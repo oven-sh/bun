@@ -17,6 +17,8 @@ Bun matches credentials in `.npmrc` (`//<registry>/:_authToken`, etc.) to regist
 
 Values may reference environment variables. Bun replaces `${NAME}` with the variable's value, or leaves it as-is if the variable is unset. `${NAME?}` becomes an empty string if unset.
 
+[Auto-install](/runtime/auto-install) reads the default registry, the scoped registries, and the registry credentials from `.npmrc`. It reads `./.npmrc` from the directory where you started `bun` and does not search parent directories. It reads `bunfig.toml` from that directory only, not the global `.bunfig.toml`. The other options on this page apply to `bun install` and the other package manager commands only.
+
 <Note>
   We recommend migrating your `.npmrc` file to Bun's [`bunfig.toml`](/runtime/bunfig) format, which supports more
   options, including Bun-specific ones.

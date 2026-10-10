@@ -574,6 +574,12 @@ pub mod fs {
             }
         }
 
+        /// The directory the process started in; `process.chdir()` does not move it.
+        #[inline]
+        pub fn initial_top_level_dir(&self) -> &[u8] {
+            self.top_level_dir.as_slice()
+        }
+
         /// Writes `.<hex(hash^nanos)>-<HEX(counter)>.<extname>\0` into `buf` and returns
         /// the NUL-terminated borrow. Static (no `&self`).
         pub fn tmpname<'b>(

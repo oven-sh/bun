@@ -1527,6 +1527,17 @@ export function tmpdirSync(pattern: string = "bun.test."): string {
   return fs.mkdtempSync(join(fs.realpathSync.native(os.tmpdir()), pattern));
 }
 
+/** A directory path below `base` that is exactly `bytes` bytes long. It is not created. */
+export function directoryPathOfLength(base: string, bytes: number): string {
+  let path = base;
+  while (path.length < bytes) {
+    let name = Math.min(bytes - path.length - 1, 200);
+    if (bytes - path.length - 1 - name === 1) name--;
+    path = join(path, Buffer.alloc(name, "d").toString());
+  }
+  return path;
+}
+
 export async function runBunInstall(
   env: NodeJS.Dict<string>,
   cwd: string,

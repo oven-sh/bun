@@ -33,7 +33,24 @@ Once Bun determines a version or version range, it:
 
 1. Checks the module cache for a compatible version. If one exists, uses it.
 2. When resolving `latest`, checks if `package@latest` was downloaded and cached in the last _24 hours_. If so, uses it.
-3. Otherwise, downloads and installs the appropriate version from the `npm` registry.
+3. Otherwise, downloads and installs the appropriate version from the registry.
+
+---
+
+## Registries
+
+Bun downloads packages from the npm registry (`https://registry.npmjs.org/`) unless you configure another one. Auto-install reads the default registry, the scoped registries, and their credentials from [`bunfig.toml`](/runtime/bunfig#install-registry) and from [`.npmrc`](/pm/npmrc).
+
+```ini .npmrc icon="npm"
+@myorg:registry=https://npm.myorg.com/
+//npm.myorg.com/:_authToken=${NPM_TOKEN}
+```
+
+Bun reads `~/.npmrc`, then `.npmrc` in the directory where you started `bun`. It does not search parent directories. Auto-install reads `bunfig.toml` from that directory only, not the global `~/.bunfig.toml`. A value in that `bunfig.toml` overrides the same value in `.npmrc`. Other `.npmrc` options, such as `cache`, apply to `bun install` and the other package manager commands only.
+
+Auto-install replaces `${NAME}` with a variable from the environment of the script, which includes its `.env` files. `bun install` reads `.env.production` where a script reads `.env.development` by default.
+
+If a registry rejects a request, for example because a token expired, the script fails with `Cannot find module` or `Cannot find package`. Run `bun add <package>` in the same directory to see the HTTP status.
 
 ---
 

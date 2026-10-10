@@ -120,7 +120,9 @@ bun_core::comptime_string_map! {
     };
 }
 
-pub use draft::{Parser, RegistryAuth, apply_registry_auth, load_npmrc, load_npmrc_config};
+pub use draft::{
+    NpmrcDiagnostics, Parser, RegistryAuth, apply_registry_auth, load_npmrc, load_npmrc_config,
+};
 
 mod draft {
 
@@ -1232,15 +1234,25 @@ mod draft {
     // loadNpmrcConfig / loadNpmrc
     // ──────────────────────────────────────────────────────────────────────────
 
+    /// Where the warnings and errors of a `.npmrc` go.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum NpmrcDiagnostics {
+        Print,
+        Discard,
+    }
+
+    /// Returns `None` when no file in `npmrc_paths` could be read.
     pub fn load_npmrc_config(
         install: &mut BunInstall,
         env: &DotEnvLoader,
         auto_loaded: bool,
+        diagnostics: NpmrcDiagnostics,
         npmrc_paths: &[&ZStr],
-    ) -> Vec<RegistryAuth> {
+    ) -> Option<Vec<RegistryAuth>> {
         let mut log = Log::init();
 
         let mut configs: Vec<RegistryAuth> = Vec::new();
+        let mut any_loaded = false;
 
         for &npmrc_path in npmrc_paths {
             let source = match bun_ast::source_from_file(
@@ -1261,10 +1273,14 @@ mod draft {
                 }
             };
             // `source.contents` is owned; drops at end of loop iteration.
+            any_loaded = true;
 
             match load_npmrc(install, env, &mut log, &source, &mut configs) {
                 Ok(()) => {}
                 Err(AllocError) => bun_core::out_of_memory(),
+            }
+            if diagnostics == NpmrcDiagnostics::Discard {
+                continue;
             }
             if log.has_errors() {
                 if log.errors == 1 {
@@ -1284,7 +1300,7 @@ mod draft {
                 Output::error_writer(),
             ));
         }
-        configs
+        any_loaded.then_some(configs)
     }
 
     pub fn apply_registry_auth(install: &mut BunInstall, auth: &[RegistryAuth]) {

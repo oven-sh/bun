@@ -1,6 +1,7 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::io::Write as _;
 
@@ -1466,6 +1467,92 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
     );
 }
 
+/// What the package manager takes from `.npmrc`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NpmrcPolicy {
+    /// `bun install` and the other commands: every mapped key, diagnostics on stderr.
+    Cli,
+    /// Runtime auto-install: the registries and their credentials, nothing printed.
+    Runtime,
+}
+
+/// `<dir>/.npmrc`, or `None` when that path does not fit a path buffer.
+fn npmrc_path_in<'a>(dir: &[u8], buf: &'a mut PathBuffer) -> Option<&'a ZStr> {
+    let end = buf.len() - 1;
+    let len = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
+        dir,
+        &mut buf[..end],
+        &[b".npmrc"],
+    )?
+    .len();
+    buf[len] = 0;
+    Some(ZStr::from_buf(&buf[..], len))
+}
+
+/// npm reads only `$HOME/.npmrc`; `$XDG_CONFIG_HOME/.npmrc` wins when that file exists.
+fn user_npmrc_path(buf: &mut PathBuffer) -> Option<&ZStr> {
+    let mut len = None;
+    if let Some(xdg_dir) = bun_core::env_var::XDG_CONFIG_HOME.get_not_empty() {
+        len = npmrc_path_in(xdg_dir, buf)
+            .filter(|path| bun_sys::exists_z(path))
+            .map(|path| path.len());
+    }
+    if len.is_none() {
+        let home_dir = bun_core::env_var::HOME.get_not_empty()?;
+        len = npmrc_path_in(home_dir, buf).map(|path| path.len());
+    }
+    len.map(|len| ZStr::from_buf(&buf[..], len))
+}
+
+/// npmrc < bunfig. Returns `bunfig` as it came when no `.npmrc` could be read.
+fn merge_npmrc_under_bunfig<'a>(
+    bunfig: Option<Cow<'a, Api::BunInstall>>,
+    env: &dot_env::Loader,
+    project_npmrc: Option<&ZStr>,
+    policy: NpmrcPolicy,
+) -> Option<Cow<'a, Api::BunInstall>> {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let mut paths = [ZStr::EMPTY; 2];
+    let mut paths_len = 0;
+    for path in [user_npmrc_path(&mut buf), project_npmrc]
+        .into_iter()
+        .flatten()
+    {
+        paths[paths_len] = path;
+        paths_len += 1;
+    }
+
+    let mut npmrc = Api::BunInstall::default();
+    let registry_auth = ini::load_npmrc_config(
+        &mut npmrc,
+        env,
+        true,
+        match policy {
+            NpmrcPolicy::Cli => ini::NpmrcDiagnostics::Print,
+            NpmrcPolicy::Runtime => ini::NpmrcDiagnostics::Discard,
+        },
+        &paths[..paths_len],
+    );
+    let Some(registry_auth) = registry_auth else {
+        return bunfig;
+    };
+    let mut npmrc = match policy {
+        NpmrcPolicy::Cli => npmrc,
+        NpmrcPolicy::Runtime => Api::BunInstall {
+            default_registry: npmrc.default_registry,
+            scoped: npmrc.scoped,
+            ..Default::default()
+        },
+    };
+
+    if let Some(bunfig) = bunfig {
+        let mut bunfig = bunfig.into_owned();
+        ini::apply_registry_auth(&mut bunfig, &registry_auth);
+        overlay_bunfig_install(&mut npmrc, bunfig);
+    }
+    Some(Cow::Owned(npmrc))
+}
+
 /// Returns `&'static mut PackageManager` — the process-singleton (held in
 /// `holder::RAW_PTR`) is leaked for the process lifetime and `init()` is called
 /// exactly once on the single CLI dispatch thread. Every
@@ -1916,49 +2003,14 @@ pub fn init(
 
     {
         // npmrc < bunfig < CLI
-        let mut bunfig_install = ctx
-            .install
-            .take()
-            .map_or_else(Api::BunInstall::default, |b| *b);
-        let mut install = Api::BunInstall::default();
         let npmrc_local = ZBox::from_bytes(b".npmrc");
-
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let parts = [b"./.npmrc" as &[u8]];
-
-        // npm reads `$HOME/.npmrc` and ignores XDG_CONFIG_HOME; keep
-        // `$XDG_CONFIG_HOME/.npmrc` only when that file actually exists.
-        let mut global_len: usize = 0;
-        if let Some(xdg_dir) = bun_core::env_var::XDG_CONFIG_HOME.get_not_empty() {
-            let p =
-                resolve_path::join_abs_string_buf_z::<platform::Auto>(xdg_dir, &mut buf, &parts);
-            if bun_sys::exists_z(p) {
-                global_len = p.len();
-            }
-        }
-        if global_len == 0 {
-            if let Some(home_dir) = bun_core::env_var::HOME.get_not_empty() {
-                global_len = resolve_path::join_abs_string_buf_z::<platform::Auto>(
-                    home_dir, &mut buf, &parts,
-                )
-                .len();
-            }
-        }
-
-        let registry_auth = if global_len > 0 {
-            ini::load_npmrc_config(
-                &mut install,
-                env,
-                true,
-                &[ZStr::from_buf(&buf[..], global_len), &*npmrc_local],
-            )
-        } else {
-            ini::load_npmrc_config(&mut install, env, true, &[&*npmrc_local])
-        };
-
-        ini::apply_registry_auth(&mut bunfig_install, &registry_auth);
-        overlay_bunfig_install(&mut install, bunfig_install);
-        ctx.install = Some(Box::new(install));
+        let install = merge_npmrc_under_bunfig(
+            ctx.install.take().map(|bunfig| Cow::Owned(*bunfig)),
+            env,
+            Some(&npmrc_local),
+            NpmrcPolicy::Cli,
+        );
+        ctx.install = Some(Box::new(install.map(Cow::into_owned).unwrap_or_default()));
     }
     let cpu_count: u32 = u32::from(bun_core::get_thread_count());
     // Captured before `cli` is moved into `options.load(Some(cli), ...)` below.
@@ -2436,6 +2488,18 @@ fn init_with_runtime_once(
         fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
     };
 
+    // bunfig.toml came from the start directory; `process.chdir()` moves `top_level_dir`.
+    let mut project_npmrc = bun_paths::path_buffer_pool::get();
+    let bun_install = merge_npmrc_under_bunfig(
+        bun_install.map(Cow::Borrowed),
+        env,
+        npmrc_path_in(
+            bun_paths::fs::FileSystem::instance().initial_top_level_dir(),
+            &mut project_npmrc,
+        ),
+        NpmrcPolicy::Runtime,
+    );
+
     let cpu_count: u32 = u32::from(bun_core::get_thread_count());
     allocate_package_manager();
     // SAFETY: holder::RAW_PTR was just set by allocate_package_manager() to a
@@ -2645,10 +2709,13 @@ fn init_with_runtime_once(
         }
     }
 
-    match manager
-        .options
-        .load(log, env, Some(cli), bun_install, Subcommand::Install)
-    {
+    match manager.options.load(
+        log,
+        env,
+        Some(cli),
+        bun_install.as_deref(),
+        Subcommand::Install,
+    ) {
         Ok(()) => {}
         Err(e) => {
             // only error.OutOfMemory possible

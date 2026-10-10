@@ -2772,6 +2772,37 @@ describe.concurrent("bun lint", () => {
       expect(result.files).toEqual({ "a.js": "var a = 1;\nif (a == 2) { debugger; }\n" });
     });
 
+    // eslint/eslint#21389, which is in no release yet: ESLint 10.12 writes `let a = 1, b = 2;`, and `b` is not defined where it
+    // is returned. The last two are the tests of that change, after all passes.
+    test("no-var and one-var: a var that has to stay one is not joined to what becomes let", async () => {
+      const rules = `{ "no-var": "error", "one-var": "error" }`;
+      const result = await lint(
+        {
+          "eslint.config.js": `module.exports = [{ languageOptions: { sourceType: "script" }, rules: ${rules} }];`,
+          "a.js": "function g() {\n  if (true) {\n    var a = 1;\n    var b = 2;\n    use(a);\n  }\n  return b;\n}\n",
+          "b.js": "function f(a) { var b = 1; var a; }\n",
+          "c.js": "function f() { var b = 1; var c = 2; }\n",
+        },
+        ["--fix", "."],
+        { reads: ["a.js", "b.js", "c.js"] },
+      );
+      expect(result.files).toEqual({
+        "a.js": "function g() {\n  if (true) {\n    let a = 1;\n    var b = 2;\n    use(a);\n  }\n  return b;\n}\n",
+        "b.js": "function f(a) { let b = 1; var a; }\n",
+        "c.js": "function f() { let b = 1,  c = 2; }\n",
+      });
+    });
+
+    test("the fix of no-var is all of the declaration", async () => {
+      const text = 'var a = 1, b = "x"; // c\nexport var c = 1;\nfor (var i = 0; i < 1; i++);\n';
+      const { raw } = await lint({ "eslint.config.js": config({ "no-var": "error" }), "a.js": text }, ["-f", "json", "a.js"]);
+      expect(JSON.parse(raw)[0].messages.map((it: any) => it.fix)).toEqual([
+        { range: [0, 19], text: 'let a = 1, b = "x";' },
+        undefined,
+        { range: [48, 57], text: "let i = 0" },
+      ]);
+    });
+
     test.skipIf(isWindows)("keeps a link to the file", async () => {
       const result = await lint(files, ["--fix", "link.js"], {
         reads: ["a.js", "link.js"],

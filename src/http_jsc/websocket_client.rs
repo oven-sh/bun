@@ -1918,6 +1918,7 @@ pub enum ErrorCode {
     ProxyAuthenticationRequired = 34,
     ProxyTunnelFailed = 36,
     UnexpectedRsv1 = 37,
+    ResponseHeadersTooLarge = 38,
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -319,7 +319,10 @@ impl Execution {
                     // SAFETY: arena-owned entry, alive for lifetime of BunTest
                     let entry = unsafe { entry.as_ref() };
                     let now = Timespec::now_force_real_time();
-                    if entry.timespec.order(&now) == core::cmp::Ordering::Less {
+                    // A stale file timer can fire while an unlimited entry is active.
+                    if !entry.timespec.eql(&Timespec::EPOCH)
+                        && entry.timespec.order(&now) == core::cmp::Ordering::Less
+                    {
                         // SAFETY: bun_vm() returns the live per-thread VM.
                         let kill_count = global_this.bun_vm().as_mut().auto_killer.kill();
                         if kill_count.processes > 0 {

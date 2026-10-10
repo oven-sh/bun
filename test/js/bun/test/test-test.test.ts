@@ -554,6 +554,44 @@ it("test timeouts when expected", () => {
   expect(err).not.toContain("unreachable code");
 });
 
+test("a completed deadline does not kill an unlimited test's child", async () => {
+  using dir = tempDir("unlimited-test-child", {
+    "child.test.js": `
+      import { afterAll, beforeAll, expect, test } from "bun:test";
+      let child;
+      beforeAll(() => {
+        child = Bun.spawn([process.execPath, "-e", "setInterval(() => {}, 1000)"], {
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "inherit",
+        });
+      });
+      afterAll(() => {
+        child.kill();
+        child.unref();
+      });
+      test("completed finite deadline", () => {}, 50);
+      test("unlimited test retains its child", async () => {
+        // Cross the completed test's deadline while this entry owns a live child.
+        await Bun.sleep(100);
+        expect(() => process.kill(child.pid, 0)).not.toThrow();
+      }, 0);
+    `,
+  });
+  await using proc = spawn({
+    cmd: [bunExe(), "test", "child.test.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(exitCode, stderr).toBe(0);
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toContain("0 fail");
+  expect(stderr).not.toContain("killed");
+});
+
 test("jest.setTimeout will change default timeout", () => {
   const path = join(tmp, "jest-setTimeout-test.test.js");
   copyFileSync(join(import.meta.dir, "setTimeout-test-fixture.js"), path);

@@ -517,6 +517,96 @@ console.log("PRELOAD");
     },
   });
 
+  // An embedded package's package.json "main" and "exports" are honoured only when autoloadPackageJson is on, as
+  // for a package on disk. The package.json is embedded as an asset at its own path. https://github.com/oven-sh/bun/issues/44101
+  for (const autoloadPackageJson of [true, false]) {
+    for (const field of ["main", "exports"] as const) {
+      const name = "compile/EmbeddedNodeModulesPackageJson" + (field === "main" ? "Main" : "Exports");
+      const packageJson =
+        field === "main"
+          ? `{ "name": "pkg", "main": "lib/main.js" }`
+          : `{ "name": "pkg", "exports": { ".": "./lib/main.js", "./feature": "./lib/feature.js" } }`;
+      const expected = !autoloadPackageJson
+        ? "index-file ResolveMessage"
+        : field === "main"
+          ? "main-field ResolveMessage"
+          : "main-field feature";
+      itBundled(name + (autoloadPackageJson ? "Enabled" : "Disabled"), {
+        backend: "cli",
+        compile: { autoloadPackageJson },
+        files: {
+          "/entry.ts": /* js */ `
+            import { tmpdir } from "os";
+            process.chdir(tmpdir());
+            const s = (x: string) => x;
+            const outcome = (spec: string) => {
+              try {
+                return require(spec).default;
+              } catch (e: any) {
+                return e?.constructor?.name ?? String(e);
+              }
+            };
+            console.log(outcome(s("pkg")), outcome(s("pkg/feature")));
+          // The embedded package.json is a JSON module, whatever autoloadPackageJson says.
+          console.log(JSON.stringify(require(s("pkg/package.json"))));
+          `,
+          "/assets.ts": /* js */ `
+            import a from "./node_modules/pkg/package.json" with { type: "file" };
+            export default a;
+          `,
+          "/node_modules/pkg/package.json": packageJson,
+          "/node_modules/pkg/index.js": `export default "index-file";`,
+          "/node_modules/pkg/lib/main.js": `export default "main-field";`,
+          "/node_modules/pkg/lib/feature.js": `export default "feature";`,
+        },
+        entryPointsRaw: [
+          "./entry.ts",
+          "./assets.ts",
+          "./node_modules/pkg/index.js",
+          "./node_modules/pkg/lib/main.js",
+          "./node_modules/pkg/lib/feature.js",
+        ],
+        // Not "[dir]/[name].[ext]": with an 8.3 cwd on Windows the asset's "[dir]" is relative to the long path.
+        assetNaming: "node_modules/pkg/[name].[ext]",
+        root: ".",
+        outfile: "dist/out",
+        run: {
+          stdout: expected + "\n" + JSON.stringify(JSON.parse(packageJson)) + "\n",
+          file: "dist/out",
+          setCwd: true,
+        },
+      });
+    }
+  }
+
+  // The embedded root package.json "imports" map can point at a builtin.
+  itBundled("compile/EmbeddedPackageJsonImportsBuiltin", {
+    backend: "cli",
+    compile: { autoloadPackageJson: true },
+    files: {
+      "/entry.ts": /* js */ `
+        import { tmpdir } from "os";
+        process.chdir(tmpdir());
+        const s = (x: string) => x;
+        console.log(typeof require(s("#fs")).readFileSync, typeof (await import(s("#fs"))).readFileSync);
+      `,
+      "/assets.ts": /* js */ `
+        import a from "./package.json" with { type: "file" };
+        export default a;
+      `,
+      "/package.json": `{ "name": "app", "imports": { "#fs": "node:fs" } }`,
+    },
+    entryPointsRaw: ["./entry.ts", "./assets.ts"],
+    assetNaming: "[name].[ext]",
+    root: ".",
+    outfile: "dist/out",
+    run: {
+      stdout: "function function\n",
+      file: "dist/out",
+      setCwd: true,
+    },
+  });
+
   // Test that autoloadBunfig: false works with execArgv (regression test for #25640)
   // When execArgv is present, bunfig should still be disabled if autoloadBunfig: false
   itBundled("compile/AutoloadBunfigDisabledWithExecArgv", {

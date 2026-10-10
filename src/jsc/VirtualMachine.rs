@@ -468,15 +468,10 @@ bun_core::define_scoped_log!(teardown_log, Worker, hidden);
 pub use bun_options_types::context::HotReload;
 
 /// The `bun build --compile` executable's embedded module graph, if this
-/// process is one: set when the first VM is created with it, the same for
-/// every VM after.
-static STANDALONE_MODULE_GRAPH: std::sync::OnceLock<
-    &'static dyn bun_resolver::StandaloneModuleGraph,
-> = std::sync::OnceLock::new();
-
-/// See [`STANDALONE_MODULE_GRAPH`]. Any thread.
+/// process is one: mounted when the first VM is created with it, the same for
+/// every VM after. Any thread.
 pub fn standalone_module_graph() -> Option<&'static dyn bun_resolver::StandaloneModuleGraph> {
-    STANDALONE_MODULE_GRAPH.get().copied()
+    bun_resolver::fs::standalone_module_graph()
 }
 
 /// InternalModuleRegistry::generateModule: ahead-of-time bytecode for internal module `id` from a `bun build --compile`
@@ -3222,7 +3217,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).gc_controller).write(Default::default());
             addr_of_mut!((*vm).channel_ref).write(Default::default());
             if let Some(graph) = opts.graph {
-                let _ = STANDALONE_MODULE_GRAPH.set(graph);
+                bun_resolver::fs::mount_standalone_module_graph(graph);
             }
             addr_of_mut!((*vm).standalone_module_graph).write(opts.graph);
             addr_of_mut!((*vm).initial_script_execution_context_identifier).write(context_id);

@@ -32,6 +32,9 @@ pub struct Entry {
     /// An `installConfig.hoistingLimits` value other than "workspaces" or "none", kept so
     /// the caller can warn about it (outside `process_names_array`'s log window).
     pub(crate) unsupported_hoisting_limits: Option<Box<[u8]>>,
+    /// The workspace's package.json has a `trustedDependencies` field. Only the root's is
+    /// read, so the caller warns about it.
+    pub(crate) has_trusted_dependencies: bool,
 }
 
 impl WorkspaceMap {
@@ -93,13 +96,7 @@ impl WorkspaceMap {
             *entry.key_ptr = Box::<[u8]>::from(key);
         }
         // old value (incl. owned `name`) dropped automatically on assignment
-        *entry.value_ptr = Entry {
-            name: value.name,
-            version: value.version,
-            name_loc: value.name_loc,
-            hoisting_limits: value.hoisting_limits,
-            unsupported_hoisting_limits: value.unsupported_hoisting_limits,
-        };
+        *entry.value_ptr = value;
         Ok(())
     }
 }
@@ -205,6 +202,7 @@ fn process_workspace_name(
             Some(v) if !matches!(&*v, b"workspaces" | b"none") => Some(v),
             _ => None,
         },
+        has_trusted_dependencies: workspace_json.root.get(b"trustedDependencies").is_some(),
         version: 'brk: {
             if let Some(version_expr) = workspace_json.root.get(b"version") {
                 if let Some(version) = version_expr.as_string_cloned(&scratch)? {
@@ -397,16 +395,7 @@ impl WorkspaceMap {
                 }
             }
 
-            workspace_names.insert(
-                rel_input_path,
-                Entry {
-                    name: workspace_entry.name,
-                    name_loc: workspace_entry.name_loc,
-                    version: workspace_entry.version,
-                    hoisting_limits: workspace_entry.hoisting_limits,
-                    unsupported_hoisting_limits: workspace_entry.unsupported_hoisting_limits,
-                },
-            )?;
+            workspace_names.insert(rel_input_path, workspace_entry)?;
         }
 
         if workspace_globs.len() > 0 {
@@ -593,17 +582,7 @@ impl WorkspaceMap {
                         }
                     }
 
-                    workspace_names.insert(
-                        workspace_path,
-                        Entry {
-                            name: workspace_entry.name,
-                            version: workspace_entry.version,
-                            name_loc: workspace_entry.name_loc,
-                            hoisting_limits: workspace_entry.hoisting_limits,
-                            unsupported_hoisting_limits: workspace_entry
-                                .unsupported_hoisting_limits,
-                        },
-                    )?;
+                    workspace_names.insert(workspace_path, workspace_entry)?;
                 }
             }
         }

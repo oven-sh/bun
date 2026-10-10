@@ -2,7 +2,7 @@ import { file, spawn, write } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
-import { cp, exists, mkdir, rm } from "fs/promises";
+import { cp, exists, mkdir, rm, symlink } from "fs/promises";
 import {
   assertManifestsPopulated,
   bunEnv as baseEnv,
@@ -2882,4 +2882,80 @@ test.concurrent("a copyfile install over a workspace's hardlinked files does not
   expect(cached).toHaveLength(1);
   expect(readJson(join(cacheDir, cached[0], "package.json"))).toEqual({ name: "no-deps", version: "2.0.0" });
   expect(statSync(join(cacheDir, cached[0], "index.js")).size).toBeGreaterThan(0);
+});
+
+// The pass after a hoisted `bun update` lists each workspace's node_modules. Behind one that is a link to the
+// root's are the root's packages, and the pass removed every one of them.
+test.concurrent("hoisted: bun update does not look behind a workspace node_modules that is a link", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({ name: "foo", workspaces: ["packages/*"], dependencies: { "no-deps": "1.0.0" } }),
+    ),
+    write(
+      join(packageDir, "packages", "pkg1", "package.json"),
+      JSON.stringify({ name: "pkg1", version: "1.0.0", dependencies: { "a-dep": "1.0.1" } }),
+    ),
+  ]);
+  await runBunInstall(env, packageDir);
+  const rootModules = join(packageDir, "node_modules");
+  await symlink(rootModules, join(packageDir, "packages", "pkg1", "node_modules"), "junction");
+
+  await using proc = spawn({ cmd: [bunExe(), "update"], cwd: packageDir, env, stdout: "pipe", stderr: "pipe" });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr.replaceAll("\\", "/")).toContain(
+    "warn: packages/pkg1/node_modules is a symlink, so Bun did not look behind it\n" +
+      "note: to have Bun clean that folder, remove the link and run 'bun install'",
+  );
+  expect({
+    "no-deps": await exists(join(rootModules, "no-deps", "package.json")),
+    "a-dep": await exists(join(rootModules, "a-dep", "package.json")),
+  }).toEqual({ "no-deps": true, "a-dep": true });
+  expect(exitCode).toBe(0);
+});
+
+// pkg1's node_modules is a link to pkg2's. An install puts pkg1's own what-bin there, through the link.
+// The pass must not take it for a copy that hides the root's.
+test.concurrent("hoisted: bun update keeps what an install wrote into a sibling's folder through a link", async () => {
+  using ctx = await setupTest();
+  const { packageDir, packageJson, env } = ctx;
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        workspaces: ["packages/*"],
+        dependencies: { "no-deps": "1.0.0", "what-bin": "1.0.0" },
+      }),
+    ),
+    write(
+      join(packageDir, "packages", "pkg1", "package.json"),
+      JSON.stringify({ name: "pkg1", version: "1.0.0", dependencies: { "what-bin": "1.5.0" } }),
+    ),
+    write(
+      join(packageDir, "packages", "pkg2", "package.json"),
+      JSON.stringify({ name: "pkg2", version: "1.0.0", dependencies: { "no-deps": "2.0.0" } }),
+    ),
+  ]);
+  await runBunInstall(env, packageDir);
+  const siblingModules = join(packageDir, "packages", "pkg2", "node_modules");
+  const workspaceModules = join(packageDir, "packages", "pkg1", "node_modules");
+  await rm(workspaceModules, { recursive: true, force: true });
+  await symlink(siblingModules, workspaceModules, "junction");
+  await runBunInstall(env, packageDir, { savesLockfile: false });
+  const versions = async () => ({
+    "no-deps": (await file(join(siblingModules, "no-deps", "package.json")).json()).version,
+    "what-bin": (await file(join(siblingModules, "what-bin", "package.json")).json()).version,
+  });
+  expect(await versions()).toEqual({ "no-deps": "2.0.0", "what-bin": "1.5.0" });
+
+  await using proc = spawn({ cmd: [bunExe(), "update"], cwd: packageDir, env, stdout: "pipe", stderr: "pipe" });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr.replaceAll("\\", "/")).toContain(
+    "warn: packages/pkg1/node_modules is a symlink, so Bun did not look behind it",
+  );
+  expect(await versions()).toEqual({ "no-deps": "2.0.0", "what-bin": "1.5.0" });
+  expect(exitCode).toBe(0);
 });

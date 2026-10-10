@@ -7904,14 +7904,6 @@ pub mod posix {
     #[cfg(unix)]
     pub use libc::timeval;
 
-    #[cfg(windows)]
-    #[repr(C)]
-    #[derive(Clone, Copy, Default)]
-    pub struct timespec {
-        pub(crate) tv_sec: i64,
-        pub(crate) tv_nsec: i64,
-    }
-
     // ── poll ──
     /// `struct pollfd`.
     #[cfg(unix)]

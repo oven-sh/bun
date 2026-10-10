@@ -5443,7 +5443,7 @@ impl DevServer {
                 let response: Response = Response::init(
                     crate::webcore::response::Init {
                         status_code: 500,
-                        headers: Some(headers_ref),
+                        headers: Some(headers_ref).into(),
                         ..Default::default()
                     },
                     crate::webcore::Body::new(crate::webcore::body::Value::Blob(

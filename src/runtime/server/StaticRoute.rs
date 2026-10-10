@@ -225,7 +225,9 @@ impl StaticRoute {
 
             let mut headers: Headers = bun_http_jsc::headers_jsc::from_fetch_headers(
                 response.get_init_headers(),
-                any_blob_content_type(&blob),
+                response
+                    .pending_content_type()
+                    .or(any_blob_content_type(&blob)),
             );
 
             // Generate ETag if not already present

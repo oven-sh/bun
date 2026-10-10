@@ -686,6 +686,37 @@ fn arm_watch_reload_grace_timer() {
     }
 }
 
+#[derive(Clone, Copy)]
+enum WatcherStep {
+    Init,
+    Start,
+}
+
+/// Never returns: `bun test --watch` and `bun build --watch` park on the watch flag alone.
+#[cold]
+#[inline(never)]
+fn exit_on_watcher_error(step: WatcherStep, err: bun_watcher::Error) -> ! {
+    bun_core::pretty_errorln!(
+        "<red>error<r><d>:<r> Failed to {} File Watcher: {}",
+        match step {
+            WatcherStep::Init => "enable",
+            WatcherStep::Start => "start",
+        },
+        err.name()
+    );
+    // `inotify_init1` reports both of these limits as EMFILE.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    if matches!(step, WatcherStep::Init)
+        && err == bun_watcher::Error::Sys(bun_errno::SystemErrno::EMFILE)
+    {
+        bun_core::note!(
+            "this user is out of inotify instances (sysctl fs.inotify.max_user_instances), or this process is out of file descriptors (ulimit -n). Close other file watchers or raise the limit."
+        );
+    }
+    Output::flush();
+    bun_core::Global::exit(1);
+}
+
 impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
     NewHotReloader<Ctx, EventLoopType, RELOAD_IMMEDIATELY>
 where
@@ -723,13 +754,7 @@ where
         // SAFETY: see above; `watcher_top_level_dir` returns `&'static [u8]`.
         let watcher = match Watcher::init(reloader, unsafe { (*this).watcher_top_level_dir() }) {
             Ok(w) => w,
-            Err(err) => {
-                bun_core::handle_error_return_trace(&err);
-                Output::panic(format_args!(
-                    "Failed to enable File Watcher: {}",
-                    err.name()
-                ));
-            }
+            Err(err) => exit_on_watcher_error(WatcherStep::Init, err),
         };
 
         // SAFETY: see above.
@@ -744,13 +769,7 @@ where
 
         // SAFETY: `watcher_ptr` was just installed into the ctx and is live.
         if let Err(err) = unsafe { (*watcher_ptr).start() } {
-            bun_core::handle_error_return_trace(&err);
-            bun_core::pretty_errorln!(
-                "<red>error<r><d>:<r> Failed to start File Watcher: {}",
-                err.name()
-            );
-            Output::flush();
-            bun_core::Global::exit(1);
+            exit_on_watcher_error(WatcherStep::Start, err);
         }
     }
 

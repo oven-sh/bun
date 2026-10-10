@@ -7,7 +7,7 @@
 //! `Zeroable` impls live here. All declarations are zero-cost FFI
 //! (`extern "system"` = `__stdcall`, which on x64 is the same as `extern "C"`).
 #![cfg(windows)]
-#![allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]
+#![allow(non_snake_case)]
 
 pub use bun_windows_sys::{
     BOOL, CONSOLE_SCREEN_BUFFER_INFO, COORD, DWORD, FALSE, HANDLE, HRESULT, INVALID_HANDLE_VALUE,
@@ -48,7 +48,6 @@ pub use bun_windows_sys::{
 // SAFETY: nested `i16`/`u16` POD; all-zero is the documented pre-call state
 // for `GetConsoleScreenBufferInfo` out-params. Impl lives here (not in
 // `bun_windows_sys`) because the `Zeroable` trait is owned by `bun_core`.
-#[cfg(windows)]
 unsafe impl crate::ffi::Zeroable for CONSOLE_SCREEN_BUFFER_INFO {}
 
 // kernel32 externs are owned by the tier-0 leaf `bun_windows_sys`; re-export

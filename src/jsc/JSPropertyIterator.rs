@@ -80,12 +80,6 @@ impl IntoIterObject for *mut JSObject {
         self
     }
 }
-impl IntoIterObject for *const JSObject {
-    #[inline]
-    fn into_iter_object(self) -> *mut JSObject {
-        self.cast_mut()
-    }
-}
 impl IntoIterObject for NonNull<JSObject> {
     #[inline]
     fn into_iter_object(self) -> *mut JSObject {

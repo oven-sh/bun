@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import net from "net";
-import perf, { PerformanceObserver } from "perf_hooks";
+import perf, { PerformanceObserver, type PerformanceNodeEntry } from "perf_hooks";
 
 test("stubs", () => {
   expect(perf.performance.nodeTiming).toBeObject();
@@ -21,6 +21,7 @@ test("doesn't throw", () => {
   expect(() => performance.getEntriesByType("measure")).not.toThrow();
   expect(() => performance.now()).not.toThrow();
   expect(() => performance.timeOrigin).not.toThrow();
+  // @ts-expect-error
   expect(() => performance.markResourceTiming()).not.toThrow();
 });
 
@@ -28,9 +29,9 @@ test("doesn't throw", () => {
 // Symbol hits V8's ToString message. Verified against Node v26.3.0.
 test("Symbol name argument throws V8 wording", () => {
   const msg = "Cannot convert a Symbol value to a string";
-  expect(() => performance.mark(Symbol())).toThrow(new TypeError(msg));
-  expect(() => performance.clearMarks(Symbol())).toThrow(new TypeError(msg));
-  expect(() => performance.clearMeasures(Symbol())).toThrow(new TypeError(msg));
+  expect(() => performance.mark(Symbol() as any)).toThrow(new TypeError(msg));
+  expect(() => performance.clearMarks(Symbol() as any)).toThrow(new TypeError(msg));
+  expect(() => performance.clearMeasures(Symbol() as any)).toThrow(new TypeError(msg));
 });
 
 // Node only looks at start/end to decide whether the options dict supplies
@@ -55,8 +56,8 @@ test("measure(name, optionsWithoutStartOrEnd, endMark) honours the trailing endM
 });
 
 test("timerify entry shape", async () => {
-  const { promise, resolve } = Promise.withResolvers();
-  const observer = new PerformanceObserver(list => resolve(list.getEntries()[0]));
+  const { promise, resolve } = Promise.withResolvers<PerformanceNodeEntry>();
+  const observer = new PerformanceObserver(list => resolve(list.getEntries()[0] as PerformanceNodeEntry));
   observer.observe({ entryTypes: ["function"] });
 
   const fn = perf.performance.timerify(function work(_a, _b) {});
@@ -170,13 +171,13 @@ test("timerify and AsyncResource.bind survive Object.prototype.get pollution", a
 });
 
 test("net entries are instanceof PerformanceEntry", async () => {
-  const { promise, resolve } = Promise.withResolvers();
-  const observer = new PerformanceObserver(list => resolve(list.getEntries()[0]));
+  const { promise, resolve } = Promise.withResolvers<PerformanceNodeEntry>();
+  const observer = new PerformanceObserver(list => resolve(list.getEntries()[0] as PerformanceNodeEntry));
   observer.observe({ entryTypes: ["net"] });
 
   const server = net.createServer(c => c.end());
-  await new Promise(r => server.listen(0, r));
-  const port = server.address().port;
+  await new Promise<void>(r => server.listen(0, r));
+  const port = (server.address() as net.AddressInfo).port;
   const socket = net.connect(port, "127.0.0.1");
   await new Promise(r => socket.on("connect", r));
 
@@ -194,7 +195,7 @@ test("re-wrapped native entries, timing and observer keep JS identity", async ()
   const name = "identity-" + Math.random();
   performance.mark(name);
   expect(performance.getEntriesByName(name)[0]).toBe(performance.getEntriesByName(name)[0]);
-  expect(performance.timing).toBe(performance.timing);
+  expect((performance as any).timing).toBe((performance as any).timing);
 
   const { promise, resolve } = Promise.withResolvers<boolean>();
   const observer = new PerformanceObserver((list, obs) => {
@@ -204,6 +205,92 @@ test("re-wrapped native entries, timing and observer keep JS identity", async ()
   observer.observe({ entryTypes: ["mark"] });
   performance.mark(name + "-2");
   expect(await promise).toBe(true);
+});
+
+test("PerformanceObserver delivers entries to a callback created in a node:vm context", async () => {
+  // A context has no PerformanceObserver of its own. A test runner or a sandbox hands it the host class,
+  // and the callback is then a function of the context's realm. Delivery used to crash the process.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const vm = require("node:vm");
+       const perfHooks = require("node:perf_hooks");
+
+       // Only its source is used: a context evaluates it, so the function belongs to the context's realm.
+       function contextCallback(list, observer) {
+         observer.disconnect();
+         report({ receiver: this, passed: observer, list, names: list.getEntries().map(entry => entry.name) });
+       }
+       const callbackSource = "(" + contextCallback + ")";
+       const check = ({ receiver, passed, list, names }, observer, callback) => ({
+         foreignCallback: !(callback instanceof Function),
+         receiver: receiver === observer,
+         observer: passed === observer,
+         list: list instanceof PerformanceObserverEntryList,
+         names,
+       });
+
+       // The context gets the host class and constructs the observer itself.
+       function insideTheContext() {
+         const { promise, resolve } = Promise.withResolvers();
+         const context = vm.createContext({
+           PerformanceObserver,
+           performance,
+           report: result => resolve(check(result, observer, callback)),
+         });
+         const { observer, callback } = vm.runInContext(
+           "const callback = " + callbackSource + ";" +
+           "const observer = new PerformanceObserver(callback);" +
+           "observer.observe({ entryTypes: ['mark'] });" +
+           "performance.mark('inside-the-context');" +
+           "({ observer, callback });",
+           context,
+         );
+         return promise;
+       }
+
+       // The host constructs the observer around a function that a context returned.
+       function fromTheHost(Observer, options, trigger) {
+         const { promise, resolve } = Promise.withResolvers();
+         const callback = vm.runInNewContext(callbackSource, {
+           report: result => resolve(check(result, observer, callback)),
+         });
+         const observer = new Observer(callback);
+         observer.observe(options);
+         trigger?.();
+         return promise;
+       }
+
+       (async () => {
+         performance.measure("buffered", { start: 0, end: 1 });
+         console.log(
+           JSON.stringify({
+             insideTheContext: await insideTheContext(),
+             globalClass: await fromTheHost(PerformanceObserver, { entryTypes: ["mark"] }, () => performance.mark("global")),
+             perfHooksClass: await fromTheHost(perfHooks.PerformanceObserver, { entryTypes: ["mark"] }, () =>
+               performance.mark("perf_hooks"),
+             ),
+             // observe({ buffered: true }) delivers before it returns, not from a task.
+             buffered: await fromTheHost(PerformanceObserver, { type: "measure", buffered: true }),
+           }),
+         );
+       })();`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const delivered = { foreignCallback: true, receiver: true, observer: true, list: true };
+  expect(JSON.parse(stdout)).toEqual({
+    insideTheContext: { ...delivered, names: ["inside-the-context"] },
+    globalClass: { ...delivered, names: ["global"] },
+    perfHooksClass: { ...delivered, names: ["perf_hooks"] },
+    buffered: { ...delivered, names: ["buffered"] },
+  });
+  expect(exitCode).toBe(0);
 });
 
 test("mark/measure toJSON and inspection include detail without perf_hooks being loaded", async () => {

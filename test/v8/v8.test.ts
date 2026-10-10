@@ -70,12 +70,7 @@ async function install(srcDir: string, tmpDir: string, runtime: Runtime): Promis
   }
 }
 
-async function build(
-  srcDir: string,
-  tmpDir: string,
-  runtime: Runtime,
-  buildMode: BuildMode,
-): Promise<{ out: string; err: string; description: string }> {
+async function build(srcDir: string, tmpDir: string, runtime: Runtime, buildMode: BuildMode): Promise<void> {
   const build = spawn({
     cmd:
       runtime == Runtime.bun
@@ -372,6 +367,20 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
   describe("Integer", () => {
     it("can create and read back int32 values", async () => {
       await checkSameOutput("test_v8_integer");
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/42195
+  describe("Function script origin", () => {
+    it("reports the file, line, and column of a JS function", async () => {
+      const out = await checkSameOutput("test_v8_function_script_origin");
+      expect(out).toContain("file: module.js");
+    });
+  });
+
+  describe("Value::ToInt32", () => {
+    it("converts values like the JS ToInt32 operation", async () => {
+      await checkSameOutput("test_v8_value_to_int32");
     });
   });
 

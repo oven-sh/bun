@@ -74,27 +74,6 @@ pub struct UsIoVec {
 }
 
 impl us_socket_t {
-    pub fn open(&mut self, is_client: bool, ip_addr: Option<&[u8]>) {
-        bun_core::scoped_log!(uws, "us_socket_open({:p}, is_client: {})", self, is_client);
-        if let Some(ip) = ip_addr {
-            debug_assert!(ip.len() < MAX_I32);
-            unsafe {
-                // SAFETY: self is a live us_socket_t; ip.ptr valid for ip.len bytes
-                let _ = c::us_socket_open(
-                    self,
-                    is_client as i32,
-                    ip.as_ptr(),
-                    i32::try_from(ip.len().min(MAX_I32)).expect("int cast"),
-                );
-            }
-        } else {
-            unsafe {
-                // SAFETY: self is a live us_socket_t
-                let _ = c::us_socket_open(self, is_client as i32, ptr::null(), 0);
-            }
-        }
-    }
-
     pub(crate) fn pause(&mut self) {
         bun_core::scoped_log!(uws, "us_socket_pause({:p})", self);
         c::us_socket_pause(self);
@@ -234,11 +213,8 @@ impl us_socket_t {
     /// Install a socket-level SNI resolver on an already-adopted server-side
     /// TLS socket (there is no listen socket to hang it off). Must run before
     /// the handshake is driven.
-    pub fn on_server_name(
-        &mut self,
-        cb: extern "C" fn(*mut us_socket_t, *const core::ffi::c_char, *mut c_int) -> *mut SslCtx,
-    ) {
-        c::us_socket_on_server_name(self, cb);
+    pub fn on_server_name(&mut self) {
+        c::us_socket_on_server_name(self);
     }
 
     /// Node-compat `_handle` shape: `SSL*` for TLS sockets, fd-as-pointer for
@@ -327,6 +303,17 @@ impl us_socket_t {
         c::us_socket_start_tls_handshake(self);
     }
 
+    /// Refuse a bad server chain during the handshake, before the client
+    /// certificate goes out. No-op on a server socket or after the handshake.
+    pub fn set_inline_reject(&mut self) {
+        c::us_socket_set_inline_reject(self);
+    }
+
+    /// A shutdown before the first handshake step sends its FIN after that step.
+    pub fn set_first_flight_before_fin(&mut self) {
+        c::us_socket_set_first_flight_before_fin(self);
+    }
+
     /// Feed bytes that were already read off the wire (e.g. a ClientHello the
     /// plain-TCP layer consumed before the upgrade) through the same decrypt
     /// path as bytes arriving from the kernel.
@@ -390,13 +377,6 @@ impl us_socket_t {
             rc
         );
         rc
-    }
-    #[cfg(windows)]
-    pub fn write_fd(&mut self, _data: &[u8], _file_descriptor: Fd) -> i32 {
-        // A `compile_error!` here would brick the windows build even with no
-        // callers (it is evaluated at item definition), so use a runtime trap
-        // instead; no current Windows call site.
-        unreachable!("us_socket_t::write_fd is not implemented on Windows")
     }
 
     pub fn write2(&mut self, first: &[u8], second: &[u8]) -> i32 {
@@ -534,14 +514,7 @@ mod c {
             ctx: *mut SslCtx,
             error: c_int,
         );
-        pub(super) safe fn us_socket_on_server_name(
-            s: &mut us_socket_t,
-            cb: extern "C" fn(
-                *mut us_socket_t,
-                *const core::ffi::c_char,
-                *mut c_int,
-            ) -> *mut SslCtx,
-        );
+        pub(super) safe fn us_socket_on_server_name(s: &mut us_socket_t);
         pub(super) safe fn us_socket_keepalive(
             s: &mut us_socket_t,
             enable: c_int,
@@ -578,12 +551,6 @@ mod c {
         -> i32;
         pub(super) safe fn us_socket_flush(s: &mut us_socket_t);
 
-        pub(super) fn us_socket_open(
-            s: *mut us_socket_t,
-            is_client: i32,
-            ip: *const u8,
-            ip_length: i32,
-        ) -> *mut us_socket_t;
         pub(super) safe fn us_socket_pause(s: &mut us_socket_t);
         pub(super) safe fn us_socket_resume(s: &mut us_socket_t);
         pub(super) fn us_socket_close(
@@ -628,6 +595,8 @@ mod c {
             length: i32,
         ) -> *mut us_socket_t;
         pub(super) safe fn us_socket_start_tls_handshake(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_set_inline_reject(s: &mut us_socket_t);
+        pub(super) safe fn us_socket_set_first_flight_before_fin(s: &mut us_socket_t);
     }
 }
 

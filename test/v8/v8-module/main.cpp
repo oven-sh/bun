@@ -1458,6 +1458,63 @@ void test_v8_integer(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
+// Returns ToInt32 of the first argument. Leaves the exception pending when the
+// conversion throws, so the JS caller sees it.
+void perform_to_int32(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  MaybeLocal<Int32> maybe = info[0]->ToInt32(context);
+  LOG_EXPR(maybe.IsEmpty());
+  if (maybe.IsEmpty()) {
+    return;
+  }
+  Local<Int32> result = maybe.ToLocalChecked();
+  LOG_EXPR(result->Value());
+  LOG_EXPR(result->IsInt32());
+  info.GetReturnValue().Set(result);
+}
+
+// Returns { file, line, column } for the function passed as the first argument,
+// as @newrelic/fn-inspect does. file is undefined when the resource name is an
+// empty handle.
+void get_function_script_origin(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  if (!info[0]->IsFunction()) {
+    return fail(info, "argument is not a function");
+  }
+  Local<Function> fn = info[0].As<Function>();
+
+  ScriptOrigin origin = fn->GetScriptOrigin();
+  Local<Value> resource_name = origin.ResourceName();
+  LOG_EXPR(resource_name.IsEmpty());
+  LOG_EXPR(origin.LineOffset());
+  LOG_EXPR(origin.ColumnOffset());
+  int line = fn->GetScriptLineNumber();
+  int column = fn->GetScriptColumnNumber();
+  LOG_EXPR(line);
+  LOG_EXPR(column);
+
+  Local<Object> result = Object::New(isolate);
+  Local<Value> file = resource_name.IsEmpty() ? Local<Value>(Undefined(isolate))
+                                              : resource_name;
+  result
+      ->Set(context, String::NewFromUtf8(isolate, "file").ToLocalChecked(),
+            file)
+      .FromJust();
+  result
+      ->Set(context, String::NewFromUtf8(isolate, "line").ToLocalChecked(),
+            Integer::New(isolate, line))
+      .FromJust();
+  result
+      ->Set(context, String::NewFromUtf8(isolate, "column").ToLocalChecked(),
+            Integer::New(isolate, column))
+      .FromJust();
+  info.GetReturnValue().Set(result);
+}
+
 void test_v8_define_own_property(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   Local<Context> context = isolate->GetCurrentContext();
@@ -2150,6 +2207,9 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "test_v8_value_type_checks",
                   test_v8_value_type_checks);
   NODE_SET_METHOD(exports, "test_v8_integer", test_v8_integer);
+  NODE_SET_METHOD(exports, "perform_to_int32", perform_to_int32);
+  NODE_SET_METHOD(exports, "get_function_script_origin",
+                  get_function_script_origin);
   NODE_SET_METHOD(exports, "test_v8_define_own_property",
                   test_v8_define_own_property);
   NODE_SET_METHOD(exports, "test_v8_bigint", test_v8_bigint);

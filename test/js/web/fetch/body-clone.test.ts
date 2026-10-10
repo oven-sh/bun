@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, tempDirWithFiles } from "harness";
+import { closeSync, openSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import net from "node:net";
 import { join } from "node:path";
 
 test("Request with streaming body can be cloned", async () => {
@@ -44,7 +46,7 @@ test("Response with streaming body can be cloned", async () => {
 
 test("Request with large streaming body can be cloned", async () => {
   let largeData = "x".repeat(1024 * 1024); // 1MB of data
-  let chunks = [];
+  let chunks: string[] = [];
   for (let chunkSize = 1024; chunkSize <= 1024 * 1024; chunkSize *= 2) {
     chunks.push(largeData.slice(0, chunkSize));
   }
@@ -70,7 +72,7 @@ test("Request with large streaming body can be cloned", async () => {
 
 test("Request with large streaming body can be cloned (pull)", async () => {
   let largeData = "x".repeat(1024 * 1024); // 1MB of data
-  let chunks = [];
+  let chunks: string[] = [];
   for (let chunkSize = 1024; chunkSize <= 1024 * 1024; chunkSize *= 2) {
     chunks.push(largeData.slice(0, chunkSize));
   }
@@ -884,7 +886,7 @@ describe.concurrent("clone() after `.body` was observed returns a fresh tee bran
     expect(before.locked).toBe(false);
     expect(target.bodyUsed).toBe(false);
 
-    const cloned = target.clone();
+    const cloned = target.clone() as Request | Response;
     const after = target.body!;
 
     // Spec: .body is a new tee branch; the pre-clone stream is the tee
@@ -967,7 +969,6 @@ describe.concurrent("clone() after `.body` was observed returns a fresh tee bran
               controller.close();
             },
           }),
-          // @ts-expect-error duplex
           duplex: "half",
         }),
     ],
@@ -1041,7 +1042,6 @@ test("new Request(src, init) with a user ReadableStream body: both derived and s
         controller.close();
       },
     });
-  // @ts-expect-error duplex
   const make = () => new Request("http://example.com/", { method: "POST", body: stream(), duplex: "half" });
   const bytes = async (r: Request | Response) => [...new Uint8Array(await r.arrayBuffer())];
 
@@ -1052,7 +1052,7 @@ test("new Request(src, init) with a user ReadableStream body: both derived and s
   // Bun extension: a Response as the second argument contributes its body via
   // the sibling Response-source branch in construct_into.
   const responseSrc = new Response(stream());
-  // @ts-expect-error Bun accepts a Response as init
+  // Bun accepts a Response as init
   const fromResponse = new Request("http://example.com/", responseSrc);
   expect({
     twoArg: { derived: await bytes(twoArg), src: await bytes(twoArgSrc) },
@@ -1120,7 +1120,9 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
     await using server = Bun.serve({
       port: 0,
       fetch: req =>
-        new URL(req.url).pathname === "/clone" ? new Response(file().stream()).clone() : new Response(file().stream()),
+        new URL(req.url).pathname === "/clone"
+          ? (new Response(file().stream()).clone() as Response)
+          : new Response(file().stream()),
     });
     const results: Record<string, [string | null, string]> = {};
     for (const path of ["/direct", "/clone"]) {
@@ -1170,6 +1172,18 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
     expect(await cloneInChild("Bun.stdin")).toEqual(bothBodiesReadStdin);
   });
 
+  // Reads of one fd share its offset, so the second Blob would start where the first one ended.
+  test("a body over a regular file given by file descriptor is teed, not duped", async () => {
+    const fd = openSync(join(tempDirWithFiles("body-clone-fd", { "a.txt": "hello world" }), "a.txt"), "r");
+    try {
+      const original = new Response(Bun.file(fd));
+      const clone = original.clone();
+      expect(await Promise.all([original.text(), clone.text()])).toEqual(["hello world", "hello world"]);
+    } finally {
+      closeSync(fd);
+    }
+  });
+
   // The same store kind reached by path: stat says it is not a regular file.
   test.skipIf(isWindows)("a body over a FIFO opened by path is still teed", async () => {
     const fifo = join(tempDirWithFiles("body-clone-fifo", {}), "body.fifo");
@@ -1181,6 +1195,159 @@ describe("clone() of a body over an unread native stream keeps the Blob behind i
     });
     expect(await cloneInChild("Bun.file(process.argv.at(-1)).stream()", [fifo])).toEqual(bothBodiesReadStdin);
     expect(await writer.exited).toBe(0);
+  });
+
+  test.skipIf(isWindows)("a body over a FIFO given by path as the Blob itself is teed, not duped", async () => {
+    const fifo = join(tempDirWithFiles("body-clone-fifo-blob", {}), "body.fifo");
+    expect(Bun.spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
+    await using writer = Bun.spawn({
+      cmd: ["sh", "-c", `printf 'hello world' > "$1"`, "sh", fifo],
+      stdout: "ignore",
+      stderr: "inherit",
+    });
+    expect(await cloneInChild("Bun.file(process.argv.at(-1))", [fifo])).toEqual(bothBodiesReadStdin);
+    expect(await writer.exited).toBe(0);
+  });
+
+  // The body shares its store with the Bun.file() it was made from. A stat cached
+  // there is what `size`, `lastModified`, `exists()` and a later `.body` answer from.
+  describe("clone() of a Bun.file() body does not change what the Bun.file() answers", () => {
+    const post = (body: Bun.BunFile) => new Request("http://example.com/", { method: "POST", body });
+    const cloners: Array<[string, (file: Bun.BunFile) => unknown]> = [
+      ["Response.clone()", file => new Response(file).clone()],
+      ["Request.clone()", file => post(file).clone()],
+      ["new Request(request)", file => new Request(post(file))],
+      ["new Request(request, init)", file => new Request(post(file), { headers: { "x-test": "1" } })],
+      // Bun takes a Response as init and clones its body.
+      ["new Request(url, response)", file => new Request("http://example.com/", new Response(file))],
+    ];
+
+    async function afterClone<T>(
+      clone: (file: Bun.BunFile) => unknown,
+      change: (path: string) => void,
+      read: (file: Bun.BunFile) => T | Promise<T>,
+    ) {
+      const path = join(tempDirWithFiles("body-clone-answers", { "log.txt": "12345" }), "log.txt");
+      const file = Bun.file(path);
+      clone(file);
+      change(path);
+      return await read(file);
+    }
+    const grow = (path: string) => writeFileSync(path, "123456789");
+
+    test.each(cloners)("%s: size and a later body see a file that grew", async (_, clone) => {
+      expect({
+        size: await afterClone(clone, grow, file => file.size),
+        body: await afterClone(clone, grow, file => Bun.readableStreamToText(new Response(file).body!)),
+      }).toEqual({ size: 9, body: "123456789" });
+    });
+
+    test("lastModified and exists() see a file that changed", async () => {
+      const clone = cloners[0][1];
+      const mtime = new Date("2033-05-18T03:33:20.000Z");
+      expect({
+        lastModified: await afterClone(
+          clone,
+          path => utimesSync(path, mtime, mtime),
+          file => file.lastModified,
+        ),
+        exists: await afterClone(clone, unlinkSync, file => file.exists()),
+      }).toEqual({ lastModified: mtime.getTime(), exists: false });
+    });
+
+    test("both bodies see a file that grew", async () => {
+      const path = join(tempDirWithFiles("body-clone-grew", { "log.txt": "12345" }), "log.txt");
+      const original = new Response(Bun.file(path));
+      const clone = original.clone();
+      grow(path);
+      expect(await Promise.all([original.body, clone.body].map(body => Bun.readableStreamToText(body!)))).toEqual([
+        "123456789",
+        "123456789",
+      ]);
+    });
+
+    test("exists() sees a file that was created before the clone", async () => {
+      const path = join(tempDirWithFiles("body-clone-created", {}), "later.txt");
+      const file = Bun.file(path);
+      expect(await file.exists()).toBe(false);
+      writeFileSync(path, "12345");
+      new Response(file).clone();
+      expect(await file.exists()).toBe(true);
+    });
+
+    test("the size console.log prints for the clone", () => {
+      const sizeOf = (change: (path: string) => void, body: (file: Bun.BunFile) => Blob) => {
+        const path = join(tempDirWithFiles("body-clone-label", { "log.txt": "12345" }), "log.txt");
+        const clone = new Response(body(Bun.file(path))).clone();
+        change(path);
+        return [Bun.inspect(clone), Bun.inspect(clone)].map(printed => printed.split("\n")[0]).join(" ");
+      };
+      expect({
+        whole: sizeOf(
+          () => {},
+          file => file,
+        ),
+        slice: sizeOf(
+          () => {},
+          file => file.slice(1, 4),
+        ),
+        grew: sizeOf(grow, file => file),
+        deleted: sizeOf(unlinkSync, file => file),
+      }).toEqual({
+        whole: "Response (5 bytes) { Response (5 bytes) {",
+        slice: "Response (3 bytes) { Response (3 bytes) {",
+        grew: "Response (9 bytes) { Response (9 bytes) {",
+        deleted: "Response { Response {",
+      });
+    });
+
+    // procfs reports `st_size == 0` for a file that has content, so with that stat cached all three read "".
+    test.skipIf(!isLinux)("a procfs file is read whole", async () => {
+      const file = Bun.file("/proc/sys/kernel/ostype");
+      const original = new Response(file);
+      const clone = original.clone();
+      expect({
+        original: await original.text(),
+        clone: await clone.text(),
+        file: await file.text(),
+      }).toEqual({ original: "Linux\n", clone: "Linux\n", file: "Linux\n" });
+    });
+  });
+
+  // No bytes to compete for: it is duped like a regular file, and each body fails when it is read.
+  describe("clone() of a body that cannot be read does not throw", () => {
+    const sizeRead = (file: Bun.BunFile) => (file.size, file);
+    const directory = () => tempDirWithFiles("body-clone-dir", {});
+
+    async function codes(file: Bun.BunFile) {
+      const original = new Response(file);
+      const clone = original.clone();
+      const results = await Promise.allSettled([original.text(), clone.text()]);
+      return results.map(result => (result.status === "rejected" ? result.reason?.code : result.status));
+    }
+
+    test("a directory by path", async () => {
+      expect({
+        fresh: await codes(Bun.file(directory())),
+        sizeRead: await codes(sizeRead(Bun.file(directory()))),
+      }).toEqual({ fresh: ["EISDIR", "EISDIR"], sizeRead: ["EISDIR", "EISDIR"] });
+    });
+
+    test.skipIf(isWindows)("a directory by file descriptor", async () => {
+      const fd = openSync(directory(), "r");
+      try {
+        expect({
+          fresh: await codes(Bun.file(fd)),
+          sizeRead: await codes(sizeRead(Bun.file(fd))),
+        }).toEqual({ fresh: ["EISDIR", "EISDIR"], sizeRead: ["EISDIR", "EISDIR"] });
+      } finally {
+        closeSync(fd);
+      }
+    });
+
+    test.skipIf(isWindows)("a file descriptor that is not open", async () => {
+      expect(await codes(Bun.file(1_000_000))).toEqual(["EBADF", "EBADF"]);
+    });
   });
 });
 
@@ -1371,7 +1538,7 @@ describe("Bun.serve: clone() of an incoming request whose body nobody reads", ()
     let data = "";
     const socket = await Bun.connect({
       hostname: "127.0.0.1",
-      port: server.port,
+      port: server.port!,
       socket: {
         data(_socket, chunk) {
           data += chunk.toString();
@@ -1415,4 +1582,136 @@ describe("Bun.serve: clone() of an incoming request whose body nobody reads", ()
     for (let i = 0; i < 200 && state === "pending"; i++) state = await readState();
     expect(state).toBe("rejected: AbortError: The connection was closed.");
   });
+});
+
+// After `clone()` the body points at a tee branch instead of the native byte
+// stream. When the body fails mid-stream, a read parked on either branch must
+// reject with the error a read on an un-cloned body gets. The original's branch
+// used to be cancelled instead of errored, so its reader ended with
+// `{ done: true }` on a truncated body.
+describe("clone() of a body that fails mid-stream", () => {
+  const announced = 64 * 1024;
+  const sent = 16 * 1024;
+  const payload = Buffer.alloc(sent, "a");
+  const chunkedPayload = Buffer.concat([Buffer.from(sent.toString(16) + "\r\n"), payload, Buffer.from("\r\n")]);
+
+  async function drain(body: ReadableStream<Uint8Array>, onBytes: (received: number) => void) {
+    const reader = body.getReader();
+    let received = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) return { received, outcome: "done" };
+        received += value.byteLength;
+        onBytes(received);
+      }
+    } catch (e: any) {
+      return { received, outcome: "rejected", error: `${e?.name}: ${e?.message}` };
+    }
+  }
+
+  // POST a first body part to a handler that clones the request and drains one
+  // side. Once the handler holds those bytes, `fail(client)` breaks the body.
+  async function serveUpload(
+    side: "original" | "clone",
+    opts: { framing: string; firstPart: Buffer; maxRequestBodySize?: number; fail(client: net.Socket): void },
+  ) {
+    const partial = Promise.withResolvers<void>();
+    const result = Promise.withResolvers<Awaited<ReturnType<typeof drain>>>();
+    await using server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      maxRequestBodySize: opts.maxRequestBodySize,
+      async fetch(req) {
+        const clone = req.clone();
+        const body = (side === "original" ? req : clone).body!;
+        result.resolve(await drain(body, received => received >= sent && partial.resolve()));
+        return new Response("k");
+      },
+      error(err) {
+        result.reject(err);
+        return new Response("handler threw", { status: 500 });
+      },
+    });
+    const client = net.connect(server.port!, "127.0.0.1");
+    try {
+      client.on("error", () => {});
+      client.write(
+        `POST / HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/octet-stream\r\n${opts.framing}\r\n\r\n`,
+      );
+      client.write(opts.firstPart);
+      // A drain that ends before `sent` bytes arrived settles `result` instead.
+      await Promise.race([partial.promise, result.promise]);
+      opts.fail(client);
+      return await result.promise;
+    } finally {
+      client.destroy();
+    }
+  }
+
+  test.each(["original", "clone"] as const)(
+    "Bun.serve: a reader on the %s request rejects when the client disconnects",
+    async side => {
+      const result = await serveUpload(side, {
+        framing: `Content-Length: ${announced}`,
+        firstPart: payload,
+        fail: client => client.destroy(),
+      });
+      expect(result).toEqual({ received: sent, outcome: "rejected", error: "AbortError: The connection was closed." });
+    },
+  );
+
+  test.each(["original", "clone"] as const)(
+    "Bun.serve: a reader on the %s request rejects when a chunked body outgrows maxRequestBodySize",
+    async side => {
+      const result = await serveUpload(side, {
+        // No Content-Length, so only the streamed byte count can enforce the cap.
+        framing: "Transfer-Encoding: chunked",
+        firstPart: chunkedPayload,
+        maxRequestBodySize: sent + 1024,
+        fail: client => client.write(chunkedPayload),
+      });
+      expect(result).toEqual({
+        received: sent,
+        outcome: "rejected",
+        error: "Error: Request body exceeded maxRequestBodySize",
+      });
+    },
+  );
+
+  test.each(["original", "clone"] as const)(
+    "fetch(): a reader on the %s response rejects when the server disconnects",
+    async side => {
+      const hangup = Promise.withResolvers<void>();
+      const accepted: net.Socket[] = [];
+      const server = net.createServer(socket => {
+        accepted.push(socket);
+        socket.on("error", () => {});
+        socket.once("data", () => {
+          socket.write(
+            `HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: ${announced}\r\n\r\n`,
+          );
+          socket.write(payload);
+          hangup.promise.then(() => socket.destroy());
+        });
+      });
+      const listening = Promise.withResolvers<void>();
+      server.listen(0, "127.0.0.1", () => listening.resolve());
+      await listening.promise;
+      try {
+        const res = await fetch(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}/`);
+        const clone = res.clone();
+        const body = (side === "original" ? res : clone).body!;
+        const result = await drain(body, received => received >= sent && hangup.resolve());
+        expect(result).toEqual({
+          received: sent,
+          outcome: "rejected",
+          error: expect.stringContaining("The socket connection was closed unexpectedly"),
+        });
+      } finally {
+        for (const socket of accepted) socket.destroy();
+        server.close();
+      }
+    },
+  );
 });

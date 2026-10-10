@@ -40,7 +40,7 @@ describeWithContainer(
       try {
         await sql`BEGIN`;
         expect.unreachable();
-      } catch (error) {
+      } catch (error: any) {
         expect(error.code).toBe("ERR_MYSQL_UNSAFE_TRANSACTION");
       }
     });

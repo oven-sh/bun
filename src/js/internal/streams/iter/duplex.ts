@@ -14,7 +14,19 @@ const { validateAbortSignal, validateObject } = require("internal/validators");
  *           a?: object, b?: object }} [options]
  * @returns {[DuplexChannel, DuplexChannel]}
  */
-function duplex(options = { __proto__: null }) {
+interface DuplexChannelOptions {
+  __proto__?: null;
+  highWaterMark?: number;
+  backpressure?: string;
+}
+
+interface DuplexOptions extends DuplexChannelOptions {
+  signal?: AbortSignal;
+  a?: DuplexChannelOptions;
+  b?: DuplexChannelOptions;
+}
+
+function duplex(options: DuplexOptions = { __proto__: null }) {
   validateObject(options, "options");
   const { highWaterMark, backpressure, signal, a, b } = options;
   if (a !== undefined) {
@@ -43,8 +55,8 @@ function duplex(options = { __proto__: null }) {
   let aClosed = false;
   let bClosed = false;
   // Track active iterators so close() can call .return() on them
-  let aReadableIterator = null;
-  let bReadableIterator = null;
+  let aReadableIterator: AsyncIterator<Uint8Array[]> | null = null;
+  let bReadableIterator: AsyncIterator<Uint8Array[]> | null = null;
 
   const channelA = {
     __proto__: null,

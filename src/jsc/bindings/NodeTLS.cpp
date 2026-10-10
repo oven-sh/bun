@@ -179,7 +179,7 @@ static int noPasswordCallback(char*, int, int, void*)
 // because forEachInIterable drives the iterator protocol and a tampered
 // %ArrayIteratorPrototype%.next can detach an earlier element between pass-1
 // callbacks.
-using CACertInput = std::variant<WTF::CString, JSC::JSArrayBufferView*>;
+using CACertInput = std::variant<WTF::UTF8CString, JSC::JSArrayBufferView*>;
 
 JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -234,7 +234,7 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
 
     for (auto& in : inputs) {
         std::span<const uint8_t> bytes;
-        if (auto* utf8 = std::get_if<WTF::CString>(&in)) {
+        if (auto* utf8 = std::get_if<WTF::UTF8CString>(&in)) {
             bytes = { reinterpret_cast<const uint8_t*>(utf8->data()), utf8->length() };
         } else {
             auto* view = std::get<JSC::JSArrayBufferView*>(in);

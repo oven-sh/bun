@@ -14,6 +14,7 @@ describe("test.failing", () => {
   });
 
   it("requires a test function (unlike test.todo)", () => {
+    // @ts-expect-error
     expect(() => test.failing("test name")).toThrow("test.failing expects a function as the second argument");
   });
 

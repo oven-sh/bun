@@ -130,6 +130,40 @@ export function bunExe() {
   return process.execPath;
 }
 
+/**
+ * Source for a `bun -e` script: binds `port`, where a dial to 127.0.0.1 sits in
+ * EINPROGRESS for good, and `filler`, to `destroy()` when done. Not on Windows or musl.
+ *
+ * A listener nobody accepts from, with a backlog one filler connection fills, so the
+ * kernel drops every later SYN. Needs listen(2) with the smallest backlog that admits
+ * exactly one connection (macOS treats 0 as unlimited), which Bun's own listeners do
+ * not expose, so the listener is a raw libc socket.
+ */
+export const blackholePortSource = `
+const net = require("node:net");
+const { dlopen, ptr } = require("bun:ffi");
+const darwin = process.platform === "darwin";
+const libc = dlopen(darwin ? "libSystem.B.dylib" : "libc.so.6", {
+  socket:      { args: ["int", "int", "int"],  returns: "int" },
+  bind:        { args: ["int", "ptr", "int"],  returns: "int" },
+  listen:      { args: ["int", "int"],         returns: "int" },
+  getsockname: { args: ["int", "ptr", "ptr"],  returns: "int" },
+});
+const AF_INET = 2, SOCK_STREAM = 1;
+const addr = new Uint8Array(16);
+if (darwin) { addr[0] = 16; addr[1] = AF_INET; } else new DataView(addr.buffer).setUint16(0, AF_INET, true);
+addr.set([127, 0, 0, 1], 4);
+const fd = libc.symbols.socket(AF_INET, SOCK_STREAM, 0);
+if (fd < 0 || libc.symbols.bind(fd, ptr(addr), 16) !== 0 || libc.symbols.listen(fd, darwin ? 1 : 0) !== 0) throw new Error("listen failed");
+const len = new Uint32Array([16]);
+if (libc.symbols.getsockname(fd, ptr(addr), ptr(len)) !== 0) throw new Error("getsockname failed");
+const port = (addr[2] << 8) | addr[3];
+// The error listener outlives the await, so a later error on the filler
+// is swallowed rather than thrown.
+const filler = net.connect(port, "127.0.0.1");
+await new Promise((resolve, reject) => filler.on("connect", resolve).on("error", reject));
+`;
+
 export function nodeExe(): string | null {
   return which("node") || null;
 }
@@ -252,8 +286,8 @@ let canBuildNodeAddonsCached: boolean | undefined;
 export function canBuildNodeAddons(): boolean {
   if (canBuildNodeAddonsCached === undefined) {
     if (!isMacOS) {
-      // Linux and Windows CI toolchains are provisioned by the bootstrap
-      // scripts in lockstep with the reported Node version; only macOS test
+      // Linux and Windows CI toolchains are baked into the images
+      // (scripts/build/ci-images/spec.ts) in lockstep with the reported Node version; only macOS test
       // boxes have independently-managed Xcode installs.
       canBuildNodeAddonsCached = true;
     } else {
@@ -519,7 +553,7 @@ export interface BunRunResult {
   stdout: string;
   stderr: string;
   exitCode: number;
-  signalCode: NodeJS.Signals | null;
+  signalCode: NodeJS.Signals | number | null;
 }
 
 /**
@@ -675,6 +709,10 @@ const binaryTypes = {
 } as const;
 if (expect.extend)
   expect.extend({
+    toMatchNodeModulesAt,
+    toHaveBins,
+    toBeValidBin,
+    toBeWorkspaceLink,
     toHaveTestTimedOutAfter(actual: any, expected: number) {
       if (typeof actual !== "string") {
         return {
@@ -739,7 +777,7 @@ if (expect.extend)
         }
       }
     },
-    toSpawn(actual: BunRunResult, expectedStdout?: string) {
+    toSpawn(actual: any, expectedStdout?: string) {
       if (actual == null || typeof actual !== "object" || typeof actual.exitCode !== "number") {
         throw new TypeError(
           `expect(received).toSpawn()\n\nExpected a BunRunResult (did you forget to await bunRun()?)`,
@@ -776,7 +814,7 @@ if (expect.extend)
         message: () => `Expected process to fail but it exited with code 0\nstdout: ${actual.stdout}`,
       };
     },
-    toThrowWithCode(fn: CallableFunction, cls: CallableFunction, code: string) {
+    toThrowWithCode(fn: any, cls: CallableFunction, code: string) {
       try {
         fn();
         return {
@@ -788,7 +826,7 @@ if (expect.extend)
         if (!(e instanceof cls)) {
           return {
             pass: false,
-            message: () => `Expected error to be instanceof ${cls.name}; got ${e.__proto__.constructor.name}`,
+            message: () => `Expected error to be instanceof ${cls.name}; got ${(e as any).__proto__.constructor.name}`,
           };
         }
 
@@ -813,7 +851,7 @@ if (expect.extend)
         };
       }
     },
-    async toThrowWithCodeAsync(fn: CallableFunction, cls: CallableFunction, code: string) {
+    async toThrowWithCodeAsync(fn: any, cls: CallableFunction, code: string) {
       try {
         await fn();
         return {
@@ -825,7 +863,7 @@ if (expect.extend)
         if (!(e instanceof cls)) {
           return {
             pass: false,
-            message: () => `Expected error to be instanceof ${cls.name}; got ${e.__proto__.constructor.name}`,
+            message: () => `Expected error to be instanceof ${cls.name}; got ${(e as any).__proto__.constructor.name}`,
           };
         }
 
@@ -1015,10 +1053,12 @@ Received ${JSON.stringify({ name: onDisk.name, version: onDisk.version })}`,
   };
 }
 
-export function toHaveBins(actual: string[], expectedBins: string[]) {
+export function toHaveBins(actual: any, expectedBins: string[]) {
   const message = () => `Expected ${actual} to be package bins ${expectedBins}`;
 
   if (isWindows) {
+    // Each bin is a pair of files, `name.exe` and `name.bunx`.
+    if (actual.length !== expectedBins.length * 2) return { pass: false, message };
     for (var i = 0; i < actual.length; i += 2) {
       if (!actual[i].includes(expectedBins[i / 2]) || !actual[i + 1].includes(expectedBins[i / 2])) {
         return { pass: false, message };
@@ -1027,10 +1067,10 @@ export function toHaveBins(actual: string[], expectedBins: string[]) {
     return { pass: true, message };
   }
 
-  return { pass: actual.every((bin, i) => bin === expectedBins[i]), message };
+  return { pass: actual.length === expectedBins.length && actual.every((bin, i) => bin === expectedBins[i]), message };
 }
 
-export function toBeValidBin(actual: string, expectedLinkPath: string) {
+export function toBeValidBin(actual: any, expectedLinkPath: string) {
   const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
 
   if (isWindows) {
@@ -1042,7 +1082,7 @@ export function toBeValidBin(actual: string, expectedLinkPath: string) {
   return { pass: fs.readlinkSync(actual) === expectedLinkPath, message };
 }
 
-export function toBeWorkspaceLink(actual: string, expectedLinkPath: string) {
+export function toBeWorkspaceLink(actual: any, expectedLinkPath: string) {
   const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
 
   if (isWindows) {
@@ -1207,7 +1247,6 @@ export async function describeWithContainer(
     "mysql:9": 3306, // Map mysql:9 to mysql_native_password
     "redis_plain": 6379,
     "redis_unified": 6379,
-    "minio": 9000,
     "autobahn": 9002,
   };
 
@@ -1312,7 +1351,7 @@ function failTestsOnBlockingWriteCall() {
     Object.defineProperty(child_process.ChildProcess.prototype, "stdin", {
       ...prop,
       get() {
-        const actual = prop.get.call(this);
+        const actual = prop.get!.call(this);
         if (actual?.write && !actual.__proto__[didAttachSymbol]) {
           actual.__proto__[didAttachSymbol] = true;
           attachWriteMeasurement(actual);
@@ -1644,6 +1683,10 @@ interface BunHarnessTestMatchers {
   toSpawn(expectedStdout?: string): void;
   toThrowWithCode(cls: CallableFunction, code: string): void;
   toThrowWithCodeAsync(cls: CallableFunction, code: string): Promise<void>;
+  toMatchNodeModulesAt(root: string): Promise<void>;
+  toHaveBins(expectedBins: string[]): void;
+  toBeValidBin(expectedLinkPath: string): void;
+  toBeWorkspaceLink(expectedLinkPath: string): void;
 }
 
 declare module "bun:test" {
@@ -1999,11 +2042,11 @@ export class VerdaccioRegistry {
     });
 
     if (response.ok) {
-      const data = await response.json();
+      const data: any = await response.json();
       return data.token;
     }
 
-    throw new Error("Failed to create user:", response.statusText);
+    throw new Error(`Failed to create user: ${response.status} ${response.statusText}`);
   }
 
   async authBunfig(user: string) {
@@ -2304,10 +2347,7 @@ export function compileFixture(sourcePath: string, options: { flags?: string[] }
   return outPath;
 }
 
-export const rss: () => number =
-  process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"
-    ? (Bun.unsafe.memoryFootprint as () => number)
-    : process.memoryUsage.rss;
+export const rss: () => number = process.memoryUsage.rss;
 
 /** Read exactly `len` bytes from `fd` at absolute `offset`. */
 export function preadExact(fd: number, offset: number, len: number): Buffer {

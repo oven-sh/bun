@@ -2,6 +2,7 @@ import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { afterEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tls as certs, isWindows } from "harness";
 import { once } from "node:events";
+import https from "node:https";
 import { join } from "node:path";
 import tls from "node:tls";
 
@@ -98,7 +99,7 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     // The TLS record layer must reassemble across many tiny BIO reads.
     fault.set({ syscall: "recv", action: "short", bytes: 1, repeat: -1 });
     const chunks: Buffer[] = [];
-    p.client.on("data", c => chunks.push(c));
+    p.client.on("data", (c: Buffer) => chunks.push(c));
     const payload = Buffer.alloc(512, "Z");
     p.serverSock.write(payload);
     p.serverSock.end();
@@ -109,7 +110,7 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
   test("send → short writes (1 byte) still deliver complete encrypted payload", async () => {
     let received = Buffer.alloc(0);
     using p = await connectedTLSPair(s => {
-      s.on("data", c => (received = Buffer.concat([received, c])));
+      s.on("data", (c: Buffer) => (received = Buffer.concat([received, c])));
     });
     fault.set({ syscall: "send", action: "short", bytes: 1, repeat: -1 });
     const payload = Buffer.alloc(512, "Y");
@@ -159,7 +160,7 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     // header and ciphertext across separate recv calls.
     fault.set({ syscall: "recv", action: "short", bytes: 5, repeat: -1 });
     const chunks: Buffer[] = [];
-    p.client.on("data", c => chunks.push(c));
+    p.client.on("data", (c: Buffer) => chunks.push(c));
     const payload = Buffer.alloc(256, "R");
     p.serverSock.write(payload);
     p.serverSock.end();
@@ -257,6 +258,55 @@ describe.skipIf(skip)("node:tls close_notify / shutdown under faults", () => {
   });
 });
 
+describe.skipIf(skip)("node:https server under injected syscall faults", () => {
+  // Every send() takes at most 16 KB, so the flush of a ciphertext batch
+  // (128 KB) is partial: its tail waits in the loop's spill slot while the
+  // plaintext already counts as written, and the send buffer is empty before
+  // the response is out. The handler takes the end() callback as "response
+  // sent" and exits, which is the one thing that discards the spill slot.
+  test.concurrent.each([
+    ["the batch tail is all that end() leaves behind", 64 * 1024],
+    ["the last flush of the send buffer leaves the batch tail", 256 * 1024],
+  ])(
+    "the end() callback waits for the batch tail in userspace: %s",
+    async (_name, size) => {
+      const fixture = /* js */ `
+        const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+        const options = { key: process.env.KEY, cert: process.env.CERT };
+        const server = require("node:https").createServer(options, (req, res) => {
+          fault.set({ syscall: "send", action: "short", bytes: 16384, repeat: -1 });
+          res.end(Buffer.alloc(${size}, "a"), () => process.exit(0));
+        });
+        server.listen(0, "127.0.0.1", () => console.log(server.address().port));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: { ...bunEnv, KEY: certs.key, CERT: certs.cert },
+        stderr: "inherit",
+        stdout: "pipe",
+      });
+      let portLine = "";
+      for await (const chunk of proc.stdout.pipeThrough(new TextDecoderStream())) {
+        portLine += chunk;
+        if (portLine.includes("\n")) break;
+      }
+
+      const received = Promise.withResolvers<number>();
+      let bytes = 0;
+      https
+        .get({ port: Number(portLine), host: "127.0.0.1", ca: certs.cert, agent: false }, res => {
+          res.on("data", chunk => (bytes += chunk.length));
+          res.on("close", () => received.resolve(bytes));
+        })
+        .on("error", () => received.resolve(bytes));
+      expect(await received.promise).toBe(size);
+      expect(await proc.exited).toBe(0);
+    },
+    // Only fault-injection (debug/ASAN) builds run this, and there the child took 3.3 to 6.5 s to load node:https and answer.
+    30_000,
+  );
+});
+
 describe.skipIf(skip)("node:tls seeded syscall fuzz", () => {
   const seed = Number(process.env.BUN_SOCKET_FUZZ_SEED ?? 0x7a1c) >>> 0 || 1;
   function makePrng(s: number) {
@@ -283,7 +333,7 @@ describe.skipIf(skip)("node:tls seeded syscall fuzz", () => {
         s.on("data", c => s.write(c));
       });
       p.client.on("error", () => {});
-      p.client.on("data", c => (echoed = Buffer.concat([echoed, c])));
+      p.client.on("data", (c: Buffer) => (echoed = Buffer.concat([echoed, c])));
 
       const plan = PLANS[Math.floor(rand() * PLANS.length)]!;
       fault.set({ ...plan, after: Math.floor(rand() * 2), repeat: -1 } as any);

@@ -7,7 +7,7 @@ use bun_uws as uws;
 
 use crate::webcore::CookieMap;
 
-pub use super::request_context::AdditionalOnAbortCallback;
+pub(crate) use super::request_context::AdditionalOnAbortCallback;
 use super::request_context::RequestContext;
 use super::{DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer};
 

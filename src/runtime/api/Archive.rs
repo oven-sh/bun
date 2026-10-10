@@ -36,7 +36,7 @@ pub(crate) struct GzipOptions {
 // Hand-written JS class glue (not the `#[bun_jsc::JsClass]` derive): Archive
 // has no constructor, which the proc-macro does not expose.
 #[repr(C)]
-pub struct Archive {
+pub(crate) struct Archive {
     /// The underlying data for the archive - uses Blob.Store for thread-safe ref counting
     store: RefPtr<Store>,
     /// Compression settings for this archive
@@ -61,7 +61,7 @@ impl Archive {
     /// (`ArchiveClass__write`) resolves it as an associated item on the struct,
     /// so forward to the module-level [`write`] body below.
     #[inline]
-    pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         self::write(global, callframe)
     }
 
@@ -412,7 +412,8 @@ fn get_entry_data<'a>(
 /// Options:
 ///   - gzip: { level?: number } - Override compression settings
 #[bun_jsc::host_fn]
-pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let cx = global.js_thread_of_caller(callframe);
     let [path_arg, data_arg, options_arg] = callframe.arguments_as_array::<3>();
     if data_arg.is_empty() {
         return Err(global.throw_invalid_arguments(format_args!(
@@ -440,7 +441,7 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
             archive.compress
         };
         return start_write_task(
-            global,
+            &cx,
             WriteData::Store(archive.store.clone()),
             path_slice.slice(),
             compress,
@@ -451,7 +452,7 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
     if let Some(blob) = blob_from_js(data_arg) {
         if let Some(store) = blob.store.get().as_ref() {
             return start_write_task(
-                global,
+                &cx,
                 WriteData::Store(store.clone()),
                 path_slice.slice(),
                 options_compress,
@@ -463,7 +464,7 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
     if let Some(array_buffer) = data_arg.as_array_buffer(global) {
         let data = array_buffer.slice().to_vec();
         return start_write_task(
-            global,
+            &cx,
             WriteData::Owned(data),
             path_slice.slice(),
             options_compress,
@@ -474,7 +475,7 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
     if data_arg.is_object() {
         let data = build_tarball_from_object(global, data_arg)?;
         return start_write_task(
-            global,
+            &cx,
             WriteData::Owned(data),
             path_slice.slice(),
             options_compress,
@@ -498,6 +499,7 @@ impl Archive {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let cx = global.js_thread_of_caller(callframe);
         let [path_arg, options_arg] = callframe.arguments_as_array::<2>();
         if path_arg.is_empty() || !path_arg.is_string() {
             return Err(global.throw_invalid_arguments(format_args!(
@@ -524,7 +526,7 @@ impl Archive {
             }
         }
 
-        start_extract_task(global, &self.store, path_slice.slice(), glob_patterns)
+        start_extract_task(&cx, &self.store, path_slice.slice(), glob_patterns)
     }
 }
 
@@ -603,15 +605,17 @@ impl Archive {
     /// Instance method: archive.blob()
     /// Returns Promise<Blob> with the archive data (compressed if gzip was set in options)
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn blob(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        start_blob_task(global, &self.store, self.compress, BlobOutputType::Blob)
+    pub(crate) fn blob(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        let cx = global.js_thread_of_caller(frame);
+        start_blob_task(&cx, &self.store, self.compress, BlobOutputType::Blob)
     }
 
     /// Instance method: archive.bytes()
     /// Returns Promise<Uint8Array> with the archive data (compressed if gzip was set in options)
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn bytes(&self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        start_blob_task(global, &self.store, self.compress, BlobOutputType::Bytes)
+    pub(crate) fn bytes(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        let cx = global.js_thread_of_caller(frame);
+        start_blob_task(&cx, &self.store, self.compress, BlobOutputType::Bytes)
     }
 
     /// Instance method: archive.files(glob?)
@@ -622,6 +626,7 @@ impl Archive {
         global: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
+        let cx = global.js_thread_of_caller(callframe);
         let glob_arg = callframe.argument(0);
 
         let mut glob_patterns: Option<Vec<Box<[u8]>>> = None;
@@ -631,7 +636,7 @@ impl Archive {
             glob_patterns = parse_pattern_arg(global, glob_arg, b"Archive.files", b"glob")?;
         }
 
-        start_files_task(global, &self.store, glob_patterns)
+        start_files_task(&cx, &self.store, glob_patterns)
     }
 }
 
@@ -639,7 +644,7 @@ impl Archive {
 // Generic Async Task Infrastructure
 // ============================================================================
 
-pub enum PromiseResult {
+pub(crate) enum PromiseResult {
     Resolve(JSValue),
     Reject(JSValue),
 }
@@ -656,14 +661,14 @@ impl PromiseResult {
 /// One `Bun.Archive` operation's pool-side work: `run` on the thread pool
 /// stores its result on `self`; `run_from_js` turns it into the promise's
 /// value. It is the off-thread part of an `AsyncTask<C>` job.
-pub trait TaskContext: Send + 'static {
+pub(crate) trait TaskContext: Send + 'static {
     /// Runs on thread pool. Stores its result on `self`.
     fn run(&mut self);
     fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<PromiseResult>;
 }
 
 /// The job for a `TaskContext`: the context off-thread, its promise on the JS side.
-pub struct AsyncTask<C: TaskContext>(core::marker::PhantomData<C>);
+pub(crate) struct AsyncTask<C: TaskContext>(core::marker::PhantomData<C>);
 
 impl<C: TaskContext> bun_jsc::JobContext for AsyncTask<C> {
     type OffThread = C;
@@ -688,10 +693,10 @@ impl<C: TaskContext> bun_jsc::JobContext for AsyncTask<C> {
 
 impl<C: TaskContext> AsyncTask<C> {
     /// Schedule `ctx` on the work pool; returns the promise it settles.
-    fn start(global: &JSGlobalObject, ctx: C) -> JSValue {
-        let promise = JSPromiseStrong::init(global);
+    fn start(cx: &bun_jsc::JsThread<'_>, ctx: C) -> JSValue {
+        let promise = JSPromiseStrong::init(cx.global());
         let value = promise.value();
-        bun_jsc::Job::<Self>::schedule(&global.js_thread(), ctx, promise);
+        bun_jsc::Job::<Self>::schedule(cx, ctx, promise);
         value
     }
 }
@@ -706,12 +711,12 @@ pub enum ExtractError {
     ReadError,
 }
 
-pub enum ExtractResult {
+pub(crate) enum ExtractResult {
     Success(u32),
     Err(ExtractError),
 }
 
-pub struct ExtractContext {
+pub(crate) struct ExtractContext {
     store: RefPtr<Store>,
     path: Box<[u8]>,
     glob_patterns: Option<Vec<Box<[u8]>>>,
@@ -773,7 +778,7 @@ impl ExtractContext {
 pub(crate) type ExtractTask = AsyncTask<ExtractContext>;
 
 fn start_extract_task(
-    global: &JSGlobalObject,
+    cx: &bun_jsc::JsThread<'_>,
     store: &RefPtr<Store>,
     path: &[u8],
     glob_patterns: Option<Vec<Box<[u8]>>>,
@@ -785,7 +790,7 @@ fn start_extract_task(
     // errdefer store.deref() — Drop handles it
 
     Ok(ExtractTask::start(
-        global,
+        cx,
         ExtractContext {
             store,
             path: path_copy,
@@ -807,7 +812,7 @@ enum BlobResult {
     Err(CompressError),
 }
 
-pub struct BlobContext {
+pub(crate) struct BlobContext {
     store: RefPtr<Store>,
     compress: Compression,
     output_type: BlobOutputType,
@@ -873,7 +878,7 @@ impl TaskContext for BlobContext {
 pub(crate) type BlobTask = AsyncTask<BlobContext>;
 
 fn start_blob_task(
-    global: &JSGlobalObject,
+    cx: &bun_jsc::JsThread<'_>,
     store: &RefPtr<Store>,
     compress: Compression,
     output_type: BlobOutputType,
@@ -882,7 +887,7 @@ fn start_blob_task(
     // errdefer store.deref() — Drop handles it
 
     Ok(BlobTask::start(
-        global,
+        cx,
         BlobContext {
             store,
             compress,
@@ -903,7 +908,7 @@ enum WriteData {
     Store(RefPtr<Store>),
 }
 
-pub struct WriteContext {
+pub(crate) struct WriteContext {
     data: WriteData,
     path: ZBox,
     compress: Compression,
@@ -963,7 +968,7 @@ impl WriteContext {
 pub(crate) type WriteTask = AsyncTask<WriteContext>;
 
 fn start_write_task(
-    global: &JSGlobalObject,
+    cx: &bun_jsc::JsThread<'_>,
     data: WriteData,
     path: &[u8],
     compress: Compression,
@@ -974,7 +979,7 @@ fn start_write_task(
     // errdefer store.deref / free(data.owned) — handled by WriteData Drop on early return.
 
     Ok(WriteTask::start(
-        global,
+        cx,
         WriteContext {
             data,
             path: path_z,
@@ -1008,7 +1013,7 @@ enum FilesResult {
 
 // freeEntries deleted — Vec<FileEntry> drops each entry; FileEntry fields drop their boxes.
 
-pub struct FilesContext {
+pub(crate) struct FilesContext {
     store: RefPtr<Store>,
     glob_patterns: Option<Vec<Box<[u8]>>>,
     result: FilesResult,
@@ -1134,7 +1139,7 @@ impl TaskContext for FilesContext {
                     let blob = unsafe { &mut *blob_ptr };
                     blob.is_jsdom_file.set(true);
                     blob.name.set(bun_core::String::clone_utf8(&entry.path));
-                    blob.last_modified.set((entry.mtime * 1000) as f64);
+                    blob.last_modified.set(entry.mtime as f64 * 1000.0);
 
                     let name_js = blob.name.get().to_js(global)?;
                     let blob_js = blob.to_js(global);
@@ -1157,7 +1162,7 @@ impl TaskContext for FilesContext {
 pub(crate) type FilesTask = AsyncTask<FilesContext>;
 
 fn start_files_task(
-    global: &JSGlobalObject,
+    cx: &bun_jsc::JsThread<'_>,
     store: &RefPtr<Store>,
     glob_patterns: Option<Vec<Box<[u8]>>>,
 ) -> JsResult<JSValue> {
@@ -1167,7 +1172,7 @@ fn start_files_task(
     // On success, ownership transfers to FilesContext, which frees them in deinit().
 
     Ok(FilesTask::start(
-        global,
+        cx,
         FilesContext {
             store,
             glob_patterns,

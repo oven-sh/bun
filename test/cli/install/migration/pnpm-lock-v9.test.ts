@@ -2722,6 +2722,196 @@ importers:
     });
   });
 
+  describe("pnpm-workspace.yaml fields moved into package.json", () => {
+    async function migrateWorkspaceYaml(workspaceYaml: string) {
+      using dir = tempDir("pnpm-v9-workspace-yaml-fields", {
+        "package.json": JSON.stringify({ name: "workspace-yaml-fields" }),
+        "pnpm-workspace.yaml": workspaceYaml,
+        "pnpm-lock.yaml": "lockfileVersion: '9.0'\n\nimporters:\n\n  .: {}\n",
+      });
+
+      const { stderr, exitCode } = await migrate(String(dir));
+
+      return {
+        warnings: stderr.split("\n").filter(line => line.startsWith("warn: ")),
+        stderr,
+        exitCode,
+        packageJson: await Bun.file(join(String(dir), "package.json")).json(),
+      };
+    }
+
+    const skippedValue = (field: string, key: string, expected: string) =>
+      `warn: skipped ${field} "${key}" from pnpm-workspace.yaml: the value is not a ${expected}`;
+    const skippedKey = (field: string) =>
+      `warn: skipped an entry of ${field} from pnpm-workspace.yaml: the key is not a string`;
+
+    const stringFields: [string, (entries: object) => object][] = [
+      ["overrides", overrides => ({ overrides })],
+      ["catalog", catalog => ({ workspaces: { catalog } })],
+      ["patchedDependencies", patchedDependencies => ({ patchedDependencies })],
+    ];
+
+    // Each anchor holds the one before it: the last `a` is 22,200 levels deep, and no line is deeper than 300.
+    const level = Buffer.alloc(300, "[").toString() + "*a" + Buffer.alloc(300, "]").toString();
+    const aliasChain = `chain:\n  - &a [1]\n${Buffer.alloc(74 * (level.length + 8), `  - &a ${level}\n`).toString()}`;
+
+    test.concurrent.each(stringFields)("an alias chain under %s is skipped with a warning", async (field, moved) => {
+      const { warnings, stderr, exitCode, packageJson } = await migrateWorkspaceYaml(`${aliasChain}${field}:
+  deep: *a
+  ? *a
+  : in-key
+  ok: 1.0.0
+`);
+
+      expect(warnings).toEqual([skippedValue(field, "deep", "string"), skippedKey(field)]);
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(packageJson).toStrictEqual({ name: "workspace-yaml-fields", ...moved({ ok: "1.0.0" }) });
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("an alias chain under catalogs is skipped with a warning", async () => {
+      const { warnings, stderr, exitCode, packageJson } = await migrateWorkspaceYaml(`${aliasChain}catalogs:
+  deep: *a
+  ? *a
+  : {in-key: 1.0.0}
+  named:
+    deep: *a
+    ? *a
+    : in-key
+    ok: 1.0.0
+`);
+
+      expect(warnings).toEqual([
+        skippedValue("catalogs", "deep", "map"),
+        skippedKey("catalogs"),
+        skippedValue("catalogs.named", "deep", "string"),
+        skippedKey("catalogs.named"),
+      ]);
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(packageJson).toStrictEqual({
+        name: "workspace-yaml-fields",
+        workspaces: { catalogs: { named: { ok: "1.0.0" } } },
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent.each(stringFields)(
+      "%s entries that are not a string under a string key are skipped with a warning",
+      async (field, moved) => {
+        const { warnings, stderr, exitCode, packageJson } = await migrateWorkspaceYaml(`${field}:
+  number: 5
+  infinity: .inf
+  boolean: true
+  empty:
+  sequence: [a, b]
+  mapping: {a: b}
+  1: number-key
+  true: boolean-key
+  ? [a, b]
+  : sequence-key
+  ok: &ok 1.0.0
+  alias: *ok
+`);
+
+        expect(warnings).toEqual([
+          ...["number", "infinity", "boolean", "empty", "sequence", "mapping"].map(key =>
+            skippedValue(field, key, "string"),
+          ),
+          skippedKey(field),
+          skippedKey(field),
+          skippedKey(field),
+        ]);
+        expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+        expect(packageJson).toStrictEqual({
+          name: "workspace-yaml-fields",
+          ...moved({ ok: "1.0.0", alias: "1.0.0" }),
+        });
+        expect(exitCode).toBe(0);
+      },
+    );
+
+    test.concurrent("catalogs entries that are not a map of strings are skipped with a warning", async () => {
+      const { warnings, stderr, exitCode, packageJson } = await migrateWorkspaceYaml(`catalogs:
+  string: 1.0.0
+  sequence: [a, b]
+  1: {number-key: 1.0.0}
+  named:
+    number: 5
+    mapping: {a: b}
+    1: number-key
+    ok: 1.0.0
+  only-skipped:
+    number: 5
+  empty: {}
+`);
+
+      expect(warnings).toEqual([
+        skippedValue("catalogs", "string", "map"),
+        skippedValue("catalogs", "sequence", "map"),
+        skippedKey("catalogs"),
+        skippedValue("catalogs.named", "number", "string"),
+        skippedValue("catalogs.named", "mapping", "string"),
+        skippedKey("catalogs.named"),
+        skippedValue("catalogs.only-skipped", "number", "string"),
+      ]);
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(packageJson).toStrictEqual({
+        name: "workspace-yaml-fields",
+        workspaces: { catalogs: { named: { ok: "1.0.0" }, "only-skipped": {}, empty: {} } },
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("a field with no string entry left is not moved", async () => {
+      const { warnings, stderr, exitCode, packageJson } = await migrateWorkspaceYaml(`overrides:
+  number: 5
+catalog:
+  ok: 1.0.0
+`);
+
+      expect(warnings).toEqual([skippedValue("overrides", "number", "string")]);
+      expect(stderr).toContain("moved pnpm-workspace.yaml to workspaces in package.json");
+      expect(packageJson).toStrictEqual({
+        name: "workspace-yaml-fields",
+        workspaces: { catalog: { ok: "1.0.0" } },
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("aliases and merge keys that resolve to strings migrate", async () => {
+      const { warnings, stderr, exitCode, packageJson } = await migrateWorkspaceYaml(`catalog: &base
+  pkg-a: &range ^1.0.0
+  pkg-b: *range
+catalogs:
+  same: *base
+  merged:
+    <<: *base
+    pkg-c: "\\u003e=2.0.0"
+overrides:
+  pkg-d: *range
+patchedDependencies:
+  pkg-e@1.0.0: &patch patches/pkg-e.patch
+  pkg-e@1.0.1: *patch
+`);
+
+      expect(warnings).toEqual([]);
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(packageJson).toStrictEqual({
+        name: "workspace-yaml-fields",
+        workspaces: {
+          catalog: { "pkg-a": "^1.0.0", "pkg-b": "^1.0.0" },
+          catalogs: {
+            same: { "pkg-a": "^1.0.0", "pkg-b": "^1.0.0" },
+            merged: { "pkg-a": "^1.0.0", "pkg-b": "^1.0.0", "pkg-c": ">=2.0.0" },
+          },
+        },
+        overrides: { "pkg-d": "^1.0.0" },
+        patchedDependencies: { "pkg-e@1.0.0": "patches/pkg-e.patch", "pkg-e@1.0.1": "patches/pkg-e.patch" },
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
+
   test.concurrent("link: version with a semver specifier resolves to the workspace (pnpm/pnpm#7712)", async () => {
     // save-workspace-protocol=false / link-workspace-packages shape
     using dir = fixture("v9-link-semver-specifier");

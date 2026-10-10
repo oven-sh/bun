@@ -2743,6 +2743,9 @@ pub struct RuntimeHooks {
     /// (resolver failures / `ModuleNotFound`).
     pub load_preloads:
         unsafe fn(vm: *mut VirtualMachine) -> crate::CrateResult<*mut JSInternalPromise>,
+    /// What `Run::start` does when the entry point's load gives an error and no
+    /// promise: print `vm.log` (or the error's name) and exit 1.
+    pub entry_point_load_failed: fn(vm: &mut VirtualMachine, err: crate::CrateError) -> !,
     /// `ensureDebugger(block_until_connected)` — no-op when no debugger.
     pub ensure_debugger: unsafe fn(vm: *mut VirtualMachine, block_until_connected: bool),
     /// `eventLoop().autoTick()` — needs `Timer::All` for the timeout calc.
@@ -4615,6 +4618,13 @@ impl VirtualMachine {
             bun_core::reload_process(should_clear_terminal, false);
         }
 
+        // `load_preloads` ticks the event loop between preloads and indexes the list it walks.
+        // A reload from inside that tick would run the preloads again and empty the list.
+        if self.is_in_preload {
+            self.hot_reload_deferred = true;
+            return;
+        }
+
         if let Some(p) = self.pending_internal_promise() {
             // SAFETY: `p` is a live JSC heap cell tracked by the VM.
             match crate::JSPromise::status_ptr(p) {
@@ -4653,12 +4663,14 @@ impl VirtualMachine {
         // the JSC module loader registry.
         self.global().reload().expect("Failed to reload");
         self.hot_reload_counter += 1;
-        // reload_entry_point() stores into pending_internal_promise on every return path.
+        // reload_entry_point() stores into pending_internal_promise whenever it returns a promise.
         let main = self.main;
         // Note: reshaped for borrowck — copy the `RawSlice` first to avoid
         // overlapping `&self`/`&mut self` borrows.
-        if self.reload_entry_point(main.slice()).is_err() {
-            panic!("Failed to reload");
+        if let Err(err) = self.reload_entry_point(main.slice()) {
+            // No promise to report: a preload file that is gone, for one. As on the first start.
+            let hooks = runtime_hooks().expect("runtime hooks not installed");
+            (hooks.entry_point_load_failed)(self, err);
         }
     }
 

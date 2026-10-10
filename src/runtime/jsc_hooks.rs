@@ -744,7 +744,8 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         // `vm.transpiler.resolver`, not `vm.preload`).
         let preload: *const [u8] = unsafe { &raw const *(&(*vm).preload)[i] };
         // SAFETY: `preload` points at a live boxed slice for this iteration
-        // (heap-stable `Box<[u8]>` payload; nothing below mutates `vm.preload`).
+        // (heap-stable `Box<[u8]>` payload; nothing below mutates `vm.preload`:
+        // a reload that lands in the tick is deferred while `is_in_preload`).
         let preload_slice: &[u8] = unsafe { &*preload };
         // Strip "file://".
         let normalized: &[u8] = preload_slice
@@ -896,6 +897,10 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
     }
 
     Ok(ptr::null_mut())
+}
+
+fn entry_point_load_failed(vm: &mut VirtualMachine, err: bun_jsc::CrateError) -> ! {
+    crate::cli::run_command::entry_point_load_failed(vm, &err.into())
 }
 
 /// `ensureDebugger(block_until_connected)` — no-op when no debugger.
@@ -1493,6 +1498,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     deinit_runtime_state,
     generate_entry_point,
     load_preloads,
+    entry_point_load_failed,
     ensure_debugger,
     auto_tick,
     auto_tick_active,

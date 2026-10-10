@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, realpathSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { mkdirSync, realpathSync, rmSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 const preloadModule = `
@@ -221,5 +221,76 @@ plugin({
       expect(stdout.toString()).toBe("");
       expect(exitCode).toBe(1);
     }
+  });
+
+  describe("with --hot", () => {
+    function spawnHot(files) {
+      const dir = tempDir("preload-hot", { "main.js": `console.log("main ran");`, ...files });
+      const cmd = [bunExe(), "--hot", "--no-clear-screen", "--preload", "./first.js", "--preload", "./second.js"];
+      const proc = Bun.spawn({
+        cmd: [...cmd, "main.js"],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      // All that was read, once it has `expected` in it or the stream ends.
+      const readUntil = stream => {
+        const reader = stream.getReader();
+        const decoder = new TextDecoder();
+        let text = "";
+        return async expected => {
+          while (!text.includes(expected)) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            text += decoder.decode(value, { stream: true });
+          }
+          return text;
+        };
+      };
+      return {
+        proc,
+        stdout: readUntil(proc.stdout),
+        stderr: readUntil(proc.stderr),
+        write: (name, contents) => writeFileSync(join(String(dir), name), contents),
+        remove: name => rmSync(join(String(dir), name)),
+        async [Symbol.asyncDispose]() {
+          proc.kill();
+          await proc.exited;
+          dir[Symbol.dispose]();
+        },
+      };
+    }
+
+    test("a reload that lands while the preloads load waits for them", async () => {
+      // It saves a watched file, itself, while it evaluates. Nothing tells it that the watcher has
+      // posted the reload, so it stays busy for a while: the reload then lands before second.js loads.
+      const first = `
+        if (!globalThis.savedOnce) {
+          globalThis.savedOnce = true;
+          const fs = require("node:fs");
+          fs.writeFileSync(__filename, fs.readFileSync(__filename));
+          Bun.sleepSync(300);
+        }
+        console.log("first ran");
+      `;
+      await using hot = spawnHot({ "first.js": first, "second.js": `console.log("second ran");` });
+      // The preloads ran once and in order. The reload came after them: they are not run again.
+      expect(await hot.stdout("main ran\nmain ran\n")).toStartWith("first ran\nsecond ran\nmain ran\nmain ran\n");
+      hot.write("main.js", `console.log("main ran again");`);
+      expect(await hot.stdout("main ran again\n")).toContain("main ran again\n");
+    });
+
+    test("a preload that is gone on a reload ends the run with the error", async () => {
+      const first = `console.log("first ran");`;
+      // A preload that failed keeps the list of preloads, and a reload runs them again.
+      await using hot = spawnHot({ "first.js": first, "second.js": `throw new Error("from second.js");` });
+      expect(await hot.stderr("error: from second.js")).toContain("error: from second.js");
+      hot.remove("second.js");
+      hot.write("first.js", first);
+      const [stderr, exitCode] = await Promise.all([hot.stderr('preload not found "./second.js"'), hot.proc.exited]);
+      expect(stderr).toContain('preload not found "./second.js"');
+      expect({ exitCode, signalCode: hot.proc.signalCode }).toEqual({ exitCode: 1, signalCode: null });
+    });
   });
 });

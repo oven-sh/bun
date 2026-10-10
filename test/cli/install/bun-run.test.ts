@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, it } from "bun:test";
-import { chmodSync } from "fs";
+import { chmodSync, copyFileSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv as bunEnv_, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { basename, join } from "path";
 
@@ -1146,6 +1146,198 @@ describe.concurrent("bun run", () => {
       expect(exitCode).toBe(0);
     },
   );
+
+  // `bun install` links a .cmd or .bat bin as `<name>.exe` plus `<name>.bunx`
+  // in node_modules/.bin. The launcher runs the file through cmd.exe, which
+  // has its own rule for the quotes of the line it receives.
+  const printTwoArguments = "@echo off\r\necho arg1=%1 arg2=%2\r\n";
+  const batchBinsProject = {
+    "package.json": JSON.stringify({
+      name: "consumer",
+      version: "0.0.0",
+      dependencies: { "batch-bins": "file:./batch-bins" },
+    }),
+    "batch-bins": {
+      "package.json": JSON.stringify({
+        name: "batch-bins",
+        version: "0.0.0",
+        bin: {
+          "cmd-tool": "./tool.cmd",
+          "bat-tool": "./tool.bat",
+          "spaced-tool": "./sub dir/tool.cmd",
+          "parens-tool": "./sub dir (x86)/tool.cmd",
+        },
+      }),
+      "tool.cmd": printTwoArguments,
+      "tool.bat": printTwoArguments,
+      "sub dir": { "tool.cmd": printTwoArguments },
+      "sub dir (x86)": { "tool.cmd": printTwoArguments },
+    },
+  };
+  const batchBins = ["cmd-tool", "bat-tool", "spaced-tool", "parens-tool"];
+  // The arguments of one run, and the line the batch file prints for them.
+  const batchBinCases: [args: string[], printed: string][] = [
+    [[], "arg1= arg2="],
+    [["hello"], "arg1=hello arg2="],
+    [["hello world"], 'arg1="hello world" arg2='],
+    [["a b", "c d"], 'arg1="a b" arg2="c d"'],
+    [[""], 'arg1="" arg2='],
+  ];
+
+  async function installBatchBins(cwd: string) {
+    await using install = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      install.stdout.text(),
+      install.stderr.text(),
+      install.exited,
+    ]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+  }
+
+  async function runAll(cwd: string, runs: { via: string; args: string[]; cmd: string[]; verbatim?: boolean }[]) {
+    const results: { via: string; args: string[]; stdout: string; stderr: string; exitCode: number }[] = [];
+    // Eight at a time keeps the number of live processes small.
+    for (let i = 0; i < runs.length; i += 8) {
+      results.push(
+        ...(await Promise.all(
+          runs.slice(i, i + 8).map(async ({ via, args, cmd, verbatim }) => {
+            await using proc = Bun.spawn({
+              cmd,
+              cwd,
+              env: bunEnv,
+              stdout: "pipe",
+              stderr: "pipe",
+              windowsVerbatimArguments: verbatim,
+            });
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+            return { via, args, stdout: stdout.trim(), stderr, exitCode };
+          }),
+        )),
+      );
+    }
+    return results;
+  }
+
+  it.if(isWindows)(
+    "the node_modules/.bin launcher passes an argument containing a space to a .cmd or .bat bin",
+    async () => {
+      using dir = tempDir("bun-run-batch-bins", batchBinsProject);
+      await installBatchBins(String(dir));
+      const binDir = join(String(dir), "node_modules", ".bin");
+
+      // The launcher runs on its own as node_modules\.bin\<name>.exe, and
+      // inside bun.exe for `bun run <name>`.
+      const runs = batchBins.flatMap(bin =>
+        batchBinCases.flatMap(([args, printed]) => [
+          { via: `${bin}.exe`, args, cmd: [join(binDir, `${bin}.exe`), ...args], printed },
+          { via: `bun run ${bin}`, args, cmd: [bunExe(), "run", bin, ...args], printed },
+        ]),
+      );
+
+      expect(await runAll(String(dir), runs)).toEqual(
+        runs.map(({ via, args, printed }) => ({ via, args, stdout: printed, stderr: "", exitCode: 0 })),
+      );
+    },
+  );
+
+  // Temporary, removed together with the fix: the two tests below check on
+  // Windows CI the command lines a fix can use, before the launcher changes.
+
+  // Writes `direct-<bin>.exe`, a copy of the launcher whose .bunx file records
+  // no `cmd /c`. It passes `"<bin>" <arguments>` to CreateProcessW, which
+  // starts cmd.exe for a batch file itself. Returns the path of the bin.
+  function makeDirectLauncher(dir: string, bin: string) {
+    const binDir = join(dir, "node_modules", ".bin");
+    // .bunx layout with a launcher string: bin path, `"`, NUL, the string,
+    // two u32 lengths in bytes (bin path, string), u16 flags.
+    const bunx = readFileSync(join(binDir, `${bin}.bunx`));
+    const flags = bunx.readUInt16LE(bunx.length - 2);
+    const binPathBytes = bunx.readUInt32LE(bunx.length - 10);
+    const noLauncherString = Buffer.alloc(binPathBytes + 4 + 2);
+    bunx.copy(noLauncherString, 0, 0, binPathBytes + 4);
+    noLauncherString.writeUInt16LE(flags & ~0b100, binPathBytes + 4);
+    writeFileSync(join(binDir, `direct-${bin}.bunx`), noLauncherString);
+    copyFileSync(join(binDir, `${bin}.exe`), join(binDir, `direct-${bin}.exe`));
+    return join(dir, "node_modules", bunx.subarray(0, binPathBytes).toString("utf16le"));
+  }
+
+  it.if(isWindows)("probe: command lines that keep a quoted argument of a .cmd bin intact", async () => {
+    using dir = tempDir("bun-run-batch-bins-probe", batchBinsProject);
+    await installBatchBins(String(dir));
+    const binDir = join(String(dir), "node_modules", ".bin");
+
+    const runs: { via: string; args: string[]; cmd: string[]; verbatim?: boolean; printed: string }[] = [];
+    for (const bin of batchBins) {
+      const target = makeDirectLauncher(String(dir), bin);
+
+      for (const [args, printed] of batchBinCases) {
+        runs.push(
+          { via: `direct-${bin}.exe`, args, cmd: [join(binDir, `direct-${bin}.exe`), ...args], printed },
+          { via: `bun run direct-${bin}`, args, cmd: [bunExe(), "run", `direct-${bin}`, ...args], printed },
+        );
+
+        // The line of the launcher with one more pair of quotes around
+        // everything after /c.
+        const tail = args.map(arg => (arg === "" || arg.includes(" ") ? ` "${arg}"` : ` ${arg}`)).join("");
+        const wrapped = `""${target}"${tail}"`;
+        runs.push(
+          { via: `cmd /c ""${bin}" <tail>"`, args, cmd: ["cmd.exe", "/c", wrapped], verbatim: true, printed },
+          {
+            via: `cmd /d /s /c ""${bin}" <tail>"`,
+            args,
+            cmd: ["cmd.exe", "/d", "/s", "/c", wrapped],
+            verbatim: true,
+            printed,
+          },
+        );
+      }
+    }
+
+    expect(await runAll(String(dir), runs)).toEqual(
+      runs.map(({ via, args, printed }) => ({ via, args, stdout: printed, stderr: "", exitCode: 0 })),
+    );
+  });
+
+  it.if(isWindows)("probe: the command line cmd.exe receives for a .cmd bin", async () => {
+    using dir = tempDir("bun-run-batch-bins-line", batchBinsProject);
+    await installBatchBins(String(dir));
+    const binDir = join(String(dir), "node_modules", ".bin");
+    const target = makeDirectLauncher(String(dir), "cmd-tool");
+    // %CMDCMDLINE% is the command line cmd.exe started with.
+    writeFileSync(target, "@echo off\r\necho %CMDCMDLINE%\r\n");
+
+    const results = await runAll(String(dir), [
+      { via: "cmd-tool.exe", args: ["hello"], cmd: [join(binDir, "cmd-tool.exe"), "hello"] },
+      { via: "bun run cmd-tool", args: ["hello"], cmd: [bunExe(), "run", "cmd-tool", "hello"] },
+      { via: "direct-cmd-tool.exe", args: [], cmd: [join(binDir, "direct-cmd-tool.exe")] },
+      { via: "direct-cmd-tool.exe", args: ["hello"], cmd: [join(binDir, "direct-cmd-tool.exe"), "hello"] },
+      { via: "direct-cmd-tool.exe", args: ["hello world"], cmd: [join(binDir, "direct-cmd-tool.exe"), "hello world"] },
+      {
+        via: "bun run direct-cmd-tool",
+        args: ["hello world"],
+        cmd: [bunExe(), "run", "direct-cmd-tool", "hello world"],
+      },
+    ]);
+
+    // A guess at what CreateProcessW builds. The diff of a wrong guess shows the real line.
+    const system32 = join(process.env.SystemRoot ?? "C:\\WINDOWS", "system32", "cmd.exe");
+    expect(results).toEqual(
+      [
+        { via: "cmd-tool.exe", args: ["hello"], stdout: `cmd /c "${target}" hello` },
+        { via: "bun run cmd-tool", args: ["hello"], stdout: `cmd /c "${target}" hello` },
+        { via: "direct-cmd-tool.exe", args: [], stdout: `${system32} /c ""${target}""` },
+        { via: "direct-cmd-tool.exe", args: ["hello"], stdout: `${system32} /c ""${target}" hello"` },
+        { via: "direct-cmd-tool.exe", args: ["hello world"], stdout: `${system32} /c ""${target}" "hello world""` },
+        { via: "bun run direct-cmd-tool", args: ["hello world"], stdout: `${system32} /c ""${target}" "hello world""` },
+      ].map(guess => ({ ...guess, stderr: "", exitCode: 0 })),
+    );
+  });
 
   // https://github.com/oven-sh/bun/issues/30711 — nested `--bun` used to rewrite
   // the BUN_NODE_DIR/{bun,node} shim to point at ITSELF. After the OUTER `--bun`

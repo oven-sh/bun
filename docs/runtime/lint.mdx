@@ -26,7 +26,7 @@ You don't need the `eslint` package, and you don't need a configuration file.
 
 `bun lint` uses `eslint:recommended`, plus `typescript-eslint/recommended` for TypeScript files. It lints `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts`, and `.tsx` files, and knows the globals of browsers, Node.js, and Bun, and in test files those of `bun test`. It skips `node_modules`, `*.min.js`, and what `.gitignore` ignores.
 
-If a `tsconfig.json` or `jsconfig.json` includes a JavaScript file, the globals of that file are what the types of the project declare: its `lib`, its `types`, and `declare global`. So `window` is undefined in a project without the `dom` library. `--no-infer-globals` turns that off. Beside a configuration file, `--infer-globals` adds these globals to the ones it has.
+If a `tsconfig.json` or `jsconfig.json` includes a JavaScript file, the globals of that file are what the types of the project declare: its `lib`, its `types`, and `declare global`. So `window` is undefined in a project without the `dom` library. `--no-infer-globals` turns that off. Beside a configuration file, `--infer-globals` adds these globals to the ones it has. If the packages of the project are not installed, or an entry of `types` is missing, nothing is inferred. With the `dom` library, `name`, `event`, `status`, `length`, `parent`, `top` and about 90 more such names count as defined everywhere, as for `tsc`.
 
 To change a rule, add a configuration file:
 

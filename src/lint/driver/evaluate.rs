@@ -63,20 +63,20 @@ pub(crate) fn evaluate_with(
     })
 }
 
-/// What the script `source`, which runs in the directory `cwd`, makes of `input`, which it reads from standard input. `Err`: why
-/// it failed.
+/// What the script `source` makes of `input`, which it reads from standard input. `directory`: what it takes for that of the
+/// file that it is about. `Err`: why it failed.
 pub(crate) fn evaluate_input(
     environment: &Environment,
     source: Source,
-    cwd: &[u8],
+    directory: &[u8],
     input: &[u8],
 ) -> Result<Json, Vec<u8>> {
     // There is no such file.
-    let path = paths::join(cwd, b"-");
+    let path = paths::join(directory, b"-");
     let script = Script {
         source,
         arguments: &[MARKER, &path],
-        cwd,
+        cwd: &environment.cwd,
         stdin: input,
     };
     run(environment, &script)

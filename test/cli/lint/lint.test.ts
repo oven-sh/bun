@@ -3526,6 +3526,36 @@ describe.concurrent("bun lint", () => {
   });
 
   // The same.
+  test("only a namespace can be deferred, as for oxc", async () => {
+    const [ofDefault, ofNamed] = ["Default imports", "Named imports"].map(
+      it => `1:8: ${it} are not allowed in a deferred import.`,
+    );
+    const cases: Record<string, [code: string, refusal?: string]> = {
+      "a0.ts": ['import defer x from "m";', ofDefault],
+      "a1.ts": ['import defer { a } from "m";', ofNamed],
+      "a2.js": ['import defer x from "m";', ofDefault],
+      "a3.js": ['import defer { a } from "m";', ofNamed],
+      "a4.ts": ['import defer x, { a } from "m";', ofDefault],
+      "a5.ts": ['import defer x, * as n from "m";', ofDefault],
+      "b0.ts": ['import defer * as n from "m";'],
+      "b1.js": ['import defer * as n from "m";'],
+      "b2.ts": ['import defer from "m";'],
+      "b3.ts": ['import defer, { a } from "m";'],
+      "b4.ts": ['import type defer from "m";'],
+      "b5.js": ['import source x from "m";'],
+    };
+    const files = Object.fromEntries(Object.entries(cases).map(([name, [code]]) => [name, code + "\n"]));
+    const oxlintrc = JSON.stringify({ categories: { correctness: "off" } });
+    const { stdout } = await lint({ ".oxlintrc.json": oxlintrc, ...files }, ["-f", "unix"]);
+    expect(
+      stdout
+        .split("\n")
+        .filter(line => line.endsWith("]"))
+        .sort(),
+    ).toEqual(Object.entries(cases).flatMap(([name, [, refusal]]) => (refusal ? [`${name}:${refusal} [Error]`] : [])));
+  });
+
+  // The same.
   test("`with` is refused where the code is strict for oxc, and in TypeScript", async () => {
     const cases: Record<string, [code: string, at?: string]> = {
       "a0.mjs": ["with (a) {}", "1:1"],
@@ -5756,7 +5786,8 @@ describe.concurrent("[lint] in bunfig.toml", () => {
   async function run(files: Record<string, string>, args: string[]) {
     const reads = Object.keys(files).filter(name => name !== "bunfig.toml");
     const result = await lint(files, args, { reads, mayFail: true });
-    const text = (printed: string) => printed.replace(/\d+(\.\d+)?m?s\b/g, "0ms");
+    // In JSON the `\\` of a path of Windows are doubled, so the directory is not found in it and its random end stays.
+    const text = (printed: string) => printed.replace(/\d+(\.\d+)?m?s\b/g, "0ms").replace(/\bbun-lint_\w+/g, "<dir>");
     return { stdout: text(result.stdout), stderr: text(result.stderr), exitCode: result.exitCode, files: result.files };
   }
 

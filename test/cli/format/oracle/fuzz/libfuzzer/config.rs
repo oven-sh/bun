@@ -189,6 +189,10 @@ fn run(data: &[u8]) {
             if writes {
                 more.push(b"--fix");
             }
+            // Beside a configuration file it has to be asked for.
+            if has_globals {
+                more.push(b"--infer-globals");
+            }
             lint(&more, bunfig, &environment)
         }
         false => format(if writes { b"--write" } else { b"--check" }, bunfig, &environment),

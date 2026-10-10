@@ -22,6 +22,10 @@ pub struct State<'a> {
     depths: Vec<u32>,
     /// `calculate_variable_jsx_depth`. 0 while it is being found out.
     variables: FxHashMap<Symbol<'a>, u32>,
+    /// The identifiers in braces, each with the `getDepth` of the braces.
+    containers: Vec<(Expr<'a>, u32)>,
+    /// Whether an element with elements in it may be what a variable is given.
+    is_any_written: bool,
     found: Vec<Found>,
 }
 
@@ -49,10 +53,11 @@ impl Rule for JsxMaxDepth {
 
     fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         let is_oxlint = cx.language().is_oxlint;
+        let parent = node.parent();
         // `getDepth`. oxlint counts the elements around it, whatever is between.
-        let is_child = || matches!(node.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Jsx);
+        let is_child = matches!(parent, Node::Expr(parent) if parent.tag() == ExprTag::Jsx);
         let depth = match cx.state.depths.last() {
-            Some(&around) if is_oxlint || is_child() => around + 1,
+            Some(&around) if is_oxlint || is_child => around + 1,
             _ => 0,
         };
         cx.state.depths.push(depth);
@@ -69,18 +74,21 @@ impl Rule for JsxMaxDepth {
                 let node = node.span();
                 cx.state.found.push(Found { listener: node.start, node, depth: depth + inside });
             }
+        } else if !is_oxlint {
+            // What is certainly no `writeExpr` of a reference.
+            cx.state.is_any_written |= match parent {
+                Node::Func(_) | Node::Prop(_) => false,
+                Node::Stmt(it) => !matches!(it.tag(), StmtTag::Return | StmtTag::Expr),
+                Node::Expr(it) => it.tag() == ExprTag::Assign,
+                _ => true,
+            };
         }
         if is_oxlint {
             return;
         }
-        // Each `JSXExpressionContainer`, with its `getDepth`.
         let values = jsx.attrs().iter().filter(|it| it.kind() != PropKind::Spread).filter_map(Prop::value);
         let children = jsx.children().iter().map(|it| (it, depth + 1));
-        for (expression, base_depth) in values.map(|it| (it, 0)).chain(children) {
-            if let Some(element) = find_jsx_element_or_fragment(expression) {
-                self.check_descendant(expression.span().start, base_depth, element, &mut cx.state.found);
-            }
-        }
+        cx.state.containers.extend(values.map(|it| (it, 0)).chain(children).filter(|it| it.0.tag() == ExprTag::Ident));
     }
 
     fn exit<'a>(&self, _: Node<'a>, cx: &mut Cx<'a, Self>) {
@@ -89,6 +97,14 @@ impl Rule for JsxMaxDepth {
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let mut found = std::mem::take(&mut cx.state.found);
+        // upstream's `JSXExpressionContainer`
+        if cx.state.is_any_written {
+            for (expression, base_depth) in std::mem::take(&mut cx.state.containers) {
+                if let Some(element) = find_jsx_element_or_fragment(expression) {
+                    self.check_descendant(expression.span().start, base_depth, element, &mut found);
+                }
+            }
+        }
         // Several can be at one node.
         utils::sort::sort_by_key(&mut found, |it| it.listener);
         // oxlint has a text of its own.

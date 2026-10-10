@@ -187,7 +187,7 @@ impl Orders for OfGroup {
     }
 }
 
-/// Where the script runs: with the packages, of which Tailwind is one.
+/// Where the packages are, of which Tailwind is one.
 fn packages(environment: &Environment) -> Option<Vec<u8>> {
     let has_packages = |directory: &&[u8]| {
         fs::kind(&paths::join(directory, b"node_modules")) == Some(fs::Kind::Directory)

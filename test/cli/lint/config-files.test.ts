@@ -1093,6 +1093,96 @@ describe.concurrent("an .oxlintrc.json", () => {
     expect(problems).toEqual(lines.map(line => `a.js:${line}:1 no-undef`));
   });
 
+  // oxlint 1.87 takes each, and each is valid by its own configuration_schema.json. The schemas of ESLint's rules refuse them.
+  test("options that oxlint takes and the schema of ESLint's rule does not", async () => {
+    const sets: [rule: string, options: unknown[]][] = [
+      ["max-classes-per-file", [0]],
+      ["max-lines-per-function", [0]],
+      ["no-param-reassign", [{}]],
+      ["prefer-destructuring", [{}]],
+      ["capitalized-comments", ["always", {}]],
+      ["curly", ["all", "consistent"]],
+      ["init-declarations", ["always", {}]],
+      ["prefer-destructuring", [{}, {}]],
+      ["no-warning-comments", [{ "decoration": ["^a$"] }]],
+      ["one-var", [{}]],
+      ["max-statements", [{ "ignoreTopLevelFunctions": true }]],
+      ["no-warning-comments", [{ "decoration": [""] }]],
+      ["max-statements", [{ "ignoreTopLevelFunctions": false }]],
+      ["no-warning-comments", [{ "decoration": ["a", "^a$"] }]],
+      ["max-classes-per-file", [{ "max": 0 }]],
+      ["no-unused-vars", [{ "argsIgnorePattern": null }]],
+      ["max-classes-per-file", [{ "ignoreExpressions": true, "max": 0 }]],
+      ["max-statements", [{ "ignoreTopLevelFunctions": true, "max": 0 }]],
+      ["no-magic-numbers", [{ "ignore": ["a"] }]],
+      ["typescript/prefer-nullish-coalescing", [{ "ignorePrimitives": false }]],
+      ["no-magic-numbers", [{ "ignore": ["^a$"] }]],
+      ["no-magic-numbers", [{ "ignore": [""] }]],
+      ["no-unused-vars", [{ "caughtErrorsIgnorePattern": null }]],
+      ["init-declarations", ["always", { "ignoreForLoopInit": true }]],
+      ["no-unused-vars", [{ "destructuredArrayIgnorePattern": null }]],
+      ["init-declarations", ["always", { "ignoreForLoopInit": false }]],
+      ["sort-keys", ["desc", { "minKeys": 0 }]],
+      ["sort-keys", ["desc", { "minKeys": 1 }]],
+      [
+        "sort-keys",
+        ["desc", { "allowLineSeparatedGroups": true, "caseSensitive": true, "minKeys": 0, "natural": true }],
+      ],
+      ["no-unused-vars", [{ "varsIgnorePattern": null }]],
+      ["no-warning-comments", [{ "decoration": ["zz-nonsense"] }]],
+      [
+        "no-unused-vars",
+        [
+          {
+            "args": "after-used",
+            "argsIgnorePattern": null,
+            "caughtErrors": "all",
+            "caughtErrorsIgnorePattern": null,
+            "destructuredArrayIgnorePattern": null,
+            "fix": {},
+            "ignoreClassWithStaticInitBlock": true,
+            "ignoreRestSiblings": true,
+            "ignoreUsingDeclarations": true,
+            "reportUsedIgnorePattern": true,
+            "reportVarsOnlyUsedAsTypes": true,
+            "vars": "all",
+            "varsIgnorePattern": null,
+          },
+        ],
+      ],
+      ["no-restricted-imports", ["import1", {}]],
+      ["arrow-body-style", ["never", {}]],
+      ["arrow-body-style", ["always", {}]],
+      ["no-restricted-imports", ["fs", "crypto ", "stream", "os", {}]],
+      ["no-magic-numbers", [{ "ignore": ["zz-nonsense"] }]],
+      ["no-restricted-imports", ["fs", {}, "stream", "os"]],
+      ["no-restricted-imports", ["fs", "crypto ", {}, "os"]],
+      ["prefer-destructuring", [{}, { "enforceForDeclarationWithTypeAnnotation": true }]],
+      ["prefer-destructuring", [{}, { "enforceForDeclarationWithTypeAnnotation": false }]],
+      ["prefer-destructuring", [{}, { "enforceForRenamedProperties": true }]],
+      ["prefer-destructuring", [{}, { "enforceForRenamedProperties": false }]],
+      [
+        "prefer-destructuring",
+        [{}, { "enforceForDeclarationWithTypeAnnotation": true, "enforceForRenamedProperties": true }],
+      ],
+      ["no-restricted-imports", ["fs", "crypto ", "stream", {}]],
+      ["no-restricted-imports", [{ "name": "foo", "message": 'Please import from "bar" instead.' }, {}]],
+      ["no-restricted-imports", ["foo", { "name": "bar", "message": 'Please import from "baz" instead.' }, "baz", {}]],
+      ["capitalized-comments", ["never", {}]],
+      ["no-restricted-imports", ["foo", {}, "baz"]],
+    ];
+    // A directory for each: one that is refused ends the run.
+    const files: Record<string, string> = { ".oxlintrc.json": "{}" };
+    sets.forEach(([rule, options], i) => {
+      const rules = { [rule]: ["error", ...options] };
+      files[`d${i}/.oxlintrc.json`] = JSON.stringify({ categories: { correctness: "off" }, rules });
+      files[`d${i}/a.js`] = "export {};\n";
+    });
+    const { stderr, exitCode } = await lint(files);
+    expect(stderr).not.toContain(`Key "rules"`);
+    expect(exitCode).toBe(0);
+  });
+
   // oxlint 1.87 takes both. The schemas of eslint-plugin-import have neither.
   test.each([
     { "import/max-dependencies": ["error", 2] },

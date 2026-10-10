@@ -8,8 +8,9 @@ use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::{estree_span, normalize};
-use rustc_hash::FxHashSet;
+use rustc_hash::FxHashMap;
 use smallvec::{SmallVec, smallvec};
+use std::collections::hash_map::Entry;
 
 /// Disallows JSX context provider values from taking values that will cause needless rerenders
 pub struct JsxNoConstructedContextValues;
@@ -38,6 +39,8 @@ pub struct State<'a> {
     inside_component: AncestorMemo<'a, ()>,
     /// 1 for a variable that is made anew each time the function that declares it runs.
     constructed_variables: FlagsOfVariables<'a>,
+    /// What such a variable is in the end, for upstream.
+    ends: FxHashMap<Symbol<'a>, Option<End<'a>>>,
     /// What upstream reports if the element is in a component.
     constructions: Vec<Construction<'a>>,
 }
@@ -48,6 +51,19 @@ struct Construction<'a> {
     kind: &'static str,
     node: Node<'a>,
     usage: Option<Expr<'a>>,
+}
+
+/// `type` and `node` of that.
+#[derive(Copy, Clone)]
+struct End<'a> {
+    kind: &'static str,
+    node: Node<'a>,
+}
+
+/// A variable on the way to its end, with the `type` as far as its own initializer decides about it.
+struct Step<'a> {
+    variable: Symbol<'a>,
+    kind: Option<&'static str>,
 }
 
 /// An expression on the way from the value of the attribute to what is made anew.
@@ -128,7 +144,7 @@ impl Rule for JsxNoConstructedContextValues {
         for attribute in jsx.attrs().iter().filter(|it| it.key().is_some_and(|key| key.is("value"))).take(count) {
             let Some(construction) = get_prop_value(attribute)
                 .and_then(|it| it.as_expression())
-                .and_then(|it| is_construction(it, e, is_oxlint, &mut cx.state.constructed_variables))
+                .and_then(|it| cx.state.is_construction(it, e, is_oxlint))
             else {
                 continue;
             };
@@ -210,36 +226,56 @@ fn is_create_context_call(expr: Expr, is_oxlint: bool) -> bool {
     }
 }
 
-/// upstream's `isConstruction`. For oxlint: whether there is one.
-fn is_construction<'a>(
-    value: Expr<'a>,
-    element: Expr<'a>,
-    is_oxlint: bool,
-    constructed_variables: &mut FlagsOfVariables<'a>,
-) -> Option<Construction<'a>> {
-    let scope = Node::Expr(element).scope();
-    let mut is_constructed =
-        |variable: Symbol<'a>| constructed_variables.of_variable(variable, |it| declared_with(it, is_oxlint)) != 0;
-    let mut seen = FxHashSet::default();
-    let (mut way, mut place) = (Way { expr: value, usage: None, kind: None }, Place::Value);
-    loop {
-        let Found { way: found, variable } = way.find_construction(place, scope, is_oxlint, &mut is_constructed)?;
-        let node = match variable {
-            None => normalize(Node::Expr(found.expr)),
-            Some(_) if is_oxlint => Node::Expr(found.expr),
-            // Where upstream never ends.
-            Some(variable) if !seen.insert(variable) => return None,
-            Some(variable) => match definition_of(variable, is_oxlint)? {
-                Definition::Made(function) => function,
-                Definition::Init(init) => {
-                    (way, place) = (Way { expr: init, ..found }, Place::Init);
-                    continue;
-                }
-            },
+impl<'a> State<'a> {
+    /// upstream's `isConstruction`. For oxlint: whether there is one.
+    fn is_construction(&mut self, value: Expr<'a>, element: Expr<'a>, is_oxlint: bool) -> Option<Construction<'a>> {
+        let mut ask = |it| is_constructed(&mut self.constructed_variables, it, is_oxlint);
+        let (way, scope) = (Way { expr: value, usage: None, kind: None }, Node::Expr(element).scope());
+        let Found { way, variable } = way.find_construction(Place::Value, scope, is_oxlint, &mut ask)?;
+        let end = match variable.filter(|_| !is_oxlint) {
+            None => End { kind: "", node: normalize(Node::Expr(way.expr)) },
+            Some(variable) => self.end_of(variable)?,
         };
-        let kind = found.kind.unwrap_or("function declaration");
-        return Some(Construction { element, kind, node, usage: found.usage });
+        Some(Construction { element, kind: way.kind.unwrap_or(end.kind), node: end.node, usage: way.usage })
     }
+
+    /// Each variable is looked at once. `None` where upstream never ends.
+    fn end_of(&mut self, mut variable: Symbol<'a>) -> Option<End<'a>> {
+        let is_oxlint = false;
+        let mut ask = |it| is_constructed(&mut self.constructed_variables, it, is_oxlint);
+        let mut path: SmallVec<[Step<'a>; 4]> = SmallVec::new();
+        let mut end = loop {
+            match self.ends.entry(variable) {
+                Entry::Occupied(known) => break *known.get(),
+                Entry::Vacant(unknown) => unknown.insert(None),
+            };
+            let init = match definition_of(variable, is_oxlint) {
+                None => break None,
+                Some(Definition::Made(node)) => {
+                    path.push(Step { variable, kind: None });
+                    break Some(End { kind: "function declaration", node });
+                }
+                Some(Definition::Init(init)) => Way { expr: init, usage: None, kind: None },
+            };
+            let Some(found) = init.find_construction(Place::Init, variable.scope(), is_oxlint, &mut ask) else {
+                break None;
+            };
+            path.push(Step { variable, kind: found.way.kind });
+            match found.variable {
+                None => break Some(End { kind: "", node: normalize(Node::Expr(found.way.expr)) }),
+                Some(next) => variable = next,
+            }
+        };
+        for step in path.into_iter().rev() {
+            end = end.map(|it| End { kind: step.kind.unwrap_or(it.kind), ..it });
+            self.ends.insert(step.variable, end);
+        }
+        end
+    }
+}
+
+fn is_constructed<'a>(known: &mut FlagsOfVariables<'a>, variable: Symbol<'a>, is_oxlint: bool) -> bool {
+    known.of_variable(variable, |it| declared_with(it, is_oxlint)) != 0
 }
 
 impl<'a> Way<'a> {

@@ -359,7 +359,7 @@ impl ResolvedConfig<'_> {
         let is_fragment = !self.is_oxlint && jsx.is_fragment();
         for child in jsx.children() {
             if !child.is_jsx_text() {
-                if child.jsx_container_span().is_some() {
+                if self.options.no_strings && child.jsx_container_span().is_some() {
                     let container = if is_fragment { Container::ChildOfFragment } else { Container::ChildOfElement };
                     self.inspect_jsx_expression(child, container, cx);
                 }
@@ -379,12 +379,9 @@ impl ResolvedConfig<'_> {
         }
     }
 
-    /// One report for each string in `"a" + b + "c"`.
+    /// With `noStrings`: one report for each string in `"a" + b + "c"`.
     fn inspect_jsx_expression<'a>(&self, expr: Expr<'a>, container: Container<'a>, cx: &Cx<'a, JsxNoLiterals>) {
         let (options, is_oxlint) = (self.options, self.is_oxlint);
-        if !options.no_strings {
-            return;
-        }
         let is_in_attribute = matches!(container, Container::Attribute(_));
         let is_child_of_element = matches!(container, Container::ChildOfElement);
         let ignore_props = if is_oxlint { options.ignore_props } else { self.ignore_props_of_all };
@@ -454,7 +451,7 @@ impl ResolvedConfig<'_> {
                         cx.report(attr, LITERAL_ATTRIBUTE);
                     }
                 }
-                Some(AttributeValue::ExpressionContainer(expr)) => {
+                Some(AttributeValue::ExpressionContainer(expr)) if options.no_strings => {
                     self.inspect_jsx_expression(expr, Container::Attribute(attr), cx);
                 }
                 _ => {}

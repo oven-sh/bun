@@ -1,0 +1,131 @@
+---
+title: Containerize a Next.js app with Bun and Docker
+sidebarTitle: Next.js with Docker
+mode: center
+---
+
+This guide builds a Docker image for a [Next.js](https://nextjs.org/) app. In the image, Bun installs the dependencies, Bun runs `next build`, and the Bun runtime serves the app. The image does not contain Node.js.
+
+The image uses the `standalone` output of Next.js. With this output, `next build` writes a `server.js` file to `.next/standalone`, together with a copy of the `node_modules` files that the server imports. In a new `create-next-app` project, `.next/standalone` is about 57 MB. The full `node_modules` directory is about 465 MB.
+
+<Note>
+  This guide assumes that you have [Docker](https://docs.docker.com/get-started/get-docker/) installed and that your
+  project has a `bun.lock` file. To create a Next.js project with Bun, see [Next.js with Bun](/guides/ecosystem/nextjs).
+  If the project has no `bun.lock` yet, run `bun install` once to create it.
+</Note>
+
+---
+
+<Steps>
+  <Step title="Enable the standalone output">
+    Set `output` to `"standalone"` in `next.config.ts`.
+
+    ```ts next.config.ts icon="/icons/typescript.svg"
+    import type { NextConfig } from "next";
+
+    const nextConfig: NextConfig = {
+      output: "standalone", // [!code ++]
+    };
+
+    export default nextConfig;
+    ```
+
+    `next build` writes the resolved config into `.next/standalone/server.js`, so the final image does not need `next.config.ts`. Start the app with `server.js`, not with `next start`. With this output, `next start` prints the warning `"next start" does not work with "output: standalone" configuration`.
+
+  </Step>
+  <Step title="Create a Dockerfile">
+    Create a `Dockerfile` in the root of your project.
+
+    ```docker Dockerfile icon="docker"
+    # Every stage uses this image, so native dependencies such as sharp
+    # are installed for the libc of the final image.
+    # See all tags at https://hub.docker.com/r/oven/bun/tags
+    FROM oven/bun:1 AS base
+    WORKDIR /app
+
+    # Install all dependencies. `next build` needs the devDependencies,
+    # for example typescript.
+    FROM base AS deps
+    COPY package.json bun.lock ./
+    RUN bun install --frozen-lockfile
+
+    # Build the app. `--bun` runs the Next.js CLI with Bun.
+    FROM base AS build
+    COPY --from=deps /app/node_modules ./node_modules
+    COPY . .
+    RUN bun --bun next build
+
+    # Copy the standalone output into a clean image. `next build` leaves
+    # `.next/static` and `public` out of the standalone output, so copy
+    # them next to server.js. At run time the server writes its caches
+    # (for example optimized images) to `.next`, so the `bun` user has to
+    # own these files.
+    FROM base AS release
+    COPY --from=build --chown=bun:bun /app/.next/standalone ./
+    COPY --from=build --chown=bun:bun /app/.next/static ./.next/static
+    COPY --from=build --chown=bun:bun /app/public ./public
+
+    # server.js listens on the address in HOSTNAME. Docker sets HOSTNAME
+    # to the container ID, so set it to all interfaces here.
+    ENV HOSTNAME=0.0.0.0
+    USER bun
+    EXPOSE 3000
+    CMD ["bun", "server.js"]
+    ```
+
+    The `oven/bun` image does not contain Node.js. The `node` command on its `PATH` is a link to `bun`, so a `build` script that runs `next build` also runs on Bun inside this image. If your `build` script runs more steps than `next build`, replace the build line with `RUN bun run build`. See [`--bun`](/runtime#--bun) for how Bun runs a CLI that asks for `node`.
+
+    `server.js` listens on the port in `PORT`. The default is `3000`.
+
+  </Step>
+  <Step title="Create a .dockerignore file">
+    Create a `.dockerignore` file next to the `Dockerfile`. Docker leaves the listed files out of the build context.
+
+    ```txt .dockerignore icon="docker"
+    node_modules
+    .next
+    .git
+    .env
+    .env*.local
+    ```
+
+    A `node_modules` directory from your machine can contain native binaries for a different operating system or libc. The `deps` stage installs the dependencies inside the image instead. The `build` stage writes a new `.next` directory. `.env` and the `.env*.local` files hold settings for your machine.
+
+  </Step>
+  <Step title="Build and run the image">
+    Build the image. Then start a container and publish port 3000.
+
+    ```sh terminal icon="terminal"
+    docker build -t my-next-app .
+    docker run -p 3000:3000 my-next-app
+    ```
+
+    Open [`http://localhost:3000`](http://localhost:3000) in your browser. In a route handler or a server component, `process.versions.bun` contains the version of Bun that serves the request.
+
+  </Step>
+</Steps>
+
+---
+
+## Environment variables
+
+Next.js reads environment variables at two different times.
+
+- Server code reads `process.env.MY_VAR` when it handles a request. Pass these variables to the container, for example with `docker run -e DATABASE_URL=... my-next-app`.
+- `next build` replaces every `process.env.NEXT_PUBLIC_*` expression with its value at build time. The container environment does not change these values. Pass them to the `build` stage as build arguments:
+
+```docker Dockerfile icon="docker"
+FROM base AS build
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+```
+
+```sh terminal icon="terminal"
+docker build --build-arg NEXT_PUBLIC_API_URL=https://api.example.com -t my-next-app .
+```
+
+`next build` reads `.env.production` from the build context and copies it into `.next/standalone`, so this file ends up in the image. Keep secrets out of it and pass them to the container instead.
+
+---
+
+See [Docker with Bun](/guides/ecosystem/docker) for more on `docker build` and `docker run`. See the Next.js documentation on [`output`](https://nextjs.org/docs/app/api-reference/config/next-config-js/output) for the layout of the standalone output in a monorepo.

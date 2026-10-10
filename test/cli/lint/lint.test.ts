@@ -5535,6 +5535,54 @@ describe.concurrent("rules as oxlint has them", () => {
     };
     expect(await reports(files, names)).toEqual(rows.map(row => row[2]));
   });
+
+  // Whether or not another variable makes the code path be analyzed: `z` in the rows that have it.
+  test("no-useless-assignment: `typeof a` in a type is no use of `a`", async () => {
+    const rows: [code: string, reports: string[]][] = [
+      [
+        "export {};\nlet a = 1;\ntype T = typeof a;\na = 2;\nuse(a);\n",
+        ["2:5 This assigned value is not used in subsequent statements."],
+      ],
+      [
+        "export {};\nlet a = 1;\nuse(a);\na = 2;\ntype T = typeof a;\n",
+        ["4:1 This assigned value is not used in subsequent statements."],
+      ],
+      [
+        "export {};\nlet a = 1;\nfunction f() {\n  type T = typeof a;\n}\na = 2;\nuse(a);\n",
+        ["2:5 This assigned value is not used in subsequent statements."],
+      ],
+      [
+        "export {};\nlet a = 1;\nuse(a);\na = 2;\nconst f = (x: typeof a) => x;\nf(0);\n",
+        ["4:1 This assigned value is not used in subsequent statements."],
+      ],
+      [
+        "export {};\nlet a = { b: 1 };\nuse(a);\na = { b: 2 };\ntype T = typeof a.b;\n",
+        ["4:1 This assigned value is not used in subsequent statements."],
+      ],
+      ["export {};\ntype T = typeof a;\nconst a = 1;\n", []],
+      [
+        "export {};\nlet z = 0;\nz = 1;\nuse(z);\ntype T = typeof a;\nconst a = 1;\n",
+        ["2:5 This assigned value is not used in subsequent statements."],
+      ],
+      [
+        "export {};\nlet z = 0;\nz = 1;\nuse(z);\nconst a = 1;\ntype T = typeof a;\n",
+        ["2:5 This assigned value is not used in subsequent statements."],
+      ],
+      [
+        "export {};\nlet a = 1;\na = 2;\ntype T = typeof a;\nuse(a);\n",
+        ["2:5 This assigned value is not used in subsequent statements."],
+      ],
+    ];
+    const names = rows.map((_, at) => `r${at}.ts`);
+    const files = {
+      ".oxlintrc.json": JSON.stringify({
+        categories: { correctness: "off" },
+        rules: { "no-useless-assignment": "error" },
+      }),
+      ...Object.fromEntries(rows.map(([code], at) => [names[at], code])),
+    };
+    expect(await reports(files, names)).toEqual(rows.map(row => row[1]));
+  });
 });
 
 describe.concurrent("regular expressions in a configuration", () => {

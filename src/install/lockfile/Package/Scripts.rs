@@ -6,6 +6,7 @@ use bun_core::strings;
 use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::Scripts as LockfileScripts;
 use bun_install::{Resolution, ResolutionTag, initialize_store};
+use bun_paths::resolve_path::{join_abs_string_buf_z, platform};
 use bun_paths::{self, SEP_STR};
 use bun_semver::String as SemverString;
 use bun_sys::{self, Fd};
@@ -110,6 +111,17 @@ impl Scripts {
             }
         }
         false
+    }
+
+    /// npm's rule for the default `node-gyp rebuild` install script.
+    pub(crate) fn wants_default_node_gyp(&self, package_dir: &[u8]) -> bool {
+        if !self.install.is_empty() || !self.preinstall.is_empty() {
+            return false;
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let binding_gyp =
+            join_abs_string_buf_z::<platform::Auto>(package_dir, &mut buf.0, &[b"binding.gyp"]);
+        bun_sys::exists_z(binding_gyp)
     }
 
     /// return: (first_index, total, entries)
@@ -297,19 +309,8 @@ impl Scripts {
     ) -> Result<Option<List>, crate::Error> {
         if self.has_any() {
             let add_node_gyp_rebuild_script =
-                if lockfile.has_trusted_dependency(folder_name, folder_name, resolution)
-                    && self.install.is_empty()
-                    && self.preinstall.is_empty()
-                {
-                    // `defer save.restore()` — `save()` returns an RAII guard that
-                    // restores the path length on Drop and derefs to the path.
-                    let mut save = folder_path.save();
-                    let _ = save.append(b"binding.gyp");
-
-                    bun_sys::exists(save.slice())
-                } else {
-                    false
-                };
+                lockfile.has_trusted_dependency(folder_name, folder_name, resolution)
+                    && self.wants_default_node_gyp(folder_path.slice());
 
             return Ok(self.create_list(
                 lockfile,
@@ -375,16 +376,7 @@ impl Scripts {
         let mut builder = tmp.string_builder();
         self.fill_from_package_json(&mut builder, log, folder_path)?;
 
-        let add_node_gyp_rebuild_script = if self.install.is_empty() && self.preinstall.is_empty() {
-            // `defer save.restore()` — `save()` returns an RAII guard that
-            // restores the path length on Drop and derefs to the path.
-            let mut save = folder_path.save();
-            let _ = save.append(b"binding.gyp");
-
-            bun_sys::exists(save.slice())
-        } else {
-            false
-        };
+        let add_node_gyp_rebuild_script = self.wants_default_node_gyp(folder_path.slice());
 
         Ok(self.create_list(
             lockfile,

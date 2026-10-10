@@ -3,8 +3,9 @@
 use core::cell::{Cell, RefCell};
 use core::sync::atomic::{AtomicBool, Ordering};
 
-use bun_ast::ExportsKind;
 use bun_ast::Source;
+use bun_ast::{EsmRecordUse, ExportsKind};
+use bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized;
 use bun_core::{FeatureFlags, env_var};
 use bun_core::{String as BunString, ZStr};
 use bun_js_parser::ParserOptions;
@@ -237,7 +238,7 @@ pub struct Entry {
     pub metadata: Metadata,
     pub output_code: BunString,
     pub sourcemap: Box<[u8]>,
-    pub esm_record: Box<[u8]>,
+    pub(crate) esm_record: Box<[u8]>,
 }
 
 impl Entry {
@@ -388,7 +389,13 @@ impl Entry {
         Ok(())
     }
 
-    pub(crate) fn load(&mut self, file: &sys::File, stat_size: u64) -> crate::CrateResult<()> {
+    /// `read_esm_record = false` skips the read, the allocation and the hash of the record.
+    pub(crate) fn load(
+        &mut self,
+        file: &sys::File,
+        stat_size: u64,
+        read_esm_record: bool,
+    ) -> crate::CrateResult<()> {
         let required = (Metadata::SIZE as u64)
             .saturating_add(self.metadata.output_byte_length)
             .saturating_add(self.metadata.sourcemap_byte_length)
@@ -518,7 +525,7 @@ impl Entry {
             self.sourcemap = sourcemap;
         }
 
-        if self.metadata.esm_record_byte_length > 0 {
+        if read_esm_record && self.metadata.esm_record_byte_length > 0 {
             let esm_record = pread_box(
                 file,
                 self.metadata.esm_record_byte_length as usize,
@@ -536,6 +543,24 @@ impl Entry {
 
         Ok(())
     }
+
+    /// `None` unless `load` read a record. It reads none for `EsmRecordUse::Unused`.
+    pub fn module_info(&self) -> Option<Box<ModuleInfoDeserialized>> {
+        if self.metadata.module_type == ModuleType::Cjs || self.esm_record.is_empty() {
+            return None;
+        }
+        ModuleInfoDeserialized::create_from_cached_record(&self.esm_record)
+    }
+}
+
+/// What a lookup found when the header of the entry on disk matches.
+pub(crate) enum Found {
+    Hit(Box<Entry>),
+    /// An ES-module entry without an ESM record, for a reader that requires one.
+    MissingEsmRecord {
+        output_hash: u64,
+        sourcemap_hash: u64,
+    },
 }
 
 pub struct RuntimeTranspilerCache {
@@ -543,7 +568,9 @@ pub struct RuntimeTranspilerCache {
     pub(crate) input_byte_length: Option<u64>,
     pub(crate) features_hash: Option<u64>,
     pub(crate) exports_kind: ExportsKind,
-    pub(crate) entry: Option<Entry>,
+    pub(crate) esm_record_use: EsmRecordUse,
+    pub(crate) refused_entry_hashes: Option<(u64, u64)>,
+    pub(crate) entry: Option<Box<Entry>>,
     // `sourcemap` / `esm_record` are owned `Box<[u8]>` (global mimalloc).
     // The per-call arena that once backed the output code is gone: the UTF-8
     // load arm preads straight into WTF storage (see `Entry::load`), so no
@@ -722,7 +749,8 @@ impl RuntimeTranspilerCache {
         input_hash: u64,
         feature_hash: u64,
         input_stat_size: u64,
-    ) -> crate::CrateResult<Entry> {
+        esm_record_use: EsmRecordUse,
+    ) -> crate::CrateResult<Found> {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.fromFile");
 
         let mut cache_file_path_buf = bun_paths::path_buffer_pool::get();
@@ -733,6 +761,7 @@ impl RuntimeTranspilerCache {
             input_hash,
             feature_hash,
             input_stat_size,
+            esm_record_use,
         )
     }
 
@@ -741,7 +770,8 @@ impl RuntimeTranspilerCache {
         input_hash: u64,
         feature_hash: u64,
         input_stat_size: u64,
-    ) -> crate::CrateResult<Entry> {
+        esm_record_use: EsmRecordUse,
+    ) -> crate::CrateResult<Found> {
         let mut metadata_bytes_buf = [0u8; Metadata::SIZE];
         // NONBLOCK: a FIFO must not block the open. On Windows it would make the handle overlapped.
         #[cfg(unix)]
@@ -782,10 +812,27 @@ impl RuntimeTranspilerCache {
             return Err(crate::CrateError::MismatchedFeatureHash);
         }
 
-        entry.load(&file, stat_size)?;
+        if esm_record_use == EsmRecordUse::Required
+            && entry.metadata.module_type != ModuleType::Cjs
+            && entry.metadata.esm_record_byte_length == 0
+        {
+            // keep the cache in this case: it is a hit for a reader that does not require the record
+            let _ = scopeguard::ScopeGuard::into_inner(unlink_guard);
+            return Ok(Found::MissingEsmRecord {
+                output_hash: entry.metadata.output_hash,
+                sourcemap_hash: entry.metadata.sourcemap_hash,
+            });
+        }
+
+        entry.load(&file, stat_size, esm_record_use != EsmRecordUse::Unused)?;
+        debug_assert!(
+            esm_record_use != EsmRecordUse::Required
+                || entry.metadata.module_type == ModuleType::Cjs
+                || !entry.esm_record.is_empty()
+        );
 
         let _ = scopeguard::ScopeGuard::into_inner(unlink_guard);
-        Ok(entry)
+        Ok(Found::Hit(Box::new(entry)))
     }
 
     pub(crate) fn to_file(
@@ -892,8 +939,21 @@ impl RuntimeTranspilerCache {
             input_hash,
             self.features_hash.unwrap(),
             source.contents.len() as u64,
+            self.esm_record_use,
         ) {
-            Ok(e) => Some(e),
+            Ok(Found::Hit(e)) => Some(e),
+            Ok(Found::MissingEsmRecord {
+                output_hash,
+                sourcemap_hash,
+            }) => {
+                self.refused_entry_hashes = Some((output_hash, sourcemap_hash));
+                bun_core::scoped_log!(
+                    cache,
+                    "get(\"{}\") = MissingEsmRecord",
+                    bstr::BStr::new(source.path.text)
+                );
+                return false;
+            }
             Err(err) => {
                 bun_core::scoped_log!(
                     cache,
@@ -960,6 +1020,8 @@ bun_ast::link_impl_TranspilerCacheImpl! {
                 input_byte_length: this.input_byte_length,
                 features_hash: this.features_hash,
                 exports_kind: this.exports_kind,
+                esm_record_use: this.esm_record_use,
+                refused_entry_hashes: None,
                 entry: None,
             };
             let hit = jsc.get(source, parser_options, used_jsx);
@@ -967,8 +1029,9 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             this.input_byte_length = jsc.input_byte_length;
             this.features_hash = jsc.features_hash;
             this.exports_kind = jsc.exports_kind;
+            this.refused_entry_hashes = jsc.refused_entry_hashes;
             if let Some(entry) = jsc.entry {
-                this.entry = Some(bun_core::heap::into_raw(Box::new(entry)).cast::<()>());
+                this.entry = Some(bun_core::heap::into_raw(entry).cast::<()>());
             }
             hit
         },
@@ -978,6 +1041,14 @@ bun_ast::link_impl_TranspilerCacheImpl! {
                 return;
             }
             debug_assert!(this.entry.is_none());
+
+            // The key does not cover every input of a transpile: the refused entry stays unless this is its output.
+            if this.refused_entry_hashes.is_some_and(|(output_hash, sourcemap_hash)| {
+                hash(output_code_bytes) != output_hash || hash(sourcemap) != sourcemap_hash
+            }) {
+                bun_core::scoped_log!(cache, "put() = kept the entry: other output");
+                return;
+            }
 
             // Borrowed Latin-1 view: `to_file` only reads `byte_slice()` + the encoding
             // tag (unmarked 8-bit EncodedSlice -> Encoding::LATIN1, same as clone_latin1),

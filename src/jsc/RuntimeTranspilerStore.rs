@@ -708,6 +708,17 @@ impl TranspilerJob {
             unsafe { &mut *(&raw mut *transpiler_storage).cast::<Transpiler<'_>>() };
         transpiler.set_arena(&arena);
         transpiler.set_log(&raw mut log);
+        // SAFETY: leaf scalar field read; see `vm` note above. Inlined
+        // `VirtualMachine::use_isolation_source_provider_cache` to avoid forming
+        // `&VirtualMachine`.
+        let use_isolation_source_provider_cache = unsafe { (*vm).test_isolation_enabled }
+            && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE::get()
+                .unwrap_or(false);
+        // The copy has the macro target if the JS thread was in a macro when it was made.
+        cache.esm_record_use = bun_ast::EsmRecordUse::for_reader(
+            use_isolation_source_provider_cache,
+            transpiler.options.target == bun_ast::Target::BunMacro,
+        );
         // Note: the resolver already shares opts with the parent
         // Transpiler via raw pointer; set_arena/set_log keep them in sync.
         transpiler.macro_context = None;
@@ -942,13 +953,6 @@ impl TranspilerJob {
             }
         }
 
-        // SAFETY: leaf scalar field read; see `vm` note above. Inlined
-        // `VirtualMachine::use_isolation_source_provider_cache` to avoid forming
-        // `&VirtualMachine`.
-        let use_isolation_source_provider_cache = unsafe { (*vm).test_isolation_enabled }
-            && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE::get()
-                .unwrap_or(false);
-
         if let Some(entry_ptr) = cache.entry.take() {
             // SAFETY: `entry` was boxed by `JSC_PARSER_CACHE_VTABLE.get` from a
             // concrete `crate::runtime_transpiler_cache::Entry`; sole owner.
@@ -970,16 +974,7 @@ impl TranspilerJob {
                 dump_source_string(vm, specifier, entry.output_code.byte_slice());
             }
 
-            let module_info = if use_isolation_source_provider_cache
-                && entry.metadata.module_type != CacheModuleType::Cjs
-                && !entry.esm_record.is_empty()
-            {
-                analyze_transpiled_module::ModuleInfoDeserialized::create_from_cached_record(
-                    &entry.esm_record,
-                )
-            } else {
-                None
-            };
+            let module_info = entry.module_info();
 
             self.resolved_source = ResolvedSource {
                 source_code: core::mem::take(&mut entry.output_code),

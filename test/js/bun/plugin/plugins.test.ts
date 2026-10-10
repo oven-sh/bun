@@ -305,6 +305,103 @@ describe("module", () => {
   });
 });
 
+// Spawned in a subprocess because the failure is an unhandled rejection that ends the process.
+describe.concurrent("require() of a module whose plugin callback returns a promise", () => {
+  async function run(entry: string) {
+    using dir = tempDir("plugin-require-promise", {
+      "entry.cjs": entry,
+      "x.late": "",
+      "x.rejects": "",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+  }
+
+  it("throws the async module error while the promise is pending, however it settles later", async () => {
+    const result = await run(`
+      let rejectModule, resolveInvalid, rejectOnLoad;
+      Bun.plugin({
+        name: "p",
+        setup(b) {
+          b.module("virt-late", () => new Promise((_, reject) => (rejectModule = reject)));
+          b.module("virt-invalid", () => new Promise(resolve => (resolveInvalid = resolve)));
+          b.onLoad({ filter: /\\.late$/ }, () => new Promise((_, reject) => (rejectOnLoad = reject)));
+        },
+      });
+      for (const id of ["virt-late", "virt-invalid", "./x.late"]) {
+        try {
+          require(id);
+          console.log(id, "did not throw");
+        } catch (e) {
+          console.log(id, "threw", e.name, /^require\\(\\) async module /.test(e.message));
+        }
+      }
+      rejectModule(new Error("late module failure"));
+      resolveInvalid({ loader: "object", exports: 7 });
+      rejectOnLoad(new Error("late onLoad failure"));
+      setImmediate(() => console.log("still alive"));
+    `);
+    expect(result).toEqual({
+      stdout: [
+        "virt-late threw TypeError true",
+        "virt-invalid threw TypeError true",
+        "./x.late threw TypeError true",
+        "still alive",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("throws the reason of a promise that is already rejected", async () => {
+    const result = await run(`
+      Bun.plugin({
+        name: "p",
+        setup(b) {
+          const caught = Promise.reject(new Error("caught by the plugin"));
+          caught.catch(() => {});
+          b.module("virt-caught", () => caught);
+          b.module("virt-rejected", () => Promise.reject(new Error("module failed")));
+          b.onLoad({ filter: /\\.rejects$/ }, async () => {
+            throw new Error("loader failed");
+          });
+        },
+      });
+      for (const id of ["virt-caught", "virt-rejected", "./x.rejects"]) {
+        try {
+          require(id);
+          console.log(id, "did not throw");
+        } catch (e) {
+          console.log(id, "threw", e.name + ":", e.message);
+        }
+      }
+      Promise.allSettled([import("virt-rejected"), import("./x.rejects")]).then(results => {
+        for (const { reason } of results) console.log("import rejected with", reason?.message);
+        setImmediate(() => console.log("still alive"));
+      });
+    `);
+    expect(result).toEqual({
+      stdout: [
+        "virt-caught threw Error: caught by the plugin",
+        "virt-rejected threw Error: module failed",
+        "./x.rejects threw Error: loader failed",
+        "import rejected with module failed",
+        "import rejected with loader failed",
+        "still alive",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 describe("dynamic import", () => {
   it("SSRs `<h1>Hello world!</h1>` with Svelte", async () => {
     const { default: App }: any = await import("./hello.svelte");

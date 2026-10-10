@@ -948,7 +948,7 @@ pub(crate) fn exit_is_requested() -> bool {
 }
 
 pub(crate) struct CommandLineReporter {
-    // `TestRunner<'a>` borrows `TestOptions`/regex from the CLI ctx; the
+    // `TestRunner<'a>` borrows `TestOptions` from the CLI ctx; the
     // reporter is held in a `Box` local to `TestCommand::exec` which never
     // returns before process exit, so `'static` is sound here. Revisit if the
     // reporter ever becomes scoped.
@@ -1736,11 +1736,38 @@ impl TestCommand {
     // pub use bun_options_types::code_coverage_options::{CodeCoverageOptions, Reporter, Reporters};
     // Re-exports moved to top-level `use` per crate map.
 
+    /// Never freed: the `TestRunner` that holds the handle lives until the process exits.
+    fn compile_test_name_pattern(
+        test_options: &bun_options_types::context::TestOptions,
+    ) -> Option<core::ptr::NonNull<jsc::RegularExpression>> {
+        let pattern = test_options.test_filter_pattern.as_deref()?;
+        match jsc::RegularExpression::init(
+            &bun_core::String::from_bytes(pattern),
+            jsc::regular_expression::Flags::None,
+        ) {
+            Ok(regex) => core::ptr::NonNull::new(regex),
+            Err(_) => {
+                pretty_errorln!(
+                    "<r><red>error<r>: --test-name-pattern expects a valid regular expression but received {}",
+                    bun_fmt::quote(pattern),
+                );
+                Global::exit(1);
+            }
+        }
+    }
+
     pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
         Output::IS_GITHUB_ACTION.store(
             Output::is_github_action(),
             core::sync::atomic::Ordering::Relaxed,
         );
+
+        // Before the banner, so that an invalid --test-name-pattern is the first output.
+        jsc::initialize(jsc::InitializeOptions {
+            short_lived_globals: ctx.test_options.isolate,
+            ..Default::default()
+        });
+        let filter_regex = Self::compile_test_name_pattern(&ctx.test_options);
 
         if !ctx.test_options.test_worker {
             // print the version so you know its doing stuff if it takes a sec
@@ -1777,10 +1804,6 @@ impl TestCommand {
         // `exec()` never returns before process exit, so the heap allocation
         // outlives all observers.
         let mut env_loader: Box<DotEnv::Loader> = Box::new(DotEnv::Loader::init());
-        jsc::initialize(jsc::InitializeOptions {
-            short_lived_globals: ctx.test_options.isolate,
-            ..Default::default()
-        });
         bun_http::http_thread::init(&Default::default());
 
         let enable_random = ctx.test_options.randomize;
@@ -1849,14 +1872,7 @@ impl TestCommand {
                 only: ctx.test_options.only,
                 bail: ctx.test_options.bail,
                 max_concurrency: ctx.test_options.max_concurrency,
-                // `test_filter_regex` is an erased `*mut RegularExpression` (see
-                // options_types::context); cast back to a typed `NonNull` —
-                // kept raw so `matches()` can write through it without
-                // laundering shared-ref provenance.
-                filter_regex: ctx
-                    .test_options
-                    .test_filter_regex()
-                    .map(|p| p.cast::<jsc::RegularExpression>()),
+                filter_regex,
                 snapshots: Snapshots::init(ctx.test_options.update_snapshots),
                 bun_test_root: bun_test::BunTestRoot::init(),
                 // `TestRunner` cannot derive `Default` because of the

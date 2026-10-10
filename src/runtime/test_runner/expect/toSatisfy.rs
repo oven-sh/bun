@@ -5,18 +5,13 @@ use super::get_signature;
 use super::throw;
 
 pub(crate) fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // toSatisfy bypasses get_value (no .resolves/.rejects handling), so it cannot use
-    // the full `matcher_prelude`; only the post_match guard mechanism unifies.
-    let _guard = this.post_match_guard(global);
+    let (this, value, not) = this.matcher_prelude(global, frame.this(), "toSatisfy", "<green>expected<r>")?;
 
-    let this_value = frame.this();
     let arguments = frame.arguments();
 
     if arguments.len() < 1 {
         return Err(global.throw_invalid_arguments(format_args!("toSatisfy() requires 1 argument")));
     }
-
-    this.increment_expect_call_counter();
 
     let predicate = arguments[0];
     predicate.ensure_still_alive();
@@ -25,16 +20,8 @@ pub(crate) fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFra
         return Err(global.throw(format_args!("toSatisfy() argument must be a function")));
     }
 
-    let Some(value) = super::js::captured_value_get_cached(this_value) else {
-        return Err(global.throw(format_args!(
-            "Internal consistency error: the expect(value) was garbage collected but it should not have been!"
-        )));
-    };
-    value.ensure_still_alive();
-
     let result = predicate.call(global, JSValue::UNDEFINED, &[value])?;
 
-    let not = this.flags.get().not();
     let pass = (result.is_boolean() && result.to_boolean()) != not;
 
     if pass {

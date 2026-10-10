@@ -1245,7 +1245,7 @@ impl CompletionStruct for JSBundleCompletionTask {
     fn create_and_configure_transpiler<'a>(
         &mut self,
         bump: &'a Arena,
-    ) -> bun_bundler::Result<&'a mut Transpiler<'a>> {
+    ) -> bun_bundler::Result<Box<Transpiler<'a>>> {
         let config = &self.config;
         let opts = api::TransformOptions {
             define: if config.define.count() > 0 {
@@ -1292,19 +1292,10 @@ impl CompletionStruct for JSBundleCompletionTask {
         };
 
         let log: *mut bun_ast::Log = &raw mut self.log;
-        let t = Transpiler::init(bump, log, opts, Some(self.env))?;
-        let transpiler: &'a mut Transpiler<'a> = bump.alloc(t);
-
-        // Post-init field wiring.
-        // Reborrow through a raw ptr so `&mut self` is usable
-        // again after handing `&'a mut Transpiler` (which is tied to `bump`,
-        // not `self`) to the trait method.
-        let tp: *mut Transpiler<'a> = transpiler;
-        // SAFETY: `tp` aliases nothing in `self`; lives in `bump`.
-        self.configure_bundler(unsafe { &mut *tp }, bump)?;
-        // SAFETY: `tp` was the unique `&'a mut` slot from `bump.alloc`; the
-        // reborrow above has ended.
-        Ok(unsafe { &mut *tp })
+        // `configure_linker` stores field addresses: box first, then configure.
+        let mut transpiler = Box::new(Transpiler::init(bump, log, opts, Some(self.env))?);
+        self.configure_bundler(&mut transpiler, bump)?;
+        Ok(transpiler)
     }
 
     fn init_and_run<'a>(
@@ -1359,7 +1350,6 @@ impl CompletionStruct for JSBundleCompletionTask {
             .run_from_js_in_new_thread(&entry_points)
             .map(|build| self.set_result(BundleV2Result::Value(build)));
 
-        // The AST-allocator pop lives in `generate_in_new_thread`.
         bv2.deinit_without_freeing_arena();
         run
     }

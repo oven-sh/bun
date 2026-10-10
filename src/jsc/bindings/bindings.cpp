@@ -6292,10 +6292,9 @@ extern "C" int JSC__JSValue__DateNowISOString(JSC::JSGlobalObject* globalObject,
 // An entry name must not be null: toJSON() puts the names in a HashSet.
 static WTF::String toFormDataEntryName(const EncodedSlice& name)
 {
-    WTF::String string = toStringCopy(name);
-    if (string.isNull())
+    if (name.len == 0)
         return WTF::emptyString();
-    return string;
+    return toStringCopy(name);
 }
 
 CPP_DECL void WebCore__DOMFormData__append(WebCore::DOMFormData* arg0, const EncodedSlice* arg1, const EncodedSlice* arg2)

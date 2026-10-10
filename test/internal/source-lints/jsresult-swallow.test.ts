@@ -29,7 +29,7 @@ const TERMINAL =
 const PATTERNS: [name: string, re: RegExp, applies: (line: string) => boolean][] = [
   [
     "discarded result of a call that enters script",
-    /^\s*let _ = .*(\bfrom_js\w*\(|\.call\w*\(|\bcall_check_slow\w*\(|\bfrom_js_host_call\w*\(|\brun_from_js\w*\(|\.delete_property\(|\bcall_next_tick\w*\(|\.for_each\(\s*global|\.to_object\(|\bcall_event_handler\(|\bcall_write_callback\()/,
+    /^\s*let _ = .*(\bfrom_js\w*\(|\.call\w*\(|\bcall_check_slow\w*\(|\bfrom_js_host_call\w*\(|\brun_from_js\w*\(|\.delete_property\(|\bcall_next_tick\w*\(|\.for_each\(\s*global|\.to_object\(|\bcall_event_handler\()/,
     // `let _ = f()?;` has propagated the Err; only the Ok value is discarded.
     line => !TERMINAL.test(line) && !/\?\s*;\s*(\/\/.*)?$/.test(line),
   ],

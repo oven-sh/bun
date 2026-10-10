@@ -146,6 +146,7 @@ export default [
       "onOrigin",
       "onFrameError",
       "onStreamPush",
+      "onStreamWriteDone",
     ],
   }),
 ];

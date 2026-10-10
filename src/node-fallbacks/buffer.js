@@ -731,14 +731,12 @@ Buffer.prototype.compare = function compare(target, start, end, thisStart, thisE
 //
 // Arguments:
 // - buffer - a Buffer to search
-// - val - a string, Buffer, or number
+// - val - a string, Buffer, Uint8Array, or number
 // - byteOffset - an index into `buffer`; will be clamped to an int32
+// - end - exclusive end of the search range (Node.js v26)
 // - encoding - an optional encoding, relevant is val is a string
 // - dir - true for indexOf, false for lastIndexOf
-function bidirectionalIndexOf(buffer, val, byteOffset, encoding, dir) {
-  // Empty buffer means no match
-  if (buffer.length === 0) return -1;
-
+function bidirectionalIndexOf(buffer, val, byteOffset, end, encoding, dir) {
   // Normalize byteOffset
   if (typeof byteOffset === "string") {
     encoding = byteOffset;
@@ -749,53 +747,117 @@ function bidirectionalIndexOf(buffer, val, byteOffset, encoding, dir) {
     byteOffset = -0x80000000;
   }
   byteOffset = +byteOffset; // Coerce to Number.
-  if (Number.isNaN(byteOffset)) {
-    // byteOffset: it it's undefined, null, NaN, "foo", etc, search whole buffer
-    byteOffset = dir ? 0 : buffer.length - 1;
+  const rawByteOffset = byteOffset;
+  // An empty value reports the default offset, not the clamped one below.
+  const byteOffsetIsDefault = Number.isNaN(rawByteOffset);
+
+  // Normalize end: exclusive upper bound of the search range.
+  if (end === undefined) end = buffer.length;
+  end = +end; // Coerce to Number.
+  if (Number.isNaN(end)) end = 0;
+  let searchEnd = Math.min(Math.max(Math.trunc(end), 0), buffer.length);
+
+  // Like Node.js IndexOfString/IndexOfBuffer: a UTF-16 search range covers
+  // whole 2-byte units. Ignored for a number value, like the encoding itself.
+  let ucs2Search = false;
+  if (encoding !== undefined) {
+    const enc = String(encoding).toLowerCase();
+    ucs2Search = enc === "ucs2" || enc === "ucs-2" || enc === "utf16le" || enc === "utf-16le";
   }
 
-  // Normalize byteOffset: negative offsets start from the end of the buffer
-  if (byteOffset < 0) byteOffset = buffer.length + byteOffset;
-  if (byteOffset >= buffer.length) {
-    if (dir) return -1;
-    else byteOffset = buffer.length - 1;
-  } else if (byteOffset < 0) {
-    if (dir) byteOffset = 0;
-    else return -1;
+  // Normalize val. A number searches for a byte value and never reads the
+  // encoding, like Node.js which returns before its encoding lookup.
+  const valIsString = typeof val === "string";
+  if (typeof val === "number") {
+    val = val & 0xff; // Search for a byte value [0-255]
+  } else {
+    if (valIsString) {
+      if (encoding !== undefined && (typeof encoding !== "string" || !Buffer.isEncoding(encoding))) {
+        throw unknownEncodingError(encoding);
+      }
+      val = Buffer.from(val, encoding);
+    }
+    // Node.js accepts any Uint8Array here, not just a Buffer.
+    if (!isInstance(val, Uint8Array)) {
+      throw invalidValueTypeError(val);
+    }
   }
+  const valIsEmpty = typeof val !== "number" && val.length === 0;
 
-  // Normalize val
-  if (typeof val === "string") {
-    val = Buffer.from(val, encoding);
+  if (!valIsEmpty) {
+    if (byteOffsetIsDefault) {
+      // byteOffset: it it's undefined, null, NaN, "foo", etc, search whole buffer
+      byteOffset = dir ? 0 : buffer.length - 1;
+    }
+
+    // Normalize byteOffset: negative offsets start from the end of the buffer
+    if (byteOffset < 0) byteOffset = buffer.length + byteOffset;
+    if (byteOffset >= buffer.length) {
+      if (dir) return -1;
+      else byteOffset = buffer.length - 1;
+    } else if (byteOffset < 0) {
+      if (dir) byteOffset = 0;
+      else return -1;
+    }
   }
 
   // Finally, search either indexOf (if dir is true) or lastIndexOf
-  if (Buffer.isBuffer(val)) {
-    // Special case: looking for empty string/buffer always fails
-    if (val.length === 0) {
-      return -1;
-    }
-    return arrayIndexOf(buffer, val, byteOffset, encoding, dir);
-  } else if (typeof val === "number") {
-    val = val & 0xff; // Search for a byte value [0-255]
+  if (typeof val === "number") {
+    if (searchEnd === 0) return -1;
+    if (dir && byteOffset >= searchEnd) return -1;
+    let offset = byteOffset;
+    if (!dir && offset > searchEnd - 1) offset = searchEnd - 1;
     if (typeof Uint8Array.prototype.indexOf === "function") {
-      if (dir) {
-        return Uint8Array.prototype.indexOf.call(buffer, val, byteOffset);
-      } else {
-        return Uint8Array.prototype.lastIndexOf.call(buffer, val, byteOffset);
-      }
+      const found = dir
+        ? Uint8Array.prototype.indexOf.call(buffer, val, offset)
+        : Uint8Array.prototype.lastIndexOf.call(buffer, val, offset);
+      if (dir && found >= searchEnd) return -1;
+      return found;
     }
-    return arrayIndexOf(buffer, [val], byteOffset, encoding, dir);
+    return arrayIndexOf(searchEnd < buffer.length ? buffer.slice(0, searchEnd) : buffer, [val], offset, encoding, dir);
   }
 
-  throw new TypeError("val must be string, number or Buffer");
+  // Special case: looking for an empty value returns the clamped offset,
+  // like String#indexOf and String#lastIndexOf.
+  if (valIsEmpty) {
+    let length = buffer.length;
+    let endBound = searchEnd;
+    if (ucs2Search) {
+      if (valIsString) length -= length % 2;
+      endBound -= endBound % 2;
+    }
+    let offset;
+    if (byteOffsetIsDefault) {
+      offset = dir ? 0 : length;
+    } else {
+      offset = Math.trunc(rawByteOffset) || 0;
+      if (offset < 0) {
+        offset += length;
+        if (offset < 0) offset = 0;
+      } else if (offset > length) {
+        offset = length;
+      }
+    }
+    return offset < endBound ? offset : endBound;
+  }
+
+  // Narrow a non-empty search to [0, searchEnd) when `end` shrinks the range.
+  if (searchEnd === 0) return -1;
+  if (dir && byteOffset >= searchEnd) return -1;
+  let haystack = buffer;
+  let offset = byteOffset;
+  if (searchEnd < buffer.length) {
+    if (!dir && offset > searchEnd - 1) offset = searchEnd - 1;
+    if (ucs2Search) searchEnd -= searchEnd % 2;
+    haystack = buffer.slice(0, searchEnd);
+  }
+  return arrayIndexOf(haystack, val, offset, encoding, dir);
 }
 
 function arrayIndexOf(arr, val, byteOffset, encoding, dir) {
   let indexSize = 1;
   let arrLength = arr.length;
   let valLength = val.length;
-
   if (encoding !== undefined) {
     encoding = String(encoding).toLowerCase();
     if (encoding === "ucs2" || encoding === "ucs-2" || encoding === "utf16le" || encoding === "utf-16le") {
@@ -803,9 +865,22 @@ function arrayIndexOf(arr, val, byteOffset, encoding, dir) {
         return -1;
       }
       indexSize = 2;
-      arrLength /= 2;
-      valLength /= 2;
-      byteOffset /= 2;
+      // Node.js gives up before searching when the value cannot fit, as in
+      // `IndexOfString` / `IndexOfBuffer`. Both tests are in bytes against
+      // `search_end`, which those round down to whole 2-byte units for UCS2
+      // whether the value is a string or a Uint8Array.
+      const fitLength = arr.length - (arr.length % indexSize);
+      if (val.length > fitLength || (dir && val.length + byteOffset > fitLength)) {
+        return -1;
+      }
+      // Node.js truncates every count to whole 2-byte units: `node_buffer.cc`
+      // divides `haystack_length`, `needle_length` and `offset` by 2 in
+      // `IndexOfString` / `IndexOfBuffer`. Dividing instead of truncating let
+      // the loop run one unit past the end of the haystack, where `read()`
+      // folded the missing byte to 0 and matched a unit Node never considers.
+      arrLength = Math.trunc(arrLength / 2);
+      valLength = Math.trunc(valLength / 2);
+      byteOffset = Math.trunc(byteOffset / 2);
     }
   }
 
@@ -813,7 +888,11 @@ function arrayIndexOf(arr, val, byteOffset, encoding, dir) {
     if (indexSize === 1) {
       return buf[i];
     } else {
-      return buf.readUInt16BE(i * indexSize);
+      // Read the 2-byte unit big-endian by hand instead of via readUInt16BE:
+      // `val` may be a plain Uint8Array, which has no such method. Buffer and
+      // Uint8Array both index to the same byte, so this matches Node exactly.
+      const o = i * indexSize;
+      return (buf[o] << 8) | buf[o + 1];
     }
   }
 
@@ -839,23 +918,67 @@ function arrayIndexOf(arr, val, byteOffset, encoding, dir) {
           break;
         }
       }
-      if (found) return i;
+      if (found) return i * indexSize;
     }
   }
 
   return -1;
 }
 
-Buffer.prototype.includes = function includes(val, byteOffset, encoding) {
-  return this.indexOf(val, byteOffset, encoding) !== -1;
+function unknownEncodingError(encoding) {
+  const err = new TypeError("Unknown encoding: " + encoding);
+  err.code = "ERR_UNKNOWN_ENCODING";
+  return err;
+}
+
+function invalidValueTypeError(val) {
+  let received;
+  if (val === null || val === undefined) {
+    received = String(val);
+  } else if (typeof val === "object") {
+    const name = val.constructor != null && val.constructor.name != null ? val.constructor.name : "Object";
+    received = "an instance of " + name;
+  } else if (typeof val === "function") {
+    received = "function " + (val.name || "");
+  } else {
+    received = "type " + typeof val + " (" + String(val) + ")";
+  }
+  const err = new TypeError(
+    'The "value" argument must be one of type number or string or an instance of Buffer or Uint8Array. Received ' +
+      received,
+  );
+  err.code = "ERR_INVALID_ARG_TYPE";
+  return err;
+}
+
+Buffer.prototype.includes = function includes(val, byteOffset, end, encoding) {
+  if (typeof end === "string") {
+    encoding = end;
+    end = this.length;
+  } else if (end === undefined) {
+    end = this.length;
+  }
+  return bidirectionalIndexOf(this, val, byteOffset, end, encoding, true) !== -1;
 };
 
-Buffer.prototype.indexOf = function indexOf(val, byteOffset, encoding) {
-  return bidirectionalIndexOf(this, val, byteOffset, encoding, true);
+Buffer.prototype.indexOf = function indexOf(val, byteOffset, end, encoding) {
+  if (typeof end === "string") {
+    encoding = end;
+    end = this.length;
+  } else if (end === undefined) {
+    end = this.length;
+  }
+  return bidirectionalIndexOf(this, val, byteOffset, end, encoding, true);
 };
 
-Buffer.prototype.lastIndexOf = function lastIndexOf(val, byteOffset, encoding) {
-  return bidirectionalIndexOf(this, val, byteOffset, encoding, false);
+Buffer.prototype.lastIndexOf = function lastIndexOf(val, byteOffset, end, encoding) {
+  if (typeof end === "string") {
+    encoding = end;
+    end = this.length;
+  } else if (end === undefined) {
+    end = this.length;
+  }
+  return bidirectionalIndexOf(this, val, byteOffset, end, encoding, false);
 };
 
 function hexWrite(buf, string, offset, length) {
@@ -877,11 +1000,26 @@ function hexWrite(buf, string, offset, length) {
   }
   let i;
   for (i = 0; i < length; ++i) {
-    const parsed = parseInt(string.substr(i * 2, 2), 16);
-    if (Number.isNaN(parsed)) return i;
-    buf[offset + i] = parsed;
+    const lo = hexNibble(string.charCodeAt(i * 2));
+    if (lo < 0) return i;
+    const hi = hexNibble(string.charCodeAt(i * 2 + 1));
+    if (hi < 0) return i;
+    buf[offset + i] = (lo << 4) | hi;
   }
   return i;
+}
+
+// Returns the value of one hex digit, or -1 if `charCode` is not one. Node.js
+// reads a pair as two digits and stops at the first pair holding anything else,
+// so `parseInt` cannot decode it: that also accepts a pair whose second
+// character is not a digit (`parseInt("a\0", 16) === 10`) and a sign or space
+// prefix (`parseInt("-0", 16) === -0`). The extra byte is one Node.js never
+// decodes, so a search value read this way is not the value Node.js searches for.
+function hexNibble(charCode) {
+  if (charCode >= 0x30 && charCode <= 0x39) return charCode - 0x30;
+  if (charCode >= 0x61 && charCode <= 0x66) return charCode - 0x57;
+  if (charCode >= 0x41 && charCode <= 0x46) return charCode - 0x37;
+  return -1;
 }
 
 function utf8Write(buf, string, offset, length) {

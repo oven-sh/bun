@@ -443,6 +443,41 @@ impl<'a> Installer<'a> {
         self.resume_unblocked_tasks(entry_id);
     }
 
+    /// A root, workspace or `link:` entry is the user's own folder, not a store copy.
+    fn is_store_copy(tag: ResolutionTag) -> bool {
+        matches!(
+            tag,
+            ResolutionTag::Npm
+                | ResolutionTag::Git
+                | ResolutionTag::Github
+                | ResolutionTag::LocalTarball
+                | ResolutionTag::RemoteTarball
+                | ResolutionTag::Folder
+        )
+    }
+
+    /// Called from main thread. Returns false when the entry has no store copy.
+    pub(crate) fn on_optional_scripts_failed(&mut self, entry_id: StoreEntryId) -> bool {
+        self.store.entries.items_step()[entry_id.get() as usize]
+            .store(Step::Done as u32, Ordering::Release);
+        self.on_task_complete(entry_id, CompleteState::Skipped);
+
+        let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
+        let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+        if !Self::is_store_copy(self.lockfile().packages.items_resolution()[pkg_id as usize].tag) {
+            return false;
+        }
+
+        let mut path = AutoAbsPath::init_top_level_dir();
+        self.append_store_path(&mut path, entry_id);
+        if let Some(parent) = bun_core::dirname(path.slice())
+            && let Ok(dir) = sys::Dir::open(parent)
+        {
+            let _ = dir.delete_tree(paths::basename(path.slice()));
+        }
+        true
+    }
+
     pub(crate) fn decrement_pending_tasks(&mut self) {
         self.manager_mut().decrement_pending_tasks();
     }

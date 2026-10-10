@@ -15,7 +15,7 @@ use crate::bun_bunfig::Arguments as Command;
 use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 
-use crate::lifecycle_script_runner::LifecycleScriptSubprocess;
+use crate::lifecycle_script_runner::{InstallCtx, LifecycleScriptSubprocess};
 // `Lockfile` here is the in-crate `crate::lockfile::Lockfile` (the
 // struct `PackageManager.lockfile` actually carries). `lockfile_real` is still
 // imported for `tree::Id` / `Tree` / `package::*`, all of
@@ -46,6 +46,25 @@ pub struct PendingLifecycleScript {
     pub(crate) list: lockfile::package::scripts::List,
     pub(crate) tree_id: lockfile::tree::Id,
     pub(crate) optional: bool,
+}
+
+impl PendingLifecycleScript {
+    fn spawn(
+        self,
+        manager: &mut PackageManager,
+        ctx: Command::Context<'_>,
+    ) -> Result<(), crate::Error> {
+        let output_in_foreground = false;
+        manager.spawn_package_lifecycle_scripts(
+            ctx,
+            self.list,
+            self.optional,
+            output_in_foreground,
+            Some(InstallCtx::Hoisted {
+                tree_id: self.tree_id,
+            }),
+        )
+    }
 }
 
 pub struct PackageInstaller<'a> {
@@ -362,6 +381,24 @@ fn abs_node_modules_path(
     let mut abs = AbsPath::from(top).unwrap_or_oom();
     abs.append(rel.as_bytes()).unwrap_or_oom();
     abs
+}
+
+/// Removes `node_modules/<alias>` of `tree_id`, the hoisted linker's own entry, never `scripts.cwd`.
+pub(crate) fn discard_failed_optional(
+    lockfile: &Lockfile,
+    tree_id: lockfile::tree::Id,
+    alias: &[u8],
+) {
+    let mut path =
+        abs_node_modules_path(lockfile, lockfile.buffers.string_bytes.as_slice(), tree_id);
+    path.append(alias).unwrap_or_oom();
+    let Some(parent) = bun_core::dirname(path.slice()) else {
+        return;
+    };
+    let Ok(dir) = Dir::open(parent) else {
+        return;
+    };
+    let _ = dir.delete_tree(bun_paths::basename(path.slice()));
 }
 
 /// A dependency alias becomes the install destination inside `node_modules`
@@ -783,21 +820,13 @@ impl<'a> PackageInstaller<'a> {
         while i > 0 {
             i -= 1;
             let tree_id = self.pending_lifecycle_scripts[i].tree_id;
-            let optional = self.pending_lifecycle_scripts[i].optional;
             if self.can_run_scripts(tree_id) {
                 let entry = self.pending_lifecycle_scripts.swap_remove(i);
                 // reshaped for borrowck — `package_name` is `Box<[u8]>`;
                 // clone it for the error message since `entry.list` is moved into `spawn`.
                 let name: Box<[u8]> = entry.list.package_name.clone();
-                let output_in_foreground = false;
 
-                if let Err(err) = self.manager_mut().spawn_package_lifecycle_scripts(
-                    self.command_ctx,
-                    entry.list,
-                    optional,
-                    output_in_foreground,
-                    None,
-                ) {
+                if let Err(err) = entry.spawn(self.manager_mut(), self.command_ctx) {
                     if log_level != Options::LogLevel::Silent {
                         if log_level.show_progress() {
                             if Output::enable_ansi_colors_stderr() {
@@ -920,15 +949,7 @@ impl<'a> PackageInstaller<'a> {
                 self.manager_mut().sleep();
             }
 
-            let optional = entry.optional;
-            let output_in_foreground = false;
-            if let Err(err) = self.manager_mut().spawn_package_lifecycle_scripts(
-                self.command_ctx,
-                entry.list,
-                optional,
-                output_in_foreground,
-                None,
-            ) {
+            if let Err(err) = entry.spawn(self.manager_mut(), self.command_ctx) {
                 if log_level != Options::LogLevel::Silent {
                     if log_level.show_progress() {
                         if Output::enable_ansi_colors_stderr() {

@@ -6,6 +6,7 @@ use crate::isolated_install::installer::{CompleteState, Installer, Step};
 use crate::isolated_install::store::{EntryColumns, entry};
 use crate::lockfile_real::Scripts as LockfileScripts;
 use crate::lockfile_real::package::scripts::List as ScriptsList;
+use crate::package_installer;
 use crate::package_manager_real::ProgressStrings;
 use bun_core::{Global, Output};
 use bun_io::BufferedReader;
@@ -283,12 +284,17 @@ pub struct LifecycleScriptSubprocess<'a> {
     pub(crate) heap: io_heap::IntrusiveField<LifecycleScriptSubprocess<'a>>,
 }
 
-pub struct InstallCtx<'a> {
-    pub(crate) entry_id: entry::Id,
-    /// Raw `*mut` for the same reason as
-    /// `LifecycleScriptSubprocess::manager` — `on_task_complete`/`start_task`
-    /// mutate Installer state from inside an exit-handler callback.
-    pub(crate) installer: *mut Installer<'a>,
+/// The linker that placed the package; it discards its own entry when an optional script fails.
+pub enum InstallCtx<'a> {
+    Isolated {
+        entry_id: entry::Id,
+        /// Raw `*mut`: `on_task_complete`/`start_task` mutate Installer state from an exit-handler callback.
+        installer: *mut Installer<'a>,
+    },
+    /// `node_modules/<package_name>` of `tree_id`; hoisted scripts exit before `lockfile.buffers.trees` changes.
+    Hoisted {
+        tree_id: crate::lockfile_real::tree::Id,
+    },
 }
 
 impl<'a> InstallCtx<'a> {
@@ -301,9 +307,16 @@ impl<'a> InstallCtx<'a> {
     /// loop, so no other `&`/`&mut Installer` overlaps the returned borrow.
     #[inline]
     #[allow(clippy::mut_from_ref)]
-    fn installer_mut(&self) -> &mut Installer<'a> {
+    fn isolated(&self) -> Option<(entry::Id, &mut Installer<'a>)> {
+        let Self::Isolated {
+            entry_id,
+            installer,
+        } = *self
+        else {
+            return None;
+        };
         // SAFETY: see fn doc.
-        unsafe { &mut *self.installer }
+        Some((entry_id, unsafe { &mut *installer }))
     }
 }
 
@@ -846,14 +859,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             Status::Exited(exit) => {
                 if exit.code > 0 {
                     if self.optional {
-                        if let Some(ctx) = &self.ctx {
-                            let installer = ctx.installer_mut();
-                            installer.store.entries.items_step()[ctx.entry_id.get() as usize]
-                                .store(Step::Done as u32, Ordering::Release);
-                            installer.on_task_complete(ctx.entry_id, CompleteState::Skipped);
-                        }
-                        self.decrement_pending_script_tasks();
-                        self.deinit_and_delete_package();
+                        self.discard_failed_optional();
                         return;
                     }
                     self.print_output();
@@ -885,16 +891,17 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     }
                 }
 
-                if let Some(ctx) = &self.ctx {
+                if let Some((entry_id, installer)) =
+                    self.ctx.as_ref().and_then(InstallCtx::isolated)
+                {
                     match self.current_script_index {
                         // preinstall
                         0 => {
-                            let installer = ctx.installer_mut();
                             let previous_step = installer.store.entries.items_step()
-                                [ctx.entry_id.get() as usize]
+                                [entry_id.get() as usize]
                                 .swap(Step::Binaries as u32, Ordering::Release);
                             debug_assert!(previous_step == Step::RunPreinstall as u32);
-                            installer.start_task(ctx.entry_id);
+                            installer.start_task(entry_id);
                             self.decrement_pending_script_tasks();
                             // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
                             unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
@@ -939,10 +946,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     );
                 }
 
-                if let Some(ctx) = &self.ctx {
-                    let installer = ctx.installer_mut();
+                if let Some((entry_id, installer)) =
+                    self.ctx.as_ref().and_then(InstallCtx::isolated)
+                {
                     let previous_step = installer.store.entries.items_step()
-                        [ctx.entry_id.get() as usize]
+                        [entry_id.get() as usize]
                         .swap(Step::Done as u32, Ordering::Release);
                     if bun_core::Environment::CI_ASSERT {
                         debug_assert!(self.current_script_index != 0);
@@ -950,7 +958,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                             previous_step == Step::RunPostInstallAndPrePostPrepare as u32
                         );
                     }
-                    installer.on_task_complete(ctx.entry_id, CompleteState::Success);
+                    installer.on_task_complete(entry_id, CompleteState::Success);
                 }
 
                 // the last script finished
@@ -973,14 +981,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             }
             Status::Err(err) => {
                 if self.optional {
-                    if let Some(ctx) = &self.ctx {
-                        let installer = ctx.installer_mut();
-                        installer.store.entries.items_step()[ctx.entry_id.get() as usize]
-                            .store(Step::Done as u32, Ordering::Release);
-                        installer.on_task_complete(ctx.entry_id, CompleteState::Skipped);
-                    }
-                    self.decrement_pending_script_tasks();
-                    self.deinit_and_delete_package();
+                    self.discard_failed_optional();
                     return;
                 }
 
@@ -1042,27 +1043,30 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    pub(crate) fn deinit_and_delete_package(&mut self) {
+    /// A script of an optional dependency failed; the linker that placed the package discards it. Frees `self`.
+    fn discard_failed_optional(&mut self) {
+        let removed =
+            if let Some((entry_id, installer)) = self.ctx.as_ref().and_then(InstallCtx::isolated) {
+                installer.on_optional_scripts_failed(entry_id)
+            } else if let Some(&InstallCtx::Hoisted { tree_id }) = self.ctx.as_ref() {
+                package_installer::discard_failed_optional(
+                    &self.manager().lockfile,
+                    tree_id,
+                    &self.package_name,
+                );
+                true
+            } else {
+                false
+            };
         if self.manager().options.log_level.is_verbose() {
             bun_core::warn!(
-                "deleting optional dependency '{}' due to failed '{}' script",
+                "{} optional dependency '{}' due to failed '{}' script",
+                if removed { "deleting" } else { "skipping" },
                 bstr::BStr::new(&self.package_name),
                 bstr::BStr::new(self.script_name()),
             );
         }
-        'try_delete_dir: {
-            let Some(dirname) = bun_core::dirname(self.scripts.cwd.as_bytes()) else {
-                break 'try_delete_dir;
-            };
-            let basename = bun_paths::basename(self.scripts.cwd.as_bytes());
-            // Close this fd: this path returns to the install loop without
-            // exiting, so the HANDLE/fd would otherwise persist for the rest of
-            // the install on every failed optional-dependency lifecycle script.
-            let Ok(dir) = bun_sys::Dir::open(dirname) else {
-                break 'try_delete_dir;
-            };
-            let _ = dir.delete_tree(basename);
-        }
+        self.decrement_pending_script_tasks();
 
         // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
         unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };

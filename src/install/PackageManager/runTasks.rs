@@ -399,7 +399,7 @@ fn run_tasks_erased(
                         list_val,
                         optional,
                         false,
-                        Some(InstallCtx {
+                        Some(InstallCtx::Isolated {
                             entry_id,
                             installer: installer_ptr,
                         }),

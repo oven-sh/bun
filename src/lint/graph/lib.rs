@@ -22,15 +22,15 @@ use bun_glob::{Options as GlobOptions, Pattern};
 use bun_lint::ast::File;
 use bun_lint::language::{LanguageOptions, Parser};
 use bun_lint::modules::{
-    Declaration, Flavor, Import, Lookup, MakeRecord, ModuleId, Modules, Reader, Record, Request,
-    RequestKind, Resolved, requests_of,
+    Declaration, Flavor, Import, ListFiles, Listed, Lookup, MakeRecord, ModuleId, Modules, Reader,
+    Record, Request, RequestKind, Resolved, requests_of,
 };
 use bun_lint::paths::{is_absolute, relative};
 use bun_sema::atom::Interner;
 use bun_sema::bind::{BindOptions, Recycled, bind_for_lint_in};
 use bun_sema::config::{
-    Project, find_config, load_overriding, resolve_config_file_name_of_project_reference,
-    without_config,
+    Project, find_config, find_config_file, load_overriding,
+    resolve_config_file_name_of_project_reference, without_config,
 };
 use bun_sema::hir::ResolutionMode;
 use bun_sema::json::Json;
@@ -131,6 +131,7 @@ pub struct Graph<'h> {
     loading: Guarded<()>,
     recorded: Guarded<Vec<Recorded<'h>>>,
     record_maker: OnceLock<MakeRecord>,
+    lister: OnceLock<ListFiles<'h>>,
     /// [`Modules::follow_packages`]
     follows_packages: AtomicBool,
     /// [`Flavor::Oxlint`]
@@ -246,14 +247,11 @@ impl Scope {
         }
         let extension =
             strings::last_index_of_char(path, b'.').map_or(&b""[..], |dot| &path[dot + 1..]);
-        // Not `cjs`.
-        if !self.allows_js && matches!(extension, b"js" | b"jsx" | b"mjs") {
+        let is_js = matches!(extension, b"js" | b"jsx" | b"mjs" | b"cjs");
+        if is_js && !self.allows_js {
             return false;
         }
-        let is_script = matches!(
-            extension,
-            b"ts" | b"tsx" | b"mts" | b"cts" | b"js" | b"jsx" | b"mjs" | b"cjs"
-        );
+        let is_script = is_js || matches!(extension, b"ts" | b"tsx" | b"mts" | b"cts");
         let mut include = self.include.iter().filter(|it| is_script || !it.1);
         include.any(|it| it.0.matches(path)) && !self.exclude.iter().any(|it| it.matches(path))
     }
@@ -287,10 +285,16 @@ impl<'h> Graph<'h> {
             loading: Guarded::new(()),
             recorded: Guarded::new(Vec::new()),
             record_maker: OnceLock::new(),
+            lister: OnceLock::new(),
             follows_packages: AtomicBool::new(false),
             follows_oxlint: AtomicBool::new(false),
             complete: OnceLock::new(),
         }
+    }
+
+    /// Who answers [`Modules::list_files`]. Without it no file is found.
+    pub fn list_files_by(&self, lister: ListFiles<'h>) {
+        let _ = self.lister.set(lister);
     }
 
     fn known(&self) -> &Known<'h> {
@@ -1001,6 +1005,10 @@ impl Modules for Graph<'_> {
         self.store.disk().read(&from_native(path))
     }
 
+    fn list_files(&self, patterns: &[&[u8]], extensions: &[&[u8]]) -> Result<Vec<Listed>, Vec<u8>> {
+        (self.lister.get()).map_or_else(|| Ok(Vec::new()), |list| list(patterns, extensions))
+    }
+
     fn facts(
         &self,
         path: &[u8],
@@ -1029,8 +1037,9 @@ impl Modules for Graph<'_> {
     }
 
     fn es_module_interop(&self, directory: &[u8]) -> bool {
-        let file = join(&from_native(directory), b"index.ts");
-        (self.resolver_of(self.config_of(&file), directory_of(&file))).es_module_interop
+        let directory = from_native(directory);
+        let config = find_config_file(self.store.disk(), &directory).unwrap_or_default();
+        self.resolver_of(&config, &directory).es_module_interop
     }
 
     fn path(&self, module: ModuleId) -> &[u8] {

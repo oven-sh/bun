@@ -102,6 +102,12 @@ pub const PARAMS: &[Param] = &[
     ),
     clap::param!("--no-type-aware                 Skip the rules that need types"),
     clap::param!(
+        "--infer-globals                 The globals of a file are what the types of its project declare, too"
+    ),
+    clap::param!(
+        "--no-infer-globals              Without a configuration file: those of browsers and of Node.js"
+    ),
+    clap::param!(
         "-p, --project/--tsconfig <path>  The tsconfig.json for the rules that need types"
     ),
     clap::param!("--type-check                    With <b>--type-aware<r>: report type errors too"),
@@ -312,6 +318,8 @@ pub struct Options {
     pub type_aware: Option<bool>,
     /// The command line has `--type-aware`.
     pub has_type_aware_flag: bool,
+    /// `--infer-globals`, `--no-infer-globals`. `None`: only without a configuration file.
+    pub infer_globals: Option<bool>,
     pub project: Option<Vec<u8>>,
     /// `0`: the number of cores.
     pub threads: usize,
@@ -334,6 +342,8 @@ pub struct Options {
     /// What the configuration asks for and cannot be done is a warning, and not an error at the end.
     pub allow_unsupported: bool,
     pub native_plugin_rules: NativePlugins,
+    /// The defaults of the flags of `bun format`, for the rule `bun/format`. No flag sets them.
+    pub of_bun_format: Option<Box<crate::fmt::cli::Options>>,
     /// Not ESLint 8's `--no-eslintrc`: its configuration files are looked for.
     pub eslintrc: bool,
     /// ESLint 8's `--env`.
@@ -396,6 +406,7 @@ impl Default for Options {
             rules: false,
             plugins: Vec::new(),
             type_aware: None,
+            infer_globals: None,
             has_type_aware_flag: false,
             project: None,
             threads: 0,
@@ -412,6 +423,7 @@ impl Default for Options {
             disable_nested_config: false,
             allow_unsupported: false,
             native_plugin_rules: NativePlugins::All,
+            of_bun_format: None,
             eslintrc: true,
             env: Vec::new(),
             rulesdir: Vec::new(),
@@ -554,6 +566,7 @@ impl Options {
             b"exit-on-fatal-error" => self.exit_on_fatal_error = is_on,
             b"print-config" => self.print_config = owned(),
             b"type-aware" => (self.type_aware, self.has_type_aware_flag) = (Some(is_on), is_on),
+            b"infer-globals" => self.infer_globals = Some(is_on),
             b"project" => self.project = owned(),
             b"threads" | b"concurrency" => match (name, text) {
                 (b"concurrency", b"auto" | b"off") => {}

@@ -84,11 +84,7 @@ enum Parent<'a> {
 impl<'a> Parent<'a> {
     /// The expression that `node` is written as.
     fn written(node: Node<'a>) -> Option<Expr<'a>> {
-        match node {
-            Node::Func(func) => func.owner().as_expr(),
-            Node::Class(class) => class.owner().as_expr(),
-            _ => node.as_expr(),
-        }
+        node.as_written().as_expr()
     }
 
     fn of(node: Node<'a>) -> Parent<'a> {

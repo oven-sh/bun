@@ -2,13 +2,13 @@ use bun_lint_oxlint::import::{export_declaration_span, is_export_declaration};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
-/// Enforce that all exports are declared at the bottom of the file.
+/// Ensure all exports appear after other statements.
 pub struct ExportsLast;
 
 const EXPORTS_LAST: Message = Message::new("", "Export statements should appear at the end of the file");
 
 impl Rule for ExportsLast {
-    const META: Meta = Meta::oxlint(Plugin::Import, "exports-last", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::Import, "exports-last", Kind::Suggestion);
     const ON: On = On::new().finish();
     no_state!();
 

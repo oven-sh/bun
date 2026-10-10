@@ -227,6 +227,8 @@ pub struct File<'a> {
     pub(crate) formatter: std::cell::Cell<Option<crate::formats::Formatter<'a>>>,
     pub(crate) handed_back: std::cell::Cell<Option<crate::formats::Reason>>,
     pub(crate) package_module: std::cell::OnceCell<std::sync::Arc<[u8]>>,
+    pub(crate) inferred_from: Cell<Option<&'a dyn crate::linter::globals::InferredGlobals>>,
+    pub(crate) inferred_globals: OnceCell<Option<&'a [crate::linter::globals::InferredGlobal]>>,
     vue_script: std::cell::Cell<VueScript>,
     language: &'a LanguageOptions,
     body: hir::IdList<hir::StmtId>,
@@ -270,6 +272,8 @@ impl<'a> File<'a> {
             formatter: std::cell::Cell::new(None),
             handed_back: std::cell::Cell::new(None),
             package_module: std::cell::OnceCell::new(),
+            inferred_from: Cell::new(None),
+            inferred_globals: OnceCell::new(),
             vue_script: std::cell::Cell::default(),
             path,
         }

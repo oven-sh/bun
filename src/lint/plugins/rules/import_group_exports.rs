@@ -8,7 +8,7 @@ use bun_lint::rule::Plugin;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
-/// Reports when named exports are not grouped together in a single export declaration.
+/// Prefer named exports to be grouped together in a single export declaration
 pub struct GroupExports;
 
 const ES_MODULE: Message = Message::new(
@@ -29,7 +29,7 @@ pub struct State<'a> {
 }
 
 impl Rule for GroupExports {
-    const META: Meta = Meta::oxlint(Plugin::Import, "group-exports", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::Import, "group-exports", Kind::Suggestion);
     const ON: On = On::new().exprs(&[ExprTag::Assign]).finish();
     type State<'a> = State<'a>;
 
@@ -39,7 +39,7 @@ impl Rule for GroupExports {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let mut on = On::new();
-        if file.mentions("exports") {
+        if file.mentions_any(&["exports", "#exports"]) {
             on = on.exprs(&[ExprTag::Assign]);
         }
         on.finish()
@@ -50,7 +50,8 @@ impl Rule for GroupExports {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if e.left().is_some_and(is_commonjs_export) && !is_assignment_target(e, &mut cx.state.assignment_targets) {
+        let is_export = if cx.language().is_oxlint { is_commonjs_export } else { has_exporting_accessor_chain };
+        if e.left().is_some_and(is_export) && !is_assignment_target(e, &mut cx.state.assignment_targets) {
             cx.state.commonjs_exports.push(e.span());
         }
     }
@@ -59,11 +60,14 @@ impl Rule for GroupExports {
         // Of values, of types.
         let mut nodes: [Spans; 2] = [Spans::new(), Spans::new()];
         let mut source_records: [FxHashMap<Name<'a>, Spans>; 2] = [FxHashMap::default(), FxHashMap::default()];
+        let is_oxlint = cx.language().is_oxlint;
         for stmt in module_items(cx.file()) {
             match stmt.kind() {
                 StmtKind::ExportNamed(export) => {
                     let kind = usize::from(export.is_type_only());
                     match export.spec().filter(|_| export.has_from()) {
+                        // The original keeps them by name in an object, of which that is no key. oxlint has a map.
+                        Some(source) if !is_oxlint && source.is("__proto__") => {}
                         Some(source) => source_records[kind].entry(source).or_default().push(stmt.span()),
                         None => nodes[kind].push(stmt.span()),
                     }
@@ -86,7 +90,30 @@ impl Rule for GroupExports {
     }
 }
 
-/// `exports.a`, `module.exports`, `module.exports.a`
+/// Whether upstream's `accessorChain` is `exports.a`, `module.exports` or `module.exports.a`. A name in brackets is as one after a
+/// dot, and the chain begins after what is neither a member nor a name: `f().exports[a]`.
+fn has_exporting_accessor_chain(left: Expr) -> bool {
+    // From the last to the first. `None`: what is in the brackets is no name.
+    let mut chain: SmallVec<[Option<&[u8]>; 5]> = SmallVec::new();
+    let mut node = left;
+    while chain.len() <= 3 && let Some(object) = node.object() {
+        chain.push(match node.index() {
+            Some(index) => index.as_ident().map(Name::bytes),
+            None => node.member_name().map(|it| it.bytes().strip_prefix(b"#").unwrap_or_else(|| it.bytes())),
+        });
+        if let Some(name) = object.as_ident() {
+            chain.push(Some(name.bytes()));
+            break;
+        }
+        if object.is_chain_root() {
+            break;
+        }
+        node = object;
+    }
+    matches!(chain[..], [_, Some(b"exports")] | [Some(b"exports"), Some(b"module")] | [_, Some(b"exports"), Some(b"module")])
+}
+
+/// oxlint's: `exports.a`, `module.exports`, `module.exports.a`
 fn is_commonjs_export(left: Expr) -> bool {
     let Some(object) = left.object() else {
         return false;

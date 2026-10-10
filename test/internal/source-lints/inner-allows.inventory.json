@@ -205,6 +205,9 @@
   "src/lint/plugins/regexp_type_data.rs": [
     "dead_code, until every rule of the plugin is written"
   ],
+  "src/lint/react/util_annotations.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
   "src/lint/react/util_ast.rs": [
     "dead_code, until every rule of the plugin is written"
   ],
@@ -254,6 +257,9 @@
     "dead_code, until every rule of the plugin is written"
   ],
   "src/lint/react/util_pragma.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_prop_types.rs": [
     "dead_code, until every rule of the plugin is written"
   ],
   "src/lint/react/util_prop_types_declaration.rs": [

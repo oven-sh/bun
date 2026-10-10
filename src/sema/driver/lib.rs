@@ -25,12 +25,12 @@ use bun_sema::hir::{ExprTag, FileKind};
 use bun_sema::json::Json;
 use bun_sema::messages;
 use bun_sema::program::{
-    COMPARE_PATHS_CASE_SENSITIVE, FileId, Files, Run, declaration_emit_output_file_path,
-    has_libraries, own_emit_output_file_path,
+    COMPARE_PATHS_CASE_SENSITIVE, FileId, Files, GlobalName, Run,
+    declaration_emit_output_file_path, has_libraries, own_emit_output_file_path,
 };
 pub use bun_sema::resolve::ScriptKind;
 use bun_sema::resolve::{
-    Host, Options, Phase, ancestors, contains_path, displayed_path,
+    Host, ModuleDetection, Options, Phase, ancestors, contains_path, displayed_path,
     get_relative_path_from_directory, inside, is_declaration_file_name, is_javascript,
     is_javascript_file, is_relative, is_same_path, join, output_declaration_file_name, to_path,
     to_path_in, typescript_path,
@@ -43,7 +43,7 @@ use bun_sema::verify::verify_project_references;
 use bun_threading::Guarded;
 use std::borrow::Cow;
 use std::cmp::Reverse;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::thread::ThreadId;
 use std::time::{Duration, Instant};
@@ -307,13 +307,18 @@ pub struct PlanOptions {
     /// The `lib.*.d.ts` of a program are those of the `typescript` that is installed for it: of the first
     /// `node_modules/typescript` from the directory of the configuration file upwards, if that has the files that `lib` and
     /// `target` name. Else they are `Request::libs`. What the project's own compiler reads about `Element` is what is read here.
-    /// And what its configuration file does not say is what that compiler takes for it: `resolve::AS_BEFORE_6`.
+    /// And its configuration file means what it means to that compiler: `resolve::INSTALLED_MAJOR`.
     pub prefers_the_library_of_the_project: bool,
     /// THE SEAM BETWEEN TWO WAYS TO LOAD A FILE ONCE FOR SEVERAL PROGRAMS. Off, `bun check`: a declaration file is kept in a form
     /// that every program copies (`portable::SharedFile`): each has its own names, and what is kept is freed when the last is
     /// loaded. On, `bun lint`: every file, sources too, by reference (`program::Run`): a run with types over a monorepo loads
     /// the same sources for a hundred programs. It keeps all of them to the end, and programs that overlap copy the names.
     pub shares_every_file: bool,
+    /// Nothing is checked: `Report::globals` is what is asked for. Of the root files of a project only those are loaded that can
+    /// declare a global, judged by name and text (`may_declare_a_global`), with the libraries and the `types` as always; of
+    /// what they import only what declaration files import. A file of `Request::paths` without a configuration file above
+    /// it is in no program.
+    pub only_the_globals: bool,
     /// The memory of the machine, or of the container that the process is in: the programs of a request run at the same
     /// time as far as a quarter of it goes. 0: it is not known, and they run one after the other.
     pub memory: usize,
@@ -346,6 +351,7 @@ impl Default for PlanOptions {
             refuses_broken_configurations: false,
             prefers_the_library_of_the_project: false,
             shares_every_file: false,
+            only_the_globals: false,
             memory: 0,
         }
     }
@@ -802,7 +808,7 @@ fn installed_typescript(host: &dyn Host, config: &[u8]) -> Option<Vec<u8>> {
         .find(|package| host.is_dir(package))
 }
 
-/// `resolve::AS_BEFORE_6` for the configuration file at `config`: `PlanOptions::prefers_the_library_of_the_project`.
+/// `resolve::INSTALLED_MAJOR` for the configuration file at `config`: `PlanOptions::prefers_the_library_of_the_project`.
 fn defaults_of_the_installed_typescript(
     host: &dyn Host,
     request: &Request,
@@ -817,7 +823,8 @@ fn defaults_of_the_installed_typescript(
     let version = fields.get(b"version")?.as_str()?;
     let major = &version[..strings::index_of_char_usize(version, b'.')?];
     let major: u32 = std::str::from_utf8(major).ok()?.parse().ok()?;
-    (major < 6).then(|| (bun_sema::resolve::AS_BEFORE_6.to_vec(), Json::Bool(true)))
+    let name = bun_sema::resolve::INSTALLED_MAJOR.to_vec();
+    Some((name, Json::Number(f64::from(major))))
 }
 
 /// The version of TypeScript that the type checker is a port of.
@@ -1020,6 +1027,13 @@ pub struct Refused {
     pub files: Vec<Vec<u8>>,
 }
 
+/// `PlanOptions::only_the_globals`
+pub struct GlobalsOf {
+    /// The files of `Request::paths` that are in the program, each a `tspath.Path`. Sorted.
+    pub files: Vec<Vec<u8>>,
+    pub names: Vec<GlobalName>,
+}
+
 #[derive(Default)]
 pub struct Report {
     /// Sorted as TypeScript sorts them: diagnostics without a file first, then by path and
@@ -1030,6 +1044,7 @@ pub struct Report {
     /// `Host::take_unreadable`: the source files that could not be read. Each was checked as an empty file.
     pub unreadable: Vec<Vec<u8>>,
     pub refused: Vec<Refused>,
+    pub globals: Vec<GlobalsOf>,
     /// Whether `@types/bun` is installed where a checked project would resolve it.
     pub has_bun_types_installed: bool,
     /// By `package.json`.
@@ -1093,6 +1108,7 @@ impl Report {
         self.incomplete.extend(other.incomplete);
         self.unreadable.extend(other.unreadable);
         self.refused.extend(other.refused);
+        self.globals.extend(other.globals);
         self.listed_files.extend(other.listed_files);
         self.scripts_elsewhere.extend(other.scripts_elsewhere);
         self.resolution_trace.extend(other.resolution_trace);
@@ -1940,7 +1956,11 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
             files.retain(|it| !in_directories.contains(&*to_path(it, is_case_sensitive)));
         }
     }
-    by_project.retain(|it| !it.2.is_empty());
+    let only_the_globals = request.plan_options.only_the_globals;
+    by_project.retain(|it| !it.2.is_empty() && !(only_the_globals && it.0.is_none()));
+    if by_project.is_empty() && only_the_globals {
+        return report;
+    }
     if by_project.is_empty() {
         report.diagnostics.push(Diagnostic {
             text: [
@@ -2275,7 +2295,7 @@ fn check_project_of(
     };
     let is_case_sensitive = disk.is_case_sensitive();
     let named = of.named.map(|(extent, named)| {
-        if extent == Extent::Project {
+        if extent == Extent::Project && !request.plan_options.only_the_globals {
             // Load the whole project even when only some files are checked. Global declarations and module augmentations from any file
             // affect every other file, so a file must produce the same errors with and without path arguments.
             let files = project.files.iter();
@@ -3275,6 +3295,27 @@ pub fn check_project(
     )
 }
 
+/// Whether the root file at `path` can add to the globals of its program: it is a declaration file; or a script, which
+/// has neither `import` nor `export`, nor `require` in JavaScript; or it has `declare global`. By the words in its text: one
+/// that is kept for nothing costs its parse. A script that has such a word in a comment is not seen.
+fn may_declare_a_global(host: &dyn Host, path: &[u8], every_file_is_a_module: bool) -> bool {
+    if is_declaration_file_name(path) {
+        return true;
+    }
+    if path.ends_with(b".json") {
+        return false;
+    }
+    let Some(text) = host.read(path) else {
+        return false;
+    };
+    let has = |word: &[u8]| strings::contains(&text, word);
+    has(b"global")
+        || !every_file_is_a_module
+            && !has(b"import")
+            && !has(b"export")
+            && !(is_javascript(path) && has(b"require"))
+}
+
 /// `check_project`. `named`: of all loaded files, only these files (sorted) and the files they
 /// refer to are checked.
 /// `owned_elsewhere`: files of referenced projects, which are loaded but not checked.
@@ -3368,6 +3409,18 @@ fn check_named_files(
         project.options.skip_default_lib_check,
     );
 
+    if request.plan_options.only_the_globals {
+        project.options.imports_of_sources_add_no_file = true;
+        let is_module = project.options.module_detection == ModuleDetection::Force;
+        let roots = &project.files;
+        let is_kept: Vec<AtomicBool> = roots.iter().map(|_| AtomicBool::new(false)).collect();
+        host.parallel(roots.len(), &|at| {
+            let may = may_declare_a_global(host, &roots[at], is_module);
+            is_kept[at].store(may, Ordering::Relaxed);
+        });
+        let mut is_kept = is_kept.iter();
+        (project.files).retain(|_| is_kept.next().is_some_and(|it| it.load(Ordering::Relaxed)));
+    }
     let written = std::mem::take(&mut project.raw_compiler_options);
     let is_true = |name: &[u8]| written.contains(&(name.to_vec(), Json::Bool(true)));
     project.options.drops_unreferenced = !request.retains_everything;
@@ -3393,6 +3446,13 @@ fn check_named_files(
         return report;
     }
     host.stays_loaded();
+    if request.plan_options.only_the_globals {
+        report.globals.push(GlobalsOf {
+            files: named.unwrap_or_default().to_vec(),
+            names: files.global_names(),
+        });
+        return report;
+    }
     if refuses {
         let problems = files.program_problems();
         let problems = (problems.iter())

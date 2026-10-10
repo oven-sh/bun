@@ -69,10 +69,16 @@ pub(super) struct Reader<'r> {
 }
 
 /// Whether the plugin that a configuration has as `prefix` is the one that is implemented here: it has the name that is usual
-/// for it, and the rules here [answer for it](Registry::answers_for). `name`: what the plugin says it is called, with its version, if it says so. Under another name, as `ts` or `node` in
+/// for it. `name`: what the plugin says it is called, with its version, if it says so. Under another name, as `ts` or `node` in
 /// `@antfu/eslint-config`, or if another plugin has the name, as `import-x` has `import` there, it runs as what it is:
-/// JavaScript. So its rules are called what the configuration calls them, in reports and in comments.
-fn is_built_in(registry: &Registry, prefix: &[u8], name: Option<&[u8]>) -> bool {
+/// JavaScript. So its rules are called what the configuration calls them, in reports and in comments. The same if the rules
+/// here [do not answer for it](Registry::answers_for) and `can_be_loaded`: the configuration says where its own are.
+fn is_built_in(
+    registry: &Registry,
+    prefix: &[u8],
+    name: Option<&[u8]>,
+    can_be_loaded: bool,
+) -> bool {
     let package = name.map(
         |name| match bun_core::strings::last_index_of_char(name, b'@') {
             Some(at) if at > 0 => &name[..at],
@@ -80,18 +86,13 @@ fn is_built_in(registry: &Registry, prefix: &[u8], name: Option<&[u8]>) -> bool 
         },
     );
     // ESLint has its own rules in a plugin that is called `@`.
-    prefix == b"@"
-        || registry.answers_for(prefix) && Plugin::answers_in_place_of(prefix, package)
+    let answers = registry.answers_for(prefix) || !can_be_loaded;
+    prefix == b"@" || answers && Plugin::answers_in_place_of(prefix, package)
 }
 
 /// Adds the names of the plugins in `json`, which is what a configuration file exports or a part of it, that are not
 /// [built in](is_built_in). An object can have the rules of a plugin that an object after it has.
-fn add_foreign_prefixes(
-    registry: &Registry,
-    json: &Json,
-    depth: usize,
-    into: &mut Vec<Box<[u8]>>,
-) {
+fn add_foreign_prefixes(registry: &Registry, json: &Json, depth: usize, into: &mut Vec<Box<[u8]>>) {
     if let Json::Array(items) = json {
         for item in items.iter().filter(|_| depth < 64) {
             add_foreign_prefixes(registry, item, depth + 1, into);
@@ -99,8 +100,10 @@ fn add_foreign_prefixes(
         return;
     }
     let plugins = json.get(b"plugins").and_then(Json::as_object);
+    let located = json.get(b"$jsPlugins");
     for (prefix, name) in plugins.unwrap_or_default() {
-        if !is_built_in(registry, prefix, name.as_str())
+        let can_be_loaded = located.is_some_and(|it| it.get(prefix).is_some());
+        if !is_built_in(registry, prefix, name.as_str(), can_be_loaded)
             && !into.iter().any(|it| **it == prefix[..])
         {
             into.push(prefix[..].into());
@@ -501,7 +504,10 @@ impl Reader<'_> {
             .and_then(Json::as_object)
             .unwrap_or_default()
         {
-            match is_built_in(self.registry, prefix, name.as_str()) {
+            let located = json.get(b"$jsPlugins");
+            let can_be_loaded = located.is_some_and(|it| it.get(prefix).is_some())
+                || self.js_locations.iter().any(|it| *it.0 == prefix[..]);
+            match is_built_in(self.registry, prefix, name.as_str(), can_be_loaded) {
                 true => {
                     object.plugins.push(prefix[..].into());
                     if let Some(name) = name.as_str() {
@@ -797,6 +803,7 @@ impl Reader<'_> {
             is_legacy: semantics.is_legacy,
             eslint_major: if semantics.is_legacy { 8 } else { 10 },
             without_modules: false,
+            infers_globals: crate::language::InferGlobals::No,
             lints_all_that_is_named: false,
             dot_patterns: None,
             prefers_typescript_rules: self.prefers_typescript_rules,

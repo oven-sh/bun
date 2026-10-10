@@ -47,7 +47,13 @@ fn is_unsafe_assignment_worker<'a>(
         }
     }
     // Only a pair of type references is looked into, so no other pair needs to be remembered.
-    if depth > MAX_DEPTH || !is_type_reference(ty) || !is_type_reference(receiver) {
+    // tsgolint leaves out a deferred one, which is what an alias of a tuple, of an array or of an
+    // instantiation is: `type A = Set<string>`.
+    let is_looked_into = |it: Type<'a>| match it.file().language().is_oxlint {
+        true => it.is_non_deferred_type_reference(),
+        false => is_type_reference(it),
+    };
+    if depth > MAX_DEPTH || !is_looked_into(ty) || !is_looked_into(receiver) {
         return None;
     }
     if visited.contains(&(ty, receiver)) {

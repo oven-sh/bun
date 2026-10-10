@@ -111,7 +111,7 @@ fn check<'a>(rule: &NoUnstableNestedComponents, node: Node<'a>, cx: &mut Cx<'a, 
     if !matches!(node, Node::Class(_)) && components.is_first_argument_of_hoc_call(node) {
         return;
     }
-    let outer = outer_node(node);
+    let outer = node.as_written();
     let is_component_in_prop = parent.and_then(as_object_property).is_some()
         || state.in_jsx_attribute_expression.find(outer, is_in_jsx_attribute_expression) == Some(true)
         || file.mentions("createElement")
@@ -151,19 +151,11 @@ fn check<'a>(rule: &NoUnstableNestedComponents, node: Node<'a>, cx: &mut Cx<'a, 
     }
 }
 
-/// The `Expr`, the `Stmt` or the `Member` that a function or a class is.
-fn outer_node(node: Node<'_>) -> Node<'_> {
-    match node {
-        Node::Func(func) => func.owner(),
-        Node::Class(class) => class.owner(),
-        _ => node,
-    }
-}
 
 /// `ctx.nodes().parent_node(..)` of a function, a class or a call. `None`: it is in parentheses, or is the whole of an
 /// optional chain.
 fn parent_node(node: Node<'_>) -> Option<Node<'_>> {
-    match outer_node(node) {
+    match node.as_written() {
         Node::Expr(e) => (!e.is_parenthesized() && !e.is_chain_root()).then(|| e.parent()),
         // The function of a method is in the method.
         outer @ Node::Member(_) => Some(outer),
@@ -174,7 +166,7 @@ fn parent_node(node: Node<'_>) -> Option<Node<'_>> {
 /// `argument` is the first argument of the call that it is in.
 fn as_first_argument(argument: Node<'_>) -> Option<Call<'_>> {
     let call = parent_node(argument)?.as_expr()?.as_call()?;
-    (call.args().first().map(Node::Expr) == Some(outer_node(argument))).then_some(call)
+    (call.args().first().map(Node::Expr) == Some(argument.as_written())).then_some(call)
 }
 
 impl<'a> Components<'a> {
@@ -258,7 +250,7 @@ fn function_like_name(node: Node<'_>) -> Option<Name<'_>> {
 }
 
 fn is_anonymous_default_export(node: Node) -> bool {
-    match outer_node(node) {
+    match node.as_written() {
         Node::Stmt(statement) => statement.is_default_export(),
         _ => matches!(parent_node(node), Some(Node::Stmt(statement)) if statement.tag() == StmtTag::ExportDefault),
     }
@@ -304,7 +296,7 @@ fn nearest_jsx_attribute_name<'a>(child: Node<'a>, parent: Node<'a>) -> Option<O
 /// `<a>{() => <b />}</a>`
 fn is_direct_jsx_child_render_prop(node: Node) -> bool {
     matches!(node, Node::Func(_))
-        && is_in_jsx_expression_container(outer_node(node))
+        && is_in_jsx_expression_container(node.as_written())
         && matches!(parent_node(node), Some(Node::Expr(e))
             if matches!(e.kind(), ExprKind::Jsx(jsx) if !jsx.is_fragment()))
 }

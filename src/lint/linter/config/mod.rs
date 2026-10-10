@@ -69,7 +69,7 @@ use super::resolved::{
 use super::schema;
 use crate::context::Severity;
 use crate::js_plugin;
-use crate::language::LanguageOptions;
+use crate::language::{InferGlobals, LanguageOptions};
 use crate::options::Json;
 use crate::paths;
 use crate::rule::{Meta, Plugin};
@@ -345,6 +345,8 @@ pub struct Config {
     eslint_major: u8,
     /// [`LanguageOptions::without_modules`]
     without_modules: bool,
+    /// [`LanguageOptions::infers_globals`]
+    infers_globals: InferGlobals,
     /// `--no-ignore` of ESLint 8: a file that is named is linted, whatever ignores it. What is found in a directory is not.
     lints_all_that_is_named: bool,
     /// Which object has the patterns with which ESLint 8 ignores what starts with a dot.
@@ -426,6 +428,11 @@ impl Config {
     /// Sets [`LanguageOptions::eslint_major`] for all files. To be called before the configuration of a file is asked for.
     pub fn follow_eslint(&mut self, major: u8) {
         self.eslint_major = major;
+    }
+
+    /// The same for [`LanguageOptions::infers_globals`].
+    pub fn infer_globals(&mut self, how: InferGlobals) {
+        self.infers_globals = how;
     }
 
     /// What the user may want to know, and nothing is wrong: a line for each.
@@ -878,6 +885,7 @@ impl Config {
         config.language.eslint_8 = eslint_8;
         config.language.eslint_major = self.eslint_major;
         config.language.without_modules = self.without_modules;
+        config.language.infers_globals = self.infers_globals;
         let parser_location = (indices.iter().rev())
             .find_map(|index| self.objects.get(*index as usize)?.parser_location.as_ref());
         // Without the plugins in whose place the file has another of the same name.

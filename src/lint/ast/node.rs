@@ -151,6 +151,16 @@ impl<'a> Node<'a> {
         self.file().slice(self.span())
     }
 
+    /// The `Expr`, the `Stmt`, the `Member` or the `Prop` that a function or a class is written as. Any other node is itself.
+    #[inline]
+    pub fn as_written(self) -> Node<'a> {
+        match self {
+            Node::Func(func) => func.owner(),
+            Node::Class(class) => class.owner(),
+            _ => self,
+        }
+    }
+
     #[inline]
     pub fn as_expr(self) -> Option<Expr<'a>> {
         match self {

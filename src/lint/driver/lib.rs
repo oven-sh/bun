@@ -23,6 +23,7 @@ pub mod for_tests;
 mod format;
 mod fs;
 mod gitignore;
+mod inferred;
 mod lint;
 mod print_config;
 mod processor;

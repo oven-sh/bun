@@ -51,6 +51,18 @@ pub(crate) enum Format {
 impl Format {
     pub(crate) const NAMES: &'static str = "stylish, pretty, json, json-with-metadata, unix, github, agent, checkstyle, junit, gitlab, sarif";
 
+    /// Says that none is called `name`.
+    pub(crate) fn is_missing(name: &[u8]) -> Vec<u8> {
+        [
+            b"There is no formatter \"",
+            name,
+            b"\". Those that exist: ",
+            Format::NAMES.as_bytes(),
+            b".",
+        ]
+        .concat()
+    }
+
     /// `is_oxlint`: the configuration is oxlint's, so the names are too.
     pub(crate) fn by_name(name: &[u8], is_oxlint: bool) -> Option<Format> {
         Some(match name {

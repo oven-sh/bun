@@ -429,6 +429,17 @@ impl std::ops::Deref for SymbolMap<'_> {
     }
 }
 
+/// A name in `Files::globals`.
+pub struct GlobalName {
+    pub name: Box<[u8]>,
+    pub is_value: bool,
+    /// A type or a namespace.
+    pub is_type: bool,
+    /// A `var` or a `let` declares it in a file of the project itself. The libraries and the packages write `declare var` for
+    /// nearly everything, so there it says nothing.
+    pub is_writable: bool,
+}
+
 /// A table that `NameResolver.Resolve` searches.
 #[derive(Copy, Clone)]
 pub enum SymbolTable {
@@ -6095,6 +6106,8 @@ impl<'s> Files<'s> {
             let should_add_file = is_import
                 && get_resolution_diagnostic(options, extension, hir).is_none()
                 && !options.no_resolve
+                && !(of_program.imports_of_sources_add_no_file
+                    && hir.kind != FileKind::Declaration)
                 && !(is_js_file && !options.allow_js);
             // `parseTask.load`: the declaration file is read in place of a source of a referenced
             // project. Any other file needs an extension that the program supports.
@@ -7404,6 +7417,39 @@ impl<'s> Files<'s> {
             }
         }
         List::One(sym)
+    }
+
+    /// What a name that no scope of a file declares can resolve to, sorted by name.
+    pub fn global_names(&self) -> Vec<GlobalName> {
+        let is_of_the_project = |file: FileId| {
+            let module = self.module(file);
+            !module.is_lib
+                && !module.is_from_external_library
+                && !strings::contains(module.file_name(), b"/node_modules/")
+        };
+        let mut names = Vec::with_capacity(self.globals.len());
+        for &(name, symbol) in self.globals.iter() {
+            let text = self.atoms.bytes(name);
+            // An ambient module is there with its quotes, and what the binder names itself with a byte that no text has.
+            if matches!(text.first(), None | Some(b'"' | b'\'' | 0xFE)) {
+                continue;
+            }
+            let symbol = self.canonical(symbol);
+            let flags = self.symbol_flags(symbol);
+            let is_variable = |part: &Sym| {
+                let flags = self.flags(*part);
+                flags.intersects(SymFlags::VARIABLE) && !flags.contains(SymFlags::CONST)
+            };
+            names.push(GlobalName {
+                name: text.into(),
+                is_value: flags.intersects(SymFlags::VALUE),
+                is_type: flags.intersects(SymFlags::TYPE | SymFlags::NAMESPACE),
+                is_writable: (self.parts(symbol).iter())
+                    .any(|part| is_of_the_project(part.file) && is_variable(part)),
+            });
+        }
+        names.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+        names
     }
 
     pub fn global(&self, name: Atom, meaning: SymFlags) -> Option<Sym> {

@@ -260,6 +260,8 @@ complete -c bun -n "__fish_seen_subcommand_from lint" -l "no-native-plugin-rules
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "print-config" -r -F -d "Print the configuration of a file, and lint nothing"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "type-aware" -d "Run the rules that need types, whatever the configuration says"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "no-type-aware" -d "Skip the rules that need types"
+complete -c bun -n "__fish_seen_subcommand_from lint" -l "infer-globals" -d "The globals of a file are what the types of its project declare, too"
+complete -c bun -n "__fish_seen_subcommand_from lint" -l "no-infer-globals" -d "Without a configuration file: those of browsers and of Node.js"
 complete -c bun -n "__fish_seen_subcommand_from lint" -s "p" -l "project" -r -F -d "The tsconfig.json for the rules that need types"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "type-check" -d "With --type-aware: report type errors too"
 complete -c bun -n "__fish_seen_subcommand_from lint" -s "A" -l "allow" -r -d "With an .oxlintrc.json: turn a rule or a category off"

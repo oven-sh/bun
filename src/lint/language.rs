@@ -60,6 +60,17 @@ pub enum Parser {
     Other,
 }
 
+/// Whether the globals of a file are what the types of its program declare: [`File::inferred_globals`](crate::ast::File).
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub enum InferGlobals {
+    #[default]
+    No,
+    /// They, and what the configuration has.
+    Besides,
+    /// They, and of the configuration what `globals` itself has. For a file that is in no program: the configuration.
+    Instead,
+}
+
 #[derive(Clone, Debug)]
 pub struct LanguageOptions {
     /// The year: 2015, 2016, .. For ES3 and ES5, 3 and 5.
@@ -110,6 +121,7 @@ pub struct LanguageOptions {
     pub eslint_major: u8,
     /// oxlint looks at no other file than the one that it lints: it does so only with its plugin `import`.
     pub without_modules: bool,
+    pub infers_globals: InferGlobals,
     /// All of `languageOptions.parserOptions`.
     pub parser_options: Json,
     /// ESLint's `settings`.
@@ -346,6 +358,7 @@ impl LanguageOptions {
             eslint_8: None,
             eslint_major: 10,
             without_modules: false,
+            infers_globals: InferGlobals::No,
             parser_options,
             settings: settings.clone(),
             config_globals: OnceLock::new(),
@@ -441,6 +454,7 @@ impl Default for LanguageOptions {
             eslint_8: None,
             eslint_major: 10,
             without_modules: false,
+            infers_globals: InferGlobals::No,
             parser_options: Json::Null,
             settings: Json::Null,
             config_globals: OnceLock::new(),

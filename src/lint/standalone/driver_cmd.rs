@@ -66,11 +66,11 @@ fn or_exit<T>(parsed: Result<T, UsageError>) -> T {
     })
 }
 
-/// What the section `name` of the bunfig.toml in the working directory says. In `bun lint` Bun's own reader of that file
-/// finds it, also where `--config=` says, and shows the line that is wrong.
-fn defaults_of_bunfig<T>(name: &[u8], read: bunfig::Read<T>) -> Option<T> {
+/// What the bunfig.toml in the working directory says. In `bun lint` Bun's own reader of that file finds it, also where
+/// `--config=` says, and shows the line that is wrong.
+fn defaults_of_bunfig<T>(read: bunfig::Read<T>) -> Option<T> {
     let text = host::read("bunfig.toml").ok()?;
-    or_exit(bunfig::of_text(&text, name, read).map_err(UsageError))
+    or_exit(bunfig::of_text(&text, read).map_err(UsageError))
 }
 
 enum Command {
@@ -124,7 +124,7 @@ pub(crate) fn run(args: &[String]) {
     }
     let command = match (command, &args[..]) {
         (Command::Format(options), [_, rest @ ..]) => {
-            let defaults = defaults_of_bunfig(b"format", bunfig::format);
+            let defaults = defaults_of_bunfig(bunfig::format);
             Command::Format(defaults.map_or(options, |defaults| {
                 Box::new(or_exit(bun_lint_driver::fmt::cli::Options::parse_over(
                     defaults, rest,
@@ -132,7 +132,7 @@ pub(crate) fn run(args: &[String]) {
             }))
         }
         (Command::Lint(options), args) if !matches!(args, [b"--run-eslint-tests", ..]) => {
-            let defaults = defaults_of_bunfig(b"lint", bunfig::lint);
+            let defaults = defaults_of_bunfig(bunfig::lint);
             match defaults.map(|defaults| Options::parse_over(defaults, args)) {
                 None => Command::Lint(options),
                 Some(Ok(options)) => Command::Lint(Box::new(options)),

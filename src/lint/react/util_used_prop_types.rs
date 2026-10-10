@@ -132,11 +132,7 @@ fn is_name_of_life_cycle_method(name: &[u8], check_async_safe_life_cycles: bool)
 /// `node.parent`, if that has a `key`, for a function, a class or the initializer of a field: a
 /// `Member` or a `Prop`.
 fn parent_with_key(node: Node<'_>) -> Option<Node<'_>> {
-    let written = match node {
-        Node::Func(func) => func.owner(),
-        Node::Class(class) => class.owner(),
-        _ => node,
-    };
+    let written = node.as_written();
     match written {
         // A signature is the node itself.
         Node::Member(member) => (!member.is_signature()).then_some(written),

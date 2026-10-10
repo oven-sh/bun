@@ -5,6 +5,7 @@ use crate::cli::{FixType, Options};
 use crate::configs::{Flavor, Loaded};
 use crate::discover::{Status, Target};
 use crate::embedded::Framework;
+use crate::inferred::Inferred;
 use crate::results::{Counts, FileResult, Linted};
 use crate::run::{Fatal, Timing};
 use crate::{Linter, fs, paths};
@@ -68,6 +69,8 @@ pub(crate) struct Context<'c, 'm> {
     pub(crate) modules: &'c Graph<'m>,
     /// `bun format`, for the rules that hold a file against its formatted text.
     pub(crate) formatter: &'c dyn Formats,
+    /// The globals of the programs of the files. `None`: no file of the run can ask.
+    pub(crate) inferred: Option<&'c Inferred<'c>>,
     pub(crate) timing: &'c Timing,
     /// The names in all files that are linted without types. They are freed when the run ends: what
     /// they take is bounded by the distinct names and strings of the project.
@@ -442,6 +445,9 @@ impl Context<'_, '_> {
                 }
                 file.set_modules(self.modules);
                 file.set_formatter(self.formatter, as_what.physical_path_len);
+                if let Some(inferred) = self.inferred {
+                    file.set_inferred_globals(inferred);
+                }
                 file.set_vue_script(as_what.vue_script);
                 let options = self.lint_options();
                 // The parts of a file that is linted in parts are not put together a second time.

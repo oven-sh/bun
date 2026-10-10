@@ -1929,12 +1929,7 @@ fn find_jsdoc_comment<'a>(file: &'a File<'a>, start: u32) -> Option<Token<'a>> {
 
 /// The braces of the `JSXExpressionContainer` that ESLint has as the parent of `node`.
 fn jsx_container_of(node: Node<'_>) -> Option<Span> {
-    let owner = match node {
-        Node::Func(func) => func.owner(),
-        Node::Class(class) => class.owner(),
-        _ => node,
-    };
-    owner.as_expr()?.jsx_container_span()
+    node.as_written().as_expr()?.jsx_container_span()
 }
 
 /// ESLint's `getJSDocComment`, for a function or a class: the `/** .. */` comment that documents

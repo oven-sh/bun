@@ -18,6 +18,7 @@ use crate::results::{Counts, FileResult};
 use crate::run::Environment;
 use bun_core::strings;
 use bun_lint::context::Severity;
+use bun_lint::linter::globals::InferredGlobals;
 use bun_lint::linter::{
     Details, LintMessage, LintResult, MAX_AUTOFIX_PASSES, ResolvedConfig, RuleId, apply_fixes,
     grows_too_much, is_parse_error, max_fixed_len,
@@ -316,6 +317,7 @@ fn check_and_lint_in(
             Some(&read_library),
             Some(context.modules),
             Some(context.formatter),
+            context.inferred.map(|it| it as &dyn InferredGlobals),
             |file| {
                 let mut result = context.linter.lint(file, config, &options);
                 if file.is_too_large_for_flow_analysis() {

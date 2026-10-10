@@ -15,10 +15,13 @@
 //! | `astUtils.getNameLocationInGlobalDirectiveComment` | [`File::name_in_global_comment`] |
 //! | `require("globals").browser` | [`environment`]`(b"browser", Tables::Today)` |
 
+mod inferred;
 mod tables;
 
+pub use inferred::{InferredGlobal, InferredGlobals};
+
 use crate::ast::File;
-use crate::language::{Global, LanguageOptions, Parser, SourceType};
+use crate::language::{Global, InferGlobals, LanguageOptions, Parser, SourceType};
 use crate::span::Span;
 use crate::utils::ast_utils::is_builtin_global_of_oxlint;
 use bun_core::strings;
@@ -361,6 +364,8 @@ pub struct GlobalVariable<'f> {
     /// Only a library of TypeScript defines it. Then a reference resolves to it only if it asks
     /// for what the variable is: a type, a value.
     pub is_only_in_lib: bool,
+    /// Only the types of the program of the file define it: [`File::inferred_globals`]. The same holds for a reference.
+    pub is_inferred: bool,
     /// ESLint's `variable.eslintExported`, with which `variable.eslintUsed` is set: an
     /// `/* exported */` comment names it.
     pub is_exported: bool,
@@ -370,7 +375,8 @@ impl GlobalVariable<'_> {
     /// Whether a reference that is in a type (`is_type`), or not, resolves to it.
     #[inline]
     pub fn accepts(&self, is_type: bool) -> bool {
-        !self.is_only_in_lib || if is_type { self.is_type } else { self.is_value }
+        let asks_what_it_is = self.is_only_in_lib || self.is_inferred;
+        !asks_what_it_is || if is_type { self.is_type } else { self.is_value }
     }
 }
 
@@ -388,14 +394,20 @@ impl<'a> File<'a> {
     /// The variable `name` of the global scope, if something other than the code of the file
     /// defines it: the version of ECMAScript, `sourceType: "commonjs"`, `languageOptions.globals`,
     /// a `/* global */` comment, and with `@typescript-eslint/parser` the libraries of TypeScript.
-    /// `None` if nothing does, or if it is `"off"`.
+    /// `None` if nothing does, or if it is `"off"`. Where [globals are inferred](InferGlobals), the types of its program too.
     ///
     /// If the file is a script that declares `name` at its top level, it is the same variable in
     /// ESLint.
     pub fn global(&'a self, name: &[u8]) -> Option<GlobalVariable<'a>> {
         let config = self.language().config_globals();
-        let implicit =
-            (config.setting(name)).or_else(|| self.global_of_environment_in_comments(name));
+        // The libraries of the program are in the place of the tables.
+        let only_written = self.language().infers_globals == InferGlobals::Instead
+            && self.inferred_globals().is_some();
+        let implicit = (config.setting(name))
+            .filter(|it| {
+                !only_written || *it == Global::Off || self.language().is_written_global(name)
+            })
+            .or_else(|| self.global_of_environment_in_comments(name));
         let comment = self.global_in_comments(name);
         let lib = if self.uses_typescript_parser() {
             config.lib(name)
@@ -403,7 +415,28 @@ impl<'a> File<'a> {
             0
         };
         let is_exported = self.is_exported_in_comments(name);
-        match comment.map(|it| it.setting).or(implicit) {
+        let setting = comment.map(|it| it.setting).or(implicit);
+        if setting.is_none()
+            && let Some(all) = self.inferred_globals()
+            && let Ok(at) = all.binary_search_by(|it| (*it.name).cmp(name))
+        {
+            let found = &all[at];
+            return Some(GlobalVariable {
+                is_writable: found.is_writable,
+                implicit_setting: Some(match found.is_writable {
+                    true => Global::Writable,
+                    false => Global::Readonly,
+                }),
+                comments: &[],
+                is_type: found.is_type,
+                is_value: found.is_value,
+                is_in_lib: false,
+                is_only_in_lib: false,
+                is_inferred: true,
+                is_exported,
+            });
+        }
+        match setting {
             None | Some(Global::Off) if lib == 0 => None,
             None | Some(Global::Off) => Some(GlobalVariable {
                 is_writable: false,
@@ -414,6 +447,7 @@ impl<'a> File<'a> {
                 is_value: lib & VALUE != 0 && !self.language().is_oxlint,
                 is_in_lib: true,
                 is_only_in_lib: true,
+                is_inferred: false,
                 is_exported,
             }),
             Some(setting) => Some(GlobalVariable {
@@ -424,6 +458,7 @@ impl<'a> File<'a> {
                 is_value: lib == 0 || lib & VALUE != 0,
                 is_in_lib: lib != 0,
                 is_only_in_lib: false,
+                is_inferred: false,
                 is_exported,
             }),
         }

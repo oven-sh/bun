@@ -3,9 +3,10 @@
 //! same `Options::set`, and the command line is laid over it. So what a key takes is what its flag takes: the kind of
 //! value is read from the table of flags, and a value is refused by what refuses it after the flag.
 //!
-//! Bun's reader of bunfig.toml finds and parses the file. What it calls with the section is here.
+//! Bun's reader of bunfig.toml finds and parses the file. What it calls with the file is here.
 
 use crate::args::{Param, UsageError, error};
+use crate::format::Format;
 use bun_ast::expr::Data;
 use bun_ast::{Expr, Loc};
 use bun_clap::Values;
@@ -21,14 +22,13 @@ pub struct Refusal {
     pub message: Vec<u8>,
 }
 
-/// [`lint`] or [`format`].
-pub type Read<T> = fn(&Expr) -> Result<T, Refusal>;
+/// [`lint`] or [`format`]: what a bunfig.toml says to the command. `Ok(None)`: nothing.
+pub type Read<T> = fn(&Expr) -> Result<Option<T>, Refusal>;
 
-/// What `read` makes of the section `name` of `text`, which is what a bunfig.toml has, for a caller that is without Bun's
-/// reader of that file: the test harness. `Ok(None)`: it has no such section. `Err`: a line for the user.
-pub fn of_text<T>(text: &[u8], name: &[u8], read: Read<T>) -> Result<Option<T>, Vec<u8>> {
-    let section = |root: &Expr| root.get(name).map(|section| read(&section)).transpose();
-    bun_lint::json::with_parsed(Notation::Toml, text, section)?.map_err(|it| it.message)
+/// What `read` makes of `text`, which is what a bunfig.toml has, for a caller that is without Bun's reader of that file:
+/// the test harness. `Err`: a line for the user.
+pub fn of_text<T>(text: &[u8], read: Read<T>) -> Result<Option<T>, Vec<u8>> {
+    bun_lint::json::with_parsed(Notation::Toml, text, read)?.map_err(|it| it.message)
 }
 
 fn refuse<T>(at: Loc, parts: &[&[u8]]) -> Result<T, Refusal> {
@@ -330,10 +330,13 @@ const _: () = assert!(
      bunfig.toml: add it to `flags`, to docs/runtime/bunfig.mdx and to the test. If it says what one run does: `actions`."
 );
 
-/// What `[format]` says.
-pub fn format(section: &Expr) -> Result<crate::fmt::cli::Options, Refusal> {
+/// What `[format]` of `file` says.
+pub fn format(file: &Expr) -> Result<Option<crate::fmt::cli::Options>, Refusal> {
+    let Some(section) = file.get(b"format") else {
+        return Ok(None);
+    };
     let mut options = crate::fmt::cli::Options::default();
-    for (key, value) in entries(section)? {
+    for (key, value) in entries(&section)? {
         // `--no-config` is the opposite of a flag that takes a value.
         if key.name == b"config" && matches!(value.data, Data::EBoolean(it) if !it.value) {
             options.config_lookup = false;
@@ -341,7 +344,7 @@ pub fn format(section: &Expr) -> Result<crate::fmt::cli::Options, Refusal> {
         }
         FORMAT.set(&key, value, &mut |flag, value, is_on| {
             options.set(flag, value, is_on)?;
-            // After the flag that is found out at the first file.
+            // With the flag, a wrong value comes out at the first file.
             match options.format.last().filter(|it| key.name == it.0) {
                 Some((name, value))
                     if bun_format::FormatOptions::default()
@@ -354,7 +357,7 @@ pub fn format(section: &Expr) -> Result<crate::fmt::cli::Options, Refusal> {
             }
         })?;
     }
-    Ok(options)
+    Ok(Some(options))
 }
 
 const LINT: Table = Table {
@@ -383,6 +386,7 @@ const LINT: Table = Table {
         b"exit-on-fatal-error",
         b"allow-unsupported",
         b"type-aware",
+        b"infer-globals",
         b"project",
         b"type-check",
         b"disable-nested-config",
@@ -437,6 +441,7 @@ const LINT: Table = Table {
         b"no-inline-config",
         b"no-error-on-unmatched-pattern",
         b"no-type-aware",
+        b"no-infer-globals",
         b"no-native-plugin-rules",
         b"parser",
         b"plugin",
@@ -494,15 +499,32 @@ fn json_of(value: &Expr) -> Result<Json, Refusal> {
     json.map_or_else(|| refuse(value.loc, &[b"it is nested too deep"]), Ok)
 }
 
-/// What `[lint]` says.
-pub fn lint(section: &Expr) -> Result<crate::cli::Options, Refusal> {
-    let mut options = crate::cli::Options::default();
-    for (key, value) in entries(section)? {
+/// What `[lint]` of `file` says, and `[format]`, which is for the rule that holds a file against what `bun format` prints.
+pub fn lint(file: &Expr) -> Result<Option<crate::cli::Options>, Refusal> {
+    let mut options = crate::cli::Options {
+        of_bun_format: format(file)?.map(Box::new),
+        ..Default::default()
+    };
+    let Some(section) = file.get(b"lint") else {
+        return Ok(options.of_bun_format.is_some().then_some(options));
+    };
+    for (key, value) in entries(&section)? {
         let set: &mut Set = &mut |flag, value, is_on| options.set(flag, value, is_on);
         match &key.name[..] {
             // One key for two flags, as in `linterOptions` of ESLint.
             b"reportUnusedDisableDirectives" if !matches!(value.data, Data::EBoolean(_)) => {
                 give(LINT.param(UNUSED_SEVERITY), value, set)?;
+            }
+            // With the flag, a wrong name comes out when the report is printed.
+            b"format" => {
+                LINT.set(&key, value, set)?;
+                let name = options.format.as_deref().unwrap_or_default();
+                if [false, true]
+                    .iter()
+                    .all(|it| Format::by_name(name, *it).is_none())
+                {
+                    return refuse(value.loc, &[&Format::is_missing(name)]);
+                }
             }
             b"nativePluginRules" => {
                 let text = match &value.data {
@@ -579,5 +601,5 @@ pub fn lint(section: &Expr) -> Result<crate::cli::Options, Refusal> {
     }
     // A flag that only ESLint or only oxlint has tells whom a command line was written for. A key was written for Bun.
     options.forget_whose_flags_it_has();
-    Ok(options)
+    Ok(Some(options))
 }

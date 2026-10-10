@@ -130,7 +130,7 @@ export const cases: Case[] = [
     file: "a.ts",
     text: () => `${rep("accessor ", 30_000)}a\n`,
     rules: { "no-debugger": "error" },
-    matches: /Parsing error/,
+    matches: /^a\.ts:\d+:\d+: .* \[Error\]$/m,
     exitCode: 1,
   },
   {
@@ -138,7 +138,7 @@ export const cases: Case[] = [
     file: "a.ts",
     text: () => `x = ${rep("new a<", 800)}A${rep(">()", 800)};\n`,
     rules: { "no-debugger": "error" },
-    matches: /Parsing error/,
+    matches: /^a\.ts:\d+:\d+: .* \[Error\]$/m,
     exitCode: 1,
   },
   {

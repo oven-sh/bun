@@ -137,6 +137,30 @@ Plugins run inside `bun lint`, on threads of their own, as they run inside `esli
 
 Types are not there for a rule in JavaScript. `parserServices.program` is `null`, also with `--type-aware`. A rule that asks for types with `getParserServices()` of typescript-eslint does not run. See [what cannot be linted](#what-cannot-be-linted).
 
+#### Run the rules of the package
+
+The built-in rules of `@typescript-eslint`, `react-hooks`, `import`, `n`, and `prettier` run in place of the rules of the package that your configuration loads. Use `--no-native-plugin-rules` to run the rules of the installed packages, in JavaScript. The rules of ESLint itself stay built in.
+
+```bash terminal icon="terminal"
+bun lint --no-native-plugin-rules
+bun lint --native-plugin-rules=@typescript-eslint,import # only these two stay built in
+```
+
+In [`bunfig.toml`](#bunfigtoml):
+
+```toml bunfig.toml icon="settings"
+[lint]
+nativePluginRules = false
+# Or name the plugins that stay built in:
+# nativePluginRules = ["@typescript-eslint", "import"]
+```
+
+- Write the name that the configuration has for the plugin, before the `/` of its rules.
+- The package has to be installed. With an `.eslintrc`, a built-in plugin otherwise needs no package.
+- The rules of `@typescript-eslint` that need types do not run in JavaScript. The run says which, and fails. Keep `@typescript-eslint` in the list for them.
+- With an `.oxlintrc.json` the option changes nothing. `plugins` names the plugins that are built into oxlint, and what `jsPlugins` names runs in JavaScript.
+- `bun lint --print-config <file>` names the rules that run in JavaScript for that file, on stderr.
+
 #### `prettier/prettier`
 
 The rule of [eslint-plugin-prettier](https://github.com/prettier/eslint-plugin-prettier) is built in. It compares each file with what [`bun format`](/runtime/format) prints, so no Prettier is started. The options, the messages, the places and the fixes are those of the package.
@@ -733,7 +757,7 @@ The type is found in arrays, tuples and unions, under another name, through `imp
 
 ### `bun/format`
 
-The same rule for a project without Prettier: it reports where a file differs from what `bun format` prints, whatever is installed.
+The same rule for a project without Prettier: it reports where a file differs from what `bun format` prints, whatever is installed. The `[format]` section of [`bunfig.toml`](/runtime/bunfig#formatter) counts, as for `bun format`.
 
 ```json .oxlintrc.json icon="file-json"
 { "rules": { "bun/format": "error" } }
@@ -791,6 +815,29 @@ bun lint -c eslint.ci.config.js
 ```
 
 Bun runs `eslint.config.js` in a separate process. A TypeScript configuration file needs no extra package.
+
+### `bunfig.toml`
+
+The `[lint]` section of `bunfig.toml` sets the defaults of the flags. A key is the name of the flag in camelCase.
+
+```toml bunfig.toml icon="settings"
+[lint]
+maxWarnings = 0 # --max-warnings 0
+inlineConfig = false # --no-inline-config
+ignorePatterns = ["vendor/"] # --ignore-pattern vendor/
+
+[lint.rules] # --rule
+"no-console" = "warn"
+eqeqeq = ["error", "smart"]
+```
+
+The command line overrides `bunfig.toml`. `bunfig.toml` overrides the configuration file where the flag does.
+
+A key does not say which tool the run stands in for, as a flag of only one tool does. Use `flavor` for that.
+
+Bun reads the `bunfig.toml` of the working directory. Write `bun --config=other.toml lint` for another file.
+
+See [`bunfig.toml`](/runtime/bunfig#linter) for every key.
 
 ### A project with both tools
 
@@ -1090,8 +1137,11 @@ bun lint [flags] [...files, directories or patterns]
 | `--pass-on-no-patterns`                    | Exit with `0` if there are no arguments                            |
 | `--exit-on-fatal-error`                    | Exit with `2` if a file cannot be parsed                           |
 | `--allow-unsupported`                      | Only warn about [what cannot be linted](#what-cannot-be-linted)    |
+| `--native-plugin-rules <plugins>`          | Plugins that [stay built in](#run-the-rules-of-the-package)        |
+| `--no-native-plugin-rules`                 | Run the rules of the installed plugins, not the built-in ones      |
 | `--print-config <path>`                    | Print the configuration of a file, and lint nothing                |
 | `--type-aware`, `--no-type-aware`          | Run or skip the rules that need types                              |
+| `--infer-globals`, `--no-infer-globals`    | Take the globals of a file from the types of its project, or not   |
 | `--type-check`                             | With `--type-aware`: report type errors too                        |
 | `-p`, `--project <path>`                   | The `tsconfig.json` for the rules that need types                  |
 | `-A`, `-W`, `-D <rule or category>`        | Allow, warn about, or deny a rule, with an `.oxlintrc.json`        |

@@ -2,18 +2,25 @@ use bun_lint_oxlint::import::{export_declaration_span, is_export_declaration, mo
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
-/// Prohibit named exports.
+/// Forbid named exports.
 pub struct NoNamedExport;
 
 const NO_NAMED_EXPORT: Message = Message::new("", "Named exports are not allowed.");
 
 impl Rule for NoNamedExport {
-    const META: Meta = Meta::oxlint(Plugin::Import, "no-named-export", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::Import, "no-named-export", Kind::Suggestion);
     const ON: On = On::new().finish();
-    no_state!();
+    type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoNamedExport
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        let language = file.language();
+        // upstream's `sourceType`. oxlint does not ask.
+        let source_type = language.parser_source_type.unwrap_or(language.source_type);
+        (language.is_oxlint || source_type == SourceType::Module).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

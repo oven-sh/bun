@@ -4,6 +4,7 @@ use crate::cli::{Options, Tool};
 use crate::configs::{self, Flavor, Loader};
 use crate::discover::{self, Status, Target};
 use crate::format::{self, Format};
+use crate::inferred::Inferred;
 use crate::lint::{Context, elapsed};
 use crate::results::{Counts, FileResult};
 use crate::suppressions::{self, Suppressions};
@@ -14,6 +15,7 @@ use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::formats::Reason;
 use bun_lint::js_plugin::{Engine, HEAVY, Host, Loading, Route};
+use bun_lint::language::InferGlobals;
 use bun_lint::linter::{FileConfig, LintMessage, Registry, RuleId, is_parse_error};
 use bun_sema::util::FxHashSet;
 use bun_threading::Guarded;
@@ -380,16 +382,7 @@ impl Run<'_> {
             None if is_oxlint => b"default",
             None => b"stylish",
         };
-        Format::by_name(name, is_oxlint).ok_or_else(|| {
-            [
-                b"There is no formatter \"",
-                name,
-                b"\". Those that exist: ",
-                Format::NAMES.as_bytes(),
-                b".",
-            ]
-            .concat()
-        })
+        Format::by_name(name, is_oxlint).ok_or_else(|| Format::is_missing(name))
     }
 
     /// What ESLint's `cli.execute` refuses. `None`: nothing.
@@ -524,6 +517,10 @@ impl Run<'_> {
                 files: 1,
                 listed: None,
             });
+        }
+        let infers = name.is_some() && config.language.infers_globals != InferGlobals::No;
+        if let Some(inferred) = context.inferred.filter(|_| infers) {
+            inferred.files(vec![path.clone()]);
         }
         let has_rules_with_types = config.has_enabled(|it| it.requires_types);
         let needs_types = name.is_some()
@@ -666,6 +663,13 @@ impl Run<'_> {
         }
         let on_circular_fixes = |path: &[u8]| warn_about_circular_fixes(loader, path);
         let mut results = Vec::with_capacity(supported.len());
+        if let Some(inferred) = context.inferred {
+            let asking = supported.iter().filter(|it| match &it.status {
+                Status::Matched(config) => config.language.infers_globals != InferGlobals::No,
+                _ => false,
+            });
+            inferred.files(asking.map(|it| it.path.clone()).collect());
+        }
 
         // Those that need types first. What turns out to be in no program is linted without.
         let started = Instant::now();
@@ -899,7 +903,13 @@ impl Run<'_> {
         let broken_fixes = Guarded::new(Vec::new());
         let handed_back = Guarded::new(Vec::new());
         let unread = Guarded::new(Vec::new());
-        let formatter = crate::fmt::ForRules::new(environment);
+        let formatter = crate::fmt::ForRules::new(environment, options.of_bun_format.as_deref());
+        // Beside a configuration file only if it is asked for.
+        let has_no_file = of_cwd
+            .as_ref()
+            .is_none_or(|it| it.flavor == Flavor::BuiltIn);
+        let inferred = (options.infer_globals.unwrap_or(has_no_file))
+            .then(|| Inferred::new(environment, pool.threads()));
         let invalid_tsconfigs = Guarded::new(Default::default());
         let context = Context {
             skipped_in_comments: &skipped_in_comments,
@@ -923,6 +933,7 @@ impl Run<'_> {
             js_plugins: &js_plugins,
             modules: &modules,
             formatter: &formatter,
+            inferred: inferred.as_ref(),
             timing: &timing,
         };
         if let Some(file) = &options.print_config {
@@ -942,6 +953,19 @@ impl Run<'_> {
                 _ => None,
             });
             self.out.stdout.push(b'\n');
+            // ESLint prints the same for a rule whoever answers for it.
+            if let FileConfig::Matched(config) = &config {
+                let on = (config.js_rules.iter()).filter(|it| it.severity != Severity::Off);
+                let ids: Vec<&[u8]> = on.map(|it| &it.configured.rule.id[..]).collect();
+                if !ids.is_empty() {
+                    pretty!(
+                        &mut self.out.stderr,
+                        environment.stderr.colors,
+                        "<blue>note<r><d>:<r> in JavaScript: {}. All other rules are built in.\n",
+                        BStr::new(&ids.join(&b", "[..]))
+                    );
+                }
+            }
             return self.out;
         }
         let mut phases = Phases::default();
@@ -971,7 +995,9 @@ impl Run<'_> {
                 &ids.join(&b", "[..]),
                 match linter.registry().answers_for(b"@typescript-eslint") {
                     true => &b""[..],
-                    false => b". With --native-plugin-rules=@typescript-eslint the built-in ones run",
+                    false => {
+                        b". With --native-plugin-rules=@typescript-eslint the built-in ones run"
+                    }
                 },
             ]);
         }

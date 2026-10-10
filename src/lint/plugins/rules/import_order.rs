@@ -1,6 +1,6 @@
+use crate::import_minimatch::Glob;
 use crate::import_type::{ImportType, ImportTypes};
 use bun_core::strings;
-use bun_glob::{Options as GlobOptions, Pattern};
 use bun_lint::language::Parser;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -66,9 +66,7 @@ struct Named {
 }
 
 struct PathGroup {
-    pattern: Pattern,
-    /// `matchBase`, for a pattern without a `/`: it is about the last name of a path.
-    matches_base: bool,
+    glob: Glob,
     group: ImportType,
     position: f64,
 }
@@ -153,22 +151,6 @@ fn direction_of(written: Option<&str>) -> Direction {
     }
 }
 
-/// `minimatch(path, pattern, patternOptions || { nocomment: true })`. Of the options, those that are known here. With
-/// [`PathGroup::matches_base`].
-fn pattern_of(group: Object) -> (Pattern, bool) {
-    let (written, options) = (group.str("pattern").unwrap_or_default().as_bytes(), group.object("patternOptions"));
-    let has_no_comment = !group.has("patternOptions") || options.bool_or("nocomment", false);
-    // Otherwise a pattern that starts with `#` is a comment, and one that starts with `!` is negated.
-    let escape: &[u8] = match written {
-        [b'#', ..] if has_no_comment => b"\\",
-        [b'!', rest @ ..] if options.bool_or("nonegate", false) && !rest.starts_with(b"(") => b"\\",
-        _ => b"",
-    };
-    let mode = if options.bool_or("dot", false) { GlobOptions::MINIMATCH_DOT } else { GlobOptions::MINIMATCH };
-    let matches_base = options.bool_or("matchBase", false) && !strings::contains_char(written, b'/');
-    (Pattern::new(&[escape, written].concat(), mode), matches_base)
-}
-
 /// `convertPathGroupsForRanks`
 fn path_groups_of(written: &[Json]) -> (Vec<PathGroup>, f64) {
     let (mut after, mut before) = ([0u32; 10], [0u32; 10]);
@@ -190,8 +172,7 @@ fn path_groups_of(written: &[Json]) -> (Vec<PathGroup>, f64) {
             }
             _ => 0.0,
         };
-        let (pattern, matches_base) = pattern_of(it);
-        groups.push(PathGroup { pattern, matches_base, group, position });
+        groups.push(PathGroup { glob: Glob::of_path_group(it), group, position });
     }
     for it in groups.iter_mut().filter(|it| it.position < 0.0) {
         it.position = -(f64::from(before[it.group as usize]) + 1.0 + it.position);
@@ -450,6 +431,15 @@ fn name_of(name: Ident<'_>) -> &[u8] {
     if name.is_string() { b"undefined" } else { name.bytes() }
 }
 
+/// The `name` of a key that is an `Identifier`, in brackets or not.
+fn identifier_of(key: Key<'_>) -> Option<&[u8]> {
+    match key.kind() {
+        KeyKind::Ident(name) => Some(name.bytes()),
+        KeyKind::Computed(e) => Some(e.as_ident()?.bytes()),
+        _ => None,
+    }
+}
+
 /// The object and the name of a `MemberExpression` whose `property` is an `Identifier`.
 fn member_of<'a>(e: Expr<'a>) -> Option<(Expr<'a>, &'a [u8])> {
     match e.kind() {
@@ -521,9 +511,7 @@ impl Order {
             _ => types.of_name(value, written == Written::Require),
         };
         let of_path = || {
-            let base = || strings::split(value, b"/").filter(|it| !it.is_empty()).last().unwrap_or_default();
-            let matches = |it: &&PathGroup| it.pattern.matches(if it.matches_base { base() } else { value });
-            let group = self.path_groups.iter().find(matches)?;
+            let group = self.path_groups.iter().find(|it| it.glob.matches(value))?;
             Some(self.groups.get(group.group as usize)? + group.position / self.max_position)
         };
         let has_path_rank = !is_excluded(import_type) && !(is_of_types && is_excluded(ImportType::Type));
@@ -549,7 +537,7 @@ impl Order {
         self.check_block(file.body(), true, &types, cx);
         for statement in file.stmts_of_kind(StmtTag::Module) {
             if let StmtKind::Module(module) = statement.kind() {
-                self.check_block(module.body(), false, &types, cx);
+                self.check_block(module.innermost().body(), false, &types, cx);
             }
         }
     }
@@ -959,12 +947,12 @@ impl Order {
             return;
         }
         let names = properties.iter().map(|it| {
-            let key = it.key().filter(|_| it.default().is_none())?;
-            let (KeyKind::Ident(name), PatKind::Ident(value)) = (key.kind(), it.value().kind()) else {
+            let name = identifier_of(it.key().filter(|_| it.default().is_none())?)?;
+            let PatKind::Ident(value) = it.value().kind() else {
                 return None;
             };
             let alias = (!it.is_shorthand()).then(|| value.bytes());
-            Some(self.named_entry(it.span(), (name.bytes(), alias), Written::Require, ImportKind::Undefined))
+            Some(self.named_entry(it.span(), (name, alias), Written::Require, ImportKind::Undefined))
         });
         if let Some(names) = names.collect::<Option<Vec<_>>>() {
             self.check_names(names, cx);
@@ -977,7 +965,7 @@ impl Order {
             return;
         };
         let names = export.items().iter().map(|it| {
-            let alias = it.is_renamed().then(|| it.exported().bytes());
+            let alias = (it.is_renamed() && !it.exported().is_string()).then(|| it.exported().bytes());
             let kind = Self::kind_of(cx, it.is_type_only());
             self.named_entry(it.span(), (name_of(it.local()), alias), Written::Export, kind)
         });
@@ -1000,11 +988,9 @@ impl Order {
                     continue;
                 };
                 let names = properties.iter().map(|it| {
-                    let (KeyKind::Ident(name), value) = (it.key()?.kind(), it.value()?.as_ident()?) else {
-                        return None;
-                    };
+                    let (name, value) = (identifier_of(it.key()?)?, it.value()?.as_ident()?);
                     let alias = (it.kind() != PropKind::Shorthand).then(|| value.bytes());
-                    Some(self.named_entry(it.span(), (name.bytes(), alias), Written::Export, ImportKind::Undefined))
+                    Some(self.named_entry(it.span(), (name, alias), Written::Export, ImportKind::Undefined))
                 });
                 if let Some(names) = names.collect::<Option<Vec<_>>>() {
                     self.check_names(names, cx);

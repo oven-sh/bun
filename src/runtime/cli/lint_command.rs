@@ -64,7 +64,7 @@ fn bunfig_before(command: &[u8]) -> Option<&'static [u8]> {
         .last()
 }
 
-/// What the section of bunfig.toml for `command` says, which `read` reads. `None`: there is no such file or section.
+/// What bunfig.toml says to `command`, which `read` reads. `None`: nothing, or there is no such file.
 /// A file that cannot be used ends the process. It is looked for in the working directory: call this after `--cwd`.
 pub(crate) fn defaults_of_bunfig<T>(
     ctx: &mut ContextData,
@@ -73,15 +73,15 @@ pub(crate) fn defaults_of_bunfig<T>(
     read: bunfig::Read<T>,
 ) -> Option<T> {
     let mut defaults = None;
-    let mut section = |section: &bun_ast::Expr| match read(section) {
+    let mut tool = |file: &bun_ast::Expr| match read(file) {
         Ok(read) => {
-            defaults = Some(read);
+            defaults = read;
             Ok(())
         }
         Err(refusal) => Err((refusal.at, refusal.message)),
     };
     let path = bunfig_before(command);
-    if let Err(err) = bun_bunfig::load_config_with_section(tag, path, ctx, Some(&mut section)) {
+    if let Err(err) = bun_bunfig::load_config_for_tool(tag, path, ctx, Some(&mut tool)) {
         Output::err(err, "failed to load bunfig", ());
         Global::exit(2);
     }

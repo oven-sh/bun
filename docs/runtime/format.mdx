@@ -218,6 +218,23 @@ bun format --no-semi --print-width 100
 
 `bun format` reads `indent_style`, `indent_size`, `tab_width`, `max_line_length`, and `end_of_line` from `.editorconfig`, like Prettier. A configuration file overrides them. Use `--no-editorconfig` to ignore `.editorconfig`.
 
+### `bunfig.toml`
+
+The `[format]` section of `bunfig.toml` sets the defaults of the flags. A key is the name of the flag in camelCase, which for a formatting option is its name in a `.prettierrc`.
+
+```toml bunfig.toml icon="settings"
+[format]
+printWidth = 100 # --print-width 100
+semi = false # --no-semi
+ignorePatterns = ["vendor/", "*.gen.ts"] # --ignore-pattern vendor/ --ignore-pattern '*.gen.ts'
+```
+
+The command line overrides `bunfig.toml`. `bunfig.toml` overrides the configuration file and `.editorconfig`, as a flag does. With `configPrecedence = "prefer-file"`, the formatting options of `[format]` count only for a file without a configuration file.
+
+Bun reads the `bunfig.toml` of the working directory. Write `bun --config=other.toml format` for another file.
+
+See [`bunfig.toml`](/runtime/bunfig#formatter) for every key.
+
 ## Sort imports
 
 `bun format` sorts imports itself. It does so if the configuration asks for it. A plugin that is named does not have to be installed:
@@ -386,6 +403,7 @@ bun format [flags] [...files, directories or patterns]
 | `--no-editorconfig`               | Do not read `.editorconfig`                                             |
 | `--config-precedence <which>`     | `cli-override` (default), `file-override`, or `prefer-file`             |
 | `--ignore-path <path>`            | Files with patterns to ignore. Default: `.gitignore`, `.prettierignore` |
+| `--ignore-pattern <pattern>`      | Ignore the files that match, as a line of `.prettierignore` does        |
 | `--with-node-modules`             | Format files in `node_modules` too                                      |
 | `--no-error-on-unmatched-pattern` | Do not fail if an argument matches no file                              |
 | `-u`, `--ignore-unknown`          | Say nothing about a file that there is no parser for                    |

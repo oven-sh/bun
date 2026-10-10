@@ -29,8 +29,8 @@ impl Rule for ConstComparisons {
         ConstComparisons
     }
 
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some(Vec::new())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        file.has_exprs([ExprTag::Binary]).then(Vec::new)
     }
 
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

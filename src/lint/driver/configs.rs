@@ -18,6 +18,7 @@ use crate::{Linter, eslintrc, evaluate, fs, paths, rulesdir};
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::js_plugin::{Configuration, Host, Route};
+use bun_lint::language::InferGlobals;
 use bun_lint::linter::{
     Config, InJavaScript, LegacyFile, LegacyOptions, ResolvedConfig, oxlint_category_of_key,
     oxlint_filter_keys, oxlint_rule_key, plugin_of_oxlint,
@@ -680,7 +681,16 @@ impl<'l> Loader<'l> {
         if installed.is_some_and(|it| minor_of(&it).is_some_and(|it| it.0 < 10)) {
             config.follow_eslint(9);
         }
+        config.infer_globals(self.infers_globals_besides());
         Ok(config)
+    }
+
+    /// [`LanguageOptions::infers_globals`](bun_lint::language::LanguageOptions) beside a configuration file.
+    fn infers_globals_besides(&self) -> InferGlobals {
+        match self.options.infer_globals {
+            Some(true) => InferGlobals::Besides,
+            _ => InferGlobals::No,
+        }
     }
 
     /// An `.oxlintrc.json`, with what the command line adds.
@@ -786,7 +796,7 @@ impl<'l> Loader<'l> {
             loaded
         };
         // The patterns are from the directory of the file.
-        let config = Config::from_rc_json_with_plugins(
+        let mut config = Config::from_rc_json_with_plugins(
             self.linter.registry(),
             paths::dirname(path),
             &json,
@@ -805,6 +815,7 @@ impl<'l> Loader<'l> {
             )
         })?;
         self.advise_about_js_plugins(&config, &sources);
+        config.infer_globals(self.infers_globals_besides());
         Ok(config)
     }
 
@@ -828,9 +839,13 @@ impl<'l> Loader<'l> {
             _ => b"recommended",
         };
         let text = strings::replace_owned(BUILT_IN, b"TYPESCRIPT", preset);
+        // Every file is in it, on whatever drive.
+        let mut config = self.flat(b"/", bun_lint::json::parse(&text).unwrap_or(Json::Null))?;
+        if self.options.infer_globals != Some(false) {
+            config.infer_globals(InferGlobals::Instead);
+        }
         Ok(Arc::new(Loaded {
-            // Every file is in it, on whatever drive.
-            config: self.flat(b"/", bun_lint::json::parse(&text).unwrap_or(Json::Null))?,
+            config,
             flavor: Flavor::BuiltIn,
             wants_types: Some(false),
             denies_warnings: false,
@@ -1297,7 +1312,7 @@ impl<'l> Loader<'l> {
         };
         let mut load_plugin =
             |location: &Json, prefix: &[u8]| self.js_plugins.load_located(location, prefix);
-        let config = Config::from_legacy(
+        let mut config = Config::from_legacy(
             self.linter.registry(),
             &LegacyOptions {
                 root: b"/",
@@ -1320,6 +1335,7 @@ impl<'l> Loader<'l> {
             self.advise(line.clone());
         }
         self.warn_about_unknown_rules(&config);
+        config.infer_globals(self.infers_globals_besides());
         Ok(Arc::new(Loaded {
             config,
             flavor: Flavor::EslintRc,

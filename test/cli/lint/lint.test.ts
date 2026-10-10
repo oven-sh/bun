@@ -59,6 +59,8 @@ type Options = {
   reads?: string[];
   /** Called with the directory before the command runs. */
   before?: (dir: string) => void;
+  /** The run is meant to end with an error. */
+  mayFail?: boolean;
 };
 
 async function lint(files: Record<string, string>, args: string[], options: Options = {}) {
@@ -74,7 +76,8 @@ async function lint(files: Record<string, string>, args: string[], options: Opti
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // Where a run ends with an error, or dies, the assertion that fails is often about something else.
-  if (exitCode !== 0 && exitCode !== 1) console.error(`bun lint ${args.join(" ")}: exit code ${exitCode}\n${stderr}`);
+  if (exitCode !== 0 && exitCode !== 1 && !options.mayFail)
+    console.error(`bun lint ${args.join(" ")}: exit code ${exitCode}\n${stderr}`);
   const read = (name: string) =>
     existsSync(join(String(dir), name)) ? readFileSync(join(String(dir), name), "utf8") : null;
   return {
@@ -4447,7 +4450,7 @@ describe.concurrent("what bun lint takes from Bun", () => {
     expect(result.stdout).toStartWith("<dir>/a.js:1:1: Unexpected 'debugger' statement.");
   });
 
-  test("the bunfig.toml of the project is not read", async () => {
+  test("what the bunfig.toml of the project has for other commands is not read", async () => {
     const result = await bun({ ...files, "bunfig.toml": "[install]\nglobalDir = 1\n" }, ["lint", "-f", "unix", "a.js"]);
     expect(result.stdout).toStartWith("<dir>/a.js:1:1: Unexpected 'debugger' statement.");
     expect(result.exitCode).toBe(1);
@@ -5327,5 +5330,687 @@ foo(b)
         });
       }
     });
+  });
+});
+
+// A key of `[lint]` is the default of the flag of the same name.
+describe.concurrent("[lint] in bunfig.toml", () => {
+  /** What a run leaves behind: what it prints but for the times, how it ends, and the files. */
+  async function run(files: Record<string, string>, args: string[]) {
+    const reads = Object.keys(files).filter(name => name !== "bunfig.toml");
+    const result = await lint(files, args, { reads, mayFail: true });
+    const text = (printed: string) => printed.replace(/\d+(\.\d+)?m?s\b/g, "0ms");
+    return { stdout: text(result.stdout), stderr: text(result.stderr), exitCode: result.exitCode, files: result.files };
+  }
+
+  const eslint = { "eslint.config.js": basic, "a.js": bad };
+  const oxlint = { ".oxlintrc.json": `{ "rules": { "no-debugger": "error", "no-var": "warn" } }`, "a.js": bad };
+  const typed = {
+    ".oxlintrc.json": `{ "rules": { "typescript/no-floating-promises": "error" } }`,
+    "tsconfig.json": `{ "compilerOptions": { "strict": true }, "include": ["*.ts"] }`,
+    "a.ts": "async function f() {}\nf();\nconst a: string = 1;\n",
+  };
+  const many = Array.from({ length: 60 }, () => "debugger;\n").join("");
+  const suppressions = JSON.stringify({
+    "a.js": { "no-debugger": { count: 1 }, eqeqeq: { count: 1 }, semi: { count: 1 } },
+  });
+
+  // Lines of the section, the flags that say the same, flags that say otherwise, the files, and the arguments.
+  const keys: [lines: string, flags: string[], opposite: string[], files: Record<string, string>, args: string[]][] = [
+    [
+      `config = "other.config.js"`,
+      ["--config", "other.config.js"],
+      ["-c", "eslint.config.js"],
+      { ...eslint, "other.config.js": config({ "no-var": "error" }) },
+      ["a.js"],
+    ],
+    [`configLookup = false`, ["--no-config-lookup"], ["--config-lookup"], eslint, ["a.js"]],
+    [`flavor = "oxlint"`, ["--flavor=oxlint"], ["--flavor=eslint"], { ...eslint, ...oxlint }, ["a.js"]],
+    [`flavor = "eslint"`, ["--flavor=eslint"], ["--flavor=oxlint"], { ...eslint, ...oxlint }, ["a.js"]],
+    [`ext = [".foo"]`, ["--ext", ".foo"], [], { ...eslint, "b.foo": bad }, ["."]],
+    [`ext = ".foo"`, ["--ext", ".foo"], [], { ...eslint, "b.foo": bad }, ["."]],
+    [
+      `ignorePatterns = ["b.js", "sub/"]`,
+      ["--ignore-pattern", "b.js", "--ignore-pattern=sub/"],
+      [],
+      { ...eslint, "b.js": bad, "sub/c.js": bad },
+      ["."],
+    ],
+    [`ignorePath = "mine"`, ["--ignore-path", "mine"], [], { ...oxlint, "b.js": bad, mine: "b.js\n" }, ["."]],
+    [
+      `ignore = false`,
+      ["--no-ignore"],
+      ["--ignore"],
+      {
+        "eslint.config.js": `export default [{ ignores: ["a.js"] }, { rules: { "no-debugger": "error" } }];`,
+        "a.js": bad,
+      },
+      ["a.js"],
+    ],
+    [
+      `warnIgnored = false`,
+      ["--no-warn-ignored"],
+      ["--warn-ignored"],
+      { "eslint.config.js": `export default [{ ignores: ["a.js"] }];`, "a.js": bad, "b.js": "" },
+      ["a.js", "b.js"],
+    ],
+    [`quiet = true`, ["--quiet"], ["--no-quiet"], eslint, ["a.js"]],
+    [`silent = true`, ["--silent"], ["--no-silent"], oxlint, ["a.js"]],
+    [
+      `maxWarnings = 0`,
+      ["--max-warnings", "0"],
+      ["--max-warnings=10"],
+      { ...eslint, "a.js": "var a = 1;\na;\n" },
+      ["a.js"],
+    ],
+    [
+      `denyWarnings = true`,
+      ["--deny-warnings"],
+      ["--no-deny-warnings"],
+      { ...oxlint, "a.js": "var a = 1;\na;\n" },
+      ["a.js"],
+    ],
+    [`format = "unix"`, ["-f", "unix"], ["--format=json"], eslint, ["a.js"]],
+    [`all = true`, ["--all"], ["--no-all"], { ...eslint, "a.js": many }, ["-f", "pretty", "a.js"]],
+    [
+      `inlineConfig = false`,
+      ["--no-inline-config"],
+      ["--inline-config"],
+      { ...eslint, "a.js": "// eslint-disable-next-line no-debugger\ndebugger;\n" },
+      ["a.js"],
+    ],
+    [
+      `reportUnusedDisableDirectives = true`,
+      ["--report-unused-disable-directives"],
+      ["--report-unused-disable-directives-severity=off"],
+      { ...eslint, "a.js": "// eslint-disable-next-line no-debugger\na;\n" },
+      ["a.js"],
+    ],
+    [
+      `reportUnusedDisableDirectives = "off"`,
+      ["--report-unused-disable-directives-severity", "off"],
+      ["--report-unused-disable-directives"],
+      { ...eslint, "a.js": "// eslint-disable-next-line no-debugger\na;\n" },
+      ["a.js"],
+    ],
+    [
+      `reportUnusedInlineConfigs = "error"`,
+      ["--report-unused-inline-configs=error"],
+      ["--report-unused-inline-configs=off"],
+      { ...eslint, "a.js": "/* eslint no-debugger: error */\na;\n" },
+      ["a.js"],
+    ],
+    [
+      `suppressionsLocation = "known.json"`,
+      ["--suppressions-location", "known.json"],
+      ["--suppressions-location=none.json"],
+      { ...eslint, "known.json": suppressions },
+      ["a.js"],
+    ],
+    [
+      `passOnUnprunedSuppressions = true`,
+      ["--pass-on-unpruned-suppressions"],
+      ["--no-pass-on-unpruned-suppressions"],
+      { ...eslint, "a.js": "a;\n", "eslint-suppressions.json": suppressions },
+      ["a.js"],
+    ],
+    [
+      `errorOnUnmatchedPattern = false`,
+      ["--no-error-on-unmatched-pattern"],
+      ["--error-on-unmatched-pattern"],
+      eslint,
+      ["none.js"],
+    ],
+    [`passOnNoPatterns = true`, ["--pass-on-no-patterns"], ["--no-pass-on-no-patterns"], eslint, []],
+    [
+      `exitOnFatalError = true`,
+      ["--exit-on-fatal-error"],
+      ["--no-exit-on-fatal-error"],
+      { ...eslint, "a.js": "a(" },
+      ["a.js"],
+    ],
+    [
+      `allowUnsupported = true`,
+      ["--allow-unsupported"],
+      ["--no-allow-unsupported"],
+      { ".eslintrc.json": `{ "rules": { "no-debugger": "error", "require-jsdoc": "warn" } }`, "a.js": bad },
+      ["a.js"],
+    ],
+    [`typeAware = true`, ["--type-aware"], ["--no-type-aware"], typed, ["a.ts"]],
+    [
+      `typeAware = false`,
+      ["--no-type-aware"],
+      ["--type-aware"],
+      {
+        ...typed,
+        ".oxlintrc.json": `{ "options": { "typeAware": true }, "rules": { "typescript/no-floating-promises": "error" } }`,
+      },
+      ["a.ts"],
+    ],
+    [`typeCheck = true`, ["--type-check"], ["--no-type-check"], typed, ["--type-aware", "a.ts"]],
+    [`project = "none.json"`, ["--project", "none.json"], ["-p", "tsconfig.json"], typed, ["--type-aware", "a.ts"]],
+    [
+      `disableNestedConfig = true`,
+      ["--disable-nested-config"],
+      ["--no-disable-nested-config"],
+      { ...oxlint, "sub/.oxlintrc.json": `{ "rules": { "no-debugger": "off" } }`, "sub/a.js": bad },
+      ["sub/a.js"],
+    ],
+    [`fixType = ["suggestion"]`, ["--fix-type", "suggestion"], [], eslint, ["--fix", "a.js"]],
+    [
+      `[lint.rules]\n"no-debugger" = "off"\neqeqeq = ["error", "smart"]\n"no-eval" = 2`,
+      ["--rule", `{"no-debugger": "off", "eqeqeq": ["error", "smart"], "no-eval": 2}`],
+      ["--rule", "no-debugger: warn"],
+      { ...eslint, "a.js": `${bad}eval(a == null);\n` },
+      ["a.js"],
+    ],
+    [
+      `[lint.rules]\n"no-debugger" = "off"\n"no-eval" = "error"`,
+      ["--rule", `{"no-debugger": "off", "no-eval": "error"}`, "--flavor=oxlint"],
+      ["--rule", "no-debugger: warn"],
+      { ...oxlint, "a.js": `${bad}eval(a);\n` },
+      ["a.js"],
+    ],
+    [
+      `[lint.rules]\n"no-restricted-imports" = ["error", { paths = ["lodash"], patterns = [{ group = ["a\\nb*"], message = "it's \\"so\\"" }] }]`,
+      ["--rule", `{"no-restricted-imports": ["error", { "paths": ["lodash"] }]}`],
+      [],
+      { ...eslint, "a.js": `import "lodash";\n` },
+      ["a.js"],
+    ],
+    [
+      `[lint.globals]\nmine = "readonly"\nyours = true\ntheirs = false\nours = "writable"`,
+      ["--global", "mine,yours:true", "--global", "theirs,ours:true"],
+      [],
+      {
+        "eslint.config.js": config({ "no-undef": "error", "no-global-assign": "error" }),
+        "a.js": "mine = yours = theirs = ours = other;\n",
+      },
+      ["a.js"],
+    ],
+    [
+      `[lint.parserOptions]\necmaFeatures = { jsx = true }`,
+      ["--parser-options", "ecmaFeatures: { jsx: true }"],
+      ["--parser-options", "ecmaFeatures: { jsx: false }"],
+      { ...eslint, "a.js": "<a />;\n" },
+      ["a.js"],
+    ],
+    [
+      `[lint.categories]\nstyle = "warn"\nall = "off"\ncorrectness = "error"`,
+      ["-A", "all", "-W", "style", "-D", "correctness"],
+      [],
+      { ".oxlintrc.json": "{}", "a.js": `${bad}for (;;) {}\n` },
+      ["a.js"],
+    ],
+  ];
+
+  test.each(keys)("%s", async (lines, flags, opposite, files, args) => {
+    const bunfig = { "bunfig.toml": lines.startsWith("[") ? `${lines}\n` : `[lint]\n${lines}\n` };
+    const [plain, byKey, byFlag, underFlag, byOtherFlag] = await Promise.all([
+      run(files, args),
+      run({ ...files, ...bunfig }, args),
+      run(files, [...flags, ...args]),
+      run({ ...files, ...bunfig }, [...opposite, ...args]),
+      // What takes a list or a table is added to.
+      run(files, [...(opposite.length === 0 || /^\[|= \[/.test(lines) ? flags : []), ...opposite, ...args]),
+    ]);
+    expect(byKey).toEqual(byFlag);
+    expect(byKey).not.toEqual(plain);
+    expect(underFlag).toEqual(byOtherFlag);
+  });
+
+  test("threads", async () => {
+    const [byKey, byFlag, wrong] = await Promise.all([
+      run({ ...eslint, "bunfig.toml": "[lint]\nthreads = 1\n" }, ["a.js"]),
+      run(eslint, ["--threads=1", "a.js"]),
+      run({ ...eslint, "bunfig.toml": "[lint]\nthreads = -1\n" }, ["a.js"]),
+    ]);
+    expect(byKey).toEqual(byFlag);
+    expect(wrong.stderr).toContain(`--threads takes a number, not "-1".`);
+    expect(wrong.exitCode).toBe(2);
+  });
+
+  // ESLint refuses the flag in a run that fixes nothing.
+  test("fixType waits for a run that fixes", async () => {
+    const files = { ...eslint, "bunfig.toml": `[lint]\nfixType = ["layout"]\n` };
+    const [without, plain, dry, dryByFlag] = await Promise.all([
+      run(files, ["a.js"]),
+      run(eslint, ["a.js"]),
+      run(files, ["--fix-dry-run", "-f", "json", "a.js"]),
+      run(eslint, ["--fix-dry-run", "--fix-type=layout", "-f", "json", "a.js"]),
+    ]);
+    expect(without).toEqual(plain);
+    expect(dry).toEqual(dryByFlag);
+  });
+
+  // A flag that only one of the two tools has says whom a command line was written for. A key was written for Bun.
+  test("a key does not say which tool the run stands in for", async () => {
+    const both = { ...eslint, ...oxlint };
+    const asks = "Say which one this run is for: --flavor=oxlint or --flavor=eslint.";
+    const results = await Promise.all(
+      [
+        `denyWarnings = true`,
+        `typeAware = true`,
+        `ext = [".js"]`,
+        `[lint.rules]\n"no-var" = "off"`,
+        `[lint.categories]\nstyle = "warn"`,
+      ].map(lines =>
+        run({ ...both, "bunfig.toml": lines.startsWith("[") ? `${lines}\n` : `[lint]\n${lines}\n` }, ["a.js"]),
+      ),
+    );
+    for (const result of results) {
+      expect(result.stderr).toContain(asks);
+      expect(result.exitCode).toBe(2);
+    }
+    // With the configuration of ESLint alone, the flag makes it a run of oxlint.
+    const [byKey, byFlag, plain] = await Promise.all([
+      run({ ...eslint, "bunfig.toml": "[lint]\ndenyWarnings = true\n" }, ["-f", "unix", "a.js"]),
+      run(eslint, ["--deny-warnings", "-f", "unix", "a.js"]),
+      run(eslint, ["-f", "unix", "a.js"]),
+    ]);
+    expect(byKey.stdout).toBe(plain.stdout);
+    expect(byFlag.stdout).not.toBe(plain.stdout);
+  });
+
+  test("bun/format holds a file against what bun format prints, with [format]", async () => {
+    const files = { "a.js": "a('b')\n", "bunfig.toml": "[format]\nsemi = false\nsingleQuote = true\n" };
+    const rule = (...options: unknown[]) => ({
+      ".oxlintrc.json": JSON.stringify({ rules: { "bun/format": ["error", ...options] } }),
+    });
+    const [withSection, without, overridden, ofPrettier] = await Promise.all([
+      run({ ...files, ...rule() }, ["-f", "unix", "a.js"]),
+      run({ "a.js": files["a.js"], ...rule() }, ["-f", "unix", "a.js"]),
+      run({ ...files, ...rule({ semi: true }) }, ["-f", "unix", "a.js"]),
+      // Prettier knows nothing of bunfig.toml.
+      run({ ...files, "eslint.config.js": config({ "prettier/prettier": "error" }) }, ["-f", "unix", "a.js"]),
+    ]);
+    expect(withSection.stdout).toBe("");
+    expect(withSection.exitCode).toBe(0);
+    expect(without.stdout).toContain(`Replace \`'b')\` with \`"b");\``);
+    expect(overridden.stdout).toContain("Insert `;`");
+    expect(overridden.stdout).not.toContain("Replace");
+    expect(ofPrettier.stdout).not.toBe("");
+  });
+
+  test("the file is that of the working directory, after --cwd", async () => {
+    const files = {
+      ...eslint,
+      "sub/a.js": bad,
+      "bunfig.toml": `[lint]\nformat = "unix"\n`,
+      "sub/bunfig.toml": `[lint]\nquiet = true\nformat = "json"\n`,
+    };
+    const [above, below] = await Promise.all([run(files, ["sub/a.js"]), run(files, ["--cwd=sub", "a.js"])]);
+    expect(above.stdout).toContain("[Warning/no-var]");
+    expect(JSON.parse(below.stdout)[0].warningCount).toBe(0);
+  });
+
+  /** `bun ...args` in a directory with `files`. */
+  async function bun(files: Record<string, string>, args: string[]) {
+    using dir = tempDir("bun-lint-bunfig", files);
+    const stdio = { stdin: "ignore", stdout: "pipe", stderr: "pipe" } as const;
+    await using proc = spawn({ cmd: [bunExe(), ...args], env, cwd: String(dir), ...stdio });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("--config= before lint names another file than bunfig.toml", async () => {
+    const files = {
+      ...eslint,
+      "bunfig.toml": `[lint]\nformat = "unix"\n`,
+      "other.toml": `[lint]\nformat = "json"\n`,
+    };
+    const results = await Promise.all([
+      bun(files, ["lint", "a.js"]),
+      bun(files, ["--config=other.toml", "lint", "a.js"]),
+      bun(files, ["-c=other.toml", "lint", "a.js"]),
+      // What follows `lint` is the linter's.
+      bun(files, ["--config=other.toml", "lint", "-c", "eslint.config.js", "a.js"]),
+      bun(files, ["--config=none.toml", "lint", "a.js"]),
+    ]);
+    expect(results.map(it => [it.stdout.startsWith("[{"), it.exitCode])).toEqual([
+      [false, 1],
+      [true, 1],
+      [true, 1],
+      [true, 1],
+      [false, 2],
+    ]);
+    expect(results[4].stderr).toContain(`while reading config "`);
+  });
+
+  test("what is wrong with [lint] is shown where it is, as for every other section", async () => {
+    const bunfig = `[lint]\nquiet = true\n\n[lint.rules]\neqeqeq = ["error", "smart"]\n"no-var" = "always"\n`;
+    const result = await bun({ ...eslint, "bunfig.toml": bunfig }, ["lint", "a.js"]);
+    expect(result.stderr).toContain(`6 | "no-var" = "always"\n`);
+    expect(result.stderr).toMatch(
+      /error: Option rules: 'always' not one of off, warn, error, 0, 1, or 2\.\n\s+at .*bunfig\.toml:6:12\n/,
+    );
+    expect(result.stdout).toBe("");
+    expect(result.exitCode).toBe(2);
+  });
+
+  // The flags that say what one run does.
+  test.each([
+    ["fix = true", "--fix"],
+    ["fixDryRun = true", "--fix-dry-run"],
+    ["fixSuggestions = true", "--fix-suggestions"],
+    ["fixDangerously = true", "--fix-dangerously"],
+    ["init = true", "--init"],
+    ["stdin = true", "--stdin"],
+    [`stdinFilename = "a.js"`, "--stdin-filename"],
+    [`printConfig = "a.js"`, "--print-config"],
+    ["suppressAll = true", "--suppress-all"],
+    [`suppressRule = ["no-var"]`, "--suppress-rule"],
+    ["pruneSuppressions = true", "--prune-suppressions"],
+    [`outputFile = "report.txt"`, "--output-file"],
+    ["color = true", "--color"],
+    ["timing = true", "--timing"],
+    [`cwd = "sub"`, "--cwd"],
+  ])("%s is refused, and nothing is written", async (line, flag) => {
+    const key = line.split(" ")[0];
+    const result = await run({ ...eslint, "bunfig.toml": `[lint]\n${line}\n` }, ["a.js"]);
+    expect(result.stderr).toContain(
+      `"${key}" cannot be set in bunfig.toml, it says what one run does. Pass ${flag} on the command line`,
+    );
+    expect(result.stdout).toBe("");
+    expect(result.files["a.js"]).toBe(bad);
+    expect(result.exitCode).toBe(2);
+  });
+
+  test.each([
+    ["quiet = 1", "expected boolean but received number"],
+    [`maxWarnings = "0"`, "expected number but received string"],
+    ["maxWarnings = 1.5", "Invalid value for option 'max-warnings' - expected type Int, received value: 1.5."],
+    ["config = false", "expected string but received boolean"],
+    ["ignorePatterns = true", "expected array but received boolean"],
+    ["ignorePatterns = [1]", "expected string but received number"],
+    [`flavor = "biome"`, "Option flavor: 'biome' not one of eslint or oxlint."],
+    [`format = "fancy"`, `There is no formatter "fancy". Those that exist: stylish, pretty, json,`],
+    [`fixType = ["all"]`, `'fixTypes' must be an array of any of "directive", "problem", "suggestion", and "layout".`],
+    [`reportUnusedDisableDirectives = "loud"`, "'loud' not one of off, warn, error, 0, 1, or 2."],
+    ["reportUnusedDisableDirectives = 1", "expected string but received number"],
+    [`reportUnusedInlineConfigs = true`, "expected string but received boolean"],
+    ["rules = true", "expected object but received boolean"],
+    [`[lint.rules]\neqeqeq = "always"`, "Option rules: 'always' not one of off, warn, error, 0, 1, or 2."],
+    [`[lint.rules]\neqeqeq = ["smart"]`, "Option rules: 'smart' not one of off, warn, error, 0, 1, or 2."],
+    [`[lint.rules]\neqeqeq = []`, "expected string but received array"],
+    [`[lint.rules]\neqeqeq = true`, "expected string but received boolean"],
+    [`[lint.globals]\na = "off"`, `expected "readonly" or "writable" but received string`],
+    [`[lint.globals]\na = 1`, `expected "readonly" or "writable" but received number`],
+    [`[lint.categories]\nstyles = "warn"`, `unknown category "styles"`],
+    [`[lint.categories]\nstyle = "deny"`, "Option categories: 'deny' not one of off, warn, error, 0, 1, or 2."],
+    ["maxWarning = 0", `unknown key "maxWarning" in [lint]. Did you mean "maxWarnings"?`],
+    ["max-warnings = 0", `unknown key "max-warnings" in [lint]. Did you mean "maxWarnings"?`],
+    [`ignorePattern = ["a"]`, `unknown key "ignorePattern" in [lint]. Did you mean "ignorePatterns"?`],
+    [`plugins = ["import"]`, `unknown key "plugins" in [lint].`],
+    [`extends = ["a"]`, `unknown key "extends" in [lint].`],
+    ["overrides = []", `unknown key "overrides" in [lint].`],
+    ["cache = true", `unknown key "cache" in [lint].`],
+    [`env = ["node"]`, `unknown key "env" in [lint].`],
+  ])("%s is refused: %s", async (lines, message) => {
+    const bunfig = lines.startsWith("[") ? `${lines}\n` : `[lint]\n${lines}\n`;
+    const result = await run({ ...eslint, "bunfig.toml": bunfig }, ["a.js"]);
+    expect(result.stderr).toContain(message);
+    expect(result.stdout).toBe("");
+    expect(result.exitCode).toBe(2);
+  });
+
+  test("every flag in the help is a key, or is refused as a key with its name", async () => {
+    const help = await lint({}, ["--help"]);
+    const flags = [...help.stdout.matchAll(/^\s+(?:-\w, )?--([a-z-]+)/gm)].map(it => it[1]);
+    expect(flags.length).toBeGreaterThan(50);
+    const renamed: Record<string, string> = {
+      "ignore-pattern": "ignorePatterns",
+      "report-unused-disable-directives-severity": "reportUnusedDisableDirectives",
+      rule: "rules",
+      global: "globals",
+      allow: "categories",
+      warn: "categories",
+      deny: "categories",
+    };
+    const answers = await Promise.all(
+      flags.map(async flag => {
+        const positive = flag.replace(/^no-/, "");
+        const key = renamed[positive] ?? positive.replace(/-(\w)/g, (_, it) => it.toUpperCase());
+        // Of a type that no key takes: one that exists says what it expects.
+        const { stderr } = await run({ "bunfig.toml": `[lint]\n${key} = [[1]]\n` }, ["--list-files"]);
+        return [flag, /expected .+ but received|cannot be set in bunfig\.toml/.test(stderr)];
+      }),
+    );
+    expect(answers.filter(it => !it[1])).toEqual([]);
+  });
+});
+
+// The rules of some plugins are built in, and run in place of those of the package that the configuration loads.
+describe.concurrent("nativePluginRules", () => {
+  // A debug build takes seconds to start an engine for JavaScript.
+  const timeout = isDebug || isASAN ? 120_000 : 10_000;
+
+  /** A package that is called `name`, whose rules report at the top of every file that they have run. */
+  const standIn = (name: string, rules: string[], report = `context.report({ node, message: "the package ran" })`) => ({
+    [`node_modules/${name}/package.json`]: JSON.stringify({ name, version: "99.0.0", main: "index.js" }),
+    [`node_modules/${name}/index.js`]: `module.exports = {
+      meta: { name: ${JSON.stringify(name)}, version: "99.0.0" },
+      rules: Object.fromEntries(${JSON.stringify(rules)}.map(rule => [rule, { create: context => ({ Program(node) { ${report}; } }) }])),
+    };\n`,
+  });
+  const packages = {
+    ...standIn("eslint-plugin-react-hooks", ["rules-of-hooks"]),
+    ...standIn("eslint-plugin-import", ["order"]),
+  };
+  const rules = { "react-hooks/rules-of-hooks": "error", "import/order": "error", "no-debugger": "error" };
+  const source = {
+    "a.js": `import b from "./b.js";\nimport fs from "fs";\nfunction f() {\n  if (b) useState(fs);\n}\ndebugger;\n`,
+    "b.js": "export default 1;\n",
+  };
+  const flat = {
+    ...packages,
+    ...source,
+    "eslint.config.js": `const hooks = require("eslint-plugin-react-hooks");\nconst imports = require("eslint-plugin-import");\nmodule.exports = [{ plugins: { "react-hooks": hooks, import: imports }, rules: ${JSON.stringify(rules)} }];\n`,
+  };
+  const legacy = {
+    ...packages,
+    ...source,
+    ".eslintrc.json": JSON.stringify({
+      root: true,
+      parserOptions: { ecmaVersion: 2022, sourceType: "module" },
+      plugins: ["react-hooks", "import"],
+      rules,
+    }),
+  };
+
+  /** For each rule that reports: whether it is that of the package. */
+  async function who(files: Record<string, string>, args: string[] = []) {
+    const { raw, stderr, exitCode } = await lint(files, ["-f", "json", ...args, "a.js"], { mayFail: true });
+    if (exitCode !== 1) return { stderr, exitCode };
+    const messages: { ruleId: string; message: string }[] = JSON.parse(raw)[0].messages;
+    return Object.fromEntries(
+      messages.map(it => [it.ruleId, it.message === "the package ran" ? "package" : "built in"]),
+    );
+  }
+  const bunfig = (value: string) => ({ "bunfig.toml": `[lint]\nnativePluginRules = ${value}\n` });
+  const all = (hooks: string, imports: string) => ({
+    "react-hooks/rules-of-hooks": hooks,
+    "import/order": imports,
+    // Of no package.
+    "no-debugger": "built in",
+  });
+
+  describe.each([
+    ["eslint.config.js", flat],
+    [".eslintrc.json", legacy],
+  ])("%s", (_, files) => {
+    test.each([
+      ["nothing", {}, [], all("built in", "built in")],
+      ["true", bunfig("true"), [], all("built in", "built in")],
+      ["false", bunfig("false"), [], all("package", "package")],
+      ["[]", bunfig("[]"), [], all("package", "package")],
+      [`["import"]`, bunfig(`["import"]`), [], all("package", "built in")],
+      [`["react-hooks", "import"]`, bunfig(`["react-hooks", "import"]`), [], all("built in", "built in")],
+      ["--no-native-plugin-rules", {}, ["--no-native-plugin-rules"], all("package", "package")],
+      ["--native-plugin-rules=false", {}, ["--native-plugin-rules=false"], all("package", "package")],
+      ["--native-plugin-rules import", {}, ["--native-plugin-rules", "import"], all("package", "built in")],
+      ["--native-plugin-rules=react-hooks", {}, ["--native-plugin-rules=react-hooks"], all("built in", "package")],
+      [
+        "false, and --native-plugin-rules=true",
+        bunfig("false"),
+        ["--native-plugin-rules=true"],
+        all("built in", "built in"),
+      ],
+      [
+        `["import"], and --native-plugin-rules=react-hooks`,
+        bunfig(`["import"]`),
+        ["--native-plugin-rules=react-hooks"],
+        all("built in", "package"),
+      ],
+      ["true, and --no-native-plugin-rules", bunfig("true"), ["--no-native-plugin-rules"], all("package", "package")],
+    ] as const)(
+      "%s",
+      async (_, more, args, expected) => {
+        expect(await who({ ...files, ...more }, [...args])).toEqual(expected);
+      },
+      timeout,
+    );
+
+    test(
+      "a comment is about the rule that runs",
+      async () => {
+        const disabled = { "a.js": `/* eslint-disable react-hooks/rules-of-hooks */\n${source["a.js"]}` };
+        expect(await who({ ...files, ...disabled, ...bunfig("false") })).toEqual({
+          "import/order": "package",
+          "no-debugger": "built in",
+        });
+      },
+      timeout,
+    );
+  });
+
+  // `plugins` of an .oxlintrc.json names what is built into oxlint, and what `jsPlugins` names runs in JavaScript anyway.
+  test(
+    "it changes nothing under the configuration of oxlint",
+    async () => {
+      const files = {
+        ...packages,
+        "a.js": `import "./a.js";\n${source["a.js"]}`,
+        ".oxlintrc.json": JSON.stringify({
+          plugins: ["import", "react"],
+          jsPlugins: [{ name: "hooks", specifier: "eslint-plugin-react-hooks" }],
+          rules: { "import/no-self-import": "error", "react/rules-of-hooks": "error", "hooks/rules-of-hooks": "error" },
+        }),
+      };
+      const run = async (more: Record<string, string>) =>
+        (await lint({ ...files, ...more }, ["-f", "unix", "a.js"])).stdout;
+      const [plain, none, some] = await Promise.all([run({}), run(bunfig("false")), run(bunfig(`["import"]`))]);
+      expect(plain).toContain("the package ran");
+      expect(plain).toContain("import(no-self-import)");
+      expect(plain).toContain("react-hooks(rules-of-hooks)");
+      expect([none, some]).toEqual([plain, plain]);
+    },
+    timeout,
+  );
+
+  test(
+    "prettier/prettier is a rule of a plugin like any other",
+    async () => {
+      const files = {
+        ...standIn("eslint-plugin-prettier", ["prettier"]),
+        "eslint.config.js": `const prettier = require("eslint-plugin-prettier");\nmodule.exports = [{ plugins: { prettier }, rules: { "prettier/prettier": "error" } }];\n`,
+        "a.js": "a  ;\n",
+      };
+      const [none, others] = await Promise.all([
+        who({ ...files, ...bunfig("false") }),
+        who({ ...files, ...bunfig(`["import"]`) }),
+      ]);
+      expect([none, others]).toEqual([{ "prettier/prettier": "package" }, { "prettier/prettier": "package" }]);
+    },
+    timeout,
+  );
+
+  test(
+    "--print-config names the rules of the file that run in JavaScript, beside what ESLint prints",
+    async () => {
+      const [builtIn, mixed] = await Promise.all([
+        lint(flat, ["--print-config", "a.js"]),
+        lint({ ...flat, ...bunfig(`["import"]`) }, ["--print-config", "a.js"]),
+      ]);
+      expect(builtIn.stderr).toBe("");
+      expect(mixed.stderr).toBe("note: in JavaScript: react-hooks/rules-of-hooks. All other rules are built in.");
+      expect(JSON.parse(mixed.raw)).toEqual(JSON.parse(builtIn.raw));
+    },
+    timeout,
+  );
+
+  // Only the built-in rules have types.
+  test(
+    "a rule of the package that asks for types does not run, and the run says so and fails",
+    async () => {
+      const asks = `throw new Error("You have used a rule which requires type information, but don't have parserOptions set to generate type information for this file.")`;
+      const files = {
+        ...standIn("@typescript-eslint/eslint-plugin", ["no-floating-promises"], asks),
+        "eslint.config.js": `const ts = require("@typescript-eslint/eslint-plugin");\nmodule.exports = [{ plugins: { "@typescript-eslint": ts }, rules: { "@typescript-eslint/no-floating-promises": "error" } }];\n`,
+        "a.js": "a;\n",
+      };
+      const result = await lint({ ...files, ...bunfig("false") }, ["a.js"], { mayFail: true });
+      expect(result.stderr).toContain(
+        "1 rule in JavaScript did not run, only the built-in rules have types: @typescript-eslint/no-floating-promises. With --native-plugin-rules=@typescript-eslint the built-in ones run",
+      );
+      expect(result.exitCode).toBe(2);
+    },
+    timeout,
+  );
+
+  test("without a configuration file no package is loaded, and the built-in rules run", async () => {
+    const files = { "a.ts": "const a: any = 1;\nexport { a };\n" };
+    const [plain, off] = await Promise.all([
+      lint(files, ["-f", "unix", "a.ts"]),
+      lint({ ...files, ...bunfig("false") }, ["-f", "unix", "a.ts"]),
+    ]);
+    expect(plain.stdout).toContain("[Error/@typescript-eslint/no-explicit-any]");
+    expect(off.stdout).toBe(plain.stdout);
+  });
+
+  // Of that package only the configurations are loaded, as long as its rules are not asked for.
+  test(
+    "the rules of @typescript-eslint with an .eslintrc",
+    async () => {
+      const files = {
+        ...standIn("@typescript-eslint/eslint-plugin", ["no-explicit-any"]),
+        ".eslintrc.json": JSON.stringify({
+          root: true,
+          plugins: ["@typescript-eslint"],
+          rules: { "@typescript-eslint/no-explicit-any": "error" },
+        }),
+        "a.js": "a;\n",
+      };
+      expect(await who({ ...files, ...bunfig("false") })).toEqual({ "@typescript-eslint/no-explicit-any": "package" });
+    },
+    timeout,
+  );
+
+  test(
+    "a package that is not installed",
+    async () => {
+      const files = { ...legacy, ...standIn("eslint-plugin-import", ["order"]) };
+      const without = Object.fromEntries(Object.entries(files).filter(([name]) => !name.includes("react-hooks/")));
+      expect(await who(without)).toEqual(all("built in", "built in"));
+      const refused = await who({ ...without, ...bunfig("false") });
+      expect(refused.exitCode).toBe(2);
+      expect(refused.stderr).toContain(`ESLint couldn't find the plugin "eslint-plugin-react-hooks".`);
+    },
+    timeout,
+  );
+
+  test.each([
+    [
+      `["imprt"]`,
+      "Option native-plugin-rules: 'imprt' not one of @typescript-eslint, react-hooks, import, n, prettier.",
+    ],
+    [`["unicorn"]`, "Option native-plugin-rules: 'unicorn' not one of"],
+    [`["true"]`, "Option native-plugin-rules: 'true' not one of"],
+    [`"import"`, "expected boolean or array but received string"],
+    ["[1]", "expected string but received number"],
+  ])("nativePluginRules = %s is refused", async (value, message) => {
+    const result = await lint({ ...flat, ...bunfig(value) }, ["a.js"], { mayFail: true });
+    expect(result.stderr).toContain(message);
+    expect(result.exitCode).toBe(2);
   });
 });

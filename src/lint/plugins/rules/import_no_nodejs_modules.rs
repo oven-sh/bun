@@ -1,22 +1,30 @@
+use crate::import_type::{ImportType, ImportTypes};
+use crate::module_visitor::static_require;
 use bun_lint_oxlint::ast_util::static_string;
 use bun_lint_oxlint::import::{common_js_require, is_nodejs_builtin_module};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use rustc_hash::FxHashSet;
 
-/// Forbid the use of Node.js built-in modules.
+/// Forbid Node.js builtin modules.
 pub struct NoNodejsModules {
     allow: FxHashSet<Box<[u8]>>,
 }
 
-const NO_NODEJS_MODULES: Message = Message::new("", "Do not import Node.js builtin module `{{module_name}}`");
+const NO_NODEJS_MODULES: Message = Message::new("", "Do not import Node.js builtin module \"{{name}}\"");
+const OXLINT: Message = Message::new("", "Do not import Node.js builtin module `{{module_name}}`");
+
+pub struct State<'a> {
+    /// `None`: oxlint goes by the name alone.
+    types: Option<ImportTypes<'a>>,
+}
 
 impl Rule for NoNodejsModules {
-    const META: Meta = Meta::oxlint(Plugin::Import, "no-nodejs-modules", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::Import, "no-nodejs-modules", Kind::Suggestion).needs_modules();
     const ON: On = On::new()
         .stmts(&[StmtTag::Import, StmtTag::ImportEquals, StmtTag::ExportNamed, StmtTag::ExportStar])
         .exprs(&[ExprTag::ImportCall, ExprTag::Call]);
-    no_state!();
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         NoNodejsModules { allow: options.object(0).strings("allow").iter().map(|it| it.as_bytes().into()).collect() }
@@ -24,12 +32,23 @@ impl Rule for NoNodejsModules {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let mut on = On::new()
-            .stmts(&[StmtTag::Import, StmtTag::ImportEquals, StmtTag::ExportNamed, StmtTag::ExportStar])
+            .stmts(&[StmtTag::Import, StmtTag::ExportNamed, StmtTag::ExportStar])
             .exprs(&[ExprTag::ImportCall]);
+        // oxlint looks at `import a = require("a")` too.
+        if file.language().is_oxlint {
+            on = on.stmts(&[StmtTag::ImportEquals]);
+        }
         if file.mentions("require") {
             on = on.exprs(&[ExprTag::Call]);
         }
         on
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
+        if file.language().is_oxlint {
+            return Some(State { types: None });
+        }
+        Some(State { types: Some(ImportTypes::of(file)?) })
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -45,38 +64,47 @@ impl Rule for NoNodejsModules {
         };
         if let Some(module_name) = module_name {
             let is_import_equals = stmt.tag() == StmtTag::ImportEquals;
-            self.check(module_name, if is_import_equals { stmt.span_without_export() } else { stmt.span() }, cx);
+            let node = if is_import_equals { stmt.span_without_export() } else { stmt.span() };
+            self.check(module_name, node, is_import_equals, cx);
         }
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        match e.tag() {
-            ExprTag::ImportCall => {
-                let ExprKind::ImportCall { args } = e.kind() else {
-                    return;
-                };
-                let module_name = args.first().filter(|it| !it.is_parenthesized()).and_then(static_string);
-                if let Some(module_name) = module_name {
-                    self.check(module_name, e.span(), cx);
-                }
+        let is_oxlint = cx.state.types.is_none();
+        let module_name = match e.kind() {
+            // oxlint reads a template too, and nothing that is in parentheses.
+            ExprKind::ImportCall { args } if is_oxlint => {
+                args.first().filter(|it| !it.is_parenthesized()).and_then(static_string)
             }
-            ExprTag::Call => {
-                if let Some(call) = e.as_call().filter(|it| !it.is_optional())
-                    && let Some(module_name) = common_js_require(call).and_then(Expr::as_string)
-                {
-                    self.check(module_name, e.span(), cx);
-                }
+            ExprKind::ImportCall { args } => args.first().and_then(Expr::as_string),
+            // oxlint passes over `require?.("a")`, and over what is in parentheses.
+            ExprKind::Call(call) if is_oxlint => {
+                common_js_require(call).filter(|_| !call.is_optional()).and_then(Expr::as_string)
             }
-            _ => {}
+            ExprKind::Call(call) => static_require(call).and_then(Expr::as_string),
+            _ => None,
+        };
+        if let Some(module_name) = module_name {
+            self.check(module_name, e.span(), e.tag() == ExprTag::Call, cx);
         }
     }
 }
 
 impl NoNodejsModules {
-    fn check<'a>(&self, module_name: Name<'a>, node: Span, cx: &Cx<'a, Self>) {
+    /// upstream's `reportIfMissing`
+    fn check<'a>(&self, module_name: Name<'a>, node: Span, is_require: bool, cx: &Cx<'a, Self>) {
         let name = module_name.bytes();
-        if (name.starts_with(b"node:") || is_nodejs_builtin_module(name)) && !self.allow.contains(name) {
-            cx.report(node, NO_NODEJS_MODULES).data("module_name", module_name);
+        if self.allow.contains(name) {
+            return;
+        }
+        match &cx.state.types {
+            None if name.starts_with(b"node:") || is_nodejs_builtin_module(name) => {
+                cx.report(node, OXLINT).data("module_name", module_name);
+            }
+            Some(types) if types.of_name(name, is_require) == ImportType::Builtin => {
+                cx.report(node, NO_NODEJS_MODULES).data("name", module_name);
+            }
+            _ => {}
         }
     }
 }

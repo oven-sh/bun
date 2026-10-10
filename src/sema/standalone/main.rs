@@ -330,6 +330,7 @@ fn run(args: &[String]) {
                 refuses_broken_configurations: defaults.refuses_broken_configurations,
                 prefers_the_library_of_the_project: defaults.prefers_the_library_of_the_project,
                 shares_every_file: defaults.shares_every_file,
+                only_the_globals: defaults.only_the_globals,
                 memory: defaults.memory,
             };
             let request = bun_sema_driver::Request {

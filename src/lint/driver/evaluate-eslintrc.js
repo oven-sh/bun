@@ -20,8 +20,8 @@ const nodePath = require("node:path");
 
 // `pluginsFrom`: the directory that plugins are looked for from. `content`: what the file says, if it is none that can be read.
 // `cwd`: the working directory of the run, which is that of the programs. `rulesdir`: what `--rulesdir` names. It comes with a
-// `content` that names nothing.
-const { pluginsFrom, content, cwd, rulesdir } = JSON.parse(process.argv.at(-3));
+// `content` that names nothing. `loadsTypescriptEslint`: the rules of that package are to run, and not those that are built in.
+const { pluginsFrom, content, cwd, rulesdir, loadsTypescriptEslint } = JSON.parse(process.argv.at(-3));
 if (cwd !== undefined) process.chdir(cwd);
 // Any text can be a key.
 const map = () => ({ __proto__: null });
@@ -120,7 +120,7 @@ require.cache[nodePath.join(pluginsFrom, "node_modules", "eslint", "lib", "linte
 };
 
 // The rules of version 8 of typescript-eslint are all implemented here, and to load it is to load TypeScript: of that version only
-// the configurations are loaded, which are modules of their own. `file`: its main module.
+// the configurations are loaded, which are modules of their own, unless its own rules are to run. `file`: its main module.
 function configsOfTypescript(file, version) {
   if (!(parseInt(version, 10) >= 8)) return null;
   return name => {
@@ -162,7 +162,8 @@ function plugin(name, from) {
         found.version = require(resolveFrom(`${request}/package.json`, file)).version;
       } catch {}
     }
-    hide("config", found.version === undefined ? null : configsOfTypescript(file, found.version));
+    const isLoaded = found.version === undefined || loadsTypescriptEslint;
+    hide("config", isLoaded ? null : configsOfTypescript(file, found.version));
     const loaded = found.config ? {} : require(file);
     if (!found.config) hide("loaded", loaded);
     found.path = portable(file);

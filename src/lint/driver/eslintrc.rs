@@ -96,6 +96,9 @@ impl Modules<'_> {
         if self.command_line.0 == path {
             argument.push((b"content", self.command_line.1.clone()));
         }
+        if !self.registry.answers_for(b"@typescript-eslint") {
+            argument.push((b"loadsTypescriptEslint", Json::Bool(true)));
+        }
         let mut text = Vec::new();
         write_json(&mut text, &answer(argument));
         let printed = evaluate::evaluate_with(self.environment, evaluate::ESLINTRC, path, &text);

@@ -811,6 +811,8 @@ _bun_lint_completion() {
         '--print-config[Print the configuration of a file, and lint nothing]:print-config:_files' \
         '--type-aware[Run the rules that need types, whatever the configuration says]' \
         '--no-type-aware[Skip the rules that need types]' \
+        '--infer-globals[The globals of a file are what the types of its project declare, too]' \
+        '--no-infer-globals[Without a configuration file\: those of browsers and of Node.js]' \
         '--project[The tsconfig.json for the rules that need types]:project:_files' \
         '-p[The tsconfig.json for the rules that need types]:project:_files' \
         '--type-check[With --type-aware\: report type errors too]' \

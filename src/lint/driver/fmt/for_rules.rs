@@ -49,15 +49,19 @@ fn plugins_of(json: Option<&Json>) -> Result<Vec<Vec<u8>>, Reason> {
         .collect()
 }
 
-/// The command line of `bun format` that says what the options of the rule say.
-fn command_line(request: &Request) -> Result<Options, Reason> {
-    let mut options = Options::default();
+/// The command line of `bun format` that says what the options of the rule say. `defaults`: of its flags, which Prettier
+/// knows nothing of.
+fn command_line(request: &Request, defaults: Option<&Options>) -> Result<Options, Reason> {
+    let defaults = defaults.filter(|_| request.like == Like::BunFormat);
+    let mut options = defaults.cloned().unwrap_or_default();
     let file_info = |key: &[u8]| request.file_info_options.and_then(|it| it.get(key));
     // `resolveConfig(file, { editorconfig: true })`, or nothing.
     if !request.uses_configuration {
         options.ignore_configuration();
     }
-    options.with_node_modules = file_info(b"withNodeModules").and_then(Json::as_bool) == Some(true);
+    if let Some(with_node_modules) = file_info(b"withNodeModules") {
+        options.with_node_modules = with_node_modules.as_bool() == Some(true);
+    }
     options.ignore_path = match file_info(b"ignorePath") {
         Some(Json::String(path)) => Some(vec![path.clone()]),
         Some(Json::Array(all)) => Some(
@@ -68,13 +72,15 @@ fn command_line(request: &Request) -> Result<Options, Reason> {
         Some(_) => return Err(Reason::Option),
         // The plugin passes `.prettierignore`, so `.gitignore` does not count.
         None if request.like == Like::InstalledPrettier => Some(vec![b".prettierignore".to_vec()]),
-        None => None,
+        None => options.ignore_path.take(),
     };
     if request.like == Like::InstalledPrettier {
         options.is_like_oxfmt = Some(false);
     }
     if let Some(of_rule) = request.options {
-        options.format = config::as_flags(of_rule).ok_or(Reason::Option)?;
+        let of_rule = config::as_flags(of_rule).ok_or(Reason::Option)?;
+        (options.format).retain(|default| !of_rule.iter().any(|it| it.0 == default.0));
+        options.format.extend(of_rule);
     }
     options.plugins = plugins_of(request.options)?;
     options
@@ -84,8 +90,12 @@ fn command_line(request: &Request) -> Result<Options, Reason> {
 }
 
 impl<'e> Set<'e> {
-    fn new(request: &Request, environment: &'e Environment<'e>) -> Set<'e> {
-        let read = command_line(request).and_then(|options| {
+    fn new(
+        request: &Request,
+        environment: &'e Environment<'e>,
+        defaults: Option<&Options>,
+    ) -> Set<'e> {
+        let read = command_line(request, defaults).and_then(|options| {
             let configs = Configs::owning(options.clone(), environment);
             // Prettier does not know the configuration files of oxfmt.
             let is_for_another =
@@ -154,6 +164,8 @@ fn check_packages(cwd: &[u8], module: Option<&[u8]>) -> Result<(), Reason> {
 /// [`Formats`], for a run of `bun lint`.
 pub struct ForRules<'e> {
     environment: &'e Environment<'e>,
+    /// What `[format]` of bunfig.toml says.
+    defaults: Option<&'e Options>,
     /// There are one or two in a run.
     sets: Guarded<Vec<Arc<Set<'e>>>>,
     scratches: Guarded<Vec<Scratches>>,
@@ -162,9 +174,10 @@ pub struct ForRules<'e> {
 }
 
 impl<'e> ForRules<'e> {
-    pub fn new(environment: &'e Environment<'e>) -> ForRules<'e> {
+    pub fn new(environment: &'e Environment<'e>, defaults: Option<&'e Options>) -> ForRules<'e> {
         ForRules {
             environment,
+            defaults,
             sets: Guarded::new(Vec::new()),
             scratches: Guarded::new(Vec::new()),
             packages: Guarded::new(Vec::new()),
@@ -176,7 +189,7 @@ impl<'e> ForRules<'e> {
         if let Some(set) = sets.iter().find(|it| it.is_for(request)) {
             return Arc::clone(set);
         }
-        let set = Arc::new(Set::new(request, self.environment));
+        let set = Arc::new(Set::new(request, self.environment, self.defaults));
         sets.push(Arc::clone(&set));
         set
     }

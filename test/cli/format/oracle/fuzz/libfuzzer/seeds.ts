@@ -177,4 +177,18 @@ for (const [name, text] of readBundle(join(import.meta.dir, "../../../../lint/co
     }
   }
 }
+// The React Compiler as lint rules, alone: its own fixtures, as ESLint's plugin and as oxlint have the rules.
+const COMPILER =
+  "capitalized-calls config error-boundaries exhaustive-effect-dependencies fbt gating globals hooks immutability incompatible-library invariant memo-dependencies memoized-effect-dependencies no-deriving-state-in-effects preserve-manual-memoization purity refs rule-suppression set-state-in-effect set-state-in-render static-components syntax todo unsupported-syntax use-memo void-use-memo";
+const fixtures = join(import.meta.dir, "../../../../../bundler/transpiler/react-compiler-fixtures");
+for (const name of readdirSync(fixtures, { recursive: true }) as string[]) {
+  const ending = /\.(js|jsx|mjs|ts|tsx)$/.exec(name)?.[1];
+  if (!ending) continue;
+  const code = readFileSync(join(fixtures, name));
+  for (const [prefix, flags] of [["react-hooks", 1 << 6], ["react", (1 << 6) | 1]] as const) {
+    const rules = Object.fromEntries(COMPILER.split(" ").map(it => [`${prefix}/${it}`, 2]));
+    // In a .js file of theirs there is JSX, and Flow.
+    write("lint", ending.startsWith("ts") ? 5 : 3, 0, Buffer.concat([Buffer.from(JSON.stringify({ rules }) + "\n"), code]), flags);
+  }
+}
 console.log(Object.fromEntries(counts));

@@ -154,6 +154,17 @@ pub enum Lookup<'e> {
     },
 }
 
+/// A file that [`Modules::list_files`] finds.
+pub struct Listed {
+    /// Absolute.
+    pub path: Vec<u8>,
+    pub is_ignored: bool,
+}
+
+/// [`Modules::list_files`]
+pub type ListFiles<'h> =
+    Box<dyn Fn(&[&[u8]], &[&[u8]]) -> Result<Vec<Listed>, Vec<u8>> + Send + Sync + 'h>;
+
 /// How a plugin reads a file that is not the one that is linted.
 #[derive(Copy, Clone)]
 pub struct Reader {
@@ -219,6 +230,11 @@ pub trait Modules: Sync {
 
     /// The file at `path`, as it is on the disk. It can be asked at any time.
     fn read(&self, path: &[u8]) -> Option<Cow<'static, [u8]>>;
+
+    /// `Array.from(new FileEnumerator({ extensions }).iterateFiles(patterns))` of ESLint 8 and 9, from the working
+    /// directory: by the configuration files of ESLint 8, whatever configures the run. `Err`: the message of what it
+    /// throws. It can be asked at any time.
+    fn list_files(&self, patterns: &[&[u8]], extensions: &[&[u8]]) -> Result<Vec<Listed>, Vec<u8>>;
 
     /// What `reader` makes of the file at `path` as it is on the disk, parsed as `language` says. It is made the first
     /// time that it is asked for, and kept by the path and by what of `language` the parser looks at. All who ask have

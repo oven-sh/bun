@@ -139,7 +139,7 @@ fn num_to_u32(n: f64) -> u32 {
 // Parser
 // ─────────────────────────────────────────────────────────────────────────────
 
-struct Parser<'a, 'section> {
+struct Parser<'a, 'tool> {
     json: Expr,
     source: &'a bun_ast::Source,
     log: &'a mut bun_ast::Log,
@@ -150,8 +150,8 @@ struct Parser<'a, 'section> {
     /// Arena backing `EString::string()` UTF-16→UTF-8 transcodes; lifetime
     /// matches the `Expr` tree (same bump used for the TOML/JSON parse).
     bump: &'a Bump,
-    /// Reads `[lint]` or `[format]`.
-    section: Option<&'a mut crate::SectionReader<'section>>,
+    /// Reads `[lint]` and `[format]`.
+    tool: Option<&'a mut crate::ToolReader<'tool>>,
 }
 
 impl<'a> Parser<'a, '_> {
@@ -410,13 +410,8 @@ impl<'a> Parser<'a, '_> {
             }
         }
 
-        let section = match cmd {
-            CommandTag::LintCommand => json.get(b"lint"),
-            CommandTag::FormatCommand => json.get(b"format"),
-            _ => None,
-        };
-        if let (Some(section), Some(read)) = (section, self.section.as_deref_mut()) {
-            if let Err((loc, message)) = read(&section) {
+        if let Some(read) = self.tool.as_deref_mut() {
+            if let Err((loc, message)) = read(&json) {
                 self.add_error_format(loc, format_args!("{}", bstr::BStr::new(&message)))?;
             }
         }
@@ -1110,7 +1105,7 @@ impl Bunfig {
         cmd: CommandTag,
         source: &bun_ast::Source,
         ctx: &mut ContextData,
-        section: Option<&mut crate::SectionReader<'_>>,
+        tool: Option<&mut crate::ToolReader<'_>>,
     ) -> crate::Result<()> {
         // SAFETY: ctx.log is populated by `create_context_data()` before any
         // bunfig load; single-threaded CLI startup invariant. The raw pointer
@@ -1182,7 +1177,7 @@ impl Bunfig {
             source,
             ctx,
             bump: &bump,
-            section,
+            tool,
         };
         parser.parse(cmd)
     }

@@ -586,11 +586,12 @@ pub fn with_file<R>(
         read_library,
         None,
         None,
+        None,
         then,
     )
 }
 
-/// The same, for a file that has [`File::modules`] and [`File::formatter`]. `path`: [`File::path`], the path that the file is
+/// The same, for a file that has [`File::modules`], [`File::formatter`] and [`File::inferred_globals`]. `path`: [`File::path`], the path that the file is
 /// linted under. `None`: the name that the program has for it, which is in the checker's format (`/C:/a.ts`) and spelled as the
 /// program found it.
 pub fn with_file_and_modules<R>(
@@ -601,6 +602,7 @@ pub fn with_file_and_modules<R>(
     read_library: Option<ReadLibrary<'_>>,
     modules: Option<&dyn crate::modules::Modules>,
     formatter: Option<&dyn crate::formats::Formats>,
+    inferred: Option<&dyn crate::linter::globals::InferredGlobals>,
     then: impl for<'a> FnOnce(&'a File<'a>) -> R,
 ) -> Option<R> {
     let module = checker.p.files.module(file);
@@ -618,6 +620,9 @@ pub fn with_file_and_modules<R>(
         }
         if let Some(formatter) = formatter {
             file.set_formatter(formatter, None);
+        }
+        if let Some(inferred) = inferred {
+            file.set_inferred_globals(inferred);
         }
         then(&file)
     }))

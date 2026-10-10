@@ -2,7 +2,7 @@ use bun_lint_oxlint::import::export_declaration_span;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
-/// Disallow anonymous default exports in modules.
+/// Forbid anonymous values as default exports.
 pub struct NoAnonymousDefaultExport {
     allow_array: bool,
     allow_arrow_function: bool,
@@ -24,7 +24,7 @@ const ARRAY: Message = Message::new("", "Assign array to a variable before expor
 const LITERAL: Message = Message::new("", "Assign literal to a variable before exporting as module default");
 
 impl Rule for NoAnonymousDefaultExport {
-    const META: Meta = Meta::oxlint(Plugin::Import, "no-anonymous-default-export", Kind::Suggestion);
+    const META: Meta = Meta::plugin(Plugin::Import, "no-anonymous-default-export", Kind::Suggestion);
     const ON: On = On::new().stmts(&[StmtTag::Fn, StmtTag::Class, StmtTag::ExportDefault]);
     no_state!();
 
@@ -46,6 +46,8 @@ impl Rule for NoAnonymousDefaultExport {
         match stmt.tag() {
             StmtTag::Fn | StmtTag::Class => {
                 let message = match stmt.kind() {
+                    // A signature is a `TSDeclareFunction`. oxlint takes it for a function.
+                    StmtKind::Fn(func) if !func.has_body() && !cx.language().is_oxlint => return,
                     StmtKind::Fn(func) if func.name().is_none() && !self.allow_anonymous_function => ANONYMOUS_FUNCTION,
                     StmtKind::Class(class) if class.name().is_none() && !self.allow_anonymous_class => ANONYMOUS_CLASS,
                     _ => return,
@@ -65,7 +67,8 @@ impl NoAnonymousDefaultExport {
         let StmtKind::ExportDefault(e) = stmt.kind() else {
             return;
         };
-        if e.is_parenthesized() {
+        // oxlint takes parentheses for a node.
+        if e.is_parenthesized() && cx.language().is_oxlint {
             return;
         }
         let (is_allowed, message) = match e.kind() {

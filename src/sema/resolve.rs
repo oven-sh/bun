@@ -531,6 +531,8 @@ pub struct Options {
     /// `noResolve`: `/// <reference path>` and `/// <reference types>` are ignored, and imports add
     /// no files to the program.
     pub no_resolve: bool,
+    /// Only the imports of a declaration file add files to the program. For who asks for its globals and nothing else.
+    pub imports_of_sources_add_no_file: bool,
     /// `customConditions`: conditions that match in the `exports` and `imports` of a
     /// `package.json`, in addition to the default ones.
     pub custom_conditions: Vec<Vec<u8>>,
@@ -652,11 +654,14 @@ pub struct Options {
     pub resolves_like_node16: bool,
     /// `ModuleResolution` is `GetModuleResolutionKind()`: it is specified, and still supported.
     pub specifies_module_resolution: bool,
-    /// `moduleResolution` is `classic`, which only `AS_BEFORE_6` has.
+    /// `baseUrl`, which only `INSTALLED_MAJOR` below 7 has: a name that is not relative is looked for there first, and
+    /// `paths` are relative to it. Empty: there is none.
+    pub base_url: Vec<u8>,
+    /// `moduleResolution` is `classic`, which only `INSTALLED_MAJOR` below 7 has.
     pub is_classic: bool,
-    /// `moduleResolution` is `node10`, which only `AS_BEFORE_6` has: it lacks `NodeResolutionFeatures.SelfName`.
+    /// `moduleResolution` is `node10`, which only `INSTALLED_MAJOR` below 7 has: no `NodeResolutionFeatures.SelfName`.
     pub forbids_self_name_references: bool,
-    /// `allowSyntheticDefaultImports` is off, which only `AS_BEFORE_6` has.
+    /// `allowSyntheticDefaultImports` is off, which only `INSTALLED_MAJOR` below 7 has.
     pub forbids_synthetic_default_imports: bool,
     /// `GetEmitModuleDetectionKind`: the effective `moduleDetection`, specified or defaulted.
     pub module_detection: ModuleDetection,
@@ -826,9 +831,11 @@ impl Options {
     }
 }
 
-/// Among `compilerOptions`, where no configuration file can have it: what the file does not say is as TypeScript 5 has it,
-/// and `node10` and `classic` are what they were. For a tool that stands in for one that runs on the compiler of the project.
-pub const AS_BEFORE_6: &[u8] = b"(as before TypeScript 6)";
+/// Among `compilerOptions`, where no configuration file can have it: the major version of the TypeScript that is
+/// installed for the project. Below 6, what the file does not say is as TypeScript 5 has it. Below 7, what 7 has removed is
+/// what it was: `baseUrl`, `node10` and `classic`, `amd` and its like, interop that is off. For a tool that stands in for
+/// one that runs on the compiler of the project.
+pub const INSTALLED_MAJOR: &[u8] = b"(the major version of the TypeScript that is installed)";
 
 impl Options {
     /// Builds the options from `compiler`, the `compilerOptions` of a configuration file in
@@ -854,7 +861,11 @@ impl Options {
             None | Some(b"") => Vec::new(),
             Some(specified) => join(base_dir, specified),
         };
-        let before_6 = flag(AS_BEFORE_6);
+        let installed = match compiler.get(INSTALLED_MAJOR) {
+            Some(Json::Number(major)) => *major,
+            _ => f64::INFINITY,
+        };
+        let (before_6, before_7) = (installed < 6.0, installed < 7.0);
         // `getEmitScriptTarget` of TypeScript 5
         let target = lower(b"target").or_else(|| {
             before_6.then(|| match lower(b"module").as_deref() {
@@ -864,7 +875,14 @@ impl Options {
                 _ => b"es5".to_vec(),
             })
         });
-        options.paths_base_dir = word(b"pathsBasePath").unwrap_or(base_dir).to_vec();
+        if before_7 {
+            options.base_url = directory(b"baseUrl");
+        }
+        // `getPathsBasePath`
+        options.paths_base_dir = match options.base_url.is_empty() {
+            true => word(b"pathsBasePath").unwrap_or(base_dir).to_vec(),
+            false => options.base_url.clone(),
+        };
         if let Some(paths) = compiler.get(b"paths").and_then(Json::as_object) {
             for (pattern, targets) in paths {
                 let targets = targets.as_array().unwrap_or(&[]).iter();
@@ -989,13 +1007,21 @@ impl Options {
             Some(b"node16" | b"nodenext" | b"bundler")
         );
         let like_node = options.resolves_like_node;
-        // `getEmitModuleResolutionKind` of TypeScript 5, where it is one of the two that 7 does not have, and whether it is
-        // `classic`. `node10` is `bundler` without `exports` and `imports`.
+        // `getEmitModuleResolutionKind` of TypeScript 5 and 6, where it is one of the two that 7 does not have, and whether
+        // it is `classic`. `node10` is `bundler` without `exports` and `imports`.
         let old = match resolution.as_deref() {
-            _ if !before_6 => None,
+            _ if !before_7 => None,
             Some(b"node16" | b"nodenext" | b"bundler") => None,
             Some(b"node" | b"node10") => Some(false),
             Some(b"classic") => Some(true),
+            _ if matches!(
+                options.module,
+                ModuleKind::Amd | ModuleKind::Umd | ModuleKind::System
+            ) =>
+            {
+                Some(true)
+            }
+            _ if !before_6 => None,
             _ if options.module == ModuleKind::CommonJs => Some(false),
             _ if like_node || options.module == ModuleKind::Preserve => None,
             _ => Some(true),
@@ -1011,9 +1037,10 @@ impl Options {
         options.resolve_json_module = specified(b"resolveJsonModule").unwrap_or(
             matches!(options.module, ModuleKind::Node20 | ModuleKind::NodeNext) || is_bundler,
         );
-        let interop = specified(b"esModuleInterop")
-            .unwrap_or_else(|| options.module.is_node() || options.module == ModuleKind::Preserve);
-        options.forbids_synthetic_default_imports = before_6
+        let interop = specified(b"esModuleInterop").unwrap_or_else(|| {
+            !before_6 || options.module.is_node() || options.module == ModuleKind::Preserve
+        });
+        options.forbids_synthetic_default_imports = before_7
             && !specified(b"allowSyntheticDefaultImports")
                 .unwrap_or(interop || options.module == ModuleKind::System || is_bundler);
         options.jsx_factory = text(b"jsxFactory");
@@ -2715,6 +2742,17 @@ impl<'h> Resolver<'h> {
             && let Some(found) = self.through_paths(spec, look)
         {
             return Some(real(found));
+        }
+        // `tryLoadModuleUsingBaseUrl`
+        if !self.options.base_url.is_empty() && !is_relative(spec) {
+            let candidate = resolve_path(&self.options.base_url, spec);
+            let found = match self.options.is_classic {
+                true => self.file(&candidate, look),
+                false => self.file_or_directory(&candidate, look),
+            };
+            if let Some(found) = found {
+                return Some(real(found));
+            }
         }
         if self.options.is_classic {
             return self.classic(spec, from_dir, look).map(real);

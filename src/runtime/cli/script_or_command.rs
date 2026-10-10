@@ -131,6 +131,19 @@ fn is_file_or_executable(name: &[u8], cwd: &[u8]) -> bool {
     }
 }
 
+/// The text of the `package.json` at `path`. A link in a repository can lead to `/dev/zero`: `bun run` stops at such a file, and
+/// finds no script in it.
+fn read_package_json(path: &[u8]) -> Option<Vec<u8>> {
+    use bun_sys::EntryKind;
+    let file = bun_sys::File::openat(bun_core::Fd::cwd(), path, bun_sys::O::RDONLY, 0).ok()?;
+    let found = file.stat().ok()?;
+    match bun_sys::kind_from_mode(found.st_mode as _) {
+        EntryKind::File if (found.st_size as u64) < 1 << 29 => file.read_to_end().ok(),
+        EntryKind::Directory => None,
+        _ => Some(Vec::new()),
+    }
+}
+
 /// The `package.json` nearest to `dir`, which is where `bun run` looks: its directory, its path and
 /// its text.
 fn nearest_package_json(mut dir: &[u8]) -> Option<(&[u8], Vec<u8>, Vec<u8>)> {
@@ -138,7 +151,7 @@ fn nearest_package_json(mut dir: &[u8]) -> Option<(&[u8], Vec<u8>, Vec<u8>)> {
     use bun_paths::resolve_path::{dirname, join_abs_string};
     loop {
         let path = join_abs_string::<Auto>(dir, &[b"package.json"]).to_vec();
-        if let Ok(contents) = bun_sys::File::read_from(bun_core::Fd::cwd(), &path) {
+        if let Some(contents) = read_package_json(&path) {
             let dir = bun_core::strings::without_trailing_slash(dir);
             return Some((dir, path, contents));
         }

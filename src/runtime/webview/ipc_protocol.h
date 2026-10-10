@@ -37,7 +37,7 @@ constexpr uint32_t kMaxFrameLen = (1u << 30) - 1;
 
 // Parent → child. viewId is in the frame header.
 enum class Op : uint8_t {
-    Create = 1, // u32 w, u32 h, u8 dataStoreKind, [u32 dirLen, dir bytes]
+    Create = 1, // CreatePayload, [str persistDir iff Persistent], str userAgent (may be empty)
     Navigate = 2, // u32 urlLen, url bytes
     Evaluate = 3, // u32 scriptLen, script bytes
     Screenshot = 4, // u8 format (0=png 1=jpeg 2=webp), u8 quality (0-100, ignored for png)
@@ -88,7 +88,7 @@ enum : uint8_t {
 struct CreatePayload {
     uint32_t width;
     uint32_t height;
-    uint8_t dataStoreKind; // DataStoreKind; str persistDir follows iff Persistent
+    uint8_t dataStoreKind; // DataStoreKind; str persistDir follows iff Persistent, then str userAgent
 };
 
 struct ClickPayload {
@@ -202,7 +202,7 @@ enum class VirtualKey : uint8_t {
 // NavDone/NavFailed → m_pendingNavigate, EvalDone/EvalFailed → m_pendingEval,
 // ScreenshotDone/Failed → m_pendingScreenshot, Ack/Error → m_pendingMisc.
 enum class Reply : uint8_t {
-    NavDone = 2, // u32 urlLen, url bytes, u32 titleLen, title bytes
+    NavDone = 2, // u32 urlLen, url bytes, u32 titleLen, title bytes, u16 status (0 = no HTTP response)
     NavFailed = 3, // u32 errLen, err bytes
     EvalDone = 4, // u32 resultLen, result bytes
     EvalFailed = 5, // u32 errLen, err bytes
@@ -214,7 +214,7 @@ enum class Reply : uint8_t {
     // Unsolicited — fires the onNavigated/onNavigationFailed callback.
     // Same viewId in header; these arrive BEFORE the corresponding
     // NavDone/NavFailed reply so the callback fires before `await` resumes.
-    NavEvent = 10, // u32 urlLen, url, u32 titleLen, title
+    NavEvent = 10, // u32 urlLen, url, u32 titleLen, title, u16 status
     NavFailEvent = 11, // u32 errLen, err
 
     // Unsolicited — fires the console callback or forwards to the global

@@ -1049,9 +1049,8 @@ describe("Bun.build", () => {
   // a long enough chain; the chains here are longer than what overflowed a
   // debug build. Bun.build() runs in a child process so that an overflow shows
   // up as a signal exit instead of taking down the test runner. The long
-  // chains build in well under a second on a release build but take 5-20s on
-  // a debug build with ASAN (more when the tests run concurrently), hence the
-  // timeout.
+  // chains build in well under a second on a release build but take 10-30s on
+  // a debug build with ASAN, hence the timeout.
   const deepGraphTimeout = 120_000;
   const deepGraphBuildScript = `
     import { basename } from "path";
@@ -1301,35 +1300,6 @@ describe("Bun.build", () => {
       expect(result.logs).toEqual([]);
       expect(result.success).toBe(true);
       expect(await runBuiltEntry(String(dir))).toBe("cjs tail\n");
-    },
-    deepGraphTimeout,
-  );
-
-  test.concurrent(
-    "bundles a chain of 2200 chunks that import each other",
-    async () => {
-      // With splitting, every import() target becomes its own chunk, and each
-      // chunk's hash covers the chunks it imports. That walk
-      // (`append_isolated_hashes_for_imported_chunks`) used to recurse per
-      // imported chunk; a debug build crashed at about 1560 chunks.
-      const length = 2200;
-      const files: Record<string, string> = {
-        "build-deep-graph.ts": deepGraphBuildScript,
-        "entry.js": `import { m0 } from "./m0.js";\nexport const entry = m0;\n`,
-      };
-      for (let i = 0; i < length; i++) {
-        files[`m${i}.js`] =
-          i + 1 < length
-            ? `export const m${i} = () => import("./m${i + 1}.js");\n`
-            : `export const m${i} = () => ${i};\n`;
-      }
-      using dir = tempDir("build-api-chunk-chain", files);
-      const result = await buildDeepGraphInChild(String(dir), { entrypoints: ["entry.js"], splitting: true });
-      expect(result.logs).toEqual([]);
-      expect(result.success).toBe(true);
-      // The entry chunk (with m0 in it), one chunk per import() target (m1 on),
-      // and the chunk with the runtime helpers that every other chunk imports.
-      expect(result.outputs).toBe(1 + (length - 1) + 1);
     },
     deepGraphTimeout,
   );

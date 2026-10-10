@@ -96,16 +96,14 @@ pub(crate) fn generate_code_for_lazy_export(
             // `defer composes_visited.deinit()` — handled by Drop.
             let mut stack: Vec<Frame> = Vec::new();
 
-            /// A class whose `composes` declarations are being walked, and
-            /// how far along them the walk is.
+            /// A class on the walk and the next `composes` name to visit.
             #[derive(Clone, Copy)]
             struct Frame {
                 idx: IndexInt,
                 css_ref: CssRef,
                 compose_index: usize,
                 name_index: usize,
-                /// Append the class's own name once its `composes` are done.
-                /// False for the root class, whose name the caller appends.
+                /// False for the root class: the caller appends its name.
                 append_name: bool,
             }
 
@@ -142,14 +140,8 @@ pub(crate) fn generate_code_for_lazy_export(
                     self.composes_visited.clear_retaining_capacity();
                 }
 
-                /// Starts walking a composed class's own `composes` unless it has
-                /// been reached already. Its name is appended when that walk
-                /// completes, after the names it composes.
-                ///
-                /// The class is marked as reached on the way in. The recursive
-                /// form marked it on the way out, which appended the same names
-                /// in the same order whenever it terminated, but recursed forever
-                /// on a `composes` cycle that did not pass through the root class.
+                /// Pushes a composed class unless it was reached already. Its name
+                /// is appended once the classes it composes are done.
                 fn visit_name(&mut self, ref_: CssRef, idx: IndexInt) {
                     debug_assert!(ref_.can_be_composed());
                     let real_ref = ref_.to_real_ref(idx);
@@ -216,15 +208,9 @@ pub(crate) fn generate_code_for_lazy_export(
                     );
                 }
 
-                /// Appends the name of every class that `css_ref` (a class in
-                /// the file `idx`, already marked as reached) transitively
-                /// composes, each after the names it composes itself.
-                ///
-                /// Explicit-stack DFS (was recursive, one `visit_composes` and
-                /// `visit_name` call per composed class). Each iteration handles
-                /// one name of one `composes` declaration of the class on top of
-                /// the stack, so the names, the `from global` strings and the
-                /// diagnostics come out in the order the recursion produced them.
+                /// Appends the name of every class that `css_ref` transitively
+                /// composes, each after the names it composes itself. Each
+                /// iteration handles one `composes` name of the top frame.
                 fn visit_composes(&mut self, css_ref: CssRef, idx: IndexInt) {
                     debug_assert!(self.stack.is_empty());
                     self.stack.push(Frame {
@@ -239,7 +225,6 @@ pub(crate) fn generate_code_for_lazy_export(
                     while let Some(frame) = self.stack.last_mut() {
                         let idx = frame.idx;
                         let css_ref = frame.css_ref;
-                        // Every class on the stack was found in a file's CSS AST.
                         let ast: &BundlerStyleSheet = all_css_asts[idx as usize]
                             .as_deref()
                             .expect("composed class comes from a CSS file");

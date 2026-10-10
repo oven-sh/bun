@@ -17,8 +17,7 @@ pub(crate) struct StaticRouteVisitor<'a> {
     pub(crate) stack: Vec<Frame>,
 }
 
-/// A file whose imports are being checked, and how many of its import
-/// records have been looked at so far.
+/// A file on the walk and the next import record to check.
 pub(crate) struct Frame {
     source_index: Index,
     next_record: usize,
@@ -67,12 +66,8 @@ impl<'a> StaticRouteVisitor<'a> {
     ///    .client`, then we know `source_index` is NOT fully
     ///    static.
     ///
-    /// Explicit-stack DFS (was recursive, one call per import). `result` is
-    /// the answer the most recently finished file (or cache hit) gave to the
-    /// file below it on the stack: `true` finishes that file as well, so it
-    /// propagates down through every file on the stack, caching `true` for
-    /// each, the way the recursive form's early returns did; `false` lets the
-    /// file go on to its next import.
+    /// `result` is the answer of the file that just finished. `true` finishes
+    /// every file on the stack.
     fn has_transitive_use_client_impl(
         &mut self,
         all_import_records: &[import_record::List<'_>],
@@ -126,9 +121,8 @@ impl<'a> StaticRouteVisitor<'a> {
         result
     }
 
-    /// Starts checking `source_index`'s imports unless the answer is already
-    /// known: cached by an earlier walk, or `false` for a file that is already
-    /// being checked further down the stack (a cycle).
+    /// Pushes `source_index`, or returns the answer when it is cached or the
+    /// file is already on the stack.
     fn enter(&mut self, source_index: Index) -> Option<bool> {
         if let Some(result) = self.cache.get(&source_index.get()) {
             return Some(*result);

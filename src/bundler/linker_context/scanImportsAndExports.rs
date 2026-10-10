@@ -526,6 +526,9 @@ pub(crate) fn scan_imports_and_exports(
                             export_star_records: export_star_import_records,
                             imports_to_bind: imports_to_bind_list,
                             stack: Vec::with_capacity(32),
+                            on_stack: bun_collections::AutoBitSet::init_empty(
+                                col_ref!(named_exports).len(),
+                            )?,
                             exports_kind,
                             named_exports,
                             ast_flags: ast_flags_list,
@@ -1457,22 +1460,18 @@ struct DependencyWrapper<'a> {
     export_star_stack: Vec<ExportStarFrame>,
 }
 
-/// One file on the path of an explicit-stack walk over the `export *` graph:
-/// the file and how many of its `export_star_import_records` have been
-/// followed so far.
+/// A file on an `export *` walk and the next export star to follow.
 struct ExportStarFrame {
     source_index: IndexInt,
     next_record: usize,
 }
 
-/// What the recursive form of `has_dynamic_exports_due_to_export_star`
-/// returned immediately upon entering a file, if anything.
 enum ExportStarEntry {
-    /// The file already has dynamic exports (`true`).
+    /// The file already has dynamic exports.
     Dynamic,
-    /// The file was already visited from this root (`false`).
+    /// The file was already visited from this root.
     Visited,
-    /// The file's own export stars need to be followed.
+    /// The file is on the stack and its export stars need to be followed.
     Pushed,
 }
 
@@ -1482,13 +1481,6 @@ impl DependencyWrapper<'_> {
     /// (CommonJS, or an unresolved external `export *`), along with every file
     /// on the `export *` path to that file. Returns whether `source_index` has
     /// dynamic exports.
-    ///
-    /// Explicit-stack DFS (was per-edge recursive, one call per `export *`).
-    /// In the recursive form, finding such a file returned `true` through
-    /// every frame on the way back up, and each of those frames marked its
-    /// file: the frames on the stack at that moment are exactly the files to
-    /// mark. A file whose export stars are exhausted without finding one
-    /// returned `false`, which is popping it.
     fn has_dynamic_exports_due_to_export_star(&mut self, source_index: IndexInt) -> bool {
         debug_assert!(self.export_star_stack.is_empty());
         match self.enter_export_star(source_index) {
@@ -1604,6 +1596,8 @@ impl DependencyWrapper<'_> {
 struct ExportStarContext<'a> {
     import_records_list: *mut [ImportRecordList<'a>],
     stack: Vec<ExportStarFrame>,
+    /// The files on `stack`, indexed by source index.
+    on_stack: bun_collections::AutoBitSet,
     exports_kind: *mut [ExportsKind],
     named_exports: *mut [NamedExports],
     imports_to_bind: *mut [RefImportData],
@@ -1613,13 +1607,8 @@ struct ExportStarContext<'a> {
 
 impl<'a> ExportStarContext<'a> {
     /// Merge the re-exports reachable through `source_index`'s `export *`
-    /// statements into `resolved_exports[target_id]`.
-    ///
-    /// Explicit-stack DFS (was per-edge recursive, one call per `export *`).
-    /// `stack` is the chain of files being followed from `source_index`, which
-    /// the recursive form kept as a separate list: a file already on it is a
-    /// cycle and is not entered again, and a real export in any file on it
-    /// shadows the re-exports found below.
+    /// statements into `resolved_exports[target_id]`. `stack` is the
+    /// `export *` path from `source_index` to the file being merged.
     fn add_exports(
         &mut self,
         resolved_exports: *mut [ResolvedExports],
@@ -1627,10 +1616,7 @@ impl<'a> ExportStarContext<'a> {
         source_index: IndexInt,
     ) {
         debug_assert!(self.stack.is_empty());
-        self.stack.push(ExportStarFrame {
-            source_index,
-            next_record: 0,
-        });
+        self.push(source_index);
 
         while let Some(frame) = self.stack.last_mut() {
             let source_index = frame.source_index;
@@ -1638,6 +1624,7 @@ impl<'a> ExportStarContext<'a> {
                 col_ref!(self.export_star_records)[source_index as usize].get(frame.next_record)
             else {
                 self.stack.pop();
+                self.on_stack.unset(source_index as usize);
                 continue;
             };
             frame.next_record += 1;
@@ -1741,19 +1728,20 @@ impl<'a> ExportStarContext<'a> {
                 }
             }
 
-            // Search further through this file's export stars, unless doing so
-            // would loop: avoid infinite loops due to cycles in the export star graph
-            if !self
-                .stack
-                .iter()
-                .any(|frame| frame.source_index == other_source_index)
-            {
-                self.stack.push(ExportStarFrame {
-                    source_index: other_source_index,
-                    next_record: 0,
-                });
+            // Search further through this file's export stars, unless that
+            // would loop
+            if !self.on_stack.is_set(other_id) {
+                self.push(other_source_index);
             }
         }
+    }
+
+    fn push(&mut self, source_index: IndexInt) {
+        self.on_stack.set(source_index as usize);
+        self.stack.push(ExportStarFrame {
+            source_index,
+            next_record: 0,
+        });
     }
 }
 
@@ -1866,8 +1854,7 @@ mod __css_validation {
             range: bun_ast::Range,
         }
 
-        /// A class (`Ref` local to the CSS file `IndexInt`) on the explicit
-        /// stack of `Visitor::visit`.
+        /// A class (`Ref` local to the CSS file `IndexInt`) on the walk.
         #[derive(Clone, Copy)]
         enum Frame {
             Enter(IndexInt, bun_ast::Ref),
@@ -1972,9 +1959,7 @@ mod __css_validation {
                 self.properties.clear_retaining_capacity();
             }
 
-            /// Every frame names a class of a file that has a CSS AST: the root
-            /// comes from `validate_css_import_composes`, and `Enter` only
-            /// pushes classes it looked up in the composed file's AST.
+            /// Every frame names a class found in a file's CSS AST.
             fn css_ast(&self, idx: IndexInt) -> &'a BundlerStyleSheet {
                 col_ref!(self.all_css_asts)[idx as usize]
                     .as_deref()
@@ -1983,14 +1968,8 @@ mod __css_validation {
 
             /// Records the properties of `root` and of everything it
             /// (transitively) composes, warning when two files contribute the
-            /// same property.
-            ///
-            /// Explicit-stack DFS (was recursive, one call per composed class).
-            /// `Enter` pushes the composed classes in source order followed by
-            /// its own `Leave`, then reverses that tail so they pop in source
-            /// order, each one's subtree completing before the next pops, and
-            /// `Leave` last: the recursion's postorder, which is what decides
-            /// which style rule a conflicting property is first seen in.
+            /// same property. Postorder: a class's properties are recorded
+            /// after those of the classes it composes.
             fn visit(&mut self, idx: IndexInt, root: bun_ast::Ref) {
                 debug_assert!(self.stack.is_empty());
                 self.stack.push(Frame::Enter(idx, root));
@@ -2024,8 +2003,6 @@ mod __css_validation {
                                         continue;
                                     }
                                     let other_idx = record.source_index.get();
-                                    // Read-only deref: may be the same
-                                    // allocation as `ast`, so bind shared.
                                     let Some(other_ast) =
                                         col_ref!(self.all_css_asts)[other_idx as usize].as_deref()
                                     else {

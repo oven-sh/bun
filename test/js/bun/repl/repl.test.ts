@@ -689,6 +689,14 @@ describe.concurrent("Bun REPL", () => {
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
+
+    // https://github.com/oven-sh/bun/issues/43506
+    test("require.main === module is not folded to import.meta.main", async () => {
+      const { outputs, stderr, exitCode } = await runRepl(["typeof (require.main === module)", ".exit"]);
+      expect(outputs).toEqual(['"boolean"']);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("global objects", () => {

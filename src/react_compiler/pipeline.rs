@@ -401,7 +401,7 @@ pub(crate) fn run_analysis_passes(
             hir,
             &mut env.functions,
         )
-    );
+    )?;
 
     timed!("EnterSSA", crate::ssa::enter_ssa(hir, env)).map_err(ssa_diag_to_error)?;
 

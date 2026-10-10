@@ -89,6 +89,7 @@ impl Rule for NoNonoctalDecimalEscape {
     const META: Meta = Meta::eslint("no-nonoctal-decimal-escape", Kind::Suggestion)
         .has_suggestions()
         .recommended();
+    const ON: On = On::new().exprs(&[ExprTag::String]).finish();
     /// Where the strings with such an escape start that are expressions.
     type State<'a> = Vec<u32>;
 
@@ -96,31 +97,30 @@ impl Rule for NoNonoctalDecimalEscape {
         NoNonoctalDecimalEscape
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Vec<u32> {
-        if !has_decimal_escape(file.text()) {
-            return Vec::new();
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Vec<u32>> {
+        has_decimal_escape(file.text()).then(Vec::new)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if !has_decimal_escape(e.text()) {
+            return;
         }
-        on.exprs([ExprTag::String], |_, e, cx| {
-            if !has_decimal_escape(e.text()) {
-                return;
+        cx.state.push(e.span().start);
+        if !e.is_jsx_text() && !e.is_jsx_tag_name() {
+            check(e.span(), cx);
+        }
+    }
+
+    // The strings that are not expressions: keys, module specifiers, literal types.
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        cx.state.sort_unstable();
+        for token in cx.file().tokens() {
+            if token.kind() == TokenKind::String
+                && has_decimal_escape(token.text())
+                && cx.state.binary_search(&token.start()).is_err()
+            {
+                check(token.span(), cx);
             }
-            cx.state.push(e.span().start);
-            if !e.is_jsx_text() && !e.is_jsx_tag_name() {
-                check(e.span(), cx);
-            }
-        });
-        // The strings that are not expressions: keys, module specifiers, literal types.
-        on.finish(|_, cx| {
-            cx.state.sort_unstable();
-            for token in cx.file().tokens() {
-                if token.kind() == TokenKind::String
-                    && has_decimal_escape(token.text())
-                    && cx.state.binary_search(&token.start()).is_err()
-                {
-                    check(token.span(), cx);
-                }
-            }
-        });
-        Vec::new()
+        }
     }
 }

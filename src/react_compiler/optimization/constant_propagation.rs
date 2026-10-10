@@ -119,7 +119,10 @@ fn constant_propagation_impl(
          * Finally, merge together any blocks that are now guaranteed to execute
          * consecutively
          */
-        merge_consecutive_blocks(func, &mut env.functions);
+        if let Err(invariant) = merge_consecutive_blocks(func, &mut env.functions) {
+            env.record_diagnostic(invariant);
+            break;
+        }
 
         // TODO: port assertConsistentIdentifiers(fn) and assertTerminalSuccessorsExist(fn)
         // from TS HIR validation. These are debug assertions that verify structural

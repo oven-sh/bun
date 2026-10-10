@@ -256,6 +256,11 @@ impl NoRestrictedProperties {
 
 impl Rule for NoRestrictedProperties {
     const META: Meta = Meta::eslint("no-restricted-properties", Kind::Suggestion);
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Dot, ExprTag::Index])
+        .pats(&[PatTag::Object])
+        .exprs(&[ExprTag::Object])
+        .types(&[TypeTag::Ref]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -287,18 +292,40 @@ impl Rule for NoRestrictedProperties {
         rule
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new()
+            .exprs(&[ExprTag::Dot, ExprTag::Index])
+            .pats(&[PatTag::Object])
+            .exprs(&[ExprTag::Object]);
+        if !file.is_javascript() {
+            on = on.types(&[TypeTag::Ref]);
+        }
+        on
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<()> {
         if self.restricted_properties.is_empty()
             && self.globally_restricted_objects.is_empty()
             && self.globally_restricted_properties.is_empty()
         {
-            return;
+            return None;
         }
-        on.exprs([ExprTag::Dot, ExprTag::Index], Self::check_member_expression);
-        on.pats([PatTag::Object], Self::check_binding_pattern);
-        on.exprs([ExprTag::Object], Self::check_assignment_pattern);
-        if !file.is_javascript() {
-            on.types([TypeTag::Ref], Self::check_heritage);
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Dot | ExprTag::Index => self.check_member_expression(e, cx),
+            ExprTag::Object => self.check_assignment_pattern(e, cx),
+            _ => {}
         }
+    }
+
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_heritage(ty, cx);
+    }
+
+    fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_binding_pattern(pat, cx);
     }
 }

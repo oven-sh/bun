@@ -73,8 +73,25 @@ impl NoConsole {
             && ast_utils::get_static_property_name(member)
                 .is_some_and(|name| !name.is_empty() && self.allowed.iter().any(|it| **it == *name))
     }
+}
 
-    fn check<'a>(&self, member: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoConsole {
+    const META: Meta = Meta::eslint("no-console", Kind::Suggestion).has_suggestions();
+    const ON: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]);
+    type State<'a> = ();
+
+    fn new(options: &Options) -> Self {
+        let allowed = options.object(0).strings("allow");
+        NoConsole {
+            allowed: allowed.into_iter().map(|it| it.as_bytes().into()).collect(),
+        }
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("console").then_some(())
+    }
+
+    fn expr<'a>(&self, member: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = member.kind() else {
             return;
         };
@@ -119,24 +136,6 @@ impl NoConsole {
             _ => {
                 report.suggest(REMOVE_METHOD_CALL, remove);
             }
-        }
-    }
-}
-
-impl Rule for NoConsole {
-    const META: Meta = Meta::eslint("no-console", Kind::Suggestion).has_suggestions();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let allowed = options.object(0).strings("allow");
-        NoConsole {
-            allowed: allowed.into_iter().map(|it| it.as_bytes().into()).collect(),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if file.mentions("console") {
-            on.exprs([ExprTag::Dot, ExprTag::Index], Self::check);
         }
     }
 }

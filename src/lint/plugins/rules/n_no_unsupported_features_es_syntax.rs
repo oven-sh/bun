@@ -143,8 +143,36 @@ fn question_dot(file: &File, before: Expr) -> Span {
     Span::new(start, start + 2)
 }
 
+/// [`State::methods`]
+fn methods_in<'a>(active: &Active, file: &'a File<'a>) -> smallvec::SmallVec<[Name<'a>; 8]> {
+    let mut methods = smallvec::SmallVec::new();
+    for (at, &(method, ..)) in active.methods.iter().enumerate() {
+        if active.methods.get(at.wrapping_sub(1)).is_none_or(|it| it.0 != method) && file.mentions(method) {
+            methods.push(file.name_of(method));
+        }
+    }
+    methods
+}
+
 impl Rule for EsSyntax {
     const META: Meta = Meta::plugin(Plugin::Node, "no-unsupported-features/es-syntax", Kind::Problem).recommended();
+    const ON: On = On::new()
+        .funcs()
+        .params()
+        .classes()
+        .members()
+        .props()
+        .nodes(NodeTags::PAT_PROP)
+        .pats(&[PatTag::Array, PatTag::Object])
+        .exprs(&[ExprTag::Array, ExprTag::Object, ExprTag::Assign])
+        .binaries(&[BinOp::Pow, BinOp::Nullish])
+        .exprs(&[ExprTag::ImportCall, ExprTag::ImportMeta, ExprTag::NewTarget, ExprTag::Spread])
+        .exprs(&[ExprTag::Template, ExprTag::TaggedTemplate, ExprTag::Await, ExprTag::Call, ExprTag::New])
+        .exprs(&[ExprTag::Dot, ExprTag::Index, ExprTag::PrivateIdentifier, ExprTag::Super, ExprTag::Regex])
+        .stmts(&[StmtTag::Var, StmtTag::Fn, StmtTag::ForOf, StmtTag::ForIn, StmtTag::Try])
+        .number_literals()
+        .string_literals()
+        .finish();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -155,160 +183,96 @@ impl Rule for EsSyntax {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
-        let version = || self.version.clone().unwrap_or_else(|| configured_node_version(file));
-        let first = self.first.get_or_init(|| Active::new(version(), &self.ignores));
-        let own = match &self.version {
-            Some(_) => None,
-            None => Some(version()).filter(|it| it.raw != first.version.raw).map(|it| Box::new(Active::new(it, &self.ignores))),
-        };
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let (first, own) = self.active_in(file);
         let active = own.as_deref().unwrap_or(first);
         let any = |features: &[usize]| features.iter().any(|&it| active.has(it));
+        let mut on = On::new();
 
         if any(&[ARROW_FUNCTIONS, ASYNC_FUNCTIONS, ASYNC_ITERATION, GENERATORS, TRAILING_FUNCTION_COMMAS]) {
-            on.funcs(Self::func);
+            on = on.funcs();
         }
         if any(&[DEFAULT_PARAMETERS, REST_PARAMETERS, DESTRUCTURING]) {
-            on.params(Self::param);
+            on = on.params();
         }
         if active.has(CLASSES) {
-            on.classes(|rule, class, cx| rule.report_in(cx, CLASSES, class.estree_span(), Node::Class(class)));
+            on = on.classes();
         }
         if any(&[ACCESSOR_PROPERTIES, COMPUTED_PROPERTIES, CLASS_FIELDS, CLASS_STATIC_BLOCK]) {
-            on.members(Self::member);
+            on = on.members();
         }
         if any(&[ACCESSOR_PROPERTIES, COMPUTED_PROPERTIES, KEYWORD_PROPERTIES, PROPERTY_SHORTHANDS, REST_SPREAD_PROPERTIES]) {
-            on.props(Self::prop);
+            on = on.props();
         }
         if any(&[COMPUTED_PROPERTIES, KEYWORD_PROPERTIES, REST_SPREAD_PROPERTIES]) {
-            on.nodes(NodeTags::PAT_PROP, Self::pat_prop);
+            on = on.nodes(NodeTags::PAT_PROP);
         }
         if any(&[DESTRUCTURING, TRAILING_COMMAS]) {
-            on.pats([PatTag::Array, PatTag::Object], Self::pat);
+            on = on.pats(&[PatTag::Array, PatTag::Object]);
         }
         if active.has(TRAILING_COMMAS) {
-            on.exprs([ExprTag::Array, ExprTag::Object], |rule, e, cx| {
-                if comma_before(cx.file(), e.span().end - 1).is_some() {
-                    rule.report(cx, TRAILING_COMMAS, e.span());
-                }
-            });
+            on = on.exprs(&[ExprTag::Array, ExprTag::Object]);
         }
         if any(&[EXPONENTIAL_OPERATORS, LOGICAL_ASSIGNMENT_OPERATORS, DESTRUCTURING]) {
-            on.exprs([ExprTag::Assign], Self::assign);
+            on = on.exprs(&[ExprTag::Assign]);
         }
         if active.has(EXPONENTIAL_OPERATORS) {
-            on.binaries([BinOp::Pow], |rule, e, cx| rule.report(cx, EXPONENTIAL_OPERATORS, e.span()));
+            on = on.binaries(&[BinOp::Pow]);
         }
         if active.has(NULLISH_COALESCING_OPERATORS) {
-            on.binaries([BinOp::Nullish], |rule, e, cx| {
-                if let Some(operator) = e.operator_span() {
-                    rule.report(cx, NULLISH_COALESCING_OPERATORS, operator);
-                }
-            });
+            on = on.binaries(&[BinOp::Nullish]);
         }
         for (feature, tag) in [(DYNAMIC_IMPORT, ExprTag::ImportCall), (IMPORT_META, ExprTag::ImportMeta), (NEW_TARGET, ExprTag::NewTarget)] {
             if active.has(feature) {
-                on.exprs([tag], |rule, e, cx| {
-                    let feature = match e.tag() {
-                        ExprTag::ImportCall => DYNAMIC_IMPORT,
-                        ExprTag::ImportMeta => IMPORT_META,
-                        _ => NEW_TARGET,
-                    };
-                    rule.report(cx, feature, e.span());
-                });
+                on = on.exprs(&[tag]);
             }
         }
         if active.has(SPREAD_ELEMENTS) {
-            on.exprs([ExprTag::Spread], |rule, e, cx| {
-                let is_element = match e.parent() {
-                    Node::Expr(parent) => match parent.tag() {
-                        ExprTag::Array => !parent.is_assignment_target(),
-                        ExprTag::Call | ExprTag::New => true,
-                        _ => false,
-                    },
-                    _ => false,
-                };
-                if is_element {
-                    rule.report(cx, SPREAD_ELEMENTS, e.span());
-                }
-            });
+            on = on.exprs(&[ExprTag::Spread]);
         }
         if any(&[TEMPLATE_LITERALS, MALFORMED_TEMPLATE_LITERALS]) {
-            on.exprs([ExprTag::Template, ExprTag::TaggedTemplate], Self::template);
+            on = on.exprs(&[ExprTag::Template, ExprTag::TaggedTemplate]);
         }
         if active.has(TOP_LEVEL_AWAIT) {
-            on.exprs([ExprTag::Await], |rule, e, cx| {
-                if !is_in_function(Node::Expr(e), &mut cx.state.function_around) {
-                    rule.report(cx, TOP_LEVEL_AWAIT, e.span());
-                }
-            });
+            on = on.exprs(&[ExprTag::Await]);
         }
         if any(&[TRAILING_FUNCTION_COMMAS, OPTIONAL_CHAINING]) {
-            on.exprs([ExprTag::Call, ExprTag::New], Self::call);
+            on = on.exprs(&[ExprTag::Call, ExprTag::New]);
         }
-        let mut methods = smallvec::SmallVec::new();
-        for (at, &(method, ..)) in active.methods.iter().enumerate() {
-            if active.methods.get(at.wrapping_sub(1)).is_none_or(|it| it.0 != method) && file.mentions(method) {
-                methods.push(file.name_of(method));
-            }
-        }
+        let methods = methods_in(active, file);
         if !methods.is_empty() || any(&[OPTIONAL_CHAINING, KEYWORD_PROPERTIES, CLASS_FIELDS, LEGACY_OBJECT_PROTOTYPE_ACCESSOR_METHODS]) {
-            on.exprs([ExprTag::Dot, ExprTag::Index], Self::member_expression);
+            on = on.exprs(&[ExprTag::Dot, ExprTag::Index]);
         }
         if any(&[CLASS_FIELDS, PRIVATE_IN]) {
-            on.exprs([ExprTag::PrivateIdentifier], |rule, e, cx| {
-                rule.report(cx, CLASS_FIELDS, e.span());
-                rule.report(cx, PRIVATE_IN, e.span());
-            });
+            on = on.exprs(&[ExprTag::PrivateIdentifier]);
         }
         if active.has(OBJECT_SUPER_PROPERTIES) {
-            on.exprs([ExprTag::Super], |rule, e, cx| {
-                // The function that it is in, not counting arrow functions.
-                let with_this = |it: Node<'a>| it.as_func().filter(|it| is_function(*it) && !it.is_arrow());
-                let func = cx.state.function_with_this_around.find(Node::Expr(e), |_, parent| with_this(parent));
-                let is_in_object_method = func.is_some_and(|func| match func.owner() {
-                    Node::Expr(owner) => matches!(owner.parent(), Node::Prop(prop) if prop.kind() == PropKind::Method),
-                    _ => false,
-                });
-                if is_in_object_method {
-                    rule.report(cx, OBJECT_SUPER_PROPERTIES, e.span());
-                }
-            });
+            on = on.exprs(&[ExprTag::Super]);
         }
         if active.has_regexp() {
-            on.exprs([ExprTag::Regex], |rule, e, cx| {
-                if let ExprKind::Regex(literal) = e.kind() {
-                    rule.regexp(cx, e.span(), Some(literal.pattern()), Some(literal.flags()));
-                }
-            });
+            on = on.exprs(&[ExprTag::Regex]);
         }
         if active.has(BLOCK_SCOPED_VARIABLES) {
-            on.stmts([StmtTag::Var], |rule, stmt, cx| {
-                if let StmtKind::Var(declarators) = stmt.kind()
-                    && matches!(declarators.first().map(VarDecl::var_kind), Some(VarKind::Let | VarKind::Const))
-                {
-                    rule.report_in(cx, BLOCK_SCOPED_VARIABLES, stmt.span_without_export(), Node::Stmt(stmt));
-                }
-            });
+            on = on.stmts(&[StmtTag::Var]);
         }
         if any(&[
             BLOCK_SCOPED_FUNCTIONS,
             FUNCTION_DECLARATIONS_IN_IF_STATEMENT_CLAUSES_WITHOUT_BLOCK,
             LABELLED_FUNCTION_DECLARATIONS,
         ]) {
-            on.stmts([StmtTag::Fn], Self::function_declaration);
+            on = on.stmts(&[StmtTag::Fn]);
         }
         if any(&[FOR_OF_LOOPS, ASYNC_ITERATION, TOP_LEVEL_AWAIT, DESTRUCTURING, INITIALIZERS_IN_FOR_IN]) {
-            on.stmts([StmtTag::ForOf, StmtTag::ForIn], Self::for_in_or_of);
+            on = on.stmts(&[StmtTag::ForOf, StmtTag::ForIn]);
         }
         if any(&[OPTIONAL_CATCH_BINDING, SHADOW_CATCH_PARAM]) {
-            on.stmts([StmtTag::Try], Self::try_statement);
+            on = on.stmts(&[StmtTag::Try]);
         }
         if any(&[BIGINT, BINARY_NUMERIC_LITERALS, OCTAL_NUMERIC_LITERALS, NUMERIC_SEPARATORS]) {
-            on.number_literals(Self::number);
+            on = on.number_literals();
         }
         if active.has(JSON_SUPERSET) && strings::contains(file.text(), b"\xE2\x80") {
-            on.string_literals(Self::string);
+            on = on.string_literals();
         }
         let has_something_at_the_end = active.globals_in(file).next().is_some()
             || active.has_regexp() && file.mentions("RegExp")
@@ -324,88 +288,100 @@ impl Rule for EsSyntax {
                 SUBCLASSING_BUILTINS,
             ]);
         if has_something_at_the_end {
-            on.finish(Self::finish);
+            on = on.finish();
         }
-        State {
+        on
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
+        let (first, own) = self.active_in(file);
+        let methods = methods_in(own.as_deref().unwrap_or(first), file);
+        Some(State {
             own,
             methods,
             types: RefCell::default(),
             var_declarators: FxHashMap::default(),
             function_around: AncestorMemo::default(),
             function_with_this_around: AncestorMemo::default(),
-        }
-    }
-}
-
-/// What the rules about the patterns of regular expressions look for.
-#[derive(Default)]
-struct Pattern {
-    has_lookbehind: bool,
-    has_named_group: bool,
-    has_property_escape: bool,
-    /// For each year from 2019: `\p{..}` with what that year has added.
-    has_property_of_year: [bool; 5],
-}
-
-impl Handler for Pattern {
-    fn on_lookaround_assertion_enter(&mut self, _: u32, behind: bool, _: bool) {
-        self.has_lookbehind |= behind;
-    }
-    fn on_capturing_group_enter(&mut self, _: u32, name: Option<&[u8]>) {
-        self.has_named_group |= name.is_some_and(|it| !it.is_empty());
-    }
-    fn on_backreference(&mut self, _: u32, _: u32, reference: regex::ast::Reference<'_>) {
-        self.has_named_group |= matches!(reference, regex::ast::Reference::Name(_));
-    }
-    fn on_unicode_property_character_set(&mut self, _: u32, _: u32, key: &[u8], value: Option<&[u8]>, _: bool, _: bool) {
-        self.has_property_escape = true;
-        let has = |set: &[&str], name: &[u8]| set.binary_search_by(|it| it.as_bytes().cmp(name)).is_ok();
-        for (found, (scripts, binary)) in self.has_property_of_year.iter_mut().zip(&UNICODE_PROPERTIES) {
-            *found |= match value.filter(|it| !it.is_empty()) {
-                Some(value) => matches!(key, b"Script" | b"Script_Extensions" | b"sc" | b"scx") && has(scripts, value),
-                None => has(binary, key),
-            };
-        }
-    }
-}
-
-impl EsSyntax {
-    fn active<'s>(&'s self, state: &'s State<'_>) -> Option<&'s Active> {
-        state.own.as_deref().or_else(|| self.first.get())
+        })
     }
 
-    fn report<'a>(&self, cx: &Context<'a>, feature: usize, at: Span) {
-        self.report_with(cx, feature, at, None, false);
-    }
-
-    /// For a feature that was supported in strict mode first. `node`: what is reported.
-    fn report_in<'a>(&self, cx: &Context<'a>, feature: usize, at: Span, node: Node<'a>) {
-        self.report_with(cx, feature, at, Some(node), false);
-    }
-
-    fn report_with<'a>(&self, cx: &Context<'a>, feature: usize, at: Span, node: Option<Node<'a>>, is_position: bool) {
-        let Some(active) = self.active(&cx.state).filter(|it| it.has(feature)) else {
-            return;
-        };
-        let Some(data) = FEATURES.get(feature) else {
-            return;
-        };
-        let mut supported = data.supported_range();
-        if let (Some(strict_mode), Some(node)) = (data.strict_mode(), node) {
-            // `normalizeScope`
-            let mut scope = node.scope();
-            while let Some(upper) = scope.parent().filter(|_| scope.node() == node) {
-                scope = upper;
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Context<'a>) {
+        match e.tag() {
+            ExprTag::Array | ExprTag::Object => {
+                if comma_before(cx.file(), e.span().end - 1).is_some() {
+                    self.report(cx, TRAILING_COMMAS, e.span());
+                }
             }
-            if !scope.is_strict() {
-                supported = strict_mode;
-            } else if Range::parse(data.supported_range().as_bytes()).is_some_and(|it| active.version.is_subset_of(&it)) {
-                return;
+            ExprTag::Assign => self.assign(e, cx),
+            ExprTag::ImportCall | ExprTag::ImportMeta | ExprTag::NewTarget => {
+                let feature = match e.tag() {
+                    ExprTag::ImportCall => DYNAMIC_IMPORT,
+                    ExprTag::ImportMeta => IMPORT_META,
+                    _ => NEW_TARGET,
+                };
+                self.report(cx, feature, e.span());
             }
+            ExprTag::Spread => self.spread(e, cx),
+            ExprTag::Template | ExprTag::TaggedTemplate => self.template(e, cx),
+            ExprTag::Await => {
+                if !is_in_function(Node::Expr(e), &mut cx.state.function_around) {
+                    self.report(cx, TOP_LEVEL_AWAIT, e.span());
+                }
+            }
+            ExprTag::Call | ExprTag::New => self.call(e, cx),
+            ExprTag::Dot | ExprTag::Index => self.member_expression(e, cx),
+            ExprTag::PrivateIdentifier => {
+                self.report(cx, CLASS_FIELDS, e.span());
+                self.report(cx, PRIVATE_IN, e.span());
+            }
+            ExprTag::Super => self.super_keyword(e, cx),
+            ExprTag::Regex => {
+                if let ExprKind::Regex(literal) = e.kind() {
+                    self.regexp(cx, e.span(), Some(literal.pattern()), Some(literal.flags()));
+                }
+            }
+            _ => {}
         }
-        let message = if data.supported().is_none() { NOT_SUPPORTED_YET } else { NOT_SUPPORTED_TILL };
-        let report = if is_position { cx.report_at(at.start, message) } else { cx.report(at, message) };
-        report.data("featureName", data.name()).data("supported", supported).data("version", active.version.raw.clone());
+    }
+
+    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Context<'a>) {
+        match e.binary_op() {
+            Some(BinOp::Pow) => self.report(cx, EXPONENTIAL_OPERATORS, e.span()),
+            Some(BinOp::Nullish) => {
+                if let Some(operator) = e.operator_span() {
+                    self.report(cx, NULLISH_COALESCING_OPERATORS, operator);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Context<'a>) {
+        match stmt.tag() {
+            StmtTag::Var => {
+                if let StmtKind::Var(declarators) = stmt.kind()
+                    && matches!(declarators.first().map(VarDecl::var_kind), Some(VarKind::Let | VarKind::Const))
+                {
+                    self.report_in(cx, BLOCK_SCOPED_VARIABLES, stmt.span_without_export(), Node::Stmt(stmt));
+                }
+            }
+            StmtTag::Fn => self.function_declaration(stmt, cx),
+            StmtTag::ForOf | StmtTag::ForIn => self.for_in_or_of(stmt, cx),
+            StmtTag::Try => self.try_statement(stmt, cx),
+            _ => {}
+        }
+    }
+
+    fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Context<'a>) {
+        if comma_before(cx.file(), pat.span().end - 1).is_some() {
+            self.report(cx, TRAILING_COMMAS, utils::estree_span(Node::Pat(pat)));
+        }
+        if let Node::VarDecl(declarator) = pat.parent()
+            && matches!(declarator.parent(), Node::Stmt(stmt) if stmt.tag() == StmtTag::Var)
+        {
+            self.report(cx, DESTRUCTURING, utils::estree_span(Node::Pat(pat)));
+        }
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Context<'a>) {
@@ -433,19 +409,8 @@ impl EsSyntax {
         }
     }
 
-    fn param<'a>(&self, param: Param<'a>, cx: &mut Context<'a>) {
-        if param.is_parameter_property() || !param.func().is_some_and(is_function) {
-            return;
-        }
-        if param.default().is_some() {
-            self.report(cx, DEFAULT_PARAMETERS, utils::estree_span(Node::Param(param)));
-        }
-        if param.is_rest() {
-            self.report(cx, REST_PARAMETERS, utils::estree_span(Node::Param(param)));
-        }
-        if matches!(param.pat().tag(), PatTag::Array | PatTag::Object) {
-            self.report(cx, DESTRUCTURING, utils::estree_span(Node::Pat(param.pat())));
-        }
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Context<'a>) {
+        self.report_in(cx, CLASSES, class.estree_span(), Node::Class(class));
     }
 
     fn member<'a>(&self, member: Member<'a>, cx: &mut Context<'a>) {
@@ -500,6 +465,180 @@ impl EsSyntax {
         }
     }
 
+    fn param<'a>(&self, param: Param<'a>, cx: &mut Context<'a>) {
+        if param.is_parameter_property() || !param.func().is_some_and(is_function) {
+            return;
+        }
+        if param.default().is_some() {
+            self.report(cx, DEFAULT_PARAMETERS, utils::estree_span(Node::Param(param)));
+        }
+        if param.is_rest() {
+            self.report(cx, REST_PARAMETERS, utils::estree_span(Node::Param(param)));
+        }
+        if matches!(param.pat().tag(), PatTag::Array | PatTag::Object) {
+            self.report(cx, DESTRUCTURING, utils::estree_span(Node::Pat(param.pat())));
+        }
+    }
+
+    fn string_literal<'a>(&self, literal: Literal<'a>, cx: &mut Context<'a>) {
+        self.string(literal, cx);
+    }
+
+    fn number_literal<'a>(&self, literal: Literal<'a>, cx: &mut Context<'a>) {
+        self.number(literal, cx);
+    }
+
+    fn node<'a>(&self, node: Node<'a>, cx: &mut Context<'a>) {
+        self.pat_prop(node, cx);
+    }
+
+    fn finish(&self, cx: &mut Context<'_>) {
+        const REGEXP: TraceMap<'static, ()> = TraceMap::new(&[("RegExp", TraceMap::EMPTY.call(()).construct(()))]);
+        let file = cx.file();
+        let Some(active) = self.active(&cx.state) else {
+            return;
+        };
+        let tracker = ReferenceTracker::new(file);
+        for feature in active.globals_in(file) {
+            let globals = FEATURES.get(feature).map_or(&[][..], Feature::globals);
+            for reference in tracker.iterate_global_references(&Roots(globals.iter().collect())) {
+                self.report(cx, feature, reference.span);
+            }
+        }
+        if active.has_regexp() && file.mentions("RegExp") {
+            for reference in tracker.iterate_global_references(&REGEXP) {
+                let Some(call) = reference.call() else {
+                    continue;
+                };
+                let text = |at: usize| call.args().get(at).and_then(|it| get_string_if_constant(it, Some(file.scope())));
+                self.regexp(cx, reference.span, text(0).as_deref(), text(1).as_deref());
+            }
+        }
+        if active.has(HASHBANG) && strings::without_utf8_bom(file.text()).starts_with(b"#!")
+            && let Some(comment) = file.comments().next().filter(|it| it.kind() == TokenKind::Shebang)
+        {
+            self.report(cx, HASHBANG, comment.span());
+        }
+        if active.has(MODULES) || active.has(EXPORT_NS_FROM) || active.has(ARBITRARY_MODULE_NAMESPACE_NAMES) {
+            self.modules(cx);
+        }
+        if active.has(UNICODE_CODEPOINT_ESCAPES) && strings::contains(file.text(), b"\\u{") {
+            self.unicode_codepoint_escapes(cx);
+        }
+        if active.has(LEGACY_OBJECT_PROTOTYPE_ACCESSOR_METHODS) {
+            for name in LEGACY_ACCESSOR_METHODS {
+                for reference in file.unresolved_references_to(name.as_bytes()) {
+                    self.report(cx, LEGACY_OBJECT_PROTOTYPE_ACCESSOR_METHODS, reference.span());
+                }
+            }
+        }
+        if active.has(SUBCLASSING_BUILTINS) {
+            self.subclassing_builtins(cx, &tracker);
+        }
+        if active.has(ERROR_CAUSE) && file.mentions("cause") {
+            self.error_cause(cx, &tracker);
+        }
+        if active.has(RESIZABLE_AND_GROWABLE_ARRAYBUFFERS) && file.mentions_any(&["ArrayBuffer", "SharedArrayBuffer"]) {
+            const BUFFERS: TraceMap<'static, ()> = TraceMap::new(&[
+                ("ArrayBuffer", TraceMap::EMPTY.construct(())),
+                ("SharedArrayBuffer", TraceMap::EMPTY.construct(())),
+            ]);
+            for reference in tracker.iterate_global_references(&BUFFERS) {
+                let Some(call) = reference.call().filter(|_| reference.expr().is_some_and(|it| it.tag() == ExprTag::New)) else {
+                    continue;
+                };
+                if !call.args().iter().take(2).any(|it| it.tag() == ExprTag::Spread)
+                    && let Some(options) = call.args().get(1)
+                {
+                    self.report(cx, RESIZABLE_AND_GROWABLE_ARRAYBUFFERS, options.span());
+                }
+            }
+        }
+    }
+}
+
+/// What the rules about the patterns of regular expressions look for.
+#[derive(Default)]
+struct Pattern {
+    has_lookbehind: bool,
+    has_named_group: bool,
+    has_property_escape: bool,
+    /// For each year from 2019: `\p{..}` with what that year has added.
+    has_property_of_year: [bool; 5],
+}
+
+impl Handler for Pattern {
+    fn on_lookaround_assertion_enter(&mut self, _: u32, behind: bool, _: bool) {
+        self.has_lookbehind |= behind;
+    }
+    fn on_capturing_group_enter(&mut self, _: u32, name: Option<&[u8]>) {
+        self.has_named_group |= name.is_some_and(|it| !it.is_empty());
+    }
+    fn on_backreference(&mut self, _: u32, _: u32, reference: regex::ast::Reference<'_>) {
+        self.has_named_group |= matches!(reference, regex::ast::Reference::Name(_));
+    }
+    fn on_unicode_property_character_set(&mut self, _: u32, _: u32, key: &[u8], value: Option<&[u8]>, _: bool, _: bool) {
+        self.has_property_escape = true;
+        let has = |set: &[&str], name: &[u8]| set.binary_search_by(|it| it.as_bytes().cmp(name)).is_ok();
+        for (found, (scripts, binary)) in self.has_property_of_year.iter_mut().zip(&UNICODE_PROPERTIES) {
+            *found |= match value.filter(|it| !it.is_empty()) {
+                Some(value) => matches!(key, b"Script" | b"Script_Extensions" | b"sc" | b"scx") && has(scripts, value),
+                None => has(binary, key),
+            };
+        }
+    }
+}
+
+impl EsSyntax {
+    /// [`EsSyntax::first`], and what [`State::own`] is for `file`.
+    fn active_in(&self, file: &File) -> (&Active, Option<Box<Active>>) {
+        let version = || self.version.clone().unwrap_or_else(|| configured_node_version(file));
+        let first = self.first.get_or_init(|| Active::new(version(), &self.ignores));
+        let own = match &self.version {
+            Some(_) => None,
+            None => Some(version()).filter(|it| it.raw != first.version.raw).map(|it| Box::new(Active::new(it, &self.ignores))),
+        };
+        (first, own)
+    }
+
+    fn active<'s>(&'s self, state: &'s State<'_>) -> Option<&'s Active> {
+        state.own.as_deref().or_else(|| self.first.get())
+    }
+
+    fn report<'a>(&self, cx: &Context<'a>, feature: usize, at: Span) {
+        self.report_with(cx, feature, at, None, false);
+    }
+
+    /// For a feature that was supported in strict mode first. `node`: what is reported.
+    fn report_in<'a>(&self, cx: &Context<'a>, feature: usize, at: Span, node: Node<'a>) {
+        self.report_with(cx, feature, at, Some(node), false);
+    }
+
+    fn report_with<'a>(&self, cx: &Context<'a>, feature: usize, at: Span, node: Option<Node<'a>>, is_position: bool) {
+        let Some(active) = self.active(&cx.state).filter(|it| it.has(feature)) else {
+            return;
+        };
+        let Some(data) = FEATURES.get(feature) else {
+            return;
+        };
+        let mut supported = data.supported_range();
+        if let (Some(strict_mode), Some(node)) = (data.strict_mode(), node) {
+            // `normalizeScope`
+            let mut scope = node.scope();
+            while let Some(upper) = scope.parent().filter(|_| scope.node() == node) {
+                scope = upper;
+            }
+            if !scope.is_strict() {
+                supported = strict_mode;
+            } else if Range::parse(data.supported_range().as_bytes()).is_some_and(|it| active.version.is_subset_of(&it)) {
+                return;
+            }
+        }
+        let message = if data.supported().is_none() { NOT_SUPPORTED_YET } else { NOT_SUPPORTED_TILL };
+        let report = if is_position { cx.report_at(at.start, message) } else { cx.report(at, message) };
+        report.data("featureName", data.name()).data("supported", supported).data("version", active.version.raw.clone());
+    }
+
     fn pat_prop<'a>(&self, node: Node<'a>, cx: &mut Context<'a>) {
         let Node::PatProp(prop) = node else {
             return;
@@ -513,17 +652,6 @@ impl EsSyntax {
                 self.report(cx, COMPUTED_PROPERTIES, prop.span());
             }
             _ => {}
-        }
-    }
-
-    fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Context<'a>) {
-        if comma_before(cx.file(), pat.span().end - 1).is_some() {
-            self.report(cx, TRAILING_COMMAS, utils::estree_span(Node::Pat(pat)));
-        }
-        if let Node::VarDecl(declarator) = pat.parent()
-            && matches!(declarator.parent(), Node::Stmt(stmt) if stmt.tag() == StmtTag::Var)
-        {
-            self.report(cx, DESTRUCTURING, utils::estree_span(Node::Pat(pat)));
         }
     }
 
@@ -542,6 +670,20 @@ impl EsSyntax {
                 self.report(cx, DESTRUCTURING, target.span());
             }
             _ => {}
+        }
+    }
+
+    fn spread<'a>(&self, e: Expr<'a>, cx: &mut Context<'a>) {
+        let is_element = match e.parent() {
+            Node::Expr(parent) => match parent.tag() {
+                ExprTag::Array => !parent.is_assignment_target(),
+                ExprTag::Call | ExprTag::New => true,
+                _ => false,
+            },
+            _ => false,
+        };
+        if is_element {
+            self.report(cx, SPREAD_ELEMENTS, e.span());
         }
     }
 
@@ -639,6 +781,19 @@ impl EsSyntax {
                 reported = feature;
                 self.report(cx, feature, e.span());
             }
+        }
+    }
+
+    fn super_keyword<'a>(&self, e: Expr<'a>, cx: &mut Context<'a>) {
+        // The function that it is in, not counting arrow functions.
+        let with_this = |it: Node<'a>| it.as_func().filter(|it| is_function(*it) && !it.is_arrow());
+        let func = cx.state.function_with_this_around.find(Node::Expr(e), |_, parent| with_this(parent));
+        let is_in_object_method = func.is_some_and(|func| match func.owner() {
+            Node::Expr(owner) => matches!(owner.parent(), Node::Prop(prop) if prop.kind() == PropKind::Method),
+            _ => false,
+        });
+        if is_in_object_method {
+            self.report(cx, OBJECT_SUPER_PROPERTIES, e.span());
         }
     }
 
@@ -803,70 +958,6 @@ impl EsSyntax {
         for (feature, is_found) in all.into_iter().chain(years.into_iter().zip(found.has_property_of_year)) {
             if is_found {
                 self.report(cx, feature, at);
-            }
-        }
-    }
-
-    fn finish<'a>(&self, cx: &mut Context<'a>) {
-        const REGEXP: TraceMap<'static, ()> = TraceMap::new(&[("RegExp", TraceMap::EMPTY.call(()).construct(()))]);
-        let file = cx.file();
-        let Some(active) = self.active(&cx.state) else {
-            return;
-        };
-        let tracker = ReferenceTracker::new(file);
-        for feature in active.globals_in(file) {
-            let globals = FEATURES.get(feature).map_or(&[][..], Feature::globals);
-            for reference in tracker.iterate_global_references(&Roots(globals.iter().collect())) {
-                self.report(cx, feature, reference.span);
-            }
-        }
-        if active.has_regexp() && file.mentions("RegExp") {
-            for reference in tracker.iterate_global_references(&REGEXP) {
-                let Some(call) = reference.call() else {
-                    continue;
-                };
-                let text = |at: usize| call.args().get(at).and_then(|it| get_string_if_constant(it, Some(file.scope())));
-                self.regexp(cx, reference.span, text(0).as_deref(), text(1).as_deref());
-            }
-        }
-        if active.has(HASHBANG) && strings::without_utf8_bom(file.text()).starts_with(b"#!")
-            && let Some(comment) = file.comments().next().filter(|it| it.kind() == TokenKind::Shebang)
-        {
-            self.report(cx, HASHBANG, comment.span());
-        }
-        if active.has(MODULES) || active.has(EXPORT_NS_FROM) || active.has(ARBITRARY_MODULE_NAMESPACE_NAMES) {
-            self.modules(cx);
-        }
-        if active.has(UNICODE_CODEPOINT_ESCAPES) && strings::contains(file.text(), b"\\u{") {
-            self.unicode_codepoint_escapes(cx);
-        }
-        if active.has(LEGACY_OBJECT_PROTOTYPE_ACCESSOR_METHODS) {
-            for name in LEGACY_ACCESSOR_METHODS {
-                for reference in file.unresolved_references_to(name.as_bytes()) {
-                    self.report(cx, LEGACY_OBJECT_PROTOTYPE_ACCESSOR_METHODS, reference.span());
-                }
-            }
-        }
-        if active.has(SUBCLASSING_BUILTINS) {
-            self.subclassing_builtins(cx, &tracker);
-        }
-        if active.has(ERROR_CAUSE) && file.mentions("cause") {
-            self.error_cause(cx, &tracker);
-        }
-        if active.has(RESIZABLE_AND_GROWABLE_ARRAYBUFFERS) && file.mentions_any(&["ArrayBuffer", "SharedArrayBuffer"]) {
-            const BUFFERS: TraceMap<'static, ()> = TraceMap::new(&[
-                ("ArrayBuffer", TraceMap::EMPTY.construct(())),
-                ("SharedArrayBuffer", TraceMap::EMPTY.construct(())),
-            ]);
-            for reference in tracker.iterate_global_references(&BUFFERS) {
-                let Some(call) = reference.call().filter(|_| reference.expr().is_some_and(|it| it.tag() == ExprTag::New)) else {
-                    continue;
-                };
-                if !call.args().iter().take(2).any(|it| it.tag() == ExprTag::Spread)
-                    && let Some(options) = call.args().get(1)
-                {
-                    self.report(cx, RESIZABLE_AND_GROWABLE_ARRAYBUFFERS, options.span());
-                }
             }
         }
     }

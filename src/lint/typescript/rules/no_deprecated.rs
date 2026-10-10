@@ -492,9 +492,63 @@ impl NoDeprecated {
             self.report(IdentifierLike::new(NameOf(property).ts_node(), key.span(cx.file()), name), reason, cx);
         }
     }
+}
+
+impl Rule for NoDeprecated {
+    const META: Meta =
+        Meta::typescript("no-deprecated", Kind::Problem).presets(Presets::STRICT_TYPE_CHECKED).requires_types();
+    const ON: On = On::new()
+        .exprs(&[
+            ExprTag::Ident,
+            ExprTag::Dot,
+            ExprTag::Index,
+            ExprTag::Super,
+            ExprTag::PrivateIdentifier,
+            ExprTag::Jsx,
+            ExprTag::Object,
+        ])
+        .pats(&[PatTag::Object, PatTag::Array])
+        .params()
+        .types(&[TypeTag::Ref, TypeTag::Import, TypeTag::Predicate])
+        .stmts(&[StmtTag::Try, StmtTag::ImportEquals, StmtTag::Module])
+        .members()
+        .export_specs();
+    type State<'a> = Deprecations<'a>;
+
+    fn new(options: &Options) -> Self {
+        NoDeprecated {
+            allow: parse_type_or_value_specifiers(options.object(0).array("allow")),
+        }
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Deprecations<'a>> {
+        let is_oxlint = file.language().is_oxlint;
+        Some(Deprecations {
+            has_no_reasons_for_variables: is_oxlint,
+            is_nothing_inherited: is_oxlint,
+            ..Deprecations::default()
+        })
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Ident => self.check_identifier(e, cx),
+            ExprTag::Dot => self.check_property(e, cx),
+            ExprTag::Index => self.check_member_expression(e, cx),
+            ExprTag::Super => self.check_super(e, cx),
+            ExprTag::PrivateIdentifier => {
+                if let ExprKind::PrivateIdentifier(name) = e.kind() {
+                    self.check_plain(IdentifierLike::new(e.ts_node(), e.span(), name.bytes()), cx);
+                }
+            }
+            ExprTag::Jsx => self.check_jsx(e, cx),
+            ExprTag::Object => self.check_object(e, cx),
+            _ => {}
+        }
+    }
 
     /// The keys of an `ObjectPattern` that declares, and the argument of a `RestElement` in a pattern.
-    fn check_pattern<'a>(&self, pattern: Pat<'a>, cx: &mut Cx<'a, Self>) {
+    fn pat<'a>(&self, pattern: Pat<'a>, cx: &mut Cx<'a, Self>) {
         match pattern.kind() {
             PatKind::Object(properties) => {
                 for property in properties {
@@ -531,7 +585,7 @@ impl NoDeprecated {
     }
 
     /// Upstream takes the parameters of some kinds of functions for declarations, and no `RestElement`.
-    fn check_param<'a>(&self, param: Param<'a>, cx: &mut Cx<'a, Self>) {
+    fn param<'a>(&self, param: Param<'a>, cx: &mut Cx<'a, Self>) {
         if param.is_rest() {
             self.check_binding(param.pat(), param.pat().span(), cx);
             return;
@@ -551,7 +605,7 @@ impl NoDeprecated {
         }
     }
 
-    fn check_type<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         match ty.kind() {
             TypeKind::Ref { name, .. } | TypeKind::Import { name, .. } => self.check_entity_name(name, cx),
             TypeKind::Predicate { .. } => {
@@ -563,7 +617,7 @@ impl NoDeprecated {
         }
     }
 
-    fn check_statement<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         match statement.kind() {
             // The parameter of a `CatchClause`.
             StmtKind::Try { param: Some(param), .. } => self.check_binding(param.pat(), param.binding_span(), cx),
@@ -587,7 +641,7 @@ impl NoDeprecated {
     }
 
     /// Upstream does not take the key of an abstract member for a declaration.
-    fn check_member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
         if member.flags().contains(Flags::ABSTRACT)
             && !cx.language().is_oxlint
             && let Some(key) = member.key()
@@ -597,7 +651,7 @@ impl NoDeprecated {
         }
     }
 
-    fn check_export_specifier<'a>(&self, specifier: ExportSpec<'a>, cx: &mut Cx<'a, Self>) {
+    fn export_spec<'a>(&self, specifier: ExportSpec<'a>, cx: &mut Cx<'a, Self>) {
         let exported = specifier.exported();
         if exported.is_string() {
             return;
@@ -610,43 +664,5 @@ impl NoDeprecated {
         }
         let reason = cx.state.search_in_aliases_chain(symbol, true);
         self.report(node, reason, cx);
-    }
-}
-
-impl Rule for NoDeprecated {
-    const META: Meta =
-        Meta::typescript("no-deprecated", Kind::Problem).presets(Presets::STRICT_TYPE_CHECKED).requires_types();
-    type State<'a> = Deprecations<'a>;
-
-    fn new(options: &Options) -> Self {
-        NoDeprecated {
-            allow: parse_type_or_value_specifiers(options.object(0).array("allow")),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Deprecations<'a> {
-        on.exprs([ExprTag::Ident], Self::check_identifier);
-        on.exprs([ExprTag::Dot], Self::check_property);
-        on.exprs([ExprTag::Index], Self::check_member_expression);
-        on.exprs([ExprTag::Super], Self::check_super);
-        on.exprs([ExprTag::PrivateIdentifier], |rule, e, cx| {
-            if let ExprKind::PrivateIdentifier(name) = e.kind() {
-                rule.check_plain(IdentifierLike::new(e.ts_node(), e.span(), name.bytes()), cx);
-            }
-        });
-        on.exprs([ExprTag::Jsx], Self::check_jsx);
-        on.exprs([ExprTag::Object], Self::check_object);
-        on.pats([PatTag::Object, PatTag::Array], Self::check_pattern);
-        on.params(Self::check_param);
-        on.types([TypeTag::Ref, TypeTag::Import, TypeTag::Predicate], Self::check_type);
-        on.stmts([StmtTag::Try, StmtTag::ImportEquals, StmtTag::Module], Self::check_statement);
-        on.members(Self::check_member);
-        on.export_specs(Self::check_export_specifier);
-        let is_oxlint = file.language().is_oxlint;
-        Deprecations {
-            has_no_reasons_for_variables: is_oxlint,
-            is_nothing_inherited: is_oxlint,
-            ..Deprecations::default()
-        }
     }
 }

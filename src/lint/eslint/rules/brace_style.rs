@@ -107,8 +107,27 @@ impl BraceStyle {
             cx.report(curly, SAME_LINE_CLOSE).fix(|fixer| fixer.insert_after(curly, "\n"));
         }
     }
+}
 
-    fn check_statement<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for BraceStyle {
+    const META: Meta = Meta::eslint("brace-style", Kind::Layout)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new().stmts(&[StmtTag::Block, StmtTag::Switch, StmtTag::Try]).funcs().classes().finish();
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        BraceStyle {
+            style: match options.str(0) {
+                Some("stroustrup") => Style::Stroustrup,
+                Some("allman") => Style::Allman,
+                _ => Style::OneTbs,
+            },
+            allow_single_line: options.object(1).bool_or("allowSingleLine", false),
+        }
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         match statement.kind() {
             StmtKind::Block(_) => {
                 if !ast_utils::is_statement_list_parent(statement.parent()) {
@@ -134,33 +153,22 @@ impl BraceStyle {
             _ => {}
         }
     }
-}
 
-impl Rule for BraceStyle {
-    const META: Meta = Meta::eslint("brace-style", Kind::Layout)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        BraceStyle {
-            style: match options.str(0) {
-                Some("stroustrup") => Style::Stroustrup,
-                Some("allman") => Style::Allman,
-                _ => Style::OneTbs,
-            },
-            allow_single_line: options.object(1).bool_or("allowSingleLine", false),
+    // The body of a function, and a static block.
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(body) = func.body_span() {
+            self.validate_braces_of(body, cx);
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::Block, StmtTag::Switch, StmtTag::If, StmtTag::Try], Self::check_statement);
-        // The body of a function, and a static block.
-        on.funcs(|rule, func, cx| {
-            if let Some(body) = func.body_span() {
-                rule.validate_braces_of(body, cx);
-            }
-        });
-        on.classes(|rule, class, cx| rule.validate_braces_of(class.body_span(), cx));
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        self.validate_braces_of(class.body_span(), cx);
+    }
+
+    // What an `if` reports at the `}` before its `else` comes after what the block reports there.
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        for statement in cx.file().stmts_of_kind(StmtTag::If) {
+            self.stmt(statement, cx);
+        }
     }
 }

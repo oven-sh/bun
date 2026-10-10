@@ -11,11 +11,10 @@ impl Rule for ComponentHookFactories {
         Kind::Suggestion,
     )
     .deprecated();
-    type State<'a> = ();
+    const ON: On = On::new();
+    no_state!();
 
     fn new(_: &Options) -> Self {
         ComponentHookFactories
     }
-
-    fn register<'a>(&self, _: &mut Listeners<'a, Self>, _: &'a File<'a>) {}
 }

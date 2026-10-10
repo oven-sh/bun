@@ -173,6 +173,10 @@ impl Rule for NoUnnecessaryQualifier {
     const META: Meta = Meta::typescript("no-unnecessary-qualifier", Kind::Suggestion)
         .fixable(Fixable::Code)
         .requires_types();
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Dot])
+        .types(&[TypeTag::Ref, TypeTag::Import])
+        .stmts(&[StmtTag::ImportEquals]);
     /// Where the namespaces and the enums are that are in no other, in the order of the text.
     type State<'a> = Vec<Span>;
 
@@ -180,11 +184,11 @@ impl Rule for NoUnnecessaryQualifier {
         NoUnnecessaryQualifier
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Vec<Span> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Vec<Span>> {
         let declarations = file.stmts_of_kind(StmtTag::Module).chain(file.stmts_of_kind(StmtTag::Enum));
         let mut declarations: Vec<Span> = declarations.map(|it| it.span()).collect();
         if declarations.is_empty() {
-            return declarations;
+            return None;
         }
         utils::sort::sort_unstable_by_key(&mut declarations, |it| (it.start, std::cmp::Reverse(it.end)));
         let mut end = 0;
@@ -193,19 +197,24 @@ impl Rule for NoUnnecessaryQualifier {
             end = end.max(it.end);
             is_in_no_other
         });
-        on.exprs([ExprTag::Dot], Self::check_member);
-        on.types([TypeTag::Ref, TypeTag::Import], |_, node, cx| {
-            if let TypeKind::Ref { name, .. } | TypeKind::Import { name, .. } = node.kind() {
-                Self::check_entity_name(cx, Node::Type(node), name);
-            }
-        });
-        on.stmts([StmtTag::ImportEquals], |_, node, cx| {
-            if let StmtKind::ImportEquals(import) = node.kind()
-                && let ImportEqualsTarget::Entity(name) = import.target()
-            {
-                Self::check_entity_name(cx, Node::Stmt(node), name);
-            }
-        });
-        declarations
+        Some(declarations)
+    }
+
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_member(node, cx);
+    }
+
+    fn ty<'a>(&self, node: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        if let TypeKind::Ref { name, .. } | TypeKind::Import { name, .. } = node.kind() {
+            Self::check_entity_name(cx, Node::Type(node), name);
+        }
+    }
+
+    fn stmt<'a>(&self, node: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if let StmtKind::ImportEquals(import) = node.kind()
+            && let ImportEqualsTarget::Entity(name) = import.target()
+        {
+            Self::check_entity_name(cx, Node::Stmt(node), name);
+        }
     }
 }

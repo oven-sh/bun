@@ -108,14 +108,15 @@ impl NoUnsafeTypeAssertion {
 
 impl Rule for NoUnsafeTypeAssertion {
     const META: Meta = Meta::typescript("no-unsafe-type-assertion", Kind::Problem).requires_types();
-    type State<'a> = ();
+    // The type that `as const` asserts is that of the expression.
+    const ON: On = On::new().exprs(&[ExprTag::As]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoUnsafeTypeAssertion
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        // The type that `as const` asserts is that of the expression.
-        on.exprs([ExprTag::As], Self::check_expression);
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_expression(node, cx);
     }
 }

@@ -218,8 +218,35 @@ impl NoInvalidVoidType {
             _ => false,
         }
     }
+}
 
-    fn check<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoInvalidVoidType {
+    const META: Meta =
+        Meta::typescript("no-invalid-void-type", Kind::Problem).presets(Presets::STRICT);
+    const ON: On = On::new().types(&[TypeTag::Keyword]);
+    type State<'a> = State<'a>;
+
+    fn new(options: &Options) -> Self {
+        let object = options.object(0);
+        let key = "allowInGenericTypeArguments";
+        NoInvalidVoidType {
+            allows_this_parameter: object.bool_or("allowAsThisParameter", false),
+            generics: match object.bool(key) {
+                Some(false) => Generics::Forbidden,
+                None if object.has(key) => {
+                    let names = object.strings(key).into_iter();
+                    Generics::Only(names.map(|it| without_spaces(it.as_bytes()).collect()).collect())
+                }
+                _ => Generics::Allowed,
+            },
+        }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         if !is_void(ty) {
             return;
         }
@@ -280,32 +307,5 @@ impl NoInvalidVoidType {
             (false, true) => INVALID_VOID_NOT_RETURN_OR_THIS_PARAM,
             (false, false) => INVALID_VOID_NOT_RETURN,
         });
-    }
-}
-
-impl Rule for NoInvalidVoidType {
-    const META: Meta =
-        Meta::typescript("no-invalid-void-type", Kind::Problem).presets(Presets::STRICT);
-    type State<'a> = State<'a>;
-
-    fn new(options: &Options) -> Self {
-        let object = options.object(0);
-        let key = "allowInGenericTypeArguments";
-        NoInvalidVoidType {
-            allows_this_parameter: object.bool_or("allowAsThisParameter", false),
-            generics: match object.bool(key) {
-                Some(false) => Generics::Forbidden,
-                None if object.has(key) => {
-                    let names = object.strings(key).into_iter();
-                    Generics::Only(names.map(|it| without_spaces(it.as_bytes()).collect()).collect())
-                }
-                _ => Generics::Allowed,
-            },
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
-        on.types([TypeTag::Keyword], Self::check);
-        State::default()
     }
 }

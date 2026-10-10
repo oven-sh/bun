@@ -30,6 +30,86 @@ pub enum Value<'a> {
     Nodes(Nodes<'a>),
 }
 
+/// Takes the fields of a node, one call for each: [`NodeType::emit_fields`](super::NodeType::emit_fields).
+pub(crate) trait Sink<'a> {
+    fn undefined(&mut self);
+    fn null(&mut self);
+    fn bool(&mut self, value: bool);
+    fn number(&mut self, value: f64);
+    fn str(&mut self, value: &'a [u8]);
+    fn node(&mut self, node: VNode<'a>);
+    fn nodes(&mut self, nodes: Nodes<'a>);
+    /// A `RegExp`, a `bigint`, an [`Object`].
+    fn other(&mut self, value: Value<'a>);
+}
+
+/// What converts to a [`Value`] goes to a [`Sink`] without one being made: which call it is, is known where the field is written
+/// down.
+pub(crate) trait Emit<'a> {
+    fn emit(self, sink: &mut impl Sink<'a>);
+}
+
+impl<'a> Emit<'a> for bool {
+    #[inline]
+    fn emit(self, sink: &mut impl Sink<'a>) {
+        sink.bool(self);
+    }
+}
+impl<'a> Emit<'a> for f64 {
+    #[inline]
+    fn emit(self, sink: &mut impl Sink<'a>) {
+        sink.number(self);
+    }
+}
+impl<'a> Emit<'a> for &'a [u8] {
+    #[inline]
+    fn emit(self, sink: &mut impl Sink<'a>) {
+        sink.str(self);
+    }
+}
+impl<'a> Emit<'a> for &'a str {
+    #[inline]
+    fn emit(self, sink: &mut impl Sink<'a>) {
+        sink.str(self.as_bytes());
+    }
+}
+impl<'a> Emit<'a> for VNode<'a> {
+    #[inline]
+    fn emit(self, sink: &mut impl Sink<'a>) {
+        sink.node(self);
+    }
+}
+impl<'a> Emit<'a> for Nodes<'a> {
+    #[inline]
+    fn emit(self, sink: &mut impl Sink<'a>) {
+        sink.nodes(self);
+    }
+}
+/// `None` is `null`.
+impl<'a, T: Emit<'a>> Emit<'a> for Option<T> {
+    #[inline]
+    fn emit(self, sink: &mut impl Sink<'a>) {
+        match self {
+            Some(value) => value.emit(sink),
+            None => sink.null(),
+        }
+    }
+}
+impl<'a> Emit<'a> for Value<'a> {
+    fn emit(self, sink: &mut impl Sink<'a>) {
+        match self {
+            Value::Undefined => sink.undefined(),
+            Value::Null => sink.null(),
+            Value::Bool(value) => sink.bool(value),
+            Value::Number(value) => sink.number(value),
+            Value::Str(value) => sink.str(value),
+            Value::Node(node) => sink.node(node),
+            Value::Nodes(nodes) => sink.nodes(nodes),
+            Value::Regex { .. } | Value::BigInt(_) | Value::Object(_) => sink.other(self),
+        }
+    }
+}
+
 /// The objects in an ESTree that are not nodes.
 #[derive(Copy, Clone)]
 pub enum Object<'a> {

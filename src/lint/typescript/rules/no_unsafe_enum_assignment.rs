@@ -759,176 +759,204 @@ fn check_literal<'a>(cx: &mut Context<'a>, node: Expr<'a>, is_final: bool) {
     }
 }
 
+fn check_assignment_expression<'a>(cx: &mut Context<'a>, node: Expr<'a>) {
+    let ExprKind::Assign { op, target, value } = node.kind() else {
+        return;
+    };
+    match op {
+        None
+        | Some(
+            BinOp::And | BinOp::BitAnd | BinOp::Nullish | BinOp::BitXor | BinOp::BitOr | BinOp::Or,
+        ) => {
+            check_assignment(
+                cx,
+                || Some(target.ty()),
+                value,
+                node.span(),
+                UNSAFE_ENUM_ASSIGNMENT,
+            );
+        }
+        Some(_) => check_mutation(cx, target, node),
+    }
+}
+
+/// What is listened to in a file without JSX.
+const WITHOUT_JSX: On = On::new()
+    .members()
+    .funcs()
+    .stmts(&[StmtTag::Return])
+    .exprs(&[ExprTag::Assign, ExprTag::Unary])
+    .params()
+    .pats(&[PatTag::Object, PatTag::Array])
+    .var_decls()
+    .exprs(&[ExprTag::Call, ExprTag::New, ExprTag::TaggedTemplate])
+    .exprs(&[ExprTag::Index, ExprTag::As])
+    .exprs(&[ExprTag::Array, ExprTag::Object])
+    .finish();
+
 impl Rule for NoUnsafeEnumAssignment {
     const META: Meta = Meta::typescript("no-unsafe-enum-assignment", Kind::Problem)
         .presets(Presets::STRICT_TYPE_CHECKED)
         .requires_types();
+    const ON: On = WITHOUT_JSX.props();
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         NoUnsafeEnumAssignment
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
-        on.members(|_, member, cx| check_class_member(cx, member));
-        on.funcs(|_, func, cx| {
-            if let FnBody::Expr(body) = func.body() {
-                check_return(cx, body, body.span());
-            }
-        });
-        on.stmts([StmtTag::Return], |_, statement, cx| {
-            if let StmtKind::Return(Some(argument)) = statement.kind() {
-                check_return(cx, argument, statement.span());
-            }
-        });
-        // Also a default in the target of a destructuring assignment, which upstream treats alike.
-        on.exprs([ExprTag::Assign], |_, node, cx| {
-            let ExprKind::Assign { op, target, value } = node.kind() else {
-                return;
-            };
-            match op {
-                None
-                | Some(
-                    BinOp::And
-                    | BinOp::BitAnd
-                    | BinOp::Nullish
-                    | BinOp::BitXor
-                    | BinOp::BitOr
-                    | BinOp::Or,
-                ) => {
-                    check_assignment(
-                        cx,
-                        || Some(target.ty()),
-                        value,
-                        node.span(),
-                        UNSAFE_ENUM_ASSIGNMENT,
-                    );
-                }
-                Some(_) => check_mutation(cx, target, node),
-            }
-        });
-        on.exprs([ExprTag::Unary], |_, node, cx| {
-            if let ExprKind::Unary {
-                op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
-                operand,
-            } = node.kind()
-            {
-                check_mutation(cx, operand, node);
-            }
-        });
-        on.params(|_, param, cx| {
-            if let Some(right) = param.default() {
-                let node = param.span_without_modifiers();
-                check_assignment(
-                    cx,
-                    || Some(param.pat().ty()),
-                    right,
-                    node,
-                    UNSAFE_ENUM_ASSIGNMENT,
-                );
-            }
-        });
-        on.pats(
-            [PatTag::Object, PatTag::Array],
-            |_, pattern, cx| match pattern.kind() {
-                PatKind::Object(properties) => {
-                    for property in properties {
-                        if let Some(right) = property.default() {
-                            let left = property.value();
-                            let node = Span::new(left.span().start, property.span().end);
-                            check_assignment(
-                                cx,
-                                || Some(left.ty()),
-                                right,
-                                node,
-                                UNSAFE_ENUM_ASSIGNMENT,
-                            );
-                        }
-                    }
-                }
-                PatKind::Array(elements) => {
-                    for element in elements {
-                        if let (Some(left), Some(right)) = (element.pat(), element.default()) {
-                            check_assignment(
-                                cx,
-                                || Some(left.ty()),
-                                right,
-                                element.span(),
-                                UNSAFE_ENUM_ASSIGNMENT,
-                            );
-                        }
-                    }
-                }
-                _ => {}
-            },
-        );
-        on.var_decls(|_, declarator, cx| {
-            if let Some(init) = declarator.init() {
-                check_assignment(
-                    cx,
-                    || Some(declarator.pat().ty()),
-                    init,
-                    declarator.span(),
-                    UNSAFE_ENUM_ASSIGNMENT,
-                );
-            }
-        });
-        on.exprs(
-            [ExprTag::Call, ExprTag::New, ExprTag::TaggedTemplate],
-            |_, node, cx| check_arguments(cx, node),
-        );
-        on.exprs([ExprTag::Index], |_, node, cx| {
-            check_computed_member(cx, node)
-        });
-        // The type of `e as const` is that of `e`.
-        on.exprs([ExprTag::As], |_, node, cx| {
-            if let ExprKind::As { expr, ty } = node.kind() {
-                check_assignment(
-                    cx,
-                    || Some(ty.ty()),
-                    expr,
-                    node.span(),
-                    UNSAFE_ENUM_ASSERTION,
-                );
-            }
-        });
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         if file.has_exprs([ExprTag::Jsx]) {
-            on.props(|_, attribute, cx| {
-                if attribute.is_jsx_attribute()
-                    && attribute.kind() != PropKind::Spread
-                    && let Some(value) = attribute.value()
-                    && value.jsx_container_span().is_some()
-                    && !value.is_missing()
+            Self::ON
+        } else {
+            WITHOUT_JSX
+        }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match node.tag() {
+            // Also a default in the target of a destructuring assignment, which upstream treats alike.
+            ExprTag::Assign => check_assignment_expression(cx, node),
+            ExprTag::Unary => {
+                if let ExprKind::Unary {
+                    op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
+                    operand,
+                } = node.kind()
                 {
+                    check_mutation(cx, operand, node);
+                }
+            }
+            ExprTag::Call | ExprTag::New | ExprTag::TaggedTemplate => check_arguments(cx, node),
+            ExprTag::Index => check_computed_member(cx, node),
+            // The type of `e as const` is that of `e`.
+            ExprTag::As => {
+                if let ExprKind::As { expr, ty } = node.kind() {
                     check_assignment(
                         cx,
-                        || value.contextual_type(),
-                        value,
-                        value.span(),
-                        UNSAFE_ENUM_ASSIGNMENT,
+                        || Some(ty.ty()),
+                        expr,
+                        node.span(),
+                        UNSAFE_ENUM_ASSERTION,
                     );
                 }
-            });
-        }
-        // Whether a literal is reported depends on what is reported around it, so that is decided at
-        // the end, from the outside in.
-        on.exprs([ExprTag::Array, ExprTag::Object], |_, node, cx| {
-            // In JavaScript a property can have a type of its own, from a JSDoc comment.
-            if !node.is_assignment_target()
-                && (cx.is_javascript() || node.contextual_type().is_some())
-            {
-                check_literal(cx, node, false);
             }
-        });
-        on.finish(|_, cx| {
-            let mut pending = std::mem::take(&mut cx.state.pending);
-            utils::sort::sort_unstable_by_key(&mut pending, |literal| literal.span().start);
-            for literal in pending {
-                if !cx.state.checked_nodes.contains(&literal) {
-                    check_literal(cx, literal, true);
+            // Whether a literal is reported depends on what is reported around it, so that is decided at
+            // the end, from the outside in.
+            ExprTag::Array | ExprTag::Object => {
+                // In JavaScript a property can have a type of its own, from a JSDoc comment.
+                if !node.is_assignment_target()
+                    && (cx.is_javascript() || node.contextual_type().is_some())
+                {
+                    check_literal(cx, node, false);
                 }
             }
-        });
-        State::default()
+            _ => {}
+        }
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if let StmtKind::Return(Some(argument)) = statement.kind() {
+            check_return(cx, argument, statement.span());
+        }
+    }
+
+    fn pat<'a>(&self, pattern: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        match pattern.kind() {
+            PatKind::Object(properties) => {
+                for property in properties {
+                    if let Some(right) = property.default() {
+                        let left = property.value();
+                        let node = Span::new(left.span().start, property.span().end);
+                        check_assignment(
+                            cx,
+                            || Some(left.ty()),
+                            right,
+                            node,
+                            UNSAFE_ENUM_ASSIGNMENT,
+                        );
+                    }
+                }
+            }
+            PatKind::Array(elements) => {
+                for element in elements {
+                    if let (Some(left), Some(right)) = (element.pat(), element.default()) {
+                        check_assignment(
+                            cx,
+                            || Some(left.ty()),
+                            right,
+                            element.span(),
+                            UNSAFE_ENUM_ASSIGNMENT,
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if let FnBody::Expr(body) = func.body() {
+            check_return(cx, body, body.span());
+        }
+    }
+
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+        check_class_member(cx, member);
+    }
+
+    fn prop<'a>(&self, attribute: Prop<'a>, cx: &mut Cx<'a, Self>) {
+        if attribute.is_jsx_attribute()
+            && attribute.kind() != PropKind::Spread
+            && let Some(value) = attribute.value()
+            && value.jsx_container_span().is_some()
+            && !value.is_missing()
+        {
+            check_assignment(
+                cx,
+                || value.contextual_type(),
+                value,
+                value.span(),
+                UNSAFE_ENUM_ASSIGNMENT,
+            );
+        }
+    }
+
+    fn param<'a>(&self, param: Param<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(right) = param.default() {
+            let node = param.span_without_modifiers();
+            check_assignment(
+                cx,
+                || Some(param.pat().ty()),
+                right,
+                node,
+                UNSAFE_ENUM_ASSIGNMENT,
+            );
+        }
+    }
+
+    fn var_decl<'a>(&self, declarator: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(init) = declarator.init() {
+            check_assignment(
+                cx,
+                || Some(declarator.pat().ty()),
+                init,
+                declarator.span(),
+                UNSAFE_ENUM_ASSIGNMENT,
+            );
+        }
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let mut pending = std::mem::take(&mut cx.state.pending);
+        utils::sort::sort_unstable_by_key(&mut pending, |literal| literal.span().start);
+        for literal in pending {
+            if !cx.state.checked_nodes.contains(&literal) {
+                check_literal(cx, literal, true);
+            }
+        }
     }
 }

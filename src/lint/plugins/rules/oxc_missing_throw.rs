@@ -10,23 +10,23 @@ const ADD_THROW: Message = Message::new("", "The `throw` keyword seems to be mis
 
 impl Rule for MissingThrow {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "missing-throw", Kind::Problem).has_suggestions();
+    const ON: On = On::new().exprs(&[ExprTag::New]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         MissingThrow
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("Error") {
-            return;
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("Error").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if e.callee().is_some_and(|callee| get_inner_expression(callee).is_ident("Error"))
+            && matches!(e.parent(), Node::Stmt(statement) if statement.tag() == StmtTag::Expr)
+            && !e.is_parenthesized()
+        {
+            cx.report(e, MISSING_THROW).suggest(ADD_THROW, |fixer| fixer.insert_before(e, "throw "));
         }
-        on.exprs([ExprTag::New], |_, e, cx| {
-            if e.callee().is_some_and(|callee| get_inner_expression(callee).is_ident("Error"))
-                && matches!(e.parent(), Node::Stmt(statement) if statement.tag() == StmtTag::Expr)
-                && !e.is_parenthesized()
-            {
-                cx.report(e, MISSING_THROW).suggest(ADD_THROW, |fixer| fixer.insert_before(e, "throw "));
-            }
-        });
     }
 }

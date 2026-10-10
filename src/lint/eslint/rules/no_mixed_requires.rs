@@ -95,8 +95,22 @@ impl NoMixedRequires {
             };
         }
     }
+}
 
-    fn check<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoMixedRequires {
+    const META: Meta = Meta::eslint("no-mixed-requires", Kind::Suggestion).deprecated();
+    const ON: On = On::new().stmts(&[StmtTag::Var]);
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        let object = options.object(0);
+        NoMixedRequires {
+            grouping: options.bool(0).unwrap_or_else(|| object.bool_or("grouping", false)),
+            allow_call: object.bool_or("allowCall", false),
+        }
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let StmtKind::Var(declarations) = stmt.kind() else {
             return;
         };
@@ -121,22 +135,5 @@ impl NoMixedRequires {
         if found.count_ones() > 1 {
             cx.report(stmt.span_without_export(), NO_MIX_CORE_MODULE_FILE_COMPUTED);
         }
-    }
-}
-
-impl Rule for NoMixedRequires {
-    const META: Meta = Meta::eslint("no-mixed-requires", Kind::Suggestion).deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let object = options.object(0);
-        NoMixedRequires {
-            grouping: options.bool(0).unwrap_or_else(|| object.bool_or("grouping", false)),
-            allow_call: object.bool_or("allowCall", false),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::Var], Self::check);
     }
 }

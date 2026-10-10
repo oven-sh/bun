@@ -11,31 +11,34 @@ const NO_TITLE_IN_DOCUMENT_HEAD: Message =
 
 impl Rule for NoTitleInDocumentHead {
     const META: Meta = Meta::oxlint(Plugin::Nextjs, "no-title-in-document-head", Kind::Problem);
+    const ON: On = On::new().stmts(&[StmtTag::Import]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoTitleInDocumentHead
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions("next/document") || !file.mentions("title") {
-            return;
+            return None;
         }
-        on.stmts([StmtTag::Import], |_, stmt, cx| {
-            let StmtKind::Import(import) = stmt.kind() else {
-                return;
-            };
-            // The first name in the braces, whatever it is.
-            let Some(specifier) = import.named().first().filter(|_| import.spec().is("next/document")) else {
-                return;
-            };
-            for (name, head) in elements_named(import, specifier.local()) {
-                for child in children(cx.file(), head) {
-                    if matches!(child, Child::Element(element) if element.tag().is_some_and(|it| it.is_ident("title"))) {
-                        cx.report(name, NO_TITLE_IN_DOCUMENT_HEAD);
-                    }
+        Some(())
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let StmtKind::Import(import) = stmt.kind() else {
+            return;
+        };
+        // The first name in the braces, whatever it is.
+        let Some(specifier) = import.named().first().filter(|_| import.spec().is("next/document")) else {
+            return;
+        };
+        for (name, head) in elements_named(import, specifier.local()) {
+            for child in children(cx.file(), head) {
+                if matches!(child, Child::Element(element) if element.tag().is_some_and(|it| it.is_ident("title"))) {
+                    cx.report(name, NO_TITLE_IN_DOCUMENT_HEAD);
                 }
             }
-        });
+        }
     }
 }

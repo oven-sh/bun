@@ -36,8 +36,20 @@ fn fix_text(e: Expr) -> &'static str {
     }
 }
 
-impl NoObjectConstructor {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoObjectConstructor {
+    const META: Meta = Meta::eslint("no-object-constructor", Kind::Suggestion).has_suggestions();
+    const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::New]);
+    type State<'a> = ();
+
+    fn new(_: &Options) -> Self {
+        NoObjectConstructor
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("Object").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let (ExprKind::Call(call) | ExprKind::New(call)) = e.kind() else {
             return;
         };
@@ -53,21 +65,5 @@ impl NoObjectConstructor {
                 (fix_text(e) == text).then(|| fixer.replace(e, text))
             });
         }
-    }
-}
-
-impl Rule for NoObjectConstructor {
-    const META: Meta = Meta::eslint("no-object-constructor", Kind::Suggestion).has_suggestions();
-    type State<'a> = ();
-
-    fn new(_: &Options) -> Self {
-        NoObjectConstructor
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("Object") {
-            return;
-        }
-        on.exprs([ExprTag::Call, ExprTag::New], Self::check);
     }
 }

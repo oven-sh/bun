@@ -718,6 +718,7 @@ impl Rule for NoExtraParens {
     const META: Meta = Meta::eslint("no-extra-parens", Kind::Layout)
         .fixable(Fixable::Code)
         .deprecated();
+    const ON: On = On::new().exprs(&[ExprTag::ImportCall]).finish();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -750,20 +751,22 @@ impl Rule for NoExtraParens {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
-        on.exprs([ExprTag::ImportCall], |rule, e, cx| {
-            if let ExprKind::ImportCall { args } = e.kind()
-                && let Some(source) = args.first()
-                && !source.is_parenthesized()
-            {
-                rule.check(source, cx);
-            }
-        });
-        on.finish(|rule, cx| {
-            let file = cx.file();
-            file.parenthesized().for_each(|e| rule.check(e, cx));
-            rule.check_initializers(cx);
-        });
-        State::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let ExprKind::ImportCall { args } = e.kind()
+            && let Some(source) = args.first()
+            && !source.is_parenthesized()
+        {
+            self.check(source, cx);
+        }
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let file = cx.file();
+        file.parenthesized().for_each(|e| self.check(e, cx));
+        self.check_initializers(cx);
     }
 }

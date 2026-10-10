@@ -10,38 +10,38 @@ const BAD_MIN_MAX_FUNC: Message = Message::new("", "Math.min and Math.max combin
 
 impl Rule for BadMinMaxFunc {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "bad-min-max-func", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         BadMinMaxFunc
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("Math") {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("Math").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call) = e.as_call() else {
             return;
+        };
+        let Some(out_min_max) = min_max(call) else {
+            return;
+        };
+        // An optional chain is not a call for oxlint.
+        let inner_calls = call.args().iter().filter(|it| !it.is_parenthesized() && it.chain() == Chain::No).filter_map(Expr::as_call);
+        for inner_min_max in inner_calls.filter_map(min_max) {
+            let constant_result = match (&out_min_max, &inner_min_max) {
+                (MinMax::Max(max), MinMax::Min(min)) if max > min => *max,
+                (MinMax::Min(min), MinMax::Max(max)) if min < max => *min,
+                _ => continue,
+            };
+            cx.report(e, BAD_MIN_MAX_FUNC).help_with(|| {
+                format!(
+                    "This evaluates to {constant_result:?} because of the incorrect `Math.min`/`Math.max` combination"
+                )
+            });
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let Some(call) = e.as_call() else {
-                return;
-            };
-            let Some(out_min_max) = min_max(call) else {
-                return;
-            };
-            // An optional chain is not a call for oxlint.
-            let inner_calls = call.args().iter().filter(|it| !it.is_parenthesized() && it.chain() == Chain::No).filter_map(Expr::as_call);
-            for inner_min_max in inner_calls.filter_map(min_max) {
-                let constant_result = match (&out_min_max, &inner_min_max) {
-                    (MinMax::Max(max), MinMax::Min(min)) if max > min => *max,
-                    (MinMax::Min(min), MinMax::Max(max)) if min < max => *min,
-                    _ => continue,
-                };
-                cx.report(e, BAD_MIN_MAX_FUNC).help_with(|| {
-                    format!(
-                        "This evaluates to {constant_result:?} because of the incorrect `Math.min`/`Math.max` combination"
-                    )
-                });
-            }
-        });
     }
 }
 

@@ -18,7 +18,8 @@ const PASCAL_CASE_OR_ALL_CAPS: Message =
 
 impl Rule for JsxPascalCase {
     const META: Meta = Meta::oxlint(Plugin::React, "jsx-pascal-case", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -30,43 +31,41 @@ impl Rule for JsxPascalCase {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Jsx], |rule, e, cx| {
-            let ExprKind::Jsx(jsx) = e.kind() else {
-                return;
-            };
-            let separator: &[u8] = match jsx.tag().map(Expr::tag) {
-                Some(ExprTag::Ident | ExprTag::String) => b":",
-                Some(ExprTag::Dot) => b".",
-                _ => return,
-            };
-            let name = get_jsx_element_name(jsx);
-            // Most are plain names in Pascal case.
-            if chars(&name).next().is_none_or(char::is_lowercase) || name.len() > 1 && check_pascal_case(&name) {
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Jsx(jsx) = e.kind() else {
+            return;
+        };
+        let separator: &[u8] = match jsx.tag().map(Expr::tag) {
+            Some(ExprTag::Ident | ExprTag::String) => b":",
+            Some(ExprTag::Dot) => b".",
+            _ => return,
+        };
+        let name = get_jsx_element_name(jsx);
+        // Most are plain names in Pascal case.
+        if chars(&name).next().is_none_or(char::is_lowercase) || name.len() > 1 && check_pascal_case(&name) {
+            return;
+        }
+        let check_names = strings::split(&name, separator);
+        for split_name in check_names {
+            if split_name.len() == 1 {
                 return;
             }
-            let check_names = strings::split(&name, separator);
-            for split_name in check_names {
-                if split_name.len() == 1 {
-                    return;
-                }
-                let check_name = match rule.allow_leading_underscore {
-                    true => split_name.strip_prefix(b"_").unwrap_or(split_name),
-                    false => split_name,
-                };
-                if !check_pascal_case(check_name)
-                    && !(rule.allow_all_caps && check_all_caps(check_name))
-                    && !rule.ignore.iter().any(|entry| **entry == *split_name || glob_match(entry, split_name))
-                {
-                    let message = if rule.allow_all_caps { PASCAL_CASE_OR_ALL_CAPS } else { PASCAL_CASE };
-                    cx.report(jsx.opening_span(), message).data("component_name", split_name.to_vec());
-                }
-                // Only the first part is looked at.
-                if rule.allow_namespace {
-                    return;
-                }
+            let check_name = match self.allow_leading_underscore {
+                true => split_name.strip_prefix(b"_").unwrap_or(split_name),
+                false => split_name,
+            };
+            if !check_pascal_case(check_name)
+                && !(self.allow_all_caps && check_all_caps(check_name))
+                && !self.ignore.iter().any(|entry| **entry == *split_name || glob_match(entry, split_name))
+            {
+                let message = if self.allow_all_caps { PASCAL_CASE_OR_ALL_CAPS } else { PASCAL_CASE };
+                cx.report(jsx.opening_span(), message).data("component_name", split_name.to_vec());
             }
-        });
+            // Only the first part is looked at.
+            if self.allow_namespace {
+                return;
+            }
+        }
     }
 }
 

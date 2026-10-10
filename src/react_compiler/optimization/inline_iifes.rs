@@ -305,7 +305,10 @@ pub(crate) fn inline_immediately_invoked_function_expressions(
         func.body.blocks = get_reverse_postordered_blocks(&func.body, &func.instructions);
         mark_instruction_ids(&mut func.body, &mut func.instructions);
         mark_predecessors(&mut func.body);
-        merge_consecutive_blocks(func, &mut env.functions);
+        // There are no phis yet.
+        if let Err(invariant) = merge_consecutive_blocks(func, &mut env.functions) {
+            env.record_diagnostic(invariant);
+        }
     }
 }
 

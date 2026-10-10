@@ -239,8 +239,22 @@ fn is_static_literal(e: Expr<'_>) -> bool {
     }
 }
 
-impl NoConstantBinaryExpression {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoConstantBinaryExpression {
+    const META: Meta = Meta::eslint("no-constant-binary-expression", Kind::Problem).recommended();
+    const ON: On = On::new().exprs(&[ExprTag::Binary]);
+    type State<'a> = Constants;
+
+    fn new(options: &Options) -> Self {
+        NoConstantBinaryExpression {
+            check_relational_comparisons: options.object(0).bool("checkRelationalComparisons"),
+        }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Constants> {
+        Some(Constants::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Binary { op, left, right } = e.kind() else {
             return;
         };
@@ -294,21 +308,5 @@ impl NoConstantBinaryExpression {
             }
             _ => {}
         }
-    }
-}
-
-impl Rule for NoConstantBinaryExpression {
-    const META: Meta = Meta::eslint("no-constant-binary-expression", Kind::Problem).recommended();
-    type State<'a> = Constants;
-
-    fn new(options: &Options) -> Self {
-        NoConstantBinaryExpression {
-            check_relational_comparisons: options.object(0).bool("checkRelationalComparisons"),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Constants {
-        on.exprs([ExprTag::Binary], Self::check);
-        Constants::default()
     }
 }

@@ -10,32 +10,31 @@ const MISSING_LANG_VALUE: Message = Message::new("", "Missing value for `lang` a
 
 impl Rule for HtmlHasLang {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "html-has-lang", Kind::Problem);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         HtmlHasLang
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Jsx], |_, e, cx| {
-            let Some(jsx_el) = as_jsx_element(e) else {
-                return;
-            };
-            if *get_element_type(cx.file(), jsx_el) != *b"html" {
-                return;
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(jsx_el) = as_jsx_element(e) else {
+            return;
+        };
+        if *get_element_type(cx.file(), jsx_el) != *b"html" {
+            return;
+        }
+        match has_jsx_prop_ignore_case(jsx_el, "lang") {
+            Some(lang_prop) if is_valid_lang_prop(lang_prop) => {}
+            Some(_) => {
+                cx.report(jsx_el.opening_span(), MISSING_LANG_VALUE);
             }
-            match has_jsx_prop_ignore_case(jsx_el, "lang") {
-                Some(lang_prop) if is_valid_lang_prop(lang_prop) => {}
-                Some(_) => {
-                    cx.report(jsx_el.opening_span(), MISSING_LANG_VALUE);
-                }
-                None => {
-                    if let Some(name) = jsx_el.tag() {
-                        cx.report(name, MISSING_LANG_PROP);
-                    }
+            None => {
+                if let Some(name) = jsx_el.tag() {
+                    cx.report(name, MISSING_LANG_PROP);
                 }
             }
-        });
+        }
     }
 }
 

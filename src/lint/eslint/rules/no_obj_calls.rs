@@ -103,21 +103,35 @@ impl NoObjCalls {
 
 impl Rule for NoObjCalls {
     const META: Meta = Meta::eslint("no-obj-calls", Kind::Problem).recommended();
+    const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::New]).finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoObjCalls
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         if file.language().is_oxlint {
-            if OXLINT_GLOBAL_OBJECTS.iter().any(|it| file.mentions(it)) {
-                on.exprs([ExprTag::Call, ExprTag::New], Self::check_as_oxlint);
-            }
-            return;
+            return On::new().exprs(&[ExprTag::Call, ExprTag::New]);
         }
-        if file.has_exprs([ExprTag::Call, ExprTag::New]) {
-            on.finish(Self::check);
+        On::new().finish()
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        if file.language().is_oxlint {
+            return OXLINT_GLOBAL_OBJECTS
+                .iter()
+                .any(|it| file.mentions(it))
+                .then_some(());
         }
+        file.has_exprs([ExprTag::Call, ExprTag::New]).then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_as_oxlint(e, cx);
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        self.check(cx);
     }
 }

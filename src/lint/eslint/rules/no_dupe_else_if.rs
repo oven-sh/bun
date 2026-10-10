@@ -287,13 +287,14 @@ impl NoDupeElseIf {
 
 impl Rule for NoDupeElseIf {
     const META: Meta = Meta::eslint("no-dupe-else-if", Kind::Problem).recommended();
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::If]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoDupeElseIf
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::If], Self::check_chain);
+    fn stmt<'a>(&self, first: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_chain(first, cx);
     }
 }

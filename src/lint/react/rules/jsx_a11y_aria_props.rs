@@ -10,42 +10,39 @@ const ARIA_PROPS: Message = Message::new("", "'{{prop_name}}' is not a valid ARI
 
 impl Rule for AriaProps {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "aria-props", Kind::Problem).fixable(Fixable::Code);
-    type State<'a> = ();
+    // Elements are far fewer than properties.
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         AriaProps
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        // Elements are far fewer than properties.
-        on.exprs([ExprTag::Jsx], |_, e, cx| {
-            let ExprKind::Jsx(jsx) = e.kind() else {
-                return;
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Jsx(jsx) = e.kind() else {
+            return;
+        };
+        for attr in jsx.attrs() {
+            let Some(name) = get_jsx_attribute_name(attr) else {
+                continue;
             };
-            for attr in jsx.attrs() {
-                let Some(name) = get_jsx_attribute_name(attr) else {
-                    continue;
-                };
-                if !name.get(..5).is_some_and(|it| it.eq_ignore_ascii_case(b"aria-")) {
-                    continue;
-                }
-                let name = cow_to_ascii_lowercase(name);
-                if is_valid_aria_property(&name) {
-                    continue;
-                }
-                let suggestion = get_common_aria_prop_typo(&name);
-                let report = cx.report(attr, ARIA_PROPS).data("prop_name", name);
-                let report = match suggestion {
-                    Some(suggestion) => report.help_with(|| format!("Did you mean '{suggestion}'?")),
-                    None => report.help(
-                        "You can find a list of valid ARIA attributes at https://www.w3.org/TR/wai-aria-1.1/#state_prop_def",
-                    ),
-                };
-                report.fix(|fixer| {
-                    Some(fixer.replace(attr.key()?.span(fixer.file()), suggestion?))
-                });
+            if !name.get(..5).is_some_and(|it| it.eq_ignore_ascii_case(b"aria-")) {
+                continue;
             }
-        });
+            let name = cow_to_ascii_lowercase(name);
+            if is_valid_aria_property(&name) {
+                continue;
+            }
+            let suggestion = get_common_aria_prop_typo(&name);
+            let report = cx.report(attr, ARIA_PROPS).data("prop_name", name);
+            let report = match suggestion {
+                Some(suggestion) => report.help_with(|| format!("Did you mean '{suggestion}'?")),
+                None => report.help(
+                    "You can find a list of valid ARIA attributes at https://www.w3.org/TR/wai-aria-1.1/#state_prop_def",
+                ),
+            };
+            report.fix(|fixer| Some(fixer.replace(attr.key()?.span(fixer.file()), suggestion?)));
+        }
     }
 }
 

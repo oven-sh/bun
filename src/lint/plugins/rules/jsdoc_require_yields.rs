@@ -19,6 +19,7 @@ const MISSING_YIELDS_WITH_GENERATOR: Message = Message::new("", "`@yields` tag i
 
 impl Rule for RequireYields {
     const META: Meta = Meta::oxlint(Plugin::Jsdoc, "require-yields", Kind::Problem);
+    const ON: On = On::new().funcs();
     type State<'a> = JSDocFinder<'a>;
 
     fn new(options: &Options) -> Self {
@@ -31,12 +32,13 @@ impl Rule for RequireYields {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> JSDocFinder<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<JSDocFinder<'a>> {
         let finder = JSDocFinder::new(file);
-        if !finder.is_empty() {
-            on.funcs(Self::check);
-        }
-        finder
+        (!finder.is_empty()).then_some(finder)
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(func, cx);
     }
 }
 

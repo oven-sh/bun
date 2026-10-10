@@ -9,6 +9,7 @@ const GLOBAL_REQUIRE: Message = Message::new("", "Unexpected require().");
 
 impl Rule for GlobalRequire {
     const META: Meta = Meta::oxlint(Plugin::Node, "global-require", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     /// That something is in what a `require()` must not be in.
     type State<'a> = AncestorMemo<'a, ()>;
 
@@ -16,18 +17,17 @@ impl Rule for GlobalRequire {
         GlobalRequire
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if file.mentions("require") {
-            on.exprs([ExprTag::Call], |_, e, cx| {
-                if let Some(callee) = e.callee().filter(|it| it.is_ident("require") && !it.is_parenthesized())
-                    && cx.state.find(Node::Expr(e), |child, parent| (!is_acceptable_parent(child, parent)).then_some(())).is_some()
-                    && callee.symbol().is_none()
-                {
-                    cx.report(e, GLOBAL_REQUIRE);
-                }
-            });
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        file.mentions("require").then(AncestorMemo::default)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(callee) = e.callee().filter(|it| it.is_ident("require") && !it.is_parenthesized())
+            && cx.state.find(Node::Expr(e), |child, parent| (!is_acceptable_parent(child, parent)).then_some(())).is_some()
+            && callee.symbol().is_none()
+        {
+            cx.report(e, GLOBAL_REQUIRE);
         }
-        AncestorMemo::default()
     }
 }
 

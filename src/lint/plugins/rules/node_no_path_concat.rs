@@ -10,34 +10,38 @@ const NO_PATH_CONCAT: Message = Message::new("", "Use `path.join()` or `path.res
 
 impl Rule for NoPathConcat {
     const META: Meta = Meta::oxlint(Plugin::Node, "no-path-concat", Kind::Suggestion);
+    const ON: On = On::new().binaries(&[BinOp::Add]).exprs(&[ExprTag::Template]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoPathConcat
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions_any(&["__dirname", "__filename"]) {
-            return;
+            return None;
         }
-        on.binaries([BinOp::Add], |_, e, cx| {
-            if let ExprKind::Binary { left, right, .. } = e.kind()
-                && is_dirname_or_filename(left)
-                && starts_with_path_separator(Start::Expr(right))
-            {
+        Some(())
+    }
+
+    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let ExprKind::Binary { left, right, .. } = e.kind()
+            && is_dirname_or_filename(left)
+            && starts_with_path_separator(Start::Expr(right))
+        {
+            cx.report(e, NO_PATH_CONCAT);
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Template(template) = e.kind() else {
+            return;
+        };
+        for (i, expr) in template.exprs().iter().enumerate() {
+            if is_dirname_or_filename(expr) && starts_with_path_separator(Start::TemplateElement(template, i + 1)) {
                 cx.report(e, NO_PATH_CONCAT);
             }
-        });
-        on.exprs([ExprTag::Template], |_, e, cx| {
-            let ExprKind::Template(template) = e.kind() else {
-                return;
-            };
-            for (i, expr) in template.exprs().iter().enumerate() {
-                if is_dirname_or_filename(expr) && starts_with_path_separator(Start::TemplateElement(template, i + 1)) {
-                    cx.report(e, NO_PATH_CONCAT);
-                }
-            }
-        });
+        }
     }
 }
 

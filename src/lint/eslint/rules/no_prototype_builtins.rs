@@ -111,15 +111,19 @@ impl Rule for NoPrototypeBuiltins {
     const META: Meta = Meta::eslint("no-prototype-builtins", Kind::Problem)
         .recommended()
         .has_suggestions();
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoPrototypeBuiltins
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if file.mentions_any(&["hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable"]) {
-            on.exprs([ExprTag::Call], Self::check);
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions_any(&["hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable"])
+            .then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(e, cx);
     }
 }

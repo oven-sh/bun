@@ -6,8 +6,20 @@ pub struct NoNewFunc;
 const NO_FUNCTION_CONSTRUCTOR: Message =
     Message::new("noFunctionConstructor", "The Function constructor is eval.");
 
-impl NoNewFunc {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoNewFunc {
+    const META: Meta = Meta::eslint("no-new-func", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::New]);
+    type State<'a> = ();
+
+    fn new(_: &Options) -> Self {
+        NoNewFunc
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("Function").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let (call, is_new) = match e.kind() {
             ExprKind::Call(call) => (call, false),
             ExprKind::New(call) => (call, true),
@@ -35,21 +47,5 @@ impl NoNewFunc {
                 }
             });
         }
-    }
-}
-
-impl Rule for NoNewFunc {
-    const META: Meta = Meta::eslint("no-new-func", Kind::Suggestion);
-    type State<'a> = ();
-
-    fn new(_: &Options) -> Self {
-        NoNewFunc
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("Function") {
-            return;
-        }
-        on.exprs([ExprTag::Call, ExprTag::New], Self::check);
     }
 }

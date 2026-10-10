@@ -60,10 +60,28 @@ impl NoInnerDeclarations {
                 .data("body", body);
         }
     }
+
+    fn function<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let StmtKind::Fn(func) = statement.kind() else {
+            return;
+        };
+        if !func.has_body() || is_at_root(statement) {
+            return;
+        }
+        if self.allows_block_scoped_functions
+            && cx.language().ecma_version >= 2015
+            && func.scope().and_then(Scope::parent).is_some_and(Scope::is_strict)
+        {
+            return;
+        }
+        let body = get_allowed_body_description(statement, cx);
+        cx.report(statement, MOVE_DECL_TO_ROOT).data("type", "function").data("body", body);
+    }
 }
 
 impl Rule for NoInnerDeclarations {
     const META: Meta = Meta::eslint("no-inner-declarations", Kind::Problem);
+    const ON: On = On::new().stmts(&[StmtTag::Fn, StmtTag::Var]);
     /// The kind of the innermost function around a node.
     type State<'a> = AncestorMemo<'a, FnKind>;
 
@@ -76,32 +94,26 @@ impl Rule for NoInnerDeclarations {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if file.language().is_oxlint {
-            on.stmts([StmtTag::Fn], Self::check_as_oxlint);
-            if self.is_both {
-                on.stmts([StmtTag::Var], Self::check_as_oxlint);
-            }
-            return AncestorMemo::default();
-        }
-        on.stmts([StmtTag::Fn], |rule, statement, cx| {
-            let StmtKind::Fn(func) = statement.kind() else {
-                return;
-            };
-            if !func.has_body() || is_at_root(statement) {
-                return;
-            }
-            if rule.allows_block_scoped_functions
-                && cx.language().ecma_version >= 2015
-                && func.scope().and_then(Scope::parent).is_some_and(Scope::is_strict)
-            {
-                return;
-            }
-            let body = get_allowed_body_description(statement, cx);
-            cx.report(statement, MOVE_DECL_TO_ROOT).data("type", "function").data("body", body);
-        });
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new().stmts(&[StmtTag::Fn]);
         if self.is_both {
-            on.stmts([StmtTag::Var], |_, statement, cx| {
+            on = on.stmts(&[StmtTag::Var]);
+        }
+        on
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(AncestorMemo::default())
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if cx.language().is_oxlint {
+            self.check_as_oxlint(statement, cx);
+            return;
+        }
+        match statement.tag() {
+            StmtTag::Fn => self.function(statement, cx),
+            StmtTag::Var => {
                 let StmtKind::Var(declarations) = statement.kind() else {
                     return;
                 };
@@ -109,8 +121,8 @@ impl Rule for NoInnerDeclarations {
                     let body = get_allowed_body_description(statement, cx);
                     cx.report(statement, MOVE_DECL_TO_ROOT).data("type", "variable").data("body", body);
                 }
-            });
+            }
+            _ => {}
         }
-        AncestorMemo::default()
     }
 }

@@ -16,52 +16,54 @@ pub struct State<'a> {
 
 impl Rule for OnlyUsedInRecursion {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "only-used-in-recursion", Kind::Problem).fixable(Fixable::Code);
+    const ON: On = On::new().funcs();
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         OnlyUsedInRecursion
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
-        on.funcs(|_, func, cx| {
-            if !matches!(func.kind(), FnKind::Decl | FnKind::Expr | FnKind::Arrow) || !func.has_body() || func.params().is_empty() {
-                return;
-            }
-            let Some(function) = function_symbol(func) else {
-                return;
-            };
-            // Asked when a parameter is found.
-            let mut known = None;
-            let mut is_reassigned = || *known.get_or_insert_with(|| is_function_reassigned(function));
-            let parameter_count = func.params().iter().filter(|it| !it.is_rest()).count();
-            for (parameter_index, parameter) in func.params().iter().take(parameter_count).enumerate() {
-                let pattern = parameter.pat();
-                match pattern.kind() {
-                    PatKind::Ident(_) => {
-                        if let Some(symbol) = pattern.symbol()
-                            && is_parameter_only_used_in_recursion(function, symbol, parameter_index)
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(State::default())
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if !matches!(func.kind(), FnKind::Decl | FnKind::Expr | FnKind::Arrow) || !func.has_body() || func.params().is_empty() {
+            return;
+        }
+        let Some(function) = function_symbol(func) else {
+            return;
+        };
+        // Asked when a parameter is found.
+        let mut known = None;
+        let mut is_reassigned = || *known.get_or_insert_with(|| is_function_reassigned(function));
+        let parameter_count = func.params().iter().filter(|it| !it.is_rest()).count();
+        for (parameter_index, parameter) in func.params().iter().take(parameter_count).enumerate() {
+            let pattern = parameter.pat();
+            match pattern.kind() {
+                PatKind::Ident(_) => {
+                    if let Some(symbol) = pattern.symbol()
+                        && is_parameter_only_used_in_recursion(function, symbol, parameter_index)
+                        && !is_reassigned()
+                    {
+                        let is_last = parameter_index + 1 == parameter_count;
+                        report_parameter(cx, func, function, pattern, symbol, is_last.then_some(parameter_index));
+                    }
+                }
+                PatKind::Object(properties) => {
+                    for property in properties.iter().filter(|it| !it.is_rest()) {
+                        if let Some(symbol) = property.value().symbol()
+                            && let Some(name) = property.key().and_then(Key::name)
+                            && is_jsx_property_only_used_in_recursion(symbol, name, function)
                             && !is_reassigned()
                         {
-                            let is_last = parameter_index + 1 == parameter_count;
-                            report_parameter(cx, func, function, pattern, symbol, is_last.then_some(parameter_index));
+                            report_jsx_property(cx, function, property, symbol, name);
                         }
                     }
-                    PatKind::Object(properties) => {
-                        for property in properties.iter().filter(|it| !it.is_rest()) {
-                            if let Some(symbol) = property.value().symbol()
-                                && let Some(name) = property.key().and_then(Key::name)
-                                && is_jsx_property_only_used_in_recursion(symbol, name, function)
-                                && !is_reassigned()
-                            {
-                                report_jsx_property(cx, function, property, symbol, name);
-                            }
-                        }
-                    }
-                    _ => {}
                 }
+                _ => {}
             }
-        });
-        State::default()
+        }
     }
 }
 

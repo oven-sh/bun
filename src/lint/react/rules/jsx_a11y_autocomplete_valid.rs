@@ -37,7 +37,8 @@ fn is_valid_autocomplete_value(value: &[u8]) -> bool {
 
 impl Rule for AutocompleteValid {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "autocomplete-valid", Kind::Problem);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let config = options.object(0);
@@ -49,21 +50,19 @@ impl Rule for AutocompleteValid {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Jsx], |rule, e, cx| {
-            let Some(jsx_el) = as_jsx_element(e) else {
-                return;
-            };
-            let Some(attr) = has_jsx_prop_ignore_case(jsx_el, "autocomplete") else {
-                return;
-            };
-            let name = get_element_type(cx.file(), jsx_el);
-            if rule.input_components.iter().any(|it| *it.as_bytes() == *name)
-                && let Some(value) = get_string_literal_prop_value(attr)
-                && !is_valid_autocomplete_value(value)
-            {
-                cx.report(attr, AUTOCOMPLETE_VALID).data("autocomplete", value);
-            }
-        });
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(jsx_el) = as_jsx_element(e) else {
+            return;
+        };
+        let Some(attr) = has_jsx_prop_ignore_case(jsx_el, "autocomplete") else {
+            return;
+        };
+        let name = get_element_type(cx.file(), jsx_el);
+        if self.input_components.iter().any(|it| *it.as_bytes() == *name)
+            && let Some(value) = get_string_literal_prop_value(attr)
+            && !is_valid_autocomplete_value(value)
+        {
+            cx.report(attr, AUTOCOMPLETE_VALID).data("autocomplete", value);
+        }
     }
 }

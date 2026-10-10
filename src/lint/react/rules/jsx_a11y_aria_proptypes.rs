@@ -12,38 +12,37 @@ const ARIA_PROPTYPES: Message = Message::new("", "This is not a valid ARIA state
 
 impl Rule for AriaProptypes {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "aria-proptypes", Kind::Problem);
-    type State<'a> = ();
+    // Elements are far fewer than properties.
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         AriaProptypes
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        // Elements are far fewer than properties.
-        on.exprs([ExprTag::Jsx], |_, e, cx| {
-            let ExprKind::Jsx(jsx) = e.kind() else {
-                return;
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Jsx(jsx) = e.kind() else {
+            return;
+        };
+        for attr in jsx.attrs() {
+            let Some(name) = get_jsx_attribute_name(attr) else {
+                continue;
             };
-            for attr in jsx.attrs() {
-                let Some(name) = get_jsx_attribute_name(attr) else {
-                    continue;
-                };
-                if !name.get(..5).is_some_and(|it| it.eq_ignore_ascii_case(b"aria-")) {
-                    continue;
-                }
-                let name = cow_to_ascii_lowercase(name);
-                let Some(aria_prop_type) = name.get(5..).and_then(get_aria_prop_type) else {
-                    continue;
-                };
-                let is_valid = match get_prop_value(attr) {
-                    Some(value) => is_valid_value_for_aria_prop_type(aria_prop_type, value),
-                    None => allow_none_value(aria_prop_type),
-                };
-                if !is_valid {
-                    cx.report(attr, ARIA_PROPTYPES).help_with(|| help(aria_prop_type, &name)).data("prop_name", name);
-                }
+            if !name.get(..5).is_some_and(|it| it.eq_ignore_ascii_case(b"aria-")) {
+                continue;
             }
-        });
+            let name = cow_to_ascii_lowercase(name);
+            let Some(aria_prop_type) = name.get(5..).and_then(get_aria_prop_type) else {
+                continue;
+            };
+            let is_valid = match get_prop_value(attr) {
+                Some(value) => is_valid_value_for_aria_prop_type(aria_prop_type, value),
+                None => allow_none_value(aria_prop_type),
+            };
+            if !is_valid {
+                cx.report(attr, ARIA_PROPTYPES).help_with(|| help(aria_prop_type, &name)).data("prop_name", name);
+            }
+        }
     }
 }
 

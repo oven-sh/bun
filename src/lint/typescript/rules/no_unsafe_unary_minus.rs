@@ -27,13 +27,14 @@ impl Rule for NoUnsafeUnaryMinus {
     const META: Meta = Meta::typescript("no-unsafe-unary-minus", Kind::Problem)
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Unary]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoUnsafeUnaryMinus
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Unary], Self::check);
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(node, cx);
     }
 }

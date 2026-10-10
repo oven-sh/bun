@@ -383,14 +383,20 @@ impl Rule for NoUnnecessaryTemplateExpression {
         .fixable(Fixable::Code)
         .presets(Presets::STRICT_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Template])
+        .types(&[TypeTag::Template]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoUnnecessaryTemplateExpression
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Template], Self::check_template_literal);
-        on.types([TypeTag::Template], Self::check_template_literal_type);
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_template_literal(node, cx);
+    }
+
+    fn ty<'a>(&self, node: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_template_literal_type(node, cx);
     }
 }

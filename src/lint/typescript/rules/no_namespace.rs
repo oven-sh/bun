@@ -19,6 +19,7 @@ fn is_declaration(stmt: Stmt) -> bool {
 
 impl Rule for NoNamespace {
     const META: Meta = Meta::typescript("no-namespace", Kind::Suggestion).recommended();
+    const ON: On = On::new().stmts(&[StmtTag::Module]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -29,28 +30,30 @@ impl Rule for NoNamespace {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if self.allow_definition_files && ts_utils::is_definition_file(file.path()) {
+            return None;
+        }
+        Some(())
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let StmtKind::Module(module) = stmt.kind() else {
+            return;
+        };
+        let ModuleName::Ident(name) = module.name() else {
+            return;
+        };
+        if self.allow_declarations && is_declaration(stmt) {
             return;
         }
-        on.stmts([StmtTag::Module], |rule, stmt, cx| {
-            let StmtKind::Module(module) = stmt.kind() else {
-                return;
-            };
-            let ModuleName::Ident(name) = module.name() else {
-                return;
-            };
-            if rule.allow_declarations && is_declaration(stmt) {
-                return;
-            }
-            // oxlint points at the keyword, which is before the name.
-            let end = cx.file().end_of_token_before(name.span().start);
-            let keyword = if cx.slice(Span::new(0, end)).ends_with(b"namespace") { "namespace" } else { "module" };
-            let place = match cx.language().is_oxlint {
-                true => Span::new(end.saturating_sub(keyword.len() as u32), end),
-                false => stmt.span_without_export(),
-            };
-            cx.report(place, MODULE_SYNTAX_IS_PREFERRED);
-        });
+        // oxlint points at the keyword, which is before the name.
+        let end = cx.file().end_of_token_before(name.span().start);
+        let keyword = if cx.slice(Span::new(0, end)).ends_with(b"namespace") { "namespace" } else { "module" };
+        let place = match cx.language().is_oxlint {
+            true => Span::new(end.saturating_sub(keyword.len() as u32), end),
+            false => stmt.span_without_export(),
+        };
+        cx.report(place, MODULE_SYNTAX_IS_PREFERRED);
     }
 }

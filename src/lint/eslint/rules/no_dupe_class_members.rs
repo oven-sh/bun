@@ -115,18 +115,20 @@ pub fn check<'a, R: Rule>(
 
 impl Rule for NoDupeClassMembers {
     const META: Meta = Meta::eslint("no-dupe-class-members", Kind::Problem).recommended();
+    const ON: On = On::new().classes();
     type State<'a> = Seen<'a>;
 
     fn new(_: &Options) -> Self {
         NoDupeClassMembers
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Seen<'a> {
-        on.classes(|_, class, cx| {
-            let mut seen = std::mem::take(&mut cx.state);
-            check(class, false, &mut seen, cx);
-            cx.state = seen;
-        });
-        Vec::new()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Seen<'a>> {
+        Some(Vec::new())
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        let mut seen = std::mem::take(&mut cx.state);
+        check(class, false, &mut seen, cx);
+        cx.state = seen;
     }
 }

@@ -38,6 +38,7 @@ enum CheckTypes {
 
 impl Rule for RequireParam {
     const META: Meta = Meta::oxlint(Plugin::Jsdoc, "require-param", Kind::Suggestion);
+    const ON: On = On::new().funcs();
     type State<'a> = JSDocFinder<'a>;
 
     fn new(options: &Options) -> Self {
@@ -60,12 +61,13 @@ impl Rule for RequireParam {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> JSDocFinder<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<JSDocFinder<'a>> {
         let finder = JSDocFinder::new(file);
-        if !finder.is_empty() {
-            on.funcs(Self::check);
-        }
-        finder
+        (!finder.is_empty()).then_some(finder)
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(func, cx);
     }
 }
 

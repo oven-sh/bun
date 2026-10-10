@@ -20,8 +20,36 @@ const PATTERN_MESSAGE: Message = Message::new(
     "'{{name}}' module is restricted from being used by a pattern.",
 );
 
-impl NoRestrictedModules {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoRestrictedModules {
+    const META: Meta = Meta::eslint("no-restricted-modules", Kind::Suggestion).deprecated();
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    type State<'a> = ();
+
+    fn new(options: &Options) -> Self {
+        let first = options.object(0);
+        let (paths, patterns) = match first.has("paths") || first.has("patterns") {
+            true => (first.array("paths"), first.strings("patterns")),
+            false => (options.all(), Vec::new()),
+        };
+        let paths = paths.iter().filter_map(|path| match path {
+            Json::String(name) => Some((name.clone(), None)),
+            _ => {
+                let path = Object::of(Some(path));
+                let message = path.str("message").filter(|it| !it.is_empty());
+                Some((path.str("name")?.into(), message.map(Into::into)))
+            }
+        });
+        NoRestrictedModules {
+            paths: paths.collect(),
+            patterns: (!patterns.is_empty()).then(|| ignore_rules(&patterns, true, IgnoreSyntax::Npm5)),
+        }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<()> {
+        (!self.paths.is_empty() || self.patterns.is_some()).then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Call(call) = e.kind() else {
             return;
         };
@@ -47,37 +75,6 @@ impl NoRestrictedModules {
         }
         if self.patterns.as_ref().is_some_and(|it| it.ignores(name)) {
             cx.report(e, PATTERN_MESSAGE).data("name", name);
-        }
-    }
-}
-
-impl Rule for NoRestrictedModules {
-    const META: Meta = Meta::eslint("no-restricted-modules", Kind::Suggestion).deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let first = options.object(0);
-        let (paths, patterns) = match first.has("paths") || first.has("patterns") {
-            true => (first.array("paths"), first.strings("patterns")),
-            false => (options.all(), Vec::new()),
-        };
-        let paths = paths.iter().filter_map(|path| match path {
-            Json::String(name) => Some((name.clone(), None)),
-            _ => {
-                let path = Object::of(Some(path));
-                let message = path.str("message").filter(|it| !it.is_empty());
-                Some((path.str("name")?.into(), message.map(Into::into)))
-            }
-        });
-        NoRestrictedModules {
-            paths: paths.collect(),
-            patterns: (!patterns.is_empty()).then(|| ignore_rules(&patterns, true, IgnoreSyntax::Npm5)),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        if !self.paths.is_empty() || self.patterns.is_some() {
-            on.exprs([ExprTag::Call], Self::check);
         }
     }
 }

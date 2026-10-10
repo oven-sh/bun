@@ -7,25 +7,24 @@ const UNEXPECTED: Message = Message::new("unexpected", "Do not assign to the exc
 
 impl Rule for NoExAssign {
     const META: Meta = Meta::eslint("no-ex-assign", Kind::Problem).recommended();
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::Try]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoExAssign
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::Try], |_, stmt, cx| {
-            let StmtKind::Try { param: Some(param), .. } = stmt.kind() else {
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let StmtKind::Try { param: Some(param), .. } = stmt.kind() else {
+            return;
+        };
+        param.pat().for_each_binding(&mut |pat| {
+            let Some(symbol) = pat.symbol().filter(|it| it.has_modifying_references()) else {
                 return;
             };
-            param.pat().for_each_binding(&mut |pat| {
-                let Some(symbol) = pat.symbol().filter(|it| it.has_modifying_references()) else {
-                    return;
-                };
-                for reference in ast_utils::get_modifying_references(symbol.references()) {
-                    cx.report(reference, UNEXPECTED);
-                }
-            });
+            for reference in ast_utils::get_modifying_references(symbol.references()) {
+                cx.report(reference, UNEXPECTED);
+            }
         });
     }
 }

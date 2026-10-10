@@ -62,50 +62,53 @@ impl Rule for NoExtraSemi {
     const META: Meta = Meta::eslint("no-extra-semi", Kind::Suggestion)
         .fixable(Fixable::Code)
         .deprecated();
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::Empty]).classes().members();
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoExtraSemi
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::Empty], |_, statement, cx| {
-            let is_allowed = match statement.parent() {
-                Node::Stmt(parent) => matches!(
-                    parent.kind(),
-                    StmtKind::For { .. }
-                        | StmtKind::ForIn { .. }
-                        | StmtKind::ForOf { .. }
-                        | StmtKind::While { .. }
-                        | StmtKind::DoWhile { .. }
-                        | StmtKind::If { .. }
-                        | StmtKind::Labeled { .. }
-                        | StmtKind::With { .. }
-                ),
-                _ => false,
-            };
-            if !is_allowed {
-                report(statement.span(), cx);
-            }
-        });
-        on.classes(|_, class, cx| check_for_part_of_class_body(class.body_span().start + 1, cx));
-        // `MethodDefinition`, `PropertyDefinition` and `StaticBlock`, not what only TypeScript has.
-        on.members(|_, member, cx| {
-            let is_listened_for = matches!(
-                member.kind(),
-                MemberKind::Property
-                    | MemberKind::Method
-                    | MemberKind::Getter
-                    | MemberKind::Setter
-                    | MemberKind::Constructor
-                    | MemberKind::StaticBlock
-            );
-            if is_listened_for
-                && !member.flags().intersects(Flags::ABSTRACT | Flags::ACCESSOR)
-                && !member.is_signature()
-            {
-                check_for_part_of_class_body(member.span().end, cx);
-            }
-        });
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let is_allowed = match statement.parent() {
+            Node::Stmt(parent) => matches!(
+                parent.kind(),
+                StmtKind::For { .. }
+                    | StmtKind::ForIn { .. }
+                    | StmtKind::ForOf { .. }
+                    | StmtKind::While { .. }
+                    | StmtKind::DoWhile { .. }
+                    | StmtKind::If { .. }
+                    | StmtKind::Labeled { .. }
+                    | StmtKind::With { .. }
+            ),
+            _ => false,
+        };
+        if !is_allowed {
+            report(statement.span(), cx);
+        }
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        check_for_part_of_class_body(class.body_span().start + 1, cx);
+    }
+
+    // `MethodDefinition`, `PropertyDefinition` and `StaticBlock`, not what only TypeScript has.
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+        let is_listened_for = matches!(
+            member.kind(),
+            MemberKind::Property
+                | MemberKind::Method
+                | MemberKind::Getter
+                | MemberKind::Setter
+                | MemberKind::Constructor
+                | MemberKind::StaticBlock
+        );
+        if is_listened_for
+            && !member.flags().intersects(Flags::ABSTRACT | Flags::ACCESSOR)
+            && !member.is_signature()
+        {
+            check_for_part_of_class_body(member.span().end, cx);
+        }
     }
 }

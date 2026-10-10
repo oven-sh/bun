@@ -44,8 +44,22 @@ fn curly_wrap_fixer<'a>(fixer: Fixer<'a>, function: Expr<'a>, arrow: Span) -> [F
     [fixer.insert_before(Span::empty(first_token), "{"), fixer.insert_after(function, "}")]
 }
 
-impl NoPromiseExecutorReturn {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoPromiseExecutorReturn {
+    const META: Meta = Meta::eslint("no-promise-executor-return", Kind::Problem).has_suggestions();
+    const ON: On = On::new().exprs(&[ExprTag::New]);
+    type State<'a> = ();
+
+    fn new(options: &Options) -> Self {
+        NoPromiseExecutorReturn {
+            allow_void: options.object(0).bool_or("allowVoid", false),
+        }
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("Promise").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::New(call) = e.kind() else {
             return;
         };
@@ -94,23 +108,5 @@ impl NoPromiseExecutorReturn {
                 allow_void.then(|| void_prepend_fixer(fixer, argument, keyword, true))
             });
         }
-    }
-}
-
-impl Rule for NoPromiseExecutorReturn {
-    const META: Meta = Meta::eslint("no-promise-executor-return", Kind::Problem).has_suggestions();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        NoPromiseExecutorReturn {
-            allow_void: options.object(0).bool_or("allowVoid", false),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("Promise") {
-            return;
-        }
-        on.exprs([ExprTag::New], Self::check);
     }
 }

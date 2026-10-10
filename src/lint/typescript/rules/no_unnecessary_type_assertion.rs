@@ -1146,6 +1146,7 @@ impl Rule for NoUnnecessaryTypeAssertion {
         .fixable(Fixable::Code)
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types();
+    const ON: On = On::new().exprs(&[ExprTag::As, ExprTag::AsConst, ExprTag::NonNull]);
     type State<'a> = Contained<'a>;
 
     fn new(options: &Options) -> Self {
@@ -1156,9 +1157,15 @@ impl Rule for NoUnnecessaryTypeAssertion {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Contained<'a> {
-        on.exprs([ExprTag::As, ExprTag::AsConst], Self::check_assertion);
-        on.exprs([ExprTag::NonNull], Self::check_non_null_assertion);
-        Contained::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Contained<'a>> {
+        Some(Contained::default())
+    }
+
+    fn expr<'a>(&self, expr: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match expr.tag() {
+            ExprTag::As | ExprTag::AsConst => self.check_assertion(expr, cx),
+            ExprTag::NonNull => self.check_non_null_assertion(expr, cx),
+            _ => {}
+        }
     }
 }

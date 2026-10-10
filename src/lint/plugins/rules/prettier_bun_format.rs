@@ -9,13 +9,14 @@ pub struct Format(Settings);
 
 impl Rule for Format {
     const META: Meta = Meta::plugin(Plugin::Bun, "format", Kind::Layout).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new().finish();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         Format(Settings::new(options))
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.finish(|rule, cx| rule.0.check(Like::BunFormat, cx));
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        self.0.check(Like::BunFormat, cx);
     }
 }

@@ -92,20 +92,29 @@ fn check<'a>(node: Expr<'a>, pattern: &[u8], flags: &[u8], cx: &mut Cx<'a, NoCon
 
 impl Rule for NoControlRegex {
     const META: Meta = Meta::eslint("no-control-regex", Kind::Problem).recommended();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Regex, ExprTag::Call, ExprTag::New]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoControlRegex
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        on.exprs([ExprTag::Regex], |_, e, cx| {
-            if let ExprKind::Regex(literal) = e.kind() {
-                check(e, literal.pattern(), literal.flags(), cx);
-            }
-        });
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new().exprs(&[ExprTag::Regex]);
         if file.mentions("RegExp") {
-            on.exprs([ExprTag::Call, ExprTag::New], |_, e, cx| {
+            on = on.exprs(&[ExprTag::Call, ExprTag::New]);
+        }
+        on
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Regex => {
+                if let ExprKind::Regex(literal) = e.kind() {
+                    check(e, literal.pattern(), literal.flags(), cx);
+                }
+            }
+            ExprTag::Call | ExprTag::New => {
                 let (ExprKind::Call(call) | ExprKind::New(call)) = e.kind() else {
                     return;
                 };
@@ -117,7 +126,8 @@ impl Rule for NoControlRegex {
                     let flags = call.args().get(1).and_then(Expr::as_string);
                     check(first, pattern.bytes(), flags.map_or(&b""[..], Name::bytes), cx);
                 }
-            });
+            }
+            _ => {}
         }
     }
 }

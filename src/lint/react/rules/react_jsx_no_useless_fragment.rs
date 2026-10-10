@@ -15,16 +15,19 @@ const CHILD_OF_HTML_ELEMENT: Message = Message::new("", "Passing a fragment to a
 
 impl Rule for JsxNoUselessFragment {
     const META: Meta = Meta::oxlint(Plugin::React, "jsx-no-useless-fragment", Kind::Suggestion).has_suggestions();
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         JsxNoUselessFragment { allow_expressions: options.object(0).bool_or("allowExpressions", false) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if is_jsx(file) {
-            on.exprs([ExprTag::Jsx], check);
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        is_jsx(file).then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        check(self, e, cx);
     }
 }
 

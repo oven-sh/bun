@@ -12,6 +12,7 @@ const NO_ARRAY_INDEX_KEY: Message = Message::new("", "Usage of Array index in ke
 
 impl Rule for NoArrayIndexKey {
     const META: Meta = Meta::oxlint(Plugin::React, "no-array-index-key", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Call]);
     /// The parameter that is the index in the callback of the innermost `a.map(..)` or the like around something.
     type State<'a> = AncestorMemo<'a, Option<Symbol<'a>>>;
 
@@ -19,19 +20,31 @@ impl Rule for NoArrayIndexKey {
         NoArrayIndexKey
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if !file.mentions("key") {
-            return AncestorMemo::default();
-        }
-        on.exprs([ExprTag::Jsx], |_, e, cx| {
-            let Some(jsx) = as_jsx_element(e) else {
-                return;
-            };
-            let keys = jsx.attrs().iter().filter(|it| it.key().is_some_and(|key| key.is("key")));
-            check(e, keys.filter_map(|it| Some((it, get_prop_value(it)?.as_expression()?))), cx);
-        });
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new().exprs(&[ExprTag::Jsx]);
         if file.mentions("cloneElement") {
-            on.exprs([ExprTag::Call], |_, e, cx| {
+            on = on.exprs(&[ExprTag::Call]);
+        }
+        on
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        if !file.mentions("key") {
+            return None;
+        }
+        Some(AncestorMemo::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Jsx => {
+                let Some(jsx) = as_jsx_element(e) else {
+                    return;
+                };
+                let keys = jsx.attrs().iter().filter(|it| it.key().is_some_and(|key| key.is("key")));
+                check(e, keys.filter_map(|it| Some((it, get_prop_value(it)?.as_expression()?))), cx);
+            }
+            ExprTag::Call => {
                 if let Some(call) = e.as_call()
                     && is_method_call(call, Some(&["React"]), Some(&["cloneElement"]), Some(2), Some(3))
                     && let Some(ExprKind::Object(properties)) =
@@ -42,9 +55,9 @@ impl Rule for NoArrayIndexKey {
                         .filter(|it| matches!(it.key().map(Key::kind), Some(KeyKind::Ident(key)) if key.is("key")));
                     check(e, keys.filter_map(|it| Some((it, it.value()?))), cx);
                 }
-            });
+            }
+            _ => {}
         }
-        AncestorMemo::default()
     }
 }
 

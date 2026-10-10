@@ -13,39 +13,39 @@ const NOT_RECOMMENDED_FONT_DISPLAY_VALUE: Message =
 
 impl Rule for GoogleFontDisplay {
     const META: Meta = Meta::oxlint(Plugin::Nextjs, "google-font-display", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         GoogleFontDisplay
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("link") {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("link").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(jsx) = as_jsx_element(e) else {
+            return;
+        };
+        let Some(name) = jsx.tag().filter(|it| it.is_ident("link")) else {
+            return;
+        };
+        let Some(href_prop) = has_jsx_prop_ignore_case(jsx, "href") else {
+            return;
+        };
+        let Some(href) = get_string_literal_prop_value(href_prop) else {
+            return;
+        };
+        if !href.starts_with(b"https://fonts.googleapis.com/css") {
             return;
         }
-        on.exprs([ExprTag::Jsx], |_, e, cx| {
-            let Some(jsx) = as_jsx_element(e) else {
-                return;
-            };
-            let Some(name) = jsx.tag().filter(|it| it.is_ident("link")) else {
-                return;
-            };
-            let Some(href_prop) = has_jsx_prop_ignore_case(jsx, "href") else {
-                return;
-            };
-            let Some(href) = get_string_literal_prop_value(href_prop) else {
-                return;
-            };
-            if !href.starts_with(b"https://fonts.googleapis.com/css") {
-                return;
+        match find_url_query_value(href, b"display") {
+            None => drop(cx.report(name, FONT_DISPLAY_PARAMETER_MISSING)),
+            Some(value @ (b"auto" | b"block" | b"fallback")) => {
+                cx.report(href_prop, NOT_RECOMMENDED_FONT_DISPLAY_VALUE).data("font_display_value", value);
             }
-            match find_url_query_value(href, b"display") {
-                None => drop(cx.report(name, FONT_DISPLAY_PARAMETER_MISSING)),
-                Some(value @ (b"auto" | b"block" | b"fallback")) => {
-                    cx.report(href_prop, NOT_RECOMMENDED_FONT_DISPLAY_VALUE).data("font_display_value", value);
-                }
-                Some(_) => {}
-            }
-        });
+            Some(_) => {}
+        }
     }
 }

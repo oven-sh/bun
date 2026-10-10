@@ -57,13 +57,14 @@ impl NoDupeArgs {
 
 impl Rule for NoDupeArgs {
     const META: Meta = Meta::eslint("no-dupe-args", Kind::Problem).recommended();
-    type State<'a> = ();
+    const ON: On = On::new().funcs();
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoDupeArgs
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.funcs(Self::check_params);
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_params(func, cx);
     }
 }

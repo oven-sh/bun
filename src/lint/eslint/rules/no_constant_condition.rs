@@ -53,7 +53,10 @@ impl NoConstantCondition {
 
 impl Rule for NoConstantCondition {
     const META: Meta = Meta::eslint("no-constant-condition", Kind::Problem).recommended();
-    type State<'a> = ();
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Cond])
+        .stmts(&[StmtTag::If, StmtTag::While, StmtTag::DoWhile, StmtTag::For]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let check_loops = options.object(0).get("checkLoops");
@@ -66,23 +69,33 @@ impl Rule for NoConstantCondition {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Cond], |_, e, cx| {
-            if let ExprKind::Cond { test, .. } = e.kind()
-                && ast_utils::is_constant(test, true)
-            {
-                cx.report(place(test), UNEXPECTED);
-            }
-        });
-        on.stmts([StmtTag::If], |_, statement, cx| {
-            if let StmtKind::If { test, .. } = statement.kind()
-                && ast_utils::is_constant(test, true)
-            {
-                cx.report(place(test), UNEXPECTED);
-            }
-        });
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new().exprs(&[ExprTag::Cond]).stmts(&[StmtTag::If]);
         if self.check_loops != CheckLoops::None {
-            on.stmts([StmtTag::While, StmtTag::DoWhile, StmtTag::For], Self::check_loop);
+            on = on.stmts(&[StmtTag::While, StmtTag::DoWhile, StmtTag::For]);
+        }
+        on
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let ExprKind::Cond { test, .. } = e.kind()
+            && ast_utils::is_constant(test, true)
+        {
+            cx.report(place(test), UNEXPECTED);
+        }
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match statement.tag() {
+            StmtTag::If => {
+                if let StmtKind::If { test, .. } = statement.kind()
+                    && ast_utils::is_constant(test, true)
+                {
+                    cx.report(place(test), UNEXPECTED);
+                }
+            }
+            StmtTag::While | StmtTag::DoWhile | StmtTag::For => self.check_loop(statement, cx),
+            _ => {}
         }
     }
 }

@@ -12,20 +12,23 @@ const NO_DOCUMENT_IMPORT_IN_PAGE: Message = Message::new(
 
 impl Rule for NoDocumentImportInPage {
     const META: Meta = Meta::oxlint(Plugin::Nextjs, "no-document-import-in-page", Kind::Problem);
+    const ON: On = On::new().stmts(&[StmtTag::Import]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoDocumentImportInPage
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions("next/document") || is_document_page(file.path()) {
-            return;
+            return None;
         }
-        on.stmts([StmtTag::Import], |_, stmt, cx| {
-            if matches!(stmt.kind(), StmtKind::Import(import) if import.spec().is("next/document")) {
-                cx.report(stmt, NO_DOCUMENT_IMPORT_IN_PAGE);
-            }
-        });
+        Some(())
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if matches!(stmt.kind(), StmtKind::Import(import) if import.spec().is("next/document")) {
+            cx.report(stmt, NO_DOCUMENT_IMPORT_IN_PAGE);
+        }
     }
 }

@@ -35,6 +35,7 @@ fn place(string: Span, file: &File) -> Span {
 
 impl Rule for NoMultiStr {
     const META: Meta = Meta::eslint("no-multi-str", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::String]).finish();
     /// Where the strings with a line break start that are expressions.
     type State<'a> = Vec<u32>;
 
@@ -42,7 +43,7 @@ impl Rule for NoMultiStr {
         NoMultiStr
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Vec<u32> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Vec<u32>> {
         // A line break in a string follows a `\`, or is U+2028 or U+2029.
         let text = file.text();
         let (mut at, mut has_break) = (0, false);
@@ -52,29 +53,31 @@ impl Rule for NoMultiStr {
         }
         let not_ascii = strings::first_non_ascii(text).and_then(|first| text.get(first as usize..)).unwrap_or_default();
         if !has_break && !strings::contains(not_ascii, b"\xE2\x80\xA8") && !strings::contains(not_ascii, b"\xE2\x80\xA9") {
-            return Vec::new();
+            return None;
         }
-        on.exprs([ExprTag::String], |_, e, cx| {
-            if !strings::contains_js_line_break(e.text()) {
-                return;
+        Some(Vec::new())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if !strings::contains_js_line_break(e.text()) {
+            return;
+        }
+        cx.state.push(e.span().start);
+        if !is_in_jsx(e) {
+            cx.report(place(e.span(), cx.file()), MULTILINE_STRING);
+        }
+    }
+
+    // The strings that are not expressions: keys, module specifiers, literal types.
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        cx.state.sort_unstable();
+        for token in cx.file().tokens() {
+            if token.kind() == TokenKind::String
+                && strings::contains_js_line_break(token.text())
+                && cx.state.binary_search(&token.start()).is_err()
+            {
+                cx.report(place(Span::new(token.start(), token.end()), cx.file()), MULTILINE_STRING);
             }
-            cx.state.push(e.span().start);
-            if !is_in_jsx(e) {
-                cx.report(place(e.span(), cx.file()), MULTILINE_STRING);
-            }
-        });
-        // The strings that are not expressions: keys, module specifiers, literal types.
-        on.finish(|_, cx| {
-            cx.state.sort_unstable();
-            for token in cx.file().tokens() {
-                if token.kind() == TokenKind::String
-                    && strings::contains_js_line_break(token.text())
-                    && cx.state.binary_search(&token.start()).is_err()
-                {
-                    cx.report(place(Span::new(token.start(), token.end()), cx.file()), MULTILINE_STRING);
-                }
-            }
-        });
-        Vec::new()
+        }
     }
 }

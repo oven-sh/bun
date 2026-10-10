@@ -121,7 +121,7 @@ impl Rule for DotNotation {
         .exprs(&[ExprTag::Index, ExprTag::Dot])
         .stmts(&[StmtTag::Interface])
         .classes();
-    no_state!();
+    type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -130,6 +130,10 @@ impl Rule for DotNotation {
             allows_keywords: options.bool_or("allowKeywords", true),
             allow_pattern: pattern.and_then(|pattern| Regex::new(pattern, "u").ok()),
         }
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        (self.checks_keywords() || file.has_exprs([ExprTag::Index])).then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

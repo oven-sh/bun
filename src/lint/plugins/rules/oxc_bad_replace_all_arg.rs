@@ -10,22 +10,22 @@ const BAD_REPLACE_ALL_ARG: Message =
 
 impl Rule for BadReplaceAllArg {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "bad-replace-all-arg", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         BadReplaceAllArg
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("replaceAll") {
-            return;
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("replaceAll").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some((replace_all, regex)) = method_called_without_global_flag(e, "replaceAll") {
+            cx.report(replace_all, BAD_REPLACE_ALL_ARG)
+                .first_label("`replaceAll` called here")
+                .label(regex, "RegExp supplied here");
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            if let Some((replace_all, regex)) = method_called_without_global_flag(e, "replaceAll") {
-                cx.report(replace_all, BAD_REPLACE_ALL_ARG)
-                    .first_label("`replaceAll` called here")
-                    .label(regex, "RegExp supplied here");
-            }
-        });
     }
 }

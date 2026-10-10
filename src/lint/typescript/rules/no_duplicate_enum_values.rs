@@ -104,42 +104,41 @@ fn check_as_oxlint<'a>(declaration: Enum<'a>, cx: &mut Cx<'a, NoDuplicateEnumVal
 
 impl Rule for NoDuplicateEnumValues {
     const META: Meta = Meta::typescript("no-duplicate-enum-values", Kind::Problem).recommended();
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::Enum]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoDuplicateEnumValues
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::Enum], |_, stmt, cx| {
-            let StmtKind::Enum(declaration) = stmt.kind() else {
-                return;
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let StmtKind::Enum(declaration) = stmt.kind() else {
+            return;
+        };
+        if cx.language().is_oxlint {
+            return check_as_oxlint(declaration, cx);
+        }
+        let mut seen: SmallVec<[Value<'a>; 8]> = SmallVec::new();
+        // All of them, as soon as they are more than a few.
+        let mut keys: FxHashSet<(bool, u64)> = FxHashSet::default();
+        for member in declaration.members() {
+            let Some(value) = member.init().and_then(member_value) else {
+                continue;
             };
-            if cx.language().is_oxlint {
-                return check_as_oxlint(declaration, cx);
+            if seen.len() == 16 && keys.is_empty() {
+                keys.extend(seen.iter().map(|it| it.key()));
             }
-            let mut seen: SmallVec<[Value<'a>; 8]> = SmallVec::new();
-            // All of them, as soon as they are more than a few.
-            let mut keys: FxHashSet<(bool, u64)> = FxHashSet::default();
-            for member in declaration.members() {
-                let Some(value) = member.init().and_then(member_value) else {
-                    continue;
-                };
-                if seen.len() == 16 && keys.is_empty() {
-                    keys.extend(seen.iter().map(|it| it.key()));
+            let is_new = match keys.is_empty() {
+                true => !seen.iter().any(|it| it.is(value)),
+                false => keys.insert(value.key()),
+            };
+            if is_new {
+                if keys.is_empty() {
+                    seen.push(value);
                 }
-                let is_new = match keys.is_empty() {
-                    true => !seen.iter().any(|it| it.is(value)),
-                    false => keys.insert(value.key()),
-                };
-                if is_new {
-                    if keys.is_empty() {
-                        seen.push(value);
-                    }
-                    continue;
-                }
-                report(member.span(), value, cx);
+                continue;
             }
-        });
+            report(member.span(), value, cx);
+        }
     }
 }

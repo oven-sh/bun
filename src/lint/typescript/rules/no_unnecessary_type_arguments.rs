@@ -198,12 +198,24 @@ impl NoUnnecessaryTypeArguments {
     }
 }
 
+const CALLS: [ExprTag; 4] = [
+    ExprTag::Call,
+    ExprTag::New,
+    ExprTag::TaggedTemplate,
+    ExprTag::Jsx,
+];
+
 impl Rule for NoUnnecessaryTypeArguments {
     const META: Meta = Meta::typescript("no-unnecessary-type-arguments", Kind::Suggestion)
         .fixable(Fixable::Code)
         .presets(Presets::STRICT_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Instantiation])
+        .types(&[TypeTag::Ref, TypeTag::Heritage])
+        .classes()
+        .exprs(&CALLS);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoUnnecessaryTypeArguments
@@ -211,15 +223,31 @@ impl Rule for NoUnnecessaryTypeArguments {
 
     // The type arguments of a `TSInstantiationExpression`, where defaults do not apply, of a
     // `TSTypeQuery` and of a `TSImportType` are not checked.
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
         if file.language().is_oxlint {
-            on.exprs([ExprTag::Instantiation], Self::check_instantiation);
+            on = on.exprs(&[ExprTag::Instantiation]);
         }
-        on.types([TypeTag::Ref, TypeTag::Heritage], Self::check_type);
-        on.classes(Self::check_class);
-        on.exprs(
-            [ExprTag::Call, ExprTag::New, ExprTag::TaggedTemplate, ExprTag::Jsx],
-            Self::check_call,
-        );
+        on.types(&[TypeTag::Ref, TypeTag::Heritage])
+            .classes()
+            .exprs(&CALLS)
+    }
+
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match node.tag() {
+            ExprTag::Instantiation => self.check_instantiation(node, cx),
+            ExprTag::Call | ExprTag::New | ExprTag::TaggedTemplate | ExprTag::Jsx => {
+                self.check_call(node, cx);
+            }
+            _ => {}
+        }
+    }
+
+    fn ty<'a>(&self, node: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_type(node, cx);
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_class(class, cx);
     }
 }

@@ -113,7 +113,8 @@ impl NoExtraneousClass {
 
 impl Rule for NoExtraneousClass {
     const META: Meta = Meta::typescript("no-extraneous-class", Kind::Suggestion).presets(Presets::STRICT);
-    type State<'a> = ();
+    const ON: On = On::new().classes();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -125,7 +126,7 @@ impl Rule for NoExtraneousClass {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.classes(Self::check);
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(class, cx);
     }
 }

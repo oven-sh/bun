@@ -428,150 +428,165 @@ fn check_property<'a>(cx: &Context<'a>, node: Prop<'a>, value: Expr<'a>) {
     }
 }
 
+impl NoUnsafeAssignment {
+    // `AssignmentExpression[operator = "="]`, and an `AssignmentPattern` in an assignment.
+    fn assign<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let ExprKind::Assign {
+            op: None,
+            target,
+            value,
+        } = node.kind()
+        {
+            check_assignment_to_target(
+                cx,
+                Target::Expr(target),
+                target.span(),
+                value,
+                node.span(),
+                true,
+            );
+        }
+    }
+
+    // `ArrayExpression > SpreadElement`
+    fn spread<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Spread(argument) = node.kind() else {
+            return;
+        };
+        if !matches!(node.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Array && !parent.is_assignment_target())
+        {
+            return;
+        }
+        let rest_type = argument.ty();
+        if is_type_any_type(rest_type) || is_type_any_array_type(rest_type) {
+            let place = if cx.language().is_oxlint { argument.outer_span() } else { node.span() };
+            cx.report(place, UNSAFE_ARRAY_SPREAD)
+                .comments_apply_at(node)
+                .data("sender", describe_sender(rest_type, cx));
+        }
+    }
+}
+
 impl Rule for NoUnsafeAssignment {
     const META: Meta = Meta::typescript("no-unsafe-assignment", Kind::Problem)
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    const ON: On = On::new()
+        .members()
+        .exprs(&[ExprTag::Assign, ExprTag::Spread])
+        .params()
+        .pats(&[PatTag::Array, PatTag::Object])
+        .var_decls()
+        .props();
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoUnsafeAssignment
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        // `AccessorProperty[value != null]`, `PropertyDefinition[value != null]`
-        on.members(|_, node, cx| {
-            let Some(value) = node.init() else {
-                return;
-            };
-            if node.kind() != MemberKind::Property
-                || node.is_signature()
-                || node.flags().contains(Flags::ABSTRACT)
-            {
-                return;
-            }
-            let file = cx.file();
-            let receiver_type = || type_of_key(file, node.key(), || NameOf(node).ty());
-            check_assignment(cx, &receiver_type, value, node.span(), node.ty().is_some());
-        });
+    // `AccessorProperty[value != null]`, `PropertyDefinition[value != null]`
+    fn member<'a>(&self, node: Member<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(value) = node.init() else {
+            return;
+        };
+        if node.kind() != MemberKind::Property
+            || node.is_signature()
+            || node.flags().contains(Flags::ABSTRACT)
+        {
+            return;
+        }
+        let file = cx.file();
+        let receiver_type = || type_of_key(file, node.key(), || NameOf(node).ty());
+        check_assignment(cx, &receiver_type, value, node.span(), node.ty().is_some());
+    }
 
-        // `AssignmentExpression[operator = "="]`, and an `AssignmentPattern` in an assignment.
-        on.exprs([ExprTag::Assign], |_, node, cx| {
-            if let ExprKind::Assign {
-                op: None,
-                target,
-                value,
-            } = node.kind()
-            {
-                check_assignment_to_target(
-                    cx,
-                    Target::Expr(target),
-                    target.span(),
-                    value,
-                    node.span(),
-                    true,
-                );
-            }
-        });
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match node.tag() {
+            ExprTag::Assign => self.assign(node, cx),
+            ExprTag::Spread => self.spread(node, cx),
+            _ => {}
+        }
+    }
 
-        // An `AssignmentPattern` in a declaration.
-        on.params(|_, node, cx| {
-            if let Some(right) = node.default() {
-                let left = Target::Pat(node.pat());
-                check_assignment_to_target(
-                    cx,
-                    left,
-                    node.binding_span(),
-                    right,
-                    node.span_without_modifiers(),
-                    true,
-                );
-            }
-        });
-        on.pats(
-            [PatTag::Array, PatTag::Object],
-            |_, pattern, cx| match pattern.kind() {
-                PatKind::Array(elements) => {
-                    for element in elements {
-                        if let (Some(left), Some(right)) = (element.pat(), element.default()) {
-                            check_assignment_to_target(
-                                cx,
-                                Target::Pat(left),
-                                left.span(),
-                                right,
-                                element.span(),
-                                true,
-                            );
-                        }
+    // An `AssignmentPattern` in a declaration.
+    fn param<'a>(&self, node: Param<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(right) = node.default() {
+            let left = Target::Pat(node.pat());
+            check_assignment_to_target(
+                cx,
+                left,
+                node.binding_span(),
+                right,
+                node.span_without_modifiers(),
+                true,
+            );
+        }
+    }
+
+    fn pat<'a>(&self, pattern: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        match pattern.kind() {
+            PatKind::Array(elements) => {
+                for element in elements {
+                    if let (Some(left), Some(right)) = (element.pat(), element.default()) {
+                        check_assignment_to_target(
+                            cx,
+                            Target::Pat(left),
+                            left.span(),
+                            right,
+                            element.span(),
+                            true,
+                        );
                     }
                 }
-                PatKind::Object(properties) => {
-                    for property in properties {
-                        if let Some(right) = property.default() {
-                            let left = property.value();
-                            let node = Span::new(left.span().start, property.span().end);
-                            check_assignment_to_target(
-                                cx,
-                                Target::Pat(left),
-                                left.span(),
-                                right,
-                                node,
-                                true,
-                            );
-                        }
+            }
+            PatKind::Object(properties) => {
+                for property in properties {
+                    if let Some(right) = property.default() {
+                        let left = property.value();
+                        let node = Span::new(left.span().start, property.span().end);
+                        check_assignment_to_target(
+                            cx,
+                            Target::Pat(left),
+                            left.span(),
+                            right,
+                            node,
+                            true,
+                        );
                     }
                 }
-                PatKind::Ident(_) | PatKind::Missing => {}
-            },
-        );
+            }
+            PatKind::Ident(_) | PatKind::Missing => {}
+        }
+    }
 
-        // `VariableDeclarator[init != null]`
-        on.var_decls(|_, node, cx| {
-            if let Some(init) = node.init() {
-                // Without an annotation the type of the variable is inferred, thus equal.
-                let compares = node.ty().is_some();
-                check_assignment_to_target(
-                    cx,
-                    Target::Pat(node.pat()),
-                    node.binding_span(),
-                    init,
-                    node.span(),
-                    compares,
-                );
-            }
-        });
+    // `VariableDeclarator[init != null]`
+    fn var_decl<'a>(&self, node: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(init) = node.init() {
+            // Without an annotation the type of the variable is inferred, thus equal.
+            let compares = node.ty().is_some();
+            check_assignment_to_target(
+                cx,
+                Target::Pat(node.pat()),
+                node.binding_span(),
+                init,
+                node.span(),
+                compares,
+            );
+        }
+    }
 
-        // `:not(ObjectPattern) > Property`, `JSXAttribute[value != null]`
-        on.props(|_, node, cx| {
-            let Some(value) = node.value() else {
-                return;
-            };
-            if !node.is_jsx_attribute() {
-                check_property(cx, node, value);
-            } else if node.kind() != PropKind::Spread
-                && value.jsx_container_span().is_some()
-                && !value.is_missing()
-            {
-                check_assignment(cx, &|| NameOf(node).ty(), value, value.span(), true);
-            }
-        });
-
-        // `ArrayExpression > SpreadElement`
-        on.exprs([ExprTag::Spread], |_, node, cx| {
-            let ExprKind::Spread(argument) = node.kind() else {
-                return;
-            };
-            if !matches!(node.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Array && !parent.is_assignment_target())
-            {
-                return;
-            }
-            let rest_type = argument.ty();
-            if is_type_any_type(rest_type) || is_type_any_array_type(rest_type) {
-                let place = if cx.language().is_oxlint { argument.outer_span() } else { node.span() };
-                cx.report(place, UNSAFE_ARRAY_SPREAD)
-                    .comments_apply_at(node)
-                    .data("sender", describe_sender(rest_type, cx));
-            }
-        });
+    // `:not(ObjectPattern) > Property`, `JSXAttribute[value != null]`
+    fn prop<'a>(&self, node: Prop<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(value) = node.value() else {
+            return;
+        };
+        if !node.is_jsx_attribute() {
+            check_property(cx, node, value);
+        } else if node.kind() != PropKind::Spread
+            && value.jsx_container_span().is_some()
+            && !value.is_missing()
+        {
+            check_assignment(cx, &|| NameOf(node).ty(), value, value.span(), true);
+        }
     }
 }

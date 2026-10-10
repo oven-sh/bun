@@ -17,6 +17,7 @@ const INVALID_TYPE_PROP: Message = Message::new("", "`button` elements must have
 
 impl Rule for ButtonHasType {
     const META: Meta = Meta::oxlint(Plugin::React, "button-has-type", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Call]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -28,68 +29,81 @@ impl Rule for ButtonHasType {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !is_jsx(file) || !file.mentions("button") {
-            return;
-        }
-        on.exprs([ExprTag::Jsx], |rule, e, cx| {
-            let ExprKind::Jsx(jsx) = e.kind() else {
-                return;
-            };
-            let Some(identifier) = jsx.tag().filter(|it| it.is_ident("button")) else {
-                return;
-            };
-            match has_jsx_prop_ignore_case(jsx, "type") {
-                None => drop(cx.report(identifier, MISSING_TYPE_PROP)),
-                Some(button_type_prop) => {
-                    let is_valid = match get_prop_value(button_type_prop) {
-                        Some(AttributeValue::StringLiteral(literal)) => {
-                            rule.is_valid_button_type_prop_string_literal(literal.value)
-                        }
-                        Some(value) => {
-                            value.as_expression().is_some_and(|it| rule.is_valid_button_type_prop_expression(it))
-                        }
-                        None => false,
-                    };
-                    if !is_valid {
-                        cx.report(button_type_prop, INVALID_TYPE_PROP).data("allowed_types", rule.allowed_types_message());
-                    }
-                }
-            }
-        });
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let on = On::new().exprs(&[ExprTag::Jsx]);
         if !file.mentions("createElement") {
-            return;
+            return on;
         }
-        on.exprs([ExprTag::Call], |rule, e, cx| {
-            let Some(call) = e.as_call().filter(|call| is_create_element_call(*call)) else {
-                return;
-            };
-            let arguments = call.args();
-            if !arguments
-                .first()
-                .is_some_and(|it| it.as_string().is_some_and(|it| it.is("button")) && !it.is_parenthesized())
-            {
-                return;
-            }
-            let Some((object, ExprKind::Object(properties))) =
-                arguments.get(1).filter(|it| !it.is_parenthesized()).map(|it| (it, it.kind()))
-            else {
-                cx.report(e, MISSING_TYPE_PROP);
-                return;
-            };
-            match properties.iter().find(|it| it.key().and_then(static_name).is_some_and(|key| key.is("type"))) {
-                None => drop(cx.report(object, MISSING_TYPE_PROP)),
-                Some(type_prop) => {
-                    if !type_prop.value().is_some_and(|it| rule.is_valid_button_type_prop_expression(it)) {
-                        cx.report(type_prop, INVALID_TYPE_PROP).data("allowed_types", rule.allowed_types_message());
-                    }
-                }
-            }
-        });
+        on.exprs(&[ExprTag::Call])
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        (is_jsx(file) && file.mentions("button")).then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Jsx => self.jsx(e, cx),
+            ExprTag::Call => self.call(e, cx),
+            _ => {}
+        }
     }
 }
 
 impl ButtonHasType {
+    fn jsx<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Jsx(jsx) = e.kind() else {
+            return;
+        };
+        let Some(identifier) = jsx.tag().filter(|it| it.is_ident("button")) else {
+            return;
+        };
+        match has_jsx_prop_ignore_case(jsx, "type") {
+            None => drop(cx.report(identifier, MISSING_TYPE_PROP)),
+            Some(button_type_prop) => {
+                let is_valid = match get_prop_value(button_type_prop) {
+                    Some(AttributeValue::StringLiteral(literal)) => {
+                        self.is_valid_button_type_prop_string_literal(literal.value)
+                    }
+                    Some(value) => {
+                        value.as_expression().is_some_and(|it| self.is_valid_button_type_prop_expression(it))
+                    }
+                    None => false,
+                };
+                if !is_valid {
+                    cx.report(button_type_prop, INVALID_TYPE_PROP).data("allowed_types", self.allowed_types_message());
+                }
+            }
+        }
+    }
+
+    fn call<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call) = e.as_call().filter(|call| is_create_element_call(*call)) else {
+            return;
+        };
+        let arguments = call.args();
+        if !arguments
+            .first()
+            .is_some_and(|it| it.as_string().is_some_and(|it| it.is("button")) && !it.is_parenthesized())
+        {
+            return;
+        }
+        let Some((object, ExprKind::Object(properties))) =
+            arguments.get(1).filter(|it| !it.is_parenthesized()).map(|it| (it, it.kind()))
+        else {
+            cx.report(e, MISSING_TYPE_PROP);
+            return;
+        };
+        match properties.iter().find(|it| it.key().and_then(static_name).is_some_and(|key| key.is("type"))) {
+            None => drop(cx.report(object, MISSING_TYPE_PROP)),
+            Some(type_prop) => {
+                if !type_prop.value().is_some_and(|it| self.is_valid_button_type_prop_expression(it)) {
+                    cx.report(type_prop, INVALID_TYPE_PROP).data("allowed_types", self.allowed_types_message());
+                }
+            }
+        }
+    }
+
     fn allowed_types_message(&self) -> &'static str {
         match (self.button, self.submit, self.reset) {
             (true, true, true) => "`button`, `submit`, or `reset`",

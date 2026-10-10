@@ -20,6 +20,7 @@ const BOOLEAN_VALUE_UNDEFINED_FALSE: Message =
 
 impl Rule for JsxBooleanValue {
     const META: Meta = Meta::oxlint(Plugin::React, "jsx-boolean-value", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 
     /// `["always", { never: ["a"], assumeUndefinedIsFalse }]`
@@ -34,49 +35,48 @@ impl Rule for JsxBooleanValue {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !is_jsx(file) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        is_jsx(file).then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Jsx(jsx) = e.kind() else {
             return;
-        }
-        on.exprs([ExprTag::Jsx], |rule, e, cx| {
-            let ExprKind::Jsx(jsx) = e.kind() else {
-                return;
+        };
+        for attribute in jsx.attrs().iter().filter(|it| it.kind() != PropKind::Spread) {
+            let value = get_prop_value(attribute);
+            let boolean = match value.map(|it| it.as_expression().map(Expr::tag)) {
+                None => None,
+                Some(Some(ExprTag::True)) => Some(true),
+                Some(Some(ExprTag::False)) if self.assume_undefined_is_false => Some(false),
+                _ => continue,
             };
-            for attribute in jsx.attrs().iter().filter(|it| it.kind() != PropKind::Spread) {
-                let value = get_prop_value(attribute);
-                let boolean = match value.map(|it| it.as_expression().map(Expr::tag)) {
-                    None => None,
-                    Some(Some(ExprTag::True)) => Some(true),
-                    Some(Some(ExprTag::False)) if rule.assume_undefined_is_false => Some(false),
-                    _ => continue,
-                };
-                let Some((key, name)) = attribute.key().and_then(|key| Some((key, key.name()?.bytes()))) else {
-                    continue;
-                };
-                // Whether the value has to be written for this attribute.
-                let is_always = match rule.is_always {
-                    true => !rule.never.iter().any(|it| **it == *name),
-                    false => rule.always.iter().any(|it| **it == *name),
-                };
-                if is_always != boolean.is_none() || strings::contains_char(name, b':') {
-                    continue;
-                }
-                let ident = key.span(cx.file());
-                match boolean {
-                    None => cx
-                        .report(ident, BOOLEAN_VALUE_ALWAYS)
-                        .data("attr", name)
-                        .fix(|fixer| fixer.insert_after(ident, "={true}")),
-                    Some(true) => {
-                        let span = Span::after(ident, attribute.span().end);
-                        cx.report(span, BOOLEAN_VALUE).data("attr", name).fix(|fixer| fixer.remove(span))
-                    }
-                    Some(false) => cx
-                        .report(attribute, BOOLEAN_VALUE_UNDEFINED_FALSE)
-                        .data("attr", name)
-                        .fix(|fixer| fixer.remove(attribute)),
-                };
+            let Some((key, name)) = attribute.key().and_then(|key| Some((key, key.name()?.bytes()))) else {
+                continue;
+            };
+            // Whether the value has to be written for this attribute.
+            let is_always = match self.is_always {
+                true => !self.never.iter().any(|it| **it == *name),
+                false => self.always.iter().any(|it| **it == *name),
+            };
+            if is_always != boolean.is_none() || strings::contains_char(name, b':') {
+                continue;
             }
-        });
+            let ident = key.span(cx.file());
+            match boolean {
+                None => cx
+                    .report(ident, BOOLEAN_VALUE_ALWAYS)
+                    .data("attr", name)
+                    .fix(|fixer| fixer.insert_after(ident, "={true}")),
+                Some(true) => {
+                    let span = Span::after(ident, attribute.span().end);
+                    cx.report(span, BOOLEAN_VALUE).data("attr", name).fix(|fixer| fixer.remove(span))
+                }
+                Some(false) => cx
+                    .report(attribute, BOOLEAN_VALUE_UNDEFINED_FALSE)
+                    .data("attr", name)
+                    .fix(|fixer| fixer.remove(attribute)),
+            };
+        }
     }
 }

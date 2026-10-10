@@ -74,8 +74,16 @@ fn check_as_oxlint<'a>(block: Stmt<'a>, body: List<'a, Stmt<'a>>, cx: &mut Cx<'a
     }
 }
 
-impl NoLoneBlocks {
-    fn check<'a>(&self, block: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoLoneBlocks {
+    const META: Meta = Meta::eslint("no-lone-blocks", Kind::Suggestion);
+    const ON: On = On::new().stmts(&[StmtTag::Block]);
+    no_state!();
+
+    fn new(_: &Options) -> Self {
+        NoLoneBlocks
+    }
+
+    fn stmt<'a>(&self, block: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         // A `with` statement has the same tag.
         let StmtKind::Block(body) = block.kind() else {
             return;
@@ -98,18 +106,5 @@ impl NoLoneBlocks {
             return;
         }
         cx.report(block, if is_nested { REDUNDANT_NESTED_BLOCK } else { REDUNDANT_BLOCK });
-    }
-}
-
-impl Rule for NoLoneBlocks {
-    const META: Meta = Meta::eslint("no-lone-blocks", Kind::Suggestion);
-    type State<'a> = ();
-
-    fn new(_: &Options) -> Self {
-        NoLoneBlocks
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::Block], Self::check);
     }
 }

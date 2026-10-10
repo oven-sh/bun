@@ -141,7 +141,8 @@ fn place_of_oxlint<'a>(previous: Case<'a>, case: Case<'a>, comment: Span) -> Spa
 
 impl Rule for NoFallthrough {
     const META: Meta = Meta::eslint("no-fallthrough", Kind::Problem).recommended();
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::Switch]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -155,17 +156,15 @@ impl Rule for NoFallthrough {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::Switch], |rule, stmt, cx| {
-            let StmtKind::Switch { cases, .. } = stmt.kind() else {
-                return;
-            };
-            let mut previous = None;
-            for case in cases {
-                if let Some(previous) = previous.replace(case) {
-                    rule.check_case(previous, case, cx);
-                }
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let StmtKind::Switch { cases, .. } = stmt.kind() else {
+            return;
+        };
+        let mut previous = None;
+        for case in cases {
+            if let Some(previous) = previous.replace(case) {
+                self.check_case(previous, case, cx);
             }
-        });
+        }
     }
 }

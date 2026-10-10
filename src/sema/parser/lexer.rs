@@ -2036,8 +2036,22 @@ impl Lexer<'_> {
             false => {
                 self.refusal = had_refused;
                 let mut pos = before;
-                while matches!(src.get(pos), Some(b' ' | b'\t' | b'\n' | b'\r')) {
-                    pos += 1;
+                loop {
+                    match (src.get(pos), src.get(pos + 1)) {
+                        (Some(b' ' | b'\t' | b'\n' | b'\r'), _) => pos += 1,
+                        // acorn and Babel skip a comment here as they do everywhere.
+                        (Some(b'/'), Some(b'/')) if self.is_ecmascript => {
+                            pos = self.end_of_line(pos);
+                        }
+                        (Some(b'/'), Some(b'*')) if self.is_ecmascript => {
+                            let rest = src.get(pos + 2..).unwrap_or_default();
+                            let Some(len) = bun_core::strings::index_of(rest, b"*/") else {
+                                break;
+                            };
+                            pos += len + 4;
+                        }
+                        _ => break,
+                    }
                 }
                 if !matches!(src.get(pos), Some(b'"' | b'\'')) {
                     return self.refuse(Refusal::Unsupported);

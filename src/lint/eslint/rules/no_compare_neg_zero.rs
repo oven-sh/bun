@@ -44,8 +44,18 @@ fn push_operand_text(text: &mut Vec<u8>, operand: Expr) {
     }
 }
 
-impl NoCompareNegZero {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoCompareNegZero {
+    const META: Meta = Meta::eslint("no-compare-neg-zero", Kind::Problem)
+        .has_suggestions()
+        .recommended();
+    const ON: On = On::new().exprs(&[ExprTag::Binary]);
+    no_state!();
+
+    fn new(_: &Options) -> Self {
+        NoCompareNegZero
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Binary { op, left, right } = e.kind() else {
             return;
         };
@@ -109,20 +119,5 @@ impl NoCompareNegZero {
                 text.push(b')');
                 Some(fixer.replace(e, text))
             });
-    }
-}
-
-impl Rule for NoCompareNegZero {
-    const META: Meta = Meta::eslint("no-compare-neg-zero", Kind::Problem)
-        .has_suggestions()
-        .recommended();
-    type State<'a> = ();
-
-    fn new(_: &Options) -> Self {
-        NoCompareNegZero
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Binary], Self::check);
     }
 }

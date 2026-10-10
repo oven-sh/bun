@@ -143,7 +143,13 @@ impl NoRestrictedExports {
 
 impl Rule for NoRestrictedExports {
     const META: Meta = Meta::eslint("no-restricted-exports", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new()
+        .export_specs()
+        .stmts(&[StmtTag::ExportStar])
+        .stmts(&[StmtTag::ExportDefault, StmtTag::Interface])
+        .stmts(&[StmtTag::Fn, StmtTag::Class])
+        .stmts(&[StmtTag::Var]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -167,22 +173,32 @@ impl Rule for NoRestrictedExports {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new();
         let restricts_names = !self.restricted_names.is_empty() || self.restricted_name_pattern.is_some();
         if restricts_names || self.named || self.default_from || self.named_from {
-            on.export_specs(Self::check_specifier);
+            on = on.export_specs();
         }
         if restricts_names || self.namespace_from {
-            on.stmts([StmtTag::ExportStar], Self::check_statement);
+            on = on.stmts(&[StmtTag::ExportStar]);
         }
         if self.direct {
-            on.stmts([StmtTag::ExportDefault, StmtTag::Interface], Self::check_statement);
+            on = on.stmts(&[StmtTag::ExportDefault, StmtTag::Interface]);
         }
         if restricts_names || self.direct {
-            on.stmts([StmtTag::Fn, StmtTag::Class], Self::check_statement);
+            on = on.stmts(&[StmtTag::Fn, StmtTag::Class]);
         }
         if restricts_names {
-            on.stmts([StmtTag::Var], Self::check_statement);
+            on = on.stmts(&[StmtTag::Var]);
         }
+        on
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_statement(statement, cx);
+    }
+
+    fn export_spec<'a>(&self, specifier: ExportSpec<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_specifier(specifier, cx);
     }
 }

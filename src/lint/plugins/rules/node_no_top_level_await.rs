@@ -13,6 +13,7 @@ const NO_TOP_LEVEL_AWAIT: Message =
 
 impl Rule for NoTopLevelAwait {
     const META: Meta = Meta::oxlint(Plugin::Node, "no-top-level-await", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Await]).stmts(&[StmtTag::ForOf, StmtTag::Var]);
     /// That something is in a function.
     type State<'a> = AncestorMemo<'a, ()>;
 
@@ -20,23 +21,30 @@ impl Rule for NoTopLevelAwait {
         NoTopLevelAwait { ignore_bin: options.object(0).bool_or("ignoreBin", false) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if !(self.ignore_bin && file.text().starts_with(b"#!")) && !is_script(file) {
-            on.exprs([ExprTag::Await], |_, e, cx| check(Node::Expr(e), cx));
-            on.stmts([StmtTag::ForOf], |_, stmt, cx| {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        (!(self.ignore_bin && file.text().starts_with(b"#!")) && !is_script(file)).then(AncestorMemo::default)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        check(Node::Expr(e), cx);
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match stmt.tag() {
+            StmtTag::ForOf => {
                 if matches!(stmt.kind(), StmtKind::ForOf { is_await: true, .. }) {
                     check(Node::Stmt(stmt), cx);
                 }
-            });
-            on.stmts([StmtTag::Var], |_, stmt, cx| {
+            }
+            StmtTag::Var => {
                 if matches!(stmt.kind(), StmtKind::Var(declarations)
                     if declarations.first().is_some_and(|it| it.var_kind() == VarKind::AwaitUsing))
                 {
                     check(Node::Stmt(stmt), cx);
                 }
-            });
+            }
+            _ => {}
         }
-        AncestorMemo::default()
     }
 }
 

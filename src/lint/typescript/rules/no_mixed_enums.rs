@@ -154,38 +154,40 @@ impl Rule for NoMixedEnums {
     const META: Meta = Meta::typescript("no-mixed-enums", Kind::Problem)
         .presets(Presets::STRICT_TYPE_CHECKED)
         .requires_types();
+    const ON: On = On::new().stmts(&[StmtTag::Enum]);
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         NoMixedEnums
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
-        on.stmts([StmtTag::Enum], |_, statement, cx| {
-            let StmtKind::Enum(node) = statement.kind() else {
-                return;
-            };
-            let Some(first) = node.members().first() else {
-                return;
-            };
-            let desired_type = get_desired_type_for_definition(cx.file(), node, first, &mut cx.state);
-            if desired_type == AllowedType::Unknown {
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let StmtKind::Enum(node) = statement.kind() else {
+            return;
+        };
+        let Some(first) = node.members().first() else {
+            return;
+        };
+        let desired_type = get_desired_type_for_definition(cx.file(), node, first, &mut cx.state);
+        if desired_type == AllowedType::Unknown {
+            return;
+        }
+        for member in node.members() {
+            let current_type = get_member_type(member);
+            if current_type == AllowedType::Unknown {
                 return;
             }
-            for member in node.members() {
-                let current_type = get_member_type(member);
-                if current_type == AllowedType::Unknown {
-                    return;
-                }
-                if current_type != desired_type {
-                    match member.init() {
-                        Some(initializer) => cx.report(initializer, MIXED),
-                        None => cx.report(member, MIXED),
-                    };
-                    return;
-                }
+            if current_type != desired_type {
+                match member.init() {
+                    Some(initializer) => cx.report(initializer, MIXED),
+                    None => cx.report(member, MIXED),
+                };
+                return;
             }
-        });
-        State::default()
+        }
     }
 }

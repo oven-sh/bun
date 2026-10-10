@@ -25,7 +25,8 @@ const LITERAL: Message = Message::new("", "Assign literal to a variable before e
 
 impl Rule for NoAnonymousDefaultExport {
     const META: Meta = Meta::oxlint(Plugin::Import, "no-anonymous-default-export", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::Fn, StmtTag::Class, StmtTag::ExportDefault]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -41,43 +42,50 @@ impl Rule for NoAnonymousDefaultExport {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::Fn, StmtTag::Class], |rule, stmt, cx| {
-            let message = match stmt.kind() {
-                StmtKind::Fn(func) if func.name().is_none() && !rule.allow_anonymous_function => ANONYMOUS_FUNCTION,
-                StmtKind::Class(class) if class.name().is_none() && !rule.allow_anonymous_class => ANONYMOUS_CLASS,
-                _ => return,
-            };
-            if stmt.is_default_export() {
-                cx.report(export_declaration_span(stmt), message);
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match stmt.tag() {
+            StmtTag::Fn | StmtTag::Class => {
+                let message = match stmt.kind() {
+                    StmtKind::Fn(func) if func.name().is_none() && !self.allow_anonymous_function => ANONYMOUS_FUNCTION,
+                    StmtKind::Class(class) if class.name().is_none() && !self.allow_anonymous_class => ANONYMOUS_CLASS,
+                    _ => return,
+                };
+                if stmt.is_default_export() {
+                    cx.report(export_declaration_span(stmt), message);
+                }
             }
-        });
-        on.stmts([StmtTag::ExportDefault], |rule, stmt, cx| {
-            let StmtKind::ExportDefault(e) = stmt.kind() else {
-                return;
-            };
-            if e.is_parenthesized() {
-                return;
-            }
-            let (is_allowed, message) = match e.kind() {
-                ExprKind::Fn(func) if func.is_arrow() => (rule.allow_arrow_function, ARROW_FUNCTION),
-                ExprKind::Object(_) => (rule.allow_object, OBJECT),
-                ExprKind::Call(_) if !e.is_chain_root() => (rule.allow_call_expression, CALL),
-                ExprKind::New(_) => (rule.allow_new, NEW),
-                ExprKind::Array(_) => (rule.allow_array, ARRAY),
-                ExprKind::True
-                | ExprKind::False
-                | ExprKind::Null
-                | ExprKind::Number(_)
-                | ExprKind::BigInt(_)
-                | ExprKind::Regex(_)
-                | ExprKind::String(_)
-                | ExprKind::Template(_) => (rule.allow_literal, LITERAL),
-                _ => return,
-            };
-            if !is_allowed {
-                cx.report(stmt, message);
-            }
-        });
+            StmtTag::ExportDefault => self.export_default(stmt, cx),
+            _ => {}
+        }
+    }
+}
+
+impl NoAnonymousDefaultExport {
+    fn export_default<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let StmtKind::ExportDefault(e) = stmt.kind() else {
+            return;
+        };
+        if e.is_parenthesized() {
+            return;
+        }
+        let (is_allowed, message) = match e.kind() {
+            ExprKind::Fn(func) if func.is_arrow() => (self.allow_arrow_function, ARROW_FUNCTION),
+            ExprKind::Object(_) => (self.allow_object, OBJECT),
+            ExprKind::Call(_) if !e.is_chain_root() => (self.allow_call_expression, CALL),
+            ExprKind::New(_) => (self.allow_new, NEW),
+            ExprKind::Array(_) => (self.allow_array, ARRAY),
+            ExprKind::True
+            | ExprKind::False
+            | ExprKind::Null
+            | ExprKind::Number(_)
+            | ExprKind::BigInt(_)
+            | ExprKind::Regex(_)
+            | ExprKind::String(_)
+            | ExprKind::Template(_) => (self.allow_literal, LITERAL),
+            _ => return,
+        };
+        if !is_allowed {
+            cx.report(stmt, message);
+        }
     }
 }

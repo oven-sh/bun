@@ -9,20 +9,20 @@ const NO_NEW_REQUIRE: Message = Message::new("", "Unexpected use of `new` operat
 
 impl Rule for NoNewRequire {
     const META: Meta = Meta::oxlint(Plugin::Node, "no-new-require", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::New]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoNewRequire
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("require") {
-            return;
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("require").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if e.callee().is_some_and(|it| is_specific_id(it, "require")) {
+            cx.report(e, NO_NEW_REQUIRE);
         }
-        on.exprs([ExprTag::New], |_, e, cx| {
-            if e.callee().is_some_and(|it| is_specific_id(it, "require")) {
-                cx.report(e, NO_NEW_REQUIRE);
-            }
-        });
     }
 }

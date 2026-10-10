@@ -8,33 +8,32 @@ const SWITCH_CASE_BREAK_POSITION: Message = Message::new("", "Move `{{keyword}}`
 
 impl Rule for SwitchCaseBreakPosition {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "switch-case-break-position", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().cases();
+    no_state!();
 
     fn new(_: &Options) -> Self {
         SwitchCaseBreakPosition
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.cases(|_, switch_case, cx| {
-            let consequent = switch_case.body();
-            if consequent.len() != 2 {
-                return;
-            }
-            let (Some(StmtKind::Block(body)), Some(last_statement)) =
-                (consequent.first().map(Stmt::kind), consequent.last())
-            else {
-                return;
-            };
-            let keyword = match last_statement.tag() {
-                StmtTag::Break => "break",
-                StmtTag::Return => "return",
-                StmtTag::Continue => "continue",
-                StmtTag::Throw => "throw",
-                _ => return,
-            };
-            if !body.is_empty() {
-                cx.report(last_statement, SWITCH_CASE_BREAK_POSITION).data("keyword", keyword);
-            }
-        });
+    fn case<'a>(&self, switch_case: Case<'a>, cx: &mut Cx<'a, Self>) {
+        let consequent = switch_case.body();
+        if consequent.len() != 2 {
+            return;
+        }
+        let (Some(StmtKind::Block(body)), Some(last_statement)) =
+            (consequent.first().map(Stmt::kind), consequent.last())
+        else {
+            return;
+        };
+        let keyword = match last_statement.tag() {
+            StmtTag::Break => "break",
+            StmtTag::Return => "return",
+            StmtTag::Continue => "continue",
+            StmtTag::Throw => "throw",
+            _ => return,
+        };
+        if !body.is_empty() {
+            cx.report(last_statement, SWITCH_CASE_BREAK_POSITION).data("keyword", keyword);
+        }
     }
 }

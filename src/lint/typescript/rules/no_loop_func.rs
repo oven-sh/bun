@@ -8,16 +8,18 @@ impl Rule for NoLoopFunc {
     const META: Meta = Meta::typescript("no-loop-func", Kind::Suggestion)
         .deprecated()
         .extends_base_rule("no-loop-func");
+    const ON: On = On::new().funcs();
     type State<'a> = Known<'a>;
 
     fn new(_: &Options) -> Self {
         NoLoopFunc
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Known<'a> {
-        if has_loops(file) {
-            on.funcs(|_, func, cx| check(func, Dialect::TypeScript, cx));
-        }
-        Known::default()
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Known<'a>> {
+        has_loops(file).then(Known::default)
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        check(func, Dialect::TypeScript, cx);
     }
 }

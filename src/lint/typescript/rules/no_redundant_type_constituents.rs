@@ -468,14 +468,18 @@ impl Rule for NoRedundantTypeConstituents {
     const META: Meta = Meta::typescript("no-redundant-type-constituents", Kind::Suggestion)
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    const ON: On = On::new().types(&[TypeTag::Intersection, TypeTag::Union]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoRedundantTypeConstituents
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.types([TypeTag::Intersection], Self::check_intersection);
-        on.types([TypeTag::Union], Self::check_union);
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        match ty.tag() {
+            TypeTag::Intersection => self.check_intersection(ty, cx),
+            TypeTag::Union => self.check_union(ty, cx),
+            _ => {}
+        }
     }
 }

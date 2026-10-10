@@ -118,7 +118,8 @@ impl NoIrregularWhitespace {
 
 impl Rule for NoIrregularWhitespace {
     const META: Meta = Meta::eslint("no-irregular-whitespace", Kind::Problem).recommended();
-    type State<'a> = ();
+    const ON: On = On::new().finish();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -131,7 +132,7 @@ impl Rule for NoIrregularWhitespace {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.finish(Self::check);
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        self.check(cx);
     }
 }

@@ -20,8 +20,22 @@ fn has_one_simple_param(func: Func) -> bool {
         })
 }
 
-impl NoConfusingArrow {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoConfusingArrow {
+    const META: Meta = Meta::eslint("no-confusing-arrow", Kind::Suggestion)
+        .fixable(Fixable::Code)
+        .deprecated();
+    const ON: On = On::new().exprs(&[ExprTag::Fn]);
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        let config = options.object(0);
+        NoConfusingArrow {
+            allow_parens: config.bool_or("allowParens", true),
+            only_one_simple_param: config.bool_or("onlyOneSimpleParam", false),
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Fn(func) = e.kind() else {
             return;
         };
@@ -38,24 +52,5 @@ impl NoConfusingArrow {
             self.allow_parens
                 .then(|| fixer.replace(body, [&b"("[..], body.text(), &b")"[..]].concat()))
         });
-    }
-}
-
-impl Rule for NoConfusingArrow {
-    const META: Meta = Meta::eslint("no-confusing-arrow", Kind::Suggestion)
-        .fixable(Fixable::Code)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let config = options.object(0);
-        NoConfusingArrow {
-            allow_parens: config.bool_or("allowParens", true),
-            only_one_simple_param: config.bool_or("onlyOneSimpleParam", false),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Fn], Self::check);
     }
 }

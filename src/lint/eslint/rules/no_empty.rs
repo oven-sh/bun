@@ -29,6 +29,43 @@ impl NoEmpty {
             |fixer| fixer.replace(inside, " /* empty */ "),
         );
     }
+
+    fn block<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if stmt.as_block().is_none_or(|body| !body.is_empty()) {
+            return;
+        }
+        if self.allow_empty_catch
+            && let Node::Stmt(parent) = stmt.parent()
+            && let StmtKind::Try { handler, .. } = parent.kind()
+            && handler == Some(stmt)
+        {
+            return;
+        }
+        let removed = if cx.language().is_oxlint { removed_by_oxlint(stmt) } else { None };
+        Self::check(stmt.span(), stmt.span(), "block", removed, cx);
+    }
+
+    fn switch<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let StmtKind::Switch { expr, cases } = stmt.kind() else {
+            return;
+        };
+        if !cases.is_empty() {
+            return;
+        }
+        let source = cx.text();
+        let close_paren = skip_trivia(source, expr.outer_span().end);
+        let open_brace = skip_trivia(source, close_paren + 1);
+        let braces = Span::new(open_brace, stmt.span().end);
+        if !cx.language().is_oxlint {
+            return Self::check(braces, braces, "switch", None, cx);
+        }
+        // oxlint points at the whole statement, which a comment does not fill.
+        if strings::is_all_js_whitespace(cx.slice(braces.shrink(1, 1))) {
+            Self::check(braces, stmt.span(), "switch", Some(stmt.span()), cx);
+        } else {
+            cx.report(stmt, UNEXPECTED).data("type", "switch").fix(|fixer| fixer.remove(stmt));
+        }
+    }
 }
 
 /// What oxlint suggests to remove for the empty `block`: what the block is in. Of a `try` statement the `finally` with
@@ -60,7 +97,8 @@ impl Rule for NoEmpty {
     const META: Meta = Meta::eslint("no-empty", Kind::Suggestion)
         .has_suggestions()
         .recommended();
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::Block, StmtTag::Switch]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         NoEmpty {
@@ -68,41 +106,11 @@ impl Rule for NoEmpty {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::Block], |rule, stmt, cx| {
-            if stmt.as_block().is_none_or(|body| !body.is_empty()) {
-                return;
-            }
-            if rule.allow_empty_catch
-                && let Node::Stmt(parent) = stmt.parent()
-                && let StmtKind::Try { handler, .. } = parent.kind()
-                && handler == Some(stmt)
-            {
-                return;
-            }
-            let removed = if cx.language().is_oxlint { removed_by_oxlint(stmt) } else { None };
-            Self::check(stmt.span(), stmt.span(), "block", removed, cx);
-        });
-        on.stmts([StmtTag::Switch], |_, stmt, cx| {
-            let StmtKind::Switch { expr, cases } = stmt.kind() else {
-                return;
-            };
-            if !cases.is_empty() {
-                return;
-            }
-            let source = cx.text();
-            let close_paren = skip_trivia(source, expr.outer_span().end);
-            let open_brace = skip_trivia(source, close_paren + 1);
-            let braces = Span::new(open_brace, stmt.span().end);
-            if !cx.language().is_oxlint {
-                return Self::check(braces, braces, "switch", None, cx);
-            }
-            // oxlint points at the whole statement, which a comment does not fill.
-            if strings::is_all_js_whitespace(cx.slice(braces.shrink(1, 1))) {
-                Self::check(braces, stmt.span(), "switch", Some(stmt.span()), cx);
-            } else {
-                cx.report(stmt, UNEXPECTED).data("type", "switch").fix(|fixer| fixer.remove(stmt));
-            }
-        });
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match stmt.tag() {
+            StmtTag::Block => self.block(stmt, cx),
+            StmtTag::Switch => self.switch(stmt, cx),
+            _ => {}
+        }
     }
 }

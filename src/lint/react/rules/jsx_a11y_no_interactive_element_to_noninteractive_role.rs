@@ -15,7 +15,8 @@ const NO_INTERACTIVE_ELEMENT_TO_NONINTERACTIVE_ROLE: Message =
 
 impl Rule for NoInteractiveElementToNoninteractiveRole {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "no-interactive-element-to-noninteractive-role", Kind::Problem);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         NoInteractiveElementToNoninteractiveRole {
@@ -26,27 +27,25 @@ impl Rule for NoInteractiveElementToNoninteractiveRole {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Jsx], |rule, e, cx| {
-            let Some(jsx_el) = as_jsx_element(e) else {
-                return;
-            };
-            let Some(role_attr) = has_jsx_prop_ignore_case(jsx_el, "role") else {
-                return;
-            };
-            let Some(first_role) =
-                get_string_literal_prop_value(role_attr).and_then(|it| strings::split_unicode_whitespace(it).next())
-            else {
-                return;
-            };
-            let element_type = get_element_type(cx.file(), jsx_el);
-            if contains_name(&HTML_TAG, &element_type)
-                && (*element_type == *b"input" || is_interactive_element(&element_type, jsx_el))
-                && !rule.allowed_roles.has(&element_type, first_role)
-                && (is_non_interactive_role(first_role) || matches!(first_role, b"presentation" | b"none"))
-            {
-                cx.report(role_attr, NO_INTERACTIVE_ELEMENT_TO_NONINTERACTIVE_ROLE);
-            }
-        });
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(jsx_el) = as_jsx_element(e) else {
+            return;
+        };
+        let Some(role_attr) = has_jsx_prop_ignore_case(jsx_el, "role") else {
+            return;
+        };
+        let Some(first_role) =
+            get_string_literal_prop_value(role_attr).and_then(|it| strings::split_unicode_whitespace(it).next())
+        else {
+            return;
+        };
+        let element_type = get_element_type(cx.file(), jsx_el);
+        if contains_name(&HTML_TAG, &element_type)
+            && (*element_type == *b"input" || is_interactive_element(&element_type, jsx_el))
+            && !self.allowed_roles.has(&element_type, first_role)
+            && (is_non_interactive_role(first_role) || matches!(first_role, b"presentation" | b"none"))
+        {
+            cx.report(role_attr, NO_INTERACTIVE_ELEMENT_TO_NONINTERACTIVE_ROLE);
+        }
     }
 }

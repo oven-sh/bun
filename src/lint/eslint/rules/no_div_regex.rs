@@ -30,20 +30,19 @@ fn oxlint_has_quantifier_at(text: &[u8], at: usize) -> bool {
 
 impl Rule for NoDivRegex {
     const META: Meta = Meta::eslint("no-div-regex", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Regex]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoDivRegex
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Regex], |_, e, cx| {
-            if e.text().get(1) != Some(&b'=') || cx.language().is_oxlint && oxlint_has_quantifier_at(e.text(), 2) {
-                return;
-            }
-            let start = e.span().start;
-            cx.report(e, UNEXPECTED)
-                .fix(|fixer| fixer.replace(Span::new(start + 1, start + 2), "[=]"));
-        });
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if e.text().get(1) != Some(&b'=') || cx.language().is_oxlint && oxlint_has_quantifier_at(e.text(), 2) {
+            return;
+        }
+        let start = e.span().start;
+        cx.report(e, UNEXPECTED)
+            .fix(|fixer| fixer.replace(Span::new(start + 1, start + 2), "[=]"));
     }
 }

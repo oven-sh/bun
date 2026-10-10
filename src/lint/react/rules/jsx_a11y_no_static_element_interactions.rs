@@ -20,7 +20,8 @@ const NO_STATIC_ELEMENT_INTERACTIONS: Message = Message::new("", "Static HTML el
 
 impl Rule for NoStaticElementInteractions {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "no-static-element-interactions", Kind::Problem);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let config = options.object(0);
@@ -34,38 +35,36 @@ impl Rule for NoStaticElementInteractions {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Jsx], |rule, e, cx| {
-            let Some(jsx_el) = as_jsx_element(e) else {
-                return;
-            };
-            // `onClick={null}` is no handler, and neither is `onClick` alone.
-            let is_handler = |value: AttributeValue| !matches!(value, AttributeValue::ExpressionContainer(e) if is_null_literal(e));
-            let has_handler = |handler: &String| has_jsx_prop(jsx_el, handler).and_then(get_prop_value).is_some_and(is_handler);
-            if jsx_el.attrs().is_empty() || !rule.handlers.iter().any(has_handler) {
-                return;
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(jsx_el) = as_jsx_element(e) else {
+            return;
+        };
+        // `onClick={null}` is no handler, and neither is `onClick` alone.
+        let is_handler = |value: AttributeValue| !matches!(value, AttributeValue::ExpressionContainer(e) if is_null_literal(e));
+        let has_handler = |handler: &String| has_jsx_prop(jsx_el, handler).and_then(get_prop_value).is_some_and(is_handler);
+        if jsx_el.attrs().is_empty() || !self.handlers.iter().any(has_handler) {
+            return;
+        }
+        let element_type = get_element_type(cx.file(), jsx_el);
+        if !contains_name(&HTML_TAG, &element_type)
+            || is_hidden_from_screen_reader(cx.file(), jsx_el)
+            || is_presentation_role(jsx_el)
+            || is_interactive_element(&element_type, jsx_el)
+            || is_non_interactive_element(&element_type, jsx_el)
+            || is_abstract_role(cx.file(), jsx_el)
+        {
+            return;
+        }
+        let has_role = match has_jsx_prop_ignore_case(jsx_el, "role").and_then(get_prop_value) {
+            Some(AttributeValue::StringLiteral(role)) => {
+                (strings::split_unicode_whitespace(&text::to_lower_case(role.value)).next())
+                    .is_some_and(|first_role| is_interactive_role(first_role) || is_non_interactive_role(first_role))
             }
-            let element_type = get_element_type(cx.file(), jsx_el);
-            if !contains_name(&HTML_TAG, &element_type)
-                || is_hidden_from_screen_reader(cx.file(), jsx_el)
-                || is_presentation_role(jsx_el)
-                || is_interactive_element(&element_type, jsx_el)
-                || is_non_interactive_element(&element_type, jsx_el)
-                || is_abstract_role(cx.file(), jsx_el)
-            {
-                return;
-            }
-            let has_role = match has_jsx_prop_ignore_case(jsx_el, "role").and_then(get_prop_value) {
-                Some(AttributeValue::StringLiteral(role)) => {
-                    (strings::split_unicode_whitespace(&text::to_lower_case(role.value)).next())
-                        .is_some_and(|first_role| is_interactive_role(first_role) || is_non_interactive_role(first_role))
-                }
-                Some(AttributeValue::ExpressionContainer(_)) => rule.allow_expression_values,
-                _ => false,
-            };
-            if !has_role && let Some(name) = jsx_el.tag() {
-                cx.report(name, NO_STATIC_ELEMENT_INTERACTIONS);
-            }
-        });
+            Some(AttributeValue::ExpressionContainer(_)) => self.allow_expression_values,
+            _ => false,
+        };
+        if !has_role && let Some(name) = jsx_el.tag() {
+            cx.report(name, NO_STATIC_ELEMENT_INTERACTIONS);
+        }
     }
 }

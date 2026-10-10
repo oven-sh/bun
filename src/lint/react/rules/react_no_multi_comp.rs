@@ -40,15 +40,23 @@ pub struct State<'a> {
     component_wrapper_functions: &'a [Json],
 }
 
+const TAGS: NodeTags = NodeTags::CLASS
+    .union(NodeTags::FUNC)
+    .union(NodeTags::VAR_DECL)
+    .union(NodeTags::PROP)
+    .union(NodeTags::new().exprs(&[ExprTag::Call, ExprTag::Assign]))
+    .union(NodeTags::new().stmts(&[StmtTag::ExportDefault]));
+
 impl Rule for NoMultiComp {
     const META: Meta = Meta::oxlint(Plugin::React, "no-multi-comp", Kind::Suggestion);
+    const ON: On = On::new().enter(TAGS).exit(TAGS).finish();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         NoMultiComp { ignore_stateless: options.object(0).bool_or("ignoreStateless", false) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         let mut state = State {
             components: Vec::new(),
             component_depth: 0,
@@ -58,40 +66,39 @@ impl Rule for NoMultiComp {
             component_wrapper_functions: &[],
         };
         if !is_jsx(file) {
-            return state;
+            return None;
         }
         state.functions_with_jsx = Some(FunctionsWithJsx::new(file));
         state.component_wrapper_functions = component_wrapper_functions(file);
-        let tags = NodeTags::CLASS
-            | NodeTags::FUNC
-            | NodeTags::VAR_DECL
-            | NodeTags::PROP
-            | [ExprTag::Call, ExprTag::Assign].into()
-            | StmtTag::ExportDefault.into();
-        on.enter(tags, |_, node, cx| {
-            let state = &mut cx.state;
-            let entered = match (state.detect(node), node) {
-                (Some(component), _) => {
-                    if state.component_depth == 0 {
-                        state.components.push(component);
-                    }
-                    state.component_depth += 1;
-                    match node {
-                        Node::VarDecl(decl) => {
-                            state.current_var_name = decl.pat().as_ident();
-                            Entered::ComponentDeclarator
-                        }
-                        _ => Entered::Component,
-                    }
+        Some(state)
+    }
+
+    fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        let state = &mut cx.state;
+        let entered = match (state.detect(node), node) {
+            (Some(component), _) => {
+                if state.component_depth == 0 {
+                    state.components.push(component);
                 }
-                (None, Node::VarDecl(decl)) if is_variable_declarator(decl) => {
-                    Entered::Declarator(std::mem::replace(&mut state.current_var_name, decl.pat().as_ident()))
+                state.component_depth += 1;
+                match node {
+                    Node::VarDecl(decl) => {
+                        state.current_var_name = decl.pat().as_ident();
+                        Entered::ComponentDeclarator
+                    }
+                    _ => Entered::Component,
                 }
-                _ => Entered::Other,
-            };
-            state.entered.push(entered);
-        });
-        on.exit(tags, |_, _, cx| match cx.state.entered.pop() {
+            }
+            (None, Node::VarDecl(decl)) if is_variable_declarator(decl) => {
+                Entered::Declarator(std::mem::replace(&mut state.current_var_name, decl.pat().as_ident()))
+            }
+            _ => Entered::Other,
+        };
+        state.entered.push(entered);
+    }
+
+    fn exit<'a>(&self, _: Node<'a>, cx: &mut Cx<'a, Self>) {
+        match cx.state.entered.pop() {
             Some(Entered::Component) => cx.state.component_depth -= 1,
             Some(Entered::ComponentDeclarator) => {
                 cx.state.component_depth -= 1;
@@ -99,15 +106,14 @@ impl Rule for NoMultiComp {
             }
             Some(Entered::Declarator(old_name)) => cx.state.current_var_name = old_name,
             Some(Entered::Other) | None => {}
-        });
-        on.finish(|rule, cx| {
-            for component in cx.state.components.iter().filter(|it| !rule.ignore_stateless || !it.is_stateless).skip(1)
-            {
-                let component_name = component.name.map_or(&b"UnnamedComponent"[..], Name::bytes);
-                cx.report(component.span, NO_MULTI_COMP).data("component_name", component_name);
-            }
-        });
-        state
+        }
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        for component in cx.state.components.iter().filter(|it| !self.ignore_stateless || !it.is_stateless).skip(1) {
+            let component_name = component.name.map_or(&b"UnnamedComponent"[..], Name::bytes);
+            cx.report(component.span, NO_MULTI_COMP).data("component_name", component_name);
+        }
     }
 }
 

@@ -38,6 +38,7 @@ struct Check<'a> {
 
 impl Rule for NoCycle {
     const META: Meta = Meta::plugin(Plugin::Import, "no-cycle", Kind::Suggestion).needs_modules();
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -55,20 +56,19 @@ impl Rule for NoCycle {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        let Some(modules) = file.modules().filter(|_| file.path() != b"<text>") else {
-            return;
-        };
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        let modules = file.modules().filter(|_| file.path() != b"<text>")?;
         let flavor = oxlint::flavor_of_modules(file);
         if modules.is_complete() {
-            return on.finish(if flavor == Flavor::Oxlint { Self::check_as_oxlint } else { Self::check });
+            return Some(());
         }
         let mut requests = requests_of(file, flavor);
         if flavor == Flavor::Oxlint {
             if !self.ignore_types {
                 requests.iter_mut().for_each(|it| it.is_only_importing_types = false);
             }
-            return modules.record(file.path(), &requests, false, flavor);
+            modules.record(file.path(), &requests, false, flavor);
+            return None;
         }
         let checks = if self.commonjs || self.amd { self.checks(file) } else { Vec::new() };
         let known = requests.len();
@@ -84,6 +84,11 @@ impl Rule for NoCycle {
         // Where the components do not tell.
         let is_always_checked = requests.len() > known || self.disable_scc || !self.ignore_types;
         modules.record(file.path(), &requests, is_always_checked, flavor);
+        None
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        if oxlint::flavor_of_modules(cx.file()) == Flavor::Oxlint { self.check_as_oxlint(cx) } else { self.check(cx) }
     }
 }
 

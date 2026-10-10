@@ -16,6 +16,7 @@ const EXCLUSIVE_CHECKED_ATTRIBUTE: Message =
 
 impl Rule for CheckedRequiresOnchangeOrReadonly {
     const META: Meta = Meta::oxlint(Plugin::React, "checked-requires-onchange-or-readonly", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Call]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -26,40 +27,51 @@ impl Rule for CheckedRequiresOnchangeOrReadonly {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("checked") {
-            return;
-        }
-        on.exprs([ExprTag::Jsx], |rule, e, cx| {
-            if let Some(jsx) = as_jsx_element(e)
-                && !jsx.attrs().is_empty()
-                && *get_element_type(cx.file(), jsx) == *b"input"
-            {
-                // The last `checked` counts.
-                rule.check(&mut jsx.attrs().iter().filter_map(|it| Some((it, it.key()?.name()?))), true, cx);
-            }
-        });
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let on = On::new().exprs(&[ExprTag::Jsx]);
         if !file.mentions("createElement") {
-            return;
+            return on;
         }
-        on.exprs([ExprTag::Call], |rule, e, cx| {
-            if let Some(call) = e.as_call()
-                && is_create_element_call(call)
-                && call
-                    .args()
-                    .first()
-                    .is_some_and(|it| it.as_string().is_some_and(|it| it.is("input")) && !it.is_parenthesized())
-                && let Some(ExprKind::Object(properties)) =
-                    call.args().get(1).filter(|it| !it.is_parenthesized()).map(Expr::kind)
-            {
-                let mut props = properties.iter().filter_map(|it| Some((it, it.key().and_then(static_name)?)));
-                rule.check(&mut props, false, cx);
+        on.exprs(&[ExprTag::Call])
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("checked").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Jsx => {
+                if let Some(jsx) = as_jsx_element(e)
+                    && !jsx.attrs().is_empty()
+                    && *get_element_type(cx.file(), jsx) == *b"input"
+                {
+                    // The last `checked` counts.
+                    self.check(&mut jsx.attrs().iter().filter_map(|it| Some((it, it.key()?.name()?))), true, cx);
+                }
             }
-        });
+            ExprTag::Call => self.call(e, cx),
+            _ => {}
+        }
     }
 }
 
 impl CheckedRequiresOnchangeOrReadonly {
+    fn call<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(call) = e.as_call()
+            && is_create_element_call(call)
+            && call
+                .args()
+                .first()
+                .is_some_and(|it| it.as_string().is_some_and(|it| it.is("input")) && !it.is_parenthesized())
+            && let Some(ExprKind::Object(properties)) =
+                call.args().get(1).filter(|it| !it.is_parenthesized()).map(Expr::kind)
+        {
+            let mut props = properties.iter().filter_map(|it| Some((it, it.key().and_then(static_name)?)));
+            self.check(&mut props, false, cx);
+        }
+    }
+
     /// `props`: the attributes or the properties, with their names.
     fn check<'a>(
         &self,

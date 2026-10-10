@@ -13,18 +13,62 @@ const NAMED: Message = Message::new("", "named import {{imported_name}} not foun
 
 impl Rule for Named {
     const META: Meta = Meta::oxlint(Plugin::Import, "named", Kind::Problem).needs_modules();
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         Named
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         // Before anything else: others ask what this file exports.
         if is_waiting_for_modules(file) || file.modules().is_none() || !file.is_javascript() {
-            return;
+            return None;
         }
-        on.finish(check);
+        Some(())
+    }
+
+    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
+        let file = cx.file();
+        let module_record = ModuleRecord::new(file);
+        let mut star_exports = StarExports::default();
+        let loaded_module = |specifier: Name<'a>| get_loaded_module(file, specifier.bytes()).filter(|it| it.record.has_module_syntax);
+        let report = |name: NameSpan<'a>, module_name: Name<'a>| {
+            cx.report(name.span, NAMED)
+                .data("imported_name", debug(name.name.bytes()))
+                .data("module_name", debug(module_name.bytes()));
+        };
+        for import_entry in &module_record.import_entries {
+            let ImportImportName::Name(specifier) = import_entry.import_name else {
+                continue;
+            };
+            let Some(remote) = loaded_module(import_entry.declaration.spec()) else {
+                continue;
+            };
+            let import_name = NameSpan::from(specifier.imported());
+            let name = import_name.name.bytes();
+            if !(name == b"default" && remote.record.has_export_default) && !remote.exports(name) && !star_exports.contains(remote, name) {
+                report(import_name, import_entry.declaration.spec());
+            }
+        }
+        let is_default = |it: &&ImportEntry<'a>| matches!(it.import_name, ImportImportName::Default(_));
+        let default_imports = module_record.import_entries.iter().filter(is_default);
+        let default_imports: FxHashSet<_> = default_imports.map(|it| (it.declaration.spec(), it.local_name().name())).collect();
+        for export_entry in &module_record.indirect_export_entries {
+            let (Some(module_request), ExportImportName::Name(import_name)) = (export_entry.module_request, export_entry.import_name) else {
+                continue;
+            };
+            let Some(remote) = loaded_module(module_request.name) else {
+                continue;
+            };
+            let name = import_name.name.bytes();
+            if !(name == b"default" && has_default_export(remote))
+                && !is_reexport_of_default_import(&default_imports, export_entry, module_request, import_name, remote)
+                && !remote.exports(name)
+            {
+                report(import_name, module_request.name);
+            }
+        }
     }
 }
 
@@ -48,47 +92,4 @@ fn is_reexport_of_default_import<'a>(
     is_synthesized_indirect_export_entry(export_entry)
         && has_default_export(remote)
         && default_imports.contains(&(module_request.name, import_name.name))
-}
-
-fn check<'a>(_: &Named, cx: &mut Cx<'a, Named>) {
-    let file = cx.file();
-    let module_record = ModuleRecord::new(file);
-    let mut star_exports = StarExports::default();
-    let loaded_module = |specifier: Name<'a>| get_loaded_module(file, specifier.bytes()).filter(|it| it.record.has_module_syntax);
-    let report = |name: NameSpan<'a>, module_name: Name<'a>| {
-        cx.report(name.span, NAMED)
-            .data("imported_name", debug(name.name.bytes()))
-            .data("module_name", debug(module_name.bytes()));
-    };
-    for import_entry in &module_record.import_entries {
-        let ImportImportName::Name(specifier) = import_entry.import_name else {
-            continue;
-        };
-        let Some(remote) = loaded_module(import_entry.declaration.spec()) else {
-            continue;
-        };
-        let import_name = NameSpan::from(specifier.imported());
-        let name = import_name.name.bytes();
-        if !(name == b"default" && remote.record.has_export_default) && !remote.exports(name) && !star_exports.contains(remote, name) {
-            report(import_name, import_entry.declaration.spec());
-        }
-    }
-    let is_default = |it: &&ImportEntry<'a>| matches!(it.import_name, ImportImportName::Default(_));
-    let default_imports = module_record.import_entries.iter().filter(is_default);
-    let default_imports: FxHashSet<_> = default_imports.map(|it| (it.declaration.spec(), it.local_name().name())).collect();
-    for export_entry in &module_record.indirect_export_entries {
-        let (Some(module_request), ExportImportName::Name(import_name)) = (export_entry.module_request, export_entry.import_name) else {
-            continue;
-        };
-        let Some(remote) = loaded_module(module_request.name) else {
-            continue;
-        };
-        let name = import_name.name.bytes();
-        if !(name == b"default" && has_default_export(remote))
-            && !is_reexport_of_default_import(&default_imports, export_entry, module_request, import_name, remote)
-            && !remote.exports(name)
-        {
-            report(import_name, module_request.name);
-        }
-    }
 }

@@ -21,31 +21,31 @@ pub struct State<'a> {
 
 impl Rule for NoNesting {
     const META: Meta = Meta::oxlint(Plugin::Promise, "no-nesting", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         NoNesting
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if file.mentions_any(&["then", "catch"]) {
-            on.exprs([ExprTag::Call], |_, e, cx| {
-                let Some(call_expr) = as_then_or_catch(e) else {
-                    return;
-                };
-                let node = Node::Expr(e);
-                let is_inside_promise = |_, ancestor: Node<'a>| ancestor.as_expr().filter(|it| is_inside_promise(*it)).map(|_| ());
-                if cx.state.callbacks.find(node, is_inside_promise).is_none() {
-                    return;
-                }
-                let closest = |_, ancestor: Node<'a>| ancestor.as_expr().filter(|it| as_then_or_catch(*it).is_some());
-                let closest = cx.state.calls.find(node, closest).and_then(Expr::as_call);
-                if closest.is_none_or(|closest| can_safely_unnest(call_expr, closest, &mut cx.state.references)) {
-                    cx.report(call_expr.callee().outer_span(), NO_NESTING);
-                }
-            });
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        file.mentions_any(&["then", "catch"]).then(State::default)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call_expr) = as_then_or_catch(e) else {
+            return;
+        };
+        let node = Node::Expr(e);
+        let is_inside_promise = |_, ancestor: Node<'a>| ancestor.as_expr().filter(|it| is_inside_promise(*it)).map(|_| ());
+        if cx.state.callbacks.find(node, is_inside_promise).is_none() {
+            return;
         }
-        State::default()
+        let closest = |_, ancestor: Node<'a>| ancestor.as_expr().filter(|it| as_then_or_catch(*it).is_some());
+        let closest = cx.state.calls.find(node, closest).and_then(Expr::as_call);
+        if closest.is_none_or(|closest| can_safely_unnest(call_expr, closest, &mut cx.state.references)) {
+            cx.report(call_expr.callee().outer_span(), NO_NESTING);
+        }
     }
 }
 

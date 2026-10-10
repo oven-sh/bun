@@ -31,6 +31,7 @@ const FORBID_COMPONENT_PROPS: Message = Message::new("", "Prop \"{{prop}}\" is f
 
 impl Rule for ForbidComponentProps {
     const META: Meta = Meta::oxlint(Plugin::React, "forbid-component-props", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 
     /// `{ forbid: ["a", { propName | propNamePattern, allowedFor, allowedForPatterns, disallowedFor,
@@ -68,39 +69,38 @@ impl Rule for ForbidComponentProps {
         ForbidComponentProps { forbid }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !is_jsx(file) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        is_jsx(file).then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Jsx(jsx) = e.kind() else {
+            return;
+        };
+        if jsx.attrs().is_empty() || !jsx.tag().and_then(get_component_name).is_some_and(is_react_component_name) {
             return;
         }
-        on.exprs([ExprTag::Jsx], |rule, e, cx| {
-            let ExprKind::Jsx(jsx) = e.kind() else {
-                return;
+        let mut tag = None;
+        for attribute in jsx.attrs().iter().filter(|it| it.kind() != PropKind::Spread) {
+            let Some((key, name)) = attribute.key().and_then(|key| Some((key, key.name()?.bytes()))) else {
+                continue;
             };
-            if jsx.attrs().is_empty() || !jsx.tag().and_then(get_component_name).is_some_and(is_react_component_name) {
-                return;
+            // Of `a:b` it is `b`.
+            let prop_name = strings::split_once_char(name, b':').map_or(name, |it| it.1);
+            let matches = |it: &&ForbidOption| {
+                if it.is_pattern { glob_match(&it.key, prop_name) } else { *it.key == *prop_name }
+            };
+            let Some(option) = self.forbid.iter().find(matches) else {
+                continue;
+            };
+            if option.is_forbidden(tag.get_or_insert_with(|| get_jsx_element_name(jsx))) {
+                let span = key.span(cx.file());
+                match &option.message {
+                    Some(message) => cx.report(span, CUSTOM).data("message", message.to_vec()),
+                    None => cx.report(span, FORBID_COMPONENT_PROPS).data("prop", prop_name),
+                };
             }
-            let mut tag = None;
-            for attribute in jsx.attrs().iter().filter(|it| it.kind() != PropKind::Spread) {
-                let Some((key, name)) = attribute.key().and_then(|key| Some((key, key.name()?.bytes()))) else {
-                    continue;
-                };
-                // Of `a:b` it is `b`.
-                let prop_name = strings::split_once_char(name, b':').map_or(name, |it| it.1);
-                let matches = |it: &&ForbidOption| {
-                    if it.is_pattern { glob_match(&it.key, prop_name) } else { *it.key == *prop_name }
-                };
-                let Some(option) = rule.forbid.iter().find(matches) else {
-                    continue;
-                };
-                if option.is_forbidden(tag.get_or_insert_with(|| get_jsx_element_name(jsx))) {
-                    let span = key.span(cx.file());
-                    match &option.message {
-                        Some(message) => cx.report(span, CUSTOM).data("message", message.to_vec()),
-                        None => cx.report(span, FORBID_COMPONENT_PROPS).data("prop", prop_name),
-                    };
-                }
-            }
-        });
+        }
     }
 }
 

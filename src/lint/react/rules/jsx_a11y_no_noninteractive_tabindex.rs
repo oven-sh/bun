@@ -18,7 +18,8 @@ const NO_NONINTERACTIVE_TABINDEX: Message = Message::new("", "`tabIndex` should 
 
 impl Rule for NoNoninteractiveTabindex {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "no-noninteractive-tabindex", Kind::Problem);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let config = options.object(0);
@@ -32,44 +33,42 @@ impl Rule for NoNoninteractiveTabindex {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Jsx], |rule, e, cx| {
-            let Some(jsx_el) = as_jsx_element(e) else {
-                return;
-            };
-            let Some(tabindex_attr) = has_jsx_prop_ignore_case(jsx_el, "tabIndex") else {
-                return;
-            };
-            let Some(tabindex_value) = get_prop_value(tabindex_attr) else {
-                return;
-            };
-            let Some(tabindex) = parse_jsx_value(tabindex_value) else {
-                if matches!(tabindex_value, AttributeValue::ExpressionContainer(_)) && !rule.allow_expression_values {
-                    cx.report(tabindex_attr, NO_NONINTERACTIVE_TABINDEX);
-                }
-                return;
-            };
-            if tabindex < 0.0 || tabindex.fract() != 0.0 {
-                return;
-            }
-            let component = get_element_type(cx.file(), jsx_el);
-            if rule.tags.iter().any(|tag| *tag.as_bytes() == *component)
-                || !contains_name(&HTML_TAG, &component)
-                || is_interactive_element(&component, jsx_el)
-            {
-                return;
-            }
-            let is_allowed = |role: &[u8]| is_interactive_role(role) || rule.roles.iter().any(|it| it.as_bytes() == role);
-            let has_allowed_role = match has_jsx_prop_ignore_case(jsx_el, "role").and_then(get_prop_value) {
-                Some(AttributeValue::StringLiteral(role)) => {
-                    strings::split_unicode_whitespace(role.value).next().is_some_and(is_allowed)
-                }
-                Some(AttributeValue::ExpressionContainer(_)) => rule.allow_expression_values,
-                _ => false,
-            };
-            if !has_allowed_role {
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(jsx_el) = as_jsx_element(e) else {
+            return;
+        };
+        let Some(tabindex_attr) = has_jsx_prop_ignore_case(jsx_el, "tabIndex") else {
+            return;
+        };
+        let Some(tabindex_value) = get_prop_value(tabindex_attr) else {
+            return;
+        };
+        let Some(tabindex) = parse_jsx_value(tabindex_value) else {
+            if matches!(tabindex_value, AttributeValue::ExpressionContainer(_)) && !self.allow_expression_values {
                 cx.report(tabindex_attr, NO_NONINTERACTIVE_TABINDEX);
             }
-        });
+            return;
+        };
+        if tabindex < 0.0 || tabindex.fract() != 0.0 {
+            return;
+        }
+        let component = get_element_type(cx.file(), jsx_el);
+        if self.tags.iter().any(|tag| *tag.as_bytes() == *component)
+            || !contains_name(&HTML_TAG, &component)
+            || is_interactive_element(&component, jsx_el)
+        {
+            return;
+        }
+        let is_allowed = |role: &[u8]| is_interactive_role(role) || self.roles.iter().any(|it| it.as_bytes() == role);
+        let has_allowed_role = match has_jsx_prop_ignore_case(jsx_el, "role").and_then(get_prop_value) {
+            Some(AttributeValue::StringLiteral(role)) => {
+                strings::split_unicode_whitespace(role.value).next().is_some_and(is_allowed)
+            }
+            Some(AttributeValue::ExpressionContainer(_)) => self.allow_expression_values,
+            _ => false,
+        };
+        if !has_allowed_role {
+            cx.report(tabindex_attr, NO_NONINTERACTIVE_TABINDEX);
+        }
     }
 }

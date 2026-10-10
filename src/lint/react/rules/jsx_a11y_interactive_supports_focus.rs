@@ -23,7 +23,8 @@ const ADD_EITHER_TAB_INDEX: Message = Message::new("", "Add `tabIndex={0}` or `t
 
 impl Rule for InteractiveSupportsFocus {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "interactive-supports-focus", Kind::Problem).has_suggestions();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let config = options.object(0);
@@ -34,44 +35,42 @@ impl Rule for InteractiveSupportsFocus {
         InteractiveSupportsFocus { tabbable: tabbable.into_iter().map(String::from).collect() }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Jsx], |rule, e, cx| {
-            let Some(jsx_el) = as_jsx_element(e) else {
-                return;
-            };
-            let Some(role) = has_jsx_prop_ignore_case(jsx_el, "role").and_then(get_string_literal_prop_value) else {
-                return;
-            };
-            if !is_interactive_role(role)
-                || is_non_interactive_role(role)
-                || !MOUSE_AND_KEYBOARD_EVENT_HANDLERS.iter().any(|handler| has_jsx_prop(jsx_el, handler).is_some())
-                || is_disabled_element(jsx_el)
-                || is_hidden_from_screen_reader(cx.file(), jsx_el)
-                || is_presentation_role(jsx_el)
-                || has_jsx_prop_ignore_case(jsx_el, "tabIndex").is_some()
-            {
-                return;
-            }
-            let element_type = get_element_type(cx.file(), jsx_el);
-            if !contains_name(&HTML_TAG, &element_type)
-                || is_interactive_element(&element_type, jsx_el)
-                || is_non_interactive_element(&element_type, jsx_el)
-            {
-                return;
-            }
-            let Some(name) = jsx_el.tag() else {
-                return;
-            };
-            if rule.tabbable.iter().any(|it| it.as_bytes() == role) {
-                cx.report(jsx_el.opening_span(), MUST_BE_TABBABLE)
-                    .data("role", role)
-                    .suggest(ADD_TAB_INDEX, |fixer| fixer.insert_after(name, " tabIndex={0}"));
-            } else {
-                cx.report(jsx_el.opening_span(), MUST_BE_FOCUSABLE)
-                    .data("role", role)
-                    .suggest(ADD_EITHER_TAB_INDEX, |fixer| fixer.insert_after(name, " tabIndex={0}"))
-                    .suggest(ADD_EITHER_TAB_INDEX, |fixer| fixer.insert_after(name, " tabIndex={-1}"));
-            }
-        });
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(jsx_el) = as_jsx_element(e) else {
+            return;
+        };
+        let Some(role) = has_jsx_prop_ignore_case(jsx_el, "role").and_then(get_string_literal_prop_value) else {
+            return;
+        };
+        if !is_interactive_role(role)
+            || is_non_interactive_role(role)
+            || !MOUSE_AND_KEYBOARD_EVENT_HANDLERS.iter().any(|handler| has_jsx_prop(jsx_el, handler).is_some())
+            || is_disabled_element(jsx_el)
+            || is_hidden_from_screen_reader(cx.file(), jsx_el)
+            || is_presentation_role(jsx_el)
+            || has_jsx_prop_ignore_case(jsx_el, "tabIndex").is_some()
+        {
+            return;
+        }
+        let element_type = get_element_type(cx.file(), jsx_el);
+        if !contains_name(&HTML_TAG, &element_type)
+            || is_interactive_element(&element_type, jsx_el)
+            || is_non_interactive_element(&element_type, jsx_el)
+        {
+            return;
+        }
+        let Some(name) = jsx_el.tag() else {
+            return;
+        };
+        if self.tabbable.iter().any(|it| it.as_bytes() == role) {
+            cx.report(jsx_el.opening_span(), MUST_BE_TABBABLE)
+                .data("role", role)
+                .suggest(ADD_TAB_INDEX, |fixer| fixer.insert_after(name, " tabIndex={0}"));
+        } else {
+            cx.report(jsx_el.opening_span(), MUST_BE_FOCUSABLE)
+                .data("role", role)
+                .suggest(ADD_EITHER_TAB_INDEX, |fixer| fixer.insert_after(name, " tabIndex={0}"))
+                .suggest(ADD_EITHER_TAB_INDEX, |fixer| fixer.insert_after(name, " tabIndex={-1}"));
+        }
     }
 }

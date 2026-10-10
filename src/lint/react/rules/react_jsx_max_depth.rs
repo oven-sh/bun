@@ -23,34 +23,35 @@ pub struct State<'a> {
 
 impl Rule for JsxMaxDepth {
     const META: Meta = Meta::oxlint(Plugin::React, "jsx-max-depth", Kind::Suggestion);
+    const ON: On = On::new().enter(NodeTags::new().exprs(&[ExprTag::Jsx])).exit(NodeTags::new().exprs(&[ExprTag::Jsx]));
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         JsxMaxDepth { max: options.object(0).number("max").map_or(2, |it| it as u32) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if is_jsx(file) && file.has_exprs([ExprTag::Jsx]) {
-            on.enter(ExprTag::Jsx, |rule, node, cx| {
-                let ancestor_depth = cx.state.ancestor_depth;
-                cx.state.ancestor_depth += 1;
-                let Some(ExprKind::Jsx(jsx)) = node.as_expr().map(Expr::kind) else {
-                    return;
-                };
-                // Only what has no element in it is looked at.
-                if jsx.children().iter().any(|it| it.tag() == ExprTag::Jsx && it.jsx_container_span().is_none()) {
-                    return;
-                }
-                let total_depth = ancestor_depth + Parts::of_element(jsx).depth(&mut cx.state.variables);
-                if total_depth > rule.max {
-                    cx.report(node, JSX_MAX_DEPTH)
-                        .data("depth", total_depth.to_string())
-                        .data("max", rule.max.to_string());
-                }
-            });
-            on.exit(ExprTag::Jsx, |_, _, cx| cx.state.ancestor_depth -= 1);
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        (is_jsx(file) && file.has_exprs([ExprTag::Jsx])).then(State::default)
+    }
+
+    fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        let ancestor_depth = cx.state.ancestor_depth;
+        cx.state.ancestor_depth += 1;
+        let Some(ExprKind::Jsx(jsx)) = node.as_expr().map(Expr::kind) else {
+            return;
+        };
+        // Only what has no element in it is looked at.
+        if jsx.children().iter().any(|it| it.tag() == ExprTag::Jsx && it.jsx_container_span().is_none()) {
+            return;
         }
-        State::default()
+        let total_depth = ancestor_depth + Parts::of_element(jsx).depth(&mut cx.state.variables);
+        if total_depth > self.max {
+            cx.report(node, JSX_MAX_DEPTH).data("depth", total_depth.to_string()).data("max", self.max.to_string());
+        }
+    }
+
+    fn exit<'a>(&self, _: Node<'a>, cx: &mut Cx<'a, Self>) {
+        cx.state.ancestor_depth -= 1;
     }
 }
 

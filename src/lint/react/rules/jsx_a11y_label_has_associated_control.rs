@@ -34,7 +34,8 @@ const LABEL_HAS_ASSOCIATED_CONTROL_NO_LABEL: Message = Message::new("", "A form 
 
 impl Rule for LabelHasAssociatedControl {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "label-has-associated-control", Kind::Problem);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let config = options.object(0);
@@ -57,39 +58,37 @@ impl Rule for LabelHasAssociatedControl {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Jsx], |rule, e, cx| {
-            let Some(element) = as_jsx_element(e) else {
-                return;
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(element) = as_jsx_element(e) else {
+            return;
+        };
+        let element_type = get_element_type(cx.file(), element);
+        if !self.label_components.iter().any(|it| *it.as_bytes() == *element_type) {
+            return;
+        }
+        if !self.has_accessible_label(cx.file(), element) {
+            cx.report(element.opening_span(), LABEL_HAS_ASSOCIATED_CONTROL_NO_LABEL);
+            return;
+        }
+        // The first of the names that the element has decides.
+        let has_html_for = || {
+            let html_for_attribute = match get_attribute_names_of_settings(cx.file(), "for") {
+                Some(attributes) => (attributes.iter().filter_map(|it| std::str::from_utf8(it.as_str()?).ok()))
+                    .find_map(|attr| has_jsx_prop(element, attr)),
+                None => has_jsx_prop(element, "htmlFor"),
             };
-            let element_type = get_element_type(cx.file(), element);
-            if !rule.label_components.iter().any(|it| *it.as_bytes() == *element_type) {
-                return;
-            }
-            if !rule.has_accessible_label(cx.file(), element) {
-                cx.report(element.opening_span(), LABEL_HAS_ASSOCIATED_CONTROL_NO_LABEL);
-                return;
-            }
-            // The first of the names that the element has decides.
-            let has_html_for = || {
-                let html_for_attribute = match get_attribute_names_of_settings(cx.file(), "for") {
-                    Some(attributes) => (attributes.iter().filter_map(|it| std::str::from_utf8(it.as_str()?).ok()))
-                        .find_map(|attr| has_jsx_prop(element, attr)),
-                    None => has_jsx_prop(element, "htmlFor"),
-                };
-                html_for_attribute.is_some_and(|it| has_attribute_value(it, false))
-            };
-            let has_control = || children(cx.file(), element).any(|child| rule.search_for_nested_control(cx.file(), child, 1));
-            let is_associated = match rule.assert {
-                Assert::HtmlFor => has_html_for(),
-                Assert::Nesting => has_control(),
-                Assert::Both => has_html_for() && has_control(),
-                Assert::Either => has_html_for() || has_control(),
-            };
-            if !is_associated {
-                cx.report(element.opening_span(), LABEL_HAS_ASSOCIATED_CONTROL);
-            }
-        });
+            html_for_attribute.is_some_and(|it| has_attribute_value(it, false))
+        };
+        let has_control = || children(cx.file(), element).any(|child| self.search_for_nested_control(cx.file(), child, 1));
+        let is_associated = match self.assert {
+            Assert::HtmlFor => has_html_for(),
+            Assert::Nesting => has_control(),
+            Assert::Both => has_html_for() && has_control(),
+            Assert::Either => has_html_for() || has_control(),
+        };
+        if !is_associated {
+            cx.report(element.opening_span(), LABEL_HAS_ASSOCIATED_CONTROL);
+        }
     }
 }
 

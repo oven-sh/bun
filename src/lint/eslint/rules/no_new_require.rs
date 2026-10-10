@@ -7,22 +7,22 @@ const NO_NEW_REQUIRE: Message = Message::new("noNewRequire", "Unexpected use of 
 
 impl Rule for NoNewRequire {
     const META: Meta = Meta::eslint("no-new-require", Kind::Suggestion).deprecated();
+    const ON: On = On::new().exprs(&[ExprTag::New]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoNewRequire
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("require") {
-            return;
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("require").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let ExprKind::New(call) = e.kind()
+            && call.callee().is_ident("require")
+        {
+            cx.report(e, NO_NEW_REQUIRE);
         }
-        on.exprs([ExprTag::New], |_, e, cx| {
-            if let ExprKind::New(call) = e.kind()
-                && call.callee().is_ident("require")
-            {
-                cx.report(e, NO_NEW_REQUIRE);
-            }
-        });
     }
 }

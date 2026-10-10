@@ -50,54 +50,77 @@ fn check_key<'a>(key: Option<Key<'a>>, cx: &Cx<'a, NoOctalEscape>) {
 
 impl Rule for NoOctalEscape {
     const META: Meta = Meta::eslint("no-octal-escape", Kind::Suggestion);
+    const ON: On = On::new()
+        .exprs(&[ExprTag::String])
+        .props()
+        .members()
+        .enum_members()
+        .pats(&[PatTag::Object])
+        .types(&[TypeTag::StringLit])
+        .import_specs()
+        .export_specs()
+        .stmts(&[StmtTag::Import, StmtTag::ExportNamed, StmtTag::ExportStar, StmtTag::ImportEquals, StmtTag::Module]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoOctalEscape
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !strings::contains_char(file.text(), b'\\') {
-            return;
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        strings::contains_char(file.text(), b'\\').then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if !e.is_jsx_text() && !e.is_jsx_tag_name() {
+            check(e.span(), cx);
         }
-        on.exprs([ExprTag::String], |_, e, cx| {
-            if !e.is_jsx_text() && !e.is_jsx_tag_name() {
-                check(e.span(), cx);
-            }
-        });
-        // The strings that are a `Literal` for ESLint and not an expression here.
-        on.props(|_, prop, cx| check_key(prop.key(), cx));
-        on.members(|_, member, cx| {
-            if member.flags().contains(Flags::STRING_NAME) {
-                check_key(member.key(), cx);
-            }
-        });
-        on.enum_members(|_, member, cx| check_key(member.key(), cx));
-        on.pats([PatTag::Object], |_, pat, cx| {
-            if let PatKind::Object(props) = pat.kind() {
-                props.iter().for_each(|prop| check_key(prop.key(), cx));
-            }
-        });
-        on.types([TypeTag::StringLit], |_, ty, cx| check(ty.span(), cx));
-        on.import_specs(|_, spec, cx| check(spec.imported().span(), cx));
-        on.export_specs(|_, spec, cx| {
-            check(spec.local().span(), cx);
-            if spec.is_renamed() {
-                check(spec.exported().span(), cx);
-            }
-        });
-        on.stmts(
-            [StmtTag::Import, StmtTag::ExportNamed, StmtTag::ExportStar, StmtTag::ImportEquals, StmtTag::Module],
-            |_, stmt, cx| {
-                match stmt.kind() {
-                    StmtKind::ExportStar { alias: Some(alias), .. } => check(alias.span(), cx),
-                    StmtKind::Module(module) => check(module.name_span(), cx),
-                    _ => {}
-                }
-                if let Some(specifier) = stmt.module_specifier_span() {
-                    check(specifier, cx);
-                }
-            },
-        );
+    }
+
+    // The strings that are a `Literal` for ESLint and not an expression here.
+
+    fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
+        check_key(prop.key(), cx);
+    }
+
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+        if member.flags().contains(Flags::STRING_NAME) {
+            check_key(member.key(), cx);
+        }
+    }
+
+    fn enum_member<'a>(&self, member: EnumMember<'a>, cx: &mut Cx<'a, Self>) {
+        check_key(member.key(), cx);
+    }
+
+    fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        if let PatKind::Object(props) = pat.kind() {
+            props.iter().for_each(|prop| check_key(prop.key(), cx));
+        }
+    }
+
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        check(ty.span(), cx);
+    }
+
+    fn import_spec<'a>(&self, spec: ImportSpec<'a>, cx: &mut Cx<'a, Self>) {
+        check(spec.imported().span(), cx);
+    }
+
+    fn export_spec<'a>(&self, spec: ExportSpec<'a>, cx: &mut Cx<'a, Self>) {
+        check(spec.local().span(), cx);
+        if spec.is_renamed() {
+            check(spec.exported().span(), cx);
+        }
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match stmt.kind() {
+            StmtKind::ExportStar { alias: Some(alias), .. } => check(alias.span(), cx),
+            StmtKind::Module(module) => check(module.name_span(), cx),
+            _ => {}
+        }
+        if let Some(specifier) = stmt.module_specifier_span() {
+            check(specifier, cx);
+        }
     }
 }

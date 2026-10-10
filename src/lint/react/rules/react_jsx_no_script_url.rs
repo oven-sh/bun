@@ -16,6 +16,7 @@ const JSX_NO_SCRIPT_URL: Message = Message::new("", "React 19 disallows `javascr
 
 impl Rule for JsxNoScriptUrl {
     const META: Meta = Meta::oxlint(Plugin::React, "jsx-no-script-url", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     /// `settings.react.linkComponents`
     type State<'a> = &'a [Json];
 
@@ -32,48 +33,46 @@ impl Rule for JsxNoScriptUrl {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         if !is_jsx(file) {
-            return &[];
+            return None;
         }
-        on.exprs([ExprTag::Jsx], |rule, e, cx| {
-            let ExprKind::Jsx(jsx) = e.kind() else {
+        Some(link_components(file))
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Jsx(jsx) = e.kind() else {
+            return;
+        };
+        let Some(component_name) = get_identifier_name(jsx).map(Name::bytes) else {
+            return;
+        };
+        let link_props = self.components.iter().rev().find(|it| *it.0 == *component_name).map(|it| &it.1);
+        let of_settings = || get_component_attrs_by_name(cx.state, component_name);
+        if link_props.is_none() && component_name != b"a" && !(self.include_from_settings && of_settings().is_some()) {
+            return;
+        }
+        for attribute in jsx.attrs().iter().filter(|it| it.kind() != PropKind::Spread) {
+            // Nothing after an attribute without a value is looked at.
+            let Some(prop_value) = get_prop_value(attribute) else {
                 return;
             };
-            let Some(component_name) = get_identifier_name(jsx).map(Name::bytes) else {
-                return;
+            let Some(name) = attribute.key().and_then(Key::name).map(Name::bytes) else {
+                continue;
             };
-            let link_props = rule.components.iter().rev().find(|it| *it.0 == *component_name).map(|it| &it.1);
-            let of_settings = || get_component_attrs_by_name(cx.state, component_name);
-            if link_props.is_none()
-                && component_name != b"a"
-                && !(rule.include_from_settings && of_settings().is_some())
-            {
-                return;
+            if !prop_value.as_string_literal().is_some_and(|it| is_script_url(it.value)) {
+                continue;
             }
-            for attribute in jsx.attrs().iter().filter(|it| it.kind() != PropKind::Spread) {
-                // Nothing after an attribute without a value is looked at.
-                let Some(prop_value) = get_prop_value(attribute) else {
-                    return;
-                };
-                let Some(name) = attribute.key().and_then(Key::name).map(Name::bytes) else {
-                    continue;
-                };
-                if !prop_value.as_string_literal().is_some_and(|it| is_script_url(it.value)) {
-                    continue;
-                }
-                // The `b` of `a:b`
-                let name = strings::rsplit_once_char(name, b':').map_or(name, |it| it.1);
-                let is_link_attribute = match link_props {
-                    Some(link_props) => link_props.iter().any(|it| **it == *name),
-                    None => component_name == b"a" || of_settings().is_some_and(|it| it.contains(name)),
-                };
-                if is_link_attribute {
-                    cx.report(attribute, JSX_NO_SCRIPT_URL);
-                }
+            // The `b` of `a:b`
+            let name = strings::rsplit_once_char(name, b':').map_or(name, |it| it.1);
+            let is_link_attribute = match link_props {
+                Some(link_props) => link_props.iter().any(|it| **it == *name),
+                None => component_name == b"a" || of_settings().is_some_and(|it| it.contains(name)),
+            };
+            if is_link_attribute {
+                cx.report(attribute, JSX_NO_SCRIPT_URL);
             }
-        });
-        link_components(file)
+        }
     }
 }
 

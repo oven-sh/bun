@@ -24,6 +24,7 @@ const NECESSARY: Message = Message::new("", "Curly braces are required here.");
 
 impl Rule for JsxCurlyBracePresence {
     const META: Meta = Meta::oxlint(Plugin::React, "jsx-curly-brace-presence", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 
     /// `"never"`, or `{ props, children, propElementValues }`
@@ -46,10 +47,12 @@ impl Rule for JsxCurlyBracePresence {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if is_jsx(file) {
-            on.exprs([ExprTag::Jsx], |rule, e, cx| rule.check(e, cx));
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        is_jsx(file).then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(e, cx);
     }
 }
 

@@ -10,30 +10,33 @@ const NO_SCRIPT_COMPONENT_IN_HEAD: Message = Message::new("", "Prevent usage of 
 
 impl Rule for NoScriptComponentInHead {
     const META: Meta = Meta::oxlint(Plugin::Nextjs, "no-script-component-in-head", Kind::Problem);
+    const ON: On = On::new().stmts(&[StmtTag::Import]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoScriptComponentInHead
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions("next/head") || !file.mentions("Script") {
-            return;
+            return None;
         }
-        on.stmts([StmtTag::Import], |_, stmt, cx| {
-            let StmtKind::Import(import) = stmt.kind() else {
-                return;
-            };
-            let Some(local) = import.default().filter(|_| import.spec().is("next/head")) else {
-                return;
-            };
-            for (name, head) in elements_named(import, local) {
-                for child in children(cx.file(), head) {
-                    if matches!(child, Child::Element(element) if element.tag().is_some_and(|it| it.is_ident("Script"))) {
-                        cx.report(name, NO_SCRIPT_COMPONENT_IN_HEAD);
-                    }
+        Some(())
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let StmtKind::Import(import) = stmt.kind() else {
+            return;
+        };
+        let Some(local) = import.default().filter(|_| import.spec().is("next/head")) else {
+            return;
+        };
+        for (name, head) in elements_named(import, local) {
+            for child in children(cx.file(), head) {
+                if matches!(child, Child::Element(element) if element.tag().is_some_and(|it| it.is_ident("Script"))) {
+                    cx.report(name, NO_SCRIPT_COMPONENT_IN_HEAD);
                 }
             }
-        });
+        }
     }
 }

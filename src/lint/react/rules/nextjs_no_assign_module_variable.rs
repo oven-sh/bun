@@ -8,22 +8,22 @@ const NO_ASSIGN_MODULE_VARIABLE: Message = Message::new("", "Do not assign to th
 
 impl Rule for NoAssignModuleVariable {
     const META: Meta = Meta::oxlint(Plugin::Nextjs, "no-assign-module-variable", Kind::Problem);
+    const ON: On = On::new().var_decls();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoAssignModuleVariable
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("module") {
-            return;
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("module").then_some(())
+    }
+
+    fn var_decl<'a>(&self, declarator: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+        let id = declarator.pat();
+        let is_catch_parameter = || matches!(declarator.parent(), Node::Stmt(stmt) if stmt.tag() == StmtTag::Try);
+        if id.as_ident().is_some_and(|name| name.is("module")) && !is_catch_parameter() {
+            cx.report(id, NO_ASSIGN_MODULE_VARIABLE);
         }
-        on.var_decls(|_, declarator, cx| {
-            let id = declarator.pat();
-            let is_catch_parameter = || matches!(declarator.parent(), Node::Stmt(stmt) if stmt.tag() == StmtTag::Try);
-            if id.as_ident().is_some_and(|name| name.is("module")) && !is_catch_parameter() {
-                cx.report(id, NO_ASSIGN_MODULE_VARIABLE);
-            }
-        });
     }
 }

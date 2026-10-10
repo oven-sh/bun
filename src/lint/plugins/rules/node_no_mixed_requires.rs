@@ -23,6 +23,7 @@ const BUILTIN_MODULES: [&str; 54] = [
 
 impl Rule for NoMixedRequires {
     const META: Meta = Meta::oxlint(Plugin::Node, "no-mixed-requires", Kind::Suggestion);
+    const ON: On = On::new().stmts(&[StmtTag::Var]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -33,34 +34,33 @@ impl Rule for NoMixedRequires {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("require") {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("require").then_some(())
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let StmtKind::Var(declarations) = stmt.kind() else {
+            return;
+        };
+        if declarations.len() < 2 {
             return;
         }
-        on.stmts([StmtTag::Var], |rule, stmt, cx| {
-            let StmtKind::Var(declarations) = stmt.kind() else {
-                return;
-            };
-            if declarations.len() < 2 {
-                return;
-            }
-            // Whether there is a `require`, and anything else. Then which kinds of modules are required.
-            let (mut has_require, mut has_other, mut found) = (false, false, [false; 4]);
-            for init in declarations.iter().map(VarDecl::init) {
-                match init.filter(|it| rule.is_require_declaration(*it)) {
-                    Some(init) => {
-                        has_require = true;
-                        found[infer_module_type(init) as usize] = true;
-                    }
-                    None => has_other = true,
+        // Whether there is a `require`, and anything else. Then which kinds of modules are required.
+        let (mut has_require, mut has_other, mut found) = (false, false, [false; 4]);
+        for init in declarations.iter().map(VarDecl::init) {
+            match init.filter(|it| self.is_require_declaration(*it)) {
+                Some(init) => {
+                    has_require = true;
+                    found[infer_module_type(init) as usize] = true;
                 }
+                None => has_other = true,
             }
-            if has_require && has_other {
-                cx.report(stmt.span_without_export(), NO_MIX_REQUIRE);
-            } else if rule.grouping && found.iter().filter(|it| **it).count() > 1 {
-                cx.report(stmt.span_without_export(), NO_MIX_CORE_MODULE_FILE_COMPUTED);
-            }
-        });
+        }
+        if has_require && has_other {
+            cx.report(stmt.span_without_export(), NO_MIX_REQUIRE);
+        } else if self.grouping && found.iter().filter(|it| **it).count() > 1 {
+            cx.report(stmt.span_without_export(), NO_MIX_CORE_MODULE_FILE_COMPUTED);
+        }
     }
 }
 

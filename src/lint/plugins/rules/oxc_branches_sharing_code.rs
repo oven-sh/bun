@@ -16,55 +16,54 @@ type Bodies<'a> = SmallVec<[List<'a, Stmt<'a>>; 4]>;
 
 impl Rule for BranchesSharingCode {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "branches-sharing-code", Kind::Suggestion).has_suggestions();
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::If]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         BranchesSharingCode
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::If], |_, if_stmt, cx| {
-            let Some(bodies) = extract_if_sequence(if_stmt) else {
-                return;
-            };
-            let (start_eq, end_eq) = scan_blocks_for_eq(cx.file(), &bodies);
-            let start = if_stmt.span().start;
-            let if_span = Span::new(start, start + 2);
-            if let Some(count) = start_eq.filter(|&count| !duplicated_stmts_are_empty(count, &bodies, false)) {
-                let report = cx.report(if_span, AT_START).labels_with(|labels| label(labels, count, &bodies, false));
-                if count == 1 {
-                    report.suggest(MOVE_BEFORE, |fixer| {
-                        let indent = get_preceding_indent_str(fixer.file().text(), start)?;
-                        let moved_code = bodies.first()?.first()?.text();
-                        let mut fix = vec![fixer.insert_before(if_stmt, [moved_code, &b"\n"[..], indent].concat())];
-                        for body in &bodies {
-                            let duplicated = body.first()?.span();
-                            fix.push(fixer.remove(Span::new(duplicated.start, body.get(1).map_or(duplicated.end, |it| it.span().start))));
-                        }
-                        Some(fix)
-                    });
-                }
+    fn stmt<'a>(&self, if_stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(bodies) = extract_if_sequence(if_stmt) else {
+            return;
+        };
+        let (start_eq, end_eq) = scan_blocks_for_eq(cx.file(), &bodies);
+        let start = if_stmt.span().start;
+        let if_span = Span::new(start, start + 2);
+        if let Some(count) = start_eq.filter(|&count| !duplicated_stmts_are_empty(count, &bodies, false)) {
+            let report = cx.report(if_span, AT_START).labels_with(|labels| label(labels, count, &bodies, false));
+            if count == 1 {
+                report.suggest(MOVE_BEFORE, |fixer| {
+                    let indent = get_preceding_indent_str(fixer.file().text(), start)?;
+                    let moved_code = bodies.first()?.first()?.text();
+                    let mut fix = vec![fixer.insert_before(if_stmt, [moved_code, &b"\n"[..], indent].concat())];
+                    for body in &bodies {
+                        let duplicated = body.first()?.span();
+                        fix.push(fixer.remove(Span::new(duplicated.start, body.get(1).map_or(duplicated.end, |it| it.span().start))));
+                    }
+                    Some(fix)
+                });
             }
-            if let Some(count) = end_eq.filter(|&count| !duplicated_stmts_are_empty(count, &bodies, true)) {
-                let report = cx.report(if_span, AT_END).labels_with(|labels| label(labels, count, &bodies, true));
-                if count == 1 {
-                    report.suggest(MOVE_AFTER, |fixer| {
-                        let indent = get_preceding_indent_str(fixer.file().text(), start)?;
-                        if bodies.iter().any(|body| duplicated_end_references_branch_locals(*body)) {
-                            return None;
-                        }
-                        let moved_code = bodies.first()?.last()?.text();
-                        let mut fix = vec![fixer.insert_after(if_stmt, [&b"\n"[..], indent, moved_code].concat())];
-                        for body in &bodies {
-                            let duplicated = body.last()?.span();
-                            let before = body.len().checked_sub(2).and_then(|it| body.get(it));
-                            fix.push(fixer.remove(Span::new(before.map_or(duplicated.start, |it| it.span().end), duplicated.end)));
-                        }
-                        Some(fix)
-                    });
-                }
+        }
+        if let Some(count) = end_eq.filter(|&count| !duplicated_stmts_are_empty(count, &bodies, true)) {
+            let report = cx.report(if_span, AT_END).labels_with(|labels| label(labels, count, &bodies, true));
+            if count == 1 {
+                report.suggest(MOVE_AFTER, |fixer| {
+                    let indent = get_preceding_indent_str(fixer.file().text(), start)?;
+                    if bodies.iter().any(|body| duplicated_end_references_branch_locals(*body)) {
+                        return None;
+                    }
+                    let moved_code = bodies.first()?.last()?.text();
+                    let mut fix = vec![fixer.insert_after(if_stmt, [&b"\n"[..], indent, moved_code].concat())];
+                    for body in &bodies {
+                        let duplicated = body.last()?.span();
+                        let before = body.len().checked_sub(2).and_then(|it| body.get(it));
+                        fix.push(fixer.remove(Span::new(before.map_or(duplicated.start, |it| it.span().end), duplicated.end)));
+                    }
+                    Some(fix)
+                });
             }
-        });
+        }
     }
 }
 

@@ -14,19 +14,14 @@ const ANY: Message = Message::new("", "Prefer default export to be present on ev
 
 impl Rule for PreferDefaultExport {
     const META: Meta = Meta::oxlint(Plugin::Import, "prefer-default-export", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().finish();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         PreferDefaultExport { is_for_any: options.object(0).str("target") == Some("any") }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.finish(Self::check);
-    }
-}
-
-impl PreferDefaultExport {
-    fn check<'a>(&self, cx: &mut Cx<'a, Self>) {
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
         if export_default(cx.file()).is_some() {
             return;
         }

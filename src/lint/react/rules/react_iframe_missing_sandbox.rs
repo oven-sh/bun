@@ -35,64 +35,80 @@ const ALLOWED_VALUES: [&[u8]; 14] = [
 
 impl Rule for IframeMissingSandbox {
     const META: Meta = Meta::oxlint(Plugin::React, "iframe-missing-sandbox", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         IframeMissingSandbox
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("iframe") {
-            return;
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let on = On::new().exprs(&[ExprTag::Jsx]);
+        if !file.mentions("createElement") {
+            return on;
         }
-        on.exprs([ExprTag::Jsx], |_, e, cx| {
-            let ExprKind::Jsx(jsx) = e.kind() else {
-                return;
-            };
-            let Some(identifier) = jsx.tag().filter(|it| it.is_ident("iframe")) else {
-                return;
-            };
-            match has_jsx_prop_ignore_case(jsx, "sandbox") {
-                None => drop(cx.report(identifier, MISSING_SANDBOX_PROP)),
-                Some(sandbox_prop) => {
-                    if let Some(literal) = get_prop_value(sandbox_prop).and_then(|it| it.as_string_literal()) {
-                        validate_sandbox_value(literal.value, literal.span, cx);
-                    }
+        on.exprs(&[ExprTag::Call])
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("iframe").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Jsx => self.jsx(e, cx),
+            ExprTag::Call => self.call(e, cx),
+            _ => {}
+        }
+    }
+}
+
+impl IframeMissingSandbox {
+    fn jsx<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Jsx(jsx) = e.kind() else {
+            return;
+        };
+        let Some(identifier) = jsx.tag().filter(|it| it.is_ident("iframe")) else {
+            return;
+        };
+        match has_jsx_prop_ignore_case(jsx, "sandbox") {
+            None => drop(cx.report(identifier, MISSING_SANDBOX_PROP)),
+            Some(sandbox_prop) => {
+                if let Some(literal) = get_prop_value(sandbox_prop).and_then(|it| it.as_string_literal()) {
+                    validate_sandbox_value(literal.value, literal.span, cx);
                 }
             }
-        });
-        if !file.mentions("createElement") {
+        }
+    }
+
+    fn call<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call) = e.as_call().filter(|call| is_create_element_call(*call)) else {
+            return;
+        };
+        let arguments = call.args();
+        if !arguments
+            .first()
+            .is_some_and(|it| it.as_string().is_some_and(|it| it.is("iframe")) && !it.is_parenthesized())
+        {
             return;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let Some(call) = e.as_call().filter(|call| is_create_element_call(*call)) else {
-                return;
-            };
-            let arguments = call.args();
-            if !arguments
-                .first()
-                .is_some_and(|it| it.as_string().is_some_and(|it| it.is("iframe")) && !it.is_parenthesized())
-            {
-                return;
-            }
-            let Some((object, ExprKind::Object(properties))) =
-                arguments.get(1).filter(|it| !it.is_parenthesized()).map(|it| (it, it.kind()))
-            else {
-                cx.report(e, MISSING_SANDBOX_PROP);
-                return;
-            };
-            let Some(sandbox_prop) =
-                properties.iter().find(|it| it.key().and_then(static_name).is_some_and(|key| key.is("sandbox")))
-            else {
-                cx.report(object, MISSING_SANDBOX_PROP);
-                return;
-            };
-            if let Some(literal) = sandbox_prop.value()
-                && let Some(value) = literal.as_string()
-            {
-                validate_sandbox_value(value.bytes(), literal.span(), cx);
-            }
-        });
+        let Some((object, ExprKind::Object(properties))) =
+            arguments.get(1).filter(|it| !it.is_parenthesized()).map(|it| (it, it.kind()))
+        else {
+            cx.report(e, MISSING_SANDBOX_PROP);
+            return;
+        };
+        let Some(sandbox_prop) =
+            properties.iter().find(|it| it.key().and_then(static_name).is_some_and(|key| key.is("sandbox")))
+        else {
+            cx.report(object, MISSING_SANDBOX_PROP);
+            return;
+        };
+        if let Some(literal) = sandbox_prop.value()
+            && let Some(value) = literal.as_string()
+        {
+            validate_sandbox_value(value.bytes(), literal.span(), cx);
+        }
     }
 }
 

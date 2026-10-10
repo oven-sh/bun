@@ -22,32 +22,31 @@ fn required_aria_props(role: &[u8]) -> &'static [&'static str] {
 
 impl Rule for RoleHasRequiredAriaProps {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "role-has-required-aria-props", Kind::Problem);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         RoleHasRequiredAriaProps
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Jsx], |_, e, cx| {
-            let Some(jsx_el) = as_jsx_element(e) else {
-                return;
-            };
-            let Some(attr) = has_jsx_prop_ignore_case(jsx_el, "role") else {
-                return;
-            };
-            for role in get_string_literal_prop_value(attr).into_iter().flat_map(strings::split_unicode_whitespace) {
-                let mut formatted_missing = Vec::new();
-                for prop in required_aria_props(role).iter().filter(|prop| has_jsx_prop_ignore_case(jsx_el, prop).is_none()) {
-                    let separator = if formatted_missing.is_empty() { "`" } else { ", `" };
-                    formatted_missing.extend_from_slice(separator.as_bytes());
-                    formatted_missing.extend_from_slice(prop.as_bytes());
-                    formatted_missing.push(b'`');
-                }
-                if !formatted_missing.is_empty() {
-                    cx.report(attr, ROLE_HAS_REQUIRED_ARIA_PROPS).data("role", role).data("props", formatted_missing);
-                }
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(jsx_el) = as_jsx_element(e) else {
+            return;
+        };
+        let Some(attr) = has_jsx_prop_ignore_case(jsx_el, "role") else {
+            return;
+        };
+        for role in get_string_literal_prop_value(attr).into_iter().flat_map(strings::split_unicode_whitespace) {
+            let mut formatted_missing = Vec::new();
+            for prop in required_aria_props(role).iter().filter(|prop| has_jsx_prop_ignore_case(jsx_el, prop).is_none()) {
+                let separator = if formatted_missing.is_empty() { "`" } else { ", `" };
+                formatted_missing.extend_from_slice(separator.as_bytes());
+                formatted_missing.extend_from_slice(prop.as_bytes());
+                formatted_missing.push(b'`');
             }
-        });
+            if !formatted_missing.is_empty() {
+                cx.report(attr, ROLE_HAS_REQUIRED_ARIA_PROPS).data("role", role).data("props", formatted_missing);
+            }
+        }
     }
 }

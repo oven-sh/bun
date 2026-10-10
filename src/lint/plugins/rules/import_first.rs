@@ -15,21 +15,18 @@ fn is_relative_path(path: &[u8]) -> bool {
 
 impl Rule for First {
     const META: Meta = Meta::oxlint(Plugin::Import, "first", Kind::Suggestion);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         First { absolute_first: options.str(0) == Some("absolute-first") }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if file.has_stmts([StmtTag::Import, StmtTag::ImportEquals]) {
-            on.finish(Self::check);
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.has_stmts([StmtTag::Import, StmtTag::ImportEquals]).then_some(())
     }
-}
 
-impl First {
-    fn check<'a>(&self, cx: &mut Cx<'a, Self>) {
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
         let (mut has_non_import, mut any_relative) = (false, false);
         for stmt in cx.file().body() {
             let source = match stmt.kind() {

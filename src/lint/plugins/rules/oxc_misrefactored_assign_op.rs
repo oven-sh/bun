@@ -12,37 +12,36 @@ const DID_YOU_MEAN: Message = Message::new("", "Did you mean `{{suggestion}}`?")
 
 impl Rule for MisrefactoredAssignOp {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "misrefactored-assign-op", Kind::Problem).has_suggestions();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Assign]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         MisrefactoredAssignOp
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Assign], |_, e, cx| {
-            let ExprKind::Assign { op: Some(op), target, value } = e.kind() else {
-                return;
-            };
-            // `a &&= a && b` has no binary expression on the right for oxlint.
-            if value.binary_op() != Some(op) || matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish) || value.is_parenthesized() {
-                return;
-            }
-            let ExprKind::Binary { left, right, .. } = value.kind() else {
-                return;
-            };
-            let report = |operand: Expr<'a>| {
-                let suggestion = [target.text(), assign_op_text(Some(op)).as_bytes(), cx.slice(operand.outer_span())].join(&b' ');
-                cx.report(e, MISREFACTORED_ASSIGN_OP)
-                    .data("suggestion", suggestion.clone())
-                    .suggest_with(DID_YOU_MEAN, &[("suggestion", &suggestion[..])], |fixer| fixer.replace(e, &suggestion[..]));
-            };
-            if assignment_target_eq_expr(target, left) {
-                report(right);
-            }
-            if is_commutative_operator(op) && assignment_target_eq_expr(target, right) {
-                report(left);
-            }
-        });
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Assign { op: Some(op), target, value } = e.kind() else {
+            return;
+        };
+        // `a &&= a && b` has no binary expression on the right for oxlint.
+        if value.binary_op() != Some(op) || matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish) || value.is_parenthesized() {
+            return;
+        }
+        let ExprKind::Binary { left, right, .. } = value.kind() else {
+            return;
+        };
+        let report = |operand: Expr<'a>| {
+            let suggestion = [target.text(), assign_op_text(Some(op)).as_bytes(), cx.slice(operand.outer_span())].join(&b' ');
+            cx.report(e, MISREFACTORED_ASSIGN_OP)
+                .data("suggestion", suggestion.clone())
+                .suggest_with(DID_YOU_MEAN, &[("suggestion", &suggestion[..])], |fixer| fixer.replace(e, &suggestion[..]));
+        };
+        if assignment_target_eq_expr(target, left) {
+            report(right);
+        }
+        if is_commutative_operator(op) && assignment_target_eq_expr(target, right) {
+            report(left);
+        }
     }
 }
 

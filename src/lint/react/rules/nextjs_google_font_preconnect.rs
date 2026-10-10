@@ -9,31 +9,31 @@ const GOOGLE_FONT_PRECONNECT: Message = Message::new("", "`rel=\"preconnect\"` i
 
 impl Rule for GoogleFontPreconnect {
     const META: Meta = Meta::oxlint(Plugin::Nextjs, "google-font-preconnect", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         GoogleFontPreconnect
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("link") {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("link").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(jsx) = as_jsx_element(e) else {
+            return;
+        };
+        let Some(name) = jsx.tag().filter(|it| it.is_ident("link")) else {
+            return;
+        };
+        let href = has_jsx_prop_ignore_case(jsx, "href").and_then(get_string_literal_prop_value);
+        if !href.is_some_and(|it| it.starts_with(b"https://fonts.gstatic.com")) {
             return;
         }
-        on.exprs([ExprTag::Jsx], |_, e, cx| {
-            let Some(jsx) = as_jsx_element(e) else {
-                return;
-            };
-            let Some(name) = jsx.tag().filter(|it| it.is_ident("link")) else {
-                return;
-            };
-            let href = has_jsx_prop_ignore_case(jsx, "href").and_then(get_string_literal_prop_value);
-            if !href.is_some_and(|it| it.starts_with(b"https://fonts.gstatic.com")) {
-                return;
-            }
-            let rel = has_jsx_prop_ignore_case(jsx, "rel").and_then(get_string_literal_prop_value);
-            if rel.is_none_or(|it| it != b"preconnect") {
-                cx.report(name, GOOGLE_FONT_PRECONNECT);
-            }
-        });
+        let rel = has_jsx_prop_ignore_case(jsx, "rel").and_then(get_string_literal_prop_value);
+        if rel.is_none_or(|it| it != b"preconnect") {
+            cx.report(name, GOOGLE_FONT_PRECONNECT);
+        }
     }
 }

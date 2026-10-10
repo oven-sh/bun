@@ -34,6 +34,10 @@ pub struct Options {
     pub posix: bool,
     /// Braces are expanded before the pattern is read, as fast-glob does. minimatch always does.
     pub expands_braces_first: bool,
+    /// `nocomment` of minimatch: a `#` at the start is a character.
+    pub nocomment: bool,
+    /// `nonegate` of minimatch: so is a `!`.
+    pub nonegate: bool,
 }
 
 impl Options {
@@ -43,6 +47,8 @@ impl Options {
         dot: true,
         posix: false,
         expands_braces_first: false,
+        nocomment: false,
+        nonegate: false,
     };
     /// `new Minimatch(pattern, { dot: true })`: @eslint/config-array, the command line of ESLint, `.editorconfig`.
     pub const MINIMATCH_DOT: Options = Options {
@@ -50,6 +56,8 @@ impl Options {
         dot: true,
         posix: false,
         expands_braces_first: true,
+        nocomment: false,
+        nonegate: false,
     };
     /// `minimatch(path, pattern)`: @trivago/prettier-plugin-sort-imports.
     pub const MINIMATCH: Options = Options {
@@ -77,6 +85,8 @@ impl Options {
         dot: true,
         posix: false,
         expands_braces_first: false,
+        nocomment: false,
+        nonegate: false,
     };
     /// What fast-glob makes of a pattern with `{ dot: true }`: the command line of Prettier.
     pub const FAST_GLOB_DOT: Options = Options {
@@ -176,10 +186,16 @@ impl Pattern {
         match options.syntax {
             Syntax::Bun => bun(pattern),
             _ if pattern.len() > MAX_PATTERN_LENGTH => of(Kind::Never),
-            Syntax::Minimatch | Syntax::Minimatch3 if pattern.starts_with(b"#") => of(Kind::Never),
+            Syntax::Minimatch | Syntax::Minimatch3
+                if pattern.starts_with(b"#") && !options.nocomment =>
+            {
+                of(Kind::Never)
+            }
             Syntax::Minimatch | Syntax::Minimatch3 if pattern.is_empty() => of(Kind::Empty),
             Syntax::Minimatch | Syntax::Minimatch3 => {
-                let bangs = pattern.iter().take_while(|b| **b == b'!').count();
+                let bangs = (pattern.iter())
+                    .take_while(|b| **b == b'!' && !options.nonegate)
+                    .count();
                 Pattern {
                     kind: match segments::read(&pattern[bangs..], options) {
                         Some(set) => Kind::Minimatch(set, options.dot),
@@ -192,7 +208,7 @@ impl Pattern {
             Syntax::Minimatch3MakeRe => of(Kind::Picomatch {
                 alternatives: vec![Alternative {
                     written: Box::default(),
-                    program: read_minimatch3::pattern(pattern, options.dot),
+                    program: read_minimatch3::pattern(pattern, options),
                     is_negated: false,
                 }],
                 is_asked_directly: true,

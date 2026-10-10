@@ -9,6 +9,9 @@ const BAD_COMPARISON_SEQUENCE: Message = Message::new("", "Bad comparison sequen
 
 impl Rule for BadComparisonSequence {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "bad-comparison-sequence", Kind::Problem);
+    const ON: On = On::new()
+        .binaries(&[BinOp::EqEq, BinOp::NotEq, BinOp::EqEqEq, BinOp::NotEqEq])
+        .binaries(&[BinOp::Lt, BinOp::Le, BinOp::Gt, BinOp::Ge]);
     /// `has_no_bad_comparison_in_parents`
     type State<'a> = AncestorMemo<'a, bool>;
 
@@ -16,19 +19,19 @@ impl Rule for BadComparisonSequence {
         BadComparisonSequence
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
-        let equality = [BinOp::EqEq, BinOp::NotEq, BinOp::EqEqEq, BinOp::NotEqEq];
-        on.binaries(equality.into_iter().chain([BinOp::Lt, BinOp::Le, BinOp::Gt, BinOp::Ge]), |_, e, cx| {
-            if let Some(comparison_result) = bad_comparison_sequence(e)
-                && cx.state.find(Node::Expr(e), has_no_bad_comparison_in_parent) == Some(true)
-            {
-                let compared_against = e.right().map(Expr::outer_span).unwrap_or_default();
-                cx.report(comparison_result, BAD_COMPARISON_SEQUENCE)
-                    .first_label("This comparison expression produces a boolean")
-                    .label(compared_against, "That boolean is then compared with this operand");
-            }
-        });
-        AncestorMemo::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(AncestorMemo::default())
+    }
+
+    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(comparison_result) = bad_comparison_sequence(e)
+            && cx.state.find(Node::Expr(e), has_no_bad_comparison_in_parent) == Some(true)
+        {
+            let compared_against = e.right().map(Expr::outer_span).unwrap_or_default();
+            cx.report(comparison_result, BAD_COMPARISON_SEQUENCE)
+                .first_label("This comparison expression produces a boolean")
+                .label(compared_against, "That boolean is then compared with this operand");
+        }
     }
 }
 

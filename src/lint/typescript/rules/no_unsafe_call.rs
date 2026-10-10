@@ -92,23 +92,21 @@ impl Rule for NoUnsafeCall {
     const META: Meta = Meta::typescript("no-unsafe-call", Kind::Problem)
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::New, ExprTag::TaggedTemplate]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoUnsafeCall
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs(
-            [ExprTag::Call, ExprTag::New, ExprTag::TaggedTemplate],
-            |_, node, cx| match node.kind() {
-                ExprKind::Call(call) => check_call(call.callee(), call.callee(), Use::Call, cx),
-                ExprKind::New(call) => check_call(call.callee(), node, Use::New, cx),
-                ExprKind::TaggedTemplate(call) => {
-                    check_call(call.callee(), call.callee(), Use::TemplateTag, cx);
-                }
-                _ => {}
-            },
-        );
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match node.kind() {
+            ExprKind::Call(call) => check_call(call.callee(), call.callee(), Use::Call, cx),
+            ExprKind::New(call) => check_call(call.callee(), node, Use::New, cx),
+            ExprKind::TaggedTemplate(call) => {
+                check_call(call.callee(), call.callee(), Use::TemplateTag, cx);
+            }
+            _ => {}
+        }
     }
 }

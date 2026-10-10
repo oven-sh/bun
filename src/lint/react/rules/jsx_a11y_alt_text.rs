@@ -30,7 +30,8 @@ const INPUT_TYPE_IMAGE_HELP: &str = "<input> elements with type=\"image\" must h
 
 impl Rule for AltText {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "alt-text", Kind::Problem);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let config = options.object(0);
@@ -48,36 +49,34 @@ impl Rule for AltText {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Jsx], |rule, e, cx| {
-            let Some(jsx_el) = as_jsx_element(e) else {
-                return;
-            };
-            let name = get_element_type(cx.file(), jsx_el);
-            let is_custom = |custom_tags: &[String]| custom_tags.iter().any(|it| *it.as_bytes() == *name);
-            let is = |tag: &[u8], custom_tags: &Option<Vec<String>>| {
-                custom_tags.as_ref().is_some_and(|custom_tags| *name == *tag || is_custom(custom_tags))
-            };
-            let is_input = |custom_tags: &Vec<String>| is_input_with_type_image(&name, jsx_el) || is_custom(custom_tags);
-            // The three with one message are told apart by the help.
-            let (message, help) = if is(b"img", &rule.img) {
-                (img_rule(jsx_el), "")
-            } else if is(b"object", &rule.object) {
-                (object_rule(cx.file(), jsx_el), OBJECT_HELP)
-            } else if is(b"area", &rule.area) {
-                (area_rule(jsx_el), AREA_HELP)
-            } else if rule.input_type_image.as_ref().is_some_and(is_input) {
-                (area_rule(jsx_el), INPUT_TYPE_IMAGE_HELP)
-            } else {
-                (None, "")
-            };
-            if let Some(message) = message {
-                let report = cx.report(jsx_el.opening_span(), message);
-                if !help.is_empty() {
-                    report.help(help);
-                }
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(jsx_el) = as_jsx_element(e) else {
+            return;
+        };
+        let name = get_element_type(cx.file(), jsx_el);
+        let is_custom = |custom_tags: &[String]| custom_tags.iter().any(|it| *it.as_bytes() == *name);
+        let is = |tag: &[u8], custom_tags: &Option<Vec<String>>| {
+            custom_tags.as_ref().is_some_and(|custom_tags| *name == *tag || is_custom(custom_tags))
+        };
+        let is_input = |custom_tags: &Vec<String>| is_input_with_type_image(&name, jsx_el) || is_custom(custom_tags);
+        // The three with one message are told apart by the help.
+        let (message, help) = if is(b"img", &self.img) {
+            (img_rule(jsx_el), "")
+        } else if is(b"object", &self.object) {
+            (object_rule(cx.file(), jsx_el), OBJECT_HELP)
+        } else if is(b"area", &self.area) {
+            (area_rule(jsx_el), AREA_HELP)
+        } else if self.input_type_image.as_ref().is_some_and(is_input) {
+            (area_rule(jsx_el), INPUT_TYPE_IMAGE_HELP)
+        } else {
+            (None, "")
+        };
+        if let Some(message) = message {
+            let report = cx.report(jsx_el.opening_span(), message);
+            if !help.is_empty() {
+                report.help(help);
             }
-        });
+        }
     }
 }
 

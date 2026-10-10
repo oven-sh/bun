@@ -20,6 +20,7 @@ fn is_unnecessary<'a>(statement: Stmt<'a>, label: Name<'a>, cx: &mut Cx<'a, NoEx
 
 impl Rule for NoExtraLabel {
     const META: Meta = Meta::eslint("no-extra-label", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().stmts(&[StmtTag::Break, StmtTag::Continue]);
     /// The innermost loop or `switch` around a node, in its function.
     type State<'a> = AncestorMemo<'a, Option<Stmt<'a>>>;
 
@@ -27,21 +28,22 @@ impl Rule for NoExtraLabel {
         NoExtraLabel
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
-        on.stmts([StmtTag::Break, StmtTag::Continue], |_, statement, cx| {
-            let Some(label) = statement.label() else {
-                return;
-            };
-            if !is_unnecessary(statement, label.name(), cx) {
-                return;
-            }
-            cx.report(label, UNEXPECTED).data("name", label).fix(|fixer| {
-                let keyword_len = if statement.tag() == StmtTag::Break { "break".len() } else { "continue".len() };
-                let after_keyword = Span::empty(statement.span().start + keyword_len as u32);
-                (!fixer.file().comments_exist_between(after_keyword, label))
-                    .then(|| fixer.remove(after_keyword.to(label.span())))
-            });
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(AncestorMemo::default())
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(label) = statement.label() else {
+            return;
+        };
+        if !is_unnecessary(statement, label.name(), cx) {
+            return;
+        }
+        cx.report(label, UNEXPECTED).data("name", label).fix(|fixer| {
+            let keyword_len = if statement.tag() == StmtTag::Break { "break".len() } else { "continue".len() };
+            let after_keyword = Span::empty(statement.span().start + keyword_len as u32);
+            (!fixer.file().comments_exist_between(after_keyword, label))
+                .then(|| fixer.remove(after_keyword.to(label.span())))
         });
-        AncestorMemo::default()
     }
 }

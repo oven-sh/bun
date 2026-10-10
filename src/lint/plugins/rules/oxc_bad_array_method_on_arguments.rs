@@ -9,32 +9,35 @@ const BAD_ARRAY_METHOD_ON_ARGUMENTS: Message = Message::new("", "Bad array metho
 
 impl Rule for BadArrayMethodOnArguments {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "bad-array-method-on-arguments", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         BadArrayMethodOnArguments
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions("arguments") {
+            return None;
+        }
+        Some(())
+    }
+
+    fn expr<'a>(&self, member: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if !member.object().is_some_and(|object| get_inner_expression(object).is_ident("arguments")) {
             return;
         }
-        on.exprs([ExprTag::Dot, ExprTag::Index], |_, member, cx| {
-            if !member.object().is_some_and(|object| get_inner_expression(object).is_ident("arguments")) {
-                return;
-            }
-            // It is what is called or an argument. Parentheses and the whole of an optional chain are nodes in between for oxlint.
-            if !matches!(member.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Call)
-                || member.is_parenthesized()
-                || member.is_chain_root()
-            {
-                return;
-            }
-            let is_array_method = |name: &Name| ARRAY_METHODS.binary_search(&name.bytes()).is_ok();
-            if let Some(method_name) = static_property_name(member).filter(is_array_method) {
-                cx.report(member, BAD_ARRAY_METHOD_ON_ARGUMENTS).data("method_name", method_name);
-            }
-        });
+        // It is what is called or an argument. Parentheses and the whole of an optional chain are nodes in between for oxlint.
+        if !matches!(member.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Call)
+            || member.is_parenthesized()
+            || member.is_chain_root()
+        {
+            return;
+        }
+        let is_array_method = |name: &Name| ARRAY_METHODS.binary_search(&name.bytes()).is_ok();
+        if let Some(method_name) = static_property_name(member).filter(is_array_method) {
+            cx.report(member, BAD_ARRAY_METHOD_ON_ARGUMENTS).data("method_name", method_name);
+        }
     }
 }
 

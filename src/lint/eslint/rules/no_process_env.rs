@@ -23,28 +23,28 @@ fn is_in_type_query(e: Expr<'_>) -> bool {
 
 impl Rule for NoProcessEnv {
     const META: Meta = Meta::eslint("no-process-env", Kind::Suggestion).deprecated();
+    const ON: On = On::new().exprs(&[ExprTag::Dot]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoProcessEnv
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("process") {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("process").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Dot { obj, name, .. } = e.kind() else {
             return;
+        };
+        // The `name` of ESLint's `PrivateIdentifier` is without the `#`.
+        if name.name().is_any(&["env", "#env"])
+            && obj.is_ident("process")
+            && !e.is_jsx_tag_name()
+            && !is_in_type_query(e)
+        {
+            cx.report(e, UNEXPECTED_PROCESS_ENV);
         }
-        on.exprs([ExprTag::Dot], |_, e, cx| {
-            let ExprKind::Dot { obj, name, .. } = e.kind() else {
-                return;
-            };
-            // The `name` of ESLint's `PrivateIdentifier` is without the `#`.
-            if name.name().is_any(&["env", "#env"])
-                && obj.is_ident("process")
-                && !e.is_jsx_tag_name()
-                && !is_in_type_query(e)
-            {
-                cx.report(e, UNEXPECTED_PROCESS_ENV);
-            }
-        });
     }
 }

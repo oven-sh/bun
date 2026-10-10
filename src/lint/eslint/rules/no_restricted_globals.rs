@@ -149,6 +149,7 @@ impl NoRestrictedGlobals {
 
 impl Rule for NoRestrictedGlobals {
     const META: Meta = Meta::eslint("no-restricted-globals", Kind::Suggestion);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -188,9 +189,11 @@ impl Rule for NoRestrictedGlobals {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        if !self.restricted.is_empty() {
-            on.finish(Self::check);
-        }
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<()> {
+        (!self.restricted.is_empty()).then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        self.check(cx);
     }
 }

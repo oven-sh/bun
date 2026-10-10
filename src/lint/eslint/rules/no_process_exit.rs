@@ -10,20 +10,20 @@ const NO_PROCESS_EXIT: Message = Message::new(
 
 impl Rule for NoProcessExit {
     const META: Meta = Meta::eslint("no-process-exit", Kind::Suggestion).deprecated();
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoProcessExit
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("process") {
-            return;
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("process").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if ast_utils::is_process_exit_call(e) {
+            cx.report(e, NO_PROCESS_EXIT);
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            if ast_utils::is_process_exit_call(e) {
-                cx.report(e, NO_PROCESS_EXIT);
-            }
-        });
     }
 }

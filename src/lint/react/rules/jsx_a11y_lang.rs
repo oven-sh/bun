@@ -13,32 +13,31 @@ const LANG: Message = Message::new("", "`lang` attribute must have a valid value
 
 impl Rule for Lang {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "lang", Kind::Problem);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         Lang
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Jsx], |_, e, cx| {
-            let Some(jsx_el) = as_jsx_element(e) else {
-                return;
-            };
-            if *get_element_type(cx.file(), jsx_el) != *b"html" {
-                return;
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(jsx_el) = as_jsx_element(e) else {
+            return;
+        };
+        if *get_element_type(cx.file(), jsx_el) != *b"html" {
+            return;
+        }
+        match has_jsx_prop_ignore_case(jsx_el, "lang") {
+            Some(lang_prop) if is_valid_lang_prop(lang_prop) => {}
+            Some(lang_prop) => {
+                cx.report(lang_prop, LANG);
             }
-            match has_jsx_prop_ignore_case(jsx_el, "lang") {
-                Some(lang_prop) if is_valid_lang_prop(lang_prop) => {}
-                Some(lang_prop) => {
-                    cx.report(lang_prop, LANG);
-                }
-                None => {
-                    if let Some(name) = jsx_el.tag() {
-                        cx.report(name, LANG);
-                    }
+            None => {
+                if let Some(name) = jsx_el.tag() {
+                    cx.report(name, LANG);
                 }
             }
-        });
+        }
     }
 }
 

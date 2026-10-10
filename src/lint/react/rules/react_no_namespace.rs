@@ -11,31 +11,40 @@ const NO_NAMESPACE: Message =
 
 impl Rule for NoNamespace {
     const META: Meta = Meta::oxlint(Plugin::React, "no-namespace", Kind::Problem);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Call]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoNamespace
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        on.exprs([ExprTag::Jsx], |_, e, cx| {
-            if let ExprKind::Jsx(jsx) = e.kind()
-                && let Some(name) = jsx.tag()
-            {
-                check(name, cx);
-            }
-        });
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let on = On::new().exprs(&[ExprTag::Jsx]);
         if !file.mentions("createElement") {
-            return;
+            return on;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            if let Some(call) = e.as_call()
-                && is_create_element_call(call)
-                && let Some(name) = call.args().first().filter(|it| !it.is_parenthesized())
-            {
-                check(name, cx);
+        on.exprs(&[ExprTag::Call])
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Jsx => {
+                if let ExprKind::Jsx(jsx) = e.kind()
+                    && let Some(name) = jsx.tag()
+                {
+                    check(name, cx);
+                }
             }
-        });
+            ExprTag::Call => {
+                if let Some(call) = e.as_call()
+                    && is_create_element_call(call)
+                    && let Some(name) = call.args().first().filter(|it| !it.is_parenthesized())
+                {
+                    check(name, cx);
+                }
+            }
+            _ => {}
+        }
     }
 }
 

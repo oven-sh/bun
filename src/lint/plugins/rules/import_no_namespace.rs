@@ -13,21 +13,22 @@ const NO_NAMESPACE: Message = Message::new("", "Usage of namespaced aka wildcard
 
 impl Rule for NoNamespace {
     const META: Meta = Meta::oxlint(Plugin::Import, "no-namespace", Kind::Suggestion);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         NoNamespace { ignore: options.object(0).strings("ignore").iter().map(|it| it.as_bytes().into()).collect() }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if file.has_stmts([StmtTag::Import]) {
-            on.finish(|rule, cx| {
-                for import in import_declarations(cx.file()) {
-                    if let Some(local) = import.namespace().filter(|_| !rule.ignores(import.spec().bytes())) {
-                        cx.report(local, NO_NAMESPACE);
-                    }
-                }
-            });
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.has_stmts([StmtTag::Import]).then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        for import in import_declarations(cx.file()) {
+            if let Some(local) = import.namespace().filter(|_| !self.ignores(import.spec().bytes())) {
+                cx.report(local, NO_NAMESPACE);
+            }
         }
     }
 }

@@ -72,8 +72,23 @@ fn is_function(node: Expr) -> bool {
     }
 }
 
-impl NoImpliedEval {
-    fn check_implied_eval<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoImpliedEval {
+    const META: Meta = Meta::typescript("no-implied-eval", Kind::Suggestion)
+        .presets(Presets::RECOMMENDED_TYPE_CHECKED)
+        .requires_types()
+        .extends_base_rule("no-implied-eval");
+    const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::New]);
+    type State<'a> = GlobalFunctions<'a>;
+
+    fn new(_: &Options) -> Self {
+        NoImpliedEval
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<GlobalFunctions<'a>> {
+        Some(GlobalFunctions::default())
+    }
+
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let (ExprKind::Call(call) | ExprKind::New(call)) = node.kind() else {
             return;
         };
@@ -101,22 +116,5 @@ impl NoImpliedEval {
         {
             cx.report(handler, NO_IMPLIED_EVAL_ERROR);
         }
-    }
-}
-
-impl Rule for NoImpliedEval {
-    const META: Meta = Meta::typescript("no-implied-eval", Kind::Suggestion)
-        .presets(Presets::RECOMMENDED_TYPE_CHECKED)
-        .requires_types()
-        .extends_base_rule("no-implied-eval");
-    type State<'a> = GlobalFunctions<'a>;
-
-    fn new(_: &Options) -> Self {
-        NoImpliedEval
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> GlobalFunctions<'a> {
-        on.exprs([ExprTag::Call, ExprTag::New], Self::check_implied_eval);
-        GlobalFunctions::default()
     }
 }

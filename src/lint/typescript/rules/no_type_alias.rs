@@ -142,7 +142,8 @@ impl NoTypeAlias {
 
 impl Rule for NoTypeAlias {
     const META: Meta = Meta::typescript("no-type-alias", Kind::Suggestion).deprecated();
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::TypeAlias]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -166,17 +167,15 @@ impl Rule for NoTypeAlias {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::TypeAlias], |rule, statement, cx| {
-            let StmtKind::TypeAlias(alias) = statement.kind() else {
-                return;
-            };
-            let mut types = SmallVec::new();
-            get_types(alias.ty(), &mut types);
-            let is_top_level = types.len() == 1;
-            for ty in types {
-                rule.validate_type_aliases(cx, ty, is_top_level);
-            }
-        });
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let StmtKind::TypeAlias(alias) = statement.kind() else {
+            return;
+        };
+        let mut types = SmallVec::new();
+        get_types(alias.ty(), &mut types);
+        let is_top_level = types.len() == 1;
+        for ty in types {
+            self.validate_type_aliases(cx, ty, is_top_level);
+        }
     }
 }

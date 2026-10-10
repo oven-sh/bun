@@ -78,8 +78,30 @@ fn operator_of(e: Expr) -> Option<(Span, &'static str)> {
     }
 }
 
-impl NoMixedOperators {
-    fn check<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoMixedOperators {
+    const META: Meta = Meta::eslint("no-mixed-operators", Kind::Suggestion).deprecated();
+    const ON: On = On::new().exprs(&[ExprTag::Binary]);
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        let options = options.object(0);
+        let mut groups: Vec<u32> = (options.array("groups").iter())
+            .map(|group| {
+                let operators = group.as_array().unwrap_or_default().iter();
+                operators.filter_map(Json::as_str).fold(0, |all, it| all | bit_of_text(it))
+            })
+            .collect();
+        if groups.is_empty() {
+            let set = |group: &&[&str]| group.iter().fold(0, |all, it| all | bit_of_text(it.as_bytes()));
+            groups = DEFAULT_GROUPS.iter().map(set).collect();
+        }
+        NoMixedOperators {
+            groups,
+            allows_same_precedence: options.bool_or("allowSamePrecedence", true),
+        }
+    }
+
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Binary { op, .. } = node.kind() else {
             return;
         };
@@ -113,32 +135,5 @@ impl NoMixedOperators {
                 .data("leftOperator", left.1)
                 .data("rightOperator", right.1);
         }
-    }
-}
-
-impl Rule for NoMixedOperators {
-    const META: Meta = Meta::eslint("no-mixed-operators", Kind::Suggestion).deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let options = options.object(0);
-        let mut groups: Vec<u32> = (options.array("groups").iter())
-            .map(|group| {
-                let operators = group.as_array().unwrap_or_default().iter();
-                operators.filter_map(Json::as_str).fold(0, |all, it| all | bit_of_text(it))
-            })
-            .collect();
-        if groups.is_empty() {
-            let set = |group: &&[&str]| group.iter().fold(0, |all, it| all | bit_of_text(it.as_bytes()));
-            groups = DEFAULT_GROUPS.iter().map(set).collect();
-        }
-        NoMixedOperators {
-            groups,
-            allows_same_precedence: options.bool_or("allowSamePrecedence", true),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Binary], Self::check);
     }
 }

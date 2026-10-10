@@ -18,6 +18,7 @@ const CATCH_OR_RETURN: Message = Message::new("", "Expected {{expected_methods}}
 
 impl Rule for CatchOrReturn {
     const META: Meta = Meta::oxlint(Plugin::Promise, "catch-or-return", Kind::Suggestion);
+    const ON: On = On::new().stmts(&[StmtTag::Expr]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -48,28 +49,27 @@ impl Rule for CatchOrReturn {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions_any(&["then", "catch", "finally", "Promise"]) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions_any(&["then", "catch", "finally", "Promise"]).then_some(())
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let StmtKind::Expr(e) = statement.kind() else {
             return;
+        };
+        // What is in parentheses, and an optional chain, is not a call for oxlint.
+        let Some(call_expr) = e.as_call().filter(|it| it.chain() == Chain::No && !e.is_parenthesized()) else {
+            return;
+        };
+        // A promise, or a method that is called at the end of one: `foo().catch().randomFunc()`
+        let is_promise_call = |it: Call| is_promise(it).is_some();
+        if (is_promise_call(call_expr) || object_call(call_expr).is_some_and(is_promise_call))
+            && !self.is_allowed_promise_termination(call_expr)
+        {
+            cx.report(e, CATCH_OR_RETURN)
+                .data("expected_methods", self.expected_methods.clone())
+                .help_with(|| self.help.clone());
         }
-        on.stmts([StmtTag::Expr], |rule, statement, cx| {
-            let StmtKind::Expr(e) = statement.kind() else {
-                return;
-            };
-            // What is in parentheses, and an optional chain, is not a call for oxlint.
-            let Some(call_expr) = e.as_call().filter(|it| it.chain() == Chain::No && !e.is_parenthesized()) else {
-                return;
-            };
-            // A promise, or a method that is called at the end of one: `foo().catch().randomFunc()`
-            let is_promise_call = |it: Call| is_promise(it).is_some();
-            if (is_promise_call(call_expr) || object_call(call_expr).is_some_and(is_promise_call))
-                && !rule.is_allowed_promise_termination(call_expr)
-            {
-                cx.report(e, CATCH_OR_RETURN)
-                    .data("expected_methods", rule.expected_methods.clone())
-                    .help_with(|| rule.help.clone());
-            }
-        });
     }
 }
 

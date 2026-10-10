@@ -89,6 +89,7 @@ impl NoInvalidRegexp {
 
 impl Rule for NoInvalidRegexp {
     const META: Meta = Meta::eslint("no-invalid-regexp", Kind::Problem).recommended();
+    const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::New]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -97,9 +98,11 @@ impl Rule for NoInvalidRegexp {
         NoInvalidRegexp { allowed_flags }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if file.mentions("RegExp") {
-            on.exprs([ExprTag::Call, ExprTag::New], Self::check);
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("RegExp").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(e, cx);
     }
 }

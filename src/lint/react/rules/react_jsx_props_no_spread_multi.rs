@@ -15,16 +15,19 @@ const MULTIPLE_MEMBER_EXPRESSIONS: Message = Message::new("", "'{{member_name}}'
 
 impl Rule for JsxPropsNoSpreadMulti {
     const META: Meta = Meta::oxlint(Plugin::React, "jsx-props-no-spread-multi", Kind::Problem).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         JsxPropsNoSpreadMulti
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if is_jsx(file) {
-            on.exprs([ExprTag::Jsx], check);
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        is_jsx(file).then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        check(self, e, cx);
     }
 }
 

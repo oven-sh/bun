@@ -54,6 +54,7 @@ struct Imports<'a> {
 
 impl Rule for JsxKey {
     const META: Meta = Meta::oxlint(Plugin::React, "jsx-key", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Array]);
     type State<'a> = State<'a>;
 
     /// Without options nothing is on. In an object of options, what is missing is on.
@@ -66,38 +67,54 @@ impl Rule for JsxKey {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if !is_jsx(file) || !file.has_exprs([ExprTag::Jsx]) {
-            return State::default();
-        }
-        on.exprs([ExprTag::Jsx], |rule, e, cx| {
-            let ExprKind::Jsx(jsx) = e.kind() else {
-                return;
-            };
-            let Some(name) = jsx.tag() else {
-                if rule.check_fragment_shorthand {
-                    check_missing_key(e, jsx.opening_span(), cx);
-                }
-                return;
-            };
-            if !jsx.attrs().iter().any(is_key) {
-                check_missing_key(e, name.span(), cx);
-            }
-            if rule.check_key_must_before_spread {
-                check_jsx_element_is_key_before_spread(jsx, cx);
-            }
-            if rule.warn_on_duplicates && cx.mentions("key") {
-                check_duplicate_keys(&mut jsx.children().iter().filter(|it| it.jsx_container_span().is_none()), cx);
-            }
-        });
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new().exprs(&[ExprTag::Jsx]);
         if self.warn_on_duplicates && file.mentions("key") {
-            on.exprs([ExprTag::Array], |_, e, cx| {
+            on = on.exprs(&[ExprTag::Array]);
+        }
+        on
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        if !is_jsx(file) || !file.has_exprs([ExprTag::Jsx]) {
+            return None;
+        }
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Jsx => self.jsx(e, cx),
+            ExprTag::Array => {
                 if let ExprKind::Array(elements) = e.kind() {
                     check_duplicate_keys(&mut elements.iter().filter(|it| !it.is_parenthesized()), cx);
                 }
-            });
+            }
+            _ => {}
         }
-        State::default()
+    }
+}
+
+impl JsxKey {
+    fn jsx<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Jsx(jsx) = e.kind() else {
+            return;
+        };
+        let Some(name) = jsx.tag() else {
+            if self.check_fragment_shorthand {
+                check_missing_key(e, jsx.opening_span(), cx);
+            }
+            return;
+        };
+        if !jsx.attrs().iter().any(is_key) {
+            check_missing_key(e, name.span(), cx);
+        }
+        if self.check_key_must_before_spread {
+            check_jsx_element_is_key_before_spread(jsx, cx);
+        }
+        if self.warn_on_duplicates && cx.mentions("key") {
+            check_duplicate_keys(&mut jsx.children().iter().filter(|it| it.jsx_container_span().is_none()), cx);
+        }
     }
 }
 

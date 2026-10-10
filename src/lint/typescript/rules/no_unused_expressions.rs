@@ -10,6 +10,7 @@ impl Rule for NoUnusedExpressions {
     const META: Meta = Meta::typescript("no-unused-expressions", Kind::Suggestion)
         .recommended()
         .extends_base_rule("no-unused-expressions");
+    const ON: On = On::new().stmts(&[StmtTag::Expr]);
     type State<'a> = Prologue<'a>;
 
     fn new(options: &Options) -> Self {
@@ -18,12 +19,13 @@ impl Rule for NoUnusedExpressions {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Prologue<'a> {
-        on.stmts([StmtTag::Expr], |rule, statement, cx| {
-            let mut prologue = std::mem::take(&mut cx.state);
-            check(rule.config, statement, &mut prologue, cx);
-            cx.state = prologue;
-        });
-        Prologue::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Prologue<'a>> {
+        Some(Prologue::default())
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let mut prologue = std::mem::take(&mut cx.state);
+        check(self.config, statement, &mut prologue, cx);
+        cx.state = prologue;
     }
 }

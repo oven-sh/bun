@@ -18,6 +18,7 @@ const PARAM_NAMES: Message = Message::new("", "Promise constructor parameters mu
 
 impl Rule for ParamNames {
     const META: Meta = Meta::oxlint(Plugin::Promise, "param-names", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::New]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -26,38 +27,37 @@ impl Rule for ParamNames {
         ParamNames { resolve_pattern: pattern("resolvePattern"), reject_pattern: pattern("rejectPattern") }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("Promise") {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("Promise").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::New(new_expr) = e.kind() else {
+            return;
+        };
+        if new_expr.args().len() != 1 || !is_promise_constructor(new_expr) {
             return;
         }
-        on.exprs([ExprTag::New], |rule, e, cx| {
-            let ExprKind::New(new_expr) = e.kind() else {
-                return;
+        let Some(executor) = new_expr.args().first().filter(|it| !it.is_parenthesized()).and_then(Expr::as_fn) else {
+            return;
+        };
+        let expected = [
+            (&self.resolve_pattern, ["_resolve", "resolve"], "^_?resolve$"),
+            (&self.reject_pattern, ["_reject", "reject"], "^_?reject$"),
+        ];
+        for (param, (pattern, names, default_pattern)) in executor.params().iter().filter(|it| !it.is_rest()).zip(expected) {
+            let Some(name) = param.pat().as_ident() else {
+                continue;
             };
-            if new_expr.args().len() != 1 || !is_promise_constructor(new_expr) {
-                return;
-            }
-            let Some(executor) = new_expr.args().first().filter(|it| !it.is_parenthesized()).and_then(Expr::as_fn) else {
-                return;
-            };
-            let expected = [
-                (&rule.resolve_pattern, ["_resolve", "resolve"], "^_?resolve$"),
-                (&rule.reject_pattern, ["_reject", "reject"], "^_?reject$"),
-            ];
-            for (param, (pattern, names, default_pattern)) in executor.params().iter().filter(|it| !it.is_rest()).zip(expected) {
-                let Some(name) = param.pat().as_ident() else {
-                    continue;
-                };
-                match pattern {
-                    Some(pattern) if !pattern.regex.test(name.bytes()) => {
-                        cx.report(param.pat(), PARAM_NAMES).data("pattern", pattern.text.clone());
-                    }
-                    None if !name.is_any(&names) => {
-                        cx.report(param.pat(), PARAM_NAMES).data("pattern", default_pattern);
-                    }
-                    _ => {}
+            match pattern {
+                Some(pattern) if !pattern.regex.test(name.bytes()) => {
+                    cx.report(param.pat(), PARAM_NAMES).data("pattern", pattern.text.clone());
                 }
+                None if !name.is_any(&names) => {
+                    cx.report(param.pat(), PARAM_NAMES).data("pattern", default_pattern);
+                }
+                _ => {}
             }
-        });
+        }
     }
 }

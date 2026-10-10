@@ -138,7 +138,10 @@ impl Rule for NoEmptyObjectType {
     const META: Meta = Meta::typescript("no-empty-object-type", Kind::Suggestion)
         .has_suggestions()
         .recommended();
-    type State<'a> = ();
+    const ON: On = On::new()
+        .stmts(&[StmtTag::Interface])
+        .types(&[TypeTag::Object]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -153,12 +156,22 @@ impl Rule for NoEmptyObjectType {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new();
         if self.allow_interfaces != AllowInterfaces::Always {
-            on.stmts([StmtTag::Interface], Self::check_interface);
+            on = on.stmts(&[StmtTag::Interface]);
         }
         if !self.allow_object_types {
-            on.types([TypeTag::Object], Self::check_type_literal);
+            on = on.types(&[TypeTag::Object]);
         }
+        on
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_interface(statement, cx);
+    }
+
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_type_literal(ty, cx);
     }
 }

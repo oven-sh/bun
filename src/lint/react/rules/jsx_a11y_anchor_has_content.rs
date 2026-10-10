@@ -14,36 +14,35 @@ const MISSING_CONTENT: Message = Message::new("", "Missing accessible content wh
 impl Rule for AnchorHasContent {
     // oxlint declares a suggestion. What it makes is a fix.
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "anchor-has-content", Kind::Problem).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         AnchorHasContent { components: options.object(0).strings("components").into_iter().map(String::from).collect() }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Jsx], |rule, e, cx| {
-            let Some(jsx_el) = as_jsx_element(e) else {
-                return;
-            };
-            let name = get_element_type(cx.file(), jsx_el);
-            if *name != *b"a" && !rule.components.iter().any(|it| *it.as_bytes() == *name) {
-                return;
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(jsx_el) = as_jsx_element(e) else {
+            return;
+        };
+        let name = get_element_type(cx.file(), jsx_el);
+        if *name != *b"a" && !self.components.iter().any(|it| *it.as_bytes() == *name) {
+            return;
+        }
+        if is_hidden_from_screen_reader(cx.file(), jsx_el)
+            || object_has_accessible_child(cx.file(), jsx_el)
+            || has_jsx_prop_ignore_case(jsx_el, "title").is_some()
+            || has_jsx_prop_ignore_case(jsx_el, "aria-label").is_some()
+            || is_component_prop(e)
+        {
+            return;
+        }
+        cx.report(e, MISSING_CONTENT).fix(|fixer| {
+            let mut all = children(fixer.file(), jsx_el);
+            match (all.next(), all.next()) {
+                (Some(Child::Element(child)), None) => remove_hidden_attributes(child, fixer),
+                _ => Vec::new(),
             }
-            if is_hidden_from_screen_reader(cx.file(), jsx_el)
-                || object_has_accessible_child(cx.file(), jsx_el)
-                || has_jsx_prop_ignore_case(jsx_el, "title").is_some()
-                || has_jsx_prop_ignore_case(jsx_el, "aria-label").is_some()
-                || is_component_prop(e)
-            {
-                return;
-            }
-            cx.report(e, MISSING_CONTENT).fix(|fixer| {
-                let mut all = children(fixer.file(), jsx_el);
-                match (all.next(), all.next()) {
-                    (Some(Child::Element(child)), None) => remove_hidden_attributes(child, fixer),
-                    _ => Vec::new(),
-                }
-            });
         });
     }
 }

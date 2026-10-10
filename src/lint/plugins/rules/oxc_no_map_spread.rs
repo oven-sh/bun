@@ -29,6 +29,7 @@ pub struct State<'a> {
 
 impl Rule for NoMapSpread {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "no-map-spread", Kind::Suggestion).has_suggestions();
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -36,16 +37,11 @@ impl Rule for NoMapSpread {
         NoMapSpread { ignore_rereads: options.bool_or("ignoreRereads", true), ignore_args: options.bool_or("ignoreArgs", true) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if file.mentions_any(&MAP_FN_NAMES) {
-            on.exprs([ExprTag::Call], |rule, e, cx| rule.check(e, cx));
-        }
-        State::default()
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        file.mentions_any(&MAP_FN_NAMES).then(State::default)
     }
-}
 
-impl NoMapSpread {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(call_expr) = e.as_call() else {
             return;
         };
@@ -105,7 +101,9 @@ impl NoMapSpread {
             }
         }
     }
+}
 
+impl NoMapSpread {
     fn is_ignored_map_call<'a>(&self, ident: Expr<'a>, call_site: Span, cx: &mut Cx<'a, Self>) -> bool {
         let Some(symbol) = ident.symbol() else {
             return false;

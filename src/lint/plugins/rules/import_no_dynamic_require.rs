@@ -11,31 +11,42 @@ const NO_DYNAMIC_REQUIRE: Message = Message::new("", "Expected a literal string 
 
 impl Rule for NoDynamicRequire {
     const META: Meta = Meta::oxlint(Plugin::Import, "no-dynamic-require", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::ImportCall, ExprTag::Call]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         NoDynamicRequire { esmodule: options.object(0).bool_or("esmodule", false) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
         if self.esmodule {
-            on.exprs([ExprTag::ImportCall], |_, e, cx| {
+            on = on.exprs(&[ExprTag::ImportCall]);
+        }
+        if file.mentions("require") {
+            on = on.exprs(&[ExprTag::Call]);
+        }
+        on
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::ImportCall => {
                 if let ExprKind::ImportCall { args } = e.kind()
                     && let Some(source) = args.first().filter(|it| !is_static_value(*it))
                 {
                     cx.report(source.outer_span(), NO_DYNAMIC_REQUIRE);
                 }
-            });
-        }
-        if file.mentions("require") {
-            on.exprs([ExprTag::Call], |_, e, cx| {
+            }
+            ExprTag::Call => {
                 if let Some(call) = e.as_call()
                     && is_specific_id(call.callee(), "require")
                     && call.args().first().is_some_and(|it| it.tag() != ExprTag::Spread && !is_static_value(it))
                 {
                     cx.report(call.callee().outer_span(), NO_DYNAMIC_REQUIRE);
                 }
-            });
+            }
+            _ => {}
         }
     }
 }

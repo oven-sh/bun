@@ -11,22 +11,21 @@ const NO_ARIA_HIDDEN_ON_FOCUSABLE: Message = Message::new("", "`aria-hidden` mus
 
 impl Rule for NoAriaHiddenOnFocusable {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "no-aria-hidden-on-focusable", Kind::Problem).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoAriaHiddenOnFocusable
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Jsx], |_, e, cx| {
-            if let Some(jsx_el) = as_jsx_element(e)
-                && let Some(aria_hidden_prop) = has_jsx_prop_ignore_case(jsx_el, "aria-hidden")
-                && is_aria_hidden_true(aria_hidden_prop)
-                && is_focusable(cx.file(), jsx_el)
-            {
-                cx.report(aria_hidden_prop, NO_ARIA_HIDDEN_ON_FOCUSABLE).fix(|fixer| fixer.remove(aria_hidden_prop));
-            }
-        });
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(jsx_el) = as_jsx_element(e)
+            && let Some(aria_hidden_prop) = has_jsx_prop_ignore_case(jsx_el, "aria-hidden")
+            && is_aria_hidden_true(aria_hidden_prop)
+            && is_focusable(cx.file(), jsx_el)
+        {
+            cx.report(aria_hidden_prop, NO_ARIA_HIDDEN_ON_FOCUSABLE).fix(|fixer| fixer.remove(aria_hidden_prop));
+        }
     }
 }
 

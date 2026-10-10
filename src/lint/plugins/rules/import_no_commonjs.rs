@@ -22,6 +22,7 @@ pub struct State<'a> {
 
 impl Rule for NoCommonjs {
     const META: Meta = Meta::oxlint(Plugin::Import, "no-commonjs", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index, ExprTag::Call]);
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -33,14 +34,27 @@ impl Rule for NoCommonjs {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
         if file.mentions("exports") {
-            on.exprs([ExprTag::Dot, ExprTag::Index], Self::check_member);
+            on = on.exprs(&[ExprTag::Dot, ExprTag::Index]);
         }
         if !self.allow_require && file.mentions("require") {
-            on.exprs([ExprTag::Call], Self::check_call);
+            on = on.exprs(&[ExprTag::Call]);
         }
-        State::default()
+        on
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Dot | ExprTag::Index => self.check_member(e, cx),
+            ExprTag::Call => self.check_call(e, cx),
+            _ => {}
+        }
     }
 }
 

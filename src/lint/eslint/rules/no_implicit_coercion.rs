@@ -281,7 +281,13 @@ impl Rule for NoImplicitCoercion {
     const META: Meta = Meta::eslint("no-implicit-coercion", Kind::Suggestion)
         .fixable(Fixable::Code)
         .has_suggestions();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[
+        ExprTag::Unary,
+        ExprTag::Binary,
+        ExprTag::Assign,
+        ExprTag::Template,
+    ]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -300,22 +306,34 @@ impl Rule for NoImplicitCoercion {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
         if self.checks_double_negation
             || self.checks_index_of
             || self.checks_unary_plus
             || self.checks_double_minus
         {
-            on.exprs([ExprTag::Unary], Self::check_unary);
+            on = on.exprs(&[ExprTag::Unary]);
         }
         if self.checks_multiplication || self.checks_subtraction || self.checks_concatenation {
-            on.exprs([ExprTag::Binary], Self::check_binary);
+            on = on.exprs(&[ExprTag::Binary]);
         }
         if self.checks_concatenation {
-            on.exprs([ExprTag::Assign], Self::check_assignment);
+            on = on.exprs(&[ExprTag::Assign]);
         }
         if self.checks_templates && (self.checks_strings || !file.language().is_oxlint) {
-            on.exprs([ExprTag::Template], Self::check_template);
+            on = on.exprs(&[ExprTag::Template]);
+        }
+        on
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Unary => self.check_unary(e, cx),
+            ExprTag::Binary => self.check_binary(e, cx),
+            ExprTag::Assign => self.check_assignment(e, cx),
+            ExprTag::Template => self.check_template(e, cx),
+            _ => {}
         }
     }
 }

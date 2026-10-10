@@ -9,33 +9,36 @@ const NO_CLONE_ELEMENT: Message = Message::new("", "`React.cloneElement` should 
 
 impl Rule for NoCloneElement {
     const META: Meta = Meta::oxlint(Plugin::React, "no-clone-element", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoCloneElement
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions("cloneElement") || !file.has_stmts([StmtTag::Import]) {
+            return None;
+        }
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(callee) = e.callee() else {
+            return;
+        };
+        // `import { cloneElement } from 'react'; cloneElement(..)`
+        let ident = get_inner_expression(callee);
+        if ident.is_ident("cloneElement") && is_import_from_module(ident, "react") {
+            cx.report(ident, NO_CLONE_ELEMENT);
             return;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let Some(callee) = e.callee() else {
-                return;
-            };
-            // `import { cloneElement } from 'react'; cloneElement(..)`
-            let ident = get_inner_expression(callee);
-            if ident.is_ident("cloneElement") && is_import_from_module(ident, "react") {
-                cx.report(ident, NO_CLONE_ELEMENT);
-                return;
-            }
-            // `import React from 'react'; React.cloneElement(..)`
-            if let Some(member) = get_member_expr(callee)
-                && static_property_name(member).is_some_and(|name| name.is("cloneElement"))
-                && member.object().is_some_and(|it| !it.is_parenthesized() && is_import_from_module(it, "react"))
-            {
-                cx.report(callee.outer_span(), NO_CLONE_ELEMENT);
-            }
-        });
+        // `import React from 'react'; React.cloneElement(..)`
+        if let Some(member) = get_member_expr(callee)
+            && static_property_name(member).is_some_and(|name| name.is("cloneElement"))
+            && member.object().is_some_and(|it| !it.is_parenthesized() && is_import_from_module(it, "react"))
+        {
+            cx.report(callee.outer_span(), NO_CLONE_ELEMENT);
+        }
     }
 }

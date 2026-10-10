@@ -54,7 +54,10 @@ impl NoRequireImports {
 
 impl Rule for NoRequireImports {
     const META: Meta = Meta::typescript("no-require-imports", Kind::Problem).recommended();
-    type State<'a> = ();
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Call])
+        .stmts(&[StmtTag::ImportEquals]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -66,12 +69,22 @@ impl Rule for NoRequireImports {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
         if file.mentions("require") {
-            on.exprs([ExprTag::Call], Self::check_call);
+            on = on.exprs(&[ExprTag::Call]);
         }
         if !self.allow_as_import {
-            on.stmts([StmtTag::ImportEquals], Self::check_import_equals);
+            on = on.stmts(&[StmtTag::ImportEquals]);
         }
+        on
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_call(e, cx);
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_import_equals(statement, cx);
     }
 }

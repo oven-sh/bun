@@ -78,6 +78,7 @@ pub fn check<'a, R: Rule<State<'a> = Known<'a>>>(
 
 impl Rule for NoInvalidThis {
     const META: Meta = Meta::eslint("no-invalid-this", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::This]);
     type State<'a> = Known<'a>;
 
     fn new(options: &Options) -> Self {
@@ -86,8 +87,11 @@ impl Rule for NoInvalidThis {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Known<'a> {
-        on.exprs([ExprTag::This], |rule, e, cx| check(e, rule.cap_is_constructor, false, cx));
-        Known::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Known<'a>> {
+        Some(Known::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        check(e, self.cap_is_constructor, false, cx);
     }
 }

@@ -26,6 +26,7 @@ pub struct State<'a> {
 
 impl Rule for NewlineAfterImport {
     const META: Meta = Meta::oxlint(Plugin::Import, "newline-after-import", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Call]).finish();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -37,21 +38,47 @@ impl Rule for NewlineAfterImport {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let mentions_require = file.mentions("require");
+        let mut on = On::new();
         if mentions_require {
-            on.exprs([ExprTag::Call], |_, e, cx| {
-                if is_top_level_static_require_call(e, &mut cx.state.hidden)
-                    && let Some(stmt) = cx.file().body().around(e.span().start)
-                {
-                    cx.state.with_require.push(stmt.span().start);
-                }
-            });
+            on = on.exprs(&[ExprTag::Call]);
         }
         if mentions_require || file.has_stmts([StmtTag::Import, StmtTag::ImportEquals]) {
-            on.finish(Self::check_all);
+            on = on.finish();
         }
-        State::default()
+        on
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if is_top_level_static_require_call(e, &mut cx.state.hidden)
+            && let Some(stmt) = cx.file().body().around(e.span().start)
+        {
+            cx.state.with_require.push(stmt.span().start);
+        }
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let body = cx.file().body();
+        let mut previous_import = None;
+        for next in body {
+            if let Some(import) = previous_import {
+                self.check(import, "import", next, is_import_statement(next), cx);
+            }
+            previous_import = is_import_statement(next).then_some(next);
+        }
+        let mut with_require = std::mem::take(&mut cx.state.with_require);
+        with_require.sort_unstable();
+        with_require.dedup();
+        for &start in &with_require {
+            if let (Some(stmt), Some(next)) = (body.around(start), body.after(start)) {
+                self.check(stmt, "require", next, with_require.binary_search(&next.span().start).is_ok(), cx);
+            }
+        }
     }
 }
 
@@ -91,25 +118,6 @@ fn next_statement_start(stmt: Stmt) -> u32 {
 }
 
 impl NewlineAfterImport {
-    fn check_all<'a>(&self, cx: &mut Cx<'a, Self>) {
-        let body = cx.file().body();
-        let mut previous_import = None;
-        for next in body {
-            if let Some(import) = previous_import {
-                self.check(import, "import", next, is_import_statement(next), cx);
-            }
-            previous_import = is_import_statement(next).then_some(next);
-        }
-        let mut with_require = std::mem::take(&mut cx.state.with_require);
-        with_require.sort_unstable();
-        with_require.dedup();
-        for &start in &with_require {
-            if let (Some(stmt), Some(next)) = (body.around(start), body.after(start)) {
-                self.check(stmt, "require", next, with_require.binary_search(&next.span().start).is_ok(), cx);
-            }
-        }
-    }
-
     fn check<'a>(&self, stmt: Stmt<'a>, keyword: &'static str, next: Stmt<'a>, next_is_same_kind: bool, cx: &Cx<'a, Self>) {
         if next_is_same_kind && !self.consider_comments {
             return;

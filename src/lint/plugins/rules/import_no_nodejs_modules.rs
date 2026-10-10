@@ -13,46 +13,61 @@ const NO_NODEJS_MODULES: Message = Message::new("", "Do not import Node.js built
 
 impl Rule for NoNodejsModules {
     const META: Meta = Meta::oxlint(Plugin::Import, "no-nodejs-modules", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new()
+        .stmts(&[StmtTag::Import, StmtTag::ImportEquals, StmtTag::ExportNamed, StmtTag::ExportStar])
+        .exprs(&[ExprTag::ImportCall, ExprTag::Call]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         NoNodejsModules { allow: options.object(0).strings("allow").iter().map(|it| it.as_bytes().into()).collect() }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        on.stmts([StmtTag::Import, StmtTag::ImportEquals, StmtTag::ExportNamed, StmtTag::ExportStar], |rule, stmt, cx| {
-            let module_name = match stmt.kind() {
-                StmtKind::Import(import) => Some(import.spec()),
-                StmtKind::ImportEquals(import) => match import.target() {
-                    ImportEqualsTarget::Require(module_name) => module_name,
-                    ImportEqualsTarget::Entity(_) => None,
-                },
-                StmtKind::ExportNamed(export) => export.spec(),
-                StmtKind::ExportStar { spec, .. } => spec,
-                _ => None,
-            };
-            if let Some(module_name) = module_name {
-                let is_import_equals = stmt.tag() == StmtTag::ImportEquals;
-                rule.check(module_name, if is_import_equals { stmt.span_without_export() } else { stmt.span() }, cx);
-            }
-        });
-        on.exprs([ExprTag::ImportCall], |rule, e, cx| {
-            let ExprKind::ImportCall { args } = e.kind() else {
-                return;
-            };
-            let module_name = args.first().filter(|it| !it.is_parenthesized()).and_then(static_string);
-            if let Some(module_name) = module_name {
-                rule.check(module_name, e.span(), cx);
-            }
-        });
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new()
+            .stmts(&[StmtTag::Import, StmtTag::ImportEquals, StmtTag::ExportNamed, StmtTag::ExportStar])
+            .exprs(&[ExprTag::ImportCall]);
         if file.mentions("require") {
-            on.exprs([ExprTag::Call], |rule, e, cx| {
+            on = on.exprs(&[ExprTag::Call]);
+        }
+        on
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let module_name = match stmt.kind() {
+            StmtKind::Import(import) => Some(import.spec()),
+            StmtKind::ImportEquals(import) => match import.target() {
+                ImportEqualsTarget::Require(module_name) => module_name,
+                ImportEqualsTarget::Entity(_) => None,
+            },
+            StmtKind::ExportNamed(export) => export.spec(),
+            StmtKind::ExportStar { spec, .. } => spec,
+            _ => None,
+        };
+        if let Some(module_name) = module_name {
+            let is_import_equals = stmt.tag() == StmtTag::ImportEquals;
+            self.check(module_name, if is_import_equals { stmt.span_without_export() } else { stmt.span() }, cx);
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::ImportCall => {
+                let ExprKind::ImportCall { args } = e.kind() else {
+                    return;
+                };
+                let module_name = args.first().filter(|it| !it.is_parenthesized()).and_then(static_string);
+                if let Some(module_name) = module_name {
+                    self.check(module_name, e.span(), cx);
+                }
+            }
+            ExprTag::Call => {
                 if let Some(call) = e.as_call().filter(|it| !it.is_optional())
                     && let Some(module_name) = common_js_require(call).and_then(Expr::as_string)
                 {
-                    rule.check(module_name, e.span(), cx);
+                    self.check(module_name, e.span(), cx);
                 }
-            });
+            }
+            _ => {}
         }
     }
 }

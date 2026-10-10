@@ -71,8 +71,11 @@ pub struct State<'a> {
     exported_names: ExportedNames<'a>,
 }
 
+const JSX: NodeTags = NodeTags::new().exprs(&[ExprTag::Jsx]);
+
 impl Rule for JsxNoLiterals {
     const META: Meta = Meta::oxlint(Plugin::React, "jsx-no-literals", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]).enter(JSX).exit(JSX);
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -92,43 +95,47 @@ impl Rule for JsxNoLiterals {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
         if self.element_overrides.is_empty() {
-            on.exprs([ExprTag::Jsx], |rule, e, cx| {
-                if let ExprKind::Jsx(jsx) = e.kind() {
-                    rule.check(jsx, None, cx);
-                }
-            });
-            return State::default();
+            return On::new().exprs(&[ExprTag::Jsx]);
         }
-        if !file.has_exprs([ExprTag::Jsx]) {
-            return State::default();
+        On::new().enter(JSX).exit(JSX)
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
+        file.has_exprs([ExprTag::Jsx]).then(State::default)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let ExprKind::Jsx(jsx) = e.kind() {
+            self.check(jsx, None, cx);
         }
-        // An override holds for all that is in the element, in `{..}` and in attributes as well.
-        on.enter(ExprTag::Jsx, |rule, node, cx| {
-            let (current_element_opts, inherited_opts) = cx.state.scopes.last().copied().unwrap_or_default();
-            let scope = match node.as_expr().map(Expr::kind) {
-                Some(ExprKind::Jsx(jsx)) if !jsx.is_fragment() => {
-                    let own_opts = rule.get_element_override_opts(jsx, &mut cx.state.exported_names);
-                    let element_opts = own_opts.or(inherited_opts);
-                    rule.check(jsx, element_opts, cx);
-                    let applies_to_nested_elements =
-                        |it: &usize| rule.element_overrides.get(*it).is_some_and(|it| it.apply_to_nested_elements);
-                    (element_opts, own_opts.filter(applies_to_nested_elements).or(inherited_opts))
-                }
-                // A fragment is part of the element that it is in.
-                Some(ExprKind::Jsx(fragment)) => {
-                    rule.check(fragment, current_element_opts, cx);
-                    (current_element_opts, inherited_opts)
-                }
-                _ => (current_element_opts, inherited_opts),
-            };
-            cx.state.scopes.push(scope);
-        });
-        on.exit(ExprTag::Jsx, |_, _, cx| {
-            cx.state.scopes.pop();
-        });
-        State::default()
+    }
+
+    // An override holds for all that is in the element, in `{..}` and in attributes as well.
+    fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        let (current_element_opts, inherited_opts) = cx.state.scopes.last().copied().unwrap_or_default();
+        let scope = match node.as_expr().map(Expr::kind) {
+            Some(ExprKind::Jsx(jsx)) if !jsx.is_fragment() => {
+                let own_opts = self.get_element_override_opts(jsx, &mut cx.state.exported_names);
+                let element_opts = own_opts.or(inherited_opts);
+                self.check(jsx, element_opts, cx);
+                let applies_to_nested_elements =
+                    |it: &usize| self.element_overrides.get(*it).is_some_and(|it| it.apply_to_nested_elements);
+                (element_opts, own_opts.filter(applies_to_nested_elements).or(inherited_opts))
+            }
+            // A fragment is part of the element that it is in.
+            Some(ExprKind::Jsx(fragment)) => {
+                self.check(fragment, current_element_opts, cx);
+                (current_element_opts, inherited_opts)
+            }
+            _ => (current_element_opts, inherited_opts),
+        };
+        cx.state.scopes.push(scope);
+    }
+
+    fn exit<'a>(&self, _: Node<'a>, cx: &mut Cx<'a, Self>) {
+        cx.state.scopes.pop();
     }
 }
 

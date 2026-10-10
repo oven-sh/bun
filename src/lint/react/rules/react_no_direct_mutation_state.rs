@@ -23,30 +23,32 @@ pub struct State<'a> {
 
 impl Rule for NoDirectMutationState {
     const META: Meta = Meta::oxlint(Plugin::React, "no-direct-mutation-state", Kind::Problem);
+    const ON: On =
+        On::new().exprs(&[ExprTag::Assign]).unaries(&[UnOp::PreInc, UnOp::PreDec, UnOp::PostInc, UnOp::PostDec]);
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         NoDirectMutationState
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if is_jsx(file) && file.mentions("state") && file.has_exprs([ExprTag::This]) {
-            on.exprs([ExprTag::Assign], |_, e, cx| {
-                if let Some(left) = e.left()
-                    && is_mutation_of_state(left)
-                    && !e.is_assignment_target()
-                    && !should_ignore_component(e, cx)
-                {
-                    cx.report(left, NO_DIRECT_MUTATION_STATE);
-                }
-            });
-            on.unaries([UnOp::PreInc, UnOp::PreDec, UnOp::PostInc, UnOp::PostDec], |_, e, cx| {
-                if e.operand().is_some_and(is_mutation_of_state) && !should_ignore_component(e, cx) {
-                    cx.report(e, NO_DIRECT_MUTATION_STATE);
-                }
-            });
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        (is_jsx(file) && file.mentions("state") && file.has_exprs([ExprTag::This])).then(State::default)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(left) = e.left()
+            && is_mutation_of_state(left)
+            && !e.is_assignment_target()
+            && !should_ignore_component(e, cx)
+        {
+            cx.report(left, NO_DIRECT_MUTATION_STATE);
         }
-        State::default()
+    }
+
+    fn unary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if e.operand().is_some_and(is_mutation_of_state) && !should_ignore_component(e, cx) {
+            cx.report(e, NO_DIRECT_MUTATION_STATE);
+        }
     }
 }
 

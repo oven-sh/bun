@@ -18,30 +18,30 @@ pub struct State<'a> {
 
 impl Rule for NoThisInExportedFunction {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "no-this-in-exported-function", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::This]);
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         NoThisInExportedFunction
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if file.has_exprs([ExprTag::This])
-            && (file.has_stmts([StmtTag::ExportNamed]) || file.stmts_of_kind(StmtTag::Fn).any(Stmt::is_exported))
-        {
-            on.exprs([ExprTag::This], |_, this, cx| {
-                if this.is_in_type_query() {
-                    return;
-                }
-                let Some(Some(func)) = cx.state.functions.find(Node::Expr(this), function_of_this) else {
-                    return;
-                };
-                // It is reported for each export.
-                for _ in 0..*cx.state.exports.entry(func).or_insert_with(|| export_count(func)) {
-                    cx.report(this, NO_THIS_IN_EXPORTED_FUNCTION);
-                }
-            });
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        (file.has_exprs([ExprTag::This])
+            && (file.has_stmts([StmtTag::ExportNamed]) || file.stmts_of_kind(StmtTag::Fn).any(Stmt::is_exported)))
+        .then(State::default)
+    }
+
+    fn expr<'a>(&self, this: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if this.is_in_type_query() {
+            return;
         }
-        State::default()
+        let Some(Some(func)) = cx.state.functions.find(Node::Expr(this), function_of_this) else {
+            return;
+        };
+        // It is reported for each export.
+        for _ in 0..*cx.state.exports.entry(func).or_insert_with(|| export_count(func)) {
+            cx.report(this, NO_THIS_IN_EXPORTED_FUNCTION);
+        }
     }
 }
 

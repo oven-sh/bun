@@ -40,6 +40,7 @@ const OUTSIDE_AMBIENT_INVALID_TAGS_IF_TYPED: [&str; 27] = [
 
 impl Rule for CheckTagNames {
     const META: Meta = Meta::oxlint(Plugin::Jsdoc, "check-tag-names", Kind::Problem);
+    const ON: On = On::new().finish();
     type State<'a> = JSDocFinder<'a>;
 
     fn new(options: &Options) -> Self {
@@ -51,45 +52,44 @@ impl Rule for CheckTagNames {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> JSDocFinder<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<JSDocFinder<'a>> {
         let finder = JSDocFinder::new(file);
-        if !finder.is_empty() {
-            on.finish(|rule, cx| {
-                let settings = JSDocPluginSettings::new(cx.file());
-                let is_ambient = cx.file().path().ends_with(b".d.ts");
-                for tag in cx.state.iter_checked(&settings).flat_map(JSDoc::tags) {
-                    let tag_name = tag.kind.parsed();
-                    let is_redundant_if_typed = || {
-                        contains_name(&ALWAYS_INVALID_TAGS_IF_TYPED, tag_name)
-                            || tag_name == b"template" && tag.comment().is_empty()
-                            || !is_ambient && contains_name(&OUTSIDE_AMBIENT_INVALID_TAGS_IF_TYPED, tag_name)
+        (!finder.is_empty()).then_some(finder)
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let settings = JSDocPluginSettings::new(cx.file());
+        let is_ambient = cx.file().path().ends_with(b".d.ts");
+        for tag in cx.state.iter_checked(&settings).flat_map(JSDoc::tags) {
+            let tag_name = tag.kind.parsed();
+            let is_redundant_if_typed = || {
+                contains_name(&ALWAYS_INVALID_TAGS_IF_TYPED, tag_name)
+                    || tag_name == b"template" && tag.comment().is_empty()
+                    || !is_ambient && contains_name(&OUTSIDE_AMBIENT_INVALID_TAGS_IF_TYPED, tag_name)
+            };
+            let is_valid = || self.jsx_tags && contains_name(&JSX_TAGS, tag_name) || contains_name(&VALID_BLOCK_TAGS, tag_name);
+            if !settings.is_user_defined_tag_name(tag_name)
+                && !self.defined_tags.iter().any(|it| **it == *tag_name)
+                && (settings.is_blocked_tag_name(tag_name)
+                    || settings.has_preferred_tag_name(tag_name)
+                    || self.typed && is_redundant_if_typed()
+                    || !is_valid())
+            {
+                cx.report(tag.kind.span, CHECK_TAG_NAMES).help_with(|| {
+                    let is_in = |tags: &[&str]| self.typed && contains_name(tags, tag_name);
+                    let what = if is_in(&ALWAYS_INVALID_TAGS_IF_TYPED) {
+                        "is redundant when using a type system."
+                    } else if self.typed && tag_name == b"template" && tag.comment().is_empty() {
+                        "without a name is redundant when using a type system."
+                    } else if !is_ambient && is_in(&OUTSIDE_AMBIENT_INVALID_TAGS_IF_TYPED) {
+                        "is redundant outside of ambient(`declare` or `.d.ts`) contexts when using a type system."
+                    } else {
+                        "is invalid tag name."
                     };
-                    let is_valid = || rule.jsx_tags && contains_name(&JSX_TAGS, tag_name) || contains_name(&VALID_BLOCK_TAGS, tag_name);
-                    if !settings.is_user_defined_tag_name(tag_name)
-                        && !rule.defined_tags.iter().any(|it| **it == *tag_name)
-                        && (settings.is_blocked_tag_name(tag_name)
-                            || settings.has_preferred_tag_name(tag_name)
-                            || rule.typed && is_redundant_if_typed()
-                            || !is_valid())
-                    {
-                        cx.report(tag.kind.span, CHECK_TAG_NAMES).help_with(|| {
-                            let is_in = |tags: &[&str]| rule.typed && contains_name(tags, tag_name);
-                            let what = if is_in(&ALWAYS_INVALID_TAGS_IF_TYPED) {
-                                "is redundant when using a type system."
-                            } else if rule.typed && tag_name == b"template" && tag.comment().is_empty() {
-                                "without a name is redundant when using a type system."
-                            } else if !is_ambient && is_in(&OUTSIDE_AMBIENT_INVALID_TAGS_IF_TYPED) {
-                                "is redundant outside of ambient(`declare` or `.d.ts`) contexts when using a type system."
-                            } else {
-                                "is invalid tag name."
-                            };
-                            let reason = settings.reason_against_tag_name(tag_name);
-                            reason.unwrap_or_else(|| format!("`@{}` {what}", bstr::BStr::new(tag_name)))
-                        });
-                    }
-                }
-            });
+                    let reason = settings.reason_against_tag_name(tag_name);
+                    reason.unwrap_or_else(|| format!("`@{}` {what}", bstr::BStr::new(tag_name)))
+                });
+            }
         }
-        finder
     }
 }

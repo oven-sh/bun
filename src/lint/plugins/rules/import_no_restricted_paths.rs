@@ -158,6 +158,7 @@ fn strings_of(value: Option<&Json>) -> Vec<Box<[u8]>> {
 
 impl Rule for NoRestrictedPaths {
     const META: Meta = Meta::plugin(Plugin::Import, "no-restricted-paths", Kind::Problem).needs_modules();
+    const ON: On = On::new().finish();
     /// The zones that have the file as a target: where they are in [`NoRestrictedPaths::read`].
     type State<'a> = SmallVec<[u32; 8]>;
 
@@ -179,10 +180,8 @@ impl Rule for NoRestrictedPaths {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        let Some(modules) = file.modules().filter(|_| file.path() != b"<text>") else {
-            return SmallVec::new();
-        };
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        let modules = file.modules().filter(|_| file.path() != b"<text>")?;
         let zones = self.read.get_or_init(|| {
             let cwd = modules.cwd();
             let base_path = self.base_path.as_ref().map_or_else(|| cwd.to_vec(), |it| paths::resolve(cwd, it));
@@ -191,15 +190,10 @@ impl Rule for NoRestrictedPaths {
         let filename = paths::portable(file.path(), file.path());
         let is_target = |zone: &Zone| zone.target.iter().any(|it| it.has(&filename));
         let matching: Self::State<'a> = (0u32..).zip(zones).filter(|it| is_target(it.1)).map(|it| it.0).collect();
-        if !matching.is_empty() {
-            on.finish(Self::check);
-        }
-        matching
+        (!matching.is_empty()).then_some(matching)
     }
-}
 
-impl NoRestrictedPaths {
-    fn check<'a>(&self, cx: &mut Cx<'a, Self>) {
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
         let Some(zones) = self.read.get() else {
             return;

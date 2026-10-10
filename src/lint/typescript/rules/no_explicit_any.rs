@@ -109,7 +109,8 @@ impl Rule for NoExplicitAny {
         .fixable(Fixable::Code)
         .has_suggestions()
         .recommended();
-    type State<'a> = ();
+    const ON: On = On::new().types(&[TypeTag::Keyword]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -119,7 +120,7 @@ impl Rule for NoExplicitAny {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.types([TypeTag::Keyword], Self::check);
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(ty, cx);
     }
 }

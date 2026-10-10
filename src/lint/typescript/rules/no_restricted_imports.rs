@@ -26,6 +26,7 @@ impl Rule for NoRestrictedImports {
     const META: Meta = Meta::typescript("no-restricted-imports", Kind::Suggestion)
         .deprecated()
         .extends_base_rule("no-restricted-imports");
+    const ON: On = On::new().stmts(&STATEMENTS).exprs(&[ExprTag::ImportCall]);
     type State<'a> = SideEffectImports<'a>;
 
     fn new(options: &Options) -> Self {
@@ -62,25 +63,37 @@ impl Rule for NoRestrictedImports {
         rule
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> SideEffectImports<'a> {
-        if self.base.is_empty() {
-            return SideEffectImports::default();
-        }
-        // In oxlint `allowTypeImports` is about the restriction that it is set for, as in ESLint's rule.
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new().stmts(&STATEMENTS);
         if file.language().is_oxlint {
-            on.stmts(STATEMENTS, |rule, statement, cx| rule.base.check(cx, statement, Dialect::TypeScript));
-            on.exprs([ExprTag::ImportCall], |rule, call, cx| rule.base.check_import_call(cx, call));
-            return SideEffectImports::default();
+            on = on.exprs(&[ExprTag::ImportCall]);
         }
-        on.stmts(STATEMENTS, |rule, statement, cx| {
-            let is_allowed = statement.tag() != StmtTag::ExportStar
-                && is_type_only(statement)
-                && import_source(statement, Dialect::TypeScript)
-                    .is_some_and(|source| rule.is_allowed_type_import(source));
-            if !is_allowed {
-                rule.base.check(cx, statement, Dialect::TypeScript);
-            }
-        });
-        SideEffectImports::default()
+        on
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<SideEffectImports<'a>> {
+        if self.base.is_empty() {
+            return None;
+        }
+        Some(SideEffectImports::default())
+    }
+
+    fn expr<'a>(&self, call: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.base.check_import_call(cx, call);
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        // In oxlint `allowTypeImports` is about the restriction that it is set for, as in ESLint's rule.
+        if cx.language().is_oxlint {
+            self.base.check(cx, statement, Dialect::TypeScript);
+            return;
+        }
+        let is_allowed = statement.tag() != StmtTag::ExportStar
+            && is_type_only(statement)
+            && import_source(statement, Dialect::TypeScript)
+                .is_some_and(|source| self.is_allowed_type_import(source));
+        if !is_allowed {
+            self.base.check(cx, statement, Dialect::TypeScript);
+        }
     }
 }

@@ -30,22 +30,59 @@ pub struct State<'a> {
 
 impl Rule for GroupExports {
     const META: Meta = Meta::oxlint(Plugin::Import, "group-exports", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Assign]).finish();
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         GroupExports
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
         if file.mentions("exports") {
-            on.exprs([ExprTag::Assign], |_, e, cx| {
-                if e.left().is_some_and(is_commonjs_export) && !is_assignment_target(e, &mut cx.state.assignment_targets) {
-                    cx.state.commonjs_exports.push(e.span());
-                }
-            });
+            on = on.exprs(&[ExprTag::Assign]);
         }
-        on.finish(check);
-        State::default()
+        on.finish()
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if e.left().is_some_and(is_commonjs_export) && !is_assignment_target(e, &mut cx.state.assignment_targets) {
+            cx.state.commonjs_exports.push(e.span());
+        }
+    }
+
+    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
+        // Of values, of types.
+        let mut nodes: [Spans; 2] = [Spans::new(), Spans::new()];
+        let mut source_records: [FxHashMap<Name<'a>, Spans>; 2] = [FxHashMap::default(), FxHashMap::default()];
+        for stmt in module_items(cx.file()) {
+            match stmt.kind() {
+                StmtKind::ExportNamed(export) => {
+                    let kind = usize::from(export.is_type_only());
+                    match export.spec().filter(|_| export.has_from()) {
+                        Some(source) => source_records[kind].entry(source).or_default().push(stmt.span()),
+                        None => nodes[kind].push(stmt.span()),
+                    }
+                }
+                _ if is_export_declaration(stmt) => {
+                    nodes[usize::from(is_type_export_declaration(stmt))].push(export_declaration_span(stmt));
+                }
+                _ => {}
+            }
+        }
+        let groups = nodes.iter().chain(source_records.iter().flat_map(|it| it.values()));
+        for span in groups.filter(|it| it.len() > 1).flatten() {
+            cx.report(*span, ES_MODULE);
+        }
+        if cx.state.commonjs_exports.len() > 1 {
+            for span in &cx.state.commonjs_exports {
+                cx.report(*span, COMMONJS);
+            }
+        }
     }
 }
 
@@ -61,34 +98,4 @@ fn is_commonjs_export(left: Expr) -> bool {
 
 fn check_module_export(member: Expr) -> bool {
     static_property_name(member).is_some_and(|it| it.is("exports")) && member.object().is_some_and(|it| is_specific_id(it, "module"))
-}
-
-fn check<'a>(_: &GroupExports, cx: &mut Cx<'a, GroupExports>) {
-    // Of values, of types.
-    let mut nodes: [Spans; 2] = [Spans::new(), Spans::new()];
-    let mut source_records: [FxHashMap<Name<'a>, Spans>; 2] = [FxHashMap::default(), FxHashMap::default()];
-    for stmt in module_items(cx.file()) {
-        match stmt.kind() {
-            StmtKind::ExportNamed(export) => {
-                let kind = usize::from(export.is_type_only());
-                match export.spec().filter(|_| export.has_from()) {
-                    Some(source) => source_records[kind].entry(source).or_default().push(stmt.span()),
-                    None => nodes[kind].push(stmt.span()),
-                }
-            }
-            _ if is_export_declaration(stmt) => {
-                nodes[usize::from(is_type_export_declaration(stmt))].push(export_declaration_span(stmt));
-            }
-            _ => {}
-        }
-    }
-    let groups = nodes.iter().chain(source_records.iter().flat_map(|it| it.values()));
-    for span in groups.filter(|it| it.len() > 1).flatten() {
-        cx.report(*span, ES_MODULE);
-    }
-    if cx.state.commonjs_exports.len() > 1 {
-        for span in &cx.state.commonjs_exports {
-            cx.report(*span, COMMONJS);
-        }
-    }
 }

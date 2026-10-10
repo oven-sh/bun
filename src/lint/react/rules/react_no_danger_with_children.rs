@@ -21,59 +21,76 @@ pub struct State<'a> {
 
 impl Rule for NoDangerWithChildren {
     const META: Meta = Meta::oxlint(Plugin::React, "no-danger-with-children", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Call]);
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         NoDangerWithChildren
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if !file.mentions("dangerouslySetInnerHTML") {
-            return State::default();
-        }
-        on.exprs([ExprTag::Jsx], |_, e, cx| {
-            let Some(jsx) = as_jsx_element(e) else {
-                return;
-            };
-            if jsx.attrs().is_empty() {
-                return;
-            }
-            let props = props_of_element(jsx, &mut cx.state.props_of_variables);
-            // Children are passed as `children={}` or are between the tags.
-            let has_children = || children(cx.file(), jsx).next().is_some_and(|first| !is_padding_spaces(first));
-            if props & DANGER != 0 && (props & CHILDREN != 0 || has_children()) {
-                cx.report(e, NO_DANGER_WITH_CHILDREN);
-            }
-        });
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let on = On::new().exprs(&[ExprTag::Jsx]);
         if !file.mentions("createElement") {
-            return State::default();
+            return on;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let Some(call) = e.as_call() else {
-                return;
-            };
-            let (arguments, callee) = (call.args(), call.callee());
-            if arguments.len() <= 1
-                || !callee.member_name().is_some_and(|name| name.name().is("createElement"))
-                || callee.is_parenthesized()
-            {
-                return;
-            }
-            let Some(props) = arguments.get(1).filter(|it| it.tag() != ExprTag::Spread && !it.is_parenthesized())
-            else {
-                return;
-            };
-            let props = match props.kind() {
-                ExprKind::Object(properties) => props_of_object(properties),
-                ExprKind::Ident(_) => props_of_variable(props, &mut cx.state.props_of_variables),
-                _ => 0,
-            };
-            // A third argument is a child.
-            if props & DANGER != 0 && (props & CHILDREN != 0 || arguments.len() > 2) {
-                cx.report(e, NO_DANGER_WITH_CHILDREN);
-            }
-        });
-        State::default()
+        on.exprs(&[ExprTag::Call])
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        if !file.mentions("dangerouslySetInnerHTML") {
+            return None;
+        }
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Jsx => self.jsx(e, cx),
+            ExprTag::Call => self.call(e, cx),
+            _ => {}
+        }
+    }
+}
+
+impl NoDangerWithChildren {
+    fn jsx<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(jsx) = as_jsx_element(e) else {
+            return;
+        };
+        if jsx.attrs().is_empty() {
+            return;
+        }
+        let props = props_of_element(jsx, &mut cx.state.props_of_variables);
+        // Children are passed as `children={}` or are between the tags.
+        let has_children = || children(cx.file(), jsx).next().is_some_and(|first| !is_padding_spaces(first));
+        if props & DANGER != 0 && (props & CHILDREN != 0 || has_children()) {
+            cx.report(e, NO_DANGER_WITH_CHILDREN);
+        }
+    }
+
+    fn call<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call) = e.as_call() else {
+            return;
+        };
+        let (arguments, callee) = (call.args(), call.callee());
+        if arguments.len() <= 1
+            || !callee.member_name().is_some_and(|name| name.name().is("createElement"))
+            || callee.is_parenthesized()
+        {
+            return;
+        }
+        let Some(props) = arguments.get(1).filter(|it| it.tag() != ExprTag::Spread && !it.is_parenthesized()) else {
+            return;
+        };
+        let props = match props.kind() {
+            ExprKind::Object(properties) => props_of_object(properties),
+            ExprKind::Ident(_) => props_of_variable(props, &mut cx.state.props_of_variables),
+            _ => 0,
+        };
+        // A third argument is a child.
+        if props & DANGER != 0 && (props & CHILDREN != 0 || arguments.len() > 2) {
+            cx.report(e, NO_DANGER_WITH_CHILDREN);
+        }
     }
 }
 

@@ -109,6 +109,12 @@ impl Rule for NoRestrictedTypes {
     const META: Meta = Meta::typescript("no-restricted-types", Kind::Suggestion)
         .fixable(Fixable::Code)
         .has_suggestions();
+    const ON: On = On::new()
+        .types(&[TypeTag::Ref, TypeTag::Heritage])
+        .types(&[TypeTag::Tuple, TypeTag::Object])
+        .types(&[TypeTag::Keyword])
+        .types(&[TypeTag::UniqueSymbol])
+        .exprs(&[ExprTag::AsConst]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -152,38 +158,43 @@ impl Rule for NoRestrictedTypes {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        if self.banned.is_empty() {
-            return;
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<()> {
+        (!self.banned.is_empty()).then_some(())
+    }
+
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        match ty.tag() {
+            TypeTag::Ref | TypeTag::Heritage => self.check_reference(ty, cx),
+            TypeTag::Tuple | TypeTag::Object => {
+                let is_empty = match ty.kind() {
+                    TypeKind::Tuple(elements) => elements.is_empty(),
+                    TypeKind::Object(members) => members.is_empty(),
+                    _ => false,
+                };
+                if is_empty {
+                    self.check(ty.span(), cx);
+                }
+            }
+            TypeTag::Keyword => {
+                if let TypeKind::Keyword(keyword) = ty.kind()
+                    && let Some(name) = keyword_name(keyword)
+                {
+                    self.check_named(ty.span(), name.as_bytes(), cx);
+                }
+            }
+            // ESLint has a `TSSymbolKeyword` in `unique symbol`, and a `TSTypeReference` in `as const`.
+            TypeTag::UniqueSymbol => {
+                if let Some(keyword) = ty.unique_symbol_keyword_span() {
+                    self.check_named(keyword, b"symbol", cx);
+                }
+            }
+            _ => {}
         }
-        on.types([TypeTag::Ref, TypeTag::Heritage], Self::check_reference);
-        on.types([TypeTag::Tuple, TypeTag::Object], |rule, ty, cx| {
-            let is_empty = match ty.kind() {
-                TypeKind::Tuple(elements) => elements.is_empty(),
-                TypeKind::Object(members) => members.is_empty(),
-                _ => false,
-            };
-            if is_empty {
-                rule.check(ty.span(), cx);
-            }
-        });
-        on.types([TypeTag::Keyword], |rule, ty, cx| {
-            if let TypeKind::Keyword(keyword) = ty.kind()
-                && let Some(name) = keyword_name(keyword)
-            {
-                rule.check_named(ty.span(), name.as_bytes(), cx);
-            }
-        });
-        // ESLint has a `TSSymbolKeyword` in `unique symbol`, and a `TSTypeReference` in `as const`.
-        on.types([TypeTag::UniqueSymbol], |rule, ty, cx| {
-            if let Some(keyword) = ty.unique_symbol_keyword_span() {
-                rule.check_named(keyword, b"symbol", cx);
-            }
-        });
-        on.exprs([ExprTag::AsConst], |rule, e, cx| {
-            if let Some(keyword) = e.const_keyword_span() {
-                rule.check_named(keyword, b"const", cx);
-            }
-        });
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(keyword) = e.const_keyword_span() {
+            self.check_named(keyword, b"const", cx);
+        }
     }
 }

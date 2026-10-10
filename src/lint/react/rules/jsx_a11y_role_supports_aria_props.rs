@@ -19,44 +19,43 @@ const IS_IMPLICIT: Message = Message::new(
 
 impl Rule for RoleSupportsAriaProps {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "role-supports-aria-props", Kind::Problem);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         RoleSupportsAriaProps
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Jsx], |_, e, cx| {
-            let Some(jsx_el) = as_jsx_element(e) else {
-                return;
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(jsx_el) = as_jsx_element(e) else {
+            return;
+        };
+        let is_aria = |attr: Prop| get_jsx_attribute_name(attr).is_some_and(|it| it.get(4) == Some(&b'-'));
+        if !jsx_el.attrs().iter().any(is_aria) {
+            return;
+        }
+        let el_type = get_element_type(cx.file(), jsx_el);
+        let role = has_jsx_prop_ignore_case(jsx_el, "role");
+        let role_value = match role {
+            Some(role) => get_string_literal_prop_value(role),
+            None => Some(get_implicit_role(jsx_el, &el_type).as_bytes()),
+        };
+        let Some(role_value) = role_value.filter(|it| is_valid_aria_role(it)) else {
+            return;
+        };
+        for attr in jsx_el.attrs() {
+            let Some(name) = get_jsx_attribute_name(attr).map(cow_to_ascii_lowercase) else {
+                continue;
             };
-            let is_aria = |attr: Prop| get_jsx_attribute_name(attr).is_some_and(|it| it.get(4) == Some(&b'-'));
-            if !jsx_el.attrs().iter().any(is_aria) {
-                return;
+            if !is_valid_aria_property(&name)
+                || get_prop_value(attr).is_some_and(is_nullish_value)
+                || is_valid_aria_property_for_role(role_value, &name)
+            {
+                continue;
             }
-            let el_type = get_element_type(cx.file(), jsx_el);
-            let role = has_jsx_prop_ignore_case(jsx_el, "role");
-            let role_value = match role {
-                Some(role) => get_string_literal_prop_value(role),
-                None => Some(get_implicit_role(jsx_el, &el_type).as_bytes()),
-            };
-            let Some(role_value) = role_value.filter(|it| is_valid_aria_role(it)) else {
-                return;
-            };
-            for attr in jsx_el.attrs() {
-                let Some(name) = get_jsx_attribute_name(attr).map(cow_to_ascii_lowercase) else {
-                    continue;
-                };
-                if !is_valid_aria_property(&name)
-                    || get_prop_value(attr).is_some_and(is_nullish_value)
-                    || is_valid_aria_property_for_role(role_value, &name)
-                {
-                    continue;
-                }
-                let message = if role.is_none() { IS_IMPLICIT } else { DEFAULT };
-                cx.report(attr, message).data("attr_name", name).data("role", role_value).data("el_name", el_type.clone());
-            }
-        });
+            let message = if role.is_none() { IS_IMPLICIT } else { DEFAULT };
+            cx.report(attr, message).data("attr_name", name).data("role", role_value).data("el_name", el_type.clone());
+        }
     }
 }
 

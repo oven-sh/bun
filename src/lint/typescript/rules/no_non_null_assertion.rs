@@ -38,46 +38,45 @@ impl Rule for NoNonNullAssertion {
     const META: Meta = Meta::typescript("no-non-null-assertion", Kind::Problem)
         .has_suggestions()
         .presets(Presets::STRICT);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::NonNull]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoNonNullAssertion
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::NonNull], |_, e, cx| {
-            // All but the last `!` of `x!!!`. What is around each is an assertion: nothing to suggest.
-            for inner in e.inner_non_null_spans() {
-                cx.report(inner, NO_NON_NULL);
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        // All but the last `!` of `x!!!`. What is around each is an assertion: nothing to suggest.
+        for inner in e.inner_non_null_spans() {
+            cx.report(inner, NO_NON_NULL);
+        }
+        let report = cx.report(e, NO_NON_NULL);
+        let is_in_member = !e.is_parenthesized()
+            && matches!(
+                e.parent().as_expr().map(Expr::kind),
+                Some(ExprKind::Dot { .. } | ExprKind::Index { .. })
+            );
+        let report = match cx.language().is_oxlint && is_in_member {
+            true => report.help(
+                "Consider using the optional chain operator `?.` instead. `x!.y` is equivalent to `x.y` at runtime and will throw if `x` is `null` or `undefined`, but `x?.y` will return `undefined`.",
+            ),
+            false => report,
+        };
+        let Some(suggestion) = suggestion(e) else {
+            return;
+        };
+        let end = e.span().end;
+        let operator = Span::new(end.saturating_sub(1), end);
+        report.suggest(SUGGEST_OPTIONAL_CHAIN, |fixer| match suggestion {
+            Suggestion::ReplaceWithOptional => vec![fixer.replace(operator, "?.")],
+            Suggestion::Remove => vec![fixer.remove(operator)],
+            Suggestion::MoveBeforeDot => {
+                let punctuator = skip_trivia(fixer.file().text(), end);
+                vec![
+                    fixer.remove(operator),
+                    fixer.insert_before(Span::empty(punctuator), "?"),
+                ]
             }
-            let report = cx.report(e, NO_NON_NULL);
-            let is_in_member = !e.is_parenthesized()
-                && matches!(
-                    e.parent().as_expr().map(Expr::kind),
-                    Some(ExprKind::Dot { .. } | ExprKind::Index { .. })
-                );
-            let report = match cx.language().is_oxlint && is_in_member {
-                true => report.help(
-                    "Consider using the optional chain operator `?.` instead. `x!.y` is equivalent to `x.y` at runtime and will throw if `x` is `null` or `undefined`, but `x?.y` will return `undefined`.",
-                ),
-                false => report,
-            };
-            let Some(suggestion) = suggestion(e) else {
-                return;
-            };
-            let end = e.span().end;
-            let operator = Span::new(end.saturating_sub(1), end);
-            report.suggest(SUGGEST_OPTIONAL_CHAIN, |fixer| match suggestion {
-                Suggestion::ReplaceWithOptional => vec![fixer.replace(operator, "?.")],
-                Suggestion::Remove => vec![fixer.remove(operator)],
-                Suggestion::MoveBeforeDot => {
-                    let punctuator = skip_trivia(fixer.file().text(), end);
-                    vec![
-                        fixer.remove(operator),
-                        fixer.insert_before(Span::empty(punctuator), "?"),
-                    ]
-                }
-            });
         });
     }
 }

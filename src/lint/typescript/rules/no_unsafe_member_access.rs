@@ -163,7 +163,8 @@ impl Rule for NoUnsafeMemberAccess {
     const META: Meta = Meta::typescript("no-unsafe-member-access", Kind::Problem)
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         NoUnsafeMemberAccess {
@@ -171,8 +172,10 @@ impl Rule for NoUnsafeMemberAccess {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Dot, ExprTag::Index], Self::check_member_expression);
-        on.exprs([ExprTag::Index], Self::check_computed_property);
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_member_expression(node, cx);
+        if node.tag() == ExprTag::Index {
+            self.check_computed_property(node, cx);
+        }
     }
 }

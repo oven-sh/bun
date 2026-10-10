@@ -17,6 +17,7 @@ const UNEXPECTED_ASSIGNMENT: Message = Message::new("", "Unexpected assignment t
 
 impl Rule for ExportsStyle {
     const META: Meta = Meta::oxlint(Plugin::Node, "exports-style", Kind::Suggestion);
+    const ON: On = On::new().finish();
     type State<'a> = AssignmentTargets<'a>;
 
     fn new(options: &Options) -> Self {
@@ -26,11 +27,16 @@ impl Rule for ExportsStyle {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if file.mentions("exports") {
-            on.finish(if self.prefers_exports { Self::check_module_exports_references } else { Self::check_exports_references });
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        file.mentions("exports").then(AssignmentTargets::default)
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        if self.prefers_exports {
+            self.check_module_exports_references(cx);
+        } else {
+            self.check_exports_references(cx);
         }
-        AssignmentTargets::default()
     }
 }
 

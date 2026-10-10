@@ -26,31 +26,30 @@ fn oxlint_is_acceptable_index_expression(property: Expr) -> bool {
 
 impl Rule for NoDynamicDelete {
     const META: Meta = Meta::typescript("no-dynamic-delete", Kind::Suggestion).presets(Presets::STRICT);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Unary]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoDynamicDelete
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Unary], |_, expr, cx| {
-            let ExprKind::Unary { op: UnOp::Delete, operand } = expr.kind() else {
-                return;
-            };
-            let ExprKind::Index { index, .. } = operand.kind() else {
-                return;
-            };
-            // ESLint has a `ChainExpression` around `a?.[b]`.
-            let is_acceptable = match cx.language().is_oxlint {
-                // It does not look into parentheses: `delete (a[b])`.
-                true => operand.is_parenthesized() || oxlint_is_acceptable_index_expression(index),
-                false => is_acceptable_index_expression(index),
-            };
-            if operand.is_in_optional_chain() || is_acceptable {
-                return;
-            }
-            // oxlint points at the `delete`.
-            cx.report(if cx.language().is_oxlint { expr } else { index }, DYNAMIC_DELETE);
-        });
+    fn expr<'a>(&self, expr: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Unary { op: UnOp::Delete, operand } = expr.kind() else {
+            return;
+        };
+        let ExprKind::Index { index, .. } = operand.kind() else {
+            return;
+        };
+        // ESLint has a `ChainExpression` around `a?.[b]`.
+        let is_acceptable = match cx.language().is_oxlint {
+            // It does not look into parentheses: `delete (a[b])`.
+            true => operand.is_parenthesized() || oxlint_is_acceptable_index_expression(index),
+            false => is_acceptable_index_expression(index),
+        };
+        if operand.is_in_optional_chain() || is_acceptable {
+            return;
+        }
+        // oxlint points at the `delete`.
+        cx.report(if cx.language().is_oxlint { expr } else { index }, DYNAMIC_DELETE);
     }
 }

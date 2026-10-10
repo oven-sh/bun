@@ -11,7 +11,8 @@ const NO_REST_SPREAD_PROPERTIES: Message = Message::new("", "{{kind}} are not al
 
 impl Rule for NoRestSpreadProperties {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "no-rest-spread-properties", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Object]).pats(&[PatTag::Object]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -21,32 +22,31 @@ impl Rule for NoRestSpreadProperties {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        // Objects are far fewer than properties.
-        on.exprs([ExprTag::Object], |rule, object, cx| {
-            let ExprKind::Object(properties) = object.kind() else {
-                return;
-            };
-            let mut is_target = None;
-            for property in properties.iter().filter(|it| it.kind() == PropKind::Spread) {
-                match *is_target.get_or_insert_with(|| object.is_assignment_target()) {
-                    true => rule.report_rest(property.span(), cx),
-                    false => {
-                        cx.report(property, NO_REST_SPREAD_PROPERTIES)
-                            .data("kind", "object spread property")
-                            .data("message_suffix", rule.object_spread_message.clone())
-                            .help("Use `Object.assign()` to combine objects instead of object spread syntax.");
-                    }
+    // Objects are far fewer than properties.
+    fn expr<'a>(&self, object: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Object(properties) = object.kind() else {
+            return;
+        };
+        let mut is_target = None;
+        for property in properties.iter().filter(|it| it.kind() == PropKind::Spread) {
+            match *is_target.get_or_insert_with(|| object.is_assignment_target()) {
+                true => self.report_rest(property.span(), cx),
+                false => {
+                    cx.report(property, NO_REST_SPREAD_PROPERTIES)
+                        .data("kind", "object spread property")
+                        .data("message_suffix", self.object_spread_message.clone())
+                        .help("Use `Object.assign()` to combine objects instead of object spread syntax.");
                 }
             }
-        });
-        on.pats([PatTag::Object], |rule, pattern, cx| {
-            if let PatKind::Object(properties) = pattern.kind()
-                && let Some(rest) = properties.last().filter(|it| it.is_rest())
-            {
-                rule.report_rest(rest.span(), cx);
-            }
-        });
+        }
+    }
+
+    fn pat<'a>(&self, pattern: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        if let PatKind::Object(properties) = pattern.kind()
+            && let Some(rest) = properties.last().filter(|it| it.is_rest())
+        {
+            self.report_rest(rest.span(), cx);
+        }
     }
 }
 

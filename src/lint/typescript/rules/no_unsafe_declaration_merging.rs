@@ -31,17 +31,22 @@ fn check_unsafe_declaration<'a>(
 
 impl Rule for NoUnsafeDeclarationMerging {
     const META: Meta = Meta::typescript("no-unsafe-declaration-merging", Kind::Problem).recommended();
+    const ON: On = On::new().stmts(&[StmtTag::Class, StmtTag::Interface]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoUnsafeDeclarationMerging
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.has_stmts([StmtTag::Class]) || !file.has_stmts([StmtTag::Interface]) {
-            return;
+            return None;
         }
-        on.stmts([StmtTag::Class, StmtTag::Interface], |_, statement, cx| match statement.kind() {
+        Some(())
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match statement.kind() {
             StmtKind::Class(class) => {
                 // What merges with the class is in the scope around the scope of the class.
                 if let Some(name) = class.name()
@@ -63,6 +68,6 @@ impl Rule for NoUnsafeDeclarationMerging {
                 }
             }
             _ => {}
-        });
+        }
     }
 }

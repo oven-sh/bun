@@ -18,44 +18,44 @@ const POTENTIALLY_ALREADY_RESOLVED: Message =
 
 impl Rule for NoMultipleResolved {
     const META: Meta = Meta::oxlint(Plugin::Promise, "no-multiple-resolved", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::New]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoMultipleResolved
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("Promise") {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("Promise").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::New(new_expr) = e.kind() else {
             return;
+        };
+        let Some(executor) = get_promise_constructor_inline_executor(new_expr) else {
+            return;
+        };
+        let symbol_of = |index: usize| executor.params().get(index).filter(|it| !it.is_rest()).and_then(|it| it.pat().symbol());
+        let resolve_finder = ResolveFinder { resolve_symbol: symbol_of(0), reject_symbol: symbol_of(1) };
+        // The executor and the functions in it are checked each for itself. There is something to find where the two are referred
+        // to twice.
+        let mut references_in: FxHashMap<Func<'a>, u32> = FxHashMap::default();
+        let mut diagnostics = Vec::new();
+        let resolvers = [resolve_finder.resolve_symbol, resolve_finder.reject_symbol].into_iter().flatten();
+        for reference in resolvers.flat_map(Symbol::references) {
+            let Node::Func(func) = reference.scope().variable_scope().node() else {
+                continue;
+            };
+            let count = references_in.entry(func).or_insert(0);
+            *count += 1;
+            if *count == 2 && func.kind() != FnKind::StaticBlock {
+                check(func, resolve_finder, &mut diagnostics);
+            }
         }
-        on.exprs([ExprTag::New], |_, e, cx| {
-            let ExprKind::New(new_expr) = e.kind() else {
-                return;
-            };
-            let Some(executor) = get_promise_constructor_inline_executor(new_expr) else {
-                return;
-            };
-            let symbol_of = |index: usize| executor.params().get(index).filter(|it| !it.is_rest()).and_then(|it| it.pat().symbol());
-            let resolve_finder = ResolveFinder { resolve_symbol: symbol_of(0), reject_symbol: symbol_of(1) };
-            // The executor and the functions in it are checked each for itself. There is something to find where the two are referred
-            // to twice.
-            let mut references_in: FxHashMap<Func<'a>, u32> = FxHashMap::default();
-            let mut diagnostics = Vec::new();
-            let resolvers = [resolve_finder.resolve_symbol, resolve_finder.reject_symbol].into_iter().flatten();
-            for reference in resolvers.flat_map(Symbol::references) {
-                let Node::Func(func) = reference.scope().variable_scope().node() else {
-                    continue;
-                };
-                let count = references_in.entry(func).or_insert(0);
-                *count += 1;
-                if *count == 2 && func.kind() != FnKind::StaticBlock {
-                    check(func, resolve_finder, &mut diagnostics);
-                }
-            }
-            for (message, resolved, prev_resolved) in diagnostics {
-                cx.report(resolved, message).data("line", cx.file().line_of(prev_resolved.span().end).to_string());
-            }
-        });
+        for (message, resolved, prev_resolved) in diagnostics {
+            cx.report(resolved, message).data("line", cx.file().line_of(prev_resolved.span().end).to_string());
+        }
     }
 }
 

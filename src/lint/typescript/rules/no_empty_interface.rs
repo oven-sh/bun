@@ -76,6 +76,7 @@ impl Rule for NoEmptyInterface {
         .fixable(Fixable::Code)
         .has_suggestions()
         .deprecated();
+    const ON: On = On::new().stmts(&[StmtTag::Interface]);
     /// Whether one of the declarations of a name is a class declaration.
     type State<'a> = FxHashMap<Symbol<'a>, bool>;
 
@@ -85,8 +86,11 @@ impl Rule for NoEmptyInterface {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
-        on.stmts([StmtTag::Interface], Self::check);
-        FxHashMap::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(FxHashMap::default())
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(statement, cx);
     }
 }

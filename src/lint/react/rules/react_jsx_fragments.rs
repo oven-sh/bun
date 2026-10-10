@@ -14,6 +14,7 @@ const PREFER_SYNTAX: Message = Message::new("", "Shorthand form for React fragme
 
 impl Rule for JsxFragments {
     const META: Meta = Meta::oxlint(Plugin::React, "jsx-fragments", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 
     /// `"element"` or `{ mode: "element" }`
@@ -21,29 +22,28 @@ impl Rule for JsxFragments {
         JsxFragments { prefers_element: options.str(0).or_else(|| options.object(0).str("mode")) == Some("element") }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !is_jsx(file) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        is_jsx(file).then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Jsx(jsx) = e.kind() else {
             return;
-        }
-        on.exprs([ExprTag::Jsx], |rule, e, cx| {
-            let ExprKind::Jsx(jsx) = e.kind() else {
-                return;
-            };
-            let (opening, Some(closing)) = (jsx.opening_span(), jsx.closing_span()) else {
-                return;
-            };
-            match jsx.tag() {
-                None if rule.prefers_element => {
-                    cx.report(opening, PREFER_ELEMENT).fix(|fixer| {
-                        [fixer.replace(opening, "<React.Fragment>"), fixer.replace(closing, "</React.Fragment>")]
-                    });
-                }
-                Some(name) if !rule.prefers_element && is_jsx_fragment(jsx) && jsx.attrs().is_empty() => {
-                    cx.report(name, PREFER_SYNTAX)
-                        .fix(|fixer| [fixer.replace(opening, "<>"), fixer.replace(closing, "</>")]);
-                }
-                _ => {}
+        };
+        let (opening, Some(closing)) = (jsx.opening_span(), jsx.closing_span()) else {
+            return;
+        };
+        match jsx.tag() {
+            None if self.prefers_element => {
+                cx.report(opening, PREFER_ELEMENT).fix(|fixer| {
+                    [fixer.replace(opening, "<React.Fragment>"), fixer.replace(closing, "</React.Fragment>")]
+                });
             }
-        });
+            Some(name) if !self.prefers_element && is_jsx_fragment(jsx) && jsx.attrs().is_empty() => {
+                cx.report(name, PREFER_SYNTAX)
+                    .fix(|fixer| [fixer.replace(opening, "<>"), fixer.replace(closing, "</>")]);
+            }
+            _ => {}
+        }
     }
 }

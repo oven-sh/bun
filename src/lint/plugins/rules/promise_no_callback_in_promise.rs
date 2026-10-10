@@ -15,6 +15,7 @@ const TIMEOUT_WHITELIST: [&str; 4] = ["setImmediate", "setTimeout", "requestAnim
 
 impl Rule for NoCallbackInPromise {
     const META: Meta = Meta::oxlint(Plugin::Promise, "no-callback-in-promise", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     /// Whether something is in a callback of `then` or `catch`.
     type State<'a> = AncestorMemo<'a, bool>;
 
@@ -24,11 +25,12 @@ impl Rule for NoCallbackInPromise {
         NoCallbackInPromise { callbacks, timeouts_err }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if file.mentions_any(&["then", "catch"]) && file.mentions_any(&self.callbacks) {
-            on.exprs([ExprTag::Call], |rule, e, cx| rule.check(e, cx));
-        }
-        AncestorMemo::default()
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        (file.mentions_any(&["then", "catch"]) && file.mentions_any(&self.callbacks)).then(AncestorMemo::default)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(e, cx);
     }
 }
 

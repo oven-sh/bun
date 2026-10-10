@@ -25,6 +25,7 @@ const NO_POTENTIAL_LEAKED_RENDER: Message = Message::new(
 
 impl Rule for JsxNoLeakedRender {
     const META: Meta = Meta::plugin(Plugin::React, "jsx-no-leaked-render", Kind::Problem).fixable(Fixable::Code);
+    const ON: On = On::new().binaries(&[BinOp::And]).exprs(&[ExprTag::Cond]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -39,14 +40,24 @@ impl Rule for JsxNoLeakedRender {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.has_exprs([ExprTag::Jsx]) {
-            return;
-        }
-        on.binaries([BinOp::And], check_logical_expression);
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new().binaries(&[BinOp::And]);
         if !self.allows_ternary {
-            on.exprs([ExprTag::Cond], check_conditional_expression);
+            on = on.exprs(&[ExprTag::Cond]);
         }
+        on
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.has_exprs([ExprTag::Jsx]).then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        check_conditional_expression(self, e, cx);
+    }
+
+    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        check_logical_expression(self, e, cx);
     }
 }
 

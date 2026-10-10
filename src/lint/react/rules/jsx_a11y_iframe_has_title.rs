@@ -9,24 +9,23 @@ const IFRAME_HAS_TITLE: Message = Message::new("", "Missing `title` attribute fo
 
 impl Rule for IframeHasTitle {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "iframe-has-title", Kind::Problem);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         IframeHasTitle
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Jsx], |_, e, cx| {
-            let Some(jsx_el) = as_jsx_element(e) else {
-                return;
-            };
-            if *get_element_type(cx.file(), jsx_el) == *b"iframe"
-                && !has_jsx_prop_ignore_case(jsx_el, "title").and_then(get_prop_value).is_some_and(is_title)
-                && let Some(name) = jsx_el.tag()
-            {
-                cx.report(name, IFRAME_HAS_TITLE);
-            }
-        });
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(jsx_el) = as_jsx_element(e) else {
+            return;
+        };
+        if *get_element_type(cx.file(), jsx_el) == *b"iframe"
+            && !has_jsx_prop_ignore_case(jsx_el, "title").and_then(get_prop_value).is_some_and(is_title)
+            && let Some(name) = jsx_el.tag()
+        {
+            cx.report(name, IFRAME_HAS_TITLE);
+        }
     }
 }
 

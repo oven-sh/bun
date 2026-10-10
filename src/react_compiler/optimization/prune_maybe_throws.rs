@@ -34,7 +34,7 @@ pub(crate) fn prune_maybe_throws(
         remove_dead_do_while_statements(&mut func.body);
         remove_unnecessary_try_catch(&mut func.body);
         mark_instruction_ids(&mut func.body, &mut func.instructions);
-        merge_consecutive_blocks(func, functions);
+        merge_consecutive_blocks(func, functions)?;
 
         // Rewrite phi operands to reference the updated predecessor blocks
         for block in func.body.blocks.values_mut() {

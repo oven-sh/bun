@@ -57,6 +57,7 @@ impl NoExtendNative {
 
 impl Rule for NoExtendNative {
     const META: Meta = Meta::eslint("no-extend-native", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Assign, ExprTag::Call]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -66,11 +67,15 @@ impl Rule for NoExtendNative {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("prototype") {
-            return;
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("prototype").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Assign => self.check_assignment(e, cx),
+            ExprTag::Call => self.check_call(e, cx),
+            _ => {}
         }
-        on.exprs([ExprTag::Assign], Self::check_assignment);
-        on.exprs([ExprTag::Call], Self::check_call);
     }
 }

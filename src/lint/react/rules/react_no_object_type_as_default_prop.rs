@@ -13,6 +13,7 @@ const NO_OBJECT_TYPE_AS_DEFAULT_PROP: Message =
 
 impl Rule for NoObjectTypeAsDefaultProp {
     const META: Meta = Meta::oxlint(Plugin::React, "no-object-type-as-default-prop", Kind::Suggestion);
+    const ON: On = On::new().funcs();
     /// `settings.react.componentWrapperFunctions`
     type State<'a> = &'a [Json];
 
@@ -20,42 +21,42 @@ impl Rule for NoObjectTypeAsDefaultProp {
         NoObjectTypeAsDefaultProp
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         if !is_jsx(file) {
-            return &[];
+            return None;
         }
-        on.funcs(|_, func, cx| {
-            let Some(first) = func.params().first().filter(|it| !it.is_rest() && it.pat().tag() != PatTag::Ident)
-            else {
-                return;
-            };
-            if !is_function_component(func, cx.state) {
-                return;
-            }
-            // Every default in the pattern. That of the parameter itself is not looked at.
-            let mut pending: SmallVec<[Pat<'a>; 4]> = smallvec![first.pat()];
-            while let Some(pat) = pending.pop() {
-                let check = |default: Option<Expr<'a>>| {
-                    if let Some(right) = default.map(get_inner_expression)
-                        && let Some(kind) = forbidden_default_kind(right)
-                    {
-                        cx.report(right, NO_OBJECT_TYPE_AS_DEFAULT_PROP).data("kind", kind);
-                    }
-                };
-                match pat.kind() {
-                    PatKind::Object(properties) => {
-                        properties.iter().for_each(|it| check(it.default()));
-                        pending.extend(properties.iter().map(PatProp::value));
-                    }
-                    PatKind::Array(elements) => {
-                        elements.iter().for_each(|it| check(it.default()));
-                        pending.extend(elements.iter().filter_map(PatElem::pat));
-                    }
-                    PatKind::Ident(_) | PatKind::Missing => {}
+        Some(component_wrapper_functions(file))
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(first) = func.params().first().filter(|it| !it.is_rest() && it.pat().tag() != PatTag::Ident) else {
+            return;
+        };
+        if !is_function_component(func, cx.state) {
+            return;
+        }
+        // Every default in the pattern. That of the parameter itself is not looked at.
+        let mut pending: SmallVec<[Pat<'a>; 4]> = smallvec![first.pat()];
+        while let Some(pat) = pending.pop() {
+            let check = |default: Option<Expr<'a>>| {
+                if let Some(right) = default.map(get_inner_expression)
+                    && let Some(kind) = forbidden_default_kind(right)
+                {
+                    cx.report(right, NO_OBJECT_TYPE_AS_DEFAULT_PROP).data("kind", kind);
                 }
+            };
+            match pat.kind() {
+                PatKind::Object(properties) => {
+                    properties.iter().for_each(|it| check(it.default()));
+                    pending.extend(properties.iter().map(PatProp::value));
+                }
+                PatKind::Array(elements) => {
+                    elements.iter().for_each(|it| check(it.default()));
+                    pending.extend(elements.iter().filter_map(PatElem::pat));
+                }
+                PatKind::Ident(_) | PatKind::Missing => {}
             }
-        });
-        component_wrapper_functions(file)
+        }
     }
 }
 

@@ -12,26 +12,26 @@ const NO_BLANK_BLOCKS: Message = Message::new("", "No empty blocks");
 
 impl Rule for NoBlankBlocks {
     const META: Meta = Meta::oxlint(Plugin::Jsdoc, "no-blank-blocks", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().finish();
     type State<'a> = JSDocFinder<'a>;
 
     fn new(options: &Options) -> Self {
         NoBlankBlocks { enable_fixer: options.object(0).bool_or("enableFixer", false) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> JSDocFinder<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<JSDocFinder<'a>> {
         let finder = JSDocFinder::new(file);
-        if !finder.is_empty() {
-            on.finish(|rule, cx| {
-                let file = cx.file();
-                for jsdoc_span in cx.state.iter_all().map(|it| it.span()).filter(|it| is_blank_jsdoc(file.slice(*it))) {
-                    let report = cx.report(jsdoc_span, NO_BLANK_BLOCKS);
-                    if rule.enable_fixer {
-                        report.fix(|fixer| fix_span(jsdoc_span, file.text()).map(|span| fixer.remove(span)));
-                    }
-                }
-            });
+        (!finder.is_empty()).then_some(finder)
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let file = cx.file();
+        for jsdoc_span in cx.state.iter_all().map(|it| it.span()).filter(|it| is_blank_jsdoc(file.slice(*it))) {
+            let report = cx.report(jsdoc_span, NO_BLANK_BLOCKS);
+            if self.enable_fixer {
+                report.fix(|fixer| fix_span(jsdoc_span, file.text()).map(|span| fixer.remove(span)));
+            }
         }
-        finder
     }
 }
 

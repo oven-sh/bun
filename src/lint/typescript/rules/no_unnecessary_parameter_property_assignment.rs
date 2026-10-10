@@ -184,6 +184,26 @@ impl NoUnnecessaryParameterPropertyAssignment {
             cx.state = true;
         }
     }
+}
+
+impl Rule for NoUnnecessaryParameterPropertyAssignment {
+    const META: Meta =
+        Meta::typescript("no-unnecessary-parameter-property-assignment", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Assign]).finish();
+    /// Whether there is a `this.x = x`.
+    type State<'a> = bool;
+
+    fn new(_: &Options) -> Self {
+        NoUnnecessaryParameterPropertyAssignment
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<bool> {
+        (file.has_classes() && file.has_exprs([ExprTag::Assign])).then_some(false)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.look_for_copy(e, cx);
+    }
 
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
         if !cx.state {
@@ -238,24 +258,5 @@ impl NoUnnecessaryParameterPropertyAssignment {
                 }
             }
         }
-    }
-}
-
-impl Rule for NoUnnecessaryParameterPropertyAssignment {
-    const META: Meta =
-        Meta::typescript("no-unnecessary-parameter-property-assignment", Kind::Suggestion);
-    /// Whether there is a `this.x = x`.
-    type State<'a> = bool;
-
-    fn new(_: &Options) -> Self {
-        NoUnnecessaryParameterPropertyAssignment
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> bool {
-        if file.has_classes() && file.has_exprs([ExprTag::Assign]) {
-            on.exprs([ExprTag::Assign], Self::look_for_copy);
-            on.finish(Self::finish);
-        }
-        false
     }
 }

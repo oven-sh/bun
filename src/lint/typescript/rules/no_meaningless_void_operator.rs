@@ -39,8 +39,22 @@ fn fix(fixer: Fixer, node: Expr) -> Fix {
     fixer.remove(Span::new(start, end))
 }
 
-impl NoMeaninglessVoidOperator {
-    fn check<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoMeaninglessVoidOperator {
+    const META: Meta = Meta::typescript("no-meaningless-void-operator", Kind::Suggestion)
+        .fixable(Fixable::Code)
+        .has_suggestions()
+        .presets(Presets::STRICT_TYPE_CHECKED)
+        .requires_types();
+    const ON: On = On::new().exprs(&[ExprTag::Unary]);
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        NoMeaninglessVoidOperator {
+            check_never: options.object(0).bool_or("checkNever", false),
+        }
+    }
+
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Unary { op: UnOp::Void, operand: argument } = node.kind() else {
             return;
         };
@@ -81,24 +95,5 @@ impl NoMeaninglessVoidOperator {
                 .data("type", arg_type.to_text())
                 .suggest(REMOVE_VOID, |fixer| fix(fixer, node));
         }
-    }
-}
-
-impl Rule for NoMeaninglessVoidOperator {
-    const META: Meta = Meta::typescript("no-meaningless-void-operator", Kind::Suggestion)
-        .fixable(Fixable::Code)
-        .has_suggestions()
-        .presets(Presets::STRICT_TYPE_CHECKED)
-        .requires_types();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        NoMeaninglessVoidOperator {
-            check_never: options.object(0).bool_or("checkNever", false),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Unary], Self::check);
     }
 }

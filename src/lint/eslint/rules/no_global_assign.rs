@@ -25,7 +25,8 @@ impl NoGlobalAssign {
 
 impl Rule for NoGlobalAssign {
     const META: Meta = Meta::eslint("no-global-assign", Kind::Suggestion).recommended();
-    type State<'a> = ();
+    const ON: On = On::new().finish();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let exceptions = options.object(0).strings("exceptions");
@@ -34,14 +35,12 @@ impl Rule for NoGlobalAssign {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.finish(|rule, cx| {
-            let file = cx.file();
-            rule.check(file.unresolved_references(), cx);
-            // What a script declares at its top level is the global variable of that name.
-            for symbol in file.scope().symbols().filter(|it| it.has_modifying_references()) {
-                rule.check(symbol.references(), cx);
-            }
-        });
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let file = cx.file();
+        self.check(file.unresolved_references(), cx);
+        // What a script declares at its top level is the global variable of that name.
+        for symbol in file.scope().symbols().filter(|it| it.has_modifying_references()) {
+            self.check(symbol.references(), cx);
+        }
     }
 }

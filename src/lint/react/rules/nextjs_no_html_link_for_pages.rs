@@ -10,35 +10,34 @@ const NO_HTML_LINK_FOR_PAGES: Message = Message::new("", "Do not use `<a>` eleme
 
 impl Rule for NoHtmlLinkForPages {
     const META: Meta = Meta::oxlint(Plugin::Nextjs, "no-html-link-for-pages", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoHtmlLinkForPages
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("href") {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("href").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Jsx(jsx) = e.kind() else {
+            return;
+        };
+        if !jsx.tag().is_some_and(|it| it.is_ident("a")) {
             return;
         }
-        on.exprs([ExprTag::Jsx], |_, e, cx| {
-            let ExprKind::Jsx(jsx) = e.kind() else {
-                return;
-            };
-            if !jsx.tag().is_some_and(|it| it.is_ident("a")) {
-                return;
-            }
-            let has_target_blank = jsx.attrs().iter().any(|it| {
-                get_jsx_attribute_name(it).is_some_and(|name| name == b"target")
-                    && get_string_literal_prop_value(it).is_some_and(|value| value == b"_blank")
-            });
-            if !has_target_blank
-                && has_jsx_prop(jsx, "download").is_none()
-                && has_jsx_prop(jsx, "href").and_then(get_string_literal_prop_value).is_some_and(is_internal_page_link)
-            {
-                cx.report(jsx.opening_span(), NO_HTML_LINK_FOR_PAGES)
-                    .first_label("Replace with `<Link>` from `next/link`");
-            }
+        let has_target_blank = jsx.attrs().iter().any(|it| {
+            get_jsx_attribute_name(it).is_some_and(|name| name == b"target")
+                && get_string_literal_prop_value(it).is_some_and(|value| value == b"_blank")
         });
+        if !has_target_blank
+            && has_jsx_prop(jsx, "download").is_none()
+            && has_jsx_prop(jsx, "href").and_then(get_string_literal_prop_value).is_some_and(is_internal_page_link)
+        {
+            cx.report(jsx.opening_span(), NO_HTML_LINK_FOR_PAGES).first_label("Replace with `<Link>` from `next/link`");
+        }
     }
 }
 

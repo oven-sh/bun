@@ -27,20 +27,19 @@ impl Rule for NoForInArray {
     const META: Meta = Meta::typescript("no-for-in-array", Kind::Problem)
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::ForIn]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoForInArray
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::ForIn], |_, node, cx| {
-            let StmtKind::ForIn { expr: right, .. } = node.kind() else {
-                return;
-            };
-            if is_array_like(get_constrained_type_at_location(right)) {
-                cx.report(get_for_statement_head_loc(node), FOR_IN_VIOLATION);
-            }
-        });
+    fn stmt<'a>(&self, node: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let StmtKind::ForIn { expr: right, .. } = node.kind() else {
+            return;
+        };
+        if is_array_like(get_constrained_type_at_location(right)) {
+            cx.report(get_for_statement_head_loc(node), FOR_IN_VIOLATION);
+        }
     }
 }

@@ -13,35 +13,35 @@ const ONE_ARGUMENT_REQUIRED: Message = Message::new("", "`Promise.{{prop_name}}(
 
 impl Rule for ValidParams {
     const META: Meta = Meta::oxlint(Plugin::Promise, "valid-params", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         ValidParams
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions_any(&["then", "catch", "finally", "Promise"]) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions_any(&["then", "catch", "finally", "Promise"]).then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(call_expr) = e.as_call() else {
+            return;
+        };
+        // Nearly every call of these has one argument.
+        let args_len = call_expr.args().len();
+        if args_len == 1 {
             return;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let Some(call_expr) = e.as_call() else {
-                return;
-            };
-            // Nearly every call of these has one argument.
-            let args_len = call_expr.args().len();
-            if args_len == 1 {
-                return;
-            }
-            let Some(prop_name) = is_promise_with_context(call_expr) else {
-                return;
-            };
-            let message = match prop_name.bytes() {
-                b"resolve" | b"reject" if args_len > 1 => ZERO_OR_ONE_ARGUMENT_REQUIRED,
-                b"then" if args_len != 2 => ONE_OR_TWO_ARGUMENT_REQUIRED,
-                b"race" | b"all" | b"allSettled" | b"any" | b"catch" | b"finally" => ONE_ARGUMENT_REQUIRED,
-                _ => return,
-            };
-            cx.report(e, message).data("prop_name", prop_name).data("args_len", args_len);
-        });
+        let Some(prop_name) = is_promise_with_context(call_expr) else {
+            return;
+        };
+        let message = match prop_name.bytes() {
+            b"resolve" | b"reject" if args_len > 1 => ZERO_OR_ONE_ARGUMENT_REQUIRED,
+            b"then" if args_len != 2 => ONE_OR_TWO_ARGUMENT_REQUIRED,
+            b"race" | b"all" | b"allSettled" | b"any" | b"catch" | b"finally" => ONE_ARGUMENT_REQUIRED,
+            _ => return,
+        };
+        cx.report(e, message).data("prop_name", prop_name).data("args_len", args_len);
     }
 }

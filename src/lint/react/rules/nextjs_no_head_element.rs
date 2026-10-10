@@ -9,22 +9,25 @@ const NO_HEAD_ELEMENT: Message = Message::new("", "Do not use `<head>` element. 
 
 impl Rule for NoHeadElement {
     const META: Meta = Meta::oxlint(Plugin::Nextjs, "no-head-element", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoHeadElement
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions("head") || is_in_app_dir(file.path()) {
-            return;
+            return None;
         }
-        on.exprs([ExprTag::Jsx], |_, e, cx| {
-            if let ExprKind::Jsx(jsx) = e.kind()
-                && jsx.tag().is_some_and(|it| it.is_ident("head"))
-            {
-                cx.report(jsx.opening_span(), NO_HEAD_ELEMENT);
-            }
-        });
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let ExprKind::Jsx(jsx) = e.kind()
+            && jsx.tag().is_some_and(|it| it.is_ident("head"))
+        {
+            cx.report(jsx.opening_span(), NO_HEAD_ELEMENT);
+        }
     }
 }

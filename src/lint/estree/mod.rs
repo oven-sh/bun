@@ -23,6 +23,7 @@ mod vnode;
 
 pub use field::Field;
 pub use schema::{FieldEntry, NodeType};
+pub(crate) use value::Sink;
 pub use value::{Nodes, Object, Value};
 pub use vnode::VNode;
 

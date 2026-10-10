@@ -9,35 +9,35 @@ const NO_FIND_DOM_NODE: Message = Message::new("", "Unexpected call to `findDOMN
 
 impl Rule for NoFindDomNode {
     const META: Meta = Meta::oxlint(Plugin::React, "no-find-dom-node", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoFindDomNode
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("findDOMNode") {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("findDOMNode").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(callee) = e.callee() else {
+            return;
+        };
+        let ident = get_inner_expression(callee);
+        if ident.tag() == ExprTag::Ident {
+            if ident.is_ident("findDOMNode") {
+                cx.report(ident, NO_FIND_DOM_NODE);
+            }
             return;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let Some(callee) = e.callee() else {
-                return;
-            };
-            let ident = get_inner_expression(callee);
-            if ident.tag() == ExprTag::Ident {
-                if ident.is_ident("findDOMNode") {
-                    cx.report(ident, NO_FIND_DOM_NODE);
-                }
-                return;
-            }
-            if let Some(member) = get_member_expr(callee)
-                && let Some((span, name)) = static_property_info(member)
-                && name.is("findDOMNode")
-                && let Some(object) = member.object().and_then(|it| get_inner_expression(it).as_ident())
-                && object.is_any(&["React", "ReactDOM", "ReactDom"])
-            {
-                cx.report(span, NO_FIND_DOM_NODE);
-            }
-        });
+        if let Some(member) = get_member_expr(callee)
+            && let Some((span, name)) = static_property_info(member)
+            && name.is("findDOMNode")
+            && let Some(object) = member.object().and_then(|it| get_inner_expression(it).as_ident())
+            && object.is_any(&["React", "ReactDOM", "ReactDom"])
+        {
+            cx.report(span, NO_FIND_DOM_NODE);
+        }
     }
 }

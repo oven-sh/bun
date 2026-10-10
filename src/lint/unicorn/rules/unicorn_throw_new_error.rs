@@ -10,34 +10,33 @@ const THROW_NEW_ERROR: Message = Message::new("", "Require `new` when throwing a
 
 impl Rule for ThrowNewError {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "throw-new-error", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         ThrowNewError
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let Some(callee) = e.callee() else {
-                return;
-            };
-            let name = match callee.kind() {
-                ExprKind::Ident(name) => name,
-                ExprKind::Dot { name, .. } if !callee.is_private_member() && !callee.is_chain_root() => name.name(),
-                _ => return,
-            };
-            if !matches!(name.bytes(), [b'A'..=b'Z', .., b'E', b'r', b'r', b'o', b'r'] | b"Error")
-                || is_data_tagged_error(callee)
-                || is_decorator(e)
-            {
-                return;
-            }
-            let report = cx.report(e, THROW_NEW_ERROR);
-            // `class A extends B.CError() {}`
-            if e.is_parenthesized() || !matches!(e.parent(), Node::Class(_)) {
-                report.fix(|fixer| fixer.insert_before(e, "new "));
-            }
-        });
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(callee) = e.callee() else {
+            return;
+        };
+        let name = match callee.kind() {
+            ExprKind::Ident(name) => name,
+            ExprKind::Dot { name, .. } if !callee.is_private_member() && !callee.is_chain_root() => name.name(),
+            _ => return,
+        };
+        if !matches!(name.bytes(), [b'A'..=b'Z', .., b'E', b'r', b'r', b'o', b'r'] | b"Error")
+            || is_data_tagged_error(callee)
+            || is_decorator(e)
+        {
+            return;
+        }
+        let report = cx.report(e, THROW_NEW_ERROR);
+        // `class A extends B.CError() {}`
+        if e.is_parenthesized() || !matches!(e.parent(), Node::Class(_)) {
+            report.fix(|fixer| fixer.insert_before(e, "new "));
+        }
     }
 }
 

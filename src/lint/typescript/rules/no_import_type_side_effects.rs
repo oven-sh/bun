@@ -18,39 +18,38 @@ fn has_braces(statement: Stmt) -> bool {
 impl Rule for NoImportTypeSideEffects {
     const META: Meta =
         Meta::typescript("no-import-type-side-effects", Kind::Problem).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::Import]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoImportTypeSideEffects
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::Import], |_, statement, cx| {
-            let StmtKind::Import(import) = statement.kind() else {
-                return;
-            };
-            let named = import.named();
-            if import.is_type_only()
-                || import.default().is_some()
-                || import.namespace().is_some()
-                || named.is_empty() && !(cx.language().is_oxlint && has_braces(statement))
-                || !named.iter().all(ImportSpec::is_type_only)
-            {
-                return;
-            }
-            cx.report(statement, USE_TOP_LEVEL_QUALIFIER).fix(|fixer| {
-                let start = statement.span().start;
-                let keyword = Span::new(start, start + "import".len() as u32);
-                // The same text. The fix of oxlint starts at the keyword, which decides between it and another rule's.
-                let mut fixes = vec![match fixer.file().language().is_oxlint {
-                    true => fixer.replace(keyword, "import type"),
-                    false => fixer.insert_after(keyword, " type"),
-                }];
-                fixes.extend(named.iter().map(|specifier| {
-                    fixer.remove(Span::new(specifier.span().start, specifier.imported().start()))
-                }));
-                fixes
-            });
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let StmtKind::Import(import) = statement.kind() else {
+            return;
+        };
+        let named = import.named();
+        if import.is_type_only()
+            || import.default().is_some()
+            || import.namespace().is_some()
+            || named.is_empty() && !(cx.language().is_oxlint && has_braces(statement))
+            || !named.iter().all(ImportSpec::is_type_only)
+        {
+            return;
+        }
+        cx.report(statement, USE_TOP_LEVEL_QUALIFIER).fix(|fixer| {
+            let start = statement.span().start;
+            let keyword = Span::new(start, start + "import".len() as u32);
+            // The same text. The fix of oxlint starts at the keyword, which decides between it and another rule's.
+            let mut fixes = vec![match fixer.file().language().is_oxlint {
+                true => fixer.replace(keyword, "import type"),
+                false => fixer.insert_after(keyword, " type"),
+            }];
+            fixes.extend(named.iter().map(|specifier| {
+                fixer.remove(Span::new(specifier.span().start, specifier.imported().start()))
+            }));
+            fixes
         });
     }
 }

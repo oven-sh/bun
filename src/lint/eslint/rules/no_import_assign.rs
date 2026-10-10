@@ -97,6 +97,7 @@ fn oxlint_place(reference: Reference) -> Span {
 
 impl Rule for NoImportAssign {
     const META: Meta = Meta::eslint("no-import-assign", Kind::Problem).recommended();
+    const ON: On = On::new().stmts(&[StmtTag::Import]);
     /// Whether an import that is not of a namespace can have something to report: something is assigned to what one imports,
     /// or declared several times. Found out for the first import.
     type State<'a> = Option<bool>;
@@ -105,45 +106,46 @@ impl Rule for NoImportAssign {
         NoImportAssign
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Option<bool> {
-        on.stmts([StmtTag::Import], |_, stmt, cx| {
-            let file = cx.file();
-            let looks_at_all = *cx.state.get_or_insert_with(|| {
-                let mut imported = file.symbols_declared_as(DeclarationKinds::IMPORT_BINDING);
-                imported.any(|it| it.has_writes() || it.declaration_count() > 1)
-            });
-            if !looks_at_all && !matches!(stmt.kind(), StmtKind::Import(import) if import.namespace().is_some()) {
-                return;
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Option<bool>> {
+        Some(None)
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let file = cx.file();
+        let looks_at_all = *cx.state.get_or_insert_with(|| {
+            let mut imported = file.symbols_declared_as(DeclarationKinds::IMPORT_BINDING);
+            imported.any(|it| it.has_writes() || it.declaration_count() > 1)
+        });
+        if !looks_at_all && !matches!(stmt.kind(), StmtKind::Import(import) if import.namespace().is_some()) {
+            return;
+        }
+        for variable in Node::Stmt(stmt).declared_symbols() {
+            let should_check_members =
+                variable.declarations().any(|it| matches!(it, Declaration::ImportNamespace(_)));
+            if !should_check_members && !variable.has_writes() {
+                continue;
             }
-            for variable in Node::Stmt(stmt).declared_symbols() {
-                let should_check_members =
-                    variable.declarations().any(|it| matches!(it, Declaration::ImportNamespace(_)));
-                if !should_check_members && !variable.has_writes() {
+            // `[a = 0] = b` writes to `a` twice.
+            let mut previous = None;
+            let is_oxlint = cx.language().is_oxlint;
+            for reference in variable.references() {
+                if previous.replace(reference.span()) == Some(reference.span()) {
                     continue;
                 }
-                // `[a = 0] = b` writes to `a` twice.
-                let mut previous = None;
-                let is_oxlint = cx.language().is_oxlint;
-                for reference in variable.references() {
-                    if previous.replace(reference.span()) == Some(reference.span()) {
-                        continue;
-                    }
-                    // `import type { A } from "a"; const A = 0`: for oxlint a declaration assigns nothing.
-                    if is_oxlint && reference.is_init() {
-                        continue;
-                    }
-                    let message = if reference.is_write() {
-                        READONLY
-                    } else if should_check_members && reference.expr().is_some_and(is_member_write) {
-                        READONLY_MEMBER
-                    } else {
-                        continue;
-                    };
-                    let place = if is_oxlint { oxlint_place(reference) } else { get_write_node(reference) };
-                    cx.report(place, message).data("name", reference.name());
+                // `import type { A } from "a"; const A = 0`: for oxlint a declaration assigns nothing.
+                if is_oxlint && reference.is_init() {
+                    continue;
                 }
+                let message = if reference.is_write() {
+                    READONLY
+                } else if should_check_members && reference.expr().is_some_and(is_member_write) {
+                    READONLY_MEMBER
+                } else {
+                    continue;
+                };
+                let place = if is_oxlint { oxlint_place(reference) } else { get_write_node(reference) };
+                cx.report(place, message).data("name", reference.name());
             }
-        });
-        None
+        }
     }
 }

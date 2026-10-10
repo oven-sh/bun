@@ -114,6 +114,7 @@ impl NoParamReassign {
 
 impl Rule for NoParamReassign {
     const META: Meta = Meta::eslint("no-param-reassign", Kind::Suggestion);
+    const ON: On = On::new().params();
     /// `is_modifying_prop`
     type State<'a> = AncestorMemo<'a, bool>;
 
@@ -134,13 +135,14 @@ impl Rule for NoParamReassign {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
-        on.params(|rule, param, cx| {
-            // oxlint does not look at a rest parameter.
-            if param.func().is_some_and(Func::has_body) && !(param.is_rest() && cx.language().is_oxlint) {
-                param.pat().for_each_binding(&mut |pat| rule.check_variable(pat, cx));
-            }
-        });
-        AncestorMemo::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(AncestorMemo::default())
+    }
+
+    fn param<'a>(&self, param: Param<'a>, cx: &mut Cx<'a, Self>) {
+        // oxlint does not look at a rest parameter.
+        if param.func().is_some_and(Func::has_body) && !(param.is_rest() && cx.language().is_oxlint) {
+            param.pat().for_each_binding(&mut |pat| self.check_variable(pat, cx));
+        }
     }
 }

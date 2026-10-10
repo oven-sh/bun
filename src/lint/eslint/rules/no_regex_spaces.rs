@@ -139,16 +139,26 @@ impl Rule for NoRegexSpaces {
     const META: Meta = Meta::eslint("no-regex-spaces", Kind::Suggestion)
         .fixable(Fixable::Code)
         .recommended();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Regex, ExprTag::Call, ExprTag::New]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoRegexSpaces
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        on.exprs([ExprTag::Regex], check_literal);
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new().exprs(&[ExprTag::Regex]);
         if file.mentions("RegExp") {
-            on.exprs([ExprTag::Call, ExprTag::New], check_function);
+            on = on.exprs(&[ExprTag::Call, ExprTag::New]);
+        }
+        on
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Regex => check_literal(self, e, cx),
+            ExprTag::Call | ExprTag::New => check_function(self, e, cx),
+            _ => {}
         }
     }
 }

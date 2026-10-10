@@ -46,6 +46,18 @@ pub struct State<'a> {
 
 type Context<'a> = Cx<'a, NoUnnecessaryCondition>;
 
+const CONDITIONS: On = On::new()
+    .exprs(&[
+        ExprTag::Assign,
+        ExprTag::Binary,
+        ExprTag::Call,
+        ExprTag::Dot,
+        ExprTag::Index,
+        ExprTag::Cond,
+    ])
+    .stmts(&[StmtTag::If, StmtTag::DoWhile, StmtTag::For, StmtTag::While])
+    .cases();
+
 const ALWAYS_FALSY: Message =
     Message::new("alwaysFalsy", "Unnecessary conditional, value is always falsy.");
 const ALWAYS_FALSY_FUNC: Message = Message::new(
@@ -817,6 +829,46 @@ impl NoUnnecessaryCondition {
             (None, true) => cx.report(callback, ALWAYS_FALSY_FUNC),
         };
     }
+
+    fn check_assignment_expression<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
+        // `a ||= b` is `a || (a = b)`.
+        match node.kind() {
+            ExprKind::Assign {
+                op: Some(BinOp::And | BinOp::Or),
+                target,
+                ..
+            } => check_node(target, cx),
+            ExprKind::Assign {
+                op: Some(BinOp::Nullish),
+                target,
+                ..
+            } => check_node_for_nullish(target, cx),
+            _ => {}
+        }
+    }
+
+    fn check_binary_expression<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
+        let ExprKind::Binary { op, left, right } = node.kind() else {
+            return;
+        };
+        match op {
+            BinOp::Lt
+            | BinOp::Gt
+            | BinOp::Le
+            | BinOp::Ge
+            | BinOp::EqEq
+            | BinOp::EqEqEq
+            | BinOp::NotEq
+            | BinOp::NotEqEq => {
+                check_if_bool_expression_is_necessary_conditional(node, left, right, op, cx);
+            }
+            BinOp::Nullish => check_node_for_nullish(left, cx),
+            // Only the left side: the right side need not be a condition at all. It is checked
+            // if the whole is used as one.
+            BinOp::And | BinOp::Or => check_node(left, cx),
+            _ => {}
+        }
+    }
 }
 
 impl Rule for NoUnnecessaryCondition {
@@ -824,6 +876,7 @@ impl Rule for NoUnnecessaryCondition {
         .has_suggestions()
         .presets(Presets::STRICT_TYPE_CHECKED)
         .requires_types();
+    const ON: On = CONDITIONS.finish();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -844,7 +897,17 @@ impl Rule for NoUnnecessaryCondition {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let compiler_options = file.type_checker().compiler_options();
+        if !is_strict_compiler_option_enabled(compiler_options, CompilerOption::StrictNullChecks)
+            && !self.allow_rule_to_run_without_strict_null_checks_i_know_what_i_am_doing
+        {
+            return CONDITIONS.finish();
+        }
+        CONDITIONS
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         let compiler_options = file.type_checker().compiler_options();
         let flags = State {
             is_strict_null_checks: is_strict_compiler_option_enabled(
@@ -859,94 +922,61 @@ impl Rule for NoUnnecessaryCondition {
             chains_with_option_array_index: FxHashMap::default(),
             optional_properties: FxHashMap::default(),
         };
-        if !flags.is_strict_null_checks
-            && !self.allow_rule_to_run_without_strict_null_checks_i_know_what_i_am_doing
-        {
-            on.finish(|_, cx| {
-                // tsgolint points at the start of the file.
-                if cx.language().is_oxlint {
-                    cx.report(Span::empty(0), NO_STRICT_NULL_CHECK);
-                    return;
-                }
-                let nowhere = Position { line: 0, column: 0 };
-                cx.report(Span::empty(0), NO_STRICT_NULL_CHECK).start_at(nowhere).end_at(nowhere);
-            });
-        }
+        Some(flags)
+    }
 
-        on.exprs([ExprTag::Assign], |_, node, cx| {
-            // `a ||= b` is `a || (a = b)`.
-            match node.kind() {
-                ExprKind::Assign {
-                    op: Some(BinOp::And | BinOp::Or),
-                    target,
-                    ..
-                } => check_node(target, cx),
-                ExprKind::Assign {
-                    op: Some(BinOp::Nullish),
-                    target,
-                    ..
-                } => check_node_for_nullish(target, cx),
-                _ => {}
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match node.tag() {
+            ExprTag::Assign => Self::check_assignment_expression(node, cx),
+            ExprTag::Binary => Self::check_binary_expression(node, cx),
+            ExprTag::Call => {
+                self.check_call_expression(node, cx);
+                check_optional_chain(node, cx);
             }
-        });
-        on.exprs([ExprTag::Binary], |_, node, cx| {
-            let ExprKind::Binary { op, left, right } = node.kind() else {
-                return;
-            };
-            match op {
-                BinOp::Lt
-                | BinOp::Gt
-                | BinOp::Le
-                | BinOp::Ge
-                | BinOp::EqEq
-                | BinOp::EqEqEq
-                | BinOp::NotEq
-                | BinOp::NotEqEq => {
-                    check_if_bool_expression_is_necessary_conditional(node, left, right, op, cx);
+            ExprTag::Dot | ExprTag::Index => check_optional_chain(node, cx),
+            ExprTag::Cond => {
+                if let ExprKind::Cond { test, .. } = node.kind() {
+                    check_node(test, cx);
                 }
-                BinOp::Nullish => check_node_for_nullish(left, cx),
-                // Only the left side: the right side need not be a condition at all. It is checked
-                // if the whole is used as one.
-                BinOp::And | BinOp::Or => check_node(left, cx),
-                _ => {}
             }
-        });
-        on.exprs([ExprTag::Call], |rule, node, cx| {
-            rule.check_call_expression(node, cx);
-            check_optional_chain(node, cx);
-        });
-        on.exprs([ExprTag::Dot, ExprTag::Index], |_, node, cx| check_optional_chain(node, cx));
-        on.exprs([ExprTag::Cond], |_, node, cx| {
-            if let ExprKind::Cond { test, .. } = node.kind() {
-                check_node(test, cx);
-            }
-        });
-        on.stmts(
-            [StmtTag::If, StmtTag::DoWhile, StmtTag::For, StmtTag::While],
-            |rule, node, cx| match node.kind() {
-                StmtKind::If { test, .. } => check_node(test, cx),
-                StmtKind::DoWhile { test, .. }
-                | StmtKind::While { test, .. }
-                | StmtKind::For {
-                    test: Some(test), ..
-                } => rule.check_if_loop_is_necessary_conditional(test, cx),
-                _ => {}
-            },
-        );
-        on.cases(|_, node, cx| {
-            if let Some(test) = node.test()
-                && let Node::Stmt(parent) = node.parent()
-                && let StmtKind::Switch { expr: discriminant, .. } = parent.kind()
-            {
-                check_if_bool_expression_is_necessary_conditional(
-                    test,
-                    discriminant,
-                    test,
-                    BinOp::EqEqEq,
-                    cx,
-                );
-            }
-        });
-        flags
+            _ => {}
+        }
+    }
+
+    fn stmt<'a>(&self, node: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match node.kind() {
+            StmtKind::If { test, .. } => check_node(test, cx),
+            StmtKind::DoWhile { test, .. }
+            | StmtKind::While { test, .. }
+            | StmtKind::For {
+                test: Some(test), ..
+            } => self.check_if_loop_is_necessary_conditional(test, cx),
+            _ => {}
+        }
+    }
+
+    fn case<'a>(&self, node: Case<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(test) = node.test()
+            && let Node::Stmt(parent) = node.parent()
+            && let StmtKind::Switch { expr: discriminant, .. } = parent.kind()
+        {
+            check_if_bool_expression_is_necessary_conditional(
+                test,
+                discriminant,
+                test,
+                BinOp::EqEqEq,
+                cx,
+            );
+        }
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        // tsgolint points at the start of the file.
+        if cx.language().is_oxlint {
+            cx.report(Span::empty(0), NO_STRICT_NULL_CHECK);
+            return;
+        }
+        let nowhere = Position { line: 0, column: 0 };
+        cx.report(Span::empty(0), NO_STRICT_NULL_CHECK).start_at(nowhere).end_at(nowhere);
     }
 }

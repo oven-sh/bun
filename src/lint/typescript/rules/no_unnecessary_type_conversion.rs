@@ -276,16 +276,25 @@ impl Rule for NoUnnecessaryTypeConversion {
         .has_suggestions()
         .presets(Presets::STRICT_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[
+        ExprTag::Assign,
+        ExprTag::Binary,
+        ExprTag::Call,
+        ExprTag::Unary,
+    ]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoUnnecessaryTypeConversion
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Assign], |_, node, cx| check_assignment(node, cx));
-        on.exprs([ExprTag::Binary], |_, node, cx| check_binary(node, cx));
-        on.exprs([ExprTag::Call], |_, node, cx| check_call(node, cx));
-        on.exprs([ExprTag::Unary], |_, node, cx| check_unary(node, cx));
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match node.tag() {
+            ExprTag::Assign => check_assignment(node, cx),
+            ExprTag::Binary => check_binary(node, cx),
+            ExprTag::Call => check_call(node, cx),
+            ExprTag::Unary => check_unary(node, cx),
+            _ => {}
+        }
     }
 }

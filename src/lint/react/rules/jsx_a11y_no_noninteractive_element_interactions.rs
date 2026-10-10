@@ -26,7 +26,8 @@ const NO_NONINTERACTIVE_ELEMENT_INTERACTIONS: Message =
 
 impl Rule for NoNoninteractiveElementInteractions {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "no-noninteractive-element-interactions", Kind::Problem);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let config = options.object(0);
@@ -47,41 +48,39 @@ impl Rule for NoNoninteractiveElementInteractions {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Jsx], |rule, e, cx| {
-            let Some(jsx_el) = as_jsx_element(e) else {
-                return;
-            };
-            if jsx_el.attrs().is_empty() {
-                return;
-            }
-            let element_type = get_element_type(cx.file(), jsx_el);
-            if !contains_name(&HTML_TAG, &element_type) || !rule.has_interactive_handler(jsx_el, &element_type) {
-                return;
-            }
-            let role_value = has_jsx_prop_ignore_case(jsx_el, "role").and_then(get_static_string_prop_value);
-            if is_content_editable(jsx_el)
-                || is_hidden_from_screen_reader(cx.file(), jsx_el)
-                || role_value.map(text::to_lower_case).is_some_and(|role| {
-                    matches!(&*role, b"presentation" | b"none") || is_abstract_role_name(&role)
-                })
-            {
-                return;
-            }
-            let role = role_value.and_then(first_recognized_role);
-            let role = role.as_deref();
-            if role.is_some_and(|role| is_interactive_role_for_rule(role, jsx_el, &element_type)) {
-                return;
-            }
-            // Of these elements some are also interactive content for HTML: `<iframe>`, `<label>`, `<details>`.
-            if (is_non_interactive_element(&element_type, jsx_el)
-                || !is_interactive_element(&element_type, jsx_el)
-                    && role.is_some_and(|role| is_non_interactive_role_for_rule(role, jsx_el, &element_type)))
-                && let Some(name) = jsx_el.tag()
-            {
-                cx.report(name, NO_NONINTERACTIVE_ELEMENT_INTERACTIONS);
-            }
-        });
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(jsx_el) = as_jsx_element(e) else {
+            return;
+        };
+        if jsx_el.attrs().is_empty() {
+            return;
+        }
+        let element_type = get_element_type(cx.file(), jsx_el);
+        if !contains_name(&HTML_TAG, &element_type) || !self.has_interactive_handler(jsx_el, &element_type) {
+            return;
+        }
+        let role_value = has_jsx_prop_ignore_case(jsx_el, "role").and_then(get_static_string_prop_value);
+        if is_content_editable(jsx_el)
+            || is_hidden_from_screen_reader(cx.file(), jsx_el)
+            || role_value.map(text::to_lower_case).is_some_and(|role| {
+                matches!(&*role, b"presentation" | b"none") || is_abstract_role_name(&role)
+            })
+        {
+            return;
+        }
+        let role = role_value.and_then(first_recognized_role);
+        let role = role.as_deref();
+        if role.is_some_and(|role| is_interactive_role_for_rule(role, jsx_el, &element_type)) {
+            return;
+        }
+        // Of these elements some are also interactive content for HTML: `<iframe>`, `<label>`, `<details>`.
+        if (is_non_interactive_element(&element_type, jsx_el)
+            || !is_interactive_element(&element_type, jsx_el)
+                && role.is_some_and(|role| is_non_interactive_role_for_rule(role, jsx_el, &element_type)))
+            && let Some(name) = jsx_el.tag()
+        {
+            cx.report(name, NO_NONINTERACTIVE_ELEMENT_INTERACTIONS);
+        }
     }
 }
 

@@ -42,13 +42,14 @@ impl Rule for NoExtraNonNullAssertion {
     const META: Meta = Meta::typescript("no-extra-non-null-assertion", Kind::Problem)
         .fixable(Fixable::Code)
         .recommended();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::NonNull]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoExtraNonNullAssertion
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::NonNull], Self::check);
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(e, cx);
     }
 }

@@ -12,32 +12,32 @@ const CLICK_EVENTS_HAVE_KEY_EVENTS: Message =
 
 impl Rule for ClickEventsHaveKeyEvents {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "click-events-have-key-events", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         ClickEventsHaveKeyEvents
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("onClick") {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("onClick").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(jsx_opening_el) = as_jsx_element(e) else {
+            return;
+        };
+        if has_jsx_prop(jsx_opening_el, "onClick").is_none() {
             return;
         }
-        on.exprs([ExprTag::Jsx], |_, e, cx| {
-            let Some(jsx_opening_el) = as_jsx_element(e) else {
-                return;
-            };
-            if has_jsx_prop(jsx_opening_el, "onClick").is_none() {
-                return;
-            }
-            let element_type = get_element_type(cx.file(), jsx_opening_el);
-            if contains_name(&HTML_TAG, &element_type)
-                && !is_hidden_from_screen_reader(cx.file(), jsx_opening_el)
-                && !is_presentation_role(jsx_opening_el)
-                && !is_interactive_element(&element_type, jsx_opening_el)
-                && !["onKeyUp", "onKeyDown", "onKeyPress"].iter().any(|prop| has_jsx_prop(jsx_opening_el, prop).is_some())
-            {
-                cx.report(jsx_opening_el.opening_span(), CLICK_EVENTS_HAVE_KEY_EVENTS);
-            }
-        });
+        let element_type = get_element_type(cx.file(), jsx_opening_el);
+        if contains_name(&HTML_TAG, &element_type)
+            && !is_hidden_from_screen_reader(cx.file(), jsx_opening_el)
+            && !is_presentation_role(jsx_opening_el)
+            && !is_interactive_element(&element_type, jsx_opening_el)
+            && !["onKeyUp", "onKeyDown", "onKeyPress"].iter().any(|prop| has_jsx_prop(jsx_opening_el, prop).is_some())
+        {
+            cx.report(jsx_opening_el.opening_span(), CLICK_EVENTS_HAVE_KEY_EVENTS);
+        }
     }
 }

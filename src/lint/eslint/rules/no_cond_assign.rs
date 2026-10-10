@@ -91,6 +91,9 @@ impl NoCondAssign {
 
 impl Rule for NoCondAssign {
     const META: Meta = Meta::eslint("no-cond-assign", Kind::Problem).recommended();
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Assign, ExprTag::Cond])
+        .stmts(&[StmtTag::If, StmtTag::While, StmtTag::DoWhile, StmtTag::For]);
     /// How the message describes what a node is in the test of, within its function.
     type State<'a> = AncestorMemo<'a, Option<&'static str>>;
 
@@ -100,23 +103,39 @@ impl Rule for NoCondAssign {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
         if self.is_always {
-            on.exprs([ExprTag::Assign], Self::check_assignment);
+            on = on.exprs(&[ExprTag::Assign]);
             if file.language().is_oxlint {
-                on.stmts(
-                    [StmtTag::If, StmtTag::While, StmtTag::DoWhile, StmtTag::For],
-                    |rule, stmt, cx| rule.check_test_once_more(stmt.into(), cx),
-                );
-                on.exprs([ExprTag::Cond], |rule, e, cx| rule.check_test_once_more(e.into(), cx));
+                on = on.stmts(&[StmtTag::If, StmtTag::While, StmtTag::DoWhile, StmtTag::For]);
+                on = on.exprs(&[ExprTag::Cond]);
             }
         } else {
-            on.stmts(
-                [StmtTag::If, StmtTag::While, StmtTag::DoWhile, StmtTag::For],
-                |rule, stmt, cx| rule.check_test(stmt.into(), cx),
-            );
-            on.exprs([ExprTag::Cond], |rule, e, cx| rule.check_test(e.into(), cx));
+            on = on.stmts(&[StmtTag::If, StmtTag::While, StmtTag::DoWhile, StmtTag::For]);
+            on = on.exprs(&[ExprTag::Cond]);
         }
-        AncestorMemo::default()
+        on
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(AncestorMemo::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Assign => self.check_assignment(e, cx),
+            ExprTag::Cond if self.is_always => self.check_test_once_more(e.into(), cx),
+            ExprTag::Cond => self.check_test(e.into(), cx),
+            _ => {}
+        }
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if self.is_always {
+            self.check_test_once_more(stmt.into(), cx);
+        } else {
+            self.check_test(stmt.into(), cx);
+        }
     }
 }

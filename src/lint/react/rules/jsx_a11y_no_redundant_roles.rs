@@ -22,35 +22,34 @@ const NO_REDUNDANT_ROLES: Message = Message::new(
 
 impl Rule for NoRedundantRoles {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "no-redundant-roles", Kind::Problem).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         NoRedundantRoles { allowed_redundant_roles: NamesByElement::of_option(options.object(0), "") }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Jsx], |rule, e, cx| {
-            let Some(jsx_el) = as_jsx_element(e) else {
-                return;
-            };
-            let Some(attr) = has_jsx_prop_ignore_case(jsx_el, "role") else {
-                return;
-            };
-            let Some(role_values) = get_string_literal_prop_value(attr) else {
-                return;
-            };
-            let component = get_element_type(cx.file(), jsx_el);
-            for role in strings::split_unicode_whitespace(role_values) {
-                if let Some(implicit_role) = get_redundant_implicit_role(&component, jsx_el, role)
-                    && !rule.is_allowed_redundant_role(&component, implicit_role)
-                {
-                    cx.report(attr, NO_REDUNDANT_ROLES)
-                        .data("element", component.clone())
-                        .data("role", implicit_role)
-                        .fix(|fixer| fixer.remove(attr));
-                }
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(jsx_el) = as_jsx_element(e) else {
+            return;
+        };
+        let Some(attr) = has_jsx_prop_ignore_case(jsx_el, "role") else {
+            return;
+        };
+        let Some(role_values) = get_string_literal_prop_value(attr) else {
+            return;
+        };
+        let component = get_element_type(cx.file(), jsx_el);
+        for role in strings::split_unicode_whitespace(role_values) {
+            if let Some(implicit_role) = get_redundant_implicit_role(&component, jsx_el, role)
+                && !self.is_allowed_redundant_role(&component, implicit_role)
+            {
+                cx.report(attr, NO_REDUNDANT_ROLES)
+                    .data("element", component.clone())
+                    .data("role", implicit_role)
+                    .fix(|fixer| fixer.remove(attr));
             }
-        });
+        }
     }
 }
 

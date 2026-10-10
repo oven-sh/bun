@@ -49,6 +49,7 @@ struct Checked<'a> {
 
 impl Rule for JsxNoTargetBlank {
     const META: Meta = Meta::oxlint(Plugin::React, "jsx-no-target-blank", Kind::Suggestion).has_suggestions();
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -62,11 +63,15 @@ impl Rule for JsxNoTargetBlank {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if is_jsx(file) {
-            on.exprs([ExprTag::Jsx], check);
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        if !is_jsx(file) {
+            return None;
         }
-        State { link_components: link_components(file), form_components: form_components(file) }
+        Some(State { link_components: link_components(file), form_components: form_components(file) })
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        check(self, e, cx);
     }
 }
 

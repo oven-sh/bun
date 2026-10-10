@@ -213,7 +213,8 @@ impl Rule for NoUnnecessaryBooleanLiteralCompare {
         .fixable(Fixable::Code)
         .presets(Presets::STRICT_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    const ON: On = On::new().finish().exprs(&[ExprTag::Binary]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -227,21 +228,28 @@ impl Rule for NoUnnecessaryBooleanLiteralCompare {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
         let compiler_options = file.type_checker().compiler_options();
         if !is_strict_compiler_option_enabled(compiler_options, CompilerOption::StrictNullChecks)
             && !self.allow_rule_to_run_without_strict_null_checks
         {
-            on.finish(|_, cx| {
-                // tsgolint points at the start of the file.
-                if cx.language().is_oxlint {
-                    cx.report(Span::empty(0), NO_STRICT_NULL_CHECK);
-                    return;
-                }
-                let line_zero = Position { line: 0, column: 0 };
-                cx.report(Span::empty(0), NO_STRICT_NULL_CHECK).start_at(line_zero).end_at(line_zero);
-            });
+            on = on.finish();
         }
-        on.exprs([ExprTag::Binary], Self::check);
+        on.exprs(&[ExprTag::Binary])
+    }
+
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(node, cx);
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        // tsgolint points at the start of the file.
+        if cx.language().is_oxlint {
+            cx.report(Span::empty(0), NO_STRICT_NULL_CHECK);
+            return;
+        }
+        let line_zero = Position { line: 0, column: 0 };
+        cx.report(Span::empty(0), NO_STRICT_NULL_CHECK).start_at(line_zero).end_at(line_zero);
     }
 }

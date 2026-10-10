@@ -50,6 +50,7 @@ pub struct State<'a>(FxHashMap<Name<'a>, Option<Vec<u8>>>);
 
 impl Rule for Extensions {
     const META: Meta = Meta::oxlint(Plugin::Import, "extensions", Kind::Suggestion).needs_modules();
+    const ON: On = On::new().exprs(&[ExprTag::Call]).finish();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -64,7 +65,15 @@ impl Rule for Extensions {
         Extensions::from_json_value(root, ExtensionRule::from_json(first))
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new().finish();
+        if file.mentions("require") {
+            on = on.exprs(&[ExprTag::Call]);
+        }
+        on
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         let enforces_nothing = self.require_extension.is_none() && self.extensions.is_empty() && self.path_group_overrides.is_empty();
         if !enforces_nothing && !is_waiting_for_modules(file) {
             // Before the calls are looked at.
@@ -72,15 +81,19 @@ impl Rule for Extensions {
             for (module_name, _) in requested_modules(file) {
                 resolved.insert(module_name, get_loaded_module(file, module_name.bytes()).and_then(|it| extension_of_path(it.path())));
             }
-            if file.mentions("require") {
-                on.exprs([ExprTag::Call], Self::check_call);
-            }
-            if !resolved.is_empty() {
-                on.finish(Self::check_module_record);
-            }
-            return State(resolved);
+            return Some(State(resolved));
         }
-        State(FxHashMap::default())
+        None
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_call(e, cx);
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        if !cx.state.0.is_empty() {
+            self.check_module_record(cx);
+        }
     }
 }
 

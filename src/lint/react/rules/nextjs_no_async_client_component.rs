@@ -10,19 +10,20 @@ const NO_ASYNC_CLIENT_COMPONENT: Message = Message::new("", "Prevent client comp
 
 impl Rule for NoAsyncClientComponent {
     const META: Meta = Meta::oxlint(Plugin::Nextjs, "no-async-client-component", Kind::Problem);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoAsyncClientComponent
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if file.mentions("use client") && file.body().iter().map_while(Stmt::directive).any(|it| it == b"use client") {
-            on.finish(|_, cx| {
-                for stmt in cx.file().body() {
-                    check(stmt, cx);
-                }
-            });
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        (file.mentions("use client") && file.body().iter().map_while(Stmt::directive).any(|it| it == b"use client")).then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        for stmt in cx.file().body() {
+            check(stmt, cx);
         }
     }
 }

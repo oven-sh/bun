@@ -91,32 +91,31 @@ fn report<'a>(case: Case<'a>, first: Span, cx: &Cx<'a, NoDuplicateCase>) {
 
 impl Rule for NoDuplicateCase {
     const META: Meta = Meta::eslint("no-duplicate-case", Kind::Problem).recommended();
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::Switch]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoDuplicateCase
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::Switch], |_, stmt, cx| {
-            let StmtKind::Switch { cases, .. } = stmt.kind() else {
-                return;
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let StmtKind::Switch { cases, .. } = stmt.kind() else {
+            return;
+        };
+        // Spares the tokens of the file for `case Kind.A: case Kind.B:`.
+        let mut tests = cases.iter().filter_map(Case::test);
+        let is_text_enough = !tests.any(|it| !is_single_token(it) && can_be_written_differently(it));
+        if cases.iter().nth(COMPARED).is_some() {
+            return check_many(cases, is_text_enough, cx);
+        }
+        for (i, case) in cases.iter().enumerate() {
+            let Some(test) = case.test() else {
+                continue;
             };
-            // Spares the tokens of the file for `case Kind.A: case Kind.B:`.
-            let mut tests = cases.iter().filter_map(Case::test);
-            let is_text_enough = !tests.any(|it| !is_single_token(it) && can_be_written_differently(it));
-            if cases.iter().nth(COMPARED).is_some() {
-                return check_many(cases, is_text_enough, cx);
+            let mut previous = cases.iter().take(i).filter_map(Case::test);
+            if let Some(first) = previous.find(|&it| equal(cx.file(), it, test, is_text_enough)) {
+                report(case, first.span(), cx);
             }
-            for (i, case) in cases.iter().enumerate() {
-                let Some(test) = case.test() else {
-                    continue;
-                };
-                let mut previous = cases.iter().take(i).filter_map(Case::test);
-                if let Some(first) = previous.find(|&it| equal(cx.file(), it, test, is_text_enough)) {
-                    report(case, first.span(), cx);
-                }
-            }
-        });
+        }
     }
 }

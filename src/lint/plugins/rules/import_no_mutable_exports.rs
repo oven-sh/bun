@@ -8,34 +8,38 @@ const MUTABLE: Message = Message::new("", "Exporting mutable '{{kind}}' binding,
 
 impl Rule for NoMutableExports {
     const META: Meta = Meta::plugin(Plugin::Import, "no-mutable-exports", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::Var, StmtTag::ExportDefault, StmtTag::ExportNamed]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoMutableExports
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::Var], |_, stmt, cx| {
-            if stmt.is_exported() {
-                check_declaration(stmt, cx);
-            }
-        });
-        on.stmts([StmtTag::ExportDefault], |_, stmt, cx| {
-            if let StmtKind::ExportDefault(e) = stmt.kind()
-                && let Some(name) = e.as_ident()
-            {
-                check_declarations_in_scope(stmt, name, cx);
-            }
-        });
-        on.stmts([StmtTag::ExportNamed], |_, stmt, cx| {
-            if let StmtKind::ExportNamed(export) = stmt.kind()
-                && !export.has_from()
-            {
-                for specifier in export.items() {
-                    check_declarations_in_scope(stmt, specifier.local().name(), cx);
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match stmt.tag() {
+            StmtTag::Var => {
+                if stmt.is_exported() {
+                    check_declaration(stmt, cx);
                 }
             }
-        });
+            StmtTag::ExportDefault => {
+                if let StmtKind::ExportDefault(e) = stmt.kind()
+                    && let Some(name) = e.as_ident()
+                {
+                    check_declarations_in_scope(stmt, name, cx);
+                }
+            }
+            StmtTag::ExportNamed => {
+                if let StmtKind::ExportNamed(export) = stmt.kind()
+                    && !export.has_from()
+                {
+                    for specifier in export.items() {
+                        check_declarations_in_scope(stmt, specifier.local().name(), cx);
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 }
 

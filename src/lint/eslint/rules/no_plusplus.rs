@@ -28,6 +28,7 @@ fn is_for_loop_afterthought<'a>(e: Expr<'a>, known: &mut AncestorMemo<'a, bool>)
 
 impl Rule for NoPlusplus {
     const META: Meta = Meta::eslint("no-plusplus", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Unary]);
     /// `is_for_loop_afterthought`
     type State<'a> = AncestorMemo<'a, bool>;
 
@@ -37,29 +38,30 @@ impl Rule for NoPlusplus {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
-        on.exprs([ExprTag::Unary], |rule, e, cx| {
-            let ExprKind::Unary {
-                op: op @ (UnOp::PreInc | UnOp::PostInc | UnOp::PreDec | UnOp::PostDec),
-                operand,
-            } = e.kind()
-            else {
-                return;
-            };
-            if rule.allow_for_loop_afterthoughts && is_for_loop_afterthought(e, &mut cx.state) {
-                return;
-            }
-            let mut report = cx.report(e, UNEXPECTED_UNARY_OP).data("operator", un_op_text(op));
-            if cx.language().is_oxlint {
-                report = report.data("sign", if matches!(op, UnOp::PreInc | UnOp::PostInc) { "+" } else { "-" });
-            }
-            // What oxlint suggests for a name, and for a property whose name is known.
-            let has_name = operand.tag() == ExprTag::Ident || static_property_name_or_regex(operand).is_some();
-            if cx.language().is_oxlint && has_name {
-                let operator: &[u8] = if matches!(op, UnOp::PreInc | UnOp::PostInc) { b" += 1" } else { b" -= 1" };
-                report.fix(|fixer| fixer.replace(e, [operand.text(), operator].concat()));
-            }
-        });
-        AncestorMemo::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(AncestorMemo::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Unary {
+            op: op @ (UnOp::PreInc | UnOp::PostInc | UnOp::PreDec | UnOp::PostDec),
+            operand,
+        } = e.kind()
+        else {
+            return;
+        };
+        if self.allow_for_loop_afterthoughts && is_for_loop_afterthought(e, &mut cx.state) {
+            return;
+        }
+        let mut report = cx.report(e, UNEXPECTED_UNARY_OP).data("operator", un_op_text(op));
+        if cx.language().is_oxlint {
+            report = report.data("sign", if matches!(op, UnOp::PreInc | UnOp::PostInc) { "+" } else { "-" });
+        }
+        // What oxlint suggests for a name, and for a property whose name is known.
+        let has_name = operand.tag() == ExprTag::Ident || static_property_name_or_regex(operand).is_some();
+        if cx.language().is_oxlint && has_name {
+            let operator: &[u8] = if matches!(op, UnOp::PreInc | UnOp::PostInc) { b" += 1" } else { b" -= 1" };
+            report.fix(|fixer| fixer.replace(e, [operand.text(), operator].concat()));
+        }
     }
 }

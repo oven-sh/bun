@@ -3,7 +3,7 @@
 //!
 //! | Case | Answer |
 //! |---|---|
-//! | `{ mode: "bun" \| "oxc" \| "minimatch" \| "minimatch-nodot" \| "micromatch" \| "micromatch-nodot" \| "fast-glob" \| "minimatch3" \| "minimatch3-nodot" \| "minimatch3-makere" \| "minimatch3-makere-dot", pattern, path, flipNegate?, partial?, matchBase? }` | `true`, `false` |
+//! | `{ mode: "bun" \| "oxc" \| "minimatch" \| "minimatch-nodot" \| "micromatch" \| "micromatch-nodot" \| "fast-glob" \| "minimatch3" \| "minimatch3-nodot" \| "minimatch3-makere" \| "minimatch3-makere-dot", pattern, path, flipNegate?, partial?, matchBase?, nocomment?, nonegate? }` | `true`, `false` |
 //! | the same with `ask: "heads"` | an array, `null` |
 //! | `{ mode: "git" \| "globset" \| "npm5" \| "npm705" \| "npm7012", lines or text, ignoreCase?, path, directory?, ask: "verdict" \| "parents" }` | `"ignored"`, `"kept"`, `"none"` |
 //! | the same with `ask: "ignores" \| "inside"` | `true`, `false` |
@@ -102,14 +102,21 @@ fn answer(case: &Json, memory: &mut Kept) -> Json {
     let text = bytes_of(case.get(b"text"));
     if mode == b"oxc" || options_of(mode).is_some() {
         let written = case.get(b"pattern");
-        let pattern = kept(
-            &mut memory.pattern,
-            key_of(mode, &[written]),
-            || match options_of(mode) {
-                Some(options) => Pattern::new(&bytes_of(written), options),
-                None => Pattern::of_oxc_glob_set(&bytes_of(written)),
-            },
+        let key = key_of(
+            mode,
+            &[written, case.get(b"nocomment"), case.get(b"nonegate")],
         );
+        let pattern = kept(&mut memory.pattern, key, || match options_of(mode) {
+            Some(options) => {
+                let options = Options {
+                    nocomment: is_set(b"nocomment"),
+                    nonegate: is_set(b"nonegate"),
+                    ..options
+                };
+                Pattern::new(&bytes_of(written), options)
+            }
+            None => Pattern::of_oxc_glob_set(&bytes_of(written)),
+        });
         if ask == b"heads" {
             let heads = |all: Vec<&[u8]>| Json::Array(all.into_iter().map(string).collect());
             return pattern.heads().map_or(Json::Null, heads);

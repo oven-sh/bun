@@ -12,25 +12,31 @@ const TEXT_ENCODING_IDENTIFIER_CASE: Message = Message::new("", "Prefer `{{good_
 impl Rule for TextEncodingIdentifierCase {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "text-encoding-identifier-case", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new().string_literals().exprs(&[ExprTag::String]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         TextEncodingIdentifierCase { with_dash: options.object(0).bool_or("withDash", false) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        on.string_literals(|rule, string_lit, cx| {
-            let span = string_lit.span();
-            if matches!(span.len(), 6 | 7) {
-                rule.check(cx.slice(span.shrink(1, 1)), span, string_lit.owner(), cx);
-            }
-        });
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new().string_literals();
         if file.has_exprs([ExprTag::Jsx]) {
-            on.exprs([ExprTag::String], |rule, e, cx| {
-                if matches!(e.span().len(), 4 | 5) && e.is_jsx_text() {
-                    rule.check(e.text(), e.span(), Node::Expr(e), cx);
-                }
-            });
+            on = on.exprs(&[ExprTag::String]);
+        }
+        on
+    }
+
+    fn string_literal<'a>(&self, string_lit: Literal<'a>, cx: &mut Cx<'a, Self>) {
+        let span = string_lit.span();
+        if matches!(span.len(), 6 | 7) {
+            self.check(cx.slice(span.shrink(1, 1)), span, string_lit.owner(), cx);
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if matches!(e.span().len(), 4 | 5) && e.is_jsx_text() {
+            self.check(e.text(), e.span(), Node::Expr(e), cx);
         }
     }
 }

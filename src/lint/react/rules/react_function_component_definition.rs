@@ -28,6 +28,7 @@ pub struct State<'a> {
 
 impl Rule for FunctionComponentDefinition {
     const META: Meta = Meta::oxlint(Plugin::React, "function-component-definition", Kind::Suggestion).has_suggestions();
+    const ON: On = On::new().funcs();
     type State<'a> = State<'a>;
 
     /// `{ namedComponents, unnamedComponents }`, each a style or a list of styles.
@@ -53,9 +54,12 @@ impl Rule for FunctionComponentDefinition {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        on.funcs(check);
-        State { component_wrapper_functions: component_wrapper_functions(file), returns: Returns::default() }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(State { component_wrapper_functions: component_wrapper_functions(file), returns: Returns::default() })
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        check(self, func, cx);
     }
 }
 

@@ -1,4 +1,4 @@
-// M8: `minimatch(path, pattern, { dot, matchBase })` of minimatch 3.1.5, which eslint-plugin-import asks, and `matchBase` of 10.2.6.
+// M8: `minimatch(path, pattern, { dot, matchBase, nocomment, nonegate })` of minimatch 3.1.5, which eslint-plugin-import asks, and the last three of 10.2.6.
 // 3.1.5 is not 10.2.6: `.*` takes `.` and `..`, `a/../b` is not folded, `(?=.)` stands before a name with magic, the pattern is trimmed.
 import { generator } from "./gen.mjs";
 import { takes_minutes } from "./M7.mjs";
@@ -15,11 +15,12 @@ export function* cases(seed, count) {
     made = made.filter(it => !takes_minutes(pattern, it)).map(it => it.join("/"));
     if (rnd(5) === 0) { pattern = rnd(2) ? pick(more) : pick(more) + "/" + pattern; made.push(pick(paths), pick(paths)); }
     if (rnd(30) === 0) pattern = pick([" ", "\n", " ", "﻿"]) + pattern + pick(["", " ", "\t"]);
-    const dot = rnd(2) === 0, matchBase = rnd(3) === 0;
+    if (rnd(8) === 0) pattern = pick(["!", "!!", "#", "!#", "!(", "!)", "!]", "!|", "\\!", "\\#"]) + pattern;
+    const dot = rnd(2) === 0, matchBase = rnd(3) === 0, flags = { ...(rnd(3) === 0 && { nocomment: true }), ...(rnd(3) === 0 && { nonegate: true }) };
     for (const path of made) {
       const ask = (f, options) => { try { return f(path, pattern, options); } catch { return undefined; } };
-      yield { it: { mode: dot ? "minimatch3" : "minimatch3-nodot", pattern, path, ...(matchBase && { matchBase }) }, want: ask(m3, { dot, matchBase }) };
-      if (matchBase) yield { it: { mode: dot ? "minimatch" : "minimatch-nodot", pattern, path, matchBase }, want: ask(m10, { dot, matchBase }) };
+      yield { it: { mode: dot ? "minimatch3" : "minimatch3-nodot", pattern, path, ...(matchBase && { matchBase }), ...flags }, want: ask(m3, { dot, matchBase, ...flags }) };
+      if (matchBase || flags.nocomment || flags.nonegate) yield { it: { mode: dot ? "minimatch" : "minimatch-nodot", pattern, path, ...(matchBase && { matchBase }), ...flags }, want: ask(m10, { dot, matchBase, ...flags }) };
     }
   }
 }

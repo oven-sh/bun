@@ -14,6 +14,7 @@ const NO_BARREL_FILE: Message =
 
 impl Rule for NoBarrelFile {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "no-barrel-file", Kind::Suggestion).needs_modules();
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -21,9 +22,9 @@ impl Rule for NoBarrelFile {
         NoBarrelFile { threshold: threshold.map_or(100, |it| it as u32) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.has_stmts([StmtTag::ExportStar]) {
-            return;
+            return None;
         }
         match modules_of(file) {
             // What the other files import is read when it is asked for.
@@ -31,19 +32,13 @@ impl Rule for NoBarrelFile {
                 let flavor = oxlint::flavor_of_modules(file);
                 modules.follow_packages();
                 modules.record(file.path(), &requests_of(file, flavor), true, flavor);
+                None
             }
-            _ => on.finish(Self::check),
+            _ => Some(()),
         }
     }
-}
 
-/// Without the plugin `import` oxlint knows nothing about the other files.
-fn modules_of<'a>(file: &'a File<'a>) -> Option<&'a dyn Modules> {
-    file.modules().filter(|_| file.path() != b"<text>" && !file.language().without_modules)
-}
-
-impl NoBarrelFile {
-    fn check(&self, cx: &mut Cx<'_, Self>) {
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
         let modules = modules_of(file);
         // Where each module is named that imports others, and how many.
@@ -84,6 +79,11 @@ impl NoBarrelFile {
                 });
         }
     }
+}
+
+/// Without the plugin `import` oxlint knows nothing about the other files.
+fn modules_of<'a>(file: &'a File<'a>) -> Option<&'a dyn Modules> {
+    file.modules().filter(|_| file.path() != b"<text>" && !file.language().without_modules)
 }
 
 /// How many modules `module` imports, directly or not. It can be one of them. `None` if it imports nothing.

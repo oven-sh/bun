@@ -10,20 +10,19 @@ const CHANGE: Message = Message::new("", "Change the `tabIndex` prop to a non-po
 
 impl Rule for TabindexNoPositive {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "tabindex-no-positive", Kind::Problem).has_suggestions();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         TabindexNoPositive
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Jsx], |_, e, cx| {
-            if let Some(attr) = as_jsx_element(e).and_then(|jsx_el| has_jsx_prop_ignore_case(jsx_el, "tabIndex"))
-                && let Some(value) = get_prop_value(attr)
-                && parse_jsx_value(value).is_some_and(|parsed_value| parsed_value > 0.0)
-            {
-                cx.report(attr, TABINDEX_NO_POSITIVE).suggest_dangerously(CHANGE, |fixer| fixer.replace(value.span(), "\"0\""));
-            }
-        });
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(attr) = as_jsx_element(e).and_then(|jsx_el| has_jsx_prop_ignore_case(jsx_el, "tabIndex"))
+            && let Some(value) = get_prop_value(attr)
+            && parse_jsx_value(value).is_some_and(|parsed_value| parsed_value > 0.0)
+        {
+            cx.report(attr, TABINDEX_NO_POSITIVE).suggest_dangerously(CHANGE, |fixer| fixer.replace(value.span(), "\"0\""));
+        }
     }
 }

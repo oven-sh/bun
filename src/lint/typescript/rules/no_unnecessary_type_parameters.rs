@@ -433,56 +433,59 @@ impl Rule for NoUnnecessaryTypeParameters {
         .has_suggestions()
         .presets(Presets::STRICT_TYPE_CHECKED)
         .requires_types();
+    const ON: On = On::new().funcs().classes();
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         NoUnnecessaryTypeParameters
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
-        on.funcs(|_, node, cx| {
-            let type_parameters = node.type_params();
-            // Upstream does not listen for a `TSConstructSignatureDeclaration`.
-            if type_parameters.is_empty() || node.kind() == FnKind::ConstructSignature {
-                return;
-            }
-            let start_of_body = match node.body() {
-                FnBody::Block(_) => node.body_span().map(|body| body.start),
-                FnBody::Expr(body) => Some(body.span().start),
-                FnBody::None => node.return_type().map(|return_type| return_type.annotation_span().end),
-            };
-            check_node(cx, type_parameters, start_of_body.unwrap_or(u32::MAX), "function", |known| {
-                let ts_node = node.ts_node();
-                let State { counts_by_type, without_type_parameters } = known;
-                let mut count = || {
-                    let mut counts = Counts::default();
-                    collect_type_parameter_usage_counts(ts_node, &mut counts, false, without_type_parameters);
-                    Rc::new(counts)
-                };
-                match ts_node.kind() {
-                    SyntaxKind::CallSignature | SyntaxKind::Constructor => count(),
-                    // Each overload of a function has the type of the function, with the signatures of all of them.
-                    _ => Rc::clone(counts_by_type.entry(ts_node.get_type_at_location()).or_insert_with(count)),
-                }
-            });
-        });
-        on.classes(|_, node, cx| {
-            let type_parameters = node.type_params();
-            if type_parameters.is_empty() {
-                return;
-            }
-            check_node(cx, type_parameters, node.body_span().start, "class", |known| {
-                let (mut counts, known) = (Counts::default(), &mut known.without_type_parameters);
-                for type_parameter in type_parameters {
-                    collect_type_parameter_usage_counts(type_parameter.ts_node(), &mut counts, true, known);
-                }
-                // A static block has no type.
-                for member in node.members().iter().filter(|member| member.kind() != MemberKind::StaticBlock) {
-                    collect_type_parameter_usage_counts(member.ts_node(), &mut counts, true, known);
-                }
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn func<'a>(&self, node: Func<'a>, cx: &mut Cx<'a, Self>) {
+        let type_parameters = node.type_params();
+        // Upstream does not listen for a `TSConstructSignatureDeclaration`.
+        if type_parameters.is_empty() || node.kind() == FnKind::ConstructSignature {
+            return;
+        }
+        let start_of_body = match node.body() {
+            FnBody::Block(_) => node.body_span().map(|body| body.start),
+            FnBody::Expr(body) => Some(body.span().start),
+            FnBody::None => node.return_type().map(|return_type| return_type.annotation_span().end),
+        };
+        check_node(cx, type_parameters, start_of_body.unwrap_or(u32::MAX), "function", |known| {
+            let ts_node = node.ts_node();
+            let State { counts_by_type, without_type_parameters } = known;
+            let mut count = || {
+                let mut counts = Counts::default();
+                collect_type_parameter_usage_counts(ts_node, &mut counts, false, without_type_parameters);
                 Rc::new(counts)
-            });
+            };
+            match ts_node.kind() {
+                SyntaxKind::CallSignature | SyntaxKind::Constructor => count(),
+                // Each overload of a function has the type of the function, with the signatures of all of them.
+                _ => Rc::clone(counts_by_type.entry(ts_node.get_type_at_location()).or_insert_with(count)),
+            }
         });
-        State::default()
+    }
+
+    fn class<'a>(&self, node: Class<'a>, cx: &mut Cx<'a, Self>) {
+        let type_parameters = node.type_params();
+        if type_parameters.is_empty() {
+            return;
+        }
+        check_node(cx, type_parameters, node.body_span().start, "class", |known| {
+            let (mut counts, known) = (Counts::default(), &mut known.without_type_parameters);
+            for type_parameter in type_parameters {
+                collect_type_parameter_usage_counts(type_parameter.ts_node(), &mut counts, true, known);
+            }
+            // A static block has no type.
+            for member in node.members().iter().filter(|member| member.kind() != MemberKind::StaticBlock) {
+                collect_type_parameter_usage_counts(member.ts_node(), &mut counts, true, known);
+            }
+            Rc::new(counts)
+        });
     }
 }

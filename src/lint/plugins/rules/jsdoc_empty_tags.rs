@@ -18,28 +18,28 @@ const EMPTY_TAGS: [&str; 18] = [
 
 impl Rule for EmptyTags {
     const META: Meta = Meta::oxlint(Plugin::Jsdoc, "empty-tags", Kind::Suggestion);
+    const ON: On = On::new().finish();
     type State<'a> = JSDocFinder<'a>;
 
     fn new(options: &Options) -> Self {
         EmptyTags { tags: options.object(0).strings("tags").iter().map(|it| it.as_bytes().into()).collect() }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> JSDocFinder<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<JSDocFinder<'a>> {
         let finder = JSDocFinder::new(file);
-        if !finder.is_empty() {
-            on.finish(|rule, cx| {
-                for tag in cx.state.iter_all().flat_map(JSDoc::tags) {
-                    let tag_name = tag.kind.parsed();
-                    let comment = tag.comment();
-                    if (contains_name(&EMPTY_TAGS, tag_name)
-                        || rule.tags.iter().any(|it| **it == *tag_name))
-                        && !comment.is_empty()
-                    {
-                        cx.report(comment.span_trimmed_first_line(), EMPTY_TAGS_MESSAGE).data("tag_name", tag_name);
-                    }
-                }
-            });
+        (!finder.is_empty()).then_some(finder)
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        for tag in cx.state.iter_all().flat_map(JSDoc::tags) {
+            let tag_name = tag.kind.parsed();
+            let comment = tag.comment();
+            if (contains_name(&EMPTY_TAGS, tag_name)
+                || self.tags.iter().any(|it| **it == *tag_name))
+                && !comment.is_empty()
+            {
+                cx.report(comment.span_trimmed_first_line(), EMPTY_TAGS_MESSAGE).data("tag_name", tag_name);
+            }
         }
-        finder
     }
 }

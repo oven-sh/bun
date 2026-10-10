@@ -18,7 +18,8 @@ const MISS_ON_BLUR: Message = Message::new("", "`{{attr_name}}` must be accompan
 
 impl Rule for MouseEventsHaveKeyEvents {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "mouse-events-have-key-events", Kind::Problem);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let config = options.object(0);
@@ -32,17 +33,15 @@ impl Rule for MouseEventsHaveKeyEvents {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Jsx], |rule, e, cx| {
-            let Some(jsx_opening_el) = as_jsx_element(e) else {
-                return;
-            };
-            if jsx_opening_el.attrs().is_empty() || !contains_name(&HTML_TAG, &get_element_type(cx.file(), jsx_opening_el)) {
-                return;
-            }
-            check(jsx_opening_el, &rule.hover_in_handlers, "onFocus", MISS_ON_FOCUS, cx);
-            check(jsx_opening_el, &rule.hover_out_handlers, "onBlur", MISS_ON_BLUR, cx);
-        });
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(jsx_opening_el) = as_jsx_element(e) else {
+            return;
+        };
+        if jsx_opening_el.attrs().is_empty() || !contains_name(&HTML_TAG, &get_element_type(cx.file(), jsx_opening_el)) {
+            return;
+        }
+        check(jsx_opening_el, &self.hover_in_handlers, "onFocus", MISS_ON_FOCUS, cx);
+        check(jsx_opening_el, &self.hover_out_handlers, "onBlur", MISS_ON_BLUR, cx);
     }
 }
 

@@ -15,32 +15,32 @@ const SUPPORTED_HTML_CONTENT_URLS: [&[u8]; 2] = [b"www.google-analytics.com/anal
 
 impl Rule for NextScriptForGa {
     const META: Meta = Meta::oxlint(Plugin::Nextjs, "next-script-for-ga", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NextScriptForGa
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("script") {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("script").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(jsx) = as_jsx_element(e) else {
             return;
+        };
+        let Some(name) = jsx.tag().filter(|it| it.is_ident("script")) else {
+            return;
+        };
+        let src = has_jsx_prop_ignore_case(jsx, "src").and_then(get_string_literal_prop_value);
+        let has_any = |text: &[u8], urls: [&[u8]; 2]| urls.iter().any(|url| strings::contains(text, url));
+        if src.is_some_and(|src| has_any(src, SUPPORTED_SRCS))
+            || matches!(get_dangerously_set_inner_html_prop_value(jsx).filter(|it| !it.is_parenthesized()).map(Expr::kind),
+                Some(ExprKind::Template(template)) if has_any(template.raw(0), SUPPORTED_HTML_CONTENT_URLS))
+        {
+            cx.report(name, NEXT_SCRIPT_FOR_GA);
         }
-        on.exprs([ExprTag::Jsx], |_, e, cx| {
-            let Some(jsx) = as_jsx_element(e) else {
-                return;
-            };
-            let Some(name) = jsx.tag().filter(|it| it.is_ident("script")) else {
-                return;
-            };
-            let src = has_jsx_prop_ignore_case(jsx, "src").and_then(get_string_literal_prop_value);
-            let has_any = |text: &[u8], urls: [&[u8]; 2]| urls.iter().any(|url| strings::contains(text, url));
-            if src.is_some_and(|src| has_any(src, SUPPORTED_SRCS))
-                || matches!(get_dangerously_set_inner_html_prop_value(jsx).filter(|it| !it.is_parenthesized()).map(Expr::kind),
-                    Some(ExprKind::Template(template)) if has_any(template.raw(0), SUPPORTED_HTML_CONTENT_URLS))
-            {
-                cx.report(name, NEXT_SCRIPT_FOR_GA);
-            }
-        });
     }
 }
 

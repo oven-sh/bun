@@ -582,7 +582,8 @@ impl Rule for NoDuplicateTypeConstituents {
         .fixable(Fixable::Code)
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    const ON: On = On::new().types(&[TypeTag::Intersection, TypeTag::Union]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -592,12 +593,18 @@ impl Rule for NoDuplicateTypeConstituents {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new();
         if !self.ignore_intersections {
-            on.types([TypeTag::Intersection], Self::check_duplicate);
+            on = on.types(&[TypeTag::Intersection]);
         }
         if !self.ignore_unions {
-            on.types([TypeTag::Union], Self::check_duplicate);
+            on = on.types(&[TypeTag::Union]);
         }
+        on
+    }
+
+    fn ty<'a>(&self, node: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_duplicate(node, cx);
     }
 }

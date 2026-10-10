@@ -17,6 +17,7 @@ const ANCHOR_HAS_AMBIGUOUS_TEXT: Message =
 
 impl Rule for AnchorAmbiguousText {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "anchor-ambiguous-text", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = Texts;
 
     fn new(options: &Options) -> Self {
@@ -28,16 +29,17 @@ impl Rule for AnchorAmbiguousText {
         AnchorAmbiguousText { words: words.into_iter().map(String::from).collect() }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
-        on.exprs([ExprTag::Jsx], |rule, e, cx| {
-            if let Some(jsx_el) = as_jsx_element(e)
-                && *get_element_type(cx.file(), jsx_el) == *b"a"
-                && let Some(text) = rule.ambiguous_text(cx.file(), jsx_el, &mut cx.state)
-            {
-                cx.report(e, ANCHOR_HAS_AMBIGUOUS_TEXT).data("text", text);
-            }
-        });
-        Texts::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(Texts::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(jsx_el) = as_jsx_element(e)
+            && *get_element_type(cx.file(), jsx_el) == *b"a"
+            && let Some(text) = self.ambiguous_text(cx.file(), jsx_el, &mut cx.state)
+        {
+            cx.report(e, ANCHOR_HAS_AMBIGUOUS_TEXT).data("text", text);
+        }
     }
 }
 

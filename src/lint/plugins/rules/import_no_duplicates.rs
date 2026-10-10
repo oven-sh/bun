@@ -32,6 +32,7 @@ fn attributes_of<'a>(import: Import<'a>) -> Attributes<'a> {
 
 impl Rule for NoDuplicates {
     const META: Meta = Meta::oxlint(Plugin::Import, "no-duplicates", Kind::Suggestion).fixable(Fixable::Code).needs_modules();
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -42,15 +43,11 @@ impl Rule for NoDuplicates {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !is_waiting_for_modules(file) && import_declarations(file).nth(1).is_some() {
-            on.finish(Self::check);
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        (!is_waiting_for_modules(file) && import_declarations(file).nth(1).is_some()).then_some(())
     }
-}
 
-impl NoDuplicates {
-    fn check<'a>(&self, cx: &mut Cx<'a, Self>) {
+    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
         let file = cx.file();
         let mut by_specifier: FxHashMap<Name<'a>, Imports<'a>> = FxHashMap::default();
         for import in import_declarations(file) {
@@ -90,7 +87,9 @@ impl NoDuplicates {
             }
         }
     }
+}
 
+impl NoDuplicates {
     fn check_group<'a>(&self, group: &[Import<'a>], cx: &Cx<'a, Self>) {
         // Values and, with `preferInline`, types by name; types by name; namespaces; types that are default exports.
         let mut import_entries_maps: [Imports<'a>; 4] = Default::default();

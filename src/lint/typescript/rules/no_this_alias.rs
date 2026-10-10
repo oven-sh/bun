@@ -51,7 +51,8 @@ impl NoThisAlias {
 
 impl Rule for NoThisAlias {
     const META: Meta = Meta::typescript("no-this-alias", Kind::Suggestion).recommended();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::This]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -67,7 +68,7 @@ impl Rule for NoThisAlias {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::This], Self::check);
+    fn expr<'a>(&self, this: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(this, cx);
     }
 }

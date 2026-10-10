@@ -16,7 +16,8 @@ const MEDIA_HAS_CAPTION: Message =
 
 impl Rule for MediaHasCaption {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "media-has-caption", Kind::Problem);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let config = options.first_object();
@@ -27,25 +28,23 @@ impl Rule for MediaHasCaption {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Jsx], |rule, e, cx| {
-            let Some(jsx_el) = as_jsx_element(e) else {
-                return;
-            };
-            let has = |names: &[String], name: &[u8]| names.iter().any(|it| it.as_bytes() == name);
-            if !has(&rule.audio_or_video, &get_element_type(cx.file(), jsx_el)) || jsx_el.attrs().iter().any(is_muted) {
-                return;
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(jsx_el) = as_jsx_element(e) else {
+            return;
+        };
+        let has = |names: &[String], name: &[u8]| names.iter().any(|it| it.as_bytes() == name);
+        if !has(&self.audio_or_video, &get_element_type(cx.file(), jsx_el)) || jsx_el.attrs().iter().any(is_muted) {
+            return;
+        }
+        let has_caption = children(cx.file(), jsx_el).any(|child| match child {
+            Child::Element(child_el) => {
+                has(&self.track, &get_element_type(cx.file(), child_el)) && child_el.attrs().iter().any(is_kind_captions)
             }
-            let has_caption = children(cx.file(), jsx_el).any(|child| match child {
-                Child::Element(child_el) => {
-                    has(&rule.track, &get_element_type(cx.file(), child_el)) && child_el.attrs().iter().any(is_kind_captions)
-                }
-                _ => false,
-            });
-            if !has_caption {
-                cx.report(e, MEDIA_HAS_CAPTION);
-            }
+            _ => false,
         });
+        if !has_caption {
+            cx.report(e, MEDIA_HAS_CAPTION);
+        }
     }
 }
 

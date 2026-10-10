@@ -86,6 +86,7 @@ impl NoDupeKeys {
 
 impl Rule for NoDupeKeys {
     const META: Meta = Meta::eslint("no-dupe-keys", Kind::Problem).recommended();
+    const ON: On = On::new().exprs(&[ExprTag::Object]);
     /// What the properties so far of the object that is being checked define, and the last key of that name.
     type State<'a> = FxHashMap<Cow<'a, [u8]>, (u8, Span)>;
 
@@ -93,8 +94,11 @@ impl Rule for NoDupeKeys {
         NoDupeKeys
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
-        on.exprs([ExprTag::Object], Self::check);
-        FxHashMap::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(FxHashMap::default())
+    }
+
+    fn expr<'a>(&self, object: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(object, cx);
     }
 }

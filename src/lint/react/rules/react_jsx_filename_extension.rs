@@ -16,7 +16,9 @@ const EXTENSION_ONLY_FOR_JSX: Message = Message::new("", "Only files containing 
 
 impl Rule for JsxFilenameExtension {
     const META: Meta = Meta::oxlint(Plugin::React, "jsx-filename-extension", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().finish();
+    /// Whether the file has JSX.
+    type State<'a> = bool;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -37,31 +39,37 @@ impl Rule for JsxFilenameExtension {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<bool> {
         let ext = file_extension(file.path()).unwrap_or_default();
         let has_ext_allowed = self.extensions.iter().any(|it| **it == *ext);
         let has_jsx = file.has_exprs([ExprTag::Jsx]);
         if !has_ext_allowed && has_jsx {
-            on.finish(|rule, cx| {
-                let file = cx.file();
-                if let Some(jsx_elt) = file.exprs_of_kind(ExprTag::Jsx).min_by_key(|it| it.span().start) {
-                    let ext = file_extension(file.path()).unwrap_or_default();
-                    cx.report(jsx_elt, NO_JSX_WITH_FILENAME_EXTENSION).data("ext", ext).help_with(|| {
-                        let allowed_extensions = rule.extensions.join(&b", ."[..]);
-                        let allowed_extensions = bstr::BStr::new(&allowed_extensions);
-                        format!("Rename the file to use an allowed extension: .{allowed_extensions}")
-                    });
-                }
-            });
+            Some(true)
         } else if has_ext_allowed
             && !has_jsx
             && self.allow_as_needed
             && !(self.ignore_files_without_code && file.body().is_empty())
         {
-            on.finish(|_, cx| {
-                let ext = file_extension(cx.file().path()).unwrap_or_default();
-                cx.report(Span::new(0, 0), EXTENSION_ONLY_FOR_JSX).data("ext", ext);
-            });
+            Some(false)
+        } else {
+            None
+        }
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        if cx.state {
+            let file = cx.file();
+            if let Some(jsx_elt) = file.exprs_of_kind(ExprTag::Jsx).min_by_key(|it| it.span().start) {
+                let ext = file_extension(file.path()).unwrap_or_default();
+                cx.report(jsx_elt, NO_JSX_WITH_FILENAME_EXTENSION).data("ext", ext).help_with(|| {
+                    let allowed_extensions = self.extensions.join(&b", ."[..]);
+                    let allowed_extensions = bstr::BStr::new(&allowed_extensions);
+                    format!("Rename the file to use an allowed extension: .{allowed_extensions}")
+                });
+            }
+        } else {
+            let ext = file_extension(cx.file().path()).unwrap_or_default();
+            cx.report(Span::new(0, 0), EXTENSION_ONLY_FOR_JSX).data("ext", ext);
         }
     }
 }

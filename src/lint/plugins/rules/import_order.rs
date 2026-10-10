@@ -206,7 +206,8 @@ fn path_groups_of(written: &[Json]) -> (Vec<PathGroup>, f64) {
 
 impl Rule for Order {
     const META: Meta = Meta::plugin(Plugin::Import, "order", Kind::Suggestion).fixable(Fixable::Code).needs_modules();
-    type State<'a> = ();
+    const ON: On = On::new().finish().var_decls().stmts(&[StmtTag::ExportNamed]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -277,17 +278,31 @@ impl Rule for Order {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
         let has_exports = self.named.cjs_exports && file.has_exprs([ExprTag::Assign]);
         if has_exports || file.has_stmts([StmtTag::Import, StmtTag::ImportEquals]) || file.has_exprs([ExprTag::Call]) {
-            on.finish(Self::check);
+            on = on.finish();
         }
         if self.named.require {
-            on.var_decls(Self::check_names_of_require);
+            on = on.var_decls();
         }
         if self.named.export {
-            on.stmts([StmtTag::ExportNamed], Self::check_names_of_export);
+            on = on.stmts(&[StmtTag::ExportNamed]);
         }
+        on
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_names_of_export(statement, cx);
+    }
+
+    fn var_decl<'a>(&self, declaration: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_names_of_require(declaration, cx);
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        self.check(cx);
     }
 }
 

@@ -12,26 +12,25 @@ const JSX_NO_COMMENT_TEXTNODES: Message =
 
 impl Rule for JsxNoCommentTextnodes {
     const META: Meta = Meta::oxlint(Plugin::React, "jsx-no-comment-textnodes", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         JsxNoCommentTextnodes
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !is_jsx(file) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        is_jsx(file).then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Jsx(jsx) = e.kind() else {
             return;
+        };
+        let texts = jsx.children().iter().filter(|it| it.tag() == ExprTag::String && it.jsx_container_span().is_none());
+        for jsx_text in texts.filter(|it| has_comment_pattern(it.text())) {
+            cx.report(jsx_text, JSX_NO_COMMENT_TEXTNODES);
         }
-        on.exprs([ExprTag::Jsx], |_, e, cx| {
-            let ExprKind::Jsx(jsx) = e.kind() else {
-                return;
-            };
-            let texts =
-                jsx.children().iter().filter(|it| it.tag() == ExprTag::String && it.jsx_container_span().is_none());
-            for jsx_text in texts.filter(|it| has_comment_pattern(it.text())) {
-                cx.report(jsx_text, JSX_NO_COMMENT_TEXTNODES);
-            }
-        });
     }
 }
 

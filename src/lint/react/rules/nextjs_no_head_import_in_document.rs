@@ -18,20 +18,23 @@ fn is_document(file_path: &[u8]) -> bool {
 
 impl Rule for NoHeadImportInDocument {
     const META: Meta = Meta::oxlint(Plugin::Nextjs, "no-head-import-in-document", Kind::Problem);
+    const ON: On = On::new().stmts(&[StmtTag::Import]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoHeadImportInDocument
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions("next/head") || !is_document(file.path()) {
-            return;
+            return None;
         }
-        on.stmts([StmtTag::Import], |_, stmt, cx| {
-            if matches!(stmt.kind(), StmtKind::Import(import) if import.spec().is("next/head")) {
-                cx.report(stmt, NO_HEAD_IMPORT_IN_DOCUMENT);
-            }
-        });
+        Some(())
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if matches!(stmt.kind(), StmtKind::Import(import) if import.spec().is("next/head")) {
+            cx.report(stmt, NO_HEAD_IMPORT_IN_DOCUMENT);
+        }
     }
 }

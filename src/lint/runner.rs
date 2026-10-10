@@ -5,7 +5,6 @@ use crate::ast::{
     ImportSpec, Member, NOT_IN_TREE, Node, Param, Pat, PatElem, PatProp, PatTag, Prop, Stmt,
     StmtTag, TupleElem, TypeNode, TypeParam, TypeTag, UnOp, VarDecl,
 };
-use crate::code_path::{Event, Step, steps};
 use crate::context::{Cx, CxBase, Diagnostic, Severity};
 use crate::literal::Literal;
 use crate::options::Options;
@@ -818,11 +817,6 @@ impl<'a, R: Rule> Running<'a> for Later<'_, 'a, R> {
         if !self.on.exit.is_empty() {
             add(WalkListener::Exit(self.on.exit, 1));
         }
-        for event in 0..EVENTS {
-            if self.on.has(On::CODE_PATH_START << event) {
-                add(WalkListener::CodePath(event, 0));
-            }
-        }
     }
 
     #[inline]
@@ -830,23 +824,6 @@ impl<'a, R: Rule> Running<'a> for Later<'_, 'a, R> {
         match entry {
             0 => self.rule.enter(node, &mut self.cx),
             _ => self.rule.exit(node, &mut self.cx),
-        }
-    }
-
-    fn code_path_event(&mut self, _: u16, event: Event<'a>) {
-        let (rule, cx) = (self.rule, &mut self.cx);
-        match event {
-            Event::CodePathStart(path, node) => rule.code_path_start(path, node, cx),
-            Event::CodePathEnd(path, node) => rule.code_path_end(path, node, cx),
-            Event::SegmentStart(segment, node) => rule.segment_start(segment, node, cx),
-            Event::SegmentEnd(segment, node) => rule.segment_end(segment, node, cx),
-            Event::UnreachableSegmentStart(segment, node) => {
-                rule.unreachable_segment_start(segment, node, cx);
-            }
-            Event::UnreachableSegmentEnd(segment, node) => {
-                rule.unreachable_segment_end(segment, node, cx);
-            }
-            Event::SegmentLoop(from, to, node) => rule.segment_loop(from, to, node, cx),
         }
     }
 
@@ -902,7 +879,6 @@ pub trait Running<'a> {
     fn listeners_of_walk(&self, add: &mut dyn FnMut(WalkListener));
     /// Calls the listener at `entry` with `node`.
     fn call(&mut self, entry: u16, node: Node<'a>);
-    fn code_path_event(&mut self, entry: u16, event: Event<'a>);
     fn finish(&mut self);
 }
 
@@ -910,22 +886,6 @@ pub trait Running<'a> {
 pub enum WalkListener {
     Enter(NodeTags, u16),
     Exit(NodeTags, u16),
-    /// The index is `event_index` of the events it is for.
-    CodePath(usize, u16),
-}
-
-const EVENTS: usize = 7;
-
-fn event_index(event: &Event) -> usize {
-    match event {
-        Event::CodePathStart(..) => 0,
-        Event::CodePathEnd(..) => 1,
-        Event::SegmentStart(..) => 2,
-        Event::SegmentEnd(..) => 3,
-        Event::UnreachableSegmentStart(..) => 4,
-        Event::UnreachableSegmentEnd(..) => 5,
-        Event::SegmentLoop(..) => 6,
-    }
 }
 
 struct Run<'r, 'a, R: Rule> {
@@ -1062,13 +1022,6 @@ impl<'a, R: Rule> Running<'a> for Run<'_, 'a, R> {
             match &kept.entry {
                 Entry::Enter(tags, _) => add(WalkListener::Enter(*tags, i as u16)),
                 Entry::Exit(tags, _) => add(WalkListener::Exit(*tags, i as u16)),
-                Entry::CodePathStart(_) => add(WalkListener::CodePath(0, i as u16)),
-                Entry::CodePathEnd(_) => add(WalkListener::CodePath(1, i as u16)),
-                Entry::SegmentStart(_) => add(WalkListener::CodePath(2, i as u16)),
-                Entry::SegmentEnd(_) => add(WalkListener::CodePath(3, i as u16)),
-                Entry::UnreachableSegmentStart(_) => add(WalkListener::CodePath(4, i as u16)),
-                Entry::UnreachableSegmentEnd(_) => add(WalkListener::CodePath(5, i as u16)),
-                Entry::SegmentLoop(_) => add(WalkListener::CodePath(6, i as u16)),
                 _ => {}
             }
         }
@@ -1080,30 +1033,6 @@ impl<'a, R: Rule> Running<'a> for Run<'_, 'a, R> {
             self.entries.get(entry as usize).map(|it| &it.entry)
         {
             listener(self.rule, node, &mut self.cx);
-        }
-    }
-
-    fn code_path_event(&mut self, entry: u16, event: Event<'a>) {
-        let (rule, cx) = (self.rule, &mut self.cx);
-        match (self.entries.get(entry as usize).map(|it| &it.entry), event) {
-            (Some(Entry::CodePathStart(on)), Event::CodePathStart(path, node))
-            | (Some(Entry::CodePathEnd(on)), Event::CodePathEnd(path, node)) => {
-                on(rule, path, node, cx)
-            }
-            (Some(Entry::SegmentStart(on)), Event::SegmentStart(segment, node))
-            | (Some(Entry::SegmentEnd(on)), Event::SegmentEnd(segment, node))
-            | (
-                Some(Entry::UnreachableSegmentStart(on)),
-                Event::UnreachableSegmentStart(segment, node),
-            )
-            | (
-                Some(Entry::UnreachableSegmentEnd(on)),
-                Event::UnreachableSegmentEnd(segment, node),
-            ) => on(rule, segment, node, cx),
-            (Some(Entry::SegmentLoop(on)), Event::SegmentLoop(from, to, node)) => {
-                on(rule, from, to, node, cx)
-            }
-            _ => {}
         }
     }
 
@@ -1162,8 +1091,6 @@ struct Walk<'w, 'r, 'a> {
     running: &'w mut [Box<dyn Running<'a> + 'r>],
     enter: ByTag,
     exit: ByTag,
-    /// By `event_index`.
-    code_path: [Vec<(u16, u16)>; EVENTS],
 }
 
 impl<'a> Walk<'_, '_, 'a> {
@@ -1178,13 +1105,6 @@ impl<'a> Walk<'_, '_, 'a> {
     fn exit(&mut self, node: Node<'a>) {
         for &(rule, entry) in self.exit.of(node) {
             self.running[rule as usize].call(entry, node);
-        }
-    }
-
-    #[inline]
-    fn event(&mut self, event: Event<'a>) {
-        for &(rule, entry) in &self.code_path[event_index(&event)] {
-            self.running[rule as usize].code_path_event(entry, event);
         }
     }
 }
@@ -1358,35 +1278,21 @@ fn run_rules<'r, 'a: 'r>(file: &'a File<'a>, rules: &'r [Enabled<'r>]) {
     }
 
     let (mut enter, mut exit) = (ByTag::default(), ByTag::default());
-    let mut code_path: [Vec<(u16, u16)>; EVENTS] = Default::default();
     for (i, rule) in running.iter().enumerate() {
         rule.listeners_of_walk(&mut |listener| match listener {
             WalkListener::Enter(tags, entry) => enter.registered.push((tags, i as u16, entry)),
             WalkListener::Exit(tags, entry) => exit.registered.push((tags, i as u16, entry)),
-            WalkListener::CodePath(event, entry) => code_path[event].push((i as u16, entry)),
         });
     }
-    let has_code_paths = code_path.iter().any(|listeners| !listeners.is_empty());
-    if has_code_paths || !enter.registered.is_empty() || !exit.registered.is_empty() {
+    if !enter.registered.is_empty() || !exit.registered.is_empty() {
         enter.finish();
         exit.finish();
         let mut listeners = Walk {
             running: &mut running,
             enter,
             exit,
-            code_path,
         };
-        if has_code_paths {
-            for step in steps(file, listeners.enter.tags, listeners.exit.tags) {
-                match step {
-                    Step::Enter(node) => listeners.enter(node),
-                    Step::Exit(node) => listeners.exit(node),
-                    Step::Event(event) => listeners.event(event),
-                }
-            }
-        } else {
-            walk_listened(file, &mut listeners);
-        }
+        walk_listened(file, &mut listeners);
     }
 
     for rule in &mut running {

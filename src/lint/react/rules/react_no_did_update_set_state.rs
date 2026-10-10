@@ -16,27 +16,24 @@ pub struct State<'a> {
 
 impl Rule for NoDidUpdateSetState {
     const META: Meta = Meta::oxlint(Plugin::React, "no-did-update-set-state", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         NoDidUpdateSetState { disallow_in_func: options.str(0) == Some("disallow-in-func") }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if file.mentions("setState") && file.mentions("componentDidUpdate") {
-            on.exprs([ExprTag::Call], |rule, e, cx| {
-                if let Some(callee) = callee_of_this_set_state(e)
-                    && let Some(function_count) = function_count_before_lifecycle_component(
-                        e,
-                        &["componentDidUpdate"],
-                        &mut cx.state.function_count,
-                    )
-                    && (function_count <= 1 || rule.disallow_in_func)
-                {
-                    cx.report(callee, NO_DID_UPDATE_SET_STATE);
-                }
-            });
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        (file.mentions("setState") && file.mentions("componentDidUpdate")).then(State::default)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(callee) = callee_of_this_set_state(e)
+            && let Some(function_count) =
+                function_count_before_lifecycle_component(e, &["componentDidUpdate"], &mut cx.state.function_count)
+            && (function_count <= 1 || self.disallow_in_func)
+        {
+            cx.report(callee, NO_DID_UPDATE_SET_STATE);
         }
-        State::default()
     }
 }

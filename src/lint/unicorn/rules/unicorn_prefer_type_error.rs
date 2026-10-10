@@ -11,30 +11,30 @@ const PREFER_TYPE_ERROR: Message =
 
 impl Rule for PreferTypeError {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-type-error", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().stmts(&[StmtTag::Throw]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferTypeError
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("Error") {
-            return;
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("Error").then_some(())
+    }
+
+    fn stmt<'a>(&self, throw_stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if let StmtKind::Throw(argument) = throw_stmt.kind()
+            && let ExprKind::New(new_expr) = argument.kind()
+            && get_inner_expression(new_expr.callee()).is_ident("Error")
+            && let Node::Stmt(block_stmt) = throw_stmt.parent()
+            && matches!(block_stmt.kind(), StmtKind::Block(body) if body.len() == 1)
+            && let Node::Stmt(if_stmt) = block_stmt.parent()
+            && let StmtKind::If { test, .. } = if_stmt.kind()
+            && is_type_checking_expr(test)
+        {
+            let callee = new_expr.callee().outer_span();
+            cx.report(callee, PREFER_TYPE_ERROR).fix(|fixer| fixer.replace(callee, "TypeError"));
         }
-        on.stmts([StmtTag::Throw], |_, throw_stmt, cx| {
-            if let StmtKind::Throw(argument) = throw_stmt.kind()
-                && let ExprKind::New(new_expr) = argument.kind()
-                && get_inner_expression(new_expr.callee()).is_ident("Error")
-                && let Node::Stmt(block_stmt) = throw_stmt.parent()
-                && matches!(block_stmt.kind(), StmtKind::Block(body) if body.len() == 1)
-                && let Node::Stmt(if_stmt) = block_stmt.parent()
-                && let StmtKind::If { test, .. } = if_stmt.kind()
-                && is_type_checking_expr(test)
-            {
-                let callee = new_expr.callee().outer_span();
-                cx.report(callee, PREFER_TYPE_ERROR).fix(|fixer| fixer.replace(callee, "TypeError"));
-            }
-        });
     }
 }
 

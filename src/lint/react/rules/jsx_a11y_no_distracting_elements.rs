@@ -15,6 +15,7 @@ const NO_DISTRACTING_ELEMENTS: Message = Message::new(
 
 impl Rule for NoDistractingElements {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "no-distracting-elements", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -23,22 +24,24 @@ impl Rule for NoDistractingElements {
         NoDistractingElements { check_marquee: checks(b"marquee"), check_blink: checks(b"blink") }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<()> {
         if !self.check_marquee && !self.check_blink {
-            return;
+            return None;
         }
-        on.exprs([ExprTag::Jsx], |rule, e, cx| {
-            let Some(jsx_el) = as_jsx_element(e) else {
-                return;
-            };
-            let element = match &*get_element_type(cx.file(), jsx_el) {
-                b"marquee" if rule.check_marquee => "marquee",
-                b"blink" if rule.check_blink => "blink",
-                _ => return,
-            };
-            if let Some(name) = jsx_el.tag() {
-                cx.report(name, NO_DISTRACTING_ELEMENTS).data("element", element);
-            }
-        });
+        Some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(jsx_el) = as_jsx_element(e) else {
+            return;
+        };
+        let element = match &*get_element_type(cx.file(), jsx_el) {
+            b"marquee" if self.check_marquee => "marquee",
+            b"blink" if self.check_blink => "blink",
+            _ => return,
+        };
+        if let Some(name) = jsx_el.tag() {
+            cx.report(name, NO_DISTRACTING_ELEMENTS).data("element", element);
+        }
     }
 }

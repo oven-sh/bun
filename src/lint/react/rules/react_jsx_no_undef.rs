@@ -10,28 +10,28 @@ const JSX_NO_UNDEF: Message = Message::new("", "'{{ident_name}}' is not defined.
 
 impl Rule for JsxNoUndef {
     const META: Meta = Meta::oxlint(Plugin::React, "jsx-no-undef", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         JsxNoUndef
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !is_jsx(file) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        is_jsx(file).then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Jsx(jsx) = e.kind() else {
             return;
+        };
+        if let Some(ident) = jsx.tag().and_then(get_resolvable_ident)
+            && let Some(name) = ident.as_ident()
+            && ident.symbol().is_none()
+            && !is_enabled_global(cx.file(), name.bytes())
+        {
+            cx.report(ident, JSX_NO_UNDEF).data("ident_name", name);
         }
-        on.exprs([ExprTag::Jsx], |_, e, cx| {
-            let ExprKind::Jsx(jsx) = e.kind() else {
-                return;
-            };
-            if let Some(ident) = jsx.tag().and_then(get_resolvable_ident)
-                && let Some(name) = ident.as_ident()
-                && ident.symbol().is_none()
-                && !is_enabled_global(cx.file(), name.bytes())
-            {
-                cx.report(ident, JSX_NO_UNDEF).data("ident_name", name);
-            }
-        });
     }
 }
 

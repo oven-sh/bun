@@ -785,6 +785,7 @@ impl Restrictions {
 
 impl Rule for NoRestrictedImports {
     const META: Meta = Meta::eslint("no-restricted-imports", Kind::Suggestion);
+    const ON: On = On::new().stmts(&STATEMENTS).exprs(&[ExprTag::ImportCall]);
     type State<'a> = SideEffectImports<'a>;
 
     fn new(options: &Options) -> Self {
@@ -793,15 +794,23 @@ impl Rule for NoRestrictedImports {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> SideEffectImports<'a> {
-        if !self.restrictions.is_empty() {
-            on.stmts(STATEMENTS, |rule, statement, cx| {
-                rule.restrictions.check(cx, statement, Dialect::Eslint);
-            });
-            if file.language().is_oxlint {
-                on.exprs([ExprTag::ImportCall], |rule, call, cx| rule.restrictions.check_import_call(cx, call));
-            }
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new().stmts(&STATEMENTS);
+        if file.language().is_oxlint {
+            on = on.exprs(&[ExprTag::ImportCall]);
         }
-        SideEffectImports::default()
+        on
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<SideEffectImports<'a>> {
+        (!self.restrictions.is_empty()).then(SideEffectImports::default)
+    }
+
+    fn expr<'a>(&self, call: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.restrictions.check_import_call(cx, call);
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        self.restrictions.check(cx, statement, Dialect::Eslint);
     }
 }

@@ -8,24 +8,24 @@ const NO_NEW_SYMBOL: Message =
 
 impl Rule for NoNewSymbol {
     const META: Meta = Meta::eslint("no-new-symbol", Kind::Problem).deprecated();
+    const ON: On = On::new().exprs(&[ExprTag::New]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoNewSymbol
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("Symbol") {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("Symbol").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::New(call) = e.kind() else {
             return;
+        };
+        let callee = call.callee();
+        if callee.is_ident("Symbol") && ast_utils::is_global_reference(callee) {
+            cx.report(callee, NO_NEW_SYMBOL);
         }
-        on.exprs([ExprTag::New], |_, e, cx| {
-            let ExprKind::New(call) = e.kind() else {
-                return;
-            };
-            let callee = call.callee();
-            if callee.is_ident("Symbol") && ast_utils::is_global_reference(callee) {
-                cx.report(callee, NO_NEW_SYMBOL);
-            }
-        });
     }
 }

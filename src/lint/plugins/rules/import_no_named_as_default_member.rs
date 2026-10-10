@@ -12,38 +12,41 @@ const NO_NAMED_AS_DEFAULT_MEMBER: Message = Message::new("", "{{module_name}} al
 
 impl Rule for NoNamedAsDefaultMember {
     const META: Meta = Meta::oxlint(Plugin::Import, "no-named-as-default-member", Kind::Problem).needs_modules();
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoNamedAsDefaultMember
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if is_waiting_for_modules(file) || file.modules().is_none() {
-            return;
+            return None;
         }
-        on.finish(|_, cx| {
-            let file = cx.file();
-            // Once, if a name is declared several times.
-            let mut seen = FxHashSet::default();
-            for entry in import_entries(file).filter(|it| seen.insert(it.local_name().name())) {
-                let ImportImportName::Default(local) = entry.import_name else {
-                    continue;
-                };
-                let Some(remote) = get_loaded_module(file, entry.declaration.spec().bytes()) else {
-                    continue;
-                };
-                if remote.record.exported_bindings.is_empty() {
-                    continue;
-                }
-                let Some(symbol) = file.top_level_scope().get_name(local.name()) else {
-                    return;
-                };
-                for ident in symbol.references().filter_map(Reference::expr).filter(|it| !it.is_parenthesized()) {
-                    check(ident, remote, entry.declaration.spec(), cx);
-                }
+        Some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let file = cx.file();
+        // Once, if a name is declared several times.
+        let mut seen = FxHashSet::default();
+        for entry in import_entries(file).filter(|it| seen.insert(it.local_name().name())) {
+            let ImportImportName::Default(local) = entry.import_name else {
+                continue;
+            };
+            let Some(remote) = get_loaded_module(file, entry.declaration.spec().bytes()) else {
+                continue;
+            };
+            if remote.record.exported_bindings.is_empty() {
+                continue;
             }
-        });
+            let Some(symbol) = file.top_level_scope().get_name(local.name()) else {
+                return;
+            };
+            for ident in symbol.references().filter_map(Reference::expr).filter(|it| !it.is_parenthesized()) {
+                check(ident, remote, entry.declaration.spec(), cx);
+            }
+        }
     }
 }
 

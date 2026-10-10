@@ -43,27 +43,26 @@ fn is_else_if(statement: Stmt) -> bool {
 
 impl Rule for NoLonelyIf {
     const META: Meta = Meta::eslint("no-lonely-if", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::If]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoLonelyIf
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::If], |_, node, cx| {
-            if let Node::Stmt(block) = node.parent()
-                && block.as_block().is_some_and(|body| body.iter().nth(1).is_none())
-                && let Node::Stmt(outer) = block.parent()
-                && matches!(outer.kind(), StmtKind::If { no: Some(no), .. } if no == block)
-                && !ast_utils::are_braces_necessary(block)
-                // oxlint says nothing after an `else if`.
-                && !(cx.language().is_oxlint && is_else_if(outer))
-            {
-                let whole = node.span();
-                // oxlint points at the keyword.
-                let end = if cx.language().is_oxlint { whole.start + 2 } else { whole.end };
-                cx.report(Span::new(whole.start, end), UNEXPECTED_LONELY_IF).fix(|fixer| fix(fixer, node, block));
-            }
-        });
+    fn stmt<'a>(&self, node: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if let Node::Stmt(block) = node.parent()
+            && block.as_block().is_some_and(|body| body.iter().nth(1).is_none())
+            && let Node::Stmt(outer) = block.parent()
+            && matches!(outer.kind(), StmtKind::If { no: Some(no), .. } if no == block)
+            && !ast_utils::are_braces_necessary(block)
+            // oxlint says nothing after an `else if`.
+            && !(cx.language().is_oxlint && is_else_if(outer))
+        {
+            let whole = node.span();
+            // oxlint points at the keyword.
+            let end = if cx.language().is_oxlint { whole.start + 2 } else { whole.end };
+            cx.report(Span::new(whole.start, end), UNEXPECTED_LONELY_IF).fix(|fixer| fix(fixer, node, block));
+        }
     }
 }

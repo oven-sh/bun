@@ -110,48 +110,48 @@ fn fix<'a>(fixer: Fixer<'a>, call: Expr<'a>, member: Expr<'a>, function: Expr<'a
 
 impl Rule for NoExtraBind {
     const META: Meta = Meta::eslint("no-extra-bind", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoExtraBind
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("bind") {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("bind").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Call(call) = e.kind() else {
+            return;
+        };
+        let member = call.callee();
+        let (function, property) = match member.kind() {
+            ExprKind::Dot { obj, name, .. } => (obj, name.span()),
+            ExprKind::Index { obj, index, .. } => (obj, index.span()),
+            _ => return,
+        };
+        // oxlint sees through `as T` and the like.
+        let is_oxlint = cx.language().is_oxlint;
+        let ExprKind::Fn(func) = (if is_oxlint { get_inner_expression(function) } else { function }).kind() else {
+            return;
+        };
+        let (Some(argument), 1) = (call.args().first(), call.args().len()) else {
+            return;
+        };
+        let uses_this = || match is_oxlint {
+            true => body_contains_this_for_oxlint(func),
+            false => own_keywords(func, true).this,
+        };
+        if argument.tag() == ExprTag::Spread
+            || !ast_utils::is_specific_member_access(member, None, Some("bind"))
+            || !func.is_arrow() && uses_this()
+        {
             return;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            let ExprKind::Call(call) = e.kind() else {
-                return;
-            };
-            let member = call.callee();
-            let (function, property) = match member.kind() {
-                ExprKind::Dot { obj, name, .. } => (obj, name.span()),
-                ExprKind::Index { obj, index, .. } => (obj, index.span()),
-                _ => return,
-            };
-            // oxlint sees through `as T` and the like.
-            let is_oxlint = cx.language().is_oxlint;
-            let ExprKind::Fn(func) = (if is_oxlint { get_inner_expression(function) } else { function }).kind() else {
-                return;
-            };
-            let (Some(argument), 1) = (call.args().first(), call.args().len()) else {
-                return;
-            };
-            let uses_this = || match is_oxlint {
-                true => body_contains_this_for_oxlint(func),
-                false => own_keywords(func, true).this,
-            };
-            if argument.tag() == ExprTag::Spread
-                || !ast_utils::is_specific_member_access(member, None, Some("bind"))
-                || !func.is_arrow() && uses_this()
-            {
-                return;
-            }
-            cx.report(property, UNEXPECTED).fix(|fixer| {
-                let is_fixable = is_side_effect_free(argument) && function.tag() == ExprTag::Fn;
-                is_fixable.then(|| fix(fixer, e, member, function)).flatten()
-            });
+        cx.report(property, UNEXPECTED).fix(|fixer| {
+            let is_fixable = is_side_effect_free(argument) && function.tag() == ExprTag::Fn;
+            is_fixable.then(|| fix(fixer, e, member, function)).flatten()
         });
     }
 }

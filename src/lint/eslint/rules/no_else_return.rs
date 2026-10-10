@@ -186,7 +186,8 @@ fn returning_statement(statement: Stmt<'_>) -> Option<Stmt<'_>> {
 
 impl Rule for NoElseReturn {
     const META: Meta = Meta::eslint("no-else-return", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::If]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         NoElseReturn {
@@ -194,40 +195,38 @@ impl Rule for NoElseReturn {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::If], |rule, statement, cx| {
-            let (mut consequent, mut else_node) = match statement.kind() {
-                StmtKind::If { yes, no: Some(no), .. } if always_returns(yes) => (yes, no),
-                _ => return,
-            };
-            // Not the `if` of an `else if`, and not where removing the `else` would change what the
-            // statement after it belongs to.
-            if !ast_utils::is_statement_list_parent(statement.parent()) {
-                return;
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let (mut consequent, mut else_node) = match statement.kind() {
+            StmtKind::If { yes, no: Some(no), .. } if always_returns(yes) => (yes, no),
+            _ => return,
+        };
+        // Not the `if` of an `else if`, and not where removing the `else` would change what the
+        // statement after it belongs to.
+        if !ast_utils::is_statement_list_parent(statement.parent()) {
+            return;
+        }
+        if self.allows_else_if {
+            while let StmtKind::If { yes, no, .. } = else_node.kind() {
+                let Some(no) = no.filter(|_| always_returns(yes)) else {
+                    return;
+                };
+                (consequent, else_node) = (yes, no);
             }
-            if rule.allows_else_if {
-                while let StmtKind::If { yes, no, .. } = else_node.kind() {
-                    let Some(no) = no.filter(|_| always_returns(yes)) else {
-                        return;
-                    };
-                    (consequent, else_node) = (yes, no);
-                }
+        }
+        // oxlint prints where the statement is that returns. Comments go by what is between the branches.
+        let report = match returning_statement(consequent).filter(|_| cx.language().is_oxlint) {
+            Some(returning) => {
+                let (start, end) = (consequent.span().end, else_node.span().start);
+                cx.report(returning, UNEXPECTED)
+                    .comments_apply_at(Span::new(start, end))
+                    .first_label("This consequent block always returns,")
+                    .label(Span::new(start, end), "Making this `else` block unnecessary.")
             }
-            // oxlint prints where the statement is that returns. Comments go by what is between the branches.
-            let report = match returning_statement(consequent).filter(|_| cx.language().is_oxlint) {
-                Some(returning) => {
-                    let (start, end) = (consequent.span().end, else_node.span().start);
-                    cx.report(returning, UNEXPECTED)
-                        .comments_apply_at(Span::new(start, end))
-                        .first_label("This consequent block always returns,")
-                        .label(Span::new(start, end), "Making this `else` block unnecessary.")
-                }
-                None => cx.report(else_node, UNEXPECTED),
-            };
-            report.fix(|fixer| match fixer.file().language().is_oxlint {
-                true => fix_as_oxlint(fixer, else_node, consequent),
-                false => fix(fixer, else_node, consequent),
-            });
+            None => cx.report(else_node, UNEXPECTED),
+        };
+        report.fix(|fixer| match fixer.file().language().is_oxlint {
+            true => fix_as_oxlint(fixer, else_node, consequent),
+            false => fix(fixer, else_node, consequent),
         });
     }
 }

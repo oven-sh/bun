@@ -241,7 +241,8 @@ impl NoImplicitGlobals {
 
 impl Rule for NoImplicitGlobals {
     const META: Meta = Meta::eslint("no-implicit-globals", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().finish();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         NoImplicitGlobals {
@@ -249,7 +250,7 @@ impl Rule for NoImplicitGlobals {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.finish(|rule, cx| rule.check(cx));
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        self.check(cx);
     }
 }

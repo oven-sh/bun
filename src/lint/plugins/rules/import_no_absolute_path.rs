@@ -12,7 +12,8 @@ const NO_ABSOLUTE_PATH: Message = Message::new("", "Do not import modules using 
 
 impl Rule for NoAbsolutePath {
     const META: Meta = Meta::oxlint(Plugin::Import, "no-absolute-path", Kind::Problem);
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::Import]).exprs(&[ExprTag::Call]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -23,25 +24,27 @@ impl Rule for NoAbsolutePath {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
         if self.esmodule {
-            on.stmts([StmtTag::Import], |_, stmt, cx| {
-                if let StmtKind::Import(import) = stmt.kind()
-                    && check_path_is_absolute(import.spec())
-                    && let Some(source) = import.spec_span()
-                {
-                    cx.report(source, NO_ABSOLUTE_PATH);
-                }
-            });
+            on = on.stmts(&[StmtTag::Import]);
         }
         if self.commonjs && file.mentions("require") || self.amd && file.mentions_any(&["require", "define"]) {
-            on.exprs([ExprTag::Call], Self::check_call);
+            on = on.exprs(&[ExprTag::Call]);
+        }
+        on
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if let StmtKind::Import(import) = stmt.kind()
+            && check_path_is_absolute(import.spec())
+            && let Some(source) = import.spec_span()
+        {
+            cx.report(source, NO_ABSOLUTE_PATH);
         }
     }
-}
 
-impl NoAbsolutePath {
-    fn check_call<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(call) = e.as_call() else {
             return;
         };

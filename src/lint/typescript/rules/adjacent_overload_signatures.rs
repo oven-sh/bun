@@ -21,7 +21,24 @@ struct Method<'a> {
     is_call_signature: bool,
 }
 
+/// oxlint's `static_name` and `get_kind_from_key`: a string is like an identifier, a number and a template are of
+/// another kind, and a private name and what else is computed are no names.
+fn oxlint_name_of(member: Member<'_>) -> Option<MemberName<'_>> {
+    let Some(key) = member.key() else {
+        return Some(get_name_from_member(member));
+    };
+    let is_template = || member.file().slice(key.inner_span(member.file())).starts_with(b"`");
+    let (name, kind) = match key.kind() {
+        KeyKind::ComputedString(name) if is_template() => (name, MemberNameType::Quoted),
+        KeyKind::Ident(name) | KeyKind::String(name) | KeyKind::ComputedString(name) => (name, MemberNameType::Normal),
+        KeyKind::Number(name) | KeyKind::ComputedNumber(name) => (name, MemberNameType::Quoted),
+        KeyKind::Private(_) | KeyKind::Computed(_) => return None,
+    };
+    Some(MemberName { name: Cow::Borrowed(name.bytes()), kind })
+}
+
 fn get_member_method(member: Member<'_>) -> Option<Method<'_>> {
+    let is_oxlint = member.file().language().is_oxlint;
     let signature = |name: &'static [u8], is_call_signature| Method {
         name: MemberName {
             name: Cow::Borrowed(name),
@@ -31,11 +48,12 @@ fn get_member_method(member: Member<'_>) -> Option<Method<'_>> {
         is_call_signature,
     };
     match member.kind() {
+        // For oxlint an abstract method is a method like another.
         MemberKind::Method | MemberKind::Getter | MemberKind::Setter | MemberKind::Constructor
-            if !member.flags().contains(Flags::ABSTRACT) =>
+            if is_oxlint || !member.flags().contains(Flags::ABSTRACT) =>
         {
             Some(Method {
-                name: get_name_from_member(member),
+                name: if is_oxlint { oxlint_name_of(member)? } else { get_name_from_member(member) },
                 is_static: Some(member.is_static()),
                 is_call_signature: false,
             })
@@ -126,11 +144,13 @@ fn check_statements<'a>(statements: List<'a, Stmt<'a>>, cx: &Cx<'a, AdjacentOver
             _ => None,
         },
         |statement, name, before| {
-            let before = match before.kind() {
-                StmtKind::Fn(func) => func.name().map_or_else(|| before.span(), |it| it.span()),
-                _ => before.span(),
+            let name_of = |it: Stmt<'a>| match it.kind() {
+                StmtKind::Fn(func) => func.name().map_or_else(|| it.span(), |name| name.span()),
+                _ => it.span(),
             };
-            cx.report(place(statement.span(), before, cx), ADJACENT_SIGNATURE).data("name", *name);
+            cx.report(place(statement.span(), name_of(before), cx), ADJACENT_SIGNATURE)
+                .data("name", *name)
+                .labels_with(|labels| labels.push(name_of(statement), ""));
         },
     );
 }
@@ -151,7 +171,8 @@ fn check_members<'a>(members: List<'a, Member<'a>>, is_in_class: bool, cx: &Cx<'
     check_body_for_overload_methods(members, get_member_method, |member, method, before| {
         let prefix: &[u8] = if method.is_static == Some(true) { b"static " } else { b"" };
         cx.report(place(member.span(), oxlint_span_of(before, is_in_class), cx), ADJACENT_SIGNATURE)
-            .data("name", [prefix, &method.name.name[..]].concat());
+            .data("name", [prefix, &method.name.name[..]].concat())
+            .labels_with(|labels| labels.push(oxlint_span_of(member, is_in_class), ""));
     });
 }
 

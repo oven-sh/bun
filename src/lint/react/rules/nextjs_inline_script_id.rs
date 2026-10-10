@@ -10,32 +10,35 @@ const INLINE_SCRIPT_ID: Message =
 
 impl Rule for InlineScriptId {
     const META: Meta = Meta::oxlint(Plugin::Nextjs, "inline-script-id", Kind::Problem);
+    const ON: On = On::new().stmts(&[StmtTag::Import]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         InlineScriptId
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions("next/script") || !file.has_exprs([ExprTag::Jsx]) {
-            return;
+            return None;
         }
-        on.stmts([StmtTag::Import], |_, stmt, cx| {
-            let StmtKind::Import(import) = stmt.kind() else {
-                return;
-            };
-            let Some(local) = import.default().filter(|_| import.spec().is("next/script")) else {
-                return;
-            };
-            for (name, jsx) in elements_named(import, local) {
-                if let Some(props) = prop_names(jsx)
-                    && !props.has_id
-                    && (props.has_dangerously_set_inner_html || jsx.children_with_whitespace().next().is_some())
-                {
-                    cx.report(name, INLINE_SCRIPT_ID);
-                }
+        Some(())
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let StmtKind::Import(import) = stmt.kind() else {
+            return;
+        };
+        let Some(local) = import.default().filter(|_| import.spec().is("next/script")) else {
+            return;
+        };
+        for (name, jsx) in elements_named(import, local) {
+            if let Some(props) = prop_names(jsx)
+                && !props.has_id
+                && (props.has_dangerously_set_inner_html || jsx.children_with_whitespace().next().is_some())
+            {
+                cx.report(name, INLINE_SCRIPT_ID);
             }
-        });
+        }
     }
 }
 

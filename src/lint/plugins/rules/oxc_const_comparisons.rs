@@ -18,28 +18,42 @@ const COMPLEMENTARY_EXPRESSIONS_LOGICAL_OPERATOR: Message = Message::new("", "Un
 
 impl Rule for ConstComparisons {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "const-comparisons", Kind::Problem);
-    type State<'a> = ();
+    const ON: On = On::new()
+        .binaries(&[BinOp::And, BinOp::Or])
+        .binaries(&[BinOp::Lt, BinOp::Le, BinOp::Gt, BinOp::Ge])
+        .finish();
+    /// The comparisons of something with itself. In `a < a && a < a` the `&&` is reported at the same place, and first.
+    type State<'a> = Vec<Expr<'a>>;
 
     fn new(_: &Options) -> Self {
         ConstComparisons
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.binaries([BinOp::And, BinOp::Or], |_, e, cx| {
-            let ExprKind::Binary { op, left, right } = e.kind() else {
-                return;
-            };
-            // All the `&&` of `a && b && c` are looked at together, from the outermost.
-            let is_and = |it: Node| matches!(it, Node::Expr(parent) if parent.binary_op() == Some(BinOp::And));
-            if op == BinOp::And && !iter_outer_expressions(e).next().is_some_and(is_and) {
-                check_const_literal_comparisons(e, cx);
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(Vec::new())
+    }
+
+    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Binary { op, left, right } = e.kind() else {
+            return;
+        };
+        if !matches!(op, BinOp::And | BinOp::Or) {
+            if is_same_inner_expression(left, right) {
+                cx.state.push(e);
             }
-            check_redundant_logical_expression(left, right, op == BinOp::Or, cx);
-        });
-        on.binaries([BinOp::Lt, BinOp::Le, BinOp::Gt, BinOp::Ge], |_, e, cx| {
-            if let ExprKind::Binary { op, left, right } = e.kind()
-                && is_same_inner_expression(left, right)
-            {
+            return;
+        }
+        // All the `&&` of `a && b && c` are looked at together, from the outermost.
+        let is_and = |it: Node| matches!(it, Node::Expr(parent) if parent.binary_op() == Some(BinOp::And));
+        if op == BinOp::And && !iter_outer_expressions(e).next().is_some_and(is_and) {
+            check_const_literal_comparisons(e, cx);
+        }
+        check_redundant_logical_expression(left, right, op == BinOp::Or, cx);
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        for &e in &cx.state {
+            if let ExprKind::Binary { op, left, .. } = e.kind() {
                 let is_const_truthy = matches!(op, BinOp::Le | BinOp::Ge);
                 cx.report(e, CONSTANT_COMPARISON)
                     .data("evaluates_to", if is_const_truthy { "true" } else { "false" })
@@ -51,7 +65,7 @@ impl Rule for ConstComparisons {
                         _ => "equal to",
                     });
             }
-        });
+        }
     }
 }
 

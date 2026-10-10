@@ -41,7 +41,6 @@ use crate::ast::{
     BinOp, Case, Class, EnumMember, ExportSpec, Expr, ExprTag, File, Func, ImportSpec, Member,
     Node, Param, Pat, PatTag, Prop, Stmt, StmtTag, TypeNode, TypeParam, TypeTag, UnOp, VarDecl,
 };
-use crate::code_path::{CodePath, Segment};
 use crate::context::Cx;
 use crate::literal::Literal;
 use crate::options::Options;
@@ -481,32 +480,6 @@ pub trait Rule: Send + Sync + Sized + 'static {
 
     fn enter<'a>(&self, _node: Node<'a>, _cx: &mut Cx<'a, Self>) {}
     fn exit<'a>(&self, _node: Node<'a>, _cx: &mut Cx<'a, Self>) {}
-    fn code_path_start<'a>(&self, _path: CodePath<'a>, _node: Node<'a>, _cx: &mut Cx<'a, Self>) {}
-    fn code_path_end<'a>(&self, _path: CodePath<'a>, _node: Node<'a>, _cx: &mut Cx<'a, Self>) {}
-    fn segment_start<'a>(&self, _segment: Segment<'a>, _node: Node<'a>, _cx: &mut Cx<'a, Self>) {}
-    fn segment_end<'a>(&self, _segment: Segment<'a>, _node: Node<'a>, _cx: &mut Cx<'a, Self>) {}
-    fn unreachable_segment_start<'a>(
-        &self,
-        _segment: Segment<'a>,
-        _node: Node<'a>,
-        _cx: &mut Cx<'a, Self>,
-    ) {
-    }
-    fn unreachable_segment_end<'a>(
-        &self,
-        _segment: Segment<'a>,
-        _node: Node<'a>,
-        _cx: &mut Cx<'a, Self>,
-    ) {
-    }
-    fn segment_loop<'a>(
-        &self,
-        _from: Segment<'a>,
-        _to: Segment<'a>,
-        _node: Node<'a>,
-        _cx: &mut Cx<'a, Self>,
-    ) {
-    }
 
     /// At the end.
     fn finish(&self, _cx: &mut Cx<'_, Self>) {}
@@ -576,18 +549,6 @@ macro_rules! on_sorts {
     };
 }
 
-macro_rules! on_events {
-    ($($method:ident $index:literal;)*) => {
-        $(
-            #[doc = concat!("[`Rule::", stringify!($method), "`]")]
-            pub const fn $method(mut self) -> On {
-                self.sorts |= On::CODE_PATH_START << $index;
-                self
-            }
-        )*
-    };
-}
-
 impl On {
     /// The rule has [`Rule::register`] instead.
     pub const REGISTERS: On = On {
@@ -635,18 +596,7 @@ impl On {
         symbols symbol SYMBOLS 12;
         string_literals string_literal STRING_LITERALS 13;
         number_literals number_literal NUMBER_LITERALS 14;
-        code_path_start code_path_start CODE_PATH_START 16;
-        finish finish FINISH 23;
-    }
-
-    // The bits after `CODE_PATH_START`, as `event_index` in `runner.rs` counts.
-    on_events! {
-        code_path_end 1;
-        segment_start 2;
-        segment_end 3;
-        unreachable_segment_start 4;
-        unreachable_segment_end 5;
-        segment_loop 6;
+        finish finish FINISH 15;
     }
 
     /// [`Rule::node`]
@@ -698,9 +648,7 @@ impl On {
     /// Something is called in the order of the source or at the end.
     #[inline]
     pub(crate) const fn has_later(self) -> bool {
-        self.has((0x7f * On::CODE_PATH_START) | On::FINISH)
-            || !self.enter.is_empty()
-            || !self.exit.is_empty()
+        self.has(On::FINISH) || !self.enter.is_empty() || !self.exit.is_empty()
     }
 }
 
@@ -728,10 +676,6 @@ pub(crate) struct Kept<'a, R: Rule> {
     pub(crate) runs: Option<Runs<'a, R>>,
 }
 
-type OnCodePath<'a, R> = fn(&R, CodePath<'a>, Node<'a>, &mut Cx<'a, R>);
-type OnSegment<'a, R> = fn(&R, Segment<'a>, Node<'a>, &mut Cx<'a, R>);
-type OnSegmentLoop<'a, R> = fn(&R, Segment<'a>, Segment<'a>, Node<'a>, &mut Cx<'a, R>);
-
 macro_rules! sorts {
     ($($(#[$doc:meta])* $method:ident $variant:ident $handle:ident $runs:ident $has_any:expr;)*) => {
         pub(crate) enum Entry<'a, R: Rule> {
@@ -746,13 +690,6 @@ macro_rules! sorts {
             Nodes(NodeTags, Listener<'a, R, Node<'a>>),
             Enter(NodeTags, Listener<'a, R, Node<'a>>),
             Exit(NodeTags, Listener<'a, R, Node<'a>>),
-            CodePathStart(OnCodePath<'a, R>),
-            CodePathEnd(OnCodePath<'a, R>),
-            SegmentStart(OnSegment<'a, R>),
-            SegmentEnd(OnSegment<'a, R>),
-            UnreachableSegmentStart(OnSegment<'a, R>),
-            UnreachableSegmentEnd(OnSegment<'a, R>),
-            SegmentLoop(OnSegmentLoop<'a, R>),
             Finish(fn(&R, &mut Cx<'a, R>)),
         }
 
@@ -976,42 +913,6 @@ impl<'a, R: Rule> Listeners<'a, R> {
     /// Once, after everything else.
     pub fn finish(&mut self, listener: fn(&R, &mut Cx<'a, R>)) {
         self.later(Entry::Finish(listener));
-    }
-
-    /// ESLint's `onCodePathStart`. Like all of the following, it is called during the walk, in
-    /// order with [`Listeners::enter`] and [`Listeners::exit`].
-    pub fn code_path_start(&mut self, listener: OnCodePath<'a, R>) {
-        self.later(Entry::CodePathStart(listener));
-    }
-
-    /// ESLint's `onCodePathEnd`.
-    pub fn code_path_end(&mut self, listener: OnCodePath<'a, R>) {
-        self.later(Entry::CodePathEnd(listener));
-    }
-
-    /// ESLint's `onCodePathSegmentStart`.
-    pub fn segment_start(&mut self, listener: OnSegment<'a, R>) {
-        self.later(Entry::SegmentStart(listener));
-    }
-
-    /// ESLint's `onCodePathSegmentEnd`.
-    pub fn segment_end(&mut self, listener: OnSegment<'a, R>) {
-        self.later(Entry::SegmentEnd(listener));
-    }
-
-    /// ESLint's `onUnreachableCodePathSegmentStart`.
-    pub fn unreachable_segment_start(&mut self, listener: OnSegment<'a, R>) {
-        self.later(Entry::UnreachableSegmentStart(listener));
-    }
-
-    /// ESLint's `onUnreachableCodePathSegmentEnd`.
-    pub fn unreachable_segment_end(&mut self, listener: OnSegment<'a, R>) {
-        self.later(Entry::UnreachableSegmentEnd(listener));
-    }
-
-    /// ESLint's `onCodePathSegmentLoop`: from the first segment to the second.
-    pub fn segment_loop(&mut self, listener: OnSegmentLoop<'a, R>) {
-        self.later(Entry::SegmentLoop(listener));
     }
 }
 

@@ -22,46 +22,45 @@ pub struct State<'a> {
 
 impl Rule for NoReturnWrap {
     const META: Meta = Meta::oxlint(Plugin::Promise, "no-return-wrap", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         NoReturnWrap { allow_reject: options.object(0).bool_or("allowReject", false) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if file.mentions("Promise") && (file.mentions("resolve") || !self.allow_reject && file.mentions("reject")) {
-            on.exprs([ExprTag::Call], |rule, e, cx| {
-                let Some(message) = e.as_call().and_then(|it| rule.check_for_resolve_reject(it)) else {
-                    return;
-                };
-                // What is in parentheses, and an optional chain, is not a call for oxlint.
-                if e.is_parenthesized() || e.chain() != Chain::No {
-                    return;
-                }
-                // It is what a function expression or an arrow function returns ..
-                let func = match e.parent() {
-                    Node::Func(func) => Some(func),
-                    Node::Stmt(parent) if parent.tag() == StmtTag::Return => {
-                        cx.state.functions.find(Node::Stmt(parent), |_, ancestor| ancestor.as_func())
-                    }
-                    _ => None,
-                };
-                let Some(Node::Expr(callback)) = func.filter(|it| matches!(it.kind(), FnKind::Expr | FnKind::Arrow)).map(Func::owner)
-                else {
-                    return;
-                };
-                // .. that is an argument of a call of a method of a promise, or of a call in one.
-                let Some(call_expr) = call_with_callback(callback) else {
-                    return;
-                };
-                let is_promise_call = |it: Expr<'a>| it.as_call().is_some_and(|it| is_promise(it).is_some());
-                let is_inside_promise_cb = |_, ancestor: Node<'a>| ancestor.as_expr().filter(|it| is_promise_call(*it)).map(|_| ());
-                if is_promise_call(call_expr) || cx.state.promises.find(Node::Expr(call_expr), is_inside_promise_cb).is_some() {
-                    cx.report(e, message);
-                }
-            });
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        (file.mentions("Promise") && (file.mentions("resolve") || !self.allow_reject && file.mentions("reject"))).then(State::default)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(message) = e.as_call().and_then(|it| self.check_for_resolve_reject(it)) else {
+            return;
+        };
+        // What is in parentheses, and an optional chain, is not a call for oxlint.
+        if e.is_parenthesized() || e.chain() != Chain::No {
+            return;
         }
-        State::default()
+        // It is what a function expression or an arrow function returns ..
+        let func = match e.parent() {
+            Node::Func(func) => Some(func),
+            Node::Stmt(parent) if parent.tag() == StmtTag::Return => {
+                cx.state.functions.find(Node::Stmt(parent), |_, ancestor| ancestor.as_func())
+            }
+            _ => None,
+        };
+        let Some(Node::Expr(callback)) = func.filter(|it| matches!(it.kind(), FnKind::Expr | FnKind::Arrow)).map(Func::owner) else {
+            return;
+        };
+        // .. that is an argument of a call of a method of a promise, or of a call in one.
+        let Some(call_expr) = call_with_callback(callback) else {
+            return;
+        };
+        let is_promise_call = |it: Expr<'a>| it.as_call().is_some_and(|it| is_promise(it).is_some());
+        let is_inside_promise_cb = |_, ancestor: Node<'a>| ancestor.as_expr().filter(|it| is_promise_call(*it)).map(|_| ());
+        if is_promise_call(call_expr) || cx.state.promises.find(Node::Expr(call_expr), is_inside_promise_cb).is_some() {
+            cx.report(e, message);
+        }
     }
 }
 

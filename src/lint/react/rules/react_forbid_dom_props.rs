@@ -26,6 +26,7 @@ const FORBIDDEN: Message = Message::new("", "Prop \"{{property}}\" is forbidden 
 
 impl Rule for ForbidDomProps {
     const META: Meta = Meta::oxlint(Plugin::React, "forbid-dom-props", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 
     /// `{ forbid: ["a", { propName: "b", disallowedFor, disallowedValues, message }] }`
@@ -43,48 +44,46 @@ impl Rule for ForbidDomProps {
         ForbidDomProps { forbid: options.object(0).array("forbid").iter().filter_map(item).collect() }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !is_jsx(file) || self.forbid.is_empty() {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        (is_jsx(file) && !self.forbid.is_empty()).then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Jsx(jsx) = e.kind() else {
             return;
-        }
-        on.exprs([ExprTag::Jsx], |rule, e, cx| {
-            let ExprKind::Jsx(jsx) = e.kind() else {
-                return;
+        };
+        let Some(tag_name) = get_identifier_name(jsx).map(Name::bytes).filter(|it| !is_react_component_name(it)) else {
+            return;
+        };
+        for attribute in jsx.attrs() {
+            let Some((key, prop_name)) = attribute.key().and_then(|key| Some((key, key.name()?.bytes()))) else {
+                continue;
             };
-            let Some(tag_name) = get_identifier_name(jsx).map(Name::bytes).filter(|it| !is_react_component_name(it))
-            else {
-                return;
-            };
-            for attribute in jsx.attrs() {
-                let Some((key, prop_name)) = attribute.key().and_then(|key| Some((key, key.name()?.bytes()))) else {
-                    continue;
-                };
-                if strings::contains_char(prop_name, b':') {
-                    continue;
-                }
-                let Some(options) = rule.forbid.iter().rev().find(|it| *it.prop_name == *prop_name) else {
-                    continue;
-                };
-                if !options.disallowed_for.is_empty() && !options.disallowed_for.iter().any(|it| **it == *tag_name) {
-                    continue;
-                }
-                let mut prop_value = None;
-                if let Some(disallowed_values) = &options.disallowed_values {
-                    prop_value = get_prop_value(attribute).and_then(static_jsx_string_value);
-                    if !prop_value.is_some_and(|value| disallowed_values.iter().any(|it| **it == *value)) {
-                        continue;
-                    }
-                }
-                let span = key.span(cx.file());
-                match (&options.message, prop_value) {
-                    (Some(message), _) => cx.report(span, CUSTOM).data("message", message.to_vec()),
-                    (None, Some(value)) => {
-                        cx.report(span, FORBIDDEN_VALUE).data("property", prop_name).data("property_value", value)
-                    }
-                    (None, None) => cx.report(span, FORBIDDEN).data("property", prop_name),
-                };
+            if strings::contains_char(prop_name, b':') {
+                continue;
             }
-        });
+            let Some(options) = self.forbid.iter().rev().find(|it| *it.prop_name == *prop_name) else {
+                continue;
+            };
+            if !options.disallowed_for.is_empty() && !options.disallowed_for.iter().any(|it| **it == *tag_name) {
+                continue;
+            }
+            let mut prop_value = None;
+            if let Some(disallowed_values) = &options.disallowed_values {
+                prop_value = get_prop_value(attribute).and_then(static_jsx_string_value);
+                if !prop_value.is_some_and(|value| disallowed_values.iter().any(|it| **it == *value)) {
+                    continue;
+                }
+            }
+            let span = key.span(cx.file());
+            match (&options.message, prop_value) {
+                (Some(message), _) => cx.report(span, CUSTOM).data("message", message.to_vec()),
+                (None, Some(value)) => {
+                    cx.report(span, FORBIDDEN_VALUE).data("property", prop_name).data("property_value", value)
+                }
+                (None, None) => cx.report(span, FORBIDDEN).data("property", prop_name),
+            };
+        }
     }
 }
 

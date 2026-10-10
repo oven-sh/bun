@@ -2,21 +2,21 @@
 //!
 //! A [`CodePath`] is made for the file, for each function, each class field initializer and each
 //! static block. It consists of [`Segment`]s, which fork at a branch and join after it. The
-//! analysis runs only if a rule listens for it
-//! ([`Listeners::code_path_start`](crate::rule::Listeners::code_path_start) and the following).
+//! analysis runs only where a rule asks for it: [`Func::code_path_steps`], [`steps_of_code_path`],
+//! [`steps`]. What ESLint tells a listener is an [`Event`] among the [`Step`]s.
 //!
-//! As in ESLint, the whole file is analyzed before the first listener is called, and the events
-//! are told during the walk. So a rule sees the finished graph from the first event on:
+//! As in ESLint, all that is asked for is analyzed before the first step is given. So a rule sees
+//! the finished graph from the first event on:
 //! `next_segments()` of a segment that starts is complete, its `prev_segments()` include those
 //! that lead back to it from the end of a loop and have not started yet, and
 //! `returned_segments()` is complete when the code path starts.
 //!
 //! | ESLint | Here |
 //! | --- | --- |
-//! | `onCodePathStart(codePath, node)`, `onCodePathEnd` | `on.code_path_start(..)`, `on.code_path_end(..)` |
-//! | `onCodePathSegmentStart(segment, node)`, `onCodePathSegmentEnd` | `on.segment_start(..)`, `on.segment_end(..)` |
-//! | `onUnreachableCodePathSegmentStart`, `onUnreachableCodePathSegmentEnd` | `on.unreachable_segment_start(..)`, `on.unreachable_segment_end(..)` |
-//! | `onCodePathSegmentLoop(from, to, node)` | `on.segment_loop(..)` |
+//! | `onCodePathStart(codePath, node)`, `onCodePathEnd` | [`Event::CodePathStart`], [`Event::CodePathEnd`] |
+//! | `onCodePathSegmentStart(segment, node)`, `onCodePathSegmentEnd` | [`Event::SegmentStart`], [`Event::SegmentEnd`] |
+//! | the same two with `Unreachable` | [`Event::UnreachableSegmentStart`], [`Event::UnreachableSegmentEnd`] |
+//! | `onCodePathSegmentLoop(from, to, node)` | [`Event::SegmentLoop`] |
 //! | `codePath.id`, `segment.id` | `id()` is a number. `to_string()` is ESLint's `s1`, `s1_2` |
 //! | `codePath.origin` | [`CodePath::origin`] |
 //! | `codePath.traverseSegments(options, callback)` | [`CodePath::traverse_segments`], [`CodePath::traverse_segments_between`] |
@@ -26,9 +26,8 @@
 //!
 //! # What it costs, and how to avoid it
 //!
-//! A listener for code paths makes the linter analyze the whole file, which costs about a quarter
-//! of what parsing and binding it costs. No rule of ESLint needs that. In the order of what they
-//! cost:
+//! To analyze a whole file ([`steps`]) costs about a quarter of what parsing and binding it costs.
+//! No rule of ESLint needs that. In the order of what they cost:
 //!
 //! 1. What a rule asks with `isAnySegmentReachable(currentSegments)` is answered without any
 //!    listener, by a pass over the statements of the file that takes a few instructions for each
@@ -49,9 +48,9 @@
 //!    would have been its listeners. See `constructor_super.rs`, `no_useless_return.rs` and
 //!    `no_useless_assignment.rs`. What tells that there is nothing to report has to be certain:
 //!    compare all the messages on `flows.ts` and `generate.ts` with those of the rule without it.
-//! 3. With listeners, the walk does not go into an expression or a type in which nothing forks and
-//!    nothing is listened for: `on.enter(..)` and `on.exit(..)` as few kinds of nodes as possible.
-//!    Statements and functions are cheap, identifiers make the walk visit everything.
+//! 3. The analysis does not go into an expression or a type in which nothing forks and nothing is
+//!    asked for: `enter` and `exit` as few kinds of nodes as possible. Statements and functions
+//!    are cheap, identifiers make it visit everything.
 //!
 //! # The node of an event
 //!
@@ -171,9 +170,8 @@ impl<'a> Func<'a> {
     /// Whether execution can reach the end of the body: what ESLint's rules ask with
     /// `isAnySegmentReachable(currentSegments)` when they leave the function.
     ///
-    /// It looks at the statements of this function alone, and takes a few instructions for each. A
-    /// rule that asks nothing else needs no listener for code paths, which make the linter
-    /// analyze the file.
+    /// It looks at the statements of this function alone, and takes a few instructions for each.
+    /// Nothing is analyzed for it.
     pub fn is_end_reachable(self) -> bool {
         match self.file().lazy.code_paths.reach.get() {
             Some(reach) => !self.has_body() || reach.is_fn_end_reachable(self),
@@ -185,12 +183,11 @@ impl<'a> Func<'a> {
 impl<'a> Func<'a> {
     /// Analyzes this function alone, with the functions in it, and returns what the listeners for
     /// code paths would be called with, in order, together with the nodes of the kinds `enter` and
-    /// `exit` in it: what [`Listeners::enter`](crate::rule::Listeners::enter) and
-    /// [`Listeners::exit`](crate::rule::Listeners::exit) would be called with.
+    /// `exit` in it: what [`Rule::enter`](crate::rule::Rule::enter) and
+    /// [`Rule::exit`](crate::rule::Rule::exit) would be called with.
     ///
-    /// For a rule that finds out from the syntax which few functions it has to look at: it needs
-    /// no listener for code paths, which make the linter analyze the whole file. The code path of
-    /// the function has no [`CodePath::upper`].
+    /// For a rule that finds out from the syntax which few functions it has to look at. The code
+    /// path of the function has no [`CodePath::upper`].
     pub fn code_path_steps(
         self,
         enter: impl Into<NodeTags>,
@@ -255,7 +252,7 @@ impl<'a> Stmt<'a> {
     /// that is in the code path around it.
     ///
     /// The first call looks at all the statements of the file, and takes a few instructions for
-    /// each. It needs no listener for code paths.
+    /// each. Nothing is analyzed for it.
     pub fn is_reachable(self) -> bool {
         self.file().reach().is_reachable(self)
     }
@@ -671,10 +668,10 @@ impl<'a> Segment<'a> {
 }
 
 /// The set of current segments that many of ESLint's rules keep, with the stack of those of the
-/// enclosing code paths. The rule calls each method from the listener of the same name.
+/// enclosing code paths. The rule calls each method at the [`Event`] of the same name.
 ///
-/// [`CodePath::current_segments`] is the same without any listener. This is for a rule that does
-/// not keep the current `CodePath`.
+/// [`CodePath::current_segments`] is the same without that. This is for a rule that does not keep
+/// the current `CodePath`.
 #[derive(Default, Debug)]
 pub struct CurrentSegments<'a> {
     /// Those of the outermost code path first.
@@ -722,7 +719,7 @@ impl<'a> CurrentSegments<'a> {
     }
 }
 
-/// What the analysis tells the rules: what a listener for code paths is called with.
+/// What the analysis tells a rule: what ESLint calls a listener for code paths with.
 #[derive(Copy, Clone, Debug)]
 pub enum Event<'a> {
     CodePathStart(CodePath<'a>, Node<'a>),

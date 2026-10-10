@@ -40,6 +40,7 @@ pub struct State<'a> {
 
 impl Rule for DisplayName {
     const META: Meta = Meta::oxlint(Plugin::React, "display-name", Kind::Suggestion);
+    const ON: On = On::new().finish();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -50,18 +51,18 @@ impl Rule for DisplayName {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         let component_wrapper_functions = component_wrapper_functions(file);
         let names = ["createElement", "createClass", "createReactClass", "memo", "forwardRef"];
-        if file.has_exprs([ExprTag::Jsx])
+        if !(file.has_exprs([ExprTag::Jsx])
             || file.mentions_any(&names)
             || self.check_context_objects && file.mentions("createContext")
-            || !component_wrapper_functions.is_empty()
+            || !component_wrapper_functions.is_empty())
         {
-            on.finish(run_once);
+            return None;
         }
         let version = react_version(file);
-        State {
+        Some(State {
             ignore_transpiler_name: self.ignore_transpiler_name,
             check_context_objects: self.check_context_objects && version.is_none_or(|it| it >= (16, 3, 0)),
             memo_forwardref_compatible: version.is_none_or(|(major, minor, patch)| {
@@ -70,7 +71,11 @@ impl Rule for DisplayName {
             component_wrapper_functions,
             returns: Returns::default(),
             assignments: AncestorMemo::default(),
-        }
+        })
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        run_once(self, cx);
     }
 }
 

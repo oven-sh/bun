@@ -13,6 +13,7 @@ const ALWAYS_RETURN: Message = Message::new("", "Each then() should return a val
 
 impl Rule for AlwaysReturn {
     const META: Meta = Meta::oxlint(Plugin::Promise, "always-return", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -26,22 +27,22 @@ impl Rule for AlwaysReturn {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if file.mentions("then") {
-            on.exprs([ExprTag::Call], |rule, e, cx| {
-                // `a.then(function () { .. })`, `a.then(() => { .. })`
-                let Some(func) = e.as_call().filter(|it| is_member_call(*it, &["then"])).and_then(|it| it.args().first()).and_then(|it| {
-                    it.as_fn().filter(|func| !it.is_parenthesized() && matches!(func.body(), FnBody::Block(_)))
-                }) else {
-                    return;
-                };
-                if (rule.ignore_last_callback || rule.has_ignored_assignment(func)) && is_last_callback(e) {
-                    return;
-                }
-                if has_no_return_code_path(func) {
-                    cx.report(func.estree_span(), ALWAYS_RETURN);
-                }
-            });
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("then").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        // `a.then(function () { .. })`, `a.then(() => { .. })`
+        let Some(func) = e.as_call().filter(|it| is_member_call(*it, &["then"])).and_then(|it| it.args().first()).and_then(|it| {
+            it.as_fn().filter(|func| !it.is_parenthesized() && matches!(func.body(), FnBody::Block(_)))
+        }) else {
+            return;
+        };
+        if (self.ignore_last_callback || self.has_ignored_assignment(func)) && is_last_callback(e) {
+            return;
+        }
+        if has_no_return_code_path(func) {
+            cx.report(func.estree_span(), ALWAYS_RETURN);
         }
     }
 }

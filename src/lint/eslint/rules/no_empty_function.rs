@@ -262,7 +262,8 @@ pub fn check<'a, R: Rule>(func: Func<'a>, allow: Allow, cx: &Cx<'a, R>) {
 
 impl Rule for NoEmptyFunction {
     const META: Meta = Meta::eslint("no-empty-function", Kind::Suggestion).has_suggestions();
-    type State<'a> = ();
+    const ON: On = On::new().funcs();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         NoEmptyFunction {
@@ -270,7 +271,7 @@ impl Rule for NoEmptyFunction {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.funcs(|rule, func, cx| check(func, rule.allow, cx));
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        check(func, self.allow, cx);
     }
 }

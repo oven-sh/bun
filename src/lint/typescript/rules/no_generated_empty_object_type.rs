@@ -40,31 +40,35 @@ impl Rule for NoGeneratedEmptyObjectType {
     const META: Meta = Meta::typescript("no-generated-empty-object-type", Kind::Problem)
         .presets(Presets::STRICT_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    const ON: On = On::new().types(&[TypeTag::Intersection, TypeTag::Ref]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoGeneratedEmptyObjectType
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.types([TypeTag::Intersection], |_, node, cx| check_node(node, cx));
-        on.types([TypeTag::Ref], |_, node, cx| {
-            let TypeKind::Ref { args, .. } = node.kind() else {
-                return;
-            };
-            if args.is_empty() {
-                return;
+    fn ty<'a>(&self, node: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        match node.tag() {
+            TypeTag::Intersection => check_node(node, cx),
+            TypeTag::Ref => {
+                let TypeKind::Ref { args, .. } = node.kind() else {
+                    return;
+                };
+                if args.is_empty() {
+                    return;
+                }
+                let is_checked = match node.parent() {
+                    Node::Type(parent) => parent.tag() != TypeTag::Intersection,
+                    // What a class implements and what an interface extends is not a `TSTypeReference`.
+                    Node::Class(class) => !class.implements().iter().any(|it| it == node),
+                    Node::Stmt(parent) => parent.tag() != StmtTag::Interface,
+                    _ => true,
+                };
+                if is_checked {
+                    check_node(node, cx);
+                }
             }
-            let is_checked = match node.parent() {
-                Node::Type(parent) => parent.tag() != TypeTag::Intersection,
-                // What a class implements and what an interface extends is not a `TSTypeReference`.
-                Node::Class(class) => !class.implements().iter().any(|it| it == node),
-                Node::Stmt(parent) => parent.tag() != StmtTag::Interface,
-                _ => true,
-            };
-            if is_checked {
-                check_node(node, cx);
-            }
-        });
+            _ => {}
+        }
     }
 }

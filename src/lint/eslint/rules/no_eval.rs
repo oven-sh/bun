@@ -158,6 +158,7 @@ impl NoEval {
 
 impl Rule for NoEval {
     const META: Meta = Meta::eslint("no-eval", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::Ident, ExprTag::This]);
     type State<'a> = Known<'a>;
 
     fn new(options: &Options) -> Self {
@@ -166,15 +167,24 @@ impl Rule for NoEval {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if !file.mentions("eval") {
-            return Known::default();
-        }
-        on.exprs([ExprTag::Call], Self::check_call);
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new().exprs(&[ExprTag::Call]);
         if !self.allows_indirect {
-            on.exprs([ExprTag::Ident], Self::check_identifier);
-            on.exprs([ExprTag::This], Self::check_this);
+            on = on.exprs(&[ExprTag::Ident, ExprTag::This]);
         }
-        Known::default()
+        on
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        file.mentions("eval").then(Known::default)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Call => self.check_call(e, cx),
+            ExprTag::Ident => self.check_identifier(e, cx),
+            ExprTag::This => self.check_this(e, cx),
+            _ => {}
+        }
     }
 }

@@ -14,6 +14,7 @@ const NO_SYNC: Message = Message::new("", "Unexpected sync method: '{{property_n
 
 impl Rule for NoSync {
     const META: Meta = Meta::oxlint(Plugin::Node, "no-sync", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     /// That something is in a function.
     type State<'a> = AncestorMemo<'a, ()>;
 
@@ -25,20 +26,21 @@ impl Rule for NoSync {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
-        on.exprs([ExprTag::Call], |rule, e, cx| {
-            let Some(property_name) = e.callee().and_then(get_sync_property_name) else {
-                return;
-            };
-            let is_function = |it: Node| matches!(it, Node::Func(func) if func.kind() != FnKind::StaticBlock);
-            if rule.ignores.contains(property_name.bytes())
-                || rule.allow_at_root_level && cx.state.find(Node::Expr(e), |_, parent| is_function(parent).then_some(())).is_none()
-            {
-                return;
-            }
-            cx.report(e, NO_SYNC).data("property_name", property_name);
-        });
-        AncestorMemo::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(AncestorMemo::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(property_name) = e.callee().and_then(get_sync_property_name) else {
+            return;
+        };
+        let is_function = |it: Node| matches!(it, Node::Func(func) if func.kind() != FnKind::StaticBlock);
+        if self.ignores.contains(property_name.bytes())
+            || self.allow_at_root_level && cx.state.find(Node::Expr(e), |_, parent| is_function(parent).then_some(())).is_none()
+        {
+            return;
+        }
+        cx.report(e, NO_SYNC).data("property_name", property_name);
     }
 }
 

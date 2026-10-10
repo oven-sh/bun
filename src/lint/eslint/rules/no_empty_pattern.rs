@@ -43,7 +43,10 @@ fn report<'a>(at: Span, kind: &'static str, cx: &Cx<'a, NoEmptyPattern>) {
 
 impl Rule for NoEmptyPattern {
     const META: Meta = Meta::eslint("no-empty-pattern", Kind::Problem).recommended();
-    type State<'a> = ();
+    const ON: On = On::new()
+        .pats(&[PatTag::Object, PatTag::Array])
+        .exprs(&[ExprTag::Object, ExprTag::Array]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         NoEmptyPattern {
@@ -53,29 +56,28 @@ impl Rule for NoEmptyPattern {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.pats([PatTag::Object, PatTag::Array], |rule, pat, cx| {
-            let kind = match pat.kind() {
-                PatKind::Object(props) if props.is_empty() => {
-                    if rule.allows_object_patterns_as_parameters && is_allowed_parameter(pat) {
-                        return;
-                    }
-                    "object"
+    fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        let kind = match pat.kind() {
+            PatKind::Object(props) if props.is_empty() => {
+                if self.allows_object_patterns_as_parameters && is_allowed_parameter(pat) {
+                    return;
                 }
-                PatKind::Array(elements) if elements.is_empty() => "array",
-                _ => return,
-            };
-            report(utils::estree_span(pat.into()), kind, cx);
-        });
-        on.exprs([ExprTag::Object, ExprTag::Array], |_, e, cx| {
-            let kind = match e.kind() {
-                ExprKind::Object(props) if props.is_empty() => "object",
-                ExprKind::Array(elements) if elements.is_empty() => "array",
-                _ => return,
-            };
-            if utils::is_assignment_target(e) {
-                report(e.span(), kind, cx);
+                "object"
             }
-        });
+            PatKind::Array(elements) if elements.is_empty() => "array",
+            _ => return,
+        };
+        report(utils::estree_span(pat.into()), kind, cx);
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let kind = match e.kind() {
+            ExprKind::Object(props) if props.is_empty() => "object",
+            ExprKind::Array(elements) if elements.is_empty() => "array",
+            _ => return,
+        };
+        if utils::is_assignment_target(e) {
+            report(e.span(), kind, cx);
+        }
     }
 }

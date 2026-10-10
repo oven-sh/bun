@@ -10,29 +10,28 @@ const BAD_CHAR_AT_COMPARISON: Message = Message::new("", "Invalid character comp
 
 impl Rule for BadCharAtComparison {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "bad-char-at-comparison", Kind::Problem);
-    type State<'a> = ();
+    const ON: On = On::new().binaries(&[BinOp::EqEq, BinOp::NotEq, BinOp::EqEqEq, BinOp::NotEqEq]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         BadCharAtComparison
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.binaries([BinOp::EqEq, BinOp::NotEq, BinOp::EqEqEq, BinOp::NotEqEq], |_, e, cx| {
-            let ExprKind::Binary { left, right, .. } = e.kind() else {
-                return;
-            };
-            let (character_access, compared_string) = if is_bad_char_at_comparison(left, right) {
-                (left, right)
-            } else if is_bad_char_at_comparison(right, left) {
-                (right, left)
-            } else {
-                return;
-            };
-            cx.report(character_access, BAD_CHAR_AT_COMPARISON).labels_with(|labels| {
-                let len = static_string(compared_string).map_or(0, |value| strings::wtf8_len_utf16(value.bytes()));
-                labels.first("A single character is accessed here");
-                labels.push(compared_string, format!("And compared with a string of length {len} here"));
-            });
+    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Binary { left, right, .. } = e.kind() else {
+            return;
+        };
+        let (character_access, compared_string) = if is_bad_char_at_comparison(left, right) {
+            (left, right)
+        } else if is_bad_char_at_comparison(right, left) {
+            (right, left)
+        } else {
+            return;
+        };
+        cx.report(character_access, BAD_CHAR_AT_COMPARISON).labels_with(|labels| {
+            let len = static_string(compared_string).map_or(0, |value| strings::wtf8_len_utf16(value.bytes()));
+            labels.first("A single character is accessed here");
+            labels.push(compared_string, format!("And compared with a string of length {len} here"));
         });
     }
 }

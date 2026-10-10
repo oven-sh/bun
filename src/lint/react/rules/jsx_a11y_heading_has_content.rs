@@ -14,24 +14,23 @@ const HEADING_HAS_CONTENT: Message =
 
 impl Rule for HeadingHasContent {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "heading-has-content", Kind::Problem);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         HeadingHasContent { components: options.object(0).strings("components").into_iter().map(String::from).collect() }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Jsx], |rule, e, cx| {
-            let Some(jsx_el) = as_jsx_element(e) else {
-                return;
-            };
-            let name = get_element_type(cx.file(), jsx_el);
-            if !matches!(*name, [b'h', b'1'..=b'6']) && !rule.components.iter().any(|it| *it.as_bytes() == *name) {
-                return;
-            }
-            if !object_has_accessible_child(cx.file(), jsx_el) && !is_hidden_from_screen_reader(cx.file(), jsx_el) {
-                cx.report(jsx_el.opening_span(), HEADING_HAS_CONTENT);
-            }
-        });
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(jsx_el) = as_jsx_element(e) else {
+            return;
+        };
+        let name = get_element_type(cx.file(), jsx_el);
+        if !matches!(*name, [b'h', b'1'..=b'6']) && !self.components.iter().any(|it| *it.as_bytes() == *name) {
+            return;
+        }
+        if !object_has_accessible_child(cx.file(), jsx_el) && !is_hidden_from_screen_reader(cx.file(), jsx_el) {
+            cx.report(jsx_el.opening_span(), HEADING_HAS_CONTENT);
+        }
     }
 }

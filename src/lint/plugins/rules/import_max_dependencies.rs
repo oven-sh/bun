@@ -14,6 +14,7 @@ const MAX_DEPENDENCIES: Message =
 
 impl Rule for MaxDependencies {
     const META: Meta = Meta::oxlint(Plugin::Import, "max-dependencies", Kind::Suggestion);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -28,15 +29,11 @@ impl Rule for MaxDependencies {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if import_declarations(file).nth(self.max as usize).is_some() {
-            on.finish(Self::check);
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        import_declarations(file).nth(self.max as usize).is_some().then_some(())
     }
-}
 
-impl MaxDependencies {
-    fn check<'a>(&self, cx: &mut Cx<'a, Self>) {
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
         let mut dependency_sources = FxHashSet::default();
         let mut first_exceeding = None;
         for entry in import_entries(cx.file()) {

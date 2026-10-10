@@ -9,15 +9,18 @@ const UNAMBIGUOUS: Message = Message::new("", "This module could be mistakenly p
 
 impl Rule for Unambiguous {
     const META: Meta = Meta::oxlint(Plugin::Import, "unambiguous", Kind::Suggestion);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         Unambiguous
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !has_module_syntax(file) {
-            on.finish(|_, cx| drop(cx.report(Span::default(), UNAMBIGUOUS)));
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        (!has_module_syntax(file)).then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        drop(cx.report(Span::default(), UNAMBIGUOUS));
     }
 }

@@ -210,8 +210,38 @@ impl NoDuplicateImports {
                 && can_be_merged(entry, it)
         })
     }
+}
 
-    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
+impl Rule for NoDuplicateImports {
+    const META: Meta = Meta::eslint("no-duplicate-imports", Kind::Problem);
+    const ON: On = On::new().stmts(&[StmtTag::Import, StmtTag::ExportNamed, StmtTag::ExportStar]).finish();
+    type State<'a> = Vec<Entry<'a>>;
+
+    fn new(options: &Options) -> Self {
+        let options = options.object(0);
+        NoDuplicateImports {
+            include_exports: options.bool_or("includeExports", false),
+            allow_separate_type_imports: options.bool_or("allowSeparateTypeImports", false),
+        }
+    }
+
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new().stmts(&[StmtTag::Import]);
+        if self.include_exports {
+            on = on.stmts(&[StmtTag::ExportNamed, StmtTag::ExportStar]);
+        }
+        on.finish()
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Vec<Entry<'a>>> {
+        Some(Vec::new())
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        self.collect(statement, cx);
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
         let mut entries = std::mem::take(&mut cx.state);
         let is_oxlint = cx.language().is_oxlint;
         if is_oxlint && !self.include_exports {
@@ -262,27 +292,5 @@ impl NoDuplicateImports {
                 }
             }
         }
-    }
-}
-
-impl Rule for NoDuplicateImports {
-    const META: Meta = Meta::eslint("no-duplicate-imports", Kind::Problem);
-    type State<'a> = Vec<Entry<'a>>;
-
-    fn new(options: &Options) -> Self {
-        let options = options.object(0);
-        NoDuplicateImports {
-            include_exports: options.bool_or("includeExports", false),
-            allow_separate_type_imports: options.bool_or("allowSeparateTypeImports", false),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Vec<Entry<'a>> {
-        on.stmts([StmtTag::Import], Self::collect);
-        if self.include_exports {
-            on.stmts([StmtTag::ExportNamed, StmtTag::ExportStar], Self::collect);
-        }
-        on.finish(Self::finish);
-        Vec::new()
     }
 }

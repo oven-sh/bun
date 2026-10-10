@@ -5,8 +5,16 @@ pub struct NoClassAssign;
 
 const CLASS: Message = Message::new("class", "'{{name}}' is a class.");
 
-impl NoClassAssign {
-    fn check<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoClassAssign {
+    const META: Meta = Meta::eslint("no-class-assign", Kind::Problem).recommended();
+    const ON: On = On::new().classes();
+    no_state!();
+
+    fn new(_: &Options) -> Self {
+        NoClassAssign
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
         let Some(symbol) = class.symbol().filter(|it| it.has_modifying_references()) else {
             return;
         };
@@ -19,18 +27,5 @@ impl NoClassAssign {
                 labels.push(reference.span(), format!("{name} is re-assigned here"));
             });
         }
-    }
-}
-
-impl Rule for NoClassAssign {
-    const META: Meta = Meta::eslint("no-class-assign", Kind::Problem).recommended();
-    type State<'a> = ();
-
-    fn new(_: &Options) -> Self {
-        NoClassAssign
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.classes(Self::check);
     }
 }

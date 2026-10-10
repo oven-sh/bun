@@ -125,22 +125,22 @@ impl Rule for NoUnsafeReturn {
     const META: Meta = Meta::typescript("no-unsafe-return", Kind::Problem)
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    const ON: On = On::new().funcs().stmts(&[StmtTag::Return]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoUnsafeReturn
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.funcs(|_, func, cx| {
-            if let FnBody::Expr(body) = func.body() {
-                check_return(body, body.span(), cx);
-            }
-        });
-        on.stmts([StmtTag::Return], |_, statement, cx| {
-            if let StmtKind::Return(Some(argument)) = statement.kind() {
-                check_return(argument, statement.span(), cx);
-            }
-        });
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if let FnBody::Expr(body) = func.body() {
+            check_return(body, body.span(), cx);
+        }
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if let StmtKind::Return(Some(argument)) = statement.kind() {
+            check_return(argument, statement.span(), cx);
+        }
     }
 }

@@ -7,15 +7,18 @@ pub struct NodeBuiltins(Builtins);
 
 impl Rule for NodeBuiltins {
     const META: Meta = Meta::plugin(Plugin::Node, "no-unsupported-features/node-builtins", Kind::Problem).recommended();
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         NodeBuiltins(Builtins::new(options, data::NODE_GLOBALS, data::NODE_MODULES, data::NODE_IMPORT_META))
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if self.0.has_candidates(file) {
-            on.finish(|rule, cx| rule.0.check(cx));
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        self.0.has_candidates(file).then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        self.0.check(cx);
     }
 }

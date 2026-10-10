@@ -859,6 +859,18 @@ impl Rule for NoMisusedPromises {
     const META: Meta = Meta::typescript("no-misused-promises", Kind::Problem)
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types();
+    const ON: On = On::new()
+        .stmts(&[StmtTag::If, StmtTag::For, StmtTag::While, StmtTag::DoWhile])
+        .exprs(&[ExprTag::Cond, ExprTag::Unary])
+        .exprs(&[ExprTag::Binary])
+        .exprs(&[ExprTag::Call, ExprTag::New])
+        .classes()
+        .stmts(&[StmtTag::Interface])
+        .stmts(&[StmtTag::Return])
+        .exprs(&[ExprTag::Assign])
+        .var_decls()
+        .exprs(&[ExprTag::Spread])
+        .props();
     /// [`is_in_test`]
     type State<'a> = State<'a>;
 
@@ -890,37 +902,82 @@ impl Rule for NoMisusedPromises {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
         let checks = &self.checks_void_return;
+        let mut on = On::new();
         if self.checks_conditionals.is_some() {
-            on.stmts(
-                [StmtTag::If, StmtTag::For, StmtTag::While, StmtTag::DoWhile],
-                Self::check_test_of_statement,
-            );
-            on.exprs([ExprTag::Cond, ExprTag::Unary], Self::check_test_of_expression);
-            on.exprs([ExprTag::Binary], Self::check_logical_expression);
-            on.exprs([ExprTag::Call], Self::check_array_predicates);
+            on = on.stmts(&[StmtTag::If, StmtTag::For, StmtTag::While, StmtTag::DoWhile]);
+            on = on.exprs(&[ExprTag::Cond, ExprTag::Unary]);
+            on = on.exprs(&[ExprTag::Binary]);
+            on = on.exprs(&[ExprTag::Call]);
         }
         if checks.arguments {
-            on.exprs([ExprTag::Call, ExprTag::New], Self::check_arguments);
+            on = on.exprs(&[ExprTag::Call, ExprTag::New]);
         }
         if checks.inherited_methods {
-            on.classes(Self::check_class);
-            on.stmts([StmtTag::Interface], Self::check_interface);
+            on = on.classes();
+            on = on.stmts(&[StmtTag::Interface]);
         }
         if checks.returns {
-            on.stmts([StmtTag::Return], Self::check_return_statement);
+            on = on.stmts(&[StmtTag::Return]);
         }
         if checks.variables {
-            on.exprs([ExprTag::Assign], Self::check_assignment);
-            on.var_decls(Self::check_variable_declaration);
+            on = on.exprs(&[ExprTag::Assign]);
+            on = on.var_decls();
         }
         if self.checks_spreads {
-            on.exprs([ExprTag::Spread], Self::check_spread_element);
+            on = on.exprs(&[ExprTag::Spread]);
         }
         if self.checks_spreads || checks.attributes || checks.properties {
-            on.props(Self::check_prop);
+            on = on.props();
         }
-        State::default()
+        on
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match node.tag() {
+            ExprTag::Cond | ExprTag::Unary => self.check_test_of_expression(node, cx),
+            ExprTag::Binary => self.check_logical_expression(node, cx),
+            // Two options are about a call.
+            ExprTag::Call => {
+                if self.checks_conditionals.is_some() {
+                    self.check_array_predicates(node, cx);
+                }
+                if self.checks_void_return.arguments {
+                    self.check_arguments(node, cx);
+                }
+            }
+            ExprTag::New => self.check_arguments(node, cx),
+            ExprTag::Assign => self.check_assignment(node, cx),
+            ExprTag::Spread => self.check_spread_element(node, cx),
+            _ => {}
+        }
+    }
+
+    fn stmt<'a>(&self, node: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match node.tag() {
+            StmtTag::If | StmtTag::For | StmtTag::While | StmtTag::DoWhile => {
+                self.check_test_of_statement(node, cx);
+            }
+            StmtTag::Interface => self.check_interface(node, cx),
+            StmtTag::Return => self.check_return_statement(node, cx),
+            _ => {}
+        }
+    }
+
+    fn class<'a>(&self, node: Class<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_class(node, cx);
+    }
+
+    fn prop<'a>(&self, node: Prop<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_prop(node, cx);
+    }
+
+    fn var_decl<'a>(&self, node: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_variable_declaration(node, cx);
     }
 }

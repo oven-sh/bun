@@ -20,38 +20,45 @@ pub struct State<'a> {
 
 impl Rule for NoAccumulatingSpread {
     const META: Meta = Meta::plugin(Plugin::Oxc, "no-accumulating-spread", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Spread, ExprTag::Object]);
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         NoAccumulatingSpread
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         let loops = [StmtTag::For, StmtTag::ForIn, StmtTag::ForOf, StmtTag::While, StmtTag::DoWhile];
         if !file.mentions_any(&["reduce", "reduceRight"]) && !file.has_stmts(loops) {
-            return State::default();
+            return None;
         }
-        on.exprs([ExprTag::Spread], |_, spread, cx| {
-            if let ExprKind::Spread(argument) = spread.kind()
-                && spread.jsx_container_span().is_none()
-            {
-                check(Node::Expr(spread), argument, cx);
-            }
-        });
-        // Objects are far fewer than properties.
-        on.exprs([ExprTag::Object], |_, object, cx| {
-            let ExprKind::Object(properties) = object.kind() else {
-                return;
-            };
-            for prop in properties {
-                if prop.kind() == PropKind::Spread
-                    && let Some(argument) = prop.value()
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Spread => {
+                if let ExprKind::Spread(argument) = e.kind()
+                    && e.jsx_container_span().is_none()
                 {
-                    check(Node::Prop(prop), argument, cx);
+                    check(Node::Expr(e), argument, cx);
                 }
             }
-        });
-        State::default()
+            // Objects are far fewer than properties.
+            ExprTag::Object => {
+                let ExprKind::Object(properties) = e.kind() else {
+                    return;
+                };
+                for prop in properties {
+                    if prop.kind() == PropKind::Spread
+                        && let Some(argument) = prop.value()
+                    {
+                        check(Node::Prop(prop), argument, cx);
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 }
 

@@ -10,22 +10,22 @@ const BAD_MATCH_ALL_ARG: Message =
 
 impl Rule for BadMatchAllArg {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "bad-match-all-arg", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         BadMatchAllArg
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("matchAll") {
-            return;
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("matchAll").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some((match_all, regex)) = method_called_without_global_flag(e, "matchAll") {
+            cx.report(match_all, BAD_MATCH_ALL_ARG)
+                .first_label("`matchAll` called here")
+                .label(regex, "RegExp supplied here");
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            if let Some((match_all, regex)) = method_called_without_global_flag(e, "matchAll") {
-                cx.report(match_all, BAD_MATCH_ALL_ARG)
-                    .first_label("`matchAll` called here")
-                    .label(regex, "RegExp supplied here");
-            }
-        });
     }
 }

@@ -259,6 +259,7 @@ impl Rule for NoMisusedSpread {
         .has_suggestions()
         .presets(Presets::STRICT_TYPE_CHECKED)
         .requires_types();
+    const ON: On = On::new().exprs(&[ExprTag::Spread]).props();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -267,9 +268,15 @@ impl Rule for NoMisusedSpread {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
-        on.exprs([ExprTag::Spread], Self::check_array_or_call_spread);
-        on.props(Self::check_object_spread);
-        State::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_array_or_call_spread(node, cx);
+    }
+
+    fn prop<'a>(&self, node: Prop<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_object_spread(node, cx);
     }
 }

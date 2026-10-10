@@ -12,34 +12,37 @@ const NO_NAMED_AS_DEFAULT: Message = Message::new("", "Module {{export_name}} ha
 
 impl Rule for NoNamedAsDefault {
     const META: Meta = Meta::oxlint(Plugin::Import, "no-named-as-default", Kind::Problem).needs_modules();
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoNamedAsDefault
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if is_waiting_for_modules(file) || file.modules().is_none() {
-            return;
+            return None;
         }
-        on.finish(|_, cx| {
-            let mut reexports: FxHashMap<ModuleId, Reexports> = FxHashMap::default();
-            for entry in import_entries(cx.file()).filter(|it| !it.is_type()) {
-                let ImportImportName::Default(local) = entry.import_name else {
-                    continue;
-                };
-                let (specifier, import_name) = (entry.declaration.spec().bytes(), local.bytes());
-                if let Some(remote) = get_loaded_module(cx.file(), specifier)
-                    && remote.exports(import_name)
-                    && !reexports
-                        .entry(remote.module)
-                        .or_insert_with(|| Reexports::new(remote.record))
-                        .default_and_named_are_same_reexport(import_name)
-                {
-                    cx.report(local, NO_NAMED_AS_DEFAULT).data("export_name", debug(specifier)).data("module_name", debug(import_name));
-                }
+        Some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let mut reexports: FxHashMap<ModuleId, Reexports> = FxHashMap::default();
+        for entry in import_entries(cx.file()).filter(|it| !it.is_type()) {
+            let ImportImportName::Default(local) = entry.import_name else {
+                continue;
+            };
+            let (specifier, import_name) = (entry.declaration.spec().bytes(), local.bytes());
+            if let Some(remote) = get_loaded_module(cx.file(), specifier)
+                && remote.exports(import_name)
+                && !reexports
+                    .entry(remote.module)
+                    .or_insert_with(|| Reexports::new(remote.record))
+                    .default_and_named_are_same_reexport(import_name)
+            {
+                cx.report(local, NO_NAMED_AS_DEFAULT).data("export_name", debug(specifier)).data("module_name", debug(import_name));
             }
-        });
+        }
     }
 }
 

@@ -130,7 +130,8 @@ impl Rule for NoInferrableTypes {
     const META: Meta = Meta::typescript("no-inferrable-types", Kind::Suggestion)
         .fixable(Fixable::Code)
         .presets(Presets::STYLISTIC);
-    type State<'a> = ();
+    const ON: On = On::new().var_decls().params().members();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -140,38 +141,43 @@ impl Rule for NoInferrableTypes {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.var_decls(|_, declaration, cx| {
-            check(|| declaration.span(), declaration.ty(), declaration.init(), false, cx);
-        });
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new().var_decls();
         if !self.ignore_parameters {
-            on.params(|_, param, cx| {
-                if param.default().is_some()
-                    && param.func().is_some_and(ast_utils::is_function_with_body)
-                {
-                    check(
-                        || param.span_without_modifiers(),
-                        param.ty(),
-                        param.default(),
-                        param.is_optional(),
-                        cx,
-                    );
-                }
-            });
+            on = on.params();
         }
         if !self.ignore_properties {
-            on.members(|_, member, cx| {
-                // Without its annotation, the type of a `readonly` property is that of the literal.
-                if member.kind() != MemberKind::Property
-                    || member.init().is_none()
-                    || member.flags().intersects(Flags::READONLY | Flags::OPTIONAL | Flags::ABSTRACT)
-                {
-                    return;
-                }
-                let is_definite_property = member.flags().contains(Flags::DEFINITE)
-                    && !member.flags().contains(Flags::ACCESSOR);
-                check(|| member.span(), member.ty(), member.init(), is_definite_property, cx);
-            });
+            on = on.members();
         }
+        on
+    }
+
+    fn var_decl<'a>(&self, declaration: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+        check(|| declaration.span(), declaration.ty(), declaration.init(), false, cx);
+    }
+
+    fn param<'a>(&self, param: Param<'a>, cx: &mut Cx<'a, Self>) {
+        if param.default().is_some() && param.func().is_some_and(ast_utils::is_function_with_body) {
+            check(
+                || param.span_without_modifiers(),
+                param.ty(),
+                param.default(),
+                param.is_optional(),
+                cx,
+            );
+        }
+    }
+
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+        // Without its annotation, the type of a `readonly` property is that of the literal.
+        if member.kind() != MemberKind::Property
+            || member.init().is_none()
+            || member.flags().intersects(Flags::READONLY | Flags::OPTIONAL | Flags::ABSTRACT)
+        {
+            return;
+        }
+        let is_definite_property =
+            member.flags().contains(Flags::DEFINITE) && !member.flags().contains(Flags::ACCESSOR);
+        check(|| member.span(), member.ty(), member.init(), is_definite_property, cx);
     }
 }

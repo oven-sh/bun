@@ -13,6 +13,7 @@ const MISSING_ROOT_TYPE: Message = Message::new("", "Missing root type for @para
 
 impl Rule for RequireParamType {
     const META: Meta = Meta::oxlint(Plugin::Jsdoc, "require-param-type", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().funcs();
     type State<'a> = JSDocFinder<'a>;
 
     fn new(options: &Options) -> Self {
@@ -23,35 +24,34 @@ impl Rule for RequireParamType {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> JSDocFinder<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<JSDocFinder<'a>> {
         let finder = JSDocFinder::new(file);
-        if !finder.is_empty() {
-            on.funcs(|rule, func, cx| {
-                if !is_function_with_body(func) {
-                    return;
-                }
-                let Some(node) = cx.state.get_function_nearest_jsdoc_node(func) else {
-                    return;
-                };
-                let settings = JSDocPluginSettings::new(cx.file());
-                let jsdocs = cx.state.get_checked_by_node(node, &settings);
-                for tag in param_tags(jsdocs, func, settings.resolve_tag_name("param")) {
-                    if settings.exempt_destructured_roots_from_checks && tag.is_about_nested_param || tag.type_part.is_some() {
-                        continue;
-                    }
-                    let is_destructured_root = tag.is_current_root_tag && tag.is_about_nested_param;
-                    match tag.name_part.filter(|_| rule.set_default_destructured_root_type && is_destructured_root) {
-                        Some(name_part) => cx
-                            .report(tag.kind.span, MISSING_ROOT_TYPE)
-                            .help_with(|| format!("Add {{{}}} to `@param` tag.", rule.default_destructured_root_type))
-                            .fix(|fixer| {
-                                fixer.insert_before(name_part.span, format!("{{{}}} ", rule.default_destructured_root_type))
-                            }),
-                        None => cx.report(tag.kind.span, MISSING_TYPE),
-                    };
-                }
-            });
+        (!finder.is_empty()).then_some(finder)
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if !is_function_with_body(func) {
+            return;
         }
-        finder
+        let Some(node) = cx.state.get_function_nearest_jsdoc_node(func) else {
+            return;
+        };
+        let settings = JSDocPluginSettings::new(cx.file());
+        let jsdocs = cx.state.get_checked_by_node(node, &settings);
+        for tag in param_tags(jsdocs, func, settings.resolve_tag_name("param")) {
+            if settings.exempt_destructured_roots_from_checks && tag.is_about_nested_param || tag.type_part.is_some() {
+                continue;
+            }
+            let is_destructured_root = tag.is_current_root_tag && tag.is_about_nested_param;
+            match tag.name_part.filter(|_| self.set_default_destructured_root_type && is_destructured_root) {
+                Some(name_part) => cx
+                    .report(tag.kind.span, MISSING_ROOT_TYPE)
+                    .help_with(|| format!("Add {{{}}} to `@param` tag.", self.default_destructured_root_type))
+                    .fix(|fixer| {
+                        fixer.insert_before(name_part.span, format!("{{{}}} ", self.default_destructured_root_type))
+                    }),
+                None => cx.report(tag.kind.span, MISSING_TYPE),
+            };
+        }
     }
 }

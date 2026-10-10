@@ -8,7 +8,8 @@ pub struct NoRedeclare {
 
 impl Rule for NoRedeclare {
     const META: Meta = Meta::typescript("no-redeclare", Kind::Suggestion).extends_base_rule("no-redeclare");
-    type State<'a> = ();
+    const ON: On = On::new().symbols().finish();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -20,8 +21,11 @@ impl Rule for NoRedeclare {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.symbols(|rule, symbol, cx| check_symbol(rule.config, symbol, cx));
-        on.finish(|rule, cx| check_globals_in_comments(rule.config, cx));
+    fn symbol<'a>(&self, symbol: Symbol<'a>, cx: &mut Cx<'a, Self>) {
+        check_symbol(self.config, symbol, cx);
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        check_globals_in_comments(self.config, cx);
     }
 }

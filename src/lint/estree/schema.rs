@@ -18,7 +18,7 @@
 //! After the name of a type come the kinds of nodes of [`crate::ast`] that a node of this type can
 //! be made of: [`NodeType::listens_to`].
 
-use super::value::{Nodes, Object, Value};
+use super::value::{Emit, Nodes, Object, Sink, Value};
 use super::views::*;
 use super::vnode::{Leaf, Part, VNode};
 use super::{Dialect, Field};
@@ -44,6 +44,15 @@ pub struct FieldEntry {
     pub is_hidden: bool,
     /// Its value in a node of that type.
     pub get: for<'a> fn(VNode<'a>) -> Value<'a>,
+}
+
+/// Gives `sink` a field. `None`: a `?` in it has given up.
+#[inline]
+fn emit<'a>(value: Option<impl Emit<'a>>, sink: &mut impl Sink<'a>) {
+    match value {
+        Some(value) => value.emit(sink),
+        None => sink.undefined(),
+    }
 }
 
 /// What `get` makes. `Value::Undefined` if a `?` in it gives up.
@@ -94,6 +103,19 @@ macro_rules! estree_schema {
                 }
             }
 
+            /// Gives `sink` the fields of `v`, which is of this type, that are enumerable and that the parser has, in the
+            /// order of [`NodeType::fields`]. As calling `get` of each, for less: nothing is looked up.
+            #[inline(never)]
+            pub(crate) fn emit_fields<'a>(self, v: VNode<'a>, is_espree: bool, sink: &mut impl Sink<'a>) {
+                match self {
+                    $(NodeType::$name => {
+                        let $v = v;
+                        let _ = ($v, is_espree, &mut *sink);
+                        $(estree_schema!(@emit $row is_espree, emit((|| Some($value))(), sink));)*
+                    })*
+                }
+            }
+
             /// The kinds of nodes of [`crate::ast`] that a node of this type can be made of. See
             /// [`VNode::for_each_at`].
             pub fn listens_to(self) -> NodeTags {
@@ -103,6 +125,12 @@ macro_rules! estree_schema {
             }
         }
     };
+    (@emit ts_hidden $is_espree:ident, $emit:expr) => {};
+    (@emit es_data $is_espree:ident, $emit:expr) => { if $is_espree { $emit } };
+    (@emit ts_node $is_espree:ident, $emit:expr) => { if !$is_espree { $emit } };
+    (@emit ts_part $is_espree:ident, $emit:expr) => { if !$is_espree { $emit } };
+    (@emit ts_data $is_espree:ident, $emit:expr) => { if !$is_espree { $emit } };
+    (@emit $row:ident $is_espree:ident, $emit:expr) => { $emit };
     (@is_child node) => { true };
     (@is_child ts_node) => { true };
     (@is_child part) => { true };

@@ -30,8 +30,25 @@ impl NoMixedSpacesAndTabs {
         let same = run(line, first);
         (line.get(same) == Some(&other)).then_some(same + 1)
     }
+}
 
-    fn check<'a>(&self, cx: &mut Cx<'a, Self>) {
+impl Rule for NoMixedSpacesAndTabs {
+    const META: Meta = Meta::eslint("no-mixed-spaces-and-tabs", Kind::Layout).deprecated();
+    const ON: On = On::new().finish();
+    type State<'a> = ();
+
+    fn new(options: &Options) -> Self {
+        NoMixedSpacesAndTabs {
+            smart_tabs: options.bool(0) == Some(true) || options.str(0) == Some("smart-tabs"),
+        }
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        let text = file.text();
+        (strings::contains(text, b" \t") || !self.smart_tabs && strings::contains(text, b"\t ")).then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
         for number in 1..=file.line_count() {
             let line = file.line_span(number);
@@ -46,24 +63,6 @@ impl NoMixedSpacesAndTabs {
             {
                 cx.report(at, MIXED_SPACES_AND_TABS);
             }
-        }
-    }
-}
-
-impl Rule for NoMixedSpacesAndTabs {
-    const META: Meta = Meta::eslint("no-mixed-spaces-and-tabs", Kind::Layout).deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        NoMixedSpacesAndTabs {
-            smart_tabs: options.bool(0) == Some(true) || options.str(0) == Some("smart-tabs"),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        let text = file.text();
-        if strings::contains(text, b" \t") || !self.smart_tabs && strings::contains(text, b"\t ") {
-            on.finish(Self::check);
         }
     }
 }

@@ -30,8 +30,30 @@ fn start_of_line(file: &File, line: u32) -> u32 {
     }
 }
 
-impl NoMultipleEmptyLines {
-    fn collect_template<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoMultipleEmptyLines {
+    const META: Meta = Meta::eslint("no-multiple-empty-lines", Kind::Layout)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new().exprs(&[ExprTag::Template]).finish();
+    /// The pieces of text of the templates that have a line break in them.
+    type State<'a> = Vec<Span>;
+
+    fn new(options: &Options) -> Self {
+        let object = options.object(0);
+        let limit = |key: &str| object.usize(key).map(|n| n.min(u32::MAX as usize) as u32);
+        let max = limit("max").unwrap_or(2);
+        NoMultipleEmptyLines {
+            max,
+            max_eof: limit("maxEOF").unwrap_or(max),
+            max_bof: limit("maxBOF").unwrap_or(max),
+        }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Vec<Span>> {
+        Some(Vec::new())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if !strings::contains_js_line_break(e.text()) {
             return;
         }
@@ -46,7 +68,7 @@ impl NoMultipleEmptyLines {
         }
     }
 
-    fn check<'a>(&self, cx: &mut Cx<'a, Self>) {
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
         utils::sort::sort_unstable_by_key(&mut cx.state, |quasi| quasi.start);
         let quasis: &[Span] = &cx.state;
@@ -96,30 +118,5 @@ impl NoMultipleEmptyLines {
             }
             last_line = line;
         }
-    }
-}
-
-impl Rule for NoMultipleEmptyLines {
-    const META: Meta = Meta::eslint("no-multiple-empty-lines", Kind::Layout)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    /// The pieces of text of the templates that have a line break in them.
-    type State<'a> = Vec<Span>;
-
-    fn new(options: &Options) -> Self {
-        let object = options.object(0);
-        let limit = |key: &str| object.usize(key).map(|n| n.min(u32::MAX as usize) as u32);
-        let max = limit("max").unwrap_or(2);
-        NoMultipleEmptyLines {
-            max,
-            max_eof: limit("maxEOF").unwrap_or(max),
-            max_bof: limit("maxBOF").unwrap_or(max),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Vec<Span> {
-        on.exprs([ExprTag::Template], Self::collect_template);
-        on.finish(Self::check);
-        Vec::new()
     }
 }

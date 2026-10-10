@@ -18,6 +18,7 @@ pub struct State {
 
 impl Rule for NoAsyncEndpointHandlers {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "no-async-endpoint-handlers", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = State;
 
     fn new(options: &Options) -> Self {
@@ -25,20 +26,21 @@ impl Rule for NoAsyncEndpointHandlers {
         NoAsyncEndpointHandlers { allowed_names }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State {
-        on.exprs([ExprTag::Call], |rule, e, cx| {
-            let Some((endpoint, args)) = e.as_call().and_then(as_endpoint_registration) else {
-                return;
-            };
-            let file = cx.file();
-            if !*cx.state.has_async_functions.get_or_insert_with(|| file.funcs().any(Func::is_async)) {
-                return;
-            }
-            for arg in args.filter(|it| it.tag() != ExprTag::Spread) {
-                rule.check_endpoint_arg(endpoint, arg, cx);
-            }
-        });
-        State::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State> {
+        Some(State::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some((endpoint, args)) = e.as_call().and_then(as_endpoint_registration) else {
+            return;
+        };
+        let file = cx.file();
+        if !*cx.state.has_async_functions.get_or_insert_with(|| file.funcs().any(Func::is_async)) {
+            return;
+        }
+        for arg in args.filter(|it| it.tag() != ExprTag::Spread) {
+            self.check_endpoint_arg(endpoint, arg, cx);
+        }
     }
 }
 

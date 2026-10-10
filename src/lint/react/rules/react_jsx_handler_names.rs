@@ -30,6 +30,7 @@ enum HandlerName<'a> {
 
 impl Rule for JsxHandlerNames {
     const META: Meta = Meta::oxlint(Plugin::React, "jsx-handler-names", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     /// Where in the file the name of a handler follows a `.`: the `.`, and the end of what makes it such a name.
     type State<'a> = OnceCell<Vec<(u32, u32)>>;
 
@@ -65,12 +66,13 @@ impl Rule for JsxHandlerNames {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Self::State<'a> {
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
         // Without the one there is neither.
-        if !self.event_handler_prop_prefixes.is_empty() {
-            on.exprs([ExprTag::Jsx], |rule, e, cx| rule.check(e, cx));
-        }
-        OnceCell::new()
+        (!self.event_handler_prop_prefixes.is_empty()).then(OnceCell::new)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(e, cx);
     }
 }
 

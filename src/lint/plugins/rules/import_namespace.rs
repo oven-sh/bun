@@ -27,17 +27,47 @@ pub struct State<'a> {
 
 impl Rule for Namespace {
     const META: Meta = Meta::oxlint(Plugin::Import, "namespace", Kind::Problem).needs_modules();
+    const ON: On = On::new().finish();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         Namespace { allow_computed: options.object(0).bool_or("allowComputed", false) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
-        if !is_waiting_for_modules(file) && file.modules().is_some() {
-            on.finish(Self::check);
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
+        (!is_waiting_for_modules(file) && file.modules().is_some()).then(State::default)
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let file = cx.file();
+        // Once, if a name is declared several times.
+        let mut seen = FxHashSet::default();
+        for entry in import_entries(file).filter(|it| seen.insert(it.local_name().name())) {
+            let Some(loaded_module) = get_loaded_module(file, entry.declaration.spec().bytes()) else {
+                continue;
+            };
+            let (source, module) = match entry.import_name {
+                ImportImportName::NamespaceObject(_) => (entry.declaration.spec().bytes(), loaded_module),
+                ImportImportName::Name(specifier) => {
+                    let Some(source) = get_module_request_name(specifier.imported().bytes(), loaded_module, cx) else {
+                        continue;
+                    };
+                    let Some(module) = loaded_module.get_loaded_module(source) else {
+                        continue;
+                    };
+                    (source, module)
+                }
+                ImportImportName::Default(_) => continue,
+            };
+            let local = entry.local_name().name();
+            let Some(symbol) = file.top_level_scope().get_name(local).filter(|_| module.record.has_module_syntax) else {
+                continue;
+            };
+            let place = Place { source, namespaces: smallvec![local.bytes()], module };
+            for ident in symbol.references().filter_map(Reference::expr).filter(|it| !it.is_parenthesized()) {
+                self.check_reference(ident, &place, cx);
+            }
         }
-        State::default()
     }
 }
 
@@ -91,38 +121,6 @@ struct Place<'a> {
 }
 
 impl Namespace {
-    fn check<'a>(&self, cx: &mut Cx<'a, Self>) {
-        let file = cx.file();
-        // Once, if a name is declared several times.
-        let mut seen = FxHashSet::default();
-        for entry in import_entries(file).filter(|it| seen.insert(it.local_name().name())) {
-            let Some(loaded_module) = get_loaded_module(file, entry.declaration.spec().bytes()) else {
-                continue;
-            };
-            let (source, module) = match entry.import_name {
-                ImportImportName::NamespaceObject(_) => (entry.declaration.spec().bytes(), loaded_module),
-                ImportImportName::Name(specifier) => {
-                    let Some(source) = get_module_request_name(specifier.imported().bytes(), loaded_module, cx) else {
-                        continue;
-                    };
-                    let Some(module) = loaded_module.get_loaded_module(source) else {
-                        continue;
-                    };
-                    (source, module)
-                }
-                ImportImportName::Default(_) => continue,
-            };
-            let local = entry.local_name().name();
-            let Some(symbol) = file.top_level_scope().get_name(local).filter(|_| module.record.has_module_syntax) else {
-                continue;
-            };
-            let place = Place { source, namespaces: smallvec![local.bytes()], module };
-            for ident in symbol.references().filter_map(Reference::expr).filter(|it| !it.is_parenthesized()) {
-                self.check_reference(ident, &place, cx);
-            }
-        }
-    }
-
     fn check_reference<'a>(&self, ident: Expr<'a>, place: &Place<'a>, cx: &mut Cx<'a, Self>) {
         match ident.parent() {
             Node::Expr(member) if member.is_in_type_query() => {}

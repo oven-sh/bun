@@ -11,7 +11,8 @@ impl Rule for NoEmptyFunction {
         .has_suggestions()
         .presets(Presets::STYLISTIC)
         .extends_base_rule("no-empty-function");
-    type State<'a> = ();
+    const ON: On = On::new().funcs();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         NoEmptyFunction {
@@ -19,7 +20,7 @@ impl Rule for NoEmptyFunction {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.funcs(|rule, func, cx| check(func, rule.allow, cx));
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        check(func, self.allow, cx);
     }
 }

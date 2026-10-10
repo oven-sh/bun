@@ -21,39 +21,40 @@ pub struct State<'a> {
 
 impl Rule for JsxNoConstructedContextValues {
     const META: Meta = Meta::oxlint(Plugin::React, "jsx-no-constructed-context-values", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         JsxNoConstructedContextValues
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if is_jsx(file) && file.mentions("value") && file.mentions_any(&["Provider", "createContext"]) {
-            on.exprs([ExprTag::Jsx], |_, e, cx| {
-                let ExprKind::Jsx(jsx) = e.kind() else {
-                    return;
-                };
-                let is_component = |node: Node<'a>| as_function(node).is_some() || as_method_definition(node).is_some();
-                if !jsx.tag().is_some_and(is_context_provider)
-                    || cx
-                        .state
-                        .inside_component
-                        .find(Node::Expr(e), |_, ancestor| is_component(ancestor).then_some(()))
-                        .is_none()
-                {
-                    return;
-                }
-                for attribute in jsx.attrs().iter().filter(|it| it.key().is_some_and(|key| key.is("value"))) {
-                    if get_prop_value(attribute)
-                        .and_then(|it| it.as_expression())
-                        .is_some_and(|it| is_constructed_expression(it, &mut cx.state.constructed_variables))
-                    {
-                        cx.report(attribute, JSX_NO_CONSTRUCTED_CONTEXT_VALUES);
-                    }
-                }
-            });
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        (is_jsx(file) && file.mentions("value") && file.mentions_any(&["Provider", "createContext"]))
+            .then(State::default)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Jsx(jsx) = e.kind() else {
+            return;
+        };
+        let is_component = |node: Node<'a>| as_function(node).is_some() || as_method_definition(node).is_some();
+        if !jsx.tag().is_some_and(is_context_provider)
+            || cx
+                .state
+                .inside_component
+                .find(Node::Expr(e), |_, ancestor| is_component(ancestor).then_some(()))
+                .is_none()
+        {
+            return;
         }
-        State::default()
+        for attribute in jsx.attrs().iter().filter(|it| it.key().is_some_and(|key| key.is("value"))) {
+            if get_prop_value(attribute)
+                .and_then(|it| it.as_expression())
+                .is_some_and(|it| is_constructed_expression(it, &mut cx.state.constructed_variables))
+            {
+                cx.report(attribute, JSX_NO_CONSTRUCTED_CONTEXT_VALUES);
+            }
+        }
     }
 }
 

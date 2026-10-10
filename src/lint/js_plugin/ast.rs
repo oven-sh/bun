@@ -14,7 +14,7 @@
 
 use super::wire;
 use crate::ast::File;
-use crate::estree::{Dialect, FieldEntry, Nodes, Object, VNode, Value};
+use crate::estree::{Dialect, Nodes, Object, Sink, VNode, Value};
 use crate::selector::{EsNode, Selector};
 use crate::span::Span;
 use bun_core::strings::Utf16OffsetTable;
@@ -159,23 +159,24 @@ struct Tree {
     extra: Vec<u8>,
 }
 
-struct OpenNode<'a> {
-    node: VNode<'a>,
-    span: Span,
-    id: u32,
-    fields: &'static [FieldEntry],
-    /// The index in `fields` of the next field.
-    next: usize,
-    /// Where in [`Tree::fields`] the word of the next field goes.
-    at: usize,
-    last_child: Option<(VNode<'a>, u32)>,
+/// Where the number of a node goes.
+#[derive(Copy, Clone)]
+enum Slot {
+    /// Nowhere: it is the `Program`.
+    None,
+    /// An index in [`Tree::fields`].
+    Field(u32),
+    /// Two of them: it is in two fields of its parent.
+    Fields(u32, u32),
+    /// An index in [`Tree::lists`].
+    List(u32),
 }
 
-/// What is being written.
-enum Open<'a> {
-    Node(OpenNode<'a>),
-    /// The rest of a list, the node that has it, and where in [`Tree::lists`] the next element goes.
-    List(Nodes<'a>, u32, usize),
+/// A node that is still to be written.
+struct Pending<'a> {
+    node: VNode<'a>,
+    parent: u32,
+    to: Slot,
 }
 
 struct Writer<'a, 's> {
@@ -186,17 +187,103 @@ struct Writer<'a, 's> {
     /// The nodes that match each of `selectors`.
     matches: Vec<Vec<u32>>,
     nodes: Numbered<'a>,
-    /// By the number of a type: how many words a node of it has. `u8::MAX`: not counted yet.
-    words: [u8; 256],
     tree: Tree,
     /// The length of [`Tree::extra`] in UTF-16 code units.
     extra_units: u32,
-    open: Vec<Open<'a>>,
+    /// The last is the next.
+    open: Vec<Pending<'a>>,
+}
+
+/// Writes the fields of a node.
+struct Fields<'w, 'a, 's> {
+    writer: &'w mut Writer<'a, 's>,
+    id: u32,
+    span: Span,
+    /// How many were [`Writer::open`] before.
+    open_before: usize,
+}
+
+impl<'a> Fields<'_, 'a, '_> {
+    #[inline]
+    fn put(&mut self, word: u32) {
+        self.writer.tree.fields.push(word);
+    }
+}
+
+impl<'a> Sink<'a> for Fields<'_, 'a, '_> {
+    #[inline]
+    fn undefined(&mut self) {
+        self.put(UNDEFINED);
+    }
+
+    #[inline]
+    fn null(&mut self) {
+        self.put(NULL);
+    }
+
+    #[inline]
+    fn bool(&mut self, value: bool) {
+        self.put(if value { TRUE } else { FALSE });
+    }
+
+    #[inline]
+    fn number(&mut self, value: f64) {
+        let word = self.writer.number(value);
+        self.put(word);
+    }
+
+    #[inline]
+    fn str(&mut self, value: &'a [u8]) {
+        let word = self.writer.string(value, self.span);
+        self.put(word);
+    }
+
+    #[inline]
+    fn node(&mut self, node: VNode<'a>) {
+        let at = self.writer.tree.fields.len() as u32;
+        self.put(UNDEFINED);
+        // For espree both names of `import { a }` are one node.
+        if let Some(last) = self.writer.open[self.open_before..].last_mut()
+            && let Slot::Field(first) = last.to
+            && last.node == node
+        {
+            last.to = Slot::Fields(first, at);
+            return;
+        }
+        self.writer.open.push(Pending {
+            node,
+            parent: self.id,
+            to: Slot::Field(at),
+        });
+    }
+
+    fn nodes(&mut self, nodes: Nodes<'a>) {
+        let (lists, open) = (&mut self.writer.tree.lists, &mut self.writer.open);
+        let at = lists.len();
+        lists.push(0);
+        for node in nodes {
+            if let Some(node) = node {
+                open.push(Pending {
+                    node,
+                    parent: self.id,
+                    to: Slot::List(lists.len() as u32),
+                });
+            }
+            lists.push(0);
+        }
+        lists[at] = (lists.len() - at - 1) as u32;
+        self.put(word(Tag::List, at));
+    }
+
+    fn other(&mut self, value: Value<'a>) {
+        let word = self.writer.other(value, self.span);
+        self.put(word);
+    }
 }
 
 impl<'a> Writer<'a, '_> {
-    /// Adds `node`, and returns its number.
-    fn start_node(&mut self, node: VNode<'a>, parent: u32) -> u32 {
+    /// Writes `node`, and notes what is in it. Returns its number.
+    fn write_node(&mut self, node: VNode<'a>, parent: u32) -> u32 {
         let id = self.tree.types.len() as u32;
         let (node_type, span) = node.type_and_span();
         self.nodes.push(node);
@@ -212,84 +299,47 @@ impl<'a> Writer<'a, '_> {
         self.tree.starts.push(self.offsets.to_utf16(span.start));
         self.tree.ends.push(self.offsets.to_utf16(span.end));
         self.tree.parents.push(parent);
-        let fields = node_type.fields();
-        let at = self.tree.fields.len();
-        let words = &mut self.words[node_type as u8 as usize];
-        if *words == u8::MAX {
-            let has = |it: &&FieldEntry| it.is_in(self.dialect) && !it.is_hidden;
-            *words = fields.iter().filter(has).count() as u8;
-        }
-        self.tree.fields.resize(at + *words as usize, UNDEFINED);
-        self.open.push(Open::Node(OpenNode {
+        let (open_before, is_espree) = (self.open.len(), self.dialect == Dialect::Espree);
+        node_type.emit_fields(
             node,
-            span,
-            id,
-            fields,
-            next: 0,
-            at,
-            last_child: None,
-        }));
+            is_espree,
+            &mut Fields {
+                writer: self,
+                id,
+                span,
+                open_before,
+            },
+        );
+        // The first of them is the next.
+        self.open[open_before..].reverse();
         id
     }
 
-    fn run(&mut self) {
-        while let Some(open) = self.open.last_mut() {
-            match open {
-                Open::Node(open) => {
-                    let Some(entry) = open.fields.get(open.next) else {
-                        self.open.pop();
-                        continue;
-                    };
-                    open.next += 1;
-                    if entry.is_hidden || !entry.is_in(self.dialect) {
-                        continue;
-                    }
-                    let (node, span, id, to) = (open.node, open.span, open.id, open.at);
-                    open.at += 1;
-                    let value = (entry.get)(node);
-                    let word = match (&value, &open.last_child) {
-                        // For espree both names of `import { a }` are one node.
-                        (Value::Node(child), &Some((last, last_id))) if *child == last => {
-                            self.tree.twice.push(last_id);
-                            word(Tag::Node, last_id as usize)
-                        }
-                        (&Value::Node(child), _) => {
-                            open.last_child = Some((child, self.tree.types.len() as u32));
-                            word(Tag::Node, self.start_node(child, id) as usize)
-                        }
-                        _ => self.value(&value, span, id),
-                    };
-                    if let Some(field) = self.tree.fields.get_mut(to) {
-                        *field = word;
-                    }
+    fn run(&mut self, program: VNode<'a>) {
+        self.open.push(Pending {
+            node: program,
+            parent: 0,
+            to: Slot::None,
+        });
+        while let Some(Pending { node, parent, to }) = self.open.pop() {
+            let id = self.write_node(node, parent);
+            let (fields, in_field) = (&mut self.tree.fields, word(Tag::Node, id as usize));
+            match to {
+                Slot::None => {}
+                Slot::Field(at) => fields[at as usize] = in_field,
+                Slot::Fields(first, second) => {
+                    fields[first as usize] = in_field;
+                    fields[second as usize] = in_field;
+                    self.tree.twice.push(id);
                 }
-                Open::List(list, parent, at) => {
-                    let Some(element) = list.next() else {
-                        self.open.pop();
-                        continue;
-                    };
-                    let (parent, to) = (*parent, *at);
-                    *at += 1;
-                    if let Some(element) = element {
-                        let id = self.start_node(element, parent);
-                        if let Some(word) = self.tree.lists.get_mut(to) {
-                            *word = id;
-                        }
-                    }
-                }
+                Slot::List(at) => self.tree.lists[at as usize] = id,
             }
         }
     }
 
-    /// The word for `value`, which is not a node, in a field of the node `id` at `span`.
-    fn value(&mut self, value: &Value<'a>, span: Span, id: u32) -> u32 {
-        match *value {
-            Value::Undefined | Value::Node(_) => UNDEFINED,
-            Value::Null => NULL,
-            Value::Bool(false) => FALSE,
-            Value::Bool(true) => TRUE,
-            Value::Number(value) => self.number(value),
-            Value::Str(value) => self.string(value, span),
+    /// The word for a `RegExp`, a `bigint` or an object in a field of the node at `span`.
+    fn other(&mut self, value: Value<'a>, span: Span) -> u32 {
+        match value {
             Value::Regex { pattern, flags } => self.pair(Tag::RegExp, Some(pattern), flags, span),
             Value::BigInt(digits) => {
                 let digits = self.string(digits, span);
@@ -302,13 +352,7 @@ impl<'a> Writer<'a, '_> {
             Value::Object(Object::Template { cooked, raw }) => {
                 self.pair(Tag::Template, cooked, raw, span)
             }
-            Value::Nodes(list) => {
-                let (at, len) = (self.tree.lists.len(), list.len());
-                self.tree.lists.push(len as u32);
-                self.tree.lists.resize(at + 1 + len, 0);
-                self.open.push(Open::List(list, id, at + 1));
-                word(Tag::List, at)
-            }
+            _ => UNDEFINED,
         }
     }
 
@@ -426,7 +470,6 @@ fn walk<'a, 's>(
         selectors,
         matches: vec![Vec::new(); selectors.len()],
         nodes: Numbered::default(),
-        words: [u8::MAX; 256],
         tree: Tree::default(),
         extra_units: 0,
         open: Vec::new(),
@@ -438,8 +481,7 @@ fn walk<'a, 's>(
     writer.tree.ends.reserve(nodes);
     writer.tree.parents.reserve(nodes);
     writer.tree.fields.reserve(nodes * 3);
-    writer.start_node(VNode::program(file), 0);
-    writer.run();
+    writer.run(VNode::program(file));
     writer
 }
 

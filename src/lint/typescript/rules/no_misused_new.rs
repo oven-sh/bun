@@ -35,8 +35,16 @@ fn place<'a>(member: Member<'a>, key: Key<'a>, cx: &Cx<'a, NoMisusedNew>) -> Spa
     if cx.language().is_oxlint { key.inner_span(cx.file()) } else { member.span() }
 }
 
-impl NoMisusedNew {
-    fn check<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoMisusedNew {
+    const META: Meta = Meta::typescript("no-misused-new", Kind::Problem).recommended();
+    const ON: On = On::new().members();
+    no_state!();
+
+    fn new(_: &Options) -> Self {
+        NoMisusedNew
+    }
+
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
         let Some(func) = member.func() else {
             return;
         };
@@ -71,18 +79,5 @@ impl NoMisusedNew {
             }
             _ => {}
         }
-    }
-}
-
-impl Rule for NoMisusedNew {
-    const META: Meta = Meta::typescript("no-misused-new", Kind::Problem).recommended();
-    type State<'a> = ();
-
-    fn new(_: &Options) -> Self {
-        NoMisusedNew
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.members(Self::check);
     }
 }

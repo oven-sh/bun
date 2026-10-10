@@ -14,6 +14,7 @@ const HANDLE_CALLBACK_ERR: Message = Message::new("", "Expected error to be hand
 
 impl Rule for HandleCallbackErr {
     const META: Meta = Meta::oxlint(Plugin::Node, "handle-callback-err", Kind::Suggestion);
+    const ON: On = On::new().funcs();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -25,25 +26,27 @@ impl Rule for HandleCallbackErr {
         })
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if matches!(&self.0, ErrorPattern::Plain(name) if !file.mentions(name)) {
-            return;
+            return None;
         }
-        on.funcs(|rule, func, cx| {
-            let is_function = matches!(
-                func.kind(),
-                FnKind::Decl | FnKind::Expr | FnKind::Arrow | FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor
-            );
-            if is_function
-                && let Some(ident) = func.params().first().filter(|it| !it.is_rest()).map(Param::pat)
-                && let Some(name) = ident.as_ident()
-                && rule.matches(name.bytes())
-                && !matches!(func.owner(), Node::Member(member) if member.is_signature())
-                && ident.symbol().is_some_and(|it| it.references().all(|it| it.is_init()))
-            {
-                cx.report(ident, HANDLE_CALLBACK_ERR);
-            }
-        });
+        Some(())
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        let is_function = matches!(
+            func.kind(),
+            FnKind::Decl | FnKind::Expr | FnKind::Arrow | FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor
+        );
+        if is_function
+            && let Some(ident) = func.params().first().filter(|it| !it.is_rest()).map(Param::pat)
+            && let Some(name) = ident.as_ident()
+            && self.matches(name.bytes())
+            && !matches!(func.owner(), Node::Member(member) if member.is_signature())
+            && ident.symbol().is_some_and(|it| it.references().all(|it| it.is_init()))
+        {
+            cx.report(ident, HANDLE_CALLBACK_ERR);
+        }
     }
 }
 

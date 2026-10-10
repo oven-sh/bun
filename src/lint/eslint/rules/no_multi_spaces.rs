@@ -271,8 +271,31 @@ impl NoMultiSpaces {
             && estree_type_name_at(file, offset)
                 .is_some_and(|name| self.exceptions.iter().any(|it| **it == *name.as_bytes()))
     }
+}
 
-    fn check<'a>(&self, cx: &mut Cx<'a, Self>) {
+impl Rule for NoMultiSpaces {
+    const META: Meta = Meta::eslint("no-multi-spaces", Kind::Layout)
+        .fixable(Fixable::Whitespace)
+        .deprecated();
+    const ON: On = On::new().finish();
+    no_state!();
+
+    fn new(options: &Options) -> Self {
+        let options = options.object(0);
+        let mut exceptions: Vec<Box<[u8]>> = vec![b"Property"[..].into()];
+        for (name, is_exception) in options.object("exceptions").entries() {
+            exceptions.retain(|it| **it != name[..]);
+            if is_exception.as_bool() == Some(true) {
+                exceptions.push(name[..].into());
+            }
+        }
+        NoMultiSpaces {
+            ignore_eol_comments: options.bool_or("ignoreEOLComments", false),
+            exceptions,
+        }
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
         let mut tokens = file.tokens().with_comments();
         let Some(mut left) = tokens.next() else {
@@ -303,31 +326,5 @@ impl NoMultiSpaces {
                 .data("displayValue", display_value(right))
                 .fix(|fixer| fixer.replace(spaces, " "));
         }
-    }
-}
-
-impl Rule for NoMultiSpaces {
-    const META: Meta = Meta::eslint("no-multi-spaces", Kind::Layout)
-        .fixable(Fixable::Whitespace)
-        .deprecated();
-    type State<'a> = ();
-
-    fn new(options: &Options) -> Self {
-        let options = options.object(0);
-        let mut exceptions: Vec<Box<[u8]>> = vec![b"Property"[..].into()];
-        for (name, is_exception) in options.object("exceptions").entries() {
-            exceptions.retain(|it| **it != name[..]);
-            if is_exception.as_bool() == Some(true) {
-                exceptions.push(name[..].into());
-            }
-        }
-        NoMultiSpaces {
-            ignore_eol_comments: options.bool_or("ignoreEOLComments", false),
-            exceptions,
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.finish(Self::check);
     }
 }

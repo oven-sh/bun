@@ -27,34 +27,33 @@ pub struct State<'a> {
 
 impl Rule for NoPageCustomFont {
     const META: Meta = Meta::oxlint(Plugin::Nextjs, "no-page-custom-font", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         NoPageCustomFont
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
-        if !file.mentions("link") {
-            return State::default();
-        }
-        on.exprs([ExprTag::Jsx], |_, e, cx| {
-            let Some(jsx) = as_jsx_element(e).filter(|it| it.tag().is_some_and(|name| name.is_ident("link"))) else {
-                return;
-            };
-            let is_custom_font = jsx.attrs().iter().any(|it| {
-                get_jsx_attribute_name(it).is_some_and(|name| name == b"href")
-                    && get_string_literal_prop_value(it).is_some_and(|href| href.starts_with(b"https://fonts.googleapis.com/css"))
-            });
-            if !is_custom_font {
-                return;
-            }
-            if !file_name(cx.path()).starts_with(b"_document.") {
-                cx.report(e, NOT_ADDED_IN_DOCUMENT);
-            } else if !is_inside_export_default(e, &mut cx.state) {
-                cx.report(e, LINK_OUTSIDE_OF_HEAD);
-            }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
+        file.mentions("link").then(State::default)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(jsx) = as_jsx_element(e).filter(|it| it.tag().is_some_and(|name| name.is_ident("link"))) else {
+            return;
+        };
+        let is_custom_font = jsx.attrs().iter().any(|it| {
+            get_jsx_attribute_name(it).is_some_and(|name| name == b"href")
+                && get_string_literal_prop_value(it).is_some_and(|href| href.starts_with(b"https://fonts.googleapis.com/css"))
         });
-        State::default()
+        if !is_custom_font {
+            return;
+        }
+        if !file_name(cx.path()).starts_with(b"_document.") {
+            cx.report(e, NOT_ADDED_IN_DOCUMENT);
+        } else if !is_inside_export_default(e, &mut cx.state) {
+            cx.report(e, LINK_OUTSIDE_OF_HEAD);
+        }
     }
 }
 

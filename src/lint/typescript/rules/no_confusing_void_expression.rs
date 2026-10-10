@@ -201,30 +201,6 @@ impl NoConfusingVoidExpression {
         }
     }
 
-    fn check<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(invalid_ancestor) = self.find_invalid_ancestor(node) else {
-            return;
-        };
-        if !is_void_like_at(node) {
-            return;
-        }
-        match invalid_ancestor {
-            InvalidAncestor::ArrowFunctionExpression(arrow_function) => {
-                self.check_arrow_function(node, arrow_function, cx);
-            }
-            InvalidAncestor::ReturnStatement(statement, return_value) => {
-                self.check_return_statement(node, statement, return_value, cx);
-            }
-            InvalidAncestor::Other if self.ignore_void_operator => {
-                cx.report(node, INVALID_VOID_EXPR_WRAP_VOID)
-                    .suggest(VOID_EXPR_WRAP_VOID, |fixer| wrap_void_fix(fixer, node));
-            }
-            InvalidAncestor::Other => {
-                cx.report(node, INVALID_VOID_EXPR);
-            }
-        }
-    }
-
     fn check_arrow_function<'a>(&self, node: Expr<'a>, arrow_function: Func<'a>, cx: &Cx<'a, Self>) {
         if self.ignore_void_returning_functions && is_void_returning_function_node(arrow_function) {
             return;
@@ -305,7 +281,8 @@ impl Rule for NoConfusingVoidExpression {
         .has_suggestions()
         .presets(Presets::STRICT_TYPE_CHECKED)
         .requires_types();
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Await, ExprTag::Call, ExprTag::TaggedTemplate]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -316,7 +293,27 @@ impl Rule for NoConfusingVoidExpression {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Await, ExprTag::Call, ExprTag::TaggedTemplate], Self::check);
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(invalid_ancestor) = self.find_invalid_ancestor(node) else {
+            return;
+        };
+        if !is_void_like_at(node) {
+            return;
+        }
+        match invalid_ancestor {
+            InvalidAncestor::ArrowFunctionExpression(arrow_function) => {
+                self.check_arrow_function(node, arrow_function, cx);
+            }
+            InvalidAncestor::ReturnStatement(statement, return_value) => {
+                self.check_return_statement(node, statement, return_value, cx);
+            }
+            InvalidAncestor::Other if self.ignore_void_operator => {
+                cx.report(node, INVALID_VOID_EXPR_WRAP_VOID)
+                    .suggest(VOID_EXPR_WRAP_VOID, |fixer| wrap_void_fix(fixer, node));
+            }
+            InvalidAncestor::Other => {
+                cx.report(node, INVALID_VOID_EXPR);
+            }
+        }
     }
 }

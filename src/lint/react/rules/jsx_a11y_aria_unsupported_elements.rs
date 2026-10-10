@@ -11,28 +11,27 @@ const ARIA_UNSUPPORTED_ELEMENTS: Message = Message::new("", "This element does n
 
 impl Rule for AriaUnsupportedElements {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "aria-unsupported-elements", Kind::Problem).fixable(Fixable::Code);
-    type State<'a> = ();
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         AriaUnsupportedElements
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.exprs([ExprTag::Jsx], |_, e, cx| {
-            let Some(jsx_el) = as_jsx_element(e) else {
-                return;
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(jsx_el) = as_jsx_element(e) else {
+            return;
+        };
+        if !contains_name(&RESERVED_HTML_TAG, &get_element_type(cx.file(), jsx_el)) {
+            return;
+        }
+        for attr in jsx_el.attrs() {
+            let Some(attr_name) = get_jsx_attribute_name(attr).map(cow_to_ascii_lowercase) else {
+                continue;
             };
-            if !contains_name(&RESERVED_HTML_TAG, &get_element_type(cx.file(), jsx_el)) {
-                return;
+            if *attr_name == *b"role" || is_valid_aria_property(&attr_name) {
+                cx.report(attr, ARIA_UNSUPPORTED_ELEMENTS).data("attr_name", attr_name).fix(|fixer| fixer.remove(attr));
             }
-            for attr in jsx_el.attrs() {
-                let Some(attr_name) = get_jsx_attribute_name(attr).map(cow_to_ascii_lowercase) else {
-                    continue;
-                };
-                if *attr_name == *b"role" || is_valid_aria_property(&attr_name) {
-                    cx.report(attr, ARIA_UNSUPPORTED_ELEMENTS).data("attr_name", attr_name).fix(|fixer| fixer.remove(attr));
-                }
-            }
-        });
+        }
     }
 }

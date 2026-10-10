@@ -78,7 +78,8 @@ impl NoInlineComments {
 
 impl Rule for NoInlineComments {
     const META: Meta = Meta::eslint("no-inline-comments", Kind::Suggestion);
-    type State<'a> = ();
+    const ON: On = On::new().finish();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -90,13 +91,11 @@ impl Rule for NoInlineComments {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.finish(|rule, cx| {
-            for comment in cx.file().comments() {
-                if comment.kind() != TokenKind::Shebang {
-                    rule.test_code_around_comment(comment, cx);
-                }
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        for comment in cx.file().comments() {
+            if comment.kind() != TokenKind::Shebang {
+                self.test_code_around_comment(comment, cx);
             }
-        });
+        }
     }
 }

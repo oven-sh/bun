@@ -263,16 +263,18 @@ pub fn check<'a, R: Rule<State<'a> = Known<'a>>>(func: Func<'a>, dialect: Dialec
 
 impl Rule for NoLoopFunc {
     const META: Meta = Meta::eslint("no-loop-func", Kind::Suggestion);
+    const ON: On = On::new().funcs();
     type State<'a> = Known<'a>;
 
     fn new(_: &Options) -> Self {
         NoLoopFunc
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Known<'a> {
-        if has_loops(file) {
-            on.funcs(|_, func, cx| check(func, Dialect::Eslint, cx));
-        }
-        Known::default()
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Known<'a>> {
+        has_loops(file).then(Known::default)
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        check(func, Dialect::Eslint, cx);
     }
 }

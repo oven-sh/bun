@@ -11,33 +11,33 @@ const USE_LOGICAL_OPERATOR: Message =
 
 impl Rule for BadBitwiseOperator {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "bad-bitwise-operator", Kind::Suggestion).has_suggestions();
-    type State<'a> = ();
+    const ON: On = On::new().binaries(&[BinOp::BitAnd, BinOp::BitOr]).exprs(&[ExprTag::Assign]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         BadBitwiseOperator
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.binaries([BinOp::BitAnd, BinOp::BitOr], |_, e, cx| {
-            let ExprKind::Binary { op, left, right } = e.kind() else {
-                return;
-            };
-            let Some(left_ident) = left.as_ident().filter(|_| !left.is_parenthesized()) else {
-                return;
-            };
-            match op {
-                BinOp::BitAnd if is_member_of(right, left_ident) => report(e, "&", "&&", cx),
-                BinOp::BitOr if !is_numeric_expr(right) => report(e, "|", "||", cx),
-                _ => {}
-            }
-        });
-        on.exprs([ExprTag::Assign], |_, e, cx| {
-            if let ExprKind::Assign { op: Some(BinOp::BitOr), value, .. } = e.kind()
-                && !is_numeric_expr(value)
-            {
-                report(e, "|=", "||=", cx);
-            }
-        });
+    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Binary { op, left, right } = e.kind() else {
+            return;
+        };
+        let Some(left_ident) = left.as_ident().filter(|_| !left.is_parenthesized()) else {
+            return;
+        };
+        match op {
+            BinOp::BitAnd if is_member_of(right, left_ident) => report(e, "&", "&&", cx),
+            BinOp::BitOr if !is_numeric_expr(right) => report(e, "|", "||", cx),
+            _ => {}
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let ExprKind::Assign { op: Some(BinOp::BitOr), value, .. } = e.kind()
+            && !is_numeric_expr(value)
+        {
+            report(e, "|=", "||=", cx);
+        }
     }
 }
 

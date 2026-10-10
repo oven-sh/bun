@@ -15,50 +15,50 @@ const REMOVE: Message = Message::new("", "Remove leading `./`");
 impl Rule for RelativeUrlStyle {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "relative-url-style", Kind::Suggestion).fixable(Fixable::Code).has_suggestions();
+    const ON: On = On::new().exprs(&[ExprTag::New]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         RelativeUrlStyle { always: options.str(0) == Some("always") }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("URL") {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("URL").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::New(new_expr) = e.kind() else {
+            return;
+        };
+        if !is_new_expression(new_expr, &["URL"], Some(2), Some(2)) {
             return;
         }
-        on.exprs([ExprTag::New], |rule, e, cx| {
-            let ExprKind::New(new_expr) = e.kind() else {
-                return;
-            };
-            if !is_new_expression(new_expr, &["URL"], Some(2), Some(2)) {
-                return;
-            }
-            let (Some(first_arg), Some(base)) = (new_expr.args().first(), new_expr.args().get(1)) else {
-                return;
-            };
-            if base.tag() == ExprTag::Spread || first_arg.is_parenthesized() {
-                return;
-            }
-            let base = base.as_string().filter(|_| !base.is_parenthesized()).map(Name::bytes);
-            let after_quote = first_arg.span().start + 1;
-            let dot_slash_span = Span::new(after_quote, after_quote + 2);
-            match first_arg.kind() {
-                ExprKind::String(url) if rule.always => {
-                    if !matches!(url.bytes().first(), Some(b'.' | b'/')) && is_safe_to_add_dot_slash(url.bytes(), base) {
-                        cx.report(first_arg, ALWAYS).fix(|fixer| fixer.insert_before(Span::empty(after_quote), "./"));
-                    }
+        let (Some(first_arg), Some(base)) = (new_expr.args().first(), new_expr.args().get(1)) else {
+            return;
+        };
+        if base.tag() == ExprTag::Spread || first_arg.is_parenthesized() {
+            return;
+        }
+        let base = base.as_string().filter(|_| !base.is_parenthesized()).map(Name::bytes);
+        let after_quote = first_arg.span().start + 1;
+        let dot_slash_span = Span::new(after_quote, after_quote + 2);
+        match first_arg.kind() {
+            ExprKind::String(url) if self.always => {
+                if !matches!(url.bytes().first(), Some(b'.' | b'/')) && is_safe_to_add_dot_slash(url.bytes(), base) {
+                    cx.report(first_arg, ALWAYS).fix(|fixer| fixer.insert_before(Span::empty(after_quote), "./"));
                 }
-                // As it is written.
-                ExprKind::String(_) => {
-                    if cx.slice(first_arg.span().shrink(1, 1)).strip_prefix(b"./").is_some_and(|it| is_safe_to_add_dot_slash(it, base)) {
-                        cx.report(first_arg, NEVER).fix(|fixer| fixer.remove(dot_slash_span));
-                    }
-                }
-                ExprKind::Template(template) if !rule.always && template.raw(0).starts_with(b"./") => {
-                    cx.report(first_arg, NEVER).suggest(REMOVE, |fixer| fixer.remove(dot_slash_span));
-                }
-                _ => {}
             }
-        });
+            // As it is written.
+            ExprKind::String(_) => {
+                if cx.slice(first_arg.span().shrink(1, 1)).strip_prefix(b"./").is_some_and(|it| is_safe_to_add_dot_slash(it, base)) {
+                    cx.report(first_arg, NEVER).fix(|fixer| fixer.remove(dot_slash_span));
+                }
+            }
+            ExprKind::Template(template) if !self.always && template.raw(0).starts_with(b"./") => {
+                cx.report(first_arg, NEVER).suggest(REMOVE, |fixer| fixer.remove(dot_slash_span));
+            }
+            _ => {}
+        }
     }
 }
 

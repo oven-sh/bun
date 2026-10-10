@@ -1661,6 +1661,10 @@ impl Rule for NoUnusedVars {
         .has_suggestions()
         .recommended()
         .extends_base_rule("no-unused-vars");
+    const ON: On = On::new()
+        .stmts(&[StmtTag::Module])
+        .finish()
+        .binaries(&[BinOp::Comma]);
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -1692,24 +1696,37 @@ impl Rule for NoUnusedVars {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
-        on.stmts([StmtTag::Module], Self::check_module);
-        on.finish(Self::check_program);
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new().stmts(&[StmtTag::Module]).finish();
         if file.language().is_oxlint {
-            on.binaries([BinOp::Comma], |_, e, cx| {
-                if let ExprKind::Binary { left, .. } = e.kind() {
-                    cx.state.discarded.push(left);
-                }
-            });
+            on = on.binaries(&[BinOp::Comma]);
         }
+        on
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         let is_definition_file = is_definition_file(file.path());
         if is_definition_file {
             mark_ambient_declarations(file.body(), false);
         }
-        State {
+        Some(State {
             is_definition_file,
             declared: AncestorMemo::default(),
             discarded: Vec::new(),
+        })
+    }
+
+    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let ExprKind::Binary { left, .. } = e.kind() {
+            cx.state.discarded.push(left);
         }
+    }
+
+    fn stmt<'a>(&self, node: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_module(node, cx);
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        self.check_program(cx);
     }
 }

@@ -27,6 +27,7 @@ pub struct State<'a> {
 
 impl Rule for CallbackReturn {
     const META: Meta = Meta::oxlint(Plugin::Node, "callback-return", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -37,11 +38,38 @@ impl Rule for CallbackReturn {
         CallbackReturn { callbacks }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
-        if self.callbacks.iter().any(|it| file.mentions(first_name(it))) {
-            on.exprs([ExprTag::Call], Self::check);
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
+        self.callbacks.iter().any(|it| file.mentions(first_name(it))).then(State::default)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(callee) = e.callee() else {
+            return;
+        };
+        if !matches!(callee.tag(), ExprTag::Ident | ExprTag::Dot | ExprTag::Index)
+            || !self.callbacks.iter().any(|it| it.as_bytes() == callee.text())
+            || !contains_only_identifiers(callee)
+        {
+            return;
         }
-        State::default()
+        let (block_body, is_body_of_function) = match cx.state.closest_block.find(Node::Expr(e), find_closest_block_parent) {
+            None | Some(ClosestBlock::ReturnOrArrow) => return,
+            Some(ClosestBlock::Block(block)) => (block.as_block(), false),
+            Some(ClosestBlock::FunctionBody(func)) => (func.body_statements(), true),
+        };
+        let mut from_the_end = block_body.into_iter().flatten().rev();
+        if let Some(last_item) = from_the_end.next() {
+            if is_body_of_function && is_callback_expression(e, last_item)
+                || last_item.tag() == StmtTag::Return && from_the_end.next().is_some_and(|it| is_callback_expression(e, it))
+            {
+                return;
+            }
+        }
+        let is_function = |it: Node| matches!(it, Node::Func(func) if func.kind() != FnKind::StaticBlock);
+        let in_function = &mut cx.state.in_function;
+        if is_body_of_function || in_function.find(Node::Expr(e), |_, parent| is_function(parent).then_some(())).is_some() {
+            cx.report(e, CALLBACK_RETURN);
+        }
     }
 }
 
@@ -95,36 +123,4 @@ fn is_callback_expression<'a>(call: Expr<'a>, statement: Stmt<'a>) -> bool {
         return false;
     };
     e == call || matches!(e.kind(), ExprKind::Binary { op, right, .. } if op != BinOp::Comma && right == call)
-}
-
-impl CallbackReturn {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(callee) = e.callee() else {
-            return;
-        };
-        if !matches!(callee.tag(), ExprTag::Ident | ExprTag::Dot | ExprTag::Index)
-            || !self.callbacks.iter().any(|it| it.as_bytes() == callee.text())
-            || !contains_only_identifiers(callee)
-        {
-            return;
-        }
-        let (block_body, is_body_of_function) = match cx.state.closest_block.find(Node::Expr(e), find_closest_block_parent) {
-            None | Some(ClosestBlock::ReturnOrArrow) => return,
-            Some(ClosestBlock::Block(block)) => (block.as_block(), false),
-            Some(ClosestBlock::FunctionBody(func)) => (func.body_statements(), true),
-        };
-        let mut from_the_end = block_body.into_iter().flatten().rev();
-        if let Some(last_item) = from_the_end.next() {
-            if is_body_of_function && is_callback_expression(e, last_item)
-                || last_item.tag() == StmtTag::Return && from_the_end.next().is_some_and(|it| is_callback_expression(e, it))
-            {
-                return;
-            }
-        }
-        let is_function = |it: Node| matches!(it, Node::Func(func) if func.kind() != FnKind::StaticBlock);
-        let in_function = &mut cx.state.in_function;
-        if is_body_of_function || in_function.find(Node::Expr(e), |_, parent| is_function(parent).then_some(())).is_some() {
-            cx.report(e, CALLBACK_RETURN);
-        }
-    }
 }

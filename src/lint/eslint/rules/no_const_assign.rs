@@ -6,8 +6,16 @@ pub struct NoConstAssign;
 
 const CONST: Message = Message::new("const", "'{{name}}' is constant.");
 
-impl NoConstAssign {
-    fn check<'a>(&self, decl: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoConstAssign {
+    const META: Meta = Meta::eslint("no-const-assign", Kind::Problem).recommended();
+    const ON: On = On::new().var_decls();
+    no_state!();
+
+    fn new(_: &Options) -> Self {
+        NoConstAssign
+    }
+
+    fn var_decl<'a>(&self, decl: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
         if !matches!(decl.var_kind(), VarKind::Const | VarKind::Using | VarKind::AwaitUsing) {
             return;
         }
@@ -24,18 +32,5 @@ impl NoConstAssign {
                 });
             }
         });
-    }
-}
-
-impl Rule for NoConstAssign {
-    const META: Meta = Meta::eslint("no-const-assign", Kind::Problem).recommended();
-    type State<'a> = ();
-
-    fn new(_: &Options) -> Self {
-        NoConstAssign
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.var_decls(Self::check);
     }
 }

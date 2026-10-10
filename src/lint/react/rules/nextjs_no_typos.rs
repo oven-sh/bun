@@ -20,36 +20,36 @@ fn is_page(file_path: &[u8]) -> bool {
 
 impl Rule for NoTypos {
     const META: Meta = Meta::oxlint(Plugin::Nextjs, "no-typos", Kind::Problem).has_suggestions();
+    const ON: On = On::new().stmts(&[StmtTag::Var, StmtTag::Fn]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoTypos
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !is_page(file.path()) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        is_page(file.path()).then_some(())
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if !stmt.is_exported() || stmt.is_default_export() {
             return;
         }
-        on.stmts([StmtTag::Var, StmtTag::Fn], |_, stmt, cx| {
-            if !stmt.is_exported() || stmt.is_default_export() {
-                return;
-            }
-            match stmt.kind() {
-                StmtKind::Var(declarators) => {
-                    for id in declarators.iter().map(VarDecl::pat) {
-                        if let Some(name) = id.as_ident() {
-                            check_function_name(name, id.span(), cx);
-                        }
+        match stmt.kind() {
+            StmtKind::Var(declarators) => {
+                for id in declarators.iter().map(VarDecl::pat) {
+                    if let Some(name) = id.as_ident() {
+                        check_function_name(name, id.span(), cx);
                     }
                 }
-                StmtKind::Fn(func) => {
-                    if let Some(id) = func.name() {
-                        check_function_name(id.name(), id.span(), cx);
-                    }
-                }
-                _ => {}
             }
-        });
+            StmtKind::Fn(func) => {
+                if let Some(id) = func.name() {
+                    check_function_name(id.name(), id.span(), cx);
+                }
+            }
+            _ => {}
+        }
     }
 }
 

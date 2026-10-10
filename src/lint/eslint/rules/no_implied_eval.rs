@@ -50,8 +50,21 @@ fn is_global_object(object: Expr<'_>) -> bool {
     ast_utils::is_global_reference(root)
 }
 
-impl NoImpliedEval {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoImpliedEval {
+    const META: Meta = Meta::eslint("no-implied-eval", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    type State<'a> = ();
+
+    fn new(_: &Options) -> Self {
+        NoImpliedEval
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions_any(&["setInterval", "setTimeout", "execScript"])
+            .then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Call(call) = e.kind() else {
             return;
         };
@@ -82,21 +95,5 @@ impl NoImpliedEval {
         if is_string {
             cx.report(e, if is_exec_script { EXEC_SCRIPT } else { IMPLIED_EVAL });
         }
-    }
-}
-
-impl Rule for NoImpliedEval {
-    const META: Meta = Meta::eslint("no-implied-eval", Kind::Suggestion);
-    type State<'a> = ();
-
-    fn new(_: &Options) -> Self {
-        NoImpliedEval
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions_any(&["setInterval", "setTimeout", "execScript"]) {
-            return;
-        }
-        on.exprs([ExprTag::Call], Self::check);
     }
 }

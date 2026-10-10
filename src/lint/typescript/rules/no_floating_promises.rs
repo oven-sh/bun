@@ -273,6 +273,7 @@ impl Rule for NoFloatingPromises {
         .has_suggestions()
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types();
+    const ON: On = On::new().stmts(&[StmtTag::Expr]).exprs(&[ExprTag::Unary]);
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -290,29 +291,37 @@ impl Rule for NoFloatingPromises {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
-        on.stmts([StmtTag::Expr], |rule, stmt, cx| {
-            let StmtKind::Expr(expression) = stmt.kind() else {
-                return;
-            };
-            if rule.ignore_iife && is_async_iife(expression) {
-                return;
-            }
-            rule.check_node(stmt.span(), expression, cx);
-        });
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new().stmts(&[StmtTag::Expr]);
 
         // The body of an arrow function that is a unary expression. Only what `void` is applied to
         // can be a promise, and only if `void` is not a way to ignore one.
         if !self.ignore_void {
-            on.exprs([ExprTag::Unary], |rule, body, cx| {
-                if let ExprKind::Unary { op: UnOp::Void, .. } = body.kind()
-                    && let Node::Func(func) = body.parent()
-                    && matches!(func.body(), FnBody::Expr(it) if it == body)
-                {
-                    rule.check_node(body.span(), body, cx);
-                }
-            });
+            on = on.exprs(&[ExprTag::Unary]);
         }
-        State::default()
+        on
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let StmtKind::Expr(expression) = stmt.kind() else {
+            return;
+        };
+        if self.ignore_iife && is_async_iife(expression) {
+            return;
+        }
+        self.check_node(stmt.span(), expression, cx);
+    }
+
+    fn expr<'a>(&self, body: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let ExprKind::Unary { op: UnOp::Void, .. } = body.kind()
+            && let Node::Func(func) = body.parent()
+            && matches!(func.body(), FnBody::Expr(it) if it == body)
+        {
+            self.check_node(body.span(), body, cx);
+        }
     }
 }

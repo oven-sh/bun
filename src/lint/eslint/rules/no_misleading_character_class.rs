@@ -336,14 +336,33 @@ impl NoMisleadingCharacterClass {
             }
         }
     }
+}
 
-    fn check_literal<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for NoMisleadingCharacterClass {
+    const META: Meta = Meta::eslint("no-misleading-character-class", Kind::Problem)
+        .has_suggestions()
+        .recommended();
+    const ON: On = On::new().exprs(&[ExprTag::Regex]).finish();
+    /// The regular expression literals in which something can be found.
+    type State<'a> = Vec<Expr<'a>>;
+
+    fn new(options: &Options) -> Self {
+        NoMisleadingCharacterClass {
+            allow_escape: options.object(0).bool_or("allowEscape", false),
+        }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Vec<Expr<'a>>> {
+        Some(Vec::new())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if matches!(e.kind(), ExprKind::Regex(literal) if may_be_misleading(literal.pattern())) {
             cx.state.push(e);
         }
     }
 
-    fn check_all<'a>(&self, cx: &mut Cx<'a, Self>) {
+    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
         let file = cx.file();
         let scope = Some(file.scope());
         let ecma_version = file.language().ecma_version;
@@ -422,25 +441,5 @@ impl NoMisleadingCharacterClass {
                 self.verify(e, literal.pattern(), literal.flags(), unicode_fixer, cx);
             }
         }
-    }
-}
-
-impl Rule for NoMisleadingCharacterClass {
-    const META: Meta = Meta::eslint("no-misleading-character-class", Kind::Problem)
-        .has_suggestions()
-        .recommended();
-    /// The regular expression literals in which something can be found.
-    type State<'a> = Vec<Expr<'a>>;
-
-    fn new(options: &Options) -> Self {
-        NoMisleadingCharacterClass {
-            allow_escape: options.object(0).bool_or("allowEscape", false),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Vec<Expr<'a>> {
-        on.exprs([ExprTag::Regex], Self::check_literal);
-        on.finish(Self::check_all);
-        Vec::new()
     }
 }

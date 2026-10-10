@@ -11,38 +11,46 @@ const NO_WEBPACK_LOADER_SYNTAX: Message = Message::new("", "Unexpected `!` in `{
 
 impl Rule for NoWebpackLoaderSyntax {
     const META: Meta = Meta::oxlint(Plugin::Import, "no-webpack-loader-syntax", Kind::Suggestion);
+    const ON: On = On::new().stmts(&[StmtTag::Import]).exprs(&[ExprTag::Call]);
     type State<'a> = AncestorMemo<'a, ()>;
 
     fn new(_: &Options) -> Self {
         NoWebpackLoaderSyntax
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        on.stmts([StmtTag::Import], |_, stmt, cx| {
-            if let StmtKind::Import(import) = stmt.kind()
-                && strings::contains_char(import.spec().bytes(), b'!')
-                && matches!(stmt.parent(), Node::File(_))
-                && let Some(source) = import.spec_span()
-            {
-                cx.report(source, NO_WEBPACK_LOADER_SYNTAX).data("name", import.spec());
-            }
-        });
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let on = On::new().stmts(&[StmtTag::Import]);
         if !file.mentions("require") {
-            return AncestorMemo::default();
+            return on;
         }
-        on.exprs([ExprTag::Call], |_, e, cx| {
-            if let Some(call) = e.as_call()
-                && call.callee().is_ident("require")
-                && !call.callee().is_parenthesized()
-                && call.args().len() == 1
-                && let Some(argument) = call.args().first().filter(|it| !it.is_parenthesized())
-                && let Some(value) = argument.as_string()
-                && strings::contains_char(value.bytes(), b'!')
-                && is_in_root_scope(Node::Expr(e), &mut cx.state)
-            {
-                cx.report(argument, NO_WEBPACK_LOADER_SYNTAX).data("name", value);
-            }
-        });
-        AncestorMemo::default()
+        on.exprs(&[ExprTag::Call])
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(AncestorMemo::default())
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if let StmtKind::Import(import) = stmt.kind()
+            && strings::contains_char(import.spec().bytes(), b'!')
+            && matches!(stmt.parent(), Node::File(_))
+            && let Some(source) = import.spec_span()
+        {
+            cx.report(source, NO_WEBPACK_LOADER_SYNTAX).data("name", import.spec());
+        }
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(call) = e.as_call()
+            && call.callee().is_ident("require")
+            && !call.callee().is_parenthesized()
+            && call.args().len() == 1
+            && let Some(argument) = call.args().first().filter(|it| !it.is_parenthesized())
+            && let Some(value) = argument.as_string()
+            && strings::contains_char(value.bytes(), b'!')
+            && is_in_root_scope(Node::Expr(e), &mut cx.state)
+        {
+            cx.report(argument, NO_WEBPACK_LOADER_SYNTAX).data("name", value);
+        }
     }
 }

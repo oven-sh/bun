@@ -2,6 +2,7 @@
 
 use crate::braces;
 use crate::node::{Node, Piece, Program, lower, nest};
+use crate::pattern::Options;
 use crate::read_picomatch::{Unread, read_written};
 use crate::segments::{Part, has_braces};
 use crate::unit::Text;
@@ -330,12 +331,16 @@ fn write_characters(part: &[u8], re: &mut Vec<u8>) {
 }
 
 /// `None`: `makeRe` gives `false`, or it is beyond a limit.
-fn source(pattern: &[u8], dot: bool) -> Option<Vec<u8>> {
+fn source(pattern: &[u8], options: Options) -> Option<Vec<u8>> {
+    let dot = options.dot;
     let pattern = strings::trim_js_whitespace(pattern);
-    if pattern.len() > MAX_PATTERN_LENGTH || pattern.is_empty() || pattern.starts_with(b"#") {
+    let is_comment = pattern.starts_with(b"#") && !options.nocomment;
+    if pattern.len() > MAX_PATTERN_LENGTH || pattern.is_empty() || is_comment {
         return None;
     }
-    let bangs = pattern.iter().take_while(|it| **it == b'!').count();
+    let bangs = (pattern.iter())
+        .take_while(|it| **it == b'!' && !options.nonegate)
+        .count();
     let rest = &pattern[bangs..];
     let globs = match has_braces(rest) {
         true => braces::expand(rest)?,
@@ -390,8 +395,8 @@ fn program_of(written: &[u8], dot: bool) -> Option<Program> {
     tree.map(|it| lower(it, Text::UTF16))
 }
 
-pub(crate) fn pattern(bytes: &[u8], dot: bool) -> Program {
-    let program = source(bytes, dot).and_then(|it| program_of(&it, dot));
+pub(crate) fn pattern(bytes: &[u8], options: Options) -> Program {
+    let program = source(bytes, options).and_then(|it| program_of(&it, options.dot));
     program.unwrap_or(Program::Never)
 }
 

@@ -668,7 +668,7 @@ pub(crate) fn run_reactive_scope_passes(
     timed!(
         "PruneNonReactiveDependencies",
         crate::reactive_scopes::prune_non_reactive_dependencies(&mut reactive_fn, env)
-    );
+    )?;
     timed!(
         "PruneUnusedScopes",
         crate::reactive_scopes::prune_unused_scopes(&mut reactive_fn, env)

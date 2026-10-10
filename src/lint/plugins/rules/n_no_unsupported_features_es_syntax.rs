@@ -3,7 +3,7 @@ use crate::n::es_syntax_data::*;
 use crate::n::object_type::ExpressionTypes;
 use crate::n::semver::Range;
 use crate::n::table::Roots;
-use crate::n::{configured_node_version, version_range};
+use crate::n::{configured_node_version_as, version_range};
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::regex::{self, Handler, Mode as RegexMode};
@@ -11,17 +11,18 @@ use bun_lint::rule::Plugin;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::eslint_utils::{ReferenceKind, ReferenceTracker, TraceMap, get_property_name, get_string_if_constant};
 use rustc_hash::FxHashMap;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::sync::OnceLock;
 
 /// Disallow unsupported ECMAScript syntax on the specified version.
 ///
 /// What finds a feature is the rule of eslint-plugin-es-x for it.
 pub struct EsSyntax {
-    version: Option<Range>,
+    /// That of the options, as it is written.
+    version: Option<Vec<u8>>,
     ignores: Vec<Box<[u8]>>,
-    /// For the first range of versions that was asked for: that of the options, or else what the first file has.
-    first: OnceLock<Active>,
+    /// What is reported with a range of versions, by the text of the range. `None`: the text is no range.
+    known: [OnceLock<(Box<[u8]>, Option<Active>)>; 8],
 }
 
 const NOT_SUPPORTED_TILL: Message = Message::new(
@@ -33,10 +34,25 @@ const NOT_SUPPORTED_YET: Message = Message::new(
     "'{{featureName}}' is not supported in Node.js. The configured version range is '{{version}}'.",
 );
 
+/// What is reported at the end.
+struct Found {
+    at: Span,
+    is_position: bool,
+    feature: usize,
+    supported: &'static str,
+    /// Where it stands among those at one place.
+    rank: u64,
+}
+
 #[derive(Default)]
 pub struct State<'a> {
-    /// If the file has another range of versions than [`EsSyntax::first`] is for.
+    /// Where in [`EsSyntax::known`] the range of versions of the file is.
+    known: usize,
+    /// If it is not there.
     own: Option<Box<Active>>,
+    found: RefCell<Vec<Found>>,
+    /// What is found from now on is what the rules of eslint-plugin-es-x report on `Program:exit`.
+    is_at_the_end: Cell<bool>,
     /// Those of [`Active::methods`] that the file may name.
     methods: smallvec::SmallVec<[Name<'a>; 8]>,
     types: RefCell<ExpressionTypes<'a>>,
@@ -143,6 +159,58 @@ fn question_dot(file: &File, before: Expr) -> Span {
     Span::new(start, start + 2)
 }
 
+/// A listener as a number to sort by. ESLint calls those for an outer node first, and those for one node in the order of
+/// the attributes and then of the kinds of nodes that their selectors name.
+const fn listener(depth: u64, attributes: u64, kinds: u64) -> u64 {
+    (depth << 8) | (attributes << 4) | kinds
+}
+
+/// For a node around what is reported, or before it.
+const OUTER: u64 = 0;
+/// For a property, which can be as long as its value.
+const PROPERTY: u64 = 1;
+const NODE: u64 = 2;
+const NODE_EXIT: u64 = 3;
+const PROGRAM_EXIT: u64 = 4;
+
+/// The listener that reports `feature`, where it matters: where something else can be reported at the same place.
+const fn listener_of(feature: usize) -> u64 {
+    match feature {
+        CLASS_FIELDS | SHADOW_CATCH_PARAM => listener(OUTER, 0, 0),
+        KEYWORD_PROPERTIES => listener(PROPERTY, 0, 1),
+        COMPUTED_PROPERTIES => listener(PROPERTY, 1, 2),
+        PROPERTY_SHORTHANDS => listener(PROPERTY, 2, 3),
+        ACCESSOR_PROPERTIES => listener(PROPERTY, 4, 4),
+        BLOCK_SCOPED_FUNCTIONS => listener(NODE, 0, 2),
+        TEMPLATE_LITERALS => listener(NODE, 0, 3),
+        MODULES | TRAILING_COMMAS => listener(NODE, 0, 4),
+        DESTRUCTURING => listener(NODE, 0, 8),
+        ASYNC_FUNCTIONS | GENERATORS => listener(NODE, 1, 0),
+        EXPORT_NS_FROM
+        | REGEXP_D_FLAG
+        | REGEXP_LOOKBEHIND_ASSERTIONS
+        | REGEXP_NAMED_CAPTURE_GROUPS
+        | REGEXP_S_FLAG
+        | REGEXP_U_FLAG
+        | REGEXP_UNICODE_PROPERTY_ESCAPES
+        | REGEXP_UNICODE_PROPERTY_ESCAPES_2019
+        | REGEXP_UNICODE_PROPERTY_ESCAPES_2020
+        | REGEXP_UNICODE_PROPERTY_ESCAPES_2021
+        | REGEXP_UNICODE_PROPERTY_ESCAPES_2022
+        | REGEXP_UNICODE_PROPERTY_ESCAPES_2023
+        | REGEXP_V_FLAG
+        | REGEXP_Y_FLAG => listener(NODE, 1, 1),
+        TOP_LEVEL_AWAIT => listener(NODE, 1, 2),
+        ASYNC_ITERATION => listener(NODE, 2, 0),
+        PRIVATE_IN => listener(NODE, 2, 2),
+        FUNCTION_DECLARATIONS_IN_IF_STATEMENT_CLAUSES_WITHOUT_BLOCK => listener(NODE, 2, 4),
+        INITIALIZERS_IN_FOR_IN => listener(NODE, 3, 3),
+        ARBITRARY_MODULE_NAMESPACE_NAMES => listener(NODE, 4, 8),
+        ARROW_FUNCTIONS => listener(NODE_EXIT, 0, 0),
+        _ => listener(NODE, 0, 1),
+    }
+}
+
 /// [`State::methods`]
 fn methods_in<'a>(active: &Active, file: &'a File<'a>) -> smallvec::SmallVec<[Name<'a>; 8]> {
     let mut methods = smallvec::SmallVec::new();
@@ -177,17 +245,21 @@ impl Rule for EsSyntax {
 
     fn new(options: &Options) -> Self {
         EsSyntax {
-            version: version_range(options.get(0)),
+            version: version_range(options.get(0)).map(|it| it.raw),
             ignores: options.object(0).strings("ignores").iter().map(|it| it.as_bytes().into()).collect(),
-            first: OnceLock::new(),
+            known: Default::default(),
         }
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
-        let (first, own) = self.active_in(file);
-        let active = own.as_deref().unwrap_or(first);
+        let found = self.active_in(file);
+        let active = found.as_ref().and_then(|it| it.1.as_deref().or_else(|| self.kept(it.0)));
+        let Some(active) = active.filter(|it| it.has_any()) else {
+            return On::new();
+        };
         let any = |features: &[usize]| features.iter().any(|&it| active.has(it));
-        let mut on = On::new();
+        // Everything is reported at the end.
+        let mut on = On::new().finish();
 
         if any(&[ARROW_FUNCTIONS, ASYNC_FUNCTIONS, ASYNC_ITERATION, GENERATORS, TRAILING_FUNCTION_COMMAS]) {
             on = on.funcs();
@@ -198,13 +270,20 @@ impl Rule for EsSyntax {
         if active.has(CLASSES) {
             on = on.classes();
         }
-        if any(&[ACCESSOR_PROPERTIES, COMPUTED_PROPERTIES, CLASS_FIELDS, CLASS_STATIC_BLOCK]) {
+        if any(&[ACCESSOR_PROPERTIES, COMPUTED_PROPERTIES, CLASS_FIELDS, CLASS_STATIC_BLOCK, TEMPLATE_LITERALS]) {
             on = on.members();
         }
-        if any(&[ACCESSOR_PROPERTIES, COMPUTED_PROPERTIES, KEYWORD_PROPERTIES, PROPERTY_SHORTHANDS, REST_SPREAD_PROPERTIES]) {
+        if any(&[
+            ACCESSOR_PROPERTIES,
+            COMPUTED_PROPERTIES,
+            KEYWORD_PROPERTIES,
+            PROPERTY_SHORTHANDS,
+            REST_SPREAD_PROPERTIES,
+            TEMPLATE_LITERALS,
+        ]) {
             on = on.props();
         }
-        if any(&[COMPUTED_PROPERTIES, KEYWORD_PROPERTIES, REST_SPREAD_PROPERTIES]) {
+        if any(&[COMPUTED_PROPERTIES, KEYWORD_PROPERTIES, REST_SPREAD_PROPERTIES, TEMPLATE_LITERALS]) {
             on = on.nodes(NodeTags::PAT_PROP);
         }
         if any(&[DESTRUCTURING, TRAILING_COMMAS]) {
@@ -239,8 +318,9 @@ impl Rule for EsSyntax {
         if any(&[TRAILING_FUNCTION_COMMAS, OPTIONAL_CHAINING]) {
             on = on.exprs(&[ExprTag::Call, ExprTag::New]);
         }
-        let methods = methods_in(active, file);
-        if !methods.is_empty() || any(&[OPTIONAL_CHAINING, KEYWORD_PROPERTIES, CLASS_FIELDS, LEGACY_OBJECT_PROTOTYPE_ACCESSOR_METHODS]) {
+        if any(&[OPTIONAL_CHAINING, KEYWORD_PROPERTIES, CLASS_FIELDS, LEGACY_OBJECT_PROTOTYPE_ACCESSOR_METHODS])
+            || active.methods.iter().any(|it| file.mentions(it.0))
+        {
             on = on.exprs(&[ExprTag::Dot, ExprTag::Index]);
         }
         if any(&[CLASS_FIELDS, PRIVATE_IN]) {
@@ -274,35 +354,17 @@ impl Rule for EsSyntax {
         if active.has(JSON_SUPERSET) && strings::contains(file.text(), b"\xE2\x80") {
             on = on.string_literals();
         }
-        let has_something_at_the_end = active.globals_in(file).next().is_some()
-            || active.has_regexp() && file.mentions("RegExp")
-            || active.has(ERROR_CAUSE) && file.mentions("cause")
-            || active.has(RESIZABLE_AND_GROWABLE_ARRAYBUFFERS) && file.mentions_any(&["ArrayBuffer", "SharedArrayBuffer"])
-            || any(&[
-                HASHBANG,
-                MODULES,
-                EXPORT_NS_FROM,
-                ARBITRARY_MODULE_NAMESPACE_NAMES,
-                UNICODE_CODEPOINT_ESCAPES,
-                LEGACY_OBJECT_PROTOTYPE_ACCESSOR_METHODS,
-                SUBCLASSING_BUILTINS,
-            ]);
-        if has_something_at_the_end {
-            on = on.finish();
-        }
         on
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
-        let (first, own) = self.active_in(file);
-        let methods = methods_in(own.as_deref().unwrap_or(first), file);
+        let (known, own) = self.active_in(file)?;
+        let methods = methods_in(own.as_deref().or_else(|| self.kept(known))?, file);
         Some(State {
+            known,
             own,
             methods,
-            types: RefCell::default(),
-            var_declarators: FxHashMap::default(),
-            function_around: AncestorMemo::default(),
-            function_with_this_around: AncestorMemo::default(),
+            ..State::default()
         })
     }
 
@@ -414,6 +476,7 @@ impl Rule for EsSyntax {
     }
 
     fn member<'a>(&self, member: Member<'a>, cx: &mut Context<'a>) {
+        self.template_as_key(member.key(), cx);
         if !matches!(member.parent(), Node::Class(_)) || member.flags().contains(Flags::ABSTRACT) {
             return;
         }
@@ -445,6 +508,7 @@ impl Rule for EsSyntax {
         if prop.is_jsx_attribute() || prop.is_import_attribute() {
             return;
         }
+        self.template_as_key(prop.key(), cx);
         let span = prop.span();
         match prop.kind() {
             PropKind::Spread => return self.report(cx, REST_SPREAD_PROPERTIES, span),
@@ -498,22 +562,6 @@ impl Rule for EsSyntax {
         let Some(active) = self.active(&cx.state) else {
             return;
         };
-        let tracker = ReferenceTracker::new(file);
-        for feature in active.globals_in(file) {
-            let globals = FEATURES.get(feature).map_or(&[][..], Feature::globals);
-            for reference in tracker.iterate_global_references(&Roots(globals.iter().collect())) {
-                self.report(cx, feature, reference.span);
-            }
-        }
-        if active.has_regexp() && file.mentions("RegExp") {
-            for reference in tracker.iterate_global_references(&REGEXP) {
-                let Some(call) = reference.call() else {
-                    continue;
-                };
-                let text = |at: usize| call.args().get(at).and_then(|it| get_string_if_constant(it, Some(file.scope())));
-                self.regexp(cx, reference.span, text(0).as_deref(), text(1).as_deref());
-            }
-        }
         if active.has(HASHBANG) && strings::without_utf8_bom(file.text()).starts_with(b"#!")
             && let Some(comment) = file.comments().next().filter(|it| it.kind() == TokenKind::Shebang)
         {
@@ -530,6 +578,23 @@ impl Rule for EsSyntax {
                 for reference in file.unresolved_references_to(name.as_bytes()) {
                     self.report(cx, LEGACY_OBJECT_PROTOTYPE_ACCESSOR_METHODS, reference.span());
                 }
+            }
+        }
+        cx.state.is_at_the_end.set(true);
+        let tracker = ReferenceTracker::new(file);
+        for feature in active.globals_in(file) {
+            let globals = FEATURES.get(feature).map_or(&[][..], Feature::globals);
+            for reference in tracker.iterate_global_references(&Roots(globals.iter().collect())) {
+                self.report(cx, feature, reference.span);
+            }
+        }
+        if active.has_regexp() && file.mentions("RegExp") {
+            for reference in tracker.iterate_global_references(&REGEXP) {
+                let Some(call) = reference.call() else {
+                    continue;
+                };
+                let text = |at: usize| call.args().get(at).and_then(|it| get_string_if_constant(it, Some(file.scope())));
+                self.regexp(cx, reference.span, text(0).as_deref(), text(1).as_deref());
             }
         }
         if active.has(SUBCLASSING_BUILTINS) {
@@ -553,6 +618,16 @@ impl Rule for EsSyntax {
                     self.report(cx, RESIZABLE_AND_GROWABLE_ARRAYBUFFERS, options.span());
                 }
             }
+        }
+        let mut found = cx.state.found.take();
+        utils::sort::sort_by_key(&mut found, |it| it.rank);
+        for it in found {
+            let Some(data) = FEATURES.get(it.feature) else {
+                continue;
+            };
+            let message = if data.supported().is_none() { NOT_SUPPORTED_YET } else { NOT_SUPPORTED_TILL };
+            let report = if it.is_position { cx.report_at(it.at.start, message) } else { cx.report(it.at, message) };
+            report.data("featureName", data.name()).data("supported", it.supported).data("version", active.version.raw.clone());
         }
     }
 }
@@ -590,31 +665,49 @@ impl Handler for Pattern {
 }
 
 impl EsSyntax {
-    /// [`EsSyntax::first`], and what [`State::own`] is for `file`.
-    fn active_in(&self, file: &File) -> (&Active, Option<Box<Active>>) {
-        let version = || self.version.clone().unwrap_or_else(|| configured_node_version(file));
-        let first = self.first.get_or_init(|| Active::new(version(), &self.ignores));
-        let own = match &self.version {
-            Some(_) => None,
-            None => Some(version()).filter(|it| it.raw != first.version.raw).map(|it| Box::new(Active::new(it, &self.ignores))),
-        };
-        (first, own)
+    /// [`State::known`] and [`State::own`] for the range of versions that `text` is, if it is one.
+    fn with_range(&self, text: &[u8]) -> Option<(usize, Option<Box<Active>>)> {
+        let active = || Range::parse(text).map(|it| Active::new(it, &self.ignores));
+        for (at, known) in self.known.iter().enumerate() {
+            let (range, found) = known.get_or_init(|| (text.into(), active()));
+            if **range == *text {
+                return found.as_ref().map(|_| (at, None));
+            }
+        }
+        active().map(|it| (0, Some(Box::new(it))))
+    }
+
+    /// [`State::known`] and [`State::own`] for `file`.
+    fn active_in(&self, file: &File) -> Option<(usize, Option<Box<Active>>)> {
+        match &self.version {
+            Some(version) => self.with_range(version),
+            None => configured_node_version_as(file, |text| self.with_range(text)).or_else(|| self.with_range(b">=16.0.0")),
+        }
+    }
+
+    fn kept(&self, at: usize) -> Option<&Active> {
+        self.known.get(at)?.get()?.1.as_ref()
     }
 
     fn active<'s>(&'s self, state: &'s State<'_>) -> Option<&'s Active> {
-        state.own.as_deref().or_else(|| self.first.get())
+        state.own.as_deref().or_else(|| self.kept(state.known))
     }
 
     fn report<'a>(&self, cx: &Context<'a>, feature: usize, at: Span) {
-        self.report_with(cx, feature, at, None, false);
+        self.report_with(cx, feature, at, None, false, listener_of(feature));
+    }
+
+    /// For a feature that has several listeners.
+    fn report_of<'a>(&self, cx: &Context<'a>, feature: usize, at: Span, by: u64) {
+        self.report_with(cx, feature, at, None, false, by);
     }
 
     /// For a feature that was supported in strict mode first. `node`: what is reported.
     fn report_in<'a>(&self, cx: &Context<'a>, feature: usize, at: Span, node: Node<'a>) {
-        self.report_with(cx, feature, at, Some(node), false);
+        self.report_with(cx, feature, at, Some(node), false, listener_of(feature));
     }
 
-    fn report_with<'a>(&self, cx: &Context<'a>, feature: usize, at: Span, node: Option<Node<'a>>, is_position: bool) {
+    fn report_with<'a>(&self, cx: &Context<'a>, feature: usize, at: Span, node: Option<Node<'a>>, is_position: bool, by: u64) {
         let Some(active) = self.active(&cx.state).filter(|it| it.has(feature)) else {
             return;
         };
@@ -634,15 +727,31 @@ impl EsSyntax {
                 return;
             }
         }
-        let message = if data.supported().is_none() { NOT_SUPPORTED_YET } else { NOT_SUPPORTED_TILL };
-        let report = if is_position { cx.report_at(at.start, message) } else { cx.report(at, message) };
-        report.data("featureName", data.name()).data("supported", supported).data("version", active.version.raw.clone());
+        let by = if cx.state.is_at_the_end.get() { listener(PROGRAM_EXIT, 0, 1) } else { by };
+        cx.state.found.borrow_mut().push(Found {
+            at,
+            is_position,
+            feature,
+            supported,
+            rank: (by << 32) | ((active.listens_for(feature) as u64) << 16) | feature as u64,
+        });
+    }
+
+    /// `` [`a`] ``, which is no expression here.
+    fn template_as_key<'a>(&self, key: Option<Key<'a>>, cx: &Context<'a>) {
+        if let Some(key) = key.filter(|it| matches!(it.kind(), KeyKind::ComputedString(_)))
+            && let span = key.inner_span(cx.file())
+            && cx.text().get(span.start as usize) == Some(&b'`')
+        {
+            self.report(cx, TEMPLATE_LITERALS, span);
+        }
     }
 
     fn pat_prop<'a>(&self, node: Node<'a>, cx: &mut Context<'a>) {
         let Node::PatProp(prop) = node else {
             return;
         };
+        self.template_as_key(prop.key(), cx);
         if prop.is_rest() {
             return self.report(cx, REST_SPREAD_PROPERTIES, prop.span());
         }
@@ -744,7 +853,7 @@ impl EsSyntax {
                 return self.report(cx, CLASS_FIELDS, name.span());
             }
             if active.has(KEYWORD_PROPERTIES) && is_keyword(name.name()) {
-                self.report(cx, KEYWORD_PROPERTIES, e.span());
+                self.report_of(cx, KEYWORD_PROPERTIES, e.span(), listener(NODE, 0, 1));
             }
             // Most are none of the methods.
             if !cx.state.methods.contains(&name.name()) && !active.has(LEGACY_OBJECT_PROTOTYPE_ACCESSOR_METHODS) {
@@ -821,7 +930,7 @@ impl EsSyntax {
             StmtKind::ForOf { left, is_await, .. } => {
                 self.report(cx, FOR_OF_LOOPS, stmt.span());
                 if is_await {
-                    self.report(cx, ASYNC_ITERATION, stmt.span());
+                    self.report_of(cx, ASYNC_ITERATION, stmt.span(), listener(NODE, 1, 1));
                     if !is_in_function(Node::Stmt(stmt), &mut cx.state.function_around) {
                         self.report(cx, TOP_LEVEL_AWAIT, stmt.span());
                     }
@@ -913,7 +1022,7 @@ impl EsSyntax {
             let backslashes = raw[..at].iter().rev().take_while(|it| **it == b'\\').count();
             if matches!(raw.get(at + 2), Some(0xA8 | 0xA9)) && backslashes % 2 == 0 {
                 let offset = literal.span().start + at as u32;
-                self.report_with(cx, JSON_SUPERSET, Span::empty(offset), None, true);
+                self.report_with(cx, JSON_SUPERSET, Span::empty(offset), None, true, listener_of(JSON_SUPERSET));
             }
         }
     }
@@ -972,7 +1081,7 @@ impl EsSyntax {
                     Some(stmt.span())
                 }
                 StmtKind::ExportNamed(export) => {
-                    names.extend(export.items().iter().flat_map(|it| [literal(it.local()), literal(it.exported()).filter(|_| it.is_renamed())]));
+                    names.extend(export.items().iter().flat_map(|it| [literal(it.local()), literal(it.exported())]));
                     Some(stmt.span())
                 }
                 StmtKind::ExportStar { alias, .. } => {

@@ -28,6 +28,8 @@ pub struct Diagnostic {
     pub span: Span,
     /// ESLint was given a position, not a range: it reports no `endLine` and `endColumn`.
     pub has_no_end: bool,
+    /// [`Meta::reports_on_exit`](crate::rule::Meta::reports_on_exit)
+    pub is_reported_on_exit: bool,
     pub details: Option<Box<Details>>,
     /// What oxlint says besides the message, where `details` does not say it. What of it has values is in `details` once the report
     /// is complete.
@@ -210,6 +212,7 @@ impl<'a> CxBase<'a> {
             message: Vec::new(),
             span,
             has_no_end: false,
+            is_reported_on_exit: self.meta.reports_on_exit,
             details: None,
             constant_help,
             fix: None,

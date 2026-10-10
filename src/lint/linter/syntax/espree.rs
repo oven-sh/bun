@@ -414,6 +414,32 @@ pub(super) fn first_error<'a>(
     checks.first.map(|it| it.1)
 }
 
+/// `using a = b;` at the top level of a script, in the words of OXC. To it a file is a module if its name says so, or if it has
+/// an `import`, an `export`, an `import.meta` or an `await` outside of all functions. What CommonJS has is in a function.
+pub(super) fn using_in_script<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
+    let is_using = |it: &Stmt| match it.kind() {
+        StmtKind::Var(list) => {
+            (list.iter().next()).is_some_and(|it| it.var_kind() == VarKind::Using)
+        }
+        _ => false,
+    };
+    let first = file.body().iter().find(is_using)?;
+    let is_module = matches!(file.path(), [.., b'.', b'c' | b'm', b'j' | b't', b's'])
+        || file.is_declaration_file()
+        || has_module_syntax(file)
+        || file
+            .body()
+            .iter()
+            .any(|it| it.tag() == StmtTag::ExportAssign)
+        || file.exprs_of_kind(ExprTag::ImportMeta).next().is_some()
+        || (file.exprs_of_kind(ExprTag::Await))
+            .any(|it| Node::Expr(it).enclosing_function().is_none());
+    (!is_module).then(|| SyntaxError {
+        at: first.span().start,
+        message: b"'using' declarations are not allowed at the top level of a script".to_vec(),
+    })
+}
+
 /// Whether the file has an `import` or an `export`.
 pub(super) fn has_module_syntax<'a>(file: &'a File<'a>) -> bool {
     file.body().iter().any(|it| is_module_syntax(&it))

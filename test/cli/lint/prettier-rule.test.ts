@@ -244,6 +244,27 @@ describe.concurrent("prettier/prettier", () => {
     expect((await lint(files)).reports).toEqual({ "a.js": [], "b.js": [], "c.js": ["theirs"] });
   });
 
+  // As with pnpm, where a package of the workspace has the configuration: from the working directory neither is to be found.
+  test("the versions are those of the plugin that the configuration has loaded", async () => {
+    const shared = "packages/config/node_modules";
+    const files = {
+      "a.js": "const a = {b:1}\n",
+      [`${shared}/prettier/package.json`]: JSON.stringify({ name: "prettier", version: "3.9.9" }),
+      [`${shared}/eslint-plugin-prettier/package.json`]: JSON.stringify({
+        name: "eslint-plugin-prettier",
+        version: "5.5.6",
+        main: "index.js",
+      }),
+      [`${shared}/eslint-plugin-prettier/index.js`]: `module.exports = { meta: { name: "eslint-plugin-prettier", version: "5.5.6" }, rules: { prettier: ${theirs} } };`,
+      "packages/config/index.mjs": `import prettier from "eslint-plugin-prettier";
+        export default [{ ignores: ["eslint.config.mjs", "packages"] }, { plugins: { prettier }, rules: { "prettier/prettier": "error" } }];`,
+      "eslint.config.mjs": `export { default } from "./packages/config/index.mjs";`,
+    };
+    const [{ reports }, { stderr }] = await Promise.all([lint(files), run(files, "-f", "stylish")]);
+    expect(reports).toEqual({ "a.js": expected["git.js"] });
+    expect(stderr).not.toContain("ran in JavaScript");
+  });
+
   // It is `bun format`, which also leaves alone what `.gitignore` names. The comment in off.js is for the other rule.
   test("bun/format reports the same, and nothing has to be installed", async () => {
     const own = (text: string) => text.replaceAll("prettier/prettier", "bun/format");

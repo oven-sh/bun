@@ -143,9 +143,9 @@ fn collect_scope_rewrites(
             )?;
             if disjoint {
                 // Exit this scope
-                let fallthrough_id = *fallthroughs
-                    .get(maybe_parent)
-                    .expect("Expected scope to exist");
+                let fallthrough_id = *fallthroughs.get(maybe_parent).ok_or_else(|| {
+                    crate::diagnostics::cold_invariant("Expected scope to exist", None, None)
+                })?;
                 let end_instr_id = env.scopes[maybe_parent.0 as usize].range.end;
                 rewrites.push(TerminalRewriteInfo::EndScope {
                     instr_id: end_instr_id,
@@ -173,7 +173,9 @@ fn collect_scope_rewrites(
 
     // Exit remaining active items
     while let Some(curr) = active_items.pop() {
-        let fallthrough_id = *fallthroughs.get(curr).expect("Expected scope to exist");
+        let fallthrough_id = *fallthroughs.get(curr).ok_or_else(|| {
+            crate::diagnostics::cold_invariant("Expected scope to exist", None, None)
+        })?;
         let end_instr_id = env.scopes[curr.0 as usize].range.end;
         rewrites.push(TerminalRewriteInfo::EndScope {
             instr_id: end_instr_id,

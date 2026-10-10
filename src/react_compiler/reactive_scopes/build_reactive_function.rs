@@ -213,7 +213,7 @@ impl<'a> Context<'a> {
         let last = self
             .control_flow_stack
             .pop()
-            .expect("Can only unschedule the last target");
+            .ok_or_else(|| cold_invariant("Can only unschedule the last target", None, None))?;
         if last.id() != schedule_id {
             return Err(cold_invariant("Can only unschedule the last target", None, None).into());
         }
@@ -1153,14 +1153,14 @@ impl<'a, 'b> Driver<'a, 'b> {
                         id: *term_id,
                     })
                 } else {
-                    Ok(self.extract_value_block_result(&instructions, block_id_val, loc))
+                    self.extract_value_block_result(&instructions, block_id_val, loc)
                 }
             }
             Terminal::Goto { .. } => {
                 if instructions.is_empty() {
                     return Err(empty_goto_invariant(block_id, loc));
                 }
-                Ok(self.extract_value_block_result(&instructions, block_id_val, loc))
+                self.extract_value_block_result(&instructions, block_id_val, loc)
             }
             Terminal::MaybeThrow { continuation, .. } => {
                 let continuation_id = *continuation;
@@ -1170,7 +1170,7 @@ impl<'a, 'b> Driver<'a, 'b> {
                 let cont_block_id = continuation_block.id;
 
                 if cont_instructions_empty && cont_is_goto {
-                    Ok(self.extract_value_block_result(&instructions, cont_block_id, loc))
+                    self.extract_value_block_result(&instructions, cont_block_id, loc)
                 } else {
                     let continuation = self.visit_value_block(continuation_id, loc, fallthrough)?;
                     Ok(self.wrap_with_sequence(&instructions, continuation, loc))
@@ -1390,10 +1390,10 @@ impl<'a, 'b> Driver<'a, 'b> {
         instructions: &[crate::hir::InstructionId],
         block_id: BlockId,
         loc: Option<SourceLocation>,
-    ) -> ValueBlockResult {
+    ) -> Result<ValueBlockResult, CompilerDiagnostic> {
         let last_id = instructions
             .last()
-            .expect("Expected non-empty instructions");
+            .ok_or_else(|| cold_invariant("Expected non-empty instructions", None, loc))?;
         let last_instr = &self.hir.instructions[last_id.0 as usize];
 
         let remaining: Vec<ReactiveInstruction> = instructions[..instructions.len() - 1]
@@ -1441,7 +1441,7 @@ impl<'a, 'b> Driver<'a, 'b> {
         };
         let id = last_instr.id;
 
-        if remaining.is_empty() {
+        Ok(if remaining.is_empty() {
             ValueBlockResult {
                 block: block_id,
                 place,
@@ -1460,7 +1460,7 @@ impl<'a, 'b> Driver<'a, 'b> {
                 },
                 id,
             }
-        }
+        })
     }
 
     fn wrap_with_sequence(

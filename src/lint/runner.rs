@@ -825,8 +825,7 @@ impl<'a, R: Rule> Running<'a> for Later<'_, 'a, R> {
     }
 }
 
-/// How a rule is found by its name.
-#[derive(Copy, Clone)]
+/// How a rule is found by its name. It is handed around as a `&'static RuleEntry`, never copied.
 pub struct RuleEntry {
     pub meta: &'static Meta,
 }
@@ -1078,16 +1077,23 @@ pub fn run<'a, S: Starts>(
 
 fn sorted(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
     // ESLint sorts by line and column alone, which leaves what starts at the same place in the order it was reported: for a
-    // listener that is called on entering a node, the outer node first.
-    let key = |it: &Diagnostic| (it.span.start, std::cmp::Reverse(it.span.end), it.rule);
-    if diagnostics.is_sorted_by_key(key) {
+    // listener that is called on entering a node, the outer node first; then, for one that is called on leaving, the inner.
+    let end = |it: &Diagnostic| match it.is_reported_on_exit {
+        true => (1 << 32) | u64::from(it.span.end),
+        false => u64::from(u32::MAX - it.span.end),
+    };
+    if diagnostics.is_sorted_by_key(|it| (it.span.start, end(it), it.rule)) {
         return diagnostics;
     }
-    // The keys are sorted, not what is reported, which is many times as large.
+    // The keys are sorted, not what is reported, which is many times as large. The place in the list is the low 32 bits.
+    let key = |at: usize, it: &Diagnostic| {
+        let place = (u128::from(it.span.start) << 33) | u128::from(end(it));
+        (place << 48) | (u128::from(it.rule) << 32) | at as u128
+    };
     let mut order: Vec<u128> = diagnostics
         .iter()
         .enumerate()
-        .map(|(at, it)| it.span.sort_key(it.rule, at))
+        .map(|(at, it)| key(at, it))
         .collect();
     order.sort();
     let mut diagnostics: Vec<Option<Diagnostic>> = diagnostics.into_iter().map(Some).collect();

@@ -61,39 +61,50 @@ pub(crate) const NOT_SUPPORTED_YET: Message = Message::new(
     "The '{{name}}' is still an experimental feature The configured version range is '{{version}}'.",
 );
 
+fn version_text(option: Option<&Json>) -> Option<&[u8]> {
+    option?
+        .get(b"version")?
+        .as_str()
+        .filter(|it| !it.is_empty())
+}
+
 /// `getVersionRange`
 pub(crate) fn version_range(option: Option<&Json>) -> Option<Range> {
-    Range::parse(
-        option?
-            .get(b"version")?
-            .as_str()
-            .filter(|it| !it.is_empty())?,
-    )
+    Range::parse(version_text(option)?)
 }
 
 /// `getConfiguredNodeVersion`, after the options of the rule.
 pub(crate) fn configured_node_version(file: &File) -> Range {
+    configured_node_version_as(file, Range::parse).unwrap_or_else(|| Range::at_least([16, 0, 0]))
+}
+
+/// The same with `parse` for `new Range(text)`, which is `None` where that throws. `None`: `>=16.0.0`.
+pub(crate) fn configured_node_version_as<T>(
+    file: &File,
+    mut parse: impl FnMut(&[u8]) -> Option<T>,
+) -> Option<T> {
     let settings = file.settings();
-    let of_package = || {
-        let package = file.modules()?.package_json(file.path())?;
-        let engines = || Range::parse(package.get(b"engines")?.get(b"node")?.as_str()?);
-        let dev_engines = || {
-            let runtime = package.get(b"devEngines")?.get(b"runtime")?;
-            let entries = runtime
-                .as_array()
-                .unwrap_or_else(|| std::slice::from_ref(runtime));
-            let node = entries.iter().find(|it| {
-                it.get(b"name").and_then(Json::as_str) == Some(b"node")
-                    && it.get(b"version").and_then(Json::as_str).is_some()
-            })?;
-            Range::parse(node.get(b"version")?.as_str()?)
-        };
-        engines().or_else(dev_engines)
-    };
-    version_range(settings.get(b"n"))
-        .or_else(|| version_range(settings.get(b"node")))
-        .or_else(of_package)
-        .unwrap_or_else(|| Range::at_least([16, 0, 0]))
+    for name in [&b"n"[..], b"node"] {
+        if let Some(found) = version_text(settings.get(name)).and_then(&mut parse) {
+            return Some(found);
+        }
+    }
+    let package = file.modules()?.package_json(file.path())?;
+    let engines = package
+        .get(b"engines")
+        .and_then(|it| it.get(b"node")?.as_str());
+    if let Some(found) = engines.and_then(&mut parse) {
+        return Some(found);
+    }
+    let runtime = package.get(b"devEngines")?.get(b"runtime")?;
+    let entries = runtime
+        .as_array()
+        .unwrap_or_else(|| std::slice::from_ref(runtime));
+    let node = entries.iter().find(|it| {
+        it.get(b"name").and_then(Json::as_str) == Some(b"node")
+            && it.get(b"version").and_then(Json::as_str).is_some()
+    })?;
+    parse(node.get(b"version")?.as_str()?)
 }
 
 /// `isInRange`

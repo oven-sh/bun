@@ -589,10 +589,9 @@ impl<'h> HirBuilder<'h> {
             break_block,
         });
         let value = f(self)?;
-        let last = self
-            .scopes
-            .pop()
-            .expect("Mismatched loop scope: stack empty");
+        let last = self.scopes.pop().ok_or_else(|| {
+            crate::diagnostics::cold_invariant("Mismatched loop scope: stack empty", None, None)
+        })?;
         match &last {
             Scope::Loop {
                 label: l,
@@ -627,10 +626,9 @@ impl<'h> HirBuilder<'h> {
             break_block,
         });
         let value = f(self)?;
-        let last = self
-            .scopes
-            .pop()
-            .expect("Mismatched label scope: stack empty");
+        let last = self.scopes.pop().ok_or_else(|| {
+            crate::diagnostics::cold_invariant("Mismatched label scope: stack empty", None, None)
+        })?;
         match &last {
             Scope::Label {
                 label: l,
@@ -664,10 +662,9 @@ impl<'h> HirBuilder<'h> {
             break_block,
         });
         let value = f(self)?;
-        let last = self
-            .scopes
-            .pop()
-            .expect("Mismatched switch scope: stack empty");
+        let last = self.scopes.pop().ok_or_else(|| {
+            crate::diagnostics::cold_invariant("Mismatched switch scope: stack empty", None, None)
+        })?;
         match &last {
             Scope::Switch {
                 label: l,

@@ -12,8 +12,7 @@
 //! | a key that is `undefined` | `None`. The property that it names is called `undefined` |
 //!
 //! What only the nodes of Flow and the trees of typescript-eslint-parser 20 get to is left out.
-//! Where upstream throws, nothing is declared. Where it goes round in circles until the stack is
-//! full (`const a = PropTypes.shape({ a })`), everything is accepted.
+//! Where upstream throws a `TypeError`, nothing is declared.
 
 use crate::util_ast::{find_return_statement, get_key_value, get_property_name, name_of_key};
 use crate::util_components_list::{Children, DeclaredPropType, DeclaredPropTypes, PropTypeKind};
@@ -25,6 +24,12 @@ use std::borrow::Cow;
 
 /// How far a declaration is followed into what it is made of.
 const MAX_DEPTH: u32 = 100;
+
+/// How many parts of a declaration are looked at. One that is named twice counts twice.
+const MAX_STEPS: u32 = 100_000;
+
+/// What upstream throws where that has no end: `const a = PropTypes.arrayOf(a)`.
+pub(crate) struct RangeError;
 
 /// What `object[undefined] = ..` calls the property.
 const UNDEFINED: &[u8] = b"undefined";
@@ -102,8 +107,10 @@ fn key_in_full_name<'k>(property: Prop<'_>, key: Option<&'k [u8]>) -> &'k [u8] {
 struct ReactDeclarationTypes<'a, 'b> {
     root_node: Option<Node<'a>>,
     custom_validators: &'b [Box<[u8]>],
-    /// It has got to [`MAX_DEPTH`]: nothing more is looked at.
-    is_too_deep: bool,
+    /// How often `build` is called.
+    steps: u32,
+    /// It has got to [`MAX_DEPTH`] or [`MAX_STEPS`]: nothing more is looked at.
+    has_given_up: bool,
 }
 
 impl<'a> ReactDeclarationTypes<'a, '_> {
@@ -139,8 +146,9 @@ impl<'a> ReactDeclarationTypes<'a, '_> {
         parent_name: &[u8],
         depth: u32,
     ) -> DeclaredPropType<'a> {
-        self.is_too_deep |= depth > MAX_DEPTH;
-        if self.is_too_deep {
+        self.steps += 1;
+        self.has_given_up |= depth > MAX_DEPTH || self.steps > MAX_STEPS;
+        if self.has_given_up {
             return DeclaredPropType::default();
         }
         let object_of_callee = value
@@ -250,16 +258,17 @@ pub(crate) fn build_react_declaration_types<'a>(
     parent_name: &[u8],
     root_node: Option<Node<'a>>,
     custom_validators: &[Box<[u8]>],
-) -> DeclaredPropType<'a> {
+) -> Result<DeclaredPropType<'a>, RangeError> {
     let mut types = ReactDeclarationTypes {
         root_node,
         custom_validators,
-        is_too_deep: false,
+        steps: 0,
+        has_given_up: false,
     };
     let built = types.build(value, parent_name, 0);
-    match types.is_too_deep {
-        true => DeclaredPropType::default(),
-        false => built,
+    match types.has_given_up {
+        true => Err(RangeError),
+        false => Ok(built),
     }
 }
 
@@ -353,8 +362,10 @@ struct DeclarePropTypesForTsTypeAnnotation<'a, 'b> {
     custom_validators: &'b [Box<[u8]>],
     /// How many calls of `visit_ts_node` are under way.
     depth: u32,
-    /// It has got to [`MAX_DEPTH`]: nothing more is looked at.
-    is_too_deep: bool,
+    /// How often it is called.
+    steps: u32,
+    /// It has got to [`MAX_DEPTH`] or [`MAX_STEPS`]: nothing more is looked at.
+    has_given_up: bool,
 }
 
 impl<'a> DeclarePropTypesForTsTypeAnnotation<'a, '_> {
@@ -364,8 +375,9 @@ impl<'a> DeclarePropTypesForTsTypeAnnotation<'a, '_> {
         let Some(node) = node else {
             return;
         };
-        self.is_too_deep |= self.depth == MAX_DEPTH;
-        if self.is_too_deep {
+        self.steps += 1;
+        self.has_given_up |= self.depth == MAX_DEPTH || self.steps > MAX_STEPS;
+        if self.has_given_up {
             self.should_ignore_prop_types = true;
             return;
         }
@@ -549,12 +561,15 @@ impl<'a> DeclarePropTypesForTsTypeAnnotation<'a, '_> {
             return;
         };
         let key = get_key_value(Node::Prop(prop_node));
-        let built = build_react_declaration_types(
+        let Ok(built) = build_react_declaration_types(
             Some(value),
             key_in_full_name(prop_node, key.as_deref()),
             self.root_node,
             self.custom_validators,
-        );
+        ) else {
+            self.should_ignore_prop_types = true;
+            return;
+        };
         let types = DeclaredPropType {
             full_name: key.clone(),
             name: key.clone(),
@@ -635,7 +650,8 @@ pub(crate) fn declare_prop_types_for_ts_type_annotation<'a>(
         imports,
         custom_validators,
         depth: 0,
-        is_too_deep: false,
+        steps: 0,
+        has_given_up: false,
     };
     annotation.visit_ts_node(prop_types);
     annotation.end_and_struct_declared_prop_types();

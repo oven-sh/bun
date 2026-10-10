@@ -259,7 +259,13 @@ pub(crate) fn align_reactive_scopes_to_block_scopes_hir(
                 // or for ternary/logical/optional terminals.
                 let value_range = if node.is_none() {
                     // Transition from block -> value block
-                    let ft = fallthrough.expect("Expected a fallthrough for value block");
+                    let ft = fallthrough.ok_or_else(|| {
+                        crate::diagnostics::cold_invariant(
+                            "Expected a fallthrough for value block",
+                            None,
+                            None,
+                        )
+                    })?;
                     let next_id = block_first_id(func, ft);
                     env.new_mutable_range(terminal_eval_order, next_id)
                 } else {

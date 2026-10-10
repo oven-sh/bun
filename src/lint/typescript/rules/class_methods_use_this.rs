@@ -10,7 +10,8 @@ pub struct ClassMethodsUseThis {
 
 impl Rule for ClassMethodsUseThis {
     const META: Meta = Meta::typescript("class-methods-use-this", Kind::Suggestion)
-        .extends_base_rule("class-methods-use-this");
+        .extends_base_rule("class-methods-use-this")
+        .reports_on_exit();
     const ON: On = On::new()
         .exprs(&[ExprTag::This, ExprTag::Super])
         .members()

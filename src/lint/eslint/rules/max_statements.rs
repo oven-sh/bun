@@ -108,7 +108,7 @@ impl MaxStatements {
 }
 
 impl Rule for MaxStatements {
-    const META: Meta = Meta::eslint("max-statements", Kind::Suggestion);
+    const META: Meta = Meta::eslint("max-statements", Kind::Suggestion).reports_on_exit();
     const ON: On = On::new().funcs().finish();
     type State<'a> = TopLevelFunctions<'a>;
 

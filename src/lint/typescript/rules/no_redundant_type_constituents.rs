@@ -470,7 +470,8 @@ impl NoRedundantTypeConstituents {
 impl Rule for NoRedundantTypeConstituents {
     const META: Meta = Meta::typescript("no-redundant-type-constituents", Kind::Suggestion)
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
-        .requires_types();
+        .requires_types()
+        .reports_on_exit();
     const ON: On = On::new().types(&[TypeTag::Intersection, TypeTag::Union]);
     no_state!();
 

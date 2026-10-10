@@ -8,7 +8,7 @@ pub struct RequireAwaitedExpectPoll;
 const REQUIRE_AWAITED_EXPECT_POLL: Message = Message::new("", "`expect.{{member_name}}` must be awaited or returned");
 
 impl Rule for RequireAwaitedExpectPoll {
-    const META: Meta = Meta::oxlint(Plugin::Vitest, "require-awaited-expect-poll", Kind::Problem);
+    const META: Meta = Meta::oxlint(Plugin::Vitest, "require-awaited-expect-poll", Kind::Problem).reports_on_exit();
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -21,28 +21,27 @@ impl Rule for RequireAwaitedExpectPoll {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let file = cx.file();
-        let mut found: Vec<_> = jest::iter_possible_jest_call_node(file).filter_map(|it| unhandled(it, file)).collect();
-        // The calls of one chain begin at one place. oxlint comes to them from the inside.
-        utils::sort::sort_unstable_by_key(&mut found, |it| (it.0.span().start, it.0.span().end));
-        for (node, member_name) in found {
-            cx.report(node, REQUIRE_AWAITED_EXPECT_POLL).data("member_name", member_name);
-        }
+        jest::iter_possible_jest_call_node(cx.file()).for_each(|node| run(node, cx))
     }
 }
 
-/// The call, and the `poll` or the `element` of it, if what it returns is neither awaited nor returned.
-fn unhandled<'a>(possible_jest_node: PossibleJestNode<'a>, file: &'a File<'a>) -> Option<(Expr<'a>, &'a [u8])> {
+fn run<'a>(possible_jest_node: PossibleJestNode<'a>, cx: &Cx<'a, RequireAwaitedExpectPoll>) {
     let node = possible_jest_node.node;
-    let expect = jest::parse_expect_and_typeof_vitest_fn_call(file, possible_jest_node)?;
+    let Some(expect) = jest::parse_expect_and_typeof_vitest_fn_call(cx.file(), possible_jest_node) else {
+        return;
+    };
     let member_name = expect.members.first().and_then(|it| it.name());
-    let member_name = member_name.filter(|it| matches!(*it, b"poll" | b"element"))?;
+    let Some(member_name) = member_name.filter(|it| matches!(*it, b"poll" | b"element")) else {
+        return;
+    };
     let is_returned_or_awaited = match skip_sequence_expressions(skip_matchers_and_modifiers(node)).parent() {
         AstKind::Stmt(statement) => statement.tag() == StmtTag::Return,
         AstKind::Expr(e) => e.tag() == ExprTag::Await,
         _ => false,
     };
-    (!is_returned_or_awaited).then_some((node, member_name))
+    if !is_returned_or_awaited {
+        cx.report(node, REQUIRE_AWAITED_EXPECT_POLL).data("member_name", member_name);
+    }
 }
 
 /// With the parentheses around it, and the sequences that it is the last of.

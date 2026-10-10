@@ -326,6 +326,8 @@ pub struct Meta {
     /// The rule stands in for that of a package only for some files: for the others it calls `File::hand_back`, and the
     /// rule of the package is asked.
     pub hands_back: bool,
+    /// The original reports when it leaves a node: see [`Meta::reports_on_exit`].
+    pub reports_on_exit: bool,
     /// A hash of `name`.
     pub(crate) key: u32,
 }
@@ -345,6 +347,7 @@ impl Meta {
             needs_modules: false,
             follows_oxlint: false,
             hands_back: false,
+            reports_on_exit: false,
             key: hash_const(0, name.as_bytes()) as u32,
         }
     }
@@ -401,6 +404,13 @@ impl Meta {
 
     pub const fn hands_back(mut self) -> Meta {
         self.hands_back = true;
+        self
+    }
+
+    /// Of what starts at one place, what this rule reports comes last, and of that the shorter first: as from a listener that
+    /// is called on leaving a node, the inner node first. Without it the longer comes first.
+    pub const fn reports_on_exit(mut self) -> Meta {
+        self.reports_on_exit = true;
         self
     }
 

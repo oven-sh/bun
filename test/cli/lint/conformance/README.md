@@ -86,6 +86,11 @@ Unpack the projects where no directory above them has a name that begins with a 
 `expected-oxlint.txt` is the same with `--suite=oxlint`. `expected-more.txt` is the same with `--suite=more --every-typed=10`: there are 22,000 cases with types in `more/`, each of
 which takes a tenth of a second. Whoever changes what is printed writes the file again, in the same commit.
 
+The messages of a case are compared as a set. What starts at the same place comes in the order in which the original visits the
+nodes, and the recordings have that order: a case whose messages are the recorded ones in another order passes and is counted, in a
+line of each of the three files (there with all cases run, also all with types), and they may not become more. `--in-order` makes
+such a case fail, as `the order differs`.
+
 ## Layout
 
 - `eslint/<rule>.json`, `typescript-eslint/<rule>.json`, `react-hooks/`, `import/`, `n/`, `oxc/`: one file per rule.

@@ -89,8 +89,13 @@ pub(crate) fn propagate_scope_dependencies_hir(
         }
 
         let hoistables = hoistable_property_loads.get(*scope_id);
-        let hoistables =
-            hoistables.expect("[PropagateScopeDependencies] Scope not found in tracked blocks");
+        let hoistables = hoistables.ok_or_else(|| {
+            crate::diagnostics::cold_invariant(
+                "[PropagateScopeDependencies] Scope not found in tracked blocks",
+                None,
+                None,
+            )
+        })?;
 
         // Step 2: Calculate hoistable dependencies using the tree.
         let tree = trees.entry(*hoistables).or_insert_with(|| {
@@ -1858,11 +1863,19 @@ impl<'a> DependencyCollectionContext<'a> {
         self.scope_stack.push(scope_id);
     }
 
-    fn exit_scope(&mut self, scope_id: ScopeId, pruned: bool, env: &mut Environment) {
-        let scoped_deps = self
-            .dep_stack
-            .pop()
-            .expect("[PropagateScopeDeps]: Unexpected scope mismatch");
+    fn exit_scope(
+        &mut self,
+        scope_id: ScopeId,
+        pruned: bool,
+        env: &mut Environment,
+    ) -> Result<(), CompilerDiagnostic> {
+        let scoped_deps = self.dep_stack.pop().ok_or_else(|| {
+            crate::diagnostics::cold_invariant(
+                "[PropagateScopeDeps]: Unexpected scope mismatch",
+                None,
+                None,
+            )
+        })?;
         self.scope_stack.pop();
 
         // Propagate dependencies upward
@@ -1877,6 +1890,7 @@ impl<'a> DependencyCollectionContext<'a> {
         if !pruned {
             self.deps.insert(scope_id, scoped_deps);
         }
+        Ok(())
     }
 
     fn current_scope(&self) -> Option<ScopeId> {
@@ -2328,7 +2342,7 @@ fn handle_function_deps(
                 ctx.enter_scope(*scope);
             }
             Some(ScopeBlockInfo::End { scope, pruned, .. }) => {
-                ctx.exit_scope(*scope, *pruned, env);
+                ctx.exit_scope(*scope, *pruned, env)?;
             }
             None => {}
         }

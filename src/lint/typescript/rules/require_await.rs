@@ -147,7 +147,8 @@ impl Rule for RequireAwait {
         .has_suggestions()
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types()
-        .extends_base_rule("require-await");
+        .extends_base_rule("require-await")
+        .reports_on_exit();
     const ON: On = On::new()
         .exprs(&[ExprTag::Await])
         .stmts(&[StmtTag::ForOf])

@@ -208,7 +208,13 @@
   "src/lint/react/util_component_util.rs": [
     "dead_code, until every rule of the plugin is written"
   ],
+  "src/lint/react/util_components.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
   "src/lint/react/util_components_list.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_components_related.rs": [
     "dead_code, until every rule of the plugin is written"
   ],
   "src/lint/react/util_eslint.rs": [
@@ -242,6 +248,9 @@
     "dead_code, until every rule of the plugin is written"
   ],
   "src/lint/react/util_pragma.rs": [
+    "dead_code, until every rule of the plugin is written"
+  ],
+  "src/lint/react/util_prop_types_declaration.rs": [
     "dead_code, until every rule of the plugin is written"
   ],
   "src/lint/react/util_prop_wrapper.rs": [

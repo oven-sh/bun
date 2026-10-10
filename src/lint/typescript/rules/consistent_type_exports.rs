@@ -218,8 +218,23 @@ impl ConsistentTypeExports {
             return;
         }
 
-        let all_export_names: Vec<&[u8]> =
-            report.type_based_specifiers.iter().map(|specifier| specifier.local().bytes()).collect();
+        // tsgolint names them as they are written, `a as b`, and has a comma before the `and`.
+        let is_oxlint = cx.language().is_oxlint;
+        let name_of = |specifier: &ExportSpec<'a>| {
+            let mut name = Vec::new();
+            match is_oxlint {
+                true => push_specifier_text(&mut name, cx.file(), *specifier),
+                false => name.extend_from_slice(specifier.local().bytes()),
+            }
+            name
+        };
+        let all_export_names: Vec<Vec<u8>> = report.type_based_specifiers.iter().map(name_of).collect();
+        let export_names = match all_export_names.split_last() {
+            Some((last, others)) if is_oxlint && others.len() > 1 => {
+                [&others.join(&b", "[..])[..], &b", and "[..], &last[..]].concat()
+            }
+            _ => format_word_list(&all_export_names),
+        };
         let message = match all_export_names.len() {
             1 => SINGLE_EXPORT_IS_TYPE,
             _ => MULTIPLE_EXPORTS_ARE_TYPES,
@@ -229,7 +244,20 @@ impl ConsistentTypeExports {
             Some(specifier) => specifier.span(),
             None => node.span(),
         };
-        cx.report(place, message).data("exportNames", format_word_list(&all_export_names)).fix(|fixer| {
+        let labels = |labels: &mut Details| {
+            if all_export_names.len() < 2 {
+                return;
+            }
+            for (i, (specifier, name)) in report.type_based_specifiers.iter().zip(&all_export_names).enumerate() {
+                let name = bstr::BStr::new(name);
+                let text = format!("{name} is a type export, try `type {name}`");
+                match i {
+                    0 => labels.first(text),
+                    _ => labels.push(specifier.span(), text),
+                }
+            }
+        };
+        cx.report(place, message).data("exportNames", export_names).labels_with(labels).fix(|fixer| {
             match self.fix_mixed_exports_with_inline_type_specifier {
                 true => Some(fix_add_type_specifier_to_named_exports(fixer, &report)),
                 false => fix_separate_named_exports(fixer, export, &report),

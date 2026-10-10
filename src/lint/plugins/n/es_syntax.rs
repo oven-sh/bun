@@ -166,6 +166,19 @@ impl Active {
             .is_some_and(|word| word & (1 << (feature % 64)) != 0)
     }
 
+    pub(crate) fn has_any(&self) -> bool {
+        self.bits.iter().any(|it| *it != 0)
+    }
+
+    /// The feature whose rule has the listeners that report `feature`: the rules about patterns share those of the first.
+    pub(crate) fn listens_for(&self, feature: usize) -> usize {
+        if !PATTERNS.contains(&feature) {
+            return feature;
+        }
+        let patterns = PATTERNS.iter().copied().filter(|&it| self.has(it));
+        patterns.min().unwrap_or(feature)
+    }
+
     /// The features that are global variables or properties of them which the file mentions.
     pub(crate) fn globals_in<'s>(&'s self, file: &'s File) -> impl Iterator<Item = usize> + 's {
         let is_mentioned = |it: &(u32, Vec<u32>)| {

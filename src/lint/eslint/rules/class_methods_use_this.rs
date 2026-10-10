@@ -185,7 +185,7 @@ impl Checker {
 }
 
 impl Rule for ClassMethodsUseThis {
-    const META: Meta = Meta::eslint("class-methods-use-this", Kind::Suggestion);
+    const META: Meta = Meta::eslint("class-methods-use-this", Kind::Suggestion).reports_on_exit();
     const ON: On = On::new().exprs(&[ExprTag::This, ExprTag::Super]).members().finish();
     type State<'a> = State<'a>;
 

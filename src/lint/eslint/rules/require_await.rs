@@ -94,7 +94,9 @@ fn report<'a>(func: Func<'a>, cx: &Cx<'a, RequireAwait>) {
 }
 
 impl Rule for RequireAwait {
-    const META: Meta = Meta::eslint("require-await", Kind::Suggestion).has_suggestions();
+    const META: Meta = Meta::eslint("require-await", Kind::Suggestion)
+        .has_suggestions()
+        .reports_on_exit();
     const ON: On = On::new()
         .funcs()
         .exprs(&[ExprTag::Await])

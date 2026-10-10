@@ -270,6 +270,7 @@ pub(super) fn first_error<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     };
     let early = [
         espree::first_error_of_oxc(file),
+        espree::using_in_script(file),
         reserved_word(file),
         duplicate_parameter(file),
     ];

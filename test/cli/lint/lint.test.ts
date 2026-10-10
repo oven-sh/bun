@@ -3234,6 +3234,39 @@ describe.concurrent("bun lint", () => {
   });
 
   // What oxlint 1.87 does with tsgolint 7.0.2003. tsgolint reads the file on its own; oxlint has not seen the comments.
+  // Each is what oxlint 1.87 says. Where it says nothing it lints the file.
+  test("`using` at the top level of a script is refused as oxc refuses it", async () => {
+    const refused = "'using' declarations are not allowed at the top level of a script";
+    const cases: Record<string, [code: string, at?: string]> = {
+      "a0.js": ["using a = 1;", "1:1"],
+      "a1.ts": ["using a = 1;", "1:1"],
+      "a2.jsx": ["let b;\n  using a = 1, c = 2;", "2:3"],
+      "a3.js": ["'use strict'; using a = 1;", "1:15"],
+      "a4.js": ["using a = 1; async function f() { await b; }", "1:1"],
+      "a5.js": ["using a = 1; import('x');", "1:1"],
+      "a6.ts": ["using a = 1; import x = require('y');", "1:1"],
+      "b0.js": ["using a = 1; export {};"],
+      "b1.mjs": ["using a = 1;"],
+      "b2.cjs": ["using a = 1;"],
+      "b3.cts": ["using a = 1;"],
+      "b4.js": ["{ using a = 1; }"],
+      "b5.js": ["await using a = 1;"],
+      "b6.js": ["using a = 1; await b;"],
+      "b7.js": ["using a = 1; function f() { import.meta; }"],
+      "b8.ts": ["using a = 1; export = a;"],
+      "b9.js": ["for (using a of b) {}"],
+    };
+    const files = Object.fromEntries(Object.entries(cases).map(([name, [code]]) => [name, code + "\n"]));
+    const oxlintrc = JSON.stringify({ categories: { correctness: "off" } });
+    const { stdout } = await lint({ ".oxlintrc.json": oxlintrc, ...files }, ["-f", "unix"]);
+    expect(
+      stdout
+        .split("\n")
+        .filter(line => line.endsWith("]"))
+        .sort(),
+    ).toEqual(Object.entries(cases).flatMap(([name, [, at]]) => (at ? [`${name}:${at}: ${refused} [Error]`] : [])));
+  });
+
   test("in a file that oxc refuses for an early error, the rules that need types go on", async () => {
     const files = {
       "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, noEmit: true, lib: ["es2022"], types: [] } }),

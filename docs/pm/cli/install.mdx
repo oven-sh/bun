@@ -380,7 +380,7 @@ Bun uses the fastest installation method available on the target platform: `clon
 
 Bun stores installed packages from npm in `~/.bun/install/cache/${name}@${version}`. If the semver version has a `build` or a `pre` tag, Bun replaces it with a hash of that value. This reduces the chances of errors from long file paths, but complicates figuring out where a package was installed on disk.
 
-When the `node_modules` folder exists, Bun decides whether to install a package by checking that the `"name"` and `"version"` in its `package.json` at the expected `node_modules` location match the expected name and version. It uses a custom JSON parser which stops parsing as soon as it finds `"name"` and `"version"`.
+When the `node_modules` folder exists, Bun decides whether to install a package from what is already there. With the hoisted linker, Bun reads the `"name"` and `"version"` from the `package.json` at the expected `node_modules` location and compares them with the expected name and version. With the [isolated linker](/pm/isolated-installs), the expected name and version are part of the package's directory name in `node_modules/.bun`. Bun checks that the package exists there and does not read its `package.json`. To reinstall every package, run `bun install --force`.
 
 When a `bun.lock` doesn’t exist or `package.json` has changed dependencies, Bun downloads and extracts tarballs eagerly while resolving.
 

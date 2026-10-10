@@ -174,6 +174,8 @@ static int us_ssl_bio_type = 0;
  * entry — see us_ssl_ctx_set_sni_policy. Absent on node:tls SecureContexts,
  * whose policy is server-level. */
 static int us_ctx_sni_policy_ex_idx = -1;
+/* (SSL_CTX) owned wire-format ALPN protocol list used by the server selector. */
+static int us_ctx_alpn_protocols_ex_idx = -1;
 /* Defined in Rust (src/uws_sys/SocketKind.rs) so the ordinal tracks the enum. */
 extern const unsigned char BUN_SOCKET_KIND_BUN_SOCKET_TLS;
 extern const unsigned char BUN_SOCKET_KIND_UWS_HTTP_TLS;
@@ -253,6 +255,16 @@ static int us_ssl_is_socket(const SSL *ssl) {
   return bio && BIO_method_type(bio) == us_ssl_bio_type;
 }
 
+struct us_ssl_alpn_protocols_t {
+  unsigned int length;
+  unsigned char data[];
+};
+
+static void us_ssl_alpn_protocols_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
+                                       int index, long argl, void *argp) {
+  (void)parent; (void)ad; (void)index; (void)argl; (void)argp;
+  if (ptr) us_free(ptr);
+}
 /* The socket driving `ssl`: every BoringSSL callback runs inside one of its SSL_* calls. */
 static struct us_socket_t *us_ssl_socket(const SSL *ssl) {
   if (!us_ssl_is_socket(ssl)) return NULL;
@@ -373,6 +385,8 @@ static void us_ex_idx_init(void) {
   us_ssl_rare_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_rare_free);
   us_ssl_wrapper_ex_idx = SSL_get_ex_new_index(0, NULL, NULL, NULL, NULL);
   us_ssl_bio_type = BIO_get_new_index() | BIO_TYPE_SOURCE_SINK;
+  us_ctx_alpn_protocols_ex_idx =
+      SSL_CTX_get_ex_new_index(0, NULL, NULL, NULL, us_ssl_alpn_protocols_free);
 }
 
 #ifdef _WIN32
@@ -1639,6 +1653,46 @@ static int us_alpn_select_h2(SSL *ssl, const unsigned char **out, unsigned char 
    * and is answered at the HTTP layer). Proceed without ALPN when HTTP/1 is
    * allowed; otherwise refuse the handshake with no_application_protocol. */
   return allow_http1 ? SSL_TLSEXT_ERR_NOACK : SSL_TLSEXT_ERR_ALERT_FATAL;
+}
+
+static int us_alpn_select_protocols(SSL *ssl, const unsigned char **out,
+                                    unsigned char *outlen, const unsigned char *in,
+                                    unsigned int inlen, void *arg) {
+  (void)ssl;
+  struct us_ssl_alpn_protocols_t *protocols = arg;
+  if (!protocols) return SSL_TLSEXT_ERR_NOACK;
+  return SSL_select_next_proto((unsigned char **)out, outlen, protocols->data,
+                               protocols->length, in, inlen) == OPENSSL_NPN_NEGOTIATED
+      ? SSL_TLSEXT_ERR_OK
+      : SSL_TLSEXT_ERR_ALERT_FATAL;
+}
+
+int us_ssl_ctx_set_alpn_protocols(SSL_CTX *ctx, const unsigned char *protocols,
+                                  unsigned int protocols_len) {
+  if (!ctx || !protocols || !protocols_len) return 0;
+  for (unsigned int offset = 0; offset < protocols_len;) {
+    unsigned int length = protocols[offset];
+    if (!length || length > protocols_len - offset - 1) return 0;
+    offset += length + 1;
+  }
+
+  us_ex_idx_ensure();
+  if (us_ctx_alpn_protocols_ex_idx < 0) return 0;
+  struct us_ssl_alpn_protocols_t *owned =
+      us_malloc(sizeof(struct us_ssl_alpn_protocols_t) + protocols_len);
+  if (!owned) return 0;
+  owned->length = protocols_len;
+  memcpy(owned->data, protocols, protocols_len);
+
+  struct us_ssl_alpn_protocols_t *previous =
+      SSL_CTX_get_ex_data(ctx, us_ctx_alpn_protocols_ex_idx);
+  if (!SSL_CTX_set_ex_data(ctx, us_ctx_alpn_protocols_ex_idx, owned)) {
+    us_free(owned);
+    return 0;
+  }
+  SSL_CTX_set_alpn_select_cb(ctx, us_alpn_select_protocols, owned);
+  if (previous) us_free(previous);
+  return 1;
 }
 
 void us_ssl_ctx_enable_http2_alpn(SSL_CTX *ctx, int allow_http1) {
@@ -3224,6 +3278,23 @@ static int sni_cb(SSL *ssl, int *al, void *arg) {
     }
   }
   return SSL_TLSEXT_ERR_OK;
+}
+
+void us_listen_socket_set_ssl_ctx(struct us_listen_socket_t *ls, SSL_CTX *ctx) {
+  if (ls->ssl_ctx == ctx) return;
+
+  SSL_CTX_up_ref(ctx);
+  SSL_CTX *previous = ls->ssl_ctx;
+  ls->ssl_ctx = ctx;
+
+  if (ls->sni) {
+    SSL_CTX_set_tlsext_servername_callback(ctx, sni_cb);
+  }
+  if (ls->on_server_name) {
+    SSL_CTX_set_select_certificate_cb(ctx, us_select_cert_cb);
+  }
+
+  if (previous) SSL_CTX_free(previous);
 }
 
 int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,

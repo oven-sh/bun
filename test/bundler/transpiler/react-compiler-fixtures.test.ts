@@ -216,6 +216,11 @@ const SLOT_COUNT_DIVERGENCE: Record<string, number[]> = Object.assign(Object.cre
   // splits `getX` and the JSX into two memo blocks: `_c(2)`. Bun keeps the value
   // of the store, so there is no stray read and one block holds both.
   "hoisting-invalid-tdz-let": [1],
+  // Upstream lowers `key` with the other attributes, ahead of the children. Bun
+  // lowers it where the `jsx(type, props, key)` call evaluates it, after them.
+  // `<div key={store.id}>` is then read next to the element, outside the memo
+  // block that used to cache it: `_c(36)`, not `_c(37)`.
+  "method-call-scope-merge-mutable-range-sync": [36],
 });
 
 // `minify: { syntax: true }` runs the parser's visit-phase folding and the

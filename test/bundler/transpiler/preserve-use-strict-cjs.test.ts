@@ -477,6 +477,12 @@ out.classMethod = new (class {
   method() {${body}
   }
 })().method();
+out.switchCaseInStrictFunction = (function () {
+  "use strict";
+  function f() { return "outer"; }
+  switch (1) { case 1: function f() { return "case"; } }
+  return f();
+})();
 out.strictFile = require("./strict-file.cjs");
 import("./module.mjs").then(module => {
   out.module = module.default;
@@ -497,6 +503,7 @@ module.exports = (function () {${body}
       strictFunction: "outer",
       nestedInStrictFunction: "outer",
       classMethod: "outer",
+      switchCaseInStrictFunction: "outer",
       strictFile: "outer",
       module: "outer",
     });

@@ -5760,6 +5760,11 @@ describe("block-level function declarations", () => {
       "{\n  let f = function() {};\n}\nmodule.exports = 1;\n",
     ],
     [
+      'a switch case in a function with "use strict"',
+      'function o(x) {\n  "use strict";\n  switch (x) {\n    case 1:\n      function f() {}\n  }\n}\n',
+      "function o(x) {\n  switch (x) {\n    case 1:\n      let f = function() {};\n  }\n}\n",
+    ],
+    [
       "a class method",
       "class A {\n  m() {\n    {\n      function f() {}\n    }\n  }\n}\n",
       "class A {\n  m() {\n    {\n      let f = function() {};\n    }\n  }\n}\n",

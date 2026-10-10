@@ -237,8 +237,11 @@ impl<'a> Binding<'a> {
             .unwrap_or_else(|| self.symbol.scope())
     }
 
+    /// For oxlint `typeof a` in a type is not one.
     fn references(self) -> SmallVec<[Reference<'a>; 8]> {
-        let all = self.symbol.references();
+        let is_oxlint = self.symbol.file().language().is_oxlint;
+        let is_one = |it: &Reference<'a>| !is_oxlint || !is_type_only_reference(self.symbol, *it);
+        let all = self.symbol.references().filter(is_one);
         match (self.symbol.declaration_kinds()).contains(DeclarationKinds::CLASS_NAME) {
             true => all.filter(|it| Binding::of(self.symbol, *it) == self).collect(),
             false => all.collect(),
@@ -1948,9 +1951,8 @@ impl NoUselessAssignment {
         if !is_unknown {
             return;
         }
-        // For oxlint `typeof a` in a type reads nothing, and what is never read is left to `no-unused-vars`.
-        let is_read = |it: &Reference<'a>| it.is_read() && !is_type_only_reference(variable.symbol, *it);
-        if variable.symbol.file().language().is_oxlint && !references.iter().any(is_read) {
+        // What is never read is left to `no-unused-vars`.
+        if !references.iter().any(|it| it.is_read()) {
             return;
         }
         let Some(scope) = scope else {

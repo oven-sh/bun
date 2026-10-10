@@ -779,6 +779,11 @@ impl Run<'_> {
             }
         };
         pool.for_each(pool.threads(), 1, &|worker| {
+            if worker + 1 == pool.threads()
+                && let Some(inferred) = context.inferred
+            {
+                inferred.begin();
+            }
             // An engine keeps the memory that its largest file took, and a thread the engine that it had. So few threads begin
             // with the largest, and the others with the smallest, until they meet.
             let lint_with_engine = || {

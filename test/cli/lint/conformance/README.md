@@ -12,7 +12,7 @@ commits, and `licenses/` has the license of each (all MIT).
 | eslint-plugin-react-hooks | 7.0.0   | 2     | 1325  |
 | eslint-plugin-import      | 2.32.0  | 41    | 2451  |
 | eslint-plugin-n           | 18.4.1  | 4     | 1530  |
-| eslint-plugin-react       | 7.37.5  | 1     | 118   |
+| eslint-plugin-react       | 7.37.5  | 103   | 11526 |
 | eslint-plugin-prettier    | 5.5.6   | 1     | 448   |
 | oxc (oxlint)              | 1.70.0  | 1     | 83    |
 

@@ -139,18 +139,25 @@ impl Project {
         let include: Vec<Vec<u8>> = specs.map(|it| it.1.clone()).collect();
         let base = join(b"", &self.base);
         let more = extra_supported_extensions(host, &self.options);
+        let patterns =
+            GlobMatcher::new(&include, &self.exclude, &base, case_sensitive, Usage::Files);
+        let base: Vec<Vec<u8>> = (PathParts::of_directory(typescript_path(&base)).iter())
+            .map(|it| it.to_vec())
+            .collect();
+        let begins_with_base = |pattern: &GlobPattern| {
+            let mut first = pattern.components.iter().zip(&base);
+            pattern.components.len() >= base.len()
+                && first.all(|it| matches!(it.0, Component::Literal(name) if name == it.1))
+        };
         Roots {
             literal: (self.options.file_specs.iter())
                 .map(|it| it.1.clone())
                 .collect(),
             has_include: !include.is_empty(),
-            patterns: GlobMatcher::new(
-                &include,
-                &self.exclude,
-                &base,
-                case_sensitive,
-                Usage::Files,
-            ),
+            include_begins_with_base: patterns.includes.iter().map(begins_with_base).collect(),
+            exclude_begins_with_base: patterns.excludes.iter().map(begins_with_base).collect(),
+            patterns,
+            base,
             groups: supported_extensions(&self.options),
             more: more.map(<[u8]>::to_vec).collect(),
             case_sensitive,
@@ -192,6 +199,11 @@ pub struct Roots {
     literal: Vec<Vec<u8>>,
     has_include: bool,
     patterns: GlobMatcher,
+    /// The names of the directory that the patterns are relative to, and which of them begin with these: that part of a
+    /// path is compared once, not once for each pattern.
+    base: Vec<Vec<u8>>,
+    include_begins_with_base: Vec<bool>,
+    exclude_begins_with_base: Vec<bool>,
     /// `supported_extensions`, `extra_supported_extensions`
     groups: &'static [&'static [&'static [u8]]],
     more: Vec<Vec<u8>>,
@@ -241,7 +253,23 @@ impl Roots {
             directory,
             name: b"",
         };
-        self.has_include && is_supported && self.patterns.matches_file(whole).is_some()
+        if !self.has_include || !is_supported {
+            return false;
+        }
+        let equal = |a: &[u8], b: &[u8]| {
+            a == b || !self.case_sensitive && equate_string_case_insensitive(a, b)
+        };
+        let count = self.base.len();
+        let is_below_base =
+            directory.len() >= count && self.base.iter().zip(directory).all(|it| equal(it.0, it.1));
+        let has = |(pattern, begins_with_base): (&GlobPattern, &bool)| match begins_with_base {
+            true => is_below_base && pattern.match_parts(whole, count, count, false),
+            false => pattern.matches(whole),
+        };
+        let mut exclude = (self.patterns.excludes.iter()).zip(&self.exclude_begins_with_base);
+        let mut include = (self.patterns.includes.iter()).zip(&self.include_begins_with_base);
+        // `GlobMatcher::matches_file`
+        !exclude.any(has) && include.any(has)
     }
 }
 

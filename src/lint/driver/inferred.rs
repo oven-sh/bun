@@ -170,6 +170,14 @@ impl<'e> Inferred<'e> {
         let _ = self.paths.set(paths);
     }
 
+    /// For one thread, while the others lint their first files: or else all of them come to ask at the same time, and
+    /// wait for the one that reads the options. It is paid whether or not a file asks. Nothing, if no file can.
+    pub(crate) fn begin(&self) {
+        if let Some(first) = self.paths.get().and_then(|it| it.first()) {
+            let _ = self.program(first);
+        }
+    }
+
     /// `path`: as `File::path`.
     fn program(&self, path: &[u8]) -> Option<&Program> {
         let by_options = self.by_options.as_ref()?.get_or_init(|| ByOptions {

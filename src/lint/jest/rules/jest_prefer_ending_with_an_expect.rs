@@ -14,6 +14,7 @@ const PREFER_ENDING_WITH_AN_EXPECT: Message = Message::new("", "Test must end wi
 
 impl Rule for PreferEndingWithAnExpect {
     const META: Meta = Meta::oxlint(Plugin::Jest, "prefer-ending-with-an-expect", Kind::Suggestion);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -27,10 +28,12 @@ impl Rule for PreferEndingWithAnExpect {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if jest::is_test(file) {
-            on.finish(|rule, cx| jest::iter_possible_jest_call_node(cx.file()).for_each(|node| rule.run(node, cx)));
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        jest::is_test(file).then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        jest::iter_possible_jest_call_node(cx.file()).for_each(|node| self.run(node, cx));
     }
 }
 

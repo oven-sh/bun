@@ -204,6 +204,44 @@ describe.concurrent("bun lint", () => {
     expect(exitCode).toBe(1);
   });
 
+  // Each is what ESLint says with espree. At the `<` of the first two the parser went round until its stack was used up.
+  test("which error of broken JavaScript is reported, and where", async () => {
+    const cases: Record<string, [code: string, error?: string]> = {
+      "a0.js": ["{} while (a)< {}", "1:13: Parsing error: Unexpected token <"],
+      "a1.js": ["var arr =< [, ,];", "1:10: Parsing error: Unexpected token <"],
+      "a2.js": ["foo(#a)", "1:5: Parsing error: Unexpected token #a"],
+      "a3.js": ["import.m\\u0065ta;", "1:1: Parsing error: 'import.meta' must not contain escaped characters"],
+      "a4.js": [
+        "import.d\\u0065fer('a');",
+        "1:8: Parsing error: The only valid meta property for import is 'import.meta'",
+      ],
+      "a5.cjs": [
+        'import { a } om "foo"',
+        "1:1: Parsing error: 'import' and 'export' may appear only with 'sourceType: module'",
+      ],
+      // acorn skips a comment before the string of an attribute, which can have a line break.
+      "a6.jsx": ['<a b=/* c */"x\ny" />;'],
+      "a7.js": ["a = => 1;", "1:5: Parsing error: Unexpected token =>"],
+    };
+    const files = Object.fromEntries(Object.entries(cases).map(([name, [code]]) => [name, code + "\n"]));
+    const settings = `export default [
+      { files: ["**/*.js", "**/*.cjs", "**/*.jsx"], rules: {} },
+      { files: ["**/*.jsx"], languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } } },
+    ];`;
+    const { stdout, exitCode } = await lint({ "eslint.config.js": settings, ...files }, [
+      "-f",
+      "unix",
+      ...Object.keys(files),
+    ]);
+    expect(
+      stdout
+        .split("\n")
+        .filter(line => line.includes("Parsing error"))
+        .map(line => line.replace(/^.*\/(a\d\.\w+):/, "$1:").replace(" [Error]", "")),
+    ).toEqual(Object.entries(cases).flatMap(([name, [, error]]) => (error ? [`${name}:${error}`] : [])));
+    expect(exitCode).toBe(1);
+  });
+
   describe("which files", () => {
     const files = {
       "eslint.config.js": config({ "no-debugger": "error" }),

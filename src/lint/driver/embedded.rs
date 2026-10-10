@@ -405,13 +405,8 @@ fn has_default_exports_property<'a>(file: &'a File<'a>, name: &str) -> bool {
 
 /// Whether a rule is on that asks what the other script of a `.vue` file exports.
 fn asks_for_exports(config: &ResolvedConfig) -> bool {
-    config.rules.iter().any(|it| {
-        it.severity != Severity::Off
-            && it.entry.meta.plugin == Plugin::Vue
-            && matches!(
-                it.entry.meta.name,
-                "valid-define-props" | "valid-define-emits"
-            )
+    config.has_enabled(|it| {
+        it.plugin == Plugin::Vue && matches!(it.name, "valid-define-props" | "valid-define-emits")
     })
 }
 

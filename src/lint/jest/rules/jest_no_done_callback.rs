@@ -10,16 +10,19 @@ const NO_DONE_CALLBACK: Message = Message::new("", "Function parameter(s) use th
 
 impl Rule for NoDoneCallback {
     const META: Meta = Meta::oxlint(Plugin::Jest, "no-done-callback", Kind::Suggestion);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoDoneCallback
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if jest::is_test(file) {
-            on.finish(|_, cx| jest::iter_possible_jest_call_node(cx.file()).for_each(|node| run(node, cx)));
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        jest::is_test(file).then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        jest::iter_possible_jest_call_node(cx.file()).for_each(|node| run(node, cx));
     }
 }
 

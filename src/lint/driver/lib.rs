@@ -25,6 +25,7 @@ mod lint;
 mod print_config;
 mod processor;
 mod results;
+pub mod rules;
 mod rulesdir;
 mod run;
 mod suppressions;

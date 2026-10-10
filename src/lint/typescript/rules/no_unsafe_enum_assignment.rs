@@ -783,7 +783,7 @@ fn check_assignment_expression<'a>(cx: &mut Context<'a>, node: Expr<'a>) {
 /// What is listened to in a file without JSX.
 const WITHOUT_JSX: On = On::new()
     .members()
-    .funcs()
+    .exprs(&[ExprTag::Fn])
     .stmts(&[StmtTag::Return])
     .exprs(&[ExprTag::Assign, ExprTag::Unary])
     .params()
@@ -819,6 +819,15 @@ impl Rule for NoUnsafeEnumAssignment {
 
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match node.tag() {
+            // As an expression, so that it comes before its body: both can be reported at the same
+            // place, and ESLint has what is about the arrow function first.
+            ExprTag::Fn => {
+                if let ExprKind::Fn(func) = node.kind()
+                    && let FnBody::Expr(body) = func.body()
+                {
+                    check_return(cx, body, body.span());
+                }
+            }
             // Also a default in the target of a destructuring assignment, which upstream treats alike.
             ExprTag::Assign => check_assignment_expression(cx, node),
             ExprTag::Unary => {
@@ -895,12 +904,6 @@ impl Rule for NoUnsafeEnumAssignment {
                 }
             }
             _ => {}
-        }
-    }
-
-    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
-        if let FnBody::Expr(body) = func.body() {
-            check_return(cx, body, body.span());
         }
     }
 

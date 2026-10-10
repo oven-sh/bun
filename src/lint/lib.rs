@@ -32,6 +32,7 @@ pub(crate) mod oxlint_messages;
 pub mod paths;
 pub mod regex;
 pub mod rule;
+pub mod rule_set;
 pub mod runner;
 pub mod selector;
 pub mod semantic;

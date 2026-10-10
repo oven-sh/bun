@@ -168,7 +168,7 @@ pub struct ResolvedConfig {
     pub language: LanguageOptions,
     pub linter: LinterOptions,
     /// In the order of the configuration, which is the order the rules run in.
-    pub rules: Vec<ConfiguredRule>,
+    pub(super) rules: Vec<ConfiguredRule>,
     /// One of them has a [name](ConfiguredRule::name).
     pub has_named_rules: bool,
     /// `settings["import/resolver"]` names a resolver that the rules here do not do the same as.
@@ -226,6 +226,23 @@ impl ResolvedConfig {
             it.name.is_none() && it.entry.meta.plugin == plugin && it.entry.meta.name == name
         };
         self.rules.iter().find(is_it)
+    }
+
+    /// What the configuration says about the rules that are built in, also about those that it turns off, in its order.
+    pub fn configured(&self) -> std::slice::Iter<'_, ConfiguredRule> {
+        self.rules.iter()
+    }
+
+    /// Whether a rule is on of which `is_it` says so.
+    pub fn has_enabled(&self, is_it: impl Fn(&Meta) -> bool) -> bool {
+        let mut on = self.rules.iter().filter(|it| it.severity != Severity::Off);
+        on.any(|it| is_it(it.entry.meta))
+    }
+
+    /// Whether a rule is on that has the rule of its package beside it, to which it can hand a file back.
+    pub fn may_hand_back(&self) -> bool {
+        let mut on = self.rules.iter().filter(|it| it.severity != Severity::Off);
+        on.any(|it| it.or_else.is_some())
     }
 
     /// The instance of a rule that the configuration calls `id`: [`ConfiguredRule::name`]. Only the configuration gives names.

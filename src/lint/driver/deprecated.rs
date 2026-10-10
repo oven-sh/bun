@@ -3,10 +3,10 @@
 #[path = "deprecated_data.rs"]
 mod data;
 
+use bun_core::printer::json_stringify;
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::js_plugin;
-use bun_core::printer::json_stringify;
 use bun_lint::linter::{ResolvedConfig, RuleId, write_json};
 use bun_lint::options::Json;
 
@@ -61,7 +61,7 @@ fn write_js(out: &mut Vec<u8>, rule: &js_plugin::Rule, (deprecated, replaced_by)
 /// `JSON.stringify(result.usedDeprecatedRules)` for a file that has `config`.
 pub(crate) fn write_used(out: &mut Vec<u8>, config: Option<&ResolvedConfig>) {
     out.push(b'[');
-    let rules = config.map_or(&[][..], |config| &config.rules[..]);
+    let rules = config.into_iter().flat_map(ResolvedConfig::configured);
     let mut js_rules = (config.map_or(&[][..], |config| &config.js_rules[..]).iter())
         .filter(|it| it.severity != Severity::Off)
         .filter_map(|it| {
@@ -74,15 +74,15 @@ pub(crate) fn write_used(out: &mut Vec<u8>, config: Option<&ResolvedConfig>) {
         .peekable();
     let start = out.len();
     // In the order of the configuration.
-    for position in 0..=rules.len() {
+    for (position, rule) in rules.map(Some).chain([None]).enumerate() {
         while let Some((_, rule, deprecated)) = js_rules.next_if(|it| it.0 <= position) {
             if out.len() > start {
                 out.push(b',');
             }
             write_js(out, rule, deprecated);
         }
-        let Some(rule) = (rules.get(position))
-            .filter(|it| it.severity != Severity::Off && it.entry.meta.is_deprecated)
+        let Some(rule) =
+            rule.filter(|it| it.severity != Severity::Off && it.entry.meta.is_deprecated)
         else {
             continue;
         };

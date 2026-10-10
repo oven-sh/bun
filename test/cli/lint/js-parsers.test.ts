@@ -444,15 +444,16 @@ describe.concurrent("bun lint with languages", () => {
   );
 
   // As `@babel/eslint-parser` with a plugin for syntax that is no standard yet. What is called like JavaScript is read here, as
-  // long as it can be.
+  // long as it can be. As in nodejs/node the packages are not above the configuration file: eslint is beside the parser.
   test(
     "so is a file called like JavaScript that only its own parser can read, and no rule sees what is made of it here",
     async () => {
       const result = await lint(
         {
-          ...eslintPackage,
+          ...Object.fromEntries(Object.entries(eslintPackage).map(([name, text]) => [`tools/${name}`, text])),
           ...lines,
-          "parser.cjs": `
+          "tools/node_modules/@babel/eslint-parser/package.json": JSON.stringify({ main: "index.js" }),
+          "tools/node_modules/@babel/eslint-parser/index.js": `
             const parseForESLint = (text, languageOptions) => ({ ast: { lines: text.split("\\n"), languageOptions } });
             module.exports = { meta: { name: "@babel/eslint-parser", version: "8.0.0" }, parseForESLint };`,
           "members.mjs": `
@@ -461,7 +462,7 @@ describe.concurrent("bun lint with languages", () => {
           "eslint.config.mjs": `
             import lines from "./lines.mjs";
             import members from "./members.mjs";
-            import parser from "./parser.cjs";
+            import parser from "./tools/node_modules/@babel/eslint-parser/index.js";
             export default [
               {
                 files: ["*.js"],

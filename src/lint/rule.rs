@@ -617,6 +617,37 @@ impl On {
         self
     }
 
+    const BINARIES: usize = ExprTag::COUNT;
+    const UNARIES: usize = On::BINARIES + BinOp::Comma as usize + 1;
+    const STMTS: usize = On::UNARIES + UnOp::PostDec as usize + 1;
+    const TYPES: usize = On::STMTS + StmtTag::COUNT;
+    const PATS: usize = On::TYPES + TypeTag::COUNT;
+    const SORTS: usize = On::PATS + PatTag::COUNT;
+    /// The row of the rules that are started whatever a file has.
+    pub const ALWAYS: usize = On::SORTS + 12;
+    /// What a file can have or not have: a row for each kind of expression, operator, statement, type and pattern, in
+    /// this order, one for each of the sorts from `optional_chains` to `export_specs`, and [`On::ALWAYS`].
+    pub const ROWS: usize = On::ALWAYS + 1;
+
+    /// The rows that it names: the first of some rows, and a bit for each from there on.
+    pub(crate) const fn rows(self) -> [(usize, u64); 8] {
+        let in_every_file = On::SYMBOLS | On::STRING_LITERALS | On::NUMBER_LITERALS;
+        let is_always = self.registers()
+            || self.has_later()
+            || self.has(in_every_file)
+            || !self.nodes.is_empty();
+        [
+            (0, self.exprs),
+            (On::BINARIES, self.binaries),
+            (On::UNARIES, self.unaries),
+            (On::STMTS, self.stmts),
+            (On::TYPES, self.types),
+            (On::PATS, self.pats),
+            (On::SORTS, (self.sorts & 0xfff) as u64),
+            (On::ALWAYS, is_always as u64),
+        ]
+    }
+
     /// What is in both.
     #[inline]
     pub(crate) const fn and(self, other: On) -> On {

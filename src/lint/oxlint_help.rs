@@ -386,6 +386,7 @@ static INDEX: &[(u32, u32)] = &[
     (0x470CFC81, at(52062, 91)), // prefer-called-times
     (0x471B73CB, at(56800, 22)), // prefer-readonly preferReadonly
     (0x47AD07A4, more(24)), // no-unexpected-multiline division
+    (0x4905AD5B, OF_THE_FIX | 2), // consistent-type-definitions typeOverInterface
     (0x4937801E, WITH_DATA | at(50111, 103)), // number-arg-out-of-range
     (0x49BD2FA0, at(36674, 36)), // no-misused-spread noFunctionSpreadInObject
     (0x49E9C313, at(43558, 112)), // no-thenable

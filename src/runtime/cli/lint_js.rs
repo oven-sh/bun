@@ -548,16 +548,16 @@ impl Drop for Borrowed<'_> {
         state.borrowed.retain(|it| it.1 != self.at);
         // They have grown since they were started. The first has the heavy files, and one is left beside those that are
         // kept. What the last one gives back is seen a while after it is gone. Looking costs a system call: every time
-        // only until it is known how they grow, and from four fifths on.
+        // only until it is known how they grow, and once they have what was planned.
+        let planned = self.engines.start.memory();
         state.given_back = state.given_back.wrapping_add(1);
-        if state.given_back.is_multiple_of(16)
-            || state.grows_by.is_none()
-            || state.taken / 4 * 5 >= self.engines.start.memory()
+        if state.given_back.is_multiple_of(16) || state.grows_by.is_none() || state.taken >= planned
         {
             state.measure(self.engines.demand.left());
         }
+        // What an engine has built is lost with it. So not before half of what the plan has left is gone too.
         if self.at != 0
-            && state.taken > self.engines.start.memory()
+            && state.taken > planned / 2 * 3
             && state.count() - state.kept > 1
             && !state.all.iter().any(Known::is_being_freed)
             && state.given_back.wrapping_sub(state.freed_at) >= 16
@@ -578,7 +578,8 @@ impl Drop for Borrowed<'_> {
     }
 }
 
-/// What an engine counts for until the run has shown how its engines grow: none that was seen took much more. So where 16 GB are to be had four engines start at once, and with less, or for a fifth, that is waited for.
+/// What an engine counts for until the run has shown how its engines grow: none that was seen took much more. So where 16 GB
+/// are to be had four engines start at once, and with less, or for a fifth, that is waited for.
 const NOT_LOADED_YET: usize = 2 << 30;
 
 /// An engine.

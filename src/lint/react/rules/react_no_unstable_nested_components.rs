@@ -38,6 +38,7 @@ pub struct State<'a> {
 
 impl Rule for NoUnstableNestedComponents {
     const META: Meta = Meta::oxlint(Plugin::React, "no-unstable-nested-components", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Call]).funcs().classes();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -48,26 +49,42 @@ impl Rule for NoUnstableNestedComponents {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
+        if file.has_exprs([ExprTag::Jsx]) || file.mentions("createElement") {
+            on = on.funcs();
+            if file.mentions_any(&["memo", "forwardRef"]) || !component_wrapper_functions(file).is_empty() {
+                on = on.exprs(&[ExprTag::Call]);
+            }
+        }
+        on.classes()
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         let components = is_jsx(file).then(|| {
             let component_wrapper_functions = component_wrapper_functions(file);
-            if file.has_exprs([ExprTag::Jsx]) || file.mentions("createElement") {
-                on.funcs(|rule, func, cx| check(rule, Node::Func(func), cx));
-                if file.mentions_any(&["memo", "forwardRef"]) || !component_wrapper_functions.is_empty() {
-                    on.exprs([ExprTag::Call], |rule, e, cx| check(rule, Node::Expr(e), cx));
-                }
-            }
-            on.classes(|rule, class, cx| check(rule, Node::Class(class), cx));
             Components { functions_with_jsx: FunctionsWithJsx::new(file), component_wrapper_functions }
-        });
-        State {
-            components,
+        })?;
+        Some(State {
+            components: Some(components),
             in_jsx_attribute_expression: AncestorMemo::default(),
             inside_create_element_props_object: AncestorMemo::default(),
             nearest_jsx_attribute_name: AncestorMemo::default(),
             nearest_call: AncestorMemo::default(),
             in_component: AncestorMemo::default(),
-        }
+        })
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        check(self, Node::Expr(e), cx);
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        check(self, Node::Func(func), cx);
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        check(self, Node::Class(class), cx);
     }
 }
 

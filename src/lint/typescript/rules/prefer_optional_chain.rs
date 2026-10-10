@@ -1804,6 +1804,7 @@ impl Rule for PreferOptionalChain {
         .has_suggestions()
         .presets(Presets::STYLISTIC_TYPE_CHECKED)
         .requires_types();
+    const ON: On = On::new().exprs(&[ExprTag::Binary]);
     type State<'a> = Comparer;
 
     fn new(options: &Options) -> Self {
@@ -1831,20 +1832,21 @@ impl Rule for PreferOptionalChain {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Comparer {
-        on.exprs([ExprTag::Binary], |rule, node, cx| {
-            let ExprKind::Binary { op, left, right } = node.kind() else {
-                return;
-            };
-            if matches!(op, BinOp::And | BinOp::Or) {
-                rule.check_logical_chain(node, op, left, right, cx);
-            }
-            if matches!(op, BinOp::Or | BinOp::Nullish) {
-                rule.check_empty_object_fallback(node, left, right, cx);
-            }
-        });
-        Comparer {
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Comparer> {
+        Some(Comparer {
             stack: bun_core::StackCheck::init(),
+        })
+    }
+
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Binary { op, left, right } = node.kind() else {
+            return;
+        };
+        if matches!(op, BinOp::And | BinOp::Or) {
+            self.check_logical_chain(node, op, left, right, cx);
+        }
+        if matches!(op, BinOp::Or | BinOp::Nullish) {
+            self.check_empty_object_fallback(node, left, right, cx);
         }
     }
 }

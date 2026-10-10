@@ -1116,8 +1116,6 @@ fn is_poorly_breakable_member_or_call_chain<'a>(
     let threshold = f.options().line_width.value() / 4;
     let mut is_chain = false;
     let mut call_expressions: SmallVec<[Expr<'a>; 4]> = SmallVec::new();
-    // Below a call. Prettier's `printMemberChain` labels such a chain a member chain however short.
-    let mut has_comment_between_links = false;
     let mut current = expression;
 
     loop {
@@ -1137,26 +1135,7 @@ fn is_poorly_breakable_member_or_call_chain<'a>(
                 call_expressions.push(current);
                 current.callee()
             }
-            ExprTag::Dot => {
-                is_chain = true;
-                // `a./* comment */ b()`: that one leads the name, which is not a link.
-                if !call_expressions.is_empty()
-                    && !f.is_quiet()
-                    && let ExprKind::Dot { obj, name, .. } = current.kind()
-                {
-                    let comments = f
-                        .comments()
-                        .comments_in(obj.outer_span().between(name.span()));
-                    has_comment_between_links |= comments.iter().any(|comment| {
-                        comment.preceded_by_newline()
-                            || comment.followed_by_newline()
-                            || f.source_text()
-                                .contains_byte(comment.span.between(name.span()), b'.')
-                    });
-                }
-                current.object()
-            }
-            ExprTag::Index => {
+            ExprTag::Dot | ExprTag::Index => {
                 is_chain = true;
                 current.object()
             }
@@ -1174,9 +1153,8 @@ fn is_poorly_breakable_member_or_call_chain<'a>(
     let Some(&first_call) = call_expressions.first() else {
         return true;
     };
-    if has_comment_between_links
-        || (comment_in_call_chain_makes_it_breakable(f)
-            && f.comments().has_comment_in_span(first_call.span()))
+    if comment_in_call_chain_makes_it_breakable(f)
+        && f.comments().has_comment_in_span(first_call.span())
     {
         return false;
     }

@@ -8,18 +8,19 @@ pub struct PaddingAroundTestBlocks;
 
 impl Rule for PaddingAroundTestBlocks {
     const META: Meta = Meta::oxlint(Plugin::Jest, "padding-around-test-blocks", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PaddingAroundTestBlocks
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if jest::is_test(file) {
-            on.finish(|_, cx| {
-                let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
-                padding_around_blocks::run(&ctx, true);
-            });
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        jest::is_test(file).then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
+        padding_around_blocks::run(&ctx, true);
     }
 }

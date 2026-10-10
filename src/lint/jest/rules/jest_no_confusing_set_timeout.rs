@@ -12,16 +12,19 @@ const NO_UNORDER_SET_TIMEOUT: Message = Message::new("", "`jest.setTimeout` shou
 
 impl Rule for NoConfusingSetTimeout {
     const META: Meta = Meta::oxlint(Plugin::Jest, "no-confusing-set-timeout", Kind::Suggestion);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoConfusingSetTimeout
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if file.mentions("setTimeout") {
-            on.finish(|_, cx| run_once(cx));
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("setTimeout").then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        run_once(cx);
     }
 }
 

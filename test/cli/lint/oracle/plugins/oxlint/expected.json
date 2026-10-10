@@ -4816,5 +4816,35 @@
  "no-deprecated/what-follows-the-tag": [
   "a.ts:29:13+1 typescript(no-deprecated)",
   "a.ts:29:38+1 typescript(no-deprecated)"
+ ],
+ "adjacent-overload-signatures/where-it-points": [
+  "a.ts:10:15+5 typescript(adjacent-overload-signatures)",
+  "a.ts:11:19+11 typescript(adjacent-overload-signatures)",
+  "a.ts:11:66+11 typescript(adjacent-overload-signatures)",
+  "a.ts:13:3+3 typescript(adjacent-overload-signatures)",
+  "a.ts:1:15+3 typescript(adjacent-overload-signatures)",
+  "a.ts:2:19+3 typescript(adjacent-overload-signatures)",
+  "a.ts:3:19+10 typescript(adjacent-overload-signatures)",
+  "a.ts:4:12+3 typescript(adjacent-overload-signatures)",
+  "a.ts:4:12+3 typescript(adjacent-overload-signatures)",
+  "a.ts:5:25+1 typescript(adjacent-overload-signatures)",
+  "a.ts:6:32+1 typescript(adjacent-overload-signatures)",
+  "a.ts:7:15+9 typescript(adjacent-overload-signatures)",
+  "a.ts:7:52+3 typescript(adjacent-overload-signatures)"
+ ],
+ "adjacent-overload-signatures/what-is-a-name": [
+  "a.ts:10:15+3 typescript(adjacent-overload-signatures)",
+  "a.ts:11:15+3 typescript(adjacent-overload-signatures)",
+  "a.ts:13:19+3 typescript(adjacent-overload-signatures)",
+  "a.ts:14:19+7 typescript(adjacent-overload-signatures)",
+  "a.ts:15:28+12 typescript(adjacent-overload-signatures)",
+  "a.ts:16:15+3 typescript(adjacent-overload-signatures)",
+  "a.ts:17:15+4 typescript(adjacent-overload-signatures)",
+  "a.ts:3:16+5 typescript(adjacent-overload-signatures)",
+  "a.ts:4:16+5 typescript(adjacent-overload-signatures)",
+  "a.ts:5:15+1 typescript(adjacent-overload-signatures)",
+  "a.ts:6:16+1 typescript(adjacent-overload-signatures)",
+  "a.ts:7:15+3 typescript(adjacent-overload-signatures)",
+  "a.ts:8:15+3 typescript(adjacent-overload-signatures)"
  ]
 }

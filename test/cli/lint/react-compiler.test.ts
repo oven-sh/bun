@@ -198,6 +198,23 @@ describe.concurrent(`bun lint: the rules of the React Compiler report what oxlin
     slow,
   );
 
+  test("a try in which nothing but a read that nobody uses can throw does not end the process", async () => {
+    const { files, exit } = await report({
+      ".oxlintrc.json": rc(),
+      "a.jsx": `export default function Component(props) {
+        let a = props.a;
+        try {
+          props.d.m;
+        } catch (err) {
+          a = props.x;
+        }
+        return <div>{a}</div>;
+      }`,
+    });
+    expect(files).toBe(1);
+    expect([0, 1]).toContain(exit);
+  });
+
   test("nothing for a path that has node_modules in it", async () => {
     const { diagnostics, files, exit } = await report(small.node_modules);
     expect(diagnostics).toEqual(expected.reports.node_modules.diagnostics);

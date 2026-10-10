@@ -28,6 +28,7 @@ fn major(version: &[u8]) -> Option<usize> {
 
 impl Rule for NoDeprecatedFunctions {
     const META: Meta = Meta::oxlint(Plugin::Jest, "no-deprecated-functions", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -35,23 +36,22 @@ impl Rule for NoDeprecatedFunctions {
         NoDeprecatedFunctions { version: version.and_then(|it| major(it.as_bytes())).unwrap_or(29) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !DEPRECATED_FUNCTIONS.iter().any(|it| file.mentions(it.0)) {
-            return;
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        DEPRECATED_FUNCTIONS.iter().any(|it| file.mentions(it.0)).then_some(())
+    }
+
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(property) = static_property_name(node)
+            && let Some((property, base_version, object, replacement)) =
+                DEPRECATED_FUNCTIONS.iter().find(|it| property.is(it.0))
+            && node.object().is_some_and(|it| it.is_ident(object) && !it.is_parenthesized())
+            && !node.is_jsx_tag_name()
+            && !node.is_in_type_query()
+            && jest_version(cx.file()).unwrap_or(self.version) >= *base_version
+        {
+            (cx.report(node, DEPRECATED_FUNCTION).data("deprecated", format!("{object}.{property}")).data("new", *replacement))
+                .fix(|fixer| fixer.replace(node, *replacement));
         }
-        on.exprs([ExprTag::Dot, ExprTag::Index], |rule, node, cx| {
-            if let Some(property) = static_property_name(node)
-                && let Some((property, base_version, object, replacement)) =
-                    DEPRECATED_FUNCTIONS.iter().find(|it| property.is(it.0))
-                && node.object().is_some_and(|it| it.is_ident(object) && !it.is_parenthesized())
-                && !node.is_jsx_tag_name()
-                && !node.is_in_type_query()
-                && jest_version(cx.file()).unwrap_or(rule.version) >= *base_version
-            {
-                (cx.report(node, DEPRECATED_FUNCTION).data("deprecated", format!("{object}.{property}")).data("new", *replacement))
-                    .fix(|fixer| fixer.replace(node, *replacement));
-            }
-        });
     }
 }
 

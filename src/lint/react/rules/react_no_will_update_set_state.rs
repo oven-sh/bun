@@ -20,34 +20,35 @@ pub struct State<'a> {
 
 impl Rule for NoWillUpdateSetState {
     const META: Meta = Meta::oxlint(Plugin::React, "no-will-update-set-state", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         NoWillUpdateSetState { disallow_in_func: options.str(0) == Some("disallow-in-func") }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         if !is_jsx(file)
             || !file.mentions("setState")
             || !file.mentions_any(&["componentWillUpdate", "UNSAFE_componentWillUpdate"])
         {
-            return State::default();
+            return None;
         }
-        on.exprs([ExprTag::Call], |rule, e, cx| {
-            let Some(callee) = callee_of_this_set_state(e) else {
-                return;
-            };
-            let names: &[&str] = match cx.state.check_unsafe_prefix {
-                true => &["componentWillUpdate", "UNSAFE_componentWillUpdate"],
-                false => &["componentWillUpdate"],
-            };
-            if let Some(function_count) =
-                function_count_before_lifecycle_component(e, names, &mut cx.state.function_count)
-                && (function_count <= 1 || rule.disallow_in_func)
-            {
-                cx.report(callee, NO_WILL_UPDATE_SET_STATE);
-            }
-        });
-        State { check_unsafe_prefix: supports_unsafe_lifecycle_prefix(file), ..State::default() }
+        Some(State { check_unsafe_prefix: supports_unsafe_lifecycle_prefix(file), ..State::default() })
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some(callee) = callee_of_this_set_state(e) else {
+            return;
+        };
+        let names: &[&str] = match cx.state.check_unsafe_prefix {
+            true => &["componentWillUpdate", "UNSAFE_componentWillUpdate"],
+            false => &["componentWillUpdate"],
+        };
+        if let Some(function_count) = function_count_before_lifecycle_component(e, names, &mut cx.state.function_count)
+            && (function_count <= 1 || self.disallow_in_func)
+        {
+            cx.report(callee, NO_WILL_UPDATE_SET_STATE);
+        }
     }
 }

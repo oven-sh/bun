@@ -3230,6 +3230,33 @@ test("react-compiler ends on a component whose types are made of each other", as
 // ValidateNoRefAccessInRender gives a function the type of what it returns. The port
 // copied all that is nested in a type at each level of each join, so n functions that
 // return each other took the cube of n: 400 of them 10 seconds, 1,000 more than a minute.
+test("react-compiler does not end the process on a try in which nothing but a read that nobody uses can throw", async () => {
+  using dir = tempDir("react-compiler-try", {
+    "entry.jsx": `
+      export default function Component(props) {
+        let a = props.a;
+        try {
+          props.d.m;
+        } catch (err) {
+          a = props.x;
+        }
+        return <div>{a}</div>;
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toContain("function Component(props)");
+  expect(exitCode).toBe(0);
+});
+
 test("react-compiler time does not grow with the cube of a chain of functions", async () => {
   const source = (n: number) => `
     import { useState } from "react";

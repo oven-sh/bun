@@ -195,14 +195,7 @@ fn needs(target: &Target) -> Needs {
 
 /// Whether a rule that is on for the file has the rule of its package beside it, to which it can hand the file back.
 fn may_be_handed_back(target: &Target) -> bool {
-    let Status::Matched(config) = &target.status else {
-        return false;
-    };
-    let mut on = config
-        .rules
-        .iter()
-        .filter(|it| it.severity != Severity::Off);
-    on.any(|it| it.or_else().is_some())
+    matches!(&target.status, Status::Matched(config) if config.may_hand_back())
 }
 
 impl Needs {
@@ -530,8 +523,7 @@ impl Run<'_> {
                 listed: None,
             });
         }
-        let has_rules_with_types = (config.rules.iter())
-            .any(|it| it.severity != Severity::Off && it.entry.meta.requires_types);
+        let has_rules_with_types = config.has_enabled(|it| it.requires_types);
         let needs_types = name.is_some()
             && loader.wants_types(&loaded, config)
             && (has_rules_with_types || context.checks_types);
@@ -688,8 +680,7 @@ impl Run<'_> {
                 continue;
             }
             let mut needing = config
-                .rules
-                .iter()
+                .configured()
                 .filter(|it| it.severity != Severity::Off && it.entry.meta.requires_types);
             if loader.wants_types(&target.loaded, config) {
                 match needing.next().is_some() || context.checks_types {

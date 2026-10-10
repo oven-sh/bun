@@ -8,18 +8,19 @@ pub struct NoTestReturnStatement;
 
 impl Rule for NoTestReturnStatement {
     const META: Meta = Meta::oxlint(Plugin::Jest, "no-test-return-statement", Kind::Suggestion);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoTestReturnStatement
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if file.mentions("expect") && file.has_stmts([StmtTag::Return]) {
-            on.finish(|_, cx| {
-                let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
-                no_test_return_statement::run_once(&ctx);
-            });
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        (file.mentions("expect") && file.has_stmts([StmtTag::Return])).then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
+        no_test_return_statement::run_once(&ctx);
     }
 }

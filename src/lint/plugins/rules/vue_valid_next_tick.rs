@@ -23,22 +23,25 @@ pub struct State<'a> {
 
 impl Rule for ValidNextTick {
     const META: Meta = Meta::oxlint(Plugin::Vue, "valid-next-tick", Kind::Problem).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Dot]).finish();
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         ValidNextTick
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if is_vue_file(file) && file.mentions_any(&["nextTick", "$nextTick"]) {
-            on.exprs([ExprTag::Dot], |_, member, cx| {
-                if let Some(report_span) = next_tick_property(member) {
-                    check(member, report_span, cx);
-                }
-            });
-            on.finish(|_, cx| next_tick_imports(cx.file()).for_each(|it| check(it, it.span(), cx)));
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
+        (is_vue_file(file) && file.mentions_any(&["nextTick", "$nextTick"])).then(State::default)
+    }
+
+    fn expr<'a>(&self, member: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(report_span) = next_tick_property(member) {
+            check(member, report_span, cx);
         }
-        State::default()
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        next_tick_imports(cx.file()).for_each(|it| check(it, it.span(), cx));
     }
 }
 

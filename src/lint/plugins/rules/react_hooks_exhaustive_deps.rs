@@ -471,6 +471,7 @@ impl Rule for ExhaustiveDeps {
         .fixable(Fixable::Code)
         .has_suggestions()
         .recommended();
+    const ON: On = On::new().exprs(&[ExprTag::Call]).finish();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -486,7 +487,15 @@ impl Rule for ExhaustiveDeps {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let on = On::new().exprs(&[ExprTag::Call]);
+        if oxlint::is_followed(file) {
+            return on;
+        }
+        on.finish()
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         let from_settings = || {
             let pattern = file.settings().get(b"react-hooks")?.get(b"additionalEffectHooks")?.as_str()?;
             Regex::from_bytes(pattern, b"").ok()
@@ -497,37 +506,40 @@ impl Rule for ExhaustiveDeps {
             && additional_hooks.is_none()
             && !file.mentions_any(&["useEffect", "useLayoutEffect", "useCallback", "useMemo", "useImperativeHandle"])
         {
-            return State::default();
+            return None;
         }
         if follows_oxlint {
-            on.exprs([ExprTag::Call], |rule, e, cx| {
-                if e.as_call().is_some_and(|it| may_be_hook(it.callee())) {
-                    let mut memo = std::mem::take(&mut cx.state.oxlint);
-                    oxlint::exhaustive_deps::run(cx, e, rule.additional_hooks.as_ref(), &mut memo);
-                    cx.state.oxlint = memo;
-                }
-            });
-            return State::default();
+            return Some(State::default());
         }
-        on.exprs([ExprTag::Call], |rule, e, cx| {
-            if let Some(call) = e.as_call()
-                && may_be_hook(call.callee())
-                && rule.get_reactive_hook_callback_index(call.callee(), &cx.state).is_some()
-            {
-                cx.state.calls.push(e);
-            }
-        });
-        on.finish(|rule, cx| {
-            // What is learned from one call is used for the next ones.
-            let mut calls = std::mem::take(&mut cx.state.calls);
-            utils::sort::sort_unstable_by_key(&mut calls, |it| (it.span().start, std::cmp::Reverse(it.span().end)));
-            for call in calls {
-                rule.visit_call_expression(call, cx);
-            }
-        });
-        State {
+        Some(State {
             additional_hooks,
             ..State::default()
+        })
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if oxlint::is_followed(cx.file()) {
+            if e.as_call().is_some_and(|it| may_be_hook(it.callee())) {
+                let mut memo = std::mem::take(&mut cx.state.oxlint);
+                oxlint::exhaustive_deps::run(cx, e, self.additional_hooks.as_ref(), &mut memo);
+                cx.state.oxlint = memo;
+            }
+            return;
+        }
+        if let Some(call) = e.as_call()
+            && may_be_hook(call.callee())
+            && self.get_reactive_hook_callback_index(call.callee(), &cx.state).is_some()
+        {
+            cx.state.calls.push(e);
+        }
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        // What is learned from one call is used for the next ones.
+        let mut calls = std::mem::take(&mut cx.state.calls);
+        utils::sort::sort_unstable_by_key(&mut calls, |it| (it.span().start, std::cmp::Reverse(it.span().end)));
+        for call in calls {
+            self.visit_call_expression(call, cx);
         }
     }
 }

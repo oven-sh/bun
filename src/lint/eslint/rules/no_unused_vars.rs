@@ -1033,7 +1033,8 @@ impl NoUnusedVars {
 impl Rule for NoUnusedVars {
     const META: Meta =
         Meta::eslint("no-unused-vars", Kind::Problem).has_suggestions().recommended();
-    type State<'a> = ();
+    const ON: On = On::new().finish();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -1063,16 +1064,14 @@ impl Rule for NoUnusedVars {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        // At the end, as upstream: other rules mark variables as used while they run.
-        on.finish(|rule, cx| {
-            let mut last_used_args = LastUsedArgs::default();
-            for symbol in cx.file().symbols() {
-                rule.check(symbol, &mut last_used_args, cx);
-            }
-            if rule.vars == Vars::All {
-                rule.check_global_comments(cx);
-            }
-        });
+    // At the end, as upstream: other rules mark variables as used while they run.
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let mut last_used_args = LastUsedArgs::default();
+        for symbol in cx.file().symbols() {
+            self.check(symbol, &mut last_used_args, cx);
+        }
+        if self.vars == Vars::All {
+            self.check_global_comments(cx);
+        }
     }
 }

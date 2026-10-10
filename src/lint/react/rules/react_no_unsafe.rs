@@ -24,39 +24,42 @@ pub struct State<'a> {
 
 impl Rule for NoUnsafe {
     const META: Meta = Meta::oxlint(Plugin::React, "no-unsafe", Kind::Problem);
+    const ON: On = On::new().members().props();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         NoUnsafe { check_aliases: options.object(0).bool_or("checkAliases", false) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         if !is_jsx(file) || !(file.mentions_any(&UNSAFE_METHODS) || self.check_aliases && file.mentions_any(&ALIASES)) {
-            return State::default();
+            return None;
         }
-        on.members(|rule, member, cx| {
-            if let Some(key) = as_method_definition(Node::Member(member)).and_then(Member::key)
-                && let Some(name) = static_name(key)
-                && rule.is_unsafe_method(name, cx.state.check_unsafe_prefix)
-                && get_parent_component(Node::Member(member), &mut cx.state.parent_component).is_some()
-            {
-                report(key, name, cx);
-            }
-        });
-        on.props(|rule, prop, cx| {
-            if let Some(key) = as_object_property(Node::Prop(prop)).and_then(Prop::key)
-                && let Some(name) = static_name(key)
-                && rule.is_unsafe_method(name, cx.state.check_unsafe_prefix)
-                && cx
-                    .state
-                    .in_es5_component
-                    .find(Node::Prop(prop), |_, ancestor| is_es5_component(ancestor).then_some(()))
-                    .is_some()
-            {
-                report(key, name, cx);
-            }
-        });
-        State { check_unsafe_prefix: supports_unsafe_lifecycle_prefix(file), ..State::default() }
+        Some(State { check_unsafe_prefix: supports_unsafe_lifecycle_prefix(file), ..State::default() })
+    }
+
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(key) = as_method_definition(Node::Member(member)).and_then(Member::key)
+            && let Some(name) = static_name(key)
+            && self.is_unsafe_method(name, cx.state.check_unsafe_prefix)
+            && get_parent_component(Node::Member(member), &mut cx.state.parent_component).is_some()
+        {
+            report(key, name, cx);
+        }
+    }
+
+    fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(key) = as_object_property(Node::Prop(prop)).and_then(Prop::key)
+            && let Some(name) = static_name(key)
+            && self.is_unsafe_method(name, cx.state.check_unsafe_prefix)
+            && cx
+                .state
+                .in_es5_component
+                .find(Node::Prop(prop), |_, ancestor| is_es5_component(ancestor).then_some(()))
+                .is_some()
+        {
+            report(key, name, cx);
+        }
     }
 }
 

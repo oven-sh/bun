@@ -612,31 +612,79 @@ impl<R: Rule> AnyRule for R {
     }
 
     fn start<'r, 'a: 'r>(&'r self, start: Start<'a>) -> Option<Box<dyn Running<'a> + 'r>> {
-        if !R::ON.registers() {
-            let file = start.file;
-            let on = R::ON.and(self.narrow(file));
-            if !has_any_of(file, on) {
-                return None;
-            }
-            let mut cx = Cx {
-                state: Rule::start(self, file)?,
-                base: start.base(),
-            };
-            call_unordered(self, file, on, &mut cx);
-            if !on.has_later() {
-                return None;
-            }
-            return Some(Box::new(Later { rule: self, on, cx }));
+        // It becomes a `Box<dyn ..>` here, in code of the rule: that takes a table of which each rule has its own.
+        Some(match started(self, start)? {
+            Started::On(run) => run,
+            Started::Registered(run) => run,
+        })
+    }
+}
+
+/// A rule at work on a file, after what takes the nodes in no particular order.
+#[doc(hidden)]
+pub enum Started<'r, 'a, R: Rule> {
+    On(Box<Later<'r, 'a, R>>),
+    Registered(Box<Run<'r, 'a, R>>),
+}
+
+impl<'a, R: Rule> Running<'a> for Started<'_, 'a, R> {
+    #[inline]
+    fn listeners_of_walk(&self, add: &mut dyn FnMut(WalkListener)) {
+        match self {
+            Started::On(run) => run.listeners_of_walk(add),
+            Started::Registered(run) => run.listeners_of_walk(add),
         }
-        let mut on = Listeners::new(start.file);
-        let state = self.register(&mut on, start.file);
-        if on.entries.is_empty() {
+    }
+
+    #[inline]
+    fn call(&mut self, entry: u16, node: Node<'a>) {
+        match self {
+            Started::On(run) => run.call(entry, node),
+            Started::Registered(run) => run.call(entry, node),
+        }
+    }
+
+    #[inline]
+    fn finish(&mut self) {
+        match self {
+            Started::On(run) => run.finish(),
+            Started::Registered(run) => run.finish(),
+        }
+    }
+}
+
+/// `None`: nothing is left to call.
+#[inline(always)]
+fn started<'r, 'a: 'r, R: Rule>(rule: &'r R, start: Start<'a>) -> Option<Started<'r, 'a, R>> {
+    if !R::ON.registers() {
+        let file = start.file;
+        let on = R::ON.and(rule.narrow(file));
+        if !has_any_of(file, on) {
             return None;
         }
-        // It becomes a `Box<dyn ..>` here, in code of the rule: that takes a table of which each rule has its own.
-        let run: Box<dyn Running<'a> + 'r> = run_started(self, on, state, start)?;
-        Some(run)
+        let mut cx = Cx {
+            state: Rule::start(rule, file)?,
+            base: start.base(),
+        };
+        call_unordered(rule, file, on, &mut cx);
+        if !on.has_later() {
+            return None;
+        }
+        return Some(Started::On(Box::new(Later { rule, on, cx })));
     }
+    let mut on = Listeners::new(start.file);
+    let state = rule.register(&mut on, start.file);
+    if on.entries.is_empty() {
+        return None;
+    }
+    run_started(rule, on, state, start).map(Started::Registered)
+}
+
+/// For [`rules!`](crate::rules): an arm of a `match` on the rules of a crate is a call of this.
+#[doc(hidden)]
+#[inline(never)]
+pub fn start<'r, 'a: 'r, R: Rule>(rule: &'r R, start: Start<'a>) -> Option<Started<'r, 'a, R>> {
+    started(rule, start)
 }
 
 /// Not inlined: it is the same code for all rules whose states are as large, of which the linker then keeps one copy.
@@ -795,7 +843,8 @@ fn call_unordered<'a, R: Rule>(rule: &R, file: &'a File<'a>, on: On, cx: &mut Cx
 }
 
 /// Such a rule at work on a file, after `call_unordered`.
-struct Later<'r, 'a, R: Rule> {
+#[doc(hidden)]
+pub struct Later<'r, 'a, R: Rule> {
     rule: &'r R,
     /// A part of `R::ON`.
     on: On,
@@ -881,7 +930,8 @@ pub enum WalkListener {
     Exit(NodeTags, u16),
 }
 
-struct Run<'r, 'a, R: Rule> {
+#[doc(hidden)]
+pub struct Run<'r, 'a, R: Rule> {
     rule: &'r R,
     entries: Entries<'a, R>,
     cx: Cx<'a, R>,
@@ -1305,5 +1355,7 @@ macro_rules! rules {
         pub static RULES: &[$crate::runner::RuleEntry] = &[
             $($crate::runner::RuleEntry::of::<rules::$module::$rule>(),)*
         ];
+
+        $crate::rules_as_a_set! { $($module::$rule,)* }
     };
 }

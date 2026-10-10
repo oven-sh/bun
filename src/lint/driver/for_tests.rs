@@ -206,7 +206,7 @@ fn configuration_case(registry: &Registry, case: &Json) -> Json {
         FileConfig::Ignored => Json::String(b"ignored".to_vec()),
         FileConfig::Unconfigured => Json::String(b"unconfigured".to_vec()),
         FileConfig::Matched(resolved) => {
-            let on = resolved.rules.iter();
+            let on = resolved.configured();
             let on = on.filter(|it| it.severity != Severity::Off);
             let on = on.map(|it| Json::String(RuleId::Known(it.entry.meta).to_vec()));
             Json::Array(on.collect())

@@ -396,7 +396,7 @@ fn minimatch(args: &[String]) {
 
 fn describe(config: &ResolvedConfig) -> Vec<(Vec<u8>, Json)> {
     let number = |severity: Severity| Json::Number(f64::from(severity as u8));
-    let rules = config.rules.iter().map(|rule| {
+    let rules = config.configured().map(|rule| {
         let mut value = vec![number(rule.severity)];
         value.extend(rule.options.iter().cloned());
         Json::Array(vec![
@@ -704,7 +704,7 @@ fn resolve(args: &[String]) {
             };
             if let FileConfig::Matched(resolved) = found {
                 matched += 1;
-                rules += resolved.rules.len();
+                rules += resolved.configured().len();
                 let address = std::sync::Arc::as_ptr(&resolved);
                 if !distinct.contains(&address) {
                     distinct.push(address);
@@ -841,10 +841,8 @@ fn parse_fixtures(args: &[String]) {
                     .map(text)
                     .unwrap_or_default();
                 let given = case.get(b"languageOptions").unwrap_or(&null);
-                let config = ResolvedConfig {
-                    language: LanguageOptions::from_json(given, &null),
-                    ..ResolvedConfig::default()
-                };
+                let mut config = ResolvedConfig::default();
+                config.language = LanguageOptions::from_json(given, &null);
                 let messages = with_file(&filename, code, &config.language, |file| {
                     linter()
                         .lint(file, &config, &LintOptions::default())

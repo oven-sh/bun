@@ -38,6 +38,7 @@ const REACT_CONTEXT: Message = Message::new(
 
 impl Rule for OnlyExportComponents {
     const META: Meta = Meta::oxlint(Plugin::React, "only-export-components", Kind::Suggestion);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -52,7 +53,7 @@ impl Rule for OnlyExportComponents {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         let is_extension = |extension: &str| {
             file_extension(file.path()).is_some_and(|it| it.eq_ignore_ascii_case(extension.as_bytes()))
         };
@@ -60,16 +61,20 @@ impl Rule for OnlyExportComponents {
         if !(is_extension("tsx") || is_extension("jsx") || self.check_js && is_extension("js"))
             || [&b".test."[..], b".spec.", b".cy.", b".stories."].into_iter().any(|it| strings::contains(filename, it))
         {
-            return;
+            return None;
         }
         // Something is imported from it: `import "react"` does not count.
         let imports_from_react = |it: Import| {
             it.spec().is("react") && (it.default().is_some() || it.namespace().is_some() || !it.named().is_empty())
         };
         if self.check_js && !import_declarations(file).any(imports_from_react) {
-            return;
+            return None;
         }
-        on.finish(|rule, cx| rule.run_once(cx));
+        Some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        self.run_once(cx);
     }
 }
 

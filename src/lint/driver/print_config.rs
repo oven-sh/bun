@@ -1,7 +1,7 @@
 //! `--print-config`
 
-use bun_lint::language::{Global, Parser, SourceType};
 use bun_core::printer::json_stringify;
+use bun_lint::language::{Global, Parser, SourceType};
 use bun_lint::linter::{ResolvedConfig, RuleId, write_json};
 use bun_lint::options::Json;
 
@@ -76,7 +76,7 @@ pub(crate) fn print(config: Option<&ResolvedConfig>) -> Vec<u8> {
             number(config.linter.report_unused_inline_configs as u32),
         ));
     }
-    let rules = config.rules.iter();
+    let rules = config.configured();
     let rules = rules.filter(|it| !config.only_has_defaults(it));
     let rules = rules.map(|rule| {
         let mut setting = vec![number(rule.severity as u32)];
@@ -93,7 +93,7 @@ pub(crate) fn print(config: Option<&ResolvedConfig>) -> Vec<u8> {
         (rule.configured.rule.id.to_vec(), Json::Array(setting))
     });
     let mut plugins = vec![text(b"@")];
-    let of_rules = config.rules.iter().map(|it| it.entry.meta.plugin);
+    let of_rules = config.configured().map(|it| it.entry.meta.plugin);
     for prefix in config
         .plugins
         .clone()

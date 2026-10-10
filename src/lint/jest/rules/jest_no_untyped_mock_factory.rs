@@ -12,16 +12,19 @@ const ADD_TYPE_PARAMETER_TO_MODULE_MOCK: Message =
 
 impl Rule for NoUntypedMockFactory {
     const META: Meta = Meta::oxlint(Plugin::Jest, "no-untyped-mock-factory", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoUntypedMockFactory
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.is_javascript() && file.mentions_any(&["mock", "doMock"]) && jest::is_test(file) {
-            on.finish(|_, cx| jest::iter_possible_jest_call_node(cx.file()).for_each(|node| run(node, cx)));
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        (!file.is_javascript() && file.mentions_any(&["mock", "doMock"]) && jest::is_test(file)).then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        jest::iter_possible_jest_call_node(cx.file()).for_each(|node| run(node, cx));
     }
 }
 

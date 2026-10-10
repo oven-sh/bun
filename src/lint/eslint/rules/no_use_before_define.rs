@@ -320,6 +320,7 @@ impl NoUseBeforeDefine {
 
 impl Rule for NoUseBeforeDefine {
     const META: Meta = Meta::eslint("no-use-before-define", Kind::Problem);
+    const ON: On = On::new().symbols();
     type State<'a> = Initializers<'a>;
 
     fn new(options: &Options) -> Self {
@@ -328,8 +329,11 @@ impl Rule for NoUseBeforeDefine {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Initializers<'a> {
-        on.symbols(Self::check);
-        Initializers::default()
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Initializers<'a>> {
+        Some(Initializers::default())
+    }
+
+    fn symbol<'a>(&self, variable: Symbol<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(variable, cx);
     }
 }

@@ -28,6 +28,7 @@ impl Rule for PreferImportingJestGlobals {
         Kind::Suggestion,
     )
     .fixable(Fixable::Code);
+    const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -39,10 +40,12 @@ impl Rule for PreferImportingJestGlobals {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if jest::may_have_possible_jest_call_node(file) {
-            on.finish(|rule, cx| rule.run_once(cx));
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        jest::may_have_possible_jest_call_node(file).then_some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        self.run_once(cx);
     }
 }
 

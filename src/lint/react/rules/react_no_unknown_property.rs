@@ -1207,6 +1207,7 @@ fn any_char(name: &[u8], is_it: impl Fn(char) -> bool) -> bool {
 
 impl Rule for NoUnknownProperty {
     const META: Meta = Meta::oxlint(Plugin::React, "no-unknown-property", Kind::Suggestion).has_suggestions();
+    const ON: On = On::new().exprs(&[ExprTag::Jsx]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -1217,71 +1218,69 @@ impl Rule for NoUnknownProperty {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if is_jsx(file) {
-            on.exprs([ExprTag::Jsx], check);
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        is_jsx(file).then_some(())
     }
-}
 
-fn check<'a>(rule: &NoUnknownProperty, e: Expr<'a>, cx: &mut Cx<'a, NoUnknownProperty>) {
-    let ExprKind::Jsx(jsx) = e.kind() else {
-        return;
-    };
-    let attributes = jsx.attrs();
-    if attributes.is_empty() {
-        return;
-    }
-    let Some(el_type) = get_identifier_name(jsx).map(Name::bytes) else {
-        return;
-    };
-    // The name of a component. `fbt` and `fbs` are something else altogether.
-    let starts_with_lowercase = match el_type.first() {
-        Some(first) if first.is_ascii() => first.is_ascii_lowercase(),
-        _ => {
-            strings::contains_char(el_type, b'-')
-                && strings::wtf8_first_codepoint(el_type).and_then(char::from_u32).is_some_and(char::is_lowercase)
-        }
-    };
-    if !starts_with_lowercase || matches!(el_type, b"fbt" | b"fbs") {
-        return;
-    }
-    let names = || attributes.iter().filter_map(Prop::key).filter_map(|key| Some((key, key.name()?.bytes())));
-    let is_valid_html_tag = matches_html_tag_conventions(el_type) && names().all(|it| it.1 != b"is");
-    for (key, actual_name) in names() {
-        if rule.ignore.iter().any(|it| **it == *actual_name) {
-            continue;
-        }
-        if is_valid_data_attr(actual_name) {
-            if rule.require_data_lowercase && any_char(actual_name, char::is_uppercase) {
-                cx.report(key.span(cx.file()), DATA_LOWERCASE_REQUIRED)
-                    .help_with(|| format!("Use '{}' instead", bstr::BStr::new(&actual_name.to_ascii_lowercase())));
-            }
-            continue;
-        }
-        if !is_valid_html_tag || is_valid_aria_property(actual_name) {
-            continue;
-        }
-        let name = normalize_attribute_case(actual_name);
-        if let Some(tags) = get(&ATTRIBUTE_TAGS_MAP, name) {
-            if !tags.iter().any(|it| it.as_bytes() == el_type) {
-                cx.report(key.span(cx.file()), INVALID_PROP_ON_TAG).help_with(|| {
-                    let prop = bstr::BStr::new(actual_name);
-                    format!("Property '{prop}' is only allowed on: {}", tags.join(", "))
-                });
-            }
-            continue;
-        }
-        if contains_name(&DOM_PROPERTIES_NAMES, name) {
-            continue;
-        }
-        let span = key.span(cx.file());
-        let report = cx.report(span, UNKNOWN_PROP);
-        match dom_property_in_other_case(name).or_else(|| get(&DOM_ATTRIBUTES_TO_CAMEL, name)) {
-            Some(prop) => report
-                .help_with(|| format!("Use '{prop}' instead"))
-                .suggest_with(USE_STANDARD_NAME, &[("x1", prop.as_bytes())], |fixer| fixer.replace(span, prop)),
-            None => report.help("Remove unknown property"),
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Jsx(jsx) = e.kind() else {
+            return;
         };
+        let attributes = jsx.attrs();
+        if attributes.is_empty() {
+            return;
+        }
+        let Some(el_type) = get_identifier_name(jsx).map(Name::bytes) else {
+            return;
+        };
+        // The name of a component. `fbt` and `fbs` are something else altogether.
+        let starts_with_lowercase = match el_type.first() {
+            Some(first) if first.is_ascii() => first.is_ascii_lowercase(),
+            _ => {
+                strings::contains_char(el_type, b'-')
+                    && strings::wtf8_first_codepoint(el_type).and_then(char::from_u32).is_some_and(char::is_lowercase)
+            }
+        };
+        if !starts_with_lowercase || matches!(el_type, b"fbt" | b"fbs") {
+            return;
+        }
+        let names = || attributes.iter().filter_map(Prop::key).filter_map(|key| Some((key, key.name()?.bytes())));
+        let is_valid_html_tag = matches_html_tag_conventions(el_type) && names().all(|it| it.1 != b"is");
+        for (key, actual_name) in names() {
+            if self.ignore.iter().any(|it| **it == *actual_name) {
+                continue;
+            }
+            if is_valid_data_attr(actual_name) {
+                if self.require_data_lowercase && any_char(actual_name, char::is_uppercase) {
+                    cx.report(key.span(cx.file()), DATA_LOWERCASE_REQUIRED)
+                        .help_with(|| format!("Use '{}' instead", bstr::BStr::new(&actual_name.to_ascii_lowercase())));
+                }
+                continue;
+            }
+            if !is_valid_html_tag || is_valid_aria_property(actual_name) {
+                continue;
+            }
+            let name = normalize_attribute_case(actual_name);
+            if let Some(tags) = get(&ATTRIBUTE_TAGS_MAP, name) {
+                if !tags.iter().any(|it| it.as_bytes() == el_type) {
+                    cx.report(key.span(cx.file()), INVALID_PROP_ON_TAG).help_with(|| {
+                        let prop = bstr::BStr::new(actual_name);
+                        format!("Property '{prop}' is only allowed on: {}", tags.join(", "))
+                    });
+                }
+                continue;
+            }
+            if contains_name(&DOM_PROPERTIES_NAMES, name) {
+                continue;
+            }
+            let span = key.span(cx.file());
+            let report = cx.report(span, UNKNOWN_PROP);
+            match dom_property_in_other_case(name).or_else(|| get(&DOM_ATTRIBUTES_TO_CAMEL, name)) {
+                Some(prop) => report
+                    .help_with(|| format!("Use '{prop}' instead"))
+                    .suggest_with(USE_STANDARD_NAME, &[("x1", prop.as_bytes())], |fixer| fixer.replace(span, prop)),
+                None => report.help("Remove unknown property"),
+            };
+        }
     }
 }

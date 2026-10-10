@@ -188,6 +188,14 @@ pub(super) fn number(value: usize) -> Json {
     Json::Number(value as f64)
 }
 
+fn fnv_1a(parts: &[&[u8]]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in parts.iter().flat_map(|part| part.iter().chain(&[0])) {
+        hash = (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
 /// GitLab's Code Quality report. The fingerprints are stable from run to run. They are not
 /// oxlint's.
 pub(super) fn write_gitlab(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
@@ -206,7 +214,7 @@ pub(super) fn write_gitlab(out: &mut Vec<u8>, results: &[FileResult], meta: &Met
                 b"major"
             };
             let lines = format!("{}:{end}:", message.line);
-            let fingerprint = crate::evaluate::hash(&[
+            let fingerprint = fnv_1a(&[
                 lines.as_bytes(),
                 &path,
                 b":",

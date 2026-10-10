@@ -126,7 +126,6 @@ pub const PARAMS: &[Param] = &[
     clap::param!("--migrate <source>"),
     clap::param!("--lsp"),
     // Ours.
-    clap::param!("--config-cache"),
     clap::param!("--list-files"),
     clap::param!("--verify"),
 ];
@@ -195,8 +194,6 @@ pub struct Options {
     pub threads: usize,
     pub timing: bool,
     pub cwd: Option<Vec<u8>>,
-    /// What a configuration file that is a program evaluates to is kept for the next run.
-    pub config_cache: bool,
     /// Before a file is written, what is written is parsed and compared with what was there.
     pub verify: bool,
     /// Prints the files that would be formatted, and formats nothing.
@@ -234,7 +231,6 @@ impl Default for Options {
             threads: 0,
             timing: false,
             cwd: None,
-            config_cache: true,
             verify: true,
             list_files: false,
         }
@@ -364,7 +360,6 @@ impl Options {
             },
             b"timing" => self.timing = is_on,
             b"cwd" => self.cwd = owned(),
-            b"config-cache" => self.config_cache = is_on,
             b"verify" => self.verify = is_on,
             _ => {}
         }

@@ -3,12 +3,9 @@
 //! Only the Tailwind CSS of the project knows it, and that is JavaScript. The formatter asks for the order of each list of
 //! classes that it comes across. A file with a class that is not known yet is put aside. When all files have had their
 //! turn, one script answers for all those classes, and the files that were put aside are formatted again.
-//!
-//! What has been found out is kept next to the packages, for as long as Tailwind and what it has loaded stay the same. So
-//! most runs start no script.
 
 use super::files::Kind;
-use crate::evaluate::{evaluate_at, kept_at};
+use crate::evaluate::evaluate;
 use crate::run::{Environment, Fatal};
 use crate::{fs, paths};
 use bun_core::strings;
@@ -21,7 +18,7 @@ use bun_threading::Guarded;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-const SCRIPT: crate::run::Source = &[crate::evaluate::TRACK, include_str!("tailwind.js")];
+const SCRIPT: crate::run::Source = &[crate::evaluate::START, include_str!("tailwind.js")];
 
 /// Which Tailwind is asked: the package in the directory `root`, loaded with one of these files.
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -114,13 +111,10 @@ struct Group {
     known: FxHashMap<Vec<u8>, Rank>,
     /// Asked for, and not known.
     missing: Vec<Vec<u8>>,
-    /// Known to an earlier run, before something that Tailwind has loaded changed.
-    stale: Vec<Vec<u8>>,
 }
 
 #[derive(Default)]
 struct Known {
-    is_loaded: bool,
     by_directory: FxHashMap<Vec<u8>, Option<Found>>,
     /// [`version_of_plugin`], by the directory.
     plugins: FxHashMap<Vec<u8>, Option<(u64, u64)>>,
@@ -189,15 +183,15 @@ impl Orders for OfGroup {
     }
 }
 
-/// Where what is asked and what is answered is kept: next to the packages, of which Tailwind is one.
-fn files(environment: &Environment) -> Option<[Vec<u8>; 2]> {
+/// Where the script reads what it is asked, while it runs: with the packages, of which Tailwind is one. Another `bun format`
+/// can be asking at the same time.
+fn question_file(environment: &Environment) -> Option<Vec<u8>> {
     let has_packages = |directory: &&[u8]| {
         fs::kind(&paths::join(directory, b"node_modules")) == Some(fs::Kind::Directory)
     };
     let root = paths::ancestors(&environment.cwd).find(has_packages)?;
-    let file =
-        |name: &[u8]| paths::join(&paths::join(root, b"node_modules/.cache/bun-format"), name);
-    Some([file(b"tailwind-classes.json"), file(b"tailwind-order.json")])
+    let name = paths::join(root, b"node_modules/.tailwind-classes.json");
+    Some(fs::temporary_name(&name))
 }
 
 impl Known {
@@ -220,7 +214,6 @@ impl Known {
             }
             let group = self.groups.entry(which).or_default();
             group.missing.clear();
-            group.stale.clear();
             group.known.clear();
             for (class, rank) in
                 (answer.get(b"ranks").and_then(Json::as_object)).unwrap_or_default()
@@ -235,19 +228,6 @@ impl Known {
         // Whatever the order of the answers is.
         bun_collections::index_sort::sort_slice(&mut failures[..]);
         failures
-    }
-
-    /// Takes in what an earlier run has asked, the answer to which is of no use any more. It is asked again together with
-    /// the next class that is not known.
-    fn take_in_question(&mut self, question: &Json) {
-        for group in (question.get(b"groups").and_then(Json::as_array)).unwrap_or_default() {
-            if let Some(which) = Which::of(group) {
-                let classes = (group.get(b"classes").and_then(Json::as_array)).unwrap_or_default();
-                self.groups.entry(which).or_default().stale = (classes.iter())
-                    .filter_map(|it| it.as_str().map(<[u8]>::to_vec))
-                    .collect();
-            }
-        }
     }
 }
 
@@ -286,18 +266,6 @@ pub(crate) fn for_file(
         Some(of_config) if is_before(7) => of_config,
         _ => paths::dirname(path),
     };
-    // What earlier runs have found out.
-    if !std::mem::replace(&mut known.is_loaded, true)
-        && let Some([question, kept]) = files(environment)
-    {
-        if let Some(answer) = kept_at(environment, SCRIPT, &kept) {
-            known.take_in(&answer);
-        } else if let Some(question) =
-            (fs::read(&question).ok()).and_then(|text| bun_lint::json::parse(&text))
-        {
-            known.take_in_question(&question);
-        }
-    }
     if !known.by_directory.contains_key(directory) {
         known
             .by_directory
@@ -388,7 +356,7 @@ impl Classes {
         };
         let mut known = self.known.lock();
         let without_package = known.without_package.as_deref().map(needs_package);
-        let Some([question, kept]) = files(environment) else {
+        let Some(question) = question_file(environment) else {
             return Err(without_package.unwrap_or_else(|| needs_package(&environment.cwd)));
         };
         if !known.groups.values().any(|it| !it.missing.is_empty()) {
@@ -398,7 +366,6 @@ impl Classes {
         let groups = known.groups.iter().map(|(which, group)| {
             let mut classes: Vec<&[u8]> = (group.known.keys())
                 .chain(&group.missing)
-                .chain(&group.stale)
                 .map(|it| &it[..])
                 .collect();
             bun_collections::index_sort::sort_slice(&mut classes[..]);
@@ -413,12 +380,9 @@ impl Classes {
             &mut text,
             &Json::Object(vec![(b"groups".to_vec(), Json::Array(groups.collect()))]),
         );
-        // Another `bun format` can be asking at the same time.
-        let own = fs::temporary_name(&question);
-        fs::write_new(&own, &text).map_err(|error| fail(&fs::describe(&error)))?;
-        let answer = evaluate_at(environment, SCRIPT, &own, Some(kept));
-        // The next run asks it again if Tailwind has changed.
-        fs::rename_or_remove(&own, &question);
+        fs::write_new(&question, &text).map_err(|error| fail(&fs::describe(&error)))?;
+        let answer = evaluate(environment, SCRIPT, &question);
+        fs::remove(&question);
         let answer = answer.map_err(|Fatal(error)| error)?;
         let failures: Vec<Vec<u8>> = (without_package.into_iter())
             .chain(known.take_in(&answer).iter().map(|it| fail(it)))

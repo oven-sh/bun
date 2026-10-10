@@ -32,6 +32,7 @@ use bun_lint::linter::{Config, FileConfig, LintMessage, Linter, ResolvedConfig};
 use bun_lint::options::Json;
 use bun_lint::rule::Plugin;
 use bun_lint::runner::RuleEntry;
+use std::borrow::Cow;
 use std::fmt::Write as _;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -166,18 +167,48 @@ const PLUGINS: [(&str, Plugin); 20] = [
 ];
 
 /// The directories of the bundle that are written to the disk.
-const PROJECTS: [&[u8]; 5] = [
+const PROJECTS: [&[u8]; 6] = [
     b"import-project/",
     b"oxlint-import-project/",
     b"n-project/",
+    b"prettier-project/",
     b"typescript-eslint-project/",
     b"node_modules/",
 ];
 
-fn write_file(path: &[u8], contents: &[u8]) {
+/// In a fixture it stands for the directory of its project, which is below `--projects`: in the names of files, in options,
+/// settings, messages and code.
+const PROJECT: &[u8] = b"/__project__";
+
+/// The directory of `PROJECTS` that the cases of a rule of `plugin` are files of.
+fn project_of(plugin: Plugin, is_of_oxlint: bool) -> &'static [u8] {
+    match plugin {
+        _ if is_of_oxlint => b"oxlint-import-project",
+        Plugin::Node => b"n-project",
+        Plugin::Prettier => b"prettier-project",
+        _ => b"import-project",
+    }
+}
+
+/// `a/b.symlink` in the bundle is the symbolic link `a/b`, and what it has is where the link leads.
+const LINK: &[u8] = b".symlink";
+
+fn make_parent(path: &[u8]) {
     if let Some(end) = strings::last_index_of_char(path, b'/').filter(|&end| end > 0) {
         let _ = bun_sys::mkdir_recursive(&path[..end]);
     }
+}
+
+fn write_link(path: &[u8], target: &[u8]) {
+    make_parent(path);
+    let _ = bun_sys::symlink(
+        &bun_core::ZBox::from_bytes(target),
+        &bun_core::ZBox::from_bytes(path),
+    );
+}
+
+fn write_file(path: &[u8], contents: &[u8]) {
+    make_parent(path);
     let _ = bun_sys::File::write_file(
         bun_core::Fd::cwd(),
         &bun_core::ZBox::from_bytes(path),
@@ -285,6 +316,7 @@ fn kind_of(entry: &RuleEntry, case: &Json) -> Kind {
         None | Some(b"parser: custom") if is_type_aware => Kind::Typed,
         None | Some(b"parser: custom")
             if entry.meta.needs_modules
+                || entry.meta.plugin == Plugin::Prettier
                 || (entry.meta.plugin == Plugin::Node && !entry.meta.follows_oxlint) =>
         {
             Kind::InProject
@@ -341,13 +373,7 @@ fn run_case(
             rules.finish(messages)
         }
         Kind::InProject => {
-            let directory: &[u8] = if fixture.plugin_of_oxlint().is_some() {
-                b"oxlint-import-project"
-            } else if entry.meta.plugin == Plugin::Node {
-                b"n-project"
-            } else {
-                b"import-project"
-            };
+            let directory = project_of(entry.meta.plugin, fixture.plugin_of_oxlint().is_some());
             // A fixture that is not in the bundle yet has the names of the files as they were recorded.
             let project = match fixture.json.get(b"root").and_then(Json::as_str) {
                 Some(root) => root.to_vec(),
@@ -469,10 +495,14 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
             .paths()
             .filter(|path| PROJECTS.iter().any(|it| path.starts_with(it)))
         {
-            write_file(
-                &[projects, b"/", path].concat(),
+            let (to, contents) = (
+                [projects, b"/", path].concat(),
                 bundle.read(path).unwrap_or_default(),
             );
+            match to.strip_suffix(LINK) {
+                Some(link) => write_link(link, contents),
+                None => write_file(&to, contents),
+            }
         }
     }
     let (mut fixtures, mut missing) = (Vec::new(), 0);
@@ -508,7 +538,14 @@ pub fn run(bundle: &Bundle<'_>, flags: &Flags<'_>, host: &dyn Host) {
                 missing += 1;
                 continue;
             };
-            match bundle.read(path).and_then(bun_lint::json::parse) {
+            let text = bundle.read(path).map(|text| match flags.projects {
+                Some(projects) if strings::contains(text, PROJECT) => {
+                    let project = [projects, b"/", project_of(*plugin, is_of_oxlint)].concat();
+                    Cow::Owned(strings::replace_owned(text, PROJECT, &project))
+                }
+                _ => Cow::Borrowed(text),
+            });
+            match text.and_then(|it| bun_lint::json::parse(&it)) {
                 Some(json) => fixtures.push(Fixture {
                     id,
                     entry,

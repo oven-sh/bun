@@ -18,9 +18,6 @@ pub const PARAMS: &[Param] = &[
         "--flavor <tool>                 Whose configuration files count where there are both: <b>eslint<r> or <b>oxlint<r>"
     ),
     clap::param!(
-        "--no-config-cache               Run <b>eslint.config.js<r> again even if nothing that it depends on has changed"
-    ),
-    clap::param!(
         "--rule <rule>...                Configure a rule: <b>--rule 'eqeqeq: [error, smart]'<r>"
     ),
     clap::param!(
@@ -134,7 +131,6 @@ pub const PARAMS: &[Param] = &[
     clap::param!("--error-on-unmatched-pattern"),
     // ESLint's, with little or nothing to do here.
     clap::param!("--list-files"),
-    clap::param!("--config-cache"),
     clap::param!("--stats"),
     clap::param!("--env-info"),
     clap::param!("-v, --version"),
@@ -255,8 +251,6 @@ pub struct Options {
     pub has_flag_of_eslint: bool,
     /// The other way round.
     pub has_flag_of_oxlint: bool,
-    /// What a configuration file that is a program evaluates to is kept for the next run.
-    pub config_cache: bool,
     pub ext: Option<Vec<Vec<u8>>>,
     pub global: Vec<Vec<u8>>,
     pub parser: Option<Vec<u8>>,
@@ -349,7 +343,6 @@ impl Default for Options {
             flavor: None,
             has_flag_of_eslint: false,
             has_flag_of_oxlint: false,
-            config_cache: true,
             ext: None,
             global: Vec::new(),
             parser: None,
@@ -489,7 +482,6 @@ impl Options {
                     }
                 })
             }
-            b"config-cache" => self.config_cache = is_on,
             b"rule" => object(name, text, &mut self.rule)?,
             b"global" => self.global.extend(list(text)),
             b"parser-options" => object(name, text, &mut self.parser_options)?,

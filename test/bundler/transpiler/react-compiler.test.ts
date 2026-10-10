@@ -3123,6 +3123,53 @@ test("react-compiler memory does not grow with the square of the size of a compo
   expect(pattern - empty).toBeLessThan(small ? 70 : 300);
 });
 
+// Each default in a pattern is a join. EnterSSA made a phi at each join for each variable that is read after it, and
+// EliminateRedundantPhi took them out again: 1,000 defaults, half a million phis, 484 MB. Now 150 MB.
+// Not where the empty build takes 330 MB, which is more than either pattern does.
+test.skipIf(isDebug || isASAN)(
+  "react-compiler memory does not grow with the square of the defaults in a pattern",
+  async () => {
+    const pattern = (elements: number) => `
+    import { useState } from "react";
+    export default function App(p) {
+      const [s] = useState(0);
+      const [${Array.from({ length: elements }, (_, i) => `e${i} = ${i}`).join(", ")}] = p.items;
+      return <div>{e0 + e${elements - 1}}{s}</div>;
+    }
+  `;
+    using dir = tempDir("react-compiler-defaults", {
+      "empty.jsx": `export default function App() { return null; }`,
+      "half.jsx": pattern(500),
+      "whole.jsx": pattern(1000),
+      // The peak of a process is never below that of the one that spawned it, and this one is small.
+      "measure.js": `
+      const peak = entry =>
+        Bun.spawnSync({
+          cmd: [process.execPath, "build", "--react-compiler", "--target=browser", "--external=*", entry],
+          stdout: "ignore",
+          stderr: "inherit",
+        }).resourceUsage.maxRSS;
+      console.log(JSON.stringify(["empty.jsx", "half.jsx", "whole.jsx"].map(peak)));
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "measure.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const [empty, half, whole] = JSON.parse(stdout);
+    // 4.8 times. Else what is measured is not the pattern.
+    expect(half).toBeGreaterThan(empty * 2);
+    // 1.9, and 2.95 without the fix.
+    expect((whole - empty) / (half - empty)).toBeLessThan(2.5);
+    expect(exitCode).toBe(0);
+  },
+);
+
 // InferTypes puts the type of a phi into each phi that it is an operand of, and it copied it. Variables that are assigned
 // from each other in loops with joins multiply: these 500 bytes took all the memory there is, in the original too.
 // Where the fix is missing, this test takes all the memory that the machine gives it until its time is over.

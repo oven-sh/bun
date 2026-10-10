@@ -84,8 +84,8 @@ fn run(args: &[String]) {
             files.sort();
             let session = bun_sema::session::Session::new();
             let atoms = Interner::new_in(&session);
-            // --repeat=n [--threads=n]: all files are read first, then parsed and lowered n times,
-            // to measure parsing and lowering alone.
+            // --repeat=n [--threads=n]: all files are read first, then parsed n times, to measure
+            // parsing alone.
             if let Some(repeat) = flag("--repeat=").and_then(|n| n.parse::<u64>().ok()) {
                 let threads = flag("--threads=").and_then(|n| n.parse().ok());
                 let read = |file: &String| read_file(file).unwrap_or_default();

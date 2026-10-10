@@ -58,6 +58,11 @@ impl ExplicitLengthCheck {
         cx.report(node, if is_zero { ZERO } else { NON_ZERO })
             .data("prop_name", property)
             .data("op_and_rhs", check_code)
+            // Where there is a fix oxlint says what it says of any.
+            .help_with(|| match (auto_fix, std::str::from_utf8(property.bytes())) {
+                (false, Ok(property)) => format!("Replace `.{property}` with `.{property} {check_code}`."),
+                _ => String::new(),
+            })
             .fix(|fixer| {
                 if !auto_fix {
                     return None;

@@ -1892,7 +1892,7 @@ pub struct FileIn<S: Storage> {
     /// The parser rejected the file: the HIR is partial or empty. Only parse errors are reported
     /// for it.
     pub has_errors: bool,
-    /// The parser, the lowering pass or the binder ran out of stack: the HIR is partial or empty.
+    /// The parser or the binder ran out of stack: the HIR is partial or empty.
     /// The file is reported as not fully checked and the exit code is 1.
     pub ran_out_of_stack: bool,
     /// `@d`: the decorated node, and the expression. In source order.
@@ -1902,7 +1902,7 @@ pub struct FileIn<S: Storage> {
     /// Two of the parameters of a function or a signature may bind one name. Only `bun_sema_parser` says so, and it may say
     /// so of what a speculative parse has given up.
     pub may_bind_a_parameter_twice: bool,
-    /// Diagnostics produced while parsing and lowering the file.
+    /// Diagnostics produced while parsing the file.
     pub diagnostics: S::Kept<Diagnostic>,
     /// `hasParseDiagnostics`: the parser or the scanner reported an error. `grammarErrorOnNode` and the binder's checks of
     /// reserved names then report nothing.

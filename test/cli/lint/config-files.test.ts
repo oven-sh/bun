@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
-import { existsSync, readdirSync, readFileSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { dirname, join, sep } from "node:path";
 import { endChildren, spawn } from "../children";
 import { cases as rowsOfESLint8 } from "./oracle/driver/eslintrc-cli-cases.mjs";
 import differencesFromESLint8 from "./oracle/driver/eslintrc-cli.differences.json";
@@ -641,27 +641,24 @@ describe.concurrent("a note says that a plugin that is built in is installed in 
   });
 });
 
-describe.concurrent("what an eslint.config.js evaluates to is kept", () => {
-  // Up to eleven runs, of two processes each.
+describe.concurrent("every run evaluates an eslint.config.js", () => {
   const timeout = isDebug || isASAN ? 120_000 : 30_000;
-  // Counts how often it runs.
-  const counted = `import { appendFileSync } from "node:fs";\nappendFileSync(new URL("./runs.txt", import.meta.url), "x");\n`;
 
-  /** A project. `write` writes a file as if that had been `age` seconds ago: what has just been written is not kept. */
+  /** A project. `write` writes a file as if that had been a minute ago. `run`: the rules that report something. */
   function project(files: Record<string, string>) {
-    const dir = tempDir("bun-lint-config-cache", { "node_modules/.keep": "", "a.js": code, ...files });
+    const dir = tempDir("bun-lint-config-evaluated", { "node_modules/.keep": "", "a.js": code });
     const root = String(dir);
-    const write = (name: string, text: string, age: number) => {
+    const write = (name: string, text: string) => {
+      mkdirSync(dirname(join(root, name)), { recursive: true });
       writeFileSync(join(root, name), text);
-      const time = Date.now() / 1000 - age;
+      const time = Date.now() / 1000 - 60;
       utimesSync(join(root, name), time, time);
     };
-    for (const [name, text] of Object.entries(files)) write(name, text, 60);
-    /** The rules that report something, and how often the file has run so far. */
-    const run = async (more: Record<string, string> = {}, args: string[] = []) => {
+    for (const [name, text] of Object.entries(files)) write(name, text);
+    const run = async (more: Record<string, string> = {}) => {
       await using proc = spawn({
-        cmd: [...command, "--threads", "2", "-f", "unix", ...args, "a.js"],
-        env: { ...env, STRICT: undefined, ...more },
+        cmd: [...command, "--threads", "2", "-f", "unix", "a.js"],
+        env: { ...env, SOME_TOKEN: undefined, ...more },
         cwd: root,
         stdin: "ignore",
         stdout: "pipe",
@@ -669,70 +666,48 @@ describe.concurrent("what an eslint.config.js evaluates to is kept", () => {
       });
       const stdout = await proc.stdout.text();
       await proc.exited;
-      const rules = [...stdout.matchAll(/ \[Error\/(.+)\]\r?$/gm)].map(it => it[1]).sort();
-      return `${rules} ${readFileSync(join(root, "runs.txt"), "utf8").length}`;
+      return [...stdout.matchAll(/ \[Error\/(.+)\]\r?$/gm)].map(it => it[1]).sort();
     };
     return { [Symbol.dispose]: () => dir[Symbol.dispose](), root, write, run };
   }
 
   test(
-    "until the file, what it imports or what it reads changes",
+    "a package that it looks for is found as soon as it is installed",
     async () => {
       using it = project({
-        "eslint.config.mjs": `${counted}import { readFileSync } from "node:fs";\nimport imported from "./imported.mjs";
-        const read = JSON.parse(readFileSync(new URL("./read.json", import.meta.url), "utf8"));
-        export default [{ rules: { ...imported, ...read } }];`,
-        "imported.mjs": `export default { "no-var": "error" };`,
-        "read.json": `{}`,
+        "eslint.config.mjs": `let optional;
+        try {
+          optional = (await import("eslint-config-optional")).default;
+        } catch {}
+        export default [optional ?? { rules: { "no-var": "error" } }];`,
       });
-      expect([await it.run(), await it.run()]).toEqual(["no-var 1", "no-var 1"]);
-      expect(readdirSync(join(it.root, "node_modules/.cache/bun-lint"))).toEqual([
-        expect.stringMatching(/^\w{16}\.json$/),
-      ]);
-      expect(await it.run({}, ["--no-config-cache"])).toBe("no-var 2");
-      it.write("imported.mjs", `export default { "no-debugger": "error" };`, 30);
-      expect([await it.run(), await it.run()]).toEqual(["no-debugger 3", "no-debugger 3"]);
-      it.write("read.json", `{ "eqeqeq": "error" }`, 30);
-      expect([await it.run(), await it.run()]).toEqual(["eqeqeq,no-debugger 4", "eqeqeq,no-debugger 4"]);
-      it.write("eslint.config.mjs", `${counted}export default [{ rules: { "no-var": "error" } }];`, 30);
-      expect([await it.run(), await it.run()]).toEqual(["no-var 5", "no-var 5"]);
+      expect(await it.run()).toEqual(["no-var"]);
+      it.write("node_modules/eslint-config-optional/package.json", `{ "name": "eslint-config-optional" }`);
+      it.write("node_modules/eslint-config-optional/index.js", `module.exports = { rules: { eqeqeq: "error" } };`);
+      expect(await it.run()).toEqual(["eqeqeq"]);
     },
     timeout,
   );
 
   test(
-    "until the package.json of a package that it imports changes",
-    async () => {
-      const description = (version: string) => JSON.stringify({ name: "shared", version, main: "index.js" });
-      using it = project({
-        "eslint.config.mjs": `${counted}import shared from "shared";\nexport default [shared];`,
-        "node_modules/shared/package.json": description("1.0.0"),
-        "node_modules/shared/index.js": `module.exports = { rules: { "no-var": "error" } };`,
-      });
-      expect([await it.run(), await it.run()]).toEqual(["no-var 1", "no-var 1"]);
-      it.write("node_modules/shared/index.js", `module.exports = { rules: { "eqeqeq": "error" } };`, 30);
-      it.write("node_modules/shared/package.json", description("1.0.1"), 30);
-      expect([await it.run(), await it.run()]).toEqual(["eqeqeq 2", "eqeqeq 2"]);
-    },
-    timeout,
-  );
-
-  test(
-    "until an environment variable that it reads changes, also one that is in an .env",
+    "nothing is left in the project, whatever it reads",
     async () => {
       using it = project({
-        "eslint.config.mjs": `${counted}export default [{ rules: { "no-var": "error", eqeqeq: process.env.STRICT === "1" ? "error" : "off" } }];`,
+        "eslint.config.mjs": `import { readFileSync } from "node:fs";
+        const rule = readFileSync(new URL("./rule.txt", import.meta.url), "utf8");
+        export default [{ rules: { [rule]: process.env.SOME_TOKEN ? "error" : "off" } }];`,
+        "rule.txt": "no-var",
       });
-      expect([await it.run(), await it.run()]).toEqual(["no-var 1", "no-var 1"]);
-      expect([await it.run({ STRICT: "1" }), await it.run({ STRICT: "1" })]).toEqual([
-        "eqeqeq,no-var 2",
-        "eqeqeq,no-var 2",
+      expect(await it.run({ SOME_TOKEN: "synthetic" })).toEqual(["no-var"]);
+      expect(await it.run()).toEqual([]);
+      const left = readdirSync(it.root, { recursive: true }) as string[];
+      expect(left.map(name => name.replaceAll(sep, "/")).sort()).toEqual([
+        "a.js",
+        "eslint.config.mjs",
+        "node_modules",
+        "node_modules/.keep",
+        "rule.txt",
       ]);
-      expect([await it.run({ UNRELATED: "1" }), await it.run({ UNRELATED: "2" })]).toEqual(["no-var 3", "no-var 3"]);
-      it.write(".env", "STRICT=1\n", 30);
-      expect([await it.run(), await it.run()]).toEqual(["eqeqeq,no-var 4", "eqeqeq,no-var 4"]);
-      it.write(".env", "STRICT=0\n", 20);
-      expect([await it.run(), await it.run()]).toEqual(["no-var 5", "no-var 5"]);
     },
     timeout,
   );

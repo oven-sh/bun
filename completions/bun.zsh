@@ -772,7 +772,6 @@ _bun_lint_completion() {
         '-c[Use this configuration file instead of looking for one]:config:_files' \
         '--no-config-lookup[Do not look for a configuration file]' \
         '--flavor[Whose configuration files count where there are both\: eslint or oxlint]:flavor' \
-        '--no-config-cache[Run eslint.config.js again even if nothing that it depends on has changed]' \
         '--rule[Configure a rule\: --rule '"'"'eqeqeq\: \[error, smart\]'"'"']:rule' \
         '--global[Define global variables\: --global a,b\:true]:global' \
         '--parser-options[Set parser options\: --parser-options projectService\:true]:parser-options' \

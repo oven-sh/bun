@@ -50,8 +50,7 @@ function shorthandName(name, prefix) {
 const isFilePath = name => /^\.{1,2}[/\\]/u.test(name) || nodePath.isAbsolute(name);
 const textOf = error => String(error?.message ?? error);
 const isMissing = error => error?.code === "MODULE_NOT_FOUND";
-// What is missing today can be installed tomorrow, and no file that is here changes with that.
-const why = (text, $missing) => (giveUp(), { $error: text, $missing });
+const why = (text, $missing) => ({ $error: text, $missing });
 // `ModuleResolver.resolve`. `from`: a file, with `/`.
 const resolveFrom = (request, from) => createRequire(resolve(from)).resolve(request);
 const portable = file => portablePath(file, nodePath);

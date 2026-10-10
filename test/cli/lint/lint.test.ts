@@ -12,7 +12,6 @@ import {
   realpathSync,
   statSync,
   symlinkSync,
-  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, parse, posix, sep, win32 } from "node:path";
@@ -3867,7 +3866,7 @@ describe.concurrent("what bun lint takes from Bun", () => {
     { BUN_INSPECT_PRELOAD: "./nowhere.js" },
     { BUN_OPTIONS: "--preload=./nowhere.js" },
   ])("%j is not for the process that runs the configuration file", async variables => {
-    const result = await bun(files, ["lint", "-f", "unix", "--no-config-cache", "sub"], variables);
+    const result = await bun(files, ["lint", "-f", "unix", "sub"], variables);
     expect(result.stdout).toStartWith("<dir>/sub/b.js:1:1: Unexpected 'debugger' statement.");
     expect(result.exitCode).toBe(1);
   });
@@ -4660,54 +4659,6 @@ foo(b)
 
   describe.concurrent("a configuration file that is a program", () => {
     const timeout = slow ? 240_000 : 30_000;
-    /** Makes the file as old as a file that nobody is working on: what depends on one that has just been written is not kept. */
-    const age = (path: string, seconds: number) => {
-      const time = new Date(Date.now() - seconds * 1000);
-      utimesSync(path, time, time);
-    };
-
-    test(
-      "what it exports is kept until the file, what it has read, or a variable of the environment changes",
-      async () => {
-        // Windows makes no difference between upper and lower case in the name of a variable.
-        const name = isWindows ? "bun_lint_platform_rule" : "BUN_LINT_PLATFORM_RULE";
-        const config = (comment: string) => `// ${comment}
-        const fs = require("node:fs");
-        fs.appendFileSync(__dirname + "/evaluated.txt", "x");
-        const { rule } = JSON.parse(fs.readFileSync(require("node:path").join(__dirname, "settings", "rule.json"), "utf8"));
-        module.exports = [{ rules: { [process.env.${name} ?? rule]: "error" } }];`;
-        using dir = tempDir("bun-lint-platform", {
-          "node_modules/.keep": "",
-          "eslint.config.cjs": config("one"),
-          "settings/rule.json": `{ "rule": "no-debugger" }`,
-          "a.js": "debugger;\nvar a;\n",
-        });
-        const at = (...names: string[]) => join(String(dir), ...names);
-        const run = async (variable?: string) => {
-          const { stdout } = await lint(dir, ["-f", "json", "a.js"], { env: { BUN_LINT_PLATFORM_RULE: variable } });
-          return [
-            JSON.parse(stdout)[0].messages.map((it: any) => it.ruleId),
-            readFileSync(at("evaluated.txt"), "utf8"),
-          ];
-        };
-        age(at("eslint.config.cjs"), 60);
-        age(at("settings", "rule.json"), 60);
-        expect(await run()).toEqual([["no-debugger"], "x"]);
-        expect(await run()).toEqual([["no-debugger"], "x"]);
-        // As long as before.
-        writeFileSync(at("settings", "rule.json"), `{ "rule": "no-var"      }`);
-        age(at("settings", "rule.json"), 30);
-        expect(await run()).toEqual([["no-var"], "xx"]);
-        expect(await run()).toEqual([["no-var"], "xx"]);
-        expect(await run("no-debugger")).toEqual([["no-debugger"], "xxx"]);
-        expect(await run("no-debugger")).toEqual([["no-debugger"], "xxx"]);
-        writeFileSync(at("eslint.config.cjs"), config("two"));
-        age(at("eslint.config.cjs"), 30);
-        expect(await run("no-debugger")).toEqual([["no-debugger"], "xxxx"]);
-      },
-      timeout,
-    );
-
     const rules = `export default [{ rules: { "no-debugger": "error", "no-var": "warn" } }];`;
     test.each([
       ["exports a configuration", rules, true, 1],
@@ -4734,26 +4685,19 @@ foo(b)
       ["leaves", `process.exit(0);`, false, 2],
       ["leaves with an error, and without a word", `process.exit(3);`, false, 2],
     ])(
-      "the first run is as the next: one that %s",
-      async (_, config, isKept, exitCode) => {
+      "one that %s",
+      async (_, config, isLoaded, exitCode) => {
         using dir = tempDir("bun-lint-platform", {
           "node_modules/.keep": "",
           "eslint.config.mjs": config,
           "a.js": "debugger;\nvar a;\n",
         });
-        age(join(String(dir), "eslint.config.mjs"), 60);
-        const run = async () => {
-          const { stdout, stderr, exitCode } = await lint(dir, ["a.js"]);
-          return { stdout, stderr: stderr.replace(/\[[\d.]+m?s\]/, "[time]"), exitCode };
-        };
-        const first = await run();
-        // What fails is run again.
-        expect(existsSync(join(String(dir), "node_modules", ".cache", "bun-lint"))).toBe(isKept);
-        expect(await run()).toEqual(first);
+        const result = await lint(dir, ["a.js"]);
         // What it prints is seen only if it fails.
-        expect(first.stdout + first.stderr).not.toMatch(/\bout\b|\berr\b|\bold\b/);
-        if (!isKept) expect(first.stderr).toMatch(/eslint\.config\.mjs:\r?\n./);
-        expect(first.exitCode).toBe(exitCode);
+        expect(result.stdout + result.stderr).not.toMatch(/\bout\b|\berr\b|\bold\b/);
+        if (!isLoaded) expect(result.stderr).toMatch(/eslint\.config\.mjs:\r?\n./);
+        expect(everythingIn(dir)).toEqual(["a.js", "eslint.config.mjs", "node_modules", "node_modules/.keep"]);
+        expect(result.exitCode).toBe(exitCode);
       },
       timeout,
     );
@@ -4810,9 +4754,9 @@ foo(b)
       const driver = join(import.meta.dir, "..", "..", "..", "src", "lint", "driver");
       const read = (...names: string[]) => names.map(name => readFileSync(join(driver, name), "utf8")).join("");
       const scripts = {
-        eslint: read("evaluate-track.js", "evaluate-describe.js", "evaluate-eslint.js"),
-        prettier: read("evaluate-track.js", join("fmt", "evaluate-prettier.js")),
-        tailwind: read("evaluate-track.js", join("fmt", "tailwind.js")),
+        eslint: read("evaluate-start.js", "evaluate-describe.js", "evaluate-eslint.js"),
+        prettier: read("evaluate-start.js", join("fmt", "evaluate-prettier.js")),
+        tailwind: read("evaluate-start.js", join("fmt", "tailwind.js")),
       };
       // `quote_cmd_arg` of libuv.
       const quoted = (text: string) =>

@@ -35,7 +35,9 @@ struct Chunks<E, const FIRST: u32, A: Allocator + Clone> {
     /// chunks before it and `1 << FIRST` more. Indexed by `Located::chunk`.
     bases: [AtomicPtr<E>; CHUNKS],
     /// Null, or where the chunk starts. Nothing reads it: no address in `bases` is in a chunk, so to a tool that looks for
-    /// what a process still refers to when it ends without dropping this, the chunks would be lost.
+    /// what a process still refers to when it ends without dropping this, the chunks would be lost. Only where there is such
+    /// a tool: it is as large as `bases`, a map has 64 of these, and a resolver for each referenced project has five maps.
+    #[cfg(bun_asan)]
     starts: [AtomicPtr<E>; CHUNKS],
     alloc: A,
     owns: Owns<E>,
@@ -53,6 +55,7 @@ impl<E, const FIRST: u32, A: Allocator + Clone> Chunks<E, FIRST, A> {
     fn new_in(alloc: A) -> Self {
         Chunks {
             bases: [const { AtomicPtr::new(null_mut()) }; CHUNKS],
+            #[cfg(bun_asan)]
             starts: [const { AtomicPtr::new(null_mut()) }; CHUNKS],
             alloc,
             owns: PhantomData,
@@ -115,6 +118,7 @@ impl<E, const FIRST: u32, A: Allocator + Clone> Chunks<E, FIRST, A> {
             Ordering::Acquire,
         ) {
             Ok(_) => {
+                #[cfg(bun_asan)]
                 self.starts[chunk].store(fresh, Ordering::Relaxed);
                 base
             }
@@ -135,7 +139,10 @@ impl<E, const FIRST: u32, A: Allocator + Clone> Chunks<E, FIRST, A> {
             let base = base.get_mut();
             if len > longest && !base.is_null() {
                 let first = std::mem::replace(base, null_mut()).wrapping_add(len);
-                *self.starts[chunk].get_mut() = null_mut();
+                #[cfg(bun_asan)]
+                {
+                    *self.starts[chunk].get_mut() = null_mut();
+                }
                 let chunk = slice_from_raw_parts_mut(first, len);
                 // SAFETY: `install` stored the address of a box of this length and this allocator,
                 // less `len`. It is not in `bases` any more, and `&mut self` shows that no

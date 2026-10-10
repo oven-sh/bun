@@ -832,14 +832,7 @@ impl<'c> Configs<'c> {
                 )
             })
         };
-        let run = || {
-            evaluate::evaluate(
-                self.environment,
-                evaluate::PRETTIER,
-                path,
-                self.options.config_cache,
-            )
-        };
+        let run = || evaluate::evaluate(self.environment, evaluate::PRETTIER, path);
         let fail = |why: &[u8]| {
             Fatal([b"Cannot load the configuration file ", path, b":\n", why].concat())
         };

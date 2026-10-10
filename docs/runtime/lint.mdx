@@ -792,8 +792,6 @@ bun lint -c eslint.ci.config.js
 
 Bun runs `eslint.config.js` in a separate process. A TypeScript configuration file needs no extra package.
 
-Loading `typescript-eslint` takes longer than linting most projects, so Bun keeps the evaluated configuration in `node_modules/.cache/bun-lint`. Bun evaluates the file again when it changes, or when a file it imports or reads, an installed package it imports, or an environment variable it reads changes. That includes a variable from an `.env` file next to the configuration file. Use `--no-config-cache` to evaluate it every time. In CI, keep that directory between runs.
-
 ### A project with both tools
 
 A project that runs `oxlint && eslint` has files of both. Say which tool each run stands in for:
@@ -1065,7 +1063,6 @@ bun lint [flags] [...files, directories or patterns]
 | `-c`, `--config <path>`                    | Use this configuration file instead of looking for one             |
 | `--no-config-lookup`                       | Do not look for a configuration file                               |
 | `--flavor <tool>`                          | The tool that the run stands in for: `eslint` or `oxlint`          |
-| `--no-config-cache`                        | Evaluate `eslint.config.js` again even if nothing changed          |
 | `--rule <rule>`                            | Configure a rule: `--rule 'eqeqeq: [error, smart]'`                |
 | `--global <names>`                         | Define global variables: `--global a,b:true`                       |
 | `--parser-options <options>`               | Set parser options: `--parser-options projectService:true`         |

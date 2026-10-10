@@ -223,7 +223,6 @@ complete -c bun -n "__fish_use_subcommand" -a "lint" -d "Lint JavaScript and Typ
 complete -c bun -n "__fish_seen_subcommand_from lint" -s "c" -l "config" -r -F -d "Use this configuration file instead of looking for one"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "no-config-lookup" -d "Do not look for a configuration file"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "flavor" -r -d "Whose configuration files count where there are both: eslint or oxlint"
-complete -c bun -n "__fish_seen_subcommand_from lint" -l "no-config-cache" -d "Run eslint.config.js again even if nothing that it depends on has changed"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "rule" -r -d "Configure a rule: --rule 'eqeqeq: [error, smart]'"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "global" -r -d "Define global variables: --global a,b:true"
 complete -c bun -n "__fish_seen_subcommand_from lint" -l "parser-options" -r -d "Set parser options: --parser-options projectService:true"

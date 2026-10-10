@@ -70,15 +70,6 @@ pub(crate) fn kind(path: &[u8]) -> Option<Kind> {
     Some(kind_and_size(path)?.0)
 }
 
-/// The time of the last change of what is at `path` and its size, as text, and that time in
-/// seconds.
-pub(crate) fn stamp(path: &[u8]) -> Option<(Vec<u8>, i64)> {
-    let found = bun_sys::stat(for_libuv(path, &mut path_buffer_pool::get())).ok()?;
-    let changed = bun_sys::stat_mtime(&found);
-    let text = format!("{}.{:09} {}", changed.sec, changed.nsec, found.st_size);
-    Some((text.into_bytes(), changed.sec))
-}
-
 pub(crate) fn is_file(path: &[u8]) -> bool {
     kind(path) == Some(Kind::File)
 }
@@ -186,13 +177,6 @@ pub(crate) fn temporary_name(path: &[u8]) -> Vec<u8> {
     [path, temporary_suffix().as_bytes()].concat()
 }
 
-/// Gives the file at `from` the name `to`, in place of what has it. If that cannot be, `from` is removed.
-pub(crate) fn rename_or_remove(from: &[u8], to: &[u8]) {
-    if rename(from, to).is_err() {
-        remove(from);
-    }
-}
-
 /// Gives the file at `from` the name `to`, in place of what has it.
 fn rename(from: &[u8], to: &[u8]) -> bun_sys::Result<()> {
     let (from, to) = (
@@ -215,7 +199,7 @@ fn rename(from: &[u8], to: &[u8]) -> bun_sys::Result<()> {
     })
 }
 
-fn remove(path: &[u8]) {
+pub(crate) fn remove(path: &[u8]) {
     let path = paths::to_native(path.to_vec());
     let _ = bun_sys::unlinkat(Fd::cwd(), terminated(&path, &mut path_buffer_pool::get()));
 }
@@ -288,17 +272,6 @@ pub(crate) fn write_atomically(cwd: &[u8], path: &[u8], text: &[u8]) -> Result<(
         return Err(b"A link leads out of the repository.".to_vec());
     }
     write_through(&real, text).map_err(|error| describe(&error))
-}
-
-/// Writes a file that need not exist, so that nobody ever reads a part of `text`, and makes the
-/// directories that it is in.
-pub(crate) fn write_new_atomically(path: &[u8], text: &[u8]) -> bun_sys::Result<()> {
-    let temporary = [path, temporary_suffix().as_bytes()].concat();
-    let written = write_new(&temporary, text).and_then(|()| rename(&temporary, path));
-    if written.is_err() {
-        remove(&temporary);
-    }
-    written
 }
 
 /// Writes a file that need not exist, and makes the directories that it is in.

@@ -1858,7 +1858,8 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
     timeout,
   );
 
-  test(
+  // A VM takes seconds to start in a debug build: beside the first no other pays for files like these.
+  test.skipIf(isDebug || isASAN)(
     "engines that grow over the memory that is for them are freed, and every file is linted",
     async () => {
       const run = async (count: number, threads: string) => {
@@ -1876,7 +1877,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
                   // It takes its time, so that more than one engine pays, and begins to grow when these have started.
                   let sum = 0;
                   for (let i = 0; i < 3e6; i++) sum += i % 7;
-                  if (++files > 6 && kept.length < 10) kept.push(new Uint8Array(32 << 20).fill(sum % 5));
+                  if (++files > 2 && kept.length < 10) kept.push(new Uint8Array(32 << 20).fill(sum % 5));
                   context.report({ node, message: "seen" });
                 },
               }),

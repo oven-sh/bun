@@ -854,12 +854,7 @@ impl<'l> Loader<'l> {
             |it| it.1,
         );
         let json = match syntax {
-            Syntax::Program => evaluate::evaluate(
-                self.environment,
-                evaluate::ESLINT,
-                path,
-                self.options.config_cache,
-            )?,
+            Syntax::Program => evaluate::evaluate(self.environment, evaluate::ESLINT, path)?,
             Syntax::Json => {
                 let text = fs::read(path).map_err(|error| {
                     Fatal(
@@ -1252,9 +1247,8 @@ impl<'l> Loader<'l> {
     fn read_legacy(&self, directory: Option<&[u8]>) -> Found {
         let (options, cwd) = (self.options, self.cwd());
         let rules = (!options.rulesdir.is_empty()).then(|| {
-            self.rulesdir.get_or_init(|| {
-                rulesdir::load(self.environment, &options.rulesdir, options.config_cache)
-            })
+            self.rulesdir
+                .get_or_init(|| rulesdir::load(self.environment, &options.rulesdir))
         });
         let rules = rules
             .map(|it| it.as_ref().map_err(Fatal::clone))
@@ -1264,7 +1258,6 @@ impl<'l> Loader<'l> {
         let command_line = paths::join(cwd, b"__placeholder__.js");
         let mut modules = eslintrc::Modules {
             environment: self.environment,
-            keeps: options.config_cache,
             plugins_from: plugins_from.clone(),
             command_line: (command_line.clone(), self.legacy_command_line()),
             printed: Vec::new(),

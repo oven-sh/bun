@@ -13,13 +13,13 @@ use crate::{fs, paths};
 use bun_core::strings;
 use bun_format::FormatOptions;
 use bun_format::html::Parser;
+use bun_format::tailwind::Tailwind;
 use bun_lint::formats::{Formats, Formatted, Like, Reason, Request};
 use bun_lint::options::Json;
 use bun_sema::atom::{Intern, Interner};
 use bun_sema::session::Session;
 use bun_threading::Guarded;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 
 /// The options of a rule, and what is read once for all files that are held against them.
 struct Set<'e> {
@@ -146,8 +146,6 @@ pub struct ForRules<'e> {
     scratches: Guarded<Vec<Scratches>>,
     /// See [`check_packages`]. `None`: nobody has asked yet.
     packages: Guarded<Option<Result<(), Reason>>>,
-    /// One thread at a time asks Tailwind, about what all of them have missed so far.
-    asking: Guarded<()>,
 }
 
 impl<'e> ForRules<'e> {
@@ -157,7 +155,6 @@ impl<'e> ForRules<'e> {
             sets: Guarded::new(Vec::new()),
             scratches: Guarded::new(Vec::new()),
             packages: Guarded::new(None),
-            asking: Guarded::new(()),
         }
     }
 
@@ -236,22 +233,13 @@ impl<'e> ForRules<'e> {
         tailwind::only_where_sorted(&mut resolved.options, kind);
         let mut scratch = self.scratches.lock().pop().unwrap_or_default();
         let verifies = true;
-        let mut format_text = || {
-            let names = Session::new();
-            let names = (&Interner::new_in(&names) as &dyn Intern, &names);
-            format(path, request.text, &resolved, names, &mut scratch, verifies)
-        };
-        let mut formatted = format_text();
-        let tailwind = resolved.options.tailwind.as_deref();
-        if let Some(tailwind) = tailwind.filter(|it| it.has_missed()) {
-            let turn = self.asking.lock();
-            let asked = configs.classes.ask(self.environment);
-            drop(turn);
-            tailwind.has_missed.store(false, Ordering::Relaxed);
-            formatted = format_text();
-            if asked.is_err() || tailwind.has_missed() {
-                formatted = Err(Failure::Bug("the order of the classes is not known"));
-            }
+        let names = Session::new();
+        let names = (&Interner::new_in(&names) as &dyn Intern, &names);
+        let mut formatted = format(path, request.text, &resolved, names, &mut scratch, verifies);
+        // Tailwind is asked in a process of its own, which takes about a second. `bun format` asks once, about all
+        // files. Here it would be once for each file that has a class that no file before it has.
+        if (resolved.options.tailwind.as_deref()).is_some_and(Tailwind::has_missed) {
+            formatted = Err(Failure::Bug("the order of the classes is not known"));
         }
         self.scratches.lock().push(scratch);
         match formatted {

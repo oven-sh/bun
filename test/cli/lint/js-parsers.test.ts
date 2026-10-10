@@ -135,13 +135,13 @@ describe.concurrent("bun lint with processors", () => {
       );
       expect(result.stderr).not.toContain("error");
       expect(summary(result.raw)).toMatchInlineSnapshot(`
-        "a.md: 4:1 no-var Unexpected var, use let or const instead. [fix 13,22 "let a = 1"]
+        "a.md: 4:1 no-var Unexpected var, use let or const instead. [fix 13,16 "let"]
         a.md: 4:10 semi Missing semicolon. [fix 22,22 ";"]
-        a.md: 15:15 no-var Unexpected var, use let or const instead. [fix 129,143 "let b = s == 1"]
+        a.md: 15:15 no-var Unexpected var, use let or const instead. [fix 129,132 "let"]
         a.md: 15:25 eqeqeq Expected '===' and instead saw '=='. [1 suggestion]
         a.md: 15:29 semi Missing semicolon. [fix 143,143 ";"]
         a.md: 7:3 eqeqeq Expected '===' and instead saw '=='. [1 suggestion] [suppressed: why not]
-        b.js: 1:1 no-var Unexpected var, use let or const instead. [fix 0,9 "let z = 1"]
+        b.js: 1:1 no-var Unexpected var, use let or const instead. [fix 0,3 "let"]
         b.js: 1:10 semi Missing semicolon. [fix 9,9 ";"]
         b.js: 2:1 no-debugger Unexpected 'debugger' statement."
       `);
@@ -316,7 +316,7 @@ describe.concurrent("bun lint with processors", () => {
       };
       const result = await lint(files, ["-f", "json", "a.md"]);
       expect(summary(result.raw)).toMatchInlineSnapshot(
-        `"a.md: 2:1 no-var Unexpected var, use let or const instead. [fix 6,12 "let a;"]"`,
+        `"a.md: 2:1 no-var Unexpected var, use let or const instead. [fix 6,9 "let"]"`,
       );
       expect(result.exitCode).toBe(1);
       // What the processor gives back without a name is for the language.
@@ -405,7 +405,7 @@ describe.concurrent("bun lint with languages", () => {
     async () => {
       const result = await lint({ ...eslintPackage, ...lines }, ["-f", "json", "a.js", "b.txt"]);
       expect(summary(result.raw)).toMatchInlineSnapshot(`
-        "a.js: 1:1 no-var Unexpected var, use let or const instead. [fix 0,6 "let a;"]
+        "a.js: 1:1 no-var Unexpected var, use let or const instead. [fix 0,3 "let"]
         b.txt: 2:1 lines/no-tabs tab o 4 s b.txt [fix 4,5 " "]
         b.txt: 3:1 lines/no-tabs tab o 4 s b.txt [fix 10,11 " "] [suppressed: ]"
       `);

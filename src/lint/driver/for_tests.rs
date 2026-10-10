@@ -51,6 +51,10 @@ impl Host for Tester<'_> {
             threads: 1,
             ..Options::default()
         };
+        let environment = Environment {
+            cwd: directory.to_vec(),
+            ..*self.environment
+        };
         let names = Session::new();
         let (store, timing) = (Store::new(directory), Timing::default());
         let context = Context {
@@ -66,7 +70,7 @@ impl Host for Tester<'_> {
             reads_suppressions: true,
             js_plugins: &self.js_plugins,
             modules: &Graph::new(&store),
-            formatter: &crate::fmt::ForRules::new(self.environment),
+            formatter: &crate::fmt::ForRules::new(&environment),
             timing: &timing,
             atoms: &Interner::new_in(&names),
             memory: &names,
@@ -105,10 +109,6 @@ impl Host for Tester<'_> {
                 Some(result.messages)
             }
             Place::Program(_) => {
-                let environment = Environment {
-                    cwd: directory.to_vec(),
-                    ..*self.environment
-                };
                 let file = Typed {
                     path: case.path,
                     config: &config,

@@ -63,8 +63,6 @@ fn answer(entries: Vec<(&[u8], Json)>) -> Json {
 /// What only a program can load: a file that is one, a package. `evaluate-eslintrc.js` does, for a file and all that it names.
 pub(crate) struct Modules<'m> {
     pub(crate) environment: &'m Environment<'m>,
-    /// [`evaluate::evaluate`]
-    pub(crate) keeps: bool,
     /// `--resolve-plugins-relative-to`, absolute.
     pub(crate) plugins_from: Option<Vec<u8>>,
     /// What stands for a file and cannot be read: its path, and what it says.
@@ -99,13 +97,7 @@ impl Modules<'_> {
         }
         let mut text = Vec::new();
         write_json(&mut text, &answer(argument));
-        let printed = evaluate::evaluate_with(
-            self.environment,
-            evaluate::ESLINTRC,
-            path,
-            &text,
-            self.keeps,
-        );
+        let printed = evaluate::evaluate_with(self.environment, evaluate::ESLINTRC, path, &text);
         let printed = printed.map_err(|Fatal(why)| why)?;
         self.printed.push((path.to_vec(), printed));
         Ok(())

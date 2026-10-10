@@ -1186,6 +1186,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         if self.token() == T::PrivateIdentifier && !self.recovers() {
             self.refuse(Refusal::Unsupported);
         }
+        let is_private = self.token() == T::PrivateIdentifier;
         let (name, at) = (self.lx.atom, (self.lx.start, self.lx.end));
         let word = match self.lx.has_escape {
             true => self.lx.text_of(name).to_vec(),
@@ -1220,10 +1221,15 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             ),
         }
         let obj = self.add_expr(ExprKind::Missing, start, start);
+        // `parseIdentifierName` makes an `Identifier` of a private name, about which nothing else is said.
+        let (name, name_pos) = match is_private {
+            true => (known::empty, start),
+            false => (name, at.0),
+        };
         let kind = ExprKind::Dot {
             obj,
             name,
-            name_pos: at.0,
+            name_pos,
             chain: Chain::No,
         };
         self.add_expr(kind, start, at.1)

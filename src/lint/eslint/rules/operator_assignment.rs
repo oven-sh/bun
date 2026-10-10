@@ -114,7 +114,9 @@ impl OperatorAssignment {
         } else if is_commutative && is_same_reference(right) && !is_assignment_target(e)
         {
             // `a = b * a` is not fixed to `a *= b`: that changes the order of the `valueOf` calls.
-            cx.report(e, REPLACED).data("operator", replacement);
+            cx.report(e, REPLACED)
+                .data("operator", replacement)
+                .labels_with(|it| it.note = format!("Use '{replacement}' shorthand instead of '='.").into());
         }
     }
 

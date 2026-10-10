@@ -1066,7 +1066,7 @@ fn resolve_identifier(
 // Unifier
 // =============================================================================
 
-/// Phis that are made of each other are copied into each other: without this, 400 bytes of source take all the memory.
+/// A fence. The largest of 157,000 real functions takes 57,000, and no source is known that comes near this.
 const MAX_STEPS: u32 = 1 << 22;
 
 /// What was made of a phi, by the address of its operands, which are held so that the address stays theirs.

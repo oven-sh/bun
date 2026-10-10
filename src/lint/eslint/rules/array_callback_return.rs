@@ -260,7 +260,15 @@ impl ArrayCallbackReturn {
                 true => "",
                 false => "\nReturn a value on each path (or enable `allowImplicit` to allow `return;`).",
             };
-            Self::report(cx, place, message, func, method).data("value_requirement", value_requirement);
+            let note = match self.allow_implicit {
+                true => {
+                    "With `allowImplicit`, callbacks that don't explicitly return a value are considered to return `undefined`."
+                }
+                false => "",
+            };
+            Self::report(cx, place, message, func, method)
+                .data("value_requirement", value_requirement)
+                .labels_with(|it| it.note = note.into());
         }
     }
 

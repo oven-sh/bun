@@ -1244,21 +1244,23 @@ impl<'a> Comments<'a> {
         &comments[..count]
     }
 
-    /// The next comments, as far as they trail what ends at `end`: a link of a member chain, what the chain starts
-    /// with, or all of an optional chain.
+    /// The next comments, as far as they trail what ends at `end` and is written: a link of a member chain, what the
+    /// chain starts with, or all of an optional chain. Those in it that nothing has written are among them.
     pub(crate) fn comments_trailing_link(&self, end: u32) -> &'a [Comment] {
-        self.next_comments_moved_to(end, TRAILS_LINK)
+        let comments = self.unprinted_comments();
+        let count = (comments.iter())
+            .take_while(|comment| {
+                comment.end() < end || (comment.moved_to == end && comment.flags & TRAILS_LINK != 0)
+            })
+            .count();
+        &comments[..count]
     }
 
     /// The next comments, as far as they lead the link of a member chain that follows what ends at `inner_end`.
     pub(crate) fn comments_leading_link(&self, inner_end: u32) -> &'a [Comment] {
-        self.next_comments_moved_to(inner_end, LEADS_LINK)
-    }
-
-    fn next_comments_moved_to(&self, position: u32, flag: u16) -> &'a [Comment] {
         let comments = self.unprinted_comments();
         let count = (comments.iter())
-            .take_while(|comment| comment.moved_to == position && comment.flags & flag != 0)
+            .take_while(|comment| comment.moved_to == inner_end && comment.flags & LEADS_LINK != 0)
             .count();
         &comments[..count]
     }
@@ -1425,12 +1427,20 @@ impl<'a> Comments<'a> {
             return &[];
         }
         let source_text = self.source_text;
+        // It is attached to a link of a member chain that is not the node.
+        let is_of_other_link = |comment: &Comment| {
+            comment.flags & LEADS_LINK != 0
+                || (comment.flags & TRAILS_LINK != 0 && comment.moved_to != preceding_span.end)
+        };
 
         if following_span_start == 0 {
             // What is left at the end of the parent.
             let comments = self.comments_before(enclosing_span.end);
             let mut start = preceding_span.end;
             for (index, comment) in comments.iter().enumerate() {
+                if is_of_other_link(comment) {
+                    return &comments[..index];
+                }
                 // It is inside the node.
                 if start > comment.start() {
                     continue;
@@ -1451,7 +1461,10 @@ impl<'a> Comments<'a> {
         let mut trailing_count = 0;
         let mut type_cast_comment = None;
         while let Some(comment) = comments.get(comment_index) {
-            if comment.end() > following_span_start || comment.end() > enclosing_span.end {
+            if comment.end() > following_span_start
+                || comment.end() > enclosing_span.end
+                || is_of_other_link(comment)
+            {
                 break;
             }
             if comment.is_moved() && comment.flags & (TRAILS_LEFT_SIDE | TRAILS_LINK) != 0 {

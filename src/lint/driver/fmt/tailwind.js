@@ -142,6 +142,4 @@ for (const group of JSON.parse(read(path)).groups) {
     groups.push({ ...which, error: String(error?.message ?? error) });
   }
 }
-// What is asked has just been written, and an answer is as good for the next question.
-touched.delete(path);
-finish({ groups }, []);
+finish({ groups });

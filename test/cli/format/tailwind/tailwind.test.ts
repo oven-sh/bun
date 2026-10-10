@@ -5,7 +5,7 @@
 // The order comes from the package `tailwindcss` of the project. Here that is a stand-in, which knows what is in order.json.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { endChildren, spawn } from "../../children";
 import cases from "./cases.json";
@@ -159,7 +159,7 @@ describe.concurrent("sortTailwindcss", () => {
     expect(allowed.exitCode).toBe(0);
   });
 
-  test("what Tailwind has said is kept until something that it has loaded changes", async () => {
+  test("every run that comes across classes asks Tailwind, once, and leaves nothing behind", async () => {
     const entry = "node_modules/tailwindcss/index.js";
     const counts = `require("node:fs").appendFileSync(__dirname + "/loaded.txt", "x");\n`;
     using dir = tempDir("bun-format-tailwind", {
@@ -170,39 +170,27 @@ describe.concurrent("sortTailwindcss", () => {
       "a.jsx": input,
     });
     const write = (name: string, text: string) => writeFileSync(join(String(dir), name), text);
-    // Nothing is kept that depends on a file that has just been written.
-    const age = (name: string, seconds: number) => {
-      const time = new Date(Date.now() - seconds * 1000);
-      utimesSync(join(String(dir), name), time, time);
-    };
-    age("app.css", 60);
-    age("node_modules/tailwindcss/package.json", 60);
     const names = ["a.jsx", "node_modules/tailwindcss/loaded.txt"];
     expect(await formatIn(String(dir), names)).toMatchObject({ stderr: "", files: [sorted, "x"] });
     // The same classes in another order, in another file.
     write("b.jsx", '<a className="flex p-4 m-2 flex" />;\n');
     expect(await formatIn(String(dir), [...names, "b.jsx"])).toMatchObject({
       stderr: "",
-      files: [sorted, "x", sorted],
+      files: [sorted, "xx", sorted],
     });
-    // A class that has not been asked about.
-    write("a.jsx", '<a className="p-4 m-1" />;\n');
-    expect(await formatIn(String(dir), names)).toMatchObject({
-      stderr: "",
-      files: ['<a className="m-1 p-4" />;\n', "xx"],
-    });
-    write("app.css", "/* reversed */\n");
-    age("app.css", 30);
     // Nothing is asked for a file without classes.
     write("c.js", "c  ;\n");
     expect(await formatIn(String(dir), ["c.js", names[1]], ["c.js"])).toMatchObject({
       stderr: "",
       files: ["c;\n", "xx"],
     });
+    write("a.jsx", '<a className="m-1 p-4" />;\n');
+    write("app.css", "/* reversed */\n");
     expect(await formatIn(String(dir), names)).toMatchObject({
       stderr: "",
       files: ['<a className="p-4 m-1" />;\n', "xxx"],
     });
+    expect(readdirSync(join(String(dir), "node_modules"))).toEqual(["tailwindcss"]);
   });
 
   test("a Tailwind that cannot be asked takes only its own files with it, in the first run as in the next", async () => {
@@ -233,9 +221,6 @@ describe.concurrent("sortTailwindcss", () => {
     ];
     for (const allows of [false, true]) {
       using dir = tempDir("bun-format-tailwind", files);
-      // Nothing is kept that depends on a file that has just been written.
-      const time = new Date(Date.now() - 60_000);
-      for (const name of Object.keys(files)) utimesSync(join(String(dir), name), time, time);
       const flags = allows ? ["--allow-unsupported", "."] : ["."];
       const lists = [];
       for (let run = 0; run < 3; run++) {

@@ -2784,7 +2784,7 @@ describe.concurrent("how a path is written", () => {
       { root, stylesheet: "C:/p/app.css", classes: ["b"] },
     ];
     using dir = tempDir("bun-format", { "question.json": JSON.stringify({ groups }) });
-    const source = ["evaluate-track.js", "fmt/tailwind.js"]
+    const source = ["evaluate-start.js", "fmt/tailwind.js"]
       .map(it => readFileSync(join(import.meta.dir, "../../../src/lint/driver", it), "utf8"))
       .join("")
       .replaceAll('require("node:path")', 'require("node:path").win32');
@@ -4002,12 +4002,6 @@ describe("bun format on Windows, macOS and Linux", () => {
   });
 
   describe.concurrent("a configuration file that is a program", () => {
-    /** Makes the file as old as a file that nobody is working on: what depends on one that has just been written is not kept. */
-    const age = (path: string, seconds: number) => {
-      const time = new Date(Date.now() - seconds * 1000);
-      utimesSync(path, time, time);
-    };
-
     test.each([
       ["exports options", `export default { semi: false };`, true, 1],
       ["prints", `console.log("out"); console.error("err"); export default { semi: false };`, true, 1],
@@ -4017,53 +4011,45 @@ describe("bun format on Windows, macOS and Linux", () => {
       ["throws", `console.error("before"); throw new Error("boom");`, false, 2],
       ["leaves with an error, and without a word", `process.exit(3);`, false, 2],
     ])(
-      "the first run is as the next: one that %s",
-      async (_, config, isKept, exitCode) => {
+      "one that %s",
+      async (_, config, isLoaded, exitCode) => {
         using dir = tempDir("bun-format-platform", {
           "node_modules/.keep": "",
           "prettier.config.mjs": config,
           "a.js": "a;\n",
         });
-        age(join(String(dir), "prettier.config.mjs"), 60);
-        const first = await format(dir, ["--check", "a.js"]);
-        // What fails is run again.
-        expect(existsSync(join(String(dir), "node_modules", ".cache"))).toBe(isKept);
-        expect(await format(dir, ["--check", "a.js"])).toEqual(first);
+        const result = await format(dir, ["--check", "a.js"]);
         // What it prints is seen only if it fails.
-        expect(first.stdout + first.stderr).not.toMatch(/\bout\b|\berr\b/);
-        if (!isKept) expect(first.stderr).toMatch(/prettier\.config\.mjs:\r?\n\[error\] ./);
-        expect(first.exitCode).toBe(exitCode);
+        expect(result.stdout + result.stderr).not.toMatch(/\bout\b|\berr\b/);
+        if (!isLoaded) expect(result.stderr).toMatch(/prettier\.config\.mjs:\r?\n\[error\] ./);
+        expect(everythingIn(dir)).toEqual(["a.js", "node_modules", "node_modules/.keep", "prettier.config.mjs"]);
+        expect(result.exitCode).toBe(exitCode);
       },
       slow ? 240_000 : 30_000,
     );
 
     test(
-      "what it exports is kept until the file or what it has read changes",
+      "every run evaluates it: a package that it looks for is found as soon as it is installed",
       async () => {
-        const config = (comment: string) => `// ${comment}
-        const fs = require("node:fs");
-        fs.appendFileSync(__dirname + "/evaluated.txt", "x");
-        module.exports = JSON.parse(fs.readFileSync(require("node:path").join(__dirname, "settings", "options.json"), "utf8"));`;
         using dir = tempDir("bun-format-platform", {
           "node_modules/.keep": "",
-          ".prettierrc.cjs": config("one"),
-          "settings/options.json": `{ "semi": false }`,
+          "prettier.config.mjs": `let optional;
+          try {
+            optional = (await import("prettier-config-optional")).default;
+          } catch {}
+          export default optional ?? { semi: false };`,
           "a.js": formatted,
         });
         const at = (...names: string[]) => join(String(dir), ...names);
-        const run = async () => [await different(dir, ["a.js"]), read(dir, "evaluated.txt")];
-        age(at(".prettierrc.cjs"), 60);
-        age(at("settings", "options.json"), 60);
-        expect(await run()).toEqual([["a.js"], "x"]);
-        expect(await run()).toEqual([["a.js"], "x"]);
-        // As long as before.
-        writeFileSync(at("settings", "options.json"), `{ "semi": true  }`);
-        age(at("settings", "options.json"), 30);
-        expect(await run()).toEqual([[], "xx"]);
-        expect(await run()).toEqual([[], "xx"]);
-        writeFileSync(at(".prettierrc.cjs"), config("two"));
-        age(at(".prettierrc.cjs"), 30);
-        expect(await run()).toEqual([[], "xxx"]);
+        // As old as a file that nobody is working on.
+        const time = new Date(Date.now() - 60_000);
+        utimesSync(at("prettier.config.mjs"), time, time);
+        expect(await different(dir, ["a.js"])).toEqual(["a.js"]);
+        mkdirSync(at("node_modules", "prettier-config-optional"));
+        writeFileSync(at("node_modules", "prettier-config-optional", "package.json"), "{}");
+        writeFileSync(at("node_modules", "prettier-config-optional", "index.js"), "module.exports = { semi: true };");
+        expect(await different(dir, ["a.js"])).toEqual([]);
+        expect(readdirSync(at("node_modules")).sort()).toEqual([".keep", "prettier-config-optional"]);
       },
       slow ? 240_000 : 30_000,
     );

@@ -321,7 +321,9 @@ impl<'a> Report<'a> {
     /// For a port of a rule of oxlint: what oxlint says at the place of the report. Like [`Report::label`], [`Report::help`]
     /// and [`Report::note`] it is shown by the formats that oxlint has, and by those that show the code.
     pub fn first_label(mut self, text: impl Into<Cow<'static, str>>) -> Self {
-        if let Some(details) = self.details() {
+        if self.file.sink.wants_help.get()
+            && let Some(details) = self.details()
+        {
             details.first_label = text.into();
         }
         self
@@ -329,7 +331,9 @@ impl<'a> Report<'a> {
 
     /// One more place that oxlint marks, and what it says there.
     pub fn label(mut self, at: impl Spanned, text: impl Into<Cow<'static, str>>) -> Self {
-        if let Some(details) = self.details() {
+        if self.file.sink.wants_help.get()
+            && let Some(details) = self.details()
+        {
             details.labels.push((at.span(), text.into()));
         }
         self
@@ -367,7 +371,9 @@ impl<'a> Report<'a> {
 
     /// oxlint's `note`
     pub fn note(mut self, text: impl Into<Cow<'static, str>>) -> Self {
-        if let Some(details) = self.details() {
+        if self.file.sink.wants_help.get()
+            && let Some(details) = self.details()
+        {
             details.note = text.into();
         }
         self

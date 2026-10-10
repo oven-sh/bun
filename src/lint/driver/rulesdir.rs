@@ -9,12 +9,8 @@ use bun_lint::options::Json;
 
 /// [`LegacyOptions::rules`](bun_lint::linter::LegacyOptions::rules) for `directories`, which are as the command line has them.
 /// `evaluate-eslintrc.js` loads every file, as ESLint does: one that throws stops the run, whatever the configuration says about
-/// its rule. `keeps`: [`evaluate::evaluate`].
-pub(crate) fn load(
-    environment: &Environment,
-    directories: &[Vec<u8>],
-    keeps: bool,
-) -> Result<Json, Fatal> {
+/// its rule.
+pub(crate) fn load(environment: &Environment, directories: &[Vec<u8>]) -> Result<Json, Fatal> {
     let cwd = &environment.cwd[..];
     let absolute = |it: &Vec<u8>| Json::String(paths::resolve(cwd, &paths::from_native(it)));
     let entry = |key: &[u8], value: Json| (key.to_vec(), value);
@@ -29,9 +25,9 @@ pub(crate) fn load(
     ]);
     let mut text = Vec::new();
     write_json(&mut text, &argument);
-    // There is no such file. The script runs in its directory, and the result is kept under its name.
+    // There is no such file. The script runs in its directory.
     let path = paths::join(cwd, b"--rulesdir");
-    let printed = evaluate::evaluate_with(environment, evaluate::ESLINTRC, &path, &text, keeps)?;
+    let printed = evaluate::evaluate_with(environment, evaluate::ESLINTRC, &path, &text)?;
     let rules = printed.get(b"rules");
     if let Some(location) = rules.and_then(|it| it.get(b"location")) {
         return Ok(location.clone());

@@ -99,11 +99,8 @@ pub enum Calc<V> {
     Value(Box<V>),
     /// A literal number.
     Number(CSSNumber),
-    /// A sum of two calc expressions.
-    Sum {
-        left: Box<Calc<V>>,
-        right: Box<Calc<V>>,
-    },
+    /// A sum of two or more calc expressions, none of them a sum.
+    Sum(SumTerms<V>),
     /// A product of a number and another calc expression.
     Product {
         number: CSSNumber,
@@ -111,6 +108,245 @@ pub enum Calc<V> {
     },
     /// A math function, such as `calc()`, `min()`, or `max()`.
     Function(Box<MathFunction<V>>),
+}
+
+pub use sum::SumTerms;
+
+/// The term list of `Calc::Sum`. Only this module can build one: two or more terms, none a sum.
+mod sum {
+    use super::{Calc, CalcValue};
+
+    #[derive(Clone)]
+    pub struct SumTerms<V>(Vec<Calc<V>>);
+
+    impl<V> core::ops::Deref for SumTerms<V> {
+        type Target = [Calc<V>];
+
+        #[inline]
+        fn deref(&self) -> &[Calc<V>] {
+            &self.0
+        }
+    }
+
+    impl<V> SumTerms<V> {
+        fn of(first: Calc<V>, second: Calc<V>) -> Self {
+            let mut terms = SumTerms(Vec::with_capacity(2));
+            terms.push(first);
+            terms.push(second);
+            terms
+        }
+
+        /// Adds `term` at the end. A sum gives its terms.
+        fn push(&mut self, term: Calc<V>) {
+            match term {
+                Calc::Sum(terms) => self.0.extend(terms.0),
+                term => self.0.push(term),
+            }
+        }
+
+        /// Takes the term at `at` out. `set_head` fills the holes at the front.
+        fn take(&mut self, at: usize) -> Calc<V> {
+            core::mem::replace(&mut self.0[at], Calc::Number(0.0))
+        }
+
+        /// Puts `first` and `second` in place of the first `taken` terms.
+        fn set_head(&mut self, taken: usize, first: Calc<V>, second: Calc<V>) {
+            debug_assert!(!matches!(first, Calc::Sum(_)) && !matches!(second, Calc::Sum(_)));
+            self.0[taken - 2] = first;
+            self.0[taken - 1] = second;
+            self.0.drain(..taken - 2);
+        }
+
+        /// The first value that `find` accepts, and its position.
+        fn find_value<R>(&self, mut find: impl FnMut(&V) -> Option<R>) -> Option<(usize, R)> {
+            self.0.iter().enumerate().find_map(|(at, term)| match term {
+                Calc::Value(value) => Some((at, find(value)?)),
+                _ => None,
+            })
+        }
+    }
+
+    impl<V: CalcValue> SumTerms<V> {
+        /// Multiplies every term by `rhs`.
+        pub(super) fn mul_f32(&mut self, rhs: f32) {
+            for term in &mut self.0 {
+                *term = core::mem::replace(term, Calc::Number(0.0)).mul_f32(rhs);
+                debug_assert!(!matches!(term, Calc::Sum(_)));
+            }
+        }
+
+        /// Puts `term` in place of the term at `at`. A sum gives its terms.
+        fn put(mut self, at: usize, term: Calc<V>) -> Calc<V> {
+            let term = match term {
+                Calc::Sum(group) => {
+                    self.0.splice(at..=at, group.0);
+                    return Calc::Sum(self);
+                }
+                term => term,
+            };
+            if at >= 2 {
+                // The terms before `at` are a sum, so the other terms keep their places.
+                self.0[at] = term;
+                return Calc::Sum(self);
+            }
+            // The front terms are paired again, one at a time, until two of them stay.
+            let mut taken = at + 1;
+            let mut head = if at == 0 {
+                drop(self.take(0));
+                term
+            } else {
+                drop(self.take(1));
+                match Calc::pair(self.take(0), term) {
+                    (first, Some(second)) => {
+                        self.set_head(taken, first, second);
+                        return Calc::Sum(self);
+                    }
+                    (term, None) => term,
+                }
+            };
+            while taken < self.len() {
+                let next = self.take(taken);
+                taken += 1;
+                match Calc::pair(head, next) {
+                    (first, Some(second)) => {
+                        self.set_head(taken, first, second);
+                        return Calc::Sum(self);
+                    }
+                    (term, None) => head = term,
+                }
+            }
+            head
+        }
+    }
+
+    impl<V> Calc<V> {
+        /// `self + rhs` with every term of both kept as it is, in order.
+        pub(crate) fn concat(self, rhs: Self) -> Self {
+            match self {
+                Calc::Sum(mut terms) => {
+                    terms.push(rhs);
+                    Calc::Sum(terms)
+                }
+                term => Calc::Sum(SumTerms::of(term, rhs)),
+            }
+        }
+    }
+
+    impl<V: CalcValue> Calc<V> {
+        /// `a + b` for a value type that can hold a `calc()`. `wrap` is its `Calc` variant.
+        pub(crate) fn add_values(a: V, b: V, wrap: fn(Box<Self>) -> V) -> V {
+            if let Some(sum) = a.try_add(&b) {
+                return sum;
+            }
+            match a.into_calc().add_terms(b.into_calc()) {
+                Calc::Value(value) => *value,
+                calc => wrap(Box::new(calc)),
+            }
+        }
+
+        /// `a + b` as a calc node. Two values that can be terms keep their boxes.
+        pub(crate) fn add_boxed(mut a: Box<V>, b: Box<V>) -> Self {
+            if !a.is_term() || !b.is_term() {
+                return V::into_calc((*a).add_internal(*b));
+            }
+            if let Some(sum) = a.try_add(&b) {
+                *a = sum;
+                return Calc::Value(a);
+            }
+            Self::add_unlike(Calc::Value(a), Calc::Value(b))
+        }
+
+        /// `self + rhs`. A sum on the right takes at most one like value of `self`, then its place.
+        fn add_terms(self, rhs: Self) -> Self {
+            let group = match rhs {
+                Calc::Sum(group) => group,
+                rhs => return self.add_term(rhs),
+            };
+            let like = |term: &Self| match term {
+                Calc::Value(a) => group.find_value(|b| a.try_add(b)),
+                _ => None,
+            };
+            let found = match &self {
+                Calc::Sum(terms) => terms
+                    .iter()
+                    .enumerate()
+                    .find_map(|(at, term)| Some((at, like(term)?))),
+                term => like(term).map(|found| (0, found)),
+            };
+            match found {
+                // One value of `self` adds into the group. The group takes the place of that value.
+                Some((at, (in_group, sum))) => {
+                    let group = Calc::Sum(group).replace(in_group, sum);
+                    match self {
+                        Calc::Sum(terms) => terms.put(at, group),
+                        _ => group,
+                    }
+                }
+                None if self.is_zero_value() => Calc::Sum(group),
+                None => self.concat(Calc::Sum(group)),
+            }
+        }
+
+        /// `self + rhs` for a `rhs` that is not a sum. A value adds into the first like value.
+        fn add_term(self, rhs: Self) -> Self {
+            let like = match (&self, &rhs) {
+                (Calc::Value(a), Calc::Value(b)) => a.try_add(b).map(|sum| (0, sum)),
+                (Calc::Sum(terms), Calc::Value(b)) => terms.find_value(|a| a.try_add(b)),
+                _ => None,
+            };
+            match (like, self) {
+                (Some((at, sum)), lhs) => lhs.replace(at, sum),
+                (None, Calc::Sum(mut terms)) => {
+                    if !rhs.is_zero_value() {
+                        terms.push(rhs);
+                    }
+                    Calc::Sum(terms)
+                }
+                (None, lhs) => Self::add_unlike(lhs, rhs),
+            }
+        }
+
+        fn is_zero_value(&self) -> bool {
+            matches!(self, Calc::Value(value) if value.is_zero())
+        }
+
+        /// `a + b` for two terms that do not add, neither of them a sum.
+        fn add_unlike(a: Self, b: Self) -> Self {
+            match Self::pair(a, b) {
+                (first, Some(second)) => Calc::Sum(SumTerms::of(first, second)),
+                (term, None) => term,
+            }
+        }
+
+        /// The terms of `a + b` in their order. A zero value goes away. `-a + b` is `b - a`.
+        fn pair(a: Self, b: Self) -> (Self, Option<Self>) {
+            if a.is_zero_value() {
+                return (b, None);
+            }
+            if b.is_zero_value() {
+                return (a, None);
+            }
+            let negative = a.try_sign().is_some_and(f32::is_sign_negative);
+            let positive = b.try_sign().is_some_and(f32::is_sign_positive);
+            if negative && positive {
+                (b, Some(a))
+            } else {
+                (a, Some(b))
+            }
+        }
+
+        /// Puts `value`, the sum of two like values, in place of the value at `at`.
+        fn replace(self, at: usize, value: V) -> Self {
+            match self {
+                Calc::Sum(mut terms) if at >= 2 && value.is_zero() => {
+                    terms.0.remove(at);
+                    Calc::Sum(terms)
+                }
+                Calc::Sum(terms) => terms.put(at, Calc::Value(Box::new(value))),
+                _ => Calc::Value(Box::new(value)),
+            }
+        }
+    }
 }
 
 // ───────────────────────────── CalcValue trait ─────────────────────────────
@@ -141,6 +377,18 @@ pub trait CalcValue:
     fn into_calc(self) -> Calc<Self>;
     /// Convert a `Calc<Self>` into `Self` if representable.
     fn from_calc(c: Calc<Self>, input: &mut css::Parser) -> CssResult<Self>;
+    /// The sum of two values of like units, when neither is a `calc()`.
+    fn try_add(&self, _rhs: &Self) -> Option<Self> {
+        None
+    }
+    /// Whether this is a zero that is not a `calc()`.
+    fn is_zero(&self) -> bool {
+        false
+    }
+    /// Whether this value can be a term of a sum: it is not a `calc()`, and its type has sums of values.
+    fn is_term(&self) -> bool {
+        false
+    }
 }
 
 impl<V: Clone> Clone for Calc<V> {
@@ -157,16 +405,7 @@ impl<V: PartialEq + Clone> PartialEq for Calc<V> {
         match (self, other) {
             (Calc::Value(a), Calc::Value(b)) => **a == **b,
             (Calc::Number(a), Calc::Number(b)) => a == b,
-            (
-                Calc::Sum {
-                    left: al,
-                    right: ar,
-                },
-                Calc::Sum {
-                    left: bl,
-                    right: br,
-                },
-            ) => **al == **bl && **ar == **br,
+            (Calc::Sum(a), Calc::Sum(b)) => **a == **b,
             (
                 Calc::Product {
                     number: an,
@@ -194,10 +433,7 @@ impl<V> Calc<V> {
                 Calc::Value(Box::new((**v).clone()))
             }
             Calc::Number(n) => Calc::Number(*n),
-            Calc::Sum { left, right } => Calc::Sum {
-                left: Box::new(left.deep_clone()),
-                right: Box::new(right.deep_clone()),
-            },
+            Calc::Sum(terms) => Calc::Sum(terms.clone()),
             Calc::Product { number, expression } => Calc::Product {
                 number: *number,
                 expression: Box::new(expression.deep_clone()),
@@ -206,12 +442,7 @@ impl<V> Calc<V> {
         }
     }
 
-    /// Moves the node out of `calc`, and leaves a placeholder for the owner to drop.
-    pub(crate) fn take_boxed(calc: &mut Box<Self>) -> Box<Self> {
-        Box::new(core::mem::replace(&mut **calc, Calc::Number(0.0)))
-    }
-
-    // Cleanup is handled by Drop on Box<V>/Box<Calc<V>>/
+    // Cleanup is handled by Drop on Box<V>/SumTerms<V>/
     // Box<MathFunction<V>>. No explicit Drop impl needed.
 }
 
@@ -242,13 +473,11 @@ impl<V: CalcValue> Calc<V> {
 
     pub(crate) fn add(self, rhs: Self, input: &mut css::Parser) -> CssResult<Self> {
         if let (Calc::Value(_), Calc::Value(_)) = (&self, &rhs) {
-            // PERF: we can reuse the allocation here
-            // Reshaped for borrowck — clone out of boxes then drop originals.
             let (a, b) = match (self, rhs) {
-                (Calc::Value(a), Calc::Value(b)) => (*a, *b),
+                (Calc::Value(a), Calc::Value(b)) => (a, b),
                 _ => unreachable!(),
             };
-            return Ok(Self::into_calc(Self::add_value(a, b)));
+            return Ok(Self::add_boxed(a, b));
         }
         if let (Calc::Number(a), Calc::Number(b)) = (&self, &rhs) {
             return Ok(Calc::Number(a + b));
@@ -272,10 +501,7 @@ impl<V: CalcValue> Calc<V> {
             return Ok(Self::into_calc(Self::add_value(this_value, b)));
         }
         if matches!(self, Calc::Function(_)) || matches!(rhs, Calc::Function(_)) {
-            return Ok(Calc::Sum {
-                left: Box::new(self),
-                right: Box::new(rhs),
-            });
+            return Ok(self.concat(rhs));
         }
         let this_value = self.into_value(input)?;
         let rhs_value = rhs.into_value(input)?;
@@ -910,16 +1136,21 @@ impl<V: CalcValue> Calc<V> {
         match self {
             Calc::Value(v) => v.to_css(dest),
             Calc::Number(n) => CSSNumberFns::to_css(*n, dest),
-            Calc::Sum { left: a, right: b } => {
-                a.to_css(dest)?;
-                // White space is always required.
-                if b.is_sign_negative() {
-                    dest.write_str(b" - ")?;
-                    let b2 = b.deep_clone().mul_f32(-1.0);
-                    b2.to_css(dest)?;
-                } else {
-                    dest.write_str(b" + ")?;
-                    b.to_css(dest)?;
+            Calc::Sum(terms) => {
+                let mut terms = terms.iter();
+                if let Some(first) = terms.next() {
+                    first.to_css(dest)?;
+                }
+                for b in terms {
+                    // White space is always required.
+                    if b.is_sign_negative() {
+                        dest.write_str(b" - ")?;
+                        let b2 = b.deep_clone().mul_f32(-1.0);
+                        b2.to_css(dest)?;
+                    } else {
+                        dest.write_str(b" + ")?;
+                        b.to_css(dest)?;
+                    }
                 }
                 Ok(())
             }
@@ -966,11 +1197,10 @@ impl<V: CalcValue> Calc<V> {
             // PERF: why not reuse the allocation here?
             Calc::Value(v) => Calc::Value(Box::new(Self::mul_value_f32(*v, other))),
             Calc::Number(n) => Calc::Number(n * other),
-            // PERF: why not reuse the allocation here?
-            Calc::Sum { left, right } => Calc::Sum {
-                left: Box::new(left.mul_f32(other)),
-                right: Box::new(right.mul_f32(other)),
-            },
+            Calc::Sum(mut terms) => {
+                terms.mul_f32(other);
+                Calc::Sum(terms)
+            }
             Calc::Product { number, expression } => {
                 let num = number * other;
                 if num == 1.0 {
@@ -1050,9 +1280,7 @@ impl<V: CalcValue> Calc<V> {
 
     pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         match self {
-            Calc::Sum { left, right } => {
-                left.is_compatible(browsers) && right.is_compatible(browsers)
-            }
+            Calc::Sum(terms) => terms.iter().all(|term| term.is_compatible(browsers)),
             Calc::Product { expression, .. } => expression.is_compatible(browsers),
             Calc::Function(f) => f.is_compatible(browsers),
             Calc::Value(v) => v.is_compatible(browsers),
@@ -1692,6 +1920,18 @@ impl CalcValue for Length {
     fn from_calc(c: Calc<Self>, _input: &mut css::Parser) -> CssResult<Self> {
         Ok(Length::Calc(Box::new(c)))
     }
+    #[inline]
+    fn try_add(&self, rhs: &Self) -> Option<Self> {
+        Length::try_add(self, rhs)
+    }
+    #[inline]
+    fn is_zero(&self) -> bool {
+        Length::is_zero(self)
+    }
+    #[inline]
+    fn is_term(&self) -> bool {
+        matches!(self, Length::Value(_))
+    }
 }
 
 /// `protocol::*` + `CalcValue` impls for the two concrete `DimensionPercentage<D>`
@@ -1740,8 +1980,20 @@ macro_rules! dim_pct_protocol {
             fn from_calc(c: Calc<Self>, _input: &mut css::Parser) -> CssResult<Self> {
                 Ok(DimensionPercentage::Calc(Box::new(c)))
             }
+            #[inline] fn try_add(&self, rhs: &Self) -> Option<Self> { DimensionPercentage::try_add(self, rhs) }
+            #[inline] fn is_zero(&self) -> bool { DimensionPercentage::is_zero(self) }
+            #[inline] fn is_term(&self) -> bool { !matches!(self, DimensionPercentage::Calc(_)) }
         }
     };
 }
 dim_pct_protocol!(LengthValue);
 dim_pct_protocol!(Angle, parse_to_css: forward,);
+
+// `Calc<V>` stays three words wide: the capacity of a sum's term list holds the tag.
+const _: () = assert!(size_of::<Calc<CSSNumber>>() == 24);
+const _: () = assert!(size_of::<Calc<Angle>>() == 24);
+const _: () = assert!(size_of::<Calc<Percentage>>() == 24);
+const _: () = assert!(size_of::<Calc<Time>>() == 24);
+const _: () = assert!(size_of::<Calc<Length>>() == 24);
+const _: () = assert!(size_of::<Calc<DimensionPercentage<LengthValue>>>() == 24);
+const _: () = assert!(size_of::<Calc<DimensionPercentage<Angle>>>() == 24);

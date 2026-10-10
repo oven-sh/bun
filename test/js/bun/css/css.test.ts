@@ -232,10 +232,270 @@ describe("css tests", () => {
     ); // ideally -400% - 8vh + 3ic
     minify_test(`a { top: calc(100% - 1 * 2 - 8 * 2); }`, `a{top:calc(100% - 2 - 16)}`); // ideally 100% - 18
   });
+  describe("calc sums", () => {
+    // A value adds into the first value that has a like unit. Any other term goes to the end.
+    minify_test(`a { width: calc(5px + 1em + -10px) }`, `a{width:calc(1em - 5px)}`);
+    minify_test(`a { width: calc(1px + 1em + 1% + 1vw - 1px) }`, `a{width:calc(1em + 1% + 1vw)}`);
+    minify_test(`a { width: calc(1% + 1em + 1vw + 1px + 1vh - 1px) }`, `a{width:calc(1% + 1em + 1vw + 1vh)}`);
+    minify_test(
+      `a { width: calc(min(1px, 1em) + 1px + min(1px, 1em) + 1px) }`,
+      `a{width:calc(min(1px,1em) + 2px + min(1px,1em))}`,
+    );
+    minify_test(
+      `a { width: calc((min(1px, 1em) + min(2px, 1em)) * 2) }`,
+      `a{width:calc(2*min(1px,1em) + 2*min(2px,1em))}`,
+    );
+    // A value that becomes zero goes away, at each place in the sum.
+    minify_test(`a { width: calc(min(1px, 1em) + 1px - 1px) }`, `a{width:calc(min(1px,1em))}`);
+    minify_test(
+      `a { width: calc(min(1px, 1em) + max(1px, 1em) + 1px - 1px) }`,
+      `a{width:calc(min(1px,1em) + max(1px,1em))}`,
+    );
+    minify_test(`a { width: calc(min(1px, 1em) + max(1px, 1em) + 0px) }`, `a{width:calc(min(1px,1em) + max(1px,1em))}`);
+    minify_test(`a { width: calc(1% + 1em + 1px + 1vw - 1px + 2vw) }`, `a{width:calc(1% + 1em + 3vw)}`);
+    minify_test(`a { width: calc(1px + 1em + 1% - 1em) }`, `a{width:calc(1px + 1%)}`);
+    minify_test(`a { width: calc(1px - 1em + 1% - 1px) }`, `a{width:calc(1% - 1em)}`);
+    // The first two terms change places when the first one is negative and the second one is not.
+    minify_test(`a { width: calc(-1% - 1px + 5px) }`, `a{width:calc(4px - 1%)}`);
+    minify_test(`a { width: calc(-1% - 1em + 1px + 1em) }`, `a{width:calc(1px - 1%)}`);
+    // lightningcss prints `- min(1px,1em)` for a subtracted function. Bun keeps the factor.
+    minify_test(`a { width: calc(min(1px, 1em) - min(1px, 1em)) }`, `a{width:calc(min(1px,1em) + -1*min(1px,1em))}`);
+    minify_test(`a { width: calc(1px - min(1px, 1em) - 3px) }`, `a{width:calc(-2px + -1*min(1px,1em))}`);
+    minify_test(`a { width: calc(1px - (min(1px, 1em) + 3px)) }`, `a{width:calc(-1*min(1px,1em) - 2px)}`);
+
+    // A sum in parentheses takes one like value of the sum before it, and then the place of that value.
+    minify_test(`a { width: calc(1px + (1px + 1em)) }`, `a{width:calc(2px + 1em)}`);
+    minify_test(`a { width: calc(3rem + calc(1.5em + 0.75rem)) }`, `a{width:calc(1.5em + 3.75rem)}`);
+    minify_test(`a { width: calc(1px + (1em - 1px + 5px)) }`, `a{width:calc(1em + 5px)}`);
+    minify_test(`a { width: calc(1rem + 10px + (1rem + 10px)) }`, `a{width:calc(2rem + 10px + 10px)}`);
+    minify_test(`a { width: calc(1rem + 10px + calc(1rem + 10px)) }`, `a{width:calc(2rem + 10px + 10px)}`);
+    minify_test(`a { width: calc(1vw + 1px + (1em + 1px + 1vw)) }`, `a{width:calc(1em + 1px + 2vw + 1px)}`);
+    minify_test(`a { margin: calc((1px + 1em) - (2px + 1em)) }`, `a{margin:calc(-1px - 1em + 1em)}`);
+    minify_test(
+      `a { width: calc((min(1px, 1em) + 1em) + (min(1px, 1em) + 1em) + (min(1px, 1em) + 1em)) }`,
+      `a{width:calc(min(1px,1em) + min(1px,1em) + min(1px,1em) + 3em)}`,
+    );
+    // With no like value, its terms go to the end.
+    minify_test(`a { width: calc(1px + 1em + (1% + 1vw)) }`, `a{width:calc(1px + 1em + 1% + 1vw)}`);
+    minify_test(`a { width: calc(-1px + (1em + 1%)) }`, `a{width:calc(-1px + 1em + 1%)}`);
+    minify_test(`a { width: calc(0px + (1em + 1%)) }`, `a{width:calc(1em + 1%)}`);
+    // A negative term at the front of a sum in parentheses prints as a subtraction.
+    minify_test(`a { width: calc(1px + (-1em + -1%)) }`, `a{width:calc(1px - 1em - 1%)}`);
+    minify_test(`a { width: calc(100% - (1px + 1em + 1vw)) }`, `a{width:calc(100% - 1px - 1em - 1vw)}`);
+    minify_test(`a { top: calc(50% - (calc(0.2px + 0.05em) / 2)) }`, `a{top:calc(50% - .1px - .025em)}`);
+    // A value that adds into a sum that was in parentheses stays in its place.
+    minify_test(`a { width: calc(1% + (1px + 1em) - 5px) }`, `a{width:calc(1% - 4px + 1em)}`);
+    // Two sums with the same terms are equal, with or without the parentheses.
+    minify_test(`a { margin: calc(1px + (1em + 1%)) calc((1px + 1em) + 1%) }`, `a{margin:calc(1px + 1em + 1%)}`);
+    // A product of a sum keeps each term and the order, also when the first term becomes negative.
+    minify_test(`a { width: calc(1% + (1px - 1em) * -1) }`, `a{width:calc(1% - 1px + 1em)}`);
+    minify_test(`a { width: calc((1px - 1em) * -1 + 1%) }`, `a{width:calc(-1px + 1em + 1%)}`);
+    minify_test(`a { width: calc(min(1px, 1em) + (1px + 1em) * 0) }`, `a{width:calc(min(1px,1em) - -0px - -0em)}`);
+    minify_test(`a { width: calc((1px + 1em) * 0 + 1px) }`, `a{width:1px}`);
+    minify_test(`a { width: calc((1px + 1em) * 0 + 1em) }`, `a{width:1em}`);
+    // A number does not add into a sum.
+    minify_test(`a { width: calc(1 + (2 + 1px)) }`, `a{width:calc(1 + 2 + 1px)}`);
+
+    // The rows of lightningcss `test_calc` that have a sum in parentheses.
+    minify_test(`a { width: calc(2 * (100% - 20px)) }`, `a{width:calc(200% - 40px)}`);
+    minify_test(`a { width: calc((100% - 20px) * 2) }`, `a{width:calc(200% - 40px)}`);
+    minify_test(`a { width: calc(50px - (20px - 30px)) }`, `a{width:60px}`);
+    minify_test(`a { width: calc(100px - (100px - 100%)) }`, `a{width:100%}`);
+    minify_test(`a { width: calc(100px + (100px - 100%)) }`, `a{width:calc(200px - 100%)}`);
+    minify_test(`a { width: calc((100vw - 50em) / 2) }`, `a{width:calc(50vw - 25em)}`);
+    minify_test(`a { width: calc(1px + (2em + (3vh + 4px))) }`, `a{width:calc(2em + 3vh + 5px)}`);
+    minify_test(`a { width: calc(1px - (2em + 4px - 6vh) / 2) }`, `a{width:calc(-1em - 1px + 3vh)}`);
+    minify_test(`a { width: calc(100% - calc(50% + 25px)) }`, `a{width:calc(50% - 25px)}`);
+    minify_test(`a { width: calc( (1em - calc( 10px + 1em)) / 2) }`, `a{width:-5px}`);
+    minify_test(
+      `a { width: calc(((((100% + (2 * 30px) + 63.5px) / 0.7537) - (100vw - 60px)) / 2) + 30px) }`,
+      `a{width:calc(66.3394% + 141.929px - 50vw)}`,
+    );
+    minify_test(`a { width: calc(((75.37% - 63.5px) - 900px) + (2 * 100px)) }`, `a{width:calc(75.37% - 763.5px)}`);
+    minify_test(`a { width: calc((900px - (10% - 63.5px)) + (2 * 100px)) }`, `a{width:calc(1163.5px - 10%)}`);
+    minify_test(
+      `a { left: calc(50% - 100px + clamp(0px, calc(50vw - 50px), 100px)) }`,
+      `a{left:calc(50% - 100px + clamp(0px,50vw - 50px,100px))}`,
+    );
+    // lightningcss prints `+ -2em` in these two.
+    minify_test(`a { width: calc(1px - (2em + 3%)) }`, `a{width:calc(1px - 2em - 3%)}`);
+    minify_test(`a { width: calc(1px - (2em + 4vh + 3%)) }`, `a{width:calc(1px - 2em - 4vh - 3%)}`);
+    // lightningcss folds each like pair in these two: `50px` and `calc(24.63% + 1163.5px)`.
+    minify_test(`a { width: calc((100px - 1em) + (-50px + 1em)) }`, `a{width:calc(1em + 50px - 1em)}`);
+    minify_test(
+      `a { width: calc(100% + (2 * 100px) - ((75.37% - 63.5px) - 900px)) }`,
+      `a{width:calc(24.63% + 963.5px + 200px)}`,
+    );
+    // https://github.com/parcel-bundler/lightningcss/issues/910
+    minify_test(
+      `a { height: calc((100dvh - 10.5rem) + (4vh + 230px)) }`,
+      `a{height:calc(100dvh - 10.5rem + 4vh + 230px)}`,
+    );
+    minify_test(
+      `a { right: calc(32px + ((min(100vw, 1724px) - 464px) / 12) + ((100vw - min(100vw - 112px, 1612px)) / 2)) }`,
+      `a{right:calc(min(100vw,1724px)/12 - 6.66667px + 50vw + min(100vw - 112px,1612px)/-2)}`,
+    );
+
+    // Only the stop of a conic gradient is an angle or a percentage.
+    minify_test(
+      `a { background: conic-gradient(red calc(10deg + 5% + 10deg), blue) }`,
+      `a{background:conic-gradient(red calc(20deg + 5%),#00f)}`,
+    );
+    minify_test(
+      `a { background: conic-gradient(red calc(10deg + (5% + 10deg)), blue) }`,
+      `a{background:conic-gradient(red calc(5% + 20deg),#00f)}`,
+    );
+    minify_test(
+      `a { background: conic-gradient(red calc(min(1deg, 5%) - (5% + 10deg)), blue) }`,
+      `a{background:conic-gradient(red calc(min(1deg,5%) - 5% - 10deg),#00f)}`,
+    );
+    // A length with no percentage.
+    minify_test(`a { border-spacing: calc(min(1px, 1em) + 1px - 1px) }`, `a{border-spacing:calc(min(1px,1em))}`);
+    minify_test(
+      `a { border-spacing: calc(min(1px, 1em) + max(1px, 1em) + 1px - 1px) }`,
+      `a{border-spacing:calc(min(1px,1em) + max(1px,1em))}`,
+    );
+    minify_test(`a { border-spacing: calc(1px + (1em + 1px)) }`, `a{border-spacing:calc(1em + 2px)}`);
+    minify_test(`a { border-width: calc(1px - (1em + 1vw)) }`, `a{border-width:calc(1px - 1em - 1vw)}`);
+    minify_test(
+      `a { box-shadow: calc(1px + 1em - 1px) calc(0px + 1em) calc(1em + 0px) red }`,
+      `a{box-shadow:1em 1em 1em red}`,
+    );
+    minify_test(
+      `@media (min-width: calc(100px - (1em + 1vw))) { a { color: red } }`,
+      `@media (width>=calc(100px - 1em - 1vw)){a{color:red}}`,
+    );
+    // A type with one unit has no sum of values.
+    minify_test(`a { opacity: calc(sign(50%) + (sign(50%) + 1)) }`, `a{opacity:calc(sign(50%) + (sign(50%) + 1))}`);
+    minify_test(`a { font-stretch: calc(50% + (25% + 10%)) }`, `a{font-stretch:85%}`);
+    minify_test(`a { color: rgb(calc(1 + (2 + 3)) 0 0) }`, `a{color:#060000}`);
+
+    // The boundary of a strict range query adds into the first length with a like unit.
+    prefix_test(
+      `
+        @media (width > calc(min(1px, 1em) + 2px)) {
+          .foo {
+            color: chartreuse;
+          }
+        }
+      `,
+      `
+        @media (min-width: calc(min(1px, 1em) + 2.001px)) {
+          .foo {
+            color: #7fff00;
+          }
+        }
+      `,
+      {
+        firefox: 60 << 16,
+      },
+    );
+
+    test("a long sum of terms that fold keeps one term for each unit", () => {
+      const pairs = 5000;
+      const sum = Buffer.alloc(pairs * "1px + 1em + ".length, "1px + 1em + ").toString() + "1px + 1em";
+      expect(minify_test_with_options(`a { width: calc(${sum}) }`, "")).toBe(
+        `a{width:calc(${pairs + 1}px + ${pairs + 1}em)}`,
+      );
+    });
+
+    test("a generated sum prints a sum of the same value", () => {
+      // mulberry32
+      let state = 1;
+      const random = () => {
+        state = (state + 0x6d2b79f5) >>> 0;
+        let t = state;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+      const pick = <T>(list: T[]) => list[(random() * list.length) | 0];
+      // Each number is exact in binary, so that terms that cancel leave no rest.
+      const atoms = ["1px", "-5px", "2em", "-1.5em", "50%", "-25%", "1in", "5vw", "0px", "min(1px, 1em)"];
+      const term = (depth: number): string => {
+        const kind = random();
+        const inner =
+          depth < 2 && kind < 0.3
+            ? kind < 0.25
+              ? "(" + sum(depth + 1) + ")"
+              : "calc(" + sum(depth + 1) + ")"
+            : pick(atoms);
+        return random() < 0.15 ? inner + " * " + pick(["2", "-1", "0.5"]) : inner;
+      };
+      const sum = (depth: number): string => {
+        let text = term(depth);
+        for (let count = 1 + ((random() * 4) | 0); count > 0; count--) text += pick([" + ", " - "]) + term(depth);
+        return text;
+      };
+      // The interpreter of a sanitized build takes some milliseconds to read one sum.
+      const sums = Array.from({ length: isASAN || isDebug ? 25 : 5_000 }, () => sum(0));
+      const css = sums.map((text, i) => ".r" + i + "{--i:" + i + ";width:calc(" + text + ")}").join("\n");
+      const printed = Array.from(minify_test_with_options(css, "").matchAll(/;width:([^}]*)\}/g), match => match[1]);
+      expect(printed.length).toBe(sums.length);
+
+      // The value of a sum when 1em is \`em\` px, 1% is \`percent\` px and 1vw is \`vw\` px.
+      const value = (text: string, em: number, percent: number, vw: number) => {
+        const tokens = text.match(/min\(|calc\(|[(),*\/]| [-+] |-?(?:\d+\.?\d*|\.\d+)(?:px|em|%|in|vw)?/g) ?? [];
+        if (tokens.join("").replaceAll(" ", "") !== text.replaceAll(" ", "")) throw new Error("cannot read " + text);
+        let at = 0;
+        const sumOf = (): number => {
+          let total = product();
+          for (;;) {
+            if (tokens[at] === " + ") (at++, (total += product()));
+            else if (tokens[at] === " - ") (at++, (total -= product()));
+            else return total;
+          }
+        };
+        const product = (): number => {
+          let total = operand();
+          for (;;) {
+            if (tokens[at] === "*") (at++, (total *= operand()));
+            else if (tokens[at] === "/") (at++, (total /= operand()));
+            else return total;
+          }
+        };
+        const operand = (): number => {
+          const token = tokens[at++];
+          if (token === "min(") {
+            const first = sumOf();
+            at++;
+            const second = sumOf();
+            at++;
+            return Math.min(first, second);
+          }
+          if (token === "calc(" || token === "(") {
+            const inner = sumOf();
+            at++;
+            return inner;
+          }
+          const amount = parseFloat(token);
+          if (token.endsWith("em")) return amount * em;
+          if (token.endsWith("%")) return amount * percent;
+          if (token.endsWith("vw")) return amount * vw;
+          return token.endsWith("in") ? amount * 96 : amount;
+        };
+        return sumOf();
+      };
+      const wrong: string[][] = [];
+      for (const [em, percent, vw] of [
+        [16.5, 7.75, 13.25],
+        [-5.5, 0.375, -0.75],
+      ]) {
+        for (let i = 0; i < sums.length; i++) {
+          const want = value(sums[i], em, percent, vw);
+          if (!(Math.abs(want - value(printed[i], em, percent, vw)) <= 1e-3 * Math.max(1, Math.abs(want)))) {
+            wrong.push([sums[i], printed[i]]);
+          }
+        }
+      }
+      expect(wrong).toEqual([]);
+    });
+  });
   describe("long calc sums", () => {
-    // A value added to a sum of terms that do not fold copied a part of the sum at every
-    // level of it. N terms took time in N cubed, and one addition took memory in N
-    // squared. The commands run in a child process so that a slow one can be stopped.
+    // One sum of many terms that do not fold. Each term was one more level of native
+    // recursion in every walk over the sum, so a long sum ended in a stack overflow. The
+    // commands run in a child process: a crash fails the assertions and not the test
+    // runner, and a slow command can be stopped.
     const sanitized = isASAN || isDebug;
     const fn = "min(1px,1em)";
     const repeat = (text: string, count: number) => Buffer.alloc(count * text.length, text).toString();
@@ -262,47 +522,149 @@ describe("css tests", () => {
     }
     const build = (css: string) => run(["build", "a.css", "--minify", "--outdir", "out"], { "a.css": css }, bunEnv);
 
-    // One rule for each shape. The unfixed build took minutes for each of them.
+    // One rule for each shape. A release build gets a count well above the number of terms
+    // at which the unfixed build died. A sanitized build is slow, so its counts are small.
+    const long = (release: number) => (sanitized ? 500 : release);
     const terms = sanitized ? 200 : 2_000;
-    const rules: [name: string, css: string, expected: string][] = [
+    const rules: [name: string, terms: number, css: (n: number) => string, expected: (n: number) => string][] = [
+      // The minifier clones the declaration.
+      [
+        "declaration",
+        long(35_000),
+        n => `.declaration{width:calc(${sum(fn, n)})}`,
+        n => `.declaration{width:calc(${sum(fn, n)})}`,
+      ],
+      // The query prints without a clone.
+      [
+        "media-query",
+        long(45_000),
+        n => `@media (min-width: calc(${sum(fn, n)})){.media-query{color:red}}`,
+        n => `@media (min-width:calc(${sum(fn, n)})){.media-query{color:red}}`,
+      ],
+      // A length is added to the sum when the query prints.
+      [
+        "range-query",
+        long(35_000),
+        n => `@media (width > calc(${sum(fn, n)})){.range-query{color:red}}`,
+        n => `@media (min-width:calc(${sum(fn, n)} + .001px)){.range-query{color:red}}`,
+      ],
+      [
+        "product",
+        long(30_000),
+        n => `.product{width:calc((${sum(fn, n)}) * 2)}`,
+        n => `.product{width:calc(${sum("2*" + fn, n)})}`,
+      ],
+      // The two values are compared.
+      [
+        "shorthand",
+        terms,
+        n => `.shorthand{margin:calc(${sum(fn, n)}) calc(${sum(fn, n)})}`,
+        n => `.shorthand{margin:calc(${sum(fn, n)})}`,
+      ],
+      // An angle or a percentage.
+      [
+        "gradient",
+        long(35_000),
+        n => `.gradient{background:conic-gradient(red calc(${sum("min(1deg,5%)", n)}),blue)}`,
+        n => `.gradient{background:conic-gradient(red calc(${sum("min(1deg,5%)", n)}),#00f)}`,
+      ],
+      // The types with one unit. Only the drop of the sum used the stack, from 139,000 terms.
+      // Bun 1.3.13 did not drop a sum.
+      [
+        "angle",
+        terms,
+        n => `.angle{rotate:calc(${sum("min(1deg,1)", n)})}`,
+        n => `.angle{rotate:calc(${sum("min(1deg,1)", n)})}`,
+      ],
+      [
+        "time",
+        terms,
+        n => `.time{transition-duration:calc(${sum("min(1s,1)", n)})}`,
+        n => `.time{transition-duration:calc(${sum("min(1s,1)", n)})}`,
+      ],
+      [
+        "number",
+        long(160_000),
+        n => `.number{opacity:calc(${sum("min(1,1%)", n)})}`,
+        n => `.number{opacity:calc(${sum("min(1,1%)", n)})}`,
+      ],
+      // A value that is added to a sum of terms that do not fold.
       [
         "subtracted",
-        `.subtracted{width:calc(${sum(fn, terms, " - ")})}`,
-        `.subtracted{width:calc(${fn}${repeat(" + -1*" + fn, terms - 1)})}`,
+        terms,
+        n => `.subtracted{width:calc(${sum(fn, n, " - ")})}`,
+        n => `.subtracted{width:calc(${fn}${repeat(" + -1*" + fn, n - 1)})}`,
       ],
       [
         "value-after-each-term",
-        `.value-after-each-term{width:calc(${sum(fn + " + 1px", terms)})}`,
-        `.value-after-each-term{width:calc(${fn} + ${terms}px${repeat(" + " + fn, terms - 1)})}`,
+        terms,
+        n => `.value-after-each-term{width:calc(${sum(fn + " + 1px", n)})}`,
+        n => `.value-after-each-term{width:calc(${fn} + ${n}px${repeat(" + " + fn, n - 1)})}`,
       ],
-      ["numbers", `.numbers{width:calc(1% + ${sum("1", terms)})}`, `.numbers{width:calc(1% + ${sum("1", terms)})}`],
+      [
+        "numbers",
+        terms,
+        n => `.numbers{width:calc(1% + ${sum("1", n)})}`,
+        n => `.numbers{width:calc(1% + ${sum("1", n)})}`,
+      ],
       [
         "groups",
-        `.groups{width:calc(${sum("(" + fn + " + 1em)", terms)})}`,
-        `.groups{width:calc(${sum(fn, terms)} + ${terms}em)}`,
+        terms,
+        n => `.groups{width:calc(${sum("(" + fn + " + 1em)", n)})}`,
+        n => `.groups{width:calc(${sum(fn, n)} + ${n}em)}`,
       ],
       [
         "groups-unit-first",
-        `.groups-unit-first{width:calc(${sum("(1em + " + fn + ")", terms)})}`,
-        `.groups-unit-first{width:calc(${terms}em${repeat(" + " + fn, terms)})}`,
+        terms,
+        n => `.groups-unit-first{width:calc(${sum("(1em + " + fn + ")", n)})}`,
+        n => `.groups-unit-first{width:calc(${n}em${repeat(" + " + fn, n)})}`,
       ],
     ];
 
     test("bun build", async () => {
-      const { output, stderr, exitCode, signalCode } = await build(rules.map(([, css]) => css).join("\n"));
-      // The output is long, so the assertion is on where each rule is.
+      const { output, stderr, exitCode, signalCode } = await build(
+        rules.map(([, count, css]) => css(count)).join("\n"),
+      );
+      // The output can be megabytes long, so the assertion is on where each rule is.
       let at = 0;
       const found: Record<string, boolean> = {};
       const wanted: Record<string, boolean> = {};
-      for (const [name, , expected] of rules) {
-        found[name] = output.startsWith(expected, at);
+      for (const [name, count, , expected] of rules) {
+        const rule = expected(count);
+        found[name] = output.startsWith(rule, at);
         wanted[name] = true;
-        at += expected.length;
+        at += rule.length;
       }
       expect({ stderr, found, length: output.length, exitCode, signalCode }).toEqual({
         stderr: "",
         found: wanted,
         length: at + 1,
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+
+    // `Bun.build` copies and compares the conditions of an `@import` on its own thread,
+    // which has a smaller stack than the threads that parse.
+    test("Bun.build with the sum in the media query of an @import", async () => {
+      const terms = sanitized ? 12_000 : 40_000;
+      const { output, stderr, exitCode, signalCode } = await run(
+        ["build-fixture.ts"],
+        {
+          "a.css": `@import "./b.css" (min-width: calc(${sum(fn, terms)}));`,
+          "b.css": `.a{color:red}`,
+          "build-fixture.ts": `
+            const { success, logs } = await Bun.build({ entrypoints: ["./a.css"], outdir: "./out", minify: true });
+            if (!success) throw new AggregateError(logs);
+          `,
+        },
+        bunEnv,
+      );
+      const wanted = `@media (min-width:calc(${sum(fn, terms)})){.a{color:red}}\n`;
+      expect({ stderr, length: output.length, equal: output === wanted, exitCode, signalCode }).toEqual({
+        stderr: "",
+        length: wanted.length,
+        equal: true,
         exitCode: 0,
         signalCode: null,
       });

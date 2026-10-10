@@ -254,119 +254,25 @@ impl<D> DimensionPercentage<D> {
         }
     }
 
-    pub(crate) fn add_internal(mut self, mut other: Self) -> Self
+    pub(crate) fn add_internal(self, other: Self) -> Self
     where
         Self: crate::values::calc::CalcValue,
-        D: protocol::TryAdd + protocol::Zero + protocol::TrySign,
     {
-        if let Some(res) = self.add_recursive(&mut other) {
-            return res;
-        }
-        self.add_impl(other)
+        Calc::add_values(self, other, Self::Calc)
     }
 
-    /// A hit takes what it needs out of both operands. A miss leaves them as they were.
-    fn add_recursive(&mut self, other: &mut Self) -> Option<Self>
+    /// The sum of two values of like units, when neither is a `calc()`.
+    pub(crate) fn try_add(&self, other: &Self) -> Option<Self>
     where
-        Self: crate::values::calc::CalcValue,
-        D: protocol::TryAdd + protocol::Zero + protocol::TrySign,
+        D: protocol::TryAdd,
     {
         match (self, other) {
             (Self::Dimension(a), Self::Dimension(b)) => a.try_add(b).map(Self::Dimension),
             (Self::Percentage(a), Self::Percentage(b)) => {
                 Some(Self::Percentage(Percentage { v: a.v + b.v }))
             }
-            (Self::Calc(calc), value) => Self::add_recursive_in(calc, value, false),
-            (value, Self::Calc(calc)) => Self::add_recursive_in(calc, value, true),
             _ => None,
         }
-    }
-
-    /// `add_recursive` for the calc node of one operand. `calc_is_rhs` keeps the operand order.
-    fn add_recursive_in(calc: &mut Calc<Self>, value: &mut Self, calc_is_rhs: bool) -> Option<Self>
-    where
-        Self: crate::values::calc::CalcValue,
-        D: protocol::TryAdd + protocol::Zero + protocol::TrySign,
-    {
-        match calc {
-            Calc::Value(v) if calc_is_rhs => value.add_recursive(v),
-            Calc::Value(v) => v.add_recursive(value),
-            Calc::Sum { left, right } => {
-                if let Some(res) = Self::add_recursive_in(left, value, calc_is_rhs) {
-                    return Some(res.add_impl(Self::Calc(Calc::take_boxed(right))));
-                }
-                let res = Self::add_recursive_in(right, value, calc_is_rhs)?;
-                Some(Self::Calc(Calc::take_boxed(left)).add_impl(res))
-            }
-            _ => None,
-        }
-    }
-
-    fn add_impl(self, other: Self) -> Self
-    where
-        Self: crate::values::calc::CalcValue,
-        D: protocol::Zero + protocol::TrySign,
-    {
-        let mut a = self;
-        let mut b = other;
-
-        if a.is_zero() {
-            return b;
-        }
-        if b.is_zero() {
-            return a;
-        }
-
-        if a.is_sign_negative() && b.is_sign_positive() {
-            core::mem::swap(&mut a, &mut b);
-        }
-
-        match (a, b) {
-            (Self::Calc(a_calc), b)
-                if matches!(*a_calc, Calc::Value(_)) && !matches!(b, Self::Calc(_)) =>
-            {
-                let Calc::Value(v) = *a_calc else {
-                    unreachable!()
-                };
-                v.add_impl(b)
-            }
-            (a, Self::Calc(b_calc))
-                if matches!(*b_calc, Calc::Value(_)) && !matches!(a, Self::Calc(_)) =>
-            {
-                let Calc::Value(v) = *b_calc else {
-                    unreachable!()
-                };
-                a.add_impl(*v)
-            }
-            (a, b) => Self::Calc(Box::new(Calc::Sum {
-                left: Box::new(a.into_calc()),
-                right: Box::new(b.into_calc()),
-            })),
-        }
-    }
-
-    #[inline]
-    fn is_sign_positive(&self) -> bool
-    where
-        Self: crate::values::calc::CalcValue,
-        D: protocol::TrySign,
-    {
-        let Some(sign) = self.try_sign() else {
-            return false;
-        };
-        sign.is_sign_positive()
-    }
-
-    #[inline]
-    fn is_sign_negative(&self) -> bool
-    where
-        Self: crate::values::calc::CalcValue,
-        D: protocol::TrySign,
-    {
-        let Some(sign) = self.try_sign() else {
-            return false;
-        };
-        sign.is_sign_negative()
     }
 
     pub(crate) fn partial_cmp(&self, other: &Self) -> Option<Ordering>

@@ -537,6 +537,29 @@ describe("a build reads the file system as it is when Bun.build() is called", ()
     });
   });
 
+  // Without hot reloading, Bun.serve() bundles an HTML route again for every
+  // request in development, the way Bun.build() does.
+  test("an HTML route that is bundled again", async () => {
+    using tmp = tempDir("build-fresh-html-route", {
+      "index.html": `<!DOCTYPE html><html><head><script type="module" src="./index.ts"></script></head></html>`,
+      "index.ts": usesAlias,
+      "v1/mod.ts": exportsFrom("v1"),
+      "v2/mod.ts": exportsFrom("v2"),
+      "tsconfig.json": tsconfigPaths("v1"),
+    });
+    const dir = String(tmp);
+    const { default: page } = await import(path.join(dir, "index.html"));
+    using server = Bun.serve({ port: 0, development: { hmr: false }, routes: { "/": page } });
+    async function served() {
+      const html = await (await fetch(server.url)).text();
+      const script = html.match(/src="([^"]+\.js)"/)![1];
+      return (await (await fetch(new URL(script, server.url))).text()).match(/"from [^"]*"/)?.[0];
+    }
+    const before = await served();
+    write(dir, "tsconfig.json", tsconfigPaths("v2"));
+    expect([before, await served()]).toEqual(['"from v1"', '"from v2"']);
+  });
+
   describe("after the runtime resolved from the same directories", () => {
     test("tsconfig.json paths changed", async () => {
       using tmp = tempDir("build-fresh-runtime-paths", {

@@ -138,6 +138,126 @@ test("markAsUncloneable and markAsUntransferable markers are private, unforgeabl
   expectDataCloneError(() => structuredClone(unmarkAttempt));
 });
 
+// Node also gives a marked ArrayBuffer a detach key (lib/internal/buffer.js markAsUntransferable), so
+// transfer() throws a TypeError there. JSC has no detach key; bun pins the buffer instead. The buffer
+// stays attached on every detach path either way. What the caller gets back differs in one place:
+// JSC answers transfer() on a pinned buffer with a copy. The byte stream's TransferArrayBuffer step
+// throws a TypeError as in Node, and the transfer list keeps throwing DataCloneError.
+test("markAsUntransferable keeps an ArrayBuffer attached on every detach path", async () => {
+  const bytes = [1, 2, 3, 4, 5, 6, 7, 8];
+  const attached = { detached: false, byteLength: 8, bytes, marked: true };
+  const markedBuffer = (options?: { maxByteLength: number }) => {
+    const ab = new ArrayBuffer(8, options);
+    new Uint8Array(ab).set(bytes);
+    markAsUntransferable(ab);
+    return ab;
+  };
+  const state = (ab: ArrayBuffer) => ({
+    detached: ab.detached,
+    byteLength: ab.byteLength,
+    bytes: ab.detached ? null : Array.from(new Uint8Array(ab)),
+    marked: wt.isMarkedAsUntransferable(ab),
+  });
+  const outcome = (attempt: () => ArrayBuffer) => {
+    try {
+      return { returned: Array.from(new Uint8Array(attempt())) };
+    } catch (e: any) {
+      return { threw: e.name };
+    }
+  };
+
+  const transfers: Record<string, (ab: ArrayBuffer) => ArrayBuffer> = {
+    "transfer()": ab => ab.transfer(),
+    "transfer(4)": ab => ab.transfer(4),
+    "transferToFixedLength()": ab => ab.transferToFixedLength(),
+  };
+  const results = Object.fromEntries(
+    Object.entries(transfers).map(([name, transfer]) => {
+      const ab = markedBuffer();
+      return [name, { result: outcome(() => transfer(ab)), source: state(ab) }];
+    }),
+  );
+  expect(results).toEqual({
+    "transfer()": { result: { returned: bytes }, source: attached },
+    "transfer(4)": { result: { returned: [1, 2, 3, 4] }, source: attached },
+    "transferToFixedLength()": { result: { returned: bytes }, source: attached },
+  });
+
+  // The returned buffer is a copy with its own storage.
+  {
+    const ab = markedBuffer();
+    new Uint8Array(ab.transfer()).fill(0xff);
+    expect(state(ab)).toEqual(attached);
+  }
+
+  // A resizable buffer stays attached and resizable. Its transfer() reports a RangeError: the copy
+  // JSC makes of a pinned buffer is fixed-length, so the resizability cannot be carried over.
+  {
+    const rab = markedBuffer({ maxByteLength: 16 });
+    expect(outcome(() => rab.transfer())).toEqual({ threw: "RangeError" });
+    expect(outcome(() => rab.transferToFixedLength())).toEqual({ returned: bytes });
+    expect(state(rab)).toEqual(attached);
+    rab.resize(16);
+    expect(rab.byteLength).toBe(16);
+    expect(rab.resizable).toBe(true);
+  }
+
+  // A byte stream transfers the buffer behind every chunk it is handed, on enqueue() and on a BYOB
+  // read. Both refuse a marked buffer.
+  {
+    const enqueued = markedBuffer();
+    const read = markedBuffer();
+    const thrown = (error: unknown) => ({
+      TypeError: error instanceof TypeError,
+      message: error instanceof Error ? error.message : error,
+    });
+    const refused = { TypeError: true, message: "Cannot transfer an ArrayBuffer that is not detachable" };
+    let enqueueError: unknown;
+    const reader = new ReadableStream({
+      type: "bytes",
+      start(controller) {
+        try {
+          controller.enqueue(new Uint8Array(enqueued));
+        } catch (e) {
+          enqueueError = e;
+        }
+      },
+    }).getReader({ mode: "byob" });
+    expect(thrown(enqueueError)).toEqual(refused);
+    expect(state(enqueued)).toEqual(attached);
+
+    let readError: unknown;
+    try {
+      await reader.read(new Uint8Array(read));
+    } catch (e) {
+      readError = e;
+    }
+    expect(thrown(readError)).toEqual(refused);
+    expect(state(read)).toEqual(attached);
+    reader.releaseLock();
+  }
+
+  // The transfer list rejects the mark itself; cloning without a transfer still copies the bytes.
+  {
+    const ab = markedBuffer();
+    expect(outcome(() => structuredClone(ab, { transfer: [ab] }))).toEqual({ threw: "DataCloneError" });
+    expect(outcome(() => structuredClone(ab))).toEqual({ returned: bytes });
+    expect(outcome(() => ab.slice(0))).toEqual({ returned: bytes });
+    expect(state(ab)).toEqual(attached);
+  }
+
+  // Only an ArrayBuffer is pinned. Marking a view marks the view alone, and its buffer stays
+  // detachable, as in Node.
+  {
+    const view = new Uint8Array(bytes);
+    markAsUntransferable(view);
+    const buffer = view.buffer as ArrayBuffer;
+    expect(wt.isMarkedAsUntransferable(view)).toBe(true);
+    expect(outcome(() => buffer.transfer())).toEqual({ returned: bytes });
+    expect(state(buffer)).toEqual({ detached: true, byteLength: 0, bytes: null, marked: false });
+  }
+});
+
 test("all worker_threads worker instance properties are present", async () => {
   const worker = new Worker(new URL("./worker.js", import.meta.url));
   expect(worker).toHaveProperty("threadId");

@@ -272,10 +272,10 @@ pub(crate) fn list_objects(
 
             let error_code_and_message = Error::get_sign_error_code_and_message(sign_err.into());
             callback(
-                S3ListObjectsResult::Failure(Error::S3Error {
-                    code: error_code_and_message.code,
-                    message: error_code_and_message.message,
-                }),
+                S3ListObjectsResult::Failure(Error::S3Error::local(
+                    error_code_and_message.code,
+                    error_code_and_message.message,
+                )),
                 callback_context,
             )?;
 
@@ -639,10 +639,10 @@ impl S3UploadStreamWrapper {
             self.end_promise = bun_jsc::JSPromiseStrong::empty();
         }
         // idempotent (`state != Finished`); `task.ended` was set by the pump's close path
-        let _ = self.task.fail(Error::S3Error {
-            code: b"UnknownError",
-            message: b"ReadableStream ended with an error",
-        });
+        let _ = self.task.fail(Error::S3Error::local(
+            b"UnknownError",
+            b"ReadableStream ended with an error",
+        ));
     }
 
     fn resolve(result: S3UploadResult, self_: &mut Self) -> JsResult<()> {
@@ -1185,10 +1185,10 @@ fn download_stream(
             callback(
                 &MutableString::default(),
                 false,
-                Some(Error::S3Error {
-                    code: error_code_and_message.code,
-                    message: error_code_and_message.message,
-                }),
+                Some(Error::S3Error::local(
+                    error_code_and_message.code,
+                    error_code_and_message.message,
+                )),
                 callback_context,
             );
             return core::ptr::null_mut();

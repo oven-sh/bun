@@ -2123,6 +2123,303 @@ describe("s3 upload stream body error", () => {
   });
 });
 
+// An S3Error that Bun reads from a failed response has the HTTP status of that
+// response as an own `status`, when it is an error status (400 to 599). A HEAD
+// response has no body, so for a failed stat() or exists() the status is all
+// that S3 says.
+describe.concurrent("s3 error status", () => {
+  // A stub origin on loopback that answers what `plan` says, and a client for it.
+  const prelude = `
+    let plan = () => new Response(null, { status: 200 });
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        await req.arrayBuffer();
+        return plan(req);
+      },
+    });
+    const endpoint = "http://127.0.0.1:" + server.port;
+    const credentials = { accessKeyId: "test", secretAccessKey: "test", region: "eu-west-3", bucket: "my_bucket" };
+    const client = new Bun.S3Client({ ...credentials, endpoint, retry: 0 });
+    const answer = (status, body) => {
+      plan = req => new Response(req.method === "HEAD" ? null : body, { status });
+    };
+    // What a program can branch on: the resolved value, or the error's code, message and own status.
+    const outcome = promise =>
+      promise.then(
+        value => ({ resolved: value }),
+        e => ({ code: e.code, message: e.message, status: Object.hasOwn(e, "status") ? e.status : "absent" }),
+      );
+    const xml = "<Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>";
+  `;
+
+  async function run(fixture: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", prelude + fixture],
+      // The S3 client honors the proxy environment; the stub is on loopback.
+      env: {
+        ...bunEnv,
+        HTTP_PROXY: undefined,
+        HTTPS_PROXY: undefined,
+        ALL_PROXY: undefined,
+        NO_PROXY: undefined,
+        http_proxy: undefined,
+        https_proxy: undefined,
+        all_proxy: undefined,
+        no_proxy: undefined,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // An error status on a response without a body: the message names it, the code stays generic.
+  const noBody = (status: number) => ({ code: "UnknownError", message: `HTTP ${status}`, status });
+  // A failure that has nothing to name.
+  const generic = { code: "UnknownError", message: "an unexpected error has occurred", status: "absent" };
+
+  it("a failed response puts its HTTP status on the error", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const rows = {};
+      // A HEAD response has no body: the status is all that S3 says.
+      for (const status of [299, 300, 301, 400, 403, 404, 409, 412, 416, 429, 500, 502, 503]) {
+        answer(status, null);
+        rows["stat " + status] = await outcome(client.file("key").stat());
+      }
+      answer(404, null);
+      rows["exists 404"] = await outcome(client.file("key").exists());
+      rows["stream 404"] = await outcome(new Response(client.file("key").stream()).text());
+      rows["write 404"] = await outcome(client.file("key").write("data"));
+      answer(403, null);
+      rows["exists 403"] = await outcome(client.file("key").exists());
+      rows["size 403"] = await outcome(client.size("key"));
+      rows["text 403"] = await outcome(client.file("key").text());
+      rows["stream 403"] = await outcome(new Response(client.file("key").stream()).text());
+      rows["write 403"] = await outcome(client.file("key").write("data"));
+      rows["delete 403"] = await outcome(client.file("key").delete());
+      rows["list 403"] = await outcome(client.list());
+      rows["image 403"] = await outcome(client.file("key").image().metadata());
+      // A body says more than the status. Its code and its message stay.
+      for (const [name, body] of [
+        ["text", "Forbidden by the proxy"],
+        ["<Error>", xml],
+        ["<Error> without a Code", "<Error><Message>only a message</Message></Error>"],
+      ]) {
+        answer(403, body);
+        rows["text 403, " + name] = await outcome(client.file("key").text());
+        rows["stream 403, " + name] = await outcome(new Response(client.file("key").stream()).text());
+      }
+      answer(404, "<Error><Code>NoSuchBucket</Code><Message>The specified bucket does not exist</Message></Error>");
+      rows["text 404, <Error>"] = await outcome(client.file("key").text());
+      rows["list 404, <Error>"] = await outcome(client.list());
+      // No status: S3 answered with a 2xx, or Bun did not send the request.
+      answer(204, null);
+      rows["write 204"] = await outcome(client.file("key").write("data"));
+      answer(201, null);
+      rows["write 201"] = await outcome(client.file("key").write("data"));
+      answer(200, "<ListBucketResult><Contents><Key>a");
+      rows["list 200, malformed"] = await outcome(client.list());
+      rows["no credentials"] = await outcome(new Bun.S3Client({ bucket: "my_bucket", endpoint }).file("key").stat());
+
+      answer(403, null);
+      const error = await client.file("key").stat().catch(e => e);
+      server.stop(true);
+      console.log(
+        JSON.stringify({
+          rows,
+          name: error.name,
+          isError: error instanceof Error,
+          descriptor: Object.getOwnPropertyDescriptor(error, "status"),
+        }),
+      );
+    `);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      rows: {
+        ...Object.fromEntries([400, 403, 409, 412, 416, 429, 500, 502, 503].map(s => [`stat ${s}`, noBody(s)])),
+        // A redirect that Bun does not follow names its status in the message only.
+        "stat 300": { ...noBody(300), status: "absent" },
+        "stat 301": { ...noBody(301), status: "absent" },
+        // A 2xx that the call does not accept.
+        "stat 299": generic,
+        // 404 is the one status that has a code of its own. A missing key is not an error for exists().
+        "stat 404": { code: "NoSuchKey", message: "The specified key does not exist.", status: 404 },
+        "exists 404": { resolved: false },
+        "stream 404": noBody(404),
+        "write 404": noBody(404),
+        "exists 403": noBody(403),
+        "size 403": noBody(403),
+        "text 403": noBody(403),
+        "stream 403": noBody(403),
+        "write 403": noBody(403),
+        "delete 403": noBody(403),
+        "list 403": noBody(403),
+        // Bun.Image reports an S3 failure as a system error: it has the message and no status.
+        "image 403": { ...noBody(403), status: "absent" },
+        "text 403, text": { code: "UnknownError", message: "Forbidden by the proxy", status: 403 },
+        "stream 403, text": { code: "UnknownError", message: "Forbidden by the proxy", status: 403 },
+        "text 403, <Error>": { code: "AccessDenied", message: "Access Denied", status: 403 },
+        "stream 403, <Error>": { code: "AccessDenied", message: "Access Denied", status: 403 },
+        "text 403, <Error> without a Code": { code: "UnknownError", message: "only a message", status: 403 },
+        "stream 403, <Error> without a Code": { code: "UnknownError", message: "only a message", status: 403 },
+        "text 404, <Error>": { code: "NoSuchBucket", message: "The specified bucket does not exist", status: 404 },
+        "list 404, <Error>": { code: "NoSuchBucket", message: "The specified bucket does not exist", status: 404 },
+        "write 204": generic,
+        "write 201": generic,
+        "list 200, malformed": {
+          code: "InvalidResponse",
+          message: expect.stringContaining("not a well-formed <ListBucketResult> document"),
+          status: "absent",
+        },
+        "no credentials": {
+          code: "ERR_S3_MISSING_CREDENTIALS",
+          message: expect.stringContaining("Missing S3 credentials"),
+          status: "absent",
+        },
+      },
+      name: "S3Error",
+      isError: true,
+      descriptor: { value: 403, writable: true, enumerable: true, configurable: true },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("a failure in transport has a status only when a response head arrived", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const rows = {};
+      // A TCP server that answers whatever it receives with \`reply\` and closes.
+      const raw = reply => Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data: socket => void socket.end(reply) } });
+      const at = port => new Bun.S3Client({ ...credentials, endpoint: "http://127.0.0.1:" + port, retry: 0 }).file("key");
+      // Nothing listens on this port.
+      const closed = raw("");
+      closed.stop(true);
+      rows["refused"] = await outcome(at(closed.port).stat());
+      // The head says 403, then the connection closes before the body is complete.
+      const half = raw("HTTP/1.1 403 Forbidden\\r\\nContent-Length: 100\\r\\n\\r\\npartial");
+      rows["text, cut after a 403 head"] = await outcome(at(half.port).text());
+      rows["stream, cut after a 403 head"] = await outcome(new Response(at(half.port).stream()).text());
+      // A proxy that answers 407 to whatever it receives. An http request reaches it as a request,
+      // an https request as a CONNECT.
+      const proxy = raw("HTTP/1.1 407 Proxy Authentication Required\\r\\nContent-Length: 0\\r\\n\\r\\n");
+      process.env.HTTP_PROXY = process.env.HTTPS_PROXY = "http://127.0.0.1:" + proxy.port;
+      const through = endpoint => new Bun.S3Client({ ...credentials, endpoint, retry: 0 }).file("key").stat();
+      rows["407 to a request, http endpoint"] = await outcome(through("http://s3.test.invalid"));
+      rows["407 to CONNECT, https endpoint"] = await outcome(through("https://s3.test.invalid"));
+      half.stop(true);
+      proxy.stop(true);
+      server.stop(true);
+      console.log(JSON.stringify(rows));
+    `);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "refused": {
+        code: expect.stringMatching(/^(ConnectionRefused|ECONNREFUSED|FailedToOpenSocket)$/),
+        message: generic.message,
+        status: "absent",
+      },
+      "text, cut after a 403 head": { code: "ConnectionClosed", message: generic.message, status: 403 },
+      "stream, cut after a 403 head": { code: "ConnectionClosed", message: generic.message, status: 403 },
+      "407 to a request, http endpoint": noBody(407),
+      // The proxy's answer to CONNECT is not a response to the S3 request.
+      "407 to CONNECT, https endpoint": { code: "ProxyConnectFailed", message: generic.message, status: "absent" },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("a failed part or commit of a multipart upload puts its HTTP status on the error", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const initiate = "<InitiateMultipartUploadResult><Bucket>my_bucket</Bucket><Key>key</Key><UploadId>upload-id</UploadId></InitiateMultipartUploadResult>";
+      const complete = '<CompleteMultipartUploadResult><Bucket>my_bucket</Bucket><Key>key</Key><ETag>"etag"</ETag></CompleteMultipartUploadResult>';
+      const internal = "<Error><Code>InternalError</Code><Message>We encountered an internal error. Please try again.</Message></Error>";
+      const etag = { headers: { ETag: '"etag"' } };
+      // One part size plus 1 MiB, so that the writer takes the multipart path.
+      const data = Buffer.alloc(6 * 1024 * 1024, "a");
+      async function upload({ create, part, commit }) {
+        plan = req => {
+          const query = new URL(req.url).searchParams;
+          if (req.method === "POST" && query.has("uploads")) return create?.() ?? new Response(initiate);
+          if (req.method === "PUT") return part?.() ?? new Response(null, etag);
+          if (req.method === "POST") return commit?.() ?? new Response(complete);
+          return new Response(null, { status: 204 });
+        };
+        const writer = client.file("key").writer({ partSize: 5 * 1024 * 1024, retry: 0 });
+        writer.write(data);
+        return outcome(writer.end());
+      }
+      const rows = {
+        "every request answers 200": await upload({}),
+        "UploadPart 206 with an ETag": await upload({ part: () => new Response(null, { status: 206, ...etag }) }),
+        "UploadPart 403, no body": await upload({ part: () => new Response(null, { status: 403 }) }),
+        "UploadPart 403, <Error>": await upload({ part: () => new Response(xml, { status: 403 }) }),
+        "UploadPart 200 without an ETag": await upload({ part: () => new Response(null) }),
+        "UploadPart 201 with an ETag": await upload({ part: () => new Response(null, { status: 201, ...etag }) }),
+        "CompleteMultipartUpload 200 with <Error>": await upload({ commit: () => new Response(internal) }),
+        "CompleteMultipartUpload 204, no body": await upload({ commit: () => new Response(null, { status: 204 }) }),
+        "CompleteMultipartUpload 403, no body": await upload({ commit: () => new Response(null, { status: 403 }) }),
+        "CreateMultipartUpload 404": await upload({ create: () => new Response(null, { status: 404 }) }),
+      };
+      server.stop(true);
+      console.log(JSON.stringify(rows));
+    `);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "every request answers 200": { resolved: 6 * 1024 * 1024 },
+      "UploadPart 206 with an ETag": { resolved: 6 * 1024 * 1024 },
+      "UploadPart 403, no body": noBody(403),
+      "UploadPart 403, <Error>": { code: "AccessDenied", message: "Access Denied", status: 403 },
+      // A request that fails under a 2xx has no status: an error never says 200.
+      "UploadPart 200 without an ETag": generic,
+      "UploadPart 201 with an ETag": generic,
+      "CompleteMultipartUpload 200 with <Error>": {
+        code: "InternalError",
+        message: "We encountered an internal error. Please try again.",
+        status: "absent",
+      },
+      "CompleteMultipartUpload 204, no body": generic,
+      "CompleteMultipartUpload 403, no body": noBody(403),
+      "CreateMultipartUpload 404": {
+        code: "UnknownError",
+        message: "Failed to initiate multipart upload",
+        status: 404,
+      },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // fetch() reports a failed stream upload to an s3:// URL twice: as a Response and as an
+  // unhandled S3Error. The literal 500 and the second report are that route's own.
+  it("a failed fetch() stream upload to s3:// has the message in its Response and the status on its S3Error", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const unhandled = new Promise(resolve => process.once("unhandledRejection", resolve));
+      answer(403, null);
+      const body = new ReadableStream({
+        pull(controller) {
+          controller.enqueue(new TextEncoder().encode("data"));
+          controller.close();
+        },
+      });
+      const response = await fetch("s3://my_bucket/key", { method: "PUT", body, s3: { ...credentials, endpoint, retry: 0 } });
+      const error = await unhandled;
+      server.stop(true);
+      console.log(
+        JSON.stringify({
+          response: { status: response.status, statusText: response.statusText, body: await response.text() },
+          error: { code: error.code, message: error.message, status: error.status },
+        }),
+      );
+    `);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      response: { status: 500, statusText: "UnknownError", body: "HTTP 403" },
+      error: noBody(403),
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("presigned url signature", () => {
   function verifyPresignedUrl(presigned: string, credentials: { secretAccessKey: string; region: string }) {
     const url = new URL(presigned);

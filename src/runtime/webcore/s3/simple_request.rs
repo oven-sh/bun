@@ -176,8 +176,7 @@ pub(crate) enum Callback {
 }
 
 impl Callback {
-    fn fail(&self, code: &[u8], message: &[u8], context: *mut c_void) -> bun_jsc::JsResult<()> {
-        let err = S3Error { code, message };
+    fn fail(&self, err: S3Error<'_>, context: *mut c_void) -> bun_jsc::JsResult<()> {
         match self {
             Callback::Upload(callback) => callback(S3UploadResult::Failure(err), context)?,
             Callback::Download(callback) => callback(S3DownloadResult::Failure(err), context)?,
@@ -192,13 +191,7 @@ impl Callback {
         Ok(())
     }
 
-    fn not_found(
-        &self,
-        code: &[u8],
-        message: &[u8],
-        context: *mut c_void,
-    ) -> bun_jsc::JsResult<()> {
-        let err = S3Error { code, message };
+    fn not_found(&self, err: S3Error<'_>, context: *mut c_void) -> bun_jsc::JsResult<()> {
         match self {
             Callback::Download(callback) => callback(S3DownloadResult::NotFound(err), context)?,
             Callback::Stat(callback) => callback(S3StatResult::NotFound(err), context)?,
@@ -206,7 +199,7 @@ impl Callback {
             Callback::ListObjects(callback) => {
                 callback(S3ListObjectsResult::NotFound(err), context)?
             }
-            _ => self.fail(code, message, context)?,
+            _ => self.fail(err, context)?,
         }
         Ok(())
     }
@@ -229,65 +222,49 @@ impl S3HttpSimpleTask {
     }
 
     fn error_with_body(&self, error_type: ErrorType) -> bun_jsc::JsResult<()> {
-        let mut code: &[u8] = b"UnknownError";
-        let mut message: &[u8] = b"an unexpected error has occurred";
-        let mut has_error_code = false;
-        let parsed;
-        if let Some(err) = self.result.fail {
-            code = err.name().as_bytes();
-            has_error_code = true;
-        } else {
-            let bytes = self.response_buffer.list.as_slice();
-            if !bytes.is_empty() {
-                message = bytes;
-                parsed = xml_response::parse_error(bytes);
-                if let Some(error) = &parsed {
-                    if let Some(body_code) = error.code.as_deref() {
-                        code = body_code;
-                        has_error_code = true;
-                    }
-                    if let Some(body_message) = error.message.as_deref() {
-                        message = body_message;
-                    }
-                }
-            }
+        let status = self
+            .result
+            .metadata
+            .as_ref()
+            .map_or(0, |metadata| metadata.response.status_code);
+        if let Some(cause) = self.result.fail {
+            return self.callback.fail(
+                xml_response::transport_failure(cause, status),
+                self.callback_context,
+            );
         }
-
+        let body = self.response_buffer.list.as_slice();
+        let mut response = xml_response::FailedResponse::read(body);
         if error_type == ErrorType::NotFound {
-            if !has_error_code {
-                code = b"NoSuchKey";
-                message = b"The specified key does not exist.";
-            }
-            self.callback
-                .not_found(code, message, self.callback_context)?;
+            let err = if response.has_code() {
+                response.error(body, status)
+            } else {
+                S3Error::from_response(b"NoSuchKey", b"The specified key does not exist.", status)
+            };
+            self.callback.not_found(err, self.callback_context)
         } else {
-            self.callback.fail(code, message, self.callback_context)?;
+            self.callback
+                .fail(response.error(body, status), self.callback_context)
         }
-        Ok(())
     }
 
     /// A commit can answer 200 and still carry an `<Error>` document.
     fn fail_if_contains_error(&mut self, status: u32) -> bun_jsc::JsResult<bool> {
-        let mut code: &[u8] = b"UnknownError";
-        let mut message: &[u8] = b"an unexpected error has occurred";
-        let parsed;
-        if let Some(err) = self.result.fail {
-            code = err.name().as_bytes();
-        } else {
-            let bytes = self.response_buffer.list.as_slice();
-            if !bytes.is_empty() {
-                message = bytes;
-            }
-            parsed = xml_response::parse_error(bytes);
-            if let Some(error) = &parsed {
-                code = error.code.as_deref().unwrap_or(code);
-                message = error.message.as_deref().unwrap_or(message);
-            }
-            if (parsed.is_none() && status == 200) || status == 206 {
-                return Ok(false);
-            }
+        debug_assert!(
+            self.result.fail.is_none(),
+            "on_response reports a transport failure first"
+        );
+        let body = self.response_buffer.list.as_slice();
+        // A 200 with no body has no `<Error>` document to read: the usual answer to a part.
+        if status == 206 || (status == 200 && body.is_empty()) {
+            return Ok(false);
         }
-        self.callback.fail(code, message, self.callback_context)?;
+        let mut response = xml_response::FailedResponse::read(body);
+        if status == 200 && !response.is_error_document() {
+            return Ok(false);
+        }
+        self.callback
+            .fail(response.error(body, status), self.callback_context)?;
         Ok(true)
     }
 
@@ -353,10 +330,10 @@ impl S3HttpSimpleTask {
                         // Half a listing is worse than none: S3 emits keys
                         // with control characters as (ill-formed) XML
                         // unless asked to URL-encode them.
-                        None => S3ListObjectsResult::Failure(S3Error {
-                            code: b"InvalidResponse",
-                            message: b"ListObjectsV2 response is not a well-formed <ListBucketResult> document (if keys can contain control characters, pass encodingType: \"url\")",
-                        }),
+                        None => S3ListObjectsResult::Failure(S3Error::local(
+                            b"InvalidResponse",
+                            b"ListObjectsV2 response is not a well-formed <ListBucketResult> document (if keys can contain control characters, pass encodingType: \"url\")",
+                        )),
                     };
                     callback(result, this.callback_context)?;
                 }
@@ -580,10 +557,10 @@ pub(crate) fn nothing_new_leaves(context: &bun_jsc::ScriptExecutionContext) -> b
 }
 
 /// What the completion of such a request is told.
-pub(crate) const NOTHING_NEW_LEAVES: S3Error<'static> = S3Error {
-    code: b"ERR_S3_VM_SHUTDOWN",
-    message: b"The JavaScript VM that owns this request is shutting down",
-};
+pub(crate) const NOTHING_NEW_LEAVES: S3Error<'static> = S3Error::local(
+    b"ERR_S3_VM_SHUTDOWN",
+    b"The JavaScript VM that owns this request is shutting down",
+);
 
 pub(crate) fn execute_simple_s3_request(
     this: &S3Credentials,
@@ -598,11 +575,7 @@ pub(crate) fn execute_simple_s3_request(
     // completion is released as for a failure, which is reported to nobody.
     if nothing_new_leaves(context) {
         drop(options.range);
-        callback.fail(
-            NOTHING_NEW_LEAVES.code,
-            NOTHING_NEW_LEAVES.message,
-            callback_context,
-        )?;
+        callback.fail(NOTHING_NEW_LEAVES, callback_context)?;
         return Ok(());
     }
     let result = match this.sign_request::<false>(
@@ -627,8 +600,7 @@ pub(crate) fn execute_simple_s3_request(
             drop(options.range);
             let error_code_and_message = get_sign_error_code_and_message(sign_err.into());
             callback.fail(
-                error_code_and_message.code,
-                error_code_and_message.message,
+                S3Error::local(error_code_and_message.code, error_code_and_message.message),
                 callback_context,
             )?;
             return Ok(());

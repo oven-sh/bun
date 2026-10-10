@@ -266,6 +266,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             // reinitialized here every iteration before any read, so declare
             // per-iteration.
             let mut opts = PropertyOpts {
+                member_start: p.lexer.loc(),
                 is_class: true,
                 allow_ts_decorators: class_opts.allow_ts_decorators,
                 class_has_extends: extends.is_some(),
@@ -274,7 +275,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             };
 
             // Parse decorators for this property
-            let first_decorator_loc = p.lexer.loc();
             let member_full_start = p.lexer.full_start();
             let property_scope_index = p.scopes_in_order.len();
             if opts.allow_ts_decorators {
@@ -293,7 +293,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 let prop_key = property.key;
                 p.finish_class_member(
                     &mut property,
-                    first_decorator_loc,
+                    opts.member_start,
                     member_full_start,
                     modifiers_base,
                 );
@@ -305,7 +305,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     if let Some(named_at) = named_at {
                         starts
                             .class_elements
-                            .insert(named_at.start, first_decorator_loc.start);
+                            .insert(named_at.start, opts.member_start.start);
                     }
                 }
                 properties.push(property);
@@ -319,7 +319,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                             if str_.eql_comptime(b"constructor") {
                                 p.log().add_error(
                                     Some(p.source),
-                                    first_decorator_loc,
+                                    opts.member_start,
                                     b"TypeScript does not allow decorators on class constructors",
                                 );
                             }
@@ -338,7 +338,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     p.finish_class_index_signature(
                         &mut class_keyword.loc,
                         opts.ts_decorators.slice(),
-                        first_decorator_loc,
+                        opts.member_start,
                         member_full_start,
                         modifiers_base,
                     );

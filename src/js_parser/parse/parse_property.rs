@@ -10,6 +10,7 @@ use crate::parser::{
     SkipTypeParameterResult, TypeParameterFlag,
 };
 use bun_ast as js_ast;
+use bun_ast::LexerLog as _;
 use bun_ast::flags;
 use bun_ast::lexer_tables::PropertyModifierKeyword;
 use bun_ast::op::Level;
@@ -673,15 +674,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                             && name == b"static"
                         {
                             p.lexer.keyword_was_taken(escaped_word.take());
-                            // esbuild skips this arm here and its lexer stops at the "{". Ours keeps parsing.
+                            // `ClassStaticBlock` is `static { }` alone: the word is the first
+                            // token of the class element and has no escape, so it ends six
+                            // characters after the element starts. After a decorator or a
+                            // modifier, or written with an escape, `static` is a member name.
+                            // The test reads the lexer: a local kept alive across `next()`
+                            // for this arm costs every other path of this function a register.
+                            // Tolerant mode: the checker reports them (1184, 1206, 1260).
                             if !p.is_tolerant()
-                                && let Some(decorator) = opts.ts_decorators.slice().first()
+                                && p.lexer.full_start().start
+                                    != opts.member_start.start + b"static".len() as i32
                             {
-                                p.log().add_error(
-                                    Some(p.source),
-                                    p.real_loc(decorator.loc),
-                                    b"Decorators are not valid here",
-                                );
+                                p.static_block_is_not_first_token(opts, name_range.loc);
                                 return Err(crate::Error::SyntaxError);
                             }
                             let loc = p.lexer.loc();
@@ -980,16 +984,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 }
 
                 if p.lexer.token == T::TEquals {
-                    if Self::IS_TYPESCRIPT_ENABLED {
-                        if !opts.declare_range.is_empty() {
-                            p.log().add_range_error(
-                                Some(p.source),
-                                p.lexer.range(),
-                                b"Class fields that use \"declare\" cannot be initialized",
-                            );
-                        }
-                    }
-
                     p.lexer.next()?;
 
                     // "this" and "super" property access is allowed in field initializers
@@ -1211,6 +1205,33 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             }
             _ => false,
         }
+    }
+
+    /// Reports `static {` in a class body where the word at `word` is not a `ClassStaticBlock`
+    /// keyword: it is the name of a method or of a field, and the `{` is what an engine rejects.
+    /// esbuild skips the arm after a decorator or `async`, and its lexer stops at the `{`. Ours
+    /// keeps parsing, so this logs the one error and the caller stops. Consumes nothing.
+    #[cold]
+    #[inline(never)]
+    fn static_block_is_not_first_token(&mut self, opts: &PropertyOpts, word: bun_ast::Loc) {
+        if let Some(decorator) = opts.ts_decorators.slice().first() {
+            self.log().add_error(
+                Some(self.source),
+                self.real_loc(decorator.loc),
+                b"Decorators are not valid here",
+            );
+            return;
+        }
+        let _ = if opts.is_async {
+            self.lexer.expected(T::TOpenParen)
+        } else if Self::IS_TYPESCRIPT_ENABLED && word != opts.member_start {
+            // TypeScript's own text (1184), at the first modifier.
+            let first_modifier = js_lexer::range_of_identifier(self.source, opts.member_start);
+            self.lexer
+                .add_range_error(first_modifier, format_args!("Modifiers cannot appear here"))
+        } else {
+            self.lexer.expected(T::TSemicolon)
+        };
     }
 
     /// `parseClassElement`: no member follows the modifiers, decorators included. It is a property

@@ -1485,6 +1485,84 @@ it("stream/iter consumers reject an unknown encoding with node's ERR_INVALID_ARG
   expect(exitCode).toBe(0);
 });
 
+it("stream/iter calls transform() of a transform object with that object as this", async () => {
+  // Upstream: https://github.com/nodejs/node/commit/649a4aba93be91a7de8998823ddaaaf805dd36d1
+  // test-stream-iter-transform-roundtrip.js covers the transform objects of node:zlib/iter.
+  const script = `
+    const { from, fromSync, pipeTo, pipeToSync, pull, pullSync, text, textSync } = require("node:stream/iter");
+
+    const thisIsTransformObject = {};
+    const output = {};
+
+    function asyncTransformObject(name) {
+      const transformObject = {
+        async *transform(source) {
+          thisIsTransformObject[name] = this === transformObject;
+          for await (const chunks of source) {
+            if (chunks !== null) yield chunks;
+          }
+        },
+      };
+      return transformObject;
+    }
+
+    function syncTransformObject(name) {
+      const transformObject = {
+        *transform(source) {
+          thisIsTransformObject[name] = this === transformObject;
+          for (const chunks of source) {
+            if (chunks !== null) yield chunks;
+          }
+        },
+      };
+      return transformObject;
+    }
+
+    (async () => {
+      output.pull = await text(pull(from("receiver"), asyncTransformObject("pull")));
+      output.pullSync = textSync(pullSync(fromSync("receiver"), syncTransformObject("pullSync")));
+
+      const written = [];
+      await pipeTo(from("receiver"), asyncTransformObject("pipeTo"), {
+        write(chunk) {
+          written.push(chunk);
+        },
+        end() {},
+      });
+      output.pipeTo = Buffer.concat(written).toString();
+
+      const writtenSync = [];
+      pipeToSync(fromSync("receiver"), syncTransformObject("pipeToSync"), {
+        writeSync(chunk) {
+          writtenSync.push(chunk);
+          return true;
+        },
+        endSync() {
+          return 0;
+        },
+      });
+      output.pipeToSync = Buffer.concat(writtenSync).toString();
+
+      console.log(JSON.stringify({ thisIsTransformObject, output }));
+    })();
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--no-warnings", "--experimental-stream-iter", "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+    stdout: {
+      thisIsTransformObject: { pull: true, pullSync: true, pipeTo: true, pipeToSync: true },
+      output: { pull: "receiver", pullSync: "receiver", pipeTo: "receiver", pipeToSync: "receiver" },
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("require.resolve.paths agrees with require about gated stream/iter specifiers", async () => {
   // Without the flag the introspection APIs must not report stream/iter as
   // a builtin (node returns a lookup-paths array there); with the flag they

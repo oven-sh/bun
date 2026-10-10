@@ -1615,6 +1615,11 @@ pub mod formatter {
         /// printed as a string. Set true in the error printer so that
         /// `ShellError` prints a more readable message.
         pub(crate) format_buffer_as_text: bool,
+        /// Set for `bun:test` matcher messages. True when it printed `value`, a DOM node or collection.
+        pub dom_printer:
+            Option<fn(&mut Formatter<'_>, &mut dyn bun_io::Write, JSValue) -> JsResult<bool>>,
+        /// Set for `bun:test` matcher messages. An own accessor prints as what its getter returns.
+        pub call_own_getters: bool,
     }
 
     impl<'a> Formatter<'a> {
@@ -1646,6 +1651,8 @@ pub mod formatter {
                 can_throw_stack_overflow: false,
                 error_display_level: ErrorDisplayLevel::Full,
                 format_buffer_as_text: false,
+                dom_printer: None,
+                call_own_getters: false,
             }
         }
 
@@ -1682,6 +1689,8 @@ pub mod formatter {
                 can_throw_stack_overflow: self.can_throw_stack_overflow,
                 error_display_level: self.error_display_level,
                 format_buffer_as_text: self.format_buffer_as_text,
+                dom_printer: self.dom_printer,
+                call_own_getters: self.call_own_getters,
             }
         }
 
@@ -2133,26 +2142,17 @@ pub mod formatter {
             if js_type.can_get()
                 && js_type != jsc::JSType::ProxyObject
                 && !opts.contains(TagOptions::DISABLE_INSPECT_CUSTOM)
+                && let Some(callback_value) =
+                    value.fast_get(global_this, jsc::BuiltinName::InspectCustom)?
+                && callback_value.is_callable()
             {
-                // Attempt to get custom formatter
-                match value.fast_get(global_this, jsc::BuiltinName::InspectCustom) {
-                    Err(_) => {
-                        return Ok(TagResult {
-                            tag: TagPayload::RevokedProxy,
-                            ..Default::default()
-                        });
-                    }
-                    Ok(Some(callback_value)) if callback_value.is_callable() => {
-                        return Ok(TagResult {
-                            tag: TagPayload::CustomFormattedObject(CustomFormattedObject {
-                                function: callback_value,
-                                this: value,
-                            }),
-                            cell: js_type,
-                        });
-                    }
-                    _ => {}
-                }
+                return Ok(TagResult {
+                    tag: TagPayload::CustomFormattedObject(CustomFormattedObject {
+                        function: callback_value,
+                        this: value,
+                    }),
+                    cell: js_type,
+                });
             }
 
             if js_type == jsc::JSType::DOMWrapper {
@@ -3180,6 +3180,17 @@ pub mod formatter {
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Option<bun_core::String>> {
+        if value.js_type() == jsc::JSType::GlobalProxy {
+            let target = value.get_proxy_target();
+            let name_str = target.get_class_name(global_this)?;
+            // Without a constructor to be found, it is the name of the native class.
+            let is_label = !name_str.is_empty()
+                && !name_str.eq_ascii(b"Object")
+                && !target
+                    .get_class_info_name()
+                    .is_some_and(|native| name_str.eq_ascii(native));
+            return Ok(is_label.then_some(name_str));
+        }
         let name_str = value.get_class_name(global_this)?;
         if !name_str.eq_ascii(b"Object") {
             return Ok(Some(name_str));
@@ -3297,6 +3308,14 @@ pub mod formatter {
                 armed: &raw const remove_before_recurse,
                 value,
             };
+
+            if let Some(print_dom) = self.dom_printer {
+                if matches!(format, Tag::Object | Tag::Proxy | Tag::Array)
+                    && print_dom(self, writer_, value)?
+                {
+                    return Ok(());
+                }
+            }
 
             // Each arm is hoisted to its own `#[inline(never)]` helper so the
             // `print_as` frame stays small enough to recurse 512 levels under
@@ -3855,6 +3874,11 @@ pub mod formatter {
             writer_: &mut dyn bun_io::Write,
             value: JSValue,
         ) -> JsResult<()> {
+            if self.single_line && self.dom_printer.is_some() {
+                let _ = write!(writer_, "[{}]", value.to_bun_string(self.global_this)?);
+                return Ok(());
+            }
+
             // Temporarily remove from the visited map to allow
             // printErrorlikeObject to process it. The circular reference
             // check is already done in print_as, so we know it's safe.
@@ -4344,9 +4368,13 @@ pub mod formatter {
                     }
                     if nonempty_count >= 100 {
                         writer.print_comma::<C>();
-                        writer.write_all(b"\n"); // we want the line break to be unconditional here
-                        *writer.estimated_line_length = 0;
-                        writer.write_indent(self.indent);
+                        if self.single_line {
+                            writer.space();
+                        } else {
+                            writer.write_all(b"\n");
+                            *writer.estimated_line_length = 0;
+                            writer.write_indent(self.indent);
+                        }
                         writer.pretty::<C>(
                             "... N more items".len(),
                             format_args!(
@@ -5373,6 +5401,7 @@ pub mod formatter {
                 return self.print_object_depth_exceeded::<C>(writer_, value);
             }
             let ordered_properties = self.ordered_properties;
+            let call_own_getters = self.call_own_getters;
             let global_this = self.global_this;
             let mut iter = PropertyIteratorCtx::<C> {
                 formatter: self,
@@ -5385,6 +5414,12 @@ pub mod formatter {
 
             if ordered_properties {
                 value.for_each_property_ordered(
+                    global_this,
+                    (&raw mut iter).cast::<c_void>(),
+                    PropertyIteratorCtx::<C>::for_each,
+                )?;
+            } else if call_own_getters {
+                value.for_each_property_calling_own_getters(
                     global_this,
                     (&raw mut iter).cast::<c_void>(),
                     PropertyIteratorCtx::<C>::for_each,
@@ -5420,9 +5455,7 @@ pub mod formatter {
                     pfmt!($s, C)
                 };
             }
-            if self.single_line {
-                let _ = writer_.write_all(b" ");
-            } else if self.always_newline_scope || self.good_time_for_a_new_line() {
+            if !self.single_line && (self.always_newline_scope || self.good_time_for_a_new_line()) {
                 let _ = writer_.write_all(b"\n");
                 let _ = self.write_indent(writer_);
                 self.reset_line();
@@ -5469,10 +5502,19 @@ pub mod formatter {
             iter_always_newline: bool,
         ) -> JsResult<()> {
             if iter_i == 0 {
-                if value.is_class(self.global_this) {
-                    self.print_as::<C>(Tag::Class, writer_, value, js_type)?;
-                } else if value.is_callable() {
-                    self.print_as::<C>(Tag::Function, writer_, value, js_type)?;
+                if value.is_callable() {
+                    let tag = if value.is_class(self.global_this) {
+                        Tag::Class
+                    } else {
+                        Tag::Function
+                    };
+                    // It is among the visited as the object that it has been printed as so far.
+                    let was_in_map = self.map_node.is_some() && self.map.remove(&value).is_some();
+                    let result = self.print_as::<C>(tag, writer_, value, js_type);
+                    if was_in_map {
+                        self.map.insert(value, ());
+                    }
+                    result?;
                 } else {
                     if let Some(name_str) = get_object_name(self.global_this, value)? {
                         let _ = write!(writer_, "{name_str} ");

@@ -6,12 +6,15 @@ import {
   describe,
   expect,
   expectTypeOf,
+  type ExtendTest,
   jest,
   type Matchers,
   mock,
   type Mock,
   spyOn,
   test,
+  type TestOptions,
+  vi,
   xdescribe,
   xit,
   xtest,
@@ -349,6 +352,44 @@ expectType(spy.mock.calls).is<any[][]>();
 jest.spyOn(console, "log");
 jest.fn(() => 123 as const);
 
+expectType(jest.useFakeTimers({ now: new Date(0), doNotFake: ["performance"], advanceTimers: 20, timerLimit: 100 })).is<
+  typeof jest
+>();
+expectType(
+  vi.useFakeTimers({
+    now: 0,
+    toFake: ["setTimeout", "Date"],
+    shouldAdvanceTime: true,
+    advanceTimeDelta: 20,
+    loopLimit: 100,
+  }),
+).is<typeof vi>();
+jest.useFakeTimers("legacy");
+vi.useFakeTimers("modern");
+// @ts-expect-error
+vi.useFakeTimers({ toFake: ["setTimeOut"] });
+expectType(jest.advanceTimersByTimeAsync(1)).is<Promise<void>>();
+expectType(jest.advanceTimersToNextTimerAsync(2)).is<Promise<void>>();
+expectType(jest.runAllTimersAsync()).is<Promise<void>>();
+expectType(jest.runOnlyPendingTimersAsync()).is<Promise<void>>();
+expectType(vi.advanceTimersByTimeAsync(1)).is<Promise<typeof vi>>();
+expectType(vi.advanceTimersToNextTimerAsync()).is<Promise<typeof vi>>();
+expectType(vi.runAllTimersAsync()).is<Promise<typeof vi>>();
+expectType(vi.runOnlyPendingTimersAsync()).is<Promise<typeof vi>>();
+expectType(vi.advanceTimersToNextTimer(2).advanceTimersToNextFrame().runAllTicks()).is<typeof vi>();
+expectType(jest.advanceTimersToNextTimer(2).advanceTimersToNextFrame().runAllTicks().runAllImmediates()).is<
+  typeof jest
+>();
+vi.setTimerTickMode("nextTimerAsync").setTimerTickMode("interval", 5).setTimerTickMode("manual");
+// @ts-expect-error
+vi.setTimerTickMode("manual", 5);
+jest.setTimerTickMode({ mode: "interval", delta: 5 }).setTimerTickMode({ mode: "nextAsync" });
+expectType(vi.setSystemTime("2020-01-01T00:00:00.000Z")).is<typeof vi>();
+jest.setSystemTime("2020-01-01T00:00:00.000Z");
+expectType(vi.getMockedSystemTime()).is<Date | null>();
+expectType(vi.getRealSystemTime()).is<number>();
+expectType(jest.getRealSystemTime()).is<number>();
+
 xtest("", () => {});
 xdescribe("", () => {});
 xit("", () => {});
@@ -442,6 +483,233 @@ unknownMatchers.toContainEqual([""]);
 unknownMatchers.toEqual(["a", "b"]);
 unknownMatchers.toBeCloseTo(2);
 unknownMatchers.toBe("a");
+
+// test.for(), test.extend() and the test context
+test.for([
+  [1, "a"],
+  [2, "b"],
+] as const)("test.for", ([n, s], context) => {
+  expectType<1 | 2>(n);
+  expectType<"a" | "b">(s);
+  expectType<string>(context.task.name);
+  expectType<"run" | "pass" | "fail" | "skip">(context.task.result.state);
+  expectType<AbortSignal>(context.signal);
+  context.expect(n).toBeNumber();
+  context.onTestFinished(({ task }) => {
+    expectType<string>(task.fullName);
+  });
+  context.onTestFailed(async () => {}, 1000);
+  context.skip(n === 1, "note");
+});
+test.for([1, 2])("test.for", { timeout: 100 }, (n, { expect }) => {
+  expect(n).toBe(n);
+});
+describe.for([[1, 2]])("describe.for", row => {
+  expectType<readonly [1, 2]>(row);
+});
+test.each`
+  a    | b
+  ${1} | ${2}
+`("$a $b", ({ a, b }, done) => {
+  expectType<any>(a + b);
+  expectType<(err?: unknown) => void>(done);
+});
+
+const extended = test.extend<{ port: number; url: string; label: string }>({
+  port: async ({}, use) => {
+    await use(3000);
+  },
+  url: [
+    async ({ port, task }, use) => {
+      expectType<number>(port);
+      expectType<string>(task.name);
+      await use(`http://localhost:${port}`);
+    },
+    { auto: true, scope: "test" },
+  ],
+  label: "a value",
+});
+extended("test.extend", ({ port, url, label, task, expect }) => {
+  expectType<number>(port);
+  expectType<string>(url);
+  expectType<string>(label);
+  expectType<string>(task.name);
+  expect(port).toBe(3000);
+});
+extended.skip("test.extend", { retry: 1 }, async ({ url }) => expectType<string>(url));
+extended.concurrent.for([1])("test.extend", (row, { port }) => {
+  expectType<number>(row + port);
+});
+extended.each([[1, "a"]] as const)("test.extend", (n, s) => {
+  expectType<1>(n);
+  expectType<"a">(s);
+});
+extended("options before the function", 1000, async ({ port }) => expectType<number>(port));
+extended("options after the function", async ({ port }) => expectType<number>(port), 1000);
+extended.for([1])("options before the function", 1000, async (row, { port }) => expectType<number>(row + port));
+extended.each([[1, "a"]])("options before the function", { timeout: 1000 }, (n, s) => {
+  expectType<number>(n);
+  expectType<string>(s);
+});
+// A row that is an array is spread, whether or not it is a tuple
+extended.each([] as readonly (readonly string[])[])("test.extend", (...args) => {
+  expectType<readonly string[]>(args);
+});
+extended.each([1, 2])("test.extend", async row => expectType<1 | 2>(row));
+extended.each`
+  a    | b
+  ${1} | ${2}
+`("$a $b", async ({ a, b }) => expectType<any>(a + b));
+// `Parameters<>` reads (label, fn, options?), as for `test`
+expectType<Parameters<typeof extended>[2]>().is<number | TestOptions | undefined>();
+expectType<Parameters<typeof extended.skip>[2]>().is<number | TestOptions | undefined>();
+expectType<Parameters<ReturnType<typeof extended.each>>[2]>().is<number | TestOptions | undefined>();
+// Options that are `any` do not take the type of the parameters away
+extended("options that are any", async ({ port }) => expectType<number>(port), {} as any);
+extended.skip("options that are any", async ({ port }) => expectType<number>(port), {} as any);
+extended.each([[1, "a"]])("options that are any", async (n, s) => expectType<string>(n + s), {} as any);
+test("options that are any", done => void expectType<(err?: unknown) => void>(done), {} as any);
+test.skip("options that are any", done => void expectType<(err?: unknown) => void>(done), {} as any);
+test.each([[1, "a"]])("options that are any", (n, s) => void expectType<string>(n + s), {} as any);
+test.each([1, 2])("options that are any", n => void expectType<number>(n), {} as any);
+extended.skip("only a label");
+extended.for([1]).skip("only a label");
+// @ts-expect-error
+extended("only a label");
+// @ts-expect-error
+extended.only("only a label");
+extended.beforeEach(({ port }) => {
+  expectType<number>(port);
+  return () => {};
+});
+extended.afterAll(({ port }, suite) => {
+  expectType<number>(port);
+  expectType<string>(suite.name);
+});
+extended.override({ label: "another" }).override({ port: async ({}, use) => use(1) });
+// @ts-expect-error
+extended.override({ label: 1 });
+// @ts-expect-error
+extended("test.extend", ({ nope }) => {});
+// @ts-expect-error
+test.extend<{ port: number }>({ port: "not a number" });
+
+const further = extended.extend<{ port: string; extra: boolean }>({
+  port: async ({ url }, use) => use(url),
+  extra: true,
+});
+further("test.extend", ({ port, extra, label }) => {
+  expectType<string>(port);
+  expectType<boolean>(extra);
+  expectType<string>(label);
+});
+const built = test
+  .extend("one", 1)
+  .extend("two", async ({ one }) => `${one}`)
+  .extend("three", { scope: "file" }, ({}, { onCleanup }) => {
+    onCleanup(async () => {});
+    return true;
+  });
+built("test.extend", ({ one, two, three }) => {
+  expectType<number>(one);
+  expectType<string>(two);
+  expectType<boolean>(three);
+});
+expectType(test.extend).is<ExtendTest<object>>();
+export const spreadTest = { ...test };
+export const spreadDescribe = { ...describe };
+
+test.todo("to be written");
+test.todo("to be fixed", () => {});
+test.concurrent.todo("to be written");
+extended.todo("to be written");
+describe.todo("to be written");
+expectType<Parameters<typeof test.todo>["length"]>().is<2 | 3>();
+// @ts-expect-error
+test("no callback");
+
+test.describe("test.describe", () => {
+  test.beforeEach(() => {});
+  test.afterAll(done => done());
+});
+
+// .resolves and .rejects
+expectType(expect(Promise.resolve(1)).resolves.toBe(1)).is<Promise<void>>();
+expectType(expect(Promise.resolve(1)).resolves.not.toBe(2)).is<Promise<void>>();
+expectType(expect(Promise.resolve(1)).not.resolves.toBe(2)).is<Promise<void>>();
+expectType(expect(Promise.reject(new Error())).rejects.toThrow()).is<Promise<void>>();
+expectType(expect(async () => 1).resolves.toBe(1)).is<Promise<void>>();
+expectType(expect(1).toBe(1)).is<void>();
+expectType(expect(1).not.toBe(2)).is<void>();
+// @ts-expect-error
+expect(Promise.resolve(1)).resolves.toBe("1");
+// @ts-expect-error
+expect(async () => 1).resolves.toBe("1");
+
+// custom matchers after .resolves and .rejects
+declare module "bun:test" {
+  interface Matchers<T> {
+    toBeWithinRange(floor: number, ceiling: number): void;
+    toHaveClassNames(...names: string[]): void;
+    toHaveClassNames(names: string, options: { exact: boolean }): void;
+    toBeOfKind<Kind>(kind: Kind): void;
+  }
+}
+expect.extend({
+  toBeWithinRange(received: unknown, floor: unknown, ceiling: unknown) {
+    return { pass: true, message: () => this.utils.matcherHint("toBeWithinRange", received, floor) };
+  },
+});
+expectType(expect(1).toBeWithinRange(0, 2)).is<void>();
+expectType(expect(Promise.resolve(1)).resolves.toBeWithinRange(0, 2)).is<Promise<void>>();
+expectType(expect(Promise.resolve(1)).resolves.not.toBeWithinRange(0, 2)).is<Promise<void>>();
+expectType(expect(Promise.reject(1)).rejects.toBeWithinRange(0, 2)).is<Promise<void>>();
+expectType(expect.poll(() => 1).toBeWithinRange(0, 2)).is<Promise<void>>();
+expect(Promise.resolve(1)).resolves.toHaveClassNames("a", "b");
+expect(Promise.resolve(1)).resolves.toHaveClassNames("a b", { exact: true });
+expect(Promise.resolve(1)).resolves.toBeOfKind<string>("kind");
+expect(Promise.resolve(1)).resolves.toBeOfKind("kind");
+// @ts-expect-error
+expect(Promise.resolve(1)).resolves.toBeWithinRange("0", 2);
+const resolvedMatchers: Matchers<number> = expect(Promise.resolve(1)).resolves;
+
+expectType(expect.soft(1, "message").toBe(1)).is<void>();
+expectType(expect.soft(Promise.resolve(1)).resolves.not.toBe(2)).is<Promise<void>>();
+// @ts-expect-error
+expect.soft(1).toBe("1");
+
+expectType(expect.poll(() => 1).toBe(1)).is<Promise<void>>();
+expectType(expect.poll(async () => 1, { interval: 1, timeout: 10, message: "message" }).not.toBe(2)).is<
+  Promise<void>
+>();
+// @ts-expect-error
+expect.poll(async () => 1).toBe("1");
+// @ts-expect-error
+expect.poll(() => 1).toThrow();
+// @ts-expect-error
+expect.poll(() => 1).resolves;
+// @ts-expect-error
+expect.poll(1);
+
+expectType(expect("text").toMatchFileSnapshot("./text.txt")).is<Promise<void>>();
+expectType(expect("text").toMatchFileSnapshot("./text.txt", "hint")).is<Promise<void>>();
+expectType(expect(Promise.resolve("text")).resolves.toMatchFileSnapshot("./text.txt")).is<Promise<void>>();
+// @ts-expect-error
+expect("text").toMatchFileSnapshot();
+
+expect.addSnapshotSerializer({
+  test: value => value instanceof Date,
+  serialize: (value, config, indentation, depth, refs, printer) =>
+    `Date(${printer(value.getTime(), config, indentation + config.indent, depth, refs)})`,
+});
+expect.addSnapshotSerializer({
+  test: value => typeof value === "string",
+  print: (value, print, indent) => indent(print([value])),
+});
+// @ts-expect-error
+expect.addSnapshotSerializer({ test: () => true });
+// @ts-expect-error
+expect.addSnapshotSerializer({ serialize: () => "" });
 
 test("options before the function", { timeout: 1000, retry: 1 }, () => {});
 test("options before the function", 1000, async () => {});

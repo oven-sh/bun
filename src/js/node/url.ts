@@ -25,8 +25,7 @@
 
 "use strict";
 
-const { URL, URLSearchParams, URLPattern } = globalThis;
-const { domainToASCII, domainToUnicode, idnaToASCII, urlToHttpOptions } = require("internal/url");
+const { domainToASCII, domainToUnicode, idnaToASCII, isURL, urlToHttpOptions } = require("internal/url");
 const { validateString, validateObject } = require("internal/validators");
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
@@ -1228,7 +1227,7 @@ function getPathFromURLWin32(url: URL): string {
       }
     }
   }
-  pathname = pathname.replace(/\//g, "\\");
+  pathname = `${pathname}`.replace(/\//g, "\\");
   pathname = decodeURIComponent(pathname);
   if (hostname !== "") {
     // UNC path: \\hostname\path
@@ -1255,16 +1254,18 @@ function getPathFromURLPosix(url: URL): string {
       }
     }
   }
-  return decodeURIComponent(pathname);
+  // As in Node, a `pathname` that is not a string stays what it is, for the caller's path check to refuse.
+  return `${pathname}`.includes("%") ? decodeURIComponent(pathname) : pathname;
 }
 
 function fileURLToPath(url: string | URL, options?: { windows?: boolean }) {
   const windows = options?.windows;
-  if (windows !== undefined && windows !== null) {
+  // Bun.fileURLToPath takes a string or a native URL.
+  if ((windows !== undefined && windows !== null) || (typeof url !== "string" && !(url instanceof URL))) {
     let parsed: URL;
     if (typeof url === "string") {
       parsed = new URL(url);
-    } else if (url instanceof URL) {
+    } else if (isURL(url)) {
       parsed = url;
     } else {
       throw $ERR_INVALID_ARG_TYPE("path", ["string", "URL"], url);
@@ -1272,7 +1273,7 @@ function fileURLToPath(url: string | URL, options?: { windows?: boolean }) {
     if (parsed.protocol !== "file:") {
       throw $ERR_INVALID_URL_SCHEME("file");
     }
-    return windows ? getPathFromURLWin32(parsed) : getPathFromURLPosix(parsed);
+    return (windows ?? process.platform === "win32") ? getPathFromURLWin32(parsed) : getPathFromURLPosix(parsed);
   }
   try {
     return Bun.fileURLToPath(url as any);
@@ -1319,14 +1320,6 @@ function hexByteToNumber(byte: number): number {
   if (byte >= 0x41 && byte <= 0x46) return byte - 0x41 + 10; // A-F
   if (byte >= 0x61 && byte <= 0x66) return byte - 0x61 + 10; // a-f
   return -1;
-}
-
-// Node's isURL (lib/internal/url.js): a duck-type check rather than
-// `instanceof`, so cross-realm URLs and compatible foreign implementations
-// are accepted; `auth`/`path` must be absent to exclude legacy `url.parse`
-// objects, which carry both.
-function isURL(self: any): boolean {
-  return Boolean(self?.href && self.protocol && self.auth === undefined && self.path === undefined);
 }
 
 function fileURLToPathBuffer(path: unknown, options?: { windows?: boolean }): Buffer {

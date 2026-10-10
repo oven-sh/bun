@@ -165,6 +165,12 @@ pub struct TSConfigJSON {
     pub use_define_for_class_fields: Option<bool>,
 }
 
+pub(crate) struct PathsWildcardMatch<'a> {
+    pub(crate) prefix: &'a [u8],
+    pub(crate) suffix: &'a [u8],
+    pub(crate) original_paths: &'a [Box<[u8]>],
+}
+
 impl Default for TSConfigJSON {
     fn default() -> Self {
         Self {
@@ -224,6 +230,50 @@ impl TSConfigJSON {
 
     pub(crate) fn has_base_url(&self) -> bool {
         !self.base_url.is_empty()
+    }
+
+    /// What the values of "paths" are relative to.
+    pub(crate) fn abs_base_url_for_paths(&self) -> &[u8] {
+        // The explicit base URL should take precedence over the implicit base URL
+        // if present. This matters when a tsconfig.json file overrides "baseUrl"
+        // from another extended tsconfig.json file but doesn't override "paths".
+        if self.has_base_url() {
+            &self.base_url
+        } else {
+            &self.base_url_for_paths
+        }
+    }
+
+    /// The key of "paths" with a `*` that `path` matches.
+    pub(crate) fn match_paths_wildcard(&self, path: &[u8]) -> Option<PathsWildcardMatch<'_>> {
+        let mut longest_match: Option<PathsWildcardMatch> = None;
+
+        for (key, original_paths) in self.paths.keys().iter().zip(self.paths.values().iter()) {
+            if let Some(star) = strings::index_of_char_usize(key, b'*') {
+                let prefix = &key[..star];
+                let suffix = &key[star + 1..];
+
+                // Find the match with the longest prefix. If two matches have the same
+                // prefix length, pick the one with the longest suffix. This second edge
+                // case isn't handled by the TypeScript compiler, but we handle it
+                // because we want the output to always be deterministic
+                if path.len() >= prefix.len() + suffix.len()
+                    && path.starts_with(prefix)
+                    && path.ends_with(suffix)
+                    && longest_match.as_ref().is_none_or(|longest| {
+                        (prefix.len(), suffix.len()) > (longest.prefix.len(), longest.suffix.len())
+                    })
+                {
+                    longest_match = Some(PathsWildcardMatch {
+                        prefix,
+                        suffix,
+                        original_paths,
+                    });
+                }
+            }
+        }
+
+        longest_match
     }
 
     pub fn merge_jsx(&self, current: options::jsx::Pragma) -> options::jsx::Pragma {

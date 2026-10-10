@@ -296,9 +296,10 @@ static JSValue constructBunVersionWithSha(VM& vm, JSObject*)
     return JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(Bun__version_with_sha)));
 }
 
-static JSValue constructIsMainThread(VM&, JSObject* object)
+static JSValue constructIsMainThread(VM& vm, JSObject*)
 {
-    return jsBoolean(uncheckedDowncast<Zig::GlobalObject>(object->globalObject())->scriptExecutionContext()->isMainThread());
+    // A ShadowRealm's global has a context of its own.
+    return jsBoolean(defaultGlobalObject(vm)->scriptExecutionContext()->isMainThread());
 }
 
 static JSValue constructPluginObject(VM& vm, JSObject* bunObject)
@@ -730,10 +731,8 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepMatch, (JSGlobalObject * globalObject, J
         return {};
     }
 
-    std::set<EncodedJSValue> objVisited;
-    std::set<EncodedJSValue> subsetVisited;
-    MarkedArgumentBuffer gcBuffer;
-    bool match = Bun__deepMatch</* enableAsymmetricMatchers */ false>(object, &objVisited, subset, &subsetVisited, globalObject, scope, &gcBuffer, false, false);
+    Bun::DeepMatchState state;
+    bool match = Bun__deepMatch</* enableAsymmetricMatchers */ false>(object, subset, globalObject, scope, state, false);
     RETURN_IF_EXCEPTION(scope, {});
     return JSValue::encode(jsBoolean(match));
 }

@@ -4764,14 +4764,7 @@ impl<'a> Resolver<'a> {
             ));
         }
 
-        let mut abs_base_url: &[u8] = &tsconfig.base_url_for_paths;
-
-        // The explicit base URL should take precedence over the implicit base URL
-        // if present. This matters when a tsconfig.json file overrides "baseUrl"
-        // from another extended tsconfig.json file but doesn't override "paths".
-        if tsconfig.has_base_url() {
-            abs_base_url = &tsconfig.base_url;
-        }
+        let abs_base_url = tsconfig.abs_base_url_for_paths();
 
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
@@ -4815,59 +4808,9 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        struct TSConfigMatch<'b> {
-            prefix: &'b [u8],
-            suffix: &'b [u8],
-            original_paths: &'b [Box<[u8]>],
-        }
-
-        let mut longest_match: Option<TSConfigMatch> = None;
-        let mut longest_match_prefix_length: i32 = -1;
-        let mut longest_match_suffix_length: i32 = -1;
-
-        for (key, original_paths) in tsconfig
-            .paths
-            .keys()
-            .iter()
-            .zip(tsconfig.paths.values().iter())
-        {
-            if let Some(star) = strings::index_of_char(key, b'*') {
-                let star = star as usize;
-                let prefix: &[u8] = if star == 0 { b"" } else { &key[0..star] };
-                let suffix: &[u8] = if star == key.len() - 1 {
-                    b""
-                } else {
-                    &key[star + 1..]
-                };
-
-                // Find the match with the longest prefix. If two matches have the same
-                // prefix length, pick the one with the longest suffix. This second edge
-                // case isn't handled by the TypeScript compiler, but we handle it
-                // because we want the output to always be deterministic
-                let plen = i32::try_from(prefix.len()).expect("int cast");
-                let slen = i32::try_from(suffix.len()).expect("int cast");
-                if path.len() >= prefix.len() + suffix.len()
-                    && path.starts_with(prefix)
-                    && path.ends_with(suffix)
-                    && (plen > longest_match_prefix_length
-                        || (plen == longest_match_prefix_length
-                            && slen > longest_match_suffix_length))
-                {
-                    longest_match_prefix_length = plen;
-                    longest_match_suffix_length = slen;
-                    longest_match = Some(TSConfigMatch {
-                        prefix,
-                        suffix,
-                        original_paths,
-                    });
-                }
-            }
-        }
-
         // If there is at least one match, only consider the one with the longest
         // prefix. This matches the behavior of the TypeScript compiler.
-        if longest_match_prefix_length != -1 {
-            let longest_match = longest_match.unwrap();
+        if let Some(longest_match) = tsconfig.match_paths_wildcard(path) {
             if let Some(debug) = self.debug_logs.as_mut() {
                 debug.add_note_fmt(format_args!(
                     "Found a fuzzy match for \"{}*{}\" in \"paths\"",
@@ -4940,7 +4883,7 @@ impl<'a> Resolver<'a> {
     /// only. Skip it, like esbuild's `matchTSConfigPaths` (which checks `.d.ts` only).
     /// This looks at the tsconfig text, not the `*` expansion: `"@/*": ["./src/*"]`
     /// must still resolve `import "@/env.d.ts"`.
-    fn is_type_only_tsconfig_path(&mut self, substitution: &[u8]) -> bool {
+    pub(crate) fn is_type_only_tsconfig_path(&mut self, substitution: &[u8]) -> bool {
         const DECLARATION_EXTS: [&[u8]; 3] = [b".d.ts", b".d.mts", b".d.cts"];
         let Some(ext) = DECLARATION_EXTS.iter().find(|ext| {
             substitution
@@ -5330,7 +5273,9 @@ impl<'a> Resolver<'a> {
 
         let ext_buf = bufs!(extension_path);
 
-        let base = &mut ext_buf[0..b"index".len() + ext.len()];
+        let Some(base) = ext_buf.get_mut(0..b"index".len() + ext.len()) else {
+            return MatchStatus::NotFound;
+        };
         base[0..b"index".len()].copy_from_slice(b"index");
         base[b"index".len()..].copy_from_slice(ext);
 
@@ -5362,7 +5307,10 @@ impl<'a> Resolver<'a> {
                 let out_buf: &[u8] = {
                     if lookup.entry().abs_path.is_empty() {
                         let parts = [dir_info.abs_path, &base[..]];
-                        let out_buf_ = self.fs_ref().abs_buf(&parts, bufs!(index));
+                        let Some(out_buf_) = self.fs_ref().abs_buf_checked(&parts, bufs!(index))
+                        else {
+                            return MatchStatus::NotFound;
+                        };
                         // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
                         // evaluated before LHS `&mut Entry` is materialized.
                         unsafe { &mut *lookup.entry }.abs_path = Interned::from_static(
@@ -5852,7 +5800,12 @@ impl<'a> Resolver<'a> {
                 let abs_path: &'static [u8] = {
                     if query.entry().abs_path.is_empty() {
                         let abs_path_parts = [query.entry().dir, query.entry().base()];
-                        let joined = self.fs_ref().abs_buf(&abs_path_parts, bufs!(load_as_file));
+                        let Some(joined) = self
+                            .fs_ref()
+                            .abs_buf_checked(&abs_path_parts, bufs!(load_as_file))
+                        else {
+                            dec_ret!(None);
+                        };
                         // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
                         // evaluated before LHS `&mut Entry` is materialized.
                         unsafe { &mut *query.entry }.abs_path = Interned::from_static(
@@ -5873,8 +5826,11 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // Try the path with extensions
-        bufs!(load_as_file)[..path.len()].copy_from_slice(path);
+        // Try the path with extensions. What does not fit a path buffer cannot name a file.
+        let Some(prefix) = bufs!(load_as_file).get_mut(..path.len()) else {
+            dec_ret!(None);
+        };
+        prefix.copy_from_slice(path);
         // NOTE: index by `0..len` so each iteration takes a fresh short
         // borrow of `self.opts` that ends before `&mut self` is taken by
         // `load_extension` (matches `extra_cjs_extensions` loop below).
@@ -5913,7 +5869,9 @@ impl<'a> Resolver<'a> {
                 tail[..segment.len()].copy_from_slice(segment);
 
                 for ext_to_replace in exts {
-                    let buffer = &mut tail[0..segment.len() + ext_to_replace.len()];
+                    let Some(buffer) = tail.get_mut(0..segment.len() + ext_to_replace.len()) else {
+                        continue;
+                    };
                     buffer[segment.len()..].copy_from_slice(ext_to_replace);
 
                     let (ts_query, ts_dirname_fd) = dir_entry.get().lookup(&buffer[..]);
@@ -6009,7 +5967,7 @@ impl<'a> Resolver<'a> {
         // field so `unsafe { &mut *self.fs() }` calls below (`filename_store.append_parts`) don't pop
         // its provenance under Stacked Borrows.
         let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
-        let buffer = &mut bufs!(load_as_file)[0..path.len() + ext.len()];
+        let buffer = bufs!(load_as_file).get_mut(0..path.len() + ext.len())?;
         buffer[path.len()..].copy_from_slice(ext);
         let file_name = &buffer[path.len() - base.len()..buffer.len()];
 

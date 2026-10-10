@@ -124,6 +124,7 @@ macro_rules! impl_timer_object {
                 interval: u32,
                 callback: ::bun_jsc::JSValue,
                 arguments: ::bun_jsc::JSValue,
+                clock: super::Clock,
             ) -> ::bun_jsc::JSValue {
                 // Heap-allocate; `*mut Self` is the
                 // `m_ctx` payload of the codegen'd JSCell wrapper. Ownership
@@ -145,7 +146,7 @@ macro_rules! impl_timer_object {
                 // owned here; `internals.init()` writes every field.
                 unsafe {
                     (*payload).internals.init(
-                        js_value, cx, id, kind, interval, callback, arguments,
+                        js_value, cx, id, kind, interval, callback, arguments, clock,
                     );
                 }
                 if cx.vm().as_mut().is_inspector_enabled() {
@@ -286,7 +287,7 @@ impl TimerHeap {
     /// # Safety
     /// `v` is a node currently in *this* heap.
     #[inline]
-    unsafe fn remove(&mut self, v: *mut EventLoopTimer) {
+    pub(crate) unsafe fn remove(&mut self, v: *mut EventLoopTimer) {
         // SAFETY: forwarded — see fn contract.
         unsafe { self.0.remove(v) };
     }
@@ -305,6 +306,48 @@ impl TimerHeap {
         // live for the heap's lifetime (intrusive invariant maintained by `All`).
         let r = unsafe { self.0.find_max() };
         if r.is_null() { None } else { Some(r) }
+    }
+
+    /// The first `ImmediateObject` (a faked `setImmediate`) to run.
+    pub(crate) fn first_immediate(&self) -> Option<*mut EventLoopTimer> {
+        let mut first: Option<*mut EventLoopTimer> = None;
+        let mut stack = vec![self.0.root];
+        while let Some(node) = stack.pop() {
+            if node.is_null() {
+                continue;
+            }
+            // SAFETY: all reachable nodes were inserted via `insert()` and remain
+            // live for the heap's lifetime (intrusive invariant maintained by `All`).
+            unsafe {
+                stack.push((*node).heap.child);
+                stack.push((*node).heap.next);
+                if (*node).tag == EventLoopTimerTag::ImmediateObject
+                    && first.is_none_or(|first| EventLoopTimer::less((), &*node, &*first))
+                {
+                    first = Some(node);
+                }
+            }
+        }
+        first
+    }
+
+    /// Whether a timer other than the runtime's own upkeep is armed.
+    pub(crate) fn has_program_timer(&self) -> bool {
+        let mut stack = vec![self.0.root];
+        while let Some(node) = stack.pop() {
+            if node.is_null() {
+                continue;
+            }
+            // SAFETY: all reachable nodes were inserted via `insert()` and remain
+            // live for the heap's lifetime (intrusive invariant maintained by `All`).
+            let node = unsafe { &*node };
+            if !node.tag.is_housekeeping() {
+                return true;
+            }
+            stack.push(node.heap.child);
+            stack.push(node.heap.next);
+        }
+        false
     }
 
     #[inline]
@@ -593,7 +636,7 @@ pub(crate) struct All {
     /// Whether we have emitted a warning for passing NaN for the timeout duration
     pub(crate) warned_not_number: bool,
     /// Incremented when timers are scheduled or rescheduled. See
-    /// TimerObjectInternals.epoch. Masked to 25 bits on increment.
+    /// TimerObjectInternals.epoch. Masked to 24 bits on increment.
     pub(crate) epoch: u32,
     pub(crate) immediate_ref_count: i32,
     #[cfg(windows)]
@@ -646,19 +689,29 @@ impl All {
         // timers (setTimeout/setInterval/AbortSignal.timeout) fire in insertion
         // order. Before heap insert: `EventLoopTimer::less` reads epoch as tiebreak.
         // SAFETY: `timer` is live (caller contract).
-        if let Some(flags) = unsafe { js_timer_flags_ptr(timer) } {
-            self.epoch = self.epoch.wrapping_add(1) & ((1u32 << 25) - 1);
+        let flags = unsafe { js_timer_flags_ptr(timer) };
+        if let Some(flags) = flags {
+            self.epoch = self.epoch.wrapping_add(1) & TimerFlags::EPOCH_MASK;
             // SAFETY: `flags` points into the live container recovered above.
             unsafe { (*flags.as_ptr()).set_epoch(self.epoch) };
         }
 
-        if self.fake_timers.is_active() && tag.allow_fake_timers() {
+        let fake = match tag {
+            // The function that created it chose its clock.
+            EventLoopTimerTag::TimeoutObject | EventLoopTimerTag::ImmediateObject => {
+                // SAFETY: as above.
+                flags.is_some_and(|flags| unsafe { flags.as_ref() }.fake())
+            }
+            _ => tag.allow_fake_timers() && self.fake_timers.set_timeout_clock() == Clock::Fake,
+        };
+        if fake {
             // SAFETY: see fn contract
             unsafe {
                 self.fake_timers.timers.insert(timer);
                 (*timer).state = EventLoopTimerState::ACTIVE;
                 (*timer).in_heap = InHeap::Fake;
             }
+            self.fake_timers.post_auto_step();
         } else {
             // SAFETY: see fn contract
             unsafe {
@@ -1297,6 +1350,14 @@ pub(crate) enum TimeoutWarning {
     TimeoutOverflowWarning,
     TimeoutNegativeWarning,
     TimeoutNaNWarning,
+}
+
+/// The clock a `setTimeout`, `setInterval` or `setImmediate` timer is on for as long as it lives.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum Clock {
+    Real,
+    /// `jest.useFakeTimers()`'s.
+    Fake,
 }
 
 #[repr(u8)]

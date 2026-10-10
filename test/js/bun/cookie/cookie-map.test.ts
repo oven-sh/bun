@@ -215,6 +215,27 @@ describe("Bun.Cookie and Bun.CookieMap", () => {
     expect(map.toSetCookieHeaders()).toMatchInlineSnapshot(`[]`);
   });
 
+  test.each([
+    ["a Proxy", () => new Proxy({ name: "value", foo: "bar" }, {})],
+    ["import.meta.env", () => import.meta.env as Record<string, string>],
+  ])("can create CookieMap from an object that lists its properties itself: %s", (_, object) => {
+    const env = process.env;
+    process.env = { name: "value", foo: "bar" };
+    try {
+      const map = new Bun.CookieMap(object());
+      expect([map.get("name"), map.get("foo")]).toEqual(["value", "bar"]);
+    } finally {
+      process.env = env;
+    }
+  });
+
+  test("takes the enumerable properties of an object only", () => {
+    const object = Object.defineProperty({ name: "value" }, "hidden", { value: "x", enumerable: false });
+    expect([...new Bun.CookieMap(object)]).toEqual([["name", "value"]]);
+    expect([...new Bun.CookieMap(new Proxy(object, {}))]).toEqual([["name", "value"]]);
+    expect([...new Bun.CookieMap(new Proxy([], {}))]).toEqual([]);
+  });
+
   test("can create CookieMap from array pairs", () => {
     const map = new Bun.CookieMap([
       ["name", "value"],

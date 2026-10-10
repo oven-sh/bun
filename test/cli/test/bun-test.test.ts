@@ -998,7 +998,7 @@ describe("bun test", () => {
         input: `
           import { test, expect } from "bun:test";
 
-          test.each(${JSON.stringify(input)})("with an object: %o", (o) => {
+          test.each(${JSON.stringify(input)})("with an object: %j", (o) => {
             expect(o).toBe(o);
           });
         `,
@@ -1027,7 +1027,7 @@ describe("bun test", () => {
           });
         `,
       });
-      expect(stderr).toContain(`with an object: ${JSON.stringify(input[0])}`);
+      expect(stderr).toContain(`(pass) with an object: { foo: "bar", nested: { again: { a: 2 } } }`);
     });
     test("check formatting for %#", () => {
       const numbers = [
@@ -1069,7 +1069,17 @@ describe("bun test", () => {
       });
       expect(stderr).toContain(`%`);
     });
-    test.todo("check formatting for %p", () => {});
+    test("check formatting for %p", () => {
+      const stderr = runTest({
+        args: [],
+        input: `
+          import { test } from "bun:test";
+
+          test.each([[{ foo: "bar", nested: [1, { a: 2 }] }, "str"]])("with %p and %p", () => {});
+        `,
+      });
+      expect(stderr).toContain(`(pass) with { foo: "bar", nested: [ 1, { a: 2 } ] } and "str"`);
+    });
 
     describe("$variable syntax", () => {
       test("should replace $variables with object properties in test names", () => {
@@ -1272,12 +1282,7 @@ describe("bun test", () => {
           `,
         });
 
-        expect(stderr).toContain("underscore");
-        expect(stderr).toContain("dollar");
-        expect(stderr).toContain("mix");
-        expect(stderr).toContain("$123invalid");
-        expect(stderr).toContain("$hasdash");
-        expect(stderr).toContain("$hasspace");
+        expect(stderr).toContain("(pass) Edge: underscore | dollar | mix | $123invalid | $has-dash | $has space");
       });
 
       test("handles deeply nested properties with arrays", () => {
@@ -1373,7 +1378,7 @@ describe("bun test", () => {
           `,
         });
 
-        expect(stderr).toContain("1 | $missing| $a.b.c| 1");
+        expect(stderr).toContain("(pass) 1 | $missing | $a.b.c | 1");
       });
     });
   });
@@ -1973,6 +1978,41 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.each([
+    ["named twice", ["./a.test.ts", "./a.test.ts"], ["LOADED a"], "Ran 1 test across 2 files."],
+    ["named in three ways", ["./a.test.ts", "a.test.ts", "ABSOLUTE"], ["LOADED a"], "Ran 1 test across 3 files."],
+    [
+      "imported by the file after it",
+      ["./a.test.ts", "./b.test.ts"],
+      ["LOADED a", "LOADED b"],
+      "Ran 2 tests across 2 files.",
+    ],
+    [
+      "imported by the file before it",
+      ["./b.test.ts", "./a.test.ts"],
+      ["LOADED a", "LOADED b"],
+      "Ran 2 tests across 2 files.",
+    ],
+  ])("a test file that is %s is loaded once", async (_, args, loaded, ran) => {
+    using dir = tempDir("test-file-twice", {
+      "a.test.ts": `import { test } from "bun:test"; console.log("LOADED a"); test("a", () => {});`,
+      "b.test.ts": `import { test } from "bun:test"; import "./a.test.ts"; console.log("LOADED b"); test("b", () => {});`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args.map(arg => (arg === "ABSOLUTE" ? join(String(dir), "a.test.ts") : arg))],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout.split("\n").filter(line => line.startsWith("LOADED"))).toEqual(loaded);
+    expect(stderr).toContain(ran);
+    expect(exitCode).toBe(0);
+  });
+
   // The scanner builds every absolute path in a PathBuffer of MAX_PATH_BYTES:
   // 4096 on Linux, 1024 on every other POSIX (src/bun_core/util.rs). On Windows
   // it is 32767*3+1 bytes, more than a command line or an NT path can hold, so
@@ -2118,5 +2158,977 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(Number(stdout.match(/OPEN_FDS=(\d+)/)?.[1])).toBeLessThan(N);
     expect(stderr).toContain(" 1 pass");
     expect(exitCode).toBe(0);
+  });
+});
+
+function runFiles(files: Record<string, string>, ...args: string[]) {
+  return runFilesWithEnv({}, files, ...args);
+}
+
+async function runFilesWithEnv(env: Record<string, string>, files: Record<string, string>, ...args: string[]) {
+  using dir = tempDir("bun-test-waits", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", ...args],
+    env: { ...bunEnv, ...env },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return {
+    stdout,
+    stderr,
+    // The errors, with every path cut down to its last component.
+    errors: stderr
+      .split(/\r?\n/)
+      .filter(line => /^(error|note): /.test(line))
+      .map(line => line.replace(/"[^"]*[\\/]([^"\\/]+)"/g, '"$1"')),
+    counts: stderr.match(/^ \d+ (pass|fail)$/gm),
+    exitCode,
+  };
+}
+
+// No test has started, so no timeout ends these waits of the runner.
+describe.concurrent("a test file that can never finish loading", () => {
+  const nothingLeft =
+    "note: it is waiting for something that can no longer happen: the event loop has nothing left to run";
+  const neverLoads = `
+    import { test } from "bun:test";
+    await new Promise(() => {});
+    test("never registered", () => {});
+  `;
+  const passes = `
+    import { test } from "bun:test";
+    test("passes", () => {});
+  `;
+
+  test.each([
+    [[]],
+    [["--isolate"]],
+    // On Windows the pipe to the coordinator keeps a worker's loop alive.
+    ...(isWindows ? [] : [[["--parallel=2"]], [["--parallel=2", "--isolate"]]]),
+  ])("fails at once and the run goes on %j", async flags => {
+    const { errors, counts, exitCode } = await runFiles(
+      { "a.test.ts": neverLoads, "b.test.ts": passes, "c.test.ts": passes },
+      ...flags,
+    );
+    expect({ errors, counts, exitCode }).toEqual({
+      errors: [
+        'error: "a.test.ts" never finished loading',
+        nothingLeft,
+        'note: unsettled top-level await in "a.test.ts"',
+      ],
+      counts: [" 2 pass", " 1 fail"],
+      exitCode: 1,
+    });
+  });
+
+  test("once the last timer has fired", async () => {
+    const { errors, counts, exitCode } = await runFiles({
+      "a.test.ts": `
+        await new Promise(() => setTimeout(() => console.log("fired"), 1));
+      `,
+    });
+    expect({ errors, counts, exitCode }).toEqual({
+      errors: [
+        'error: "a.test.ts" never finished loading',
+        nothingLeft,
+        'note: unsettled top-level await in "a.test.ts"',
+      ],
+      counts: [" 0 pass", " 1 fail"],
+      exitCode: 1,
+    });
+  });
+
+  // Here both are pipes, whose writers the event loop knows from the start. They have nothing left to write.
+  test.each([
+    ["process.stdout", []],
+    ["process.stderr", []],
+    [`process.stdout.write("written\\n")`, []],
+    // On Windows the pipe to the coordinator keeps a worker's loop alive.
+    ...(isWindows ? [] : [["process.stdout", ["--parallel=2"]]]),
+  ] as [string, string[]][])("after %s %j", async (touch, flags) => {
+    const { errors, counts, exitCode } = await runFiles(
+      {
+        "a.test.ts": `
+          ${touch};
+          await new Promise(() => {});
+        `,
+        "b.test.ts": passes,
+      },
+      ...flags,
+    );
+    expect({ errors, counts, exitCode }).toEqual({
+      errors: [
+        'error: "a.test.ts" never finished loading',
+        nothingLeft,
+        'note: unsettled top-level await in "a.test.ts"',
+      ],
+      counts: [" 1 pass", " 1 fail"],
+      exitCode: 1,
+    });
+  });
+
+  test("names the modules that wait, in the order they were evaluated, not their importers", async () => {
+    const { errors, counts, exitCode } = await runFiles({
+      "a.test.ts": `
+        import "./middle.ts";
+      `,
+      "middle.ts": `
+        import "./y.ts";
+      `,
+      "y.ts": `
+        export const y = 1;
+        await import("./x.ts");
+      `,
+      "x.ts": `
+        export const x = 1;
+        await import("./y.ts");
+      `,
+    });
+    expect({ errors, counts, exitCode }).toEqual({
+      errors: [
+        'error: "a.test.ts" never finished loading',
+        nothingLeft,
+        'note: unsettled top-level await in "y.ts"',
+        'note: unsettled top-level await in "x.ts"',
+      ],
+      counts: [" 0 pass", " 1 fail"],
+      exitCode: 1,
+    });
+  });
+
+  test("names a handful of modules at most", async () => {
+    const files: Record<string, string> = { "a.test.ts": "" };
+    for (let i = 0; i < 7; i++) {
+      files["a.test.ts"] += `import "./dep${i}.ts";\n`;
+      files[`dep${i}.ts`] = "await new Promise(() => {});";
+    }
+    const { errors } = await runFiles(files);
+    expect(errors).toEqual([
+      'error: "a.test.ts" never finished loading',
+      nothingLeft,
+      ...[0, 1, 2, 3, 4].map(i => `note: unsettled top-level await in "dep${i}.ts"`),
+      "note: and 2 more",
+    ]);
+  });
+
+  test("names a module whose onLoad() plugin never settles", async () => {
+    const { errors, counts, exitCode } = await runFiles({
+      "a.test.ts": `
+        Bun.plugin({
+          name: "stuck",
+          setup(build) {
+            build.onLoad({ filter: /stuck\\.ts$/ }, () => new Promise(() => {}));
+          },
+        });
+        await import("./importer.ts");
+      `,
+      "importer.ts": `
+        import "./stuck.ts";
+      `,
+      "stuck.ts": "",
+    });
+    expect({ errors, counts, exitCode }).toEqual({
+      errors: [
+        'error: "a.test.ts" never finished loading',
+        nothingLeft,
+        'note: unsettled top-level await in "a.test.ts"',
+        'note: an onLoad() plugin or a mock.module() factory never settled for "stuck.ts"',
+      ],
+      counts: [" 0 pass", " 1 fail"],
+      exitCode: 1,
+    });
+  });
+
+  test("the next file loads the modules it left unfinished anew", async () => {
+    const { stdout, errors, counts, exitCode } = await runFiles(
+      {
+        "a.test.ts": `
+          globalThis.gate = new Promise(() => {});
+          await import("./importer.ts");
+        `,
+        "b.test.ts": `
+          import { test, expect } from "bun:test";
+          globalThis.gate = Promise.resolve("open");
+          const { gate } = await import("./importer.ts");
+          test("gate", () => expect(gate).toBe("open"));
+        `,
+        "importer.ts": `
+          export { gate } from "./gated.ts";
+        `,
+        "gated.ts": `
+          console.log("evaluating gated.ts");
+          export const gate = await globalThis.gate;
+        `,
+      },
+      "./a.test.ts",
+      "./b.test.ts",
+    );
+    expect({ stdout, errors: errors.slice(2), counts, exitCode }).toEqual({
+      stdout: expect.stringMatching(/^(bun test .*\n)?evaluating gated.ts\nevaluating gated.ts\n$/),
+      errors: ['note: unsettled top-level await in "a.test.ts"', 'note: unsettled top-level await in "gated.ts"'],
+      counts: [" 1 pass", " 1 fail"],
+      exitCode: 1,
+    });
+  });
+
+  const mockNeverSettles = {
+    "a.test.ts": `
+      import { test, mock } from "bun:test";
+      mock.module("./a.ts", async () => ({ ...(await import("./a.ts?actual")), a: await new Promise(() => {}) }));
+      await import("./b.ts");
+      test("never registered", () => {});
+    `,
+    "a.ts": `
+      import { b } from "./b.ts";
+      export const a = "real a";
+      export const viaB = () => b;
+    `,
+    "b.ts": `
+      import { a } from "./a.ts";
+      export const b = "real b";
+      export const viaA = () => a;
+    `,
+  };
+
+  test("a mock.module() factory that never settles, for a module in an import cycle", async () => {
+    const { stderr, counts, exitCode } = await runFiles(
+      { ...mockNeverSettles, "b.test.ts": passes },
+      "./a.test.ts",
+      "./b.test.ts",
+    );
+    expect(stderr).toContain("a.test.ts");
+    expect({ counts, exitCode }).toEqual({ counts: [" 1 pass", " 1 fail"], exitCode: 1 });
+  });
+
+  test("the next file gets the real modules of that cycle", async () => {
+    const { counts, exitCode } = await runFiles(
+      {
+        ...mockNeverSettles,
+        "b.test.ts": `
+          import { test, expect } from "bun:test";
+          import { viaA } from "./b.ts";
+          test("real", () => expect(viaA()).toBe("real a"));
+        `,
+      },
+      "./a.test.ts",
+      "./b.test.ts",
+    );
+    expect({ counts, exitCode }).toEqual({ counts: [" 1 pass", " 1 fail"], exitCode: 1 });
+  });
+
+  test("a mock.module() factory for a loaded module that never settles", async () => {
+    const { errors, counts, exitCode } = await runFiles(
+      {
+        "a.test.ts": `
+          import { test, mock } from "bun:test";
+          import "./dep.ts";
+          mock.module("./dep.ts", () => new Promise(() => {}));
+          test("never runs", () => console.log("ran"));
+        `,
+        "b.test.ts": passes,
+        "dep.ts": "export const dep = 1;",
+      },
+      "./a.test.ts",
+      "./b.test.ts",
+    );
+    expect({ errors, counts, exitCode }).toEqual({
+      errors: ['error: A mock.module() factory never settled in "a.test.ts"', nothingLeft],
+      counts: [" 1 pass", " 1 fail"],
+      exitCode: 1,
+    });
+  });
+
+  test("--preload", async () => {
+    const { errors, counts, exitCode } = await runFiles(
+      { "preload.ts": "await new Promise(() => {});", "a.test.ts": passes },
+      "--preload",
+      "./preload.ts",
+    );
+    expect({ errors, counts, exitCode }).toEqual({
+      errors: [
+        'error: preload "preload.ts" never finished loading',
+        nothingLeft,
+        'note: unsettled top-level await in "preload.ts"',
+      ],
+      counts: [" 0 pass", " 1 fail"],
+      exitCode: 1,
+    });
+  });
+
+  test("--bail", async () => {
+    const { stderr, errors, exitCode } = await runFiles(
+      { "a.test.ts": neverLoads, "b.test.ts": passes },
+      "--bail",
+      "./a.test.ts",
+      "./b.test.ts",
+    );
+    expect(errors[0]).toBe('error: "a.test.ts" never finished loading');
+    expect(stderr).toContain("Bailed out after 1 failure");
+    expect(stderr).not.toContain("b.test.ts");
+    expect(exitCode).toBe(1);
+  });
+
+  // On Windows the ref'd timers' hold on the loop, which the faked ones share, cannot be told from any other.
+  test.skipIf(isWindows)("waiting for a faked timer, which nothing fires", async () => {
+    const { errors, counts, exitCode } = await runFiles({
+      "a.test.ts": `
+        import { jest } from "bun:test";
+        jest.useFakeTimers();
+        await new Promise(resolve => setTimeout(resolve, 1));
+      `,
+    });
+    expect({ errors, counts, exitCode }).toEqual({
+      errors: [
+        'error: "a.test.ts" never finished loading',
+        nothingLeft,
+        'note: unsettled top-level await in "a.test.ts"',
+      ],
+      counts: [" 0 pass", " 1 fail"],
+      exitCode: 1,
+    });
+  });
+
+  test("a test environment that never finishes closing", async () => {
+    const { errors, counts, exitCode } = await runFiles(
+      {
+        "a.test.ts": passes,
+        "b.test.ts": passes,
+        "node_modules/happy-dom/package.json": JSON.stringify({ name: "happy-dom", main: "index.js" }),
+        "node_modules/happy-dom/index.js": `
+          exports.Window = class Window {
+            document = {};
+            happyDOM = { abort: () => new Promise(() => {}) };
+            close() {}
+          };
+        `,
+      },
+      "--environment=happy-dom",
+      "--isolate",
+    );
+    expect({ errors, counts, exitCode }).toEqual({
+      errors: [
+        "error: The test environment never finished closing",
+        nothingLeft,
+        "error: The test environment never finished closing",
+        nothingLeft,
+      ],
+      counts: [" 2 pass", " 0 fail"],
+      exitCode: 1,
+    });
+  });
+
+  // Each of these waits for the event itself. What does not keep the process alive can still settle a promise, as in Jest and vitest.
+  test.each(
+    Object.entries({
+      "timer": `await new Promise(resolve => setTimeout(resolve, 20, "ok"))`,
+      "unref'd timer": `await new Promise(resolve => setTimeout(resolve, 20, "ok").unref())`,
+      "unref'd interval": `await new Promise(resolve => {
+        const interval = setInterval(() => (clearInterval(interval), resolve("ok")), 5).unref();
+      })`,
+      "immediate": `await new Promise(resolve => setImmediate(resolve, "ok"))`,
+      "AbortSignal.timeout": `await new Promise(resolve => AbortSignal.timeout(20).addEventListener("abort", () => resolve("ok")))`,
+      "Atomics.waitAsync": `(await Atomics.waitAsync(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20).value) && "ok"`,
+      "subprocess": `(await Bun.spawn({ cmd: [process.execPath, "-e", ""], stdio: ["ignore", "ignore", "ignore"] }).exited) || "ok"`,
+      "unref'd subprocess": `await (async () => {
+        const child = Bun.spawn({ cmd: [process.execPath, "-e", ""], stdio: ["ignore", "ignore", "ignore"] });
+        child.unref();
+        return (await child.exited) || "ok";
+      })()`,
+      "output of an unref'd subprocess": `await (async () => {
+        const child = require("node:child_process").spawn(process.execPath, ["-e", "console.log('ok'); setInterval(() => {}, 1000)"], {
+          stdio: ["ignore", "pipe", "ignore"],
+        });
+        child.unref();
+        const output = await new Promise(resolve => child.stdout.once("data", data => resolve(String(data).trim())));
+        child.kill();
+        return output;
+      })()`,
+      "fetch": `await (async () => {
+        using server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+        return await (await fetch(server.url)).text();
+      })()`,
+      "unref'd socket": `await (async () => {
+        using server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { open: socket => void socket.end("ok"), data() {} } });
+        server.unref();
+        const { promise, resolve } = Promise.withResolvers();
+        const socket = await Bun.connect({ hostname: "127.0.0.1", port: server.port, socket: { data: (_, data) => resolve(String(data)) } });
+        socket.unref();
+        return await promise;
+      })()`,
+      "worker": `await new Promise(resolve => {
+        new Worker(URL.createObjectURL(new Blob(["postMessage('ok')"]))).onmessage = event => resolve(event.data);
+      })`,
+      "unref'd worker": `await new Promise(resolve => {
+        const worker = new Worker(URL.createObjectURL(new Blob(["postMessage('ok')"])));
+        worker.unref();
+        worker.onmessage = event => resolve(event.data);
+      })`,
+      "file": `(await Bun.file(import.meta.path).text()) && "ok"`,
+      "transpiling a big module on another thread": `(await import("./big.ts")).ok`,
+    }),
+  )("is not one that waits for: %s", async (_, expression) => {
+    const bigLine = "(function (a: number): number { return a + 1; });\n";
+    const { errors, counts, exitCode } = await runFiles({
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        const result = ${expression};
+        test("result", () => expect(result).toBe("ok"));
+      `,
+      "big.ts": `export const ok = "ok";\n` + Buffer.alloc(bigLine.length * 4_000, bigLine).toString(),
+    });
+    expect({ errors, counts, exitCode }).toEqual({ errors: [], counts: [" 1 pass", " 0 fail"], exitCode: 0 });
+  });
+
+  // On macOS a watcher misses what changes before its event stream has started, so the directory changes until the run ends.
+  // It is changed from here: whatever did that in the test file would be one more thing to wait for.
+  test("is not one that waits for: unref'd fs.watch", async () => {
+    using dir = tempDir("bun-test-waits", {
+      "a.test.ts": `
+        import { test, expect } from "bun:test";
+        import { watch } from "node:fs";
+        const watcher = watch(import.meta.dir, { persistent: false });
+        const result = await new Promise(resolve => watcher.once("change", () => resolve("ok")));
+        watcher.close();
+        test("result", () => expect(result).toBe("ok"));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const stderr = proc.stderr.text();
+    let writes = 0;
+    do {
+      writeFileSync(join(String(dir), "changed.txt"), String(writes++));
+    } while ((await Promise.race([proc.exited, Bun.sleep(10)])) === undefined);
+    expect({ counts: (await stderr).match(/^ \d+ (pass|fail)$/gm), exitCode: await proc.exited }).toEqual({
+      counts: [" 1 pass", " 0 fail"],
+      exitCode: 0,
+    });
+  });
+
+  // Where there is no pidfd_open(), a thread waits for the children instead of the event loop.
+  test.skipIf(!isLinux)("counts an unref'd subprocess that a thread waits for, until it has exited", async () => {
+    const { errors, counts, exitCode } = await runFilesWithEnv(
+      { BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
+      {
+        "a.test.ts": `
+          import { test, expect } from "bun:test";
+          const child = Bun.spawn({ cmd: [process.execPath, "-e", ""], stdio: ["ignore", "ignore", "ignore"] });
+          child.unref();
+          const exitCode = await child.exited;
+          test("exited", () => expect(exitCode).toBe(0));
+        `,
+        "b.test.ts": neverLoads,
+      },
+      "./a.test.ts",
+      "./b.test.ts",
+    );
+    expect({ errors, counts, exitCode }).toEqual({
+      errors: [
+        'error: "b.test.ts" never finished loading',
+        nothingLeft,
+        'note: unsettled top-level await in "b.test.ts"',
+      ],
+      counts: [" 1 pass", " 1 fail"],
+      exitCode: 1,
+    });
+  });
+
+  test("is not one that comes after an unhandled error", async () => {
+    const { errors, counts, exitCode } = await runFiles(
+      {
+        "a.test.ts": `
+          Promise.reject(new Error("unhandled"));
+        `,
+        "b.test.ts": `
+          import { test } from "bun:test";
+          await new Promise(resolve => setTimeout(resolve, 1));
+          test("passes", () => {});
+        `,
+      },
+      "./a.test.ts",
+      "./b.test.ts",
+    );
+    expect({ errors, counts, exitCode }).toEqual({
+      errors: ["error: unhandled"],
+      counts: [" 1 pass", " 0 fail"],
+      exitCode: 1,
+    });
+  });
+
+  // On Windows `bun test --watch` is a parent process that restarts the runner.
+  test.skipIf(isWindows)("--watch reports it and goes on watching", async () => {
+    using dir = tempDir("bun-test-waits-watch", { "a.test.ts": neverLoads });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--watch", "--no-clear-screen"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const reader = proc.stderr.pipeThrough(new TextDecoderStream()).getReader();
+    let output = "";
+    async function waitFor(needle: string) {
+      while (!output.includes(needle)) {
+        const { value, done } = await reader.read();
+        if (done) throw new Error(`exited before printing ${JSON.stringify(needle)}:\n${output}`);
+        output += value;
+      }
+    }
+    await waitFor("Ran 1 test across 1 file.");
+    expect(output).toContain("never finished loading");
+    expect(output).toContain(" 1 fail");
+
+    output = "";
+    writeFileSync(join(String(dir), "a.test.ts"), passes);
+    await waitFor("Ran 1 test across 1 file.");
+    expect(output).toContain(" 1 pass");
+    expect(output).toContain(" 0 fail");
+  });
+});
+
+// Nor does a timeout end these.
+describe.concurrent("a test file that can never finish running", () => {
+  const nothingLeft =
+    "note: it is waiting for something that can no longer happen: the event loop has nothing left to run";
+  const passes = `
+    import { test } from "bun:test";
+    test("passes", () => {});
+  `;
+
+  test("a describe() callback that never settles fails, and the run goes on", async () => {
+    const { stdout, errors, counts, exitCode } = await runFiles(
+      {
+        "a.test.ts": `
+          import { describe, test } from "bun:test";
+          describe("never settles", async () => {
+            await new Promise(() => {});
+            test("never registered", () => {});
+          });
+          describe("settles", () => {
+            test("runs", () => console.log("ran"));
+          });
+        `,
+        "b.test.ts": passes,
+      },
+      "./a.test.ts",
+      "./b.test.ts",
+    );
+    expect({ stdout, errors, counts, exitCode }).toEqual({
+      stdout: expect.stringMatching(/^(bun test .*\n)?ran\n$/),
+      errors: ['error: A describe() callback never settled in "a.test.ts"', nothingLeft],
+      counts: [" 2 pass", " 0 fail"],
+      exitCode: 1,
+    });
+  });
+
+  test("tests without a timeout that never settle fail, and the run goes on", async () => {
+    const { stderr, errors, counts, exitCode } = await runFiles({
+      "a.test.ts": `
+        import { test } from "bun:test";
+        test("first", () => new Promise(() => {}), 0);
+        test("second", () => new Promise(() => {}), 0);
+        test("third", () => {});
+      `,
+    });
+    const neverSettled = ['error: A test or a hook without a timeout never settled in "a.test.ts"', nothingLeft];
+    expect({ results: stderr.match(/^\((pass|fail)\) \w+/gm), errors, counts, exitCode }).toEqual({
+      results: ["(fail) first", "(fail) second", "(pass) third"],
+      errors: [...neverSettled, ...neverSettled],
+      counts: [" 1 pass", " 2 fail"],
+      exitCode: 1,
+    });
+  });
+
+  test.each([
+    [
+      "a hook",
+      `
+        import { afterEach, test } from "bun:test";
+        afterEach(() => new Promise(() => {}), 0);
+        test("first", () => {}, 0);
+        test("second", () => {}, 0);
+      `,
+    ],
+    [
+      "concurrent tests",
+      `
+        import { test } from "bun:test";
+        test.concurrent("first", () => new Promise(() => {}), 0);
+        test.concurrent("second", () => new Promise(() => {}), 0);
+      `,
+    ],
+  ])("the file ends at %s without a timeout that can never settle, and the run goes on", async (_, contents) => {
+    const { errors, counts, exitCode } = await runFiles(
+      { "a.test.ts": contents, "b.test.ts": passes },
+      "./a.test.ts",
+      "./b.test.ts",
+    );
+    expect({ errors, counts, exitCode }).toEqual({
+      errors: ['error: A test or a hook without a timeout never settled in "a.test.ts"', nothingLeft],
+      counts: [" 1 pass", " 0 fail"],
+      exitCode: 1,
+    });
+  });
+});
+
+// Asleep in the poll until the next deadline, not polling in a loop until it is due.
+describe.concurrent("the runner sleeps while it waits", () => {
+  const waitMs = 1000;
+  const cpuMs = (stdout: string) => Number(stdout.match(/^cpu (\d+)$/m)?.[1]);
+  const printCpu = `(usage => console.log("cpu " + Math.round((usage.user + usage.system) / 1000)))(process.cpuUsage(start))`;
+
+  test("for a load that only an unref'd timer can settle", async () => {
+    const { stdout, counts, exitCode } = await runFiles({
+      "a.test.ts": `
+        import { test } from "bun:test";
+        const start = process.cpuUsage();
+        await new Promise(resolve => setTimeout(resolve, ${waitMs}).unref());
+        ${printCpu};
+        test("passes", () => {});
+      `,
+    });
+    expect(cpuMs(stdout)).toBeLessThan(waitMs / 2);
+    expect({ counts, exitCode }).toEqual({ counts: [" 1 pass", " 0 fail"], exitCode: 0 });
+  });
+
+  test("for a test that times out with nothing on the event loop", async () => {
+    const { stdout, counts, exitCode } = await runFiles({
+      "a.test.ts": `
+        import { test } from "bun:test";
+        let start;
+        test("times out", async () => {
+          start = process.cpuUsage();
+          await new Promise(() => {});
+        }, ${waitMs});
+        test("passes", () => ${printCpu});
+      `,
+    });
+    expect(cpuMs(stdout)).toBeLessThan(waitMs / 2);
+    expect({ counts, exitCode }).toEqual({ counts: [" 1 pass", " 1 fail"], exitCode: 1 });
+  });
+
+  test("for a hook that times out after fake timers were switched off", async () => {
+    const { stdout, counts, exitCode } = await runFiles(
+      {
+        "a.test.ts": `
+          import { test, beforeEach, afterEach, afterAll, jest } from "bun:test";
+          let start;
+          beforeEach(() => void jest.useFakeTimers());
+          afterEach(async () => {
+            jest.useRealTimers();
+            start = process.cpuUsage();
+            await new Promise(() => {});
+          });
+          afterAll(() => ${printCpu});
+          test("arms a faked timer", () => void setTimeout(() => {}, 1));
+        `,
+      },
+      `--timeout=${waitMs}`,
+    );
+    expect(cpuMs(stdout)).toBeLessThan(waitMs / 2);
+    expect({ counts, exitCode }).toEqual({ counts: [" 0 pass", " 1 fail"], exitCode: 1 });
+  });
+});
+
+// Script of the test is on the stack of what ends it here.
+describe.concurrent("the next test does not start beneath the call that ends a test", () => {
+  const results = (stderr: string) => stderr.match(/^\((pass|fail)\) [\w ]+/gm)?.map(line => line.trimEnd());
+
+  test.each(
+    Object.entries({
+      "reportError()": `reportError(new Error("reported"));`,
+      "done(error)": `done(new Error("reported"));`,
+      "dispatchEvent() to a listener that throws": `
+        const target = new EventTarget();
+        target.addEventListener("event", () => {
+          throw new Error("reported");
+        });
+        target.dispatchEvent(new Event("event"));
+      `,
+      "vi.advanceTimersByTime() to an abort listener that throws": `
+        vi.useFakeTimers();
+        AbortSignal.timeout(5).addEventListener("abort", () => {
+          throw new Error("reported");
+        });
+        vi.advanceTimersByTime(10);
+        vi.useRealTimers();
+      `,
+    }),
+  )("%s", async (_, call) => {
+    const { stderr, errors, exitCode } = await runFiles({
+      "a.test.ts": `
+        import { expect, test, vi } from "bun:test";
+        let isCalling = false;
+        test("ends", done => {
+          setTimeout(() => {
+            isCalling = true;
+            ${call}
+            isCalling = false;
+          });
+        });
+        test("next", () => expect(isCalling).toBe(false));
+      `,
+    });
+    expect({ results: results(stderr), errors, exitCode }).toEqual({
+      results: ["(fail) ends", "(pass) next"],
+      errors: ["error: reported"],
+      exitCode: 1,
+    });
+  });
+
+  test("Bun.spawnSync() that outlives the timeout of the test", async () => {
+    const { stderr, exitCode } = await runFiles({
+      "a.test.ts": `
+        import { expect, test } from "bun:test";
+        let isCalling = false;
+        test("ends", done => {
+          setTimeout(() => {
+            isCalling = true;
+            // The timeout of the test kills it.
+            Bun.spawnSync({ cmd: [process.execPath, "-e", "setInterval(() => {}, 1e6)"] });
+            isCalling = false;
+          });
+        }, 500);
+        test("next", () => expect(isCalling).toBe(false));
+      `,
+    });
+    expect({ results: results(stderr), exitCode }).toEqual({ results: ["(fail) ends", "(pass) next"], exitCode: 1 });
+  });
+
+  // It ticks the event loop until the setup() of the plugin has settled, which the timeout of the test comes before.
+  test("Bun.build() that outlives the timeout of the test", async () => {
+    const { stderr, exitCode } = await runFiles({
+      "entry.ts": "",
+      "a.test.ts": `
+        import { expect, test } from "bun:test";
+        let isCalling = false;
+        test("ends", async () => {
+          await new Promise(resolve => setTimeout(resolve));
+          isCalling = true;
+          const build = Bun.build({
+            entrypoints: ["./entry.ts"],
+            plugins: [{ name: "slow", setup: () => new Promise(resolve => setTimeout(resolve, 300)) }],
+          });
+          isCalling = false;
+          await build;
+        }, 100);
+        test("next", () => expect(isCalling).toBe(false));
+      `,
+    });
+    expect({ results: results(stderr), exitCode }).toEqual({ results: ["(fail) ends", "(pass) next"], exitCode: 1 });
+  });
+
+  test("two rejections of one tick are both the running test's", async () => {
+    const { stderr, errors, exitCode } = await runFiles({
+      "a.test.ts": `
+        import { test } from "bun:test";
+        test("rejects twice", done => {
+          setTimeout(() => {
+            Promise.reject(new Error("one"));
+            Promise.reject(new Error("two"));
+          });
+        });
+        test("next", async () => {
+          await new Promise(resolve => setTimeout(resolve));
+        });
+      `,
+    });
+    expect({ results: results(stderr), errors, exitCode }).toEqual({
+      results: ["(fail) rejects twice", "(pass) next"],
+      errors: ["error: one", "error: two"],
+      exitCode: 1,
+    });
+  });
+});
+
+describe.concurrent("an error that arrives while a test file loads", () => {
+  const results = (stderr: string) => stderr.match(/^\((pass|fail)\) [\w >]+/gm)?.map(line => line.trimEnd());
+  // The file goes on one turn of the event loop after the error.
+  const file = (error: string) => `
+    import { describe, test } from "bun:test";
+    test("registered before", () => {});
+    await new Promise(resolve => {
+      setTimeout(() => {
+        setTimeout(resolve);
+        ${error}
+      });
+    });
+    test("registered after", () => {});
+    test("fails", () => {
+      throw new Error("of the test");
+    });
+    describe("block", () => {
+      test("test", () => {});
+    });
+  `;
+  const all = ["(pass) registered before", "(pass) registered after", "(fail) fails", "(pass) block > test"];
+
+  test.each(
+    Object.entries({
+      "an unhandled rejection": `Promise.reject(new Error("stray"));`,
+      "an uncaught exception": `throw new Error("stray");`,
+      "reportError()": `reportError(new Error("stray"));`,
+    }),
+  )("%s is reported, and the tests of the file run", async (_, error) => {
+    const { stderr, errors, exitCode } = await runFiles({ "a.test.ts": file(error) });
+    expect({ results: results(stderr), errors, exitCode }).toEqual({
+      results: all,
+      errors: ["error: stray", "error: of the test"],
+      exitCode: 1,
+    });
+    expect(stderr).toContain("Unhandled error between tests");
+  });
+
+  test("what the file before it has left behind", async () => {
+    const { stderr, errors, exitCode } = await runFiles(
+      {
+        "a.test.ts": `
+          import { test } from "bun:test";
+          test("leaves a function", () => {
+            globalThis.left = () => Promise.reject(new Error("stray"));
+          });
+        `,
+        "b.test.ts": file(`globalThis.left();`),
+      },
+      "./a.test.ts",
+      "./b.test.ts",
+    );
+    expect({ results: results(stderr), errors, exitCode }).toEqual({
+      results: ["(pass) leaves a function", ...all],
+      errors: ["error: stray", "error: of the test"],
+      exitCode: 1,
+    });
+  });
+});
+
+describe.concurrent("a test file that fails to load", () => {
+  const turn = `await new Promise(resolve => setTimeout(resolve));`;
+  const files = {
+    "preload.ts": `
+      import { afterAll, beforeAll } from "bun:test";
+      beforeAll(async () => {
+        ${turn}
+        console.log("beforeAll");
+        globalThis.isReady = true;
+      });
+      afterAll(async () => {
+        ${turn}
+        console.log("afterAll");
+      });
+    `,
+    "missing.test.ts": `
+      import { test } from "bun:test";
+      import "./missing.ts";
+      test("never registered", () => {});
+    `,
+    "throws.test.ts": `
+      import { afterAll, beforeAll, describe, test } from "bun:test";
+      beforeAll(() => console.log("unreachable"));
+      afterAll(() => console.log("unreachable"));
+      test("registered", () => console.log("unreachable"));
+      describe("registered", () => {
+        console.log("unreachable");
+      });
+      throw new Error("thrown by the file");
+    `,
+    "one.test.ts": `
+      import { test } from "bun:test";
+      test("one", () => console.log("one:", globalThis.isReady));
+    `,
+    "two.test.ts": `
+      import { test } from "bun:test";
+      test("two", () => console.log("two:", globalThis.isReady));
+    `,
+  };
+  const both = ["beforeAll", "one: true", "two: true", "afterAll"];
+
+  test.each([
+    [["missing", "one", "two"], both],
+    [["one", "missing", "two"], both],
+    [["one", "two", "missing"], both],
+    [["throws", "one", "two"], both],
+    [["one", "two", "throws"], both],
+    [["missing"], ["beforeAll", "afterAll"]],
+    [
+      ["missing", "throws"],
+      ["beforeAll", "afterAll"],
+    ],
+    [
+      ["--isolate", "missing", "one"],
+      ["beforeAll", "afterAll", "beforeAll", "one: true", "afterAll"],
+    ],
+    [
+      ["--parallel=1", "missing", "one"],
+      ["beforeAll", "afterAll", "beforeAll", "one: true", "afterAll"],
+    ],
+    [
+      ["--rerun-each=2", "missing", "one"],
+      ["beforeAll", "one: true", "afterAll", "one: true", "afterAll"],
+    ],
+    [["--bail=1", "missing", "one"], ["beforeAll"]],
+    [
+      ["--bail=1", "one", "missing"],
+      ["beforeAll", "one: true", "afterAll"],
+    ],
+  ])("runs none of its tests, and the hooks of a preload that are due with it: %j", async (args, expected) => {
+    const { stdout, exitCode } = await runFiles(
+      files,
+      "--preload=./preload.ts",
+      ...args.map(arg => (arg.startsWith("-") ? arg : `./${arg}.test.ts`)),
+    );
+    expect({ stdout: stdout.split(/\r?\n/).filter(line => line && !line.startsWith("bun test ")), exitCode }).toEqual({
+      stdout: expected,
+      exitCode: 1,
+    });
+  });
+});
+
+describe.concurrent("an error whose message cannot be read", () => {
+  test.each(
+    Object.entries({
+      "an own getter": `Object.defineProperty(new Error("unreadable"), "message", { get() { throw new Error("thrown by the getter"); } })`,
+      "a getter of its class": `new (class extends Error { get message() { return this.details.join(); } })()`,
+    }),
+  )("%s: the tests after it are run, not reported unrun", async (_, error) => {
+    const { stdout, stderr, exitCode } = await runFiles({
+      "a.test.ts": `
+        import { afterEach, test } from "bun:test";
+        const ran: string[] = [];
+        let attempts = 0;
+        afterEach(() => void ran.push("afterEach"));
+        test("throws it from a timer", async () => {
+          ran.push("attempt " + ++attempts);
+          if (attempts > 1) throw new Error("of attempt 2");
+          await new Promise(resolve => {
+            setTimeout(() => {
+              setTimeout(resolve);
+              throw ${error};
+            });
+          });
+        }, { retry: 1 });
+        test("fails", () => {
+          ran.push("fails");
+          throw new Error("of the test");
+        });
+        test("passes", () => console.log([...ran, "passes"].join()));
+      `,
+    });
+    expect({
+      stdout: stdout.split(/\r?\n/).filter(line => line && !line.startsWith("bun test ")),
+      results: stderr.match(/^\((pass|fail)\) [\w ]+/gm)?.map(line => line.trimEnd()),
+      exitCode,
+    }).toEqual({
+      stdout: ["attempt 1,afterEach,attempt 2,afterEach,fails,afterEach,passes"],
+      results: ["(fail) throws it from a timer", "(fail) fails", "(pass) passes"],
+      exitCode: 1,
+    });
   });
 });

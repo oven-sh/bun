@@ -332,7 +332,7 @@ void NodeVMScript::destroy(JSCell* cell)
     static_cast<NodeVMScript*>(cell)->NodeVMScript::~NodeVMScript();
 }
 
-static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVMScript* script, JSObject* contextifiedObject, JSValue optionsArg, bool allowStringInPlaceOfOptions = false)
+static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVMScript* script, JSValue optionsArg, bool allowStringInPlaceOfOptions = false)
 {
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -348,9 +348,6 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
             options = {};
         }
     }
-
-    // Set the contextified object before evaluating
-    globalObject->setContextifiedObject(contextifiedObject);
 
     NakedPtr<JSC::Exception> exception;
     JSValue result {};
@@ -522,10 +519,9 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInContext, (JSGlobalObject * globalObject, Cal
     JSValue contextArg = args.at(0);
     NodeVMGlobalObject* nodeVmGlobalObject = getGlobalObjectFromContext(globalObject, contextArg, true);
     RETURN_IF_EXCEPTION(scope, {});
-    JSObject* context = asObject(contextArg);
     ASSERT(nodeVmGlobalObject != nullptr);
 
-    RELEASE_AND_RETURN(scope, runInContext(nodeVmGlobalObject, script, context, args.at(1)));
+    RELEASE_AND_RETURN(scope, runInContext(nodeVmGlobalObject, script, args.at(1)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -540,9 +536,8 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
         return {};
     }
 
-    bool notContextified = NodeVM::getContextArg(globalObject, contextObjectValue);
-
-    if (!contextObjectValue || !contextObjectValue.isObject()) [[unlikely]] {
+    JSObject* context;
+    if (!NodeVM::getContextArg(globalObject, contextObjectValue, context)) [[unlikely]] {
         throwTypeError(globalObject, scope, "Context must be an object"_s);
         return {};
     }
@@ -554,23 +549,15 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
     getNodeVMContextOptions(globalObject, vm, scope, contextOptionsArg, contextOptions, optionNames(vm).contextCodeGeneration(vm), &importer);
     RETURN_IF_EXCEPTION(scope, {});
 
-    contextOptions.notContextified = notContextified;
-
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    JSObject* context = asObject(contextObjectValue);
-    auto* targetContext = NodeVMGlobalObject::create(vm,
-        zigGlobalObject->NodeVMGlobalObjectStructure(),
-        contextOptions, importer);
+    // The handle of a vm.constants.DONT_CONTEXTIFY context is its global: there is nothing to wrap in a new one.
+    NodeVMGlobalObject* targetContext = context ? getGlobalObjectFromContext(globalObject, context, false) : nullptr;
     RETURN_IF_EXCEPTION(scope, {});
-
-    if (notContextified) {
-        auto* specialSandbox = NodeVMSpecialSandbox::create(vm, targetContext);
+    if (!targetContext || targetContext->contextifiedObject()) {
+        targetContext = NodeVMGlobalObject::create(vm, contextOptions, importer, context);
         RETURN_IF_EXCEPTION(scope, {});
-        targetContext->setSpecialSandbox(specialSandbox);
-        RELEASE_AND_RETURN(scope, runInContext(targetContext, script, targetContext->specialSandbox(), callFrame->argument(1)));
     }
 
-    RELEASE_AND_RETURN(scope, runInContext(targetContext, script, context, callFrame->argument(1)));
+    RELEASE_AND_RETURN(scope, runInContext(targetContext, script, contextOptionsArg));
 }
 
 class NodeVMScriptPrototype final : public JSC::JSNonFinalObject {

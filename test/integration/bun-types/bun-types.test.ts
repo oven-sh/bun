@@ -430,6 +430,39 @@ describe("@types/bun integration test", () => {
   });
 
   // Runs on debug builds too, same as the Bun.mmap block above.
+  describe("import.meta.glob", () => {
+    // fixture/vite-client/client.d.ts declares `ImportMeta.glob` too, so it needs a program
+    // of its own. The compiler loads the declarations in the order of `files`.
+    test.each([
+      ["bun-types", ["bun-types.d.ts", "client.d.ts", "main.ts"]],
+      ["vite-client", ["client.d.ts", "bun-types.d.ts", "main.ts"]],
+    ])("has the type that vite/client declares when %s is loaded first", async (first, files) => {
+      const checkDir = join(TEMP_DIR, `import-meta-glob-check-${first}`);
+      const tsconfig = structuredClone(sourceTsconfig);
+      tsconfig.files = files.map(file => `vite-client/${file}`);
+      tsconfig.compilerOptions.skipLibCheck = false;
+      tsconfig.compilerOptions.typeRoots = [join(BASE_FIXTURE_DIR, "node_modules", "@types")];
+      await cp(join(FIXTURE_SOURCE_DIR, "vite-client"), join(checkDir, "vite-client"), { recursive: true });
+      await cp(join(FIXTURE_SOURCE_DIR, "utilities.ts"), join(checkDir, "utilities.ts"));
+      await Bun.write(join(checkDir, "tsconfig.json"), JSON.stringify(tsconfig, null, 2));
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(BASE_FIXTURE_DIR, "node_modules", "typescript", "bin", "tsc"), "-p", "."],
+        env: bunEnv,
+        cwd: checkDir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr.trim()).toBe("");
+      expect(stdout.trim()).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // Runs on debug builds too, same as the Bun.mmap block above.
   describe("TextDecoder", () => {
     test("accepts the encoding labels the runtime supports", async () => {
       const checkDir = join(TEMP_DIR, "text-decoder-encoding-check");

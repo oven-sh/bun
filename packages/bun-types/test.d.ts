@@ -16,10 +16,46 @@
 declare module "bun:test" {
   export type Mock<T extends (...args: any[]) => any> = JestMock.Mock<T>;
 
+  /**
+   * `T` with every function and class in it, at any depth, typed as a {@link Mock}.
+   */
+  export type Mocked<T> = T extends new (...args: infer Args) => infer Instance
+    ? Mock<(...args: Args) => Mocked<Instance>> & { prototype: Mocked<Instance> } & {
+        [K in Exclude<keyof T, "prototype">]: Mocked<T[K]>;
+      }
+    : T extends (...args: any[]) => any
+      ? Mock<T> & { [K in keyof T]: Mocked<T[K]> }
+      : T extends object
+        ? { [K in keyof T]: Mocked<T[K]> }
+        : T;
+
+  /**
+   * Returns the exports of a mocked module, or a promise for them. `importOriginal` loads the module that is mocked.
+   *
+   * @example
+   * ```ts
+   * vi.mock("./math", async importOriginal => ({ ...(await importOriginal()), add: vi.fn() }));
+   * ```
+   */
+  export type ModuleMockFactory<T = any> = (importOriginal: <M = T>() => Promise<M>) => any;
+
+  export interface ModuleMockOptions {
+    /**
+     * Keep the implementation of every function the module exports, and record its calls.
+     */
+    spy?: boolean | undefined;
+  }
+
   export const mock: {
     /**
      * Creates a mock function. The optional `Function` becomes the mock's implementation.
      */
+    <T extends (...args: any[]) => any>(Function?: T): Mock<T>;
+    /**
+     * Creates a mock class. `new` on the mock constructs through `Class`.
+     */
+    <Args extends any[], Instance>(Class: new (...args: Args) => Instance): Mock<(...args: Args) => Instance>;
+    // Repeated: `ReturnType<typeof mock>` and `Parameters<typeof mock>` read the last overload.
     <T extends (...args: any[]) => any>(Function?: T): Mock<T>;
 
     /**
@@ -34,7 +70,8 @@ declare module "bun:test" {
      * returned promise resolves after that. Otherwise nothing is returned.
      *
      * @param id module ID to mock
-     * @param factory a function returning an object used as the exports of the mocked module
+     * @param factory a function returning an object used as the exports of the mocked module. It is given a function
+     * that loads the module being mocked.
      *
      * @example
      * ```ts
@@ -51,7 +88,7 @@ declare module "bun:test" {
      * console.log(await readFile("hello.txt", "utf8")); // hello world
      * ```
      */
-    module(id: string, factory: () => any): void | Promise<void>;
+    module(id: string, factory: ModuleMockFactory): void | Promise<void>;
     /**
      * Restore the previous value of mocks.
      */
@@ -69,8 +106,9 @@ declare module "bun:test" {
    * - `new Date()`
    * - `Intl.DateTimeFormat().format()`
    *
+   * The real time comes back at the end of the test file, unless a preload set the time.
+   *
    * @param now The time to set the system time to. If omitted, the system time is reset
-   * @returns `this`
    * @since v0.6.13
    *
    * ## Set Date to a specific time
@@ -89,24 +127,208 @@ declare module "bun:test" {
    * setSystemTime();
    * ```
    */
-  export function setSystemTime(now?: Date | number): ThisType<void>;
+  export function setSystemTime(now?: Date | number | string): void;
+
+  /**
+   * A function or clock that `useFakeTimers()` can fake, by its name in `@sinonjs/fake-timers`.
+   */
+  export type FakeableAPI =
+    | "setTimeout"
+    | "clearTimeout"
+    | "setInterval"
+    | "clearInterval"
+    | "setImmediate"
+    | "clearImmediate"
+    | "Date"
+    | "performance"
+    | "hrtime"
+    | "nextTick"
+    | "queueMicrotask"
+    | "requestAnimationFrame"
+    | "cancelAnimationFrame"
+    | "requestIdleCallback"
+    | "cancelIdleCallback"
+    | "Intl"
+    | "Temporal";
+
+  export interface FakeTimersOptions {
+    /**
+     * What `Date` says the time is when the fake clock starts.
+     */
+    now?: number | Date | undefined;
+    /**
+     * Fake these and nothing else.
+     *
+     * @default ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "requestAnimationFrame", "cancelAnimationFrame", "Date", "performance", "hrtime"]
+     */
+    toFake?: FakeableAPI[] | undefined;
+    /**
+     * Do not fake these. Jest's name for the option.
+     */
+    doNotFake?: FakeableAPI[] | undefined;
+    /**
+     * Do not fake these. Vitest's name for the option.
+     */
+    toNotFake?: FakeableAPI[] | undefined;
+    /**
+     * Move the fake clock forward by `advanceTimeDelta` milliseconds every `advanceTimeDelta` real milliseconds.
+     *
+     * @default false
+     */
+    shouldAdvanceTime?: boolean | undefined;
+    /**
+     * @default 20
+     */
+    advanceTimeDelta?: number | undefined;
+    /**
+     * Jest's name for `shouldAdvanceTime` (`true`) and `advanceTimeDelta` (a number).
+     */
+    advanceTimers?: boolean | number | undefined;
+    /**
+     * How many timers `runAllTimers()` runs before it throws, and how many faked `process.nextTick` or
+     * `queueMicrotask` callbacks in a row any function that moves the clock.
+     *
+     * @default 10_000 for `vi.useFakeTimers()`, 100_000 for `jest.useFakeTimers()`
+     */
+    loopLimit?: number | undefined;
+    /**
+     * Jest's name for `loopLimit`.
+     */
+    timerLimit?: number | undefined;
+  }
 
   export namespace jest {
-    function restoreAllMocks(): void;
-    function clearAllMocks(): void;
-    function resetAllMocks(): void;
+    function restoreAllMocks(): typeof jest;
+    function clearAllMocks(): typeof jest;
+    function resetAllMocks(): typeof jest;
     function fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
-    function setSystemTime(now?: number | Date): void;
+    function fn<Args extends any[], Instance>(func: new (...args: Args) => Instance): Mock<(...args: Args) => Instance>;
+    // Repeated: `ReturnType<typeof jest.fn>` and `Parameters<typeof jest.fn>` read the last overload.
+    function fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
+    /**
+     * Whether `fn` is a mock function or a spy.
+     */
+    function isMockFunction(fn: unknown): fn is Mock<(...args: any[]) => any>;
+    /**
+     * Returns `item`, typed as mocked. It does nothing at runtime.
+     */
+    function mocked<T>(item: T, options?: unknown): Mocked<T>;
+    /**
+     * Replace the module `id` with the return value of `factory`. The call is moved above the imports of the file.
+     *
+     * Without a factory the module is the file of the same name in a `__mocks__` directory, if there is one, and
+     * otherwise a copy of the module in which every function is a mock.
+     */
+    function mock(id: string, factory?: ModuleMockFactory): typeof jest;
+    /**
+     * Like {@link mock}, but the call stays where it is written.
+     */
+    function doMock(id: string, factory?: ModuleMockFactory): typeof jest;
+    /**
+     * The module `id` is not mocked any more. The call is moved above the imports of the file.
+     */
+    function unmock(id: string): typeof jest;
+    /**
+     * Like {@link unmock}, but the call stays where it is written.
+     */
+    function dontMock(id: string): typeof jest;
+    /**
+     * `require()` the module `id` itself, whether or not it is mocked.
+     */
+    function requireActual<T = any>(id: string): T;
+    /**
+     * `require()` the module `id` as it is when it is mocked, whether or not it is.
+     */
+    function requireMock<T = any>(id: string): T;
+    /**
+     * A copy of what `require()` of the module `id` itself returns, in which every function is a mock.
+     */
+    function createMockFromModule<T = any>(id: string): Mocked<T>;
+    /**
+     * The next `import()` or `require()` of a module evaluates it again. Mocked modules stay mocked, and their
+     * factories are called again.
+     */
+    function resetModules(): typeof jest;
+    function setSystemTime(now?: number | Date | string): void;
     function setTimeout(milliseconds: number): void;
-    function useFakeTimers(options?: { now?: number | Date } | "modern" | "legacy"): typeof vi;
-    function useRealTimers(): typeof vi;
-    function advanceTimersByTime(milliseconds: number): typeof vi;
-    function advanceTimersToNextTimer(): typeof vi;
-    function runAllTimers(): typeof vi;
-    function runOnlyPendingTimers(): typeof vi;
+    /**
+     * Replace the timer functions on `globalThis` with ones that schedule on a fake clock, which only moves when the
+     * test moves it. A function that was read before this call, such as `const savedSetTimeout = setTimeout`, stays real.
+     *
+     * The real timers come back at the end of the test file, unless a preload made this call at its top level.
+     */
+    function useFakeTimers(options?: FakeTimersOptions | "modern" | "legacy"): typeof jest;
+    /**
+     * Put the real timer functions and clocks back, and drop the fake timers that are pending.
+     */
+    function useRealTimers(): typeof jest;
+    /**
+     * Move the fake clock forward and run the timers that become due.
+     */
+    function advanceTimersByTime(milliseconds: number): typeof jest;
+    /**
+     * Like {@link advanceTimersByTime}, but promise jobs and a turn of the real event loop run between two timers, so a
+     * timer that a callback schedules after an `await` is seen.
+     */
+    function advanceTimersByTimeAsync(milliseconds: number): Promise<void>;
+    /**
+     * Move the fake clock to the next timer and run every timer that is due at that time, `steps` times.
+     */
+    function advanceTimersToNextTimer(steps?: number): typeof jest;
+    /**
+     * Like {@link advanceTimersToNextTimer}, but promise jobs and a turn of the real event loop run between two timers.
+     */
+    function advanceTimersToNextTimerAsync(steps?: number): Promise<void>;
+    /**
+     * Move the fake clock to the next multiple of 16 milliseconds, when a faked `requestAnimationFrame` runs its callbacks.
+     */
+    function advanceTimersToNextFrame(): typeof jest;
+    /**
+     * Run timers until none is left. Throws after `timerLimit` timers.
+     */
+    function runAllTimers(): typeof jest;
+    /**
+     * Like {@link runAllTimers}, but promise jobs and a turn of the real event loop run between two timers.
+     */
+    function runAllTimersAsync(): Promise<void>;
+    /**
+     * Move the fake clock to the last timer that is pending now.
+     */
+    function runOnlyPendingTimers(): typeof jest;
+    /**
+     * Like {@link runOnlyPendingTimers}, but promise jobs and a turn of the real event loop run between two timers.
+     */
+    function runOnlyPendingTimersAsync(): Promise<void>;
+    /**
+     * Run the callbacks given to a faked `process.nextTick` or `queueMicrotask`.
+     */
+    function runAllTicks(): typeof jest;
+    /**
+     * Run the callbacks given to a faked `setImmediate`.
+     */
+    function runAllImmediates(): typeof jest;
+    /**
+     * Choose how the fake clock moves when the test does not move it.
+     * - `manual`: it does not. This is the default.
+     * - `nextAsync`: every turn of the real event loop runs the next timer.
+     * - `interval`: every `delta` (default 20) real milliseconds it moves forward by as many.
+     */
+    function setTimerTickMode(
+      config: { mode: "manual" | "nextAsync" } | { mode: "interval"; delta?: number | undefined },
+    ): typeof jest;
     function getTimerCount(): number;
     function clearAllTimers(): void;
     function isFakeTimers(): boolean;
+    /**
+     * The real time in milliseconds since the epoch, whatever is faked.
+     */
+    function getRealSystemTime(): number;
+    function spyOn<T extends object, K extends keyof T>(obj: T, property: K, accessType: "get"): Mock<() => T[K]>;
+    function spyOn<T extends object, K extends keyof T>(
+      obj: T,
+      property: K,
+      accessType: "set",
+    ): Mock<(value: T[K]) => void>;
     function spyOn<T extends object, K extends keyof T>(
       obj: T,
       methodOrPropertyValue: K,
@@ -159,6 +381,23 @@ declare module "bun:test" {
   }
 
   /**
+   * Create a spy on the getter of a property. It calls the original getter until it is given another implementation.
+   *
+   * @example
+   * ```ts
+   * spyOn(navigator, "userAgent", "get").mockReturnValue("test");
+   * ```
+   */
+  export function spyOn<T extends object, K extends keyof T>(obj: T, property: K, accessType: "get"): Mock<() => T[K]>;
+  /**
+   * Create a spy on the setter of a property. It calls the original setter until it is given another implementation.
+   */
+  export function spyOn<T extends object, K extends keyof T>(
+    obj: T,
+    property: K,
+    accessType: "set",
+  ): Mock<(value: T[K]) => void>;
+  /**
    * Create a spy on an object property or method
    */
   export function spyOn<T extends object, K extends keyof T>(
@@ -178,28 +417,258 @@ declare module "bun:test" {
      * Create a spy on an object property or method
      */
     spyOn: typeof spyOn;
+    isMockFunction: typeof jest.isMockFunction;
+    mocked: typeof jest.mocked;
     /**
-     * Mock a module
+     * Mock `value` deeply, the way a module is mocked when it is given no factory: a copy in which functions and
+     * classes are mocks that return `undefined`, arrays are empty, and primitives and builtin objects are kept.
+     *
+     * With `{ spy: true }` the functions keep their implementation, arrays keep their elements, and objects are
+     * changed in place instead of copied.
+     *
+     * @example
+     * ```ts
+     * const mocked = vi.mockObject({ add: (a: number, b: number) => a + b });
+     * mocked.add(1, 2); // undefined
+     * mocked.add.mockReturnValue(3);
+     * ```
      */
-    mock: typeof mock.module;
+    mockObject<T>(value: T, options?: { spy?: boolean | undefined }): Mocked<T>;
     /**
-     * Restore all mocks to their original implementation
+     * Like `vi.mock(id, factory)`, with the module written as `import("./math")`: `importOriginal` is typed as that module.
      */
-    restoreAllMocks: typeof jest.restoreAllMocks;
+    mock<T>(module: Promise<T>, factory?: ModuleMockFactory<T> | ModuleMockOptions): void | Promise<void>;
+    /**
+     * Replace a module with the return value of `factory`. The call is moved above the imports of the file.
+     *
+     * Without a factory the module is the file of the same name in a `__mocks__` directory, if there is one, and
+     * otherwise a copy of the module in which every function is a mock. With `{ spy: true }` the functions keep their
+     * implementation.
+     *
+     * @example
+     * ```ts
+     * import { add } from "./math";
+     *
+     * vi.mock("./math", async importOriginal => ({ ...(await importOriginal()), add: vi.fn(() => 3) }));
+     * ```
+     */
+    mock(id: string, factory?: ModuleMockFactory | ModuleMockOptions): void | Promise<void>;
+    /**
+     * Like `vi.mock`, but the call stays where it is written: it applies to the imports that run after it.
+     *
+     * Disposing of what it returns removes the mock: `using _ = vi.doMock("./math", factory)`.
+     */
+    doMock(id: string, factory?: ModuleMockFactory | ModuleMockOptions): Disposable | (Disposable & Promise<void>);
+    doMock<T>(
+      module: Promise<T>,
+      factory?: ModuleMockFactory<T> | ModuleMockOptions,
+    ): Disposable | (Disposable & Promise<void>);
+    /**
+     * The module is not mocked any more. The call is moved above the imports of the file.
+     */
+    unmock(id: string | Promise<unknown>): void;
+    /**
+     * Like `vi.unmock`, but the call stays where it is written.
+     */
+    doUnmock(id: string | Promise<unknown>): void;
+    /**
+     * Import the module `id` itself, whether or not it is mocked.
+     */
+    importActual<T = any>(id: string): Promise<T>;
+    /**
+     * Import the module `id` as it is when it is mocked, whether or not it is.
+     */
+    importMock<T = any>(id: string): Promise<Mocked<T>>;
+    /**
+     * The next `import()` or `require()` of a module evaluates it again. Mocked modules stay mocked.
+     */
+    resetModules(): typeof vi;
+    /**
+     * Calls `factory` and returns what it returns. The statement is moved above the imports of the file, so a
+     * `vi.mock` factory can use the result.
+     *
+     * @example
+     * ```ts
+     * const mocks = vi.hoisted(() => ({ add: vi.fn() }));
+     * vi.mock("./math", () => ({ add: mocks.add }));
+     * ```
+     */
+    hoisted<T>(factory: () => T): T;
+    /**
+     * Put back every property that is spied on. The calls and the implementation of a `vi.spyOn()` spy are kept.
+     */
+    restoreAllMocks(): typeof vi;
     /**
      * Clear all mock state (calls, results, etc.) without restoring original implementation
      */
-    clearAllMocks: typeof jest.clearAllMocks;
-    resetAllMocks: typeof jest.resetAllMocks;
-    useFakeTimers: typeof jest.useFakeTimers;
-    useRealTimers: typeof jest.useRealTimers;
-    advanceTimersByTime: typeof jest.advanceTimersByTime;
-    advanceTimersToNextTimer: typeof jest.advanceTimersToNextTimer;
-    runAllTimers: typeof jest.runAllTimers;
-    runOnlyPendingTimers: typeof jest.runOnlyPendingTimers;
-    getTimerCount: typeof jest.getTimerCount;
-    clearAllTimers: typeof jest.clearAllTimers;
-    isFakeTimers: typeof jest.isFakeTimers;
+    clearAllMocks(): typeof vi;
+    /**
+     * Clear all mock state and implementations. A `vi.fn(implementation)` mock goes back to `implementation` and a
+     * `vi.spyOn()` spy to the original; mocks made with `jest.fn()`, `mock()` or `spyOn()` return `undefined`.
+     */
+    resetAllMocks(): typeof vi;
+    /**
+     * Replace the timer functions on `globalThis` with ones that schedule on a fake clock, which only moves when the
+     * test moves it. A function that was read before this call, such as `const savedSetTimeout = setTimeout`, stays real.
+     *
+     * The real timers come back at the end of the test file, unless a preload made this call at its top level.
+     */
+    useFakeTimers(options?: FakeTimersOptions | "modern" | "legacy"): typeof vi;
+    /**
+     * Put the real timer functions and clocks back, and drop the fake timers that are pending.
+     */
+    useRealTimers(): typeof vi;
+    /**
+     * Move the fake clock forward and run the timers that become due.
+     */
+    advanceTimersByTime(milliseconds: number): typeof vi;
+    /**
+     * Like `advanceTimersByTime`, but promise jobs and a turn of the real event loop run between two timers, so a timer
+     * that a callback schedules after an `await` is seen.
+     */
+    advanceTimersByTimeAsync(milliseconds: number): Promise<typeof vi>;
+    /**
+     * Move the fake clock to the next timer and run every timer that is due at that time, `steps` times.
+     */
+    advanceTimersToNextTimer(steps?: number): typeof vi;
+    /**
+     * Like `advanceTimersToNextTimer`, but promise jobs and a turn of the real event loop run between two timers.
+     */
+    advanceTimersToNextTimerAsync(steps?: number): Promise<typeof vi>;
+    /**
+     * Move the fake clock to the next multiple of 16 milliseconds, when a faked `requestAnimationFrame` runs its callbacks.
+     */
+    advanceTimersToNextFrame(): typeof vi;
+    /**
+     * Run timers until none is left. Throws after `loopLimit` timers.
+     */
+    runAllTimers(): typeof vi;
+    /**
+     * Like `runAllTimers`, but promise jobs and a turn of the real event loop run between two timers.
+     */
+    runAllTimersAsync(): Promise<typeof vi>;
+    /**
+     * Move the fake clock to the last timer that is pending now.
+     */
+    runOnlyPendingTimers(): typeof vi;
+    /**
+     * Like `runOnlyPendingTimers`, but promise jobs and a turn of the real event loop run between two timers.
+     */
+    runOnlyPendingTimersAsync(): Promise<typeof vi>;
+    /**
+     * Run the callbacks given to a faked `process.nextTick` or `queueMicrotask`.
+     */
+    runAllTicks(): typeof vi;
+    /**
+     * Choose how the fake clock moves when the test does not move it.
+     * - `manual`: it does not. This is the default.
+     * - `nextTimerAsync`: every turn of the real event loop runs the next timer.
+     * - `interval`: every `interval` (default 20) real milliseconds it moves forward by as many.
+     */
+    setTimerTickMode(mode: "manual" | "nextTimerAsync"): typeof vi;
+    setTimerTickMode(mode: "interval", interval?: number): typeof vi;
+    getTimerCount(): number;
+    clearAllTimers(): typeof vi;
+    isFakeTimers(): boolean;
+    /**
+     * Set what `Date` says the time is. Without fake timers only `Date` is mocked, until `vi.useRealTimers()`.
+     */
+    setSystemTime(now?: number | Date | string): typeof vi;
+    /**
+     * The mocked time, or `null` when neither `vi.setSystemTime()` nor `vi.useFakeTimers()` is in effect.
+     */
+    getMockedSystemTime(): Date | null;
+    /**
+     * The real time in milliseconds since the epoch, whatever is faked.
+     */
+    getRealSystemTime(): number;
+    /**
+     * Set `process.env[name]` (which is also `import.meta.env[name]`) until `vi.unstubAllEnvs()` or the end of the
+     * test file. `undefined` deletes the variable.
+     */
+    stubEnv<T extends string>(
+      name: T,
+      value: T extends "PROD" | "DEV" | "SSR" ? boolean | undefined : string | undefined,
+    ): typeof vi;
+    /**
+     * Give every variable changed by `vi.stubEnv()` the value it had before the first stub.
+     */
+    unstubAllEnvs(): typeof vi;
+    /**
+     * Define `globalThis[name]` until `vi.unstubAllGlobals()` or the end of the test file.
+     */
+    stubGlobal(name: string | symbol | number, value: unknown): typeof vi;
+    /**
+     * Give every global changed by `vi.stubGlobal()` the property descriptor it had before the first stub.
+     */
+    unstubAllGlobals(): typeof vi;
+    /**
+     * Change the configuration for the rest of the test file, or for every test file when a preload script
+     * calls it. Other options of Vitest are accepted and have no effect.
+     */
+    setConfig(config: {
+      /** Default timeout, in milliseconds, of the tests registered after this call. `0` and `Infinity` mean no timeout. */
+      testTimeout?: number | undefined;
+      /** Default timeout, in milliseconds, of the hooks registered after this call. `0` and `Infinity` mean no timeout. */
+      hookTimeout?: number | undefined;
+      /** How many concurrent tests run at the same time. */
+      maxConcurrency?: number | undefined;
+      /** Call `vi.clearAllMocks()` before each test. The default for tests imported from `"vitest"`. */
+      clearMocks?: boolean | undefined;
+      /** Call `vi.resetAllMocks()` before each test. */
+      mockReset?: boolean | undefined;
+      /** Call `vi.restoreAllMocks()` before each test. */
+      restoreMocks?: boolean | undefined;
+      /** Call `vi.unstubAllEnvs()` before each test. */
+      unstubEnvs?: boolean | undefined;
+      /** Call `vi.unstubAllGlobals()` before each test. */
+      unstubGlobals?: boolean | undefined;
+      [option: string]: unknown;
+    }): void;
+    /**
+     * Undo every `vi.setConfig()`.
+     */
+    resetConfig(): void;
+    /**
+     * Wait until every `import()` that is in flight has settled, including the ones started meanwhile.
+     */
+    dynamicImportSettled(): Promise<void>;
+    /**
+     * Call `callback` now and then every `interval` milliseconds until it neither throws nor rejects, and resolve
+     * with its value. After `timeout` milliseconds, reject with its last error.
+     *
+     * The waiting is on the real clock. While fake timers are on, every call is preceded by
+     * `vi.advanceTimersByTime(interval)`.
+     *
+     * @param options the timeout, or `{ timeout = 1000, interval = 50 }`
+     *
+     * @example
+     * ```ts
+     * await vi.waitFor(() => expect(server.isReady).toBe(true), { timeout: 500 });
+     * ```
+     */
+    waitFor<T>(
+      callback: () => T | Promise<T>,
+      options?: number | { timeout?: number | undefined; interval?: number | undefined },
+    ): Promise<T>;
+    /**
+     * Call `callback` now and then every `interval` milliseconds until it returns a truthy value, and resolve
+     * with that value. An error rejects at once. After `timeout` milliseconds, reject with a timeout error.
+     *
+     * The waiting is on the real clock. While fake timers are on, every call is preceded by
+     * `vi.advanceTimersByTime(interval)`.
+     *
+     * @param options the timeout, or `{ timeout = 1000, interval = 50 }`
+     *
+     * @example
+     * ```ts
+     * const element = await vi.waitUntil(() => document.querySelector(".element"));
+     * ```
+     */
+    waitUntil<T>(
+      callback: () => T | Promise<T>,
+      options?: number | { timeout?: number | undefined; interval?: number | undefined },
+    ): Promise<Exclude<T, false | "" | 0 | 0n | null | undefined>>;
   };
 
   interface FunctionLike {
@@ -254,6 +723,17 @@ declare module "bun:test" {
      */
     serial: Describe<T>;
     /**
+     * Marks this group of tests to be executed serially (one after another).
+     * @alias serial
+     */
+    sequential: Describe<T>;
+    /**
+     * Runs the tests of this group, and of the groups inside it, in a random order.
+     *
+     * The summary of the run prints the seed: `bun test --seed=<seed>` gives the same order again.
+     */
+    shuffle: Describe<T>;
+    /**
      * Runs this group of tests, only if `condition` is true.
      *
      * This is the opposite of `describe.skipIf()`.
@@ -261,6 +741,11 @@ declare module "bun:test" {
      * @param condition if these tests should run
      */
     if(condition: boolean): Describe<T>;
+    /**
+     * Runs this group of tests, only if `condition` is true.
+     * @alias if
+     */
+    runIf(condition: boolean): Describe<T>;
     /**
      * Skips this group of tests, if `condition` is true.
      *
@@ -281,6 +766,17 @@ declare module "bun:test" {
     each<T extends Readonly<[any, ...any[]]>>(table: readonly T[]): Describe<[...T]>;
     each<T extends readonly any[]>(table: readonly T[]): Describe<[...T]>;
     each<const T>(table: readonly T[]): Describe<[T]>;
+    /**
+     * The table as a tagged template: the first line names the columns, and each row is an object.
+     */
+    each(headings: TemplateStringsArray, ...values: any[]): Describe<[row: any]>;
+    // Repeated: `Parameters<typeof describe.each>` and `ReturnType<typeof describe.each>` read the last overload.
+    each<const T>(table: readonly T[]): Describe<[T]>;
+    /**
+     * Like `each()`, but a row that is an array is not spread over the parameters.
+     */
+    for<const T>(table: readonly T[]): Describe<[row: T]>;
+    for(headings: TemplateStringsArray, ...values: any[]): Describe<[row: any]>;
   }
   /**
    * Describes a group of related tests.
@@ -477,6 +973,16 @@ declare module "bun:test" {
    * @category Testing
    */
   export interface Test<T extends ReadonlyArray<unknown>> {
+    // First, or `options` that are `any` are taken for the `fn` of the next overload. `Parameters<>` reads the last one.
+    (
+      label: string,
+      fn: (
+        ...args: __internal.IsTuple<T> extends true
+          ? [...table: __internal.Flatten<T>, done: (err?: unknown) => void]
+          : T
+      ) => void | Promise<unknown>,
+      options: number | TestOptions,
+    ): void;
     /**
      * Runs a test, with the options before the test function.
      *
@@ -541,6 +1047,14 @@ declare module "bun:test" {
      */
     failing: Test<T>;
     /**
+     * Marks this test as failing, like Vitest's `test.fails`.
+     *
+     * The test passes if anything about it fails: its callback, a `beforeEach`
+     * or `afterEach` hook, the timeout, or `expect.assertions()`.
+     * {@link test.failing} only accepts an error from the callback.
+     */
+    fails: Test<T>;
+    /**
      * Runs the test concurrently with other concurrent tests.
      */
     concurrent: Test<T>;
@@ -550,6 +1064,11 @@ declare module "bun:test" {
      */
     serial: Test<T>;
     /**
+     * Forces the test to run serially (not in parallel).
+     * @alias serial
+     */
+    sequential: Test<T>;
+    /**
      * Runs this test, if `condition` is true.
      *
      * This is the opposite of `test.skipIf()`.
@@ -557,6 +1076,11 @@ declare module "bun:test" {
      * @param condition if the test should run
      */
     if(condition: boolean): Test<T>;
+    /**
+     * Runs this test, if `condition` is true.
+     * @alias if
+     */
+    runIf(condition: boolean): Test<T>;
     /**
      * Skips this test, if `condition` is true.
      *
@@ -596,6 +1120,271 @@ declare module "bun:test" {
     each<T extends Readonly<[unknown, ...unknown[]]>>(table: readonly T[]): Test<T>;
     each<T extends readonly unknown[]>(table: readonly T[]): Test<T>;
     each<const T>(table: readonly T[]): Test<[T]>;
+    /**
+     * The table as a tagged template: the first line names the columns, and each row is an object.
+     *
+     * @example
+     * ```ts
+     * test.each`
+     *   a    | b    | sum
+     *   ${1} | ${2} | ${3}
+     * `("$a + $b = $sum", ({ a, b, sum }) => {
+     *   expect(a + b).toBe(sum);
+     * });
+     * ```
+     */
+    each(headings: TemplateStringsArray, ...values: any[]): Test<[row: any]>;
+    // Repeated: `Parameters<typeof test.each>` and `ReturnType<typeof test.each>` read the last overload.
+    each<const T>(table: readonly T[]): Test<[T]>;
+    /**
+     * Like `each()`, but a row that is an array is not spread over the parameters,
+     * and the second argument is the {@link TestContext}.
+     *
+     * @example
+     * ```ts
+     * test.for([[1, 2, 3]])("%i + %i = %i", ([a, b, sum], { expect }) => {
+     *   expect(a + b).toBe(sum);
+     * });
+     * ```
+     */
+    for<const Row>(table: readonly Row[]): TestWithContext<object, [row: Row]>;
+    for(headings: TemplateStringsArray, ...values: any[]): TestWithContext<object, [row: any]>;
+    /**
+     * Returns a `test` whose callbacks receive the {@link TestContext} with `fixtures` in it.
+     *
+     * A fixture is set up for the tests, and the `beforeEach()` / `afterEach()` hooks of the
+     * returned `test`, that destructure it, and torn down after the test.
+     *
+     * @example
+     * ```ts
+     * const test = base.extend<{ server: Server }>({
+     *   server: async ({}, use) => {
+     *     const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+     *     await use(server);
+     *     await server.stop();
+     *   },
+     * });
+     *
+     * test("responds", async ({ server }) => {
+     *   expect(await (await fetch(server.url)).text()).toBe("ok");
+     * });
+     * ```
+     */
+    extend: ExtendTest<object>;
+    beforeAll: typeof beforeAll;
+    beforeEach: typeof beforeEach;
+    afterEach: typeof afterEach;
+    afterAll: typeof afterAll;
+    describe: Describe<[]>;
+    suite: Describe<[]>;
+  }
+
+  /**
+   * What the callbacks of `test.for()` and of a `test` made by `test.extend()` receive.
+   * One object per test: its hooks get the same one.
+   */
+  export interface TestContext {
+    /** The running test. */
+    readonly task: TestTask;
+    /**
+     * `expect`, with `expect.assertions()`, `expect.hasAssertions()` and snapshots that belong to
+     * this test whichever tests run concurrently with it.
+     */
+    readonly expect: Expect;
+    /** Aborted when the test times out. */
+    readonly signal: AbortSignal;
+    /** Stops the test and reports it as skipped. */
+    skip(note?: string): never;
+    /** Stops the test and reports it as skipped, unless `condition` is `false`. */
+    skip(condition: boolean, note?: string): void;
+    /** Runs `fn` after the test, its `afterEach` hooks and its fixtures. The last registered runs first. */
+    onTestFinished(fn: (context: TestContext) => void | Promise<unknown>, options?: HookOptions): void;
+    /** Like `onTestFinished()`, only if the test failed. */
+    onTestFailed(fn: (context: TestContext) => void | Promise<unknown>, options?: HookOptions): void;
+    /** Adds to `task.annotations`. */
+    annotate(message: string, type?: string, attachment?: object): Promise<TestAnnotation>;
+    annotate(message: string, attachment?: object): Promise<TestAnnotation>;
+  }
+
+  export interface TestAnnotation {
+    message: string;
+    /** @default "notice" */
+    type: string;
+    attachment?: object;
+  }
+
+  export interface TestSuite {
+    type: "suite";
+    /** The label of the `describe()` block, or the path of the file relative to the working directory. */
+    name: string;
+    /** The names of the file, of the blocks around this one and its own, joined by `" > "`. */
+    fullName: string;
+    mode: "run" | "skip" | "only" | "todo";
+    /** For anything you want to keep with the block. */
+    meta: Record<string, any>;
+    file: TestSuite & { filepath: string };
+    /** The block around this one. */
+    suite?: TestSuite;
+  }
+
+  export interface TestTask extends Omit<TestSuite, "type"> {
+    type: "test";
+    id: string;
+    /** `fullName` without the file. */
+    fullTestName: string;
+    timeout: number;
+    retry: number;
+    repeats: number;
+    fails?: true;
+    concurrent?: true;
+    annotations: TestAnnotation[];
+    result: {
+      state: "run" | "pass" | "fail" | "skip";
+      /** What the test, its hooks and its fixtures threw. */
+      errors?: unknown[];
+      retryCount: number;
+      repeatCount: number;
+      /** The argument of `context.skip()`. */
+      note?: string;
+    };
+    context: TestContext;
+  }
+
+  export interface FixtureOptions {
+    /**
+     * Set the fixture up for every test, whether it destructures it or not.
+     * @default false
+     */
+    auto?: boolean;
+    /**
+     * `"file"` and `"worker"`: set up once, for the first test that needs it, and torn down after the last test of the file.
+     * @default "test"
+     */
+    scope?: "test" | "file" | "worker";
+  }
+
+  /**
+   * Sets up a fixture, passes it to `use()`, and tears it down once the promise `use()` returned resolves.
+   * The first parameter has to be an object destructuring pattern: it names the fixtures this one depends on.
+   */
+  export type FixtureFunction<Value, Context> = (
+    context: Context,
+    use: (value: Value) => Promise<void>,
+  ) => void | Promise<void>;
+
+  type Fixture<Value, Context> = ((...args: any[]) => any) extends Value
+    ? FixtureFunction<Value, Context>
+    : Value | FixtureFunction<Value, Context>;
+
+  export type Fixtures<Added, Context = object> = {
+    [Name in keyof Added]:
+      | Fixture<Added[Name], Omit<Added, Name> & Context & TestContext>
+      | [Fixture<Added[Name], Omit<Added, Name> & Context & TestContext>, FixtureOptions];
+  };
+
+  /**
+   * The type of `test.extend`.
+   */
+  export interface ExtendTest<Context> {
+    <Added extends Record<string, any> = object>(
+      fixtures: Fixtures<Added, Context>,
+    ): TestWithContext<Omit<Context, keyof Added> & Added>;
+    /**
+     * Adds one fixture: a value, or a function that returns it.
+     */
+    <Name extends string, Value>(
+      name: Name,
+      value:
+        | ((
+            context: Context & TestContext,
+            helpers: { onCleanup(fn: () => void | Promise<unknown>): void },
+          ) => Value | Promise<Value>)
+        | Value,
+    ): TestWithContext<Omit<Context, Name> & Record<Name, Value>>;
+    <Name extends string, Value>(
+      name: Name,
+      options: FixtureOptions,
+      value:
+        | ((
+            context: Context & TestContext,
+            helpers: { onCleanup(fn: () => void | Promise<unknown>): void },
+          ) => Value | Promise<Value>)
+        | Value,
+    ): TestWithContext<Omit<Context, Name> & Record<Name, Value>>;
+  }
+
+  type ContextHook<Context> = (
+    fn: (context: Context & TestContext) => unknown | Promise<unknown>,
+    options?: HookOptions,
+  ) => void;
+  type SuiteHook<Context> = (
+    fn: (context: Context, suite: TestSuite) => unknown | Promise<unknown>,
+    options?: HookOptions,
+  ) => void;
+  type TestOfRows<Row extends ReadonlyArray<unknown>> = {
+    // First, or `options` that are `any` are taken for the `fn` of the next overload. `Parameters<>` reads the last one.
+    (label: string, fn: (...args: Row) => void | Promise<unknown>, options: number | TestOptions): void;
+    (label: string, options: number | TestOptions, fn: (...args: Row) => void | Promise<unknown>): void;
+    (label: string, fn: (...args: Row) => void | Promise<unknown>, options?: number | TestOptions): void;
+  };
+
+  /**
+   * A `test` whose callbacks receive the {@link TestContext} instead of a `done` callback.
+   */
+  export interface TestWithContext<Context, Row extends ReadonlyArray<unknown> = []> {
+    // First, or `options` that are `any` are taken for the `fn` of the next overload. `Parameters<>` reads the last one.
+    (
+      label: string,
+      fn: (...args: [...Row, context: Context & TestContext]) => void | Promise<unknown>,
+      options: number | TestOptions,
+    ): void;
+    (
+      label: string,
+      options: number | TestOptions,
+      fn: (...args: [...Row, context: Context & TestContext]) => void | Promise<unknown>,
+    ): void;
+    (
+      label: string,
+      fn: (...args: [...Row, context: Context & TestContext]) => void | Promise<unknown>,
+      options?: number | TestOptions,
+    ): void;
+    only: TestWithContext<Context, Row>;
+    skip: ((label: string) => void) & TestWithContext<Context, Row>;
+    todo: ((label: string) => void) & TestWithContext<Context, Row>;
+    failing: TestWithContext<Context, Row>;
+    fails: TestWithContext<Context, Row>;
+    concurrent: TestWithContext<Context, Row>;
+    serial: TestWithContext<Context, Row>;
+    sequential: TestWithContext<Context, Row>;
+    if(condition: boolean): TestWithContext<Context, Row>;
+    runIf(condition: boolean): TestWithContext<Context, Row>;
+    skipIf(condition: boolean): TestWithContext<Context, Row>;
+    todoIf(condition: boolean): TestWithContext<Context, Row>;
+    failingIf(condition: boolean): TestWithContext<Context, Row>;
+    concurrentIf(condition: boolean): TestWithContext<Context, Row>;
+    serialIf(condition: boolean): TestWithContext<Context, Row>;
+    /** The rows fill the parameters: the callback does not get the context. */
+    each<T extends Readonly<[unknown, ...unknown[]]>>(table: readonly T[]): TestOfRows<T>;
+    each<T extends readonly unknown[]>(table: readonly T[]): TestOfRows<T>;
+    each<const T>(table: readonly T[]): TestOfRows<[row: T]>;
+    each(headings: TemplateStringsArray, ...values: any[]): TestOfRows<[row: any]>;
+    for<const T>(table: readonly T[]): TestWithContext<Context, [row: T]>;
+    for(headings: TemplateStringsArray, ...values: any[]): TestWithContext<Context, [row: any]>;
+    extend: ExtendTest<Context>;
+    /**
+     * Replaces fixtures for the tests of the `describe()` block it is called in, or of the file.
+     */
+    override(fixtures: Partial<Fixtures<Context>>): this;
+    /** @deprecated Use `override()`. */
+    scoped(fixtures: Partial<Fixtures<Context>>): this;
+    /** The callback gets the fixtures with `scope: "file"` or `"worker"` that it destructures, and the suite. */
+    beforeAll: SuiteHook<Context>;
+    afterAll: SuiteHook<Context>;
+    /** A function the callback returns runs after the `afterEach` hooks. */
+    beforeEach: ContextHook<Context>;
+    afterEach: ContextHook<Context>;
+    describe: Describe<[]>;
+    suite: Describe<[]>;
   }
   /**
    * Runs a test.
@@ -736,6 +1525,57 @@ declare module "bun:test" {
     unreachable(msg?: string | Error): never;
 
     /**
+     * Like `expect()`, except that a matcher that fails does not throw: the failure is reported, the test goes
+     * on, and it fails when it ends.
+     *
+     * @example
+     * expect.soft(response.status).toBe(200);
+     * expect.soft(await response.text()).toBe("ok"); // checked even if the status is wrong
+     *
+     * @param actual the actual value
+     * @param customFailMessage an optional custom message to display if the test fails.
+     */
+    soft<T = unknown>(actual?: T, customFailMessage?: string): Matchers<T>;
+
+    /**
+     * Calls `fn`, awaits what it returns and runs the matcher on it, again and again until the matcher passes.
+     * The matcher returns a promise, which rejects with the last failure once `timeout` is up.
+     *
+     * The time is real even under fake timers, which each attempt advances by `interval`.
+     *
+     * @example
+     * await expect.poll(() => document.querySelector(".ready")).not.toBeNull();
+     * await expect.poll(() => queue.length, { interval: 10, timeout: 500 }).toBe(0);
+     */
+    poll<T>(
+      fn: () => T,
+      options?: {
+        /**
+         * Milliseconds between two attempts.
+         * @default 50
+         */
+        interval?: number;
+        /**
+         * Milliseconds after which the matcher fails.
+         * @default 1000
+         */
+        timeout?: number;
+        /** A custom message to display if the matcher fails. */
+        message?: string;
+      },
+    ): Omit<
+      AsyncMatchers<Awaited<T>>,
+      | "resolves"
+      | "rejects"
+      | "toThrow"
+      | "toThrowError"
+      | "toMatchSnapshot"
+      | "toMatchInlineSnapshot"
+      | "toThrowErrorMatchingSnapshot"
+      | "toThrowErrorMatchingInlineSnapshot"
+    >;
+
+    /**
      * Ensures that an assertion is made
      */
     hasAssertions(): void;
@@ -744,6 +1584,73 @@ declare module "bun:test" {
      * Ensures that a specific number of assertions are made
      */
     assertions(neededAssertions: number): void;
+
+    /**
+     * Registers functions that decide whether two values are equal, for `toEqual()`,
+     * `toStrictEqual()`, `toMatchObject()`, `toHaveBeenCalledWith()` and every other
+     * matcher and asymmetric matcher that compares deeply.
+     *
+     * A tester returns `true` or `false`, or `undefined` to leave the pair to the next
+     * tester and then to the built-in rules. Testers registered by a test file last
+     * until the end of that file; those registered by a preload script last for every file.
+     *
+     * @example
+     * expect.addEqualityTesters([
+     *   (a, b) => (a instanceof Volume && b instanceof Volume ? a.equals(b) : undefined),
+     * ]);
+     * expect(new Volume(1, "L")).toEqual(new Volume(1000, "mL"));
+     */
+    addEqualityTesters(testers: Tester[]): void;
+
+    /**
+     * Registers how the snapshot matchers print the values that `serializer.test()` returns `true` for,
+     * wherever in a snapshot they are. The serializer that was added last is asked first.
+     *
+     * A serializer added by a test file lasts until the end of that file; one added by a preload
+     * script, or by a module that test files import, lasts for every file after it.
+     *
+     * @example
+     * expect.addSnapshotSerializer({
+     *   test: value => value instanceof Money,
+     *   serialize: value => `${value.amount} ${value.currency}`,
+     * });
+     * expect({ price: new Money(5, "EUR") }).toMatchInlineSnapshot(`
+     *   {
+     *     "price": 5 EUR,
+     *   }
+     * `);
+     */
+    addSnapshotSerializer(serializer: SnapshotSerializer): void;
+
+    /**
+     * What `expect` knows about the test that is running, plus whatever was given to
+     * {@link Expect.setState}. The same object is returned, up to date, by every call.
+     */
+    getState(): ExpectState & Record<string, unknown>;
+
+    /**
+     * Merges `state` into the object that {@link Expect.getState} returns.
+     *
+     * `assertionCalls`, `expectedAssertionsNumber` and `isExpectingAssertions` are the
+     * counters behind `expect.assertions()` and `expect.hasAssertions()`.
+     * `currentTestName` and `testPath` cannot be changed.
+     */
+    setState(state: Partial<ExpectState> & Record<string, unknown>): void;
+  }
+
+  export interface ExpectState {
+    /** How many assertions the current test has made. */
+    assertionCalls: number;
+    /** The names of the enclosing `describe` blocks and of the current test, joined by a space. */
+    currentTestName?: string;
+    /** The argument of `expect.assertions()`, if it was called in the current test. */
+    expectedAssertionsNumber: number | null;
+    /** Whether `expect.hasAssertions()` was called in the current test. */
+    isExpectingAssertions: boolean;
+    /** Always empty. */
+    suppressedErrors: Error[];
+    /** The absolute path of the current test file. */
+    testPath?: string;
   }
 
   /**
@@ -928,7 +1835,18 @@ declare module "bun:test" {
     closeTo(num: number, numDigits?: number): AsymmetricMatcher;
   }
 
-  export interface MatchersBuiltin<T = unknown> {
+  /**
+   * The matchers after `.resolves` and `.rejects`. Each returns a promise, which fulfills once the matcher has
+   * passed and rejects with its failure.
+   */
+  export type AsyncMatchers<T = unknown> = MatchersBuiltin<T, Promise<void>> & {
+    [K in Exclude<keyof Matchers<T>, keyof MatchersBuiltin>]: Matchers<T>[K] extends (...args: infer Args) => unknown
+      ? (...args: Args) => Promise<void>
+      : Matchers<T>[K];
+    // `infer Args` reads the last overload of a custom matcher and drops its type parameters: the rest come from here.
+  } & Matchers<T>;
+
+  export interface MatchersBuiltin<T = unknown, R = void> {
     /**
      * Negates the result of a subsequent assertion.
      *
@@ -940,23 +1858,23 @@ declare module "bun:test" {
      * expect(42).toEqual(42); // will pass
      * expect(42).not.toEqual(42); // will fail
      */
-    not: Matchers<unknown>;
+    not: [R] extends [void] ? Matchers<unknown> : AsyncMatchers<unknown>;
 
     /**
-     * Expects the value to be a promise that resolves.
+     * Expects the value to be a promise that resolves, or a function that returns one.
      *
      * @example
-     * expect(Promise.resolve(1)).resolves.toBe(1);
+     * await expect(Promise.resolve(1)).resolves.toBe(1);
      */
-    resolves: Matchers<Awaited<T>>;
+    resolves: AsyncMatchers<Awaited<T extends (...args: any[]) => infer Returned ? Returned : T>>;
 
     /**
-     * Expects the value to be a promise that rejects.
+     * Expects the value to be a promise that rejects, or a function that returns one.
      *
      * @example
-     * expect(Promise.reject("error")).rejects.toBe("error");
+     * await expect(Promise.reject("error")).rejects.toBe("error");
      */
-    rejects: Matchers<unknown>;
+    rejects: AsyncMatchers<unknown>;
 
     /**
      * Assertion which passes.
@@ -970,7 +1888,7 @@ declare module "bun:test" {
      *
      * @param message the message to display if the test fails (optional)
      */
-    pass: (message?: string) => void;
+    pass: (message?: string) => R;
 
     /**
      * Assertion which fails.
@@ -982,7 +1900,7 @@ declare module "bun:test" {
      * expect().not.fail();
      * expect().not.fail("hi");
      */
-    fail: (message?: string) => void;
+    fail: (message?: string) => R;
 
     /**
      * Asserts that a value equals what is expected.
@@ -1003,8 +1921,8 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toBe(expected: T): void;
-    toBe<X = T>(expected: NoInfer<X>): void;
+    toBe(expected: T): R;
+    toBe<X = T>(expected: NoInfer<X>): R;
 
     /**
      * Asserts that a number is odd.
@@ -1014,7 +1932,7 @@ declare module "bun:test" {
      * expect(1).toBeOdd();
      * expect(2).not.toBeOdd();
      */
-    toBeOdd(): void;
+    toBeOdd(): R;
 
     /**
      * Asserts that a number is even.
@@ -1024,7 +1942,7 @@ declare module "bun:test" {
      * expect(2).toBeEven();
      * expect(1).not.toBeEven();
      */
-    toBeEven(): void;
+    toBeEven(): R;
 
     /**
      * Asserts that a value is close to the expected value, within floating point precision.
@@ -1043,7 +1961,7 @@ declare module "bun:test" {
      * @param expected the expected value
      * @param numDigits the number of digits to check after the decimal point. Default is `2`
      */
-    toBeCloseTo(expected: number, numDigits?: number): void;
+    toBeCloseTo(expected: number, numDigits?: number): R;
 
     /**
      * Asserts that a value is deeply equal to what is expected.
@@ -1056,8 +1974,8 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toEqual(expected: T): void;
-    toEqual<X = T>(expected: NoInfer<X>): void;
+    toEqual(expected: T): R;
+    toEqual<X = T>(expected: NoInfer<X>): R;
 
     /**
      * Asserts that a value is deeply and strictly equal to
@@ -1082,8 +2000,8 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toStrictEqual(expected: T): void;
-    toStrictEqual<X = T>(expected: NoInfer<X>): void;
+    toStrictEqual(expected: T): R;
+    toStrictEqual<X = T>(expected: NoInfer<X>): R;
 
     /**
      * Asserts that the value is deeply equal to an element in the expected array.
@@ -1097,8 +2015,8 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toBeOneOf(expected: Iterable<T>): void;
-    toBeOneOf<X = T>(expected: NoInfer<Iterable<X>>): void;
+    toBeOneOf(expected: Iterable<T>): R;
+    toBeOneOf<X = T>(expected: NoInfer<Iterable<X>>): R;
 
     /**
      * Asserts that a value contains what is expected.
@@ -1113,8 +2031,8 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContain(expected: T extends Iterable<infer U> ? U : T): void;
-    toContain<X = T>(expected: NoInfer<X extends Iterable<infer U> ? U : X>): void;
+    toContain(expected: T extends Iterable<infer U> ? U : T): R;
+    toContain<X = T>(expected: NoInfer<X extends Iterable<infer U> ? U : X>): R;
 
     /**
      * Asserts that an `object` contains a key.
@@ -1129,8 +2047,8 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainKey(expected: __internal.IfNeverThenElse<keyof T, PropertyKey>): void;
-    toContainKey<X = T>(expected: __internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>): void;
+    toContainKey(expected: __internal.IfNeverThenElse<keyof T, PropertyKey>): R;
+    toContainKey<X = T>(expected: __internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>): R;
 
     /**
      * Asserts that an `object` contains all the provided keys.
@@ -1146,8 +2064,8 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainAllKeys(expected: Array<__internal.IfNeverThenElse<keyof T, PropertyKey>>): void;
-    toContainAllKeys<X = T>(expected: Array<__internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>>): void;
+    toContainAllKeys(expected: Array<__internal.IfNeverThenElse<keyof T, PropertyKey>>): R;
+    toContainAllKeys<X = T>(expected: Array<__internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>>): R;
 
     /**
      * Asserts that an `object` contains at least one of the provided keys.
@@ -1162,8 +2080,8 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainAnyKeys(expected: Array<__internal.IfNeverThenElse<keyof T, PropertyKey>>): void;
-    toContainAnyKeys<X = T>(expected: Array<__internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>>): void;
+    toContainAnyKeys(expected: Array<__internal.IfNeverThenElse<keyof T, PropertyKey>>): R;
+    toContainAnyKeys<X = T>(expected: Array<__internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>>): R;
 
     /**
      * Asserts that an `object` contains the provided value.
@@ -1197,7 +2115,7 @@ declare module "bun:test" {
      */
     // Contributor note: In theory we could type this better but it would be a
     // slow union to compute...
-    toContainValue(expected: unknown): void;
+    toContainValue(expected: unknown): R;
 
     /**
      * Asserts that an `object` contains the provided values.
@@ -1214,7 +2132,7 @@ declare module "bun:test" {
      * expect(o).not.toContainValues(['qux', 'foo']);
      * @param expected the expected value
      */
-    toContainValues(expected: Array<unknown>): void;
+    toContainValues(expected: Array<unknown>): R;
 
     /**
      * Asserts that an `object` contains all the provided values.
@@ -1228,7 +2146,7 @@ declare module "bun:test" {
      * expect(o).not.toContainAllValues(['bar', 'foo']);
      * @param expected the expected value
      */
-    toContainAllValues(expected: Array<unknown>): void;
+    toContainAllValues(expected: Array<unknown>): R;
 
     /**
      * Asserts that an `object` contains any of the provided values.
@@ -1243,7 +2161,7 @@ declare module "bun:test" {
      * expect(o).not.toContainAnyValues(['qux']);
      * @param expected the expected value
      */
-    toContainAnyValues(expected: Array<unknown>): void;
+    toContainAnyValues(expected: Array<unknown>): R;
 
     /**
      * Asserts that an `object` contains all the provided keys.
@@ -1255,8 +2173,8 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainKeys(expected: Array<__internal.IfNeverThenElse<keyof T, PropertyKey>>): void;
-    toContainKeys<X = T>(expected: Array<__internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>>): void;
+    toContainKeys(expected: Array<__internal.IfNeverThenElse<keyof T, PropertyKey>>): R;
+    toContainKeys<X = T>(expected: Array<__internal.IfNeverThenElse<NoInfer<keyof X>, PropertyKey>>): R;
 
     /**
      * Asserts that a value contains and equals what is expected.
@@ -1270,8 +2188,8 @@ declare module "bun:test" {
      *
      * @param expected the expected value
      */
-    toContainEqual(expected: T extends Iterable<infer U> ? U : T): void;
-    toContainEqual<X = T>(expected: NoInfer<X extends Iterable<infer U> ? U : X>): void;
+    toContainEqual(expected: T extends Iterable<infer U> ? U : T): R;
+    toContainEqual<X = T>(expected: NoInfer<X extends Iterable<infer U> ? U : X>): R;
 
     /**
      * Asserts that a value has a `.length` property
@@ -1283,7 +2201,7 @@ declare module "bun:test" {
      *
      * @param length the expected length
      */
-    toHaveLength(length: number): void;
+    toHaveLength(length: number): R;
 
     /**
      * Asserts that a value has a property with the
@@ -1298,7 +2216,7 @@ declare module "bun:test" {
      * @param keyPath the expected property name or path, or an index
      * @param value the expected property value, if provided
      */
-    toHaveProperty(keyPath: string | number | Array<string | number>, value?: unknown): void;
+    toHaveProperty(keyPath: string | number | Array<string | number>, value?: unknown): R;
 
     /**
      * Asserts that a value is "truthy".
@@ -1311,7 +2229,7 @@ declare module "bun:test" {
      * expect(1).toBeTruthy();
      * expect({}).toBeTruthy();
      */
-    toBeTruthy(): void;
+    toBeTruthy(): R;
 
     /**
      * Asserts that a value is "falsy".
@@ -1324,7 +2242,7 @@ declare module "bun:test" {
      * expect(0).toBeFalsy();
      * expect("").toBeFalsy();
      */
-    toBeFalsy(): void;
+    toBeFalsy(): R;
 
     /**
      * Asserts that a value is defined (that is, not `undefined`).
@@ -1333,7 +2251,7 @@ declare module "bun:test" {
      * expect(true).toBeDefined();
      * expect(undefined).toBeDefined(); // fail
      */
-    toBeDefined(): void;
+    toBeDefined(): R;
 
     /**
      * Asserts that a value is an instance of the given class or constructor.
@@ -1342,7 +2260,7 @@ declare module "bun:test" {
      * expect([]).toBeInstanceOf(Array);
      * expect(null).toBeInstanceOf(Array); // fail
      */
-    toBeInstanceOf(value: unknown): void;
+    toBeInstanceOf(value: unknown): R;
 
     /**
      * Asserts that a value is `undefined`.
@@ -1351,7 +2269,7 @@ declare module "bun:test" {
      * expect(undefined).toBeUndefined();
      * expect(null).toBeUndefined(); // fail
      */
-    toBeUndefined(): void;
+    toBeUndefined(): R;
 
     /**
      * Asserts that a value is `null`.
@@ -1360,7 +2278,7 @@ declare module "bun:test" {
      * expect(null).toBeNull();
      * expect(undefined).toBeNull(); // fail
      */
-    toBeNull(): void;
+    toBeNull(): R;
 
     /**
      * Asserts that a value is `NaN`.
@@ -1372,7 +2290,7 @@ declare module "bun:test" {
      * expect(Infinity).toBeNaN(); // fail
      * expect("notanumber").toBeNaN(); // fail
      */
-    toBeNaN(): void;
+    toBeNaN(): R;
 
     /**
      * Asserts that a value is a `number` and is greater than the expected value.
@@ -1384,7 +2302,7 @@ declare module "bun:test" {
      *
      * @param expected the expected number
      */
-    toBeGreaterThan(expected: number | bigint): void;
+    toBeGreaterThan(expected: number | bigint): R;
 
     /**
      * Asserts that a value is a `number` and is greater than or equal to the expected value.
@@ -1396,7 +2314,7 @@ declare module "bun:test" {
      *
      * @param expected the expected number
      */
-    toBeGreaterThanOrEqual(expected: number | bigint): void;
+    toBeGreaterThanOrEqual(expected: number | bigint): R;
 
     /**
      * Asserts that a value is a `number` and is less than the expected value.
@@ -1408,7 +2326,7 @@ declare module "bun:test" {
      *
      * @param expected the expected number
      */
-    toBeLessThan(expected: number | bigint): void;
+    toBeLessThan(expected: number | bigint): R;
 
     /**
      * Asserts that a value is a `number` and is less than or equal to the expected value.
@@ -1420,7 +2338,7 @@ declare module "bun:test" {
      *
      * @param expected the expected number
      */
-    toBeLessThanOrEqual(expected: number | bigint): void;
+    toBeLessThanOrEqual(expected: number | bigint): R;
 
     /**
      * Asserts that a function throws an error.
@@ -1441,7 +2359,7 @@ declare module "bun:test" {
      *
      * @param expected the expected error, error message, or error pattern
      */
-    toThrow(expected?: unknown): void;
+    toThrow(expected?: unknown): R;
 
     /**
      * Asserts that a function throws an error.
@@ -1463,7 +2381,7 @@ declare module "bun:test" {
      * @param expected the expected error, error message, or error pattern
      * @alias toThrow
      */
-    toThrowError(expected?: unknown): void;
+    toThrowError(expected?: unknown): R;
 
     /**
      * Asserts that a value matches a regular expression or includes a substring.
@@ -1474,7 +2392,7 @@ declare module "bun:test" {
      *
      * @param expected the expected substring or pattern.
      */
-    toMatch(expected: string | RegExp): void;
+    toMatch(expected: string | RegExp): R;
 
     /**
      * Asserts that a value matches the most recent snapshot.
@@ -1483,7 +2401,7 @@ declare module "bun:test" {
      * expect([1, 2, 3]).toMatchSnapshot('hint message');
      * @param hint Hint used to identify the snapshot in the snapshot file.
      */
-    toMatchSnapshot(hint?: string): void;
+    toMatchSnapshot(hint?: string): R;
 
     /**
      * Asserts that a value matches the most recent snapshot.
@@ -1496,7 +2414,7 @@ declare module "bun:test" {
      * @param propertyMatchers Object containing properties to match against the value.
      * @param hint Hint used to identify the snapshot in the snapshot file.
      */
-    toMatchSnapshot(propertyMatchers?: object, hint?: string): void;
+    toMatchSnapshot(propertyMatchers?: object, hint?: string): R;
 
     /**
      * Asserts that a value matches the most recent inline snapshot.
@@ -1507,7 +2425,7 @@ declare module "bun:test" {
      *
      * @param value The latest automatically-updated snapshot value.
      */
-    toMatchInlineSnapshot(value?: string): void;
+    toMatchInlineSnapshot(value?: string): R;
 
     /**
      * Asserts that a value matches the most recent inline snapshot.
@@ -1523,7 +2441,21 @@ declare module "bun:test" {
      * @param propertyMatchers Object containing properties to match against the value.
      * @param value The latest automatically-updated snapshot value.
      */
-    toMatchInlineSnapshot(propertyMatchers?: object, value?: string): void;
+    toMatchInlineSnapshot(propertyMatchers?: object, value?: string): R;
+
+    /**
+     * Asserts that a value matches the contents of a file of its own. A string is compared as it is,
+     * anything else as a snapshot prints it.
+     *
+     * A file that does not exist is written, unless in CI. `--update-snapshots` rewrites one that differs.
+     *
+     * @example
+     * await expect(render(page)).toMatchFileSnapshot("./snapshots/page.html");
+     *
+     * @param path Path of the file, relative to the test file.
+     * @param hint Hint used to number the snapshot among those of the test.
+     */
+    toMatchFileSnapshot(path: string, hint?: string): Promise<void>;
 
     /**
      * Asserts that a function throws an error matching the most recent snapshot.
@@ -1537,7 +2469,7 @@ declare module "bun:test" {
      *
      * @param hint Hint used to identify the snapshot in the snapshot file.
      */
-    toThrowErrorMatchingSnapshot(hint?: string): void;
+    toThrowErrorMatchingSnapshot(hint?: string): R;
 
     /**
      * Asserts that a function throws an error matching the most recent snapshot.
@@ -1551,7 +2483,7 @@ declare module "bun:test" {
      *
      * @param value The latest automatically-updated snapshot value.
      */
-    toThrowErrorMatchingInlineSnapshot(value?: string): void;
+    toThrowErrorMatchingInlineSnapshot(value?: string): R;
 
     /**
      * Asserts that an object matches a subset of properties.
@@ -1562,7 +2494,7 @@ declare module "bun:test" {
      *
      * @param subset Subset of properties to match with.
      */
-    toMatchObject(subset: object): void;
+    toMatchObject(subset: object): R;
 
     /**
      * Asserts that a value is empty.
@@ -1573,7 +2505,7 @@ declare module "bun:test" {
      * expect({}).toBeEmpty();
      * expect(new Set()).toBeEmpty();
      */
-    toBeEmpty(): void;
+    toBeEmpty(): R;
 
     /**
      * Asserts that a value is an empty `object`.
@@ -1582,7 +2514,7 @@ declare module "bun:test" {
      * expect({}).toBeEmptyObject();
      * expect({ a: 'hello' }).not.toBeEmptyObject();
      */
-    toBeEmptyObject(): void;
+    toBeEmptyObject(): R;
 
     /**
      * Asserts that a value is `null` or `undefined`.
@@ -1591,7 +2523,7 @@ declare module "bun:test" {
      * expect(null).toBeNil();
      * expect(undefined).toBeNil();
      */
-    toBeNil(): void;
+    toBeNil(): R;
 
     /**
      * Asserts that a value is an `array`.
@@ -1602,7 +2534,7 @@ declare module "bun:test" {
      * expect(new Array(1)).toBeArray();
      * expect({}).not.toBeArray();
      */
-    toBeArray(): void;
+    toBeArray(): R;
 
     /**
      * Asserts that a value is an `array` of a certain length.
@@ -1614,7 +2546,7 @@ declare module "bun:test" {
      * expect(new Array(1)).toBeArrayOfSize(1);
      * expect({}).not.toBeArrayOfSize(0);
      */
-    toBeArrayOfSize(size: number): void;
+    toBeArrayOfSize(size: number): R;
 
     /**
      * Asserts that a value is a `boolean`.
@@ -1625,7 +2557,7 @@ declare module "bun:test" {
      * expect(null).not.toBeBoolean();
      * expect(0).not.toBeBoolean();
      */
-    toBeBoolean(): void;
+    toBeBoolean(): R;
 
     /**
      * Asserts that a value is `true`.
@@ -1635,7 +2567,7 @@ declare module "bun:test" {
      * expect(false).not.toBeTrue();
      * expect(1).not.toBeTrue();
      */
-    toBeTrue(): void;
+    toBeTrue(): R;
 
     /**
      * Asserts that a value matches a specific type.
@@ -1646,7 +2578,7 @@ declare module "bun:test" {
      * expect("hello").toBeTypeOf("string");
      * expect([]).not.toBeTypeOf("boolean");
      */
-    toBeTypeOf(type: "bigint" | "boolean" | "function" | "number" | "object" | "string" | "symbol" | "undefined"): void;
+    toBeTypeOf(type: "bigint" | "boolean" | "function" | "number" | "object" | "string" | "symbol" | "undefined"): R;
 
     /**
      * Asserts that a value is `false`.
@@ -1656,7 +2588,7 @@ declare module "bun:test" {
      * expect(true).not.toBeFalse();
      * expect(0).not.toBeFalse();
      */
-    toBeFalse(): void;
+    toBeFalse(): R;
 
     /**
      * Asserts that a value is a `number`.
@@ -1667,7 +2599,7 @@ declare module "bun:test" {
      * expect(NaN).toBeNumber();
      * expect(BigInt(1)).not.toBeNumber();
      */
-    toBeNumber(): void;
+    toBeNumber(): R;
 
     /**
      * Asserts that a value is a `number`, and is an integer.
@@ -1677,7 +2609,7 @@ declare module "bun:test" {
      * expect(3.14).not.toBeInteger();
      * expect(NaN).not.toBeInteger();
      */
-    toBeInteger(): void;
+    toBeInteger(): R;
 
     /**
      * Asserts that a value is an `object`.
@@ -1687,7 +2619,7 @@ declare module "bun:test" {
      * expect("notAnObject").not.toBeObject();
      * expect(NaN).not.toBeObject();
      */
-    toBeObject(): void;
+    toBeObject(): R;
 
     /**
      * Asserts that a value is a `number`, and is not `NaN` or `Infinity`.
@@ -1698,7 +2630,7 @@ declare module "bun:test" {
      * expect(NaN).not.toBeFinite();
      * expect(Infinity).not.toBeFinite();
      */
-    toBeFinite(): void;
+    toBeFinite(): R;
 
     /**
      * Asserts that a value is a positive `number`.
@@ -1708,7 +2640,7 @@ declare module "bun:test" {
      * expect(-3.14).not.toBePositive();
      * expect(NaN).not.toBePositive();
      */
-    toBePositive(): void;
+    toBePositive(): R;
 
     /**
      * Asserts that a value is a negative `number`.
@@ -1718,7 +2650,7 @@ declare module "bun:test" {
      * expect(1).not.toBeNegative();
      * expect(NaN).not.toBeNegative();
      */
-    toBeNegative(): void;
+    toBeNegative(): R;
 
     /**
      * Asserts that a value is a number between a start and end value.
@@ -1726,7 +2658,7 @@ declare module "bun:test" {
      * @param start the start number (inclusive)
      * @param end the end number (exclusive)
      */
-    toBeWithin(start: number, end: number): void;
+    toBeWithin(start: number, end: number): R;
 
     /**
      * Asserts that a value is equal to the expected string, ignoring any whitespace.
@@ -1737,7 +2669,7 @@ declare module "bun:test" {
      *
      * @param expected the expected string
      */
-    toEqualIgnoringWhitespace(expected: string): void;
+    toEqualIgnoringWhitespace(expected: string): R;
 
     /**
      * Asserts that a value is a `symbol`.
@@ -1746,7 +2678,7 @@ declare module "bun:test" {
      * expect(Symbol("foo")).toBeSymbol();
      * expect("foo").not.toBeSymbol();
      */
-    toBeSymbol(): void;
+    toBeSymbol(): R;
 
     /**
      * Asserts that a value is a `function`.
@@ -1754,7 +2686,7 @@ declare module "bun:test" {
      * @example
      * expect(() => {}).toBeFunction();
      */
-    toBeFunction(): void;
+    toBeFunction(): R;
 
     /**
      * Asserts that a value is a `Date` object.
@@ -1766,7 +2698,7 @@ declare module "bun:test" {
      * expect(new Date(null)).toBeDate();
      * expect("2020-03-01").not.toBeDate();
      */
-    toBeDate(): void;
+    toBeDate(): R;
 
     /**
      * Asserts that a value is a valid `Date` object.
@@ -1776,7 +2708,7 @@ declare module "bun:test" {
      * expect(new Date(null)).not.toBeValidDate();
      * expect("2020-03-01").not.toBeValidDate();
      */
-    toBeValidDate(): void;
+    toBeValidDate(): R;
 
     /**
      * Asserts that a value is a `string`.
@@ -1786,7 +2718,7 @@ declare module "bun:test" {
      * expect(new String("bar")).toBeString();
      * expect(123).not.toBeString();
      */
-    toBeString(): void;
+    toBeString(): R;
 
     /**
      * Asserts that a value includes a `string`.
@@ -1795,14 +2727,14 @@ declare module "bun:test" {
      *
      * @param expected the expected substring
      */
-    toInclude(expected: string): void;
+    toInclude(expected: string): R;
 
     /**
      * Asserts that a value includes a `string` the given number of times.
      * @param expected the expected substring
      * @param times the number of times the substring should occur
      */
-    toIncludeRepeated(expected: string, times: number): void;
+    toIncludeRepeated(expected: string, times: number): R;
 
     /**
      * Asserts that a value satisfies a custom condition.
@@ -1814,47 +2746,47 @@ declare module "bun:test" {
      * @link https://vitest.dev/api/expect.html#tosatisfy
      * @link https://jest-extended.jestcommunity.dev/docs/matchers/toSatisfy
      */
-    toSatisfy(predicate: (value: T) => boolean): void;
+    toSatisfy(predicate: (value: T) => boolean): R;
 
     /**
      * Asserts that a value starts with a `string`.
      *
      * @param expected the string to start with
      */
-    toStartWith(expected: string): void;
+    toStartWith(expected: string): R;
 
     /**
      * Asserts that a value ends with a `string`.
      *
      * @param expected the string to end with
      */
-    toEndWith(expected: string): void;
+    toEndWith(expected: string): R;
 
     /**
      * Ensures that a mock function has returned successfully at least once.
      *
      * An unfulfilled promise counts as a failure, as does a thrown error.
      */
-    toHaveReturned(): void;
+    toHaveReturned(): R;
 
     /**
      * Ensures that a mock function has returned successfully `times` times.
      *
      * An unfulfilled promise counts as a failure, as does a thrown error.
      */
-    toHaveReturnedTimes(times: number): void;
+    toHaveReturnedTimes(times: number): R;
 
     /**
      * Ensures that a mock function has returned a specific value.
      * This matcher uses deep equality, like toEqual(), and supports asymmetric matchers.
      */
-    toHaveReturnedWith(expected: unknown): void;
+    toHaveReturnedWith(expected: unknown): R;
 
     /**
      * Ensures that a mock function has returned a specific value on its last invocation.
      * This matcher uses deep equality, like toEqual(), and supports asymmetric matchers.
      */
-    toHaveLastReturnedWith(expected: unknown): void;
+    toHaveLastReturnedWith(expected: unknown): R;
 
     /**
      * Ensures that a mock function has returned a specific value on the nth invocation.
@@ -1862,62 +2794,113 @@ declare module "bun:test" {
      * @param n The 1-based index of the function call
      * @param expected The expected return value
      */
-    toHaveNthReturnedWith(n: number, expected: unknown): void;
+    toHaveNthReturnedWith(n: number, expected: unknown): R;
 
     /**
      * Ensures that a mock function is called.
      */
-    toHaveBeenCalled(): void;
+    toHaveBeenCalled(): R;
 
     /**
      * Ensures that a mock function is called.
      * @alias toHaveBeenCalled
      */
-    toBeCalled(): void;
+    toBeCalled(): R;
 
     /**
      * Ensures that a mock function is called an exact number of times.
      */
-    toHaveBeenCalledTimes(expected: number): void;
+    toHaveBeenCalledTimes(expected: number): R;
 
     /**
      * Ensures that a mock function is called an exact number of times.
      * @alias toHaveBeenCalledTimes
      */
-    toBeCalledTimes(expected: number): void;
+    toBeCalledTimes(expected: number): R;
 
     /**
      * Ensure that a mock function is called with specific arguments.
      */
-    toHaveBeenCalledWith(...expected: unknown[]): void;
+    toHaveBeenCalledWith(...expected: unknown[]): R;
 
     /**
      * Ensure that a mock function is called with specific arguments.
      * @alias toHaveBeenCalledWith
      */
-    toBeCalledWith(...expected: unknown[]): void;
+    toBeCalledWith(...expected: unknown[]): R;
 
     /**
      * Ensure that a mock function is called with specific arguments for the last call.
      */
-    toHaveBeenLastCalledWith(...expected: unknown[]): void;
+    toHaveBeenLastCalledWith(...expected: unknown[]): R;
 
     /**
      * Ensure that a mock function is called with specific arguments for the last call.
      * @alias toHaveBeenLastCalledWith
      */
-    lastCalledWith(...expected: unknown[]): void;
+    lastCalledWith(...expected: unknown[]): R;
 
     /**
      * Ensure that a mock function is called with specific arguments for the nth call.
      */
-    toHaveBeenNthCalledWith(n: number, ...expected: unknown[]): void;
+    toHaveBeenNthCalledWith(n: number, ...expected: unknown[]): R;
 
     /**
      * Ensure that a mock function is called with specific arguments for the nth call.
      * @alias toHaveBeenNthCalledWith
      */
-    nthCalledWith(n: number, ...expected: unknown[]): void;
+    nthCalledWith(n: number, ...expected: unknown[]): R;
+
+    /**
+     * Ensure that a mock function is called exactly once, with specific arguments.
+     */
+    toHaveBeenCalledExactlyOnceWith(...expected: unknown[]): R;
+
+    /**
+     * Ensure that the first call of a mock function came before the first call of `mock`.
+     * @param mock The mock function to compare with
+     * @param failIfNoFirstInvocation Whether to fail when the received mock function was never called. Defaults to `true`.
+     */
+    toHaveBeenCalledBefore(mock: Mock<(...args: any[]) => any>, failIfNoFirstInvocation?: boolean): R;
+
+    /**
+     * Ensure that the first call of a mock function came after the first call of `mock`.
+     * @param mock The mock function to compare with
+     * @param failIfNoFirstInvocation Whether to fail when `mock` was never called. Defaults to `true`.
+     */
+    toHaveBeenCalledAfter(mock: Mock<(...args: any[]) => any>, failIfNoFirstInvocation?: boolean): R;
+
+    /**
+     * Ensures that a promise returned by a mock function has resolved at least once.
+     *
+     * A returned value that is not a promise counts as resolved, a thrown error as rejected.
+     */
+    toHaveResolved(): R;
+
+    /**
+     * Ensures that the promises returned by a mock function have resolved `times` times.
+     */
+    toHaveResolvedTimes(times: number): R;
+
+    /**
+     * Ensures that a promise returned by a mock function has resolved with a specific value.
+     * This matcher uses deep equality, like toEqual(), and supports asymmetric matchers.
+     */
+    toHaveResolvedWith(expected: unknown): R;
+
+    /**
+     * Ensures that the promise returned by the last call of a mock function has resolved with a specific value.
+     * This matcher uses deep equality, like toEqual(), and supports asymmetric matchers.
+     */
+    toHaveLastResolvedWith(expected: unknown): R;
+
+    /**
+     * Ensures that the promise returned by the nth call of a mock function has resolved with a specific value.
+     * This matcher uses deep equality, like toEqual(), and supports asymmetric matchers.
+     * @param n The 1-based index of the function call
+     * @param expected The expected resolved value
+     */
+    toHaveNthResolvedWith(n: number, expected: unknown): R;
   }
 
   /**
@@ -1951,47 +2934,103 @@ declare module "bun:test" {
       : CustomMatcher<unknown, any[]>;
   };
 
+  /** Prints a value that is inside of the one a {@link SnapshotSerializer} prints. */
+  export type SnapshotPrinter = (
+    value: unknown,
+    config: SnapshotSerializerConfig,
+    indentation: string,
+    depth: number,
+    refs: unknown[],
+  ) => string;
+
+  /** The options of `pretty-format` that snapshots are printed with. */
+  export interface SnapshotSerializerConfig {
+    /** What one more level of `indentation` adds. */
+    indent: string;
+    /** Between two items. */
+    spacingInner: string;
+    /** After an opening and before a closing bracket. */
+    spacingOuter: string;
+    min: boolean;
+    plugins: SnapshotSerializer[];
+    [option: string]: unknown;
+  }
+
+  /** For {@link Expect.addSnapshotSerializer}: a plugin of `pretty-format`, with either of its two interfaces. */
+  export type SnapshotSerializer = { test(value: any): boolean } & (
+    | {
+        serialize(
+          value: any,
+          config: SnapshotSerializerConfig,
+          indentation: string,
+          depth: number,
+          refs: unknown[],
+          printer: SnapshotPrinter,
+        ): string;
+      }
+    | {
+        print(value: any, print: (value: unknown) => string, indent: (text: string) => string): string;
+      }
+  );
+
   /** Custom equality tester */
   export type Tester = (this: TesterContext, a: any, b: any, customTesters: Tester[]) => boolean | undefined;
 
   export type EqualsFunction = (
     a: unknown,
     b: unknown,
-    //customTesters?: Array<Tester>,
-    //strictCheck?: boolean,
+    /** The only custom testers to use. Those of `expect.addEqualityTesters()` are not used unless they are passed. */
+    customTesters?: Array<Tester>,
+    /** Compare like `toStrictEqual()` instead of `toEqual()`. */
+    strictCheck?: boolean,
   ) => boolean;
 
   export interface TesterContext {
     equals: EqualsFunction;
   }
 
-  interface MatcherState {
-    //assertionCalls: number;
+  interface MatcherState extends ExpectState {
     //currentConcurrentTestName?: () => string | undefined;
-    //currentTestName?: string;
     //error?: Error;
     //expand: boolean;
-    //expectedAssertionsNumber: number | null;
     //expectedAssertionsNumberError?: Error;
-    //isExpectingAssertions: boolean;
     //isExpectingAssertionsError?: Error;
     isNot: boolean;
     //numPassingAsserts: number;
     promise: string;
-    //suppressedErrors: Array<Error>;
-    //testPath?: string;
   }
 
   type MatcherHintColor = (arg: string) => string; // subset of Chalk type
 
   interface MatcherUtils {
-    //customTesters: Array<Tester>;
+    /** The testers registered with `expect.addEqualityTesters()`, to pass on to `equals`. */
+    customTesters: Array<Tester>;
     //dontThrow(): void; // (internally used by jest snapshot)
     equals: EqualsFunction;
     utils: Readonly<{
       stringify(value: unknown): string;
       printReceived(value: unknown): string;
       printExpected(value: unknown): string;
+      /**
+       * The lines that differ between two values, or between two strings.
+       *
+       * `null` for two numbers, two bigints, two booleans, and an asymmetric matcher.
+       *
+       * @param options accepted for compatibility with Jest, and ignored
+       */
+      diff(expected: unknown, received: unknown, options?: object): string | null;
+      /** `name` with the type of `value`, and `name` with what `print` makes of `value`, on two lines. */
+      printWithType<T>(name: string, value: T, print: (value: T) => string): string;
+      /** Colors text like an expected value. The text is not quoted. */
+      EXPECTED_COLOR(...text: unknown[]): string;
+      /** Colors text like a received value. The text is not quoted. */
+      RECEIVED_COLOR(...text: unknown[]): string;
+      /**
+       * The first line of a failure message, such as `expect(received).toBeFoo(expected)`.
+       *
+       * @param received the text between the parentheses of `expect()`
+       * @param expected the text between the parentheses of the matcher, `""` for none
+       */
       matcherHint(
         matcherName: string,
         received?: unknown,
@@ -2041,6 +3080,7 @@ declare module "bun:test" {
     };
 
     export interface Mock<T extends (...args: any[]) => any> extends MockInstance<T> {
+      new (...args: Parameters<T>): ReturnType<T>;
       (...args: Parameters<T>): ReturnType<T>;
     }
 
@@ -2183,6 +3223,15 @@ declare module "bun:test" {
        * List of the results of all calls that have been made to the mock.
        */
       results: Array<MockFunctionResult<T>>;
+      /**
+       * What the result of each call has settled to by now: a returned promise counts as `"incomplete"` while it is
+       * pending, then as `"fulfilled"` or `"rejected"`. Every read gives a new array.
+       */
+      readonly settledResults: Array<
+        | { type: "incomplete"; value: undefined }
+        | { type: "fulfilled"; value: Awaited<ReturnType<T>> }
+        | { type: "rejected"; value: unknown }
+      >;
     }
 
     export interface MockInstance<T extends FunctionLike = UnknownFunction> {
@@ -2206,6 +3255,8 @@ declare module "bun:test" {
       mockResolvedValueOnce(value: ResolveType<T>): this;
       mockRejectedValue(value: RejectType<T>): this;
       mockRejectedValueOnce(value: RejectType<T>): this;
+      mockThrow(value: unknown): this;
+      mockThrowOnce(value: unknown): this;
       [Symbol.dispose](): void;
     }
 

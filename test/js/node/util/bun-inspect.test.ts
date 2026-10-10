@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import stripAnsi from "strip-ansi";
 
 describe("Bun.inspect", () => {
@@ -141,5 +142,50 @@ describe("Bun.inspect", () => {
 
   it("depth = 0", () => {
     expect(Bun.inspect({ a: { b: { c: { d: 1 } } } }, { depth: 0 })).toEqual("{\n  a: [Object ...],\n}");
+  });
+
+  // As in Node, where these use the `inspect` that node:util started with.
+  it.concurrent.each([
+    `util.inspect = 5;`,
+    `util.inspect = {};`,
+    `util.inspect = "str";`,
+    `util.inspect = undefined;`,
+    `util.inspect = null;`,
+    `util.inspect = () => "replaced";`,
+    `delete util.inspect;`,
+    `Object.defineProperty(util, "inspect", { get() { throw new Error("getter"); } });`,
+  ])("native printers do not read node:util's inspect: %s", async replace => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const util = require("node:util");
+        ${replace}
+        const custom = Symbol.for("nodejs.util.inspect.custom");
+        const channel = new BroadcastChannel("x");
+        console.log(channel);
+        channel.close();
+        console.log({ [custom]: (depth, options, inspect) => inspect({ a: 1 }) });
+        console.log(Bun.inspect({ [custom]: (depth, options, inspect) => options.stylize("s", "string") }, { colors: true }) === "\\x1b[32ms\\x1b[39m");
+        console.log(new URLSearchParams("a=1")[custom](2, {}));
+        console.log(new ReadableStream());
+        Bun.gc(true);
+        console.log({ [custom]: (depth, options, inspect) => inspect({ b: 2 }) });`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.split("\n")).toEqual([
+      "BroadcastChannel { name: 'x', active: true }",
+      "{ a: 1 }",
+      "true",
+      "URLSearchParams { 'a' => '1' }",
+      "ReadableStream { locked: false, state: 'readable', supportsBYOB: false }",
+      "{ b: 2 }",
+      "",
+    ]);
+    expect(exitCode).toBe(0);
   });
 });

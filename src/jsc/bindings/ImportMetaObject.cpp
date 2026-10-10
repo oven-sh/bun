@@ -52,6 +52,12 @@
 #include "isBuiltinModule.h"
 #include "WebCoreJSBuiltins.h"
 
+extern "C" bool isBunTest;
+
+namespace Bun {
+JSC::JSObject* createImportMetaEnvForTests(Zig::GlobalObject*);
+}
+
 namespace Zig {
 using namespace JSC;
 using namespace WebCore;
@@ -225,6 +231,8 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
             auto fromString = from.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             if (auto resolvedString = globalObject->onLoadPlugins.resolveVirtualModule(moduleString, fromString)) {
+                if (!isRequireDotResolve && !globalObject->onLoadPlugins.runningModuleMocks.isEmpty()) [[unlikely]]
+                    return JSC::JSValue::encode(jsString(vm, Bun::keyOfImportWhileModuleMocksRun(globalObject, resolvedString.value(), fromString, false)));
                 if (moduleString == resolvedString.value())
                     return JSC::JSValue::encode(moduleName);
                 return JSC::JSValue::encode(jsString(vm, resolvedString.value()));
@@ -336,9 +344,19 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
         return {};
     }
 
+    if (!isRequireDotResolve && !globalObject->onLoadPlugins.runningModuleMocks.isEmpty()) [[unlikely]] {
+        auto key = asString(JSC::JSValue::decode(result))->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto fromString = from.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSC::JSValue::encode(jsString(vm, Bun::keyOfImportWhileModuleMocksRun(globalObject, key, fromString, false)));
+    }
+
     scope.release();
     return result;
 }
+
+extern "C" bool Bun__resolveWithOnResolve(ErrorableString* result, JSC::JSGlobalObject* global, const BunString* specifier, const BunString* from, BunString* query);
 
 JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -404,45 +422,56 @@ JSC_DEFINE_HOST_FUNCTION(functionImportMeta__resolve,
     auto fromWTFString = from.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
+    auto a = Bun::toString(specifier);
+    auto b = Bun::toString(fromWTFString);
+    ErrorableString result;
+    BunString query = BunStringEmpty;
+
     // Try to resolve it to a relative file path. This path is not meant to throw module resolution errors.
     if (specifier.startsWith("./"_s) || specifier.startsWith("../"_s) || specifier.startsWith("/"_s) || specifier.startsWith("file://"_s)
 #if OS(WINDOWS)
         || specifier.startsWith(".\\"_s) || specifier.startsWith("..\\"_s) || specifier.startsWith("\\"_s)
 #endif
     ) {
-        auto fromURL = fromWTFString.startsWith("file://"_s) ? WTF::URL(fromWTFString) : WTF::URL::fileURLWithFileSystemPath(fromWTFString);
-        if (!fromURL.isValid()) {
-            JSC::throwTypeError(globalObject, scope, "`parent` is not a valid Filepath / URL"_s);
-            RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue {}));
+        bool isAnswered = false;
+        if (!globalObject->onResolvePlugins.fileNamespace.filters.isEmpty()) [[unlikely]] {
+            isAnswered = Bun__resolveWithOnResolve(&result, globalObject, &a, &b, &query);
+            RETURN_IF_EXCEPTION(scope, {});
         }
 
-        WTF::URL url(fromURL, specifier);
-        RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, url.string())));
+        if (!isAnswered) {
+            auto fromURL = fromWTFString.startsWith("file://"_s) ? WTF::URL(fromWTFString) : WTF::URL::fileURLWithFileSystemPath(fromWTFString);
+            if (!fromURL.isValid()) {
+                JSC::throwTypeError(globalObject, scope, "`parent` is not a valid Filepath / URL"_s);
+                RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSValue {}));
+            }
+
+            WTF::URL url(fromURL, specifier);
+            RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, url.string())));
+        }
+    } else {
+        // In Node.js, `node:doesnotexist` resolves to `node:doesnotexist`
+        if (specifier.startsWith("node:"_s) || specifier.startsWith("bun:"_s)) [[unlikely]] {
+            return JSValue::encode(jsString(vm, specifier));
+        }
+
+        // Run it through the module resolver, errors at this point are actual errors.
+        Zig__GlobalObject__resolve(&result, globalObject, &a, &b, &query);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
-    // In Node.js, `node:doesnotexist` resolves to `node:doesnotexist`
-    if (specifier.startsWith("node:"_s) || specifier.startsWith("bun:"_s)) [[unlikely]] {
-        return JSValue::encode(jsString(vm, specifier));
-    }
-
-    // Run it through the module resolver, errors at this point are actual errors.
-    auto a = Bun::toString(specifier);
-    auto b = Bun::toString(fromWTFString);
-    auto result = JSValue::decode(Bun__resolveSyncWithStrings(globalObject, &a, &b, true));
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (!result.isString()) {
-        JSC::throwException(globalObject, scope, result);
+    if (!result.success) {
+        JSC::throwException(globalObject, scope, JSValue::decode(result.result.err));
         return {};
     }
 
-    auto resultString = result.toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, {});
+    auto resultString = result.result.value.transferToWTFString();
+    auto queryString = query.transferToWTFString();
     if (isAbsolutePath(resultString)) {
         // file path -> url
-        RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, WTF::URL::fileURLWithFileSystemPath(resultString).string())));
+        resultString = WTF::URL::fileURLWithFileSystemPath(resultString).string();
     }
-    return JSValue::encode(result);
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, queryString.isEmpty() ? resultString : makeString(resultString, queryString))));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_url, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
@@ -509,10 +538,16 @@ JSC_DEFINE_CUSTOM_SETTER(jsImportMetaObjectSetter_require, (JSGlobalObject * jsG
     return true;
 }
 
+// A CustomValue: `thisValue` is the prototype that holds the property.
 JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_env, (JSGlobalObject * jsGlobalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(jsGlobalObject);
-    return JSValue::encode(globalObject->m_processEnvObject.getInitializedOnMainThread(globalObject));
+    if (!isBunTest) [[likely]]
+        return JSValue::encode(globalObject->m_processEnvObject.getInitializedOnMainThread(globalObject));
+
+    JSObject* env = Bun::createImportMetaEnvForTests(globalObject);
+    asObject(JSValue::decode(thisValue))->putDirect(JSC::getVM(globalObject), propertyName, env, PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
+    return JSValue::encode(env);
 }
 
 extern "C" JSC::EncodedJSValue SYSV_ABI BunObject_getter_main(JSC::JSGlobalObject*);
@@ -554,7 +589,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
 static const HashTableValue ImportMetaObjectPrototypeValues[] = {
     { "dir"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_dir, 0 } },
     { "dirname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_dir, 0 } },
-    { "env"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_env, 0 } },
+    { "env"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomValue | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_env, 0 } },
     { "file"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_file, 0 } },
     { "filename"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_path, 0 } },
     { "main"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_main, 0 } },
@@ -569,7 +604,7 @@ static const HashTableValue ImportMetaObjectBakePrototypeValues[] = {
     { "bakeBuiltin"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, commonJSRequireESMCodeGenerator, 0 } },
     { "dir"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_dir, 0 } },
     { "dirname"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_dir, 0 } },
-    { "env"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_env, 0 } },
+    { "env"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomValue | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_env, 0 } },
     { "file"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_file, 0 } },
     { "filename"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_path, 0 } },
     { "main"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | PropertyAttribute::DontDelete), NoIntrinsic, { HashTableValue::GetterSetterType, jsImportMetaObjectGetter_main, 0 } },

@@ -121,7 +121,7 @@ test("unsupported formData 1", async () => {
     res.end();
   }).listen(0);
   await once(server, "listening");
-  expect(
+  await expect(
     fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`).then(res => res.formData()),
   ).rejects.toThrow(TypeError);
 });
@@ -516,7 +516,7 @@ test("error on redirect", async () => {
   }).listen(0);
   await once(server, "listening");
 
-  expect(
+  await expect(
     fetch(`http://localhost:${(server.address() as net.AddressInfo).port}`, {
       redirect: "error",
     }),

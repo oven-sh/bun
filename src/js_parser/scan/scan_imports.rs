@@ -354,6 +354,12 @@ impl<'a> ImportScanner<'a> {
                         }
                     }
 
+                    if record!().kind == js_ast::ImportKind::Dynamic {
+                        stmts[stmts_end] = p.lower_import_to_dynamic(st, stmt.loc);
+                        stmts_end += 1;
+                        continue;
+                    }
+
                     if st.default_name.is_some() {
                         record!()
                             .flags

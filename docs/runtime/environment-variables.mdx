@@ -167,6 +167,8 @@ Bun.env.API_TOKEN; // => "secret"
 import.meta.env.API_TOKEN; // => "secret"
 ```
 
+Under `bun test`, `import.meta.env` also has [Vite's `MODE`, `DEV`, `PROD`, `SSR` and `BASE_URL`](/test/runtime-behavior#import-meta-env).
+
 To print all currently-set environment variables, run `bun --print process.env`.
 
 ```sh

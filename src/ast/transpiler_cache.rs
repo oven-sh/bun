@@ -16,7 +16,16 @@ use core::ptr::NonNull;
 pub struct RuntimeTranspilerCache {
     pub input_hash: Option<u64>,
     pub input_byte_length: Option<u64>,
+    /// The key of an output that is the same under `bun test` and outside of it.
     pub features_hash: Option<u64>,
+    /// The key of any other: `features_hash` and what `bun test` adds to the parser's features.
+    pub test_features_hash: Option<u64>,
+    /// The key of one of those that imports from "vitest".
+    pub vitest_features_hash: Option<u64>,
+    /// Set by the parser. Which of them `put()` stores.
+    pub uses_test_api: bool,
+    /// Set by the parser, and by `get()` from the key of what it found.
+    pub imports_vitest: bool,
     pub exports_kind: ExportsKind,
     /// Set by `put()` / `get()` when a cache hit returns transpiled output.
     /// Bundler/parser only store/read the bytes; T6 owns the string wrapper
@@ -37,6 +46,10 @@ impl Default for RuntimeTranspilerCache {
             input_hash: None,
             input_byte_length: None,
             features_hash: None,
+            test_features_hash: None,
+            vitest_features_hash: None,
+            uses_test_api: false,
+            imports_vitest: false,
             exports_kind: ExportsKind::None,
             output_code: None,
             entry: None,

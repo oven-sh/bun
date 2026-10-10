@@ -10,6 +10,8 @@ class SourceProvider;
 
 namespace Bun {
 
+struct CodeString;
+
 // Per-VM cache mapping resolved specifier (absolute path) → Zig::SourceProvider,
 // populated only under `bun test --isolate`. Survives global swaps so a fresh
 // global's module fetch reuses an already-transpiled provider (and hits JSC's
@@ -49,12 +51,14 @@ public:
         }
     }
 
-    static Zig::SourceProvider* lookup(JSC::VM&, const WTF::String& key);
+    // `pluginContents`: what a plugin supplied for `key` in place of the file. A key has one provider, the last one made
+    // for it, and it is found only by what it was made from: the file, or those contents with that loader, and the
+    // globals of "bun:test" or of "vitest".
+    static Zig::SourceProvider* lookup(JSC::VM&, const WTF::String& key, const CodeString* pluginContents = nullptr);
 
-    // Inserts only when isTagCacheable(provider.m_tag); no-op
-    // otherwise. Asserts isNewEntry — a duplicate insert means a lookup was
-    // bypassed, which is exactly the gating bug this consolidation prevents.
-    static void insert(JSC::VM&, const WTF::String& key, Zig::SourceProvider&);
+    // Inserts only when isTagCacheable(provider.m_tag) and the source is all the provider was made from; no-op otherwise.
+    // (Two fetches of a key that are in flight at once both miss and both insert.)
+    static void insert(JSC::VM&, const WTF::String& key, Zig::SourceProvider&, const CodeString* pluginContents = nullptr);
 
     static void evict(JSC::VM&, const WTF::String& key);
     static void clear(JSC::VM&);

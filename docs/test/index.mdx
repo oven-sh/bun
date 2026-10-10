@@ -202,6 +202,8 @@ test.failing.each([1, 2, 3])("chained qualifiers %d", input => {
 });
 ```
 
+`test.sequential` is an alias, for compatibility with Vitest.
+
 ## Retry failed tests
 
 Use the `--retry` flag to automatically retry failed tests up to a given number of times. If a test fails and then passes on a subsequent attempt, Bun reports it as passing.
@@ -271,6 +273,20 @@ bun test --seed 123456
 ```
 
 The `--seed` flag implies `--randomize`, so you don't need to specify both. The same seed always produces the same test execution order.
+
+### Shuffle one block with `describe.shuffle`
+
+`describe.shuffle()` runs the tests of one block, and of the blocks inside it, in a random order, without `--randomize`. The summary prints the seed, and `--seed` gives that block the same order again.
+
+```ts title="cart.test.ts" icon="/icons/typescript.svg"
+import { describe, test } from "bun:test";
+
+describe.shuffle("cart", () => {
+  test("adds an item", () => {});
+  test("removes an item", () => {});
+  test("empties", () => {});
+});
+```
 
 ## Bail out with `--bail`
 

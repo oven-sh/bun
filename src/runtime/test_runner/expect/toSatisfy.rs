@@ -5,8 +5,6 @@ use super::get_signature;
 use super::throw;
 
 pub(crate) fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // toSatisfy bypasses get_value (no .resolves/.rejects handling), so it cannot use
-    // the full `matcher_prelude`; only the post_match guard mechanism unifies.
     let _guard = this.post_match_guard(global);
 
     let this_value = frame.this();
@@ -25,12 +23,7 @@ pub(crate) fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFra
         return Err(global.throw(format_args!("toSatisfy() argument must be a function")));
     }
 
-    let Some(value) = super::js::captured_value_get_cached(this_value) else {
-        return Err(global.throw(format_args!(
-            "Internal consistency error: the expect(value) was garbage collected but it should not have been!"
-        )));
-    };
-    value.ensure_still_alive();
+    let value = this.get_value(global, this_value, "toSatisfy", "<green>expected<r>")?;
 
     let result = predicate.call(global, JSValue::UNDEFINED, &[value])?;
 

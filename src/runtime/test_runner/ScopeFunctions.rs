@@ -1,11 +1,15 @@
 use core::fmt;
-use crate::test_runner::expect::JSValueTestExt;
+use std::rc::Rc;
+use crate::test_runner::expect::{FormatterTestExt as _, JSValueTestExt};
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
 use bun_core::String as BunString;
 
-use crate::test_runner::bun_test::{self, BaseScopeCfg, BunTest, DescribeScope};
-use crate::test_runner::bun_test::js_fns::Signature;
+use crate::test_runner::bun_test::{self, BaseScopeCfg, BunTest, Calling, DescribeScope, Flavor};
+use crate::test_runner::bun_test::js_fns::{Signature, generic_hook};
+use crate::test_runner::test_context;
+use crate::test_runner::test_context_fixtures::TestFixtures;
+use crate::test_runner::test_context_parameter::{ContextParameter, SharedContextParameter};
 use crate::test_runner::jest;
 
 // `group_log` wraps `test_runner::debug::group` (a begin/end/log tracer) as an RAII guard
@@ -62,9 +66,25 @@ pub(crate) struct ScopeFunctions {
     /// WriteBarrier on the JS wrapper (see `values: ["each"]` in jest.classes.ts). This
     /// field is kept in sync with that slot via `js::each_set_cached` in `create_unbound`.
     pub(crate) each: JSValue,
+    pub(crate) rows: Rows,
+    /// The `TestFixtures` of `test.extend()`, else `.zero`. Kept alive like `each`.
+    pub(crate) fixtures: JSValue,
+}
+
+/// How the callback gets a row of `each`.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum Rows {
+    /// `.each()`: an array is spread over the parameters.
+    Each,
+    /// `.for()`: as the first argument, before the test context.
+    For,
 }
 
 impl ScopeFunctions {
+    pub(crate) fn new(mode: Mode, cfg: BaseScopeCfg) -> ScopeFunctions {
+        ScopeFunctions { mode, cfg, each: JSValue::ZERO, rows: Rows::Each, fixtures: JSValue::ZERO }
+    }
+
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_skip(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"get .skip", "skip")
@@ -78,6 +98,18 @@ impl ScopeFunctions {
         this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Failing, ..Default::default() }, b"get .failing", "failing")
     }
     #[bun_jsc::host_fn(getter)]
+    pub(crate) fn get_fails(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Fails, ..Default::default() }, b"get .fails", "fails")
+    }
+    /// vitest's, whichever module `this` is from.
+    #[bun_jsc::host_fn(getter)]
+    pub(crate) fn get_shuffle(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        if this.mode == Mode::Test {
+            return Ok(JSValue::UNDEFINED);
+        }
+        this.generic_extend(global, BaseScopeCfg { self_shuffle: true, ..Default::default() }, b"get .shuffle", "shuffle")
+    }
+    #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_concurrent(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         this.generic_extend(global, BaseScopeCfg { self_concurrent: SelfConcurrent::Yes, ..Default::default() }, b"get .concurrent", "concurrent")
     }
@@ -86,12 +118,20 @@ impl ScopeFunctions {
         this.generic_extend(global, BaseScopeCfg { self_concurrent: SelfConcurrent::No, ..Default::default() }, b"get .serial", "serial")
     }
     #[bun_jsc::host_fn(getter)]
+    pub(crate) fn get_sequential(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        this.generic_extend(global, BaseScopeCfg { self_concurrent: SelfConcurrent::No, ..Default::default() }, b"get .sequential", "sequential")
+    }
+    #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_only(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         this.generic_extend(global, BaseScopeCfg { self_only: true, ..Default::default() }, b"get .only", "only")
     }
     #[bun_jsc::host_fn(method)]
     pub(crate) fn fn_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .if()", true, "if")
+    }
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn fn_run_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .runIf()", true, "runIf")
     }
     #[bun_jsc::host_fn(method)]
     pub(crate) fn fn_skip_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
@@ -115,19 +155,183 @@ impl ScopeFunctions {
     }
     #[bun_jsc::host_fn(method)]
     pub(crate) fn fn_each(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        this.with_rows(global, frame, Rows::Each, this.cfg.flavor, "each")
+    }
+    /// vitest's, whichever module `this` is from.
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn fn_for(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        this.with_rows(global, frame, Rows::For, Flavor::Vitest, "for")
+    }
+
+    /// vitest's, whichever module `this` is from.
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn fn_extend(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        let fixtures = this.define_fixtures(global, frame, "test.extend()", false)?;
+        let cfg = BaseScopeCfg { flavor: Flavor::Vitest, ..Default::default() };
+        create_bound(global, ScopeFunctions { fixtures, ..ScopeFunctions::new(Mode::Test, cfg) }, "test")
+    }
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn fn_override(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+        if this.fixtures.is_empty() {
+            return Err(global.throw(format_args!(
+                "test.override() can only be called on a function that test.extend() returned"
+            )));
+        }
+        this.define_fixtures(global, frame, "test.override()", true)?;
+        Ok(frame.this())
+    }
+
+    fn define_fixtures(
+        &self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+        signature: &'static str,
+        is_override: bool,
+    ) -> JsResult<JSValue> {
+        if self.mode == Mode::Describe {
+            return Err(global.throw(format_args!("{} cannot be called on {}", signature, self)));
+        }
+        let mut active_scope: *const DescribeScope = core::ptr::null();
+        let mut is_top_level = true;
+        if let Some(buntest) = bun_test::clone_active_strong() {
+            if buntest.phase == bun_test::Phase::Collection {
+                active_scope = buntest.collection.active_scope.as_ptr();
+                is_top_level = core::ptr::eq(active_scope, &raw const *buntest.collection.root_scope);
+            } else if is_override {
+                return Err(global.throw(format_args!(
+                    "Cannot call {} inside a test. Call it inside describe() instead.",
+                    signature
+                )));
+            }
+        }
+        TestFixtures::define(global, frame, signature, self.fixtures, active_scope, is_top_level, is_override)
+    }
+
+    fn hook(&self, global: &JSGlobalObject, name: &'static str, jest: bun_jsc::JSHostFn, vitest: bun_jsc::JSHostFn) -> JsResult<JSValue> {
+        if self.mode == Mode::Describe {
+            return Ok(JSValue::UNDEFINED);
+        }
+        let hook = if self.cfg.flavor == Flavor::Vitest { vitest } else { jest };
+        let hook = bun_jsc::JSFunction::create(global, name, hook, 1, Default::default());
+        if self.fixtures.is_empty() {
+            return Ok(hook);
+        }
+        JSValueTestExt::bind(hook, global, self.fixtures, &BunString::static_(name), 1.0, &[])
+    }
+    #[bun_jsc::host_fn(getter)]
+    pub(crate) fn get_before_all(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        this.hook(global, "beforeAll", generic_hook::__jsc_host_before_all, generic_hook::__jsc_host_vitest_before_all)
+    }
+    #[bun_jsc::host_fn(getter)]
+    pub(crate) fn get_before_each(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        this.hook(global, "beforeEach", generic_hook::__jsc_host_before_each, generic_hook::__jsc_host_vitest_before_each)
+    }
+    #[bun_jsc::host_fn(getter)]
+    pub(crate) fn get_after_each(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        this.hook(global, "afterEach", generic_hook::__jsc_host_after_each, generic_hook::__jsc_host_vitest_after_each)
+    }
+    #[bun_jsc::host_fn(getter)]
+    pub(crate) fn get_after_all(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        this.hook(global, "afterAll", generic_hook::__jsc_host_after_all, generic_hook::__jsc_host_vitest_after_all)
+    }
+    #[bun_jsc::host_fn(getter)]
+    pub(crate) fn get_describe(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        if this.mode == Mode::Describe {
+            return Ok(JSValue::UNDEFINED);
+        }
+        let cfg = BaseScopeCfg { flavor: this.cfg.flavor, ..Default::default() };
+        create_bound(global, ScopeFunctions::new(Mode::Describe, cfg), "describe")
+    }
+
+    fn with_rows(
+        &self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+        rows: Rows,
+        flavor: Flavor,
+        name: &'static str,
+    ) -> JsResult<JSValue> {
         let _g = group_log::begin();
 
         let [array] = frame.arguments_as_array::<1>();
         if array.is_undefined_or_null() || !array.is_array() {
-            let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global);
+            let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global).with_quote_strings(false);
             return Err(global.throw(format_args!("Expected array, got {}", array.to_fmt(&mut formatter))));
         }
 
-        if !this.each.is_empty() {
-            return Err(global.throw(format_args!("Cannot {} on {}", "each", this)));
+        if !self.each.is_empty() {
+            return Err(global.throw(format_args!("Cannot {} on {}", name, self)));
         }
-        create_bound(global, this.mode, array, this.cfg, "each")
+        let array = template_rows(global, frame.arguments(), flavor)?.unwrap_or(array);
+        let cfg = BaseScopeCfg { flavor, ..self.cfg };
+        create_bound(global, ScopeFunctions { cfg, each: array, rows, ..*self }, name)
     }
+}
+
+/// The rows of a table written as a tagged template: an object for each, keyed by the headings of the first line.
+/// ```js
+/// test.each`
+///   a    | b
+///   ${1} | ${2}
+/// `
+/// ```
+fn template_rows(global: &JSGlobalObject, arguments: &[JSValue], flavor: Flavor) -> JsResult<Option<JSValue>> {
+    let Some((&strings, values)) = arguments.split_first() else {
+        return Ok(None);
+    };
+    if flavor == Flavor::Vitest {
+        return vitest_template_rows(global, strings, values);
+    }
+    if !strings.get_own(global, &BunString::static_("raw"))?.is_some_and(JSValue::is_array) {
+        return Ok(None);
+    }
+    let before_first_value = strings.get_index(global, 0)?.to_utf8(global)?;
+    let first_line = bun_core::strings::split_any(before_first_value.slice().trim_ascii(), b"\r\n")
+        .next()
+        .unwrap_or_default();
+    let headings: Vec<&[u8]> = bun_core::strings::split(first_line, b"|").map(<[u8]>::trim_ascii).collect();
+    if values.is_empty() || values.len() % headings.len() != 0 {
+        return Err(global.throw(format_args!(
+            "Expected a value for each of the {} headings \"{}\" in every row of the table, received {} values",
+            headings.len(),
+            bstr::BStr::new(first_line),
+            values.len(),
+        )));
+    }
+    table_rows(global, &headings, values).map(Some)
+}
+
+fn table_rows(global: &JSGlobalObject, headings: &[&[u8]], values: &[JSValue]) -> JsResult<JSValue> {
+    let rows = JSValue::create_empty_array(global, 0)?;
+    for row_values in values.chunks_exact(headings.len()) {
+        let row = JSValue::create_empty_object(global, headings.len());
+        for (heading, &value) in headings.iter().zip(row_values) {
+            row.put_may_be_index(global, &BunString::clone_utf8(heading), value)?;
+        }
+        rows.push(global, row)?;
+    }
+    Ok(rows)
+}
+
+/// Vitest's `formatTemplateString(cases, args)`, which any array with arguments after it is given. A last row that is
+/// not complete is left out.
+fn vitest_template_rows(global: &JSGlobalObject, strings: JSValue, values: &[JSValue]) -> JsResult<Option<JSValue>> {
+    if values.is_empty() {
+        return Ok(None);
+    }
+    // `cases.join("").trim().replace(/ /g, "").split("\n")[0].split("|")`
+    let mut joined = Vec::new();
+    let mut iter = strings.array_iterator(global)?;
+    while let Some(string) = iter.next()? {
+        if !string.is_undefined_or_null() {
+            joined.extend_from_slice(string.to_utf8(global)?.slice());
+        }
+    }
+    let trimmed = jest::trim_js_whitespace(&joined);
+    let first_line = &trimmed[..bun_core::strings::index_of_char_usize(trimmed, b'\n').unwrap_or(trimmed.len())];
+    let first_line: Vec<u8> = first_line.iter().copied().filter(|byte| *byte != b' ').collect();
+    let headings: Vec<&[u8]> = bun_core::strings::split(&first_line, b"|").collect();
+    table_rows(global, &headings, values).map(Some)
 }
 
 #[bun_jsc::host_fn]
@@ -148,8 +352,11 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
     let buntest_strong = bun_test::js_fns::clone_active_strong(global, Signature::ScopeFunctions(this))?;
     let bun_test_ptr = buntest_strong.get();
 
+    let is_vitest = this.cfg.flavor == Flavor::Vitest;
     let callback_mode: CallbackMode = match this.cfg.self_mode {
         SelfMode::Skip | SelfMode::Todo => CallbackMode::Allow,
+        // vitest: a test or a describe block without a callback is a todo.
+        _ if is_vitest => CallbackMode::Allow,
         _ => CallbackMode::Require,
     };
 
@@ -157,19 +364,42 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
         global,
         frame,
         Signature::ScopeFunctions(this),
-        ParseArgumentsCfg { callback: callback_mode, kind: FunctionKind::TestOrDescribe },
+        ParseArgumentsCfg {
+            callback: callback_mode,
+            kind: FunctionKind::TestOrDescribe,
+            inherited: bun_test_ptr.collection.active_scope().inherited,
+        },
     )?;
 
-    let callback_length: usize = if let Some(callback) = args.callback {
-        callback.get_length(global)? as usize
-    } else {
-        0
+    // Jest: a parameter that no value of the row fills is a `done` callback.
+    let callback_length: usize = match args.callback {
+        Some(callback) if !is_vitest => callback.get_length(global)? as usize,
+        _ => 0,
+    };
+    // The fixtures the callback asks for.
+    let parameter: Option<SharedContextParameter> = match args.callback {
+        Some(callback) if !this.fixtures.is_empty() && this.mode == Mode::Test => Some(Rc::new(core::cell::OnceCell::from(if this.each.is_empty() {
+            ContextParameter::of(callback, 0)
+        } else if this.rows == Rows::For {
+            ContextParameter::of(callback, 1)
+        } else {
+            ContextParameter::Absent
+        }))),
+        _ => None,
     };
 
     if !this.each.is_empty() {
         if this.each.is_undefined_or_null() || !this.each.is_array() {
-            let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global);
+            let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global).with_quote_strings(false);
             return Err(global.throw(format_args!("Expected array, got {}", this.each.to_fmt(&mut formatter))));
+        }
+        // vitest spreads the rows only if each of them is an array.
+        let mut spread_rows = this.rows == Rows::Each;
+        if spread_rows && is_vitest {
+            let mut rows = this.each.array_iterator(global)?;
+            while let Some(row) = rows.next()? {
+                spread_rows &= row.is_array();
+            }
         }
         let mut iter = this.each.array_iterator(global)?;
         let mut test_idx: usize = 0;
@@ -198,14 +428,19 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                     args_list.push(item);
                 }
 
-                let formatted_label: Option<Vec<u8>> = if let Some(desc) = args.description.as_deref() {
-                    Some(jest::format_label(global, desc, args_list.as_slice(), test_idx)?.into_vec())
-                } else {
-                    None
+                let formatted_label: Option<Vec<u8>> = match args.description.as_deref() {
+                    // `toArray(item)` makes no items of these.
+                    Some(desc) if is_vitest && this.rows == Rows::For && item.is_undefined_or_null() => {
+                        Some(jest::format_vitest_title(global, desc, &[], test_idx)?)
+                    }
+                    Some(desc) if is_vitest => Some(jest::format_vitest_title(global, desc, args_list.as_slice(), test_idx)?),
+                    Some(desc) => Some(jest::format_label(global, desc, args_list.as_slice(), test_idx)?.into_vec()),
+                    None => None,
                 };
 
+                let callback_args = if spread_rows { args_list.as_slice() } else { core::slice::from_ref(&item) };
                 let bound = if let Some(cb) = args.callback {
-                    Some(JSValueTestExt::bind(cb, global, item, &BunString::static_("cb"), 0.0, args_list.as_slice())?)
+                    Some(JSValueTestExt::bind(cb, global, item, &BunString::static_("cb"), 0.0, callback_args)?)
                 } else {
                     None
                 };
@@ -218,7 +453,12 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
                     bound,
                     formatted_label.as_deref(),
                     &args.options,
-                    callback_length.saturating_sub(args_list.len()),
+                    if is_vitest {
+                        Calling::Vitest { context: this.rows == Rows::For }
+                    } else {
+                        Calling::Jest { done: callback_length > args_list.len() }
+                    },
+                    parameter.as_ref(),
                     line_no,
                 )
             })?;
@@ -233,7 +473,8 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
             args.callback,
             args.description.as_deref(),
             &args.options,
-            callback_length,
+            if is_vitest { Calling::Vitest { context: true } } else { Calling::Jest { done: callback_length >= 1 } },
+            parameter.as_ref(),
             line_no,
         )?;
     }
@@ -297,7 +538,8 @@ impl ScopeFunctions {
         callback: Option<JSValue>,
         description: Option<&[u8]>,
         options: &ParseArgumentsOptions,
-        callback_length: usize,
+        calling: Calling,
+        parameter: Option<&SharedContextParameter>,
         line_no: u32,
     ) -> JsResult<()> {
         let _g = group_log::begin();
@@ -346,9 +588,12 @@ impl ScopeFunctions {
                 test_id_for_debugger = id;
             }
         }
-        let has_done_parameter = if callback.is_some() { callback_length >= 1 } else { false };
 
         let mut base = self.cfg;
+        options.modifiers.apply(global, &mut base, options.inherited.fails.filter(|_| self.mode == Mode::Test))?;
+        if callback.is_none() && matches!(base.self_mode, SelfMode::Normal | SelfMode::Failing | SelfMode::Fails) {
+            base.self_mode = SelfMode::Todo;
+        }
         base.line_no = line_no;
         base.test_id_for_debugger = test_id_for_debugger;
         // Use the file's default concurrent setting (determined once when entering the file)
@@ -366,6 +611,11 @@ impl ScopeFunctions {
             Mode::Describe => {
                 // SAFETY: active_scope is a valid cursor into root_scope's tree for the lifetime of Collection.
                 let new_scope = unsafe { bun_test.collection.active_scope.as_mut() }.append_describe(description, base);
+                if self.cfg.flavor == Flavor::Vitest {
+                    new_scope.inherited = options.inherited;
+                } else {
+                    new_scope.inherited.shuffle = options.inherited.shuffle;
+                }
                 bun_test.collection.enqueue_describe_callback(new_scope, callback)?;
             }
             Mode::Test => {
@@ -418,11 +668,39 @@ impl ScopeFunctions {
                     bstr::BStr::new(bun_test.collection.active_scope().base.name.as_deref().unwrap_or(b"(unnamed)"))
                 ));
 
-                let _ = bun_test.collection.active_scope_mut().append_test(
+                let mut callback = if matches_filter { callback } else { None };
+                let mut parameter_of_callback = None;
+                if let (Some(parameter), Some(_)) = (parameter, callback) {
+                    let (call, ordinal) = if self.each.is_empty() { ("()", "first") } else { ("", "second") };
+                    let why = "fixtures are set up for the properties it names";
+                    let error = match parameter.get().unwrap_or(&ContextParameter::Absent) {
+                        ContextParameter::Absent | ContextParameter::Properties(_) => None,
+                        ContextParameter::RestProperty => Some(global.create_error_instance(format_args!(
+                            "{self}{call} expects the {ordinal} parameter of its callback not to have a rest property: {why}"
+                        ))),
+                        ContextParameter::Other(Some(received)) => Some(global.create_error_instance(format_args!(
+                            "{self}{call} expects the {ordinal} parameter of its callback to be an object destructuring pattern, received {}: {why}",
+                            bun_core::fmt::quote(received),
+                        ))),
+                        ContextParameter::Other(None) => Some(global.create_error_instance(format_args!(
+                            "{self}{call} expects the {ordinal} parameter of its callback to be an object destructuring pattern: {why}"
+                        ))),
+                    };
+                    match error {
+                        Some(error) => callback = Some(test_context::rejecting(global, error)?),
+                        None => parameter_of_callback = Some(Rc::clone(parameter)),
+                    }
+                    if TestFixtures::has_scope_beyond_test(self.fixtures) {
+                        bun_test.expect_file_scoped_fixtures();
+                    }
+                }
+
+                let entry = bun_test.collection.active_scope_mut().append_test(
                     description,
-                    if matches_filter { callback } else { None },
+                    callback,
                     bun_test::ExecutionEntryCfg {
-                        has_done_parameter,
+                        calling,
+                        fixtures: Some(self.fixtures).filter(|fixtures| !fixtures.is_empty()),
                         timeout: options.timeout,
                         retry_count: options.retry.unwrap_or(0),
                         repeat_count: options.repeats,
@@ -430,6 +708,9 @@ impl ScopeFunctions {
                     base,
                     bun_test::AddedInPhase::Collection,
                 )?;
+                if parameter_of_callback.is_some() {
+                    entry.parameter = parameter_of_callback;
+                }
             }
         }
         Ok(())
@@ -454,7 +735,7 @@ impl ScopeFunctions {
         if cond != invert {
             self.generic_extend(global, conditional_cfg, name, fn_name)
         } else {
-            create_bound(global, self.mode, self.each, self.cfg, fn_name)
+            create_bound(global, ScopeFunctions { ..*self }, fn_name)
         }
     }
 
@@ -467,16 +748,36 @@ impl ScopeFunctions {
     ) -> JsResult<JSValue> {
         let _g = group_log::begin();
 
-        if cfg.self_mode == SelfMode::Failing && self.mode == Mode::Describe {
+        if matches!(cfg.self_mode, SelfMode::Failing | SelfMode::Fails) && self.mode == Mode::Describe {
             return Err(global.throw(format_args!("Cannot {} on {}", bstr::BStr::new(name), self)));
         }
         if cfg.self_only {
             error_in_ci(global, b".only")?;
         }
-        let Some(extended) = self.cfg.extend(cfg) else {
+        // Modifiers are a set, as in Jest and vitest: repeating one changes nothing and skip > todo > failing.
+        let (mut base, mut added) = (self.cfg, cfg);
+        base.self_only &= !added.self_only;
+        if base.self_concurrent == added.self_concurrent {
+            base.self_concurrent = SelfConcurrent::Inherit;
+        }
+        if mode_precedence(base.self_mode) > mode_precedence(added.self_mode) {
+            added.self_mode = SelfMode::Normal;
+        } else {
+            base.self_mode = SelfMode::Normal;
+        }
+        let Some(extended) = base.extend(added) else {
             return Err(global.throw(format_args!("Cannot {} on {}", bstr::BStr::new(name), self)));
         };
-        create_bound(global, self.mode, self.each, extended, fn_name)
+        create_bound(global, ScopeFunctions { cfg: extended, ..*self }, fn_name)
+    }
+}
+
+fn mode_precedence(mode: SelfMode) -> u8 {
+    match mode {
+        SelfMode::Normal => 0,
+        SelfMode::Failing | SelfMode::Fails => 1,
+        SelfMode::Todo => 2,
+        SelfMode::Skip | SelfMode::FilteredOut => 3,
     }
 }
 
@@ -501,6 +802,56 @@ pub(crate) struct ParseArgumentsOptions {
     pub(crate) timeout: u32,
     pub(crate) retry: Option<u32>,
     pub(crate) repeats: u32,
+    /// What was given, else what `ParseArgumentsCfg::inherited` has.
+    pub(crate) inherited: InheritedOptions,
+    pub(crate) modifiers: ModifierOptions,
+}
+
+/// The options of a vitest `describe()` that are the defaults of what is inside it.
+#[derive(Default, Clone, Copy)]
+pub(crate) struct InheritedOptions {
+    pub(crate) timeout: Option<u32>,
+    pub(crate) retry: Option<u32>,
+    pub(crate) repeats: Option<u32>,
+    pub(crate) fails: Option<bool>,
+    pub(crate) shuffle: Option<bool>,
+}
+
+/// vitest: `test(name, { skip: true }, fn)` is `test.skip(name, fn)`, and `{ skip: false }` undoes `test.skip`.
+#[derive(Default, Clone, Copy)]
+pub(crate) struct ModifierOptions {
+    only: Option<bool>,
+    skip: Option<bool>,
+    todo: Option<bool>,
+    concurrent: Option<bool>,
+}
+
+impl ModifierOptions {
+    fn apply(self, global: &JSGlobalObject, cfg: &mut BaseScopeCfg, fails: Option<bool>) -> JsResult<()> {
+        if let Some(concurrent) = self.concurrent {
+            cfg.self_concurrent = if concurrent { SelfConcurrent::Yes } else { SelfConcurrent::No };
+        }
+        if self.only.or(self.skip).or(self.todo).or(fails).is_none() {
+            return Ok(());
+        }
+        if self.only == Some(true) {
+            error_in_ci(global, b".only")?;
+        }
+        cfg.self_only = self.only.unwrap_or(cfg.self_only);
+        let has = |option: Option<bool>, mode: SelfMode| option.unwrap_or(cfg.self_mode == mode);
+        cfg.self_mode = if !cfg.self_only && has(self.skip, SelfMode::Skip) {
+            SelfMode::Skip
+        } else if !cfg.self_only && has(self.todo, SelfMode::Todo) {
+            SelfMode::Todo
+        } else if has(fails, SelfMode::Fails) {
+            SelfMode::Fails
+        } else if cfg.self_mode == SelfMode::Failing {
+            SelfMode::Failing
+        } else {
+            SelfMode::Normal
+        };
+        Ok(())
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -513,12 +864,14 @@ pub(crate) enum CallbackMode {
 pub(crate) enum FunctionKind {
     TestOrDescribe,
     Hook,
+    VitestHook,
 }
 
 #[derive(Copy, Clone)]
 pub(crate) struct ParseArgumentsCfg {
     pub callback: CallbackMode,
     pub(crate) kind: FunctionKind,
+    pub(crate) inherited: InheritedOptions,
 }
 
 fn get_description(
@@ -566,6 +919,7 @@ pub(crate) fn parse_arguments(
     cfg: ParseArgumentsCfg,
 ) -> JsResult<ParseArgumentsResult> {
     let [a1, a2, a3] = frame.arguments_as_array::<3>();
+    let is_vitest = matches!(signature, Signature::ScopeFunctions(function) if function.cfg.flavor == Flavor::Vitest);
 
     #[derive(Copy, Clone)]
     enum Len { Three, Two, One, Zero }
@@ -610,6 +964,8 @@ pub(crate) fn parse_arguments(
         Len::Two => {
             if a1.is_function() && !a2.is_function() {
                 DescriptionCallbackOptions { callback: a1, options: a2, ..Default::default() }
+            } else if is_vitest && !a2.is_function() {
+                DescriptionCallbackOptions { description: a1, options: a2, ..Default::default() }
             } else {
                 DescriptionCallbackOptions { description: a1, callback: a2, ..Default::default() }
             }
@@ -626,13 +982,14 @@ pub(crate) fn parse_arguments(
         Len::Zero => DescriptionCallbackOptions::default(),
     };
     let (description, callback, options) = (items.description, items.callback, items.options);
+    let is_first_the_name = matches!(len, Len::Three) || (matches!(len, Len::Two) && (!a1.is_function() || a2.is_function()));
 
     let result_callback: Option<JSValue> = if cfg.callback != CallbackMode::Require && callback.is_undefined_or_null() {
         None
     } else if callback.is_function() {
         Some(callback.with_async_context_if_needed(global))
     } else {
-        let ordinal = if cfg.kind == FunctionKind::Hook { "first" } else { "second" };
+        let ordinal = if cfg.kind == FunctionKind::TestOrDescribe { "second" } else { "first" };
         return Err(global.throw(format_args!("{} expects a function as the {} argument", signature, ordinal)));
     };
 
@@ -644,6 +1001,10 @@ pub(crate) fn parse_arguments(
     // `result` cleanup handled by Drop on early return.
 
     let mut timeout_option: Option<f64> = None;
+    let mut repeats_option: Option<u32> = None;
+    let mut fails_option: Option<bool> =
+        matches!(signature, Signature::ScopeFunctions(function) if function.cfg.self_mode == SelfMode::Fails).then_some(true);
+    let mut shuffle_option: Option<bool> = None;
 
     if options.is_number() {
         timeout_option = Some(options.as_number());
@@ -659,7 +1020,10 @@ pub(crate) fn parse_arguments(
             }
             timeout_option = Some(timeout.as_number());
         }
-        if let Some(retries) = options.get(global, "retry")? {
+        if let Some(mut retries) = options.get(global, "retry")? {
+            if is_vitest && retries.is_object() {
+                retries = retries.get(global, "count")?.unwrap_or_else(|| JSValue::js_number(0.0));
+            }
             if !retries.is_number() {
                 return Err(global.throw(format_args!("{}() expects retry to be a number", signature)));
             }
@@ -670,10 +1034,28 @@ pub(crate) fn parse_arguments(
             if !repeats.is_number() {
                 return Err(global.throw(format_args!("{}() expects repeats to be a number", signature)));
             }
-            if result.options.retry.is_some() && result.options.retry.unwrap() != 0 {
+            if !is_vitest && result.options.retry.is_some() && result.options.retry.unwrap() != 0 {
                 return Err(global.throw(format_args!("{}(): Cannot set both retry and repeats", signature)));
             }
-            result.options.repeats = repeats.as_number() as u32;
+            repeats_option = Some(repeats.as_number() as u32);
+        }
+        if is_vitest {
+            let modifiers = &mut result.options.modifiers;
+            for (name, modifier) in [
+                ("only", &mut modifiers.only),
+                ("skip", &mut modifiers.skip),
+                ("todo", &mut modifiers.todo),
+                ("fails", &mut fails_option),
+                ("shuffle", &mut shuffle_option),
+                ("concurrent", &mut modifiers.concurrent),
+            ] {
+                *modifier = options.get(global, name)?.map(JSValue::to_boolean).or(*modifier);
+            }
+            if let Some(sequential) = options.get(global, "sequential")?
+                && sequential.to_boolean()
+            {
+                modifiers.concurrent = Some(false);
+            }
         }
     } else if options.is_undefined_or_null() {
         // no options
@@ -684,29 +1066,55 @@ pub(crate) fn parse_arguments(
         )));
     }
 
-    result.description = if description.is_undefined_or_null() {
+    result.description = if is_vitest
+        && cfg.kind == FunctionKind::TestOrDescribe
+        && (is_first_the_name || !description.is_undefined_or_null())
+    {
+        Some(jest::format_vitest_name(global, description)?)
+    } else if description.is_undefined_or_null() {
         None
     } else {
         Some(get_description(global, description, signature)?)
     };
+
+    let timeout_option_ms: Option<u32> = timeout_option.map(|timeout| timeout as u32);
+    result.options.inherited = InheritedOptions {
+        timeout: timeout_option_ms.or(cfg.inherited.timeout),
+        retry: result.options.retry.or(cfg.inherited.retry),
+        repeats: repeats_option.or(cfg.inherited.repeats),
+        fails: fails_option.or(cfg.inherited.fails),
+        shuffle: matches!(signature, Signature::ScopeFunctions(function) if function.cfg.self_shuffle)
+            .then_some(true)
+            .or(shuffle_option)
+            .or(cfg.inherited.shuffle),
+    };
+    result.options.retry = result.options.inherited.retry;
+    result.options.repeats = result.options.inherited.repeats.unwrap_or(0);
 
     if result.options.retry.is_none() {
         if let Some(runner) = jest::Jest::runner() {
             result.options.retry = Some(runner.test_options.retry);
         }
     }
-    if result.options.retry.unwrap_or(0) != 0 && result.options.repeats != 0 {
+    if !is_vitest && result.options.retry.unwrap_or(0) != 0 && result.options.repeats != 0 {
         return Err(global.throw(format_args!("{}(): Cannot set both retry and repeats", signature)));
     }
 
-    let default_timeout_ms: Option<u32> = jest::Jest::runner().and_then(|runner| {
-        if runner.default_timeout_ms != 0 { Some(runner.default_timeout_ms) } else { None }
+    let default_timeout_ms: Option<u32> = jest::Jest::runner().and_then(|runner| match (runner.default_timeout_ms, cfg.kind) {
+        (0, _) => None,
+        // vitest's default `hookTimeout`
+        (ms, FunctionKind::VitestHook) => Some(ms.max(10_000)),
+        (ms, _) => Some(ms),
     });
     let override_timeout_ms: Option<u32> = jest::Jest::runner().and_then(|runner| {
         if runner.default_timeout_override != u32::MAX { Some(runner.default_timeout_override) } else { None }
     });
-    let timeout_option_ms: Option<u32> = timeout_option.map(|timeout| timeout as u32);
-    result.options.timeout = timeout_option_ms.or(override_timeout_ms).or(default_timeout_ms).unwrap_or(0);
+    let vi_timeout_ms: Option<u32> = jest::Jest::runner().and_then(|runner| match cfg.kind {
+        FunctionKind::TestOrDescribe => runner.vi_config.test_timeout,
+        FunctionKind::Hook | FunctionKind::VitestHook => runner.vi_config.hook_timeout,
+    });
+    result.options.timeout =
+        result.options.inherited.timeout.or(vi_timeout_ms).or(override_timeout_ms).or(default_timeout_ms).unwrap_or(0);
 
     Ok(result)
 }
@@ -721,7 +1129,7 @@ pub(crate) fn parse_arguments(
 // `JSC::WriteBarrier<Unknown> m_each` slot on the JSCell wrapper so the GC visits
 // the `.each(arr)` argument between construction and the trailing `("name", cb)` call.
 pub(crate) mod js {
-    bun_jsc::codegen_cached_accessors!("ScopeFunctions"; each);
+    bun_jsc::codegen_cached_accessors!("ScopeFunctions"; each, fixtures);
 }
 
 impl fmt::Display for ScopeFunctions {
@@ -738,8 +1146,11 @@ impl fmt::Display for ScopeFunctions {
         if self.cfg.self_only {
             write!(f, ".only")?;
         }
+        if self.cfg.self_shuffle {
+            write!(f, ".shuffle")?;
+        }
         if !self.each.is_empty() {
-            write!(f, ".each()")?;
+            write!(f, "{}", if self.rows == Rows::For { ".for()" } else { ".each()" })?;
         }
         Ok(())
     }
@@ -751,18 +1162,22 @@ impl Drop for ScopeFunctions {
     }
 }
 
-fn create_unbound(global: &JSGlobalObject, mode: Mode, each: JSValue, cfg: BaseScopeCfg) -> JSValue {
+fn create_unbound(global: &JSGlobalObject, scope_functions: ScopeFunctions) -> JSValue {
     let _g = group_log::begin();
 
+    let (each, fixtures) = (scope_functions.each, scope_functions.fixtures);
     // `JsClass::to_js` boxes `self` and hands the raw pointer to the C++
     // wrapper (m_ctx); freed in `finalize`.
-    let value = ScopeFunctions { mode, cfg, each }.to_js(global);
+    let value = scope_functions.to_js(global);
     value.ensure_still_alive();
     // Write into the C++ m_each WriteBarrier so GC visits it. The Rust `each` field
     // lives in unmanaged memory that JSC never scans; without this the array can be
     // collected between `.each(arr)` and the trailing `("name", cb)` call.
     if !each.is_empty() {
         js::each_set_cached(value, global, each);
+    }
+    if !fixtures.is_empty() {
+        js::fixtures_set_cached(value, global, fixtures);
     }
     value
 }
@@ -789,14 +1204,12 @@ fn set_prototype_direct(value: JSValue, prototype: JSValue, global: &JSGlobalObj
 
 pub(crate) fn create_bound(
     global: &JSGlobalObject,
-    mode: Mode,
-    each: JSValue,
-    cfg: BaseScopeCfg,
+    scope_functions: ScopeFunctions,
     name: &'static str,
 ) -> JsResult<JSValue> {
     let _g = group_log::begin();
 
-    let value = create_unbound(global, mode, each, cfg);
+    let value = create_unbound(global, scope_functions);
     bind(value, global, name)
 }
 

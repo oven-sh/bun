@@ -208,6 +208,15 @@ test("threadId module and worker property is consistent", async () => {
   await worker2.terminate();
 });
 
+test.each([
+  ["file:", new URL("./worker.js", import.meta.url)],
+  ["data:", new URL("data:text/javascript,")],
+])("the filename can be a %s URL of another implementation", async (_, { href, protocol, hostname, pathname }) => {
+  const worker = new Worker({ href, protocol, hostname, pathname, toString: () => href } as URL);
+  await once(worker, "online");
+  await worker.terminate();
+});
+
 test("receiveMessageOnPort works across threads", async () => {
   const { port1, port2 } = new MessageChannel();
   const worker = new Worker(new URL("./worker.js", import.meta.url), {

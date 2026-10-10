@@ -6,6 +6,7 @@
  *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/expect.test.js`
  */
 
+import { stripVTControlCharacters } from "node:util";
 // import these functions typed with the bun:test types,
 // so this test can also be used to detect issues with the "bun:test" type definitions
 import test_interop from "./test-interop.js";
@@ -39,7 +40,7 @@ describe("expect()", () => {
       try {
         await asyncFn();
       } catch (e) {
-        throw new Error(/** @type {any} */ (e).message);
+        throw new Error(stripVTControlCharacters(/** @type {any} */ (e).message));
       }
     });
   };
@@ -139,6 +140,155 @@ describe("expect()", () => {
         setTimeout(() => resolve(1), 0);
       }),
     ).resolves.toBe(1);
+  });
+
+  // https://github.com/oven-sh/bun/issues/18857
+  describe("resolves and rejects on a thenable", () => {
+    /** @returns {PromiseLike<any>} */
+    const thenable = (/** @type {"resolve" | "reject"} */ how, /** @type {unknown} */ value) => ({
+      then(resolve, reject) {
+        /** @type {any} */ (how === "resolve" ? resolve : reject)(value);
+        return /** @type {any} */ (undefined);
+      },
+    });
+
+    test("settles with what then() passes to its callbacks", async () => {
+      await expect(thenable("resolve", "done")).resolves.toBe("done");
+      await expect(thenable("resolve", 4)).resolves.not.toBe(5);
+      await expect(thenable("resolve", { a: 1, b: 2 })).resolves.toMatchObject({ a: 1 });
+      await expect(thenable("reject", 4)).rejects.toBe(4);
+      await expect(thenable("reject", 4)).rejects.not.toBe(5);
+      await expect(thenable("reject", new Error("thenable error"))).rejects.toThrow("thenable error");
+
+      // Different task
+      await expect({
+        then(/** @type {(value: string) => void} */ resolve) {
+          setTimeout(() => resolve("later"), 0);
+        },
+      }).resolves.toBe("later");
+    });
+
+    test("finds then() wherever a property lookup does", async () => {
+      class Inherited {
+        then(/** @type {(value: string) => void} */ resolve) {
+          resolve("inherited");
+        }
+      }
+      await expect(new Inherited()).resolves.toBe("inherited");
+      await expect(Object.create(thenable("resolve", "prototype"))).resolves.toBe("prototype");
+      await expect(
+        new Proxy({}, { get: (_, key) => (key === "then" ? thenable("resolve", "proxy").then : undefined) }),
+      ).resolves.toBe("proxy");
+    });
+
+    test("calls then() once, with the thenable as this", async () => {
+      const then = jest.fn((/** @type {(value: string) => void} */ resolve) => resolve("called"));
+      const value = { then };
+      await expect(value).resolves.toBe("called");
+      expect(then).toHaveBeenCalledTimes(1);
+      expect(then.mock.contexts).toEqual([value]);
+    });
+
+    test_skipIf(!isBun)("fails when the thenable settles the other way, or then is not callable", async () => {
+      await expectFailure(() => expect(thenable("resolve", 4)).rejects.toBe(4)).toThrow(
+        "Expected promise that rejects\nReceived promise that resolved: {",
+      );
+      await expectFailure(() => expect(thenable("reject", 4)).resolves.toBe(4)).toThrow(
+        "Expected promise that resolves\nReceived promise that rejected: {",
+      );
+      for (const value of [{ then: 4 }, { then: null }, { then: {} }, { a: 4 }, [], "then", 4, null, undefined]) {
+        await expectFailure(() => expect(value).resolves.toBe(value)).toThrow("Expected promise\nReceived: ");
+        await expectFailure(() => expect(value).rejects.toBe(value)).toThrow("Expected promise\nReceived: ");
+      }
+    });
+
+    // Jest hands its own callbacks to then(), so what `await` does around that call does not happen.
+    test_skipIf(isJest)("adopts the thenable as await does", async () => {
+      const error = new Error("thrown by then()");
+      await expect({
+        then() {
+          throw error;
+        },
+      }).rejects.toBe(error);
+      // Only the first call of either callback counts.
+      await expect({
+        then(/** @type {(value: number) => void} */ resolve, /** @type {(reason: number) => void} */ reject) {
+          resolve(1);
+          reject(2);
+          resolve(3);
+          throw error;
+        },
+      }).resolves.toBe(1);
+      await expect(thenable("resolve", thenable("resolve", "nested"))).resolves.toBe("nested");
+      await expect(thenable("resolve", thenable("reject", "nested"))).rejects.toBe("nested");
+      await expect(thenable("resolve", Promise.resolve("promise"))).resolves.toBe("promise");
+      await expect(thenable("reject", thenable("resolve", "not adopted"))).rejects.toHaveProperty("then");
+      await expect(Object.assign(() => {}, thenable("resolve", "function"))).resolves.toBe("function");
+    });
+
+    test_skipIf(!isBun)("reads then once, and a getter that throws is a rejection", async () => {
+      const get = jest.fn(() => thenable("resolve", "getter").then);
+      await expect(Object.defineProperty({}, "then", { get })).resolves.toBe("getter");
+      expect(get).toHaveBeenCalledTimes(1);
+
+      const error = new Error("thrown by the getter");
+      const throws = {
+        get then() {
+          throw error;
+        },
+      };
+      await expect(throws).rejects.toBe(error);
+      await expectFailure(() => expect(throws).resolves.toBe(1)).toThrow("Received promise that rejected");
+    });
+
+    test_skipIf(!isBun)("expect.resolvesTo and expect.rejectsTo", () => {
+      expect({ a: thenable("resolve", "one") }).toEqual({ a: expect.resolvesTo.stringContaining("one") });
+      expect({ a: thenable("reject", "two") }).toEqual({ a: expect.rejectsTo.stringContaining("two") });
+      expect({ a: thenable("resolve", "one") }).not.toEqual({ a: expect.rejectsTo.stringContaining("one") });
+      expect({ a: { then: 1 } }).not.toEqual({ a: expect.resolvesTo.anything() });
+    });
+
+    // Bun.$ and Bun.sql return such promises. In a child process, because no test timeout ends the wait for one that never starts.
+    test_skipIf(!isBun)("a Promise subclass that starts its work in then()", async () => {
+      const { bunEnv, bunExe } = require("harness");
+      const src = `
+        const { expect } = require("bun:test");
+        class Lazy extends Promise {
+          static get [Symbol.species]() {
+            return Promise;
+          }
+          static create(how) {
+            let start;
+            const lazy = new Lazy((resolve, reject) => {
+              start = () => (how === "resolve" ? resolve : reject)("started");
+            });
+            lazy.start = start;
+            return lazy;
+          }
+          then(onFulfilled, onRejected) {
+            this.start();
+            return super.then(onFulfilled, onRejected);
+          }
+        }
+        await expect(Lazy.create("resolve")).resolves.toBe("started");
+        await expect(Lazy.create("reject")).rejects.toBe("started");
+        await expect(Bun.$\`exit 0\`.quiet()).resolves.toMatchObject({ exitCode: 0 });
+        await expect(Bun.$\`exit 7\`.quiet()).rejects.toMatchObject({ exitCode: 7 });
+        console.log("ok");
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toMatchObject({
+        stdout: "ok\n",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
   });
 
   test("can call without an argument", () => {
@@ -3463,7 +3613,150 @@ describe("expect()", () => {
         expect(Bun.deepMatch({ a: 1, b: 2 }, { a: 1 })).toBe(false);
         expect(Bun.deepMatch({ a: 1 }, { a: 1, b: 2 })).toBe(true);
       });
+      test("Bun.deepMatch compares an object that occurs twice with each of its patterns", () => {
+        const shared = { v: 1 };
+        expect(Bun.deepMatch({ a: { v: 1 }, b: { v: 2 } }, { a: shared, b: shared })).toBe(false);
+        expect(Bun.deepMatch({ a: shared, b: shared }, { a: { v: 1 }, b: { v: 2 } })).toBe(false);
+        expect(Bun.deepMatch({ a: shared, b: shared }, { a: { v: 1 }, b: { v: 1 } })).toBe(true);
+      });
     }
+    test("compares an object that occurs twice with each of its patterns", () => {
+      const shared = { v: 1 };
+      expect({ a: shared, b: shared }).not.toMatchObject({ a: { v: 1 }, b: { v: 2 } });
+      expect({ a: { v: 1 }, b: { v: 2 } }).not.toMatchObject({ a: shared, b: shared });
+      expect({ a: shared, b: shared }).toMatchObject({ a: { v: 1 }, b: { v: 1 } });
+      expect({ a: shared, b: [shared, { c: shared }] }).not.toMatchObject({ a: {}, b: [{}, { c: { v: 2 } }] });
+    });
+    test("ends on cycles", () => {
+      const received = { v: 1, other: { v: 2 } };
+      received.self = received;
+      received.other.back = received;
+      const same = { v: 1, other: { v: 2 } };
+      same.self = same;
+      same.other.back = same;
+      expect(received).toMatchObject(same);
+      const different = { v: 1, other: { v: 2 } };
+      different.self = different;
+      different.other.back = { v: 3 };
+      expect(received).not.toMatchObject(different);
+    });
+    test("an object that occurs twice shows, in each place, what the pattern there says", () => {
+      const number = expect.any(Number);
+      const shared = { id: 123.5, k: 2.5 };
+      const pattern = { id: number };
+      expect({ a: shared, b: shared }).toMatchInlineSnapshot(
+        { a: pattern, b: pattern },
+        `
+{
+  "a": {
+    "id": Any<Number>,
+    "k": 2.5,
+  },
+  "b": {
+    "id": Any<Number>,
+    "k": 2.5,
+  },
+}
+`,
+      );
+      expect({ a: shared, b: shared, c: [shared, shared] }).toMatchInlineSnapshot(
+        { a: { id: number }, b: { k: number }, c: [{ id: number, k: number }, {}] },
+        `
+{
+  "a": {
+    "id": Any<Number>,
+    "k": 2.5,
+  },
+  "b": {
+    "id": 123.5,
+    "k": Any<Number>,
+  },
+  "c": [
+    {
+      "id": Any<Number>,
+      "k": Any<Number>,
+    },
+    {
+      "id": 123.5,
+      "k": 2.5,
+    },
+  ],
+}
+`,
+      );
+      const cycle = { id: 1.5 };
+      cycle.self = cycle;
+      const cyclicPattern = { id: number };
+      cyclicPattern.self = cyclicPattern;
+      expect(cycle).toMatchInlineSnapshot(
+        cyclicPattern,
+        `
+{
+  "id": Any<Number>,
+  "self": [Circular],
+}
+`,
+      );
+      expect(shared).toEqual({ id: 123.5, k: 2.5 });
+    });
+    test("the copy of an array keeps the holes at its end", () => {
+      const received = [1.5, 2];
+      received.length = 4;
+      const pattern = [expect.any(Number), 2];
+      pattern.length = 4;
+      expect({ received }).toMatchInlineSnapshot(
+        { received: pattern },
+        `
+{
+  "received": [
+    Any<Number>,
+    2,
+    undefined,
+    undefined,
+  ],
+}
+`,
+      );
+    });
+    test("leaves the received object as it is", () => {
+      class Point {
+        x = 1;
+        get y() {
+          return 2;
+        }
+      }
+      const received = Object.freeze({
+        a: 1,
+        nested: Object.freeze({ b: "x", list: Object.freeze([1, Object.freeze({ c: 2 })]) }),
+        point: new Point(),
+        wrong: 1,
+      });
+      const before = structuredClone({ ...received, point: { ...received.point } });
+      const matching = {
+        a: expect.any(Number),
+        nested: { b: expect.any(String), list: [expect.any(Number), { c: expect.anything() }] },
+        point: { x: expect.any(Number), y: expect.any(Number) },
+      };
+      expect(received).toMatchObject(matching);
+      expect(() => expect(received).not.toMatchObject(matching)).toThrow();
+      let message = "";
+      try {
+        expect(received).toMatchObject({ ...matching, wrong: 2 });
+      } catch (error) {
+        message = Bun.stripANSI(error.message);
+      }
+      // What has matched an asymmetric matcher is not part of the difference.
+      expect(message.split("\n").filter(line => /^[-+] /.test(line))).toEqual([
+        '-   "point": {',
+        '+   "point": Point {',
+        '-   "wrong": 2,',
+        '+   "wrong": 1,',
+        "- Expected  - 2",
+        "+ Received  + 2",
+      ]);
+      expect({ ...received, point: { ...received.point } }).toEqual(before);
+      expect(Object.keys(received.point)).toEqual(["x"]);
+    });
     test("with expect matcher", () => {
       const f = Symbol.for("foo");
       const b = Symbol.for("bar");
@@ -4931,11 +5224,15 @@ describe("expect()", () => {
   test("pass to return undefined", () => {
     expect(expect().pass()).toBeUndefined();
   });
-  test("rejects to return undefined", () => {
-    expect(expect(Promise.reject("error")).rejects.toBe("error")).toBeUndefined();
+  test("rejects to return a promise of undefined", async () => {
+    const result = expect(Promise.reject("error")).rejects.toBe("error");
+    expect(result).toBeInstanceOf(Promise);
+    expect(await result).toBeUndefined();
   });
-  test("resolves to return undefined", () => {
-    expect(expect(Promise.resolve(1)).resolves.toBe(1)).toBeUndefined();
+  test("resolves to return a promise of undefined", async () => {
+    const result = expect(Promise.resolve(1)).resolves.toBe(1);
+    expect(result).toBeInstanceOf(Promise);
+    expect(await result).toBeUndefined();
   });
   test("toBe to return undefined", () => {
     expect(expect(true).toBe(true)).toBeUndefined();

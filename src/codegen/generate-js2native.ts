@@ -58,6 +58,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "crash_handler.rs": "crash_handler/crash_handler.rs",
   "css_internals.rs": "css_jsc/css_internals.rs",
   "BytecodeOrderRecorder.rs": "jsc/BytecodeOrderRecorder.rs",
+  "environment.rs": "runtime/test_runner/environment.rs",
   "escapeRegExp.rs": "string/escapeRegExp.rs",
   "event_loop.rs": "jsc/event_loop.rs",
   "ffi.rs": "runtime/ffi/ffi.rs",

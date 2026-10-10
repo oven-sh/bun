@@ -955,7 +955,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_hasUncaughtExceptionCaptureCallback, (JSC::JSGl
     return JSValue::encode(jsBoolean(true));
 }
 
-extern "C" uint64_t Bun__readOriginTimer(void*);
+extern "C" uint64_t Bun__readHRTime(void*);
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime, (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
@@ -963,7 +963,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime, (JSC::JSGlobalObject * globalOb
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    uint64_t time = Bun__readOriginTimer(globalObject->bunVM());
+    uint64_t time = Bun__readHRTime(globalObject->bunVM());
     double seconds = static_cast<double>(time / 1000000000);
     double nanoseconds = static_cast<double>(time % 1000000000);
 
@@ -1016,7 +1016,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHRTime, (JSC::JSGlobalObject * globalOb
 JSC_DEFINE_HOST_FUNCTION(Process_functionHRTimeBigInt, (JSC::JSGlobalObject * globalObject_, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(globalObject_);
-    return JSC::JSValue::encode(JSValue(JSC::JSBigInt::createFrom(globalObject, Bun__readOriginTimer(globalObject->bunVM()))));
+    return JSC::JSValue::encode(JSValue(JSC::JSBigInt::createFrom(globalObject, Bun__readHRTime(globalObject->bunVM()))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionChdir, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -4561,8 +4561,29 @@ static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
     return mainModule;
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionNextTickInDefaultRealm, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue callback = callFrame->argument(0);
+    if (!callback.isCallable())
+        return Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "callback"_s, "function"_s, callback);
+
+    auto* globalObject = defaultGlobalObject(vm);
+    globalObject->processObject()->queueNextTick(globalObject, ArgList(callFrame));
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
 JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {
+    // Only the thread's default realm has checkpoints (GlobalObject::drainMicrotasks): the ticks of another realm join its queue.
+    if (!globalObject->isThreadLocalDefaultGlobalObject) {
+        auto* nextTickFunction = JSC::JSFunction::create(vm, globalObject, 1, "nextTick"_s, jsFunctionNextTickInDefaultRealm, ImplementationVisibility::Public);
+        this->m_nextTickFunction.set(vm, this, nextTickFunction);
+        return nextTickFunction;
+    }
+
     JSNextTickQueue* nextTickQueueObject;
     if (!globalObject->m_nextTickQueue) {
         nextTickQueueObject = JSNextTickQueue::create(globalObject);

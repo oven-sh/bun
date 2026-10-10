@@ -50,6 +50,9 @@ public:
     bun_ModuleInfoDeserialized* m_moduleInfo { nullptr };
     uint32_t m_tag { 0 };
     bool m_alreadyBundled { false };
+    bool m_dependsOnMoreThanSource { false };
+    // What IsolatedModuleCache finds a provider that it holds by, besides the key: what a plugin supplied in place of the file, and the module its globals come from.
+    uint64_t m_madeFromHash { 0 };
 
 private:
     SourceProvider(void* bunVM, ResolvedSource& resolvedSource, Ref<WTF::StringImpl>&& sourceImpl,
@@ -60,6 +63,7 @@ private:
         , m_moduleInfo(std::exchange(resolvedSource.module_info, nullptr))
         , m_tag(resolvedSource.tag)
         , m_alreadyBundled(resolvedSource.already_bundled)
+        , m_dependsOnMoreThanSource(resolvedSource.depends_on_more_than_source)
         , m_bunVM(bunVM)
         , m_source(WTF::move(sourceImpl))
     {

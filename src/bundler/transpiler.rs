@@ -1479,6 +1479,7 @@ impl<'a> Transpiler<'a> {
                     jsc_builtin_syntax: false,
                     output_format: p_opts::Format::Esm,
                     transform_only: self.options.transform_only,
+                    import_meta_glob: None,
                     import_meta_main_value: None,
                     lower_import_meta_main_for_node_js: false,
                     framework: None,
@@ -1528,6 +1529,9 @@ impl<'a> Transpiler<'a> {
                 opts.features.lower_using = !target.is_bun();
 
                 opts.features.inject_jest_globals = this_parse.inject_jest_globals;
+                opts.features.vitest_globals =
+                    self.options.vitest_globals || self.options.test_file_imports_vitest;
+                opts.features.own_test_globals = self.options.own_test_globals;
                 opts.features.minify_syntax = self.options.minify_syntax;
                 opts.features.minify_identifiers = self.options.minify_identifiers;
                 opts.features.dead_code_elimination = self.options.dead_code_elimination;
@@ -1588,6 +1592,16 @@ impl<'a> Transpiler<'a> {
                         .macro_context
                         .as_mut()
                         .map(|m| &mut *core::ptr::from_mut(m));
+                }
+                // Only the runtime's module loader allows CommonJS. The rest only transform text.
+                if this_parse.allow_commonjs {
+                    // SAFETY: the resolver outlives the parse, which only calls it from this thread.
+                    opts.import_meta_glob = Some(unsafe {
+                        js_ast::ImportMetaGlobHost::new(
+                            js_ast::ImportMetaGlobHostKind::Resolver,
+                            &raw mut self.resolver,
+                        )
+                    });
                 }
 
                 // spec calls `transpiler.resolver.caches.js.parse`.

@@ -5,7 +5,7 @@ export default (wrapper = Bun.fetch) => {
     if (
       opts.body &&
       typeof opts.body === "object" &&
-      (!("buffer" in opts.body) || typeof opts.body.buffer !== "object" || !(opts.body.buffer instanceof ArrayBuffer))
+      (!("buffer" in opts.body) || typeof opts.body.buffer !== "object" || !$inheritsArrayBuffer(opts.body.buffer))
     ) {
       opts.body = JSON.stringify(opts.body);
       // Content length will automatically be set

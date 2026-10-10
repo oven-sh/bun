@@ -1,6 +1,7 @@
 //! Builds the single JUnit document and coverage report from the per-file
 //! data workers stream over IPC, once `drive()` completes.
 
+use bun_collections::index_sort;
 use bun_core::Output;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
 use bun_sourcemap_jsc::code_coverage::Report;
@@ -55,7 +56,7 @@ pub(crate) fn write_coverage_report(coord: &mut Coordinator, opts: &mut CodeCove
     if reports.is_empty() {
         return;
     }
-    reports.sort_unstable_by(|a, b| a.source_url.cmp(&b.source_url));
+    index_sort::sort_slice_unstable_by(&mut reports, |a, b| a.source_url.cmp(&b.source_url));
     if let Err(err) = print_coverage_reports(opts, &reports) {
         Output::err(err, "Failed to write lcov.info", ());
         coord.aborted.get_or_insert(1);

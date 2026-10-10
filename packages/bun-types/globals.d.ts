@@ -1333,7 +1333,79 @@ interface ImportMetaEnv {
   [key: string]: string | undefined;
 }
 
-interface ImportMeta {
+declare module "bun" {
+  /** Options of {@link ImportMeta.glob} */
+  interface ImportMetaGlobOptions {
+    /**
+     * Import the modules with `import` statements instead of `() => import()`
+     *
+     * @default false
+     */
+    eager?: boolean;
+    /**
+     * The export to import instead of the module namespace object, such as `"default"`
+     */
+    import?: string;
+    /**
+     * Query string to append to each import path
+     */
+    query?: string | Record<string, string | number | boolean>;
+    /**
+     * Directory that relative patterns and the keys of the result are relative
+     * to. Starts with `./` or `../` (from the importing file) or `/` (from the
+     * project root).
+     */
+    base?: string;
+    /**
+     * Also match dotfiles and files in `node_modules`
+     *
+     * @default false
+     */
+    exhaustive?: boolean;
+  }
+
+  namespace __internal {
+    // `ImportMeta` inherits `glob`: the `ImportMeta.glob` of another package, such as
+    // `vite/client`, then replaces it whichever of the two is loaded first.
+    interface ImportMetaGlob {
+      /**
+       * Import every module that matches a glob pattern. Compatible with
+       * [Vite's `import.meta.glob`](https://vite.dev/guide/features#glob-import).
+       *
+       * Bun's transpiler and bundler replace the call with an object literal, so
+       * the arguments must be literals.
+       *
+       * @example
+       * ```ts
+       * const pages = import.meta.glob("./pages/*.tsx");
+       * // {
+       * //   "./pages/about.tsx": () => import("./pages/about.tsx"),
+       * //   "./pages/home.tsx": () => import("./pages/home.tsx"),
+       * // }
+       * ```
+       */
+      glob<TModule = unknown>(
+        pattern: string | string[],
+        options?: Bun.ImportMetaGlobOptions & { eager?: false },
+      ): Record<string, () => Promise<TModule>>;
+      /**
+       * @example
+       * ```ts
+       * const pages = import.meta.glob("./pages/*.tsx", { eager: true });
+       * // import * as about from "./pages/about.tsx";
+       * // import * as home from "./pages/home.tsx";
+       * // { "./pages/about.tsx": about, "./pages/home.tsx": home }
+       * ```
+       */
+      glob<TModule = unknown>(
+        pattern: string | string[],
+        options: Bun.ImportMetaGlobOptions & { eager: true },
+      ): Record<string, TModule>;
+    }
+  }
+}
+
+interface ImportMeta extends Bun.__internal.ImportMetaGlob {
   /**
    * `file://` url string for the current module.
    *
@@ -1363,6 +1435,9 @@ interface ImportMeta {
    * ```ts
    * import.meta.env === process.env
    * ```
+   *
+   * Under `bun test` it is a view of `process.env` that also has Vite's `MODE`,
+   * `DEV`, `PROD`, `SSR` and `BASE_URL`.
    */
   readonly env: Bun.Env & NodeJS.ProcessEnv & ImportMetaEnv;
 

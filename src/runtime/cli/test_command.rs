@@ -10,9 +10,11 @@ use bun_core::{self as bun, Global, Output, env_var, fmt as bun_fmt};
 use bun_core::{EncodedSlice, strings};
 use bun_core::{pretty_error, pretty_errorln};
 use bun_dotenv as DotEnv;
+use bun_jsc::event_loop::TopLevelWaitError;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{self as jsc};
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
+use bun_options_types::context::{JunitSuites, TestGlobals};
 use bun_paths as bun_path;
 use bun_paths::resolve_path;
 use bun_paths::string_paths::without_leading_path_separator;
@@ -59,6 +61,7 @@ use coverage::{ByteRangeMapping, CodeCoverageReport, Fraction};
 // `crate::test_runner::*`; the façade below adapts the body's nested-path
 // usage (`bun_test::Execution::Result`, `bun_test::BasicResult`, …) without a
 // 2k-line body rewrite.
+use crate::test_runner::environment::Environment;
 use crate::test_runner::jest::{self, FileColumns as _, Summary, TestRunner};
 use crate::test_runner::snapshot::Snapshots;
 use bun_collections::index_sort;
@@ -219,6 +222,7 @@ pub(crate) struct JunitReporter {
 
     pub(crate) suite_stack: Vec<SuiteInfo>,
     pub(crate) current_depth: u32,
+    pub(crate) suites: JunitSuites,
 
     pub(crate) hostname_value: Option<Box<[u8]>>,
 }
@@ -288,8 +292,11 @@ impl JunitReporter {
         None
     }
 
-    pub(crate) fn init() -> Box<JunitReporter> {
-        Box::new(JunitReporter::default())
+    pub(crate) fn init(suites: JunitSuites) -> Box<JunitReporter> {
+        Box::new(JunitReporter {
+            suites,
+            ..Default::default()
+        })
     }
 }
 
@@ -643,6 +650,16 @@ impl JunitReporter {
             self.begin_test_suite(t.file)?;
         }
 
+        if self.suites == JunitSuites::Flat {
+            let mut name: Vec<u8> = Vec::new();
+            for &(scope, _) in &t.scopes {
+                name.extend_from_slice(scope);
+                name.extend_from_slice(b" > ");
+            }
+            name.extend_from_slice(t.name);
+            return self.write_test_case(t, &name, t.file);
+        }
+
         // Keep the longest prefix of open describe suites that matches
         // `t.scopes`; close the rest, then open what is missing.
         let open = &self.suite_stack[1..];
@@ -667,13 +684,17 @@ impl JunitReporter {
             class_name.extend_from_slice(name);
         }
 
-        self.write_test_case(t, &class_name)
+        self.write_test_case(t, t.name, &class_name)
     }
 
-    fn write_test_case(&mut self, t: &TestCaseReport<'_>, class_name: &[u8]) -> crate::Result<()> {
+    fn write_test_case(
+        &mut self,
+        t: &TestCaseReport<'_>,
+        name: &[u8],
+        class_name: &[u8],
+    ) -> crate::Result<()> {
         let TestCaseReport {
             file,
-            name,
             status,
             assertions,
             elapsed_ns,
@@ -762,7 +783,7 @@ impl JunitReporter {
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
             }
-            R::FailBecauseFailingTestPassed => {
+            R::FailBecauseFailingTestPassed | R::FailBecauseFailsTestPassed => {
                 if !self.suite_stack.is_empty() {
                     let last = self.suite_stack.len() - 1;
                     self.suite_stack[last].metrics.failures += 1;
@@ -771,7 +792,12 @@ impl JunitReporter {
                 self.contents.extend_from_slice(indent);
                 let _ = writeln!(
                     &mut self.contents,
-                    "  <failure message=\"test marked with .failing() did not throw\" type=\"AssertionError\"/>"
+                    "  <failure message=\"test marked with {}\" type=\"AssertionError\"/>",
+                    if status == R::FailBecauseFailsTestPassed {
+                        ".fails() did not fail"
+                    } else {
+                        ".failing() did not throw"
+                    }
                 );
                 self.contents.extend_from_slice(indent);
                 self.contents.extend_from_slice(b"</testcase>\n");
@@ -1156,11 +1182,12 @@ impl CommandLineReporter {
             match status {
                 R::Pending | R::Pass | R::Skip | R::SkippedBecauseLabel | R::Todo | R::Fail => {}
 
-                R::FailBecauseFailingTestPassed => {
+                R::FailBecauseFailingTestPassed | R::FailBecauseFailsTestPassed => {
                     let _ = bun_core::write_pretty!(
                         writer,
                         colors,
-                        "  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works<r>\n"
+                        "  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.{s}` if tested behavior now works<r>\n",
+                        test_entry.base.mode.tag_name()
                     );
                 }
                 R::FailBecauseTodoPassed => {
@@ -1394,6 +1421,7 @@ impl CommandLineReporter {
 
             R::Fail
             | R::FailBecauseFailingTestPassed
+            | R::FailBecauseFailsTestPassed
             | R::FailBecauseTodoPassed
             | R::FailBecauseExpectedHasAssertions
             | R::FailBecauseExpectedAssertionCount
@@ -1702,14 +1730,24 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
         return false;
     }
 
-    let ext = bun_path::extension(slice);
     // SAFETY: `VirtualMachine::get()` returns the process-lifetime VM pointer; only
     // called from the JS thread once a VM exists.
-    let loader_by_ext = VirtualMachine::get()
-        .as_mut()
-        .transpiler
-        .options
-        .loader(ext);
+    let options = &VirtualMachine::get().as_mut().transpiler.options;
+
+    // What Bun generates for `./worker.ts?worker` is not the user's code; what a plugin supplies for `./a.vue?x` is.
+    if let Some(query) = strings::index_of_char_usize(slice, b'?') {
+        use bun_bundler::options::ImportSuffix;
+        let by_extension = options.loader(bun_path::extension(&slice[..query]));
+        if matches!(
+            ImportSuffix::find(&slice[query..], Some(by_extension)),
+            Some(ImportSuffix::Init | ImportSuffix::Worker(_))
+        ) {
+            return false;
+        }
+    }
+
+    let ext = bun_path::extension(slice);
+    let loader_by_ext = options.loader(ext);
 
     // allow file loader just incase they use a custom loader with a non-standard extension
     if !(loader_by_ext.is_javascript_like() || loader_by_ext == bun_ast::Loader::File) {
@@ -1784,19 +1822,16 @@ impl TestCommand {
         bun_http::http_thread::init(&Default::default());
 
         let enable_random = ctx.test_options.randomize;
-        let seed: u32 = if enable_random {
-            ctx.test_options
-                .seed
-                .unwrap_or_else(|| bun::fast_random() as u32) // @truncate
-        } else {
-            0
-        }; // seed is limited to u32 so storing it in js doesn't lose precision
+        // Without --randomize, it is for `describe.shuffle`.
+        let seed: u32 = ctx
+            .test_options
+            .seed
+            .unwrap_or_else(|| bun::fast_random() as u32); // @truncate
+        // seed is limited to u32 so storing it in js doesn't lose precision
         // Persist the chosen seed so --parallel forwards it to every worker;
         // otherwise each worker would draw its own and the printed --seed=N
         // would not reproduce the run.
-        if enable_random {
-            ctx.test_options.seed = Some(seed);
-        }
+        ctx.test_options.seed = Some(seed);
         // `DefaultPrng` is `Copy`, so pass the prng by value to TestRunner
         // and keep a local copy for shuffling.
         let random_instance: Option<bun::rand::DefaultPrng> = if enable_random {
@@ -1838,7 +1873,6 @@ impl TestCommand {
             jest: TestRunner {
                 default_timeout_ms: ctx.test_options.default_timeout_ms,
                 concurrent: ctx.test_options.concurrent,
-                randomize_seed: if enable_random { Some(seed) } else { None },
                 // SAFETY: lifetime-erase to `'static`; backing storage lives in `ctx`
                 // (process-lifetime singleton) and `concurrent_test_glob_view` is held
                 // in this never-returning frame.
@@ -1866,6 +1900,8 @@ impl TestCommand {
                 files: jest::FileList::default(),
                 index: jest::FileMap::default(),
                 default_timeout_override: u32::MAX,
+                vi_config: Default::default(),
+                vi_config_of_preload: Default::default(),
                 // SAFETY: lifetime-erase to `'static`; `ctx` is the
                 // process-lifetime CLI context and `exec()` never returns.
                 test_options: unsafe { bun_ptr::detach_lifetime_ref(&ctx.test_options) },
@@ -1899,7 +1935,9 @@ impl TestCommand {
         // literal above (lifetime-erased); the post-init assignment is dropped.
 
         if ctx.test_options.reporters.junit && !ctx.test_options.test_worker {
-            reporter.reporters.junit = Some(JunitReporter::init());
+            reporter.reporters.junit = Some(JunitReporter::init(
+                ctx.test_options.reporters.junit_suites.unwrap_or_default(),
+            ));
         }
         if ctx.test_options.reporters.dots {
             reporter.reporters.dots = true;
@@ -1938,6 +1976,8 @@ impl TestCommand {
         // Clone (not take): build_worker_argv reads ctx.preloads to forward --preload.
         vm.preload = ctx.preloads.clone();
         vm.transpiler.options.rewrite_jest_for_tests = true;
+        vm.transpiler.options.vitest_globals =
+            ctx.test_options.globals == Some(TestGlobals::Vitest);
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
             ctx.runtime_options.experimental_http2_fetch,
             core::sync::atomic::Ordering::Relaxed,
@@ -2367,6 +2407,8 @@ impl TestCommand {
                     &mut coverage_options,
                 )?;
             } else {
+                // SAFETY: `vm.transpiler.env` is the process-lifetime DotEnv loader pointer.
+                ParallelRunner::set_ids_without_workers(unsafe { &mut *vm.transpiler.env });
                 Self::run_all_tests(&mut reporter, vm, test_files);
             }
         }
@@ -2553,7 +2595,7 @@ impl TestCommand {
                 }
 
                 // Display the random seed if tests were randomized
-                if random_instance.is_some() {
+                if random_instance.is_some() || summary.shuffled > 0 {
                     pretty_error!("{}<r>--seed={}<r>\n", &indenter, seed);
                 }
 
@@ -2823,38 +2865,86 @@ impl TestCommand {
         unsafe { (*vm_ptr).run_with_api_lock(|| ctx.begin()) };
     }
 
+    /// A promise rejected with why the runner gave up waiting for `what`.
+    fn never_settled(
+        global: &jsc::JSGlobalObject,
+        what: &str,
+        file_path: &[u8],
+    ) -> *mut jsc::JSInternalPromise {
+        let rejected = jsc::JSPromise::rejected_promise(
+            global,
+            global.create_error_instance(format_args!(
+                "{what} never settled in {}\nnote: {}",
+                bun_fmt::quote(file_path),
+                TopLevelWaitError::NothingLeft,
+            )),
+        );
+        rejected.set_handled();
+        std::ptr::from_mut(rejected)
+    }
+
+    /// The next load finds the modules as the preloads left them. A module that is still being loaded goes
+    /// once it has loaded, which is waited for: the next load would be given it, with the mocks it has imported.
+    /// One that can never finish loading goes as it is: the next file would wait for it, and be blamed.
+    /// A file that has mocked modules holds on to its own copies of all that imported them: it goes too.
+    fn undo_module_mocks(
+        vm: &VirtualMachine,
+        global: &jsc::JSGlobalObject,
+        file_path: &[u8],
+        next_load_shares_global: bool,
+    ) {
+        unsafe extern "C" {
+            safe fn JSMock__replaceModuleOfTestFile(
+                global: &jsc::JSGlobalObject,
+                path: &bun::String,
+            );
+        }
+        bun_jsc::cpp::JSMock__forgetPendingModulePatches(global);
+        bun_jsc::cpp::JSMock__undoModuleMocksOfTestFile(global, next_load_shares_global);
+        if !next_load_shares_global {
+            return;
+        }
+        let loaded = vm
+            .event_loop_ref()
+            .wait_at_top_level(|| !bun_jsc::cpp::JSMock__hasModulesToEvict(global));
+        if loaded == Err(TopLevelWaitError::NothingLeft) {
+            drop(bun_jsc::cpp::Bun__evictUnfinishedModules(global));
+        }
+        JSMock__replaceModuleOfTestFile(global, &bun::String::from_bytes(file_path));
+    }
+
+    /// In words, and what tells it from the runner's next step. `None`: several tests at once.
+    fn what_runner_waits_for(
+        buntest: &bun_test::BunTest,
+    ) -> (&'static str, Option<(*const (), i64)>) {
+        match buntest.get_current_state_data() {
+            bun_test::RefDataValue::Collection { active_scope } => (
+                "A describe() callback",
+                Some((active_scope.as_ptr().cast_const().cast(), 0)),
+            ),
+            bun_test::RefDataValue::Execution {
+                entry_data: Some(entry),
+                ..
+            } => (
+                "A test or a hook without a timeout",
+                Some((entry.entry, i64::from(entry.attempt))),
+            ),
+            bun_test::RefDataValue::Done => ("The promise of a matcher that was not awaited", None),
+            _ => ("A test or a hook without a timeout", None),
+        }
+    }
+
     pub(crate) fn run(
         reporter: &mut CommandLineReporter,
         vm: &mut VirtualMachine,
         file_name: &[u8],
         first_last: bun_test::FirstLast,
     ) -> crate::Result<()> {
-        // Capture the raw log pointer (Copy) so the guard does not borrow `vm`.
-        let vm_log = vm.log;
-        scopeguard::defer! {
-            bun_ast::Expr::data_store_reset();
-            bun_ast::Stmt::data_store_reset();
-
-            if let Some(log_ptr) = vm_log {
-                // SAFETY: vm.log points at the VM-owned Log for the lifetime of the run.
-                let log = unsafe { &mut *log_ptr.as_ptr() };
-                if log.errors > 0 {
-                    let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
-                    log.msgs.clear();
-                    log.errors = 0;
-                }
-            }
-
-            Output::flush();
-        }
-
-        // Restore test.only state after each module.
-        let prev_only = reporter.jest.only;
-        let reporter_ptr: *mut CommandLineReporter = reporter;
-        // SAFETY: `reporter` is caller-owned and outlives this guard; raw-ptr
-        // escape so the closure does not hold a borrowck
-        // lock on `reporter` for the entire function body.
-        scopeguard::defer! { unsafe { (*reporter_ptr).jest.only = prev_only; } }
+        let _print_log = PrintLogAfterFile(vm.log);
+        let _restore_only = RestoreOnlyAfterFile {
+            only: reporter.jest.only,
+            reporter,
+        };
 
         let resolution = vm.transpiler.resolve_entry_point(file_name)?;
         vm.clear_entry_point()?;
@@ -2884,6 +2974,8 @@ impl TestCommand {
         let mut repeat_index: u32 = 0;
         vm.on_unhandled_rejection_ctx = None;
         vm.on_unhandled_rejection = jest::on_unhandled_rejection::on_unhandled_rejection;
+        let mut environment =
+            Environment::of_file(file_path, reporter.jest.test_options.environment);
 
         while repeat_index < repeat_count {
             // Clear the module cache before re-running (except for the first run)
@@ -2902,19 +2994,18 @@ impl TestCommand {
             bun_test_root.enter_file(file_id, reporter, should_run_concurrent, first_last);
             let bun_test_root_ptr: *mut bun_test::BunTestRoot = bun_test_root;
             let global = vm.global();
-            scopeguard::defer! {
-                // SAFETY: `bun_test_root` is `&'static mut` from `Jest::runner()`;
-                // raw-ptr escape so the closure does not hold a borrowck lock on
-                // it for the loop body.
-                unsafe { (*bun_test_root_ptr).exit_file(); }
-                // A mock.module() patch still pending must not hold up the next file.
-                bun_jsc::cpp::JSMock__forgetPendingModulePatches(global);
-            }
+            // `--isolate` swaps the global after the last repeat.
+            let next_load_shares_global =
+                !vm.test_isolation_enabled || repeat_index + 1 < repeat_count;
+            let _entered_file = EnteredFile {
+                bun_test_root: bun_test_root_ptr,
+                global,
+                next_load_shares_global,
+            };
 
             // SAFETY: `set()` reads only `reporter.{worker_ipc_file_idx, reporters}`
             // and writes only `current_file` — disjoint fields. Fresh raw-ptr
-            // split (not the defer-captured `reporter_ptr`) keeps the borrows
-            // disjoint without tripping borrowck.
+            // split keeps the borrows disjoint without tripping borrowck.
             unsafe {
                 let rp: *mut CommandLineReporter = reporter;
                 (*rp).jest.current_file.set(
@@ -2938,64 +3029,36 @@ impl TestCommand {
             }
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
-            let promise = vm.load_entry_point_for_test_runner(file_path)?;
+            let mut promise = environment.load_entry_point(vm, file_path)?;
             // Only count the file once, not once per repeat
             if repeat_index == 0 {
                 reporter.summary().files += 1;
             }
 
-            // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
-            match jsc::JSInternalPromise::opaque_mut(promise).status() {
-                jsc::js_promise::Status::Rejected => {
-                    // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so
-                    // `unhandled_rejection(&mut self, ...)` can reborrow.
-                    let global = vm.global();
-                    let p = jsc::JSInternalPromise::opaque_mut(promise);
-                    let (result, promise_js) = (p.result(global.vm()), p.to_js());
-                    vm.unhandled_rejection(global, result, promise_js);
-                    reporter.summary().fail += 1;
+            if jsc::JSInternalPromise::opaque_mut(promise).status()
+                != jsc::js_promise::Status::Rejected
+            {
+                vm.event_loop_ref().tick();
 
-                    if reporter.jest.bail == reporter.summary().fail {
-                        reporter.print_summary();
-                        pretty_error!(
-                            "\nBailed out after {} failure{}<r>\n",
-                            reporter.jest.bail,
-                            if reporter.jest.bail == 1 { "" } else { "s" }
-                        );
-                        reporter.write_junit_report_if_needed();
-                        reporter.write_timings_if_needed();
-
-                        vm.exit_handler.exit_code = 1;
-                        vm.is_shutting_down = true;
-                        // `global_exit()` diverges, so the `exit_file()` defer
-                        // above never fires. Release the active file's
-                        // `Strong`s and the preload-hook scope here so
-                        // `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reclaim them,
-                        // then clear `RUNNER` so finalizers can't observe a
-                        // partially-torn-down `TestRunner`.
-                        // SAFETY: single-threaded; raw-ptr reborrow mirrors the
-                        // defer's escape.
-                        unsafe {
-                            (*bun_test_root_ptr).deinit_for_exit();
-                            jest::Jest::RUNNER.write(None);
-                        }
-                        let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);
-                        // SAFETY: global_exit diverges; `vm_ptr` is a fresh
-                        // raw-ptr reborrow of the exclusive `vm` borrow.
-                        unsafe { (*vm_ptr).run_with_api_lock(|| (&mut *vm_ptr).global_exit()) };
-                    }
-
-                    return Ok(());
+                // Tests start after top-level mock.module() calls with a pending factory have patched their module.
+                let patched = vm
+                    .event_loop_ref()
+                    .wait_at_top_level(|| !bun_jsc::cpp::JSMock__hasPendingModulePatches(global));
+                if patched == Err(TopLevelWaitError::NothingLeft) {
+                    promise = Self::never_settled(global, "A mock.module() factory", file_path);
                 }
-                _ => {}
             }
 
-            vm.event_loop_ref().tick();
-
-            // Tests start after top-level mock.module() calls with a pending factory have patched their module.
-            while bun_jsc::cpp::JSMock__hasPendingModulePatches(global) {
-                vm.event_loop_ref().auto_tick();
-                vm.event_loop_ref().tick();
+            // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
+            let failed_to_load = jsc::JSInternalPromise::opaque_mut(promise).status()
+                == jsc::js_promise::Status::Rejected;
+            if failed_to_load {
+                // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so
+                // `unhandled_rejection(&mut self, ...)` can reborrow.
+                let global = vm.global();
+                let p = jsc::JSInternalPromise::opaque_mut(promise);
+                let (result, promise_js) = (p.result(global.vm()), p.to_js());
+                vm.unhandled_rejection(global, result, promise_js);
             }
 
             'blk: {
@@ -3005,6 +3068,9 @@ impl TestCommand {
                     break 'blk;
                 };
                 let buntest = buntest_strong.get();
+                buntest.is_loading = false;
+                // None of its tests run. The hooks of a preload that are due with this file do.
+                buntest.collection.root_scope.failed |= failed_to_load;
 
                 // Automatically execute bun_test tests
                 if buntest.result_queue.readable_length() == 0 {
@@ -3020,11 +3086,37 @@ impl TestCommand {
 
                 let mut prev_unhandled_count = vm.unhandled_error_counter;
                 while buntest.phase != bun_test::Phase::Done {
+                    // `RunTestsTask` left them when it came up in an event loop beneath script.
+                    if buntest.result_queue.readable_length() > 0 {
+                        bun_test::BunTest::run_next_tick(
+                            &std::rc::Rc::downgrade(&buntest_strong),
+                            global,
+                            bun_test::ResultMsg::Start,
+                        );
+                    }
                     if buntest.wants_wakeup {
                         buntest.wants_wakeup = false;
                         vm.wakeup();
                     }
-                    vm.event_loop_ref().auto_tick();
+                    if buntest.timer.state != crate::timer::EventLoopTimerState::ACTIVE
+                        && !vm.has_work_left()
+                    {
+                        let (what, waits_for) = Self::what_runner_waits_for(buntest);
+                        let p = jsc::JSPromise::opaque_mut(Self::never_settled(
+                            global, what, file_path,
+                        ));
+                        vm.unhandled_rejection(global, p.result(global.vm()), p.to_js());
+                        vm.event_loop_ref().tick();
+                        // The error ends a describe() or a test, not a hook or concurrent tests:
+                        // then what is left of the file never runs.
+                        if waits_for.is_none()
+                            || waits_for == Self::what_runner_waits_for(buntest).1
+                        {
+                            break;
+                        }
+                        continue;
+                    }
+                    vm.event_loop_ref().auto_tick_asleep();
                     if buntest.phase == bun_test::Phase::Done {
                         break;
                     }
@@ -3047,9 +3139,50 @@ impl TestCommand {
                 if should_drain_event_loop() {
                     vm.on_before_exit();
                 }
+                reporter.jest.snapshots.remove_obsolete(buntest);
                 drop(buntest_strong);
             }
 
+            if failed_to_load {
+                reporter.summary().fail += 1;
+
+                if reporter.jest.bail == reporter.summary().fail {
+                    reporter.print_summary();
+                    pretty_error!(
+                        "\nBailed out after {} failure{}<r>\n",
+                        reporter.jest.bail,
+                        if reporter.jest.bail == 1 { "" } else { "s" }
+                    );
+                    reporter.write_junit_report_if_needed();
+                    reporter.write_timings_if_needed();
+
+                    vm.exit_handler.exit_code = 1;
+                    vm.is_shutting_down = true;
+                    // `global_exit()` diverges, so the `exit_file()` defer
+                    // above never fires. Release the active file's
+                    // `Strong`s and the preload-hook scope here so
+                    // `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reclaim them,
+                    // then clear `RUNNER` so finalizers can't observe a
+                    // partially-torn-down `TestRunner`.
+                    // SAFETY: single-threaded; raw-ptr reborrow mirrors the
+                    // defer's escape.
+                    unsafe {
+                        (*bun_test_root_ptr).deinit_for_exit();
+                        jest::Jest::RUNNER.write(None);
+                    }
+                    let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm);
+                    // SAFETY: global_exit diverges; `vm_ptr` is a fresh
+                    // raw-ptr reborrow of the exclusive `vm` borrow.
+                    unsafe { (*vm_ptr).run_with_api_lock(|| (&mut *vm_ptr).global_exit()) };
+                }
+            }
+
+            crate::test_runner::vi_utils::on_test_file_end(vm.global(), next_load_shares_global);
+            if next_load_shares_global {
+                crate::test_runner::timers::fake_timers::on_test_file_end(vm.global());
+            }
+            Self::undo_module_mocks(vm, global, file_path, next_load_shares_global);
+            // After them: what the script they run rejects is still this file's.
             let _ = vm.global().handle_rejected_promises();
 
             if Output::is_github_action() && reporter.worker_ipc_file_idx.is_none() {
@@ -3065,12 +3198,74 @@ impl TestCommand {
                 vm.auto_killer.disable();
             }
 
-            repeat_index += 1;
+            repeat_index = if failed_to_load {
+                repeat_count
+            } else {
+                repeat_index + 1
+            };
+            // Here, an error it throws is still this file's.
+            if repeat_index == repeat_count {
+                environment.teardown(vm);
+            }
         }
         if let Some(junit) = reporter.reporters.junit.as_mut() {
             let _ = junit.end_file(None);
         }
         Ok(())
+    }
+}
+
+/// `vm.log`
+struct PrintLogAfterFile(Option<core::ptr::NonNull<bun_ast::Log>>);
+
+impl Drop for PrintLogAfterFile {
+    fn drop(&mut self) {
+        bun_ast::Expr::data_store_reset();
+        bun_ast::Stmt::data_store_reset();
+
+        if let Some(log) = self.0 {
+            // SAFETY: the VM owns the Log, and outlives the run of a file.
+            let log = unsafe { &mut *log.as_ptr() };
+            if log.errors > 0 {
+                let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                    Output::error_writer(),
+                ));
+                log.msgs.clear();
+                log.errors = 0;
+            }
+        }
+
+        Output::flush();
+    }
+}
+
+/// `test.only` holds for the file it is in.
+struct RestoreOnlyAfterFile {
+    reporter: *mut CommandLineReporter,
+    only: bool,
+}
+
+impl Drop for RestoreOnlyAfterFile {
+    fn drop(&mut self) {
+        // SAFETY: the caller of `TestCommand::run` owns the reporter, which outlives the call.
+        unsafe { (*self.reporter).jest.only = self.only };
+    }
+}
+
+/// From `BunTestRoot::enter_file` to `exit_file`.
+struct EnteredFile<'a> {
+    bun_test_root: *mut bun_test::BunTestRoot,
+    global: &'a jsc::JSGlobalObject,
+    next_load_shares_global: bool,
+}
+
+impl Drop for EnteredFile<'_> {
+    fn drop(&mut self) {
+        // SAFETY: it is `Jest::runner()`'s, which lives as long as the process.
+        unsafe { (*self.bun_test_root).exit_file() };
+        // A mock.module() patch still pending must not hold up the next file.
+        bun_jsc::cpp::JSMock__forgetPendingModulePatches(self.global);
+        bun_jsc::cpp::JSMock__undoModuleMocksOfTestFile(self.global, self.next_load_shares_global);
     }
 }
 

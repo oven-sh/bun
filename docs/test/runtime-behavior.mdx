@@ -44,6 +44,45 @@ To test with a specific time zone:
 TZ=America/New_York bun test
 ```
 
+### `import.meta.env`
+
+Under `bun test`, `import.meta.env` also has the variables that [Vite](https://vite.dev/guide/env-and-mode) defines, so code written for Vite runs unchanged.
+
+| Variable   | Value                                                                     |
+| ---------- | ------------------------------------------------------------------------- |
+| `MODE`     | `"test"`                                                                  |
+| `DEV`      | `true`, or `false` when `bun test` starts with `NODE_ENV=production`      |
+| `PROD`     | The opposite of `DEV`                                                     |
+| `SSR`      | `true`, or `false` while there is a `document` ([DOM testing](/test/dom)) |
+| `BASE_URL` | `"/"`                                                                     |
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect } from "bun:test";
+
+test("Vite's variables", () => {
+  expect(import.meta.env.MODE).toBe("test");
+  expect(import.meta.env.DEV).toBe(true);
+});
+```
+
+Everything else is read from and written to `process.env`. The five variables are not in `process.env`, so child processes don't inherit them. If `process.env` does have one, that value is used: `DEV`, `PROD` and `SSR` are `false` for `""` and `true` for any other string.
+
+```bash terminal icon="terminal"
+MODE=staging bun test
+```
+
+`vi.stubEnv()` changes them for a test:
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+import { test, expect, vi } from "bun:test";
+
+test("in production", () => {
+  vi.stubEnv("PROD", true);
+  expect(import.meta.env.PROD).toBe(true);
+  vi.unstubAllEnvs();
+});
+```
+
 ## Test Timeouts
 
 Each test has a default timeout of 5000ms (5 seconds). Tests that exceed it fail.
@@ -87,7 +126,7 @@ test("test without timeout", async () => {
 
 ### Unhandled Errors
 
-`bun test` tracks unhandled promise rejections and errors that occur between tests. If any occur, `bun test` exits with a non-zero code even when no test failed. In both examples below the error happens while the file is being loaded, so the file's tests are not run at all.
+`bun test` tracks unhandled promise rejections and errors that occur between tests. If any occur, `bun test` exits with a non-zero code even when no test failed. In both examples below the error happens while the file is being loaded. The file's tests still run.
 
 This helps catch errors in asynchronous code that might otherwise go unnoticed:
 
@@ -107,8 +146,8 @@ test("test 2", () => {
   expect(true).toBe(true);
 });
 
-// bun test reports this as "Unhandled error between tests", does not run
-// this file's tests (0 pass, 1 error), and exits with code 1
+// bun test reports this as "Unhandled error between tests", runs both tests
+// (2 pass, 1 error), and exits with code 1
 ```
 
 ### Promise Rejections
@@ -122,10 +161,28 @@ test("test 1", () => {
   expect(1).toBe(1);
 });
 
-// bun test reports this as "Unhandled error between tests", does not run
-// this file's tests, and exits with code 1
+// bun test reports this as "Unhandled error between tests", runs the test
+// (1 pass, 1 error), and exits with code 1
 Promise.reject(new Error("Unhandled rejection"));
 ```
+
+A file that throws at its top level, or whose top-level `await` rejects, fails to load: none of its tests run.
+
+### Unsettled Top-Level Await
+
+No timeout applies while a test file is loading. When a top-level `await` or `import` is still pending and nothing is left on the event loop that could settle it, `bun test` fails the file, names the modules that are stuck, and moves on to the next file.
+
+```ts title="test.ts" icon="/icons/typescript.svg"
+await new Promise(() => {});
+```
+
+```txt
+error: "/path/to/test.ts" never finished loading
+note: it is waiting for something that can no longer happen: the event loop has nothing left to run
+note: unsettled top-level await in "/path/to/test.ts"
+```
+
+The same goes for a `--preload` script, an async `describe()` callback, and a test or hook whose timeout is `0`. A timer, socket, subprocess or worker that is still open counts as something that could settle it, even after `.unref()`.
 
 ### Custom Error Handling
 
@@ -244,6 +301,8 @@ You can also import them explicitly:
 ```ts title="test.ts" icon="/icons/typescript.svg"
 import { test, it, describe, expect, beforeAll, beforeEach, afterAll, afterEach, jest, vi } from "bun:test";
 ```
+
+A file that imports some of them can still use the others as globals.
 
 ## Process Integration
 

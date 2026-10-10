@@ -6,12 +6,28 @@ export class FakeTimers {
   static [key: string]: any;
   [key: string]: any;
   private constructor() {}
-  static install(opts: { now?: number | Date; [key: string]: any } = { now: 0 }) {
+  static install(opts: { now?: number | Date; [key: string]: any } = {}) {
     if (active) {
       vi.useRealTimers();
     }
     active = true;
-    vi.useFakeTimers({ now: opts.now });
+    // @sinonjs/fake-timers starts at 0 and fakes everything there is.
+    vi.useFakeTimers({
+      now: opts.now ?? 0,
+      toFake: opts.toFake ?? [
+        "setTimeout",
+        "clearTimeout",
+        "setInterval",
+        "clearInterval",
+        "setImmediate",
+        "clearImmediate",
+        "Date",
+        "performance",
+        "hrtime",
+        "nextTick",
+        "queueMicrotask",
+      ],
+    });
     return new FakeTimers();
   }
   uninstall() {
@@ -21,11 +37,17 @@ export class FakeTimers {
   tick(ms: number) {
     vi.advanceTimersByTime(ms);
   }
+  async tickAsync(ms: number) {
+    await vi.advanceTimersByTimeAsync(ms);
+  }
   hrtime(...args: Parameters<typeof process.hrtime>) {
     return process.hrtime(...args);
   }
   get setTimeout() {
     return setTimeout;
+  }
+  get setInterval() {
+    return setInterval;
   }
   get now() {
     return Date.now();
@@ -40,6 +62,12 @@ export const assert: any = (value: boolean) => {
   expect(value).toBeTrue();
 };
 Object.assign(assert, {
+  isTrue(actual: unknown) {
+    expect(actual).toBe(true);
+  },
+  isFalse(actual: unknown) {
+    expect(actual).toBe(false);
+  },
   equals(actual: unknown, expected: unknown) {
     expect(actual).toBe(expected);
   },
@@ -64,6 +92,16 @@ export const sinon: any = {
       calls.push(args);
     };
     result.calls = calls;
+    Object.defineProperty(result, "called", {
+      get() {
+        return calls.length > 0;
+      },
+    });
+    Object.defineProperty(result, "calledThrice", {
+      get() {
+        return calls.length === 3;
+      },
+    });
     Object.defineProperty(result, "notCalled", {
       get() {
         return calls.length === 0;

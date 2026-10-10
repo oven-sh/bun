@@ -1,0 +1,576 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`elements of React 18 > anonymous component 1`] = `<Unknown />`;
+
+exports[`elements of React 18 > arrow component 1`] = `<Arrow />`;
+
+exports[`elements of React 18 > children of several types 1`] = `
+<div>
+  s
+  1
+  0
+  true
+  a
+  b
+  <i />
+  2n
+</div>
+`;
+
+exports[`elements of React 18 > children prop 1`] = `
+<p>
+  from props
+</p>
+`;
+
+exports[`elements of React 18 > children prop array 1`] = `
+<p
+  id="i"
+>
+  a
+  b
+</p>
+`;
+
+exports[`elements of React 18 > class component 1`] = `
+<Klass
+  p="v"
+/>
+`;
+
+exports[`elements of React 18 > context consumer 1`] = `
+<Context.Consumer>
+  [Function]
+</Context.Consumer>
+`;
+
+exports[`elements of React 18 > context provider 1`] = `
+<Context.Provider
+  value={2}
+>
+  c
+</Context.Provider>
+`;
+
+exports[`elements of React 18 > deep 1`] = `
+<a>
+  <b>
+    <c>
+      <d
+        x={
+          {
+            "y": [
+              <e />,
+            ],
+          }
+        }
+      />
+    </c>
+  </b>
+</a>
+`;
+
+exports[`elements of React 18 > displayName 1`] = `<Display.Name />`;
+
+exports[`elements of React 18 > element as prop 1`] = `
+<x
+  icon={
+    <i
+      className="k"
+    />
+  }
+  one={<b />}
+/>
+`;
+
+exports[`elements of React 18 > empty 1`] = `<div />`;
+
+exports[`elements of React 18 > forwardRef 1`] = `<ForwardRef(Inner) />`;
+
+exports[`elements of React 18 > forwardRef anonymous 1`] = `<ForwardRef />`;
+
+exports[`elements of React 18 > forwardRef displayName 1`] = `<Forwarded />`;
+
+exports[`elements of React 18 > fragment 1`] = `
+<React.Fragment>
+  <a />
+  <b />
+</React.Fragment>
+`;
+
+exports[`elements of React 18 > function child 1`] = `
+<Component>
+  [Function]
+</Component>
+`;
+
+exports[`elements of React 18 > function component 1`] = `
+<Component
+  a={1}
+>
+  c
+</Component>
+`;
+
+exports[`elements of React 18 > in a Map 1`] = `
+Map {
+  "k" => <p>
+    t
+  </p>,
+}
+`;
+
+exports[`elements of React 18 > in an object 1`] = `
+{
+  "el": <p
+    id="x"
+  >
+    t
+  </p>,
+  "list": [
+    <a />,
+    <b>
+      c
+    </b>,
+  ],
+}
+`;
+
+exports[`elements of React 18 > key and ref 1`] = `
+<li>
+  x
+</li>
+`;
+
+exports[`elements of React 18 > lazy 1`] = `<UNDEFINED />`;
+
+exports[`elements of React 18 > memo 1`] = `<Memo(Memoized) />`;
+
+exports[`elements of React 18 > memo anonymous 1`] = `<Memo />`;
+
+exports[`elements of React 18 > memo displayName 1`] = `<Memo(Remembered) />`;
+
+exports[`elements of React 18 > mock as prop 1`] = `
+<button
+  onClick={[MockFunction]}
+  onNamed={[MockFunction nm]}
+/>
+`;
+
+exports[`elements of React 18 > multi-line text 1`] = `
+<p>
+  line one
+line two
+</p>
+`;
+
+exports[`elements of React 18 > nested 1`] = `
+<ul
+  className="l"
+>
+  <li>
+    one
+  </li>
+  <li>
+    <b>
+      two
+    </b>
+     and 
+    <i>
+      three
+    </i>
+  </li>
+</ul>
+`;
+
+exports[`elements of React 18 > number type 1`] = `<UNDEFINED />`;
+
+exports[`elements of React 18 > object child 1`] = `
+<p>
+  {
+    "a": 1,
+  }
+</p>
+`;
+
+exports[`elements of React 18 > one prop 1`] = `
+<a
+  href="/x"
+/>
+`;
+
+exports[`elements of React 18 > prop types 1`] = `
+<x
+  arr={
+    [
+      1,
+      2,
+    ]
+  }
+  b={true}
+  big={1n}
+  d={1970-01-01T00:00:00.000Z}
+  e={{}}
+  ea={[]}
+  f={false}
+  fn={[Function]}
+  n={1}
+  nul={null}
+  o={
+    {
+      "a": 1,
+    }
+  }
+  re={/r\\+/}
+  s="str"
+  sym={Symbol(s)}
+/>
+`;
+
+exports[`elements of React 18 > props are sorted 1`] = `
+<a
+  className="c"
+  data-a="d"
+  href="/x"
+  id="i"
+  z={1}
+>
+  t
+</a>
+`;
+
+exports[`elements of React 18 > strict mode 1`] = `
+<UNDEFINED>
+  c
+</UNDEFINED>
+`;
+
+exports[`elements of React 18 > string props with odd characters 1`] = `
+<x
+  bt="\`\${x}\`\\"
+  lt="<>&"
+  nl="a
+b"
+  q="a "b""
+/>
+`;
+
+exports[`elements of React 18 > suspense 1`] = `
+<React.Suspense
+  fallback={<i />}
+>
+  c
+</React.Suspense>
+`;
+
+exports[`elements of React 18 > text child 1`] = `
+<p>
+  hello
+</p>
+`;
+
+exports[`elements of React 18 > text is escaped 1`] = `
+<p>
+  a &lt; b &gt; c & d "q"
+</p>
+`;
+
+exports[`elements of React 18 > undefined type 1`] = `<UNDEFINED />`;
+
+exports[`elements of React 19 > anonymous component 1`] = `<Unknown />`;
+
+exports[`elements of React 19 > arrow component 1`] = `<Arrow />`;
+
+exports[`elements of React 19 > children of several types 1`] = `
+<div>
+  s
+  1
+  0
+  true
+  a
+  b
+  <i />
+  2n
+</div>
+`;
+
+exports[`elements of React 19 > children prop 1`] = `
+<p>
+  from props
+</p>
+`;
+
+exports[`elements of React 19 > children prop array 1`] = `
+<p
+  id="i"
+>
+  a
+  b
+</p>
+`;
+
+exports[`elements of React 19 > class component 1`] = `
+<Klass
+  p="v"
+/>
+`;
+
+exports[`elements of React 19 > context consumer 1`] = `
+<Context.Consumer>
+  [Function]
+</Context.Consumer>
+`;
+
+exports[`elements of React 19 > context provider 1`] = `
+<Context.Provider
+  value={2}
+>
+  c
+</Context.Provider>
+`;
+
+exports[`elements of React 19 > deep 1`] = `
+<a>
+  <b>
+    <c>
+      <d
+        x={
+          {
+            "y": [
+              <e />,
+            ],
+          }
+        }
+      />
+    </c>
+  </b>
+</a>
+`;
+
+exports[`elements of React 19 > displayName 1`] = `<Display.Name />`;
+
+exports[`elements of React 19 > element as prop 1`] = `
+<x
+  icon={
+    <i
+      className="k"
+    />
+  }
+  one={<b />}
+/>
+`;
+
+exports[`elements of React 19 > empty 1`] = `<div />`;
+
+exports[`elements of React 19 > forwardRef 1`] = `<ForwardRef(Inner) />`;
+
+exports[`elements of React 19 > forwardRef anonymous 1`] = `<ForwardRef />`;
+
+exports[`elements of React 19 > forwardRef displayName 1`] = `<Forwarded />`;
+
+exports[`elements of React 19 > fragment 1`] = `
+<React.Fragment>
+  <a />
+  <b />
+</React.Fragment>
+`;
+
+exports[`elements of React 19 > function child 1`] = `
+<Component>
+  [Function]
+</Component>
+`;
+
+exports[`elements of React 19 > function component 1`] = `
+<Component
+  a={1}
+>
+  c
+</Component>
+`;
+
+exports[`elements of React 19 > in a Map 1`] = `
+Map {
+  "k" => <p>
+    t
+  </p>,
+}
+`;
+
+exports[`elements of React 19 > in an object 1`] = `
+{
+  "el": <p
+    id="x"
+  >
+    t
+  </p>,
+  "list": [
+    <a />,
+    <b>
+      c
+    </b>,
+  ],
+}
+`;
+
+exports[`elements of React 19 > key and ref 1`] = `
+<li>
+  x
+</li>
+`;
+
+exports[`elements of React 19 > lazy 1`] = `<UNDEFINED />`;
+
+exports[`elements of React 19 > memo 1`] = `<Memo(Memoized) />`;
+
+exports[`elements of React 19 > memo anonymous 1`] = `<Memo />`;
+
+exports[`elements of React 19 > memo displayName 1`] = `<Memo(Remembered) />`;
+
+exports[`elements of React 19 > mock as prop 1`] = `
+<button
+  onClick={[MockFunction]}
+  onNamed={[MockFunction nm]}
+/>
+`;
+
+exports[`elements of React 19 > multi-line text 1`] = `
+<p>
+  line one
+line two
+</p>
+`;
+
+exports[`elements of React 19 > nested 1`] = `
+<ul
+  className="l"
+>
+  <li>
+    one
+  </li>
+  <li>
+    <b>
+      two
+    </b>
+     and 
+    <i>
+      three
+    </i>
+  </li>
+</ul>
+`;
+
+exports[`elements of React 19 > number type 1`] = `<UNDEFINED />`;
+
+exports[`elements of React 19 > object child 1`] = `
+<p>
+  {
+    "a": 1,
+  }
+</p>
+`;
+
+exports[`elements of React 19 > one prop 1`] = `
+<a
+  href="/x"
+/>
+`;
+
+exports[`elements of React 19 > prop types 1`] = `
+<x
+  arr={
+    [
+      1,
+      2,
+    ]
+  }
+  b={true}
+  big={1n}
+  d={1970-01-01T00:00:00.000Z}
+  e={{}}
+  ea={[]}
+  f={false}
+  fn={[Function]}
+  n={1}
+  nul={null}
+  o={
+    {
+      "a": 1,
+    }
+  }
+  re={/r\\+/}
+  s="str"
+  sym={Symbol(s)}
+/>
+`;
+
+exports[`elements of React 19 > props are sorted 1`] = `
+<a
+  className="c"
+  data-a="d"
+  href="/x"
+  id="i"
+  z={1}
+>
+  t
+</a>
+`;
+
+exports[`elements of React 19 > strict mode 1`] = `
+<UNDEFINED>
+  c
+</UNDEFINED>
+`;
+
+exports[`elements of React 19 > string props with odd characters 1`] = `
+<x
+  bt="\`\${x}\`\\"
+  lt="<>&"
+  nl="a
+b"
+  q="a "b""
+/>
+`;
+
+exports[`elements of React 19 > suspense 1`] = `
+<React.Suspense
+  fallback={<i />}
+>
+  c
+</React.Suspense>
+`;
+
+exports[`elements of React 19 > text child 1`] = `
+<p>
+  hello
+</p>
+`;
+
+exports[`elements of React 19 > text is escaped 1`] = `
+<p>
+  a &lt; b &gt; c & d "q"
+</p>
+`;
+
+exports[`elements of React 19 > undefined type 1`] = `<UNDEFINED />`;
+
+exports[`what react-test-renderer gives 1`] = `
+[
+  <a />,
+  <b
+    children="kept"
+    s="str"
+    x={1}
+  >
+    t
+    <c />
+  </b>,
+  <d />,
+  <e />,
+  <f>
+    &lt;&gt;
+    5
+    null
+  </f>,
+]
+`;

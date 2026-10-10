@@ -6321,6 +6321,7 @@ declare module "bun" {
     | "tsx"
     | "json"
     | "jsonc"
+    | "json5"
     | "toml"
     | "yaml"
     | "xml"
@@ -6328,6 +6329,7 @@ declare module "bun" {
     | "napi"
     | "wasm"
     | "text"
+    | "md"
     | "css"
     | "html";
 
@@ -6423,7 +6425,12 @@ declare module "bun" {
     defer: () => Promise<void>;
   }
 
-  type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined | void;
+  /**
+   * `undefined` or `null` declines the module: the next matching `onLoad`
+   * callback runs, and when they all decline the module is loaded as if no
+   * plugin had matched it.
+   */
+  type OnLoadResult = OnLoadResultSourceCode | OnLoadResultObject | undefined | null | void;
   type OnLoadCallback = (args: OnLoadArgs) => OnLoadResult | Promise<OnLoadResult>;
   type OnStartCallback = () => void | Promise<void>;
   type OnEndCallback = (result: BuildOutput) => void | Promise<void>;
@@ -6435,7 +6442,8 @@ declare module "bun" {
 
   interface OnResolveArgs {
     /**
-     * The import specifier of the module being loaded
+     * The import specifier of the module being loaded, as it is written:
+     * `"react"`, `"@/utils"`, `"./file"`, `"./file.ts"`
      */
     path: string;
     /**

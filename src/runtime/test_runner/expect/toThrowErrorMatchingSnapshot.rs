@@ -1,6 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::Expect;
+use super::Received;
 use super::get_signature;
 use super::throw;
 
@@ -67,7 +68,7 @@ pub(crate) fn to_throw_error_matching_snapshot(
 
     let hint = hint_string.as_ref().map_or(bun_core::Utf8Bytes::EMPTY, |s| s.to_utf8());
 
-    let Some(value): Option<JSValue> = this.fn_to_err_string_or_undefined(
+    let (Some(thrown), _) = this.get_value_as_to_throw(
         global,
         this.get_value(
             global,
@@ -86,5 +87,5 @@ pub(crate) fn to_throw_error_matching_snapshot(
         );
     };
 
-    this.snapshot(global, value, None, hint.slice(), "toThrowErrorMatchingSnapshot")
+    this.snapshot(global, Received::Thrown(thrown), None, hint.slice(), "toThrowErrorMatchingSnapshot")
 }

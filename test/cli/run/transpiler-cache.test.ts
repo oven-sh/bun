@@ -12,7 +12,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "fs";
-import { bunEnv, bunExe, bunRun, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "path";
 
@@ -690,4 +690,422 @@ console.log("OK");
   expect(third.stdout.toString()).toContain("OK");
   expect(third.signalCode).toBeUndefined();
   expect(third.exitCode).toBe(0);
+});
+
+describe.concurrent("`bun test` and `bun run`", () => {
+  const padding = Buffer.alloc("// padding\n".length * 400, "// padding\n").toString();
+  const commands = {
+    "run": ["run", "load.js"],
+    "test": ["test", "./load.test.js"],
+    "test --globals=vitest": ["test", "--globals=vitest", "./load.test.js"],
+  };
+  type Mode = keyof typeof commands;
+
+  async function load(cwd: string, cache: string, mode: Mode, flags: string[] = []) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...commands[mode].slice(0, -1), ...flags, commands[mode].at(-1)!],
+      env: { ...env, BUN_RUNTIME_TRANSPILER_CACHE_PATH: cache },
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim().split("\n").at(-1)).toBe("loaded");
+    if (mode !== "run") expect(stderr).toContain(" 1 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
+  }
+
+  /** The entries of a cache directory, by the N of the `"entry:N:"` in the source of each. */
+  function readEntries(cache: string) {
+    const entries = new Map<number, { bytes: Buffer; key: string; output: Buffer; written: bigint }>();
+    for (const name of readdirSync(cache)) {
+      const bytes = readFileSync(join(cache, name));
+      const id = /entry:(\d+):/.exec(bytes.toString("latin1"));
+      if (!id) continue;
+      entries.set(Number(id[1]), {
+        bytes,
+        // 0: cache_version u32, 4: module_type u8, 5: output_encoding u8, 6: features_hash u64
+        key: bytes.subarray(6, 14).toString("hex"),
+        output: Buffer.concat([bytes.subarray(0, 6), bytes.subarray(14)]),
+        written: statSync(join(cache, name), { bigint: true }).mtimeNs,
+      });
+    }
+    return entries;
+  }
+
+  const loader = (files: string[], how: "import" | "require") => ({
+    "load.js": `
+      for (const file of ${JSON.stringify(files)}) {
+        try {
+          ${how === "import" ? "await import" : "require"}("./" + file);
+        } catch {}
+      }
+      console.log("loaded");
+    `,
+    "load.test.js": `
+      import { test } from "bun:test";
+      import "./load.js";
+      test("loaded", () => {});
+    `,
+  });
+
+  test("share the entry of a file that uses nothing of `bun test`", async () => {
+    const files = Array.from({ length: 6 }, (_, i) => `module${i}.ts`);
+    using dir = tempDir("transpiler-cache-shared", {
+      ...Object.fromEntries(files.map((file, i) => [file, `export const id: string = "entry:${i}:";\n${padding}`])),
+      ...loader(files, "import"),
+    });
+    // How many entries each run of a sequence wrote, all runs of it with one cache.
+    const written = await Promise.all(
+      (
+        [
+          ["run", "test", "run", "test"],
+          ["test", "test", "run", "run"],
+          ["test --globals=vitest", "run", "test", "test --globals=vitest"],
+        ] as const
+      ).map(async (sequence, i) => {
+        const cache = join(String(dir), `.cache-${i}`);
+        let before: ReturnType<typeof readEntries> = new Map();
+        const counts: number[] = [];
+        for (const mode of sequence) {
+          await load(String(dir), cache, mode);
+          const after = readEntries(cache);
+          counts.push([...after].filter(([id, entry]) => before.get(id)?.written !== entry.written).length);
+          before = after;
+        }
+        return counts;
+      }),
+    );
+    expect(written).toEqual([
+      [6, 0, 0, 0],
+      [6, 0, 0, 0],
+      [6, 0, 0, 0],
+    ]);
+  }, 60_000);
+
+  // Whether what the file is transpiled to may depend on `bun test`.
+  const globals = [
+    ...["test", "it", "describe", "expect", "expectTypeOf", "beforeAll", "beforeEach", "afterEach", "afterAll", "jest"],
+    ...["vi", "xit", "xtest", "xdescribe", "onTestFinished", "suite", "vitest", "onTestFailed", "assertType"],
+  ];
+  const sources: Record<string, [extension: string, source: string, usesTestApi: boolean]> = {
+    "nothing, js": ["js", `import { a } from "./dep.js"; export function f(x) { return a(x); }`, false],
+    "nothing, ts": ["ts", `import { a } from "./dep.js"; export function f(x: number) { return a(x); }`, false],
+    "nothing, cjs": ["cjs", `module.exports = function f(x) { return x; };`, false],
+    "nothing, jsx": ["jsx", `export function f(x) { return <div>{x}</div>; }`, false],
+
+    ...Object.fromEntries(
+      globals.map(name => [`global ${name}`, ["js", `export function f() { return ${name}; }`, true]]),
+    ),
+    "typeof": ["js", `export const t = () => typeof describe;`, true],
+    "in a nested function": ["js", `export function f() { return function g() { return () => describe; }; }`, true],
+    "in a method": ["js", `export class A { m() { return describe; } }`, true],
+    "in a static block": ["js", `export class A { static { if (A.x) void expect; } }`, true],
+    "in a field": ["js", `export class A { x = () => expect; }`, true],
+    "in a scope with eval": ["js", `export function f(s) { eval(s); return describe; }`, true],
+    "declare const": ["ts", `declare const describe: any; export function f() { return describe; }`, true],
+    "declare function": ["ts", `declare function describe(): void; export function f() { return describe; }`, true],
+    "declare global": ["ts", `declare global { var describe: any; } export function f() { return describe; }`, true],
+    "beside a shadowing parameter": [
+      "js",
+      `export function f(describe) { return describe; } export function g() { return describe; }`,
+      true,
+    ],
+    "shorthand property": ["js", `export function f() { return { expect }; }`, true],
+    "assignment": ["cjs", `module.exports = function f() { describe = 1; };`, true],
+    "delete": ["cjs", `module.exports = function f() { return delete describe; };`, true],
+    "with": ["cjs", `module.exports = function f(o) { with (o) { return describe; } };`, true],
+    "in CommonJS": ["cjs", `module.exports = function f() { return describe; };`, true],
+    "decorator": ["ts", `export function f() { @describe class A {} return A; }`, true],
+    "template tag": ["js", "export function f() { return test`x`; }", true],
+    "optional call": ["js", `export function f() { return describe?.(); }`, true],
+    "default of a parameter": ["js", `export function f(a = expect) { return a; }`, true],
+    "JSX member": ["jsx", `export function f() { return <vi.mock />; }`, true],
+    "after return": ["js", `export function f() { return 1; describe(); }`, true],
+    "if (typeof window)": ["js", `export function f() { if (typeof window !== "undefined") describe(); }`, true],
+    "if NODE_ENV is test": ["js", `export function f() { if (process.env.NODE_ENV === "test") describe(); }`, true],
+    "if NODE_ENV is not test": ["js", `export function f() { if (process.env.NODE_ENV !== "test") describe(); }`, true],
+
+    "only in eval": ["js", `export function f() { return eval("describe"); }`, false],
+    "type positions": [
+      "ts",
+      `export type T = typeof describe; export let x: ReturnType<typeof expect> | undefined; export function f(a: typeof vi) { return a as typeof jest; }`,
+      false,
+    ],
+    "shadowing parameter": ["js", `export function f(describe) { return describe; }`, false],
+    "shadowing catch": ["js", `export function f() { try {} catch (expect) { return expect; } }`, false],
+    "shadowing local": ["js", `export function f() { let it = 1; return it; }`, false],
+    "globalThis.describe": ["js", `export function f() { return globalThis.describe; }`, false],
+    "window.describe": ["js", `export function f() { return window.describe; }`, false],
+    "property, key, string, label": [
+      "js",
+      `export function f(o) { test: for (;;) break test; return [o.expect, { describe: 1 }, "vi", o?.jest, class { it() {} }]; }`,
+      false,
+    ],
+    "var after the use": ["js", `export function f() { return describe; } var describe = 1;`, false],
+    "var in a block": ["js", `export function f() { return describe; } { var describe = 1; }`, false],
+    "function after the use": ["js", `export function f() { return describe; } function describe() {}`, false],
+    "function in a block": [
+      "cjs",
+      `module.exports = function f() { return describe; }; { function describe() {} }`,
+      false,
+    ],
+    "let after the use": ["js", `export function f() { return describe; } let describe = 1;`, false],
+    "class after the use": ["js", `export function f() { return describe; } class describe {}`, false],
+    "import of the name": [
+      "js",
+      `import { describe } from "./dep.js"; export function f() { return describe; }`,
+      false,
+    ],
+    "namespace import of the name": [
+      "js",
+      `import * as vi from "./dep.js"; export function f() { return vi.mock("./dep.js"); }`,
+      false,
+    ],
+    "member of a namespace": [
+      "ts",
+      `export namespace N { export const describe = 1; export const y = () => describe; }`,
+      false,
+    ],
+    "member of an enum": ["ts", `export enum E { test = 1, y = test }`, false],
+    "import equals": ["ts", `import describe = require("./dep.js"); export function f() { return describe; }`, false],
+    "JSX tag": ["jsx", `export function f() { return <describe />; }`, false],
+    "if (false)": ["js", `export function f() { if (false) { describe(); } }`, true],
+    "false &&": ["js", `export function f() { return false && describe(); }`, true],
+    "vi.mock(import()) in dead code": ["js", `if (false) vi.mock(import("./dep.js"), () => ({}));`, true],
+    "NODE_ENV": ["js", `export function f() { return process.env.NODE_ENV === "test" ? 1 : 2; }`, false],
+    "import.meta.env": [
+      "js",
+      `export function f() { return [import.meta.env.MODE, import.meta.env.NODE_ENV]; }`,
+      false,
+    ],
+
+    "import vitest": ["js", `import { vi } from "vitest"; export function f() { return vi; }`, true],
+    "import @jest/globals": ["js", `import { jest } from "@jest/globals"; export function f() { return jest; }`, true],
+    "import bun:test": ["js", `import { jest } from "bun:test"; export function f() { return jest; }`, true],
+    "import of no name": ["js", `import "vitest"; export function f() {}`, true],
+    "import {}": ["js", `import {} from "vitest"; export function f() {}`, true],
+    "import default": ["js", `import v from "vitest"; export function f() { return v; }`, true],
+    "import *": ["js", `import * as V from "vitest"; export function f() { return V.vi.mock("./dep.js"); }`, true],
+    "import that is not used": ["ts", `import { vi } from "vitest"; export function f() {}`, true],
+    "export *": ["js", `export * from "vitest"; export function f() {}`, true],
+    "export * as": ["js", `export * as v from "vitest"; export function f() {}`, true],
+    "export from": ["js", `export { vi } from "@jest/globals"; export function f() {}`, true],
+    "require()": ["cjs", `module.exports = function f() { return require("vitest"); };`, true],
+    "require() in ESM": ["js", `export function f() { return require("@jest/globals"); }`, true],
+    "require() of a template": ["cjs", "module.exports = function f() { return require(`vitest`); };", true],
+    "require() of a conditional": [
+      "cjs",
+      `module.exports = function f(v) { return require(v ? "vitest" : "./dep.js"); };`,
+      true,
+    ],
+    "require.resolve()": ["cjs", `module.exports = function f() { return require.resolve("vitest"); };`, true],
+    "import() of bun:test": ["js", `export function f() { return import("bun:test"); }`, true],
+    "import() of vitest": ["js", `export function f() { return import("vitest"); }`, true],
+
+    "import type": ["ts", `import type { Mock } from "vitest"; export function f(a: Mock) { return a; }`, false],
+    "import { type }": ["ts", `import { type Mock } from "vitest"; export function f(a: Mock) { return a; }`, false],
+    "export type": ["ts", `export type { Mock } from "vitest"; export function f() {}`, false],
+    "require() of no literal": ["cjs", `module.exports = function f(v) { return require(v + "vitest"); };`, false],
+    "import() of no literal": ["js", `export function f(v) { return import(v + "vitest"); }`, false],
+    "import.meta.resolve()": ["js", `export function f() { return import.meta.resolve("vitest"); }`, false],
+    "require() in dead code": ["cjs", `module.exports = function f() { if (false) return require("vitest"); };`, false],
+    "a path in the package": ["js", `export function f() { return import("vitest/config"); }`, false],
+    "macro that is not called": [
+      "ts",
+      `import { m } from "./macro.ts" with { type: "macro" }; export function f() {}`,
+      false,
+    ],
+
+    "vi.mock(), global": [
+      "js",
+      `import { a } from "./dep.js"; vi.mock("./dep.js", () => ({ a() {} })); export function f() { return a(); }`,
+      true,
+    ],
+    "vi.mock(), imported": [
+      "js",
+      `import { a } from "./dep.js"; import { vi } from "vitest"; vi.mock("./dep.js", () => ({ a() {} })); export function f() { return a(); }`,
+      true,
+    ],
+    "vi.mock(), imported as": [
+      "js",
+      `import { a } from "./dep.js"; import { vi as v } from "vitest"; v.mock("./dep.js", () => ({ a() {} })); export function f() { return a(); }`,
+      true,
+    ],
+    "jest.mock() of bun:test": [
+      "js",
+      `import { a } from "./dep.js"; import { jest } from "bun:test"; jest.mock("./dep.js", () => ({ a() {} })); export function f() { return a(); }`,
+      true,
+    ],
+    "jest.mock() of @jest/globals": [
+      "js",
+      `import { a } from "./dep.js"; import { jest } from "@jest/globals"; jest.mock("./dep.js", () => ({ a() {} })); export function f() { return a(); }`,
+      true,
+    ],
+    "vi.hoisted()": [
+      "js",
+      `import { a } from "./dep.js"; const h = vi.hoisted(() => 1); export function f() { return a(h); }`,
+      true,
+    ],
+    "vi.doMock(import()), global": ["js", `export function f() { vi.doMock(import("./dep.js"), () => ({})); }`, true],
+    "vi.doMock(import()), imported": [
+      "js",
+      `import { vi } from "vitest"; export function f() { vi.doMock(import("./dep.js"), () => ({})); }`,
+      true,
+    ],
+    "vi.mock() that is pure": ["js", `/* @__PURE__ */ vi.mock("./dep.js");`, true],
+    "vi.mock(import()) that is pure": ["js", `/* @__PURE__ */ vi.mock(import("./dep.js"));`, true],
+    "mock.module()": [
+      "js",
+      `import { a } from "./dep.js"; import { mock } from "bun:test"; mock.module("./dep.js", () => ({ a() {} })); export function f() { return a(); }`,
+      true,
+    ],
+    "a vi of its own": [
+      "js",
+      `import { a } from "./dep.js"; const vi = { mock() {}, hoisted() {}, doMock() {} }; vi.mock("./dep.js"); vi.hoisted(() => 1); vi.doMock(import("./dep.js")); export function f() { return a(); }`,
+      false,
+    ],
+  };
+
+  test.each(["import", "require"] as const)(
+    "keep apart the entries of a file that does, loaded by %s()",
+    async how => {
+      const names = Object.keys(sources);
+      const files = names.map((name, i) => `source${i}.${sources[name][0]}`);
+      using dir = tempDir("transpiler-cache-apart", {
+        ...Object.fromEntries(
+          names.map((name, i) => [files[i], `globalThis.id = "entry:${i}:";\n${sources[name][1]}\n${padding}`]),
+        ),
+        ...loader(files, how),
+        "dep.js": `export function a() {} export const describe = 1;`,
+        "macro.ts": `export function m() { return 1; }`,
+        "node_modules/vitest/package.json": `{ "name": "vitest", "version": "1.0.0", "main": "index.js" }`,
+        "node_modules/vitest/index.js": `exports.vi = exports.default = "not bun's";`,
+        "node_modules/@jest/globals/package.json": `{ "name": "@jest/globals", "version": "1.0.0", "main": "index.js" }`,
+        "node_modules/@jest/globals/index.js": `exports.jest = exports.vi = "not bun's";`,
+      });
+      const modes = Object.keys(commands) as Mode[];
+
+      // Each mode after each other, every pair with a cache of its own.
+      const pairs = await Promise.all(
+        modes
+          .flatMap(first => modes.filter(second => second !== first).map(second => [first, second] as const))
+          .map(async ([first, second], i) => {
+            const cache = join(String(dir), `.cache-${i}`);
+            await load(String(dir), cache, first);
+            const afterFirst = readEntries(cache);
+            await load(String(dir), cache, second);
+            return { first, second, afterFirst, afterSecond: readEntries(cache) };
+          }),
+      );
+      // What each mode transpiles the files to, with nothing in the cache.
+      const fresh = Object.fromEntries(pairs.map(pair => [pair.first, pair.afterFirst])) as Record<
+        Mode,
+        ReturnType<typeof readEntries>
+      >;
+      for (const mode of modes) expect([mode, fresh[mode].size]).toEqual([mode, names.length]);
+
+      // A file that uses nothing of `bun test` has the key of "nothing" with its extension, in every mode.
+      const keyOfNothing = (i: number) => fresh.run.get(names.indexOf(`nothing, ${sources[names[i]][0]}`))!.key;
+      const expected = names.filter(name => sources[name][2]);
+      for (const mode of modes) {
+        expect([mode, names.filter((_, i) => fresh[mode].get(i)!.key !== keyOfNothing(i))]).toEqual([mode, expected]);
+      }
+      // Any other has one key for each mode.
+      expect(names.filter((_, i) => new Set(modes.map(mode => fresh[mode].get(i)!.key)).size === modes.length)).toEqual(
+        expected,
+      );
+      // And only such a file is transpiled to something else in one of them.
+      const differs = names.filter((_, i) =>
+        modes.some(mode => !fresh[mode].get(i)!.output.equals(fresh.run.get(i)!.output)),
+      );
+      expect(differs.filter(name => !sources[name][2])).toEqual([]);
+      expect(differs).toContain("global describe");
+      expect(differs).toContain("global suite");
+      expect(differs).toContain("import vitest");
+      expect(differs).toContain("vi.doMock(import()), imported");
+      expect(differs).toContain("vi.mock(import()) that is pure");
+
+      for (const { first, second, afterFirst, afterSecond } of pairs) {
+        const differ = (entries: typeof afterFirst, mode: Mode) =>
+          names.filter((_, i) => !entries.get(i)?.bytes.equals(fresh[mode].get(i)!.bytes));
+        // What the cache holds after a run is what that run would have made with nothing in it,
+        expect([first, second, differ(afterFirst, first), differ(afterSecond, second)]).toEqual([
+          first,
+          second,
+          [],
+          [],
+        ]);
+        // and the second run wrote none of what the two share.
+        expect([
+          first,
+          second,
+          names.filter((_, i) => afterSecond.get(i)!.written !== afterFirst.get(i)!.written),
+        ]).toEqual([first, second, expected]);
+      }
+    },
+    120_000,
+  );
+
+  test.each([
+    ["vi.mock=replaced", `vi.mock("./dep.js", () => ({ a() {} }));`],
+    ["vi.hoisted=replaced", `const hoisted = vi.hoisted(() => 1);`],
+    ["vi=replaced", `vi.mock("./dep.js", () => ({ a() {} }));`],
+    ["named=describe", `export const g = () => named;`],
+    ["named.dot=expect", `export const g = () => named.dot;`],
+    ["named=vi", `export const g = () => named.doMock(import("./dep.js"), () => ({}));`],
+  ])(
+    "keep apart the entries of a file that uses it only without, or only with, --define %s",
+    async (define, statement) => {
+      using dir = tempDir("transpiler-cache-define", {
+        "source.js": `globalThis.id = "entry:0:";\nimport { a } from "./dep.js";\n${statement}\nexport function f() { return a(); }\n${padding}`,
+        "nothing.js": `globalThis.id = "entry:1:";\nimport { a } from "./dep.js";\nexport function f() { return a(); }\n${padding}`,
+        "dep.js": `export function a() {}`,
+        ...loader(["source.js", "nothing.js"], "import"),
+      });
+      const flags = ["--define", define];
+      const [runFirst, testFirst] = await Promise.all(
+        (
+          [
+            ["run", "test"],
+            ["test", "run"],
+          ] as const
+        ).map(async ([first, second], i) => {
+          const cache = join(String(dir), `.cache-${i}`);
+          await load(String(dir), cache, first, flags);
+          const afterFirst = readEntries(cache);
+          await load(String(dir), cache, second, flags);
+          return { afterFirst, afterSecond: readEntries(cache) };
+        }),
+      );
+      const fresh = { run: runFirst.afterFirst, test: testFirst.afterFirst };
+      expect({
+        differs: !fresh.run.get(0)!.output.equals(fresh.test.get(0)!.output),
+        keys: new Set([fresh.run.get(0)!.key, fresh.test.get(0)!.key, fresh.run.get(1)!.key, fresh.test.get(1)!.key])
+          .size,
+        testAfterRun: runFirst.afterSecond.get(0)!.bytes.equals(fresh.test.get(0)!.bytes),
+        runAfterTest: testFirst.afterSecond.get(0)!.bytes.equals(fresh.run.get(0)!.bytes),
+      }).toEqual({ differs: true, keys: 3, testAfterRun: true, runAfterTest: true });
+    },
+    60_000,
+  );
+
+  test("an entry of another version is replaced", async () => {
+    using dir = tempDir("transpiler-cache-version", {
+      "module.ts": `export const id: string = "entry:0:";\n${padding}`,
+      ...loader(["module.ts"], "import"),
+    });
+    const cache = join(String(dir), ".cache");
+    await load(String(dir), cache, "run");
+    const [name] = readdirSync(cache);
+    const entry = readFileSync(join(cache, name));
+    const older = Buffer.from(entry);
+    older.writeUInt32LE(entry.readUInt32LE(0) - 1, 0);
+    writeFileSync(join(cache, name), older);
+    for (const mode of ["test", "run"] as const) {
+      await load(String(dir), cache, mode);
+      expect(readdirSync(cache)).toEqual([name]);
+      expect(readFileSync(join(cache, name)).equals(entry)).toBe(true);
+    }
+  }, 60_000);
 });

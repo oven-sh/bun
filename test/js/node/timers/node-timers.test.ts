@@ -1,6 +1,7 @@
 import jsc from "bun:jsc";
 import { describe, expect, it, mock, test } from "bun:test";
 import { bunEnv, bunExe, bunRun, isWindows } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import path from "node:path";
 import { clearInterval, clearTimeout, promises, setImmediate, setInterval, setTimeout } from "node:timers";
 import { promisify } from "util";
@@ -374,4 +375,44 @@ describe.each(["with", "without"])("setImmediate %s timers running", mode => {
 
 it("should defer microtasks when an exception is thrown in an immediate", async () => {
   expect(await bunRun(["run", path.join(import.meta.dir, "timers-immediate-exception-fixture.js")])).toSpawn();
+});
+
+it("a promise assigned to _onTimeout is fulfilled with undefined, whatever the arguments of the timer are", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const results = [];
+        const thenable = { get then() { results.push("then was read"); } };
+        for (const args of [[], [1], [thenable], [1, 2], [1, 2, 3]]) {
+          const { promise } = Promise.withResolvers();
+          setTimeout(() => {}, 1, ...args)._onTimeout = promise;
+          const value = await promise;
+          results.push(Object.prototype.toString.call(value));
+        }
+        console.log(results.join());
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: Array(5).fill("[object Undefined]").join() + "\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
+it("_onTimeout is the callback inside AsyncLocalStorage.run()", () => {
+  const callback = () => {};
+  const timer = new AsyncLocalStorage().run(1, () => setTimeout(callback, 100_000, 1, 2));
+  try {
+    expect((timer as any)._onTimeout).toBe(callback);
+  } finally {
+    clearTimeout(timer);
+  }
 });

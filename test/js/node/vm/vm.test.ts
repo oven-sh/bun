@@ -1,11 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { totalmem } from "node:os";
+import * as pathNamespace from "node:path";
 import { join } from "node:path";
 import {
   compileFunction,
   constants,
   createContext,
+  isContext,
   runInContext,
   runInNewContext,
   runInThisContext,
@@ -1793,6 +1795,690 @@ describe("DONT_CONTEXTIFY", () => {
     ctx.fromOutside = 456;
     expect(runInContext("fromOutside", ctx)).toBe(456);
   });
+
+  test("the returned object is the context's globalThis", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    expect({
+      scriptThis: runInContext("this", ctx) === ctx,
+      globalThis: runInContext("globalThis", ctx) === ctx,
+      sloppyFunctionThis: runInContext("(function () { return this; })()", ctx) === ctx,
+      insideTheContext: runInContext("this === globalThis", ctx),
+      isContext: isContext(ctx),
+      createContextAgain: createContext(ctx) === ctx,
+    }).toEqual({
+      scriptThis: true,
+      globalThis: true,
+      sloppyFunctionThis: true,
+      insideTheContext: true,
+      isContext: true,
+      createContextAgain: true,
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/43671
+  test("a private field stamped on the returned object is found on `this` inside the context", () => {
+    class ReturnValue {
+      constructor(value: object) {
+        return value;
+      }
+    }
+    class Brand extends ReturnValue {
+      #brand = true;
+      static has(value: object) {
+        return #brand in value;
+      }
+    }
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    new Brand(ctx);
+    expect({
+      handle: Brand.has(ctx),
+      scriptThis: Brand.has(runInContext("this", ctx)),
+      globalThis: Brand.has(runInContext("globalThis", ctx)),
+    }).toEqual({ handle: true, scriptThis: true, globalThis: true });
+  });
+
+  test("top-level declarations are kept between scripts", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    runInContext("var declaredVar = 3; function declaredFunction() { return declaredVar + 1; }", ctx);
+    runInContext("let declaredLet = 5; const declaredConst = 6; class DeclaredClass {}", ctx);
+    runInContext("(0, eval)('var evalVar = 7')", ctx);
+    runInContext("implicitGlobal = 8", ctx);
+    new Script("var scriptVar = 9").runInContext(ctx);
+
+    expect(
+      runInContext(
+        "[declaredVar, declaredFunction(), declaredLet, declaredConst, typeof DeclaredClass, evalVar, implicitGlobal, scriptVar].join()",
+        ctx,
+      ),
+    ).toBe("3,4,5,6,function,7,8,9");
+    expect(Object.keys(ctx).sort()).toEqual([
+      "declaredFunction",
+      "declaredVar",
+      "evalVar",
+      "implicitGlobal",
+      "scriptVar",
+    ]);
+    expect({
+      declaredVar: Object.getOwnPropertyDescriptor(ctx, "declaredVar"),
+      declaredFunction: ctx.declaredFunction(),
+      evalVar: Object.getOwnPropertyDescriptor(ctx, "evalVar"),
+      implicitGlobal: Object.getOwnPropertyDescriptor(ctx, "implicitGlobal"),
+    }).toEqual({
+      declaredVar: { value: 3, writable: true, enumerable: true, configurable: false },
+      declaredFunction: 4,
+      evalVar: { value: 7, writable: true, enumerable: true, configurable: true },
+      implicitGlobal: { value: 8, writable: true, enumerable: true, configurable: true },
+    });
+    expect(() => runInContext("let declaredLet", ctx)).toThrow(expect.objectContaining({ name: "SyntaxError" }));
+    expect(() => runInContext("missingName", ctx)).toThrow(expect.objectContaining({ name: "ReferenceError" }));
+  });
+
+  test("the global has no interceptors", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    ctx.deletable = 1;
+    runInContext("var notDeletable = 1", ctx);
+    const symbol = Symbol("symbol");
+    (ctx as any)[symbol] = 2;
+    ctx[0] = 3;
+    expect({
+      builtinsAreOwn: Object.getOwnPropertyNames(ctx).includes("Array"),
+      deleted: [runInContext("delete globalThis.deletable", ctx), "deletable" in ctx],
+      notDeleted: [runInContext("delete globalThis.notDeletable", ctx), "notDeletable" in ctx],
+      symbol: runInContext("Object.getOwnPropertySymbols(globalThis)", ctx)[0] === symbol,
+      index: runInContext("this[0]", ctx),
+    }).toEqual({
+      builtinsAreOwn: true,
+      deleted: [true, false],
+      notDeleted: [false, true],
+      symbol: true,
+      index: 3,
+    });
+
+    const prototype = { fromPrototype: 4 };
+    Object.setPrototypeOf(ctx, prototype);
+    expect(runInContext("fromPrototype", ctx)).toBe(4);
+    expect(runInContext("Object.getPrototypeOf(globalThis)", ctx)).toBe(prototype);
+  });
+
+  test("Bun.inspect() prints its enumerable properties", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    expect(Bun.inspect(ctx)).toBe("{}");
+    ctx.assigned = 1;
+    expect(Bun.inspect(ctx)).toBe("{\n  assigned: 1,\n}");
+
+    const declared = createContext(constants.DONT_CONTEXTIFY);
+    runInContext("var declaredVar = 2; let declaredLet = 3", declared);
+    expect(Bun.inspect(declared)).toBe("{\n  declaredVar: 2,\n}");
+
+    expect(Bun.inspect(runInContext("this", createContext({ contextified: 4 })))).toBe("{\n  contextified: 4,\n}");
+  });
+
+  test("nothing can be declared on a frozen global", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    runInContext("Object.freeze(globalThis)", ctx);
+    const typeError = expect.objectContaining({ name: "TypeError" });
+    expect(Object.isFrozen(ctx)).toBe(true);
+    expect(() => runInContext("var declaredVar = 1", ctx)).toThrow(typeError);
+    expect(() => runInContext("function declaredFunction() {}", ctx)).toThrow(typeError);
+    expect(runInContext("let declaredLet = 1; declaredLet", ctx)).toBe(1);
+  });
+
+  test.each([
+    ["vm.runInNewContext()", (code: string, context: any, options?: any) => runInNewContext(code, context, options)],
+    [
+      "Script#runInNewContext()",
+      (code: string, context: any, options?: any) => new Script(code).runInNewContext(context, options),
+    ],
+  ])("%s", (_, run) => {
+    expect(
+      run("var a = 1; function b() {} [this === globalThis, typeof a, typeof b].join()", constants.DONT_CONTEXTIFY),
+    ).toBe("true,number,function");
+    expect(isContext(run("globalThis", constants.DONT_CONTEXTIFY))).toBe(true);
+    expect(() => run("eval('1')", constants.DONT_CONTEXTIFY, { contextCodeGeneration: { strings: false } })).toThrow(
+      expect.objectContaining({ name: "EvalError" }),
+    );
+
+    // There is no object to make a new context around: the code runs in the context it is given.
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    run("var declaredVar = 1; let declaredLet = 2", ctx);
+    expect(ctx.declaredVar).toBe(1);
+    expect(run("declaredLet", ctx)).toBe(2);
+    expect(run("globalThis", ctx)).toBe(ctx);
+  });
+
+  test("compileFunction() takes it as parsingContext", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    ctx.inContext = 11;
+    expect(compileFunction("return inContext", [], { parsingContext: ctx })()).toBe(11);
+    expect(() => compileFunction("return 1", [], { parsingContext: constants.DONT_CONTEXTIFY as any })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+  });
+
+  test("modules evaluate in it", async () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    const module = new SourceTextModule("export default Function('return this')()", { context: ctx });
+    await module.link(() => {
+      throw new Error("unreachable");
+    });
+    await module.evaluate();
+    expect((module.namespace as any).default).toBe(ctx);
+  });
+});
+
+describe.each([
+  ["DONT_CONTEXTIFY", () => createContext(constants.DONT_CONTEXTIFY)],
+  ["a contextified object", () => createContext({})],
+])("a bare identifier in %s", (_, makeContext) => {
+  // What jsdom does: the accessors and the Proxy are made in the outer realm, in strict mode.
+  function receiverName(inner: object, receiver: unknown) {
+    if (receiver === inner) return "globalThis";
+    if (receiver === globalThis) return "the outer globalThis";
+    return typeof receiver;
+  }
+
+  test("reaches accessors on the global's prototype chain with globalThis as `this`", () => {
+    const ctx = makeContext();
+    const inner = runInContext("this", ctx);
+    const receivers: string[] = [];
+    const prototype = Object.create(runInContext("Object.prototype", ctx), {
+      strict: {
+        get() {
+          receivers.push("get " + receiverName(inner, this));
+        },
+        set() {
+          receivers.push("set " + receiverName(inner, this));
+        },
+      },
+      sloppy: {
+        get: Function(
+          "push",
+          "return function () { push(this); }",
+        )((receiver: unknown) => receivers.push("sloppy get " + receiverName(inner, receiver))),
+      },
+    });
+    Object.setPrototypeOf(inner, prototype);
+
+    runInContext("strict; typeof strict; sloppy; (function () { 'use strict'; strict; })(); strict = 1;", ctx);
+    expect(receivers).toEqual([
+      "get globalThis",
+      "get globalThis",
+      "sloppy get globalThis",
+      "get globalThis",
+      "set globalThis",
+    ]);
+  });
+
+  test("passes globalThis as the receiver to a Proxy on the global's prototype chain", () => {
+    const ctx = makeContext();
+    const inner = runInContext("this", ctx);
+    const traps: string[] = [];
+    const target = { fromProxy: 7 };
+    const proxy = new Proxy(target, {
+      get(target, key, receiver) {
+        if (typeof key === "string") traps.push(`get ${key} ${receiverName(inner, receiver)}`);
+        return Reflect.get(target, key, receiver);
+      },
+      set(target, key, value, receiver) {
+        traps.push(`set ${String(key)} ${receiverName(inner, receiver)}`);
+        return Reflect.set(target, key, value, receiver);
+      },
+    });
+    // The running program installs it: https://github.com/oven-sh/bun/issues/42331
+    inner.install = () => Object.setPrototypeOf(inner, Object.create(proxy));
+
+    expect(
+      runInContext(
+        `install();
+        var results = [fromProxy];
+        createdByStore = 9;
+        results.push(createdByStore, Object.hasOwn(globalThis, "createdByStore"));
+        fromProxy = 8;
+        results.push(fromProxy, Object.hasOwn(globalThis, "fromProxy"));
+        results.join()`,
+        ctx,
+      ),
+    ).toBe("7,9,true,8,true");
+    expect(traps).toEqual(["get fromProxy globalThis", "set createdByStore globalThis", "set fromProxy globalThis"]);
+    expect(target).toEqual({ fromProxy: 7 });
+  });
+});
+
+// With such a cycle, looking up a name that nothing has never ends: hence another process, which is killed.
+test.concurrent("the prototype chain of the globalThis of a context cannot lead back to it", async () => {
+  const fixture = /* js */ `
+    const vm = require("node:vm");
+    const attempt = set => {
+      try {
+        return set();
+      } catch (error) {
+        return error.name;
+      }
+    };
+    const cycles = {
+      "itself": inner => Object.setPrototypeOf(inner, inner) === inner,
+      "its child": inner => Object.setPrototypeOf(inner, Object.create(inner)) === inner,
+      "its grandchild": inner => Object.setPrototypeOf(inner, Object.create(Object.create(inner))) === inner,
+      "__proto__": inner => void (inner.__proto__ = Object.create(inner)),
+      "Reflect": inner => Reflect.setPrototypeOf(inner, Object.create(inner)),
+      "from inside": inner => inner.eval("Object.setPrototypeOf(globalThis, Object.create(globalThis)) === globalThis"),
+      "its parent": inner => {
+        const parent = {};
+        Object.setPrototypeOf(inner, parent);
+        return Object.setPrototypeOf(parent, inner) === parent;
+      },
+      "its grandparent": inner => {
+        const grandparent = {};
+        Object.setPrototypeOf(inner, Object.create(grandparent));
+        return Reflect.setPrototypeOf(grandparent, Object.create(inner));
+      },
+      "through another context": (inner, other) => {
+        Object.setPrototypeOf(inner, other);
+        return Reflect.setPrototypeOf(other, inner);
+      },
+    };
+    const allowed = {
+      "an object": inner => {
+        const parent = { inherited: 1 };
+        Object.setPrototypeOf(inner, parent);
+        return [Object.getPrototypeOf(inner) === parent, inner.inherited, inner.eval("inherited")].join();
+      },
+      "null": inner => Object.getPrototypeOf(Object.setPrototypeOf(inner, null)),
+      "what was its parent inherits from it": inner => {
+        const parent = {};
+        const prototype = Object.getPrototypeOf(inner);
+        Object.setPrototypeOf(inner, parent);
+        Object.setPrototypeOf(inner, prototype);
+        return Reflect.setPrototypeOf(parent, inner);
+      },
+    };
+    for (const sandbox of [vm.constants.DONT_CONTEXTIFY, {}]) {
+      const make = () => vm.runInContext("this", vm.createContext(typeof sandbox === "object" ? {} : sandbox));
+      const inners = [];
+      const results = {};
+      for (const [name, set] of Object.entries({ ...cycles, ...allowed })) {
+        inners.push(make());
+        results[name] = attempt(() => set(inners.at(-1), make()));
+      }
+      console.log(JSON.stringify(results));
+      console.log(inners.map(inner => typeof inner.missing).join());
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 60_000,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const results = {
+    "itself": "TypeError",
+    "its child": "TypeError",
+    "its grandchild": "TypeError",
+    "__proto__": "TypeError",
+    "Reflect": false,
+    "from inside": "TypeError",
+    "its parent": "TypeError",
+    "its grandparent": false,
+    "through another context": false,
+    "an object": "true,1,1",
+    "null": null,
+    "what was its parent inherits from it": true,
+  };
+  const lookups = Array(Object.keys(results).length).fill("undefined").join();
+  const lines = stdout.split("\n").map(line => (line.startsWith("{") ? JSON.parse(line) : line));
+  expect({ lines, stderr, exitCode }).toEqual({
+    lines: [results, lookups, results, lookups, ""],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// The global of one context is the contextified object of the next.
+test.concurrent("operations on contexts that are nested too deeply are a RangeError", async () => {
+  const fixture = /* js */ `
+    const vm = require("node:vm");
+    const operations = {
+      "get": inner => inner.base,
+      "set": inner => void (inner.base = 2),
+      "set a new name": inner => void (inner.fresh = 2),
+      "define an accessor": inner => Reflect.defineProperty(inner, "accessor", { get() {}, configurable: true }),
+      "define a value": inner => Reflect.defineProperty(inner, "value", { value: 1, configurable: true, writable: true }),
+      "in": inner => "missing" in inner,
+      "getOwnPropertyDescriptor": inner => Object.getOwnPropertyDescriptor(inner, "missing"),
+      "hasOwn": inner => Object.hasOwn(inner, "base"),
+    };
+    let inner = { base: 1 };
+    // A level of the others takes less of the stack than one of "get", but not that much less.
+    let [every, limit] = [10, Infinity];
+    for (let depth = 1; depth <= limit && Object.keys(operations).length; depth++) {
+      inner = vm.runInContext("this", vm.createContext(inner));
+      if (depth % every) continue;
+      for (const name in operations) {
+        try {
+          operations[name](inner);
+        } catch (error) {
+          if (!(error instanceof RangeError)) throw error;
+          delete operations[name];
+          if (name === "get") [every, limit] = [depth, depth * 20];
+        }
+      }
+    }
+    console.log("went all the way down:", Object.keys(operations).join(", "));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    // So small a stack is used up by few enough contexts to make them here. What does not check goes on beyond this limit.
+    env: { ...bunEnv, BUN_JSC_maxPerThreadStackUsage: isDebug || isASAN ? "450000" : "200000" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "went all the way down: \n", stderr: "", exitCode: 0 });
+});
+
+test.concurrent("DONT_CONTEXTIFY: `this` of an accessor does not depend on how hot the code is", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const vm = require("node:vm");
+      console.log(vm.runInContext(\`
+        var wrong = 0;
+        var accessor = {
+          get() { "use strict"; if (this !== globalThis) wrong++; return 1; },
+          set() { "use strict"; if (this !== globalThis) wrong++; },
+        };
+        Object.defineProperty(globalThis, "own", accessor);
+        Object.setPrototypeOf(globalThis, Object.create(Object.prototype, { inherited: accessor }));
+        (function () {
+          for (var i = 0; i < 10000; i++) {
+            own + inherited;
+            own = inherited = i;
+          }
+        })();
+        wrong\`, vm.createContext(vm.constants.DONT_CONTEXTIFY)));`,
+    ],
+    // The optimizing tiers take over at a fixed iteration instead of whenever their threads are done.
+    env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0\n", stderr: "", exitCode: 0 });
+});
+
+// Running code in it made the global its own contextified object: every lookup recursed until the stack overflowed.
+test.concurrent("the globalThis of a contextified context is not itself a context", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const vm = require("node:vm");
+      const inner = vm.runInContext("this", vm.createContext({ fromSandbox: 1 }));
+      console.log(vm.isContext(inner));
+      for (const run of [() => vm.runInContext("fromSandbox", inner), () => new vm.Script("fromSandbox").runInContext(inner)]) {
+        try {
+          console.log(run());
+        } catch (e) {
+          console.log(e.code, e.message);
+        }
+      }`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const rejected = `ERR_INVALID_ARG_TYPE The "contextifiedObject" argument must be an vm.Context\n`;
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "false\n" + rejected + rejected, stderr: "", exitCode: 0 });
+});
+
+// Every expected value is what Node.js answers.
+describe.each([
+  ["is", (proxy: object) => proxy],
+  ["inherits from", (proxy: object) => Object.create(proxy)],
+])("a bare identifier when the contextified object %s a Proxy", (relation, contextified) => {
+  const notDefined = (name: string) =>
+    expect.objectContaining({ name: "ReferenceError", message: `${name} is not defined` });
+
+  test("a `get` trap answers for every name", () => {
+    const get = (_: object, key: string | symbol) => (key === "answered" ? 42 : undefined);
+    for (const handler of [{ get }, { get, has: () => false }, { get, has: () => true }]) {
+      for (const proxy of [new Proxy({}, handler), new Proxy(new Proxy({}, handler), {})]) {
+        const context = createContext(contextified(proxy));
+        for (const directive of ["", "'use strict';"]) {
+          expect(
+            runInContext(
+              `${directive} [answered, typeof answered, unanswered, typeof unanswered, typeof Array]`,
+              context,
+            ),
+          ).toEqual([42, "number", undefined, "undefined", "undefined"]);
+        }
+      }
+    }
+  });
+
+  test("without a `get` trap it has what its target has", () => {
+    for (const handler of [{}, { get: undefined }, { get: null as never }, { has: () => false }]) {
+      for (const target of [
+        { held: 1 },
+        Object.create({ held: 1 }),
+        new Proxy({ held: 1 }, handler),
+        Object.create(new Proxy({ held: 1 }, handler)),
+      ]) {
+        const context = createContext(contextified(new Proxy(target, handler)));
+        for (const directive of ["", "'use strict';"]) {
+          expect(
+            runInContext(`${directive} [held, typeof held, typeof absent, typeof Array, globalThis === this]`, context),
+          ).toEqual([1, "number", "undefined", "function", true]);
+          expect(() => runInContext(`${directive} absent`, context)).toThrow(notDefined("absent"));
+        }
+      }
+    }
+  });
+
+  test("calls, compound assignments, assignments and deletes", () => {
+    const target: Record<string, unknown> = { counter: 1, twice: (n: number) => n * 2 };
+    const proxy = new Proxy(target, {});
+    const sandbox = contextified(proxy);
+    const context = createContext(sandbox);
+    expect(
+      runInContext(
+        `var results = [twice(4), (function () { "use strict"; return twice(5); })()];
+        counter += 1;
+        results.push(counter);
+        counter++;
+        results.push(counter);
+        counter = 10;
+        results.push(counter);
+        created = 11;
+        results.push(created, delete created, delete counter);
+        results`,
+        context,
+      ),
+    ).toEqual([8, 10, 2, 3, 10, 11, true, true]);
+    expect(runInContext("[typeof created, counter]", context)).toEqual([typeof sandbox.created, sandbox.counter]);
+    expect(target.counter).toBe(sandbox === proxy ? 10 : 1);
+    // Strict code stores to what the contextified object has itself. For Node.js a Proxy has nothing itself.
+    if (sandbox !== proxy) {
+      expect(() => runInContext("'use strict'; counter = 5", context)).toThrow(notDefined("counter"));
+      expect(
+        runInContext("counter = 5; (function () { 'use strict'; counter += 1; counter++; })(); counter", context),
+      ).toBe(7);
+    }
+
+    for (const code of ["absent()", "absent += 1", "absent++", "'use strict'; absent = 1"])
+      expect(() => runInContext(code, context)).toThrow(notDefined("absent"));
+    expect("absent" in sandbox).toBe(false);
+
+    const everyName = createContext(contextified(new Proxy({}, { get: () => undefined })));
+    expect(() => runInContext("unanswered()", everyName)).toThrow(expect.objectContaining({ name: "TypeError" }));
+  });
+
+  test("getters and `get` traps see the contextified object", () => {
+    const receivers: unknown[] = [];
+    const behindGetter = contextified(
+      new Proxy(
+        {
+          get viaGetter() {
+            receivers.push(this);
+            return 1;
+          },
+        },
+        {},
+      ),
+    );
+    expect(runInContext("[viaGetter, typeof viaGetter]", createContext(behindGetter))).toEqual([1, "number"]);
+    expect(receivers.map(receiver => receiver === behindGetter)).toEqual([true, true]);
+
+    const traps: unknown[][] = [];
+    const behindTrap = contextified(
+      new Proxy(
+        {},
+        {
+          get(_, key, receiver) {
+            traps.push([key, receiver === behindTrap]);
+            return key === "itself" ? behindTrap : 2;
+          },
+        },
+      ),
+    );
+    const context = createContext(behindTrap);
+    expect(runInContext("[viaTrap, typeof viaTrap]", context)).toEqual([2, "number"]);
+    expect(traps).toEqual([
+      ["viaTrap", true],
+      ["viaTrap", true],
+    ]);
+    // The contextified object never gets into the context.
+    expect(runInContext("itself === this", context)).toBe(true);
+
+    const trapsRead: (string | symbol)[] = [];
+    const handler = new Proxy(
+      {},
+      {
+        get(_, trap) {
+          trapsRead.push(trap);
+          return trap === "get" ? () => 3 : undefined;
+        },
+      },
+    );
+    const behindHandler = createContext(contextified(new Proxy({}, handler)));
+    trapsRead.length = 0;
+    expect(runInContext("viaTrap", behindHandler)).toBe(3);
+    expect(trapsRead.filter(trap => trap === "get")).toEqual(["get"]);
+  });
+
+  test("a trap that throws or breaks an invariant, a revoked Proxy and a prototype cycle", () => {
+    const thrown = new RangeError("thrown by the trap");
+    const thrower = () => {
+      throw thrown;
+    };
+    const run = (code: string, proxy: object) => runInContext(code, createContext(contextified(proxy)));
+    const typeError = expect.objectContaining({ name: "TypeError" });
+
+    expect(() => run("typeof Array", new Proxy({ held: 1 }, { get: thrower }))).toThrow(thrown);
+    expect(run("[typeof Array, globalThis.held, this.held]", new Proxy({ held: 1 }, { has: thrower }))).toEqual([
+      "function",
+      1,
+      1,
+    ]);
+    expect(
+      run(
+        "[held, typeof held, typeof absent, typeof Array]",
+        new Proxy({ held: 1 }, { getOwnPropertyDescriptor: thrower }),
+      ),
+    ).toEqual([1, "number", "undefined", "function"]);
+
+    const frozen = Object.freeze({ Array: 1 });
+    expect(run("Array", new Proxy(frozen, { get: () => 1 }))).toBe(1);
+    expect(() => run("Array", new Proxy(frozen, { get: () => 2 }))).toThrow(typeError);
+
+    const { proxy: revoked, revoke } = Proxy.revocable({ held: 1 }, {});
+    revoke();
+    expect(() => run("typeof Array", revoked)).toThrow(typeError);
+
+    const target = { held: 1 };
+    const cycle = new Proxy(target, {});
+    Object.setPrototypeOf(target, cycle);
+    expect(run("[held, typeof held]", cycle)).toEqual([1, "number"]);
+    expect(() => run("typeof Array", cycle)).toThrow(expect.objectContaining({ name: "RangeError" }));
+  });
+
+  test.concurrent.each([
+    ["sloppy", ""],
+    ["strict", `"use strict";`],
+  ])("%s code reads the same in every tier", async (_, directive) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const vm = require("node:vm");
+        // One small loop each: a function that is large, or compiled again after a wrong guess, needs more iterations to get to the last tier.
+        const code = \`(function () {
+          ${directive}
+          function readsHeld() {
+            var count = 0;
+            for (var i = 0; i < 200000; i++) count += held;
+            return count;
+          }
+          function callsOne() {
+            var count = 0;
+            for (var i = 0; i < 200000; i++) if (i % 64 === 0) count += one();
+            return count;
+          }
+          function typeOfHeld() {
+            var count = 0;
+            for (var i = 0; i < 200000; i++) if (i % 64 === 0 && typeof held === "number") count++;
+            return count;
+          }
+          function typeOfAbsent() {
+            var count = 0;
+            for (var i = 0; i < 200000; i++) if (i % 64 === 0 && typeof absent === "undefined") count++;
+            return count;
+          }
+          function readsAbsent() {
+            var undefineds = 0, errors = 0;
+            for (var i = 0; i < 200000; i++) {
+              if (i % 1024 === 0) {
+                try {
+                  if (absent === void 0) undefineds++;
+                } catch (e) {
+                  if (e.name === "ReferenceError") errors++;
+                }
+              }
+            }
+            return undefineds + " undefined " + errors + " ReferenceError";
+          }
+          return [readsHeld(), callsOne(), typeOfHeld(), typeOfAbsent(), readsAbsent()];
+        })()\`;
+        for (const handler of [{}, { get: Reflect.get }]) {
+          const proxy = new Proxy({ held: 1, one: () => 1 }, handler);
+          console.log(vm.runInContext(code, vm.createContext(${relation === "is"} ? proxy : Object.create(proxy))).join());
+        }`,
+      ],
+      // The optimizing tiers take over at a fixed iteration instead of whenever their threads are done.
+      env: { ...bunEnv, BUN_JSC_useConcurrentJIT: "0" },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout:
+        "200000,3125,3125,3125,0 undefined 196 ReferenceError\n" +
+        "200000,3125,3125,3125,196 undefined 0 ReferenceError\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
+test("a bare identifier when the contextified object inherits from a module namespace object", () => {
+  const context = createContext(Object.create(pathNamespace));
+  expect(runInContext("[typeof join, typeof absent, typeof Array]", context)).toEqual([
+    "function",
+    "undefined",
+    "function",
+  ]);
+  expect(runInContext("join", context)).toBe(pathNamespace.join);
 });
 
 describe("defineProperty errors use vm-realm global", () => {
@@ -2430,14 +3116,15 @@ test("SourceTextModule#evaluate() arms the timeout when the number is boxed as a
 });
 
 // A vm timeout that lands while a host function beneath the timed script is spinning a nested event-loop
-// wait (expect().resolves ticks the loop until its promise settles) must unwind to the run and surface as
+// wait (Bun.build() ticks the loop until the promise of a plugin's setup() settles) must unwind to the run and surface as
 // ERR_SCRIPT_EXECUTION_TIMEOUT; the nested wait used to keep ticking over the pending termination (a hang).
 // In a child, like the other unbounded waits above.
 test.concurrent("timeout during a nested event-loop wait beneath the script", async () => {
   const code = `
-    const vm = require("node:vm"); const { expect } = require("bun:test");
+    const vm = require("node:vm");
     const never = new Promise(() => {}); const iv = setInterval(() => {}, 1);
-    try { vm.runInNewContext("expect(never).resolves.toBe(1)", { expect, never }, { timeout: 100 }); console.log("returned"); }
+    const script = "Bun.build({ entrypoints: ['./x.js'], plugins: [{ name: 'never', setup: () => never }] })";
+    try { vm.runInNewContext(script, { Bun, never }, { timeout: 100 }); console.log("returned"); }
     catch (e) { console.log(e.code); } finally { clearInterval(iv); }
   `;
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
@@ -2666,13 +3353,15 @@ test.concurrent("a FinalizationRegistry cleanup job is dropped when its context 
     const nextTurn = () => new Promise(resolve => setImmediate(resolve));
     const liveContextCleanedUp = Promise.withResolvers();
     let liveContext;
-    let deadContextCleanups = 0;
+    let dropped;
+    const cleanups = [0, 0, 0, 0];
 
     function setup() {
       // A collection sweeps the first 8 cells of a type itself and leaves the rest for later. ~JSGlobalObject
       // cancels the job too, so these contexts are past the first 8 and their registries are not.
       const swept = Array.from({ length: 8 }, () => vm.createContext({}));
-      const contexts = Array.from({ length: 4 }, () => vm.createContext({ onCleanup: () => deadContextCleanups++ }));
+      const contexts = Array.from({ length: 4 }, (_, i) => vm.createContext({ onCleanup: () => cleanups[i]++ }));
+      dropped = contexts.map(context => new WeakRef(context));
       liveContext = vm.createContext({ onCleanup: liveContextCleanedUp.resolve });
       contexts.push(liveContext);
       for (const context of contexts) vm.runInContext("globalThis.registry = new FinalizationRegistry(onCleanup)", context);
@@ -2684,14 +3373,16 @@ test.concurrent("a FinalizationRegistry cleanup job is dropped when its context 
     await nextTurn();
     edenGC(); // The registered objects are dead: every registry posts its cleanup job.
     fullGC(); // All contexts but one are dead, and their registries are destroyed.
+    // But for one that a word on the native stack still points at: its job is to run.
+    const died = dropped.map(context => context.deref() === undefined);
     await liveContextCleanedUp.promise;
     await nextTurn(); // A job posted after the live context's has run by now too.
-    console.log({ deadContextCleanups });
+    console.log({ someDied: died.includes(true), deadContextCleanups: cleanups.filter((_, i) => died[i]) });
   `;
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: "{\n  deadContextCleanups: 0,\n}\n",
+    stdout: expect.stringMatching(/^\{\n  someDied: true,\n  deadContextCleanups: \[ (0, )*0 \],\n\}\n$/),
     stderr: "",
     exitCode: 0,
   });
@@ -2729,4 +3420,47 @@ test.concurrent("Atomics.notify does not wake the Atomics.waitAsync of a context
     stderr: "",
     exitCode: 0,
   });
+});
+
+test.concurrent("contexts that nothing refers to are collected, the last one made as well", async () => {
+  const fixture = /* js */ `
+    const vm = require("node:vm");
+    const { heapStats } = require("bun:jsc");
+    (function make() {
+      for (let i = 0; i < 20; i++) {
+        vm.createContext({ i });
+        vm.createContext(vm.constants.DONT_CONTEXTIFY);
+        vm.runInNewContext("1", { i });
+        new vm.Script("1").runInNewContext({ i });
+      }
+    })();
+    Bun.gc(true);
+    console.log(heapStats().objectTypeCounts.NodeVMGlobalObject ?? 0);
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0\n", stderr: "", exitCode: 0 });
+});
+
+test.each([
+  ["a Proxy", () => new Proxy({ first: "one", second: "two" }, {})],
+  ["import.meta.env", () => import.meta.env],
+])("the global lists the properties of a contextified object that lists them itself: %s", (_, object) => {
+  const env = process.env;
+  process.env = { first: "one", second: "two" };
+  try {
+    const context = createContext(object());
+    const listed = runInContext(
+      `(() => {
+        const names = [];
+        for (const name in globalThis) names.push(name);
+        return { keys: Object.keys(globalThis), ownKeys: Reflect.ownKeys(globalThis), forIn: names };
+      })()`,
+      context,
+    );
+    const both = expect.arrayContaining(["first", "second"]);
+    expect(listed).toEqual({ keys: both, ownKeys: both, forIn: both });
+  } finally {
+    process.env = env;
+  }
 });

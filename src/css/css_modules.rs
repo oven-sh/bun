@@ -2,9 +2,15 @@ use core::fmt::Arguments;
 
 use bun_alloc::Arena as Bump;
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
+use bun_ast::{ImportRecord, Log, Range, Ref, Source};
 use bun_collections::ArrayHashMap;
+use bun_core::StackCheck;
+use bun_core::fmt::quote;
 
 use crate as css;
+use css::css_parser::LocalEntry;
+use css::css_properties::css_modules::{Composes, Specifier};
+use css::{BundlerStyleSheet, CssRef};
 
 // ─────────────────────────────────────────────────────────────────────────
 // `reference_dashed`'s `dest.importRecord()` lookup is hoisted to the caller (see the comment
@@ -108,7 +114,6 @@ impl<'a> CssModule<'a> {
         specifier_path: Option<&'a [u8]>,
         source_index: u32,
     ) -> Option<&'a [u8]> {
-        use css::css_properties::css_modules::Specifier;
         let (reference, key): (CssModuleReference<'a>, &'a [u8]) = match from {
             Some(Specifier::Global) => return Some(&name[2..]),
             Some(Specifier::ImportRecordIndex(_)) => {
@@ -422,12 +427,217 @@ pub enum CssModuleReference<'a> {
     },
 }
 
-/// LAYERING: canonical implementation lives in `bun_base64::wyhash_url_safe`
-/// (a leaf crate) so `bun_bundler::LinkerContext::mangle_local_css` can call
-/// the *same* hasher without depending on `bun_css`. Re-export here so
-/// in-crate callers (`dependencies.rs`, `rules/import.rs`) keep the
-/// `css_modules::hash` path.
 #[inline]
 pub(crate) fn hash<'a>(bump: &'a Bump, args: Arguments<'_>, at_start: bool) -> &'a [u8] {
     bun_base64::wyhash_url_safe(bump, args, at_start)
+}
+
+/// Whether the file at `path` is a CSS module.
+pub fn is_module_path(path: &[u8]) -> bool {
+    const SUFFIX: &[u8] = b".module.css";
+    path.len() > SUFFIX.len() && path.ends_with(SUFFIX)
+}
+
+/// The name that `local`, a class or id of the CSS module at `pretty_path`, is renamed to.
+pub fn scoped_name(scratch: &Bump, pretty_path: &[u8], local: &[u8]) -> Box<[u8]> {
+    use std::io::Write as _;
+    let path_hash = hash(
+        scratch,
+        // use path relative to cwd for determinism
+        format_args!("{}", bstr::BStr::new(pretty_path)),
+        false,
+    );
+    let mut name = Vec::<u8>::new();
+    write!(
+        &mut name,
+        "{}_{}",
+        bstr::BStr::new(local),
+        bstr::BStr::new(path_hash)
+    )
+    .expect("infallible: in-memory write");
+    name.into_boxed_slice()
+}
+
+/// One of the space-separated names in the string a CSS module exports for a local.
+#[derive(Clone, Copy)]
+pub enum ExportedName<'a> {
+    /// A local of the file `Ref::source_index`, exported as its scoped name.
+    Local(Ref),
+    /// `composes: name from global`, exported as written.
+    Global(&'a [u8]),
+}
+
+/// The files that `composes: name from "file"` can reach, by source index.
+pub trait ComposesGraph {
+    /// `None` when the file is not CSS.
+    fn stylesheet(&self, source_index: u32) -> Option<&BundlerStyleSheet>;
+    fn source(&self, source_index: u32) -> &Source;
+    fn import_record(&self, source_index: u32, import_record_index: u32) -> &ImportRecord;
+}
+
+/// Follows `composes` to find what a CSS module exports for each of its locals.
+pub struct ComposesVisitor<'a> {
+    graph: &'a dyn ComposesGraph,
+    visited: ArrayHashMap<Ref, ()>,
+    names: Vec<ExportedName<'a>>,
+    stack_check: StackCheck,
+    /// A chain of `composes` was cut short for lack of stack.
+    pub out_of_stack: bool,
+}
+
+impl<'a> ComposesVisitor<'a> {
+    pub fn new(graph: &'a dyn ComposesGraph) -> Self {
+        Self {
+            graph,
+            visited: ArrayHashMap::new(),
+            names: Vec::new(),
+            stack_check: StackCheck::init(),
+            out_of_stack: false,
+        }
+    }
+
+    /// What `sheet`, the file `source_index`, exports for `local`: the classes it composes, then `local`.
+    pub fn exported_names(
+        &mut self,
+        sheet: &'a BundlerStyleSheet,
+        local: CssRef,
+        source_index: u32,
+        log: &mut Log,
+    ) -> &[ExportedName<'a>] {
+        self.visited.clear_retaining_capacity();
+        self.names.clear();
+        self.visit_local(sheet, local, source_index, log);
+        &self.names
+    }
+
+    fn visit_local(
+        &mut self,
+        sheet: &'a BundlerStyleSheet,
+        local: CssRef,
+        source_index: u32,
+        log: &mut Log,
+    ) {
+        let ref_ = local.to_real_ref(source_index);
+        if self.visited.insert(ref_, ()).is_some() {
+            return;
+        }
+        if let Some(entry) = sheet.composes.get(&ref_) {
+            // while parsing we check that we only allow `composes` on single class selectors
+            debug_assert!(local.can_be_composed());
+            for compose in &entry.composes {
+                self.visit_compose(sheet, compose, source_index, log);
+            }
+        }
+        self.names.push(ExportedName::Local(ref_));
+    }
+
+    fn visit_compose(
+        &mut self,
+        sheet: &'a BundlerStyleSheet,
+        compose: &'a Composes,
+        source_index: u32,
+        log: &mut Log,
+    ) {
+        if !self.stack_check.is_safe_to_recurse() {
+            self.out_of_stack = true;
+            log.add_error_fmt(
+                self.graph.source(source_index),
+                compose.loc,
+                format_args!("Maximum \"composes\" depth exceeded"),
+            );
+            return;
+        }
+        match compose.from {
+            // it is imported
+            Some(Specifier::ImportRecordIndex(import_record_index)) => {
+                let other_index = self
+                    .graph
+                    .import_record(source_index, import_record_index)
+                    .source_index;
+                if !other_index.is_valid() {
+                    return;
+                }
+                let other_index = other_index.get();
+                let Some(other_sheet) = self.graph.stylesheet(other_index) else {
+                    log.add_error_fmt(
+                        self.graph.source(source_index),
+                        compose.loc,
+                        format_args!(
+                            "Cannot use the \"composes\" property with the {} file (it is not a CSS file)",
+                            quote(self.graph.source(other_index).path.pretty),
+                        ),
+                    );
+                    return;
+                };
+                for name in compose.names.slice() {
+                    if let Some(other) = other_sheet.local_scope.get(name.v()) {
+                        self.visit_composed(
+                            other_sheet,
+                            name.v(),
+                            other,
+                            other_index,
+                            compose,
+                            log,
+                        );
+                    }
+                }
+            }
+            // `foo` in `composes: foo from global` is not renamed
+            Some(Specifier::Global) => {
+                for name in compose.names.slice() {
+                    self.names.push(ExportedName::Global(name.v()));
+                }
+            }
+            // it is from the current file
+            None => {
+                for name in compose.names.slice() {
+                    let Some(local) = sheet.local_scope.get(name.v()) else {
+                        log.add_error_fmt(
+                            self.graph.source(source_index),
+                            compose.loc,
+                            format_args!(
+                                "The name {} never appears in {} as a CSS modules locally scoped class name. Note that \"composes\" only works with single class selectors.",
+                                quote(name.v()),
+                                quote(self.graph.source(source_index).path.pretty),
+                            ),
+                        );
+                        continue;
+                    };
+                    self.visit_composed(sheet, name.v(), local, source_index, compose, log);
+                }
+            }
+        }
+    }
+
+    /// `compose` names `name`, which is `local` in `sheet`, the file `source_index`.
+    fn visit_composed(
+        &mut self,
+        sheet: &'a BundlerStyleSheet,
+        name: &[u8],
+        local: &LocalEntry,
+        source_index: u32,
+        compose: &Composes,
+        log: &mut Log,
+    ) {
+        if !local.ref_.can_be_composed() {
+            log.add_range_error_fmt_with_note(
+                Some(self.graph.source(source_index)),
+                Range {
+                    loc: compose.loc,
+                    ..Default::default()
+                },
+                format_args!(
+                    "The composes property cannot be used with {}, because it is not a single class name.",
+                    quote(name),
+                ),
+                format_args!("The definition of {} is here.", quote(name)),
+                Range {
+                    loc: local.loc,
+                    ..Default::default()
+                },
+            );
+            return;
+        }
+        self.visit_local(sheet, local.ref_, source_index, log);
+    }
 }

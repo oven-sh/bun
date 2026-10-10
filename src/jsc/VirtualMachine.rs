@@ -260,6 +260,8 @@ pub struct VirtualMachine {
 
     /// Used by bun:test to set global hooks for beforeAll, beforeEach, etc.
     pub is_in_preload: bool,
+    /// `Watcher::get_hash()` of the path of the preload script that is loaded.
+    pub preload_hash: u32,
     pub has_patched_run_main: bool,
 
     pub transpiler_store: crate::runtime_transpiler_store::RuntimeTranspilerStore,
@@ -370,6 +372,8 @@ pub struct VirtualMachine {
     /// graph has been collected; its context may not have been stopped yet: that is queued from
     /// the finalizer). Not the current context: that is what the async context says.
     pub(crate) entered_context: Cell<Option<crate::ContextId>>,
+    /// An `onResolve` callback of `Bun.plugin()` is on the stack.
+    pub(crate) is_in_on_resolve: Cell<bool>,
     pub test_isolation_enabled: bool,
     /// Counts `bun test --isolate` file swaps. The realm's context keeps its identifier across
     /// them, so a timer or pool job of the realm's remembers the count it was made under: one
@@ -1671,17 +1675,23 @@ impl VirtualMachine {
     #[inline]
     pub fn rare_data(&mut self) -> &mut RareData {
         if self.rare_data.is_none() {
-            let rd = Box::new(RareData::default());
-            // RareData embeds the per-VM `us_socket_group_t` heads as value fields.
-            // Registering the allocation as a root region lets LSAN trace
-            // `RareData → group.head_sockets → us_socket_t`.
-            bun_core::asan::register_root_region(
-                core::ptr::from_ref::<RareData>(&*rd).cast(),
-                core::mem::size_of::<RareData>(),
-            );
-            self.rare_data = Some(rd);
+            self.init_rare_data();
         }
         self.rare_data.as_mut().unwrap()
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn init_rare_data(&mut self) {
+        let rd = Box::new(RareData::default());
+        // RareData embeds the per-VM `us_socket_group_t` heads as value fields.
+        // Registering the allocation as a root region lets LSAN trace
+        // `RareData → group.head_sockets → us_socket_t`.
+        bun_core::asan::register_root_region(
+            core::ptr::from_ref::<RareData>(&*rd).cast(),
+            core::mem::size_of::<RareData>(),
+        );
+        self.rare_data = Some(rd);
     }
 
     /// Raw projection to the lazily-allocated `RareData`, for callers holding a borrow into it across re-entry (never forms `&mut RareData`).
@@ -1750,27 +1760,84 @@ impl VirtualMachine {
         }
     }
 
-    pub fn is_event_loop_alive_excluding_immediates(&self) -> bool {
+    fn is_platform_loop_active(&self) -> bool {
+        self.platform_loop_opt().is_some_and(|h| h.is_active())
+    }
+
+    fn has_queued_work_excluding_immediates(&self) -> bool {
         let el = self.event_loop_shared();
-        let active = self
-            .platform_loop_opt()
-            .map(|h| h.is_active())
-            .unwrap_or(false);
+        self.active_tasks > 0
+            || el.has_pending_tasks()
+            || !el.yield_tasks.is_empty()
+            || el.has_pending_refs()
+    }
+
+    fn has_immediates(&self) -> bool {
+        let el = self.event_loop_shared();
+        !el.immediate_tasks.is_empty() || !el.next_immediate_tasks.is_empty()
+    }
+
+    pub fn is_event_loop_alive_excluding_immediates(&self) -> bool {
         self.unhandled_error_counter == 0
-            && ((active as usize)
-                + self.active_tasks
-                + el.tasks.readable_length()
-                + el.yield_tasks.len()
-                + (el.has_concurrent_tasks() as usize)
-                + (el.has_pending_refs() as usize)
-                > 0)
+            && (self.is_platform_loop_active() || self.has_queued_work_excluding_immediates())
     }
 
     pub fn is_event_loop_alive(&self) -> bool {
-        let el = self.event_loop_shared();
-        self.is_event_loop_alive_excluding_immediates()
-            || !el.immediate_tasks.is_empty()
-            || !el.next_immediate_tasks.is_empty()
+        self.is_event_loop_alive_excluding_immediates() || self.has_immediates()
+    }
+
+    /// [`is_event_loop_alive`](Self::is_event_loop_alive) for `bun test`, which goes on after an unhandled error.
+    pub(crate) fn is_event_loop_alive_despite_errors(&self) -> bool {
+        self.is_platform_loop_active()
+            || self.has_queued_work_excluding_immediates()
+            || self.has_immediates()
+    }
+
+    /// Whether anything is left that could run script again. [`is_event_loop_alive`](Self::is_event_loop_alive) asks
+    /// what keeps the process alive; a handle or a timer that does not (unref'd) can still settle what a wait is for.
+    pub fn has_work_left(&self) -> bool {
+        // Read before the queues: the waiter thread posts a child's exit, then stops counting the child.
+        #[cfg(unix)]
+        if bun_spawn::process::WaiterThread::is_watching() {
+            return true;
+        }
+        if self.has_queued_work_excluding_immediates() || self.has_immediates() {
+            return true;
+        }
+        let timers =
+            runtime_hooks().map_or_else(TimersLeft::default, |hooks| (hooks.timers_left)());
+        timers.armed
+            || self.has_handles(timers.holds_loop_ref)
+            || self.has_handles_off_the_loop()
+            || crate::cpp::Bun__hasDeferredWorkNotKeepingEventLoopAlive(self.global())
+    }
+
+    /// What wakes the loop from a thread of its own: a `Worker`, `fs.watch()`, a napi threadsafe function.
+    fn has_handles_off_the_loop(&self) -> bool {
+        !self.child_workers.is_empty() || !self.root_context.owns_nothing()
+    }
+
+    /// Every ref on the loop counts as a poll too.
+    #[cfg(not(windows))]
+    fn has_handles(&self, timers_hold_loop_ref: bool) -> bool {
+        let rare = self.rare_data.as_deref();
+        // The only socket of a `--parallel` worker's group is the one to its coordinator.
+        let has_coordinator =
+            rare.is_some_and(|rare| !rare.test_parallel_ipc_group.head_sockets.is_null());
+        // `process.stdout` on a pipe, for one, with nothing left to write.
+        let disarmed = rare
+            .and_then(|rare| rare.file_polls.as_deref())
+            .map_or(0, bun_io::Store::disarmed_count);
+        let fires_nothing = i32::from(timers_hold_loop_ref) + i32::from(has_coordinator) + disarmed;
+        self.platform_loop_opt()
+            .is_some_and(|h| h.num_polls > fires_nothing)
+    }
+
+    /// `uv_loop_alive` cannot leave out the timers' ref, nor the pipe to a `--parallel` worker's coordinator.
+    #[cfg(windows)]
+    fn has_handles(&self, _timers_hold_loop_ref: bool) -> bool {
+        self.platform_loop_opt()
+            .is_some_and(|h| h.is_active() || h.has_active_io_handles())
     }
 
     pub fn wakeup(&mut self) {
@@ -2715,6 +2782,15 @@ pub struct WorkerExecArgvFlags {
     pub invalid: Option<usize>,
 }
 
+/// The timers' part of [`VirtualMachine::has_work_left`].
+#[derive(Copy, Clone, Default)]
+pub struct TimersLeft {
+    /// A timer other than the runtime's own upkeep is armed on the real clock.
+    pub armed: bool,
+    /// The one ref on the loop that the ref'd JS timers share. The faked ones, which nothing fires, share it too.
+    pub holds_loop_ref: bool,
+}
+
 pub struct RuntimeHooks {
     /// `bun.api.Timer.All.init()` + `Body.Value.HiveAllocator.init()` +
     /// `configureDebugger()` — everything `init()` does that names a
@@ -2775,6 +2851,8 @@ pub struct RuntimeHooks {
     ),
     /// `FakeTimers::min_delay_ms()` of the calling thread's VM. A slot for the same reason as `timer_insert`.
     pub timer_min_delay_ms: fn() -> u32,
+    /// Of the calling thread's VM. A slot for the same reason as `timer_insert`.
+    pub timers_left: fn() -> TimersLeft,
     /// `RareData.defaultClientSslCtx()` — lazy default-trust-store client
     /// `SSL_CTX*`, shared by every `tls: true` outbound connection that didn't
     /// supply explicit options. The storage slot lives in `RareData`
@@ -4838,6 +4916,7 @@ impl VirtualMachine {
     /// Builds a `ResolvedSource` backed by a ref-counted copy of `code` interned in the VM's ref-string map.
     pub fn ref_counted_resolved_source(
         &mut self,
+        ast: crate::resolved_source::PrintedAst,
         code: &[u8],
         specifier: &bun_core::String,
         source_url: &[u8],
@@ -4847,7 +4926,7 @@ impl VirtualMachine {
         if code.is_empty() {
             return ResolvedSource {
                 source_url: specifier.create_if_different(source_url),
-                ..Default::default()
+                ..ResolvedSource::printed(ast, Default::default())
             };
         }
         let source = self.ref_counted_string::<true>(code, hash_);
@@ -4856,9 +4935,8 @@ impl VirtualMachine {
         let source_ref = unsafe { &*source };
 
         ResolvedSource {
-            source_code: bun_core::String::retain_wtf_impl(source_ref.impl_),
             source_url: specifier.create_if_different(source_url),
-            ..Default::default()
+            ..ResolvedSource::printed(ast, bun_core::String::retain_wtf_impl(source_ref.impl_))
         }
     }
 
@@ -4945,6 +5023,7 @@ impl VirtualMachine {
         global_object: &JSGlobalObject,
         specifier: &bun_core::String,
         referrer: &bun_core::String,
+        loader: Option<bun_ast::Loader>,
         log: &mut bun_ast::Log,
         flags: FetchFlags,
     ) -> crate::CrateResult<ResolvedSource> {
@@ -5025,7 +5104,7 @@ impl VirtualMachine {
             // `'static` only because it crosses the §Dispatch boundary as
             // `*mut c_void` — the hook never retains the borrow.
             path: unsafe { lr.path.into_static() },
-            loader: lr.loader.unwrap_or(if lr.is_main {
+            loader: loader.or(lr.loader).unwrap_or(if lr.is_main {
                 bun_ast::Loader::Js
             } else {
                 bun_ast::Loader::File
@@ -5106,7 +5185,7 @@ impl VirtualMachine {
         if let Some(result) = ModuleLoader::HardcodedModule::Alias::get(
             specifier,
             bun_ast::Target::Bun,
-            Default::default(),
+            ModuleLoader::alias_cfg(),
         ) {
             ret.path = result.path.as_bytes();
             return Ok(());
@@ -5181,11 +5260,16 @@ impl VirtualMachine {
                     // SAFETY: thread-local heap allocation; sole `&mut` on the JS
                     // thread for the duration of the bust below.
                     let buf = unsafe { &mut *specifier_cache_resolver_buf() }.as_mut_slice();
+                    let mut busted_as_spelled = false;
                     let buster_name: &[u8] = if bun_paths::is_absolute(normalized_specifier) {
                         if let Some(dir) = bun_paths::dirname(normalized_specifier) {
                             if dir.len() > buf.len() {
                                 return Err(crate::CrateError::ModuleNotFound);
                             }
+                            // `load_as_file` caches the listing under the slashes of the specifier.
+                            busted_as_spelled = self.transpiler.resolver.bust_dir_cache(
+                                bun_paths::string_paths::without_trailing_slash_windows_path(dir),
+                            );
                             // Normalized without trailing slash.
                             bun_paths::string_paths::normalize_slashes_only(
                                 buf,
@@ -5221,7 +5305,8 @@ impl VirtualMachine {
                     // Only re-query if we previously had something cached.
                     if self.transpiler.resolver.bust_dir_cache(
                         bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
-                    ) {
+                    ) || busted_as_spelled
+                    {
                         continue;
                     }
                     return Err(crate::CrateError::ModuleNotFound);
@@ -5254,51 +5339,18 @@ impl VirtualMachine {
         global: &JSGlobalObject,
         specifier: &bun_core::String,
         source: &bun_core::String,
-        query_string: Option<&mut bun_core::String>,
+        mut query_string: Option<&mut bun_core::String>,
         mode: ResolveMode,
     ) -> JsResult<Result<bun_core::String, JSValue>> {
-        if global.has_plugins() {
-            match run_on_resolve(global, specifier, source)? {
-                None => {}
-                Some(Err(error)) => return Ok(Err(error)),
-                Some(Ok(answer)) => {
-                    if let Some(name) = global.resolve_virtual_module(&answer, source) {
-                        return Ok(Ok(name));
-                    }
-                    // A bare name may be a package's in the registry. It is the plugin's own, and not
-                    // installed, if `onResolve` answers about it as well.
-                    let answer_utf8 = answer.to_utf8();
-                    let is_bare = bun_resolver::is_package_path(&answer_utf8)
-                        && ModuleLoader::plugin_namespace_and_path(&answer_utf8)
-                            .is_some_and(|(namespace, _)| namespace.is_empty());
-                    drop(answer_utf8);
-                    let is_own = is_bare
-                        && (answer.eql(specifier)
-                            || match run_on_resolve(global, &answer, source)? {
-                                None => false,
-                                Some(Ok(_)) => true,
-                                Some(Err(error)) => return Ok(Err(error)),
-                            });
-                    let global_cache = if is_own {
-                        bun_resolver::GlobalCache::disable
-                    } else {
-                        global.bun_vm().transpiler.resolver.opts.global_cache
-                    };
-                    let resolved = Self::resolve_without_on_resolve::<IS_A_FILE_PATH>(
-                        global,
-                        &answer,
-                        source,
-                        query_string,
-                        mode,
-                        global_cache,
-                    )?;
-                    // Not on disk, for an `onLoad` to serve.
-                    if resolved.is_err() && global.has_on_load(&answer.to_utf8())? {
-                        return Ok(Ok(answer));
-                    }
-                    return Ok(resolved);
-                }
-            }
+        if let Some(resolved) = Self::resolve_with_on_resolve::<IS_A_FILE_PATH>(
+            global,
+            specifier,
+            source,
+            query_string.as_deref_mut(),
+            mode,
+            false,
+        )? {
+            return Ok(resolved);
         }
         Self::resolve_without_on_resolve::<IS_A_FILE_PATH>(
             global,
@@ -5308,6 +5360,61 @@ impl VirtualMachine {
             mode,
             global.bun_vm().transpiler.resolver.opts.global_cache,
         )
+    }
+
+    /// What the answer of an `onResolve` about `specifier` resolves to. `None` when none answers,
+    /// or, if `same_is_no_answer`, with `specifier`.
+    pub(crate) fn resolve_with_on_resolve<const IS_A_FILE_PATH: bool>(
+        global: &JSGlobalObject,
+        specifier: &bun_core::String,
+        source: &bun_core::String,
+        query_string: Option<&mut bun_core::String>,
+        mode: ResolveMode,
+        same_is_no_answer: bool,
+    ) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
+        let answer = match run_on_resolve(global, specifier, source)? {
+            None => return Ok(None),
+            Some(Err(error)) => return Ok(Some(Err(error))),
+            Some(Ok(answer)) => answer,
+        };
+        if same_is_no_answer && answer.eql(specifier) {
+            return Ok(None);
+        }
+        if let Some(name) = global.resolve_virtual_module(&answer, source) {
+            return Ok(Some(Ok(name)));
+        }
+        // A bare name that an `onLoad` could serve may be a package's in the registry. It is the
+        // plugin's own, and not installed, if `onResolve` answers about it as well.
+        let answer_utf8 = answer.to_utf8();
+        let is_bare = bun_resolver::is_package_path(&answer_utf8)
+            && ModuleLoader::on_load_namespace_and_path(&answer_utf8)
+                .is_some_and(|(namespace, _)| namespace.is_empty());
+        drop(answer_utf8);
+        let is_own = is_bare
+            && (answer.eql(specifier)
+                || match run_on_resolve(global, &answer, source)? {
+                    None => false,
+                    Some(Ok(_)) => true,
+                    Some(Err(error)) => return Ok(Some(Err(error))),
+                });
+        let global_cache = if is_own {
+            bun_resolver::GlobalCache::disable
+        } else {
+            global.bun_vm().transpiler.resolver.opts.global_cache
+        };
+        let resolved = Self::resolve_without_on_resolve::<IS_A_FILE_PATH>(
+            global,
+            &answer,
+            source,
+            query_string,
+            mode,
+            global_cache,
+        )?;
+        // Not on disk, for an `onLoad` to serve.
+        if resolved.is_err() && global.has_on_load(&answer.to_utf8())? {
+            return Ok(Some(Ok(answer)));
+        }
+        Ok(Some(resolved))
     }
 
     fn resolve_without_on_resolve<const IS_A_FILE_PATH: bool>(
@@ -5350,12 +5457,11 @@ impl VirtualMachine {
 
         // Bare/`node:` builtins: answer from the alias table before paying for UTF-8 copies and the resolver.
         // (Alias names are ASCII, so the Latin-1 bytes are the UTF-8 bytes whenever they can match.)
-        let has_plugins = global.has_plugins();
-        if !has_plugins && specifier.is_8bit() {
+        if specifier.is_8bit() {
             if let Some(hardcoded) = ModuleLoader::HardcodedModule::Alias::get(
                 specifier.latin1(),
                 bun_ast::Target::Bun,
-                Default::default(),
+                ModuleLoader::alias_cfg(),
             ) {
                 return Ok(Ok(
                     if mode == ResolveMode::RequireResolve && hardcoded.node_builtin {
@@ -5373,7 +5479,7 @@ impl VirtualMachine {
         if let Some(hardcoded) = ModuleLoader::HardcodedModule::Alias::get(
             specifier_utf8.slice(),
             bun_ast::Target::Bun,
-            Default::default(),
+            ModuleLoader::alias_cfg(),
         ) {
             return Ok(Ok(
                 if mode == ResolveMode::RequireResolve && hardcoded.node_builtin {
@@ -5390,8 +5496,8 @@ impl VirtualMachine {
         }
 
         // (One letter is a Windows drive.)
-        if has_plugins
-            && ModuleLoader::plugin_namespace_and_path(&specifier_utf8)
+        if global.has_plugins()
+            && ModuleLoader::on_load_namespace_and_path(&specifier_utf8)
                 .is_some_and(|(namespace, _)| namespace.len() > 1)
             && global.has_on_load(&specifier_utf8)?
         {
@@ -5622,6 +5728,12 @@ impl VirtualMachine {
                 .unwrap_or(false)
     }
 
+    /// Whether what is transpiled now has the globals of "vitest".
+    #[unsafe(export_name = "Bun__VM__hasGlobalsOfVitest")]
+    pub extern "C" fn has_globals_of_vitest(&self) -> bool {
+        self.transpiler.options.vitest_globals || self.transpiler.options.test_file_imports_vitest
+    }
+
     /// Resets entry-point state and re-loads `entry_path` for the test runner, returning the load promise.
     pub(crate) fn reload_entry_point_for_test_runner(
         &mut self,
@@ -5689,6 +5801,36 @@ impl VirtualMachine {
         Ok(promise)
     }
 
+    /// `bun test`'s wait for `pending_internal_promise`, the load of `module`, to settle. A load that
+    /// never can has failed: returns the promise, rejected with what is known about it, that takes its place.
+    pub fn wait_for_test_runner_load(
+        &mut self,
+        module: core::fmt::Arguments<'_>,
+    ) -> Option<*mut JSInternalPromise> {
+        // pending_internal_promise can change if hot module reloading is enabled
+        let waited = self.event_loop_mut().wait_at_top_level(|| {
+            self.pending_internal_promise().is_none_or(|promise| {
+                crate::JSPromise::status_ptr(promise) != crate::js_promise::Status::Pending
+            })
+        });
+        let Err(nothing_left @ crate::event_loop::TopLevelWaitError::NothingLeft) = waited else {
+            return None;
+        };
+        let global = self.global();
+        let notes = crate::cpp::Bun__evictUnfinishedModules(global);
+        let rejected = crate::JSPromise::rejected_promise(
+            global,
+            global.create_error_instance(format_args!(
+                "{module} never finished loading\nnote: {nothing_left}{notes}"
+            )),
+        );
+        // Like the loader's: whoever loads the file reports it, not the rejection tracker.
+        rejected.set_handled();
+        let rejected = std::ptr::from_mut(rejected);
+        self.set_pending_internal_promise(Some(rejected));
+        Some(rejected)
+    }
+
     /// Loads a test-file entry point and waits for the load promise to settle.
     pub fn load_entry_point_for_test_runner(
         &mut self,
@@ -5696,31 +5838,15 @@ impl VirtualMachine {
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         let promise = self.reload_entry_point_for_test_runner(entry_path)?;
 
-        // pending_internal_promise can change if hot module reloading is enabled
-        if self.is_watcher_enabled() {
-            loop {
-                let Some(p) = self.pending_internal_promise() else {
-                    break;
-                };
-                // SAFETY: `p` is a live JSC heap cell tracked by the VM.
-                if crate::JSPromise::status_ptr(p) != crate::js_promise::Status::Pending {
-                    break;
-                }
-                self.event_loop_mut().tick();
-                let Some(p) = self.pending_internal_promise() else {
-                    break;
-                };
-                // SAFETY: see above.
-                if crate::JSPromise::status_ptr(p) == crate::js_promise::Status::Pending {
-                    self.auto_tick();
-                }
-            }
-        } else {
-            // SAFETY: `promise` is a live JSC heap cell.
-            if crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Rejected {
-                return Ok(promise);
-            }
-            let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+        if !self.is_watcher_enabled()
+            && crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Rejected
+        {
+            return Ok(promise);
+        }
+        if let Some(rejected) =
+            self.wait_for_test_runner_load(format_args!("{}", bun_core::fmt::quote(entry_path)))
+        {
+            return Ok(rejected);
         }
 
         // Pre-arm the waker so this settled-promise tick cannot park (#36450).
@@ -5835,8 +5961,7 @@ impl VirtualMachine {
     /// Callers must run `bun_runtime::jsc_hooks::stop_active_handles_for_test_isolation(vm)`
     /// first so leaked watchers/servers are stopped while their close handlers
     /// can still run (dropping their JS-side Strongs, which otherwise pin the
-    /// outgoing global) before the blind socket-group close below. It also
-    /// resets the high tier's fake-timer state, which this crate cannot reach.
+    /// outgoing global) before the blind socket-group close below.
     pub fn swap_global_for_test_isolation(&mut self) {
         debug_assert!(self.test_isolation_enabled);
 
@@ -5863,6 +5988,12 @@ impl VirtualMachine {
             // node:quic events into the dead realm.
             rare.node_quic_callbacks.deinit();
         }
+        // A macro that ran on this thread is a function of the outgoing global, which runs nothing from now on.
+        for callback in self.macros.values() {
+            callback.unprotect();
+        }
+        self.macros.clear_retaining_capacity();
+        self.transpiler.macro_context = None;
         let _ = self.event_loop_mut().drain_microtasks();
 
         let _ = self.auto_killer.kill();
@@ -6623,6 +6754,7 @@ impl VirtualMachine {
                     global,
                     &frames[top].source_url,
                     &bun_core::String::EMPTY,
+                    None,
                     &mut log,
                     FetchFlags::PrintSource,
                 ) else {
@@ -7297,11 +7429,19 @@ impl VirtualMachine {
                 TagOptions::DISABLE_INSPECT_CUSTOM | TagOptions::HIDE_GLOBAL,
             )?;
             if !matches!(tag.tag, TagPayload::NativeCode) {
+                // Nor for what it holds, as for the properties of an Error.
+                let prev_disable_inspect_custom = formatter.disable_inspect_custom;
+                formatter.disable_inspect_custom = true;
                 let _ = if allow_ansi_color {
                     formatter.format::<true>(tag, writer, error_instance, global_ref)
                 } else {
                     formatter.format::<false>(tag, writer, error_instance, global_ref)
                 };
+                formatter.disable_inspect_custom = prev_disable_inspect_custom;
+                // What printing it throws is not what is being reported.
+                if global_ref.has_exception() && global_ref.clear_exception_except_termination() {
+                    pretty_write!(writer, "<r><d>[threw while it was printed]<r>")?;
+                }
                 writer.write_all(b"\n")?;
             }
         }
@@ -7691,28 +7831,84 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
         .to_js())
 }
 
+/// What `onResolve` callbacks resolve themselves is apart from the resolve they are asked about.
+struct OnResolveScope<'a> {
+    vm: &'a VirtualMachine,
+    was_in_on_resolve: bool,
+    /// The `paths` of the `require.resolve()` that asks.
+    custom_dir_paths: Option<&'static [bun_core::String]>,
+}
+
+impl<'a> OnResolveScope<'a> {
+    fn enter(vm: &'a VirtualMachine) -> Self {
+        Self {
+            vm,
+            was_in_on_resolve: vm.is_in_on_resolve.replace(true),
+            custom_dir_paths: vm.as_mut().transpiler.resolver.custom_dir_paths.take(),
+        }
+    }
+}
+
+impl Drop for OnResolveScope<'_> {
+    fn drop(&mut self) {
+        self.vm.is_in_on_resolve.set(self.was_in_on_resolve);
+        self.vm.as_mut().transpiler.resolver.custom_dir_paths = self.custom_dir_paths;
+    }
+}
+
 /// `None` when no `Bun.plugin()` `onResolve` callback claimed the specifier.
 fn run_on_resolve(
     global: &JSGlobalObject,
     specifier: &bun_core::String,
     importer: &bun_core::String,
 ) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
-    let specifier = specifier.to_utf8();
-    let Some((namespace, path)) = ModuleLoader::plugin_namespace_and_path(&specifier) else {
+    let (in_file_namespace, in_another_namespace) = global.has_on_resolve();
+    if !in_file_namespace && !in_another_namespace {
         return Ok(None);
-    };
+    }
+    let specifier = specifier.to_utf8();
+    let (namespace, path) = ModuleLoader::namespace_and_path(&specifier);
+    let namespace: &[u8] = if namespace == b"file" { b"" } else { namespace };
+    let vm = global.bun_vm();
+    // "virtual:thing" is "thing" to the namespace "virtual", then "virtual:thing" to the namespace "file".
+    let asks_namespace = in_another_namespace && !namespace.is_empty();
+    // Except for a path with an extension: not a builtin, nor what a callback loads, or a catch-all would call itself without end.
+    let asks_file_namespace = in_file_namespace
+        && !specifier.is_empty()
+        && ((namespace.is_empty() && ModuleLoader::has_extension_or_namespace(&specifier))
+            || !(vm.is_in_on_resolve.get() || ModuleLoader::bun_aliases_get(&specifier).is_some()));
+    if !asks_namespace && !asks_file_namespace {
+        return Ok(None);
+    }
     // The importer's key ends in the query it was imported with.
     let importer = importer.to_utf8();
-    let importer = match bun_core::strings::index_of_char_usize(&importer, b'?') {
-        Some(query) => &importer[..query],
-        None => &importer[..],
-    };
-    let Some(on_resolve_plugin) = global.run_on_resolve_plugins(
-        &bun_core::String::from_bytes(if namespace == b"file" { b"" } else { namespace }),
-        &bun_core::String::borrow_utf8(path),
-        &bun_core::String::borrow_utf8(importer),
-    )?
-    else {
+    let importer = bun_core::String::borrow_utf8(
+        match bun_core::strings::index_of_char_usize(&importer, b'?') {
+            Some(query) => &importer[..query],
+            None => &importer[..],
+        },
+    );
+    let _scope = OnResolveScope::enter(vm);
+    let mut answer = None;
+    if asks_namespace {
+        answer = global.run_on_resolve_plugins(
+            &bun_core::String::from_bytes(namespace),
+            &bun_core::String::borrow_utf8(path),
+            &importer,
+        )?;
+    }
+    if answer.is_none() && asks_file_namespace {
+        answer = global.run_on_resolve_plugins(
+            &bun_core::String::EMPTY,
+            &bun_core::String::borrow_utf8(if namespace.is_empty() {
+                path
+            } else {
+                &specifier
+            }),
+            &importer,
+        )?;
+    }
+    let Some(on_resolve_plugin) = answer else {
         return Ok(None);
     };
     if !on_resolve_plugin.is_object() {
@@ -7736,14 +7932,6 @@ fn run_on_resolve(
         return Ok(Some(Err(global.create_error_instance(format_args!(
             "Expected \"path\" to be a non-empty string in onResolve plugin"
         )))));
-    } else if file_path.eq_ascii(b".")
-        || file_path.eq_ascii(b"..")
-        || file_path.eq_ascii(b"...")
-        || file_path.eq_ascii(b" ")
-    {
-        return Ok(Some(Err(global.create_error_instance(format_args!(
-            "\"path\" is invalid in onResolve plugin"
-        )))));
     }
     let user_namespace: bun_core::String = 'brk: {
         if let Some(namespace_value) = on_resolve_plugin.get(global, b"namespace")? {
@@ -7766,25 +7954,34 @@ fn run_on_resolve(
             if namespace_str.eq_ascii(b"node") {
                 break 'brk bun_core::String::static_("node");
             }
+            if namespace_str.index_of_ascii_char(0).is_some() {
+                return Err(global.throw_invalid_argument_property_value(
+                    b"namespace",
+                    Some("a string without null bytes"),
+                    namespace_value,
+                ));
+            }
             break 'brk namespace_str;
         }
         break 'brk bun_core::String::static_("file");
     };
 
-    if user_namespace.eq_ascii(b"file") {
-        if file_path.starts_with_ascii(b"file://") {
-            let path = bun_url::path_from_file_url(&file_path);
-            if !path.is_dead() {
-                return Ok(Some(Ok(path)));
-            }
-        }
-        return Ok(Some(Ok(file_path)));
+    let key = if !user_namespace.eq_ascii(b"file") {
+        bun_core::String::create_format(format_args!("{}:{}", user_namespace, file_path))
+    } else if file_path.starts_with_ascii(b"file://") {
+        let path = bun_url::path_from_file_url(&file_path);
+        if path.is_dead() { file_path } else { path }
+    } else {
+        file_path
+    };
+    if key.index_of_ascii_char(0).is_some() {
+        return Err(global.throw_invalid_argument_property_value(
+            b"path",
+            Some("a string without null bytes"),
+            path_value,
+        ));
     }
-
-    Ok(Some(Ok(bun_core::String::create_format(format_args!(
-        "{}:{}",
-        user_namespace, file_path
-    )))))
+    Ok(Some(Ok(key)))
 }
 
 /// See [`VirtualMachine::enter_context`].

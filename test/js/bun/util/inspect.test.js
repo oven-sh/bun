@@ -11,6 +11,7 @@ import {
 } from "harness";
 import { join } from "path";
 import util from "util";
+import vm from "vm";
 it("prototype", () => {
   const prototypes = [
     Request.prototype,
@@ -529,6 +530,33 @@ it("new Date(..)", () => {
 
 it("Bun.inspect.custom exists", () => {
   expect(Bun.inspect.custom).toBe(util.inspect.custom);
+});
+
+// Called by a bare name that is not a local variable, a native function is given the engine's own scope object as `this`.
+// These functions return a `this` that is not of their class as it is.
+it("[Bun.inspect.custom] of a built-in class returns undefined or throws when it is called by a bare name", () => {
+  const returned = {};
+  for (const name of Object.getOwnPropertyNames(globalThis)) {
+    const inspectCustom = globalThis[name]?.prototype?.[Bun.inspect.custom];
+    if (typeof inspectCustom !== "function") continue;
+    returned[name] = [[], [-1], [2, {}]].map(args => {
+      try {
+        return (() => inspectCustom(...args))();
+      } catch (error) {
+        return error.name;
+      }
+    });
+  }
+  expect(Object.keys(returned)).toContainValues([
+    "ReadableStream",
+    "WritableStream",
+    "URL",
+    "URLSearchParams",
+    "CryptoKey",
+  ]);
+  expect(Object.entries(returned).filter(([, results]) => results.some(result => typeof result === "object"))).toEqual(
+    [],
+  );
 });
 
 describe("Functions with names", () => {
@@ -1320,5 +1348,229 @@ it("object property enumeration scales linearly with property count", () => {
     // Per-property cost must stay roughly constant as n grows 10x. The previous
     // Vector-based visited-property dedup was O(n^2), giving a ~9x ratio here.
     expect(l.ms / 30000 / (s.ms / 3000)).toBeLessThan(3);
+  });
+});
+
+describe("own non-enumerable properties are not printed", () => {
+  const hide = (object, key, descriptor = { value: { hidden: true } }) =>
+    Object.defineProperty(object, key, descriptor);
+
+  it("string and symbol keys", () => {
+    const obj = hide(hide({}, Symbol("impl")), "hiddenString");
+    obj[Symbol("enumerable")] = 3;
+    obj.visible = 4;
+    expect(Bun.inspect(obj)).toBe("{\n  [Symbol(enumerable)]: 3,\n  visible: 4,\n}");
+  });
+
+  it("nothing else to print", () => {
+    expect(Bun.inspect(hide({}, "a"))).toBe("{}");
+    expect(Bun.inspect(hide(Object.create(null), "a"))).toBe("[Object: null prototype] {}");
+    expect(Bun.inspect(hide(new (class Foo {})(), "a"))).toBe("Foo {}");
+  });
+
+  it("next to an accessor", () => {
+    const obj = {
+      get visible() {
+        return 1;
+      },
+    };
+    hide(obj, "data");
+    hide(obj, "accessor", { get() {} });
+    expect(Bun.inspect(obj)).toBe("{\n  visible: [Getter],\n}");
+  });
+
+  it("nested", () => {
+    expect(Bun.inspect({ a: hide({ b: 1 }, "c") })).toBe("{\n  a: {\n    b: 1,\n  },\n}");
+    expect(Bun.inspect([hide({ b: 1 }, "c")])).toBe("[\n  {\n    b: 1,\n  }\n]");
+  });
+
+  it("array", () => {
+    const array = hide([1, 2], "hidden");
+    array.visible = 3;
+    expect(Bun.inspect(array)).toBe("[ 1, 2, visible: 3 ]");
+  });
+
+  it("sorted", () => {
+    expect(Bun.inspect(hide({ b: 1, a: 2 }, "c"), { sorted: true })).toBe("{\n  a: 2,\n  b: 1,\n}");
+  });
+
+  it("hides the property of the prototype that it shadows", () => {
+    expect(Bun.inspect(hide(Object.create({ a: "inherited", b: 2 }), "a"))).toBe("{\n  b: 2,\n}");
+    class Foo {
+      get a() {
+        return "inherited";
+      }
+      get b() {
+        return 2;
+      }
+    }
+    expect(Bun.inspect(hide(new Foo(), "a"))).toBe("Foo {\n  b: [Getter],\n}");
+  });
+
+  it("members of the prototypes are still printed", () => {
+    class Foo {
+      field = 1;
+      get getter() {
+        return 1;
+      }
+      method() {}
+    }
+    expect(Bun.inspect(new Foo())).toBe("Foo {\n  field: 1,\n  getter: [Getter],\n  method: [Function: method],\n}");
+    expect(Bun.inspect(new TextDecoder())).toContain('encoding: "utf-8"');
+  });
+});
+
+describe("values of another realm", () => {
+  it("the members of its Object.prototype are not printed", () => {
+    expect(Bun.inspect(vm.runInNewContext("({ a: 1 })"))).toBe("{\n  a: 1,\n}");
+    expect(Bun.inspect(vm.runInNewContext("({})"))).toBe("{}");
+    expect(Bun.inspect(vm.runInNewContext("({ a: { b: [{ c: 1 }] } })"))).toBe(Bun.inspect({ a: { b: [{ c: 1 }] } }));
+    expect(Bun.inspect(vm.runInNewContext("Object.create({ a: 1 })"))).toBe("{\n  a: 1,\n}");
+    expect(Bun.inspect(vm.runInNewContext("new (class Foo { x = 1; m() {} })()"))).toBe(
+      "Foo {\n  x: 1,\n  m: [Function: m],\n}",
+    );
+  });
+
+  it("its global prints its enumerable properties", () => {
+    expect(Bun.inspect(vm.runInContext("this", vm.createContext({ a: 1 })))).toBe("{\n  a: 1,\n}");
+    expect(Bun.inspect(vm.runInContext("var b = 2; this", vm.createContext({})))).toBe("{\n  b: 2,\n}");
+    expect(Bun.inspect(vm.runInNewContext("this"))).toBe("{}");
+    expect(
+      Bun.inspect(
+        vm.runInNewContext("Object.setPrototypeOf(this, (class Window { m() {} }).prototype); this.a = 1; this"),
+      ),
+    ).toBe("Window {\n  a: 1,\n  m: [Function: m],\n}");
+  });
+
+  it("its global ends a prototype chain", () => {
+    expect(Bun.inspect(Object.create(vm.runInContext("this", vm.createContext({ a: 1 }))))).toBe("{}");
+  });
+});
+
+describe("a value whose [nodejs.util.inspect.custom] cannot be read", () => {
+  const values = {
+    "inherits from a Proxy that throws": () =>
+      Object.create(
+        new Proxy(
+          {},
+          {
+            get() {
+              throw new Error("cannot be read");
+            },
+          },
+        ),
+      ),
+    "has a getter that throws": () => ({
+      get [Symbol.for("nodejs.util.inspect.custom")]() {
+        throw new Error("cannot be read");
+      },
+    }),
+  };
+  const holders = {
+    "itself": value => value,
+    "the first property": value => ({ value, b: 2 }),
+    "the second property": value => ({ a: 1, value }),
+    "an element": value => [1, value],
+    "a property of the global of a node:vm context": value => vm.runInContext("this", vm.createContext({ value })),
+    "a property of a DONT_CONTEXTIFY context": value =>
+      Object.assign(vm.createContext(vm.constants.DONT_CONTEXTIFY), { value }),
+  };
+
+  describe.each(Object.keys(values))("because it %s", kind => {
+    it.each(Object.keys(holders))("Bun.inspect() throws the error: %s", holder => {
+      expect(() => Bun.inspect(holders[holder](values[kind]()))).toThrow("cannot be read");
+      expect(Bun.inspect({ a: 1 })).toBe("{\n  a: 1,\n}");
+    });
+  });
+
+  it.concurrent("console.log() throws the error, and goes on printing afterwards", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const value = { get [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("cannot be read"); } };
+        for (const log of [console.log, console.error, console.table]) {
+          try {
+            log([{ value }]);
+            process.stdout.write("\\nreturned\\n");
+          } catch (error) {
+            process.stdout.write("\\n" + error.message + "\\n");
+          }
+        }
+        console.log({ a: 1 });`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect({ lines: stdout.split("\n").filter(line => /^[a-z]/.test(line)), end: stdout.slice(-12), exitCode }).toEqual(
+      {
+        lines: ["cannot be read", "cannot be read", "cannot be read"],
+        end: "{\n  a: 1,\n}\n",
+        exitCode: 0,
+      },
+    );
+  });
+
+  // The report of an error does not fail.
+  describe.each(["throw thrown;", "Promise.reject(thrown);", "reportError(thrown); process.exitCode = 1;"])(
+    "%s",
+    report => {
+      async function reportOf(thrown) {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", `const thrown = ${thrown};\n${report}`],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr: stderr.replace(/\n+Bun v.*\n$/, "\n"), exitCode };
+      }
+
+      it.concurrent("does not read it", async () => {
+        const getter = `get [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("cannot be read"); }`;
+        expect(await reportOf(`{ value: { ${getter} }, b: 2 }`)).toEqual({
+          stdout: "",
+          stderr: "error\n{\n  value: {\n    [Symbol(nodejs.util.inspect.custom)]: [Getter],\n  },\n  b: 2,\n}\n",
+          exitCode: 1,
+        });
+      });
+
+      it.concurrent("says where printing what was thrown threw", async () => {
+        const handler = `{ getPrototypeOf() { throw new Error("has no prototype"); } }`;
+        expect(await reportOf(`{ a: 1, value: Object.create(new Proxy({}, ${handler})) }`)).toEqual({
+          stdout: "",
+          stderr: "error\n{\n  a: 1,\n  value: [threw while it was printed]\n",
+          exitCode: 1,
+        });
+      });
+    },
+  );
+});
+
+it("a function that is printed as an object and has nothing to list is printed as a function", () => {
+  const f = () => {};
+  expect(Bun.inspect(expect.objectContaining(f))).toBe("ObjectContaining [Function: f]");
+  expect(Bun.inspect(expect.objectContaining(class A {}))).toBe("ObjectContaining [class A]");
+  expect(Bun.inspect({ x: expect.objectContaining(f) })).toBe("{\n  x: ObjectContaining [Function: f],\n}");
+  expect(Bun.inspect(expect.objectContaining(Object.assign(() => {}, { a: 1 })))).toBe(
+    "ObjectContaining {\n  a: 1,\n}",
+  );
+});
+
+describe("compact prints one line", () => {
+  it("an array of more than 100 items", () => {
+    expect(Bun.inspect(Array(150).fill(0), { compact: true })).toBe(
+      `[ ${Array(100).fill(0).join(", ")}, ... 50 more items ]`,
+    );
+    expect(Bun.inspect({ a: Array(101).fill(0) }, { compact: true })).toBe(
+      `{ a: [ ${Array(100).fill(0).join(", ")}, ... 1 more items ] }`,
+    );
+  });
+
+  it("an object past the depth", () => {
+    expect(Bun.inspect({ a: { b: 1 }, z: 1 }, { compact: true, depth: 0 })).toBe("{ a: [Object ...], z: 1 }");
+    expect(Bun.inspect([{ b: 1 }, { c: 2 }], { compact: true, depth: 0 })).toBe("[ [Object ...], [Object ...] ]");
   });
 });

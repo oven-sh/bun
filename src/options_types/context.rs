@@ -415,6 +415,15 @@ pub enum HotReload {
     Watch,
 }
 
+/// The `[test]` options, also of `vi.setConfig()`, that undo something before each test, in the order vitest applies them.
+pub const RESETS_BEFORE_EACH_TEST: [&str; 5] = [
+    "restoreMocks",
+    "mockReset",
+    "clearMocks",
+    "unstubEnvs",
+    "unstubGlobals",
+];
+
 pub struct TestOptions {
     pub default_timeout_ms: u32,
     pub update_snapshots: bool,
@@ -440,6 +449,8 @@ pub struct TestOptions {
     // responsible for freeing any previous value.
     pub test_filter_regex: Option<core::ptr::NonNull<()>>, // SAFETY: erased *mut bun_jsc::RegularExpression
     pub max_concurrency: u32,
+    /// As `RESETS_BEFORE_EACH_TEST`.
+    pub resets_before_each_test: [Option<bool>; RESETS_BEFORE_EACH_TEST.len()],
     /// `bun test --isolate`: run each test file in a fresh global object on
     /// the same VM, force-closing leaked handles between files.
     pub isolate: bool,
@@ -466,6 +477,11 @@ pub struct TestOptions {
     pub timings_files: Vec<Box<[u8]>>,
     /// `bun test --update-timings`: merge this run's measured per-file durations into `timings_file`.
     pub update_timings: bool,
+    /// `bun test --environment=<name>`, else `[test] environment`: what a test file
+    /// without an `@vitest-environment` / `@jest-environment` comment runs in.
+    pub environment: Option<TestEnvironment>,
+    /// `bun test --globals=<name>`, else `[test] globals`.
+    pub globals: Option<TestGlobals>,
 
     pub reporters: Reporters,
     pub reporter_outfile: Option<Box<[u8]>>,
@@ -477,11 +493,84 @@ pub struct Shard {
     pub count: u32,
 }
 
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum TestEnvironment {
+    Node,
+    Jsdom,
+    HappyDom,
+}
+
+impl TestEnvironment {
+    pub fn from_name(name: &[u8]) -> Option<Self> {
+        match name {
+            b"node" => Some(Self::Node),
+            b"jsdom" => Some(Self::Jsdom),
+            b"happy-dom" => Some(Self::HappyDom),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Node => "node",
+            Self::Jsdom => "jsdom",
+            Self::HappyDom => "happy-dom",
+        }
+    }
+}
+
+/// The module that `test`, `expect` and the other globals of a file come from.
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum TestGlobals {
+    /// "vitest" for a file that imports from "vitest", else "bun:test".
+    Bun,
+    Vitest,
+}
+
+impl TestGlobals {
+    pub fn from_name(name: &[u8]) -> Option<Self> {
+        match name {
+            b"bun" => Some(Self::Bun),
+            b"vitest" => Some(Self::Vitest),
+            _ => None,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Bun => "bun",
+            Self::Vitest => "vitest",
+        }
+    }
+}
+
 #[derive(Default, Copy, Clone)]
 pub struct Reporters {
     pub dots: bool,
     pub only_failures: bool,
     pub junit: bool,
+    /// `bun test --reporter-junit-suites=<name>`, else `[test.reporter] junitSuites`.
+    pub junit_suites: Option<JunitSuites>,
+}
+
+/// What a `describe` block becomes in the JUnit report.
+#[derive(Copy, Clone, Default, Eq, PartialEq)]
+pub enum JunitSuites {
+    /// A `<testsuite>` inside the file's `<testsuite>`.
+    #[default]
+    Nested,
+    /// A prefix of the `name` of its `<testcase>`s.
+    Flat,
+}
+
+impl JunitSuites {
+    pub fn from_name(name: &[u8]) -> Option<Self> {
+        match name {
+            b"nested" => Some(Self::Nested),
+            b"flat" => Some(Self::Flat),
+            _ => None,
+        }
+    }
 }
 
 impl TestOptions {
@@ -524,6 +613,7 @@ impl Default for TestOptions {
             // Cap the default to 5 there; the `--max-concurrency` flag still
             // overrides explicitly.
             max_concurrency: if bun_core::env::ENABLE_ASAN { 5 } else { 20 },
+            resets_before_each_test: [None; RESETS_BEFORE_EACH_TEST.len()],
             isolate: false,
             parallel: 0,
             parallel_delay_ms: None,
@@ -532,6 +622,8 @@ impl Default for TestOptions {
             shard: None,
             timings_files: Vec::new(),
             update_timings: false,
+            environment: None,
+            globals: None,
             reporters: Reporters::default(),
             reporter_outfile: None,
         }

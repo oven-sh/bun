@@ -7,7 +7,7 @@
  *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/expect-extend.test.js`
  */
 
-import { withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, tempDir, withoutAggressiveGC } from "harness";
 import test_interop from "./test-interop.js";
 var { isBun, expect, describe, test, it } = await test_interop();
 
@@ -328,6 +328,27 @@ describe("async support", () => {
   });
 });
 
+it("passes any number of arguments on", () => {
+  let seen;
+  expect.extend({
+    _toSeeArguments(...args) {
+      seen = args;
+      return { pass: true, message: () => "" };
+    },
+  });
+  for (const count of [0, 1, 6, 7, 8, 9, 40]) {
+    const args = Array.from({ length: count }, (_, i) => ({ i }));
+    const received = { received: count };
+    expect(received)._toSeeArguments(...args);
+    expect(seen).toEqual([received, ...args]);
+    expect(seen.every((arg, i) => arg === (i ? args[i - 1] : received))).toBe(true);
+    seen = undefined;
+    expect({ a: received }).toEqual({ a: expect._toSeeArguments(...args) });
+    expect(seen.every((arg, i) => arg === (i ? args[i - 1] : received))).toBe(true);
+    expect(seen).toHaveLength(count + 1);
+  }
+});
+
 it("should not crash under intensive usage", () => {
   withoutAggressiveGC(() => {
     for (let i = 0; i < 10000; ++i) {
@@ -390,6 +411,87 @@ test("expect.extend with numeric index keys does not crash", () => {
   expect(typeof expect[1073741820]).toBe("function");
 });
 
+describe("the message of a matcher that fails is thrown as it is", () => {
+  expect.extend({
+    _toFailWith(received, result) {
+      return { pass: false, ...result };
+    },
+    _toPassWith(received, result) {
+      return { pass: true, ...result };
+    },
+    async _toFailLaterWith(received, result) {
+      return { pass: false, ...result };
+    },
+    _toFailWithItsHint() {
+      const options = { isNot: this.isNot, promise: this.promise };
+      return { pass: this.isNot, message: () => this.utils.matcherHint("_toFailWithItsHint", "it", "", options) };
+    },
+  });
+  const messageOf = async fn => {
+    try {
+      await fn();
+    } catch (error) {
+      return Bun.stripANSI(error.message);
+    }
+  };
+  const message = () => "line 1\nline 2\n";
+
+  test("with and without modifiers", async () => {
+    expect([
+      await messageOf(() => expect(1)._toFailWith({ message })),
+      await messageOf(() => expect(1).not._toPassWith({ message })),
+      await messageOf(() => expect(Promise.resolve(1)).resolves._toFailWith({ message })),
+      await messageOf(() => expect(Promise.reject(1)).rejects._toFailWith({ message })),
+      await messageOf(() => expect(Promise.resolve(1)).resolves.not._toPassWith({ message })),
+      await messageOf(() => expect(1)._toFailLaterWith({ message })),
+    ]).toEqual(Array(6).fill("line 1\nline 2\n"));
+  });
+
+  test("the matcher says what was called", async () => {
+    expect([
+      await messageOf(() => expect(1)._toFailWithItsHint()),
+      await messageOf(() => expect(1).not._toFailWithItsHint()),
+      await messageOf(() => expect(Promise.resolve(1)).resolves._toFailWithItsHint()),
+      await messageOf(() => expect(Promise.reject(1)).rejects.not._toFailWithItsHint()),
+    ]).toEqual([
+      "expect(it)._toFailWithItsHint()",
+      "expect(it).not._toFailWithItsHint()",
+      "expect(it).resolves._toFailWithItsHint()",
+      "expect(it).rejects.not._toFailWithItsHint()",
+    ]);
+  });
+
+  test.skipIf(!isBun)("under the label of expect(value, label)", async () => {
+    expect(await messageOf(() => expect(1, "the label")._toFailWith({ message }))).toBe(
+      "the label\n\nline 1\nline 2\n",
+    );
+  });
+
+  test("no message", async () => {
+    for (const result of [{}, { message: undefined }, { message: () => undefined }, { message: () => "" }]) {
+      expect(await messageOf(() => expect(1)._toFailWith(result))).toBe("No message was specified for this matcher.");
+    }
+  });
+
+  test("other messages", async () => {
+    expect(await messageOf(() => expect(1)._toFailWith({ message: () => 5 }))).toBe("5");
+    const thrown = new Error("from message()");
+    expect(() =>
+      expect(1)._toFailWith({
+        message() {
+          throw thrown;
+        },
+      }),
+    ).toThrow(thrown);
+  });
+
+  test("an asymmetric matcher that fails is printed by the matcher around it", async () => {
+    expect(await messageOf(() => expect({ a: 1 }).toEqual({ a: expect._toFailWith({ message }) }))).toStartWith(
+      "expect(received).toEqual(expected)",
+    );
+  });
+});
+
 describe("MatcherContext", () => {
   describe("utils", () => {
     test("RECEIVED_COLOR is a function", () => {
@@ -402,5 +504,421 @@ describe("MatcherContext", () => {
 
       expect(123).toBeCustomColor(456);
     });
+
+    /** @type {import("bun:test").MatcherContext["utils"]} */
+    let utils;
+    expect.extend({
+      _toGiveItsUtils() {
+        utils = this.utils;
+        return { pass: true };
+      },
+    });
+    expect()._toGiveItsUtils();
+    const inAngles = text => `<${text}>`;
+
+    // What jest-matcher-utils 30.5.1 returns for the same arguments.
+    test.each([
+      [["toX"], "expect(received).toX(expected)"],
+      [[".toX"], "expect(received).toX(expected)"],
+      [[".not.toX"], "expect(received).not.toX(expected)"],
+      [["toX", "element"], "expect(element).toX(expected)"],
+      [["toX", "element", ""], "expect(element).toX()"],
+      [[".toBeDisabled", "element", ""], "expect(element).toBeDisabled()"],
+      [[".not.toBeDisabled", "element", ""], "expect(element).not.toBeDisabled()"],
+      [["toX", "", ""], "expect.toX()"],
+      [["toX", "", "e"], "expect.toX(e)"],
+      [["toX", undefined, undefined], "expect(received).toX(expected)"],
+      [["toX", "r", "e", undefined], "expect(r).toX(e)"],
+      [["toX", "r", "e", {}], "expect(r).toX(e)"],
+      [["toX", undefined, undefined, { isNot: true }], "expect(received).not.toX(expected)"],
+      [["toX", undefined, undefined, { promise: "resolves" }], "expect(received).resolves.toX(expected)"],
+      [
+        ["toX", undefined, undefined, { promise: "rejects", isNot: true }],
+        "expect(received).rejects.not.toX(expected)",
+      ],
+      [["toX", undefined, undefined, { comment: "deep equality" }], "expect(received).toX(expected) // deep equality"],
+      [["toX", undefined, "", { comment: "c" }], "expect(received).toX() // c"],
+      [["toX", undefined, undefined, { secondArgument: "second" }], "expect(received).toX(expected, second)"],
+      [["toX", undefined, "", { secondArgument: "second" }], "expect(received).toX()"],
+      [["toX", undefined, undefined, { isDirectExpectCall: true }], "expect.toX(expected)"],
+      [["toX", "", undefined, { isDirectExpectCall: true, isNot: true }], "expect.not.toX(expected)"],
+      [[".toX", undefined, undefined, { isNot: true }], "expect(received).not.toX(expected)"],
+      [[".toX", undefined, undefined, { promise: "resolves" }], "expect(received).resolves.toX(expected)"],
+      [
+        [
+          "toX",
+          "r",
+          "e",
+          { expectedColor: inAngles, receivedColor: inAngles, secondArgument: "s", secondArgumentColor: inAngles },
+        ],
+        "expect(<r>).toX(<e>, <s>)",
+      ],
+      [["toX", "r", "e", { comment: "", promise: "", secondArgument: "" }], "expect(r).toX(e)"],
+      [["toX", "r", "e", { isNot: 1, comment: 5 }], "expect(r).not.toX(e) // 5"],
+      [["toX", 1, 2], "expect(1).toX(2)"],
+      [["toX", null, null], "expect(null).toX(null)"],
+      [["toX", "a.b", "c.d"], "expect(a.b).toX(c.d)"],
+      [["a.b.c"], "expect(received)a.b.c(expected)"],
+      [["toX", "multi\nline", "e"], "expect(multi\nline).toX(e)"],
+      [["", "r", "e"], "expect(r).(e)"],
+    ])("matcherHint(...%j)", (args, hint) => {
+      expect(Bun.stripANSI(utils.matcherHint(...args))).toBe(hint);
+    });
+
+    test("matcherHint reads each argument once, in order", () => {
+      const log = [];
+      const logged = name => ({
+        toString() {
+          log.push(name);
+          return name;
+        },
+      });
+      const options = new Proxy(
+        { comment: logged("comment"), promise: logged("promise"), secondArgument: logged("secondArgument") },
+        {
+          get(target, key) {
+            log.push(`options.${String(key)}`);
+            return target[key];
+          },
+        },
+      );
+      expect(Bun.stripANSI(utils.matcherHint("toX", logged("received"), logged("expected"), options))).toBe(
+        "expect(received).promise.toX(expected, secondArgument) // comment",
+      );
+      expect(log).toEqual([
+        "received",
+        "expected",
+        "options.comment",
+        "comment",
+        "options.expectedColor",
+        "options.isDirectExpectCall",
+        "options.isNot",
+        "options.promise",
+        "promise",
+        "options.receivedColor",
+        "options.secondArgument",
+        "secondArgument",
+        "options.secondArgumentColor",
+      ]);
+    });
+
+    test("matcherHint rejects what it cannot use", () => {
+      expect(() => utils.matcherHint()).toThrow("the first argument (matcher name) must be a string");
+      expect(() => utils.matcherHint(1)).toThrow("the first argument (matcher name) must be a string");
+      expect(() => utils.matcherHint("toX", "r", "e", 1)).toThrow("options must be an object (or undefined)");
+      for (const option of ["receivedColor", "expectedColor", "secondArgumentColor"]) {
+        expect(() => utils.matcherHint("toX", "r", "e", { secondArgument: "s", [option]: 1 })).toThrow(
+          new TypeError(`matcherHint: options.${option} must be a function`),
+        );
+      }
+      // As in Jest, a color that is not needed is not looked at.
+      expect(Bun.stripANSI(utils.matcherHint("toX", "", "", { receivedColor: 1, expectedColor: 1 }))).toBe(
+        "expect.toX()",
+      );
+      const thrown = new Error("from the color");
+      expect(() =>
+        utils.matcherHint("toX", "r", "e", {
+          receivedColor() {
+            throw thrown;
+          },
+        }),
+      ).toThrow(thrown);
+    });
+
+    test.each(["EXPECTED_COLOR", "RECEIVED_COLOR"])("%s colors text as it is", name => {
+      const color = (...args) => Bun.stripANSI(utils[name](...args));
+      expect([
+        color("text"),
+        color('"quoted"'),
+        color("a  \nb "),
+        color(""),
+        color(),
+        color(5),
+        color(true),
+        color(null),
+        color(undefined),
+        color({ a: "b" }),
+        color([1, "x"]),
+        color("a", "b", 1),
+      ]).toEqual([
+        "text",
+        '"quoted"',
+        "a  \nb ",
+        "",
+        "",
+        "5",
+        "true",
+        "null",
+        "undefined",
+        "[object Object]",
+        "1,x",
+        "a b 1",
+      ]);
+    });
+
+    // What jest-matcher-utils 30.5.1 returns where there are no lines to show.
+    test.each([
+      [[1, 1], null],
+      [[1, 2], null],
+      [[NaN, NaN], null],
+      [[0, -0], null],
+      [[1n, 2n], null],
+      [[true, false], null],
+      [[expect.any(Number), 1], null],
+      [[], "Compared values have no visual difference."],
+      [["a", "a"], "Compared values have no visual difference."],
+      [["", ""], "Compared values have no visual difference."],
+      [[null, null], "Compared values have no visual difference."],
+      [[{ a: 1 }, { a: 1 }], "Compared values have no visual difference."],
+      [[[1], [1]], "Compared values have no visual difference."],
+      [[1, 1n], "  Comparing two different types of values. Expected number but received bigint."],
+      [["1", 1], "  Comparing two different types of values. Expected string but received number."],
+      [[1], "  Comparing two different types of values. Expected number but received undefined."],
+      [[null, undefined], "  Comparing two different types of values. Expected null but received undefined."],
+      [[null, {}], "  Comparing two different types of values. Expected null but received object."],
+      [[{}, []], "  Comparing two different types of values. Expected object but received array."],
+      [[new Map(), new Set()], "  Comparing two different types of values. Expected map but received set."],
+      [[/a/, {}], "  Comparing two different types of values. Expected regexp but received object."],
+      [[new Date(0), {}], "  Comparing two different types of values. Expected date but received object."],
+      [[() => {}, {}], "  Comparing two different types of values. Expected function but received object."],
+      [[Symbol(), {}], "  Comparing two different types of values. Expected symbol but received object."],
+      [[new String("a"), "a"], "  Comparing two different types of values. Expected object but received string."],
+    ])("diff(...%p)", (args, text) => {
+      const diff = utils.diff(...args);
+      expect(diff && Bun.stripANSI(diff)).toBe(text);
+    });
+
+    test("diff marks the lines that differ", () => {
+      const marked = (...args) =>
+        Bun.stripANSI(utils.diff(...args))
+          .split("\n")
+          .filter(line => /^[-+]/.test(line));
+      const counts = (expected, received) => [`- Expected  - ${expected}`, `+ Received  + ${received}`];
+      // Strings are text: no quotes, line by line.
+      expect(marked("a\nb\nc", "a\nx\nc")).toEqual(["- b", "+ x", ...counts(1, 1)]);
+      expect(marked({ a: 1, b: 2 }, { a: 1, b: 3 })).toEqual(['-   "b": 2,', '+   "b": 3,', ...counts(1, 1)]);
+      expect(marked([1, 2, 3], [1, 3])).toEqual(["-   2,", ...counts(1, 0)]);
+      expect(marked(new Map([["a", 1]]), new Map([["a", 2]]))).toEqual([
+        '-   "a" => 1,',
+        '+   "a" => 2,',
+        ...counts(1, 1),
+      ]);
+      expect(marked({ a: 1 }, { a: 2 }, { expand: false, contextLines: 0 })).toEqual([
+        '-   "a": 1,',
+        '+   "a": 2,',
+        ...counts(1, 1),
+      ]);
+      expect(Bun.stripANSI(utils.diff("color: blue;", "color: red;"))).toBe(
+        "Expected: color: blue;\nReceived: color: red;",
+      );
+      expect(Bun.stripANSI(utils.diff(new Error("a"), new Error("b")))).toBe(
+        "Expected: [Error: a]\nReceived: [Error: b]",
+      );
+      expect(Bun.stripANSI(utils.diff(Symbol("a"), Symbol("b")))).toBe("Expected: Symbol(a)\nReceived: Symbol(b)");
+    });
+
+    test("diff reports what a value throws while it is printed", () => {
+      const thrown = new Error("from the trap");
+      const value = new Proxy(
+        {},
+        {
+          ownKeys() {
+            throw thrown;
+          },
+        },
+      );
+      expect(() => utils.diff(value, {})).toThrow(thrown);
+      expect(() => utils.diff({}, value)).toThrow(thrown);
+    });
+
+    // What jest-matcher-utils 30.5.1 returns for the same arguments.
+    test.each([
+      [undefined, "Received has value: <undefined>"],
+      [null, "Received has value: <object>"],
+      [[1], "Received has type:  array\nReceived has value: <object>"],
+      [true, "Received has type:  boolean\nReceived has value: <boolean>"],
+      [() => {}, "Received has type:  function\nReceived has value: <function>"],
+      [1, "Received has type:  number\nReceived has value: <number>"],
+      ["s", "Received has type:  string\nReceived has value: <string>"],
+      [1n, "Received has type:  bigint\nReceived has value: <bigint>"],
+      [{ a: 1 }, "Received has type:  object\nReceived has value: <object>"],
+      [/a/, "Received has type:  regexp\nReceived has value: <object>"],
+      [new Map(), "Received has type:  map\nReceived has value: <object>"],
+      [new Set(), "Received has type:  set\nReceived has value: <object>"],
+      [new Date(0), "Received has type:  date\nReceived has value: <object>"],
+      [Symbol("s"), "Received has type:  symbol\nReceived has value: <symbol>"],
+      [new Error("e"), "Received has type:  object\nReceived has value: <object>"],
+      [Object.create(null), "Received has type:  object\nReceived has value: <object>"],
+    ])("printWithType(%p)", (value, text) => {
+      expect(utils.printWithType("Received", value, printed => `<${typeof printed}>`)).toBe(text);
+    });
+
+    test("printWithType converts and checks its arguments", () => {
+      expect(utils.printWithType(5, 1, String)).toBe("5 has type:  number\n5 has value: 1");
+      expect(utils.printWithType("N", 1, () => 7)).toBe("N has type:  number\nN has value: 7");
+      expect(Bun.stripANSI(utils.printWithType("Received", "s", utils.printReceived))).toBe(
+        'Received has type:  string\nReceived has value: "s"',
+      );
+      for (const args of [[], ["N", 1], ["N", 1, 5]]) {
+        expect(() => utils.printWithType(...args)).toThrow(
+          new TypeError("printWithType: the third argument (print) must be a function"),
+        );
+      }
+      const thrown = new Error("from print");
+      expect(() =>
+        utils.printWithType("N", 1, () => {
+          throw thrown;
+        }),
+      ).toThrow(thrown);
+    });
+
+    test.each(["stringify", "printExpected", "printReceived"])("%s prints an error without its stack", name => {
+      class CustomError extends Error {
+        name = "CustomError";
+      }
+      expect(
+        [
+          new Error("a"),
+          new TypeError("b"),
+          new CustomError("c"),
+          new Error(""),
+          new Error("l1\nl2"),
+          Object.assign(new Error("d"), { code: 1 }),
+          new Error("e", { cause: new Error("f") }),
+        ].map(error => Bun.stripANSI(utils[name](error))),
+      ).toEqual([
+        "[Error: a]",
+        "[TypeError: b]",
+        "[CustomError: c]",
+        "[Error]",
+        "[Error: l1\nl2]",
+        "[Error: d]",
+        "[Error: e]",
+      ]);
+    });
+
+    test("colors", async () => {
+      using dir = tempDir("matcher-utils-colors", {
+        "colors.test.js": `
+          import { expect, test } from "bun:test";
+          test("colors", () => {
+            expect.extend({
+              _toPrintColors() {
+                const { matcherHint, EXPECTED_COLOR, RECEIVED_COLOR } = this.utils;
+                console.log(
+                  JSON.stringify([
+                    matcherHint("toX"),
+                    matcherHint(".toX", "element", ""),
+                    matcherHint("toX", "r", "e", { isNot: true, promise: "resolves", comment: "c", secondArgument: "s" }),
+                    EXPECTED_COLOR("a"),
+                    RECEIVED_COLOR("a"),
+                    EXPECTED_COLOR(""),
+                  ]),
+                );
+                return { pass: true };
+              },
+            });
+            expect()._toPrintColors();
+          });
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "colors.test.js"],
+        cwd: String(dir),
+        env: { ...bunEnv, FORCE_COLOR: "1", NO_COLOR: undefined },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [dim, red, green, reset] = ["\x1b[2m", "\x1b[31m", "\x1b[32m", "\x1b[0m"];
+      expect({
+        printed: stdout
+          .split("\n")
+          .filter(line => line.startsWith("["))
+          .map(line => JSON.parse(line))[0],
+        stderr,
+      }).toEqual({
+        printed: [
+          `${dim}expect(${reset}${red}received${reset}${dim}).${reset}toX${dim}(${reset}${green}expected${reset}${dim})${reset}`,
+          `${dim}expect(${reset}${red}element${reset}${dim}).toX()${reset}`,
+          `${dim}expect(${reset}${red}r${reset}${dim}).${reset}resolves${dim}.${reset}not${dim}.${reset}toX${dim}(${reset}${green}e${reset}${dim}, ${reset}${green}s${reset}${dim}) // c${reset}`,
+          `${green}a${reset}`,
+          `${red}a${reset}`,
+          "",
+        ],
+        stderr: expect.any(String),
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
+});
+
+describe.skipIf(!isBun)("the namespace of a module as matchers", () => {
+  test("only `default` and `__esModule` are left out when they are not functions", () => {
+    expect.extend({
+      // @ts-expect-error
+      default: { _toBeInTheDefaultExport() {} },
+      // @ts-expect-error
+      __esModule: true,
+      _toBeInTheNamespace(actual) {
+        return { pass: actual === "namespace" };
+      },
+    });
+    // @ts-expect-error
+    expect("namespace")._toBeInTheNamespace();
+    expect("default" in expect(1)).toBe(false);
+    expect("__esModule" in expect(1)).toBe(false);
+    expect("_toBeInTheDefaultExport" in expect(1)).toBe(false);
+
+    for (const name of ["Default", "esModule", "__esmodule", "module.exports"]) {
+      expect(() => expect.extend({ [name]: {} })).toThrow(
+        `expect.extend: \`${name}\` is not a valid matcher. Must be a function, is "object"`,
+      );
+    }
+  });
+
+  test("import * as matchers from a CommonJS module", async () => {
+    using dir = tempDir("expect-extend-namespace", {
+      "plain.cjs": `exports.toBeEven = actual => ({ pass: actual % 2 === 0 });`,
+      "transpiled.cjs": `
+        Object.defineProperty(exports, "__esModule", { value: true });
+        exports.toBeOdd = actual => ({ pass: actual % 2 === 1 });
+        exports.default = { toBeOdd: exports.toBeOdd };
+      `,
+      "namespace.test.js": `
+        import { expect, test } from "bun:test";
+        import * as plain from "./plain.cjs";
+        import * as transpiled from "./transpiled.cjs";
+        for (const matchers of [plain, transpiled]) {
+          console.log(Object.keys(matchers).map(name => name + ": " + typeof matchers[name]).join(", "));
+          expect.extend(matchers);
+        }
+        test("the matchers of the modules", () => {
+          expect(2).toBeEven();
+          expect(2).not.toBeOdd();
+        });
+        test("a function named default is a matcher", () => {
+          expect.extend({ default: actual => ({ pass: actual === 1 }) });
+          expect(1).default();
+          expect(2).not.default();
+        });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "namespace.test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({
+      stdout: stdout.split("\n").slice(1),
+      stderr: stderr.split("\n").filter(line => /^ \d+ \w+$/.test(line)),
+    }).toEqual({
+      stdout: ["default: object, toBeEven: function", "default: object, toBeOdd: function", ""],
+      stderr: [" 2 pass", " 0 fail"],
+    });
+    expect(exitCode).toBe(0);
   });
 });

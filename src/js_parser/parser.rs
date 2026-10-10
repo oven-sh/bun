@@ -193,6 +193,10 @@ pub mod Runtime {
         pub inlining: bool,
 
         pub inject_jest_globals: bool,
+        /// Those are the exports of "vitest" in every file.
+        pub vitest_globals: bool,
+        /// A bit for each of `Jest::GLOBALS` that script has put on `globalThis` itself.
+        pub own_test_globals: u32,
 
         pub no_macros: bool,
 
@@ -286,6 +290,8 @@ pub mod Runtime {
                 allow_runtime: true,
                 inlining: false,
                 inject_jest_globals: false,
+                vitest_globals: false,
+                own_test_globals: 0,
                 no_macros: false,
                 commonjs_named_exports: true,
                 minify_syntax: false,
@@ -377,7 +383,7 @@ pub mod Runtime {
                 self.standard_decorators,
                 self.lower_using,
                 self.repl_mode,
-                // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true
+                // `inject_jest_globals` and `vitest_globals`: `hash_test_features_for_runtime_transpiler`
             ];
 
             // `[bool; N]` is N bytes of 0x00/0x01.
@@ -401,6 +407,15 @@ pub mod Runtime {
                 hasher.update(b"define");
                 hasher.update(&define_hash.to_le_bytes());
             }
+        }
+
+        /// What else is in the key of a file with `P::uses_test_api`.
+        pub(crate) fn hash_test_features_for_runtime_transpiler(&self, hasher: &mut Wyhash) {
+            hasher.update(&[
+                u8::from(self.inject_jest_globals),
+                u8::from(self.vitest_globals),
+            ]);
+            hasher.update(&self.own_test_globals.to_le_bytes());
         }
 
         pub(crate) fn should_unwrap_require(&self, package_name: &[u8]) -> bool {
@@ -1228,6 +1243,9 @@ pub struct ExprIn {
 
     /// The parent only reads, calls or assigns a property of this: `x.a`, `x[a]`, `const { a } = x`, not `delete x.a`.
     pub(crate) is_property_access_target: bool,
+
+    /// The parent is `Object.keys(x)`.
+    pub(crate) is_object_keys_argument: bool,
 }
 
 /// This function exists to tie all of these checks together in one place
@@ -1773,62 +1791,60 @@ impl<'a> MacroState<'a> {
 }
 
 pub struct Jest {
-    pub(crate) test: Ref,
-    pub(crate) it: Ref,
-    pub(crate) describe: Ref,
-    pub(crate) expect: Ref,
-    pub(crate) expect_type_of: Ref,
-    pub(crate) before_all: Ref,
-    pub(crate) before_each: Ref,
-    pub(crate) after_each: Ref,
-    pub(crate) after_all: Ref,
-    pub(crate) jest: Ref,
-    pub(crate) vi: Ref,
-    pub(crate) xit: Ref,
-    pub(crate) xtest: Ref,
-    pub(crate) xdescribe: Ref,
+    /// The symbol of each of `Jest::GLOBALS` that the file has looked up and does not bind.
+    pub(crate) refs: [Ref; Jest::GLOBALS.len()],
 }
 
 impl Jest {
-    /// `_parse` iterates this static table. The `&str` is the *JavaScript*
-    /// global name, and the fn-ptr projects the corresponding `Ref` out of
-    /// the struct. The table order determines the emitted import-clause /
-    /// binding property order.
-    pub(crate) const FIELDS: &'static [(&'static str, fn(&Jest) -> Ref)] = &[
-        ("test", |j| j.test),
-        ("it", |j| j.it),
-        ("describe", |j| j.describe),
-        ("expect", |j| j.expect),
-        ("expectTypeOf", |j| j.expect_type_of),
-        ("beforeAll", |j| j.before_all),
-        ("beforeEach", |j| j.before_each),
-        ("afterEach", |j| j.after_each),
-        ("afterAll", |j| j.after_all),
-        ("jest", |j| j.jest),
-        ("vi", |j| j.vi),
-        ("xit", |j| j.xit),
-        ("xtest", |j| j.xtest),
-        ("xdescribe", |j| j.xdescribe),
+    /// The exports of "bun:test" and "vitest" that a file can use without importing them, in the
+    /// order `_parse` emits them.
+    pub const GLOBALS: &'static [&'static str] = &[
+        "test",
+        "it",
+        "describe",
+        "expect",
+        "expectTypeOf",
+        "beforeAll",
+        "beforeEach",
+        "afterEach",
+        "afterAll",
+        "jest",
+        "vi",
+        "xit",
+        "xtest",
+        "xdescribe",
+        "onTestFinished",
+        "suite",
+        "vitest",
+        "onTestFailed",
+        "assertType",
     ];
+
+    #[cold]
+    pub(crate) fn did_declare_unbound(&mut self, name: &[u8], symbol: Ref) {
+        if let Some(global) = Self::GLOBALS
+            .iter()
+            .position(|global| global.as_bytes() == name)
+        {
+            self.refs[global] = symbol;
+        }
+    }
+
+    /// Whether "vitest" lacks this one of `GLOBALS`.
+    pub(crate) fn is_of_bun_only(global: &str) -> bool {
+        matches!(global, "jest" | "xit" | "xtest" | "xdescribe")
+    }
+
+    /// Whether "bun:test" lacks this one of `GLOBALS`.
+    pub(crate) fn is_of_vitest_only(global: &str) -> bool {
+        matches!(global, "suite" | "vitest" | "onTestFailed" | "assertType")
+    }
 }
 
 impl Default for Jest {
     fn default() -> Self {
         Self {
-            test: Ref::NONE,
-            it: Ref::NONE,
-            describe: Ref::NONE,
-            expect: Ref::NONE,
-            expect_type_of: Ref::NONE,
-            before_all: Ref::NONE,
-            before_each: Ref::NONE,
-            after_each: Ref::NONE,
-            after_all: Ref::NONE,
-            jest: Ref::NONE,
-            vi: Ref::NONE,
-            xit: Ref::NONE,
-            xtest: Ref::NONE,
-            xdescribe: Ref::NONE,
+            refs: [Ref::NONE; Jest::GLOBALS.len()],
         }
     }
 }

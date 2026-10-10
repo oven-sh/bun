@@ -10,8 +10,7 @@ use bun_options_types::LoaderExt as _;
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{
-    self as jsc, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValue,
-    ResolvedSource,
+    self as jsc, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, ResolvedSource,
 };
 
 // Re-exports.
@@ -168,25 +167,18 @@ extern "C" fn Bun__fetchBuiltinModule(
     }
 }
 
-/// Linear scan over the `BUN_ALIASES` const tables (PERF: could replace with
-/// a `comptime_string_map!`).
+/// Under `bun test`, "vitest" and "@jest/globals" name builtin modules however they are asked for.
+#[inline]
+pub fn alias_cfg() -> bun_resolve_builtins::Cfg {
+    bun_resolve_builtins::Cfg {
+        rewrite_jest_for_tests: crate::virtual_machine::isBunTest
+            .load(core::sync::atomic::Ordering::Relaxed),
+    }
+}
+
 #[inline]
 pub fn bun_aliases_get(name: &[u8]) -> Option<bun_resolve_builtins::Alias> {
-    // Keep the raw-table scan in agreement with `Alias::get`'s flag gate so
-    // `require.resolve.paths` / `Module._resolveLookupPaths` (which reach
-    // here via `ModuleLoader__isBuiltin`) don't report a gated-off specifier
-    // as a builtin that `require` would then fail to load.
-    if bun_resolve_builtins::stream_iter_alias_gated(name) {
-        return None;
-    }
-    for table in bun_resolve_builtins::HardcodedModule::BUN_ALIASES {
-        for (k, v) in *table {
-            if *k == name {
-                return Some(*v);
-            }
-        }
-    }
-    None
+    HardcodedModule::Alias::get(name, bun_ast::Target::Bun, alias_cfg())
 }
 
 /// Node's `--expose-internals`.
@@ -202,12 +194,15 @@ pub fn exposed_internal_tag(spec: &[u8]) -> Option<(Vec<u8>, crate::ResolvedSour
     Some((name, tag))
 }
 
-/// C++ entry point: whether `data[..len]` names a builtin module.
+/// C++ entry point: whether `data[..len]` names a builtin module to `node:module`. As to `isBuiltin()`, what `bun test`
+/// serves in place of a package ("vitest", "@jest/globals"), and the key it serves "vitest" under, do not.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> bool {
     // SAFETY: C++ guarantees `data[..len]` is a valid UTF-8 specifier slice.
     let str = unsafe { bun_core::ffi::slice(data, len) };
-    bun_aliases_get(str).is_some() || exposed_internal_tag(str).is_some()
+    (str != b"bun:test/vitest"
+        && HardcodedModule::Alias::has(str, bun_ast::Target::Bun, Default::default()))
+        || exposed_internal_tag(str).is_some()
 }
 
 /// Module loader resolve hook: index into the codegen'd `Bun::builtinModuleKeys` of the canonical key a builtin alias
@@ -216,44 +211,87 @@ unsafe extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: usize) -> boo
 unsafe extern "C" fn ModuleLoader__builtinAliasIndex(data: *const u8, len: usize) -> i32 {
     // SAFETY: C++ guarantees `data[..len]` is a live 8-bit specifier slice.
     let str = unsafe { bun_core::ffi::slice(data, len) };
-    HardcodedModule::Alias::get(str, bun_ast::Target::Bun, Default::default())
+    bun_aliases_get(str)
         .and_then(|alias| crate::builtin_module_key_index::get(alias.path.as_bytes()))
         .map_or(-1, i32::from)
 }
 
-/// C++ entry point: picks the loader for a specifier from its file extension and the VM's loader map.
+/// C++ entry point: the loader of what a plugin supplies without naming one. As for a file: the `type` it is imported
+/// with, else its file extension in the VM's loader map. None for a `type` that loads what is at the path instead.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__getDefaultLoader(
     global: &JSGlobalObject,
     str: &bun_core::String,
+    type_attribute: Option<&bun_core::String>,
 ) -> bun_options_types::schema::api::Loader {
+    use bun_ast::Loader;
     use bun_options_types::schema::api;
-    // SAFETY: C++ passed the live JS-thread global; `bun_vm()` is the
-    // per-thread VM pointer (never null on this path).
-    let jsc_vm = global.bun_vm();
     let filename = str.to_utf8();
-    let loader = jsc_vm
-        .transpiler
-        .options
-        .loader(bun_resolver::fs::PathName::init(filename.slice()).ext)
-        .to_api();
-    if loader == api::Loader::file {
-        return api::Loader::js;
+    let loader =
+        match type_attribute.and_then(|attribute| Loader::from_string(&attribute.to_utf8())) {
+            Some(
+                Loader::File
+                | Loader::Wasm
+                | Loader::Napi
+                | Loader::Base64
+                | Loader::Dataurl
+                | Loader::Bunsh
+                | Loader::Sqlite
+                | Loader::SqliteEmbedded
+                | Loader::Html,
+            ) => return api::Loader::_none,
+            Some(loader) => loader,
+            None => {
+                match global
+                    .bun_vm()
+                    .transpiler
+                    .options
+                    .loader(bun_resolver::fs::PathName::init(filename.slice()).ext)
+                {
+                    Loader::File | Loader::Bunsh => Loader::Js,
+                    loader => loader,
+                }
+            }
+        };
+    match loader {
+        // (`to_api` makes it `json`.)
+        Loader::Jsonc => api::Loader::jsonc,
+        loader => loader.to_api(),
     }
-    loader
 }
 
-/// The namespace (`b""` for `file`) and path that plugins are asked about for `specifier`, if they are asked.
-pub(crate) fn plugin_namespace_and_path(specifier: &[u8]) -> Option<(&[u8], &[u8])> {
-    if !could_be_plugin(specifier) {
-        return None;
-    }
+/// C++ entry point: what `IsolatedModuleCache` knows the contents a plugin supplied, and their loader, by. Never 0.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__hashPluginContents(contents: &bun_core::EncodedSlice, loader: u8) -> u64 {
+    let encoding = (u64::from(contents.is_16bit()) << 1) | u64::from(contents.is_utf8());
+    bun_wyhash::hash_with_seed((u64::from(loader) << 2) | encoding, contents.byte_slice()) | 1
+}
+
+/// The namespace of `specifier` (`b""` if it has none) and the path after it.
+pub(crate) fn namespace_and_path(specifier: &[u8]) -> (&[u8], &[u8]) {
     let namespace = extract_namespace(specifier);
-    Some(if namespace.is_empty() {
+    if namespace.is_empty() {
         (namespace, specifier)
     } else {
         (namespace, &specifier[namespace.len() + 1..])
-    })
+    }
+}
+
+/// The namespace (`b""` for `file`) and path that `onLoad` is asked about for `key`, if it is asked.
+pub(crate) fn on_load_namespace_and_path(key: &[u8]) -> Option<(&[u8], &[u8])> {
+    has_extension_or_namespace(key).then(|| namespace_and_path(key))
+}
+
+/// C++ entry point: the length of the namespace `onLoad` is asked about for `key` (0 for `file`), or -1 if it is not asked.
+#[unsafe(no_mangle)]
+extern "C" fn Bun__onLoadNamespaceLength(key: &bun_core::String) -> i32 {
+    match on_load_namespace_and_path(&key.to_utf8()) {
+        // The namespace of a plugin is ASCII, so its length in bytes is its length in `key`.
+        Some((namespace, _)) if namespace.is_ascii() => {
+            i32::try_from(namespace.len()).unwrap_or(-1)
+        }
+        _ => -1,
+    }
 }
 
 /// The `namespace:` prefix of `specifier`, or `b""` if it has none
@@ -274,8 +312,7 @@ fn extract_namespace(specifier: &[u8]) -> &[u8] {
     &specifier[..colon]
 }
 
-/// Cheap pre-filter before calling into a plugin: has a file extension or a `namespace:`.
-fn could_be_plugin(specifier: &[u8]) -> bool {
+pub(crate) fn has_extension_or_namespace(specifier: &[u8]) -> bool {
     if let Some(last_dot) = bun_core::strings::last_index_of_char(specifier, b'.') {
         let ext = &specifier[last_dot + 1..];
         // '.' followed by either a letter or a non-ascii character
@@ -289,31 +326,4 @@ fn could_be_plugin(specifier: &[u8]) -> bool {
     }
     !bun_paths::is_absolute(specifier)
         && bun_core::strings::index_of_char_usize(specifier, b':').is_some()
-}
-
-/// C++ entry point: runs the plugin for a virtual-module specifier, returning its exports (or zero when no plugin serves it).
-#[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__runVirtualModule(
-    global: &JSGlobalObject,
-    specifier_ptr: *const bun_core::String,
-) -> JSValue {
-    jsc::mark_binding();
-    if !global.has_plugins() {
-        return JSValue::ZERO;
-    }
-
-    // SAFETY: C++ passed a valid `bun.String*`.
-    let specifier_slice = unsafe { &*specifier_ptr }.to_utf8();
-    let Some((namespace, after_namespace)) = plugin_namespace_and_path(specifier_slice.slice())
-    else {
-        return JSValue::ZERO;
-    };
-
-    match global.run_on_load_plugins(
-        &bun_core::String::from_bytes(namespace),
-        &bun_core::String::from_bytes(after_namespace),
-    ) {
-        Ok(Some(v)) => v,
-        Ok(None) | Err(_) => JSValue::ZERO,
-    }
 }

@@ -124,8 +124,28 @@ export default [
         getter: "getExpand",
       },
       equals: {
-        fn: "equals",
-        length: 3,
+        getter: "getEquals",
+      },
+      customTesters: {
+        getter: "getCustomTesters",
+      },
+      assertionCalls: {
+        getter: "getAssertionCalls",
+      },
+      currentTestName: {
+        getter: "getCurrentTestName",
+      },
+      expectedAssertionsNumber: {
+        getter: "getExpectedAssertionsNumber",
+      },
+      isExpectingAssertions: {
+        getter: "getIsExpectingAssertions",
+      },
+      suppressedErrors: {
+        getter: "getSuppressedErrors",
+      },
+      testPath: {
+        getter: "getTestPath",
       },
     },
   }),
@@ -136,34 +156,10 @@ export default [
     call: false,
     finalize: true,
     JSType: "0b11101110",
+    values: ["equalityTesters", "equals", "state", "snapshotSerializers"],
     configurable: false,
     klass: {},
-    proto: {
-      stringify: {
-        fn: "stringify",
-        length: 1,
-      },
-      printExpected: {
-        fn: "printExpected",
-        length: 1,
-      },
-      printReceived: {
-        fn: "printReceived",
-        length: 1,
-      },
-      EXPECTED_COLOR: {
-        fn: "printExpected",
-        length: 1,
-      },
-      RECEIVED_COLOR: {
-        fn: "printReceived",
-        length: 1,
-      },
-      matcherHint: {
-        fn: "matcherHint",
-        length: 1,
-      },
-    },
+    proto: {},
   }),
   define({
     name: "ExpectStatic",
@@ -224,6 +220,7 @@ export default [
     finalize: true,
     JSType: "0b11101110",
     values: ["capturedValue", "resultValue"],
+    protoFnCaller: "callMatcher",
     configurable: false,
     klass: {
       extend: {
@@ -270,6 +267,18 @@ export default [
         fn: "addSnapshotSerializer",
         length: 1,
       },
+      addEqualityTesters: {
+        fn: "addEqualityTesters",
+        length: 1,
+      },
+      getState: {
+        fn: "getState",
+        length: 0,
+      },
+      setState: {
+        fn: "setState",
+        length: 1,
+      },
       not: {
         getter: "getStaticNot",
       },
@@ -281,6 +290,14 @@ export default [
       },
       unreachable: {
         fn: "doUnreachable",
+        length: 1,
+      },
+      soft: {
+        fn: "soft",
+        length: 1,
+      },
+      poll: {
+        fn: "poll",
         length: 1,
       },
     },
@@ -334,6 +351,37 @@ export default [
       },
       nthCalledWith: {
         fn: "toHaveBeenNthCalledWith",
+      },
+      toHaveBeenCalledExactlyOnceWith: {
+        fn: "toHaveBeenCalledExactlyOnceWith",
+      },
+      toHaveBeenCalledBefore: {
+        fn: "toHaveBeenCalledBefore",
+        length: 1,
+      },
+      toHaveBeenCalledAfter: {
+        fn: "toHaveBeenCalledAfter",
+        length: 1,
+      },
+      toHaveResolved: {
+        fn: "toHaveResolved",
+        length: 0,
+      },
+      toHaveResolvedTimes: {
+        fn: "toHaveResolvedTimes",
+        length: 1,
+      },
+      toHaveResolvedWith: {
+        fn: "toHaveResolvedWith",
+        length: 1,
+      },
+      toHaveLastResolvedWith: {
+        fn: "toHaveLastResolvedWith",
+        length: 1,
+      },
+      toHaveNthResolvedWith: {
+        fn: "toHaveNthResolvedWith",
+        length: 2,
       },
       toHaveReturnedTimes: {
         fn: "toHaveReturnedTimes",
@@ -481,6 +529,10 @@ export default [
       },
       toMatchInlineSnapshot: {
         fn: "toMatchInlineSnapshot",
+        length: 1,
+      },
+      toMatchFileSnapshot: {
+        fn: "toMatchFileSnapshot",
         length: 1,
       },
       toStrictEqual: {
@@ -810,7 +862,7 @@ export default [
     forBind: true,
     finalize: true,
     JSType: "0b11101110",
-    values: ["each"],
+    values: ["each", "fixtures"],
     configurable: false,
     klass: {},
     proto: {
@@ -826,6 +878,14 @@ export default [
         getter: "getFailing",
         cache: true,
       },
+      fails: {
+        getter: "getFails",
+        cache: true,
+      },
+      shuffle: {
+        getter: "getShuffle",
+        cache: true,
+      },
       concurrent: {
         getter: "getConcurrent",
         cache: true,
@@ -834,12 +894,20 @@ export default [
         getter: "getSerial",
         cache: true,
       },
+      sequential: {
+        getter: "getSequential",
+        cache: true,
+      },
       only: {
         getter: "getOnly",
         cache: true,
       },
       if: {
         fn: "fnIf",
+        length: 1,
+      },
+      runIf: {
+        fn: "fnRunIf",
         length: 1,
       },
       skipIf: {
@@ -865,6 +933,46 @@ export default [
       each: {
         fn: "fnEach",
         length: 1,
+      },
+      for: {
+        fn: "fnFor",
+        length: 1,
+      },
+      extend: {
+        fn: "fnExtend",
+        length: 1,
+      },
+      override: {
+        fn: "fnOverride",
+        length: 1,
+      },
+      scoped: {
+        fn: "fnOverride",
+        length: 1,
+      },
+      beforeAll: {
+        getter: "getBeforeAll",
+        cache: true,
+      },
+      beforeEach: {
+        getter: "getBeforeEach",
+        cache: true,
+      },
+      afterEach: {
+        getter: "getAfterEach",
+        cache: true,
+      },
+      afterAll: {
+        getter: "getAfterAll",
+        cache: true,
+      },
+      describe: {
+        getter: "getDescribe",
+        cache: true,
+      },
+      suite: {
+        getter: "getDescribe",
+        cache: "describe",
       },
     },
   }),

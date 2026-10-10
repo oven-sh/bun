@@ -21,10 +21,14 @@ pub trait ErrorJsc {
 }
 
 impl ErrorJsc for Error {
+    #[cold]
+    #[inline(never)]
     fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(self.to_system_error().to_error_instance(global))
     }
 
+    #[cold]
+    #[inline(never)]
     fn to_js_with_async_stack(
         &self,
         global: &JSGlobalObject,

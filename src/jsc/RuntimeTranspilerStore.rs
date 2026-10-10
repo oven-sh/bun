@@ -6,8 +6,8 @@ use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use bun_alloc::Arena;
+use bun_ast::ASTMemoryAllocator;
 use bun_ast::Loader;
-use bun_ast::{ASTMemoryAllocator, ExportsKind};
 use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_bundler::analyze_transpiled_module;
 use bun_bundler::options::ModuleType;
@@ -33,6 +33,7 @@ use bun_watcher::Watcher;
 use crate::async_module::AsyncModule;
 use crate::event_loop::{ConcurrentTask, EventLoop};
 use crate::hot_reloader::ImportWatcher;
+use crate::resolved_source::PrintedAst;
 use crate::resolved_source_tag::ResolvedSourceTag;
 use crate::runtime_transpiler_cache::{
     Entry as CacheEntry, ModuleType as CacheModuleType,
@@ -374,6 +375,7 @@ impl RuntimeTranspilerStore {
                 poll_ref: KeepAlive::default(),
                 resolved_source,
                 generation_number: self.generation_number.load(Ordering::SeqCst),
+                has_plugins: global_object.has_plugins(),
                 parse_error: None,
                 work_task: WorkPoolTask {
                     node: Default::default(),
@@ -406,6 +408,9 @@ impl RuntimeTranspilerStore {
 // the 64-slot hive is unconditional here.
 const TRANSPILER_JOB_HIVE_CAP: usize = 64;
 
+/// The parser's error for a call of a macro under `no_macros`.
+const MACROS_ARE_DISABLED: &[u8] = b"Macros are disabled";
+
 pub(crate) type TranspilerJobStore = HiveArrayFallback<TranspilerJob, TRANSPILER_JOB_HIVE_CAP>;
 
 pub struct TranspilerJob {
@@ -431,6 +436,8 @@ pub struct TranspilerJob {
     pub global_this: BackRef<JSGlobalObject>,
     pub(crate) poll_ref: KeepAlive,
     pub(crate) generation_number: u32,
+    /// A macro is loaded through `Bun.plugin()` callbacks, so the JS thread runs it: the pool thread's VM has none.
+    has_plugins: bool,
     pub(crate) log: bun_ast::Log,
     pub(crate) parse_error: Option<crate::CrateError>,
     /// Moved out by `run_from_js_thread`; dropped with the slot otherwise.
@@ -539,7 +546,19 @@ impl TranspilerJob {
 
         let referrer = core::mem::take(&mut self.non_threadsafe_referrer);
         let mut log = core::mem::replace(&mut self.log, bun_ast::Log::init());
-        let (specifier, result) = match self.parse_error {
+        let loader = self.loader;
+        // SAFETY: JS thread; leaf scalar field read on the VM that owns this job.
+        let calls_macro = self.has_plugins
+            && !unsafe { (*vm).transpiler.options.no_macros }
+            && log
+                .msgs
+                .iter()
+                .any(|msg| &*msg.data.text == MACROS_ARE_DISABLED);
+        let (specifier, mut result) = match self.parse_error {
+            Some(_) if calls_macro => (
+                core::mem::take(&mut self.non_threadsafe_input_specifier),
+                Err(crate::CrateError::ParseError),
+            ),
             Some(e) => (String::clone_utf8(self.path.text), Err(e)),
             None => {
                 let mut resolved_source = core::mem::take(&mut self.resolved_source);
@@ -561,6 +580,20 @@ impl TranspilerJob {
                 .store
                 .put(std::ptr::from_mut::<TranspilerJob>(self))
         };
+
+        if calls_macro {
+            log = bun_ast::Log::init();
+            result = VirtualMachine::fetch_without_on_load_plugins(
+                // SAFETY: JS thread; the job's slot, which is inside the VM, was given back above.
+                unsafe { &mut *vm },
+                &global_this,
+                &specifier,
+                &referrer,
+                Some(loader),
+                &mut log,
+                crate::module_loader::FetchFlags::Transpile,
+            );
+        }
 
         AsyncModule::fulfill(
             &global_this,
@@ -711,6 +744,11 @@ impl TranspilerJob {
         // Note: the resolver already shares opts with the parent
         // Transpiler via raw pointer; set_arena/set_log keep them in sync.
         transpiler.macro_context = None;
+        // No job is part of a macro, but the JS thread may be in macro mode by now.
+        transpiler.options.target = bun_ast::Target::Bun;
+        if self.has_plugins {
+            transpiler.options.no_macros = true;
+        }
         // Note: `parse_maybe` re-creates the macro context per-iteration
         // when `macro_context.is_none()`. It boxes a
         // higher-tier `MacroContext` via `__bun_macro_context_init`; that Box
@@ -753,11 +791,8 @@ impl TranspilerJob {
         // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
         let is_node_override = strings::has_prefix_comptime(specifier, node_fallbacks::IMPORT_PATH);
 
-        // SAFETY: leaf scalar field reads on `*vm`; see `vm` note above.
-        let macro_remappings = if unsafe { (*vm).macro_mode }
-            || !unsafe { (*vm).has_any_macro_remappings }
-            || is_node_override
-        {
+        // SAFETY: leaf scalar field read on `*vm`; see `vm` note above.
+        let macro_remappings = if !unsafe { (*vm).has_any_macro_remappings } || is_node_override {
             MacroRemap::default()
         } else {
             // Note: `MacroRemap` (StringArrayHashMap of StringArrayHashMap)
@@ -1062,8 +1097,8 @@ impl TranspilerJob {
             );
         }
 
-        let is_commonjs_module = parse_result.ast.has_commonjs_export_names
-            || parse_result.ast.exports_kind == ExportsKind::Cjs;
+        let printed_ast = PrintedAst::new(&parse_result.ast);
+        let is_commonjs_module = printed_ast.is_commonjs_module;
         let mut module_info: Option<Box<analyze_transpiled_module::ModuleInfo>> =
             if use_isolation_source_provider_cache
                 && !is_commonjs_module
@@ -1162,14 +1197,12 @@ impl TranspilerJob {
             break 'brk result;
         };
         self.resolved_source = ResolvedSource {
-            source_code,
-            is_commonjs_module,
             module_info: module_info.map(|mi| {
                 use analyze_transpiled_module::ModuleInfoExt;
                 mi.into_deserialized()
             }),
             tag: this_tag,
-            ..Default::default()
+            ..ResolvedSource::printed(printed_ast, source_code)
         };
 
         // `arena` and `ast_memory_store` drop here (after `_ast_scope` restores

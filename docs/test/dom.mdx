@@ -5,9 +5,62 @@ description: "Learn how to test DOM elements and components using Bun with happy
 
 Bun's test runner plays well with existing component and DOM testing libraries, including React Testing Library and happy-dom.
 
-## happy-dom
+## Test environments
 
-For headless tests of your frontend code and components, we recommend happy-dom. It implements a complete set of HTML and DOM APIs in plain JavaScript, so it can simulate a browser environment with high fidelity.
+`bun test` sets up [happy-dom](https://github.com/capricorn86/happy-dom) or [jsdom](https://github.com/jsdom/jsdom) for you, with the same globals Vitest gives a test file (`window`, `document`, `HTMLElement`, ...). Install the one you want as a dev dependency.
+
+```bash terminal icon="terminal"
+bun add -d happy-dom
+```
+
+Choose it for every test file in `bunfig.toml`, or with `bun test --environment=happy-dom`.
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+environment = "happy-dom" # or "jsdom", or "node" (the default: no DOM)
+```
+
+Or choose it for one file with the comment Vitest and Jest use, which overrides the project's setting.
+
+```ts title="dom.test.ts" icon="/icons/typescript.svg"
+// @vitest-environment happy-dom
+
+import { test, expect } from "bun:test";
+
+test("dom test", () => {
+  document.body.innerHTML = `<button>My button</button>`;
+  expect(document.querySelector("button")?.textContent).toEqual("My button");
+});
+```
+
+Bun looks for each comment where its own runner does: `@vitest-environment` anywhere in the text of the file, and `@jest-environment`, which means the same, only in a `/** */` comment that the file starts with (a `//` comment is not read). `// @vitest-environment node` runs a file without a DOM. Other environments, such as `edge-runtime` or a custom one, are not supported.
+
+If Bun cannot follow a comment, because the package is not installed or the environment is not supported, it prints a warning and runs the file without a DOM. If it cannot set up the environment from `bunfig.toml` or `--environment`, the file fails.
+
+### Options
+
+`@vitest-environment-options` (or `@jest-environment-options`) takes one line of JSON, passed to happy-dom's `Window` or to the `JSDOM` constructor. The URL defaults to `http://localhost:3000`.
+
+```ts title="dom.test.ts" icon="/icons/typescript.svg"
+/**
+ * @vitest-environment jsdom
+ * @vitest-environment-options { "url": "https://example.com/" }
+ */
+```
+
+### Windows and test files
+
+Test files share one global object and one module registry by default, so files with the same environment and options also share one window: a module that read `document.body` when it was imported stays right in the next file. After each file Bun puts the globals back, so a file that runs in `node` sees no `document`.
+
+With [`--isolate` or `--parallel`](/test/parallel), every file gets its own window and its own copy of every module. Use them when files in different environments import the same DOM library: a shared module stays bound to the first window it saw.
+
+Preload scripts run in the project's environment. Under `--isolate` they run again for each file, in that file's environment.
+
+With jsdom, an error thrown in an event listener or a timer fails the running test, as in Vitest and Jest, unless the file (or a preload script) has added an `error` listener to `window`.
+
+## Registering happy-dom in a preload
+
+Instead of setting `environment`, you can register the globals yourself in a preload script.
 
 Install the `@happy-dom/global-registrator` package as a dev dependency.
 
@@ -78,7 +131,7 @@ Ran 1 test across 1 file. [125.00ms]
 
 ## React Testing Library
 
-Bun works with React Testing Library for testing React components. After setting up happy-dom as described earlier, install and use React Testing Library normally.
+Bun works with React Testing Library for testing React components. After setting up a DOM as described earlier, install and use React Testing Library normally.
 
 ```bash terminal icon="terminal"
 bun add -d @testing-library/react @testing-library/jest-dom
@@ -203,7 +256,7 @@ preload = ["./test-setup.ts"]
 
 **TypeScript errors for DOM APIs**: Include the `/// <reference lib="dom" />` directive at the top of your test files.
 
-**Missing globals**: Check that your preload file imports and registers `@happy-dom/global-registrator`.
+**Missing globals**: Check that the file runs in a [test environment](#test-environments), or that your preload file imports and registers `@happy-dom/global-registrator`.
 
 **React component rendering issues**: Check that `@testing-library/react` is installed and happy-dom is set up.
 

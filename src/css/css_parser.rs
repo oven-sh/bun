@@ -10,7 +10,7 @@ use bun_alloc::Arena as Bump;
 use bun_ast::Log;
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 use bun_collections::{ArrayHashMap, StringArrayHashMap, VecExt};
-use bun_core::strings;
+use bun_core::{StackCheck, strings};
 
 // ───────────────────────────── re-exports ─────────────────────────────
 //
@@ -559,7 +559,9 @@ fn nested_block_enter(parser: &mut Parser) -> CssResult<NestedBlockState> {
     }
 
     parser.input.nesting_depth += 1;
-    if parser.input.nesting_depth > MAX_NESTING_DEPTH {
+    let out_of_stack = !parser.input.stack_check.is_safe_to_recurse();
+    parser.input.out_of_stack |= out_of_stack;
+    if out_of_stack || parser.input.nesting_depth > MAX_NESTING_DEPTH {
         parser.input.nesting_depth -= 1;
         let err = parser.new_custom_error(ParserError::maximum_nesting_depth);
         let found_close = consume_until_end_of_block(block_type, &mut parser.input.tokenizer);
@@ -2621,11 +2623,15 @@ mod stylesheet_impl {
                 if let Err(e) = result {
                     let result_options = rule_list_parser.parser.options;
                     if result_options.error_recovery {
-                        // todo_stuff.warn
+                        result_options.warn(&e);
                         continue;
                     }
                     return Err(Err::from_parse_error(e, options.filename));
                 }
+            }
+            if parser.input.out_of_stack {
+                let e = parser.new_custom_error(ParserError::maximum_nesting_depth);
+                return Err(Err::from_parse_error(e, options.filename));
             }
 
             let sources: Vec<Box<[u8]>> = vec![Box::<[u8]>::from(options.filename)];
@@ -2891,7 +2897,7 @@ pub struct ParserOptions<'a> {
     /// when the style sheet is serialized.
     pub(crate) source_index: u32,
     /// Whether to ignore invalid rules and declarations rather than erroring.
-    pub(crate) error_recovery: bool,
+    pub error_recovery: bool,
     /// A list that will be appended to when a warning occurs.
     ///
     /// Stored as a raw `NonNull<Log>` so `warn(&self)`
@@ -3783,6 +3789,9 @@ pub struct ParserInput<'a> {
     pub(crate) tokenizer: Tokenizer<'a>,
     pub(crate) cached_token: Option<CachedToken>,
     pub(crate) nesting_depth: u32,
+    stack_check: StackCheck,
+    /// A block was skipped for lack of stack, which neither backtracking nor error recovery may hide.
+    out_of_stack: bool,
     /// Set once a nested block fails to parse and the end of input is reached
     /// without ever finding its closing token, i.e. the stylesheet is
     /// truncated somewhere inside that block. Everything from
@@ -3827,6 +3836,8 @@ impl<'a> ParserInput<'a> {
             tokenizer: Tokenizer::init_with_arena(code, arena),
             cached_token: None,
             nesting_depth: 0,
+            stack_check: StackCheck::init(),
+            out_of_stack: false,
             unclosed_block_at_eof: None,
             math_fn_parse_failures: 0,
             token_list_parse_failures: 0,

@@ -775,7 +775,7 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
         const dir = `${tmpbase}/fs.test.js/${performance.now()}-1/bun-write/ENOENT`;
         const file = join(dir, "file");
         try {
-          expect(async () => await Bun.write(file, "contents", { createPath: false })).toThrow(
+          await expect(async () => await Bun.write(file, "contents", { createPath: false })).toThrow(
             "no such file or directory",
           );
           expect(fs.existsSync(file)).toBe(false);

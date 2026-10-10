@@ -288,6 +288,12 @@ describe("undici", () => {
       expect(json2.args.foo).toBe("bar");
     });
 
+    it("should take a URL of another implementation", async () => {
+      const { href, protocol } = new URL(`${hostUrl}/get`);
+      const { body } = await request({ href, protocol } as URL, { query: { foo: "bar" } });
+      expect(await body.json()).toMatchObject({ url: `${hostUrl}/get?foo=bar`, args: { foo: "bar" } });
+    });
+
     it("should throw on HTTP 4xx or 5xx error when throwOnError is true", async () => {
       try {
         await request(`${hostUrl}/status/404`, { throwOnError: true });

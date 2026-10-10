@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import path from "path";
 
@@ -131,6 +131,97 @@ test("coverage excludes node_modules directory", () => {
   expect(result.stderr.toString("utf-8")).not.toContain("node_modules");
   expect(result.exitCode).toBe(0);
   expect(result.signalCode).toBeUndefined();
+});
+
+test("coverage leaves out the modules generated for ?worker and ?init, and nothing else that has a query", async () => {
+  using dir = tempDir("cov", {
+    "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
+    "echo.ts": `postMessage("started");`,
+    "empty.wasm": Buffer.from("0061736d01000000", "hex"),
+    "lib.ts": `export const used = () => 1;`,
+    "preload.ts": `
+      Bun.plugin({
+        name: "supplies a module",
+        setup(build) {
+          build.onLoad({ filter: /\\?supplied$/ }, () => ({ contents: "export const supplied = () => 2;", loader: "ts" }));
+        },
+      });
+    `,
+    "generated.test.ts": `
+      import { expect, test, vi } from "bun:test";
+      import EchoWorker from "./echo.ts?worker";
+      import EchoSharedWorker from "./echo.ts?sharedworker";
+      import init from "./empty.wasm?init";
+      import { used } from "./lib.ts?again";
+      import { supplied } from "./lib.ts?supplied";
+      test("uses them", () => {
+        vi.stubGlobal("Worker", class {});
+        new EchoWorker();
+        expect([used(), supplied(), typeof init, typeof EchoSharedWorker]).toEqual([1, 2, "function", "function"]);
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--preload", "./preload.ts", "--coverage", "--coverage-reporter=lcov"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("1 pass");
+  expect(readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8").match(/^SF:.*$/gm)).toEqual([
+    "SF:lib.ts",
+    "SF:lib.ts?supplied",
+    "SF:preload.ts",
+  ]);
+  expect(exitCode).toBe(0);
+});
+
+// Such a name does not exist on Windows.
+test.skipIf(isWindows)("a file with ? in its name is not left out of coverage: it cannot be loaded", async () => {
+  using dir = tempDir("cov", {
+    "bunfig.toml": `[test]\ncoverageSkipTestFiles = true\n`,
+    "named.ts": `export const file = "named.ts";`,
+    "named.ts?worker": `export const file = "named.ts?worker";`,
+    "only?init.ts": `export const file = "only?init.ts";`,
+    "names.test.ts": `
+      const results = {};
+      for (const specifier of ["./named.ts?x", "./only?init.ts", "./only%3Finit.ts", new URL("./only%3Finit.ts", import.meta.url).href]) {
+        results[specifier.replace(/^file:.*\\//, "file:")] = await import(specifier).then(({ file }) => file, error => error.code);
+      }
+      results.glob = Object.keys(import.meta.glob("./named*"));
+      results.worker = typeof (await import("./named.ts?worker")).default;
+      console.log("@" + JSON.stringify(results));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(
+    JSON.parse(
+      stdout
+        .split("\n")
+        .find(line => line.startsWith("@"))!
+        .slice(1),
+    ),
+  ).toEqual({
+    "./named.ts?x": "named.ts",
+    "./only?init.ts": "ERR_MODULE_NOT_FOUND",
+    "./only%3Finit.ts": "ERR_MODULE_NOT_FOUND",
+    "file:only%3Finit.ts": "ERR_MODULE_NOT_FOUND",
+    glob: ["./named.ts"],
+    worker: "function",
+  });
+  expect(readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8").match(/^SF:.*$/gm)).toEqual([
+    "SF:named.ts",
+  ]);
+  expect(exitCode).toBe(0);
 });
 
 test("coveragePathIgnorePatterns - single pattern string", () => {

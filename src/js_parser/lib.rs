@@ -27,6 +27,7 @@ pub mod sema;
 pub mod typescript;
 pub mod visit;
 
+pub use lower::import_meta_glob::*;
 pub use p::P;
 pub use parse::parse_entry::{Options as ParserOptions, Parser};
 

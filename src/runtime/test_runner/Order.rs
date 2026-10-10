@@ -15,6 +15,8 @@ pub(crate) struct Order {
     // `cloned_hook_entries` after `generate_order_describe` and reclaims the Box
     // headers (without running `Drop`) in `Drop for BunTest`.
     pub(crate) previous_group_was_concurrent: bool,
+    /// A `describe.shuffle` decided an order.
+    pub(crate) shuffled: bool,
     pub(crate) cfg: Config,
 }
 
@@ -25,6 +27,7 @@ impl Order {
             sequences: Vec::new(),
             cfg,
             previous_group_was_concurrent: false,
+            shuffled: false,
         }
     }
     // `deinit` only freed `groups` / `sequences` — handled by Drop on Vec; no impl Drop needed.
@@ -39,9 +42,17 @@ impl Order {
         Ok(())
     }
 
-    pub(crate) fn generate_all_order(&mut self, entries: &[Box<ExecutionEntry>]) -> JsResult<AllOrderResult> {
+    /// `runs_a_test`: vitest leaves out the hooks of a scope in which every test is skipped.
+    pub(crate) fn generate_all_order(
+        &mut self,
+        entries: &[Box<ExecutionEntry>],
+        runs_a_test: bool,
+    ) -> JsResult<AllOrderResult> {
         let start = self.groups.len();
         for entry_box in entries.iter() {
+            if !runs_a_test && entry_box.calling.is_vitest() {
+                continue;
+            }
             // Callers (e.g. BunTestRoot.hook_scope) only hold `&` access to the Vec, so we accept
             // `&[Box<_>]` and recover each Box's heap pointer as *mut to mutate through the
             // pointer, not the slice. SAFETY: each Box<ExecutionEntry> is live and
@@ -86,14 +97,22 @@ impl Order {
 
         // gather beforeAll
         let beforeall_order: AllOrderResult = if use_hooks {
-            self.generate_all_order(&current.before_all)?
+            self.generate_all_order(&current.before_all, current.base.has_callback)?
         } else {
             AllOrderResult::EMPTY
         };
 
         // shuffle entries if randomize flag is set
-        if let Some(random) = self.cfg.randomize.as_mut() {
-            shuffle_with_index(random, &mut current.entries);
+        match (current.inherited.shuffle, self.cfg.randomize.as_mut()) {
+            (Some(false), _) | (None, None) => {}
+            (None, Some(random)) => shuffle_with_index(random, &mut current.entries),
+            // A generator of its own: `--seed`, which shuffles everything else as well, gives this order again.
+            (Some(true), _) => {
+                let name = bun_wyhash::hash(current.base.name.as_deref().unwrap_or_default());
+                let mut random = bun_core::rand::DefaultPrng::init(self.cfg.seed.wrapping_add(name));
+                shuffle_with_index(&mut random, &mut current.entries);
+                self.shuffled = true;
+            }
         }
 
         // gather children
@@ -111,7 +130,7 @@ impl Order {
 
         // gather afterAll
         let afterall_order: AllOrderResult = if use_hooks {
-            self.generate_all_order(&current.after_all)?
+            self.generate_all_order(&current.after_all, current.base.has_callback)?
         } else {
             AllOrderResult::EMPTY
         };
@@ -266,6 +285,8 @@ pub(crate) struct Config {
     // The only call site seeds a concrete `DefaultPrng` (xoshiro256++), so
     // no type-erased Random vtable is needed.
     pub(crate) randomize: Option<bun_core::rand::DefaultPrng>,
+    /// What `randomize` is seeded with.
+    pub(crate) seed: u64,
 }
 
 /// Forward Fisher-Yates: `i` from 0 to len-2, `j = intRangeLessThan(usize, i, len)`.

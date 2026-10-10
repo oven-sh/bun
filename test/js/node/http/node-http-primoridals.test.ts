@@ -1,4 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
+import { once } from "node:events";
+import type { AddressInfo } from "node:net";
+import { text } from "node:stream/consumers";
+import vm from "node:vm";
 
 const Response = globalThis.Response;
 const Request = globalThis.Request;
@@ -126,5 +130,69 @@ test("Overriding Request, Response, Headers, and Blob should not break node:http
     globalThis.Request = Request;
     globalThis.Headers = Headers;
     globalThis.Blob = Blob;
+  }
+});
+
+async function withEchoServer(run: (http: typeof import("node:http"), origin: string) => Promise<void>) {
+  // Not imported: the test above is about loading node:http with the globals replaced.
+  const http = require("node:http");
+  const server = http.createServer((req, res) => {
+    let body = "";
+    req
+      .on("data", chunk => (body += chunk))
+      .on("end", () => {
+        res.write(`${req.url} ${body} `);
+        res.write(uint8ArrayOfAnotherRealm());
+        res.end(uint8ArrayOfAnotherRealm());
+      });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    await run(http, `http://127.0.0.1:${(server.address() as AddressInfo).port}`);
+  } finally {
+    server.close();
+  }
+}
+
+function uint8ArrayOfAnotherRealm(): Uint8Array {
+  return vm.runInNewContext("new Uint8Array([97, 98])");
+}
+
+test("a Uint8Array of another realm is a chunk", async () => {
+  await withEchoServer(async (http, origin) => {
+    const request = http.request(origin + "/", { method: "POST" });
+    request.write(uint8ArrayOfAnotherRealm());
+    request.end(uint8ArrayOfAnotherRealm());
+    const [response] = await once(request, "response");
+    expect(await text(response)).toBe("/ abab abab");
+  });
+});
+
+test("a URL of another implementation is a URL", async () => {
+  function foreignURL(input: string) {
+    const { href, origin, protocol, username, password, host, hostname, port, pathname, search, hash } = new URL(input);
+    return { href, origin, protocol, username, password, host, hostname, port, pathname, search, hash };
+  }
+  await withEchoServer(async (http, origin) => {
+    const [response] = await once(http.get(foreignURL(origin + "/path?query")), "response");
+    expect(await text(response)).toBe("/path?query  abab");
+  });
+  const request = require("node:https")
+    .request(foreignURL("https://127.0.0.1:1/path?query"))
+    .on("error", () => {});
+  expect(request.path).toBe("/path?query");
+  request.destroy();
+});
+
+test("does not read URL from globalThis", async () => {
+  const { URL } = globalThis;
+  globalThis.URL = class {} as unknown as typeof URL;
+  try {
+    await withEchoServer(async (http, origin) => {
+      const [response] = await once(http.get(origin + "/path?query"), "response");
+      expect(await text(response)).toBe("/path?query  abab");
+    });
+  } finally {
+    globalThis.URL = URL;
   }
 });

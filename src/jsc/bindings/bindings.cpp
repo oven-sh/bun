@@ -251,27 +251,8 @@ enum class AsymmetricMatcherConstructorType : int8_t {
 };
 
 // Ensure we instantiate the true and false variants of this function
-template bool Bun__deepMatch<true>(
-    JSValue objValue,
-    std::set<EncodedJSValue>* seenObjProperties,
-    JSValue subsetValue,
-    std::set<EncodedJSValue>* seenSubsetProperties,
-    JSGlobalObject* globalObject,
-    ThrowScope& throwScope,
-    MarkedArgumentBuffer* gcBuffer,
-    bool replacePropsWithAsymmetricMatchers,
-    bool isMatchingObjectContaining);
-
-template bool Bun__deepMatch<false>(
-    JSValue objValue,
-    std::set<EncodedJSValue>* seenObjProperties,
-    JSValue subsetValue,
-    std::set<EncodedJSValue>* seenSubsetProperties,
-    JSGlobalObject* globalObject,
-    ThrowScope& throwScope,
-    MarkedArgumentBuffer* gcBuffer,
-    bool replacePropsWithAsymmetricMatchers,
-    bool isMatchingObjectContaining);
+template bool Bun__deepMatch<true>(JSValue objValue, JSValue subsetValue, JSGlobalObject* globalObject, ThrowScope& throwScope, Bun::DeepMatchState& state, bool isMatchingObjectContaining);
+template bool Bun__deepMatch<false>(JSValue objValue, JSValue subsetValue, JSGlobalObject* globalObject, ThrowScope& throwScope, Bun::DeepMatchState& state, bool isMatchingObjectContaining);
 
 extern "C" bool Expect_readFlagsAndProcessPromise(JSC::EncodedJSValue instanceValue, JSC::JSGlobalObject* globalObject, ExpectFlags* flags, JSC::EncodedJSValue* value, AsymmetricMatcherConstructorType* constructorType);
 
@@ -560,10 +541,8 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
         JSValue patternObject = expectObjectContaining->m_objectValue.get();
         if (patternObject.isObject()) {
             if (otherProp.isObject()) {
-                // SAFETY: visited property sets are not required when
-                // `enableAsymmetricMatchers` and `isMatchingObjectContaining`
-                // are both true
-                bool match = Bun__deepMatch<true>(otherProp, nullptr, patternObject, nullptr, globalObject, throwScope, nullptr, false, true);
+                Bun::DeepMatchState state;
+                bool match = Bun__deepMatch<true>(otherProp, patternObject, globalObject, throwScope, state, true);
                 RETURN_IF_EXCEPTION(throwScope, AsymmetricMatcherResult::FAIL);
                 if (match) {
                     return AsymmetricMatcherResult::PASS;
@@ -678,6 +657,123 @@ static bool canPerformFastPropertyEnumerationForIterationBun(Structure* s)
 static bool mayBeAsymmetricMatcher(JSValue value)
 {
     return value.isCell() && !value.isEmpty() && value.asCell()->type() == JSC::JSType(JSDOMWrapperType);
+}
+
+extern "C" int8_t Expect__runEqualityTesters(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue a, JSC::EncodedJSValue b);
+
+static ALWAYS_INLINE bool hasEqualityTesters(JSGlobalObject* globalObject)
+{
+    JSObject* matcherUtils = static_cast<Zig::GlobalObject*>(globalObject)->m_testMatcherUtilsObject.getConcurrently();
+    return matcherUtils && uncheckedDowncast<JSExpectMatcherUtils>(matcherUtils)->m_equalityTesters;
+}
+
+// What the testers of `expect.addEqualityTesters()` say about a pair, which overrides every built-in rule but asymmetric matchers.
+static NEVER_INLINE std::optional<bool> runEqualityTesters(JSGlobalObject* globalObject, ThrowScope& scope, JSValue a, JSValue b)
+{
+    int8_t verdict = Expect__runEqualityTesters(globalObject, JSValue::encode(a ? a : jsUndefined()), JSValue::encode(b ? b : jsUndefined()));
+    RETURN_IF_EXCEPTION(scope, false);
+    if (verdict < 0)
+        return std::nullopt;
+    return verdict != 0;
+}
+
+// A DOM written in JavaScript makes its nodes from classes, some of them behind a Proxy.
+static ALWAYS_INLINE bool mayBeDOMNode(JSGlobalObject* globalObject, JSObject* object)
+{
+    JSC::JSType type = object->type();
+    return type == ProxyObjectType || (type == FinalObjectType && object->getPrototypeDirect() != globalObject->objectPrototype());
+}
+
+// `isDomNode` of Jest and vitest. No code of the value runs unless it has an `isEqualNode`.
+static bool isDOMNode(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* object, JSValue& isEqualNode)
+{
+    VM& vm = globalObject->vm();
+    auto& names = WebCore::builtinNames(vm);
+    if (!mayBeDOMNode(globalObject, object))
+        return false;
+
+    JSObject* target = object;
+    while (auto* proxy = dynamicDowncast<ProxyObject>(target)) {
+        if (proxy->isRevoked())
+            return false;
+        target = proxy->target();
+    }
+    {
+        // The slot forbids entering the VM for as long as it lives.
+        PropertySlot inquiry(target, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        bool hasIsEqualNode = target->getPropertySlot(globalObject, names.isEqualNodePublicName(), inquiry);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!hasIsEqualNode)
+            return false;
+    }
+
+    JSValue nodeType = object->get(globalObject, names.nodeTypePublicName());
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!nodeType.isNumber())
+        return false;
+    JSValue nodeName = object->get(globalObject, names.nodeNamePublicName());
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!nodeName.isString())
+        return false;
+    isEqualNode = object->get(globalObject, names.isEqualNodePublicName());
+    RETURN_IF_EXCEPTION(scope, false);
+    return isEqualNode.isCallable();
+}
+
+enum class DOMNodeComparison : uint8_t {
+    Equal,
+    StrictEqual,
+    // toMatchObject: a node is still matched against a plain pattern by its properties.
+    Match,
+};
+
+namespace Bun {
+JSC::JSString* objectPrototypeToStringOutOfLine(JSC::JSGlobalObject*, JSC::JSValue);
+}
+
+// What `equals` of Jest and vitest does before it compares properties. nullopt: compare the properties.
+static NEVER_INLINE std::optional<bool> domNodesDequal(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* o1, JSObject* o2, DOMNodeComparison comparison)
+{
+    VM& vm = globalObject->vm();
+    // A property and the code that names it each hold the name. While only the table of names does, no object has an `isEqualNode`.
+    if (WebCore::builtinNames(vm).isEqualNodePublicName().impl()->hasOneRef())
+        return std::nullopt;
+    JSValue isEqualNode;
+    JSValue isEqualNodeOfOther;
+    bool isNode1 = isDOMNode(globalObject, scope, o1, isEqualNode);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (!isNode1 && o1->structureID() == o2->structureID() && o1->type() == FinalObjectType && !o1->structure()->hasPolyProto())
+        return std::nullopt;
+    bool isNode2 = isDOMNode(globalObject, scope, o2, isEqualNodeOfOther);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (comparison == DOMNodeComparison::Match ? !(isNode1 && isNode2) : !(isNode1 || isNode2))
+        return std::nullopt;
+
+    JSString* tag1 = Bun::objectPrototypeToStringOutOfLine(globalObject, o1);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    JSString* tag2 = Bun::objectPrototypeToStringOutOfLine(globalObject, o2);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    bool sameTag = tag1->equal(globalObject, tag2);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (!sameTag)
+        return false;
+    if (!isNode1 || !isNode2)
+        return std::nullopt;
+
+    if (comparison == DOMNodeComparison::StrictEqual) {
+        JSValue constructor1 = o1->get(globalObject, vm.propertyNames->constructor);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        JSValue constructor2 = o2->get(globalObject, vm.propertyNames->constructor);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        if (constructor1 != constructor2)
+            return false;
+    }
+
+    MarkedArgumentBuffer arguments;
+    arguments.append(o2);
+    JSValue result = JSC::call(globalObject, isEqualNode, JSC::getCallData(isEqualNode), o1, arguments);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    return result.toBoolean(globalObject);
 }
 
 JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, uint64_t i)
@@ -848,6 +944,11 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 RETURN_IF_EXCEPTION(scope, false);
                 break;
             }
+        }
+
+        if (hasEqualityTesters(globalObject)) [[unlikely]] {
+            if (auto verdict = runEqualityTesters(globalObject, scope, v1, v2))
+                return *verdict;
         }
     }
 
@@ -1092,6 +1193,15 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
         return true;
     }
 
+    if constexpr (enableAsymmetricMatchers) {
+        if (mayBeDOMNode(globalObject, o1) || mayBeDOMNode(globalObject, o2)) {
+            auto nodesEqual = domNodesDequal(globalObject, scope, o1, o2, isStrict ? DOMNodeComparison::StrictEqual : DOMNodeComparison::Equal);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (nodesEqual)
+                return *nodesEqual;
+        }
+    }
+
     if constexpr (isStrict && !checkPrototypes && !skipPrototypeIdentity) {
         if (!equal(JSObject::calculatedClassName(o1), JSObject::calculatedClassName(o2))) {
             return false;
@@ -1209,14 +1319,21 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                 return false;
             }
 
+            // An equality tester may say that a value does not equal itself.
+            bool sameIsEqual = true;
+            if constexpr (enableAsymmetricMatchers)
+                sameIsEqual = !hasEqualityTesters(globalObject);
+
             for (size_t i = 0; i < pairs.size(); i += 2) {
                 JSValue left = pairs.at(i);
                 JSValue right = pairs.at(i + 1);
 
-                if (left == right) continue;
-                auto same = JSC::sameValue(globalObject, left, right);
-                RETURN_IF_EXCEPTION(scope, false);
-                if (same) continue;
+                if (sameIsEqual) [[likely]] {
+                    if (left == right) continue;
+                    auto same = JSC::sameValue(globalObject, left, right);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    if (same) continue;
+                }
 
                 auto eql = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, left, right, gcBuffer, stack, scope, true);
                 RETURN_IF_EXCEPTION(scope, false);
@@ -1718,6 +1835,23 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
             return false;
         }
 
+        // The equality testers are asked about each element.
+        if (mode.enableAsymmetricMatchers && hasEqualityTesters(globalObject)) [[unlikely]] {
+            size_t length = left->length();
+            for (size_t i = 0; i < length; i++) {
+                JSValue leftElement = left->getIndex(globalObject, i);
+                RETURN_IF_EXCEPTION(scope, {});
+                JSValue rightElement = right->getIndex(globalObject, i);
+                RETURN_IF_EXCEPTION(scope, {});
+                bool elementsEqual = mode.deepEquals(globalObject, leftElement, rightElement, gcBuffer, stack, scope, true);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!elementsEqual)
+                    return false;
+            }
+            if (compareOwnProperties) break;
+            return true;
+        }
+
         if (vector == rightVector) [[unlikely]] {
             if (mode.checkPrototypes) {
                 return mode.nonIndexOwnPropertiesEqual(globalObject, gcBuffer, stack, scope, left, right);
@@ -1791,7 +1925,8 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
         }
         return true;
     }
-    case JSFunctionType: {
+    case JSFunctionType:
+    case InternalFunctionType: {
         return false;
     }
 
@@ -1919,8 +2054,11 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
         return g1->m_globalThis == g2->m_globalThis;
     }
     case GlobalProxyType: {
-        if (c1Type != c2Type) return false;
         auto* gp1 = dynamicDowncast<JSC::JSGlobalProxy>(c1);
+        // The global of a node:vm context compares by its properties, as in Node, where only the main global has a tag of its own.
+        if (!gp1->target()->inherits<Zig::GlobalObject>())
+            break;
+        if (c1Type != c2Type) return false;
         auto* gp2 = dynamicDowncast<JSC::JSGlobalProxy>(c2);
         return gp1->target()->m_globalThis == gp2->target()->m_globalThis;
     }
@@ -2109,6 +2247,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
     case BigUint64ArrayType:
     case StringObjectType:
     case JSFunctionType:
+    case InternalFunctionType:
     case JSAsJSONType:
     case JSDOMWrapperType:
     case GlobalObjectType:
@@ -2166,41 +2305,14 @@ template bool Bun__deepEquals<true, false, false, true>(JSC::JSGlobalObject*, JS
 
 /**
  * @brief `Bun.deepMatch(a, b)`
- *
- * @note
- * The sets recording already visited properties (`seenObjProperties`,
- * `seenSubsetProperties`, and `gcBuffer`) aren not needed when both
- * `enableAsymmetricMatchers` and `isMatchingObjectContaining` are true. In
- * this case, it is safe to pass a `nullptr`.
- *
- * `gcBuffer` ensures JSC's stack scan does not come up empty-handed and free
- * properties currently within those stacks. Likely unnecessary, but better to
- * be safe tnan sorry
- *
- * @tparam enableAsymmetricMatchers
- * @param objValue
- * @param seenObjProperties already visited properties of `objValue`.
- * @param subsetValue
- * @param seenSubsetProperties already visited properties of `subsetValue`.
- * @param globalObject
- * @param throwScope
- * @param gcBuffer
- * @param replacePropsWithAsymmetricMatchers
- * @param isMatchingObjectContaining
- *
- * @return true
- * @return false
  */
 template<bool enableAsymmetricMatchers>
 bool Bun__deepMatch(
     JSValue objValue,
-    std::set<EncodedJSValue>* seenObjProperties,
     JSValue subsetValue,
-    std::set<EncodedJSValue>* seenSubsetProperties,
     JSGlobalObject* globalObject,
     ThrowScope& throwScope,
-    MarkedArgumentBuffer* gcBuffer,
-    bool replacePropsWithAsymmetricMatchers,
+    Bun::DeepMatchState& state,
     bool isMatchingObjectContaining)
 {
 
@@ -2213,10 +2325,27 @@ bool Bun__deepMatch(
         return false;
     }
 
+    if constexpr (enableAsymmetricMatchers) {
+        // The sample of expect.objectContaining() is a pattern, not a value to compare.
+        if (!isMatchingObjectContaining && hasEqualityTesters(globalObject)) [[unlikely]] {
+            if (auto verdict = runEqualityTesters(globalObject, throwScope, objValue, subsetValue))
+                return *verdict;
+        }
+    }
+
     // fast path for reference equality.
     if (objValue == subsetValue) return true;
     JSObject* obj = objValue.getObject();
     JSObject* subsetObj = subsetValue.getObject();
+
+    if constexpr (enableAsymmetricMatchers) {
+        if (mayBeDOMNode(globalObject, obj) && mayBeDOMNode(globalObject, subsetObj)) {
+            auto nodesEqual = domNodesDequal(globalObject, throwScope, obj, subsetObj, DOMNodeComparison::Match);
+            RETURN_IF_EXCEPTION(throwScope, false);
+            if (nodesEqual)
+                return *nodesEqual;
+        }
+    }
 
     PropertyNameArrayBuilder subsetProps(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Include);
     subsetObj->getPropertyNames(globalObject, subsetProps, DontEnumPropertiesMode::Exclude);
@@ -2263,10 +2392,7 @@ bool Bun__deepMatch(
                 case AsymmetricMatcherResult::FAIL:
                     return false;
                 case AsymmetricMatcherResult::PASS:
-                    if (replacePropsWithAsymmetricMatchers) {
-                        obj->putDirectMayBeIndex(globalObject, property, subsetProp);
-                        RETURN_IF_EXCEPTION(throwScope, false);
-                    }
+                    state.recordIfAsked(obj, subsetObj, property, subsetProp, jsUndefined());
                     // continue to next subset prop
                     continue;
                 case AsymmetricMatcherResult::NOT_MATCHER:
@@ -2277,10 +2403,6 @@ bool Bun__deepMatch(
                 case AsymmetricMatcherResult::FAIL:
                     return false;
                 case AsymmetricMatcherResult::PASS:
-                    if (replacePropsWithAsymmetricMatchers) {
-                        subsetObj->putDirectMayBeIndex(globalObject, property, prop);
-                        RETURN_IF_EXCEPTION(throwScope, false);
-                    }
                     // continue to next subset prop
                     continue;
                 case AsymmetricMatcherResult::NOT_MATCHER:
@@ -2300,20 +2422,24 @@ bool Bun__deepMatch(
                 RETURN_IF_EXCEPTION(throwScope, false);
                 if (!eql) return false;
             } else {
-                ASSERT(seenObjProperties != nullptr);
-                ASSERT(seenSubsetProperties != nullptr);
-                ASSERT(gcBuffer != nullptr);
-                auto didInsertProp = seenObjProperties->insert(JSC::JSValue::encode(prop));
-                auto didInsertSubset = seenSubsetProperties->insert(JSC::JSValue::encode(subsetProp));
-                gcBuffer->append(prop);
-                gcBuffer->append(subsetProp);
-                // property cycle detected
-                if (!didInsertProp.second || !didInsertSubset.second) continue;
-                bool matched = Bun__deepMatch<enableAsymmetricMatchers>(prop, seenObjProperties, subsetProp, seenSubsetProperties, globalObject, throwScope, gcBuffer, replacePropsWithAsymmetricMatchers, isMatchingObjectContaining);
+                state.gcBuffer.append(prop);
+                state.gcBuffer.append(subsetProp);
+                state.recordIfAsked(obj, subsetObj, property, prop, subsetProp);
+                // This value has met this pattern before: it matched, or the two are being compared (a cycle).
+                if (!state.seen.insert({ JSC::JSValue::encode(prop), JSC::JSValue::encode(subsetProp) }).second) continue;
+                bool matched = Bun__deepMatch<enableAsymmetricMatchers>(prop, subsetProp, globalObject, throwScope, state, isMatchingObjectContaining);
                 RETURN_IF_EXCEPTION(throwScope, false);
                 if (!matched) return false;
             }
         } else {
+            if constexpr (enableAsymmetricMatchers) {
+                if (hasEqualityTesters(globalObject)) [[unlikely]] {
+                    if (auto verdict = runEqualityTesters(globalObject, throwScope, prop, subsetProp)) {
+                        if (!*verdict) return false;
+                        continue;
+                    }
+                }
+            }
             auto same = JSC::sameValue(globalObject, prop, subsetProp);
             RETURN_IF_EXCEPTION(throwScope, false);
             if (!same) return false;
@@ -3268,17 +3394,109 @@ bool Bun__deepEqualsNodeStrictSkipProto(JSC::EncodedJSValue JSValue0, JSC::Encod
 
 #undef IMPL_DEEP_EQUALS_WRAPPER
 
-bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject, bool replacePropsWithAsymmetricMatchers)
+// A copy of `object` to put properties on, or null for an object that is more than its properties.
+static JSObject* shallowCopyForDeepMatch(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* object)
+{
+    auto& vm = JSC::getVM(globalObject);
+    JSObject* copy = nullptr;
+    if (isJSArray(object)) {
+        copy = constructEmptyArray(globalObject, nullptr, 0);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    } else if (object->type() == FinalObjectType) {
+        JSValue prototype = object->getPrototypeDirect();
+        copy = prototype.isObject() ? constructEmptyObject(globalObject, asObject(prototype)) : constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    } else {
+        return nullptr;
+    }
+    PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    object->methodTable()->getOwnPropertyNames(object, globalObject, names, DontEnumPropertiesMode::Include);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    for (const auto& name : names) {
+        PropertyDescriptor descriptor;
+        bool exists = object->getOwnPropertyDescriptor(globalObject, name, descriptor);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (!exists)
+            continue;
+        descriptor.setConfigurable(true);
+        if (descriptor.isDataDescriptor())
+            descriptor.setWritable(true);
+        copy->methodTable()->defineOwnProperty(copy, globalObject, name, descriptor, false);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    // Not with the others: it is not configurable. Holes at the end are only in it.
+    if (auto* array = dynamicDowncast<JSArray>(copy)) {
+        array->setLength(globalObject, uncheckedDowncast<JSArray>(object)->length(), false);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    return copy;
+}
+
+// `root` with each property that matched an asymmetric matcher replaced by that matcher: copies, as far as that takes any.
+static JSValue replaceMatchedProperties(JSGlobalObject* globalObject, ThrowScope& scope, Bun::DeepMatchState& state, JSValue root, JSValue rootPattern)
+{
+    using Pair = std::pair<EncodedJSValue, EncodedJSValue>;
+    auto pairAt = [&](size_t index) { return Pair { JSValue::encode(state.recorded.at(index)), JSValue::encode(state.recorded.at(index + 1)) }; };
+    auto matchedMatcher = [&](size_t record) { return state.recorded.at(record * 4 + 3).isUndefined(); };
+    size_t records = state.recordedNames.size();
+
+    // One for each object under each pattern: an object that occurs twice shows, in each place, what the pattern there says.
+    std::map<Pair, JSObject*> copies;
+    for (size_t i = 0; i < records; i++) {
+        if (matchedMatcher(i))
+            copies.emplace(pairAt(i * 4), nullptr);
+    }
+    // And for what leads to those, cycles included.
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (size_t i = records; i-- > 0;) {
+            if (!matchedMatcher(i) && copies.contains(pairAt(i * 4 + 2)) && copies.emplace(pairAt(i * 4), nullptr).second)
+                changed = true;
+        }
+    }
+
+    MarkedArgumentBuffer keepAlive;
+    for (auto& [pair, copy] : copies) {
+        copy = shallowCopyForDeepMatch(globalObject, scope, asObject(JSValue::decode(pair.first)));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (copy)
+            keepAlive.append(copy);
+    }
+    for (size_t i = 0; i < records; i++) {
+        auto holder = copies.find(pairAt(i * 4));
+        if (holder == copies.end() || !holder->second)
+            continue;
+        JSValue value = state.recorded.at(i * 4 + 2);
+        if (!matchedMatcher(i)) {
+            auto nested = copies.find(pairAt(i * 4 + 2));
+            if (nested == copies.end() || !nested->second)
+                continue;
+            value = nested->second;
+        }
+        holder->second->putDirectMayBeIndex(globalObject, state.recordedNames[i], value);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    auto copyOfRoot = copies.find({ JSValue::encode(root), JSValue::encode(rootPattern) });
+    return copyOfRoot != copies.end() && copyOfRoot->second ? JSValue(copyOfRoot->second) : root;
+}
+
+// `replaced`, unless it is null: what a diff or a snapshot shows for `JSValue0` when the result is `replaceWhen`.
+bool JSC__JSValue__jestDeepMatch(JSC::EncodedJSValue JSValue0, JSC::EncodedJSValue JSValue1, JSC::JSGlobalObject* globalObject, bool replaceWhen, JSC::EncodedJSValue* replaced)
 {
     JSValue obj = JSValue::decode(JSValue0);
     JSValue subset = JSValue::decode(JSValue1);
 
     ThrowScope scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
-    std::set<EncodedJSValue> objVisited;
-    std::set<EncodedJSValue> subsetVisited;
-    MarkedArgumentBuffer gcBuffer;
-    RELEASE_AND_RETURN(scope, Bun__deepMatch<true>(obj, &objVisited, subset, &subsetVisited, globalObject, scope, &gcBuffer, replacePropsWithAsymmetricMatchers, false));
+    Bun::DeepMatchState state;
+    state.records = !!replaced;
+    bool matched = Bun__deepMatch<true>(obj, subset, globalObject, scope, state, false);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (replaced) {
+        JSValue shown = matched == replaceWhen ? replaceMatchedProperties(globalObject, scope, state, obj, subset) : obj;
+        RETURN_IF_EXCEPTION(scope, false);
+        *replaced = JSValue::encode(shown);
+    }
+    return matched;
 }
 
 extern "C" bool Bun__JSValue__isAsyncContextFrame(JSC::EncodedJSValue value)
@@ -5010,7 +5228,7 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
     return vm->heap.sizeAfterLastFullCollection();
 }
 
-bool JSC__JSValue__isTerminationException(JSC::EncodedJSValue JSValue0)
+NEVER_INLINE bool JSC__JSValue__isTerminationException(JSC::EncodedJSValue JSValue0)
 {
     JSC::Exception* exception = dynamicDowncast<JSC::Exception>(JSC::JSValue::decode(JSValue0));
     if (exception == nullptr)
@@ -5133,7 +5351,7 @@ void JSC__VM__notifyNeedShellTimeoutCheck(JSC::VM* arg0)
     (*arg0).notifyNeedShellTimeoutCheck();
 }
 
-void JSC__VM__throwError(JSC::VM* vm_, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue encodedValue)
+NEVER_INLINE void JSC__VM__throwError(JSC::VM* vm_, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue encodedValue)
 {
     JSC::VM& vm = *reinterpret_cast<JSC::VM*>(vm_);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -5353,8 +5571,17 @@ extern "C" void JSGlobalObject__throwStackOverflow(JSC::JSGlobalObject* globalOb
     throwStackOverflowError(globalObject, scope);
 }
 
+// The Object.prototype or Function.prototype of any realm, or the global of another realm.
+static bool endsPrototypeWalk(JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype)
+{
+    auto* realm = prototype->realmMayBeNull();
+    return (realm && (prototype == realm->objectPrototype() || prototype == realm->functionPrototype()))
+        || (prototype->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(prototype)->target() != globalObject);
+}
+
+// callOwnGetters: an own accessor gives what its getter returns, and itself when the getter throws.
 template<bool nonIndexedOnly>
-static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+static void JSC__JSValue__forEachPropertyImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol), bool callOwnGetters)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
@@ -5434,6 +5661,8 @@ restart:
 
             JSC::JSValue propertyValue = JSValue();
             if (objectToUse == object) {
+                if (entry.attributes() & PropertyAttribute::DontEnum)
+                    return true;
                 propertyValue = objectToUse->getDirect(entry.offset());
                 if (!propertyValue)
                     return true;
@@ -5460,6 +5689,18 @@ restart:
             if (!propertyValue)
                 continue;
 
+            if (callOwnGetters) {
+                if (objectToUse == object && propertyValue.isGetterSetter()) {
+                    JSC::JSValue accessor = propertyValue;
+                    propertyValue = uncheckedDowncast<GetterSetter>(accessor)->callGetter(globalObject, object);
+                    if (scope.exception()) [[unlikely]] {
+                        if (!scope.tryClearException())
+                            return;
+                        propertyValue = accessor;
+                    }
+                }
+            }
+
             anyHits = true;
             JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
 
@@ -5478,14 +5719,11 @@ restart:
 
                 JSValue proto = prototypeObject.getPrototype(globalObject);
                 RETURN_IF_EXCEPTION(scope, );
-                if (proto) {
-                    if (!(proto == globalObject->objectPrototype() || proto == globalObject->functionPrototype() || (proto.inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(proto)->target() != globalObject))) {
-                        if ((structure = proto.structureOrNull())) {
-                            prototypeObject = proto;
-                            fast = canPerformFastPropertyEnumerationForIterationBun(structure);
-                            goto restart;
-                        }
-                    }
+                if (auto* protoObject = proto.getObject(); protoObject && !endsPrototypeWalk(globalObject, protoObject)) {
+                    structure = protoObject->structure();
+                    prototypeObject = proto;
+                    fast = canPerformFastPropertyEnumerationForIterationBun(structure);
+                    goto restart;
                 }
             }
             return;
@@ -5498,7 +5736,7 @@ restart:
 
         JSObject* iterating = prototypeObject.getObject();
 
-        while (iterating && !(iterating == globalObject->objectPrototype() || iterating == globalObject->functionPrototype() || (iterating->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(iterating)->target() != globalObject)) && prototypeCount++ < 5) {
+        while (iterating && (iterating == object || !endsPrototypeWalk(globalObject, iterating)) && prototypeCount++ < 5) {
             if constexpr (nonIndexedOnly) {
                 iterating->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Include);
             } else {
@@ -5536,6 +5774,9 @@ restart:
                 if (!visitedProperties.add(property.impl()).isNewEntry)
                     continue;
 
+                if (iterating == object && (slot.attributes() & PropertyAttribute::DontEnum))
+                    continue;
+
                 EncodedSlice key = toEncodedSlice(property.isSymbol() && !property.isPrivateName() ? property.impl() : property.string());
 
                 JSC::JSValue propertyValue = jsUndefined();
@@ -5557,6 +5798,13 @@ restart:
                     } else if (object->getOwnPropertySlot(object, globalObject, property, slot)) {
                         RETURN_IF_EXCEPTION(scope, );
                         propertyValue = slot.getValue(globalObject, property);
+                    }
+                } else if (callOwnGetters && iterating == object && slot.isAccessor()) {
+                    propertyValue = slot.getValue(globalObject, property);
+                    if (scope.exception()) [[unlikely]] {
+                        if (!scope.tryClearException())
+                            return;
+                        propertyValue = slot.getterSetter();
                     }
                 } else if (slot.isAccessor()) {
                     // If we can't use getPureResult, let's at least say it was a [Getter]
@@ -5610,12 +5858,17 @@ restart:
 
 [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
-    JSC__JSValue__forEachPropertyImpl<false>(JSValue0, globalObject, arg2, iter);
+    JSC__JSValue__forEachPropertyImpl<false>(JSValue0, globalObject, arg2, iter, false);
 }
 
 extern "C" void JSC__JSValue__forEachPropertyNonIndexed(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
-    JSC__JSValue__forEachPropertyImpl<true>(JSValue0, globalObject, arg2, iter);
+    JSC__JSValue__forEachPropertyImpl<true>(JSValue0, globalObject, arg2, iter, false);
+}
+
+extern "C" void JSC__JSValue__forEachPropertyCallingOwnGetters(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+{
+    JSC__JSValue__forEachPropertyImpl<false>(JSValue0, globalObject, arg2, iter, true);
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInUInt64Range(JSC::EncodedJSValue value, uint64_t max, uint64_t min)
@@ -5646,8 +5899,8 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
     return high == JSBigInt::ComparisonResult::LessThan || high == JSBigInt::ComparisonResult::Equal;
 }
 
-[[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachPropertyOrdered(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
-
+// callGetters: as for JSC__JSValue__forEachPropertyImpl. All the properties of this walk are own.
+static void forEachPropertyOrderedImpl(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol), bool callGetters, bool withNonEnumerable = false)
 {
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     JSC::JSObject* object = value.getObject();
@@ -5660,7 +5913,11 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
     JSC::PropertyNameArrayBuilder properties(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     {
 
-        JSC::JSObject::getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Include);
+        // withNonEnumerable is what older versions printed: `Module {}` for a module namespace, whose names only its class knows.
+        if (withNonEnumerable)
+            JSC::JSObject::getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Include);
+        else
+            object->methodTable()->getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(scope, );
     }
 
@@ -5686,29 +5943,21 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
         if (!hasProperty) {
             continue;
         }
-
-        if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
-            if (property == vm.propertyNames->underscoreProto
-                || property == vm.propertyNames->toStringTagSymbol)
-                continue;
-        }
+        if ((slot.attributes() & PropertyAttribute::DontEnum) != 0 && (property == vm.propertyNames->underscoreProto || property == vm.propertyNames->toStringTagSymbol))
+            continue;
 
         JSC::JSValue propertyValue = jsUndefined();
-        if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
-            if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
+        if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
+            if (callGetters) {
+                propertyValue = slot.getValue(globalObject, property);
+                if (scope.exception()) [[unlikely]] {
+                    if (!scope.tryClearException())
+                        return;
+                    propertyValue = slot.getPureResult();
+                }
+            } else {
                 propertyValue = slot.getPureResult();
-            } else if (slot.attributes() & PropertyAttribute::BuiltinOrFunction) {
-                propertyValue = slot.getValue(globalObject, property);
-            } else if (slot.isCustom()) {
-                propertyValue = slot.getValue(globalObject, property);
-            } else if (slot.isValue()) {
-                propertyValue = slot.getValue(globalObject, property);
-            } else if (object->getOwnPropertySlot(object, globalObject, property, slot)) {
-                RETURN_IF_EXCEPTION(scope, );
-                propertyValue = slot.getValue(globalObject, property);
             }
-        } else if ((slot.attributes() & PropertyAttribute::Accessor) != 0) {
-            propertyValue = slot.getPureResult();
         } else {
             propertyValue = slot.getValue(globalObject, property);
         }
@@ -5726,6 +5975,25 @@ extern "C" [[ZIG_EXPORT(nothrow)]] bool JSC__isBigIntInInt64Range(JSC::EncodedJS
         RETURN_IF_EXCEPTION(scope, );
     }
     properties.releaseData();
+}
+
+[[ZIG_EXPORT(check_slow)]] void JSC__JSValue__forEachPropertyOrdered(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)([[ZIG_NONNULL]] JSC::JSGlobalObject* arg0, void* ctx, [[ZIG_NONNULL]] EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+{
+    forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, iter, false);
+}
+
+// True when JSC__JSValue__forEachPropertyOrderedWithNonEnumerable is sure to give the same.
+extern "C" bool JSC__JSValue__forEachPropertyOrderedCallingGetters(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+{
+    JSC::JSObject* object = JSC::JSValue::decode(JSValue0).getObject();
+    bool hasOnlyEnumerableValues = object && object->structure()->canPerformFastPropertyEnumeration() && !object->structure()->hasNonEnumerableProperties();
+    forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, iter, true);
+    return hasOnlyEnumerableValues;
+}
+
+extern "C" void JSC__JSValue__forEachPropertyOrderedWithNonEnumerable(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC::JSGlobalObject* arg0, void* ctx, EncodedSlice* arg2, JSC::EncodedJSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
+{
+    forEachPropertyOrderedImpl(JSValue0, globalObject, arg2, iter, false, true);
 }
 
 [[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isConstructor(JSC::EncodedJSValue JSValue0)
@@ -6944,6 +7212,7 @@ extern "C" JSC::EncodedJSValue Bun__REPL__formatValue(
     // Get the util.inspect function from the global object
     auto* bunGlobal = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     JSC::JSValue inspectFn = bunGlobal->utilInspectFunction();
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (!inspectFn || !inspectFn.isCallable()) {
         // Fallback to toString if util.inspect is not available

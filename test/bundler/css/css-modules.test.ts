@@ -585,6 +585,64 @@ describe("css", () => {
       expect(css).toContain(`.${betaOwn}`);
     },
   });
+
+  // `.a` and `.b` compose each other and `.r`, outside that cycle, leads into
+  // it. This used to overflow the stack.
+  itBundled("css-module/ComposesCycleWithoutTheExportedClass", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(styles);
+      `,
+      "/styles.module.css": `
+        .r { composes: a }
+        .a { composes: b; color: red }
+        .b { composes: a; margin: 0 }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          r: "b_-MSaAA a_-MSaAA r_-MSaAA",
+          a: "b_-MSaAA a_-MSaAA",
+          b: "a_-MSaAA b_-MSaAA"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+        "
+      `);
+    },
+  });
+
+  itBundled("css-module/ComposesCycleAcrossFilesWithoutTheExportedClass", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(styles);
+      `,
+      "/styles.module.css": `.r { composes: a from "./a.module.css" }`,
+      "/a.module.css": `.a { composes: b from "./b.module.css"; color: red }`,
+      "/b.module.css": `.b { composes: a from "./a.module.css"; margin: 0 }`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      api.expectFile("/out/entry.js").toMatchInlineSnapshot(`
+        "// styles.module.css
+        var styles_module_default = {
+          r: "b_Kd7Gww a_BLNoTg r_-MSaAA"
+        };
+
+        // entry.js
+        console.log(styles_module_default);
+        "
+      `);
+    },
+  });
 });
 
 // `bun build --no-bundle` prints a module file with no link step. Class

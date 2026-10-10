@@ -36,6 +36,9 @@ pub struct ResolvedSource {
     /// An ES module of the executable's pre-resolved module graph: it carries no `module_info`; the loader builds its
     /// record from the graph.
     pub is_prelinked_module: bool,
+    /// `source_code` holds what a macro returned or the files `import.meta.glob` matched: it is not what another load of
+    /// the file gives. Set by `ResolvedSource::printed`.
+    pub depends_on_more_than_source: bool,
 
     pub bytecode_cache: Bytecode,
     /// `Zig::SourceProvider` takes it (nulling the field).
@@ -43,6 +46,35 @@ pub struct ResolvedSource {
     /// The file path whose `file://` URL is this module's source origin (what `import()` resolves against and what a
     /// bytecode cache is validated against). Empty: derived from `source_url` (a builtin gets a `builtin://` origin).
     pub origin_path: BunString,
+}
+
+/// What a `ResolvedSource` keeps of the AST that its `source_code` was printed from, read before the printer takes it.
+#[derive(Clone, Copy)]
+pub struct PrintedAst {
+    pub is_commonjs_module: bool,
+    depends_on_more_than_source: bool,
+}
+
+impl PrintedAst {
+    pub fn new(ast: &bun_ast::Ast) -> Self {
+        Self {
+            is_commonjs_module: ast.has_commonjs_export_names
+                || ast.exports_kind == bun_ast::ExportsKind::Cjs,
+            depends_on_more_than_source: ast.depends_on_more_than_source,
+        }
+    }
+}
+
+impl ResolvedSource {
+    /// What every `ResolvedSource` of a file that was transpiled just now is made from.
+    pub fn printed(ast: PrintedAst, source_code: BunString) -> Self {
+        Self {
+            source_code,
+            is_commonjs_module: ast.is_commonjs_module,
+            depends_on_more_than_source: ast.depends_on_more_than_source,
+            ..Default::default()
+        }
+    }
 }
 
 /// `ResolvedSource.bytecode_cache`: C++ sees `{ uint8_t* ptr; size_t len; bool owned; bool persistent; uint32_t entry_offset; }`
@@ -126,5 +158,5 @@ extern "C" fn ResolvedSource__freeBytecode(bytecode: *mut u8) {
     unsafe { bun_alloc::default_alloc::free(bytecode.cast()) };
 }
 
-bun_core::assert_ffi_layout!(ResolvedSource, 136, 8; is_prelinked_module @ 77, bytecode_cache @ 80, module_info @ 104);
+bun_core::assert_ffi_layout!(ResolvedSource, 136, 8; is_prelinked_module @ 77, depends_on_more_than_source @ 78, bytecode_cache @ 80, module_info @ 104);
 bun_core::assert_ffi_layout!(Bytecode, 24, 8; owned @ 16, persistent @ 17, entry_offset @ 20);

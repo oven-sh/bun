@@ -32359,13 +32359,6 @@
     "windows": 25,
     "windows-aarch64": 20
   },
-  "js/node/test/parallel/test-webstreams-compression-buffer-source.js": {
-    "default": 4,
-    "asan": 104,
-    "musl": 39,
-    "windows": 63,
-    "windows-aarch64": 78
-  },
   "js/node/test/parallel/test-webstreams-decompression-reject-trailing.js": {
     "default": 25,
     "asan": 33,

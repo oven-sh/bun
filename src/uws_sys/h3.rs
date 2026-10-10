@@ -203,8 +203,10 @@ impl Response {
         let ip = unsafe { bun_core::ffi::slice(ip_ptr, len) };
         Some(SocketAddress::new(ip, port, is_ipv6))
     }
+    /// The body failed after the response started: `RESET_STREAM`, the
+    /// HTTP/3 form of HTTP/1's close without the terminating chunk.
     pub(crate) fn force_close(&mut self) {
-        c::uws_h3_res_force_close(self)
+        c::uws_h3_res_force_close(self, crate::quic::H3ErrorCode::InternalError as u64)
     }
 
     pub(crate) fn on_writable<UD, H>(&mut self, _handler: H, ud: *mut UD)
@@ -691,7 +693,7 @@ mod c {
         pub(super) safe fn uws_h3_res_state(res: &mut Response) -> State;
         pub(super) fn uws_h3_res_end(res: *mut Response, p: *const u8, n: usize, close: bool);
         pub(super) safe fn uws_h3_res_end_stream(res: &mut Response, close: bool);
-        pub(super) safe fn uws_h3_res_force_close(res: &mut Response);
+        pub(super) safe fn uws_h3_res_force_close(res: &mut Response, error_code: u64);
         pub(super) fn uws_h3_res_try_end(
             res: *mut Response,
             p: *const u8,

@@ -1216,7 +1216,7 @@ void us_quic_stream_close(us_quic_stream_t *s) {
 /* From lsquic_stream.h (not in the public header). */
 void lsquic_stream_maybe_reset(struct lsquic_stream *, uint64_t error_code, int);
 
-/* Abort the send half with RESET_STREAM(H3_REQUEST_CANCELLED) instead of
+/* Abort the send half with RESET_STREAM(error_code) instead of
  * FIN. lsquic_stream_close/shutdown queue FIN after the buffered tail,
  * which is a protocol error if a content-length was advertised and the
  * client is abandoning the upload short — the server's lsquic will
@@ -1224,11 +1224,19 @@ void lsquic_stream_maybe_reset(struct lsquic_stream *, uint64_t error_code, int)
  * the wire-level "I'm cancelling this send" and lets the server treat it
  * as a stream-level cancellation rather than a malformed message.
  * Sends nothing once lsquic_stream_close/shutdown has run, so call it first. */
-void us_quic_stream_reset(us_quic_stream_t *s) {
+void us_quic_stream_reset(us_quic_stream_t *s, uint64_t error_code) {
     if (!s->stream) return;
     /* do_close=0: with no reset due, maybe_reset's own close shuts only the read half. */
-    lsquic_stream_maybe_reset(s->stream, 0x10C, 0);
+    lsquic_stream_maybe_reset(s->stream, error_code, 0);
     lsquic_stream_close(s->stream);
+}
+
+/* Reads lsquic's own state, so the stream carries no copy. A STOP_SENDING
+ * that arrives after the RESET_STREAM replaces the code. */
+int us_quic_stream_peer_reset(us_quic_stream_t *s, uint64_t *code) {
+    if (!s->stream || !lsquic_stream_reset_received(s->stream)) return 0;
+    *code = lsquic_stream_get_error_code(s->stream);
+    return 1;
 }
 
 int us_quic_stream_has_unacked(us_quic_stream_t *s) {

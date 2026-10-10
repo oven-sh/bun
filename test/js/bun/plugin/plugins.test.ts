@@ -1655,3 +1655,655 @@ describe.concurrent("onResolve", () => {
     });
   });
 });
+
+describe.concurrent("onResolve is asked about a specifier with no extension and no namespace", () => {
+  // A name that no callback answers about is not asked of the registry.
+  const bunfig = { "bunfig.toml": `[install]\nauto = false\n` };
+  async function run(files: Record<string, string>, args: string[], env: Record<string, string> = {}, cwd = ".") {
+    using dir = tempDir("plugin-onresolve-every-specifier", { ...bunfig, ...files });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: resolve(String(dir), cwd),
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim().split("\n"), stderr, exitCode };
+  }
+
+  const alias = {
+    "preload.ts": `
+      import { plugin } from "bun";
+      plugin({ name: "alias", setup(b) { b.onResolve({ filter: /^aliased$/ }, () => ({ path: import.meta.dir + "/target.ts" })); } });
+    `,
+    "target.ts": `export const which = "the target";`,
+    "script.ts": `console.log((await import("aliased")).which);`,
+    "x.test.ts": `
+      import { expect, test } from "bun:test";
+      test("alias", async () => {
+        expect((await import("aliased")).which).toBe("the target");
+      });
+    `,
+  };
+  it("in a script", async () => {
+    expect(await run(alias, ["--preload", "./preload.ts", "script.ts"])).toEqual({
+      stdout: ["the target"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+  it("in bun test", async () => {
+    const { stderr, exitCode } = await run(alias, ["test", "--preload", "./preload.ts", "x.test.ts"]);
+    expect(stderr).toContain(" 1 pass\n 0 fail\n");
+    expect(exitCode).toBe(0);
+  });
+
+  const specifiers = ["aliased", "@/aliased", "@scope/aliased", "./relative-no-ext", "../up", "/absolute/no-ext"];
+  const targets = ["bare", "at", "scoped", "relative", "up", "absolute"];
+  const files = {
+    ...Object.fromEntries(targets.map(target => [`targets/${target}.ts`, `export default "${target}";`])),
+    "plugin.ts": `
+      const targets = ${JSON.stringify(Object.fromEntries(specifiers.map((specifier, i) => [specifier, targets[i]])))};
+      Bun.plugin({
+        name: "aliases",
+        setup(build) {
+          build.onResolve({ filter: /aliased$|no-ext$|^\\.\\.\\/up$/ }, ({ path, importer }) => {
+            console.log("onResolve", path, "from", importer.slice(import.meta.dir.length + 1).replaceAll("\\\\", "/"));
+            return { path: import.meta.dir + "/targets/" + targets[path] + ".ts" };
+          });
+        },
+      });
+    `,
+  };
+  const each = (body: string) => (S: string[]) =>
+    `const S = ${JSON.stringify(S)};\nconst name = path => require("node:path").basename(path);\nfor (const s of S) ${body}`;
+  // import.meta.resolve() answers about a path without resolving it.
+  const packages = specifiers.slice(0, 3);
+  it.each([
+    [
+      "an import statement",
+      "entry.mjs",
+      (S: string[]) =>
+        S.map((specifier, i) => `import $${i} from "${specifier}";\n`).join("") +
+        `console.log([${S.map((_, i) => "$" + i)}].join());`,
+      "all",
+      specifiers,
+    ],
+    [
+      "export from",
+      "entry.mjs",
+      (S: string[]) =>
+        S.map((specifier, i) => `export { default as $${i} } from "${specifier}";\n`).join("") +
+        `import * as self from "./entry.mjs";\nconsole.log(Object.values(self).join());`,
+      "all",
+      specifiers,
+    ],
+    ["import()", "entry.mjs", each(`console.log((await import(s)).default);`), "", specifiers],
+    ["require()", "entry.cjs", each(`console.log(require(s).default);`), "", specifiers],
+    ["module.require()", "entry.cjs", each(`console.log(module.require(s).default);`), "", specifiers],
+    ["import.meta.require()", "entry.mjs", each(`console.log(import.meta.require(s).default);`), "", specifiers],
+    ["require.resolve()", "entry.cjs", each(`console.log(name(require.resolve(s)));`), ".ts", specifiers],
+    [
+      "require.resolve() with paths",
+      "entry.cjs",
+      each(`console.log(name(require.resolve(s, { paths: ["/not/there"] })));`),
+      ".ts",
+      specifiers,
+    ],
+    ["import.meta.resolve()", "entry.mjs", each(`console.log(name(import.meta.resolve(s)));`), ".ts", packages],
+    [
+      "import.meta.resolveSync()",
+      "entry.mjs",
+      each(`console.log(name(import.meta.resolveSync(s)));`),
+      ".ts",
+      specifiers,
+    ],
+    [
+      "Bun.resolveSync()",
+      "entry.mjs",
+      each(`console.log(name(Bun.resolveSync(s, import.meta.dir)));`),
+      ".ts",
+      specifiers,
+    ],
+    [
+      "Bun.resolve()",
+      "entry.mjs",
+      each(`console.log(name(await Bun.resolve(s, import.meta.dir)));`),
+      ".ts",
+      specifiers,
+    ],
+  ] as const)("once, by %s", async (_, name, source, expected, S) => {
+    // Bun.resolveSync() and Bun.resolve() are given a directory.
+    const code = source([...S]);
+    const importer = code.includes("import.meta.dir") ? "src/sub" : "src/sub/" + name;
+    const asked = S.map(specifier => `onResolve ${specifier} from ${importer}`);
+    expect(await run({ ...files, ["src/sub/" + name]: code }, ["--preload", "./plugin.ts", "src/sub/" + name])).toEqual(
+      {
+        stdout:
+          expected === "all"
+            ? [...asked, targets.slice(0, S.length).join()]
+            : S.flatMap((_, i) => [asked[i], targets[i] + expected]),
+        stderr: "",
+        exitCode: 0,
+      },
+    );
+  });
+
+  it("once when its answer matches its own filter", async () => {
+    const files = {
+      "node_modules/my-pkg/package.json": `{ "name": "my-pkg", "main": "index.js" }`,
+      "node_modules/my-pkg/index.js": `module.exports = "my-pkg";`,
+      "node_modules/my-pkg/dist/index.js": `module.exports = "my-pkg/dist";`,
+      "plugin.ts": `
+        Bun.plugin({ name: "dist", setup(build) { build.onResolve({ filter: /^my-pkg/ }, ({ path }) => (console.log("onResolve", path), { path: path + "/dist" })); } });
+      `,
+      "entry.mjs": `
+        import statement from "my-pkg";
+        console.log(statement, (await import("my-pkg")).default, import.meta.require("my-pkg"));
+      `,
+    };
+    expect(await run(files, ["--preload", "./plugin.ts", "entry.mjs"])).toEqual({
+      stdout: ["onResolve my-pkg", "onResolve my-pkg", "onResolve my-pkg", "my-pkg/dist my-pkg/dist my-pkg/dist"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // As in the documentation of onLoad.
+  it("and can move it into a namespace", async () => {
+    const source = `
+      Bun.plugin({
+        name: "env plugin",
+        setup(build) {
+          build.onResolve({ filter: /^env$/ }, args => ({ path: args.path, namespace: "env" }));
+          build.onLoad({ filter: /env/, namespace: "env" }, () => ({
+            contents: "export default " + JSON.stringify({ FOO: process.env.FOO }),
+            loader: "js",
+          }));
+        },
+      });
+      console.log((await import("env")).default.FOO, require("env").default.FOO, require.resolve("env"));
+    `;
+    expect(await run({ "entry.ts": source }, ["entry.ts"], { FOO: "bar" })).toEqual({
+      stdout: ["bar bar env:env"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  const installed = {
+    "node_modules/dep-pkg/package.json": `{ "name": "dep-pkg", "main": "main.js" }`,
+    "node_modules/dep-pkg/main.js": `module.exports = "dep-pkg";`,
+    "lib/foo.js": `module.exports = "lib/foo";`,
+    "index.js": `module.exports = "index";`,
+    "sub/index.js": `module.exports = "sub/index";`,
+  };
+
+  it("and answering with what it was asked about changes nothing", async () => {
+    const files = {
+      ...installed,
+      "plugin.ts": `
+        globalThis.asked = [];
+        Bun.plugin({ name: "no-op", setup(build) { build.onResolve({ filter: /.*/ }, ({ path }) => (asked.push(path.replace(import.meta.dir, "").replaceAll("\\\\", "/")), { path })); } });
+      `,
+      "sub/entry.cjs": `
+        asked.length = 0;
+        for (const specifier of ["dep-pkg", "..", ".", "./", "../", "../lib/foo", require("node:path").join(__dirname, "../lib/foo"), "not-there", "./not-there", "...", " "])
+          try { console.log(require(specifier)); } catch (error) { console.log(error.message.split("\\n")[0]); }
+        import("dep-pkg").then(({ default: dep }) => console.log(dep, JSON.stringify(asked)));
+      `,
+    };
+    expect(await run(files, ["--preload", "./plugin.ts", "sub/entry.cjs"])).toEqual({
+      stdout: [
+        "dep-pkg",
+        "index",
+        "sub/index",
+        "sub/index",
+        "index",
+        "lib/foo",
+        "lib/foo",
+        "Cannot find module 'not-there'",
+        "Cannot find module './not-there'",
+        "Cannot find module '...'",
+        "Cannot find module ' '",
+        "dep-pkg " +
+          JSON.stringify([
+            ...["dep-pkg", "..", ".", "./", "../", "../lib/foo", "/lib/foo", "not-there", "./not-there", "...", " "],
+            "dep-pkg",
+          ]),
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("but not about the name of a builtin", async () => {
+    const files = {
+      ...installed,
+      "plugin.ts": `
+        Bun.plugin({ name: "logs", setup(build) { build.onResolve({ filter: /.*/ }, ({ path }) => { console.log("onResolve", path); }); } });
+      `,
+      "entry.mjs": `
+        import fs from "fs";
+        import { sleep } from "bun";
+        console.log("loaded");
+        require("os"); await import("path");
+        console.log(["fs", "fs/promises", "ws", "undici", "bun", "node:fs", "bun:jsc"].map(name => require.resolve(name)).join());
+        await import("node:os"); require("bun:jsc");
+        console.log(import.meta.resolve("path"), Bun.resolveSync("zlib", import.meta.dir));
+        console.log(require("dep-pkg"));
+      `,
+    };
+    const { stdout, stderr, exitCode } = await run(files, ["--preload", "./plugin.ts", "entry.mjs"]);
+    expect({ stdout: stdout.slice(1), stderr, exitCode }).toEqual({
+      // (After the entry point.)
+      stdout: [
+        "loaded",
+        "fs,fs/promises,ws,undici,bun,node:fs,bun:jsc",
+        "node:path node:zlib",
+        "onResolve dep-pkg",
+        "dep-pkg",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Under bun test a static import of "vitest" is the builtin. Whether require() gives the builtin too is not for
+  // this test to say: the callback is asked exactly when the package that is installed is what loads.
+  it("and about the name of what bun test replaces, if the installed package is what loads", async () => {
+    const files = {
+      "node_modules/vitest/package.json": `{ "name": "vitest", "main": "index.js" }`,
+      "node_modules/vitest/index.js": `exports.which = "installed";`,
+      "plugin.ts": `
+        Bun.plugin({ name: "logs", setup(build) { build.onResolve({ filter: /^vitest$/ }, ({ path }) => { console.log("onResolve", path); }); } });
+      `,
+      "a.test.ts": `
+        import { test } from "vitest";
+        test("vitest", () => {
+          console.log(require("vitest").which ?? "the builtin");
+        });
+      `,
+    };
+    const { stdout, stderr, exitCode } = await run(files, ["test", "--preload", "./plugin.ts", "./a.test.ts"]);
+    expect(stderr).toContain(" 1 pass\n 0 fail\n");
+    // (After the version.)
+    const printed = stdout.slice(1);
+    expect({ printed, exitCode }).toEqual({
+      printed: printed.includes("installed") ? ["onResolve vitest", "installed"] : ["the builtin"],
+      exitCode: 0,
+    });
+  });
+
+  // A catch-all that loads a package when it is first called would be called about that package, and so on.
+  it("but not about what a callback, or a package it calls, loads while it runs", async () => {
+    const files = {
+      ...installed,
+      "node_modules/helper-pkg/package.json": `{ "name": "helper-pkg", "main": "index.js" }`,
+      "node_modules/helper-pkg/index.js": `let lazy; exports.help = path => (lazy ??= require("./lib/lazy"))(path);`,
+      "node_modules/helper-pkg/lib/lazy.js": `module.exports = path => (path === "aliased" ? { path: "dep-pkg" } : undefined);`,
+      "plugin.ts": `
+        Bun.plugin({
+          name: "catch-all",
+          setup(build) {
+            build.onResolve({ filter: /.*/ }, ({ path }) => {
+              console.log("onResolve", path);
+              return require("helper-pkg").help(path);
+            });
+          },
+        });
+      `,
+      "entry.cjs": `console.log(require("aliased"), require("./lib/foo"), require("helper-pkg").help("aliased").path);`,
+    };
+    const { stdout, stderr, exitCode } = await run(files, ["--preload", "./plugin.ts", "entry.cjs"]);
+    expect({ stdout: stdout.slice(1), stderr, exitCode }).toEqual({
+      stdout: ["onResolve aliased", "onResolve ./lib/foo", "onResolve helper-pkg", "dep-pkg lib/foo dep-pkg"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("nor about a package a callback loads after it has asked about a path with an extension and a prefix", async () => {
+    const files = {
+      ...installed,
+      "node_modules/helper-pkg/package.json": `{ "name": "helper-pkg", "main": "index.js" }`,
+      "node_modules/helper-pkg/index.js": `module.exports = "helper-pkg";`,
+      "plugin.ts": `
+        Bun.plugin({
+          name: "nested",
+          setup(build) {
+            build.onResolve({ filter: /.*/, namespace: "ns" }, ({ path }) => { console.log("ns", path); });
+            build.onResolve({ filter: /^ns:|\\.js$/ }, ({ path }) => { console.log("file", path); });
+            build.onResolve({ filter: /^[^./:]+$/ }, ({ path }) => {
+              console.log("file", path);
+              // Asked about: it has an extension.
+              require("./lib/foo.js");
+              // Asked about in the namespace ns, and not as it is written.
+              try { require.resolve("ns:probe"); } catch {}
+              // Not asked about, after the two that were.
+              require("helper-pkg");
+            });
+          },
+        });
+      `,
+      "entry.cjs": `
+        console.log(require("dep-pkg"));
+        try { require.resolve("ns:probe"); } catch {}
+      `,
+    };
+    expect(await run(files, ["--preload", "./plugin.ts", "entry.cjs"])).toEqual({
+      stdout: ["file dep-pkg", "file ./lib/foo.js", "ns probe", "dep-pkg", "ns probe", "file ns:probe"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("and what a callback resolves is apart from the paths of the require.resolve() that asks", async () => {
+    const files = {
+      ...installed,
+      "x.js": ``,
+      "other/x.js": ``,
+      "other/node_modules/only-there/package.json": `{ "name": "only-there", "main": "main.js" }`,
+      "other/node_modules/only-there/main.js": ``,
+      "plugin.ts": `
+        const short = path => path.slice(import.meta.dir.length + 1).replaceAll("\\\\", "/");
+        Bun.plugin({
+          name: "resolves",
+          setup(build) {
+            build.onResolve({ filter: /^(\\.\\/x|\\.\\/x\\.js|only-there)$/ }, ({ path }) => {
+              console.log("onResolve", path, short(require.resolve("./x")), short(require.resolve("./foo", { paths: [import.meta.dir + "/lib"] })));
+            });
+          },
+        });
+      `,
+      "entry.cjs": `
+        const short = path => path.slice(__dirname.length + 1).replaceAll("\\\\", "/");
+        for (const specifier of ["./x", "./x.js", "only-there"])
+          console.log(short(require.resolve(specifier, { paths: [__dirname + "/other"] })));
+      `,
+    };
+    expect(await run(files, ["--preload", "./plugin.ts", "entry.cjs"])).toEqual({
+      stdout: [
+        "onResolve ./x x.js lib/foo.js",
+        "other/x.js",
+        "onResolve ./x.js x.js lib/foo.js",
+        "other/x.js",
+        "onResolve only-there x.js lib/foo.js",
+        "other/node_modules/only-there/main.js",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("in the namespace that is its prefix, then in the namespace file as it is written", async () => {
+    const source = `
+      Bun.plugin({
+        name: "namespaces",
+        setup(build) {
+          build.onResolve({ filter: /.*/, namespace: "other" }, ({ path }) => { console.log("other", path); });
+          build.onResolve({ filter: /.*/, namespace: "file" }, ({ path }) => { console.log("file", path); });
+        },
+      });
+      for (const specifier of ["bare", "./relative", "other:bare", "file:bare"])
+        await import(specifier).catch(() => {});
+    `;
+    expect(await run({ "entry.mjs": source }, ["entry.mjs"])).toEqual({
+      stdout: ["file bare", "file ./relative", "other bare", "file other:bare", "file bare"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("with a prefix, by a filter that matches the whole of it", async () => {
+    const source = `
+      Bun.plugin({
+        name: "virtual",
+        setup({ onResolve, onLoad }) {
+          onResolve({ filter: /^virtual:/ }, ({ path }) => (console.log("onResolve", path), { path, namespace: "v" }));
+          onLoad({ filter: /.*/, namespace: "v" }, ({ path }) => ({ exports: { path }, loader: "object" }));
+        },
+      });
+      console.log((await import("virtual:thing")).path, require("virtual:other.js").path, require.resolve("virtual:thing"));
+    `;
+    expect(await run({ "entry.ts": source }, ["entry.ts"])).toEqual({
+      stdout: [
+        "onResolve virtual:thing",
+        "onResolve virtual:other.js",
+        "onResolve virtual:thing",
+        "virtual:thing virtual:other.js v:virtual:thing",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A path in a namespace that an onLoad serves is a key, whatever else its text matches.
+  it.each([
+    ["an import statement", "entry.mjs", `import theme from "virt:theme.css"; console.log(theme);`, "served theme.css"],
+    ["import()", "entry.mjs", `console.log((await import("virt:theme.css")).default);`, "served theme.css"],
+    ["require()", "entry.cjs", `console.log(require("virt:theme.css").default);`, "served theme.css"],
+    ["require.resolve()", "entry.cjs", `console.log(require.resolve("virt:theme.css"));`, "virt:theme.css"],
+  ])("but not with a prefix whose namespace has an onLoad for it, by %s", async (_, name, source, expected) => {
+    const files = {
+      "plugin.ts": `
+        Bun.plugin({
+          name: "serves",
+          setup(build) {
+            build.onLoad({ filter: /.*/, namespace: "virt" }, ({ path }) => ({ exports: { default: "served " + path }, loader: "object" }));
+          },
+        });
+        Bun.plugin({
+          name: "suffix",
+          setup(build) {
+            build.onResolve({ filter: /\\.css$/ }, ({ path }) => (console.log("onResolve", path), { path: import.meta.dir + "/other.css" }));
+          },
+        });
+      `,
+      [name]: source,
+    };
+    expect(await run(files, ["--preload", "./plugin.ts", name])).toEqual({
+      stdout: [expected],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("nor with the key of a module in such a namespace, which names the same module again", async () => {
+    const source = `
+      const { basename } = require("node:path");
+      Bun.plugin({
+        name: "moves",
+        setup(build) {
+          build.onResolve({ filter: /\\.virtual$/ }, ({ path }) => (console.log("onResolve", basename(path)), { path: "from " + basename(path), namespace: "virtual" }));
+          build.onLoad({ filter: /.*/, namespace: "virtual" }, ({ path }) => ({ exports: { from: path }, loader: "object" }));
+        },
+      });
+      const key = require.resolve("./x.virtual");
+      console.log(key, require.resolve(key) === key, require(key) === require("./x.virtual"));
+    `;
+    expect(await run({ "entry.cjs": source }, ["entry.cjs"])).toEqual({
+      stdout: ["onResolve x.virtual", "onResolve x.virtual", "virtual:from x.virtual true true"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The loader answers these itself, and a filter would be run on the whole of the source they carry.
+  it("but with the prefix data: or blob: only in that namespace", async () => {
+    const source = `
+      Bun.plugin({
+        name: "namespaces",
+        setup(build) {
+          build.onResolve({ filter: /.*/, namespace: "data" }, ({ path }) => { console.log("data", path); });
+          build.onResolve({ filter: /.*/, namespace: "blob" }, () => { console.log("blob"); });
+          build.onResolve({ filter: /.*/ }, ({ path }) => { console.log("file", path); });
+        },
+      });
+      console.log((await import("data:text/javascript,export default 1")).default);
+      console.log((await import(URL.createObjectURL(new Blob(["export default 2"], { type: "text/javascript" })))).default);
+    `;
+    expect(await run({ "entry.mjs": source }, ["entry.mjs"])).toEqual({
+      stdout: ["data text/javascript,export default 1", "1", "blob", "2"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The name of that script is made from the working directory: a dot in it is not an extension.
+  it.each([".", "dir.name"])("but not about the script of bun -e, which has no file, in %s", async cwd => {
+    const plugin = `
+      Bun.plugin({ name: "logs", setup(build) { build.onResolve({ filter: /.*/ }, ({ path }) => { console.log("onResolve", path); }); } });
+    `;
+    expect(
+      await run({ [cwd + "/plugin.ts"]: plugin }, ["--preload", "./plugin.ts", "-e", `console.log("ran")`], {}, cwd),
+    ).toEqual({
+      stdout: ["ran"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("that names a package or a path in it", async () => {
+    const source = `
+      Bun.plugin({
+        name: "intercept",
+        setup(build) {
+          build.onResolve({ filter: /^@somemodule\\/foo(\\/.*)?$/ }, args => ({ path: args.path, namespace: "host" }));
+          build.onLoad({ filter: /.*/, namespace: "host" }, args => ({ exports: { path: args.path }, loader: "object" }));
+        },
+      });
+      console.log((await import("@somemodule/foo")).path, (await import("@somemodule/foo/bar")).path);
+    `;
+    expect(await run({ "entry.ts": source }, ["entry.ts"])).toEqual({
+      stdout: ["@somemodule/foo @somemodule/foo/bar"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("again after a callback has thrown", async () => {
+    const source = `
+      Bun.plugin({
+        name: "throws",
+        setup(build) {
+          build.onResolve({ filter: /^throws$/ }, () => { throw new Error("from onResolve"); });
+          build.onResolve({ filter: /^aliased$/ }, () => ({ path: "./target" }));
+        },
+      });
+      try { require("throws"); } catch (error) { console.log(error.message); }
+      console.log(require("aliased"));
+    `;
+    expect(await run({ "entry.cjs": source, "target.js": `module.exports = "the target";` }, ["entry.cjs"])).toEqual({
+      stdout: ["from onResolve", "the target"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("and can answer with a file it has just written", async () => {
+    const source = `
+      import { writeFileSync } from "node:fs";
+      // The directory is read while the files are not there.
+      await import("./generated/not-there").catch(() => {});
+      Bun.plugin({
+        name: "generates",
+        setup(build) {
+          build.onResolve({ filter: /^generated\\// }, ({ path }) => {
+            writeFileSync(import.meta.dir + "/" + path + ".ts", "export default " + JSON.stringify(path));
+            return { path: import.meta.dir + "/" + path };
+          });
+        },
+      });
+      console.log((await import("generated/a")).default, require("generated/b").default);
+    `;
+    expect(await run({ "entry.ts": source, "generated/.keep": "" }, ["entry.ts"])).toEqual({
+      stdout: ["generated/a generated/b"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The package is installed: without the callback it is what loads.
+  describe("about the name of a package that is installed", () => {
+    const files = {
+      "node_modules/dep/package.json": `{ "name": "dep", "main": "index.js" }`,
+      "node_modules/dep/index.js": `console.log("the package ran");`,
+      "other.js": `console.log("the other file ran");`,
+    };
+    const answers = {
+      "throws": `() => { throw new Error("from onResolve"); }`,
+      "answers another file": `() => ({ path: import.meta.dir + "/other.js" })`,
+    };
+    const plugin = (filter: RegExp, how: keyof typeof answers) =>
+      `Bun.plugin({ name: "answers", setup(build) { build.onResolve({ filter: ${filter} }, ${answers[how]}); } });`;
+    const doors = [
+      ["an import statement", "entry.mjs", `import "dep";`],
+      ["export from", "entry.mjs", `export * from "dep";`],
+      ["import()", "entry.mjs", `await import("dep");`],
+      ["import() of a computed name", "entry.mjs", `const name = "d" + "ep"; await import(name);`],
+      ["require()", "entry.cjs", `require("dep");`],
+      ["Module.runMain()", "entry.cjs", `require("node:module").runMain("dep");`],
+      ["a test file", "entry.test.mjs", `import { test } from "bun:test"; import "dep"; test("loads", () => {});`],
+    ] as const;
+    const cases = doors.flatMap(door =>
+      (["throws", "answers another file"] as const).map(how => [how, ...door] as const),
+    );
+
+    it.each(cases)("and the callback %s, by %s", async (how, _, name, source) => {
+      const { stdout, stderr, exitCode } = await run({ ...files, "plugin.mjs": plugin(/^dep$/, how), [name]: source }, [
+        ...(name.endsWith(".test.mjs") ? ["test"] : []),
+        "--preload",
+        "./plugin.mjs",
+        "./" + name,
+      ]);
+      // (bun test prints its version first.)
+      const printed = stdout.filter(line => line !== "" && !line.startsWith("bun test "));
+      if (how === "throws") {
+        expect(stderr).toContain("from onResolve");
+        expect({ printed, exitCode }).toEqual({ printed: [], exitCode: 1 });
+      } else {
+        expect({ printed, exitCode }).toEqual({ printed: ["the other file ran"], exitCode: 0 });
+      }
+    });
+
+    // What the callback is asked about is the name, which the path it resolves to also contains.
+    it.each(["throws", "answers another file"] as const)(
+      "and the callback %s, with a filter that matches the resolved path as well",
+      async how => {
+        const source = `
+          try { await import("dep"); } catch (error) { console.log("caught", error.message); }
+        `;
+        expect(
+          await run({ ...files, "plugin.mjs": plugin(/dep/, how), "entry.mjs": source }, [
+            "--preload",
+            "./plugin.mjs",
+            "entry.mjs",
+          ]),
+        ).toEqual({
+          stdout: [how === "answers another file" ? "the other file ran" : "caught from onResolve"],
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+    );
+
+    it("and mock.module() of that package throws what the callback throws", async () => {
+      const test = `
+        import { expect, mock, test } from "bun:test";
+        test("mock.module()", () => {
+          expect(() => mock.module("dep", () => ({ default: "mocked" }))).toThrow("from onResolve");
+        });
+      `;
+      const { stderr, exitCode } = await run({ ...files, "plugin.mjs": plugin(/^dep$/, "throws"), "a.test.ts": test }, [
+        "test",
+        "--preload",
+        "./plugin.mjs",
+        "./a.test.ts",
+      ]);
+      expect(stderr).toContain(" 1 pass\n 0 fail\n");
+      expect(exitCode).toBe(0);
+    });
+  });
+});

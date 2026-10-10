@@ -6335,6 +6335,10 @@ declare module "bun" {
     /**
      * Only apply the plugin when the import specifier matches this regular expression
      *
+     * `onResolve` matches the import specifier as it is written (`"react"`,
+     * `"./file"`), never the file it resolves to. `onLoad` matches the path of
+     * the module being loaded.
+     *
      * @example
      * ```ts
      * // Only apply the plugin when the import specifier matches the regex
@@ -6358,6 +6362,12 @@ declare module "bun" {
      *
      * The default namespace is `"file"` and it can be omitted from import
      * specifiers.
+     *
+     * In a runtime plugin, an `onResolve` with a `namespace` runs on the part
+     * of the specifier after the prefix. If none of them returns a path, the
+     * `onResolve` callbacks without a `namespace` run on the whole specifier,
+     * unless an `onLoad` in that namespace matches it. Builtin modules, and
+     * `data:` and `blob:` URLs, only reach the callbacks of their `namespace`.
      */
     namespace?: string;
   }
@@ -6435,7 +6445,8 @@ declare module "bun" {
 
   interface OnResolveArgs {
     /**
-     * The import specifier of the module being loaded
+     * The import specifier of the module being loaded, as it is written:
+     * `"react"`, `"@/utils"`, `"./file"`, `"./file.ts"`
      */
     path: string;
     /**
@@ -6664,8 +6675,10 @@ declare module "bun" {
    * - `onLoad` returns source code or an object that becomes the module's exports
    * - `onResolve` redirects a module specifier to another module specifier. It does not chain.
    *
-   * Plugin hooks must define a `filter` RegExp and only match when the
-   * import specifier contains a "." or a ":".
+   * Plugin hooks must define a `filter` RegExp. `onResolve` runs it on the
+   * import specifier as it is written. `onLoad` runs it on the path of the
+   * module being loaded. At runtime, `onLoad` is not called for a path with no
+   * file extension and no namespace.
    *
    * ES Module resolution semantics mean that plugins may be initialized _after_
    * a module is resolved. You might need to load plugins at the very beginning

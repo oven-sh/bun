@@ -234,11 +234,10 @@ impl HTTPRequestBody {
                 stream.deinit();
             }
             HTTPRequestBody::Sendfile(sendfile) => {
-                if sendfile.offset.max(sendfile.remain) > 0 {
+                if sendfile.fd.is_valid() {
                     sendfile.fd.close();
+                    sendfile.fd = bun_sys::Fd::INVALID;
                 }
-                sendfile.offset = 0;
-                sendfile.remain = 0;
             }
         }
     }

@@ -152,6 +152,80 @@ export function InTheBody(props: { useThing?: () => number }) {
 }
 `;
 
+/** What is found for `a = a + 1` depends on the order in which the compiler goes over the blocks of the loops. */
+const order = `export default function Component(props) {
+  let a = props.a,
+    b = 0,
+    c = null,
+    d = 0,
+    e = {};
+  try {
+  } catch {}
+  const g1 = (p2) => {
+    const h3 = (q4) => {};
+    const t5 = <b x={(b = !b)}>{b}</b>;
+    try {
+      ({ [a]: 1 });
+    } catch (err) {}
+    {
+    }
+    {
+    }
+    {
+    }
+  };
+  while (e.m0) {
+    try {
+    } catch (err) {}
+    do {
+      c = {} + (0 && <b x={g1}>{e}</b>);
+      v6 = {};
+      c = {};
+      try {
+      } catch (err) {}
+    } while ({});
+    const o8 = {};
+    const g9 = () => {};
+  }
+  for (const x12 of props.x) {
+    try {
+      try {
+        if (f0) {
+          switch (g1) {
+            default: {
+            }
+            case 0: {
+            }
+            case 1: {
+            }
+            case 2: {
+              {
+              }
+              const g19 = () => {
+                a = a + 1;
+              };
+              g19();
+            }
+          }
+        }
+        const o22 = {};
+      } catch (e2) {}
+      try {
+      } catch {}
+    } catch (err) {}
+  }
+  return (
+    <div>
+      {a}
+      {b}
+      {c}
+      {d}
+      {e}
+    </div>
+  );
+}
+`;
+
 /** A type cast is an instruction of its own to the compiler, with a place of its own. `x!` is not. */
 const casts = `function Hidden(props: Props) {
   const Dynamic = useComponent(props.kind) as any;
@@ -325,6 +399,7 @@ function Component(props) {
 `,
   },
   casts: { ".oxlintrc.json": rc(), "casts.tsx": casts },
+  order: { ".oxlintrc.json": rc(), "order.jsx": order },
   lowering: { ".oxlintrc.json": rc(), "forever.tsx": forever, "defaults.tsx": defaults },
   node_modules: {
     ".oxlintrc.json": rc(),

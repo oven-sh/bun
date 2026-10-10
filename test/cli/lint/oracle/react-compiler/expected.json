@@ -3232,6 +3232,113 @@
     ]
    }
   },
+  "order": {
+   "exit": 1,
+   "files": 1,
+   "diagnostics": {
+    "order.jsx": [
+     {
+      "code": "react(globals)",
+      "help": "Variable `v6` is declared outside of the component/hook. Reassigning this value during render is a side effect which can cause unpredictable behavior. If this variable is used in rendering, use useState instead. Otherwise, update it in an effect",
+      "labels": [
+       {
+        "label": "`v6` cannot be reassigned",
+        "span": {
+         "column": 7,
+         "length": 2,
+         "line": 27,
+         "offset": 417
+        }
+       }
+      ],
+      "message": "Cannot reassign variables declared outside of the component/hook",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/globals",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value used previously in JSX is not allowed. Consider moving the modification before the JSX",
+      "labels": [
+       {
+        "label": "`a` cannot be modified",
+        "span": {
+         "column": 17,
+         "length": 1,
+         "line": 50,
+         "offset": 849
+        }
+       },
+       {
+        "label": "`a` originates here",
+        "span": {
+         "column": 7,
+         "length": 1,
+         "line": 2,
+         "offset": 49
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Reassigning `b` after render has completed can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "Cannot reassign `b` after render completes",
+        "span": {
+         "column": 23,
+         "length": 1,
+         "line": 11,
+         "offset": 203
+        }
+       },
+       {
+        "label": "`b` is declared here",
+        "span": {
+         "column": 5,
+         "length": 1,
+         "line": 3,
+         "offset": 66
+        }
+       }
+      ],
+      "message": "Cannot reassign variable after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "This argument is a function which may reassign or mutate `b` after render, which can cause inconsistent behavior on subsequent renders. Consider using state instead",
+      "labels": [
+       {
+        "label": "This modifies `b`",
+        "span": {
+         "column": 23,
+         "length": 1,
+         "line": 11,
+         "offset": 203
+        }
+       },
+       {
+        "label": "This function may (indirectly) reassign or modify `b` after render",
+        "span": {
+         "column": 14,
+         "length": 9,
+         "line": 9,
+         "offset": 144
+        }
+       }
+      ],
+      "message": "Cannot modify local variables after render completes",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     }
+    ]
+   }
+  },
   "lowering": {
    "exit": 1,
    "files": 2,

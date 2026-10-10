@@ -297,6 +297,59 @@ struct Rc<'r, 'l> {
     extended: usize,
 }
 
+/// A rule as a file names it.
+struct Written {
+    /// oxlint's `parse_rule_key`
+    plugin: Vec<u8>,
+    name: Vec<u8>,
+    id: Vec<u8>,
+    setting: Json,
+}
+
+/// `rules` of `json`.
+fn written_rules(json: &Json) -> Vec<Written> {
+    let rules = json.get(b"rules").and_then(Json::as_object);
+    let written = |(id, setting): &(Vec<u8>, Json)| {
+        let ((prefix, name), key) = (parse_rule_id(id), oxlint_rule_key(id));
+        let plugin = match (prefix, parse_rule_id(&key).0) {
+            (b"", b"") => &b"eslint"[..],
+            (b"", of_key) => of_key,
+            (prefix, _) => plugin_of_oxlint(prefix),
+        };
+        let plugin = match plugin {
+            b"jsx-a11y" => &b"jsx_a11y"[..],
+            b"react-perf" => b"react_perf",
+            plugin => plugin,
+        };
+        Written {
+            plugin: plugin.to_vec(),
+            name: name.to_vec(),
+            id: id.clone(),
+            setting: setting.clone(),
+        }
+    };
+    rules.unwrap_or_default().iter().map(written).collect()
+}
+
+/// oxlint's `Oxlintrc::merge`, of the rules: those of `extended` that `own` does not name are added, and all of them come out
+/// in the order of its hash table. The same hashes in the same table give the same order.
+fn merged(own: Vec<Written>, extended: Vec<Written>) -> Vec<Written> {
+    fn text(it: &[u8]) -> &str {
+        std::str::from_utf8(it).unwrap_or_default()
+    }
+    let mut all: Vec<Option<Written>> = own.into_iter().chain(extended).map(Some).collect();
+    let mut table: FxHashMap<(&str, &str), usize> = FxHashMap::default();
+    for (at, it) in all.iter().flatten().enumerate() {
+        table
+            .entry((text(&it.plugin), text(&it.name)))
+            .or_insert(at);
+    }
+    let order: Vec<usize> = table.into_values().collect();
+    (order.into_iter())
+        .filter_map(|at| all.get_mut(at)?.take())
+        .collect()
+}
+
 /// Whether `plugin` is one of `names`, which are as a configuration file of oxlint has them.
 fn is_among(plugin: Plugin, names: &[Vec<u8>]) -> bool {
     (names.iter())
@@ -467,6 +520,33 @@ impl Rc<'_, '_> {
         self.reader.rules(&rules)
     }
 
+    /// `no-shadow` and `@typescript-eslint/no-shadow` are two rules in the table of [`merged`] and one when they are applied, in
+    /// the order of `rules`: the later counts.
+    fn set_the_later_names(
+        &mut self,
+        rules: &[Written],
+        plugins: &[Vec<u8>],
+    ) -> Result<(), ConfigError> {
+        let mut last: FxHashMap<Vec<u8>, (usize, usize)> = FxHashMap::default();
+        for (at, it) in rules.iter().enumerate() {
+            let known = last.entry(oxlint_rule_key(&it.id)).or_default();
+            *known = (at, known.1 + 1);
+        }
+        let later = (last.into_values().filter(|it| it.1 > 1)).filter_map(|it| rules.get(it.0));
+        let later: Vec<_> = later
+            .map(|it| (it.id.clone(), it.setting.clone()))
+            .collect();
+        if !later.is_empty() {
+            let json = Json::Object(vec![(b"rules".to_vec(), Json::Object(later))]);
+            let rules = self.rules(&json, plugins)?;
+            self.reader.objects.push(ConfigObject {
+                rules,
+                ..ConfigObject::default()
+            });
+        }
+        Ok(())
+    }
+
     /// Loads what `jsPlugins` of `json` names, which is a file in `directory` or one of its overrides.
     fn load_js_plugins(&mut self, json: &Json, directory: &[u8]) -> Result<(), ConfigError> {
         for plugin in json
@@ -517,14 +597,14 @@ impl Rc<'_, '_> {
     }
 
     /// Adds the objects for the file `json`, which is in `directory`. `is_extended`: another file
-    /// extends it.
+    /// extends it. Its rules and those of what it extends, as oxlint has them.
     fn file(
         &mut self,
         json: &Json,
         directory: &[u8],
         is_extended: bool,
         depth: usize,
-    ) -> Result<(), ConfigError> {
+    ) -> Result<Vec<Written>, ConfigError> {
         if json.as_object().is_none() {
             return Err(ConfigError::new(&[b"Unexpected non-object config."]));
         }
@@ -553,10 +633,11 @@ impl Rc<'_, '_> {
             Some(one) => std::slice::from_ref(one),
             None => &[],
         };
+        let (mut objects, mut files) = (Vec::new(), Vec::new());
         for extended in extends {
             // What an `oxlint.config.ts` has imported.
             if extended.as_object().is_some() {
-                self.file(extended, directory, true, depth + 1)?;
+                objects.push(self.file(extended, directory, true, depth + 1)?);
                 continue;
             }
             let Some(name) = extended.as_str() else {
@@ -586,7 +667,7 @@ impl Rc<'_, '_> {
             };
             let file = paths::resolve(directory, &portable);
             let read = self.file(&extended, paths::dirname(&file), true, depth + 1);
-            read.map_err(|error| {
+            files.push(read.map_err(|error| {
                 ConfigError::new(&[
                     b"invalid config file ",
                     directory,
@@ -595,7 +676,7 @@ impl Rc<'_, '_> {
                     b": ",
                     &error.message,
                 ])
-            })?;
+            })?);
         }
         let categories = json.get(b"categories");
         let of_the_file = json.get(b"$categoriesOfTheFile").or(categories);
@@ -669,6 +750,13 @@ impl Rc<'_, '_> {
             base.linter_options = Json::Object(linter_options);
         }
         self.reader.objects.push(base);
+        // oxlint goes from the last to the first, through the objects before the files.
+        let is_merged = !objects.is_empty() || !files.is_empty();
+        let extended = objects.into_iter().rev().chain(files.into_iter().rev());
+        let rules = extended.fold(written_rules(json), merged);
+        if is_merged && !is_extended {
+            self.set_the_later_names(&rules, &certain)?;
+        }
 
         for item in json
             .get(b"overrides")
@@ -698,7 +786,7 @@ impl Rc<'_, '_> {
             };
             self.overrides.push((object, plugins));
         }
-        Ok(())
+        Ok(rules)
     }
 
     /// `plugins` of `json`. oxlint refuses a name that it does not know.

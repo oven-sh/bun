@@ -494,14 +494,18 @@ impl<T: Clone + Default> ChunkedVec<T> {
         self.0.iter().flat_map(|chunk| chunk.iter())
     }
 
-    /// `merge(mine, theirs)` at each index, but for the chunks that `other` shares. Whether any did.
-    fn merge_from(&mut self, other: &Self, mut merge: impl FnMut(&mut T, &T) -> bool) -> bool {
+    /// Puts `merged(mine, theirs)` at each index where it is something, and copies no chunk for less. Whether it was.
+    fn merge_from(&mut self, other: &Self, merged: impl Fn(&T, &T) -> Option<T>) -> bool {
         self.grow(other.0.len());
         let mut changed = false;
         for (mine, theirs) in self.0.iter_mut().zip(&other.0) {
-            if !Rc::ptr_eq(mine, theirs) {
-                for (mine, theirs) in Rc::make_mut(mine).iter_mut().zip(theirs.iter()) {
-                    changed |= merge(mine, theirs);
+            if Rc::ptr_eq(mine, theirs) {
+                continue;
+            }
+            for (at, theirs) in theirs.iter().enumerate() {
+                if let Some(merged) = merged(&mine[at], theirs) {
+                    Rc::make_mut(mine)[at] = merged;
+                    changed = true;
                 }
             }
         }
@@ -767,19 +771,20 @@ impl InferenceState {
     /// Merge `other` into `self` in place. Returns `true` if `self` changed.
     fn merge_from(&mut self, other: &InferenceState) -> bool {
         let mut changed = self.values.merge_from(&other.values, |value, ov| {
-            let Some(ov) = *ov else { return false };
+            let ov = (*ov)?;
             let merged = match *value {
                 Some(this) => merge_abstract_values(this, ov),
                 None => ov,
             };
-            let changed = *value != Some(merged);
-            *value = Some(merged);
-            changed
+            (*value != Some(merged)).then_some(Some(merged))
         });
 
         match (&mut self.variables, &other.variables) {
             (Variables::Dense(this), Variables::Dense(that)) => {
-                changed |= this.merge_from(that, ValueIdSet::union_with);
+                changed |= this.merge_from(that, |mine, theirs| {
+                    let mut all = mine.clone();
+                    all.union_with(theirs).then_some(all)
+                });
             }
             (Variables::Sparse(this), Variables::Sparse(that)) => {
                 for (id, other_values) in that {

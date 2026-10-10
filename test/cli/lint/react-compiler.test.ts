@@ -180,6 +180,13 @@ describe.concurrent(`bun lint: the rules of the React Compiler report what oxlin
     expect(exit).toBe(1);
   });
 
+  test("loops behind loops are gone over in the compiler's order", async () => {
+    const { diagnostics, exit } = await report(small.order);
+    expect(diagnostics).toEqual(expected.reports.order.diagnostics);
+    expect(diagnostics["order.jsx"]).toHaveLength(4);
+    expect(exit).toBe(1);
+  });
+
   // oxlint and eslint-plugin-react-hooks take all the memory there is for functions like these, so the words are ours.
   test(
     "a small function whose types or refs are made of each other takes no time to speak of",

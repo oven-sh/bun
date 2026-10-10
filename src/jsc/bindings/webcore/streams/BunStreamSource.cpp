@@ -761,11 +761,8 @@ JSValue readDirectStream(JSGlobalObject* globalObject, JSReadableStream* stream,
         pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onReadDirectStreamPullFulfilled(), runtime->onReadDirectStreamPullRejected(), jsUndefined(), sinkController);
     // pull() already called close(error).
     if (JSValue failed = sinkController->m_failReason.get()) {
-        auto* rejected = promiseRejectedWith(globalObject, failed);
-        RETURN_IF_EXCEPTION(scope, {});
         // Every caller is a native sink owner that reads the promise's state instead of attaching a reaction.
-        markPromiseAsHandled(vm, rejected);
-        return rejected;
+        return promiseRejectedWithAsHandled(globalObject, failed);
     }
     if (stream->m_state == ReadableStreamState::Readable) {
         auto* closePromise = JSPromise::create(vm, globalObject->promiseStructure());

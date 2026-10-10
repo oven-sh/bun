@@ -405,9 +405,16 @@ impl PartialEq for PackQueueItem {
 #[derive(Default)]
 pub(crate) struct PackQueue {
     heap: std::collections::BinaryHeap<PackQueueItem>,
+    /// An invariant to make [`PackQueue::add`] idempotent per path
+    /// and ensure tarballs don't have duplicate files.
+    seen: StringHashMap<()>,
 }
 impl PackQueue {
     fn add(&mut self, item: PackQueueItem) -> Result<(), AllocError> {
+        let entry = self.seen.get_or_put(item.path.as_bytes())?;
+        if entry.found_existing {
+            return Ok(());
+        }
         self.heap.push(item);
         Ok(())
     }

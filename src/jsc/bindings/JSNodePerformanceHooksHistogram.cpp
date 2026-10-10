@@ -172,13 +172,13 @@ int64_t JSNodePerformanceHooksHistogram::getMax() const
 
 double JSNodePerformanceHooksHistogram::getMean() const
 {
-    if (!m_histogramData.histogram) return NAN;
+    if (!m_histogramData.histogram) return std::numeric_limits<double>::quiet_NaN();
     return hdr_mean(m_histogramData.histogram);
 }
 
 double JSNodePerformanceHooksHistogram::getStddev() const
 {
-    if (!m_histogramData.histogram) return NAN;
+    if (!m_histogramData.histogram) return std::numeric_limits<double>::quiet_NaN();
     return hdr_stddev(m_histogramData.histogram);
 }
 

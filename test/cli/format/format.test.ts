@@ -2973,13 +2973,16 @@ describe.concurrent("what an ignore file has is not written, however it is come 
     expect(result.exitCode).toBe(0);
   });
 
-  test.each([["src"], ["src/*.js"], ["src", "src/*.js"]])("%s, of which every file is ignored, is no error", async (...args) => {
-    const files = { ".prettierignore": "src/a.js\nsrc/b.js\n", "src/a.js": ugly, "src/b.js": ugly };
-    const result = await format(files, ["--check", ...args], { reads: ["src/a.js"] });
-    expect(result.stderr).not.toContain("[error]");
-    expect(result.files).toEqual({ "src/a.js": ugly });
-    expect(result.exitCode).toBe(0);
-  });
+  test.each([["src"], ["src/*.js"], ["src", "src/*.js"]])(
+    "%s, of which every file is ignored, is no error",
+    async (...args) => {
+      const files = { ".prettierignore": "src/a.js\nsrc/b.js\n", "src/a.js": ugly, "src/b.js": ugly };
+      const result = await format(files, ["--check", ...args], { reads: ["src/a.js"] });
+      expect(result.stderr).not.toContain("[error]");
+      expect(result.files).toEqual({ "src/a.js": ugly });
+      expect(result.exitCode).toBe(0);
+    },
+  );
 
   test("a pattern that matches nothing is an error beside a directory of which every file is ignored", async () => {
     const files = { ".prettierignore": "src/a.js\n", "src/a.js": ugly };

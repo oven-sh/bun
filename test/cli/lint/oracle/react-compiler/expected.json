@@ -3232,6 +3232,268 @@
     ]
    }
   },
+  "lowering": {
+   "exit": 1,
+   "files": 2,
+   "diagnostics": {
+    "defaults.tsx": [
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 10,
+         "length": 8,
+         "line": 21,
+         "offset": 568
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 11,
+         "length": 26,
+         "line": 25,
+         "offset": 657
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 13,
+         "length": 8,
+         "line": 8,
+         "offset": 224
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 14,
+         "length": 8,
+         "line": 13,
+         "offset": 370
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 14,
+         "length": 8,
+         "line": 26,
+         "offset": 708
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 22,
+         "length": 15,
+         "line": 25,
+         "offset": 668
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 30,
+         "length": 26,
+         "line": 20,
+         "offset": 529
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 34,
+         "length": 26,
+         "line": 12,
+         "offset": 300
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 37,
+         "length": 26,
+         "line": 7,
+         "offset": 136
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 41,
+         "length": 15,
+         "line": 20,
+         "offset": 540
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 45,
+         "length": 15,
+         "line": 12,
+         "offset": 311
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     },
+     {
+      "code": "react(hooks)",
+      "help": "Call the Hook directly instead of passing or storing it as a value",
+      "labels": [
+       {
+        "label": "This Hook is used as a value",
+        "span": {
+         "column": 48,
+         "length": 15,
+         "line": 7,
+         "offset": 147
+        }
+       }
+      ],
+      "message": "Hooks may not be referenced as normal values; they must be called",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/rules-of-hooks",
+      "severity": "error"
+     }
+    ],
+    "forever.tsx": [
+     {
+      "code": "react(immutability)",
+      "help": "Do not mutate component props or hook arguments. If the value should change, update it where it is owned and pass an update callback, or use local state",
+      "labels": [
+       {
+        "label": "value cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 5,
+         "line": 18,
+         "offset": 342
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 15,
+         "length": 11,
+         "line": 5,
+         "offset": 120
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ]
+   }
+  },
   "node_modules": {
    "exit": 1,
    "files": 4,
@@ -3570,6 +3832,131 @@
       "column": 3,
       "endLine": 35,
       "endColumn": 14,
+      "suggestions": []
+     }
+    ],
+    "suppressed": []
+   },
+   "defaults.tsx": {
+    "messages": [
+     {
+      "ruleId": "react-hooks/hooks",
+      "severity": 2,
+      "message": "Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n\n<dir>/defaults.tsx:7:37\n   5 | }\n   6 |\n>  7 | export function InAnObject({ label, useThing = useDefaultThing }: { label: string; useThing?: () => number }) {\n     |                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^ Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n   8 |   const v = useThing();\n   9 |   return <p>{label}{v}</p>;\n  10 | }\n\n",
+      "line": 7,
+      "column": 37,
+      "endLine": 7,
+      "endColumn": 63,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/hooks",
+      "severity": 2,
+      "message": "Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n\n<dir>/defaults.tsx:7:48\n   5 | }\n   6 |\n>  7 | export function InAnObject({ label, useThing = useDefaultThing }: { label: string; useThing?: () => number }) {\n     |                                                ^^^^^^^^^^^^^^^ Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n   8 |   const v = useThing();\n   9 |   return <p>{label}{v}</p>;\n  10 | }\n\n",
+      "line": 7,
+      "column": 48,
+      "endLine": 7,
+      "endColumn": 63,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/hooks",
+      "severity": 2,
+      "message": "Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n\n<dir>/defaults.tsx:8:13\n   6 |\n   7 | export function InAnObject({ label, useThing = useDefaultThing }: { label: string; useThing?: () => number }) {\n>  8 |   const v = useThing();\n     |             ^^^^^^^^ Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n   9 |   return <p>{label}{v}</p>;\n  10 | }\n  11 |\n\n",
+      "line": 8,
+      "column": 13,
+      "endLine": 8,
+      "endColumn": 21,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/hooks",
+      "severity": 2,
+      "message": "Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n\n<dir>/defaults.tsx:12:34\n  10 | }\n  11 |\n> 12 | export function WithAKey({ hook: useThing = useDefaultThing }: { hook?: () => number }) {\n     |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^ Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n  13 |   return <p>{useThing()}</p>;\n  14 | }\n  15 |\n\n",
+      "line": 12,
+      "column": 34,
+      "endLine": 12,
+      "endColumn": 60,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/hooks",
+      "severity": 2,
+      "message": "Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n\n<dir>/defaults.tsx:12:45\n  10 | }\n  11 |\n> 12 | export function WithAKey({ hook: useThing = useDefaultThing }: { hook?: () => number }) {\n     |                                             ^^^^^^^^^^^^^^^ Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n  13 |   return <p>{useThing()}</p>;\n  14 | }\n  15 |\n\n",
+      "line": 12,
+      "column": 45,
+      "endLine": 12,
+      "endColumn": 60,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/hooks",
+      "severity": 2,
+      "message": "Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n\n<dir>/defaults.tsx:13:14\n  11 |\n  12 | export function WithAKey({ hook: useThing = useDefaultThing }: { hook?: () => number }) {\n> 13 |   return <p>{useThing()}</p>;\n     |              ^^^^^^^^ Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n  14 | }\n  15 |\n  16 | export function InAnArray([useThing = useDefaultThing]: [(() => number)?]) {\n\n",
+      "line": 13,
+      "column": 14,
+      "endLine": 13,
+      "endColumn": 22,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/hooks",
+      "severity": 2,
+      "message": "Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n\n<dir>/defaults.tsx:20:30\n  18 | }\n  19 |\n> 20 | export function useParameter(useThing = useDefaultThing) {\n     |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^ Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n  21 |   return useThing();\n  22 | }\n  23 |\n\n",
+      "line": 20,
+      "column": 30,
+      "endLine": 20,
+      "endColumn": 56,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/hooks",
+      "severity": 2,
+      "message": "Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n\n<dir>/defaults.tsx:20:41\n  18 | }\n  19 |\n> 20 | export function useParameter(useThing = useDefaultThing) {\n     |                                         ^^^^^^^^^^^^^^^ Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n  21 |   return useThing();\n  22 | }\n  23 |\n\n",
+      "line": 20,
+      "column": 41,
+      "endLine": 20,
+      "endColumn": 56,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/hooks",
+      "severity": 2,
+      "message": "Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n\n<dir>/defaults.tsx:21:10\n  19 |\n  20 | export function useParameter(useThing = useDefaultThing) {\n> 21 |   return useThing();\n     |          ^^^^^^^^ Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n  22 | }\n  23 |\n  24 | export function InTheBody(props: { useThing?: () => number }) {\n\n",
+      "line": 21,
+      "column": 10,
+      "endLine": 21,
+      "endColumn": 18,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/hooks",
+      "severity": 2,
+      "message": "Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n\n<dir>/defaults.tsx:25:11\n  23 |\n  24 | export function InTheBody(props: { useThing?: () => number }) {\n> 25 |   const { useThing = useDefaultThing } = props;\n     |           ^^^^^^^^^^^^^^^^^^^^^^^^^^ Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n  26 |   return <p>{useThing()}</p>;\n  27 | }\n  28 |\n\n",
+      "line": 25,
+      "column": 11,
+      "endLine": 25,
+      "endColumn": 37,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/hooks",
+      "severity": 2,
+      "message": "Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n\n<dir>/defaults.tsx:25:22\n  23 |\n  24 | export function InTheBody(props: { useThing?: () => number }) {\n> 25 |   const { useThing = useDefaultThing } = props;\n     |                      ^^^^^^^^^^^^^^^ Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n  26 |   return <p>{useThing()}</p>;\n  27 | }\n  28 |\n\n",
+      "line": 25,
+      "column": 22,
+      "endLine": 25,
+      "endColumn": 37,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/hooks",
+      "severity": 2,
+      "message": "Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n\n<dir>/defaults.tsx:26:14\n  24 | export function InTheBody(props: { useThing?: () => number }) {\n  25 |   const { useThing = useDefaultThing } = props;\n> 26 |   return <p>{useThing()}</p>;\n     |              ^^^^^^^^ Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values\n  27 | }\n  28 |\n\n",
+      "line": 26,
+      "column": 14,
+      "endLine": 26,
+      "endColumn": 22,
       "suggestions": []
      }
     ],

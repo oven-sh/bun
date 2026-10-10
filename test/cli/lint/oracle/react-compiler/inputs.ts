@@ -92,6 +92,66 @@ function Clock() {
 
 const impure = "function Component() {\n  return <div>{Date.now()}</div>;\n}\n";
 
+/** oxlint's compiler takes it for `while (true)`. Upstream's has a Todo for it. */
+const forever = `import { useRef } from "react";
+
+export function Forever(props: { a: number }) {
+  const ref = useRef(0);
+  const bad = ref.current;
+  for (;;) {
+    if (props.a) break;
+  }
+  return <div>{bad}</div>;
+}
+
+export function Counts(props: { a: number }) {
+  let last = 0;
+  for (let i = 0; ; i++) {
+    if (i > props.a) break;
+    last = i;
+  }
+  props.a = last;
+  return <div>{last}</div>;
+}
+
+export function Alone(props: { a: number }) {
+  for (;;) {
+    if (props.a) break;
+  }
+  return <div>{props.a}</div>;
+}
+`;
+
+/** `x = d` in a pattern has a place of its own, which what comes out of it has. */
+const defaults = `import { useState } from "react";
+
+function useDefaultThing(): number {
+  return useState(0)[0];
+}
+
+export function InAnObject({ label, useThing = useDefaultThing }: { label: string; useThing?: () => number }) {
+  const v = useThing();
+  return <p>{label}{v}</p>;
+}
+
+export function WithAKey({ hook: useThing = useDefaultThing }: { hook?: () => number }) {
+  return <p>{useThing()}</p>;
+}
+
+export function InAnArray([useThing = useDefaultThing]: [(() => number)?]) {
+  return <p>{useThing()}</p>;
+}
+
+export function useParameter(useThing = useDefaultThing) {
+  return useThing();
+}
+
+export function InTheBody(props: { useThing?: () => number }) {
+  const { useThing = useDefaultThing } = props;
+  return <p>{useThing()}</p>;
+}
+`;
+
 /** A type cast is an instruction of its own to the compiler, with a place of its own. `x!` is not. */
 const casts = `function Hidden(props: Props) {
   const Dynamic = useComponent(props.kind) as any;
@@ -265,6 +325,7 @@ function Component(props) {
 `,
   },
   casts: { ".oxlintrc.json": rc(), "casts.tsx": casts },
+  lowering: { ".oxlintrc.json": rc(), "forever.tsx": forever, "defaults.tsx": defaults },
   node_modules: {
     ".oxlintrc.json": rc(),
     "a.jsx": impure,
@@ -344,6 +405,7 @@ ${["a", "b", "c", "d", "e", "f", "g", "h", "i"].map(name => `    value += props.
 }
 `,
   "casts.tsx": casts,
+  "defaults.tsx": defaults,
   "disabled.jsx": readsRef("// eslint-disable-next-line react-hooks/refs"),
   "flow-hook.jsx": readsRef("// $FlowFixMe[react-rule-hook]"),
   "flow-ref.jsx": readsRef("// $FlowFixMe[react-rule-unsafe-ref]"),

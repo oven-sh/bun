@@ -172,6 +172,14 @@ describe.concurrent(`bun lint: the rules of the React Compiler report what oxlin
     expect(exit).toBe(1);
   });
 
+  test("`for (;;)` is compiled, and `x = d` in a pattern has a place of its own", async () => {
+    const { diagnostics, exit } = await report(small.lowering);
+    expect(diagnostics).toEqual(expected.reports.lowering.diagnostics);
+    expect(rulesIn({ it: diagnostics["forever.tsx"] })).toEqual(["react(immutability)", "react(refs)"]);
+    expect(diagnostics["defaults.tsx"]).toHaveLength(12);
+    expect(exit).toBe(1);
+  });
+
   // oxlint and eslint-plugin-react-hooks take all the memory there is for functions like these, so the words are ours.
   test(
     "a small function whose types or refs are made of each other takes no time to speak of",
@@ -316,6 +324,23 @@ describe.concurrent(
           "react-hooks/immutability 30:4-30:33 Error: This value cannot be modified",
           "react-hooks/immutability 35:3-35:14 Error: This value cannot be modified",
         ],
+        "defaults.tsx": [
+          "7:37-7:63",
+          "7:48-7:63",
+          "8:13-8:21",
+          "12:34-12:60",
+          "12:45-12:60",
+          "13:14-13:22",
+          "20:30-20:56",
+          "20:41-20:56",
+          "21:10-21:18",
+          "25:11-25:37",
+          "25:22-25:37",
+          "26:14-26:22",
+        ].map(
+          place =>
+            `react-hooks/hooks ${place} Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values`,
+        ),
         "disabled.jsx": [],
         "flow-other.jsx": ["react-hooks/refs 4:17-4:28 Error: Cannot access refs during render"],
         "javascript.jsx": ["react-hooks/memo-dependencies 2:40-2:41 Error: Found extra memoization dependencies"],

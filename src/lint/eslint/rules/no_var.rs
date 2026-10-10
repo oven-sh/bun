@@ -259,10 +259,14 @@ fn fix_as_oxlint<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, declarations: List<'
         _ => None,
     };
     if let Some(around) = around {
+        let is_body = matches!(statement.parent(), Node::Func(_));
         let mut leaves = false;
         for declaration in declarations {
             declaration.pat().for_each_binding(&mut |pat| {
-                leaves |= pat.symbol().is_some_and(|it| it.references().any(|it| !around.contains(it.span())));
+                // That a parameter gets its default value is no reference for it.
+                leaves |= pat.symbol().is_some_and(|it| {
+                    it.references().any(|it| !around.contains(it.span()) && !(is_body && it.is_init()))
+                });
             });
         }
         if leaves {

@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir } from "harness";
+import { readdirSync, readlinkSync } from "node:fs";
 import path from "node:path";
 
 test("dev server deinitializes itself", () => {
@@ -49,4 +50,39 @@ test("dev server is deinitialized before its arena when listen fails", async () 
   expect(stderr).toBe("");
   expect(stdout).toBe('{"code":"EADDRINUSE","deinits":1}\n');
   expect(exitCode).toBe(0);
+});
+
+// Each stopped `Bun.serve({ development: true })` must release its file
+// watcher. The watcher thread used to stay parked in its blocking wait after
+// `server.stop()`, so every disposed dev server kept one inotify instance until
+// process exit, and a tight `fs.inotify.max_user_instances` budget ended in
+// `EMFILE while initializing file watcher`. The `/proc/self/fd` probe is Linux-specific.
+test.skipIf(!isLinux)("dev server releases its file watcher on stop()", async () => {
+  using dir = tempDir("dev-server-watcher-release", {
+    "index.html": "<!doctype html><html><body>hi</body></html>",
+  });
+  const { default: html } = await import(path.join(String(dir), "index.html"));
+  const inotifyInstances = () => {
+    let n = 0;
+    for (const name of readdirSync("/proc/self/fd")) {
+      try {
+        if (readlinkSync("/proc/self/fd/" + name) === "anon_inode:inotify") n++;
+      } catch {}
+    }
+    return n;
+  };
+
+  const before = inotifyInstances();
+  for (let i = 0; i < 2; i++) {
+    using server = Bun.serve({ port: 0, development: true, routes: { "/": html }, fetch: () => new Response("") });
+    await (await fetch(server.url)).text();
+  }
+
+  // The watcher thread closes its inotify fd once stop() wakes it. Without the
+  // fix the thread never wakes and every instance stays open.
+  const deadline = Date.now() + 3000;
+  while (inotifyInstances() > before && Date.now() < deadline) {
+    await Bun.sleep(10);
+  }
+  expect(inotifyInstances()).toBe(before);
 });

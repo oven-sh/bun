@@ -66,6 +66,13 @@ pub mod kernel32 {
             lpOverlapped: LPOVERLAPPED,
             lpCompletionRoutine: LPOVERLAPPED_COMPLETION_ROUTINE,
         ) -> BOOL;
+        pub fn CancelIoEx(hFile: HANDLE, lpOverlapped: LPOVERLAPPED) -> BOOL;
+        pub fn PostQueuedCompletionStatus(
+            CompletionPort: HANDLE,
+            dwNumberOfBytesTransferred: DWORD,
+            dwCompletionKey: ULONG_PTR,
+            lpOverlapped: LPOVERLAPPED,
+        ) -> BOOL;
 
         // safe: by-value `HANDLE` + `DWORD`; a bad handle yields
         // `WAIT_FAILED` + GetLastError, no UB.

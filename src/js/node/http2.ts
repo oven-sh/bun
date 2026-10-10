@@ -3007,6 +3007,12 @@ function tryClose(fd) {
 function doSendFileFD(options, fd, headers, err, stat) {
   const onError = options.onError;
   const ownsFd = this[kOwnsFd] === true;
+  // statCheck is handed `options` and may write to it. node reads these first and never reads endStream.
+  const respondOptions = {
+    waitForTrailers: options.waitForTrailers,
+    sendDate: options.sendDate,
+    paddingStrategy: options.paddingStrategy,
+  };
   if (err) {
     if (ownsFd && err.code !== "EBADF") {
       tryClose(fd);
@@ -3014,7 +3020,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
 
     if (onError) onError(err);
     else {
-      this.respond(headers, options);
+      this.respond(headers, respondOptions);
       this.destroy(streamErrorFromCode(NGHTTP2_INTERNAL_ERROR));
     }
     return;
@@ -3033,7 +3039,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
       if (ownsFd) tryClose(fd);
       if (onError) onError(err);
       else {
-        this.respond(headers, options);
+        this.respond(headers, respondOptions);
         this.destroy(err);
       }
       return;
@@ -3090,7 +3096,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
     headers[HTTP2_HEADER_CONTENT_LENGTH] = statOptions.length;
   }
   try {
-    this.respond(headers, options);
+    this.respond(headers, respondOptions);
   } catch (err) {
     // respond() rejected the headers (e.g. a request pseudo-header in the response): the fd opened
     // for the file never reaches a read stream, so close it here before the stream is destroyed.
@@ -3270,6 +3276,9 @@ class ServerHttp2Stream extends Http2Stream {
     if (!this.pushAllowed) {
       throw $ERR_HTTP2_PUSH_DISABLED();
     }
+    assertIsObject(options, "options");
+    // Like node, read a copy so only own enumerable keys count.
+    options = { ...options };
     const session = this[bunHTTP2Session];
     const parser = session?.[bunHTTP2Native];
     if (!parser) {
@@ -3353,7 +3362,7 @@ class ServerHttp2Stream extends Http2Stream {
       if (headers[HTTP2_HEADER_METHOD] === HTTP2_METHOD_HEAD) {
         pushedStream[kHeadRequest] = true;
         pushedStream.end();
-      } else if (options?.endStream) {
+      } else if (options.endStream) {
         pushedStream.end();
       }
     }
@@ -3365,6 +3374,7 @@ class ServerHttp2Stream extends Http2Stream {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
+    assertIsObject(options, "options");
 
     if ($isArray(headers)) {
       // node rejects the raw-array form here (only respond() accepts it) - same
@@ -3425,6 +3435,7 @@ class ServerHttp2Stream extends Http2Stream {
       throw $ERR_HTTP2_INVALID_STREAM();
     }
     if (this.headersSent) throw $ERR_HTTP2_HEADERS_SENT();
+    assertIsObject(options, "options");
 
     if ($isArray(headers)) {
       // node rejects the raw-array form here (only respond() accepts it) - same
@@ -3558,6 +3569,13 @@ class ServerHttp2Stream extends Http2Stream {
     if (this.sentTrailers) {
       throw $ERR_HTTP2_TRAILERS_ALREADY_SENT();
     }
+    assertIsObject(options, "options");
+    // Like node, read a copy so only own enumerable keys count. paddingStrategy is a bun extension.
+    options = { ...options };
+    const sendDate = options.sendDate;
+    const paddingStrategy = options.paddingStrategy;
+    let endStream = !!options.endStream;
+    let waitForTrailers = !!options.waitForTrailers;
 
     // Raw (flat [name, value, ...] array) headers form: the pairs are encoded
     // on the wire in their given order; a default :status is prepended and a
@@ -3591,8 +3609,7 @@ class ServerHttp2Stream extends Http2Stream {
         statusCode = 200;
         headers.unshift(HTTP2_HEADER_STATUS, statusCode);
       }
-      const sendDateOption = options?.sendDate;
-      if (!isDateSet && (sendDateOption == null || sendDateOption)) {
+      if (!isDateSet && (sendDate == null || sendDate)) {
         headers.push(HTTP2_HEADER_DATE, utcDate());
       }
       rawHeadersList = headers as any[];
@@ -3648,7 +3665,6 @@ class ServerHttp2Stream extends Http2Stream {
     if (statusCode < 100 || statusCode > 599) {
       throw $ERR_HTTP2_STATUS_INVALID(statusCode);
     }
-    let endStream = !!options?.endStream;
     if (
       endStream ||
       statusCode === HTTP_STATUS_NO_CONTENT ||
@@ -3662,13 +3678,10 @@ class ServerHttp2Stream extends Http2Stream {
       // onWantTrailers immediately after, whose JS handler calls
       // noTrailers → sendData("", true) and emits a spurious DATA frame on
       // the already-half-closed stream (RFC 9113 §5.1 violation). Strip
-      // waitForTrailers here so the native never fires that path; the JS
-      // guard further down (`options?.waitForTrailers && !endStream`) only
-      // covers the `_final` side and runs AFTER the native call.
-      options = { ...options, endStream: true, waitForTrailers: false };
+      // waitForTrailers so neither the native layer nor `_final` takes the wantTrailers path.
       endStream = true;
+      waitForTrailers = false;
     }
-    const sendDate = options?.sendDate;
     if (rawHeadersList === null && (sendDate == null || sendDate)) {
       const current_date = headers["date"];
       if (current_date == null) {
@@ -3677,21 +3690,14 @@ class ServerHttp2Stream extends Http2Stream {
     }
 
     const wireHeaders = rawHeadersList !== null ? rawHeadersList : headers;
-    if (typeof options === "undefined") {
-      session[bunHTTP2Native]?.request(this.id, undefined, wireHeaders, sensitiveNames);
-    } else {
-      session[bunHTTP2Native]?.request(this.id, undefined, wireHeaders, sensitiveNames, options);
-      // Only track waitForTrailers when the HEADERS frame above did NOT end
-      // the stream. Status codes 204/205/304 and HEAD requests force
-      // endStream=true earlier in this method, which means the native
-      // request() already wrote END_STREAM on the HEADERS frame — driving
-      // the wantTrailers path from `_final` on such a stream would call
-      // `noTrailers`/`emit("wantTrailers")` on an already-half-closed
-      // stream and corrupt state. Use optional chaining: `options` may be
-      // `null` here (typeof null === "object" enters this else branch).
-      if (options?.waitForTrailers && !endStream) {
-        this[bunHTTP2WaitForTrailers] = true;
-      }
+    // The native writer is shared with request() and acts on parent, weight, exclusive, silent and signal.
+    session[bunHTTP2Native]?.request(this.id, undefined, wireHeaders, sensitiveNames, {
+      endStream,
+      waitForTrailers,
+      paddingStrategy,
+    });
+    if (waitForTrailers) {
+      this[bunHTTP2WaitForTrailers] = true;
     }
     this.headersSent = true;
     if (onServerStreamFinishChannel.hasSubscribers) {

@@ -766,6 +766,7 @@ impl ExtractContext {
                 close_handles: true,
                 log: false,
                 npm: false,
+                file_readers: libarchive::FileReaders::FromEntry,
             },
         ) {
             Ok(c) => c,
@@ -1381,13 +1382,12 @@ fn extract_to_disk_filtered(
             }
             bun_sys::FileKind::File => {
                 let size: usize = usize::try_from(entry_ref.size().max(0)).expect("int cast");
-                // Sanitize permissions: use entry perms masked to 0o777, or default 0o644
-                let entry_perm = entry_ref.perm();
-                let mode: Mode = if entry_perm != 0 {
-                    Mode::try_from(entry_perm & 0o777).expect("int cast")
-                } else {
-                    0o644
-                };
+                // On Windows, a mode without the owner write bit makes a read-only file, which a later extraction cannot open.
+                #[cfg(windows)]
+                let mode: Mode = 0;
+                #[cfg(not(windows))]
+                let mode: Mode =
+                    libarchive::file_mode(entry_ref.perm(), libarchive::FileReaders::FromEntry);
 
                 // Create parent directories if needed (ignore expected errors)
                 if let Some(parent_dir) = bun_core::dirname(pathname) {
@@ -1402,13 +1402,16 @@ fn extract_to_disk_filtered(
                     }
                 }
 
-                // Create and write the file using bun.sys
-                let file_fd: Fd = match bun_sys::openat(
+                #[cfg(windows)]
+                let opened = bun_sys::openat(
                     dir_fd,
                     pathname_z,
                     bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
                     mode,
-                ) {
+                );
+                #[cfg(not(windows))]
+                let opened = libarchive::create_entry_file(dir_fd, pathname_z, mode);
+                let file_fd: Fd = match opened {
                     Ok(fd) => fd,
                     Err(_) => continue,
                 };

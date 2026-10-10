@@ -88,6 +88,8 @@ function lazyCpus({ cpus, hostCpuCount }) {
 
 // all logic based on `process.platform` and `process.arch` is inlined at bundle time
 function bound(binding) {
+  const constants = $processBindingConstants.os;
+  Object.freeze(constants.signals);
   return {
     availableParallelism: function () {
       return navigator.hardwareConcurrency;
@@ -148,7 +150,7 @@ function bound(binding) {
     get EOL() {
       return process.platform === "win32" ? "\r\n" : "\n";
     },
-    constants: $processBindingConstants.os,
+    constants,
   };
 }
 

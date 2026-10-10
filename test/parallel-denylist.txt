@@ -69,6 +69,7 @@ js/bun/resolve/resolve.test.ts
 js/bun/resolve/resolver-permission-denied-ancestor.test.ts
 js/bun/shell/bunshell.test.ts
 js/bun/shell/commands/rm.test.ts
+js/bun/shell/leak.test.ts
 js/bun/shell/shell-pipe-read-fault.test.ts
 js/bun/spawn/exit-code.test.ts
 js/bun/spawn/null-byte-injection.test.ts
@@ -147,6 +148,7 @@ js/node/util/bun-inspect.test.ts
 js/node/util/mime-api.test.ts
 js/node/util/util.test.js
 js/node/vm/sourcetextmodule-leak.test.ts
+js/node/zlib/leak.test.ts
 js/sql/postgres-pgsslmode-env.test.ts
 js/sql/postgres-tls-ctx-leak.test.ts
 js/third_party/@azure/service-bus/azure-service-bus.test.ts
@@ -169,6 +171,7 @@ js/web/explicit-resource-management.test.ts
 js/web/fetch/fetch-proxy-tls-intern-race.test.ts
 js/web/fetch/fetch-tls-abortsignal-timeout.test.ts
 js/web/fetch/utf8-bom.test.ts
+js/web/request/request-clone-leak.test.ts
 js/web/streams/streams-leak.test.ts
 js/web/workers/worker-late-completion.test.ts
 js/web/workers/worker-terminate-funnels.test.ts

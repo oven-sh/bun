@@ -76,6 +76,9 @@ impl Rule for NoScriptUrl {
             return;
         }
         let found = match literal.owner() {
+            Node::Expr(e) if cx.language().is_oxlint && e.is_jsx_attribute_string() => {
+                literal.text().get(1..=SCHEME.len()).is_some_and(|start| start.eq_ignore_ascii_case(SCHEME))
+            }
             // The value of a JSX attribute is written differently.
             Node::Expr(e) => e.as_string().is_some_and(is_script_url),
             _ => is_script_url_literal(literal.text()),

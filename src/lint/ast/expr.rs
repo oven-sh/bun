@@ -297,6 +297,13 @@ impl<'a> Expr<'a> {
         self.file.is_jsx_text(self.id)
     }
 
+    /// It is a string that is the value of a JSX attribute, without braces. Its value is with what `&amp;` and the like stand
+    /// for, which oxlint does not read.
+    #[inline]
+    pub fn is_jsx_attribute_string(self) -> bool {
+        self.as_string().is_some() && self.file.is_jsx_attribute_string(self.id)
+    }
+
     /// ESLint's `value` of a `JSXText`: the text as it is written, all whitespace included, with
     /// what `&amp;` and the like stand for. `None` if it is not [JSX text](Expr::is_jsx_text).
     /// espree has `\n` for each `\r\n` in it.

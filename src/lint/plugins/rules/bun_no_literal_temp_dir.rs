@@ -15,10 +15,6 @@ const LITERAL_DIRECTORY: Message = Message::new(
     "`{{directory}}` is not where every system keeps temporary files. Ask for the directory: `os.tmpdir()`.",
 );
 
-fn is_jsx_attribute_string(e: Expr) -> bool {
-    matches!(e.parent(), Node::Prop(it) if it.is_jsx_attribute()) && e.jsx_container_span().is_none()
-}
-
 impl NoLiteralTempDir {
     /// The directory that `path` is or is in. `is_whole`: nothing follows `path`.
     fn directory_of(&self, path: &[u8], is_whole: bool) -> Option<&[u8]> {
@@ -44,7 +40,7 @@ impl Rule for NoLiteralTempDir {
         let found = match e.kind() {
             // In JSX a text is prose, and `a=".."` is more often a URL than a path.
             ExprKind::String(_) if e.is_jsx_text() || e.is_jsx_tag_name() => None,
-            ExprKind::String(_) if is_jsx_attribute_string(e) => None,
+            ExprKind::String(_) if e.is_jsx_attribute_string() => None,
             _ => written_start(e).and_then(|(path, is_whole)| self.directory_of(path, is_whole)),
         };
         if let Some(directory) = found {

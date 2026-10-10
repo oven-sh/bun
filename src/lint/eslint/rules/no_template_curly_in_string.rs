@@ -10,8 +10,8 @@ const UNEXPECTED_TEMPLATE_EXPRESSION: Message = Message::new(
 );
 
 /// `/\$\{[^}]+\}/u.test(value)`. For oxlint there can be nothing between the braces.
-fn has_placeholder(value: Name, is_oxlint: bool) -> bool {
-    let mut rest = value.bytes();
+fn has_placeholder(value: &[u8], is_oxlint: bool) -> bool {
+    let mut rest = value;
     while let Some(at) = strings::index_of(rest, b"${") {
         rest = rest.get(at + 2..).unwrap_or_default();
         match strings::index_of_char_usize(rest, b'}') {
@@ -30,7 +30,7 @@ fn is_quoted(file: &File, span: Span) -> bool {
 
 /// A name that can be written as a string: in the braces of an import or an export, of a module.
 fn check_ident<'a>(name: Ident<'a>, cx: &mut Cx<'a, NoTemplateCurlyInString>) {
-    if has_placeholder(name.name(), cx.language().is_oxlint) && name.is_string() {
+    if has_placeholder(name.name().bytes(), cx.language().is_oxlint) && name.is_string() {
         cx.report(name, UNEXPECTED_TEMPLATE_EXPRESSION);
     }
 }
@@ -38,7 +38,7 @@ fn check_ident<'a>(name: Ident<'a>, cx: &mut Cx<'a, NoTemplateCurlyInString>) {
 fn check_key<'a>(key: Option<Key<'a>>, cx: &mut Cx<'a, NoTemplateCurlyInString>) {
     if let Some(key) = key
         && let KeyKind::String(value) | KeyKind::ComputedString(value) = key.kind()
-        && has_placeholder(value, cx.language().is_oxlint)
+        && has_placeholder(value.bytes(), cx.language().is_oxlint)
     {
         let span = key.inner_span(cx.file());
         if is_quoted(cx.file(), span) {
@@ -72,7 +72,10 @@ impl Rule for NoTemplateCurlyInString {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let has_one = e.as_string().is_some_and(|it| has_placeholder(it, cx.language().is_oxlint));
+        let is_oxlint = cx.language().is_oxlint;
+        let is_as_written = is_oxlint && e.is_jsx_attribute_string();
+        let value = e.as_string().map(|it| if is_as_written { e.text() } else { it.bytes() });
+        let has_one = value.is_some_and(|it| has_placeholder(it, is_oxlint));
         if has_one && !e.is_jsx_text() && !e.is_jsx_tag_name() {
             cx.report(e, UNEXPECTED_TEMPLATE_EXPRESSION);
         }
@@ -102,7 +105,7 @@ impl Rule for NoTemplateCurlyInString {
             }
             _ => None,
         };
-        if specifier.is_some_and(|it| has_placeholder(it, cx.language().is_oxlint))
+        if specifier.is_some_and(|it| has_placeholder(it.bytes(), cx.language().is_oxlint))
             && let Some(span) = stmt.module_specifier_span()
         {
             cx.report(span, UNEXPECTED_TEMPLATE_EXPRESSION);
@@ -110,7 +113,7 @@ impl Rule for NoTemplateCurlyInString {
     }
 
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
-        if matches!(ty.kind(), TypeKind::StringLit(value) if has_placeholder(value, cx.language().is_oxlint))
+        if matches!(ty.kind(), TypeKind::StringLit(value) if has_placeholder(value.bytes(), cx.language().is_oxlint))
             && is_quoted(cx.file(), ty.span())
         {
             cx.report(ty, UNEXPECTED_TEMPLATE_EXPRESSION);

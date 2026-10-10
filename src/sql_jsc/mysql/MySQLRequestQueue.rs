@@ -65,16 +65,6 @@ impl MySQLRequestQueue {
 
     #[inline]
     pub(crate) fn can_pipeline(&self, connection: &MySQLConnection) -> bool {
-        // Feature flags are unset by default; `unwrap_or(false)` falls back to the
-        // non-nullable defaulted `get()`.
-        if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING
-            .get()
-            .unwrap_or(false)
-        {
-            // @branchHint(.unlikely) — no stable Rust equivalent; left as plain branch.
-            return false;
-        }
-
         self.is_ready_for_query.get()
             && self.nonpipelinable_requests.get() == 0 // need to wait for non pipelinable requests to finish
             && !self.waiting_to_prepare.get()

@@ -149,6 +149,8 @@ class FSWatcher extends EventEmitter {
       options = {};
     } else if (typeof options === "string") {
       options = { encoding: options };
+    } else if (options != null && typeof options !== "object") {
+      throw $ERR_INVALID_ARG_TYPE("options", ["string", "Object"], options);
     }
 
     if (typeof listener !== "function") {

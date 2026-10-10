@@ -3302,10 +3302,14 @@ pub(crate) mod args {
         Ok(default)
     }
 
+    /// Node's `getOptions()` rejects an `options` value that is not a string, object, nullish, or function.
+    fn throw_invalid_options_type(ctx: &JSGlobalObject, value: JSValue) -> bun_jsc::JsError {
+        ctx.throw_invalid_argument_type_value_one_of(b"options", b"string or object", value)
+    }
+
     /// Consume the next positional argument as a Node.js fs `encoding` option.
     /// Accepts either an encoding string (`"utf8"`, `"buffer"`, ...) or an options
-    /// object with an `.encoding` property. Any other value (including `undefined`
-    /// / `null` / numbers / functions) is silently ignored and `default` is returned.
+    /// object with an `.encoding` property, per `getOptions()`.
     /// Shared by `Readlink`/`Realpath`/`MkdirTemp::from_js`.
     fn parse_encoding_arg(
         ctx: &JSGlobalObject,
@@ -3324,6 +3328,8 @@ pub(crate) mod args {
                 _ => {
                     if val.is_object() {
                         encoding = get_encoding(val, ctx, encoding)?;
+                    } else if !val.is_undefined_or_null() {
+                        return Err(throw_invalid_options_type(ctx, val));
                     }
                 }
             }
@@ -3592,6 +3598,8 @@ pub(crate) mod args {
                             if let Some(w) = val.get_boolean_strict(ctx, "withFileTypes")? {
                                 with_file_types = w;
                             }
+                        } else if !val.is_undefined_or_null() {
+                            return Err(throw_invalid_options_type(ctx, val));
                         }
                     }
                 }
@@ -4180,6 +4188,8 @@ pub(crate) mod args {
                             ));
                         }
                     }
+                } else if !arg.is_undefined_or_null() {
+                    return Err(throw_invalid_options_type(ctx, arg));
                 }
             }
             let abort_signal = scopeguard::ScopeGuard::into_inner(abort_signal);
@@ -4287,6 +4297,8 @@ pub(crate) mod args {
                             );
                         }
                     }
+                } else if !arg.is_undefined_or_null() {
+                    return Err(throw_invalid_options_type(ctx, arg));
                 }
             }
             let flavor = if arguments.will_be_async {

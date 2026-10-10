@@ -329,6 +329,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool
     pub(crate) macro_call_count: MacroCallCountType,
 
     pub(crate) hoisted_ref_for_sloppy_mode_block_fn: RefRefMap,
+    /// Sloppy block-level functions with no Annex B `var`: a lexical binding of the same name is in its way.
+    pub(crate) sloppy_mode_block_fn_without_var: RefMap,
 
     // Used for forcing CommonJS
     pub(crate) has_with_scope: bool,
@@ -3606,6 +3608,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         self.options.bundle || self.options.features.minify_identifiers
     }
 
+    /// Whether a block-level function becomes a `let`. Otherwise it stays a declaration for the engine's Annex B.
+    pub(crate) fn lowers_block_level_function(&self, name: Ref) -> bool {
+        // `hoist_symbols` makes the `var` twin of a sloppy function only for a renamer.
+        self.will_use_renamer()
+            // A function-level "use strict" is not printed, so strict code can run as sloppy text.
+            || self.is_strict_mode()
+            // The REPL wraps each input in a function, which would own the `var` of a top-level block.
+            || (self.options.repl_mode && self.fn_or_arrow_data_visit.is_outside_fn_or_arrow)
+            || self.sloppy_mode_block_fn_without_var.contains_key(&name)
+    }
+
     fn hoist_symbols(&mut self, mut scope: js_ast::StoreRef<js_ast::Scope>) {
         // This runs before the visit pass, so it walks the scope tree at the full
         // nesting depth the parser allowed; deep trees must error here instead of
@@ -3839,6 +3852,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                             .hoisted_ref_for_sloppy_mode_block_fn
                                             .remove(&original_member_ref);
                                     }
+                                } else if self.symbols[symbol_idx].kind
+                                    == js_ast::symbol::Kind::HoistedFunction
+                                {
+                                    self.sloppy_mode_block_fn_without_var
+                                        .insert(original_member_ref, ());
                                 }
                                 continue 'next_member;
                             }
@@ -9977,6 +9995,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             has_classic_runtime_warned: false,
             macro_call_count: 0,
             hoisted_ref_for_sloppy_mode_block_fn: Default::default(),
+            sloppy_mode_block_fn_without_var: Default::default(),
             has_with_scope: false,
             has_top_level_function_merged_with_var: false,
             is_file_considered_to_have_esm_exports: false,

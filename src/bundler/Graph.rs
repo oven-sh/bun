@@ -112,6 +112,8 @@ pub struct InputFile {
     pub unique_key_for_additional_file: Box<[u8], AstAlloc>,
     pub content_hash_for_additional_file: u64,
     pub flags: InputFileFlags,
+    /// The file's own `//# sourceMappingURL=` map (inline or sidecar), chained into the output map.
+    pub input_source_map: Option<Box<bun_sourcemap::InputSourceMap>>,
 }
 
 impl Default for InputFile {
@@ -125,6 +127,7 @@ impl Default for InputFile {
             unique_key_for_additional_file: AstAlloc::vec().into_boxed_slice(),
             content_hash_for_additional_file: 0,
             flags: InputFileFlags::default(),
+            input_source_map: None,
         }
     }
 }
@@ -142,6 +145,7 @@ bun_collections::multi_array_columns! {
         unique_key_for_additional_file: Box<[u8], AstAlloc>,
         content_hash_for_additional_file: u64,
         flags: InputFileFlags,
+        input_source_map: Option<Box<bun_sourcemap::InputSourceMap>>,
     }
 }
 

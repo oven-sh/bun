@@ -385,6 +385,23 @@ impl Stringifier {
                     self.builder
                         .append_lchar(bun_core::fmt::hex_char_lower(c as u8));
                 }
+                // a pair as is; an unpaired surrogate as `\uHHHH` like JSON.stringify
+                0xd800..=0xdbff
+                    if i + 1 < str.length()
+                        && bun_core::strings::u16_is_trail(str.char_at(i + 1)) =>
+                {
+                    self.builder.append_uchar(c)
+                }
+                0xdc00..=0xdfff if i > 0 && bun_core::strings::u16_is_lead(str.char_at(i - 1)) => {
+                    self.builder.append_uchar(c)
+                }
+                0xd800..=0xdfff => {
+                    self.builder.append_latin1(b"\\u");
+                    for shift in [12u8, 8, 4, 0] {
+                        self.builder
+                            .append_lchar(bun_core::fmt::hex_char_lower((c >> shift) as u8));
+                    }
+                }
                 _ => self.builder.append_uchar(c),
             }
         }

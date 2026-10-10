@@ -5,9 +5,11 @@ use bun_core::strings;
 use bun_lint::ast::walk::{Visitor, walk_node};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::source::mention_bit;
 use bun_lint::utils::estree_compat::{Target, TargetKind, estree_parent, estree_type_name};
 use bun_lint::utils::sort;
 use rustc_hash::FxHashSet;
+use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::iter::successors;
 
@@ -15,6 +17,13 @@ use std::iter::successors;
 pub struct NoUnusedState;
 
 const UNUSED_STATE_FIELD: Message = Message::new("unusedStateField", "Unused state field: '{{name}}'");
+
+/// Whether the file can have a call of `createClass`: `pragma.#createClass` is one for upstream.
+fn mentions_create_class(file: &File<'_>, create_class: &[u8]) -> bool {
+    let mut private = SmallVec::<[u8; 32]>::from_slice(b"#");
+    private.extend_from_slice(create_class);
+    file.mentions_bit(mention_bit(create_class)) || file.mentions_bit(mention_bit(&private))
+}
 
 /// `quasis[0].value.raw`, of what is written between the backticks: espree has a `\n` for each line break in it.
 fn raw_of<'a>(file: &File<'a>, written: &'a [u8]) -> Cow<'a, [u8]> {
@@ -483,9 +492,8 @@ impl Rule for NoUnusedState {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        let create_class = || std::str::from_utf8(get_create_class_from_context(file));
-        (file.mentions_any(&["state", "setState", "getInitialState"])
-            && (file.has_classes() || create_class().is_ok_and(|it| file.mentions(it))))
+        (file.mentions_any(&["state", "setState", "getInitialState", "#getInitialState"])
+            && (file.has_classes() || mentions_create_class(file, get_create_class_from_context(file))))
         .then_some(())
     }
 
@@ -495,7 +503,7 @@ impl Rule for NoUnusedState {
         let pragmas = Pragmas::new(file);
         let mut components: Vec<_> =
             file.classes().filter(|it| is_es6_component(*it, &pragmas)).map(Node::Class).collect();
-        if std::str::from_utf8(pragmas.create_class).is_ok_and(|it| file.mentions(it)) {
+        if mentions_create_class(file, pragmas.create_class) {
             let objects = file.exprs_of_kind(ExprTag::Object).map(Node::Expr);
             components.extend(objects.filter(|it| is_es5_component(*it, &pragmas)));
         }

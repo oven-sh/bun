@@ -1,27 +1,34 @@
 use bun_lint_oxlint::ast_util::{get_declaration_of_variable, static_name};
 use crate::jsx::{AttributeValue, get_prop_value};
 use crate::react::{is_create_element_call, is_jsx};
+use crate::util_is_create_element::is_create_element;
+use crate::util_pragma::get_from_context;
+use crate::util_variable::{Found, find_variable_by_name};
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
+use std::cell::OnceCell;
 
-/// Require that the value of the prop `style` be an object or a variable that is an object.
+/// Enforce style prop value is an object
 pub struct StylePropObject {
     allow: Vec<Box<[u8]>>,
 }
 
+const STYLE_PROP_NOT_OBJECT: Message = Message::new("stylePropNotObject", "Style prop value must be an object");
 const STYLE_PROP_OBJECT: Message = Message::new("", "`style` prop value must be an object.");
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// Whether a variable is declared with something that is not an object.
+    /// For oxlint: whether a variable is declared with something that is not an object.
     invalid_variables: FxHashMap<Symbol<'a>, bool>,
+    /// The pragma. oxlint knows none.
+    pragma: OnceCell<&'a [u8]>,
 }
 
 impl Rule for StylePropObject {
-    const META: Meta = Meta::oxlint(Plugin::React, "style-prop-object", Kind::Problem);
+    const META: Meta = Meta::plugin(Plugin::React, "style-prop-object", Kind::Problem);
     const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Call]);
     type State<'a> = State<'a>;
 
@@ -33,14 +40,16 @@ impl Rule for StylePropObject {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let on = On::new().exprs(&[ExprTag::Jsx]);
-        if !file.mentions("createElement") {
-            return on;
+        // For upstream `React.#createElement()` is a call of `createElement`.
+        match file.mentions("createElement") || (!file.language().is_oxlint && file.mentions("#createElement")) {
+            true => on.exprs(&[ExprTag::Call]),
+            false => on,
         }
-        on.exprs(&[ExprTag::Call])
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        if !is_jsx(file) || !file.mentions("style") {
+        // oxlint does not run the rule on a file that cannot have JSX.
+        if !file.mentions("style") || (file.language().is_oxlint && !is_jsx(file)) {
             return None;
         }
         Some(State::default())
@@ -60,53 +69,108 @@ impl StylePropObject {
         let ExprKind::Jsx(jsx) = e.kind() else {
             return;
         };
-        let styles = jsx.attrs().iter().filter(|it| it.key().is_some_and(|key| key.is("style")));
-        for value in styles.filter_map(get_prop_value) {
-            let is_invalid = match value {
-                AttributeValue::StringLiteral(_) => true,
-                _ => value.as_expression().is_some_and(|it| is_invalid_expression(it, &mut cx.state)),
+        let is_oxlint = cx.language().is_oxlint;
+        for attribute in jsx.attrs().iter().filter(|it| it.key().is_some_and(|key| key.is("style"))) {
+            let Some(value) = get_prop_value(attribute) else {
+                continue;
             };
-            // `<a.b>`, `<a:b>` and `<this>` are not looked at.
-            if is_invalid
-                && let Some(ExprKind::Ident(name) | ExprKind::String(name)) = jsx.tag().map(Expr::kind)
-                && !strings::contains_char(name.bytes(), b':')
-                && !self.allows(name)
-            {
-                cx.report(value.span(), STYLE_PROP_OBJECT);
+            // oxlint points at the value.
+            let whole = if is_oxlint { value.span() } else { attribute.span() };
+            let place = match value {
+                AttributeValue::StringLiteral(_) => Some(whole),
+                AttributeValue::ExpressionContainer(_) => {
+                    value.as_expression().and_then(|it| place_of_invalid(it, whole, cx))
+                }
+                // oxlint lets an element pass.
+                AttributeValue::Element(_) | AttributeValue::Fragment(_) => (!is_oxlint).then_some(whole),
+            };
+            let Some(place) = place else {
+                continue;
+            };
+            let name = match jsx.tag().map(Expr::kind) {
+                Some(ExprKind::Ident(name) | ExprKind::String(name)) => {
+                    Some(name.bytes()).filter(|it| !strings::contains_char(it, b':'))
+                }
+                Some(ExprKind::This) if !is_oxlint => Some(&b"this"[..]),
+                _ => None,
+            };
+            // oxlint does not look at `<a.b>`, `<a:b>` and `<this>`.
+            if !name.map_or(is_oxlint, |name| self.allows(name)) {
+                cx.report(place, message(is_oxlint));
             }
         }
     }
 
     fn call<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(call) = e.as_call().filter(|call| is_create_element_call(*call)) else {
+        let Some(call) = e.as_call() else {
             return;
         };
+        let is_oxlint = cx.language().is_oxlint;
+        // oxlint has a node for parentheses.
+        let is_seen = |it: &Expr<'a>| !is_oxlint || !it.is_parenthesized();
         let arguments = call.args();
-        let Some(ExprKind::String(name) | ExprKind::Ident(name)) =
-            arguments.first().filter(|it| !it.is_parenthesized()).map(Expr::kind)
-        else {
+        let Some(ExprKind::Object(properties)) = arguments.get(1).filter(is_seen).map(Expr::kind) else {
             return;
         };
-        let Some(ExprKind::Object(properties)) = arguments.get(1).filter(|it| !it.is_parenthesized()).map(Expr::kind)
-        else {
-            return;
+        let name = match arguments.first().filter(is_seen).map(Expr::kind) {
+            Some(ExprKind::Ident(name)) => Some(name),
+            // For upstream what is allowed is a name.
+            Some(ExprKind::String(name)) if is_oxlint => Some(name),
+            _ => None,
         };
-        if self.allows(name) {
+        // oxlint looks at nothing but a name and a string.
+        if name.map_or(is_oxlint, |name| self.allows(name.bytes())) {
             return;
         }
-        for property in properties.iter().filter(|it| it.key().and_then(static_name).is_some_and(|key| key.is("style")))
-        {
-            if let Some(value) = property.value()
-                && is_invalid_expression(value, &mut cx.state)
-            {
-                cx.report(value, STYLE_PROP_OBJECT);
+        // oxlint takes the `createElement` of everything but `document`.
+        let is_creation = match is_oxlint {
+            true => is_create_element_call(call),
+            false => is_create_element(e, cx.state.pragma.get_or_init(|| get_from_context(cx.file()))),
+        };
+        if !is_creation {
+            return;
+        }
+        let is_style = |it: &Prop<'a>| {
+            it.key().is_some_and(|key| match is_oxlint {
+                // oxlint: also `"style"` and `["style"]`.
+                true => static_name(key).is_some_and(|name| name.is("style")),
+                false => matches!(key.kind(), KeyKind::Ident(name) if name.is("style")),
+            })
+        };
+        // Upstream looks at the first.
+        let looked_at = if is_oxlint { usize::MAX } else { 1 };
+        for value in properties.iter().filter(is_style).take(looked_at).filter_map(Prop::value) {
+            if let Some(place) = place_of_invalid(value, value.span(), cx) {
+                cx.report(place, message(is_oxlint));
             }
         }
     }
 
-    fn allows(&self, name: Name) -> bool {
-        self.allow.iter().any(|it| **it == *name.bytes())
+    fn allows(&self, name: &[u8]) -> bool {
+        self.allow.iter().any(|it| **it == *name)
     }
+}
+
+fn message(is_oxlint: bool) -> Message {
+    if is_oxlint { STYLE_PROP_OBJECT } else { STYLE_PROP_NOT_OBJECT }
+}
+
+/// upstream's `isNonNullaryLiteral`
+fn is_non_nullary_literal(expression: Expr) -> bool {
+    ast_utils::is_literal(expression) && expression.tag() != ExprTag::Null
+}
+
+/// Where `value`, which is in braces or the value of a property, is reported if it is no object: a literal at `whole`.
+fn place_of_invalid<'a>(value: Expr<'a>, whole: Span, cx: &mut Cx<'a, StylePropObject>) -> Option<Span> {
+    if cx.language().is_oxlint {
+        return is_invalid_expression(value, &mut cx.state).then_some(whole);
+    }
+    let Some(name) = value.as_ident() else {
+        return is_non_nullary_literal(value).then_some(whole);
+    };
+    // upstream's `checkIdentifiers`: one step, and the variable is reported where it is used.
+    matches!(find_variable_by_name(Node::Expr(value), name), Some(Found::Init(init)) if is_non_nullary_literal(init))
+        .then(|| value.span())
 }
 
 fn is_invalid_type(ty: TypeNode) -> bool {
@@ -126,7 +190,7 @@ fn is_invalid_type(ty: TypeNode) -> bool {
             if !ty.is_parenthesized() && types.iter().any(|it| is_invalid_keyword(it) || is_invalid_intersection(it)))
 }
 
-/// A string, a boolean, a template, or a variable that is declared with one of these or with a variable that is.
+/// For oxlint: a string, a boolean, a template, or a variable that is declared with one of these or such a variable.
 fn is_invalid_expression<'a>(expression: Expr<'a>, state: &mut State<'a>) -> bool {
     let mut passed: SmallVec<[Symbol<'a>; 4]> = SmallVec::new();
     let mut at = expression;

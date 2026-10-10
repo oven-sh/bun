@@ -1089,7 +1089,7 @@ describe("bundler", () => {
         "http://a.b http:||a.b false 3 false",
         "https://A// A|| true 3 true",
         "https://a.b a.b false 1 false",
-      ].join("\\n"),
+      ].join("\n"),
     },
     onAfterBundle(api) {
       expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
@@ -1158,6 +1158,30 @@ describe("bundler", () => {
       expect(out).toMatch(/function Direct\d*\(\{ depth, items \}\)/);
       expect(out).toMatch(/function Inner\d*\(\{ depth, items \}, ref\)/);
     },
+  });
+
+  // The lexer keeps the place of the flags in 16 bits. From 65,536 on the flags were taken from the wrong place, and the
+  // literal came out as a comment.
+  itBundled("react-compiler/RegExpWhoseFlagsBeginBehind64KB", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function Long(props) {
+          "use memo";
+          const last = /${Buffer.alloc(65533, "a").toString()}/gi;
+          const first = /${Buffer.alloc(65534, "a").toString()}/gi;
+          const more = /${Buffer.alloc(70000, "a").toString()}/gi;
+          const none = /${Buffer.alloc(70000, "a").toString()}/;
+          return [last, first, more, none].map(it => it.source.length + it.flags).concat(props.a);
+        }
+        console.log(Long({ a: 1 }).join(" "));
+      `,
+      "/node_modules/react/compiler-runtime.js": `let cache; exports.c = n => (cache ??= new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: "65533gi 65534gi 70000gi 70000 1" },
   });
 
   // Sibling of the above: `WAS_ORIGINALLY_TYPEOF_IDENTIFIER` was also dropped,

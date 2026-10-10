@@ -2,8 +2,8 @@ use bun_lint_oxlint::ast_util::{
     as_function, as_method_definition, as_object_property, as_property_definition, static_name,
 };
 use crate::react::{is_es5_component, is_es6_component, is_jsx};
-use crate::util_ast::{Property, get_component_properties, get_property_name};
-use crate::util_component_util;
+use crate::util_ast::{get_component_properties, get_property_name};
+use crate::util_component_util::{self, Pragmas};
 use crate::util_components::Components;
 use crate::util_components_list::{At, ComponentId, Queue};
 use bun_lint::prelude::*;
@@ -78,9 +78,19 @@ impl Rule for RequireRenderReturn {
     /// upstream's listeners for `ReturnStatement` and `ArrowFunctionExpression`, in the order of ESLint's walk, and
     /// then its `Program:exit`.
     fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let file = cx.file();
+        let pragmas = Pragmas::new(file);
+        // Whether something can be reported at all does not take the list of components.
+        let has_render = |node| render_of_component(node, &pragmas).is_some();
+        let mentions_create_class = std::str::from_utf8(pragmas.create_class).is_ok_and(|it| file.mentions(it));
+        if !file.classes().map(Node::Class).any(has_render)
+            && !(mentions_create_class && file.exprs_of_kind(ExprTag::Object).map(Node::Expr).any(has_render))
+        {
+            return;
+        }
         let mut queue = Queue::default();
         let mut is_in_render = AncestorMemo::default();
-        for func in cx.file().funcs().filter(|it| ast_utils::is_function_with_body(*it)) {
+        for func in file.funcs().filter(|it| ast_utils::is_function_with_body(*it)) {
             let node = Node::Func(func);
             if matches!(func.body(), FnBody::Expr(_)) {
                 if is_value_of_render(func) {
@@ -92,25 +102,30 @@ impl Rule for RequireRenderReturn {
                 }
             }
         }
-        let mut components = Components::new(cx.file());
+        let mut components = Components::new(file);
         let mut has_return_statement: FxHashSet<ComponentId> = FxHashSet::default();
         while let Some(event) = queue.pop_until(At::END) {
             components.advance(event.at);
             has_return_statement.extend(components.set(event.node));
         }
         components.finish();
-        let pragmas = *components.pragmas();
         for id in components.list() {
-            let node = components.component(id).node;
             if !has_return_statement.contains(&id)
-                && let Some(render) = find_render_method(node)
-                && (util_component_util::is_es5_component(node, &pragmas)
-                    || matches!(node, Node::Class(class) if util_component_util::is_es6_component(class, &pragmas)))
+                && let Some(render) = render_of_component(components.component(id).node, &pragmas)
             {
                 cx.report(estree_span(render), NO_RENDER_RETURN).at_the_end();
             }
         }
     }
+}
+
+/// upstream's `findRenderMethod`, of what is a component by `isES5Component` or `isES6Component`.
+fn render_of_component<'a>(node: Node<'a>, pragmas: &Pragmas<'_>) -> Option<Node<'a>> {
+    let mut properties = get_component_properties(node).into_iter();
+    let render = properties.find(|it| it.func().is_some() && is_called_render(it.node()))?;
+    let is_component = util_component_util::is_es5_component(node, pragmas)
+        || matches!(node, Node::Class(class) if util_component_util::is_es6_component(class, pragmas));
+    is_component.then(|| render.node())
 }
 
 /// On the way up from a function: `true` at what is called `render`, `false` at the next function.
@@ -133,7 +148,7 @@ fn is_called_render(node: Node<'_>) -> bool {
 fn is_value_of_render(arrow: Func<'_>) -> bool {
     let value = arrow.owner().as_expr();
     let parent = estree_parent(Node::Func(arrow));
-    // ESTree has a node between it and a member that it decorates, or a property of a pattern that it is the default of.
+    // ESTree has a node between it and a member that it decorates or a property of a pattern whose default it is.
     let is_child = match parent {
         Node::Member(member) => member.init() == value,
         Node::Prop(property) => property.value() == value,
@@ -141,12 +156,6 @@ fn is_value_of_render(arrow: Func<'_>) -> bool {
         _ => true,
     };
     is_child && is_called_render(parent)
-}
-
-/// upstream's `findRenderMethod`
-fn find_render_method(node: Node<'_>) -> Option<Node<'_>> {
-    let mut properties = get_component_properties(node).into_iter();
-    properties.find(|it| it.func().is_some() && is_called_render(it.node())).map(Property::node)
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]

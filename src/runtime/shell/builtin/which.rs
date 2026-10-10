@@ -178,8 +178,8 @@ impl Which {
         _: usize,
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if let Some(err) = e {
-            return Builtin::done(interp, cmd, err.errno as crate::shell::ExitCode);
+        if e.is_some() {
+            return Builtin::done(interp, cmd, 1);
         }
         match Self::state_mut(interp, cmd).state {
             State::OneArg => Builtin::done(interp, cmd, 1),

@@ -545,8 +545,23 @@ impl PosixBufferedReader {
         }
 
         match poll.register_with_fd(lp.cast(), FilePollKind::Readable, poll.fd()) {
+            sys::Result::Err(err) if crate::pipes::is_unpollable(&err) => {
+                self.demote_to_unpollable();
+                Ok(())
+            }
             sys::Result::Err(err) => Err(err),
             sys::Result::Ok(()) => Ok(()),
+        }
+    }
+
+    /// Drops the poll the kernel refused and reads the fd synchronously, like
+    /// a regular file. No poll callback will come, so a caller that waits for
+    /// one must issue the read itself: see [`Self::is_pollable`].
+    fn demote_to_unpollable(&mut self) {
+        self.flags.remove(PosixFlags::POLLABLE);
+        let fd = self.handle.get_fd();
+        if let PollOrFd::Poll(poll) = mem::replace(&mut self.handle, PollOrFd::Fd(fd)) {
+            poll.deinit_force_unregister();
         }
     }
 
@@ -582,6 +597,12 @@ impl PosixBufferedReader {
     /// Ends the reader after the next `len` bytes of the source as if they were followed by EOF (`ReadLimit`); `None` reads to EOF. Set before starting.
     pub fn set_limit(&mut self, len: Option<usize>) {
         self.limit = ReadLimit(len);
+    }
+
+    /// False after `start(fd, true)` when the kernel refused the poll. Reads
+    /// then run synchronously, and nothing drives them until the parent reads.
+    pub fn is_pollable(&self) -> bool {
+        self.flags.contains(PosixFlags::POLLABLE)
     }
 
     // Exists for consistently with Windows.
@@ -877,9 +898,11 @@ impl PosixBufferedReader {
             }
             if let Some(Stop::WouldBlock) = stop {
                 if file_type == FileType::File {
-                    bun_core::debug_warn!(
-                        "Received EAGAIN while reading from a file. This is a bug."
-                    );
+                    // Nothing can wake this reader: a regular file never
+                    // blocks, and a demoted fd has no poll. Report it, or the
+                    // consumer waits for a read that cannot complete.
+                    // SAFETY: caller contract; `on_error` is the tail.
+                    unsafe { Self::on_error(this, sys::Error::retry().with_fd(fd)) };
                 } else {
                     // SAFETY: caller contract; the error dispatch may free the parent.
                     unsafe { Self::register_poll(this) };
@@ -979,10 +1002,15 @@ impl PosixBufferedReader {
                 (n, ReadState::Eof)
             }
             Some(Stop::WouldBlock) => {
-                if file_type != FileType::File {
-                    // SAFETY: caller contract.
-                    unsafe { Self::register_poll(this) };
+                if file_type == FileType::File {
+                    // As in `read_loop`: with no poll to arm, a drained read
+                    // leaves the pull pending for ever.
+                    // SAFETY: caller contract; `on_error` may free the parent.
+                    unsafe { Self::on_error(this, sys::Error::retry().with_fd(fd)) };
+                    return (0, ReadState::Progress);
                 }
+                // SAFETY: caller contract.
+                unsafe { Self::register_poll(this) };
                 (0, ReadState::Drained)
             }
             Some(Stop::Error(err)) => {

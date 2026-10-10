@@ -341,8 +341,9 @@ fn is_second_of_array_pattern<'a>(declarator: VarDecl<'a>, name: Name<'a>) -> bo
 struct Found<'a> {
     /// In the order of the source, each with its number in `paths`.
     dependencies: Vec<(Dependency<'a>, u32)>,
-    /// By the number in `paths`, for those that are found: the position in `dependencies`.
-    positions: FxHashMap<u32, u32>,
+    /// By the number in `paths` and the variable, for those that are found: the position in `dependencies`. oxlint hashes the
+    /// variable: a parameter of a function in the function does not stand for the variable of that name around it.
+    positions: FxHashMap<(u32, Option<Symbol<'a>>), u32>,
     paths: Paths<'a>,
     /// Every time that one was found: its position in `dependencies`.
     inserted: Vec<u32>,
@@ -355,11 +356,14 @@ impl<'a> Found<'a> {
         let number = self
             .paths
             .number_of(&dependency, |it| it.is_found_within = true);
-        let at = *self.positions.entry(number).or_insert_with(|| {
-            self.paths.get_mut(number).is_found = true;
-            self.dependencies.push((dependency, number));
-            self.dependencies.len() as u32 - 1
-        });
+        let at = *self
+            .positions
+            .entry((number, dependency.symbol))
+            .or_insert_with(|| {
+                self.paths.get_mut(number).is_found = true;
+                self.dependencies.push((dependency, number));
+                self.dependencies.len() as u32 - 1
+            });
         self.inserted.push(at);
     }
 
@@ -1214,7 +1218,10 @@ pub(crate) fn run<'a, R: Rule>(
     let mut undeclared: Vec<usize> = (found.dependencies.iter().enumerate())
         .filter(|(_, (_, number))| found.paths.get(*number).declared == 0)
         // What is read of `foo.current` counts for `foo`.
-        .filter(|(_, (it, number))| !(it.ends_in_current() && found.paths.base(*number).is_found))
+        .filter(|(_, (it, number))| {
+            let base = (found.paths.get(*number).base, it.symbol);
+            !(it.ends_in_current() && found.positions.contains_key(&base))
+        })
         .filter(|(_, (_, number))| !found.paths.above(*number).any(|it| it.declared != 0))
         .filter(|(_, (it, _))| component.is_dependency(it, memo))
         .map(|it| it.0)

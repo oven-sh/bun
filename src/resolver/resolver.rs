@@ -1564,8 +1564,7 @@ impl<'a> Resolver<'a> {
                     PJSideEffects::Unspecified | PJSideEffects::Glob(_) | PJSideEffects::Mixed(_)
                 );
 
-                result.primary_side_effects_data =
-                    primary_side_effects(&existing.side_effects, path.text());
+                result.primary_side_effects_data = primary_side_effects(existing, path.text());
 
                 if existing.name.is_empty() || self.care_about_bin_folder {
                     result.package_json = None;
@@ -1579,7 +1578,7 @@ impl<'a> Resolver<'a> {
             if needs_side_effects {
                 if let Some(package_json) = Result::deref_package_json(result.package_json) {
                     result.primary_side_effects_data =
-                        primary_side_effects(&package_json.side_effects, path.text());
+                        primary_side_effects(package_json, path.text());
                 }
             }
 
@@ -6781,13 +6780,13 @@ impl<'b> BrowserMapPath<'b> {
     }
 }
 
-fn primary_side_effects(
-    side_effects: &crate::package_json::SideEffects,
-    path: &[u8],
-) -> SideEffects {
-    if side_effects.has_side_effects(path) {
+fn primary_side_effects(package_json: &PackageJSON, path: &[u8]) -> SideEffects {
+    if package_json.has_side_effects(path) {
         SideEffects::HasSideEffects
-    } else if matches!(side_effects, crate::package_json::SideEffects::False) {
+    } else if matches!(
+        package_json.side_effects,
+        crate::package_json::SideEffects::False
+    ) {
         SideEffects::NoSideEffectsPackageJson
     } else {
         SideEffects::NoSideEffectsPackageJsonArray

@@ -3432,6 +3432,16 @@ extern "C" bool NapiEnv__hasPendingException(napi_env env)
     return scope.exception() != nullptr;
 }
 
+// Called by the wrapper bun:ffi cc() generates, after the compiled function returns.
+extern "C" bool NapiEnv__throwPendingException(napi_env env)
+{
+    if (env->throwPendingException()) {
+        return true;
+    }
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(env->vm());
+    return scope.exception() != nullptr;
+}
+
 extern "C" uint32_t Bun__napi_get_version(napi_env env)
 {
     return env->napiModule().nm_version;

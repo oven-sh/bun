@@ -918,6 +918,34 @@ impl WatcherAtomics {
             let ev_index: u8 =
                 u8::try_from(ev.offset_from((&raw const (*this).events).cast::<HotReloadEvent>()))
                     .unwrap();
+            // A pending event the dev server has not taken yet is taken back, and its changes
+            // moved into `ev`, before `ev` is published: `ev` is another slot, and replaced, the
+            // old one's changes ran only when that slot was handed out again, on some later change
+            // (a save seen a save late). Once taken back, the dev server finds no next event
+            // (`WAITING`) or, done, `DONE`, which the swap below handles as it always has.
+            if let Some(old_index) = (*this).pending_event {
+                if (*this)
+                    .next_event
+                    .compare_exchange(old_index, NextEvent::WAITING.0, Ordering::AcqRel, Ordering::Acquire)
+                    .is_ok()
+                {
+                    let old: *mut HotReloadEvent = &raw mut (*this).events[old_index as usize];
+                    if (*old).timer < (*ev).timer {
+                        (*ev).timer = (*old).timer;
+                    }
+                    for file in (*old).files.keys() {
+                        (*ev).append_file(file);
+                    }
+                    for dir in (*old).dirs.keys() {
+                        (*ev).append_dir(dir, None);
+                    }
+                    (*ev).extra_files.extend_from_slice(&(*old).extra_files);
+                    (*old).files.clear_retaining_capacity();
+                    (*old).dirs.clear_retaining_capacity();
+                    (*old).extra_files.clear();
+                    (*this).pending_event = None;
+                }
+            }
             let old_next = NextEvent((*this).next_event.swap(ev_index, Ordering::AcqRel));
             match old_next {
                 NextEvent::DONE => {

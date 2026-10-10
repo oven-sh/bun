@@ -2927,6 +2927,13 @@ pub mod bv2_impl {
                 // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`.
                 path.pretty =
                     unsafe { bun_ptr::detach_lifetime(self.arena().alloc_slice_copy(rel)) };
+            } else if cfg!(windows) && strings::contains_char(path.pretty, b'\\') {
+                // A file reached through a symlink (a package in an isolated install's store)
+                // keeps the symlink's path as its pretty one, spelled with backslashes here.
+                let pretty: &mut [u8] = self.arena().alloc_slice_copy(path.pretty);
+                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(pretty);
+                // SAFETY: as above, the arena outlives the bundle pass.
+                path.pretty = unsafe { bun_ptr::detach_lifetime(&*pretty) };
             }
             path.assert_pretty_is_valid();
             path.assert_file_path_is_absolute();
@@ -5262,7 +5269,23 @@ pub mod bv2_impl {
                         );
                     }
                 }
-                jsc_api::JSBundler::ResolveValue::Success(result) => {
+                jsc_api::JSBundler::ResolveValue::Success(mut result) => {
+                    // A plugin may answer with a file's path spelled with either separator
+                    // (`C:/app/x.tsx` from a template, `C:\app\x.tsx` from `Bun.resolveSync`).
+                    // Everything below keys on these bytes — the module map, the watcher
+                    // (which compares change events against platform paths) and the pretty
+                    // path — so the file is made one path, the platform's, as the resolver's are.
+                    // Not an external one: it is printed as the plugin wrote it (a URL, `/lib.js`).
+                    // Only a Windows path (a drive or a share): `/virtual/x.ts` is the plugin's own
+                    // name, which its onLoad filter expects as written.
+                    let windows_path = matches!(result.path.as_ref(), [d, b':', b'/' | b'\\', ..] if d.is_ascii_alphabetic())
+                        || matches!(result.path.as_ref(), [b'\\' | b'/', b'\\' | b'/', ..]);
+                    if !result.external
+                        && (result.namespace.is_empty() || result.namespace.as_ref() == b"file")
+                        && windows_path
+                    {
+                        bun_paths::resolve_path::posix_to_platform_in_place::<u8>(&mut result.path);
+                    }
                     let mut out_source_index: Option<Index> = None;
                     // SAFETY: `result.{path,namespace}` are `Box<[u8]>`. Each arm below
                     // either moves both boxes into `this.free_list` before it stores
@@ -5281,6 +5304,51 @@ pub mod bv2_impl {
                         path.namespace = b"file";
                     } else {
                         path.namespace = result_ns_static;
+                    }
+                    // A file the dev server already holds, unchanged, is used as it is, as
+                    // for an import the resolver found (see the `is_file_cached` check in
+                    // the import-record loop): parsed again, it went to the browser as
+                    // changed, and every module importing it through a plugin ran anew
+                    // (its state lost) on each edit to any file importing it.
+                    if !result.external
+                        && resolve.import_record.kind != ImportKind::EntryPointBuild
+                        && path.namespace == b"file"
+                        && !matches!(
+                            path.loader(&this.transpiler.options.loaders),
+                            Some(Loader::Css | Loader::Html)
+                        )
+                    {
+                        let target = resolve.import_record.original_target;
+                        let cached = match this.dev_server_handle() {
+                            // Not a stylesheet: a plugin may load any path as CSS, which has
+                            // handling of its own below.
+                            Some(dev_server) => dev_server
+                                .is_file_cached(path.text, target.bake_graph())
+                                .is_some_and(|entry| entry.kind != bake_types::CacheKind::Css),
+                            None => false,
+                        };
+                        let importer = resolve.import_record.importer_source_index as usize;
+                        let index = resolve.import_record.import_record_index as usize;
+                        // Only for a JavaScript importer: a stylesheet's imports are never taken
+                        // from the cache, and an HTML file's assets get their hashed URLs, as in
+                        // the import-record loop.
+                        let importer_is_js = !matches!(
+                            this.graph.input_files.items_loader().get(importer),
+                            Some(Loader::Css | Loader::Html) | None
+                        );
+                        if cached
+                            && importer_is_js
+                            && index < this.graph.ast.items_import_records()[importer].len()
+                        {
+                            this.free_list.push(result.namespace);
+                            this.free_list.push(result.path);
+                            let pretty = this.path_with_pretty_initialized(&path, target).expect("oom");
+                            let import_record: &mut ImportRecord =
+                                &mut this.graph.ast.items_import_records_mut()[importer].as_mut_slice()[index];
+                            import_record.source_index = Index::INVALID;
+                            import_record.path = path_as_static(&pretty);
+                            return;
+                        }
                     }
                     if !result.external {
                         // SAFETY: `GetOrPutResult` borrows `&mut this` for its whole
@@ -7599,7 +7667,7 @@ pub mod bv2_impl {
 
             // To minimize contention, watchers are appended on the bundle thread.
             if this.bun_watcher.is_some() {
-                if parse_result.watcher_data.fd != bun_sys::Fd::INVALID {
+                if parse_result.watcher_data.watch {
                     let source_index = parse_result.value.source_index();
                     // borrowck — read the source path before
                     // `should_add_watcher(&self)` so the column borrow is released.

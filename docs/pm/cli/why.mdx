@@ -82,3 +82,21 @@ The output shows:
 - The version requirement specified in each package's dependencies
 
 For nested dependencies, the command shows the complete dependency tree by default, with indentation indicating the relationship hierarchy.
+
+A package can appear in the tree more than once when several chains go through it. Once its dependents have been listed (and take up more than one line), later occurrences are marked `*deduped` instead of listing them again. The exception is `--depth`: if the listing was cut off by the depth limit and the package appears again closer to the queried package, where more levels fit, it is listed again. A dependency cycle is marked `*circular`.
+
+```bash terminal icon="terminal"
+bun why pkg-x
+```
+
+```txt
+pkg-x@workspace:packages/pkg-x
+  ├─ monorepo
+  ├─ pkg-a@workspace (requires workspace:*)
+  │  └─ pkg-c@workspace (requires workspace:*)
+  │     └─ pkg-d@workspace (requires workspace:*)
+  │        └─ pkg-f@workspace (requires workspace:*)
+  │
+  └─ pkg-c@workspace (requires workspace:*)
+     └─ *deduped
+```

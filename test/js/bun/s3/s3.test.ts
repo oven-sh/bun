@@ -2,9 +2,20 @@ import type { S3File, S3Options } from "bun";
 import { S3Client, s3 as defaultS3, file, randomUUIDv7 } from "bun";
 import { afterAll, describe, expect, it } from "bun:test";
 import { createHash, createHmac, randomUUID } from "crypto";
-import { bunEnv, bunExe, getSecret, isCI, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  gcTick,
+  getSecret,
+  isASAN,
+  isCI,
+  isDebug,
+  isWindows,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import path from "path";
-import { spawnServer } from "s3-server";
+import { serve, spawnServer } from "s3-server";
 const s3 = (...args: Parameters<typeof defaultS3.file>) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
 
@@ -1702,6 +1713,300 @@ describe("Archive with S3", () => {
     // Cleanup
     await s3File.delete();
   });
+});
+
+describe("a slice of an in-memory Blob as the data of a write", () => {
+  // This server runs in the process of the test, so the test can read what each request carried.
+  const server = serve({ buckets: ["slices"] });
+  afterAll(() => server.stop());
+  const credentials = server.clientOptions();
+  const options = { ...credentials, bucket: "slices" };
+  const client = new S3Client(options);
+
+  // What one write put on the wire and what it said.
+  function written(key: string, resolved: number) {
+    const object = server.buckets.get("slices")!.current(key);
+    return {
+      resolved,
+      stored: object && Buffer.from(object.data.bytes()).toString(),
+      requests: server.requests
+        .filter(request => request.key === key)
+        .map(request => `${request.operation}, Content-Length: ${request.headers.get("content-length")}`),
+    };
+  }
+
+  // The bytes on both sides of a slice must not go into the object.
+  const whole = "public-part|SECRET-made-up|the rest of the buffer";
+  const prefix = (parent: Blob) => parent.slice(0, 11);
+
+  // [name, makes the data from a Blob that holds `whole`, the bytes that the object must hold]
+  const sources: [string, (parent: Blob) => any, string][] = [
+    ["a prefix", prefix, "public-part"],
+    ["a middle part", parent => parent.slice(12, 26), "SECRET-made-up"],
+    ["a suffix", parent => parent.slice(27), "the rest of the buffer"],
+    ["a slice of a slice", parent => parent.slice(5, 30).slice(2, 8), "part|S"],
+    ["an empty slice at the start", parent => parent.slice(0, 0), ""],
+    ["an empty slice at the end", parent => parent.slice(parent.size), ""],
+    ["new Blob([slice])", parent => new Blob([prefix(parent)]), "public-part"],
+    ["new File([slice], name)", parent => new File([prefix(parent)], "part.txt"), "public-part"],
+    ["[slice]", parent => [prefix(parent)], "public-part"],
+    ["new Response(slice)", parent => new Response(prefix(parent)), "public-part"],
+    [
+      "new Request(url, { body: slice })",
+      parent => new Request(options.endpoint, { method: "POST", body: prefix(parent) }),
+      "public-part",
+    ],
+    ["new Response(slice.stream())", parent => new Response(prefix(parent).stream()), "public-part"],
+    // Controls: each of these is all of its own bytes.
+    ["the whole Blob", parent => parent, whole],
+    ["blob.slice(0)", parent => parent.slice(0), whole],
+    ["the text of the slice", () => "public-part", "public-part"],
+    ["the bytes of the slice", () => Buffer.from("public-part"), "public-part"],
+  ];
+
+  const writers: [string, (key: string, data: any) => Promise<number>][] = [
+    ["client.write(key, data)", (key, data) => client.write(key, data)],
+    ["client.file(key).write(data)", (key, data) => client.file(key).write(data)],
+    ["Bun.write(client.file(key), data)", (key, data) => Bun.write(client.file(key), data)],
+    [
+      'Bun.write("s3://bucket/key", data, credentials)',
+      (key, data) => Bun.write(`s3://slices/${key}`, data, credentials as any),
+    ],
+    ["S3Client.write(key, data, options)", (key, data) => S3Client.write(key, data, options)],
+  ];
+
+  it.each(sources)("%s", async (_, make, expected) => {
+    const parent = new Blob([whole]);
+    const actual: Record<string, unknown> = {};
+    const wanted: Record<string, unknown> = {};
+    for (const [name, write] of writers) {
+      const key = randomUUIDv7();
+      actual[name] = written(key, await write(key, make(parent)));
+      wanted[name] = {
+        resolved: expected.length,
+        stored: expected,
+        requests: [`PutObject, Content-Length: ${expected.length}`],
+      };
+    }
+    expect(actual).toEqual(wanted);
+  });
+
+  it("a slice that holds the last reference to the bytes", async () => {
+    let parentIsCollected = false;
+    const registry = new FinalizationRegistry(() => (parentIsCollected = true));
+    const slice = (() => {
+      const parent = new Blob([whole]);
+      registry.register(parent, undefined);
+      return parent.slice(12, 26);
+    })();
+    while (!parentIsCollected) await gcTick();
+
+    const key = randomUUIDv7();
+    expect(written(key, await client.write(key, slice))).toEqual({
+      resolved: 14,
+      stored: "SECRET-made-up",
+      requests: ["PutObject, Content-Length: 14"],
+    });
+  });
+
+  // A write of `archive`, against `tar`, the bytes that the object must hold.
+  async function writtenArchive(archive: Bun.Archive, tar: Uint8Array) {
+    const key = randomUUIDv7();
+    const resolved = await client.write(key, archive);
+    const stored = server.buckets.get("slices")!.current(key)!.data.bytes();
+    expect({ resolved, stored: stored.length, isTheArchive: Buffer.from(stored).equals(tar) }).toEqual({
+      resolved: tar.length,
+      stored: tar.length,
+      isTheArchive: true,
+    });
+  }
+
+  it("an Archive that was made from a slice", async () => {
+    const tar = await new Bun.Archive({ "a.txt": "hello" }).bytes();
+    const padded = new Blob(["junk", tar, "junk"]);
+    await writtenArchive(new Bun.Archive(padded.slice(4, 4 + tar.length)), tar);
+  });
+
+  // Control: an archive keeps the store of a file as it is.
+  it("an Archive that was made from a Bun.file()", async () => {
+    using dir = tempDir("s3-archive-of-file", {});
+    const tar = await new Bun.Archive({ "a.txt": "hello" }).bytes();
+    const tarPath = path.join(String(dir), "in.tar");
+    await Bun.write(tarPath, tar);
+    await writtenArchive(new Bun.Archive(Bun.file(tarPath)), tar);
+  });
+
+  it("a failed write of an empty slice reports the key, as a failed write of an empty string does", async () => {
+    const denied = new S3Client({ ...options, secretAccessKey: "not-the-secret" });
+    const key = randomUUIDv7();
+    const failure = { name: "S3Error", code: "SignatureDoesNotMatch", path: key };
+    expect(await denied.write(key, "").catch(error => error)).toMatchObject(failure);
+    expect(await denied.write(key, new Blob([whole]).slice(0, 0)).catch(error => error)).toMatchObject(failure);
+  });
+
+  // In a compiled executable, `Bun.file()` of an embedded file is an in-memory Blob that has a name.
+  // A debug build is skipped: `bun build --compile` copies its executable, which takes about 10 s.
+  it.skipIf(isDebug)("a slice of an embedded file in a compiled executable", async () => {
+    using dir = tempDir("s3-embedded-slice", {
+      "asset.txt": whole,
+      "empty.txt": "",
+      "app.ts": `
+        import asset from "./asset.txt" with { type: "file" };
+        import empty from "./empty.txt" with { type: "file" };
+        import { S3Client } from "bun";
+
+        const { prefix, ...options } = JSON.parse(process.env.S3_TEST_OPTIONS!);
+        const { bucket, ...credentials } = options;
+        const client = new S3Client(options);
+        const denied = new S3Client({ ...options, secretAccessKey: "not-the-secret" });
+        const slice = () => Bun.file(asset).slice(0, 11);
+        const failurePath = (key: string, data: Blob) => denied.write(prefix + key, data).catch(error => error.path);
+
+        console.log(
+          JSON.stringify({
+            asset,
+            slices: {
+              [prefix + "1"]: await client.write(prefix + "1", slice()),
+              [prefix + "2"]: await client.file(prefix + "2").write(slice()),
+              [prefix + "3"]: await Bun.write(client.file(prefix + "3"), slice()),
+              [prefix + "4"]: await Bun.write("s3://" + bucket + "/" + prefix + "4", slice(), credentials),
+              [prefix + "5"]: await S3Client.write(prefix + "5", slice(), options),
+            },
+            emptySlice: await client.write(prefix + "empty-slice", Bun.file(asset).slice(0, 0)),
+            wholeFile: await client.write(prefix + "whole-file", Bun.file(asset)),
+            failurePaths: {
+              wholeFile: await failurePath("denied-whole-file", Bun.file(asset)),
+              slice: await failurePath("denied-slice", slice()),
+              emptySlice: await failurePath("denied-empty-slice", Bun.file(asset).slice(0, 0)),
+              emptyFile: await failurePath("denied-empty-file", Bun.file(empty)),
+            },
+          }),
+        );
+      `,
+    });
+    const exe = path.join(String(dir), isWindows ? "app.exe" : "app");
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", path.join(String(dir), "app.ts"), "--outfile", exe],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, buildStderr, buildExitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(buildStderr).not.toContain("error:");
+    expect(buildExitCode).toBe(0);
+
+    const prefix = randomUUIDv7() + "-";
+    await using app = Bun.spawn({
+      cmd: [exe],
+      env: { ...bunEnv, S3_TEST_OPTIONS: JSON.stringify({ ...options, prefix }) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([app.stdout.text(), app.stderr.text(), app.exited]);
+    expect(stderr).toBe("");
+    const { asset, slices, emptySlice, wholeFile, failurePaths } = JSON.parse(stdout);
+    const slashes = (name: string) => name.replaceAll("\\", "/");
+
+    const slice = { resolved: 11, stored: "public-part", requests: ["PutObject, Content-Length: 11"] };
+    expect({
+      slices: Object.entries<number>(slices).map(([key, resolved]) => written(key, resolved)),
+      emptySlice: written(prefix + "empty-slice", emptySlice),
+      wholeFile: written(prefix + "whole-file", wholeFile),
+      failurePaths: Object.fromEntries(Object.entries<string>(failurePaths).map(([name, at]) => [name, slashes(at)])),
+    }).toEqual({
+      slices: [slice, slice, slice, slice, slice],
+      emptySlice: { resolved: 0, stored: "", requests: ["PutObject, Content-Length: 0"] },
+      wholeFile: { resolved: whole.length, stored: whole, requests: [`PutObject, Content-Length: ${whole.length}`] },
+      failurePaths: {
+        // A failure reports the name of a source that has one and has bytes. For no bytes it reports the key.
+        wholeFile: slashes(asset),
+        slice: slashes(asset),
+        emptySlice: prefix + "denied-empty-slice",
+        emptyFile: prefix + "denied-empty-file",
+      },
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
+// A write of in-memory data is one PUT, and the request owns a copy of the data.
+// From #31783 the write also held its source until the response came, so a
+// pending write of a Buffer or a string held the data twice.
+it("a pending write of in-memory data holds one copy of the data", async () => {
+  const count = 8;
+  const size = 8 * 1024 * 1024;
+  let received = 0;
+  const allReceived = Promise.withResolvers<void>();
+  const released = Promise.withResolvers<void>();
+  await using sink = Bun.serve({
+    port: 0,
+    maxRequestBodySize: 1024 * 1024 * 1024,
+    async fetch(req) {
+      if (req.method !== "PUT") {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/all-received") await allReceived.promise;
+        if (pathname === "/release") released.resolve();
+        return new Response();
+      }
+      for await (const chunk of req.body!) received += chunk.byteLength;
+      if (received === count * size) allReceived.resolve();
+      await released.promise;
+      return new Response("", { headers: { ETag: '"etag"' } });
+    },
+  });
+
+  const fixture = `
+    const sink = process.env.SINK;
+    const client = new Bun.S3Client({
+      endpoint: sink,
+      bucket: "bucket",
+      accessKeyId: "key",
+      secretAccessKey: "secret",
+      region: "us-east-1",
+    });
+    const data = Buffer.alloc(${size}, 97);
+    // The first request starts the HTTP thread. Keep that out of the measurement.
+    await fetch(sink + "/warm-up");
+    Bun.gc(true);
+    const baseline = process.memoryUsage.rss();
+
+    const pending = [];
+    for (let i = 0; i < ${count}; i++) pending.push(client.write("key-" + i, data));
+    await fetch(sink + "/all-received");
+    Bun.gc(true);
+    const held = process.memoryUsage.rss() - baseline;
+
+    await fetch(sink + "/release");
+    const written = await Promise.all(pending);
+    console.log(JSON.stringify({ heldMiB: Math.round(held / 1024 / 1024), written }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: {
+      ...bunEnv,
+      SINK: "http://127.0.0.1:" + sink.port,
+      // The S3 client does not honor NO_PROXY, so an inherited proxy would hijack the loopback sink.
+      HTTP_PROXY: undefined,
+      HTTPS_PROXY: undefined,
+      http_proxy: undefined,
+      https_proxy: undefined,
+      // ASAN's quarantine pins freed blocks and keeps RSS at peak.
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+        .filter(Boolean)
+        .join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr.trim()).toBe("");
+  const { heldMiB, written } = JSON.parse(stdout.trim().split("\n").at(-1)!);
+
+  expect(written).toEqual(Array(count).fill(size));
+  // One copy of the data is 64 MiB: 65 MiB held in a release build, 69 MiB in a debug build with ASAN.
+  // With the source held too it is 130 MiB or more in both.
+  expect(heldMiB).toBeLessThan(isASAN || isDebug ? 112 : 96);
+  expect(exitCode).toBe(0);
 });
 
 describe("s3 multipart upload id validation", () => {

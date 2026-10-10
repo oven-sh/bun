@@ -4,7 +4,8 @@ use std::ffi::CString;
 
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
-use crate::webcore::blob::Store;
+use crate::webcore::blob::store::Data as StoreData;
+use crate::webcore::blob::{SizeType, Store};
 use bun_core::{self, EncodedSlice, Output, Utf8Bytes, ZBox, strings};
 use bun_glob as glob;
 use bun_jsc::{
@@ -37,17 +38,62 @@ pub(crate) struct GzipOptions {
 // has no constructor, which the proc-macro does not expose.
 #[repr(C)]
 pub(crate) struct Archive {
-    /// The underlying data for the archive - uses Blob.Store for thread-safe ref counting
-    store: RefPtr<Store>,
+    /// The bytes of the archive
+    store: StoreView,
     /// Compression settings for this archive
     compress: Compression,
 }
 
+/// A store and the part of it to read, as a `Blob` has: a slice shares the store of its parent.
+#[derive(Clone)]
+struct StoreView {
+    store: RefPtr<Store>,
+    offset: SizeType,
+    size: SizeType,
+}
+
+impl StoreView {
+    fn whole(store: RefPtr<Store>) -> Self {
+        let size = store.size();
+        Self {
+            store,
+            offset: 0,
+            size,
+        }
+    }
+
+    fn of_blob(blob: &Blob) -> Option<Self> {
+        let store = blob.store()?.clone();
+        // Only an in-memory store is read here. A file or an S3 store is passed on as it is.
+        if !matches!(store.data, StoreData::Bytes(_)) {
+            return Some(Self::whole(store));
+        }
+        Some(Self {
+            store,
+            offset: blob.offset.get(),
+            size: blob.size.get(),
+        })
+    }
+
+    fn shared_view(&self) -> &[u8] {
+        let bytes = self.store.shared_view();
+        let start = (self.offset as usize).min(bytes.len());
+        &bytes[start..][..(self.size as usize).min(bytes.len() - start)]
+    }
+
+    fn to_blob(&self, global: &JSGlobalObject) -> Blob {
+        let blob = Blob::init_with_store(self.store.clone(), global);
+        blob.offset.set(self.offset);
+        blob.size.set(self.size);
+        blob
+    }
+}
+
 impl Archive {
-    /// Borrow the backing `RefPtr<Store>`.
+    /// The bytes of the archive as a `Blob`.
     #[inline]
-    pub(crate) fn store_ref(&self) -> &RefPtr<Store> {
-        &self.store
+    pub(crate) fn to_blob(&self, global: &JSGlobalObject) -> Blob {
+        self.store.to_blob(global)
     }
 }
 
@@ -175,11 +221,8 @@ impl Archive {
 
         // For Blob/Archive, ref the existing store (zero-copy)
         if let Some(blob) = blob_from_js(data_arg) {
-            if let Some(store) = blob.store.get().as_ref() {
-                return Ok(Box::new(Archive {
-                    store: store.clone(),
-                    compress,
-                }));
+            if let Some(store) = StoreView::of_blob(blob) {
+                return Ok(Box::new(Archive { store, compress }));
             }
         }
 
@@ -260,7 +303,7 @@ fn parse_compression_options(
 }
 
 fn create_archive(data: Vec<u8>, compress: Compression) -> Box<Archive> {
-    let store = Store::init(data);
+    let store = StoreView::whole(Store::init(data));
     Box::new(Archive { store, compress })
 }
 
@@ -450,10 +493,10 @@ pub(crate) fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<
 
     // For Blobs, use store reference with options compression
     if let Some(blob) = blob_from_js(data_arg) {
-        if let Some(store) = blob.store.get().as_ref() {
+        if let Some(store) = StoreView::of_blob(blob) {
             return start_write_task(
                 &cx,
-                WriteData::Store(store.clone()),
+                WriteData::Store(store),
                 path_slice.slice(),
                 options_compress,
             );
@@ -717,7 +760,7 @@ pub(crate) enum ExtractResult {
 }
 
 pub(crate) struct ExtractContext {
-    store: RefPtr<Store>,
+    store: StoreView,
     path: Box<[u8]>,
     glob_patterns: Option<Vec<Box<[u8]>>>,
     result: ExtractResult,
@@ -779,7 +822,7 @@ pub(crate) type ExtractTask = AsyncTask<ExtractContext>;
 
 fn start_extract_task(
     cx: &bun_jsc::JsThread<'_>,
-    store: &RefPtr<Store>,
+    store: &StoreView,
     path: &[u8],
     glob_patterns: Option<Vec<Box<[u8]>>>,
 ) -> JsResult<JSValue> {
@@ -813,7 +856,7 @@ enum BlobResult {
 }
 
 pub(crate) struct BlobContext {
-    store: RefPtr<Store>,
+    store: StoreView,
     compress: Compression,
     output_type: BlobOutputType,
     result: BlobResult,
@@ -850,10 +893,7 @@ impl TaskContext for BlobContext {
             }
             BlobResult::Uncompressed => Ok(match self.output_type {
                 BlobOutputType::Blob => {
-                    // The clone bumps the refcount; ownership of
-                    // the new ref transfers into the Blob via init_with_store.
-                    let store = self.store.clone();
-                    let blob_ptr = Blob::new(Blob::init_with_store(store, global));
+                    let blob_ptr = Blob::new(self.store.to_blob(global));
                     // SAFETY: blob_ptr is the heap allocation just produced by Blob::new.
                     PromiseResult::Resolve(unsafe { (*blob_ptr).to_js(global) })
                 }
@@ -879,7 +919,7 @@ pub(crate) type BlobTask = AsyncTask<BlobContext>;
 
 fn start_blob_task(
     cx: &bun_jsc::JsThread<'_>,
-    store: &RefPtr<Store>,
+    store: &StoreView,
     compress: Compression,
     output_type: BlobOutputType,
 ) -> JsResult<JSValue> {
@@ -905,7 +945,7 @@ enum WriteResult {
 
 enum WriteData {
     Owned(Vec<u8>),
-    Store(RefPtr<Store>),
+    Store(StoreView),
 }
 
 pub(crate) struct WriteContext {
@@ -1014,7 +1054,7 @@ enum FilesResult {
 // freeEntries deleted — Vec<FileEntry> drops each entry; FileEntry fields drop their boxes.
 
 pub(crate) struct FilesContext {
-    store: RefPtr<Store>,
+    store: StoreView,
     glob_patterns: Option<Vec<Box<[u8]>>>,
     result: FilesResult,
 }
@@ -1163,7 +1203,7 @@ pub(crate) type FilesTask = AsyncTask<FilesContext>;
 
 fn start_files_task(
     cx: &bun_jsc::JsThread<'_>,
-    store: &RefPtr<Store>,
+    store: &StoreView,
     glob_patterns: Option<Vec<Box<[u8]>>>,
 ) -> JsResult<JSValue> {
     let store = store.clone();

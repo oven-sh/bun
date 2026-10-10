@@ -1947,6 +1947,64 @@ describe("Bun.Archive", () => {
     });
   });
 
+  describe("a slice of a Blob as the archive", () => {
+    // [name, makes a Blob whose bytes are exactly `tar`]
+    const blobs: [string, (tar: Uint8Array) => Blob][] = [
+      ["a prefix", tar => new Blob([tar, "junk"]).slice(0, tar.length)],
+      ["a middle part", tar => new Blob(["junk", tar, "junk"]).slice(4, 4 + tar.length)],
+      ["a suffix", tar => new Blob(["junk", tar]).slice(4)],
+      ["a slice of a slice", tar => new Blob(["junk", tar, "junk"]).slice(2).slice(2, 2 + tar.length)],
+      // Control: this Blob is all of its own bytes.
+      ["the whole Blob", tar => new Blob([tar])],
+    ];
+
+    test.each(blobs)("%s", async (_, make) => {
+      using dir = tempDir("archive-blob-slice", {});
+      const tar = await new Bun.Archive({ "a.txt": "hello" }).bytes();
+      const blob = make(tar);
+
+      const archive = new Bun.Archive(blob);
+      expect(await archive.bytes()).toEqual(tar);
+      expect(await (await archive.blob()).bytes()).toEqual(tar);
+      const files = await archive.files();
+      expect([...files.keys()]).toEqual(["a.txt"]);
+      expect(await files.get("a.txt")!.text()).toBe("hello");
+      expect(await archive.extract(join(String(dir), "extracted"))).toBe(1);
+      expect(await Bun.file(join(String(dir), "extracted", "a.txt")).text()).toBe("hello");
+
+      const outPath = join(String(dir), "out.tar");
+      await Bun.Archive.write(outPath, blob);
+      expect(await Bun.file(outPath).bytes()).toEqual(tar);
+    });
+
+    test("an empty slice", async () => {
+      using dir = tempDir("archive-blob-empty-slice", {});
+      const tar = await new Bun.Archive({ "a.txt": "hello" }).bytes();
+      const empty = new Blob([tar]).slice(0, 0);
+
+      expect((await new Bun.Archive(empty).bytes()).length).toBe(0);
+
+      const outPath = join(String(dir), "out.tar");
+      await Bun.Archive.write(outPath, empty);
+      expect((await Bun.file(outPath).bytes()).length).toBe(0);
+    });
+
+    // Control: an archive keeps the store of a file as it is.
+    test("a Bun.file()", async () => {
+      using dir = tempDir("archive-bun-file", {});
+      const tar = await new Bun.Archive({ "a.txt": "hello" }).bytes();
+      const tarPath = join(String(dir), "in.tar");
+      await Bun.write(tarPath, tar);
+
+      const archive = new Bun.Archive(Bun.file(tarPath));
+      expect(await (await archive.blob()).bytes()).toEqual(tar);
+
+      const outPath = join(String(dir), "out.tar");
+      expect(await Bun.write(outPath, archive)).toBe(tar.length);
+      expect(await Bun.file(outPath).bytes()).toEqual(tar);
+    });
+  });
+
   describe("Bun.write with Archive", () => {
     test("writes archive to local file", async () => {
       const archive = new Bun.Archive({

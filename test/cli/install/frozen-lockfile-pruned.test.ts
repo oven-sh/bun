@@ -1,7 +1,7 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { exists, lstat } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
+import { exists, lstat, rm } from "fs/promises";
+import { VerdaccioRegistry, bunEnv, bunExe, isWindows, normalizeBunSnapshot, readdirSorted } from "harness";
 import { dirname, join } from "path";
 
 type Linker = "hoisted" | "isolated";
@@ -100,7 +100,21 @@ const survivorError = (dependent: string, ws = "other") =>
   `workspace "${dependent}" depends on workspace "${ws}" (packages/${ws}), which is listed in bun.lock but not on disk`;
 const rootSurvivorError =
   'the root package depends on workspace "other" (packages/other), which is listed in bun.lock but not on disk';
-const survivorNote = "note: a pruned checkout must keep every workspace that its remaining workspaces depend on";
+const survivorNote =
+  "note: a pruned checkout must keep the package.json of each workspace that an installed package depends on";
+
+// peer-deps-fixed@1.0.0 (peer) and one-range-dep@1.0.0 (dependency) ask for no-deps@^1.0.0. The workspace packages/no-deps
+// (1.5.0) satisfies it, so bun.lock binds that edge to the workspace. The workspace's own a-dep shows whether it was installed.
+const workspaceLinkedTree = (appDependencies: Record<string, string>): Tree => ({
+  root: { name: "mono", workspaces: ["packages/*"] },
+  packages: {
+    "packages/app": { name: "app", version: "1.0.0", dependencies: appDependencies },
+    "packages/no-deps": { name: "no-deps", version: "1.5.0", dependencies: { "a-dep": "1.0.1" } },
+  },
+});
+const noDepsPrunedNote = 'note: skipped 1 workspace listed in bun.lock but not on disk: "no-deps"\n';
+const noLinkNote = (dependent: string) =>
+  `note: package "${dependent}" is installed without its link to workspace "no-deps" (packages/no-deps)\n`;
 
 const catalogTree: Tree = {
   root: { name: "mono", workspaces: { packages: ["packages/*"], catalog: { "a-dep": "1.0.1", "left-pad": "1.0.0" } } },
@@ -290,6 +304,12 @@ async function editApp(dir: string, edit: (app: any) => void) {
   const app = await file(appJson).json();
   edit(app);
   await write(appJson, JSON.stringify(app));
+}
+
+// The folders the linker placed: the root node_modules for hoisted, the store for isolated.
+async function placedNames(dir: string, linker: Linker) {
+  const folder = linker === "hoisted" ? join(dir, "node_modules") : join(dir, "node_modules", ".bun");
+  return (await readdirSorted(folder)).filter(name => !name.startsWith(".") && name !== "node_modules");
 }
 
 function installedPath(dir: string, linker: Linker, name: string, version: string) {
@@ -645,6 +665,201 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
     },
   );
 
+  // bun.lock may leave a peer or an optional dependency unresolved, and an edge to a pruned workspace is treated the same way.
+  describe("a registry package's peer on a pruned workspace", () => {
+    const expectNoLink = async (packageDir: string) => {
+      expect(await placedNames(packageDir, linker)).toEqual(
+        linker === "hoisted" ? ["app", "peer-deps-fixed"] : ["peer-deps-fixed@1.0.0"],
+      );
+      if (linker === "isolated") {
+        const entry = join(packageDir, "node_modules", ".bun", "peer-deps-fixed@1.0.0", "node_modules");
+        expect(await readdirSorted(entry)).toEqual(["peer-deps-fixed"]);
+      }
+      expect(await exists(join(packageDir, "packages", "no-deps"))).toBeFalse();
+    };
+
+    test.concurrent("is left out and the install passes", async () => {
+      const tree = workspaceLinkedTree({ "peer-deps-fixed": "1.0.0" });
+      const { packageDir, full } = await verbatimScenario(linker, tree, ["packages/app"]);
+      expect(full).toContain('"no-deps": ["no-deps@workspace:packages/no-deps"]');
+      expect(full).not.toContain('"no-deps@1.');
+
+      const { stderr } = await frozen(packageDir, linker, 0);
+
+      expect(stderr).toBe(noDepsPrunedNote + noLinkNote("peer-deps-fixed@1.0.0"));
+      expect(await lockText(packageDir)).toBe(full);
+      await expectNoLink(packageDir);
+    });
+
+    // The isolated linker already exits 0 here, but it installs the pruned workspace: a-dep and packages/no-deps/node_modules.
+    test.concurrent("is left out with --ignore-scripts too, and the pruned workspace is not installed", async () => {
+      const tree = workspaceLinkedTree({ "peer-deps-fixed": "1.0.0" });
+      const { packageDir, full } = await verbatimScenario(linker, tree, ["packages/app"]);
+      expect(full).not.toContain('"no-deps@1.');
+
+      const { stderr } = await frozen(packageDir, linker, 0, ["install", "--frozen-lockfile", "--ignore-scripts"]);
+
+      expect(stderr).toBe(noDepsPrunedNote + noLinkNote("peer-deps-fixed@1.0.0"));
+      expect(await lockText(packageDir)).toBe(full);
+      await expectNoLink(packageDir);
+    });
+  });
+
+  // A local tarball has no package.json on disk, so it loses the link like a registry package.
+  test.concurrent("a tarball's optional dependency on a pruned workspace is left out", async () => {
+    const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker } });
+    const manifest = { name: "opt", version: "1.0.0", optionalDependencies: { "no-deps": "^1.0.0" } };
+    const tarball = await new Bun.Archive(
+      { "package/package.json": JSON.stringify(manifest) },
+      { compress: "gzip" },
+    ).bytes();
+    await Promise.all([
+      writeTree(packageDir, workspaceLinkedTree({ opt: "file:../../opt.tgz" })),
+      write(join(packageDir, "opt.tgz"), tarball),
+    ]);
+    await install(packageDir, linker);
+    const full = await lockText(packageDir);
+    expect(full).toContain('"optionalDependencies": { "no-deps": "^1.0.0" }');
+    expect(full).not.toContain('"no-deps@1.');
+    await Promise.all(
+      ["node_modules", "packages/app/node_modules", "packages/no-deps"].map(path =>
+        rm(join(packageDir, path), { recursive: true, force: true }),
+      ),
+    );
+
+    const { stderr } = await frozen(packageDir, linker, 0);
+
+    expect(stderr).toStartWith(noDepsPrunedNote + 'note: package "opt@');
+    expect(stderr).toEndWith('" is installed without its link to workspace "no-deps" (packages/no-deps)\n');
+    expect(stderr.split("\n")).toHaveLength(3);
+    expect(await lockText(packageDir)).toBe(full);
+    expect(await placedNames(packageDir, linker)).toEqual(
+      linker === "hoisted" ? ["app", "opt"] : [expect.stringMatching(/^opt@/)],
+    );
+    expect(await exists(join(packageDir, "packages", "no-deps"))).toBeFalse();
+  });
+
+  // bun.lock may not leave a required dependency unresolved. one-range-dep@1.0.0 has the dependency no-deps@^1.0.0.
+  describe("a registry package's required dependency on a pruned workspace", () => {
+    const requiredError =
+      'error: package "one-range-dep@1.0.0" depends on workspace "no-deps" (packages/no-deps), which is listed in bun.lock but not on disk\n';
+
+    // With --ignore-scripts the isolated linker exits 0 on main: it links into the missing folder and installs the pruned workspace.
+    describe.each([
+      ["default flags", []],
+      ["--ignore-scripts", ["--ignore-scripts"]],
+    ] as [string, string[]][])("%s", (_label, flags) => {
+      test.concurrent("fails before node_modules changes", async () => {
+        const tree = workspaceLinkedTree({ "one-range-dep": "1.0.0" });
+        const { packageDir, full } = await verbatimScenario(linker, tree, ["packages/app"]);
+        expect(full).not.toContain('"no-deps@1.');
+
+        const { stdout, stderr, exitCode } = await raw(packageDir, linker, ["install", "--frozen-lockfile", ...flags]);
+
+        expect(stderr).toBe(`${noDepsPrunedNote}${requiredError}${survivorNote}\n`);
+        expect(stdout).not.toContain("Failed to install");
+        expect(await lockText(packageDir)).toBe(full);
+        expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
+        expect(await exists(join(packageDir, "packages", "no-deps"))).toBeFalse();
+        expect(exitCode).toBe(1);
+      });
+    });
+
+    // Guard that passes on main too: --production does not place one-range-dep, so nothing links the pruned workspace.
+    test.concurrent("does not fail an install that does not place the dependent", async () => {
+      const tree: Tree = {
+        root: { name: "mono", workspaces: ["packages/*"] },
+        packages: {
+          "packages/app": { name: "app", version: "1.0.0", devDependencies: { "one-range-dep": "1.0.0" } },
+          "packages/no-deps": { name: "no-deps", version: "1.5.0" },
+        },
+      };
+      const { packageDir, full } = await verbatimScenario(linker, tree, ["packages/app"]);
+      expect(full).not.toContain('"no-deps@1.');
+
+      const { stderr } = await frozen(packageDir, linker, 0, ["install", "--frozen-lockfile", "--production"]);
+
+      expect(stderr).toBe(noDepsPrunedNote);
+      expect(await lockText(packageDir)).toBe(full);
+    });
+  });
+
+  // app's no-deps@2.0.0 does not satisfy the peer, so bun.lock still binds the peer to the workspace.
+  test.concurrent("a peer bound to a pruned workspace still gets the copy its dependent provides", async () => {
+    const tree = workspaceLinkedTree({ "peer-deps-fixed": "1.0.0", "no-deps": "2.0.0" });
+    const { packageDir, full } = await verbatimScenario(linker, tree, ["packages/app"]);
+    expect(full).toContain('"no-deps": ["no-deps@workspace:packages/no-deps"]');
+    expect(full).toContain('"app/no-deps": ["no-deps@2.0.0"');
+    expect(full).not.toContain('"no-deps@1.');
+
+    const { stderr } = await frozen(packageDir, linker, 0);
+
+    // The isolated linker links the parent's copy for this peer on a full checkout too, so it leaves nothing out.
+    expect(stderr).toBe(noDepsPrunedNote + (linker === "hoisted" ? noLinkNote("peer-deps-fixed@1.0.0") : ""));
+    expect(await lockText(packageDir)).toBe(full);
+    const placed = await placedNames(packageDir, linker);
+    expect(placed).toEqual(
+      linker === "hoisted"
+        ? ["app", "no-deps", "peer-deps-fixed"]
+        : ["no-deps@2.0.0", expect.stringMatching(/^peer-deps-fixed@1\.0\.0\+[0-9a-f]{16}$/)],
+    );
+    const peer =
+      linker === "hoisted"
+        ? join(packageDir, "node_modules", "no-deps", "package.json")
+        : join(packageDir, "node_modules", ".bun", placed[1], "node_modules", "no-deps", "package.json");
+    expect(await file(peer).json()).toMatchObject({ name: "no-deps", version: "2.0.0" });
+    expect(await exists(join(packageDir, "packages", "no-deps"))).toBeFalse();
+  });
+
+  // The catalog range links the workspace, and the edge keeps its catalog: tag, so the diff does not report it.
+  test.concurrent("a remaining workspace's catalog: dependency on a pruned workspace is reported", async () => {
+    const tree: Tree = {
+      root: { name: "mono", workspaces: { packages: ["packages/*"], catalog: { "no-deps": "^1.0.0" } } },
+      packages: {
+        "packages/app": { name: "app", version: "1.0.0", optionalDependencies: { "no-deps": "catalog:" } },
+        "packages/no-deps": { name: "no-deps", version: "1.5.0" },
+      },
+    };
+    const { packageDir, full } = await verbatimScenario(linker, tree, ["packages/app"]);
+    expect(full).not.toContain('"no-deps@1.');
+
+    const { stderr, exitCode } = await raw(packageDir, linker, ["install", "--frozen-lockfile"]);
+
+    expect(stderr).toBe(`${noDepsPrunedNote}error: ${survivorError("app", "no-deps")}\n${survivorNote}\n`);
+    expect(await lockText(packageDir)).toBe(full);
+    expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
+    expect(exitCode).toBe(1);
+  });
+
+  // A file: folder has its package.json on disk, like a workspace, so its optional dependency is reported and not left out.
+  test.concurrent("a file: folder's dependency on a pruned workspace is reported", async () => {
+    const tree: Tree = {
+      root: { name: "mono", workspaces: ["packages/*"], dependencies: { tool: "file:./tools/tool" } },
+      packages: {
+        "packages/app": { name: "app", version: "1.0.0" },
+        "packages/no-deps": { name: "no-deps", version: "1.5.0" },
+      },
+      files: {
+        "tools/tool/package.json": JSON.stringify({
+          name: "tool",
+          version: "1.0.0",
+          optionalDependencies: { "no-deps": "^1.0.0" },
+        }),
+      },
+    };
+    const { packageDir, full } = await verbatimScenario(linker, tree, ["packages/app"]);
+    expect(full).not.toContain('"no-deps@1.');
+
+    const { stderr, exitCode } = await raw(packageDir, linker, ["install", "--frozen-lockfile"]);
+
+    expect(stderr).toBe(
+      `${noDepsPrunedNote}error: package "tool@tools/tool" depends on workspace "no-deps" (packages/no-deps), which is listed in bun.lock but not on disk\n${survivorNote}\n`,
+    );
+    expect(await lockText(packageDir)).toBe(full);
+    expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
+    expect(exitCode).toBe(1);
+  });
+
   test.concurrent("a catalog entry only the pruned workspace used may be missing from bun.lock", async () => {
     const { packageDir, full } = await verbatimScenario(linker, catalogTree, ["packages/app"]);
     const trimmed = trimCatalogLine(full, "left-pad", "1.0.0");
@@ -802,6 +1017,25 @@ describe("hoisted", () => {
     expect(await lockText(packageDir)).toBe(full);
     expect(exitCode).toBe(1);
   });
+
+  test.concurrent(
+    "--silent suppresses the error for a registry package's required dependency but still fails",
+    async () => {
+      const tree = workspaceLinkedTree({ "one-range-dep": "1.0.0" });
+      const { packageDir, full } = await verbatimScenario("hoisted", tree, ["packages/app"]);
+
+      const { stdout, stderr, exitCode } = await raw(packageDir, "hoisted", [
+        "install",
+        "--frozen-lockfile",
+        "--silent",
+      ]);
+
+      expect(stdout + stderr).toBe("");
+      expect(await lockText(packageDir)).toBe(full);
+      expect(await exists(join(packageDir, "node_modules"))).toBeFalse();
+      expect(exitCode).toBe(1);
+    },
+  );
 
   test.concurrent("--silent suppresses the survivor error but still fails", async () => {
     const { packageDir, full } = await verbatimScenario("hoisted", survivorTree, survivors);

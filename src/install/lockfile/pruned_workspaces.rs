@@ -1,4 +1,6 @@
 use bstr::BStr;
+use bun_collections::DynamicBitSet;
+use bun_core::UnwrapOrOom as _;
 use bun_paths::AutoAbsPath;
 use bun_semver::String;
 use bun_semver::string::Builder as StringBuilderNs;
@@ -6,8 +8,8 @@ use bun_semver::string::Builder as StringBuilderNs;
 use crate::dependency::{Dependency, Tag as DependencyVersionTag, VersionExt as _};
 use crate::lockfile::DependencySlice;
 use crate::lockfile::package::PackageColumns as _;
-use crate::lockfile_real::{CatalogMap, Lockfile};
-use crate::{PackageID, PackageNameHash, ResolutionTag};
+use crate::lockfile_real::{CatalogMap, Lockfile, bun_lock};
+use crate::{DependencyID, PackageID, PackageManager, PackageNameHash, ResolutionTag};
 
 pub(crate) fn workspace_is_missing_on_disk(
     lockfile: &Lockfile,
@@ -21,6 +23,36 @@ pub(crate) fn workspace_is_missing_on_disk(
         package_json_path.append(workspace_path.slice(lockfile.buffers.string_bytes.as_slice()));
     let _ = package_json_path.append(b"package.json");
     !bun_sys::exists_z(package_json_path.slice_z())
+}
+
+// A registry package can share the name of a pruned workspace, so the name alone does not decide.
+pub(crate) fn is_pruned_workspace(
+    manager: &PackageManager,
+    lockfile: &Lockfile,
+    pkg_id: PackageID,
+) -> bool {
+    let pruned = &manager.summary.pruned_workspaces;
+    if pruned.is_empty() {
+        return false;
+    }
+    let pkgs = lockfile.packages.slice();
+    pkgs.items_resolution()[pkg_id as usize].tag == ResolutionTag::Workspace
+        && pruned.contains(&pkgs.items_name_hash()[pkg_id as usize])
+}
+
+// Every other edge keeps the workspace in the plan, and `report_links_to_pruned_workspaces` fails the install.
+pub(crate) fn skips_link_to_pruned_workspace(
+    manager: &PackageManager,
+    lockfile: &Lockfile,
+    dependent: PackageID,
+    dep: &Dependency,
+    target: PackageID,
+) -> bool {
+    is_pruned_workspace(manager, lockfile, target)
+        && bun_lock::may_stay_unresolved(dep)
+        && !lockfile.packages.items_resolution()[dependent as usize]
+            .tag
+            .is_local_package()
 }
 
 pub(crate) fn lockfile_lists_workspace_path(lockfile: &Lockfile, workspace_path: &[u8]) -> bool {
@@ -72,10 +104,10 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
         }
         let target = target as usize;
         debug_assert_eq!(pkg_res[target].tag, ResolutionTag::Workspace);
-        bun_core::pretty_errorln!(
-            "<r><red>error<r><d>:<r> the root package depends on workspace <b>\"{}\"<r> ({}), which is listed in bun.lock but not on disk",
-            BStr::new(names[target].slice(from_buf)),
-            BStr::new(pkg_res[target].workspace().slice(from_buf)),
+        report_dependency_on_missing(
+            Dependent::Root,
+            names[target].slice(from_buf),
+            pkg_res[target].workspace().slice(from_buf),
         );
     }
 
@@ -90,23 +122,157 @@ pub(crate) fn exit_if_survivor_depends_on_missing(
             }
             let target = target as usize;
             debug_assert_eq!(pkg_res[target].tag, ResolutionTag::Workspace);
-            bun_core::pretty_errorln!(
-                "<r><red>error<r><d>:<r> workspace <b>\"{}\"<r> depends on workspace <b>\"{}\"<r> ({}), which is listed in bun.lock but not on disk",
-                BStr::new(name.slice(to_buf)),
-                BStr::new(names[target].slice(from_buf)),
-                BStr::new(pkg_res[target].workspace().slice(from_buf)),
+            report_dependency_on_missing(
+                Dependent::Workspace(name.slice(to_buf)),
+                names[target].slice(from_buf),
+                pkg_res[target].workspace().slice(from_buf),
             );
         }
     }
 
     if found {
         if !silent {
-            bun_core::note!(
-                "a pruned checkout must keep every workspace that its remaining workspaces depend on"
-            );
+            note_pruned_checkout_rule();
         }
         bun_core::Global::crash();
     }
+}
+
+enum Dependent<'a> {
+    Root,
+    Workspace(&'a [u8]),
+    Package(&'a [u8], &'a dyn core::fmt::Display),
+}
+
+fn report_dependency_on_missing(
+    dependent: Dependent<'_>,
+    workspace_name: &[u8],
+    workspace_path: &[u8],
+) {
+    let (name, path) = (BStr::new(workspace_name), BStr::new(workspace_path));
+    match dependent {
+        Dependent::Root => bun_core::pretty_errorln!(
+            "<r><red>error<r><d>:<r> the root package depends on workspace <b>\"{}\"<r> ({}), which is listed in bun.lock but not on disk",
+            name,
+            path,
+        ),
+        Dependent::Workspace(dependent) => bun_core::pretty_errorln!(
+            "<r><red>error<r><d>:<r> workspace <b>\"{}\"<r> depends on workspace <b>\"{}\"<r> ({}), which is listed in bun.lock but not on disk",
+            BStr::new(dependent),
+            name,
+            path,
+        ),
+        Dependent::Package(dependent, resolution) => bun_core::pretty_errorln!(
+            "<r><red>error<r><d>:<r> package <b>\"{}@{}\"<r> depends on workspace <b>\"{}\"<r> ({}), which is listed in bun.lock but not on disk",
+            BStr::new(dependent),
+            resolution,
+            name,
+            path,
+        ),
+    }
+}
+
+fn note_pruned_checkout_rule() {
+    bun_core::note!(
+        "a pruned checkout must keep the package.json of each workspace that an installed package depends on"
+    );
+}
+
+// `linked` is every edge of the linker's plan with the package the linker picked for it, so `--omit`, `--filter` and peers already apply.
+pub(crate) fn report_links_to_pruned_workspaces(
+    manager: &PackageManager,
+    lockfile: &Lockfile,
+    linked: &mut dyn Iterator<Item = (DependencyID, PackageID)>,
+) {
+    if manager.summary.pruned_workspaces.is_empty() {
+        return;
+    }
+    let pkgs = lockfile.packages.slice();
+    let names = pkgs.items_name();
+    let pkg_res = pkgs.items_resolution();
+    let dep_slices = pkgs.items_dependencies();
+    let deps = lockfile.buffers.dependencies.as_slice();
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let silent = manager.options.log_level.is_silent();
+
+    let mut installed = DynamicBitSet::init_empty(pkgs.len()).unwrap_or_oom();
+    let mut linked_deps = DynamicBitSet::init_empty(deps.len()).unwrap_or_oom();
+    let mut links: Vec<(usize, usize)> = Vec::new();
+    for (dep_id, target) in linked {
+        installed.set(target as usize);
+        linked_deps.set(dep_id as usize);
+        if !is_pruned_workspace(manager, lockfile, target) {
+            continue;
+        }
+        // A pruned workspace is not a dependent to report: its own edges only follow from the edge that placed it.
+        if let Some(dependent) = dep_slices.iter().position(|slice| slice.contains(dep_id))
+            && !is_pruned_workspace(manager, lockfile, dependent as PackageID)
+        {
+            links.push((dependent, target as usize));
+        }
+    }
+    if !links.is_empty() {
+        if !silent {
+            for (dependent, target) in sorted_pairs(links) {
+                let name = names[dependent].slice(buf);
+                let resolution = pkg_res[dependent].fmt(buf, bun_core::fmt::PathSep::Posix);
+                report_dependency_on_missing(
+                    match pkg_res[dependent].tag {
+                        ResolutionTag::Root => Dependent::Root,
+                        ResolutionTag::Workspace => Dependent::Workspace(name),
+                        _ => Dependent::Package(name, &resolution),
+                    },
+                    names[target].slice(buf),
+                    pkg_res[target].workspace().slice(buf),
+                );
+            }
+            note_pruned_checkout_rule();
+        }
+        bun_core::Global::crash();
+    }
+    if silent {
+        return;
+    }
+
+    // The isolated linker links a peer to the copy an ancestor provides, and then nothing is left out.
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    let mut skipped: Vec<(usize, usize)> = Vec::new();
+    for dependent in (0..pkgs.len()).filter(|&id| installed.is_set(id)) {
+        let slice = dep_slices[dependent];
+        for dep_id in slice.begin()..slice.end() {
+            let (dep, target) = (&deps[dep_id as usize], resolutions[dep_id as usize]);
+            if (target as usize) < pkgs.len()
+                && !linked_deps.is_set(dep_id as usize)
+                && skips_link_to_pruned_workspace(
+                    manager,
+                    lockfile,
+                    dependent as PackageID,
+                    dep,
+                    target,
+                )
+                && dep
+                    .behavior
+                    .is_placed(manager.options.remote_package_features)
+            {
+                skipped.push((dependent, target as usize));
+            }
+        }
+    }
+    for (dependent, target) in sorted_pairs(skipped) {
+        bun_core::note!(
+            "package \"{}@{}\" is installed without its link to workspace \"{}\" ({})",
+            BStr::new(names[dependent].slice(buf)),
+            pkg_res[dependent].fmt(buf, bun_core::fmt::PathSep::Posix),
+            BStr::new(names[target].slice(buf)),
+            BStr::new(pkg_res[target].workspace().slice(buf)),
+        );
+    }
+}
+
+fn sorted_pairs(mut pairs: Vec<(usize, usize)>) -> Vec<(usize, usize)> {
+    bun_collections::index_sort::sort_vec_unstable_by(&mut pairs, |a, b| a.cmp(b));
+    pairs.dedup();
+    pairs
 }
 
 pub(crate) fn catalog_entries_missing_from_lockfile(

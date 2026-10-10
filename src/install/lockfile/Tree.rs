@@ -8,7 +8,9 @@ use bun_core::ZStr;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP};
 
 use crate::lockfile::package::PackageColumns as _;
-use crate::lockfile::{DepSorter, DependencyIDList, DependencyIDSlice, Lockfile};
+use crate::lockfile::{
+    DepSorter, DependencyIDList, DependencyIDSlice, Lockfile, pruned_workspaces,
+};
 use crate::package_manager::{PackageManager, WorkspaceFilter};
 use crate::{
     Dependency, DependencyID, PackageID, PackageNameHash, Resolution, invalid_dependency_id,
@@ -600,6 +602,19 @@ pub(crate) fn is_filtered_dependency_or_workspace(
         return true;
     }
 
+    // Peers are exempt: an ancestor's copy can satisfy one, so `process_subtree` and `build_store` decide.
+    if !dep.behavior.is_peer()
+        && pruned_workspaces::skips_link_to_pruned_workspace(
+            manager,
+            lockfile,
+            parent_pkg_id,
+            dep,
+            pkg_id,
+        )
+    {
+        return true;
+    }
+
     if parent_pkg_id != 0 {
         return false;
     }
@@ -703,12 +718,13 @@ impl Tree {
 
             // filter out disabled dependencies
             if METHOD == BuilderMethod::Filter {
+                let manager = builder.manager.expect("manager set when METHOD == Filter");
                 if is_filtered_dependency_or_workspace(
                     dep_id,
                     parent_pkg_id,
                     builder.workspace_filters,
                     builder.install_root_dependencies,
-                    builder.manager.expect("manager set when METHOD == Filter"),
+                    manager,
                     lockfile,
                     &*builder.resolutions,
                 ) {
@@ -718,6 +734,17 @@ impl Tree {
                 // unresolved packages are skipped when filtering. they already had
                 // their chance to resolve.
                 if pkg_id == invalid_package_id {
+                    continue;
+                }
+
+                // Only a peer is skipped here, and an ancestor's copy of it is already placed.
+                if pruned_workspaces::skips_link_to_pruned_workspace(
+                    manager,
+                    lockfile,
+                    parent_pkg_id,
+                    &dependencies[dep_id as usize],
+                    pkg_id,
+                ) {
                     continue;
                 }
 

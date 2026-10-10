@@ -16,5 +16,6 @@ extern "C" SUPPRESS_ASAN void MarkedArgumentBuffer__run(
 
 extern "C" void MarkedArgumentBuffer__append(void* args, JSC::EncodedJSValue value)
 {
-    static_cast<JSC::MarkedArgumentBuffer*>(args)->append(JSC::JSValue::decode(value));
+    // append() drops the value when the buffer cannot grow, and no Rust caller can see that.
+    static_cast<JSC::MarkedArgumentBuffer*>(args)->appendWithCrashOnOverflow(JSC::JSValue::decode(value));
 }

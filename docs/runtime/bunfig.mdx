@@ -379,6 +379,8 @@ Enable the dots reporter, which prints one dot per test. Default `false`.
 dots = true
 ```
 
+Equivalent to the `--dots` flag.
+
 #### `test.reporter.junit`
 
 Enable JUnit XML reporting and specify the output file path.
@@ -388,7 +390,7 @@ Enable JUnit XML reporting and specify the output file path.
 junit = "test-results.xml"
 ```
 
-CI systems and other tools can consume the report.
+CI systems and other tools can consume the report. The `--reporter-outfile` CLI flag overrides the output file path.
 
 ## Package manager
 

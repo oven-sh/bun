@@ -90,7 +90,7 @@ impl IframeMissingSandbox {
         let Some(first) = first else {
             // oxlint points at the name.
             let at = if is_oxlint { identifier.span() } else { jsx.opening_span() };
-            cx.report(at, if is_oxlint { MISSING_SANDBOX_PROP } else { ATTRIBUTE_MISSING });
+            cx.report(at, if is_oxlint { MISSING_SANDBOX_PROP } else { ATTRIBUTE_MISSING }).by_selector();
             return;
         };
         // oxlint looks at the first only.

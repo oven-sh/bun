@@ -384,6 +384,15 @@ impl<'a> Report<'a> {
         self
     }
 
+    /// The original listens with a selector that says more than a kind of node. On one node ESLint calls such a listener after
+    /// those for the kind alone, wherever their rules stand.
+    pub fn by_selector(mut self) -> Self {
+        if let Some(diagnostic) = &mut self.diagnostic {
+            diagnostic.when = When::EnteringBySelector;
+        }
+        self
+    }
+
     /// Of what the rule reports at one start, this comes with the shorter first.
     pub fn shorter_first(mut self) -> Self {
         if let Some(diagnostic) = &mut self.diagnostic {

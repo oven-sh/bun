@@ -1098,13 +1098,14 @@ fn sorted(diagnostics: Vec<Diagnostic>, when: &[When]) -> Vec<Diagnostic> {
         let node = named.filter(|_| when.is_empty()).unwrap_or(it.span);
         let is_outer = u64::from(node.start < it.span.start);
         let (end, rule) = (u64::from(node.end), u64::from(it.rule));
+        // There are fewer than 1 << 15 rules.
         let longer_first = ((u64::from(u32::MAX) - end) << 16) | rule;
         match when.get(it.rule as usize).copied().unwrap_or(it.when) {
             When::Once => rule << 32,
             When::Entering => ((2 - is_outer) << 48) | longer_first,
+            When::EnteringBySelector => (2 << 48) | longer_first | (1 << 15),
             When::EnteringShorterFirst => (2 << 48) | (end << 16) | rule,
             When::Leaving => ((3 + is_outer) << 48) | (end << 16) | rule,
-            // There are fewer than 1 << 15 rules.
             When::LeavingCodePath => (3 << 48) | (end << 16) | (1 << 15) | rule,
             When::AtTheEnd => (5 << 48) | (rule << 32) | end,
             When::Last => (6 << 48) | longer_first,

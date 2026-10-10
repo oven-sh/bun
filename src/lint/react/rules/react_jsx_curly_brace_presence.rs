@@ -96,12 +96,13 @@ impl JsxCurlyBracePresence {
                     let wanted = self.prop_element_values(is_oxlint);
                     if wanted != Mode::Ignore && wanted != left_alone {
                         cx.report(element, necessary)
+                            .by_selector()
                             .fix(|fixer| [fixer.insert_before(element, "{"), fixer.insert_after(element, "}")]);
                     }
                 }
                 AttributeValue::StringLiteral(string) => {
                     if self.props == Mode::Always {
-                        cx.report(string.span, necessary).fix(|fixer| {
+                        cx.report(string.span, necessary).by_selector().fix(|fixer| {
                             // oxlint prints the text as a string of JavaScript, line breaks too.
                             let text = match is_oxlint {
                                 true => in_braces(string.value, is_oxlint),
@@ -328,7 +329,7 @@ fn report_missing_curly_for_text_node(span: Span, is_oxlint: bool, cx: &Cx<'_, J
     if !has_text {
         return;
     }
-    cx.report(span, if is_oxlint { NECESSARY } else { MISSING_CURLY }).fix(|fixer| {
+    cx.report(span, if is_oxlint { NECESSARY } else { MISSING_CURLY }).by_selector().fix(|fixer| {
         let mut fixes = Vec::new();
         // `after_blanks`: from the first character that is not a blank.
         let mut wrap = |start: usize, part: &[u8], after_blanks: bool| {

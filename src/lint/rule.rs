@@ -318,6 +318,8 @@ pub enum When {
     Once,
     /// In a listener that is called on entering a node: the longer first.
     Entering,
+    /// [`Report::by_selector`](crate::context::Report::by_selector)
+    EnteringBySelector,
     /// [`Report::shorter_first`](crate::context::Report::shorter_first)
     EnteringShorterFirst,
     /// [`Meta::reports_on_exit`]

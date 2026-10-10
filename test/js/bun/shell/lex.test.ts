@@ -533,6 +533,15 @@ describe("lex shell", () => {
       expect(tokens(script)).toEqual(expected);
     });
 
+    // Bun Shell reads a file only into fd 0. bash opens `f` for reading on fd 1 or 2.
+    test.each([
+      ["cat 0<f", [text("cat"), delimit, stdin, ...toFile]],
+      ["echo z 1<f", [...echo, text("z"), delimit, text("1"), delimit, stdin, ...toFile]],
+      ["echo z 2<f", [...echo, text("z"), delimit, text("2"), delimit, stdin, ...toFile]],
+    ])("%s: only 0 is an fd number before `<`", (script, expected) => {
+      expect(tokens(script)).toEqual(expected);
+    });
+
     test.each([
       ["echo ** c", [...echo, { DoubleAsterisk: {} }, delimit, text("c"), delimit, eof]],
       ["echo **|cat", [...echo, { DoubleAsterisk: {} }, delimit, { Pipe: {} }, text("cat"), delimit, eof]],

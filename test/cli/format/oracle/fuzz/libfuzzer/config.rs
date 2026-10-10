@@ -51,10 +51,12 @@ const FILES: [(&str, bool); 29] = [
 ];
 
 /// Beside a tsconfig.json: a rule that asks for the globals, and files that declare some.
-const GLOBALS: [(&str, &str); 3] = [
+const GLOBALS: [(&str, &str); 5] = [
     (".eslintrc.json", "{\"root\":true,\"rules\":{\"no-undef\":\"error\"}}"),
     ("globals.d.ts", "declare var one: number;\ndeclare global {\n  var two: string;\n}\nexport {};\n"),
-    ("sub/i.js", "one; two; three; process;\n"),
+    ("script.d.ts", "declare var four: number;\ninterface Five {}\n"),
+    ("sub/i.js", "one; two; three; four; process;\n"),
+    ("sub/j.ts", "one; two; three; four; process;\nlet five: Five;\n"),
 ];
 
 /// What is formatted and linted, unless the input has a text of its own for `a.ts`.

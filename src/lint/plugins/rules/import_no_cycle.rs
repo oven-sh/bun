@@ -90,12 +90,13 @@ impl Rule for NoCycle {
                 is_known: Box::new(move |path, text| has_export_map(&Settings::new(&same), path, text)),
             }
         });
-        if !has_export_map(&Settings::new(file.settings()), file.path(), file.text()) {
+        let has_export_map = has_export_map(&Settings::new(file.settings()), file.path(), file.text());
+        if !has_export_map {
             requests.clear();
         }
         // A way back can lead through a package.
         modules.follow_packages();
-        let checks = if self.commonjs || self.amd { self.checks(file) } else { Vec::new() };
+        let checks = if self.commonjs || self.amd || !has_export_map { self.checks(file) } else { Vec::new() };
         let known = requests.len();
         requests.extend(checks.iter().filter(|it| it.is_require).map(|it| Request {
             specifier: it.specifier,
@@ -108,7 +109,11 @@ impl Rule for NoCycle {
         set_lines(file.text(), &mut requests[known..]);
         // Where the components do not tell: they are made of the imports of values.
         let imports_no_value = known > 0 && requests[..known].iter().all(|it| it.is_only_importing_types);
-        let is_always_checked = requests.len() > known || self.disable_scc || !self.ignore_types || imports_no_value;
+        let is_always_checked = requests.len() > known
+            || self.disable_scc
+            || !self.ignore_types
+            || imports_no_value
+            || !has_export_map && !checks.is_empty();
         modules.record(file.path(), &requests, is_always_checked, flavor);
         None
     }
@@ -264,7 +269,7 @@ impl NoCycle {
             return;
         };
         // The modules are known by their real paths. Nothing leads back to the name of a link.
-        if modules.path(me) != bun_lint::paths::from_native(file.path()) {
+        if !modules.is_path_of(me, file.path()) {
             return;
         }
         let requests = requests_of(file, Flavor::Oxlint);

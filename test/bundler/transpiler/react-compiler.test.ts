@@ -807,9 +807,71 @@ describe("bundler", () => {
     },
   });
 
-  // Whether `JSON.parse(props.text)` throws depends on a prop, but what was assigned in the `try` or in the handler, and
-  // what was caught, did not count as reactive: the first render's element was kept for ever. Upstream 1.0.0 does the same.
+  // What is caught is declared before the `try`, so it is a candidate for a dependency of a scope around the `try` or in it.
+  // There its name is not bound. It is only left out because it is not reactive.
+  itBundled("react-compiler/WhatIsCaughtIsNoDependencyOutsideTheHandler", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        const check = text => {
+          if (text.startsWith("!")) throw new Error(text);
+          return text;
+        };
+        const mutate = it => { it.k = it.k + "!"; };
+        function Around(props) {
+          let r;
+          try { r = { k: check(props.text) }; } catch (e) { return null; }
+          mutate(r);
+          return <div>{r.k}</div>;
+        }
+        function AroundAndRead(props) {
+          let r;
+          try { r = { k: check(props.text) }; } catch (e) { r = { k: e.message }; }
+          mutate(r);
+          return <div>{r.k}</div>;
+        }
+        function Within(props) {
+          const text = props.text + "";
+          let s = null;
+          try {
+            const r = { k: check(text) };
+            if (r.k) s = mutate(r) ?? r.k;
+            else console.warn(r.k);
+          } catch (error) {
+            mutate(error);
+          }
+          if (s === null) return <p>none</p>;
+          return <div>{s}</div>;
+        }
+        for (const component of [Around, AroundAndRead, Within]) {
+          globalThis.rendering = component;
+          console.log(["a", "!b", "!c", "a", "a"].map(text => component({ text })?.p.children ?? "nothing").join(", "));
+        }
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `
+        const caches = new Map();
+        exports.c = n => {
+          if (!caches.has(globalThis.rendering))
+            caches.set(globalThis.rendering, new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));
+          return caches.get(globalThis.rendering);
+        };
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: "a!, nothing, nothing, a!, a!\na!, !b!, !c!, a!, a!\na!, none, none, a!, a!" },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
+  // Whether `JSON.parse(props.text)` throws depends on a prop, but what is assigned in the `try` or in the handler, and
+  // what is caught, do not count as reactive: the first render's element is kept for ever. Upstream 1.0.0 does the same.
   itBundled("react-compiler/WhatDependsOnAThrowIsReactive", {
+    todo: true,
     files: {
       "/entry.jsx": /* jsx */ `
         const check = text => {

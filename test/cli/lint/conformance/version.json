@@ -1,7 +1,6 @@
 {
   "eslint": {
-    "version": "10.12.0",
-    "commit": "87bd2cef7b2309739c29598fb2be335f4bed71a3"
+    "version": "9.39.5"
   },
   "typescript-eslint": {
     "version": "8.71.1",
@@ -71,5 +70,23 @@
   },
   "yargs": {
     "version": "17.7.3"
+  },
+  "@types/json-schema": {
+    "version": "7.0.15"
+  },
+  "chai": {
+    "version": "4.5.0"
+  },
+  "debug": {
+    "version": "3.2.7"
+  },
+  "glob": {
+    "version": "7.2.3"
+  },
+  "lodash.isarray": {
+    "version": "4.0.0"
+  },
+  "redux": {
+    "version": "3.7.2"
   }
 }

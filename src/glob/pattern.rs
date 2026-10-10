@@ -309,11 +309,7 @@ impl Pattern {
         self.matches_with(path, How::default())
     }
 
-    /// `matches` with the option `matchBase` of minimatch.
-    pub fn matches_base(&self, path: &[u8]) -> bool {
-        self.matches_base_with(path, How::default())
-    }
-
+    /// `matches_with` with the option `matchBase` of minimatch.
     pub fn matches_base_with(&self, path: &[u8], how: How) -> bool {
         match &self.kind {
             Kind::Minimatch(set, dot) if !(how.partial && path == b"/") => {

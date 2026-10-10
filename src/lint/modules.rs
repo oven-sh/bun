@@ -218,6 +218,9 @@ pub trait Modules: Sync {
     /// Absolute. With [`Flavor::Oxlint`] symbolic links are followed.
     fn path(&self, module: ModuleId) -> &[u8];
 
+    /// Whether `path`, as which a file is linted, is the path of `module`, and not the name of a link to it.
+    fn is_path_of(&self, module: ModuleId, path: &[u8]) -> bool;
+
     /// What it imports, in the order of eslint-plugin-import: what is imported dynamically first. Nothing if it is not JavaScript or
     /// TypeScript, if it is in a `node_modules`, or if it cannot be read.
     fn imports(&self, module: ModuleId) -> &[Import];

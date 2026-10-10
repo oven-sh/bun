@@ -140,6 +140,17 @@ fn write_method_definition<'a>(member: Member<'a>, f: &mut Formatter<'a>) {
     write!(f, OptionalSemicolon);
 }
 
+/// `#a = 1 /* comment */;` stays as it is in JavaScript: Babel's `ClassPrivateProperty` is not in the list of Prettier's
+/// `handleMethodNameComments`, so the comment trails the value.
+fn is_no_property_to_handle_method_name_comments<'a>(
+    member: Member<'a>,
+    f: &Formatter<'a>,
+) -> bool {
+    f.context().has_tree_of_babel()
+        && !f.options().flavor.is_oxfmt()
+        && (member.key()).is_some_and(|key| matches!(key.kind(), KeyKind::Private(_)))
+}
+
 /// For oxfmt all comments between a member and its `;` are behind the `;`. For Prettier those that end or
 /// start their line are in the member: see `Comments::start_of_comments_before_semicolon`.
 fn all_comments_before_semicolon_go_behind_it(f: &Formatter<'_>) -> bool {
@@ -868,10 +879,13 @@ impl<'a> Format<'a> for FormatClassElementWithSemicolon<'a> {
         } else if needs_semi {
             // The comments on the line of the `;` are written behind it. They are in the member:
             // `a = 1 // prettier-ignore ⏎ ;` is formatted.
-            let limit = f.comments().start_of_comments_before_semicolon(
-                self.element.init().map(|it| it.span().end),
-                span,
-            );
+            let limit = match is_no_property_to_handle_method_name_comments(self.element, f) {
+                true => span.end,
+                false => f.comments().start_of_comments_before_semicolon(
+                    self.element.init().map(|it| it.span().end),
+                    span,
+                ),
+            };
             let limit = match all_comments_before_semicolon_go_behind_it(f) {
                 true => (self.element.init())
                     .and_then(|it| start_of_comments_in_dropped_parentheses(it, None, f))

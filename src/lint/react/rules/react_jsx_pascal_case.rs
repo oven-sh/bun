@@ -38,7 +38,7 @@ impl Rule for JsxPascalCase {
         let options = options.object(0);
         let ignored = |entry: &str| Ignored {
             entry: entry.as_bytes().into(),
-            minimatch: Pattern::new(entry.as_bytes(), GlobOptions::MINIMATCH_3),
+            minimatch: Pattern::new(entry.as_bytes(), GlobOptions { noglobstar: true, ..GlobOptions::MINIMATCH_3 }),
         };
         JsxPascalCase {
             allow_all_caps: options.bool_or("allowAllCaps", false),

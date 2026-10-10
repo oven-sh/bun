@@ -203,6 +203,11 @@ impl<'s> Resolvers<'s> {
         } else {
             Cow::Owned(paths::resolve(modules.cwd(), from))
         };
+        // For `path.resolve` and `path.join` of POSIX a `\` is a part of a name.
+        let is_posix = paths::Style::of(&from) == paths::Style::Posix;
+        if is_posix && strings::contains_char(specifier, b'\\') {
+            return Resolved::Nothing;
+        }
         let found = self
             .map
             .iter()

@@ -2707,7 +2707,15 @@ impl<'h> Resolver<'h> {
         };
         let from_dir = dirname::<Posix>(from);
         match is_relative(spec) {
-            true => Some((self.relative(spec, from_dir, look)?, None)),
+            true => {
+                // `resolve`: only `.`, `..` and what ends in a `/` can be nothing but a directory: `./..` is
+                // `../b.js` too.
+                let mut candidate = resolve_path(from_dir, spec);
+                if matches!(spec, b"." | b"..") && !candidate.ends_with(b"/") {
+                    candidate.push(b'/');
+                }
+                Some((self.file_or_directory(&candidate, look)?, None))
+            }
             // `node:fs`
             false if strings::contains_char(spec, b':') => None,
             false => {

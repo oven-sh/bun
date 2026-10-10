@@ -1058,6 +1058,10 @@ impl Modules for Graph<'_> {
         self.resolver_of(&config, &directory).es_module_interop
     }
 
+    fn is_path_of(&self, module: ModuleId, path: &[u8]) -> bool {
+        self.path(module) == self.store.disk().as_written(&from_native(path))
+    }
+
     fn path(&self, module: ModuleId) -> &[u8] {
         self.complete
             .get()

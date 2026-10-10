@@ -134,7 +134,8 @@ fn should_inline<'a>(
     while is_wrapper(outer) {
         outer = outer.parent();
     }
-    let is_in_member = is_member_or_wrapper(outer);
+    // For Prettier `e` is in the parentheses of a type cast then.
+    let is_in_member = is_member_or_wrapper(outer) && !is_cast_target_that_hides_its_kind(e, f);
     if !is_in_member && !is_private && object.tag() == ExprTag::Ident && !is_cast_target(object, f)
     {
         return true;

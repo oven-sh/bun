@@ -1,7 +1,6 @@
 use crate::util_ast::{get_property_name, is_assignment_lhs};
 use crate::util_components::Components;
 use crate::util_components_list::{At, Queue};
-use crate::util_jsx::Branches;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::source::mention_bit;
@@ -136,11 +135,8 @@ impl<'a> State<'a> {
             let node = Node::Func(func);
             let names = func.params_with_this().take(2).filter_map(|it| EvaluatedParam::of(it).name());
             let mut names = names.peekable();
-            // No function is a component that does not return JSX or `null`.
             if names.peek().is_some()
-                && (is_any_related
-                    || (self.components.is_returning_jsx_or_null(node, Branches::Any)
-                        && self.components.get_stateless_component(node) == Some(node)))
+                && (is_any_related || self.components.get_stateless_component(node) == Some(node))
             {
                 names_of_params.extend(names);
             }

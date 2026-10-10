@@ -28,7 +28,6 @@ use crate::hir::{
 use crate::utils::DisjointSet;
 
 use crate::inference::infer_reactive_scope_variables::find_disjoint_mutable_values;
-use crate::optimization::prune_maybe_throws::value_may_throw;
 
 // =============================================================================
 // Public API
@@ -63,27 +62,6 @@ pub(crate) fn infer_reactive_places(
     // per block) is a function of the CFG only, so compute it once here instead
     // of inside the fixpoint loop.
     let frontiers = post_dominator_frontiers(func, &post_dominators)?;
-    // Not in upstream: whether something in a `try` throws decides what runs next, as a test does.
-    let mut read_by_what_may_throw: IdMap<BlockId, Vec<IdentifierId>> = IdMap::new();
-    for (block_id, block) in &func.body.blocks {
-        if let Terminal::MaybeThrow {
-            handler: Some(_), ..
-        } = &block.terminal
-        {
-            let mut read = Vec::new();
-            for instr_id in &block.instructions {
-                let value = &func.instructions[instr_id.0 as usize].value;
-                if value_may_throw(value) {
-                    read.extend(
-                        visitors::each_instruction_value_operand(value, env)
-                            .into_iter()
-                            .map(|place| place.identifier),
-                    );
-                }
-            }
-            read_by_what_may_throw.insert(*block_id, read);
-        }
-    }
     let mut control_tests: IdMap<BlockId, Vec<IdentifierId>> = IdMap::new();
     for &block_id in &block_ids {
         let mut tests = Vec::new();
@@ -99,11 +77,6 @@ pub(crate) fn infer_reactive_places(
                         if let Some(ref case_test) = case.test {
                             tests.push(case_test.identifier);
                         }
-                    }
-                }
-                Terminal::MaybeThrow { .. } => {
-                    if let Some(read) = read_by_what_may_throw.get(*frontier_block_id) {
-                        tests.extend_from_slice(read);
                     }
                 }
                 _ => {}
@@ -147,9 +120,7 @@ pub(crate) fn infer_reactive_places(
                     reactive_map.mark_reactive(phi.place.identifier);
                 } else {
                     for (pred, _operand) in &phi.operands {
-                        if is_reactive_controlled_block(*pred, &control_tests, &mut reactive_map)
-                            || (has_reactive_control && throws_to(func, *pred, *block_id))
-                        {
+                        if is_reactive_controlled_block(*pred, &control_tests, &mut reactive_map) {
                             reactive_map.mark_reactive(phi.place.identifier);
                             break;
                         }
@@ -251,16 +222,6 @@ pub(crate) fn infer_reactive_places(
             // Process terminal operands (just to mark them reactive for output)
             for op in visitors::each_terminal_operand(&block.terminal) {
                 reactive_map.is_reactive(op.identifier);
-            }
-
-            if let Terminal::Try {
-                handler,
-                handler_binding: Some(caught),
-                ..
-            } = &block.terminal
-                && is_reactive_controlled_block(*handler, &control_tests, &mut reactive_map)
-            {
-                reactive_map.mark_reactive(caught.identifier);
             }
         }
 
@@ -446,14 +407,9 @@ fn is_reactive_controlled_block(
 ) -> bool {
     control_tests
         .get(block_id)
-        .is_some_and(|tests| tests.iter().any(|&id| reactive_map.is_reactive(id)))
-}
-
-/// Which of the blocks of a `try` a handler is reached from is decided by what controls the handler.
-fn throws_to(func: &HirFunction, from: BlockId, to: BlockId) -> bool {
-    func.body.blocks.get(&from).is_some_and(|block| {
-        matches!(block.terminal, Terminal::MaybeThrow { handler: Some(handler), .. } if handler == to)
-    })
+        .unwrap()
+        .iter()
+        .any(|&id| reactive_map.is_reactive(id))
 }
 
 // =============================================================================

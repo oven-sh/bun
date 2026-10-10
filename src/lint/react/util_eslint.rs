@@ -1,6 +1,6 @@
 #![allow(dead_code)] // until every rule of the plugin is written
 //! `sourceCode.isSpaceBetweenTokens`, which ESLint 10 no longer has: eslint-plugin-react gets it
-//! from `fixupPluginRules` of @eslint/compat.
+//! from `fixupPluginRules` of @eslint/compat. And `markVariableAsUsed` of `lib/util/eslint.js`.
 
 use bun_core::strings;
 use bun_lint::prelude::*;
@@ -43,4 +43,21 @@ pub(crate) fn is_space_between_tokens<'a>(file: &'a File<'a>, first: Span, secon
         current_token = next_token.span();
     }
     false
+}
+
+/// `markVariableAsUsed`: ESLint's `sourceCode.markVariableAsUsed(name, node)`.
+pub(crate) fn mark_variable_as_used<'a>(name: Name<'a>, node: Node<'a>) {
+    let scope = node.scope();
+    let Some(variable) = scope.resolve_name(name) else {
+        return;
+    };
+    // In a class its name is a second variable for ESLint: that one is found, and nobody asks it.
+    let declared_in = variable.scope();
+    let is_name_of_class_around = scope
+        .chain()
+        .take_while(|it| *it != declared_in)
+        .any(|it| matches!(it.node(), Node::Class(class) if class.symbol() == Some(variable)));
+    if !is_name_of_class_around {
+        variable.mark_used();
+    }
 }

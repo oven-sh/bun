@@ -48,7 +48,9 @@ class Worker final : public RefCounted<Worker>, public EventTargetWithInlineData
     WTF_MAKE_TZONE_ALLOCATED(Worker);
 
 public:
+    // Validates the options and allocates the worker. start() spawns its thread.
     static ExceptionOr<Ref<Worker>> create(ScriptExecutionContext&, const String& url, WorkerOptions&&);
+    ExceptionOr<void> start(Ref<SerializedScriptValue>&& workerDataAndEnvironmentData, Vector<TransferredMessagePort>&& dataMessagePorts, RefPtr<Bun::SharedEnvStore>&&);
     ~Worker();
 
     // ActiveDOMObject.

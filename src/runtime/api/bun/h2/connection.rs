@@ -364,7 +364,8 @@ pub(crate) struct Connection {
     pub last_stream_id: u32,
     /// nghttp2's last_proc_stream_id: the highest peer stream that counts as processed (§6.8).
     last_proc_stream_id: u32,
-    pub going_away: bool,
+    /// nghttp2's remote_last_stream_id: the highest id that the next GOAWAY can carry (§6.8).
+    remote_last_stream_id: u32,
 }
 
 impl Connection {
@@ -404,7 +405,7 @@ impl Connection {
             preface_received: 0,
             last_stream_id: 0,
             last_proc_stream_id: 0,
-            going_away: false,
+            remote_last_stream_id: 0x7fff_ffff,
         }
     }
 
@@ -452,7 +453,6 @@ impl Connection {
         lib_code: i32,
         debug: &[u8],
     ) {
-        self.going_away = true;
         self.terminated = true;
         let last = sink.clamp_goaway_last_stream_id(self.last_proc_stream_id);
         let mut payload = Vec::with_capacity(8 + debug.len());
@@ -948,7 +948,8 @@ impl Connection {
         } else {
             !last_stream_id.is_multiple_of(2)
         };
-        if last_stream_id > 0 && !initiated_locally {
+        if (last_stream_id > 0 && !initiated_locally) || last_stream_id > self.remote_last_stream_id
+        {
             self.send_go_away(
                 sink,
                 ErrorCode::ProtocolError,
@@ -956,7 +957,7 @@ impl Connection {
             );
             return true;
         }
-        self.going_away = true;
+        self.remote_last_stream_id = last_stream_id;
         sink.on_go_away(code_raw, last_stream_id, &payload[8..]);
         false
     }

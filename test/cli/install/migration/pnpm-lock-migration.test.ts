@@ -401,4 +401,74 @@ snapshots:
     expect(stderr).toContain("could not find any other lockfile");
     expect(stderr).not.toContain("migrated lockfile from pnpm-lock.yaml");
   });
+
+  // `a` depends on `b` through a workspace link, so every lookup of an importer's directory runs.
+  const linkedWorkspaces = {
+    "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+    "packages/a/package.json": JSON.stringify({ name: "a", version: "1.0.0", dependencies: { b: "workspace:*" } }),
+    "packages/b/package.json": JSON.stringify({ name: "b", version: "1.0.0" }),
+  };
+
+  async function installWithImporters(dir: string, importerA: string, importerB: string) {
+    fs.writeFileSync(
+      join(dir, "pnpm-lock.yaml"),
+      `lockfileVersion: '9.0'
+
+importers:
+
+  .: {}
+
+  '${importerA}':
+    dependencies:
+      b:
+        specifier: workspace:*
+        version: link:../b
+
+  '${importerB}': {}
+`,
+    );
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode };
+  }
+
+  const bunLock = (dir: string) => fs.readFileSync(join(dir, "bun.lock"), "utf8");
+
+  test.concurrent("an absolute importer path migrates like the relative one", async () => {
+    using relativeDir = tempDir("pnpm-migrate-relative-importer", linkedWorkspaces);
+    using absoluteDir = tempDir("pnpm-migrate-absolute-importer", linkedWorkspaces);
+    const root = String(absoluteDir).replaceAll("\\", "/");
+
+    const [relative, absolute] = await Promise.all([
+      installWithImporters(String(relativeDir), "packages/a", "packages/b"),
+      installWithImporters(String(absoluteDir), `${root}/packages/a`, `${root}/packages/b`),
+    ]);
+
+    expect(absolute.stderr).not.toContain("error:");
+    expect(absolute.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+    expect(absolute.exitCode).toBe(0);
+    expect(relative.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+    expect(bunLock(String(absoluteDir))).toContain('"a": ["a@workspace:packages/a"]');
+    expect(bunLock(String(absoluteDir))).toBe(bunLock(String(relativeDir)));
+  });
+
+  test.concurrent("an importer path that does not fit a path buffer fails the migration", async () => {
+    using dir = tempDir("pnpm-migrate-long-importer", linkedWorkspaces);
+    const longPath = Buffer.alloc(100_000, "a").toString();
+
+    const { stderr, exitCode } = await installWithImporters(String(dir), longPath, "packages/b");
+
+    expect(stderr).toContain(
+      `pnpm-lock.yaml lists importer '${longPath}' but '${longPath}/package.json' does not exist`,
+    );
+    expect(stderr).toContain("failed to migrate lockfile: 'pnpm-lock.yaml'");
+    expect(exitCode).toBe(0);
+    expect(bunLock(String(dir))).toContain('"a": ["a@workspace:packages/a"]');
+  });
 });

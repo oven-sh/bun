@@ -488,7 +488,8 @@ pub fn is_npm_package_name_ignore_length(target: &[u8]) -> bool {
 // Secret-redaction scanners are canonical in crate::strings_impl (only callers
 // live in bun_core/fmt.rs). Re-exported here to preserve the bun.strings.* path.
 pub(crate) use crate::strings_impl::{
-    find_url_password, is_uuid, starts_with_npm_secret, starts_with_secret, starts_with_uuid,
+    find_closing_triple_quote, find_url_password, is_uuid, starts_with_npm_secret,
+    starts_with_secret, starts_with_uuid,
 };
 
 pub fn index_equal_any(in_: &[&[u8]], target: &[u8]) -> Option<usize> {

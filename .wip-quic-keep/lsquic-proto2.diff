@@ -1,0 +1,221 @@
+diff --git a/src/liblsquic/lsquic_full_conn_ietf.c b/src/liblsquic/lsquic_full_conn_ietf.c
+index f54e1a5..af0ceee 100644
+--- a/src/liblsquic/lsquic_full_conn_ietf.c
++++ b/src/liblsquic/lsquic_full_conn_ietf.c
+@@ -8692,6 +8692,15 @@ ietf_full_conn_ci_tick (struct lsquic_conn *lconn, lsquic_time_t now)
+          * and replaced by new ACK packet.  This way, we are never more
+          * than 1 packet over CWND.
+          */
++        /* bun: lsquic_send_ctl_squeeze_sched() keeps a delayed packet that
++         * holds only DATAGRAM frames.  When no other packet is delayed, the
++         * lost packets are rescheduled here, as they were when that packet
++         * was dropped: a packet with DATAGRAM frames alone sets no
++         * retransmission alarm.
++         */
++        if (!lsquic_send_ctl_have_delayed_packets(&conn->ifc_send_ctl)
++                && lsquic_send_ctl_reschedule_packets(&conn->ifc_send_ctl) > 0)
++            CLOSE_IF_NECESSARY();
+         tick |= TICK_SEND;
+         if (conn->ifc_flags & IFC_CLOSING)
+             goto end_write;
+diff --git a/src/liblsquic/lsquic_packet_out.c b/src/liblsquic/lsquic_packet_out.c
+index d3e2234..d1ed563 100644
+--- a/src/liblsquic/lsquic_packet_out.c
++++ b/src/liblsquic/lsquic_packet_out.c
+@@ -359,19 +359,24 @@ lsquic_packet_out_elide_reset_stream_frames (lsquic_packet_out_t *packet_out,
+ }
+ 
+ 
++/* bun: `keep' names the regen frame types that stay in the packet.  They
++ * are still counted in po_regen_sz.
++ */
+ void
+-lsquic_packet_out_chop_regen (lsquic_packet_out_t *packet_out)
++lsquic_packet_out_chop_regen (lsquic_packet_out_t *packet_out,
++                                                    enum quic_ft_bit keep)
+ {
+     struct packet_out_frec_iter pofi;
+     struct frame_rec *frec;
+-    unsigned short adj;
++    unsigned short adj, kept;
++    const enum quic_ft_bit chop = BQUIC_FRAME_REGEN_MASK & ~keep;
+ 
+-    adj = 0;
++    adj = 0, kept = 0;
+     for (frec = lsquic_pofi_first(&pofi, packet_out); frec;
+                                                 frec = lsquic_pofi_next(&pofi))
+     {
+         frec->fe_off -= adj;
+-        if (BQUIC_FRAME_REGEN_MASK & (1 << frec->fe_frame_type))
++        if (chop & (1 << frec->fe_frame_type))
+         {
+             adj += frec->fe_len;
+             memmove(packet_out->po_data + frec->fe_off,
+@@ -380,11 +385,13 @@ lsquic_packet_out_chop_regen (lsquic_packet_out_t *packet_out)
+             packet_out->po_data_sz -= frec->fe_len;
+             frec->fe_frame_type = 0;
+         }
++        else if (keep & (1 << frec->fe_frame_type))
++            kept += frec->fe_len;
+     }
+ 
+     //assert(adj);    /* Otherwise why are we called? */
+-    packet_out->po_regen_sz = 0;
+-    packet_out->po_frame_types &= ~BQUIC_FRAME_REGEN_MASK;
++    packet_out->po_regen_sz = kept;
++    packet_out->po_frame_types &= ~chop;
+ }
+ 
+ 
+diff --git a/src/liblsquic/lsquic_packet_out.h b/src/liblsquic/lsquic_packet_out.h
+index c652080..dfec6a7 100644
+--- a/src/liblsquic/lsquic_packet_out.h
++++ b/src/liblsquic/lsquic_packet_out.h
+@@ -403,7 +403,7 @@ lsquic_packet_out_elide_reset_stream_frames (lsquic_packet_out_t *,
+                                                     lsquic_stream_id_t);
+ 
+ void
+-lsquic_packet_out_chop_regen (lsquic_packet_out_t *);
++lsquic_packet_out_chop_regen (lsquic_packet_out_t *, enum quic_ft_bit keep);
+ 
+ void
+ lsquic_packet_out_ack_streams (struct lsquic_packet_out *);
+diff --git a/src/liblsquic/lsquic_send_ctl.c b/src/liblsquic/lsquic_send_ctl.c
+index de7e6a5..4c9a7f4 100644
+--- a/src/liblsquic/lsquic_send_ctl.c
++++ b/src/liblsquic/lsquic_send_ctl.c
+@@ -2264,7 +2264,8 @@ lsquic_send_ctl_next_packet_to_send_predict (struct lsquic_send_ctl *ctl)
+         }
+         if ((packet_out->po_flags & PO_REPACKNO)
+                     && packet_out->po_regen_sz == packet_out->po_data_sz
+-                    && packet_out->po_frame_types != QUIC_FTBIT_PATH_CHALLENGE)
++                    && packet_out->po_frame_types != QUIC_FTBIT_PATH_CHALLENGE
++                    && !(packet_out->po_frame_types & QUIC_FTBIT_DATAGRAM))
+         {
+             LSQ_DEBUG("send prediction: packet #%"PRIu64" would be dropped, "
+                 "continue", packet_out->po_packno);
+@@ -2310,6 +2311,20 @@ lsquic_send_ctl_next_packet_to_send (struct lsquic_send_ctl *ctl,
+         {
+             LSQ_DEBUG("sc_n_consec_rtos: %d, sc_next_limit is 0",
+                       ctl->sc_n_consec_rtos);
++            /* bun: only the next RTO refills sc_next_limit.  The packets
++             * that used it up set the RTO alarm only if they hold a
++             * retransmittable frame: a DATAGRAM frame, a PING or a path MTU
++             * probe does not.  Make sure that the alarm is set.
++             */
++            if (!lsquic_alarmset_is_set(ctl->sc_alset,
++                        AL_RETX_INIT + lsquic_packet_out_pns(packet_out)))
++            {
++                LSQ_DEBUG("packet #%"PRIu64" waits for an RTO that is not "
++                    "scheduled: set the alarm", packet_out->po_packno);
++                lsquic_alarmset_set(ctl->sc_alset,
++                    AL_RETX_INIT + lsquic_packet_out_pns(packet_out),
++                    lsquic_time_now() + calculate_packet_rto(ctl));
++            }
+             return NULL;
+         }
+     }
+@@ -2318,12 +2333,9 @@ lsquic_send_ctl_next_packet_to_send (struct lsquic_send_ctl *ctl,
+ 
+     if (packet_out->po_flags & PO_REPACKNO)
+     {
+-        /* bun: a scheduled packet that gets a new number loses its DATAGRAM
+-         * frames: it is dropped below, or update_for_resending chops them
+-         * out with the other regenerated frames. */
+-        send_ctl_report_datagrams(ctl, packet_out, LSQ_DG_UNSENT);
+-        if (packet_out->po_regen_sz < packet_out->po_data_sz
+-            && packet_out->po_frame_types != QUIC_FTBIT_PADDING)
++        if ((packet_out->po_regen_sz < packet_out->po_data_sz
++                && packet_out->po_frame_types != QUIC_FTBIT_PADDING)
++            || (packet_out->po_frame_types & QUIC_FTBIT_DATAGRAM))
+         {
+             update_for_resending(ctl, packet_out);
+             packet_out->po_flags &= ~PO_REPACKNO;
+@@ -2646,6 +2658,16 @@ update_for_resending (lsquic_send_ctl_t *ctl, lsquic_packet_out_t *packet_out)
+ {
+ 
+     lsquic_packno_t oldno, packno;
++    enum quic_ft_bit keep;
++    unsigned short regen_sz;
++
++    /* bun: a packet on the scheduled queue was not sent.  It is here for a
++     * new number, and its DATAGRAM frames leave with it: lsquic cannot
++     * generate them again.  Only a lost packet loses them (RFC 9221
++     * Section 5: DATAGRAM frames are not retransmitted).
++     */
++    keep = packet_out->po_flags & PO_SCHED
++                ? packet_out->po_frame_types & QUIC_FTBIT_DATAGRAM : 0;
+ 
+     /* When the packet is resent, it uses the same number of bytes to encode
+      * the packet number as the original packet.  This follows the reference
+@@ -2655,8 +2677,8 @@ update_for_resending (lsquic_send_ctl_t *ctl, lsquic_packet_out_t *packet_out)
+     packno = send_ctl_next_packno(ctl);
+ 
+     packet_out->po_flags &= ~PO_SENT_SZ;
+-    assert(packet_out->po_frame_types & ~BQUIC_FRAME_REGEN_MASK);
+-    packet_out->po_frame_types &= ~BQUIC_FRAME_REGEN_MASK;
++    assert(packet_out->po_frame_types & (~BQUIC_FRAME_REGEN_MASK | keep));
++    packet_out->po_frame_types &= ~BQUIC_FRAME_REGEN_MASK | keep;
+     packet_out->po_packno = packno;
+     lsquic_packet_out_set_ecn(packet_out, ctl->sc_ecn);
+ 
+@@ -2666,15 +2688,16 @@ update_for_resending (lsquic_send_ctl_t *ctl, lsquic_packet_out_t *packet_out)
+         packet_out->po_ver_tag = *ctl->sc_ver_neg->vn_tag;
+     }
+ 
+-    assert(packet_out->po_regen_sz < packet_out->po_data_sz);
++    assert(keep || packet_out->po_regen_sz < packet_out->po_data_sz);
+     if (packet_out->po_regen_sz)
+     {
++        regen_sz = packet_out->po_regen_sz;
++        lsquic_packet_out_chop_regen(packet_out, keep);
+         if (packet_out->po_flags & PO_SCHED)
+         {
+-            ctl->sc_bytes_scheduled -= packet_out->po_regen_sz;
+-            packet_out->po_acct_sz -= packet_out->po_regen_sz;
++            ctl->sc_bytes_scheduled -= regen_sz - packet_out->po_regen_sz;
++            packet_out->po_acct_sz -= regen_sz - packet_out->po_regen_sz;
+         }
+-        lsquic_packet_out_chop_regen(packet_out);
+     }
+     EV_LOG_CONN_EVENT(LSQUIC_LOG_CONN_ID, "schedule resend, repackage packet "
+                       "#%"PRIu64" -> #%"PRIu64, oldno, packno);
+@@ -2889,7 +2912,8 @@ lsquic_send_ctl_squeeze_sched (lsquic_send_ctl_t *ctl)
+     {
+         next = TAILQ_NEXT(packet_out, po_next);
+         if (packet_out->po_regen_sz < packet_out->po_data_sz
+-                || packet_out->po_frame_types == QUIC_FTBIT_PATH_CHALLENGE)
++                || packet_out->po_frame_types == QUIC_FTBIT_PATH_CHALLENGE
++                || (packet_out->po_frame_types & QUIC_FTBIT_DATAGRAM))
+         {
+             if (packet_out->po_flags & PO_ENCRYPTED)
+                 send_ctl_return_enc_data(ctl, packet_out);
+@@ -2905,10 +2929,6 @@ lsquic_send_ctl_squeeze_sched (lsquic_send_ctl_t *ctl)
+             send_ctl_sched_remove(ctl, packet_out);
+             LSQ_DEBUG("Dropping packet #%"PRIu64" from scheduled queue",
+                 packet_out->po_packno);
+-            /* bun: a delayed packet that holds nothing but regenerated
+-             * frames is not sent later, and a DATAGRAM frame counts as
+-             * one (write_datagram adds it to po_regen_sz). */
+-            send_ctl_report_datagrams(ctl, packet_out, LSQ_DG_UNSENT);
+             send_ctl_destroy_chain(ctl, packet_out, NULL);
+             send_ctl_destroy_packet(ctl, packet_out);
+             ++dropped;
+@@ -3093,7 +3113,7 @@ send_ctl_move_ack (struct lsquic_send_ctl *ctl, struct lsquic_packet_out *dst,
+         dst->po_regen_sz = src->po_regen_sz;
+         dst->po_frame_types |= (BQUIC_FRAME_REGEN_MASK & src->po_frame_types);
+         src->po_frame_types &= ~BQUIC_FRAME_REGEN_MASK;
+-        lsquic_packet_out_chop_regen(src);
++        lsquic_packet_out_chop_regen(src, 0);
+     }
+ 
+     return 0;
+@@ -3457,7 +3477,7 @@ lsquic_send_ctl_schedule_buffered (lsquic_send_ctl_t *ctl,
+              * generated.
+              */
+             LSQ_DEBUG("Remove out-of-order ACK from buffered packet");
+-            lsquic_packet_out_chop_regen(packet_out);
++            lsquic_packet_out_chop_regen(packet_out, 0);
+             if (packet_out->po_data_sz == 0)
+             {
+                 LSQ_DEBUG("Dropping now-empty buffered packet");

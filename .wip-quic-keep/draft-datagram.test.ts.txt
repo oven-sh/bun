@@ -1,0 +1,578 @@
+// `ondatagramstatus(id, status)` reports each datagram under the id that
+// `sendDatagram()` returned for it, whatever order the acknowledgements and
+// the losses are declared in, and whatever lsquic does with the packet.
+import { describe, expect, test } from "bun:test";
+import { createPrivateKey, randomBytes } from "node:crypto";
+import { createSocket } from "node:dgram";
+import { once } from "node:events";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { connect, listen } from "node:quic";
+
+const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
+const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
+const cert = readFileSync(join(keysDir, "agent1-cert.pem"));
+const sni = { "*": { keys: [key], certs: [cert] } };
+
+// The relay sees ciphertext, so it tells 1-RTT packets apart by length. The
+// sizes below put each kind of packet in a range of its own, whatever small
+// frames lsquic adds to it. Two datagrams of LARGE or of MEDIUM bytes do not
+// fit in one packet, so each one travels in a packet of its own.
+const LARGE = 1100;
+const MEDIUM = 750;
+const SMALL = 200;
+const CHUNK = 300;
+const lengthIn = (min: number, max: number) => (packet: Buffer) =>
+  !(packet[0] & 0x80) && packet.length >= min && packet.length < max;
+/** A packet with a LARGE datagram. A path MTU probe is longer than 1400 bytes. */
+const carriesLarge = lengthIn(LARGE, 1400);
+const carriesMedium = lengthIn(MEDIUM, LARGE);
+const carriesThreeSmall = lengthIn(3 * SMALL, MEDIUM);
+/** A packet with CHUNK bytes of stream data. */
+const carriesChunk = lengthIn(CHUNK, 3 * SMALL);
+// The tests with a retransmission timeout start with this many datagrams.
+const WARM_UP = 24;
+// A datagram that arrived is acknowledged, unless lsquic gave up on its
+// packet before the ACK came.
+const arrived = expect.stringMatching(/^(acknowledged|lost)$/);
+
+/** A UDP relay between a client and the server at `serverPort`. */
+async function relayTo(serverPort: number) {
+  const front = createSocket("udp4");
+  const upstream = createSocket("udp4");
+  let clientPort = 0;
+  const forServer: Buffer[] = [];
+  const forClient: Buffer[] = [];
+  const relay = {
+    port: 0,
+    /** Returns true for a client packet that the relay must lose. */
+    lose: (_packet: Buffer): boolean => false,
+    /** While true, the relay keeps the packets of both sides. */
+    outage: false,
+    /** How many of the packets kept for the client carry a MEDIUM datagram. */
+    keptMedium: () => forClient.filter(carriesMedium).length,
+    /** Forwards the packets kept for the client, through the one with the `count`th MEDIUM datagram. */
+    deliverMedium(count: number) {
+      let end = 0;
+      for (let seen = 0; end < forClient.length && seen < count; end++) seen += +carriesMedium(forClient[end]);
+      for (const packet of forClient.splice(0, end)) front.send(packet, clientPort, "127.0.0.1");
+    },
+    /** Ends the outage. What the relay kept goes out, in order. */
+    release() {
+      relay.outage = false;
+      for (const packet of forServer.splice(0)) upstream.send(packet, serverPort, "127.0.0.1");
+      for (const packet of forClient.splice(0)) front.send(packet, clientPort, "127.0.0.1");
+    },
+    /** Called for each packet that arrives at the relay from that side. */
+    onClientPacket: (_packet: Buffer) => {},
+    onServerPacket: () => {},
+    [Symbol.dispose]() {
+      front.close();
+      upstream.close();
+    },
+  };
+  upstream.on("message", packet => {
+    if (relay.outage) forClient.push(packet);
+    else front.send(packet, clientPort, "127.0.0.1");
+    relay.onServerPacket();
+  });
+  front.on("message", (packet, from) => {
+    clientPort = from.port;
+    relay.onClientPacket(packet);
+    if (relay.lose(packet)) return;
+    if (relay.outage) forServer.push(packet);
+    else upstream.send(packet, serverPort, "127.0.0.1");
+  });
+  front.bind(0, "127.0.0.1");
+  upstream.bind(0, "127.0.0.1");
+  await Promise.all([once(front, "listening"), once(upstream, "listening")]);
+  relay.port = front.address().port;
+  return relay;
+}
+
+/**
+ * A server, a relay in front of it, and a client session through the relay.
+ * The first byte of each datagram the client sends is its id, so the server
+ * side knows which ids arrived.
+ */
+async function sessionThroughRelay() {
+  const received: number[] = [];
+  let onReceived = () => {};
+  const serverSession = Promise.withResolvers<any>();
+  const serverSessionClosed = Promise.withResolvers<void>();
+  const server = await listen(
+    session => {
+      serverSession.resolve(session);
+      session.onerror = () => {};
+      session.closed.then(serverSessionClosed.resolve, serverSessionClosed.resolve);
+      // The server echoes what the client writes to a stream.
+      session.onstream = async (stream: any) => {
+        stream.closed.catch(() => {});
+        try {
+          for await (const batch of stream) for (const chunk of [batch].flat()) stream.writer.writeSync(chunk);
+        } catch {}
+      };
+    },
+    {
+      sni,
+      alpn: ["quic-test"],
+      transportParams: { maxIdleTimeout: 10 },
+      ondatagram(datagram: Uint8Array) {
+        received.push(datagram[0]);
+        onReceived();
+      },
+    },
+  );
+  const relay = await relayTo(server.address.port);
+
+  const statuses = new Map<number, string[]>();
+  let onStatus = () => {};
+  let fromServer = 0;
+  let onServerDatagram = () => {};
+  let onServerStream = () => {};
+  const client = await connect(
+    { address: "127.0.0.1", port: relay.port },
+    {
+      alpn: "quic-test",
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 10 },
+      onerror() {},
+      ondatagram() {
+        fromServer++;
+        onServerDatagram();
+      },
+      ondatagramstatus(id: bigint, status: string) {
+        statuses.set(Number(id), [...(statuses.get(Number(id)) ?? []), status]);
+        onStatus();
+      },
+      async onstream(stream: any) {
+        stream.closed.catch(() => {});
+        try {
+          for await (const _ of stream);
+        } catch {}
+        onServerStream();
+      },
+    },
+  );
+  await client.opened;
+
+  const ids: Promise<bigint>[] = [];
+  /** Resolves once `done()` holds. `listen` installs the check at its source. */
+  const until = (done: () => boolean, listen: (check: () => void) => void) =>
+    new Promise<void>(resolve => {
+      const check = () => done() && resolve();
+      listen(check);
+      check();
+    });
+  /** Sends a datagram of `size` bytes. Returns its id: ids count from 1. */
+  const send = (size = LARGE) => {
+    ids.push(client.sendDatagram(Buffer.alloc(size, ids.length + 1)));
+    return ids.length;
+  };
+  /** The first status reported for `id`. */
+  const status = (id: number) =>
+    until(
+      () => statuses.has(id),
+      check => (onStatus = check),
+    ).then(() => statuses.get(id)![0]);
+  return {
+    client,
+    relay,
+    send,
+    status,
+    /** The ids of the datagrams that the server received, in ascending order. */
+    received: () => received.toSorted((a, b) => a - b),
+    /** Every status reported for each id: one per id when all is right. */
+    statuses: () => Object.fromEntries(statuses),
+    /**
+     * Round trips of two datagrams, because the server acknowledges every
+     * second packet at once. After them the retransmission timers of the
+     * client are short. These are datagrams 1 to WARM_UP.
+     */
+    async warmUp() {
+      for (let i = 0; i < WARM_UP; i += 2) {
+        send();
+        expect(await status(send())).toBe("acknowledged");
+      }
+    },
+    /**
+     * Resolves once the client has reported what the server's ACKs say about
+     * every datagram sent so far. The last one must pass the relay. When the
+     * server has it, the server opens a stream, and the packet with the
+     * stream data carries the ACKs that the server still owes. The client
+     * queues the statuses from that packet behind the stream, for the same
+     * pass: they are out when the pass is over.
+     */
+    async settled() {
+      const last = ids.length;
+      await until(
+        () => received.includes(last),
+        check => (onReceived = check),
+      );
+      const read = new Promise<void>(resolve => (onServerStream = resolve));
+      const stream = await (await serverSession.promise).createUnidirectionalStream({ body: new Uint8Array(1) });
+      stream.closed.catch(() => {});
+      await read;
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect((await Promise.all(ids)).map(Number)).toEqual(ids.map((_, i) => i + 1));
+    },
+    /** A stream to the server. `echoed(n)` resolves once `n` bytes have come back. */
+    async echoStream() {
+      const stream = await client.createBidirectionalStream();
+      stream.closed.catch(() => {});
+      let count = 0;
+      let onEcho = () => {};
+      (async () => {
+        try {
+          for await (const batch of stream) {
+            for (const chunk of [batch].flat()) count += chunk.byteLength;
+            onEcho();
+          }
+        } catch {}
+      })();
+      return {
+        write: (size: number) => void stream.writer.writeSync(new Uint8Array(size)),
+        echoed: (size: number) =>
+          until(
+            () => count >= size,
+            check => (onEcho = check),
+          ),
+      };
+    },
+    /**
+     * The server sends `count` datagrams during an outage, each in a packet
+     * of its own. Resolves once the relay has them.
+     */
+    async serverDatagrams(count: number) {
+      const session = await serverSession.promise;
+      for (let i = 0; i < count; i++) session.sendDatagram(new Uint8Array(MEDIUM));
+      await until(
+        () => relay.keptMedium() >= count,
+        check => (relay.onServerPacket = check),
+      );
+    },
+    /**
+     * The relay hands the client the next two datagrams of the server. The
+     * client acknowledges every second packet at once, so it owes no ACK
+     * when it dispatches the second one. Resolves inside that dispatch,
+     * after `inDispatch` ran there.
+     */
+    async deliverTwo(inDispatch = () => {}) {
+      const last = fromServer + 2;
+      const dispatched = until(
+        () => fromServer >= last,
+        check =>
+          (onServerDatagram = () => {
+            if (fromServer === last) inDispatch();
+            check();
+          }),
+      );
+      relay.deliverMedium(2);
+      await dispatched;
+    },
+    /**
+     * An outage in which the retransmission timeout of the client fires. A
+     * datagram leaves in a packet of its own, then stream data keeps the
+     * retransmission timer running. Nothing comes back, so only that timeout
+     * can declare the datagram lost. Resolves outside the session's dispatch
+     * of that status: from there each `send()` is one lsquic tick.
+     */
+    async timeout(echo: { write(size: number): void }) {
+      relay.lose = carriesLarge;
+      relay.outage = true;
+      const inOutage = send();
+      await new Promise<void>(resolve => (relay.onClientPacket = () => resolve()));
+      echo.write(64);
+      expect(await status(inOutage)).toBe("lost");
+      await new Promise<void>(resolve => setImmediate(resolve));
+    },
+    async [Symbol.asyncDispose]() {
+      // Both sides close through the relay, which passes everything again.
+      relay.lose = () => false;
+      relay.release();
+      client.close();
+      await Promise.all([client.closed.catch(() => {}), serverSessionClosed.promise]);
+      relay[Symbol.dispose]();
+      await server[Symbol.asyncDispose]();
+    },
+  };
+}
+
+/** The ids from `from` to `to`. */
+const range = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => from + i);
+/** `{ [id]: [status] }` for each id from `from` to `to`. */
+const all = (status: unknown, from: number, to: number) =>
+  Object.fromEntries(range(from, to).map(id => [id, [status]]));
+
+describe("ondatagramstatus", () => {
+  test.each([
+    { lost: 1, of: 6 },
+    { lost: 3, of: 8 },
+  ])("reports the loss of datagram $lost of $of under its id", async ({ lost, of }) => {
+    await using net = await sessionThroughRelay();
+    let carriers = 0;
+    net.relay.lose = packet => carriesLarge(packet) && ++carriers === lost;
+
+    for (let i = 0; i < of; i++) net.send();
+    await net.settled();
+
+    expect(net.received()).toEqual(range(1, of).filter(id => id !== lost));
+    expect(net.statuses()).toEqual({ ...all("acknowledged", 1, of), [lost]: ["lost"] });
+  });
+
+  test("reports every datagram as acknowledged when no packet is lost", async () => {
+    await using net = await sessionThroughRelay();
+
+    for (let i = 0; i < 6; i++) net.send();
+    await net.settled();
+
+    expect(net.received()).toEqual(range(1, 6));
+    expect(net.statuses()).toEqual(all("acknowledged", 1, 6));
+  });
+
+  test("reports each datagram of a lost packet that carried several", async () => {
+    await using net = await sessionThroughRelay();
+    net.relay.lose = carriesThreeSmall;
+
+    // This `await` resumes inside the session's dispatch of the status, and
+    // writes made there leave together: datagrams 2, 3 and 4 share the one
+    // packet that the relay loses.
+    expect(await net.status(net.send())).toBe("acknowledged");
+    for (let i = 0; i < 3; i++) net.send(SMALL);
+    for (let i = 0; i < 6; i++) net.send();
+    await net.settled();
+
+    expect(net.received()).toEqual([1, ...range(5, 10)]);
+    expect(net.statuses()).toEqual({ ...all("acknowledged", 1, 10), ...all("lost", 2, 4) });
+  });
+
+  test("keeps an acknowledged datagram and the lost one after it apart", async () => {
+    await using net = await sessionThroughRelay();
+    const { relay } = net;
+    const echo = await net.echoStream();
+    // Outside a dispatch of the session, each write below is one packet.
+    await new Promise<void>(resolve => setImmediate(resolve));
+
+    // The relay keeps datagram 1, loses datagram 2, and keeps six packets of
+    // stream data. Then the server gets them all at once. Its ACK reaches
+    // past datagram 2 with stream data alone, so the client acknowledges
+    // datagram 1 and then declares datagram 2 lost, in one pass.
+    relay.lose = carriesLarge;
+    relay.outage = true;
+    let chunks = 0;
+    const kept = new Promise<void>(resolve => {
+      relay.onClientPacket = packet => carriesChunk(packet) && ++chunks === 6 && resolve();
+    });
+    net.send(MEDIUM);
+    net.send();
+    for (let i = 0; i < 6; i++) echo.write(CHUNK);
+    await kept;
+    relay.release();
+
+    await echo.echoed(6 * CHUNK);
+    net.send(MEDIUM);
+    await net.settled();
+
+    expect(net.received()).toEqual([1, 3]);
+    expect(net.statuses()).toEqual({ 1: [arrived], 2: ["lost"], 3: [arrived] });
+  });
+
+  // After a retransmission timeout lsquic sends at most two packets until an
+  // ACK arrives, and the stream data it resends is one of them. A datagram
+  // that it frames meanwhile waits in its packet, as it waits in the queue
+  // of Node, and leaves when lsquic may send again.
+  test.each([{ listener: true }, { listener: false }])(
+    "sends a datagram that had to wait after a retransmission timeout (ondatagramstatus: $listener)",
+    async ({ listener }) => {
+      await using net = await sessionThroughRelay();
+      const { client, relay } = net;
+      const echo = await net.echoStream();
+
+      await net.warmUp();
+      await net.timeout(echo);
+      if (!listener) client.ondatagramstatus = undefined;
+
+      // The outage ends, and the relay loses no packet after it. At most one
+      // of these three may leave before an ACK arrives.
+      relay.lose = () => false;
+      relay.release();
+      for (let i = 0; i < 3; i++) net.send();
+
+      await echo.echoed(64);
+      for (let i = 0; i < 6; i++) net.send(MEDIUM);
+      await net.settled();
+
+      // Datagrams 1 to 24 are the warm-up, and 25 is the one of the timeout.
+      expect(net.received()).toEqual([...range(1, 24), ...range(26, 34)]);
+      expect(net.statuses()).toEqual(
+        listener
+          ? { ...all("acknowledged", 1, 24), 25: ["lost"], ...all("acknowledged", 26, 28), ...all(arrived, 29, 34) }
+          : { ...all("acknowledged", 1, 24), 25: ["lost"] },
+      );
+      const { datagramsSent: sent, datagramsAcknowledged: acknowledged, datagramsLost: lost } = client.stats;
+      expect({ sent, counted: acknowledged + lost }).toEqual({ sent: 34n, counted: 34n });
+      expect(lost).toBeGreaterThanOrEqual(1n);
+    },
+  );
+
+  test("keeps a datagram in a packet that gets a new number before the send", async () => {
+    await using net = await sessionThroughRelay();
+    const { relay } = net;
+    const echo = await net.echoStream();
+
+    await net.warmUp();
+    // The relay keeps four datagrams of the server for the steps below.
+    relay.outage = true;
+    await net.serverDatagrams(4);
+    await net.timeout(echo);
+    // From here the relay loses no packet. It keeps what the client sends
+    // until the outage ends.
+    relay.lose = () => false;
+    // Datagram 26 uses up what lsquic may still send before an ACK.
+    net.send();
+
+    // Datagram 27 and stream data, written in one dispatch of the session,
+    // share a packet. lsquic may not send that packet yet.
+    await net.deliverTwo(() => {
+      echo.write(8);
+      net.send();
+    });
+    // The client sends an ACK for the next two. lsquic gives new numbers to
+    // the packets that wait behind an ACK. The DATAGRAM frame stays in its
+    // packet.
+    await net.deliverTwo();
+
+    relay.release();
+    await echo.echoed(72);
+    for (let i = 0; i < 6; i++) net.send(MEDIUM);
+    await net.settled();
+
+    expect(net.received()).toEqual([...range(1, 24), ...range(26, 33)]);
+    expect(net.statuses()).toEqual({
+      ...all("acknowledged", 1, 24),
+      25: ["lost"],
+      26: [arrived],
+      27: ["acknowledged"],
+      ...all(arrived, 28, 33),
+    });
+  });
+
+  test("stops at a callback that destroys the session", async () => {
+    const serverSession = Promise.withResolvers<any>();
+    await using server = await listen(
+      session => {
+        session.onerror = () => {};
+        session.closed.catch(() => {});
+        serverSession.resolve(session);
+      },
+      { sni, alpn: ["quic-test"], ondatagram() {} },
+    );
+    const calls: string[] = [];
+    const client = await connect(server.address, {
+      alpn: "quic-test",
+      servername: "localhost",
+      verifyPeer: "manual",
+      onerror() {},
+      ondatagramstatus(id: bigint, status: string) {
+        calls.push(`${id}:${status}`);
+        if (id > 1n) throw new Error("from ondatagramstatus");
+        // Writes made inside a session callback leave together: one packet,
+        // and so one acknowledgement, for datagrams 2, 3 and 4.
+        for (let i = 0; i < 3; i++) client.sendDatagram(new Uint8Array(SMALL));
+      },
+    });
+    await client.opened;
+    await client.sendDatagram(new Uint8Array(SMALL));
+
+    // The throw destroys the session. As in Node, datagrams 3 and 4 are then
+    // neither reported nor counted: an uncaught ERR_INTERNAL_ASSERTION for
+    // each would fail this test.
+    const closed = await client.closed.then(
+      () => "resolved",
+      (error: Error) => error.message,
+    );
+    (await serverSession.promise).destroy();
+    expect({ closed, calls, acknowledged: client.stats.datagramsAcknowledged }).toEqual({
+      closed: "from ondatagramstatus",
+      calls: ["1:acknowledged", "2:acknowledged"],
+      acknowledged: 2n,
+    });
+  });
+
+  test("skips a datagram of a rejected 0-RTT flight without moving the ids after it", async () => {
+    const tokenSecret = randomBytes(16);
+    const ticket = Promise.withResolvers<any>();
+    const token = Promise.withResolvers<any>();
+    const onSession = (session: any) => {
+      session.onerror = () => {};
+      session.closed.catch(() => {});
+    };
+
+    // A first server hands out a session ticket and a token.
+    const first = await listen(onSession, { sni, alpn: ["quic-test"], endpoint: { tokenSecret } });
+    const firstClient = await connect(first.address, {
+      alpn: "quic-test",
+      verifyPeer: "manual",
+      onsessionticket: ticket.resolve,
+      onnewtoken: token.resolve,
+    });
+    await Promise.all([firstClient.opened, ticket.promise, token.promise]);
+    await firstClient.close();
+    await first.close();
+
+    // A second one takes the token and rejects the early data.
+    const received: number[] = [];
+    let onProgress = () => {};
+    const serverSession = Promise.withResolvers<any>();
+    await using second = await listen(
+      (session: any) => {
+        onSession(session);
+        serverSession.resolve(session);
+      },
+      {
+        sni,
+        alpn: ["quic-test"],
+        endpoint: { tokenSecret },
+        enableEarlyData: false,
+        ondatagram(datagram: Uint8Array) {
+          received.push(datagram[0]);
+          onProgress();
+        },
+      },
+    );
+    const statuses = new Map<number, string[]>();
+    const client = await connect(second.address, {
+      alpn: "quic-test",
+      verifyPeer: "manual",
+      sessionTicket: await ticket.promise,
+      token: await token.promise,
+      onerror() {},
+      onearlyrejected() {},
+      ondatagramstatus(id: bigint, status: string) {
+        statuses.set(Number(id), [...(statuses.get(Number(id)) ?? []), status]);
+        onProgress();
+      },
+    });
+    client.closed.catch(() => {});
+
+    // Datagram 1 leaves in the 0-RTT flight, datagrams 2 to 4 after the
+    // handshake. No packet is lost. As in Node, datagram 1 gets no status.
+    const ids = [await client.sendDatagram(new Uint8Array([1]))];
+    const { earlyDataAttempted, earlyDataAccepted } = await client.opened;
+    for (let i = 2; i <= 4; i++) ids.push(await client.sendDatagram(new Uint8Array([i])));
+    await new Promise<void>(resolve => {
+      onProgress = () => statuses.size >= 3 && received.length >= 3 && resolve();
+    });
+    client.destroy();
+    (await serverSession.promise).destroy();
+
+    expect({ earlyDataAttempted, earlyDataAccepted, ids }).toEqual({
+      earlyDataAttempted: true,
+      earlyDataAccepted: false,
+      ids: [1n, 2n, 3n, 4n],
+    });
+    expect(received.toSorted((a, b) => a - b)).toEqual([2, 3, 4]);
+    expect(Object.fromEntries(statuses)).toEqual(all("acknowledged", 2, 4));
+  });
+});

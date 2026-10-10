@@ -588,6 +588,30 @@ pub(crate) fn js_node_test_mark_result(
     Ok(JSValue::UNDEFINED)
 }
 
+/// Reached only from `node:test` in a `run()` child (`internal/test_runner/run_frames`):
+/// writes one event frame to stdout the way `console.log` writes, all of it before
+/// returning, so no later `console.log` lands inside it. `process.stdout` queues in
+/// its own sink what the pipe does not take at once; that goes out first, or the
+/// frame would overtake output the test wrote before it finished.
+pub(crate) fn js_node_test_write_run_frame(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    let [frame, stdout_sink] = callframe.arguments_as_array::<2>();
+    #[cfg(unix)]
+    if let Some(sink) = crate::webcore::file_sink::JSSink::from_js(stdout_sink) {
+        // SAFETY: `from_js` returned the live `*mut JSSink<FileSink>` behind the JS
+        // wrapper, which is `repr(transparent)` over the `FileSink` it was allocated as.
+        unsafe { crate::webcore::FileSink::flush_blocking(sink.cast()) };
+    }
+    #[cfg(not(unix))]
+    let _ = stdout_sink;
+    if let Some(frame) = frame.as_array_buffer(global) {
+        let _ = Output::raw_writer().write(frame.byte_slice());
+    }
+    Ok(JSValue::UNDEFINED)
+}
+
 pub(crate) mod on_unhandled_rejection {
     use super::*;
 

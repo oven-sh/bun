@@ -40,16 +40,16 @@ const kJoinSeparator = " > ";
 //
 // Port of Node.js lib/internal/test_runner/{runner,tests_stream}.js (v26.3.0).
 // Files run in child processes (node's isolation:'process'); the child is spawned
-// with kRunChildEnv set, which makes this module stream one JSON event per line
-// on stdout. Unmarked stdout/stderr lines become test:stdout/test:stderr, the
-// same split node makes around its V8-serializer framing.
+// with kRunChildEnv set, which makes this module write one frame per event on
+// stdout (internal/test_runner/run_frames). The parent finds the frames in the
+// raw stdout bytes; every other stdout/stderr line becomes test:stdout/test:stderr,
+// the same split node makes around its V8-serializer framing.
 // -----------------------------------------------------------------------------
 
 // node's own tests branch on NODE_TEST_CONTEXT to tell the parent from the
 // spawned child, so use node's variable and value rather than a bun-specific one.
 const kRunChildEnv = "NODE_TEST_CONTEXT";
 const kRunChildEnvValue = "child-v8";
-const kRunEventPrefix = "\0bun:test:run\0";
 
 // Created lazily on the first run() call so the common test()/describe()
 // path never loads node:stream.
@@ -119,9 +119,6 @@ function getTestsStreamClass() {
     }
     summary(data: unknown) {
       this.#emit("test:summary", data);
-    }
-    republish(type: string, data: unknown) {
-      this.#emit(type, data);
     }
 
     endStream() {
@@ -505,43 +502,12 @@ async function runOneFile(
     // loop is still suspended on I/O, before the finally's .catch attaches.
     drainStderr.catch(() => {});
 
-    const handleStdoutLine = (line: string) => {
-      if (line.length === 0) return;
-      // bun:test's own reporter can leave an unterminated line, so the marker is
-      // not always at column 0; take everything from the marker on.
-      const marker = line.indexOf(kRunEventPrefix);
-      if (marker === -1) {
-        reporter.stdout({ __proto__: null, file: absolute, message: line + "\n" });
-        return;
-      }
-      if (marker > 0) {
-        const before = line.slice(0, marker).trimEnd();
-        if (before.length > 0) {
-          reporter.stdout({ __proto__: null, file: absolute, message: before + "\n" });
-        }
-      }
-      let event;
-      try {
-        event = JSON.parse(line.slice(marker + kRunEventPrefix.length));
-      } catch {
-        return;
-      }
-      if (event == null || typeof event.data !== "object" || event.data === null) return;
-      republishChildEvent(event, absolute, reporter, fileCounts);
-    };
-
-    const decoder = new TextDecoder();
-    let carry = "";
-    for await (const chunk of proc.stdout as any) {
-      carry += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
-      let nl;
-      while ((nl = carry.indexOf("\n")) !== -1) {
-        const line = carry.slice(0, nl);
-        carry = carry.slice(nl + 1);
-        handleStdoutLine(line);
-      }
-    }
-    if (carry.length > 0) handleStdoutLine(carry);
+    const output = require("internal/test_runner/run_frames").createRunOutputDecoder(
+      (message: string) => reporter.stdout({ __proto__: null, file: absolute, message }),
+      (event: { type: string; data: any }) => republishChildEvent(event, absolute, reporter, fileCounts),
+    );
+    for await (const chunk of proc.stdout as any) output.write(chunk);
+    output.end();
 
     await drainStderr;
     const exitCode = await proc.exited;
@@ -609,7 +575,11 @@ async function runOneFile(
 
 function rebuildError(serialized: any, depth = 0): Error {
   const { message, stack, name, code, failureType, cause } = serialized;
-  const error = new Error(message);
+  // A test can fail with an error whose `message` is an object, and Error()
+  // throws on one that has no string form.
+  const messageIsObject = typeof message === "object" && message !== null;
+  const error = new Error(messageIsObject ? undefined : message);
+  if (messageIsObject) error.message = message;
   error.stack = stack;
   if (name !== undefined && name !== "Error") error.name = name;
   if (code !== undefined) (error as any).code = code;
@@ -658,18 +628,16 @@ function republishChildEvent(
     delete data.type;
     if (type === "test:pass") reporter.pass(data);
     else reporter.fail(data);
-    return;
   }
-  reporter.republish(type, data);
 }
 
-// Child side: with kRunChildEnv set, stream one JSON event per line so the
+// Child side: with kRunChildEnv set, write one frame per event on stdout so the
 // spawning parent can rebuild node's event stream.
 const runChildReporterEnabled = process.env[kRunChildEnv] !== undefined;
 
-function emitRunChildEvent(type: string, data: unknown) {
+function emitRunChildEvent(type: string, data: Record<string, unknown>) {
   try {
-    process.stdout.write(kRunEventPrefix + JSON.stringify({ type, data }) + "\n");
+    require("internal/test_runner/run_frames").writeRunFrame(type, data);
   } catch {}
 }
 

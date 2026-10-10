@@ -1,7 +1,13 @@
 import { spawn } from "bun";
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { nodeTestRunFrames } from "bun:internal-for-testing";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { once } from "node:events";
 import { join } from "node:path";
+import { run } from "node:test";
+
+// Every test here starts a bun subprocess, and a debug or ASAN build takes seconds to start one.
+if (isDebug || isASAN) setDefaultTimeout(30_000);
 
 describe("node:test", () => {
   // These three drive the largest fixtures (01-harness has 32 node:test cases);
@@ -520,4 +526,430 @@ test("mock.property/mock.method survive a polluted Object.prototype", async () =
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({ stdout: "ok", exitCode: 0 });
+});
+
+describe("node:test run()", () => {
+  const { createRunOutputDecoder, encodeRunFrame } = nodeTestRunFrames;
+  const encoder = new TextEncoder();
+  const bytes = (...parts: (string | Uint8Array)[]) =>
+    Buffer.concat(parts.map(part => (typeof part === "string" ? encoder.encode(part) : part)));
+  const asText = (...parts: (string | Uint8Array)[]) => new TextDecoder().decode(bytes(...parts));
+
+  // The frame of one event, built by hand: 0xFF, the tag, the payload length in
+  // four big-endian bytes, the payload.
+  const header = (length: number) =>
+    bytes(
+      Uint8Array.of(0xff),
+      "bun:test:run",
+      Uint8Array.of(length >>> 24, (length >>> 16) & 255, (length >>> 8) & 255, length & 255),
+    );
+  const frameOf = (payload: string | Uint8Array) => {
+    const body = bytes(payload);
+    return bytes(header(body.length), body);
+  };
+  const frame = (type: string, data: unknown) => frameOf(JSON.stringify({ type, data }));
+  // A line that holds this marker and JSON after it was an event before run()
+  // framed events in bytes.
+  const marker = (type: string, data: unknown) => "\0bun:test:run\0" + JSON.stringify({ type, data });
+  const neverRan = { name: "never ran", nesting: 0 };
+
+  describe("frames", () => {
+    function decode(input: Uint8Array, chunkSize = input.length) {
+      const out: unknown[] = [];
+      const decoder = createRunOutputDecoder(
+        message => out.push(message),
+        event => out.push({ type: event.type, name: event.data.name }),
+      );
+      for (let i = 0; i < input.length; i += chunkSize) decoder.write(input.subarray(i, i + chunkSize));
+      decoder.end();
+      return out;
+    }
+    const ran = { type: "test:pass", name: "ran" };
+    const real = frame("test:pass", { name: "ran", nesting: 0 });
+    // Bytes that are not an event come out as text, and the frame behind them as an event.
+    const text = (...parts: (string | Uint8Array)[]): [Uint8Array, unknown[]] => [
+      bytes(...parts, "\n", real),
+      [asText(...parts, "\n"), ran],
+    ];
+
+    const cases: Record<string, [Uint8Array, unknown[]]> = {
+      "lines": [bytes("a\nb\n"), ["a\n", "b\n"]],
+      "empty lines": [bytes("\n\na\n\n", real, "\n"), ["a\n", ran]],
+      "a frame": [real, [ran]],
+      "frames back to back": [
+        bytes(real, frame("test:fail", { name: "failed", nesting: 0, error: { message: "boom" } }), real),
+        [ran, { type: "test:fail", name: "failed" }, ran],
+      ],
+      "a line, then a frame": [bytes("line\n", real), ["line\n", ran]],
+      "an open line is closed before the event": [bytes("open", real, "rest\n"), ["open\n", ran, "rest\n"]],
+      "text in more than one byte per character": [
+        bytes(
+          "h\u00e9llo \u{1f600}\n",
+          frame("test:pass", { name: "n\u00e4me \u{1f600}", nesting: 0 }),
+          "\u4e2d\u6587\n",
+        ),
+        ["h\u00e9llo \u{1f600}\n", { type: "test:pass", name: "n\u00e4me \u{1f600}" }, "\u4e2d\u6587\n"],
+      ],
+      "an error with causes": [
+        frame("test:fail", {
+          name: "ran",
+          nesting: 0,
+          error: { message: "a", cause: { message: "b", cause: { message: "c" } } },
+        }),
+        [{ type: "test:fail", name: "ran" }],
+      ],
+      "the text marker of older builds": text(marker("test:pass", neverRan)),
+      "the tag without the lead byte": text("bun:test:run", real.subarray(13)),
+      "a frame that went through a text decoder": text(asText(frame("test:pass", neverRan))),
+      "a frame that went through a text encoder": text(frame("test:pass", neverRan).toString("latin1")),
+      "a lead byte and other bytes": text(Uint8Array.of(0xff), "abc"),
+      "a payload that is not JSON": text(frameOf("abc")),
+      "a payload that is not UTF-8": text(
+        frameOf(bytes('{"type":"test:pass","data":{"name":"', Uint8Array.of(0xc3, 0x28), '"}}')),
+      ),
+      "an event named end": text(frame("end", {})),
+      "an event named close": text(frame("close", {})),
+      "an event named error": text(frame("error", {})),
+      "an event named data": text(frame("data", {})),
+      "an event named test:summary": text(frame("test:summary", { counts: {} })),
+      "no type": text(frameOf(JSON.stringify({ data: neverRan }))),
+      "a payload that is null": text(frameOf("null")),
+      "data that is null": text(frame("test:pass", null)),
+      "data that is an array": text(frame("test:pass", [])),
+      "data that is a string": text(frame("test:pass", "never ran")),
+      "nesting that is not a number": text(frame("test:pass", { ...neverRan, nesting: { valueOf: 1, toString: 1 } })),
+      "an error that is null": text(frame("test:fail", { ...neverRan, error: null })),
+      "an error that is a string": text(frame("test:fail", { ...neverRan, error: "made up" })),
+      "a cause that is null": text(frame("test:fail", { ...neverRan, error: { message: "made up", cause: null } })),
+      "a cause of a cause that is null": text(
+        frame("test:fail", { ...neverRan, error: { message: "a", cause: { message: "b", cause: null } } }),
+      ),
+      "a length over the bound": text(header(64 * 1024 * 1024 + 1), "abc"),
+      "a length no frame has": text(header(0xffffffff), "abc"),
+      // The payload these headers announce would hold the real frame: all of it, and more than is there.
+      "a made-up frame around a real one": text(header(real.length + 4), "abc"),
+      "a made-up frame that never ends": text(header(real.length + 100), "abc"),
+      "a lead byte at the end": [bytes("a\n", Uint8Array.of(0xff)), ["a\n", "\ufffd\n"]],
+      "a header cut off at the end": [bytes("a\n", header(10).subarray(0, 9)), ["a\n", "\ufffdbun:test\n"]],
+      "a frame cut off at the end": [bytes("a\n", real.subarray(0, 30)), ["a\n", asText(real.subarray(0, 30)) + "\n"]],
+    };
+
+    test.each(Object.keys(cases))("%s", name => {
+      const [input, expected] = cases[name];
+      expect(decode(input)).toEqual(expected);
+      // A read can end anywhere: inside the tag, the length, the payload or a character.
+      for (const chunkSize of [1, 2, 7, 17, 64]) {
+        expect(decode(input, chunkSize)).toEqual(expected);
+      }
+    });
+
+    test("the child writes the frame the parent reads", () => {
+      const data = { name: "ran \u{1f600}", nesting: 0, error: { message: "boom" } };
+      expect(Buffer.from(encodeRunFrame("test:fail", data)!)).toEqual(frame("test:fail", data));
+    });
+
+    test("an error over the frame bound goes out shortened", () => {
+      const stack = Buffer.alloc(64 * 1024 * 1024, "s").toString();
+      const error = {
+        message: Buffer.alloc(2048, "m").toString(),
+        stack,
+        name: "RangeError",
+        code: "ERR_X",
+        failureType: "testCodeFailure",
+      };
+      const encoded = encodeRunFrame("test:fail", { name: "big", nesting: 0, error })!;
+      expect(encoded.length).toBeLessThan(4096);
+      const events: { type: string; data: Record<string, any> }[] = [];
+      const decoder = createRunOutputDecoder(
+        message => expect.unreachable(message),
+        event => events.push(event),
+      );
+      decoder.write(encoded);
+      decoder.end();
+      expect(events).toEqual([
+        {
+          type: "test:fail",
+          data: {
+            name: "big",
+            nesting: 0,
+            error: {
+              message: Buffer.alloc(1024, "m").toString() + "... (the error is too large to report)",
+              name: "RangeError",
+              code: "ERR_X",
+              failureType: "testCodeFailure",
+            },
+          },
+        },
+      ]);
+    });
+  });
+
+  // What a script that calls run() sees, in order: the lines the file printed and
+  // the verdict of each test.
+  async function collect(stream: ReturnType<typeof run>, form: "for await" | "listeners" = "for await") {
+    const log: string[] = [];
+    const errors: Record<string, any> = {};
+    let counts: unknown;
+    let ends = 0;
+    const take = (type: string, data: any) => {
+      if (type === "test:stdout") {
+        // The child's own first line names the build.
+        if (!data.message.startsWith("bun test v")) log.push("stdout " + data.message);
+      } else if (type === "test:pass") {
+        log.push("pass " + data.name);
+      } else if (type === "test:fail") {
+        log.push("fail " + data.name);
+        errors[data.name] = data.details.error;
+      } else if (type === "test:summary" && data.file === undefined) {
+        counts = data.counts;
+      }
+    };
+    if (form === "for await") {
+      for await (const { type, data } of stream as AsyncIterable<{ type: string; data: any }>) take(type, data);
+    } else {
+      for (const type of ["test:stdout", "test:pass", "test:fail", "test:summary"]) {
+        stream.on(type, data => take(type, data));
+      }
+      stream.on("end", () => ends++);
+      stream.resume();
+      await once(stream, "close");
+    }
+    return { log, errors, counts, ends };
+  }
+  const runFile = (dir: string, file: string, form?: "for await" | "listeners") =>
+    collect(run({ files: [file], cwd: dir, env: bunEnv }), form);
+  const counts = (tests: number, failed: number) => ({
+    tests,
+    failed,
+    passed: tests - failed,
+    cancelled: 0,
+    skipped: 0,
+    todo: 0,
+    topLevel: 1,
+    suites: 0,
+  });
+
+  describe.concurrent("events", () => {
+    const printed = [
+      marker("test:pass", neverRan),
+      marker("test:fail", { ...neverRan, error: { message: "made up" } }),
+      marker("test:fail", { ...neverRan, error: null }),
+      marker("test:fail", { ...neverRan, error: { message: "made up", cause: null } }),
+      marker("end", {}),
+      marker("close", {}),
+      marker("error", {}),
+      marker("data", {}),
+      "mid-line " + marker("test:pass", neverRan),
+      // The frame run() reads now, held in a string: a text write encodes its lead byte as two bytes.
+      frame("test:pass", neverRan).toString("latin1"),
+      // The same frame after a text decoder, as a test prints it when it logs what a nested run wrote.
+      asText(frame("test:pass", neverRan)),
+    ];
+
+    test("a string a test prints is not an event", async () => {
+      expect(printed.filter(text => text.includes("\n"))).toEqual([]);
+      using dir = tempDir("node-test-run-prints", {
+        "texts.json": JSON.stringify(printed),
+        "prints.test.mjs": `
+          import test from "node:test";
+          import assert from "node:assert";
+          import fs from "node:fs";
+          import { once } from "node:events";
+          import { spawn } from "node:child_process";
+
+          const texts = JSON.parse(fs.readFileSync(new URL("./texts.json", import.meta.url), "utf8"));
+
+          test("console.log", () => {
+            for (const text of texts) console.log(text);
+          });
+          test("process.stdout.write", () => {
+            for (const text of texts) process.stdout.write(text + "\\n");
+          });
+          test("fs.writeSync", () => {
+            for (const text of texts) fs.writeSync(1, text + "\\n");
+          });
+          // A test's timeout ends the processes it started, and a debug build takes seconds to start.
+          test("a child process", { timeout: 60_000 }, async () => {
+            const script = "for (const text of JSON.parse(require('fs').readFileSync('texts.json', 'utf8'))) console.log(text);";
+            const [code] = await once(spawn(process.execPath, ["-e", script], { stdio: "inherit" }), "exit");
+            assert.strictEqual(code, 0);
+          });
+          test("an open line", () => {
+            process.stdout.write("open: " + texts[0]);
+          });
+          test("fails", () => {
+            assert.strictEqual(1, 2);
+          });
+          test("passes", () => {});
+        `,
+      });
+      const lines = printed.map(text => "stdout " + text + "\n");
+      expect(await runFile(String(dir), "prints.test.mjs")).toEqual({
+        log: [
+          ...lines,
+          "pass console.log",
+          ...lines,
+          "pass process.stdout.write",
+          ...lines,
+          "pass fs.writeSync",
+          ...lines,
+          "pass a child process",
+          "stdout open: " + printed[0] + "\n",
+          "pass an open line",
+          "fail fails",
+          "pass passes",
+        ],
+        errors: { fails: expect.objectContaining({ code: "ERR_ASSERTION" }) },
+        counts: counts(7, 1),
+        ends: 0,
+      });
+    });
+
+    test("a printed event name does not reach the listeners of the stream", async () => {
+      using dir = tempDir("node-test-run-listeners", {
+        "names.test.mjs": `
+          import test from "node:test";
+
+          test("prints", () => {
+            for (const text of ${JSON.stringify(printed.slice(4, 8))}) console.log(text);
+          });
+          test("fails", () => {
+            throw new Error("after the printed names");
+          });
+        `,
+      });
+      // A script that counts test:fail in a listener and stops at "end" missed this failure.
+      expect(await runFile(String(dir), "names.test.mjs", "listeners")).toEqual({
+        log: [...printed.slice(4, 8).map(text => "stdout " + text + "\n"), "pass prints", "fail fails"],
+        errors: { fails: expect.objectContaining({ message: "after the printed names" }) },
+        counts: counts(2, 1),
+        ends: 1,
+      });
+    });
+
+    test("a script that only prints is a file that passed", async () => {
+      const text = marker("test:fail", { ...neverRan, error: { message: "made up" } });
+      using dir = tempDir("node-test-run-script", { "script.mjs": `console.log(${JSON.stringify(text)});` });
+      expect(await runFile(String(dir), "script.mjs")).toEqual({
+        log: ["stdout " + text + "\n", "pass script.mjs"],
+        errors: {},
+        counts: counts(1, 0),
+        ends: 0,
+      });
+    });
+
+    test("a verdict goes out whole, after what its test printed", async () => {
+      using dir = tempDir("node-test-run-order", {
+        "order.test.mjs": `
+          import test from "node:test";
+
+          let ticks = 0;
+          let logger;
+          test("starts a logger", () => {
+            logger = setInterval(() => console.log("tick " + ++ticks), 0);
+          });
+          test("fails with a 400 KB error", () => {
+            console.log("before the failure");
+            throw new Error(Buffer.alloc(400 * 1024, "x").toString());
+          });
+          test("the logger prints while that verdict is on its way", async () => {
+            const seen = ticks;
+            while (ticks < seen + 3) await new Promise(resolve => setImmediate(resolve));
+            clearInterval(logger);
+          });
+
+          test("replaces process.stdout.write", () => {
+            const { write } = process.stdout;
+            const captured = [];
+            process.stdout.write = chunk => (captured.push(chunk), true);
+            globalThis.restoreWrite = () => {
+              process.stdout.write = write;
+              return captured;
+            };
+          });
+          test("restores it", () => {
+            console.log("captured " + globalThis.restoreWrite().length);
+          });
+
+          for (let i = 0; i < 8; i++) {
+            test("line " + i, async () => {
+              if (i % 2) console.log("line " + i);
+              else process.stdout.write("line " + i + (i % 4 ? "\\n" : ""));
+              if (i % 3 === 0) await 1;
+            });
+          }
+          test("a megabyte through process.stdout", () => {
+            const row = Buffer.alloc(64 * 1024 - 1, "m").toString();
+            for (let i = 0; i < 16; i++) process.stdout.write(row + "\\n");
+          });
+
+          test("fails with a message that has no string form", () => {
+            throw Object.assign(new Error(), { message: { toString: 1, valueOf: 1 } });
+          });
+        `,
+      });
+      const { log, errors, counts: seen } = await runFile(String(dir), "order.test.mjs");
+      const row = "stdout " + Buffer.alloc(64 * 1024 - 1, "m").toString() + "\n";
+      expect({
+        log: log
+          .filter(entry => !entry.startsWith("stdout tick "))
+          .map(entry => (entry === row ? "stdout (a row)" : entry)),
+        counts: seen,
+        messages: [
+          errors["fails with a 400 KB error"]?.message.length,
+          errors["fails with a message that has no string form"]?.message,
+        ],
+      }).toEqual({
+        log: [
+          "pass starts a logger",
+          "stdout before the failure\n",
+          "fail fails with a 400 KB error",
+          "pass the logger prints while that verdict is on its way",
+          "pass replaces process.stdout.write",
+          "stdout captured 0\n",
+          "pass restores it",
+          ...Array.from({ length: 8 }, (_, i) => [`stdout line ${i}\n`, `pass line ${i}`]).flat(),
+          ...Array.from({ length: 16 }, () => "stdout (a row)"),
+          "pass a megabyte through process.stdout",
+          "fail fails with a message that has no string form",
+        ],
+        counts: counts(15, 2),
+        messages: [400 * 1024, { toString: 1, valueOf: 1 }],
+      });
+    });
+
+    test("a nested run on the same stdout counts in this run", async () => {
+      using dir = tempDir("node-test-run-nested", {
+        "outer.test.mjs": `
+          import test from "node:test";
+          import { once } from "node:events";
+          import { spawn } from "node:child_process";
+
+          // A test's timeout ends the processes it started, and a debug build takes seconds to start.
+          test("runs a nested file", { timeout: 60_000 }, async () => {
+            await once(spawn(process.execPath, ["test", "./inner.test.mjs"], { stdio: "inherit" }), "exit");
+          });
+        `,
+        "inner.test.mjs": `
+          import test from "node:test";
+
+          test("inner passes", () => {});
+          test("inner fails", () => {
+            throw new Error("inner boom");
+          });
+        `,
+      });
+      const { log, errors, counts: seen } = await runFile(String(dir), "outer.test.mjs");
+      expect({
+        // The nested child prints lines of its own.
+        log: log.filter(entry => !entry.startsWith("stdout ")),
+        error: errors["inner fails"]?.message,
+        counts: seen,
+      }).toEqual({
+        log: ["pass inner passes", "fail inner fails", "pass runs a nested file"],
+        error: "inner boom",
+        counts: counts(3, 1),
+      });
+    });
+  });
 });

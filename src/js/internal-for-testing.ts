@@ -845,6 +845,15 @@ export const fileSinkInternals = {
   liveCount: $newRustFunction("runtime/webcore/FileSink.rs", "TestingAPIs.fileSinkLiveCount", 0) as () => number,
 };
 
+// node:test run(): the frames a child writes on stdout and the parent's decoder.
+export const nodeTestRunFrames: {
+  encodeRunFrame(type: string, data: Record<string, unknown>): Uint8Array | undefined;
+  createRunOutputDecoder(
+    onText: (message: string) => void,
+    onEvent: (event: { type: string; data: Record<string, any> }) => void,
+  ): { write(chunk: Uint8Array): void; end(): void };
+} = require("internal/test_runner/run_frames");
+
 export const byteStreamInternals = {
   // Swap a ByteStream-backed stream's producer for one whose drain signal
   // re-enters on_cancel, making consumed-during-signal_drained re-entrancy

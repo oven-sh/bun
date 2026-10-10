@@ -1003,6 +1003,47 @@ impl FileSink {
         sys::Result::Ok(())
     }
 
+    /// Pushes every queued byte to the fd and waits while the fd is full. For a
+    /// caller that is about to write the same fd directly: what it writes must
+    /// not overtake the queue.
+    ///
+    /// # Safety
+    /// `this` must be the canonical live `*mut FileSink` (see
+    /// [`on_attached_process_exit`](Self::on_attached_process_exit)).
+    #[cfg(unix)]
+    pub(crate) unsafe fn flush_blocking(this: *mut FileSink) {
+        use bun_io::pipe_writer::PosixPipeWriter;
+        // SAFETY: caller contract — `this` is live with write+dealloc provenance.
+        unsafe {
+            // The drain settles a pending write, which can drop the JS wrapper's
+            // ref (same pattern as `on_write`).
+            let _guard = RefPtr::init_ref(this);
+            loop {
+                let queued = (*this).writer.get().buffered_len();
+                let fd = PosixPipeWriter::get_fd((*this).writer.get());
+                if queued == 0 || fd == Fd::INVALID {
+                    break;
+                }
+                let mut pollfd = [sys::posix::PollFd {
+                    fd: fd.native(),
+                    events: sys::posix::POLL_OUT,
+                    revents: 0,
+                }];
+                if sys::posix::poll(&mut pollfd, -1).is_err() {
+                    break;
+                }
+                // What the event loop runs when the fd turns writable. Raw, like
+                // the poll dispatch: the callbacks re-enter through the backref.
+                let writer: *mut IOWriter = (*this).writer.as_ptr();
+                (*writer).on_poll(0, false);
+                // An error or a close leaves the queue as it was.
+                if (*this).writer.get().buffered_len() >= queued {
+                    break;
+                }
+            }
+        }
+    }
+
     pub(crate) fn flush_from_js(
         &self,
         cx: &bun_jsc::JsThread<'_>,

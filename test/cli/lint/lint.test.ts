@@ -5197,24 +5197,30 @@ describe.concurrent("a lint script in package.json", () => {
   });
 
   // `bun run` has that directory in PATH.
-  test.skipIf(isWindows)("an executable of that name beside package.json wins over the linter, further down too", async () => {
-    using dir = tempDir("bun-lint-name", {
-      ...files,
-      "package.json": "{}",
-      "lint": `#!/bin/sh\necho the executable\n`,
-      "sub/b.js": "debugger;\n",
-    });
-    chmodSync(join(String(dir), "lint"), 0o755);
-    const cwd = join(String(dir), "sub");
-    await using proc = spawn({ cmd: [bunExe(), "lint"], env, cwd, stdout: "pipe", stderr: "pipe" });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout.trim()).toBe("the executable");
-    expect(exitCode).toBe(0);
-  });
+  test.skipIf(isWindows)(
+    "an executable of that name beside package.json wins over the linter, further down too",
+    async () => {
+      using dir = tempDir("bun-lint-name", {
+        ...files,
+        "package.json": "{}",
+        "lint": `#!/bin/sh\necho the executable\n`,
+        "sub/b.js": "debugger;\n",
+      });
+      chmodSync(join(String(dir), "lint"), 0o755);
+      const cwd = join(String(dir), "sub");
+      await using proc = spawn({ cmd: [bunExe(), "lint"], env, cwd, stdout: "pipe", stderr: "pipe" });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout.trim()).toBe("the executable");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test("--cwd lint lint: the first is a directory", async () => {
     const { "package.json": __, ...rest } = files;
-    using dir = tempDir("bun-lint-name", { "lint/eslint.config.js": rest["eslint.config.js"], "lint/a.js": rest["a.js"] });
+    using dir = tempDir("bun-lint-name", {
+      "lint/eslint.config.js": rest["eslint.config.js"],
+      "lint/a.js": rest["a.js"],
+    });
     const cmd = [bunExe(), "--cwd", "lint", "lint", "-f", "unix"];
     await using proc = spawn({ cmd, env, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
     const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
@@ -6966,6 +6972,141 @@ describe.concurrent("nativePluginRules", () => {
     },
     timeout,
   );
+
+  // eslint-plugin-import-lite, which @antfu/eslint-config has as `import`, has no `meta`. Neither has eslint-plugin-react.
+  describe("a plugin that says no name is the package that it was loaded from", () => {
+    /** As `standIn`, without `meta`. The first rule takes one of two words that the rule of eslint-plugin-import does not know. */
+    const nameless = (name: string, rules: string[]) => ({
+      [`node_modules/${name}/package.json`]: JSON.stringify({ name, version: "99.0.0", main: "index.js" }),
+      [`node_modules/${name}/index.js`]: `module.exports = {
+        rules: Object.fromEntries(${JSON.stringify(rules)}.map((rule, at) => [rule, {
+          meta: { schema: at === 0 ? [{ enum: ["top-level", "inline"] }] : [] },
+          create: context => ({ Program(node) { context.report({ node, message: "the package ran" }); } }),
+        }])),
+      };\n`,
+    });
+    const config = (prefix: string, name: string, rules: object) => ({
+      "eslint.config.js": `module.exports = [{
+        languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },
+        plugins: { ${prefix}: require("${name}") },
+        rules: ${JSON.stringify(rules)},
+      }];`,
+    });
+    const code = {
+      "a.js": `foo();\nimport b from "./b.js";\nexport const a = [<b />];\n`,
+      "b.js": "export default 1;\n",
+    };
+
+    test.each([
+      ["import", "eslint-plugin-import-lite", "package"],
+      ["import", "eslint-plugin-import", "built in"],
+    ] as const)(
+      "%s: %s",
+      async (prefix, name, who_) => {
+        const rules = { "import/consistent-type-specifier-style": ["error", "top-level"], "import/first": "error" };
+        const files = {
+          ...nameless(name, ["consistent-type-specifier-style", "first"]),
+          ...config(prefix, name, rules),
+          ...code,
+        };
+        const answer = await who(files);
+        expect(answer).toEqual(
+          who_ === "package"
+            ? { "import/consistent-type-specifier-style": "package", "import/first": "package" }
+            : // The word is not one of eslint-plugin-import's.
+              { stderr: expect.stringContaining(`Key "import/consistent-type-specifier-style"`), exitCode: 2 },
+        );
+      },
+      timeout,
+    );
+
+    test(
+      "react: eslint-plugin-react",
+      async () => {
+        const files = {
+          ...nameless("eslint-plugin-react", ["other", "jsx-key"]),
+          ...config("react", "eslint-plugin-react", { "react/jsx-key": "error" }),
+          ...code,
+        };
+        expect(await who(files)).toEqual({ "react/jsx-key": "built in" });
+      },
+      timeout,
+    );
+
+    test(
+      "a comment that names a rule which only the other package has",
+      async () => {
+        const files = {
+          ...nameless("eslint-plugin-import-lite", ["consistent-type-specifier-style", "first"]),
+          ...config("import", "eslint-plugin-import-lite", {}),
+          "a.js": "// eslint-disable-next-line import/no-unresolved\nexport {};\n",
+        };
+        const { raw } = await lint(files, ["-f", "json", "a.js"], { mayFail: true });
+        expect((JSON.parse(raw)[0].messages as any[]).map(it => it.message)).toEqual([
+          "Definition for rule 'import/no-unresolved' was not found.",
+        ]);
+      },
+      timeout,
+    );
+
+    const first = { "import/first": "error" };
+    test(
+      "the last node_modules of the path counts: the store of pnpm",
+      async () => {
+        const inStore = (name: string) => `.pnpm/${name}@1.0.0/node_modules/${name}`;
+        const run = (name: string) =>
+          who({
+            ...nameless(inStore(name), ["other", "first"]),
+            ...config("import", `./node_modules/${inStore(name)}`, first),
+            ...code,
+          });
+        expect(await Promise.all([run("eslint-plugin-import-lite"), run("eslint-plugin-import")])).toEqual([
+          { "import/first": "package" },
+          { "import/first": "built in" },
+        ]);
+      },
+      timeout,
+    );
+
+    test(
+      "a package that only hands the object on is not what it was loaded from",
+      async () => {
+        const run = (name: string) =>
+          who({
+            ...nameless(name, ["other", "first"]),
+            "node_modules/shared/package.json": `{ "name": "shared", "main": "index.js" }`,
+            "node_modules/shared/index.js": `exports.plugin = require("${name}");\n`,
+            ...config("import", "shared", first),
+            "eslint.config.js": config("import", "shared", first)["eslint.config.js"].replace(
+              `require("shared")`,
+              `require("shared").plugin`,
+            ),
+            ...code,
+          });
+        expect(await Promise.all([run("eslint-plugin-import-lite"), run("eslint-plugin-import")])).toEqual([
+          { "import/first": "package" },
+          { "import/first": "built in" },
+        ]);
+      },
+      timeout,
+    );
+
+    test(
+      "an object that is written in the configuration file goes by its prefix",
+      async () => {
+        const files = {
+          "eslint.config.js": `module.exports = [{
+            plugins: { import: { rules: { first: { create: context => ({ Program(node) { context.report({ node, message: "the package ran" }); } }) } } } },
+            rules: ${JSON.stringify(first)},
+          }];`,
+          "a.js": `foo();\nimport b from "./b.js";\nb;\n`,
+          "b.js": code["b.js"],
+        };
+        expect(await who(files)).toEqual({ "import/first": "built in" });
+      },
+      timeout,
+    );
+  });
 
   // `plugins` of an .oxlintrc.json names what is built into oxlint, and what `jsPlugins` names runs in JavaScript anyway.
   test(

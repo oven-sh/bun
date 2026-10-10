@@ -93,14 +93,37 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
         unsafe { &*(&raw const self.buffer[0..len] as *const [T]) }
     }
 
-    /// Adjust the slice's length to `len`.
-    /// Does not initialize added items if any.
+    /// Shrink the slice's length to `len`, dropping the truncated elements.
+    ///
+    /// Returns `Overflow` if `len` is greater than the current length: growing would
+    /// expose uninitialized elements as `T` through the safe slice views. To grow, use
+    /// `append`/`append_slice`, or `unused_capacity_slice` + [`Self::set_len_unchecked`].
     pub fn resize(&mut self, len: usize) -> Result<(), OverflowError> {
-        if len > BUFFER_CAPACITY {
+        let old_len = self.len;
+        if len > old_len {
             return Err(OverflowError::Overflow);
         }
         self.len = len;
+        // SAFETY: `[len..old_len]` is initialized; `len` reset first so a panicking Drop
+        // can't double-drop (same pattern as `clear`).
+        unsafe {
+            core::ptr::drop_in_place(&raw mut self.buffer[len..old_len] as *mut [T]);
+        }
         Ok(())
+    }
+
+    /// Set `len` directly without touching the buffer (e.g. after writing into
+    /// `unused_capacity_slice`).
+    ///
+    /// # Safety
+    /// - `len <= BUFFER_CAPACITY`.
+    /// - If growing, the elements at `[old_len..len]` must already be initialized with
+    ///   valid `T`s, as for `Vec::set_len`: every method (including `Drop`) assumes
+    ///   `[0..len]` is initialized. (Shrinking this way leaks the truncated tail
+    ///   instead of dropping it; use `resize` for that.)
+    pub unsafe fn set_len_unchecked(&mut self, len: usize) {
+        debug_assert!(len <= BUFFER_CAPACITY);
+        self.len = len;
     }
 
     /// Remove all elements from the slice.
@@ -149,8 +172,9 @@ impl<T, const BUFFER_CAPACITY: usize> BoundedArrayAligned<T, BUFFER_CAPACITY> {
 
     /// Return a slice of only the extra capacity after items.
     /// This can be useful for writing directly into it.
-    /// Note that such an operation must be followed up with a
-    /// call to `resize()`
+    /// Note that such an operation must be followed up with a call to
+    /// [`Self::set_len_unchecked`] to commit the new length; `resize` is
+    /// shrink-only so it cannot be used here.
     pub fn unused_capacity_slice(&mut self) -> &mut [MaybeUninit<T>] {
         &mut self.buffer[self.len..]
     }

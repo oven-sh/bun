@@ -151,9 +151,8 @@ export const libarchive: Dependency = {
 // config.h — replaces cmake's feature-detection pass
 // ───────────────────────────────────────────────────────────────────────────
 //
-// Mirrors the relevant subset of build/cmake/config.h.in for our four
-// targets (linux-gnu, linux-musl, darwin, windows). Anything not defined
-// here makes libarchive take its portable fallback.
+// Mirrors the relevant subset of build/cmake/config.h.in for each target.
+// Anything not defined here makes libarchive take its portable fallback.
 //
 // Deliberately omitted regardless of host:
 //   - HAVE_{BZLIB,LZMA,LZ4,ZSTD,OPENSSL,NETTLE,MBEDTLS,ICONV,LIBXML2,EXPAT,
@@ -164,8 +163,10 @@ export const libarchive: Dependency = {
 //     points, so the extra code was dead-stripped anyway.
 //
 // If a libarchive bump adds a new HAVE_* check, the worst case is a missed
-// optimization. The two cases that fail loudly are SIZEOF_LONG/WCHAR_T and
-// the struct-stat-nsec field name — both pinned per-target below.
+// optimization. A bump that renames one is the same miss and leaves the old
+// name defined with no reader, so diff config.h.in against the names below.
+// The two cases that fail loudly are SIZEOF_LONG/WCHAR_T and the
+// struct-stat-nsec field name — both pinned per-target below.
 
 const def1 = (names: string[]) => names.map(n => `#define ${n} 1`).join("\n");
 
@@ -188,7 +189,7 @@ const ALWAYS = def1([
   "HAVE_ZLIB_H",
 ]);
 
-// POSIX: every non-Windows target (linux glibc, linux musl, darwin).
+// POSIX: every non-Windows target.
 // prettier-ignore
 const POSIX = def1([
   "HAVE_DECL_SSIZE_MAX", "HAVE_DECL_STRERROR_R",
@@ -230,6 +231,8 @@ const LINUX = def1([
 
 // FreeBSD: BSD-style stat (st_mtim, st_flags, st_birthtim), extattr_* xattr
 // API, chflags family. No <sys/xattr.h> — extattr lives in <sys/extattr.h>.
+// The birthtime macros follow libarchive's spelling (the st_birthtime and
+// st_birthtimespec aliases <sys/stat.h> puts over st_birthtim), not the field's.
 // prettier-ignore
 const FREEBSD = def1([
   "HAVE_ARC4RANDOM_BUF",
@@ -238,8 +241,8 @@ const FREEBSD = def1([
   "HAVE_LCHMOD", "HAVE_LCHFLAGS", "HAVE_CHFLAGS", "HAVE_FCHFLAGS",
   "HAVE_EXTATTR_GET_FILE", "HAVE_EXTATTR_LIST_FILE", "HAVE_EXTATTR_SET_FD",
   "HAVE_EXTATTR_SET_FILE", "HAVE_DECL_EXTATTR_NAMESPACE_USER",
-  "HAVE_STRUCT_STAT_ST_MTIM_TV_NSEC", "HAVE_STRUCT_STAT_ST_BIRTHTIM",
-  "HAVE_STRUCT_STAT_ST_FLAGS",
+  "HAVE_STRUCT_STAT_ST_MTIM_TV_NSEC", "HAVE_STRUCT_STAT_ST_BIRTHTIME",
+  "HAVE_STRUCT_STAT_ST_BIRTHTIMESPEC_TV_NSEC", "HAVE_STRUCT_STAT_ST_FLAGS",
   "HAVE_READPASSPHRASE", "HAVE_READPASSPHRASE_H",
   "ARCHIVE_XATTR_FREEBSD",
 ]);
@@ -253,7 +256,7 @@ const DARWIN = def1([
   "HAVE_FSTATFS", "HAVE_STATFS", "HAVE_LCHMOD", "HAVE_LCHFLAGS", "HAVE_CHFLAGS",
   "HAVE_FCHFLAGS",
   "HAVE_FGETXATTR", "HAVE_FLISTXATTR", "HAVE_FSETXATTR", "HAVE_GETXATTR",
-  "HAVE_LISTXATTR", "HAVE_SETXATTR",
+  "HAVE_LISTXATTR",
   "HAVE_STRUCT_STAT_ST_MTIMESPEC_TV_NSEC", "HAVE_STRUCT_STAT_ST_BIRTHTIME",
   "HAVE_STRUCT_STAT_ST_BIRTHTIMESPEC_TV_NSEC", "HAVE_STRUCT_STAT_ST_FLAGS",
   "HAVE_STRUCT_STATFS_F_IOSIZE",
@@ -267,9 +270,8 @@ const DARWIN = def1([
 // prettier-ignore
 const WINDOWS = def1([
   "HAVE_IO_H", "HAVE_DIRECT_H", "HAVE_PROCESS_H", "HAVE_SYS_UTIME_H", "HAVE_WINDOWS_H",
-  "HAVE__CTIME64_S", "HAVE__FSEEKI64", "HAVE__GET_TIMEZONE", "HAVE__GMTIME64_S",
-  "HAVE__LOCALTIME64_S", "HAVE__MKGMTIME64",
-  "HAVE_STRNCPY_S", "HAVE_WCSCPY_S", "HAVE_WCSNCPY_S",
+  "HAVE_CTIME_S", "HAVE__FSEEKI64", "HAVE__GET_TIMEZONE", "HAVE_GMTIME_S",
+  "HAVE_LOCALTIME_S",
 ]) + `
 /* POSIX type fallbacks — UCRT's <sys/types.h> doesn't define these.
    Values match cmake's WIN32 branch (CMakeLists.txt CHECK_TYPE_SIZE block). */

@@ -168,9 +168,14 @@ impl<'e> Inferred<'e> {
         }
     }
 
-    /// Called once, before the first file is linted. Nothing is done with them before a file asks.
+    /// Called once, before the first file is linted, and not by a thread of the pool. Where the types are asked for
+    /// every name, every file asks: the request is made here, where it has the pool to itself.
     pub(crate) fn files(&self, paths: Vec<Vec<u8>>) {
+        let is_asked = self.by_options.is_none() && !paths.is_empty();
         let _ = self.paths.set(paths);
+        if is_asked {
+            self.tables.get_or_init(|| self.load_all());
+        }
     }
 
     /// Called once, before the first file is linted. `from`: the directories in which the search for files began. All

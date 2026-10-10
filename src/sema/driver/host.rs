@@ -170,6 +170,9 @@ pub struct Disk {
     /// `take_turns`
     turns: OnceLock<bun_threading::Semaphore>,
     pub(crate) caches: crate::ThreadCaches,
+    /// A thread of the pool has made it. The other threads of the pool can all be waiting for what it is made for, so
+    /// nothing waits for them: not the threads either that the request starts to coordinate its projects.
+    is_of_a_thread_of_the_pool: bool,
     case_sensitive: bool,
     directories: ShardedMap<Vec<u8>, Directory>,
     /// The real path of each directory that was queried.
@@ -439,6 +442,7 @@ impl Disk {
             keeps_byte_order_marks: false,
             shared: Default::default(),
             caches: Default::default(),
+            is_of_a_thread_of_the_pool: !bun_threading::thread_pool::Thread::current().is_null(),
             case_sensitive,
             directories: ShardedMap::default(),
             real_directories: ShardedMap::default(),
@@ -1490,6 +1494,9 @@ impl Host for Disk {
         self.io_pool.as_deref()
     }
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
+        if self.is_of_a_thread_of_the_pool {
+            return crate::for_each_on_this_thread(&self.caches, count, work);
+        }
         // In runs: adjacent paths are in the same directory.
         crate::for_each_parallel_in_turns(
             &self.caches,

@@ -1017,6 +1017,16 @@ export const cases: Case[] = [
     matches: /a\.js:1:1688902: Parsing error: Argument name clash \[Error\]$/m,
     exitCode: 1,
   },
+  {
+    name: "100,000 options of a rule, which have to be unique",
+    isHeavy: true,
+    file: "a.js",
+    text: () => "a;\n",
+    rules: { "id-denylist": ["error", ...Array.from({ length: 100_000 }, (_, i) => `b${i}`)] },
+    eslint: true,
+    reports: {},
+    exitCode: 0,
+  },
   // ── a number in the options that is the length of a text ──
   {
     name: "2 ** 53 empty lines after an import",
@@ -1132,6 +1142,20 @@ export const cases: Case[] = [
       `const a = { b: () => ({ x: 1 }) };\n` +
       seq(60_000, i => `function C${i}(props: ReturnType<typeof a.b>) { return <a/>; }\n`),
     rules: { "react/prop-types": "error" },
+    reports: {},
+    exitCode: 0,
+  },
+  {
+    name: "30,000 statements with this under 1,500 callbacks in a method of a component",
+    isHeavy: true,
+    file: "a.jsx",
+    text: () =>
+      "class A extends React.Component { componentDidMount() {\n" +
+      rep("a(() => {\n", 1_500) +
+      rep("this.setState({}); this.state.b = 1; this.refs.c;\n", 30_000) +
+      rep("});\n", 1_500) +
+      "} render() { return <div />; } }\n",
+    rules: { "react/prop-types": "error", "react/no-this-in-sfc": "error" },
     reports: {},
     exitCode: 0,
   },

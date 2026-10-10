@@ -160,6 +160,22 @@ pub(crate) fn for_each_parallel_in_turns(
     );
 }
 
+pub(crate) fn for_each_on_this_thread(
+    caches: &ThreadCaches,
+    count: usize,
+    work: &(dyn Fn(usize) + Sync),
+) {
+    let region = Region {
+        caches,
+        threads: 1,
+        next: AtomicUsize::new(0),
+        count,
+        run: count.max(1),
+        work,
+    };
+    region.work_off();
+}
+
 static OWN_POOL: OnceLock<bun_threading::ThreadPool> = OnceLock::new();
 
 /// From now on parallel regions run on a pool of their own. For work that waits on its thread for what Bun's pool does:

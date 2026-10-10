@@ -605,13 +605,18 @@ impl<'h> Graph<'h> {
     }
 
     /// What eslint-import-resolver-typescript finds and TypeScript does not: a file by its whole name, whatever that
-    /// ends in, and with `.json` or `.node` behind it. Also through `paths` and `baseUrl`.
-    fn resolve_other_file(&self, config: &[u8], specifier: &[u8], from: &[u8]) -> Option<Vec<u8>> {
+    /// ends in, and with one of `extensions` behind it. Also through `paths` and `baseUrl`.
+    fn resolve_other_file(
+        &self,
+        config: &[u8],
+        (specifier, from): (&[u8], &[u8]),
+        extensions: &[&[u8]],
+    ) -> Option<Vec<u8>> {
         let ProjectResolver {
             resolver, base_url, ..
         } = self.resolver_of(config, directory_of(from));
         let how = AsRequire {
-            extensions: &[b".json", b".node"],
+            extensions,
             module_directories: &[b"node_modules"],
             paths: &[],
             through_paths: true,
@@ -1228,10 +1233,25 @@ impl Modules for Graph<'_> {
                 }
                 let real = self.store.disk().realpath(&from);
                 let configs = self.configs_of_typescript_resolver(projects, &from);
+                // A name that is a file is that file, before anything is added to it. One that ends like a script
+                // can be another script.
+                let name = &specifier
+                    [strings::last_index_of_char(specifier, b'/').map_or(0, |it| it + 1)..];
+                let is_script = ScriptKind::from_file_name(name).is_some();
+                let is_it =
+                    |it: &Vec<u8>| it.strip_suffix(name).is_some_and(|it| it.ends_with(b"/"));
                 let found = configs.iter().find_map(|config| {
+                    let other = |extensions: &[&[u8]]| {
+                        self.resolve_other_file(config, (specifier, &from), extensions)
+                    };
+                    let very = (!is_script && name.len() < specifier.len())
+                        .then(|| other(&[]))
+                        .flatten();
+                    if let Some(very) = very.filter(is_it) {
+                        return Some((Cow::Owned(very), false));
+                    }
                     let found = self.resolve_any_path(config, &real, specifier, is_require);
-                    let other = || self.resolve_other_file(config, specifier, &from);
-                    found.or_else(|| Some((Cow::Owned(other()?), false)))
+                    found.or_else(|| Some((Cow::Owned(other(&[b".json", b".node"])?), false)))
                 });
                 // TypeScript adds neither `.json` nor `.node` to a name. Such a file comes before a directory.
                 let named = join(directory_of(&from), specifier);

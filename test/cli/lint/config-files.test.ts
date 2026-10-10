@@ -3165,6 +3165,71 @@ describe.concurrent("what the configuration asks for and cannot be done", () => 
   });
 });
 
+// As ESLint 10.12 with eslint-plugin-import 2.32.0 and eslint-plugin-react 7.37.5: `" ".repeat(n)` throws beyond the longest string that
+// JavaScript has, 2 ** 29 - 24, and for a negative n: the rule throws, which ends the run. Below that ESLint reports as ever, in a format
+// that does not print the fixes: its `json` throws over them.
+describe.concurrent("a number in the options of a rule that is the length of a text", () => {
+  const indented = "if (a) {\n  b();\n}\n";
+  const element = 'const a = (\n  <b\n    c="d"\n  >\n    <e />\n  </b>\n);\n';
+  const tooLong = "RangeError: Invalid string length";
+  test.each<
+    [rule: string, option: unknown, file: string, text: string, thrown: [error: string, line: number] | string[]]
+  >([
+    ["indent", 2 ** 31, "a.js", indented, [tooLong, 1]],
+    ["indent", 2 ** 53, "a.js", indented, [tooLong, 1]],
+    ["indent", 2 ** 29 - 23, "a.js", indented, [tooLong, 1]],
+    ["indent", 2 ** 29 - 24, "a.js", indented, ["a.js:2:1 indent"]],
+    // Nothing is repeated.
+    ["indent", 2 ** 31, "a.js", "a();\n", []],
+    ["import/newline-after-import", { count: 2 ** 53 }, "a.js", '\nimport "a";\nb();\n', [tooLong, 2]],
+    ["import/newline-after-import", { count: 2 ** 29 }, "a.js", '\nimport "a";\nb();\n', [tooLong, 2]],
+    [
+      "import/newline-after-import",
+      { count: 2 ** 28 },
+      "a.js",
+      '\nimport "a";\nb();\n',
+      ["a.js:2:1 import/newline-after-import"],
+    ],
+    // The calls are looked at when the program ends.
+    ["import/newline-after-import", { count: 2 ** 31 }, "a.js", '\n\nconst a = require("a");\nb();\n', [tooLong, 1]],
+    ["react/jsx-indent", 2 ** 31, "a.jsx", element, [tooLong, 2]],
+    // Only twice as much is too long.
+    ["react/jsx-indent", 2 ** 29 - 24, "a.jsx", element, [tooLong, 5]],
+    ["react/jsx-indent", -1, "a.jsx", element, ["RangeError: Invalid count value: -1", 2]],
+    ["react/jsx-indent-props", 2 ** 31, "a.jsx", element, [tooLong, 2]],
+    ["react/jsx-indent-props", 2 ** 28, "a.jsx", element, ["a.jsx:3:5 react/jsx-indent-props"]],
+  ])("%s: %j in %s %j", async (rule, option, file, text, expected) => {
+    const files = {
+      "eslint.config.mjs": `export default [{
+        files: ["**/*.js", "**/*.jsx"],
+        languageOptions: { parserOptions: { ecmaFeatures: { jsx: true } } },
+        plugins: {
+          import: { meta: { name: "eslint-plugin-import" }, rules: {} },
+          react: { meta: { name: "eslint-plugin-react" }, rules: {} },
+        },
+        rules: { ${JSON.stringify(rule)}: ["error", ${JSON.stringify(option)}] },
+      }];`,
+      [file]: text,
+    };
+    const { problems, stderr, exitCode } = await lint(files, [file]);
+    if (typeof expected[1] === "number") {
+      expect(stderr).toContain(`${expected[0]}\nOccurred while linting <dir>/${file}:${expected[1]}\nRule: "${rule}"`);
+      expect({ problems, exitCode }).toEqual({ problems: [], exitCode: 2 });
+    } else {
+      expect({ problems, exitCode }).toEqual({ problems: expected as string[], exitCode: expected.length ? 1 : 0 });
+    }
+  });
+
+  // ESLint 8.57 names another line: that of the block.
+  test("indent-legacy", async () => {
+    const files = { ".eslintrc.json": rc({ rules: { "indent-legacy": ["error", 2 ** 31] } }), "a.js": indented };
+    const { stderr, exitCode } = await lint(files, ["a.js"]);
+    expect(stderr).toContain(`${tooLong}\nOccurred while linting <dir>/a.js:`);
+    expect(stderr).toContain('\nRule: "indent-legacy"');
+    expect(exitCode).toBe(2);
+  });
+});
+
 // As ESLint 10.12. What is in a plugin of the configuration is known, whether or not a rule of it is on.
 test.concurrent(
   "a rule that only a comment names, of a plugin of which the configuration turns no rule on",

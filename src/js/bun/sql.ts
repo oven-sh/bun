@@ -966,7 +966,6 @@ const SQL = function SQL(
         if ($isArray(result)) {
           result = await Promise.all(result);
         }
-        scope.connectionState &= ~ReservedConnectionState.acceptQueries;
         if (RELEASE_SAVEPOINT_COMMAND) {
           // mssql dont have release savepoint
           await unsafeQueryFromTransaction(
@@ -981,7 +980,6 @@ const SQL = function SQL(
         }
         return result;
       } catch (err) {
-        scope.connectionState &= ~ReservedConnectionState.acceptQueries;
         if (scopeIsOpen(owner)) {
           await unsafeQueryFromTransaction(
             `${ROLLBACK_TO_SAVEPOINT_COMMAND} ${save_point_name}`,

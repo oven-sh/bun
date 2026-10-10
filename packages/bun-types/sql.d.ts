@@ -91,10 +91,14 @@ declare module "bun" {
    */
   interface TransactionSQL extends SQL {
     /**
-     * Creates a savepoint within the current transaction
+     * Creates a savepoint within the current transaction. The callback gets a
+     * client of its own ({@link SavepointSQL}). `savepoint` resolves with the
+     * callback's return value. When the callback returns an array of queries,
+     * they run inside the savepoint and `savepoint` resolves with their
+     * results.
      */
-    savepoint<T>(name: string, fn: SQL.SavepointContextCallback<T>): Promise<T>;
-    savepoint<T>(fn: SQL.SavepointContextCallback<T>): Promise<T>;
+    savepoint<T>(name: string, fn: SQL.SavepointContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
+    savepoint<T>(fn: SQL.SavepointContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
 
     /**
      * Reserves a connection from the pool and returns a client that wraps

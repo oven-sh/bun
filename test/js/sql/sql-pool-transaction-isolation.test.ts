@@ -856,6 +856,43 @@ describe.each(adapters)("$adapter", entry => {
     },
   );
 
+  // tx.close() rolls the transaction back. Behind COMMIT or ROLLBACK of the runner there is
+  // nothing left to roll back, and a ROLLBACK of its own would follow the end of the transaction.
+  test.each(["COMMIT", "ROLLBACK"])("tx.close() while %s is in flight sends no ROLLBACK of its own", async end => {
+    const received: Received[] = [];
+    const endReceived = Promise.withResolvers<void>();
+    const endAnswer = Promise.withResolvers<void>();
+    const { port, server } = await mockServer(received, sql => {
+      if (sql !== end) return;
+      endReceived.resolve();
+      return endAnswer.promise;
+    });
+    const sql = new SQL(options(port));
+    try {
+      let handle!: Bun.TransactionSQL;
+      const begun = sql
+        .begin(async tx => {
+          handle = tx;
+          await tx.unsafe("SELECT 'T1a'");
+          if (end === "ROLLBACK") throw new Error("t1-app-error");
+          return "t1";
+        })
+        .then(
+          value => value,
+          err => err.message,
+        );
+      await endReceived.promise;
+      const closed = handle.close();
+      endAnswer.resolve();
+      expect(await begun).toBe(end === "ROLLBACK" ? "t1-app-error" : "t1");
+      await closed;
+      expect(received.map(entry => entry.sql)).toEqual([beginCommand, "SELECT 'T1a'", end]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
   // handle(row) builds a fragment for a later query. On a handle that no longer accepts
   // queries it has to stay a fragment: a rejected promise in its place is one that the
   // query it is part of never awaits, and bun:test fails this test if one is reported.

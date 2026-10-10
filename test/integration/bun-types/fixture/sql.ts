@@ -144,6 +144,8 @@ sql1.begin(async txn => {
       }),
     ).is<Promise<11>>();
   });
+  // An array of queries that the callback returns resolves to the results of the queries.
+  expectType(await txn.savepoint(sp => [sp<[12]>`SELECT 12`, sp<[13]>`SELECT 13`])).is<([12] | [13])[]>();
 });
 
 // @ts-expect-error

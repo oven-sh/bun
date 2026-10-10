@@ -37,6 +37,26 @@ describe.concurrent("run-shell", () => {
     const stderr = await proc.stderr.text();
     expect(stderr).toBe("error: Failed to run script.sh due to error Unexpected ')'\n");
   });
+
+  test("a script with an unsupported reserved word runs no command", async () => {
+    using dir = tempDir("run-shell-reserved-word", {
+      "loop.sh": 'echo before\nfor f in one two three; do\n  echo "f=[$f]"\ndone\necho tail\n',
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "loop.sh"],
+      cwd: String(dir),
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "",
+      stderr:
+        'error: Failed to run loop.sh due to error "for" is a reserved word that Bun Shell does not support yet. To run a command named "for", quote it.\n',
+      exitCode: 1,
+    });
+  });
 });
 
 test.skipIf(isWindows)(

@@ -125,8 +125,8 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
         if (headerName != HTTPHeaderName::SetCookie) {
             if (!headers.setIndex(index, *valueToSet))
                 headers.set(headerName, *valueToSet);
-        } else {
-            headers.add(headerName, normalizedValue);
+        } else if (!headers.add(headerName, normalizedValue)) {
+            return Exception { OutOfMemoryError };
         }
 
         return {};
@@ -160,10 +160,11 @@ static ExceptionOr<void> appendToHeaderMap(const HTTPHeaderMap::HTTPHeaderMapCon
         return canWriteResult.releaseException();
     if (!canWriteResult.releaseReturnValue())
         return {};
-    if (header.keyAsHTTPHeaderName)
-        headers.add(header.keyAsHTTPHeaderName.value(), header.value);
-    else
-        headers.add(header.key, header.value);
+    bool added = header.keyAsHTTPHeaderName
+        ? headers.add(header.keyAsHTTPHeaderName.value(), header.value)
+        : headers.add(header.key, header.value);
+    if (!added)
+        return Exception { OutOfMemoryError };
 
     return {};
 }
@@ -325,7 +326,7 @@ std::optional<KeyValuePair<String, String>> FetchHeaders::Iterator::next()
     if (m_keys.isEmpty() || m_updateCounter != m_headers->m_updateCounter) {
         bool hasSetCookie = !m_headers->getSetCookieHeaders().isEmpty();
         m_keys.resize(0);
-        m_keys.reserveCapacity(m_headers->m_headers.size() + (hasSetCookie ? 1 : 0));
+        m_keys.reserveCapacity(m_headers->sizeAfterJoiningSetCookieHeader());
         if (m_lowerCaseKeys) {
             for (auto& header : m_headers->m_headers)
                 m_keys.unsafeAppendWithoutCapacityCheck(header.asciiLowerCaseName());

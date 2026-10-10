@@ -9,6 +9,8 @@
 use crate as css;
 use crate::SmallList;
 use crate::VendorPrefix;
+use crate::css_values::number::{NonNegative, parse_non_negative};
+use crate::css_values::size::Size2D;
 use crate::prefixes::Feature as PrefixFeature;
 use crate::targets::Targets;
 
@@ -1892,6 +1894,26 @@ fn parse_value<T: css::generic::ParseWithOptions>(
     input.expect_exhausted().is_ok().then_some(value)
 }
 
+/// [parse_value] for a value type whose range in this property is `[0,∞]`.
+fn parse_non_negative_value<T>(input: &mut css::Parser, options: &css::ParserOptions) -> Option<T>
+where
+    NonNegative<T>: css::generic::ParseWithOptions,
+{
+    parse_value::<NonNegative<T>>(input, options).map(|v| v.0)
+}
+
+/// `<length-percentage [0,∞]>{1,2}`, a corner radius.
+fn parse_radius(
+    input: &mut css::Parser,
+    _options: &css::ParserOptions,
+) -> Option<Size2D<css::css_values::length::LengthPercentage>> {
+    let value = Size2D::parse_with(input, |i| {
+        parse_non_negative(i, css::css_values::length::LengthPercentage::parse)
+    })
+    .ok()?;
+    input.expect_exhausted().is_ok().then_some(value)
+}
+
 impl Property {
     /// Returns the [`PropertyId`] for this declaration.
     pub(crate) fn property_id(&self) -> PropertyId {
@@ -2833,66 +2855,42 @@ impl Property {
                 }
             }
             PropertyId::BorderTopLeftRadius(pre) => {
-                if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
-                >(input, options)
-                {
+                if let Some(c) = parse_radius(input, options) {
                     return Ok(Property::BorderTopLeftRadius((c, pre)));
                 }
             }
             PropertyId::BorderTopRightRadius(pre) => {
-                if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
-                >(input, options)
-                {
+                if let Some(c) = parse_radius(input, options) {
                     return Ok(Property::BorderTopRightRadius((c, pre)));
                 }
             }
             PropertyId::BorderBottomLeftRadius(pre) => {
-                if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
-                >(input, options)
-                {
+                if let Some(c) = parse_radius(input, options) {
                     return Ok(Property::BorderBottomLeftRadius((c, pre)));
                 }
             }
             PropertyId::BorderBottomRightRadius(pre) => {
-                if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
-                >(input, options)
-                {
+                if let Some(c) = parse_radius(input, options) {
                     return Ok(Property::BorderBottomRightRadius((c, pre)));
                 }
             }
             PropertyId::BorderStartStartRadius => {
-                if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
-                >(input, options)
-                {
+                if let Some(c) = parse_radius(input, options) {
                     return Ok(Property::BorderStartStartRadius(c));
                 }
             }
             PropertyId::BorderStartEndRadius => {
-                if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
-                >(input, options)
-                {
+                if let Some(c) = parse_radius(input, options) {
                     return Ok(Property::BorderStartEndRadius(c));
                 }
             }
             PropertyId::BorderEndStartRadius => {
-                if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
-                >(input, options)
-                {
+                if let Some(c) = parse_radius(input, options) {
                     return Ok(Property::BorderEndStartRadius(c));
                 }
             }
             PropertyId::BorderEndEndRadius => {
-                if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
-                >(input, options)
-                {
+                if let Some(c) = parse_radius(input, options) {
                     return Ok(Property::BorderEndEndRadius(c));
                 }
             }
@@ -3073,18 +3071,23 @@ impl Property {
                 }
             }
             PropertyId::FlexGrow(pre) => {
-                if let Some(c) = parse_value::<css::css_values::number::CSSNumber>(input, options) {
+                if let Some(c) =
+                    parse_non_negative_value::<css::css_values::number::CSSNumber>(input, options)
+                {
                     return Ok(Property::FlexGrow((c, pre)));
                 }
             }
             PropertyId::FlexShrink(pre) => {
-                if let Some(c) = parse_value::<css::css_values::number::CSSNumber>(input, options) {
+                if let Some(c) =
+                    parse_non_negative_value::<css::css_values::number::CSSNumber>(input, options)
+                {
                     return Ok(Property::FlexShrink((c, pre)));
                 }
             }
             PropertyId::FlexBasis(pre) => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
+                if let Some(c) = parse_non_negative_value::<
+                    css::css_values::length::LengthPercentageOrAuto,
+                >(input, options)
                 {
                     return Ok(Property::FlexBasis((c, pre)));
                 }
@@ -3317,57 +3320,65 @@ impl Property {
                 }
             }
             PropertyId::PaddingTop => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
+                if let Some(c) = parse_non_negative_value::<
+                    css::css_values::length::LengthPercentageOrAuto,
+                >(input, options)
                 {
                     return Ok(Property::PaddingTop(c));
                 }
             }
             PropertyId::PaddingBottom => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
+                if let Some(c) = parse_non_negative_value::<
+                    css::css_values::length::LengthPercentageOrAuto,
+                >(input, options)
                 {
                     return Ok(Property::PaddingBottom(c));
                 }
             }
             PropertyId::PaddingLeft => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
+                if let Some(c) = parse_non_negative_value::<
+                    css::css_values::length::LengthPercentageOrAuto,
+                >(input, options)
                 {
                     return Ok(Property::PaddingLeft(c));
                 }
             }
             PropertyId::PaddingRight => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
+                if let Some(c) = parse_non_negative_value::<
+                    css::css_values::length::LengthPercentageOrAuto,
+                >(input, options)
                 {
                     return Ok(Property::PaddingRight(c));
                 }
             }
             PropertyId::PaddingBlockStart => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
+                if let Some(c) = parse_non_negative_value::<
+                    css::css_values::length::LengthPercentageOrAuto,
+                >(input, options)
                 {
                     return Ok(Property::PaddingBlockStart(c));
                 }
             }
             PropertyId::PaddingBlockEnd => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
+                if let Some(c) = parse_non_negative_value::<
+                    css::css_values::length::LengthPercentageOrAuto,
+                >(input, options)
                 {
                     return Ok(Property::PaddingBlockEnd(c));
                 }
             }
             PropertyId::PaddingInlineStart => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
+                if let Some(c) = parse_non_negative_value::<
+                    css::css_values::length::LengthPercentageOrAuto,
+                >(input, options)
                 {
                     return Ok(Property::PaddingInlineStart(c));
                 }
             }
             PropertyId::PaddingInlineEnd => {
-                if let Some(c) =
-                    parse_value::<css::css_values::length::LengthPercentageOrAuto>(input, options)
+                if let Some(c) = parse_non_negative_value::<
+                    css::css_values::length::LengthPercentageOrAuto,
+                >(input, options)
                 {
                     return Ok(Property::PaddingInlineEnd(c));
                 }
@@ -3576,9 +3587,10 @@ impl Property {
                 }
             }
             PropertyId::TransitionDuration(pre) => {
-                if let Some(c) =
-                    parse_value::<SmallList<css::css_values::time::Time, 1>>(input, options)
-                {
+                if let Some(c) = parse_value::<SmallList<NonNegative<css::css_values::time::Time>, 1>>(
+                    input, options,
+                ) {
+                    let c = c.into_iter().map(|time| time.0).collect();
                     return Ok(Property::TransitionDuration((c, pre)));
                 }
             }

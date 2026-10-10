@@ -418,7 +418,12 @@ impl TokenList {
                         has_whitespace = false;
                     }
                     Token::Number(v) => {
-                        CSSNumberFns::to_css(v.value, dest)?;
+                        if v.int_value.is_none() && v.value.fract() == 0.0 {
+                            // `1e1` and `2.0` are not `<integer>`s, and `10` and `2` are.
+                            token.to_css(dest)?;
+                        } else {
+                            CSSNumberFns::to_css(v.value, dest)?;
+                        }
                         has_whitespace = false;
                     }
                     _ => {

@@ -20,9 +20,8 @@ pub struct State<'a> {
     parent_component: AncestorWalk<'a, bool, Option<(Node<'a>, bool)>>,
     parent_class_component: AncestorMemo<'a, Node<'a>>,
     components: Components<'a>,
-    /// Whether something is in a function that returns JSX or `null`. For upstream no other is a component.
-    in_function_with_jsx_or_null: AncestorMemo<'a, ()>,
-    /// The `this.a` in such functions.
+    enclosing_function: AncestorMemo<'a, Func<'a>>,
+    /// The `this.a` in a function that upstream can take for a component.
     members: Queue<'a>,
 }
 
@@ -53,7 +52,7 @@ impl Rule for NoThisInSfc {
             parent_component: AncestorWalk::default(),
             parent_class_component: AncestorMemo::default(),
             components: Components::new(file),
-            in_function_with_jsx_or_null: AncestorMemo::default(),
+            enclosing_function: AncestorMemo::default(),
             members: Queue::default(),
         })
     }
@@ -77,15 +76,10 @@ impl Rule for NoThisInSfc {
             }
             return;
         }
-        let State { components, in_function_with_jsx_or_null, members, .. } = &mut cx.state;
         let node = Node::Expr(member);
-        let is_in_candidate = in_function_with_jsx_or_null.find(node, |_, ancestor| {
-            (ancestor.as_func().is_some_and(ast_utils::is_function_with_body)
-                && components.is_returning_jsx_or_null(ancestor, Branches::Any))
-            .then_some(())
-        });
-        if is_in_candidate.is_some() {
-            members.push(At::enter(node), 0, node);
+        let innermost = cx.state.enclosing_function.find(node, |_, ancestor| ancestor.as_func());
+        if std::iter::successors(innermost, |it| it.enclosing()).any(|it| can_be_component(it, &cx.state.components)) {
+            cx.state.members.push(At::enter(node), 0, node);
         }
     }
 
@@ -100,6 +94,14 @@ impl Rule for NoThisInSfc {
             }
         }
     }
+}
+
+/// Whether upstream can take `func` for a component: it returns JSX or `null` and is not directly in a class member.
+fn can_be_component<'a>(func: Func<'a>, components: &Components<'a>) -> bool {
+    let node = Node::Func(func);
+    ast_utils::is_function_with_body(func)
+        && !matches!(estree_parent(node), Node::Member(_))
+        && components.is_returning_jsx_or_null(node, Branches::Any)
 }
 
 /// `node.parent.type === "Property"`

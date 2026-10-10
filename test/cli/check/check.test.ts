@@ -3142,6 +3142,33 @@ const wrong: number = "";
       isDebug || isASAN ? 120_000 : undefined,
     );
 
+    // The system takes what is before it for the whole name. For tsc nothing is at such a path.
+    test.each([
+      ["extends", { extends: "./\0base.json" }, "error TS5083: Cannot read file '<dir>/\0base.json'.\n", ""],
+      [
+        "extends, after the name of a file that is there",
+        { extends: "./base.json\0x" },
+        "",
+        "\ntsconfig.json(1,12): error TS6053: File './base.json\0x' not found.",
+      ],
+      ["typeRoots", { compilerOptions: { typeRoots: ["./\0x"], types: undefined } }, "", ""],
+    ])("a NUL in a path of a configuration file: %s", async (_, more, before, after) => {
+      const { compilerOptions, ...rest } = more as { compilerOptions?: object };
+      using dir = project({
+        "tsconfig.json": JSON.stringify({
+          ...rest,
+          compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, ...compilerOptions },
+        }),
+        "base.json": "{}",
+        "a.ts": `export const wrong: number = "";\n`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(
+        `${before}a.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.${after}`,
+      );
+      expect(exitCode).toBe(1);
+    });
+
     test("100,000 signs that begin a decorator", async () => {
       using dir = project({
         "a.ts": `${repeat("@", 100_000)}\n`,

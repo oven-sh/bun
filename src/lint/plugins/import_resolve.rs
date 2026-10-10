@@ -208,10 +208,16 @@ impl<'s> Resolvers<'s> {
         if is_posix && strings::contains_char(specifier, b'\\') {
             return Resolved::Nothing;
         }
-        let found = self
-            .map
-            .iter()
-            .find_map(|it| modules.resolve_file(&from, specifier, is_require, &it.1));
+        let found = self.map.iter().find_map(|it| {
+            let resolve =
+                |lookup: &Lookup| modules.resolve_file(&from, specifier, is_require, lookup);
+            // The package also finds a file by its whole name, whatever that ends in, and appends `.json` and `.node`.
+            let others = || Lookup::Node(SmallVec::from_slice(&[&b".json"[..], b".node"]));
+            match it.1 {
+                Lookup::TypeScript => resolve(&it.1).or_else(|| resolve(&others())),
+                _ => resolve(&it.1),
+            }
+        });
         found.map_or(Resolved::Nothing, Resolved::File)
     }
 

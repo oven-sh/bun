@@ -9,6 +9,8 @@
 
 #[path = "oxlint_categories.rs"]
 mod categories;
+#[path = "oxlint_fields.rs"]
+mod fields;
 
 use super::flat::{ConfigError, Reader, Semantics};
 use super::ignore_lines::IgnoreLines;
@@ -232,6 +234,41 @@ fn with_eslint_severities(rules: &Json) -> Json {
     Json::Object(entries.collect())
 }
 
+/// oxlint's refusal of a property that the rule `key` does not know, in the words of serde. `key`: as [`oxlint_rule_key`] writes the
+/// rule. `setting`: what the file says about it.
+fn refuse_unknown_fields(key: &[u8], setting: &Json) -> Result<(), ConfigError> {
+    let options = setting.as_array().unwrap_or_default().iter().skip(1);
+    for (at, option) in options.take(2).enumerate() {
+        let place = (key, at as u8);
+        let row = fields::FIELDS.binary_search_by(|it| (it.0.as_bytes(), it.1).cmp(&place));
+        let row = row.ok().and_then(|it| fields::FIELDS.get(it));
+        let (Some(&(_, _, known)), Some(properties)) = (row, option.as_object()) else {
+            continue;
+        };
+        let Some((unknown, _)) = properties.iter().find(|it| !has_word(known, &it.0)) else {
+            continue;
+        };
+        let names: Vec<Vec<u8>> = (known.split(' ').filter(|it| !it.is_empty()))
+            .map(|it| [b"`", it.as_bytes(), b"`"].concat())
+            .collect();
+        let expected = match &names[..] {
+            [] => b"there are no fields".to_vec(),
+            [one] => [b"expected ", &one[..]].concat(),
+            [one, other] => [b"expected ", &one[..], b" or ", other].concat(),
+            all => [&b"expected one of "[..], &all.join(&b", "[..])].concat(),
+        };
+        return Err(ConfigError::new(&[
+            b"Invalid configuration for rule `",
+            key,
+            b"`:\n  unknown field `",
+            unknown,
+            b"`, ",
+            &expected,
+        ]));
+    }
+    Ok(())
+}
+
 /// Loads a JavaScript plugin: [`Host::load`](crate::js_plugin::Host::load). It is given the directory of the file that names the
 /// plugin, the specifier, and the name that the file gives the plugin, if it does.
 pub type LoadPlugin<'l> =
@@ -400,16 +437,29 @@ impl Rc<'_, '_> {
         }
     }
 
-    fn rules(&mut self, json: &Json) -> Result<Vec<RuleSetting>, ConfigError> {
+    /// `plugins`: those that are certain to be on here. oxlint passes over what is said about a rule of another one, by the name that
+    /// is written: with `"plugins": []` over `@typescript-eslint/no-unused-vars`, not over `no-unused-vars`.
+    fn rules(&mut self, json: &Json, plugins: &[Vec<u8>]) -> Result<Vec<RuleSetting>, ConfigError> {
         let Some(rules) = json.get(b"rules") else {
             return Ok(Vec::new());
         };
         let mut rules = with_eslint_severities(rules);
         // All names of a rule are one rule, so what the file says last about it counts.
         if let Json::Object(entries) = &mut rules {
-            for (id, _) in entries {
+            for (id, setting) in entries {
                 if find_js_rule(&self.reader.js_plugins, id).is_none() {
-                    *id = oxlint_rule_key(id);
+                    let key = oxlint_rule_key(id);
+                    let plugin = match (parse_rule_id(id).0, parse_rule_id(&key).0) {
+                        (b"", b"") => &b"eslint"[..],
+                        (b"", of_key) => of_key,
+                        (written, _) => plugin_of_oxlint(written),
+                    };
+                    if plugin == b"eslint"
+                        || plugins.iter().any(|it| plugin_of_oxlint(it) == plugin)
+                    {
+                        refuse_unknown_fields(&key, setting)?;
+                    }
+                    *id = key;
                 }
             }
         }
@@ -575,9 +625,11 @@ impl Rc<'_, '_> {
                 .into()
         });
         self.plugins_of_files.extend_from_slice(&plugins);
-        self.plugins.extend(plugins);
+        self.plugins.extend_from_slice(&plugins);
         // All patterns are relative to the file that extends.
         let passes_everything_on = !is_extended;
+        // The flags that turn a plugin on or off are in the `plugins` of the file that extends only.
+        let certain = if is_extended { Vec::new() } else { plugins };
 
         let ignore_patterns = strings_of(json.get(b"ignorePatterns"));
         if !ignore_patterns.is_empty() && passes_everything_on {
@@ -607,7 +659,7 @@ impl Rc<'_, '_> {
             }
         }
         let mut base = ConfigObject {
-            rules: self.rules(json)?,
+            rules: self.rules(json, &certain)?,
             ..ConfigObject::default()
         };
         if passes_everything_on {
@@ -626,6 +678,10 @@ impl Rc<'_, '_> {
             let excluded = strings_of(item.get(b"excludeFiles"));
             let plugins = self.plugin_names(item)?;
             (self.plugins).extend_from_slice(plugins.as_deref().unwrap_or_default());
+            let certain = match is_extended {
+                true => Vec::new(),
+                false => [&certain[..], plugins.as_deref().unwrap_or_default()].concat(),
+            };
             let object = ConfigObject {
                 files: Some(
                     (files.iter())
@@ -636,7 +692,7 @@ impl Rc<'_, '_> {
                     .then(|| excluded.iter().map(|it| Pattern::of_oxlint(it)).collect()),
                 language_options: self.language_options(item),
                 settings: item.get(b"settings").cloned().unwrap_or(Json::Null),
-                rules: self.rules(item)?,
+                rules: self.rules(item, &certain)?,
                 ..ConfigObject::default()
             };
             self.overrides.push((object, plugins));

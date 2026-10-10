@@ -508,6 +508,8 @@ fn check_property<'a>(cx: &Context<'a>, node: Prop<'a>, value: Expr<'a>) {
             let target = key.map_or_else(|| node.span(), |it| it.span(file));
             check_assignment(cx, &receiver_type, value, node.span(), target, true);
         }
+        // tsgolint listens for a `PropertyAssignment` and a `ShorthandPropertyAssignment` only.
+        PropKind::Method | PropKind::Getter | PropKind::Setter if file.language().is_oxlint => {}
         PropKind::Method | PropKind::Getter | PropKind::Setter => {
             if node.func().is_some_and(Func::has_body) {
                 // TypeScript's node for the function is the method or the accessor.

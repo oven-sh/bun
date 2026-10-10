@@ -34,6 +34,8 @@ struct Entities {
     list: Vec<Entity>,
     /// The first byte of each.
     starts: Vec<u8>,
+    /// One of them may be in a text that is nothing but blanks.
+    has_blank: bool,
 }
 
 impl Rule for NoUnescapedEntities {
@@ -74,14 +76,18 @@ impl Rule for NoUnescapedEntities {
         let is_oxlint = cx.language().is_oxlint;
         // oxlint has no options.
         let entities = self.forbid.as_ref().filter(|_| !is_oxlint).unwrap_or(&self.defaults);
-        for child in jsx.children_with_whitespace() {
-            let jsx_text = match child {
-                JsxChild::Expr(it) if it.tag() == ExprTag::String && it.jsx_container_span().is_none() => it.span(),
-                JsxChild::Expr(_) => continue,
-                JsxChild::Whitespace(span) => span,
-            };
+        let check = |jsx_text: Span| {
             if strings::index_of_any(cx.slice(jsx_text), &entities.starts).is_some() {
                 entities.report_invalid_entity(jsx_text, is_oxlint, cx);
+            }
+        };
+        let is_text = |it: &Expr| it.tag() == ExprTag::String && it.jsx_container_span().is_none();
+        jsx.children().iter().filter(is_text).for_each(|it| check(it.span()));
+        if entities.has_blank {
+            for child in jsx.children_with_whitespace() {
+                if let JsxChild::Whitespace(span) = child {
+                    check(span);
+                }
             }
         }
     }
@@ -91,8 +97,9 @@ impl Entities {
     /// Without those that are not one UTF-16 code unit of a line, which is what upstream compares them with.
     fn new(mut list: Vec<Entity>) -> Self {
         list.retain(|it| strings::wtf8_len_utf16(&it.char) == 1 && strings::js_line_break_len(&it.char) == 0);
-        let starts = list.iter().filter_map(|it| it.char.first().copied()).collect();
-        Entities { list, starts }
+        let starts: Vec<u8> = list.iter().filter_map(|it| it.char.first().copied()).collect();
+        let has_blank = !starts.iter().all(u8::is_ascii_graphic);
+        Entities { list, starts, has_blank }
     }
 
     #[cold]

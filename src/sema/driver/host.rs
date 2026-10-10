@@ -6,7 +6,8 @@
 
 use bun_ast::e::{JsonValue, ObjectJSON};
 use bun_core::strings::{
-    BOM, contains, is_valid_utf8, rsplit_once_char, split_once_char, without_trailing_slash,
+    BOM, contains, contains_char, is_valid_utf8, rsplit_once_char, split_once_char,
+    without_trailing_slash,
 };
 use bun_paths::platform::Posix;
 use bun_paths::resolve_path::{dirname, windows_volume_name_len, z};
@@ -54,6 +55,15 @@ pub fn to_native(path: &[u8]) -> &[u8] {
         [b'/', b'\\', b'\\', ..] if cfg!(windows) => &path[1..],
         _ => typescript_path(path),
     }
+}
+
+/// `to_native`, for a call of the system. `None`: the system has no name for it, so nothing is there: it is too long,
+/// as an import can name a path of any number of segments; or it has a NUL, as a configuration file can write one,
+/// where the system would take what is before it for the whole.
+fn for_the_system(path: &[u8]) -> Option<&[u8]> {
+    let native = to_native(path);
+    let is_a_name = native.len() < bun_paths::MAX_PATH_BYTES && !contains_char(native, 0);
+    is_a_name.then_some(native)
 }
 
 /// The root of a drive is `/C:`. For the system, to which `C:` is the working directory on that
@@ -352,7 +362,7 @@ fn decoded(mut bytes: Vec<u8>, keeps_mark: bool) -> Cow<'static, [u8]> {
 
 /// `vfs.FS.ReadFile` of the file at `path`, by that path alone.
 pub(crate) fn read_at(path: &[u8], keeps_mark: bool) -> Option<Cow<'static, [u8]>> {
-    let bytes = bun_sys::File::read_from(Fd::cwd(), to_native(path));
+    let bytes = bun_sys::File::read_from(Fd::cwd(), for_the_system(path)?);
     bytes.ok().map(|bytes| decoded(bytes, keeps_mark))
 }
 
@@ -571,7 +581,7 @@ impl Disk {
     /// Asks the system, which does not know what is only in memory.
     fn ask_whether_directory(&self, path: &[u8]) -> Option<bool> {
         self.find_in_memory(path)
-            .or_else(|| is_directory(Fd::cwd(), to_native(&with_root(path))))
+            .or_else(|| is_directory(Fd::cwd(), for_the_system(&with_root(path))?))
     }
 
     /// `None`: the system has to be queried.
@@ -601,8 +611,12 @@ impl Disk {
     }
 
     fn ask_for_real_path(path: &[u8]) -> Vec<u8> {
+        let rooted = with_root(path);
+        let Some(native) = for_the_system(&rooted) else {
+            return path.to_vec();
+        };
         let (mut name, mut real) = (path_buffer_pool::get(), path_buffer_pool::get());
-        bun_sys::realpath(z(to_native(&with_root(path)), &mut name), &mut real)
+        bun_sys::realpath(z(native, &mut name), &mut real)
             .map_or_else(|_| path.to_vec(), from_native)
     }
 
@@ -708,11 +722,11 @@ fn is_like_a_short_name(name: &[u8]) -> bool {
 
 /// Reads the entries of the directory at `path` from the system.
 fn list(path: &[u8]) -> Directory {
-    // The system has no name for it: an import can name a path of any number of segments.
-    if path.len() >= bun_paths::MAX_PATH_BYTES {
+    let rooted = with_root(path);
+    let Some(native) = for_the_system(&rooted) else {
         return Directory::Missing;
-    }
-    let directory = match bun_sys::open_dir_absolute(to_native(&with_root(path))) {
+    };
+    let directory = match bun_sys::open_dir_absolute(native) {
         Ok(directory) => bun_sys::Dir::from_fd(directory),
         Err(error) if matches!(error.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) => {
             return Directory::Missing;
@@ -775,7 +789,8 @@ fn is_file_system_case_sensitive(path: &[u8]) -> bool {
         (swapped != name).then_some(swapped)
     };
     // `[eval]` is only in memory: no spelling of its name is found.
-    let Some(path) = ancestors(path).find(|it| bun_sys::exists(to_native(it))) else {
+    let is_there = |it: &&[u8]| for_the_system(it).is_some_and(bun_sys::exists);
+    let Some(path) = ancestors(path).find(is_there) else {
         return true;
     };
     // What is in a directory is on its file system. Its own name is not, if it is where that file
@@ -1170,6 +1185,7 @@ impl Disk {
         if let Some(before_read) = &self.before_read {
             before_read(path);
         }
+        for_the_system(path)?;
         let Split { parent, name } = split(path);
         // Not of a configuration file or a `package.json`, which are read as JSON.
         let keeps_mark = self.keeps_byte_order_marks && ScriptKind::from_file_name(path).is_some();

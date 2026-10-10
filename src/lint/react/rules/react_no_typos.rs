@@ -1,4 +1,4 @@
-use crate::util_ast::{get_key_value, get_property_name, get_property_name_node};
+use crate::util_ast::{Property, get_key_value, get_property_name, get_property_name_node};
 use crate::util_component_util::{is_es5_component, is_es6_component};
 use crate::util_components::Components;
 use crate::util_is_create_element::is_member_called;
@@ -100,12 +100,15 @@ impl Rule for NoTypos {
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
-        let on = On::new().exprs(&[ExprTag::Assign]).stmts(&[StmtTag::Import]).classes();
-        let create_class = std::str::from_utf8(get_create_class_from_context(file));
-        match create_class.is_ok_and(|it| file.mentions(it)) {
-            true => on.exprs(&[ExprTag::Call, ExprTag::New]),
-            false => on,
+        let mut on = On::new().exprs(&[ExprTag::Assign]).classes();
+        if file.mentions_any(&["prop-types", "react"]) {
+            on = on.stmts(&[StmtTag::Import]);
         }
+        let create_class = std::str::from_utf8(get_create_class_from_context(file));
+        if create_class.is_ok_and(|it| file.mentions(it)) {
+            on = on.exprs(&[ExprTag::Call, ExprTag::New]);
+        }
+        on
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
@@ -115,9 +118,9 @@ impl Rule for NoTypos {
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.kind() {
             // upstream's `MemberExpression`, which does nothing but in an `AssignmentExpression`.
-            ExprKind::Assign { target, value, .. } if !e.is_assignment_target() => {
+            ExprKind::Assign { target, value, .. } => {
                 for node in [target, value] {
-                    member_expression(node, value, cx);
+                    member_expression(node, e, value, cx);
                 }
             }
             ExprKind::Call(call) | ExprKind::New(call) => {
@@ -149,13 +152,11 @@ impl Rule for NoTypos {
         for member in class.members() {
             let node = Node::Member(member);
             let finding = match member.kind() {
-                MemberKind::Property if member.is_static() && ast_utils::is_property_definition(member) => {
-                    Finding::of_property_casing(node, member.init(), cx)
-                }
-                MemberKind::Method | MemberKind::Getter | MemberKind::Setter
-                    if !member.flags().contains(Flags::ABSTRACT) =>
-                {
-                    Finding::of_lifecycle_method_casing(node, member.is_static())
+                MemberKind::Property => Finding::of_property_casing(node, member.init(), cx)
+                    .filter(|_| member.is_static() && ast_utils::is_property_definition(member)),
+                MemberKind::Method | MemberKind::Getter | MemberKind::Setter => {
+                    Finding::of_lifecycle_method_casing(Property::Member(member))
+                        .filter(|_| !member.flags().contains(Flags::ABSTRACT))
                 }
                 _ => None,
             };
@@ -176,15 +177,18 @@ fn first_specifier(import: Import<'_>) -> Option<Name<'_>> {
     first.or_else(|| import.named().first().map(ImportSpec::local)).map(Ident::name)
 }
 
-/// upstream's `MemberExpression`, for the left or the right of an `AssignmentExpression` whose right is `right`.
-fn member_expression<'a>(node: Expr<'a>, right: Expr<'a>, cx: &mut Cx<'a, NoTypos>) {
-    // A `ChainExpression` is around the whole of an optional chain.
-    if !ast_utils::is_member_expression(node) || node.is_chain_root() {
+/// upstream's `MemberExpression`, for the left or the right of `parent`, whose right is `right`.
+fn member_expression<'a>(node: Expr<'a>, parent: Expr<'a>, right: Expr<'a>, cx: &mut Cx<'a, NoTypos>) {
+    if !matches!(node.tag(), ExprTag::Dot | ExprTag::Index) {
         return;
     }
     let Some(finding) = Finding::of_property_casing(Node::Expr(node), Some(right), cx) else {
         return;
     };
+    // A `ChainExpression` is around the whole of an optional chain. A default is in an `AssignmentPattern`.
+    if node.is_chain_root() || parent.is_assignment_target() {
+        return;
+    }
     let components = &mut cx.state.components;
     let Some(related_component) = components.get_related_component(node) else {
         return;
@@ -207,10 +211,8 @@ fn object_expression<'a>(node: Expr<'a>, cx: &Cx<'a, NoTypos>) {
         return;
     }
     for property in properties.iter().filter(|it| it.kind() != PropKind::Spread) {
-        let node = Node::Prop(property);
-        let is_static = false;
-        let casing = Finding::of_property_casing(node, property.value(), cx);
-        for finding in casing.into_iter().chain(Finding::of_lifecycle_method_casing(node, is_static)) {
+        let casing = Finding::of_property_casing(Node::Prop(property), property.value(), cx);
+        for finding in casing.into_iter().chain(Finding::of_lifecycle_method_casing(Property::Prop(property))) {
             finding.report(TYPO_PROP_DECLARATION, cx);
         }
     }
@@ -276,11 +278,13 @@ impl<'a> Finding<'a> {
         (packages.prop_types.is_some() || packages.react.is_some()).then_some(Finding::PropObject(properties, packages))
     }
 
-    /// upstream's `reportErrorIfLifecycleMethodCasingTypo`, for a `Member` or a `Prop`. A key that is a number, for
-    /// which upstream throws, is like no method.
-    fn of_lifecycle_method_casing(node: Node<'a>, is_static: bool) -> Option<Finding<'a>> {
+    /// upstream's `reportErrorIfLifecycleMethodCasingTypo`. A key that is a number, for which upstream throws, is like
+    /// no method.
+    fn of_lifecycle_method_casing(property: Property<'a>) -> Option<Finding<'a>> {
+        let node = property.node();
         let node_key_name = get_property_name(node).map(Cow::Borrowed).or_else(|| get_key_value(node))?;
         let method = *INSTANCE.iter().chain(&STATIC).find(|it| node_key_name.eq_ignore_ascii_case(it.as_bytes()))?;
+        let is_static = property.is_static();
         (*node_key_name != *method.as_bytes() || (!is_static && STATIC.contains(&method)))
             .then_some(Finding::LifecycleMethod { node, node_key_name, method, is_static })
     }

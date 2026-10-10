@@ -350,6 +350,11 @@ impl<'h> HirBuilder<'h> {
         self.env
     }
 
+    /// A local gets a symbol of its own in the output. What is bound outside of the function keeps the one that it has.
+    pub(crate) fn is_bound_outside(&self, ref_: Ref) -> bool {
+        self.host.is_module_level(ref_) || self.env.own_name == Some(ref_)
+    }
+
     pub(crate) fn environment_mut(&mut self) -> &mut Environment {
         self.env
     }
@@ -987,7 +992,7 @@ impl<'h> HirBuilder<'h> {
             _ => {}
         }
 
-        if self.host.is_module_level(ref_) {
+        if self.is_bound_outside(ref_) {
             return Ok(VariableBinding::ModuleLocal { name });
         }
         // Module-scope generated symbols (jsx-runtime `jsx`/`jsxDEV`/`Fragment`,
@@ -1012,7 +1017,7 @@ impl<'h> HirBuilder<'h> {
     /// enclosing function scope).
     pub(crate) fn is_context_identifier(&self, ref_: Ref) -> bool {
         let ref_ = self.resolve_ref(ref_);
-        if ref_.is_symbol() && self.host.is_module_level(ref_) {
+        if ref_.is_symbol() && self.is_bound_outside(ref_) {
             return false;
         }
         self.context_identifiers.contains(&ref_)

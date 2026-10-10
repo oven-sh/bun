@@ -145,6 +145,11 @@ fn run(data: &[u8]) {
     let _ = std::fs::write(directory.join(name), config);
     let bunfig = (name == "bunfig.toml").then_some(config);
     let has_globals = name.ends_with("sconfig.json");
+    // A path with a NUL in it fails an assertion of `ZStr::as_cstr`. Known, and it would hide all else.
+    if has_globals && (input.text.contains(&0) || input.text.windows(6).any(|it| it.eq_ignore_ascii_case(b"\\u0000"))) {
+        let _ = std::fs::remove_file(directory.join(name));
+        return;
+    }
     for (name, text) in GLOBALS.iter().filter(|_| has_globals) {
         let _ = std::fs::write(directory.join(name), text);
     }

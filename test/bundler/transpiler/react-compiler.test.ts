@@ -1096,6 +1096,62 @@ describe("bundler", () => {
     },
   });
 
+  // The name of a function expression was taken for a local that nobody declares. Read from a callback it got a new symbol,
+  // `Callback3`, which is not bound. Read directly, the component was left alone.
+  itBundled("react-compiler/FunctionExpressionThatNamesItself", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { forwardRef, memo } from "react";
+        const Callback = memo(function Callback({ depth, items }) {
+          if (depth === 0) return <b />;
+          return <div>{items.map(i => <Callback key={i} depth={depth - 1} items={items} />)}</div>;
+        });
+        const Direct = memo(function Direct({ depth, items }) {
+          if (depth === 0) return <b />;
+          return <div title={[items]}><Direct depth={depth - 1} items={items} /></div>;
+        });
+        const Outer = forwardRef(function Inner({ depth, items }, ref) {
+          if (depth === 0) return <b ref={ref} />;
+          return <div>{items.map(i => <Inner key={i} depth={depth - 1} items={items} />)}</div>;
+        });
+        const Shadowed = memo(function Shadowed({ Shadowed: Other, items }) {
+          return <div>{items.map(i => <Other key={i} />)}</div>;
+        });
+        const useItself = function useItself(items) {
+          return items.map(() => typeof useItself);
+        };
+        const render = (component, props) => {
+          globalThis.rendering = component;
+          return component(props);
+        };
+        const props = { depth: 1, items: [1] };
+        console.log(
+          render(Callback, props).p.children[0].t === Callback,
+          render(Direct, props).p.children.t === Direct,
+          render(Outer, props).p.children[0].t === Outer,
+          render(Shadowed, { Shadowed: "p", items: [1] }).p.children[0].t,
+          render(useItself, [1])[0],
+        );
+      `,
+      "/node_modules/react/index.js": `exports.memo = it => it; exports.forwardRef = it => it;`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `
+        const caches = new Map();
+        exports.c = n => {
+          if (!caches.has(globalThis.rendering))
+            caches.set(globalThis.rendering, new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));
+          return caches.get(globalThis.rendering);
+        };
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: "true true true p function" },
+  });
+
   // Sibling of the above: `WAS_ORIGINALLY_TYPEOF_IDENTIFIER` was also dropped,
   // so the printer wrapped `typeof undeclared` as `typeof (0, undeclared)`,
   // which throws ReferenceError instead of returning "undefined" — breaking

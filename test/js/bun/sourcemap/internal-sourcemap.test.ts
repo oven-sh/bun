@@ -55,7 +55,7 @@ function extractPositions(stack: string): string[] {
     .filter((s): s is string => s !== null);
 }
 
-async function run(files: Record<string, string>, env: Record<string, string> = {}) {
+async function run(files: Record<string, string | Buffer>, env: Record<string, string> = {}) {
   using dir = tempDir("internal-sourcemap", files);
   await using proc = Bun.spawn({
     cmd: [bunExe(), "index.ts"],
@@ -226,5 +226,50 @@ describe("InternalSourceMap", () => {
       expect(stdout).toMatch(new RegExp(`index\\.ts:${ln}:`));
     }
     expect(exited).toBe(0);
+  });
+
+  // Both line tables behind a remapped frame are built by walking raw bytes: the
+  // source's by LineOffsetTable::generate, the transpiled output's by the builder.
+  // A lead byte without the continuation bytes it declares (the file is Latin-1,
+  // not UTF-8) is one character, one byte wide; stepping over the declared width
+  // instead swallows the line break after it and every frame below comes out a
+  // line early. The fixtures are written to disk as latin1, so "\xe9" is the one
+  // byte 0xE9.
+  describe.concurrent("an ill-formed UTF-8 byte right before a line break", () => {
+    async function framePositions(latin1Source: string) {
+      const { stdout, stderr, exited } = await run({ "index.ts": Buffer.from(latin1Source, "latin1") });
+      expect(stderr).toBe("");
+      expect(exited).toBe(0);
+      return [...stdout.matchAll(/index\.ts:(\d+:\d+)/g)].map(m => m[1]);
+    }
+
+    test("in a comment that is dropped from the output", async () => {
+      // Lines: 1 "/* caf<E9>", 2 "b */", 3 the Error, 4 console.log.
+      const positions = await framePositions(
+        '/* caf\xe9\nb */\nconst err = new Error("x");\nconsole.log(err.stack);\n',
+      );
+      expect(positions).toEqual(["3:17"]);
+    });
+
+    test("in a legal comment that is kept in the output", async () => {
+      // Lines: 1 "/*! caf<E9>", 2 "b */", 3 the Error, 6 console.log. The output
+      // has no blank lines, so the walks over the source and over the output
+      // cannot each be a line off and still produce the right answer together.
+      const positions = await framePositions(
+        '/*! caf\xe9\nb */\nconst err = new Error("x");\n\n\nconsole.log(err.stack);\n',
+      );
+      expect(positions).toEqual(["3:17"]);
+    });
+
+    test("in a template literal, next to a U+FFFD the printer wrote out for another one", async () => {
+      // Line 1 breaks inside the template literal right after the ill-formed
+      // byte. The string on line 3 is printed with a real U+FFFD (three bytes,
+      // one column) ahead of the Error on the same line, which the walk over
+      // the output must not mistake for an ill-formed byte either.
+      const positions = await framePositions(
+        'const s = `caf\xe9\n`;\nconst err = ["caf\xe9", new Error("x")][1];\nconsole.log(err.stack);\n',
+      );
+      expect(positions).toEqual(["3:26"]);
+    });
   });
 });

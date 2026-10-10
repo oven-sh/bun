@@ -169,6 +169,7 @@ pg_tags! {
     bit_array = 1561,
     varbit_array = 1563,
     numeric_array = 1231,
+    uuid_array = 2951,
     jsonb = 3802,
     jsonb_array = 3807,
     // Not really sure what this is.

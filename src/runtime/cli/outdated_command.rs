@@ -101,9 +101,7 @@ impl OutdatedCommand {
     ) -> crate::Result<()> {
         // Reshaped for borrowck — `load_from_cwd` would otherwise alias
         // `PackageManager` with its `lockfile` field. Project disjoint
-        // raw pointers from the singleton first; `load_from_cwd` only reads
-        // `manager.options` / migration helpers and never re-borrows
-        // `manager.lockfile` through the `pm` argument.
+        // raw pointers from the singleton first.
         let pm_ptr: *mut PackageManager = manager;
         let not_silent = manager.options.log_level != LogLevel::Silent;
         let log_ptr: *mut bun_ast::Log = manager.log;

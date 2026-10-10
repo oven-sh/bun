@@ -33,8 +33,7 @@ impl ScanCommand {
 
         // Reshaped for borrowck — `manager.lockfile.load_from_cwd(&mut self,
         // Some(manager), log)` would alias `&mut *manager.lockfile` with `&mut *manager`.
-        // Project disjoint raw pointers from the singleton first; `load_from_cwd` only
-        // reads `manager.options`/migration helpers and never re-borrows `manager.lockfile`.
+        // Project disjoint raw pointers from the singleton first.
         {
             let log_level = manager.options.log_level;
             let pm_ptr: *mut PackageManager = manager;

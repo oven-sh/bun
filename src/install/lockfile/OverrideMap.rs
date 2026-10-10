@@ -521,7 +521,6 @@ impl OverrideMap {
         value: &[u8],
         buf: &mut bun_semver::string::Buf<'_>,
         log: &mut bun_ast::Log,
-        manager: Option<&mut PackageManager>,
     ) -> Result<bool, Error> {
         let name_hash = SemverBuilder::string_hash(target.name);
         let name = buf.append_with_hash(target.name, name_hash)?;
@@ -549,10 +548,9 @@ impl OverrideMap {
         };
 
         let is_flat = parent.is_none() && target_range.tag != VersionTag::Npm;
-        let manager = if is_flat { manager } else { None };
         let value = buf.append(value)?;
         let sliced = value.sliced(buf.bytes.as_slice());
-        let Some(version) = dependency::parse(name, name_hash, sliced.slice, &sliced, log, manager)
+        let Some(version) = dependency::parse(name, name_hash, sliced.slice, &sliced, log, None)
         else {
             return Ok(false);
         };

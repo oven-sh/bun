@@ -392,7 +392,7 @@ pub(crate) fn load(
     lockfile: &mut Lockfile,
     stream: &mut Stream,
     log: &mut Log,
-    mut manager: Option<&mut PackageManager>,
+    manager: Option<&PackageManager>,
 ) -> Result<SerializerLoadResult, Error> {
     let mut res = SerializerLoadResult::default();
     // `FixedBufferStream` exposes the read methods directly, so we
@@ -453,7 +453,7 @@ pub(crate) fn load(
     res.packages_need_update = packages_load_result.needs_update;
     res.migrated_from_lockb_v2 = migrate_from_v2;
 
-    lockfile.buffers = buffers::load(stream, log, manager.as_deref_mut())?;
+    lockfile.buffers = buffers::load(stream, log, manager)?;
     if stream.read_int_le::<u64>()? != 0 {
         return Err(crate::Error::LockfileIsMalformedExpected0AtTheEnd);
     }
@@ -627,7 +627,6 @@ pub(crate) fn load(
                     let mut context = dependency::Context {
                         log: &mut *log,
                         buffer: string_bytes,
-                        package_manager: manager.as_deref_mut(),
                     };
                     overrides.map.put_assume_capacity(
                         *name,
@@ -708,7 +707,6 @@ pub(crate) fn load(
                     let mut context = dependency::Context {
                         log: &mut *log,
                         buffer: string_bytes,
-                        package_manager: manager.as_deref_mut(),
                     };
                     let value = dependency::to_dependency(*dep, &mut context);
                     catalogs.default.put_assume_capacity_context(
@@ -752,7 +750,6 @@ pub(crate) fn load(
                         let mut context = dependency::Context {
                             log,
                             buffer: string_bytes,
-                            package_manager: manager.as_deref_mut(),
                         };
                         let value = dependency::to_dependency(*dep, &mut context);
                         group.put_assume_capacity_context(
@@ -805,7 +802,6 @@ pub(crate) fn load(
                     let mut context = dependency::Context {
                         log: &mut *log,
                         buffer: string_bytes,
-                        package_manager: manager.as_deref_mut(),
                     };
                     let parent = dependency::to_dependency(*parent, &mut context);
                     let rule = ScopedOverride {

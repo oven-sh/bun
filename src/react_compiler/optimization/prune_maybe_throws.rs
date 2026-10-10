@@ -11,12 +11,12 @@
 //! Analogous to TS `Optimization/PruneMaybeThrows.ts`.
 
 use crate::collections::IdMap;
-use crate::diagnostics::{CompilerDiagnostic, cold_invariant};
+use crate::diagnostics::{CompilerDiagnostic, ErrorCategory, cold_invariant};
 use crate::hir::cfg_utils::{
     get_reverse_postordered_blocks, mark_instruction_ids, remove_dead_do_while_statements,
     remove_unnecessary_try_catch, remove_unreachable_for_updates,
 };
-use crate::hir::{BlockId, HirFunction, Instruction, InstructionValue, Terminal};
+use crate::hir::{BlockId, BlockKind, HirFunction, Instruction, InstructionValue, Terminal};
 
 use crate::optimization::merge_consecutive_blocks::merge_consecutive_blocks;
 
@@ -34,6 +34,21 @@ pub(crate) fn prune_maybe_throws(
         remove_dead_do_while_statements(&mut func.body);
         remove_unnecessary_try_catch(&mut func.body);
         mark_instruction_ids(&mut func.body, &mut func.instructions);
+        // A phi can keep an operand of the removed catch handler, and the merge asserts on that.
+        for block in func.body.blocks.values() {
+            if block.kind == BlockKind::Block && block.preds.len() == 1 {
+                if let Some(phi) = block.phis.iter().find(|phi| phi.operands.len() != 1) {
+                    return Err(CompilerDiagnostic::new(
+                        ErrorCategory::Invariant,
+                        format!(
+                            "Found a block with a single predecessor but where a phi has multiple ({}) operands",
+                            phi.operands.len()
+                        ),
+                        None,
+                    ));
+                }
+            }
+        }
         merge_consecutive_blocks(func, functions);
 
         // Rewrite phi operands to reference the updated predecessor blocks

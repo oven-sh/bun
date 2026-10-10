@@ -1414,6 +1414,250 @@ describe("bundler", () => {
     },
   });
 
+  // Stub react packages and a render helper for the two tests below. The fake
+  // `c` records the size of every memo cache, so the second element of each
+  // pair is the `_c(n)` of that function, or `[]` for a function that the
+  // compiler leaves as written.
+  const reactThatRecordsCacheSizes = {
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    "/node_modules/react/index.js": `exports.createElement = () => null;`,
+    "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+    "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+    "/node_modules/react/compiler-runtime.js": /* js */ `
+      const sizes = [];
+      exports.c = size => {
+        sizes.push(size);
+        return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+      };
+      exports.sizes = () => sizes;
+    `,
+  };
+  const renderWithCacheSizes = /* js */ `
+    function render(fn, props) {
+      const before = sizes().length;
+      const result = fn(props);
+      return [result?.props?.children ?? result ?? "undefined", sizes().slice(before)];
+    }
+  `;
+
+  // Dead code elimination can empty a try body (`window.localStorage;` with the
+  // value unused). PruneMaybeThrows then removes the catch handler and the
+  // `try` terminal, and the block after the try statement survives only if it
+  // is merged into the try block. A catch body of more than one block (`if`,
+  // `?:`, `??`, `?.`) left a stale predecessor that blocked the merge:
+  // `function IfInCatch(props) { ; }`. In a loop body or an outer try body only
+  // the rest of that body was lost. babel-plugin-react-compiler 1.0.0 prints
+  // the same.
+  //
+  // `SingleBlockCatch` is the control. `AssignedInBranchingCatch` is skipped
+  // (its phi has an operand of a removed block), so it runs as written, and
+  // `window` is not defined here.
+  itBundled("react-compiler/DeadTryBodyWithBranchingCatchKeepsTheRestOfTheFunction", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { sizes } from "react/compiler-runtime";
+
+        function IfInCatch(props) {
+          try {
+            window.localStorage;
+          } catch (e) {
+            if (props.debug) console.warn(e);
+          }
+          return <div>{props.a}</div>;
+        }
+        function TernaryInCatch(props) {
+          try {
+            props.n;
+          } catch {
+            console.log(props.c ? 1 : 2);
+          }
+          return <div>{props.a}</div>;
+        }
+        function NullishInCatch(p) {
+          try {
+            p.n;
+          } catch {
+            const u0 = p.o ?? 1;
+          }
+          return <div>{p.a}</div>;
+        }
+        function useOptionalInCatch(p) {
+          "use memo";
+          try {
+            p.n;
+          } catch {
+            console.log(p.o?.v);
+          }
+          return [p.a];
+        }
+        function RestOfLoopBody(p) {
+          const out = [];
+          for (const it of p.list) {
+            try {
+              it.n;
+            } catch {
+              if (p.c) console.log(1);
+            }
+            out.push(it);
+          }
+          return <div>{out}</div>;
+        }
+        function RestOfOuterTryBody(p) {
+          try {
+            try {
+              p.n;
+            } catch {
+              if (p.c) console.log(1);
+            }
+            p.f();
+          } catch {}
+          return <div>{p.a}</div>;
+        }
+        function SingleBlockCatch(props) {
+          try {
+            window.localStorage;
+          } catch (e) {
+            console.warn(e);
+          }
+          return <div>{props.a}</div>;
+        }
+        function AssignedInBranchingCatch(props) {
+          let ok = true;
+          try {
+            window.localStorage;
+          } catch {
+            if (props.strict) ok = false;
+          }
+          return <div>{ok ? "on" : "off"}</div>;
+        }
+
+        ${renderWithCacheSizes}
+        let fCalls = 0;
+        console.log(JSON.stringify({
+          IfInCatch: render(IfInCatch, { a: 1 }),
+          TernaryInCatch: render(TernaryInCatch, { a: 2 }),
+          NullishInCatch: render(NullishInCatch, { a: 3 }),
+          useOptionalInCatch: render(useOptionalInCatch, { a: 4 }),
+          RestOfLoopBody: render(RestOfLoopBody, { list: [1, 2] }),
+          RestOfOuterTryBody: render(RestOfOuterTryBody, { a: 5, f: () => fCalls++ }),
+          SingleBlockCatch: render(SingleBlockCatch, { a: 6 }),
+          AssignedInBranchingCatch: render(AssignedInBranchingCatch, { strict: true }),
+          fCalls,
+        }));
+      `,
+      ...reactThatRecordsCacheSizes,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: JSON.stringify({
+        IfInCatch: [1, [2]],
+        TernaryInCatch: [2, [2]],
+        NullishInCatch: [3, [2]],
+        useOptionalInCatch: [[4], [2]],
+        RestOfLoopBody: [[1, 2], [2]],
+        RestOfOuterTryBody: [5, [2]],
+        SingleBlockCatch: [6, [2]],
+        AssignedInBranchingCatch: ["off", []],
+        fCalls: 1,
+      }),
+    },
+  });
+
+  // When the removed catch body assigns a local that is read later, the phi for
+  // that local keeps an operand of a removed block. That is an invariant error,
+  // and the function is skipped (by Babel, too). Two shapes aborted the build
+  // instead. A catch body of one block failed the assert that
+  // MergeConsecutiveBlocks has for that invariant. In `AssignedInNestedCatch`
+  // PruneMaybeThrows rewrote the operand to another removed block (the inner
+  // catch ends in an object literal, which cannot throw), and
+  // InferReactivePlaces panicked (`Option::unwrap()` on `None`).
+  //
+  // `DeadTryInDoWhile` loses the test of its do-while with the catch handler.
+  // It was skipped before and still is: a merge into that `break` would move
+  // `p.f()` into the `if`. `LiveTryWithFoldedArgument` is the control for a
+  // stale operand that stays legal: it is on the phi of a catch block that is
+  // still reachable (`60 * 1000` folds to a literal after SSA).
+  itBundled("react-compiler/DeadTryBodyWithStalePhiOperandSkipsOnlyThatFunction", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { sizes } from "react/compiler-runtime";
+
+        const foo = x => x;
+
+        function AssignedInSingleBlockCatch() {
+          let ok = true;
+          try {
+            window.localStorage;
+          } catch {
+            ok = false;
+          }
+          return <div>{ok ? "on" : "off"}</div>;
+        }
+        function AssignedInNestedCatch(p) {
+          let x = 0;
+          try {
+            try {
+              p.n;
+            } catch {
+              x = 2;
+              ({ ...p });
+            }
+            p.f(x);
+          } catch {}
+          return <div>{p.a}</div>;
+        }
+        function DeadTryInDoWhile(p) {
+          try {
+            do {
+              if (p.a) break;
+              try {
+                p.n;
+                return null;
+              } catch {}
+              ({ ...p });
+              break;
+            } while (p.c);
+            p.f(1);
+          } catch {}
+          return <div>{p.z}</div>;
+        }
+        function LiveTryWithFoldedArgument() {
+          let x = 0;
+          try {
+            x = foo(60 * 1000);
+          } catch {}
+          return <div>{x}</div>;
+        }
+
+        ${renderWithCacheSizes}
+        const fArgs = [];
+        const f = x => fArgs.push(x);
+        console.log(JSON.stringify({
+          AssignedInSingleBlockCatch: render(AssignedInSingleBlockCatch),
+          AssignedInNestedCatch: render(AssignedInNestedCatch, { a: 1, f }),
+          DeadTryInDoWhile: render(DeadTryInDoWhile, { a: true, z: 2, f }),
+          LiveTryWithFoldedArgument: render(LiveTryWithFoldedArgument),
+          fArgs,
+        }));
+      `,
+      ...reactThatRecordsCacheSizes,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: JSON.stringify({
+        AssignedInSingleBlockCatch: ["off", []],
+        AssignedInNestedCatch: [1, []],
+        DeadTryInDoWhile: [2, []],
+        LiveTryWithFoldedArgument: [60000, [2]],
+        fArgs: [0, 1],
+      }),
+    },
+  });
+
   // A 0-arg call to an unknown import is non-reactive in InferReactivePlaces
   // (no operand is reactive, callee isn't a hook), so its scope's deps prune
   // to empty and it becomes a sentinel-only block. Babel does the same; this

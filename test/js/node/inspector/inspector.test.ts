@@ -300,6 +300,69 @@ test("inspector.close() followed by inspector.open() starts a new server", async
   expect(summary.finalUrl).toBeNull();
 });
 
+// An HTTP/1.0 request (or any request without a Host header) to the inspector's
+// HTTP endpoints must be answered like Node does, not 500 with an
+// ERR_INVALID_URL stack dumped to the debuggee's stderr.
+const hostlessRequestFixture = `
+import inspector from "node:inspector";
+import net from "node:net";
+
+inspector.open(0, "127.0.0.1", false);
+const port = Number(new URL(inspector.url()).port);
+
+function raw(requestText) {
+  return new Promise(resolve => {
+    let data = "";
+    const socket = net.connect(port, "127.0.0.1", () => socket.write(requestText));
+    socket.on("data", chunk => (data += chunk));
+    socket.on("close", () => resolve(data));
+    socket.on("error", () => resolve(data));
+  });
+}
+
+const withHost = await raw(\`GET /json/version HTTP/1.1\\r\\nHost: 127.0.0.1:\${port}\\r\\nConnection: close\\r\\n\\r\\n\`);
+const withoutHost = await raw(\`GET /json/version HTTP/1.0\\r\\n\\r\\n\`);
+const emptyHost = await raw(\`GET /json/version HTTP/1.1\\r\\nHost: \\r\\nConnection: close\\r\\n\\r\\n\`);
+
+const statusLine = response => response.split("\\r\\n")[0];
+console.log(
+  JSON.stringify({
+    withHost: statusLine(withHost),
+    withoutHost: statusLine(withoutHost),
+    emptyHost: statusLine(emptyHost),
+    withoutHostBody: JSON.parse(withoutHost.slice(withoutHost.indexOf("\\r\\n\\r\\n") + 4)),
+  }),
+);
+inspector.close();
+`;
+
+test("inspector.open() HTTP endpoints answer requests without a Host header", async () => {
+  using dir = tempDir("inspector-hostless", {
+    "fixture.mjs": hostlessRequestFixture,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stderrIfFailed: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stderrIfFailed: "", exitCode: 0 });
+
+  const summary = JSON.parse(stdout.trim().split("\n").at(-1)!);
+  expect(summary).toEqual({
+    withHost: "HTTP/1.1 200 OK",
+    withoutHost: "HTTP/1.1 200 OK",
+    emptyHost: "HTTP/1.1 200 OK",
+    withoutHostBody: { "Browser": expect.stringContaining("Bun/"), "Protocol-Version": "1.1" },
+  });
+  // The inspected process's own stderr must not receive an internal:debugger
+  // stack dump for an ordinary Host-less request.
+  expect(stderr).not.toContain("ERR_INVALID_URL");
+  expect(stderr).not.toContain("internal:debugger");
+});
+
 // A failed inspector.open() (port already in use) must print Node's diagnostic
 // line and RETURN so a later open() can retry on the same debugger thread.
 const failedOpenRetryFixture = `

@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { Stats, statSync } from "node:fs";
+import assert from "node:assert";
+import { readdirSync, statfsSync, Stats, statSync } from "node:fs";
+import { inspect, isDeepStrictEqual } from "node:util";
 
 // Node.js's Stats constructor signature (deprecated, DEP0180):
 //   Stats(dev, mode, nlink, uid, gid, rdev, blksize, ino, size, blocks, atimeMs, mtimeMs, ctimeMs, birthtimeMs)
@@ -129,5 +131,44 @@ describe("Stats methods and accessors called without a receiver", () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+});
+
+// Node's Stats, BigIntStats, Dirent and StatFs are plain JS classes. Their prototypes have no
+// Symbol.toStringTag, so Object.prototype.toString gives "[object Object]" and deep-equality
+// code treats an instance like a plain object. Bun's native prototypes used to carry a tag.
+describe("fs result prototypes have no Symbol.toStringTag", () => {
+  const values = () => ({
+    Stats: statSync(import.meta.path),
+    BigIntStats: statSync(import.meta.path, { bigint: true }),
+    Dirent: readdirSync(import.meta.dir, { withFileTypes: true })[0],
+    StatFs: statfsSync(import.meta.dir),
+    BigIntStatFs: statfsSync(import.meta.dir, { bigint: true }),
+  });
+
+  test.each(Object.keys(values()))("%s", name => {
+    const value = values()[name as keyof ReturnType<typeof values>];
+    const proto = Object.getPrototypeOf(value);
+    expect({
+      ownTag: Object.hasOwn(proto, Symbol.toStringTag),
+      tag: Symbol.toStringTag in value,
+      toString: Object.prototype.toString.call(value),
+      deepEqualCopy: isDeepStrictEqual(value, { ...value }, true),
+    }).toEqual({
+      ownTag: false,
+      tag: false,
+      toString: "[object Object]",
+      deepEqualCopy: true,
+    });
+    expect(() => assert.partialDeepStrictEqual(value, {})).not.toThrow();
+  });
+
+  test("inspect still prints the class name", () => {
+    const { Stats: stats, BigIntStats: bigint, Dirent: dirent } = values();
+    expect([inspect(stats), inspect(bigint), inspect(dirent)].map(s => s.split(" {")[0])).toEqual([
+      "Stats",
+      "BigIntStats",
+      "Dirent",
+    ]);
   });
 });

@@ -1,10 +1,10 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, lstatSync, readFileSync, readlinkSync, statSync } from "fs";
+import { chmodSync, existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, statSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, isWindows, readdirSorted, runBunInstall, tempDir } from "harness";
 import { createRequire } from "module";
-import { basename, dirname, join } from "path";
+import { basename, dirname, join, relative, sep } from "path";
 import { pathToFileURL } from "url";
 
 const registry = new VerdaccioRegistry();
@@ -1708,6 +1708,149 @@ describe("existing node_modules, missing node_modules/.bun", () => {
       ["no-deps", "oops1"],
       ["a-dep", "oops2"],
     ]);
+  });
+
+  async function run(env: NodeJS.Dict<string>, cwd: string, ...args: string[]) {
+    await using proc = spawn({ cmd: [bunExe(), ...args], cwd, env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const resolved = (...parts: string[]) => realpathSync(join(...parts));
+  const withoutDotEntries = (entries: string[]) => entries.filter(entry => !entry.startsWith("."));
+  // Every global-dir variable is set so an inherited one can never point at the real global folder.
+  const globalEnv = (root: string) => ({
+    ...bunEnv,
+    BUN_INSTALL_CACHE_DIR: join(root, ".bun-cache"),
+    BUN_INSTALL: join(root, ".global"),
+    BUN_INSTALL_GLOBAL_DIR: join(root, ".global", "install", "global"),
+    BUN_INSTALL_BIN: join(root, ".global", "bin"),
+  });
+
+  // The global node_modules is also the `bun link` registry, and bun.lock does not list the registrations.
+  test.concurrent("a global install keeps the bun link registrations", async () => {
+    using dir = tempDir("isolated-global-links", {
+      "linked/package.json": JSON.stringify({ name: "linked", version: "1.0.0" }),
+      "scoped-linked/package.json": JSON.stringify({ name: "@scope/linked", version: "1.0.0" }),
+      "gone/package.json": JSON.stringify({ name: "gone", version: "1.0.0" }),
+      "both/package.json": JSON.stringify({ name: "both", version: "1.0.0" }),
+      "scoped-tool/package.json": JSON.stringify({ name: "@scope/tool", version: "2.0.0" }),
+      // What a global install with the hoisted linker leaves behind.
+      ".global/install/global/node_modules/tool/package.json": JSON.stringify({ name: "tool", version: "1.0.0" }),
+      ".global/install/global/node_modules/@scope/tool/package.json": JSON.stringify({
+        name: "@scope/tool",
+        version: "1.0.0",
+      }),
+    });
+    const root = String(dir);
+    const globalNm = join(root, ".global", "install", "global", "node_modules");
+
+    // What `bun link` writes: a link to the package folder (a junction on Windows) at the package name.
+    for (const [name, folder] of [
+      ["linked", "linked"],
+      ["@scope/linked", "scoped-linked"],
+      ["gone", "gone"],
+      ["both", "both"],
+    ]) {
+      await symlink(join(root, folder), join(globalNm, name), "junction");
+    }
+    // A registration whose package folder no longer exists is kept too, like the hoisted linker does.
+    await rm(join(root, "gone"), { recursive: true });
+    expect(await readdirSorted(globalNm)).toEqual(["@scope", "both", "gone", "linked", "tool"]);
+    expect(await readdirSorted(join(globalNm, "@scope"))).toEqual(["linked", "tool"]);
+
+    // `both` is registered and installed: the install writes its own link at that name.
+    const add = await run(
+      globalEnv(root),
+      root,
+      ...["add", "-g", "--linker", "isolated", join(root, "both"), join(root, "scoped-tool")],
+    );
+    expect(add.stderr).not.toContain("error:");
+    expect(add.stderr).not.toContain("warn:");
+    expect(add.exitCode).toBe(0);
+
+    const entries = await readdirSorted(globalNm);
+    expect(entries).toEqual([".bun", expect.stringContaining(".old_modules-"), "@scope", "both", "gone", "linked"]);
+    expect(await readdirSorted(join(globalNm, "@scope"))).toEqual(["linked", "tool"]);
+    expect({
+      linked: resolved(globalNm, "linked"),
+      scopedLinked: resolved(globalNm, "@scope", "linked"),
+      goneIsLink: lstatSync(join(globalNm, "gone")).isSymbolicLink(),
+    }).toEqual({
+      linked: resolved(root, "linked"),
+      scopedLinked: resolved(root, "scoped-linked"),
+      goneIsLink: true,
+    });
+    const store = resolved(globalNm, ".bun");
+    for (const installed of [["both"], ["@scope", "tool"]]) {
+      expect(relative(store, resolved(globalNm, ...installed)).split(sep)).toEqual([
+        expect.stringContaining(`${installed.join("+")}@`),
+        "node_modules",
+        ...installed,
+      ]);
+    }
+    // Only the registrations moved back. The hoisted packages are still set aside.
+    const oldModules = join(globalNm, entries[1]);
+    expect(withoutDotEntries(await readdirSorted(oldModules))).toEqual(["@scope", "tool"]);
+    expect(await readdirSorted(join(oldModules, "@scope"))).toEqual(["tool"]);
+  });
+
+  // The rename out of a read-only directory fails. Windows has no such directory, and root ignores the mode.
+  test.concurrent.skipIf(isWindows || process.getuid?.() === 0)(
+    "a registration that cannot be moved back is reported, and the install continues",
+    async () => {
+      using dir = tempDir("isolated-global-links-readonly", {
+        "linked/package.json": JSON.stringify({ name: "@readonly/linked", version: "1.0.0" }),
+        "tool/package.json": JSON.stringify({ name: "tool", version: "1.0.0" }),
+      });
+      const root = String(dir);
+      const globalNm = join(root, ".global", "install", "global", "node_modules");
+      await mkdir(join(globalNm, "@readonly"), { recursive: true });
+      await symlink(join(root, "linked"), join(globalNm, "@readonly", "linked"));
+      chmodSync(join(globalNm, "@readonly"), 0o555);
+      try {
+        const add = await run(globalEnv(root), root, "add", "-g", "--linker", "isolated", join(root, "tool"));
+        expect(add.stderr).toMatch(
+          /^warn: failed to keep the 'bun link' registration of "@readonly\/linked": E[A-Z]+\nnote: run 'bun link' in the folder of "@readonly\/linked" to register it again$/m,
+        );
+        expect(add.stderr).not.toContain("error:");
+        expect(add.exitCode).toBe(0);
+
+        const entries = await readdirSorted(globalNm);
+        expect(entries).toEqual([".bun", expect.stringContaining(".old_modules-"), "@readonly", "tool"]);
+        expect(await readdirSorted(join(globalNm, "@readonly"))).toEqual([]);
+        expect(await readdirSorted(join(globalNm, entries[1], "@readonly"))).toEqual(["linked"]);
+      } finally {
+        // The read-only directory is below .old_modules-<hex> once the install moved it.
+        for (const entry of ["", ...(await readdirSorted(globalNm))]) {
+          const scope = join(globalNm, entry, "@readonly");
+          if (existsSync(scope)) chmodSync(scope, 0o755);
+        }
+      }
+    },
+  );
+
+  test.concurrent("a project install sets the links of node_modules aside", async () => {
+    using dir = tempDir("isolated-project-links", {
+      "package.json": JSON.stringify({ name: "project", dependencies: { dep: "file:./dep" } }),
+      "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+      "stray/package.json": JSON.stringify({ name: "stray", version: "1.0.0" }),
+      "node_modules/@scope/real/package.json": JSON.stringify({ name: "@scope/real", version: "1.0.0" }),
+    });
+    const root = String(dir);
+    const nodeModules = join(root, "node_modules");
+    await symlink(join(root, "stray"), join(nodeModules, "stray"), "junction");
+    await symlink(join(root, "stray"), join(nodeModules, "@scope", "stray"), "junction");
+
+    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(root, ".bun-cache") };
+    const install = await run(env, root, "install", "--linker", "isolated");
+    expect(install.stderr).not.toContain("error:");
+    expect(install.exitCode).toBe(0);
+
+    const entries = await readdirSorted(nodeModules);
+    expect(entries).toEqual([".bun", expect.stringContaining(".old_modules-"), "dep"]);
+    const oldModules = join(nodeModules, entries[1]);
+    expect(withoutDotEntries(await readdirSorted(oldModules))).toEqual(["@scope", "stray"]);
+    expect(await readdirSorted(join(oldModules, "@scope"))).toEqual(["real", "stray"]);
   });
 });
 

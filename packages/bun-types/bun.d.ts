@@ -7526,6 +7526,22 @@ declare module "bun" {
         flags: ReceiveFlags,
       ): void | Promise<void>;
       drain?(socket: Socket<DataBinaryType>): void | Promise<void>;
+      /**
+       * Called when the `data` or `drain` handler throws. On Linux and macOS,
+       * also called when a receive fails. The socket stays open.
+       *
+       * If `data` or `drain` throws and there is no `error` handler, the
+       * thrown value is reported as an uncaught exception.
+       *
+       * A promise that `data` or `drain` returns is not awaited. If it
+       * rejects, the rejection is reported as an unhandled rejection and does
+       * not reach `error`.
+       *
+       * Earlier versions of Bun call this handler with the error as the only
+       * argument.
+       *
+       * @param error The error. A value that `data` or `drain` throws is passed as thrown.
+       */
       error?(socket: Socket<DataBinaryType>, error: Error): void | Promise<void>;
     }
 
@@ -7538,6 +7554,22 @@ declare module "bun" {
         flags: ReceiveFlags,
       ): void | Promise<void>;
       drain?(socket: ConnectedSocket<DataBinaryType>): void | Promise<void>;
+      /**
+       * Called when the `data` or `drain` handler throws. On Linux and macOS,
+       * also called when a receive fails. The socket stays open.
+       *
+       * If `data` or `drain` throws and there is no `error` handler, the
+       * thrown value is reported as an uncaught exception.
+       *
+       * A promise that `data` or `drain` returns is not awaited. If it
+       * rejects, the rejection is reported as an unhandled rejection and does
+       * not reach `error`.
+       *
+       * Earlier versions of Bun call this handler with the error as the only
+       * argument.
+       *
+       * @param error The error. A value that `data` or `drain` throws is passed as thrown.
+       */
       error?(socket: ConnectedSocket<DataBinaryType>, error: Error): void | Promise<void>;
     }
 

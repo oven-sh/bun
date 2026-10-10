@@ -2743,9 +2743,6 @@ pub struct RuntimeHooks {
     /// (resolver failures / `ModuleNotFound`).
     pub load_preloads:
         unsafe fn(vm: *mut VirtualMachine) -> crate::CrateResult<*mut JSInternalPromise>,
-    /// What `Run::start` does when the entry point's load gives an error and no
-    /// promise: print `vm.log` (or the error's name) and exit 1.
-    pub entry_point_load_failed: fn(vm: &mut VirtualMachine, err: crate::CrateError) -> !,
     /// `ensureDebugger(block_until_connected)` — no-op when no debugger.
     pub ensure_debugger: unsafe fn(vm: *mut VirtualMachine, block_until_connected: bool),
     /// `eventLoop().autoTick()` — needs `Timer::All` for the timeout calc.
@@ -4661,9 +4658,37 @@ impl VirtualMachine {
         // Note: reshaped for borrowck — copy the `RawSlice` first to avoid
         // overlapping `&self`/`&mut self` borrows.
         if let Err(err) = self.reload_entry_point(main.slice()) {
-            // No promise to report: a preload file that is gone, for one. As on the first start.
-            let hooks = runtime_hooks().expect("runtime hooks not installed");
-            (hooks.entry_point_load_failed)(self, err);
+            self.reject_failed_reload(err);
+        }
+    }
+
+    /// A reload that gives an error and no promise, as when a preload file is gone. The error
+    /// becomes the rejection of the reload: the run loop reports it and waits for the next
+    /// save, as for an import that is gone. (A first start with the same error exits.)
+    #[cold]
+    fn reject_failed_reload(&mut self, err: crate::CrateError) {
+        use crate::LogJsc as _;
+        let global = self.global();
+        let rejected = if global.has_exception() {
+            crate::JSPromise::rejected_promise_with_caught_exception(global, jsc::JsError::Thrown)
+        } else {
+            let reason = match self.log_mut() {
+                Some(log) if !log.msgs.is_empty() => {
+                    let reason = log.to_js(global, format_args!("Failed to reload"));
+                    log.reset();
+                    reason
+                }
+                _ => Ok(global.create_error_instance(format_args!(
+                    "Error occurred loading entry point: {}",
+                    err.name(),
+                ))),
+            };
+            reason.map(|reason| crate::JSPromise::rejected_promise(global, reason))
+        };
+        if let Ok(rejected) = rejected {
+            // Whoever loads the entry point reports its promise, not the rejection tracker.
+            rejected.set_handled();
+            self.set_pending_internal_promise(Some(core::ptr::from_mut(rejected)));
         }
     }
 

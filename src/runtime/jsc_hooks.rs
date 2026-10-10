@@ -894,10 +894,6 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
     Ok(ptr::null_mut())
 }
 
-fn entry_point_load_failed(vm: &mut VirtualMachine, err: bun_jsc::CrateError) -> ! {
-    crate::cli::run_command::entry_point_load_failed(vm, &err.into())
-}
-
 /// `ensureDebugger(block_until_connected)` — no-op when no debugger.
 ///
 /// # Safety
@@ -1493,7 +1489,6 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     deinit_runtime_state,
     generate_entry_point,
     load_preloads,
-    entry_point_load_failed,
     ensure_debugger,
     auto_tick,
     auto_tick_active,

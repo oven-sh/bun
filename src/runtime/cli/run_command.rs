@@ -1716,16 +1716,14 @@ fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
     vm.global_exit();
 }
 
-/// Cold `Err(err)` arm of `vm.load_entry_point` in `Run::start`, and of a `--hot` reload.
-/// It exits under `--hot` and `--watch` too (#15177): nothing watches a file that was not
-/// found, so no save would start a reload.
+/// Cold `Err(err)` arm of `vm.load_entry_point` in `Run::start`.
 #[cold]
 #[inline(never)]
 #[cfg_attr(
     any(target_os = "linux", target_os = "android"),
     unsafe(link_section = ".text.unlikely")
 )]
-pub(crate) fn entry_point_load_failed(vm: &mut VirtualMachine, err: &crate::Error) -> ! {
+fn entry_point_load_failed(vm: &mut VirtualMachine, err: &crate::Error) -> ! {
     if log_has_msgs(vm) {
         dump_build_error(vm);
         log_clear_msgs(vm);

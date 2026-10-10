@@ -694,11 +694,8 @@ static void rejectWithCause(Ref<DeferredPromise>&& promise, ExceptionCode ec, co
     });
 }
 
-// Rejects an import failure. A failed key parse (d2i_*, EC/RSA/AKP) leaves
-// its BoringSSL error in the thread's error queue. Always drain it here so a
-// later, unrelated BoringSSL consumer does not report it as its own failure.
-// The ML import paths attach it as the DOMException's cause like Node does.
-// Shared by importKey's and unwrapKey's inner-import exceptionCallbacks.
+// Rejects an import failure and drains the BoringSSL error the key parse left
+// behind. The ML import paths attach it as the DOMException's cause like Node does.
 static void rejectImportKeyException(Ref<DeferredPromise>&& promise, ExceptionCode ec, const String& msg, CryptoAlgorithmIdentifier identifier)
 {
     if (ec == DataError && isAkpAlgorithm(identifier)) {

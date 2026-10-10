@@ -354,8 +354,7 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
     }
 
     if (md == nullptr && zigHasher == nullptr) [[unlikely]] {
-        // A name lookup miss pushes nothing to the BoringSSL error queue. Reading
-        // it here would report whatever an earlier, unrelated call left behind.
+        // A lookup miss pushes no BoringSSL error, so do not report a stale one.
         throwCryptoError(globalObject, scope, 0, "Digest method not supported"_s);
         return {};
     }
@@ -376,8 +375,7 @@ JSC_DEFINE_HOST_FUNCTION(constructHash, (JSC::JSGlobalObject * globalObject, JSC
 
     JSHash* hash = JSHash::create(vm, structure);
 
-    // A failed init or copy pushes its own entry last. ERR_get_error would
-    // return the oldest entry, which can belong to an earlier unrelated call.
+    // The failed call's entry is the newest. ERR_get_error would return the oldest.
     if (zigHasher) {
         if (!hash->initZig(globalObject, scope, zigHasher.release(), xofLen)) {
             throwCryptoError(globalObject, scope, ERR_peek_last_error(), "Digest method not supported"_s);

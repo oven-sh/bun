@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
-import { existsSync, mkdtempSync, realpathSync } from "node:fs";
+import { bunEnv, bunExe, runBunInstall, tempDir, tempDirWithFiles } from "harness";
+import { existsSync, mkdtempSync, readFileSync, realpathSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -578,5 +578,97 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
     expect(outputDepth2.split("\n").length).toBeLessThan(outputNoDepth.split("\n").length);
 
     expect(outputDepth2).toContain("mime-db@");
+  });
+
+  async function why(cwd: string, pattern: string) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...cmd.split(" "), pattern],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // `bun why` prints an empty line after each package that it explains.
+  const explained = (...lines: string[]) => ({ stdout: lines.join("\n") + "\n\n", stderr: "", exitCode: 0 });
+
+  it("should list a root package.json with no name as a dependent", async () => {
+    using dir = tempDir(`why-unnamed-root-${i++}`, {
+      "package.json": JSON.stringify({
+        dependencies: { "dep-a": "file:./dep-a" },
+        devDependencies: { "dep-b": "file:./dep-b" },
+      }),
+      "dep-a/package.json": JSON.stringify({
+        name: "dep-a",
+        version: "1.0.0",
+        dependencies: { "dep-c": "file:../dep-c" },
+      }),
+      "dep-b/package.json": JSON.stringify({ name: "dep-b", version: "1.0.0" }),
+      "dep-c/package.json": JSON.stringify({ name: "dep-c", version: "1.0.0" }),
+    });
+    await runBunInstall(bunEnv, String(dir));
+
+    // `*` matches every name. The root has no name, so it is a dependent but not a match.
+    expect(await why(String(dir), "*")).toEqual(
+      explained(
+        "dep-a@dep-a",
+        "  └─ the root package (requires file:./dep-a)",
+        "",
+        "dep-b@dep-b",
+        "  └─ dev the root package (requires file:./dep-b)",
+        "",
+        "dep-c@dep-c",
+        "  └─ dep-a@dep-a (requires file:../dep-c)",
+        "     └─ the root package (requires file:./dep-a)",
+      ),
+    );
+  });
+
+  // bun.lock cannot hold a package with no name (#17060), but an old bun.lockb can. `bun install` wrote this one
+  // with `saveTextLockfile = false` for the package.json below. `anon/package.json` has no name and depends on
+  // `leaf` with `file:../leaf`.
+  it("should not list a folder package with no name as the root package", async () => {
+    using dir = tempDir(`why-unnamed-folder-${i++}`, {
+      "package.json": JSON.stringify({ dependencies: { anon: "file:./anon" } }),
+      "bun.lockb": readFileSync(join(import.meta.dir, "fixtures", "unnamed-folder-dependency.lockb")),
+    });
+
+    expect(await why(String(dir), "*")).toEqual(
+      explained("leaf@leaf", "  └─ @anon (requires file:../leaf)", "     └─ the root package (requires file:./anon)"),
+    );
+  });
+
+  it.each([
+    { title: "no name", name: undefined, label: "the root package" },
+    { title: "a name", name: "my-app", label: "my-app" },
+  ])("should list a workspace root with $title as a dependent of its workspaces", async ({ name, label }) => {
+    using dir = tempDir(`why-workspace-root-${i++}`, {
+      "package.json": JSON.stringify({ name, workspaces: ["lib-a", "lib-b", "lib-c"] }),
+      "lib-a/package.json": JSON.stringify({
+        name: "lib-a",
+        version: "1.0.0",
+        dependencies: { "lib-c": "workspace:*" },
+      }),
+      "lib-b/package.json": JSON.stringify({
+        name: "lib-b",
+        version: "1.0.0",
+        dependencies: { "lib-a": "workspace:*" },
+      }),
+      "lib-c/package.json": JSON.stringify({ name: "lib-c", version: "1.0.0" }),
+    });
+    await runBunInstall(bunEnv, String(dir));
+
+    // The root depends on lib-a too. `bun why` does not list the root below a workspace, so lib-b is the last line there.
+    expect(await why(String(dir), "lib-c")).toEqual(
+      explained(
+        "lib-c@workspace:lib-c",
+        "  ├─ lib-a@workspace (requires workspace:*)",
+        "  │  └─ lib-b@workspace (requires workspace:*)",
+        `  └─ ${label}`,
+      ),
+    );
   });
 });

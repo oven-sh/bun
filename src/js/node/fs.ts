@@ -964,16 +964,17 @@ realpathSync.native = fs.realpathNativeSync.bind(fs);
 // and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`
 // using filter and other options uses a lazily loaded js fallback ported from node.js
 function cpSync(src, dest, options) {
-  const { cpSyncFn, validateCpOptions, tryNativeFastPathSync } = require("internal/fs/cp-sync");
+  const { cpSyncFn, validateCpOptions, nativeHonorsOptions, tryNativeFastPathSync } = require("internal/fs/cp-sync");
   const { getValidatedFsPath } = require("internal/validators");
   options = validateCpOptions(options);
   src = getValidatedFsPath(src, "src");
   dest = getValidatedFsPath(dest, "dest");
-  const { filter, dereference, preserveTimestamps, verbatimSymlinks, mode, errorOnExist, force, recursive } = options;
-  if (!filter && !dereference && !preserveTimestamps && !verbatimSymlinks && !mode && !errorOnExist && force) {
+  if (nativeHonorsOptions(options)) {
     const { ok, checked } = tryNativeFastPathSync(src, dest, options);
     if (ok) {
-      return fs.cpSync(src, dest, recursive, errorOnExist, force, mode);
+      const { errorOnExist, force, recursive, mode } = options;
+      // node ignores `errorOnExist` when `force` is set.
+      return fs.cpSync(src, dest, recursive, errorOnExist && !force, force, mode);
     }
     return cpSyncFn(src, dest, options, checked);
   }

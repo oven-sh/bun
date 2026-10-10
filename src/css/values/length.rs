@@ -469,8 +469,8 @@ impl Length {
         res
     }
 
-    pub(crate) fn add_internal(self, other: Length) -> Length {
-        if let Some(r) = self.try_add(&other) {
+    pub(crate) fn add_internal(mut self, mut other: Length) -> Length {
+        if let Some(r) = self.try_add(&mut other) {
             return r;
         }
         self.add__(other)
@@ -517,57 +517,27 @@ impl Length {
         // to move out of the Box, so the conditions are folded into match guards.
     }
 
-    fn try_add(&self, other: &Length) -> Option<Length> {
-        if let (Self::Value(a), Self::Value(b)) = (self, other) {
-            if let Some(res) = a.try_add(*b) {
-                return Some(Self::Value(res));
-            }
-            return None;
+    /// A hit takes what it needs out of both operands. A miss leaves them as they were.
+    fn try_add(&mut self, other: &mut Length) -> Option<Length> {
+        match (self, other) {
+            (Self::Value(a), Self::Value(b)) => a.try_add(*b).map(Self::Value),
+            (Self::Calc(calc), value) | (value, Self::Calc(calc)) => Self::try_add_in(calc, value),
         }
+    }
 
-        if let Self::Calc(c) = self {
-            match &**c {
-                Calc::Value(v) => return v.try_add(other),
-                Calc::Sum { left, right } => {
-                    let a = Self::Calc(left.clone());
-                    if let Some(res) = a.try_add(other) {
-                        return Some(res.add__(Self::Calc(right.clone())));
-                    }
-
-                    let b = Self::Calc(right.clone());
-                    if let Some(res) = b.try_add(other) {
-                        return Some(Self::Calc(left.clone()).add__(res));
-                    }
-
-                    return None;
+    /// `try_add` with one operand given as its calc node.
+    fn try_add_in(calc: &mut Calc<Length>, value: &mut Length) -> Option<Length> {
+        match calc {
+            Calc::Value(v) => v.try_add(value),
+            Calc::Sum { left, right } => {
+                if let Some(res) = Self::try_add_in(left, value) {
+                    return Some(res.add__(Self::Calc(Calc::take_boxed(right))));
                 }
-                _ => return None,
+                let res = Self::try_add_in(right, value)?;
+                Some(Self::Calc(Calc::take_boxed(left)).add__(res))
             }
-            // `Box` ownership requires cloning the sub-nodes here (no aliasing
-            // of the same heap node).
+            _ => None,
         }
-
-        if let Self::Calc(c) = other {
-            match &**c {
-                Calc::Value(v) => return v.try_add(self),
-                Calc::Sum { left, right } => {
-                    let a = Self::Calc(left.clone());
-                    if let Some(res) = self.try_add(&a) {
-                        return Some(res.add__(Self::Calc(right.clone())));
-                    }
-
-                    let b = Self::Calc(right.clone());
-                    if let Some(res) = self.try_add(&b) {
-                        return Some(Self::Calc(left.clone()).add__(res));
-                    }
-
-                    return None;
-                }
-                _ => return None,
-            }
-        }
-
-        None
     }
 
     fn unwrap_calc(length: Length) -> Length {

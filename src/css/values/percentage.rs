@@ -254,68 +254,52 @@ impl<D> DimensionPercentage<D> {
         }
     }
 
-    pub(crate) fn add_internal(self, other: Self) -> Self
+    pub(crate) fn add_internal(mut self, mut other: Self) -> Self
     where
         Self: crate::values::calc::CalcValue,
         D: protocol::TryAdd + protocol::Zero + protocol::TrySign,
     {
-        if let Some(res) = self.add_recursive(&other) {
+        if let Some(res) = self.add_recursive(&mut other) {
             return res;
         }
         self.add_impl(other)
     }
 
-    fn add_recursive(&self, other: &Self) -> Option<Self>
+    /// A hit takes what it needs out of both operands. A miss leaves them as they were.
+    fn add_recursive(&mut self, other: &mut Self) -> Option<Self>
     where
         Self: crate::values::calc::CalcValue,
         D: protocol::TryAdd + protocol::Zero + protocol::TrySign,
     {
         match (self, other) {
-            (Self::Dimension(a), Self::Dimension(b)) => {
-                if let Some(res) = a.try_add(b) {
-                    return Some(Self::Dimension(res));
-                }
-            }
+            (Self::Dimension(a), Self::Dimension(b)) => a.try_add(b).map(Self::Dimension),
             (Self::Percentage(a), Self::Percentage(b)) => {
-                return Some(Self::Percentage(Percentage { v: a.v + b.v }));
+                Some(Self::Percentage(Percentage { v: a.v + b.v }))
             }
-            (Self::Calc(this_calc), _) => match this_calc.as_ref() {
-                Calc::Value(v) => return v.add_recursive(other),
-                Calc::Sum { left, right } => {
-                    // With owning Boxes we deep_clone the sum operands. The values
-                    // are only read during this computation, so the clone is
-                    // semantically equivalent (just extra allocation).
-                    let left_calc = Self::Calc(left.deep_clone_boxed());
-                    if let Some(res) = left_calc.add_recursive(other) {
-                        return Some(res.add_impl(Self::Calc(right.deep_clone_boxed())));
-                    }
-
-                    let right_calc = Self::Calc(right.deep_clone_boxed());
-                    if let Some(res) = right_calc.add_recursive(other) {
-                        return Some(Self::Calc(left.deep_clone_boxed()).add_impl(res));
-                    }
-                }
-                _ => {}
-            },
-            (_, Self::Calc(other_calc)) => match other_calc.as_ref() {
-                Calc::Value(v) => return self.add_recursive(v),
-                Calc::Sum { left, right } => {
-                    let left_calc = Self::Calc(left.deep_clone_boxed());
-                    if let Some(res) = self.add_recursive(&left_calc) {
-                        return Some(res.add_impl(Self::Calc(right.deep_clone_boxed())));
-                    }
-
-                    let right_calc = Self::Calc(right.deep_clone_boxed());
-                    if let Some(res) = self.add_recursive(&right_calc) {
-                        return Some(Self::Calc(left.deep_clone_boxed()).add_impl(res));
-                    }
-                }
-                _ => {}
-            },
-            _ => {}
+            (Self::Calc(calc), value) => Self::add_recursive_in(calc, value, false),
+            (value, Self::Calc(calc)) => Self::add_recursive_in(calc, value, true),
+            _ => None,
         }
+    }
 
-        None
+    /// `add_recursive` for the calc node of one operand. `calc_is_rhs` keeps the operand order.
+    fn add_recursive_in(calc: &mut Calc<Self>, value: &mut Self, calc_is_rhs: bool) -> Option<Self>
+    where
+        Self: crate::values::calc::CalcValue,
+        D: protocol::TryAdd + protocol::Zero + protocol::TrySign,
+    {
+        match calc {
+            Calc::Value(v) if calc_is_rhs => value.add_recursive(v),
+            Calc::Value(v) => v.add_recursive(value),
+            Calc::Sum { left, right } => {
+                if let Some(res) = Self::add_recursive_in(left, value, calc_is_rhs) {
+                    return Some(res.add_impl(Self::Calc(Calc::take_boxed(right))));
+                }
+                let res = Self::add_recursive_in(right, value, calc_is_rhs)?;
+                Some(Self::Calc(Calc::take_boxed(left)).add_impl(res))
+            }
+            _ => None,
+        }
     }
 
     fn add_impl(self, other: Self) -> Self

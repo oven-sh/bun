@@ -3,7 +3,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "path";
 import {
   cssTest,
@@ -231,6 +231,122 @@ describe("css tests", () => {
       `a{width:calc(6 - 400% - 2 - 4 - 8vh + 3ic)}`,
     ); // ideally -400% - 8vh + 3ic
     minify_test(`a { top: calc(100% - 1 * 2 - 8 * 2); }`, `a{top:calc(100% - 2 - 16)}`); // ideally 100% - 18
+  });
+  describe("long calc sums", () => {
+    // A value added to a sum of terms that do not fold copied a part of the sum at every
+    // level of it. N terms took time in N cubed, and one addition took memory in N
+    // squared. The commands run in a child process so that a slow one can be stopped.
+    const sanitized = isASAN || isDebug;
+    const fn = "min(1px,1em)";
+    const repeat = (text: string, count: number) => Buffer.alloc(count * text.length, text).toString();
+    const sum = (term: string, count: number, operator = " + ") => repeat(term + operator, count - 1) + term;
+
+    async function run(args: string[], files: Record<string, string>, env: Record<string, string | undefined>) {
+      using dir = tempDir("css-long-calc-sum", files);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        env,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        // The unfixed commands ran for minutes. Do not leave one behind.
+        timeout: 20_000,
+        killSignal: "SIGKILL",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const output = await Bun.file(join(String(dir), "out", "a.css"))
+        .text()
+        .catch(() => "");
+      const maxRSS = proc.resourceUsage()?.maxRSS ?? 0;
+      return { stdout, output, stderr, exitCode, signalCode: proc.signalCode, maxRSS };
+    }
+    const build = (css: string) => run(["build", "a.css", "--minify", "--outdir", "out"], { "a.css": css }, bunEnv);
+
+    // One rule for each shape. The unfixed build took minutes for each of them.
+    const terms = sanitized ? 200 : 2_000;
+    const rules: [name: string, css: string, expected: string][] = [
+      [
+        "subtracted",
+        `.subtracted{width:calc(${sum(fn, terms, " - ")})}`,
+        `.subtracted{width:calc(${fn}${repeat(" + -1*" + fn, terms - 1)})}`,
+      ],
+      [
+        "value-after-each-term",
+        `.value-after-each-term{width:calc(${sum(fn + " + 1px", terms)})}`,
+        `.value-after-each-term{width:calc(${fn} + ${terms}px${repeat(" + " + fn, terms - 1)})}`,
+      ],
+      ["numbers", `.numbers{width:calc(1% + ${sum("1", terms)})}`, `.numbers{width:calc(1% + ${sum("1", terms)})}`],
+      [
+        "groups",
+        `.groups{width:calc(${sum("(" + fn + " + 1em)", terms)})}`,
+        `.groups{width:calc(${sum(fn, terms)} + ${terms}em)}`,
+      ],
+      [
+        "groups-unit-first",
+        `.groups-unit-first{width:calc(${sum("(1em + " + fn + ")", terms)})}`,
+        `.groups-unit-first{width:calc(${terms}em${repeat(" + " + fn, terms)})}`,
+      ],
+    ];
+
+    test("bun build", async () => {
+      const { output, stderr, exitCode, signalCode } = await build(rules.map(([, css]) => css).join("\n"));
+      // The output is long, so the assertion is on where each rule is.
+      let at = 0;
+      const found: Record<string, boolean> = {};
+      const wanted: Record<string, boolean> = {};
+      for (const [name, , expected] of rules) {
+        found[name] = output.startsWith(expected, at);
+        wanted[name] = true;
+        at += expected.length;
+      }
+      expect({ stderr, found, length: output.length, exitCode, signalCode }).toEqual({
+        stderr: "",
+        found: wanted,
+        length: at + 1,
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+
+    test("bun pm diff", async () => {
+      // With colors on, this command prints the CSS of both packages through the parser.
+      const css = `.a{width:calc(${sum(fn, terms, " - ")})}`;
+      const { stdout, stderr, exitCode, signalCode } = await run(
+        ["pm", "diff", "./a", "./b"],
+        {
+          "a/package.json": `{"name":"a","version":"1.0.0"}`,
+          "b/package.json": `{"name":"a","version":"1.0.0"}`,
+          "a/a.css": css,
+          "b/a.css": css.replace("}", ";color:red}"),
+        },
+        { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1", COLUMNS: "120" },
+      );
+      const added = Array.from(stdout.replace(/\x1b\[[0-9;]*[mK]/g, "").matchAll(/│\+ +(.*)$/gm), match => match[1]);
+      expect({ stderr, added, exitCode, signalCode }).toEqual({
+        stderr: "",
+        added: ["color: red;"],
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+
+    test("one value added to many terms does not copy them", async () => {
+      // The unfixed build used 1.7 GB for this sum in a release build, and 1 GB in a
+      // sanitized build for the shorter one.
+      const functions = sanitized ? 2_000 : 4_000;
+      const megabytes = sanitized ? 600 : 300;
+      const { output, stderr, exitCode, signalCode, maxRSS } = await build(
+        `.a{width:calc(${sum(fn, functions)} + 1px)}`,
+      );
+      const wanted = `.a{width:calc(${sum(fn, functions)} + 1px)}\n`;
+      expect({ stderr, equal: output === wanted, exitCode, signalCode }).toEqual({
+        stderr: "",
+        equal: true,
+        exitCode: 0,
+        signalCode: null,
+      });
+      expect(maxRSS).toBeLessThan(megabytes * 1024 * 1024);
+    });
   });
   describe("border_spacing", () => {
     minify_test(

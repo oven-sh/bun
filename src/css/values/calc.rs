@@ -206,11 +206,9 @@ impl<V> Calc<V> {
         }
     }
 
-    pub(crate) fn deep_clone_boxed(&self) -> Box<Self>
-    where
-        V: Clone,
-    {
-        Box::new(self.deep_clone())
+    /// Moves the node out of `calc`, and leaves a placeholder for the owner to drop.
+    pub(crate) fn take_boxed(calc: &mut Box<Self>) -> Box<Self> {
+        Box::new(core::mem::replace(&mut **calc, Calc::Number(0.0)))
     }
 
     // Cleanup is handled by Drop on Box<V>/Box<Calc<V>>/

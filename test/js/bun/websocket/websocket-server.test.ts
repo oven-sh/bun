@@ -712,7 +712,7 @@ describe("Server", () => {
         ws.send("Hello!");
       },
       close(_, code) {
-        expect(code).toBe(1006);
+        expect(code).toBe(1009);
         done();
       },
     }));

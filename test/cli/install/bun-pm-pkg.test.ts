@@ -272,6 +272,70 @@ describe.concurrent("bun pm pkg", () => {
       expect((await readPkg(dir)).newArray).toEqual(["one", "two", "three"]);
     });
 
+    it("should accept any valid JSON value with --json flag", async () => {
+      using dir = tempDir("pm-pkg-json-valid", {
+        "package.json": JSON.stringify({ name: "x", version: "1.0.0" }, null, 2),
+      });
+      const { error, code } = await runPmPkg(
+        [
+          "set",
+          "a=0",
+          "b=-1.5e3",
+          "c=1E+2",
+          'd="str \\u00e9\\n"',
+          'e={"k":[1,{"m":null}],"":""}',
+          "f= [ true ,\tfalse ]\n",
+          "--json",
+        ],
+        dir,
+      );
+      expect(error).toBe("");
+      expect(await readPkg(dir)).toEqual({
+        name: "x",
+        version: "1.0.0",
+        a: 0,
+        b: -1500,
+        c: 100,
+        d: "str \u00e9\n",
+        e: { k: [1, { m: null }], "": "" },
+        f: [true, false],
+      });
+      expect(code).toBe(0);
+    });
+
+    // npm runs the value through JSON.parse and refuses to write on failure.
+    // Anything JSON.parse rejects must be an error here too, never a lenient
+    // parse (`010` -> 8 or 10) and never a silent fallback to a string.
+    it.each([
+      ["undefined", "Unexpected undefined"],
+      ["NaN", "Unexpected NaN"],
+      ["Infinity", "Unexpected Infinity"],
+      ["1/0", "Unsupported syntax: Operators are not allowed in JSON"],
+      ["+1", "Unsupported syntax: Operators are not allowed in JSON"],
+      ["'single'", "JSON strings must use double quotes"],
+      ["0x10", "JSON does not support hexadecimal numbers"],
+      ["0b11", "JSON does not support binary numbers"],
+      ["010", "JSON does not support numbers with leading zeros"],
+      ["1_000", "JSON does not support numeric separators"],
+      [".5", 'JSON numbers must have a digit before "."'],
+      ["5.", 'JSON numbers must have a digit after "."'],
+      ["- 5", 'JSON numbers must have a digit after "-"'],
+      ["[1,]", "JSON does not support trailing commas"],
+      ['{"a":1,}', "JSON does not support trailing commas"],
+      ["//c 1", "JSON does not support comments"],
+      ['"\\v"', "Syntax Error"],
+      ["1 2", "Unexpected 2"],
+      ["[1] {}", "Unexpected {"],
+    ])("should reject the invalid JSON value %s with --json flag", async (value, message) => {
+      using dir = makeTestDir();
+      const before = await Bun.file(join(dir, "package.json")).text();
+      const { output, error, code } = await runPmPkg(["set", `x=${value}`, "--json"], dir, false);
+      expect(output).toBe("");
+      expect(error).toContain(`error: Invalid JSON value for "x": ${message}\n`);
+      expect(await Bun.file(join(dir, "package.json")).text()).toBe(before);
+      expect(code).toBe(1);
+    });
+
     it("should treat values as strings without --json flag", async () => {
       using dir = makeTestDir();
       const { code } = await runPmPkg(

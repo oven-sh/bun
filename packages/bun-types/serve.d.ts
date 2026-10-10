@@ -68,7 +68,7 @@ declare module "bun" {
      * Sends a message to the client.
      *
      * @param data The data to send.
-     * @param compress Whether to compress the data. Ignored if the client does not support compression
+     * @param compress Whether to compress the data. Defaults to `false`. Ignored if the client does not support compression
      * @example
      * ```ts
      * ws.send("Hello!");
@@ -82,7 +82,7 @@ declare module "bun" {
      * Sends a text message to the client.
      *
      * @param data The data to send.
-     * @param compress Whether to compress the data. Ignored if the client does not support compression
+     * @param compress Whether to compress the data. Defaults to `false`. Ignored if the client does not support compression
      * @example
      * ```ts
      * ws.send("Hello!");
@@ -95,7 +95,7 @@ declare module "bun" {
      * Sends a binary message to the client.
      *
      * @param data The data to send.
-     * @param compress Whether to compress the data. Ignored if the client does not support compression
+     * @param compress Whether to compress the data. Defaults to `false`. Ignored if the client does not support compression
      * @example
      * ```ts
      * ws.send(new TextEncoder().encode("Hello!"));
@@ -148,7 +148,7 @@ declare module "bun" {
      *
      * @param topic The topic name.
      * @param data The data to send.
-     * @param compress Whether to compress the data. Ignored if the client does not support compression
+     * @param compress Whether to compress the data. Defaults to `false`. Ignored if the client does not support compression
      * @example
      * ```ts
      * ws.publish("chat", "Hello!");
@@ -163,7 +163,7 @@ declare module "bun" {
      *
      * @param topic The topic name.
      * @param data The data to send.
-     * @param compress Whether to compress the data. Ignored if the client does not support compression
+     * @param compress Whether to compress the data. Defaults to `false`. Ignored if the client does not support compression
      * @example
      * ```ts
      * ws.publish("chat", "Hello!");
@@ -177,7 +177,7 @@ declare module "bun" {
      *
      * @param topic The topic name.
      * @param data The data to send.
-     * @param compress Whether to compress the data. Ignored if the client does not support compression
+     * @param compress Whether to compress the data. Defaults to `false`. Ignored if the client does not support compression
      * @example
      * ```ts
      * ws.publish("chat", new TextEncoder().encode("Hello!"));
@@ -1081,13 +1081,16 @@ declare module "bun" {
      *
      * @param topic The topic to publish to
      * @param data The data to send
-     * @param compress Should the data be compressed? Ignored if the client does not support compression.
+     * @param compress Whether to compress the data. Defaults to `true`, unlike {@link ServerWebSocket.send} and
+     * {@link ServerWebSocket.publish}, which default to `false`. Pass `false` to send the data as-is.
+     * Ignored for subscribers that do not support compression (requires `perMessageDeflate`).
      *
      * @returns 0 if the message was dropped for any subscriber (or there were no subscribers), -1 if backpressure was applied for any subscriber, or the number of bytes sent.
      *
      * @example
      *
      * ```js
+     * // compressed for subscribers that negotiated perMessageDeflate
      * server.publish("chat", "Hello World");
      * ```
      *
@@ -1098,7 +1101,8 @@ declare module "bun" {
      *
      * @example
      * ```js
-     * server.publish("chat", new ArrayBuffer(4), true);
+     * // sent uncompressed to every subscriber
+     * server.publish("chat", new ArrayBuffer(4), false);
      * ```
      *
      * @example

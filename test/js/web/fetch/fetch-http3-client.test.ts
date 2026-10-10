@@ -274,6 +274,12 @@ describe("fetch protocol: http3", () => {
     expect(await res.text()).toBe("");
   });
 
+  // RFC 9110 section 9.3.8: unlike the response to HEAD, the response to TRACE has content.
+  test("TRACE has a body", async () => {
+    const res = await fetch(`${base}/hello`, { ...h3, method: "TRACE" });
+    expect({ status: res.status, text: await res.text() }).toEqual({ status: 200, text: "hello over h3" });
+  });
+
   test.each([
     ["a 204", "/status?code=204&body=", {}],
     ["a 304", "/status?code=304&body=", {}],

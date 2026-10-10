@@ -1010,6 +1010,66 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     }
   });
 
+  // RFC 9110 section 9.3.8: the response to TRACE has content. The DATA of
+  // "/later" is held until the next request arrives, so it is read after that
+  // fetch() promise has resolved.
+  test("the response to a TRACE request has a body", async () => {
+    const server = makeH2Server();
+    const rstCodes: Record<string, number> = {};
+    const allClosed = Promise.withResolvers<void>();
+    let sendHeldData: (() => void) | undefined;
+    server.on("stream", (stream: http2.ServerHttp2Stream, headers: http2.IncomingHttpHeaders) => {
+      const path = String(headers[":path"]);
+      const body = `${headers[":method"]} ${path}`;
+      stream.on("error", () => {});
+      stream.on("close", () => {
+        rstCodes[path] = stream.rstCode;
+        if (Object.keys(rstCodes).length === 3) allClosed.resolve();
+      });
+      sendHeldData?.();
+      stream.respond({ ":status": 200, "content-type": "message/http", "content-length": String(body.length) });
+      if (path === "/later") {
+        sendHeldData = () => {
+          sendHeldData = undefined;
+          stream.end(body);
+        };
+      } else {
+        stream.end(body);
+      }
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await using proc = await spawnFetch(`
+        const url = "https://localhost:${port}";
+        const tls = { rejectUnauthorized: false };
+        const same = await fetch(url + "/same", { method: "TRACE", tls });
+        const sameText = await same.text();
+        const later = await fetch(url + "/later", { method: "TRACE", tls });
+        const release = await fetch(url + "/release", { tls });
+        console.log(JSON.stringify([
+          [same.status, sameText],
+          [later.status, await later.text()],
+          [release.status, await release.text()],
+        ]));
+      `);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([
+        [200, "TRACE /same"],
+        [200, "TRACE /later"],
+        [200, "GET /release"],
+      ]);
+      expect(exitCode).toBe(0);
+      // Each stream ended with END_STREAM: the client cancelled none of them.
+      await allClosed.promise;
+      expect(rstCodes).toEqual({ "/same": 0, "/later": 0, "/release": 0 });
+    } finally {
+      server.close();
+    }
+  });
+
   describe("raw frame server", () => {
     test("REFUSED_STREAM is transparently retried on the same connection", async () => {
       let attempts = 0;

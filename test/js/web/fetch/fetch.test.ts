@@ -803,6 +803,63 @@ describe("fetch", () => {
     }),
   );
 
+  // RFC 9112 §6.3: only a HEAD response is terminated at the end of the header
+  // section. A TRACE response echoes the request as content (RFC 9110 §9.3.8).
+  it.concurrent("reads a TRACE response body", async () => {
+    const echo = "TRACE / HTTP/1.1\r\nhost: bun\r\n";
+    const head = (framing: string) =>
+      `HTTP/1.1 200 OK\r\nContent-Type: message/http\r\n${framing}Connection: close\r\n\r\n`;
+    await using server = net.createServer(socket => {
+      socket.on("error", () => {});
+      socket.once("data", data => {
+        const [method, path] = String(data).split(" ", 2);
+        if (method === "HEAD") {
+          socket.end(head(`Content-Length: ${echo.length}\r\n`));
+        } else if (path === "/chunked") {
+          socket.end(head("Transfer-Encoding: chunked\r\n") + `${echo.length.toString(16)}\r\n${echo}\r\n0\r\n\r\n`);
+        } else {
+          socket.end(head(`Content-Length: ${echo.length}\r\n`) + echo);
+        }
+      });
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const read = async (path: string, method: string) => {
+      const res = await fetch(`http://127.0.0.1:${port}${path}`, { method });
+      return [res.headers.get("content-length"), res.headers.get("transfer-encoding"), await res.text()];
+    };
+
+    expect({
+      sized: await read("/", "TRACE"),
+      chunked: await read("/chunked", "TRACE"),
+      head: await read("/", "HEAD"),
+    }).toEqual({
+      sized: [String(echo.length), null, echo],
+      chunked: [null, "chunked", echo],
+      // HEAD is the one method still terminated at the end of the header section.
+      head: [String(echo.length), null, ""],
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/19615
+  it.concurrent("a TRACE request to Bun.serve gets the response body", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        return new Response(`${req.method} ${new URL(req.url).pathname}\nx-foo: ${req.headers.get("x-foo")}`, {
+          headers: { "Content-Type": "message/http" },
+        });
+      },
+    });
+    const res = await fetch(new Request(server.url.href, { method: "TRACE", headers: { "X-Foo": "bar" } }));
+    const echoed = "TRACE /\nx-foo: bar";
+    expect({
+      status: res.status,
+      contentLength: res.headers.get("content-length"),
+      body: await res.text(),
+    }).toEqual({ status: 200, contentLength: String(echoed.length), body: echoed });
+  });
+
   // WHATWG Fetch only forbids a body for GET and HEAD. OPTIONS with content is
   // legal HTTP (RFC 9110 §9.3.7) and must be sent, not rejected.
   it.concurrent("OPTIONS with body is sent and delivered", async () => {

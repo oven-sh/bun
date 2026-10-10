@@ -4035,6 +4035,37 @@ CREATE TABLE ${table_name} (
       expect(xs.map(x => x.x).join("")).toBe("123");
     });
 
+    // https://github.com/oven-sh/bun/issues/43247
+    test("tagged template on a released reserved handle returns a Query that rejects when run", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      const reserved = await sql.reserve();
+      await reserved.release();
+
+      const query = reserved`select 1 as x`;
+      expect(query.constructor.name).toBe("Query");
+      expect(query.values()).toBe(query);
+      expect((await query.catch(e => e)).code).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
+      expect((await reserved`select 1 as x`.values().catch(e => e)).code).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
+      expect(reserved({ a: 1 }).constructor.name).toBe("SQLHelper");
+      expect(await sql`select ${reserved`1`}::int as x`).toEqual([{ x: 1 }]);
+    });
+
+    test("tagged template on a settled transaction handle returns a Query that rejects when run", async () => {
+      await using sql = postgres({ ...options, max: 1 });
+      let stale!: Parameters<Parameters<typeof sql.begin>[0]>[0];
+      await sql.begin(async tx => {
+        stale = tx;
+      });
+
+      const query = stale`select 1 as x`;
+      expect(query.constructor.name).toBe("Query");
+      expect(query.values()).toBe(query);
+      expect((await query.catch(e => e)).code).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
+      expect((await stale`select 1 as x`.values().catch(e => e)).code).toBe("ERR_POSTGRES_CONNECTION_CLOSED");
+      expect(stale({ a: 1 }).constructor.name).toBe("SQLHelper");
+      expect(await sql`select ${stale`1`}::int as x`).toEqual([{ x: 1 }]);
+    });
+
     test("keeps process alive when it should", async () => {
       const file = path.posix.join(__dirname, "sql-fixture-ref.ts");
       const result = await $`DATABASE_URL=${process.env.DATABASE_URL} ${bunExe()} ${file}`;

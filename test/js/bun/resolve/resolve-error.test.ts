@@ -168,6 +168,178 @@ describe("ResolveMessage", () => {
     }
     expect().pass();
   });
+
+  // https://github.com/oven-sh/bun/issues/12890
+  describe.concurrent("blocked lifecycle script hint", () => {
+    async function run(files: Record<string, string>) {
+      using dir = tempDir("resolve-blocked-lifecycle", {
+        "package.json": JSON.stringify({ name: "app", version: "0.0.0" }),
+        "main.js": `require("has-postinstall");`,
+        ...files,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    it("points at `bun pm trust` when the enclosing package has a postinstall", async () => {
+      const { stderr, exitCode } = await run({
+        "node_modules/has-postinstall/package.json": JSON.stringify({
+          name: "has-postinstall",
+          version: "1.0.0",
+          main: "index.js",
+          scripts: {
+            // `}` inside an earlier script value must not truncate the scan
+            // before the postinstall key is seen.
+            clean: "rimraf {dist,build} && echo ${CI:+done}",
+            postinstall: "node scripts/recover-modules.js temp_modules node_modules",
+          },
+        }),
+        "node_modules/has-postinstall/index.js": `module.exports = require("missing-inner-dep");`,
+      });
+      expect(stderr).toContain(`Cannot find package 'missing-inner-dep'`);
+      expect(stderr).toContain(
+        `The "postinstall" script for "has-postinstall" may have been blocked. If you trust this package, run \`bun pm trust has-postinstall\``,
+      );
+      expect(exitCode).toBe(1);
+    });
+
+    it("handles scoped package names", async () => {
+      using dir = tempDir("resolve-blocked-lifecycle-scoped", {
+        "package.json": JSON.stringify({ name: "app", version: "0.0.0" }),
+        "main.js": `require("@scope/has-postinstall");`,
+        "node_modules/@scope/has-postinstall/package.json": JSON.stringify({
+          name: "@scope/has-postinstall",
+          version: "1.0.0",
+          main: "index.js",
+          scripts: { postinstall: "true" },
+        }),
+        "node_modules/@scope/has-postinstall/index.js": `module.exports = require("missing-inner-dep");`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(`\`bun pm trust @scope/has-postinstall\``);
+      expect(exitCode).toBe(1);
+    });
+
+    it("points at `bun pm trust` when the enclosing package has a binding.gyp", async () => {
+      const { stderr, exitCode } = await run({
+        "node_modules/has-postinstall/package.json": JSON.stringify({
+          name: "has-postinstall",
+          version: "1.0.0",
+          main: "index.js",
+        }),
+        "node_modules/has-postinstall/binding.gyp": "{}",
+        "node_modules/has-postinstall/index.js": `module.exports = require("./build/Release/addon.node");`,
+      });
+      expect(stderr).toContain(`Cannot find module './build/Release/addon.node'`);
+      expect(stderr).toContain(`run \`bun pm trust has-postinstall\``);
+      expect(exitCode).toBe(1);
+    });
+
+    it("does not fire for a prepare-only package (prepare is never blocked for registry deps)", async () => {
+      const { stderr, exitCode } = await run({
+        "node_modules/has-postinstall/package.json": JSON.stringify({
+          name: "has-postinstall",
+          version: "1.0.0",
+          main: "index.js",
+          scripts: { prepare: "husky install" },
+        }),
+        "node_modules/has-postinstall/index.js": `module.exports = require("missing-inner-dep");`,
+      });
+      expect(stderr).toContain(`Cannot find package 'missing-inner-dep'`);
+      expect(stderr).not.toContain("bun pm trust");
+      expect(exitCode).toBe(1);
+    });
+
+    it("does not fire when the enclosing package has no install-class script", async () => {
+      const { stderr, exitCode } = await run({
+        "node_modules/has-postinstall/package.json": JSON.stringify({
+          name: "has-postinstall",
+          version: "1.0.0",
+          main: "index.js",
+          scripts: { test: "jest", build: "tsc" },
+          // The scan is bounded to the scripts object, so a sibling key that
+          // happens to be named like a lifecycle hook must not trigger it.
+          dependencies: { install: "^0.13.0" },
+        }),
+        "node_modules/has-postinstall/index.js": `module.exports = require("missing-inner-dep");`,
+      });
+      expect(stderr).toContain(`Cannot find package 'missing-inner-dep'`);
+      expect(stderr).not.toContain("bun pm trust");
+      expect(exitCode).toBe(1);
+    });
+
+    it('is not confused by `"scripts"` appearing as a string value', async () => {
+      const { stderr, exitCode } = await run({
+        "node_modules/has-postinstall/package.json": JSON.stringify({
+          name: "has-postinstall",
+          version: "1.0.0",
+          main: "index.js",
+          // `"scripts"` appears as an array element before any key of that
+          // name; the scan must not treat the following `dependencies` object
+          // as the scripts body.
+          files: ["scripts"],
+          dependencies: { install: "^0.13.0" },
+        }),
+        "node_modules/has-postinstall/index.js": `module.exports = require("missing-inner-dep");`,
+      });
+      expect(stderr).toContain(`Cannot find package 'missing-inner-dep'`);
+      expect(stderr).not.toContain("bun pm trust");
+      expect(exitCode).toBe(1);
+    });
+
+    it('finds the real `"scripts"` key after a `"scripts"` string value', async () => {
+      const { stderr, exitCode } = await run({
+        "node_modules/has-postinstall/package.json": JSON.stringify({
+          name: "has-postinstall",
+          version: "1.0.0",
+          main: "index.js",
+          files: ["scripts"],
+          repository: { type: "git" },
+          scripts: { postinstall: "true" },
+        }),
+        "node_modules/has-postinstall/index.js": `module.exports = require("missing-inner-dep");`,
+      });
+      expect(stderr).toContain(`The "postinstall" script for "has-postinstall" may have been blocked`);
+      expect(exitCode).toBe(1);
+    });
+
+    it("does not fire when the referrer is outside node_modules", async () => {
+      using dir = tempDir("resolve-blocked-lifecycle-root", {
+        "package.json": JSON.stringify({
+          name: "app",
+          version: "0.0.0",
+          scripts: { postinstall: "true" },
+        }),
+        "node_modules/.keep": "",
+        "main.js": `require("missing-top-level-dep");`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(`Cannot find package 'missing-top-level-dep'`);
+      expect(stderr).not.toContain("bun pm trust");
+      expect(exitCode).toBe(1);
+    });
+  });
 });
 
 // These tests reproduce panics where the module resolver wrote past fixed-size

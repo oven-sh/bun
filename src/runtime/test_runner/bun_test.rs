@@ -805,7 +805,8 @@ impl BunTest {
 
         let [value] = callframe.arguments_as_array::<1>();
 
-        let was_error = !value.is_empty_or_undefined_or_null();
+        // As in Jest, only a truthy argument fails. Nullish is tested first so done() skips the ToBoolean call.
+        let was_error = !value.is_empty_or_undefined_or_null() && value.to_boolean();
         // SAFETY: `this` is the live `*mut DoneCallback` returned by `from_js`;
         // single-threaded JS VM, GC keeps the wrapper alive for the call frame.
         if unsafe { (*this).called } {

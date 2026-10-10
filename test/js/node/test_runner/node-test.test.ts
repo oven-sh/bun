@@ -88,6 +88,50 @@ describe("node:test", () => {
     });
   });
 
+  // bun:test's done(value) fails only on a truthy value, as Jest's does, so
+  // node:test must not report these failures through it.
+  test("should fail a test whose body or hook throws a falsy value", async () => {
+    const { exitCode, stderr } = await runTests(["30-throw-falsy.js"]);
+    // Five tests for each of 0, false, "", NaN and 0n. 0n prints as 0.
+    expect(reportedErrors(stderr)).toEqual({ "error: 0": 10, "error: false": 5, "error": 5, "error: NaN": 5 });
+    expect(stderr).toContain(" 0 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringContaining(" 25 fail"),
+    });
+  });
+
+  test.each([
+    ["under bun test", {}],
+    // What run() sets for the child process of each file.
+    ["in a run() child", { NODE_TEST_CONTEXT: "child-v8", BUN_TEST_DRAIN_EVENT_LOOP: "1" }],
+  ])("should report a suite-level before or after hook that throws a falsy value %s", async (_mode, env) => {
+    const { exitCode, stderr } = await runTests(["31-throw-falsy-suite-hooks.js"], env);
+    // One before hook and one after hook for each of 0, false, "", NaN and 0n.
+    expect({ exitCode, errors: reportedErrors(stderr) }).toEqual({
+      exitCode: 1,
+      errors: { "error: 0": 4, "error: false": 2, "error": 2, "error: NaN": 2 },
+    });
+  });
+
+  test("should fail a test when its run rejects or a mock restore throws, whatever the value", async () => {
+    const { exitCode, stderr } = await runTests(["32-failure-outside-the-body.js"]);
+    // undefined and null are replaced by a "test failed" error, which is also printed as
+    // the cause of "1 subtest failed".
+    expect(reportedErrors(stderr)).toEqual({
+      "error: test failed": 8,
+      "error: 0": 2,
+      "error: false": 2,
+      "error": 2,
+      "error: 1 subtest failed": 10,
+    });
+    expect(stderr).toContain(" 0 pass");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringContaining(" 20 fail"),
+    });
+  });
+
   test("should support done callbacks in tests and hooks", async () => {
     const { exitCode, stderr } = await runTests(["10-done-callbacks.js"]);
     expect(stderr).toContain("2 pass");
@@ -333,6 +377,8 @@ async function runTests(filenames: string[], env: Record<string, string> = {}, a
     stderr: stderrStream,
   } = spawn({
     cmd: [bunExe(), "test", ...args, ...testPaths],
+    // No bunfig.toml here, so the child does not load the repository's test preload.
+    cwd: join(import.meta.dirname, "fixtures"),
     env: { ...bunEnv, ...env },
     stderr: "pipe",
   });
@@ -342,6 +388,15 @@ async function runTests(filenames: string[], env: Record<string, string> = {}, a
     new Response(stderrStream).text(),
   ]);
   return { exitCode, stdout, stderr };
+}
+
+// Counts the `error: <value>` lines in the output of `bun test`.
+function reportedErrors(stderr: string) {
+  const counts: Record<string, number> = {};
+  for (const line of stderr.split(/\r?\n/)) {
+    if (line.startsWith("error")) counts[line] = (counts[line] ?? 0) + 1;
+  }
+  return counts;
 }
 
 describe("node:test mock", () => {

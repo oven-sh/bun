@@ -7,6 +7,7 @@
 // getTestContext) are observable without a separate runner process.
 
 const { jest } = Bun;
+const reportError = globalThis.reportError;
 const { kEmptyObject, throwNotImplemented } = require("internal/shared");
 const {
   validateBoolean,
@@ -2388,7 +2389,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   try {
     node.mockTracker?.reset();
   } catch (err) {
-    if (!acceptedXfail) failure ??= err;
+    if (!acceptedXfail) failure ??= err ?? makeTestFailure("test failed");
   }
 
   node.passed = failure === undefined;
@@ -2409,7 +2410,7 @@ function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn, ownTodo:
       await runOwnBeforeHooks(parent);
       failure = await executeTestNode(child, fn);
     } catch (err) {
-      failure = err;
+      failure = err ?? makeTestFailure("test failed");
     }
     // Check the child's own todo declaration (options.todo or test.todo(...)),
     // not the inherited todoFlag: a subtest that threw must still fail a
@@ -2536,10 +2537,16 @@ function currentCollectionParent(): TestNode {
   return getRootNode();
 }
 
+// bun:test's done(value) fails only on a truthy value, so the failure is reported first and done() then completes the entry.
+function doneWithFailure(done: () => void, failure: unknown) {
+  reportError(failure);
+  done();
+}
+
 function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = false) {
   // bun:test invokes this with a `done` callback because the function declares
   // one parameter.
-  return (done: (error?: unknown) => void) => {
+  return (done: () => void) => {
     // Under plain bun:test a describe.todo scope already handles its children's
     // todo verdict (FailBecauseTodoPassed under --todo), so don't override when
     // the flag was only inherited; under a run() child the suite registers as a
@@ -2554,13 +2561,13 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
           markCurrentResult(false, done);
         } else if (node.todoFlag && !declaredTodo && (runChildReporterEnabled || !todoBefore)) {
           markCurrentResult(true, done);
-        } else {
-          done(failure);
+        } else if (failure !== undefined) {
+          doneWithFailure(done, failure);
           return;
         }
-        done(undefined);
+        done();
       },
-      err => done(err),
+      err => doneWithFailure(done, err ?? makeTestFailure("test failed")),
     );
   };
 }
@@ -2615,10 +2622,10 @@ function addTest(
     // Under a run() child, register skip as an ordinary test so its directive
     // event fires in execution order (not at collection time).
     if (runChildReporterEnabled && effectiveMode === "skip") {
-      const runner = function (done: (err?: unknown) => void) {
+      const runner = function (done: () => void) {
         reportDirectiveOnlyNode(node, "skip");
         markCurrentResult(false, done);
-        done(undefined);
+        done();
       };
       if (passOptions !== undefined) test(name, runner, passOptions);
       else test(name, runner);
@@ -2815,10 +2822,10 @@ function before(arg0: unknown, arg1: unknown) {
     return;
   }
   const { beforeAll } = bunTest();
-  beforeAll((done: (error?: unknown) => void) => {
+  beforeAll((done: () => void) => {
     Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(
       () => done(),
-      err => done(err ?? new Error("before hook failed")),
+      err => doneWithFailure(done, err ?? new Error("before hook failed")),
     );
   });
 }
@@ -2831,10 +2838,10 @@ function after(arg0: unknown, arg1: unknown) {
     return;
   }
   const { afterAll } = bunTest();
-  afterAll((done: (error?: unknown) => void) => {
+  afterAll((done: () => void) => {
     Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(
       () => done(),
-      err => done(err ?? new Error("after hook failed")),
+      err => doneWithFailure(done, err ?? new Error("after hook failed")),
     );
   });
 }

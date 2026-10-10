@@ -42,6 +42,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn visit_expr_in_out(&mut self, e: &mut Expr, in_: ExprIn) {
         if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
+            // The caller reads `e` as visited. A revisit can be inside a shared `define` value.
+            if !self.is_revisit_for_substitution {
+                e.data = Data::EMissing(E::Missing {});
+            }
             self.report_stack_overflow(e.loc);
             return;
         }
@@ -689,7 +693,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let Some(ref_) = ref_
                     && !p.options.features.is_macro_runtime
                 {
-                    if let Some(macro_ref_data) = p.macro_.refs.get(&ref_).copied() {
+                    // After a stack overflow the visit skipped a part of the template.
+                    if let Some(macro_ref_data) = p.macro_.refs.get(&ref_).copied()
+                        && !p.reported_stack_overflow.get()
+                    {
                         p.ignore_usage(ref_);
                         if p.is_control_flow_dead {
                             *e = p.new_expr(E::Undefined {}, e_.tag.unwrap().loc);
@@ -2273,7 +2280,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if Self::ALLOW_MACROS {
-            if is_macro_ref && !p.options.features.is_macro_runtime {
+            // After a stack overflow the visit skipped a part of the arguments.
+            if is_macro_ref
+                && !p.options.features.is_macro_runtime
+                && !p.reported_stack_overflow.get()
+            {
                 let ref_ = match &e_.target.data {
                     Data::EImportIdentifier(ident) => ident.ref_,
                     Data::EDot(dot) => {
@@ -2503,7 +2514,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // If control flow is dead, just return false without validation errors
-        if p.is_control_flow_dead {
+        // After a stack overflow the visit skipped a part of the arguments.
+        if p.is_control_flow_dead || p.reported_stack_overflow.get() {
             return Some(p.new_expr(E::Boolean { value: false }, loc));
         }
 

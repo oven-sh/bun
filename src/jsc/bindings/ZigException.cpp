@@ -26,6 +26,7 @@
 #include "JavaScriptCore/CodeBlock.h"
 #include "JavaScriptCore/ErrorInstance.h"
 #include "JavaScriptCore/ErrorInstanceInlines.h"
+#include "JavaScriptCore/ErrorPrototype.h"
 #include "JavaScriptCore/ExceptionScope.h"
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/JSString.h"
@@ -34,6 +35,7 @@
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include "JavaScriptCore/JSObjectInlines.h"
+#include "JavaScriptCore/ProxyObject.h"
 
 #include "wtf/Assertions.h"
 #include "wtf/text/OrdinalNumber.h"
@@ -819,6 +821,31 @@ void exceptionFromString(ZigException& except, JSC::JSValue value, JSC::JSGlobal
     }
 
     except.message = Bun::toStringRef(str);
+}
+
+extern "C" bool JSC__JSValue__hasErrorPrototype(JSC::EncodedJSValue JSValue0)
+{
+    // Proxy targets and stored prototypes: no trap and no getter runs.
+    auto next = [](JSC::JSObject* object) -> JSC::JSObject* {
+        if (auto* proxy = dynamicDowncast<JSC::ProxyObject>(object))
+            return proxy->target();
+        return object->getPrototypeDirect().getObject();
+    };
+
+    // A Proxy can close a cycle. Brent's algorithm: `mark` waits while the walk takes `lap` steps, then moves up to it.
+    JSC::JSObject* mark = nullptr;
+    size_t lap = 1;
+    size_t steps = 0;
+    for (auto* object = JSC::JSValue::decode(JSValue0).getObject(); object && object != mark; object = next(object)) {
+        if (object->inherits<JSC::ErrorPrototype>())
+            return true;
+        if (++steps == lap) {
+            mark = object;
+            lap *= 2;
+            steps = 0;
+        }
+    }
+    return false;
 }
 
 extern "C" void JSC__Exception__getStackTrace(JSC::Exception* arg0, JSC::JSGlobalObject* global, ZigStackTrace* trace)

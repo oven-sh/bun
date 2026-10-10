@@ -28,6 +28,8 @@ extern SSL_CTX *us_ssl_ctx_build_raw(
     struct us_bun_socket_context_options_t options,
     enum create_bun_socket_error_t *err);
 extern X509_STORE *us_get_default_ca_store(void);
+extern int us_ssl_ctx_set_verify_signature_algorithms(SSL_CTX *ctx);
+extern int us_x509_verify_cert(X509_STORE_CTX *ctx, int purpose);
 extern struct us_bun_verify_error_t us_ssl_socket_verify_error_from_ssl(SSL *ssl);
 
 #define US_QUIC_READ_BUF (16 * 1024)
@@ -44,18 +46,13 @@ struct us_quic_hset {
     int is_server;
 };
 
-struct us_quic_sni {
-    char *name;
-    SSL_CTX *ctx;
-};
-
 struct us_quic_socket_context_s {
     struct us_loop_t *loop;
     lsquic_engine_t *engine;
     struct lsquic_engine_settings settings;
     SSL_CTX *ssl_ctx;
-    struct us_quic_sni *sni;
-    unsigned int sni_count, sni_cap;
+    /* serverName -> SSL_CTX*, in the tree TCP listeners use (crypto/sni_tree.cpp). */
+    void *sni;
     int processing;
     int closing;
     /* us_quic_socket_context_shutdown ran while `processing` was set;
@@ -436,23 +433,6 @@ static void us_quic_udp_on_close(struct us_udp_socket_t *u) {
 
 /* ───── SSL ───── */
 
-/* Exact match, then `*.tail` wildcards (matches "a.tail" but not "tail"). */
-static SSL_CTX *us_quic_match_sni(us_quic_socket_context_t *ctx, const char *sni) {
-    if (!sni) return ctx->ssl_ctx;
-    size_t sl = strlen(sni);
-    for (unsigned i = 0; i < ctx->sni_count; i++) {
-        if (strcmp(ctx->sni[i].name, sni) == 0) return ctx->sni[i].ctx;
-    }
-    for (unsigned i = 0; i < ctx->sni_count; i++) {
-        const char *n = ctx->sni[i].name;
-        if (n[0] == '*' && n[1] == '.') {
-            size_t tl = strlen(n + 1);
-            if (sl > tl && memcmp(sni + sl - tl, n + 1, tl) == 0) return ctx->sni[i].ctx;
-        }
-    }
-    return ctx->ssl_ctx;
-}
-
 static SSL_CTX *us_quic_get_ssl_ctx(void *peer_ctx, const struct sockaddr *local) {
     (void) local;
     us_quic_listen_socket_t *ls = (us_quic_listen_socket_t *) peer_ctx;
@@ -462,7 +442,8 @@ static SSL_CTX *us_quic_get_ssl_ctx(void *peer_ctx, const struct sockaddr *local
 static SSL_CTX *us_quic_lookup_cert(void *cert_ctx, const struct sockaddr *local, const char *sni) {
     (void) local;
     us_quic_socket_context_t *ctx = (us_quic_socket_context_t *) cert_ctx;
-    return us_quic_match_sni(ctx, sni);
+    SSL_CTX *match = sni && ctx->sni ? (SSL_CTX *) sni_find(ctx->sni, sni) : NULL;
+    return match ? match : ctx->ssl_ctx;
 }
 
 static int us_quic_alpn_select(SSL *ssl, const unsigned char **out, unsigned char *outlen,
@@ -875,6 +856,10 @@ us_quic_socket_context_t *us_create_quic_socket_context(
     return ctx;
 }
 
+static void us_quic_sni_free(void *ssl_ctx) {
+    SSL_CTX_free((SSL_CTX *) ssl_ctx);
+}
+
 int us_quic_socket_context_add_server_name(us_quic_socket_context_t *ctx,
     const char *hostname, struct us_bun_socket_context_options_t options)
 {
@@ -884,17 +869,8 @@ int us_quic_socket_context_add_server_name(us_quic_socket_context_t *ctx,
     us_quic_prepare_ssl_ctx(ssl, &options);
     SSL_CTX_set_verify(ssl, SSL_CTX_get_verify_mode(ssl) | SSL_CTX_get_verify_mode(ctx->ssl_ctx),
         SSL_CTX_get_verify_callback(ssl));
-    if (ctx->sni_count == ctx->sni_cap) {
-        unsigned ncap = ctx->sni_cap ? ctx->sni_cap * 2 : 4;
-        struct us_quic_sni *n = (struct us_quic_sni *) us_realloc(ctx->sni, ncap * sizeof(*n));
-        if (!n) { SSL_CTX_free(ssl); return -1; }
-        ctx->sni = n; ctx->sni_cap = ncap;
-    }
-    char *name = us_strdup(hostname);
-    if (!name) { SSL_CTX_free(ssl); return -1; }
-    ctx->sni[ctx->sni_count].name = name;
-    ctx->sni[ctx->sni_count].ctx = ssl;
-    ctx->sni_count++;
+    if (!ctx->sni) ctx->sni = sni_new();
+    SSL_CTX_free((SSL_CTX *) sni_add(ctx->sni, hostname, ssl));
     return 0;
 }
 
@@ -934,11 +910,7 @@ void us_quic_socket_context_free(us_quic_socket_context_t *ctx) {
     while (ctx->listeners) us_udp_socket_close(ctx->listeners->udp);
     if (ctx->engine) { lsquic_engine_destroy(ctx->engine); ctx->engine = NULL; }
     if (ctx->ssl_ctx) { SSL_CTX_free(ctx->ssl_ctx); ctx->ssl_ctx = NULL; }
-    for (unsigned i = 0; i < ctx->sni_count; i++) {
-        us_free(ctx->sni[i].name);
-        SSL_CTX_free(ctx->sni[i].ctx);
-    }
-    us_free(ctx->sni);
+    if (ctx->sni) sni_free(ctx->sni, us_quic_sni_free);
     for (us_quic_listen_socket_t *ls = ctx->closed_listeners; ls; ) {
         us_quic_listen_socket_t *next = ls->next;
         us_free(ls);
@@ -1336,7 +1308,7 @@ static enum ssl_verify_result_t us_quic_client_verify(SSL *ssl, uint8_t *out_ale
     int ok = 0;
     if (X509_STORE_CTX_init(vctx, store, leaf, chain) == 1) {
         X509_STORE_CTX_set_default(vctx, "ssl_server");
-        ok = X509_verify_cert(vctx) == 1;
+        ok = us_x509_verify_cert(vctx, X509_PURPOSE_SSL_SERVER) == 1;
     }
     X509_STORE_CTX_free(vctx);
     if (!ok) return ssl_verify_invalid;
@@ -1366,6 +1338,7 @@ us_quic_socket_context_t *us_create_quic_client_context(
      * the system store on macOS/Windows. */
     SSL_CTX_set_cert_store(ssl, us_get_default_ca_store());
     SSL_CTX_set_custom_verify(ssl, SSL_VERIFY_PEER, us_quic_client_verify);
+    if (!us_ssl_ctx_set_verify_signature_algorithms(ssl)) { SSL_CTX_free(ssl); return NULL; }
 
     us_quic_socket_context_t *ctx = (us_quic_socket_context_t *)
         us_calloc(1, sizeof(us_quic_socket_context_t) + ext_size);

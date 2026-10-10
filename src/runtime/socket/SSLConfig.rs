@@ -120,17 +120,20 @@ fn read_from_blob(
 
 /// JSC-dependent constructors for the canonical `bun_http::SSLConfig`.
 /// Import this trait to call `SSLConfig::from_js(..)` / `::from_generated(..)`.
+/// An unset `rejectUnauthorized` is `true` for a server and `NODE_TLS_REJECT_UNAUTHORIZED` for a client, as in Node.js.
 pub(crate) trait SSLConfigFromJs: Sized {
     fn from_js(
         vm: &VirtualMachine,
         global: &JSGlobalObject,
         value: JSValue,
+        is_server: bool,
     ) -> JsResult<Option<Self>>;
 
     fn from_generated(
         vm: &VirtualMachine,
         global: &JSGlobalObject,
         generated: &jsc::generated::SSLConfig,
+        is_server: bool,
     ) -> JsResult<Option<Self>>;
 }
 
@@ -139,16 +142,18 @@ impl SSLConfigFromJs for SSLConfig {
         vm: &VirtualMachine,
         global: &JSGlobalObject,
         value: JSValue,
+        is_server: bool,
     ) -> JsResult<Option<SSLConfig>> {
         let generated = jsc::generated::SSLConfig::from_js(global, value)?;
         // `generated` dropped at scope exit
-        Self::from_generated(vm, global, &generated)
+        Self::from_generated(vm, global, &generated, is_server)
     }
 
     fn from_generated(
         vm: &VirtualMachine,
         global: &JSGlobalObject,
         generated: &jsc::generated::SSLConfig,
+        is_server: bool,
     ) -> JsResult<Option<SSLConfig>> {
         let mut result = SSLConfig::zero();
         // `result` cleanup handled by Drop on error-path `?`
@@ -177,7 +182,7 @@ impl SSLConfigFromJs for SSLConfig {
         result.low_memory_mode = generated.low_memory_mode;
         result.reject_unauthorized = generated
             .reject_unauthorized
-            .unwrap_or_else(|| vm.get_tls_reject_unauthorized())
+            .unwrap_or_else(|| is_server || vm.get_tls_reject_unauthorized())
             as i32;
         result.request_cert = generated.request_cert as i32;
         result.secure_options = generated.secure_options;
@@ -268,17 +273,39 @@ impl SSLConfigFromJs for SSLConfig {
             || result.client_renegotiation_limit != 0
             || generated.client_renegotiation_window != 0;
 
-        // We don't need to deinit `result` if `any` is false.
-        if any { Ok(Some(result)) } else { Ok(None) }
+        if !any {
+            return Ok(None);
+        }
+        // After `any`: the fallback does not make `tls: {}` a TLS configuration.
+        if generated.ciphers.as_ref().is_none() {
+            apply_default_ciphers(vm, &mut result);
+        }
+        Ok(Some(result))
     }
 }
 
 /// The `SSLConfig` for the `tls: true` shorthand: every option at its
 /// documented default, unlike `SSLConfig::zero()`.
-pub(crate) fn tls_true_defaults(vm: &VirtualMachine) -> SSLConfig {
+pub(crate) fn tls_true_defaults(vm: &VirtualMachine, is_server: bool) -> SSLConfig {
     let mut cfg = SSLConfig::zero();
-    cfg.reject_unauthorized = vm.get_tls_reject_unauthorized() as i32;
+    cfg.reject_unauthorized = (is_server || vm.get_tls_reject_unauthorized()) as i32;
+    apply_default_ciphers(vm, &mut cfg);
     cfg
+}
+
+/// For a request without TLS options: its default context is built on the HTTP thread, which does not see `tls.DEFAULT_CIPHERS`.
+pub(crate) fn http_client_defaults(vm: &VirtualMachine) -> Option<bun_http::ssl_config::SharedPtr> {
+    vm.tls_default_ciphers()?;
+    Some(bun_http::ssl_config::global_registry::intern(
+        tls_true_defaults(vm, false),
+    ))
+}
+
+/// No `ciphers` option means `tls.DEFAULT_CIPHERS`, as in Node's `configSecureContext`.
+fn apply_default_ciphers(vm: &VirtualMachine, cfg: &mut SSLConfig) {
+    if let Some(ciphers) = vm.tls_default_ciphers() {
+        cfg.set_default_ciphers(ciphers);
+    }
 }
 
 /// Whether a new TLS socket must enforce `rejectUnauthorized`: close the
@@ -303,19 +330,41 @@ fn handle_path(
     field: &'static str,
     string: &bun_core::String,
 ) -> JsResult<*const c_char> {
-    let name = string.to_owned_slice_z();
-    // `bun_sys::access` routes to `access(2)` on POSIX and
-    // `GetFileAttributesW` on Windows (via `sys_uv`), so this is the
-    // cross-platform existence probe.
-    if bun_sys::access(&name, bun_sys::posix::F_OK).is_err() {
-        // Error path: free_sensitive(name) — zero before drop. Route through
-        // the canonical helper so the secure-zero core stays single-sourced.
-        // SAFETY: `zbox_into_raw` yields a `default_alloc::malloc`-backed,
-        // NUL-terminated buffer whose ownership we now hold exclusively.
-        unsafe { bun_core::free_sensitive(zbox_into_raw(&name)) };
-        return Err(global.throw_invalid_arguments(format_args!("Unable to access {} path", field)));
+    let name = string.to_utf8();
+    let name = name.slice();
+    if bun_core::strings::contains_char(name, 0) {
+        return Err(global
+            .err(
+                jsc::ErrorCode::INVALID_ARG_VALUE,
+                format_args!("TLSOptions.{field} must be a path without null bytes"),
+            )
+            .throw());
     }
-    Ok(zbox_into_raw(&name))
+    // Opened later (for fetch, on the HTTP thread), and the SSL_CTX caches key on this string.
+    let mut path = if cfg!(windows) || !bun_paths::is_absolute_posix(name) {
+        bun_paths::AutoAbsPathChecked::init_top_level_dir()
+    } else {
+        bun_paths::AutoAbsPathChecked::init()
+    };
+    // The kernel resolves `..` through symlinks, so it is left in. Win32 resolves it as `join` does, which also knows `C:foo` and `\foo`.
+    let pinned = if cfg!(windows) {
+        path.join(&[name])
+    } else {
+        path.append(name)
+    };
+    // `append` drops a trailing slash, with which no file opens.
+    if name.is_empty()
+        || (cfg!(not(windows)) && name.ends_with(b"/"))
+        || pinned.is_err()
+        || bun_sys::access(path.slice_z(), bun_sys::posix::F_OK).is_err()
+    {
+        return Err(global.throw_invalid_arguments(format_args!("Unable to access {field} path")));
+    }
+    // BoringSSL's fopen is narrow on Windows: a non-ASCII cwd must not be baked into the path.
+    if cfg!(windows) && !bun_core::strings::is_all_ascii(path.slice()) {
+        return Ok(dupe_z(name));
+    }
+    Ok(dupe_z(path.slice()))
 }
 
 fn handle_file_for_field(
@@ -452,7 +501,7 @@ extern "C" fn Bun__WebSocket__parseSSLConfig(
     // constructor only runs on the JS thread with an initialized VM.
     let vm = global_this.bun_vm();
     // Use SSLConfig::from_js for clean and safe parsing
-    let config_opt = match SSLConfig::from_js(vm, global_this, tls_value) {
+    let config_opt = match SSLConfig::from_js(vm, global_this, tls_value, false) {
         Ok(c) => c,
         // Exception is already set on globalThis
         Err(_) => return None,

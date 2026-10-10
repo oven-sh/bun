@@ -2,7 +2,7 @@ use core::ffi::{c_char, c_int, c_void};
 
 use bun_boringssl_sys::OwnedSslCtx;
 
-use crate::{SocketGroup, SslCtx, us_socket_t};
+use crate::{SslCtx, us_socket_t};
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for a uSockets listen socket.
@@ -36,14 +36,8 @@ impl ListenSocket {
         ))
     }
 
-    /// Group accepted sockets are linked into.
-    pub fn group(&mut self) -> &mut SocketGroup {
-        // SAFETY: self is a valid listen socket; C returns a non-null group.
-        unsafe { &mut *us_listen_socket_group(self) }
-    }
-
     /// `ssl_ctx` is `SSL_CTX_up_ref`'d for the SNI node; the listener drops
-    /// that ref on close / `remove_server_name`. `user` is the per-domain handle
+    /// that ref on close, or when `hostname` is registered again. `user` is the per-domain handle
     /// `find_server_name_userdata` recovers (uWS uses an `HttpRouter*`; Bun.listen
     /// passes null).
     ///
@@ -59,17 +53,12 @@ impl ListenSocket {
         hostname: &core::ffi::CStr,
         ssl_ctx: *mut SslCtx,
         user: *mut c_void,
-    ) -> bool {
+    ) {
         // SAFETY: self and hostname are valid for the duration of the call;
         // caller guarantees `ssl_ctx` is non-null and points at a live SSL_CTX
         // (C up-refs and stores it); `user` is an opaque caller-owned pointer
         // stored verbatim by C.
-        unsafe { us_listen_socket_add_server_name(self, hostname.as_ptr(), ssl_ctx, user) == 0 }
-    }
-
-    pub fn remove_server_name(&mut self, hostname: &core::ffi::CStr) {
-        // SAFETY: self and hostname are valid for the duration of the call.
-        unsafe { us_listen_socket_remove_server_name(self, hostname.as_ptr()) }
+        unsafe { us_listen_socket_add_server_name(self, hostname.as_ptr(), ssl_ctx, user) }
     }
 
     /// Makes `ctx` the default `SSL_CTX` for sockets accepted from now on.
@@ -78,6 +67,7 @@ impl ListenSocket {
         unsafe { us_listen_socket_set_default_ssl_ctx(self, ctx.as_ptr()) }
     }
 
+    /// `cb` receives a null `ListenSocket` once this listen socket closed.
     pub fn on_server_name(
         &mut self,
         cb: extern "C" fn(*mut ListenSocket, *const c_char, *mut c_int, *mut c_void) -> *mut c_void,
@@ -92,14 +82,12 @@ impl ListenSocket {
 // `safe fn`. Shims with nullable raw / ctx ptr stay unsafe.
 unsafe extern "C" {
     safe fn us_listen_socket_close(ls: &mut ListenSocket);
-    safe fn us_listen_socket_group(ls: &mut ListenSocket) -> *mut SocketGroup;
     fn us_listen_socket_add_server_name(
         ls: *mut ListenSocket,
         hostname: *const c_char,
         ssl_ctx: *mut SslCtx,
         user: *mut c_void,
-    ) -> c_int;
-    fn us_listen_socket_remove_server_name(ls: *mut ListenSocket, hostname: *const c_char);
+    );
     fn us_listen_socket_set_default_ssl_ctx(ls: *mut ListenSocket, ctx: *mut SslCtx);
     safe fn us_listen_socket_on_server_name(
         ls: &mut ListenSocket,

@@ -36,10 +36,23 @@
 /* This cannot be shared */
 thread_local void (*sni_free_cb)(void *);
 
+/* RFC 6066 section 3: host names compare ASCII case-insensitively */
+struct sni_label_less {
+    static unsigned char fold(unsigned char c) {
+        return c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c;
+    }
+
+    bool operator()(std::string_view a, std::string_view b) const {
+        return std::lexicographical_compare(a.begin(), a.end(), b.begin(), b.end(), [](char x, char y) {
+            return fold(x) < fold(y);
+        });
+    }
+};
+
 struct sni_node {
     /* Empty nodes must always hold null */
     void *user = nullptr;
-    std::map<std::string_view, std::unique_ptr<sni_node>> children;
+    std::map<std::string_view, std::unique_ptr<sni_node>, sni_label_less> children;
 
     ~sni_node() {
         /* A name from JS can have any number of labels, so tear the subtree down
@@ -59,8 +72,7 @@ struct sni_node {
             /* The data of our string_views are managed by us_malloc */
             us_free((void *) p.first.data());
 
-            /* Call destructor passed to sni_free only if we hold data.
-             * This is important since sni_remove does not have sni_free_cb set */
+            /* Call destructor passed to sni_free only if we hold data */
             if (p.second.get()->user) {
                 sni_free_cb(p.second.get()->user);
             }
@@ -72,54 +84,11 @@ struct sni_node {
 };
 
 /* Splits the first label off a hostname. `rest` is left holding whatever follows the dot.
- * All of sni_add, sni_remove and sni_find must split names the same way. */
+ * sni_add and sni_find must split names the same way. */
 static std::string_view nextLabel(std::string_view &rest) {
     std::string_view label = rest.substr(0, rest.find('.', 0));
     rest.remove_prefix(std::min(rest.length(), label.length() + 1));
     return label;
-}
-
-// this can only delete ONE single node, but may cull "empty nodes with null as data"
-void *removeUser(struct sni_node *root, std::string_view rest) {
-
-    /* The hostname comes from JS and can have any number of labels, so walk down
-     * with an explicit path instead of one stack frame per label */
-    std::vector<std::pair<struct sni_node *, decltype(root->children)::iterator>> path;
-
-    while (!rest.empty()) {
-        /* Is this label a child of root? */
-        auto it = root->children.find(nextLabel(rest));
-        if (it == root->children.end()) {
-            /* We cannot continue */
-            return nullptr;
-        }
-
-        path.emplace_back(root, it);
-        root = it->second.get();
-    }
-
-    /* We are in the bottom, take the user and mark us for culling on the way up */
-    void *removedUser = root->user;
-    root->user = nullptr;
-
-    /* On the way back up, we may cull empty nodes with no children.
-     * This ends up being where we remove all nodes */
-    for (auto p = path.rbegin(); p != path.rend(); ++p) {
-        struct sni_node *parent = p->first;
-        auto it = p->second;
-
-        if (!it->second.get()->children.empty() || it->second.get()->user != nullptr) {
-            break;
-        }
-
-        /* The data of our string_views are managed by us_malloc */
-        us_free((void *) it->first.data());
-
-        /* This can only happen with user set to null, otherwise we use sni_free_cb which is unset by sni_remove */
-        parent->children.erase(it);
-    }
-
-    return removedUser;
 }
 
 void *getUser(struct sni_node *root, std::string_view rest) {
@@ -169,8 +138,8 @@ extern "C" {
         delete (sni_node *) sni;
     }
 
-    /* Returns non-null if this name already exists */
-    int sni_add(void *sni, const char *hostname, void *user) {
+    /* The last registration of a name wins. Returns the user it displaced, which the caller now owns */
+    void *sni_add(void *sni, const char *hostname, void *user) {
         struct sni_node *root = (struct sni_node *) sni;
 
         /* Traverse all labels in hostname */
@@ -190,19 +159,7 @@ extern "C" {
             root = it->second.get();
         }
 
-        /* We must never add multiple contexts for the same name, as that would overwrite and leak */
-        if (root->user) {
-            return 1;
-        }
-
-        root->user = user;
-
-        return 0;
-    }
-
-    /* Removes the exact match. Wildcards are treated as the verbatim asterisk char, not as an actual wildcard */
-    void *sni_remove(void *sni, const char *hostname) {
-        return removeUser((struct sni_node *) sni, std::string_view(hostname, strlen(hostname)));
+        return std::exchange(root->user, user);
     }
 
     void *sni_find(void *sni, const char *hostname) {

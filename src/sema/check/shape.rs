@@ -1277,7 +1277,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             TypeData::Tuple { .. } => self.tuple_members(ty, ty),
             TypeData::Intersection(parts) => {
-                let resolved = self.shape_memo(ty, |c| c.build_intersection_shape(ty, parts));
+                let resolved = self.shape_memo(ty, |c| c.build_intersection_shape(ty, parts, true));
                 Some((resolved, MapperId::IDENTITY))
             }
             _ => None,
@@ -2352,9 +2352,9 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(members) = members else { return };
         let mapper = members.mapper;
         b.reserve(members.shape().props.len());
-        // The mapper of the most recent property that had its own, and its composition with
-        // `mapper`.
-        let mut composed = (MapperId::IDENTITY, mapper);
+        // The mapper of the most recent property that had its own, whether that is a member, and
+        // the composition with `mapper`.
+        let mut composed = (MapperId::IDENTITY, true, mapper);
         for prop in &members.shape().props {
             if b.has(prop.name) {
                 continue;
@@ -2362,11 +2362,32 @@ impl<'p, 's> Checker<'p, 's> {
             let mut prop = prop.clone_in(self.arena);
             match &mut prop.source {
                 PropSource::Type(t) | PropSource::Copy(t, ..) => *t = self.instantiate(*t, mapper),
-                _ => {
-                    if prop.mapper != composed.0 {
-                        composed = (prop.mapper, self.compose(prop.mapper, mapper));
+                // `instantiateSymbol` returns it itself. One that it has instantiated for a base
+                // type has a mapper.
+                PropSource::Symbol(_) if prop.flags.contains(PropFlags::THISLESS) => {}
+                &mut PropSource::Symbol(sym)
+                    if prop.mapper == MapperId::IDENTITY
+                        && self.is_thisless_for_this_mapper(sym) =>
+                {
+                    prop.flags |= PropFlags::THISLESS;
+                }
+                source => {
+                    let is_member = matches!(source, PropSource::Symbol(_));
+                    if prop.mapper == MapperId::IDENTITY {
+                        prop.mapper = mapper;
+                    } else {
+                        if (prop.mapper, is_member) != (composed.0, composed.1) {
+                            // The mapper of a member maps the type parameters of the class or the
+                            // interface that declares it, and `mapper` those of `base`, which the
+                            // declaration cannot mention: it would grow with every level.
+                            let both = match is_member {
+                                true => self.map_mapper(prop.mapper, mapper),
+                                false => self.compose(prop.mapper, mapper),
+                            };
+                            composed = (prop.mapper, is_member, both);
+                        }
+                        prop.mapper = composed.2;
                     }
-                    prop.mapper = composed.1;
                 }
             }
             b.add_new(prop);
@@ -4152,14 +4173,60 @@ impl<'p, 's> Checker<'p, 's> {
         (constructors, is_mixin)
     }
 
-    /// `resolveIntersectionTypeMembers`, and `createUnionOrIntersectionProperty` for each name.
-    fn build_intersection_shape(&mut self, whole: TypeId, parts: &[TypeId]) -> Shape<'s> {
+    /// Where to read the properties of `ty`: `getPropertyOfType` and `getPropertiesOfType` do not
+    /// resolve the members of an intersection, which compares the signatures of its constituents.
+    pub(super) fn object_with_properties_of(&mut self, ty: TypeId) -> TypeId {
+        let TypeData::Intersection(parts) = self.data(ty) else {
+            return ty;
+        };
+        if self.p.shapes.handle(&self.task, &ty).is_some() {
+            return ty;
+        }
+        if let Some(known) = self.p.intersection_objects.get(&self.task, &ty) {
+            return known;
+        }
+        // Without two signatures there is nothing to compare.
+        let (mut call, mut construct) = (0, 0);
+        for &part in parts {
+            let part = self.apparent_type(part);
+            if self.is_union(part) {
+                (call, construct) = (2, 2);
+                break;
+            }
+            if let Some(members) = self.members(part) {
+                call += members.shape().call.len();
+                construct += members.shape().construct.len();
+            }
+        }
+        if call < 2 && construct < 2 {
+            return ty;
+        }
+        let scope = self.begin_scope();
+        let shape = self.build_intersection_shape(ty, parts, false);
+        let object = self.synth(shape);
+        match self.end_scope_by_counters(scope) {
+            Ok(stored) => (self.p.intersection_objects).insert(&self.task, ty, object, stored),
+            Err(_) => object,
+        }
+    }
+
+    /// `createUnionOrIntersectionProperty` for each name and, if `resolves`,
+    /// `resolveIntersectionTypeMembers`.
+    fn build_intersection_shape(
+        &mut self,
+        whole: TypeId,
+        parts: &[TypeId],
+        resolves: bool,
+    ) -> Shape<'s> {
         let mut b = Builder::new_in(self.arena);
         // The type of a property is resolved lazily: with `this` bound to the whole intersection,
         // it can depend on other properties of the whole. For each name that several members have:
         // the properties, the one in `b` first.
         let mut lists: Vec<Vec<Prop<'s>, &'s Arena>> = Vec::new();
-        let (constructors, is_mixin) = self.find_mixins(parts);
+        let (constructors, is_mixin) = match resolves {
+            true => self.find_mixins(parts),
+            false => Default::default(),
+        };
         let has_mixins = is_mixin.contains(&true);
         for (at, &written) in parts.iter().enumerate() {
             let part = self.apparent_type(written);
@@ -4218,6 +4285,20 @@ impl<'p, 's> Checker<'p, 's> {
                         lists.push(Vec::new_in(self.arena));
                     }
                 }
+            }
+            // Whether it has signatures says which global types it has properties of.
+            if !resolves {
+                for (all, of_part) in [
+                    (&mut b.shape.call, call.first()),
+                    (&mut b.shape.construct, construct.first()),
+                ] {
+                    if all.is_empty()
+                        && let Some(&sig) = of_part
+                    {
+                        all.push(self.instantiate_sig(sig, members.mapper));
+                    }
+                }
+                continue;
             }
             // A signature identical to an existing one is not added.
             for &sig in call.iter() {
@@ -4828,7 +4909,10 @@ impl<'p, 's> Checker<'p, 's> {
             ObjectFlags::COULD_CONTAIN_TYPE_VARIABLES | ObjectFlags::HAS_OTHER_INSTANTIATION;
         let is_instantiated = self.types().object_flags(base).intersects(is_changed)
             && match prop.source {
-                PropSource::Symbol(sym) => !self.is_thisless_for_this_mapper(sym),
+                PropSource::Symbol(sym) => {
+                    !prop.flags.contains(PropFlags::THISLESS)
+                        && !self.is_thisless_for_this_mapper(sym)
+                }
                 _ => true,
             };
         let ty = if is_instantiated {
@@ -6944,7 +7028,12 @@ impl<'p, 's> Checker<'p, 's> {
             return (!prop.flags.contains(PropFlags::READ_PARTIAL))
                 .then_some((prop, MapperId::IDENTITY));
         }
-        let members = self.members_of_apparent_type(ty, apparent)?;
+        let object = self.object_with_properties_of(apparent);
+        let members = if object == apparent {
+            self.members_of_apparent_type(ty, apparent)?
+        } else {
+            self.members(object)?
+        };
         if self.is_type_only_member(apparent, name) {
             return None;
         }

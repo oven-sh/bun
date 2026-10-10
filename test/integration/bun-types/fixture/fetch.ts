@@ -383,4 +383,7 @@ if (typeof process !== "undefined") {
   fetch("https://example.com", { session: {} });
   // @ts-expect-error `true` does not name a proxy
   fetch("https://example.com", { proxy: true });
+  fetch("https://example.com", { tls: { ca: "ca", crl: Buffer.from("crl") } });
+  // @ts-expect-error crl takes PEM contents
+  fetch("https://example.com", { tls: { crl: 1 } });
 }

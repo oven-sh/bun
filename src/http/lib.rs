@@ -1456,7 +1456,7 @@ fn write_to_socket_with_buffer_fallback<const IS_SSL: bool>(
 /// than the certificate (`packages/bun-usockets/src/crypto/openssl.c`) when the
 /// peer went away. The other one, -71, is a fatal protocol error such as a peer
 /// that does not speak TLS. Certificate problems are the positive `X509_V_ERR_*`.
-const US_HANDSHAKE_ECONNRESET: i32 = -46;
+const US_HANDSHAKE_ECONNRESET: i32 = uws::us_bun_verify_error_t::PEER_DISCONNECTED;
 
 /// Why a TLS handshake that reported failure failed.
 pub(crate) fn handshake_failure(error_no: i32) -> crate::Error {
@@ -1867,7 +1867,7 @@ impl<'a> HTTPClient<'a> {
                 // below with `null` SNI in the IP case.
                 let mut owned: Vec<u8>; // drops on scope exit
                 let host_z: *const core::ffi::c_char =
-                    if !bun_core::ip_address::is_ip_address(raw_hostname) {
+                    if !bun_core::ip_address::is_ip_host(raw_hostname) {
                         // SAFETY: TEMP_HOSTNAME only accessed from HTTP thread
                         let temp = scratch::temp_hostname();
                         if raw_hostname.len() < temp.len() {

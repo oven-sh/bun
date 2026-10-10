@@ -2278,7 +2278,9 @@ describe("direct stream edge cases over Bun.serve", () => {
     });
   });
 
-  test("async generator body: client abort between yields throws the connection-closed error into the generator once, then finally", async () => {
+  // The connection-closed error is the reason of a direct stream's cancel(). A generator body
+  // gets no reason: it is returned, the way `for await` leaves an iterator.
+  test("async generator body: client abort between yields returns the generator: finally runs, catch does not", async () => {
     const events: string[] = [];
     const finished = Promise.withResolvers<void>();
     using server = Bun.serve({
@@ -2304,7 +2306,7 @@ describe("direct stream edge cases over Bun.serve", () => {
     });
     await abortAfter(server, "first");
     await finished.promise;
-    expect(events).toEqual([expect.stringMatching(/^catch:.*closed/i), "finally"]);
+    expect(events).toEqual(["finally"]);
   });
 
   test("Readable.toWeb(nodeReadable) body destroyed mid-response aborts the response instead of hanging", async () => {

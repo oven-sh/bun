@@ -152,7 +152,7 @@ macro_rules! buffered_fields {
             resolved_type_arguments instantiations key_properties composed outer_type_params declared_type_params
             identity_mappers identity_mappers_with_adopted base_types context_checked relations variances
             awaited_types mapped_prop_types reverse_mapped_cache optional_properties intersected_props
-            union_properties union_objects keys_of_properties never_intersections mapped_targets inferred_constraints constraints plain_global_refs
+            union_properties union_objects intersection_objects keys_of_properties never_intersections mapped_targets inferred_constraints constraints plain_global_refs
             equivalent_base_types type_param_constraints enum_values type_param_defaults
             circular_type_param_defaults conditionals
             mapped_param_constraints
@@ -352,6 +352,7 @@ pub struct Program<'s> {
     union_properties: ByKey<(TypeId, Atom), Option<TypeId>, Buffered, &'s Session>,
     /// `UnionOrIntersectionType.resolvedProperties` of a union: `union_as_object`.
     union_objects: ById<TypeId, TypeId, Buffered, &'s Session>,
+    intersection_objects: ById<TypeId, TypeId, Buffered, &'s Session>,
     /// `get_literal_type_from_properties` without index flags. Instantiations under several
     /// mappers arrive at one object type.
     keys_of_properties: ById<TypeId, TypeId, Buffered, &'s Session>,
@@ -530,6 +531,7 @@ impl<'s> Program<'s> {
             never_intersections: ById::new_in(session),
             mapped_targets: ById::new_in(session),
             union_objects: ById::new_in(session),
+            intersection_objects: ById::new_in(session),
             keys_of_properties: ById::new_in(session),
             inferred_constraints: ById::new_in(session),
             constraints: ById::new_in(session),
@@ -764,7 +766,7 @@ impl<'s> Program<'s> {
             has_compared_without_total_order: std::cell::Cell::new(false),
             symbol_ids: None,
             parsed_again_for_await: None,
-            flow_analysis_disabled: false,
+            flow_analysis_disabled: Vec::new(),
             inline_level: 0,
             walk_declared: TypeId::NEVER,
             constants_in_evaluation: Vec::new(),
@@ -1457,9 +1459,13 @@ pub struct Checker<'p, 's> {
     /// `reparseTopLevelAwait`: the statements of that file that end up in an await context. Sorted.
     /// Computed on first use.
     parsed_again_for_await: Option<Vec<StmtId>>,
-    /// `flowAnalysisDisabled`. Only `checkBlock` restores it, so after a reference outside any
-    /// function or module block it stays set for the files that this checker checks afterwards.
-    flow_analysis_disabled: bool,
+    /// `flowAnalysisDisabled`: the files in which it holds, in the order in which it was set. More
+    /// than one where a query from a file that is too long gets to another one that is. Only
+    /// `checkBlock` restores it, so after a reference outside any function or module block it stays
+    /// set for the rest of the file. In tsgo it holds for every reference, also for one in another
+    /// file that a query gets to in the meantime, whose `errorType` then stays in what the query
+    /// stores.
+    flow_analysis_disabled: Vec<FileId>,
     /// Nesting depth of the `const ok = test` conditions being inlined.
     inline_level: u32,
     /// The declared type of the reference that the flow walk in progress narrows.

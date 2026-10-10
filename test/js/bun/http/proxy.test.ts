@@ -2,12 +2,13 @@ import axios from "axios";
 import type { Server } from "bun";
 import { proxyInternals } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isIPv6, isWindows, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, isASAN, isIPv6, isWindows, tempDir, tls as tlsCert } from "harness";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
 import tls from "node:tls";
+import { decodeErrorAlert, startMalformedServerHelloServer } from "../../node/tls/tls-handshake-alert-utils";
 import { createAdversarialProxy, deadPort, proxyFreeEnv } from "./proxy-stress-helpers";
 async function createProxyServer(is_tls: boolean) {
   const serverArgs: any[] = [];
@@ -230,6 +231,26 @@ for (const proxy_tls of [false, true]) {
     }
   }
 }
+
+test.concurrent("POST of a Bun.file() large enough for sendfile through a TLS proxy from the environment", async () => {
+  const content = Buffer.alloc(200_000, "abcdefgh");
+  using dir = tempDir("proxy-sendfile-body", { "body.bin": content });
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const file = Bun.file("body.bin");
+      const res = await fetch(${JSON.stringify(String(httpServer.url))}, { method: "POST", body: file, tls: { rejectUnauthorized: false } });
+      console.log(res.status, (await res.text()) === (await file.text()));`,
+    ],
+    env: { ...bunEnv, ...proxyFreeEnv, http_proxy: httpsProxyServer.url },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "200 true\n", stderr: "", exitCode: 0 });
+});
 
 for (const server_tls of [false, true]) {
   describe.concurrent(`proxy can handle redirects with ${server_tls ? "TLS" : "non-TLS"} server`, () => {
@@ -835,11 +856,11 @@ test("HTTPS proxy tunnel keep-alive does not share tunnel across different targe
   expect(connects.sort()).toEqual([`CONNECT localhost:${serverA.port}`, `CONNECT localhost:${serverB.port}`].sort());
 });
 
-// The TLS handshake inside a CONNECT tunnel is keyed to the URL host like a
-// direct connection: the ClientHello SNI and the certificate verification use
-// the URL host, and a caller-supplied Host header only travels as an HTTP
-// field on the tunneled request.
-test("HTTPS proxy tunnel keeps a caller-supplied Host header out of SNI and certificate verification", async () => {
+// The TLS handshake inside a CONNECT tunnel is keyed like a direct connection:
+// the ClientHello SNI and the certificate verification use tls.servername when
+// set, otherwise the URL host. A caller-supplied Host header only travels as an
+// HTTP field on the tunneled request.
+test("HTTPS proxy tunnel derives the inner SNI from tls.servername or the URL host, never from the Host header", async () => {
   const seen: { sni: string | null; host: string | undefined }[] = [];
   const target = tls.createServer(
     {
@@ -861,14 +882,28 @@ test("HTTPS proxy tunnel keeps a caller-supplied Host header out of SNI and cert
   await once(target, "listening");
   try {
     const port = (target.address() as net.AddressInfo).port;
-    const res = await fetch(`https://localhost:${port}/`, {
-      proxy: httpProxyServer.url,
-      keepalive: false,
-      headers: { Host: "other.example" },
-      tls: { ca: tlsCert.cert },
-    });
-    expect(`${res.status} ${await res.text()}`).toBe("200 ok");
-    expect(seen).toEqual([{ sni: "localhost", host: "other.example" }]);
+    const get = async (url: string, init: { headers?: Record<string, string>; tls?: Record<string, string> }) => {
+      const res = await fetch(url, {
+        proxy: httpProxyServer.url,
+        keepalive: false,
+        headers: init.headers,
+        tls: { ca: tlsCert.cert, ...init.tls },
+      });
+      return `${res.status} ${await res.text()}`;
+    };
+    // DNS URL host with a foreign Host header: SNI is the URL host.
+    expect(await get(`https://localhost:${port}/`, { headers: { Host: "other.example" } })).toBe("200 ok");
+    // IP URL host with tls.servername: SNI is the servername (the documented
+    // "dial an IP, verify a name" opt-in), with or without a Host header.
+    expect(await get(`https://127.0.0.1:${port}/`, { tls: { servername: "localhost" } })).toBe("200 ok");
+    expect(
+      await get(`https://127.0.0.1:${port}/`, { headers: { Host: "other.example" }, tls: { servername: "localhost" } }),
+    ).toBe("200 ok");
+    expect(seen).toEqual([
+      { sni: "localhost", host: "other.example" },
+      { sni: "localhost", host: `127.0.0.1:${port}` },
+      { sni: "localhost", host: "other.example" },
+    ]);
   } finally {
     target.close();
   }
@@ -898,6 +933,44 @@ test("HTTPS proxy tunnel sends a tls.serverName that is IP shorthand as SNI", as
       expect(`${res.status} ${await res.text()}`).toBe("200 ok");
     }
     expect(seen).toEqual(["127.1", "10", "0x7f000001", "1.2.3.4/8", null, null]);
+  } finally {
+    target.close();
+  }
+});
+
+// As on a direct connection, an IPv6 address with a zone id is an IP address
+// inside the tunnel: it is matched on the IP SAN of its address, and it is not
+// sent as SNI. The certificate is the harness one, with the IP SAN ::1.
+test("HTTPS proxy tunnel matches a tls.serverName with a zone id on its address and sends no SNI", async () => {
+  const seen: (string | null)[] = [];
+  const target = tls.createServer(tlsCert, socket => {
+    socket.on("error", () => {});
+    seen.push(socket.servername || null);
+    socket.once("data", () => socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"));
+  });
+  target.listen(0);
+  await once(target, "listening");
+  try {
+    const url = `https://localhost:${(target.address() as net.AddressInfo).port}/`;
+    const options = { proxy: httpProxyServer.url, keepalive: false };
+    const serverNames = [
+      ["::1%lo", { ca: tlsCert.cert }],
+      ["fe80::1%eth0", { rejectUnauthorized: false }],
+      // Not a zone id for net.isIP, so not an IP address.
+      ["fe80::1%br_lan", { rejectUnauthorized: false }],
+    ] as const;
+    for (const [serverName, verify] of serverNames) {
+      const res = await fetch(url, { ...options, tls: { serverName, ...verify } });
+      expect(`${res.status} ${await res.text()}`).toBe("200 ok");
+    }
+    expect(seen).toEqual([null, null, "fe80::1%br_lan"]);
+
+    expect(
+      await fetch(url, { ...options, tls: { serverName: "::2%lo", ca: tlsCert.cert } }).then(
+        res => res.status,
+        err => err.code,
+      ),
+    ).toBe("ERR_TLS_CERT_ALTNAME_INVALID");
   } finally {
     target.close();
   }
@@ -1077,6 +1150,27 @@ test("HTTPS target through proxy with rejecting checkServerIdentity transmits no
   }
 });
 
+// The client resets the proxy connection right after it writes the alert. On
+// Windows a reset discards the data the proxy has not read yet.
+test.skipIf(isWindows)(
+  "HTTPS target through proxy gets the client's TLS alert when the tunneled handshake fails",
+  async () => {
+    using target = await startMalformedServerHelloServer();
+    const result = await fetch(`https://localhost:${target.port}/`, {
+      proxy: httpProxyServer.url,
+      keepalive: false,
+      tls: { rejectUnauthorized: false },
+    }).then(
+      () => "resolved",
+      (err: NodeJS.ErrnoException) => `rejected:${err.code}`,
+    );
+    expect({ result, targetReceived: await target.afterClientHello }).toEqual({
+      result: "rejected:EPROTO",
+      targetReceived: decodeErrorAlert,
+    });
+  },
+);
+
 test("HTTPS over HTTP proxy preserves TLS record order with large bodies", async () => {
   // Create a custom HTTPS server that returns body size for this test
   using customServer = Bun.serve({
@@ -1115,6 +1209,67 @@ test("HTTPS over HTTP proxy preserves TLS record order with large bodies", async
     // recvd body size should exactly match the sent body size
     expect(result).toBe(String(size));
   }
+});
+
+test("HTTPS over an HTTPS proxy preserves TLS record order with a large body", async () => {
+  // The tunnel gets all the ciphertext of the body at once, and the TLS socket to the proxy takes it in parts.
+  using origin = Bun.serve({
+    port: 0,
+    tls: tlsCert,
+    fetch: async req => new Response(Bun.hash(await req.arrayBuffer()).toString()),
+  });
+  const body = Buffer.alloc(16 * 1024 * 1024, Buffer.from(Array.from({ length: 251 }, (_, i) => i)));
+  const response = await fetch(origin.url, {
+    method: "POST",
+    proxy: httpsProxyServer.url,
+    body,
+    keepalive: false,
+    tls: { ca: tlsCert.cert, rejectUnauthorized: false },
+  });
+  expect(await response.text()).toBe(Bun.hash(body).toString());
+});
+
+test("a pooled HTTPS proxy tunnel does not keep the memory of a large request body", async () => {
+  using origin = Bun.serve({
+    port: 0,
+    tls: tlsCert,
+    async fetch(req) {
+      let received = 0;
+      for await (const chunk of req.body!) received += chunk.byteLength;
+      return new Response(String(received));
+    },
+  });
+  const MiB = 1024 * 1024;
+  const bodyMiB = 64;
+  const fixture = `
+    async function post(size) {
+      const res = await fetch(${JSON.stringify(origin.url.href)}, {
+        method: "POST",
+        body: Buffer.alloc(size, "a"),
+        proxy: ${JSON.stringify(httpProxyServer.url)},
+        tls: { rejectUnauthorized: false },
+      });
+      const received = await res.text();
+      if (received !== String(size)) throw new Error("the origin received " + received + " of " + size + " bytes");
+    }
+    // The first request opens the tunnel. Every later one reuses it.
+    await post(1024);
+    Bun.gc(true);
+    const before = process.memoryUsage.rss();
+    await post(${bodyMiB * MiB});
+    let kept = Infinity;
+    // The body itself goes back to the system a few hundred ms after it is collected, however many requests that is.
+    for (const deadline = performance.now() + 2500; performance.now() < deadline && kept > ${(bodyMiB / 4) * MiB}; ) {
+      await post(1024);
+      Bun.gc(true);
+      kept = Math.min(kept, process.memoryUsage.rss() - before);
+    }
+    console.log(JSON.stringify({ deltaMiB: Math.round(kept / ${MiB}) }));
+  `;
+  httpProxyServer.log.length = 0;
+  // A tunnel that keeps the ciphertext queue of the body keeps more than the body.
+  await expectRssDeltaBelow(["-e", fixture], { release: bodyMiB / 2, debug: bodyMiB / 2 });
+  expect(httpProxyServer.log.filter(line => line === `CONNECT localhost:${origin.port}`).length).toBe(1);
 });
 
 test("HTTPS origin close-delimited body via HTTP proxy does not ECONNRESET", async () => {
@@ -3260,6 +3415,46 @@ test("a proxy's own reply to CONNECT never resolves as the https origin's respon
     { code: "EPROTO", status: undefined, authenticate: undefined, connects: ["CONNECT"] },
     { code: "ERR_PROXY_TUNNEL", status: 101, authenticate: null, connects: ["CONNECT"] },
   ]);
+});
+
+test("an https origin that ends the TLS handshake with close_notify fails the tunneled request", async () => {
+  // The proxy opens the tunnel and keeps it open. The origin answers the ClientHello with a close_notify alert,
+  // so only the alert says that no TLS session will come.
+  const closeNotify = Buffer.from([0x15, 0x03, 0x03, 0x00, 0x02, 0x01, 0x00]);
+  const established = Buffer.from("HTTP/1.1 200 Connection Established\r\n\r\n");
+  const outcomes: unknown[] = [];
+  // "with the reply": the alert is in the same write as the reply to CONNECT, ahead of the ClientHello.
+  for (const alert of ["after the ClientHello", "with the reply"]) {
+    const sockets: net.Socket[] = [];
+    const proxy = net.createServer(socket => {
+      sockets.push(socket);
+      socket.on("error", () => {});
+      let chunks = 0;
+      socket.on("data", () => {
+        chunks++;
+        if (chunks === 1)
+          socket.write(alert === "with the reply" ? Buffer.concat([established, closeNotify]) : established);
+        else if (chunks === 2 && alert === "after the ClientHello") socket.write(closeNotify);
+      });
+    });
+    await once(proxy.listen(0, "127.0.0.1"), "listening");
+    try {
+      outcomes.push(
+        await fetch("https://origin.invalid/", {
+          proxy: `http://127.0.0.1:${(proxy.address() as net.AddressInfo).port}`,
+          keepalive: false,
+        }).then(
+          response => ({ resolved: response.status }),
+          e => ({ code: e.code }),
+        ),
+      );
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      proxy.close();
+    }
+  }
+  // What a direct connection reports for a peer that leaves mid-handshake.
+  expect(outcomes).toEqual([{ code: "ECONNRESET" }, { code: "ECONNRESET" }]);
 });
 
 test("invalid TLS options are reported the same through a proxy as directly", async () => {

@@ -664,6 +664,9 @@ impl<'p, 's> Checker<'p, 's> {
                         self.reduced_apparent_type_as_object(ty);
                     }
                 } else {
+                    if self.check_mode().contains(CheckMode::INFERENTIAL) {
+                        self.report_spread_in_inference(file, e, p);
+                    }
                     not_spread.push(ty);
                 }
                 continue;

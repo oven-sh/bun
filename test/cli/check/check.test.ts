@@ -633,6 +633,158 @@ describe.concurrent("bun check", () => {
     `);
   });
 
+  describe("a file that is too long for control flow analysis takes no error from another file", () => {
+    const long = (end: string) => "const data = [];\n" + repeat("data[0] = 0;\n", 3000) + end;
+    const right = `type S = { k: "a" } | { k: "b" };\ndeclare function assertNever(x: never): never;\nexport function f(s: S) {\n  switch (s.k) {\n    case "a":\n      return 1;\n    case "b":\n      return 2;\n    default:\n      return assertNever(s);\n  }\n}\n`;
+    const wrong = `declare let s: string;\nexport const a: number = s;\nexport function f(x: string): number {\n  return x;\n}\nexport const b = s.nope;\n`;
+    const errors = [
+      "wrong.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.",
+      "wrong.ts(4,3): error TS2322: Type 'string' is not assignable to type 'number'.",
+      "wrong.ts(6,20): error TS2339: Property 'nope' does not exist on type 'string'.",
+    ];
+    test.each([
+      ["it is checked", "a-generated.ts", {}, [], long("export default data;\n"), wrong, errors],
+      // 2563 is not among the errors of a JavaScript file that is not checked.
+      [
+        "it is JavaScript that is not checked, as with the tsconfig.json of bun init",
+        "a-generated.js",
+        { allowJs: true },
+        ["--checkJs"],
+        long("export default data;\n"),
+        wrong,
+        errors,
+      ],
+      [
+        "it reads a variable of the other file behind its limit",
+        "a-generated.ts",
+        {},
+        [],
+        long("data[0] = b;\n"),
+        `declare let s: string;\nconst b = s.nope;\nconst c: number = s;\n`,
+        [
+          "wrong.ts(2,13): error TS2339: Property 'nope' does not exist on type 'string'.",
+          "wrong.ts(3,7): error TS2322: Type 'string' is not assignable to type 'number'.",
+        ],
+      ],
+    ] as const)("%s", async (_, generated, options, shows, text, other, expected) => {
+      using dir = project({
+        [generated]: text,
+        "wrong.ts": other,
+        "right.ts": right,
+        "tsconfig.json": JSON.stringify({
+          compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, ...options },
+          files: [generated, "right.ts", "wrong.ts"],
+        }),
+      });
+      const [control, ...runs] = await Promise.all([
+        check(dir, [...shows]),
+        ...[1, 2, 8].map(threads => check(dir, ["--threads", String(threads)])),
+      ]);
+      // In a debug build the stack can run out before the 2,000 levels of TS2563.
+      if (!isDebug && !isASAN) expect(control.stdout).toContain(`${generated}(1,1): error TS2563:`);
+      for (const { stdout, exitCode } of runs) {
+        const others = stdout.split("\n").filter(line => !line.startsWith("a-generated."));
+        expect(others.join("\n")).toBe(expected.join("\n"));
+        expect(exitCode).toBe(1);
+      }
+    });
+
+    test("nor does another file that is too long switch it on again", async () => {
+      using dir = project({
+        "a-generated.ts":
+          `import { last } from "./c-generated";\n` +
+          long(
+            `data[0] = last;\nexport const f = (p: string | number) => {\n  const n: number = p;\n  return [n, data];\n};\n`,
+          ),
+        "c-generated.ts": "const rows = [];\n" + repeat("rows[0] = 0;\n", 3000) + "export const last = rows;\n",
+        "wrong.ts": wrong,
+      });
+      const tooLong = (file: string) =>
+        `${file}(1,1): error TS2563: The containing function or module body is too large for control flow analysis.`;
+      for (const { stdout, exitCode } of await Promise.all(
+        [1, 2, 8].map(threads => check(dir, ["--threads", String(threads)])),
+      )) {
+        // In a debug build the stack can run out before the 2,000 levels of TS2563.
+        if (isDebug || isASAN) {
+          expect(stdout.split("\n").filter(line => line.startsWith("wrong.ts"))).toEqual(errors);
+        } else {
+          expect(stdout).toBe([tooLong("a-generated.ts"), tooLong("c-generated.ts"), ...errors].join("\n"));
+        }
+        expect(exitCode).toBe(1);
+      }
+    });
+  });
+
+  // The time was cubic and worse: 16 s for 1,000 lines in a release build, where it now takes 0.2 s.
+  test("an array without a type that is filled line by line", async () => {
+    const n = isDebug || isASAN ? 200 : 1000;
+    const lines = (line: (i: number) => string, count = n) => Array.from({ length: count }, (_, i) => line(i)).join("");
+    const end = "export const probe: never = rows;\n";
+    using dir = project({
+      "assigned.ts": "const rows = [];\n" + lines(i => `rows[${i}] = { id: ${i} };\n`) + end,
+      "pushed.ts": "const rows = [];\n" + lines(i => `rows.push({ id: ${i} });\n`) + end,
+      // Half as many: each line has three flow nodes, and 2,000 levels are the limit of TS2563.
+      "pushed-if.ts":
+        "declare const c: boolean;\nconst rows = [];\n" + lines(i => `if (c) rows.push({ id: ${i} });\n`, n / 2) + end,
+    });
+    const { stdout, exitCode } = await check(dir);
+    expect(stdout).toBe(
+      [
+        `assigned.ts(${n + 2},14): error TS2322: Type '{ id: number; }[]' is not assignable to type 'never'.`,
+        `pushed-if.ts(${n / 2 + 3},14): error TS2322: Type '{ id: number; }[]' is not assignable to type 'never'.`,
+        `pushed.ts(${n + 2},14): error TS2322: Type '{ id: number; }[]' is not assignable to type 'never'.`,
+      ].join("\n"),
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  // The time was cubic: 16 s for 2,000 interfaces in a release build, where it now takes 0.7 s.
+  test("a long chain of interfaces, each of which extends the last", async () => {
+    const n = isDebug || isASAN ? 300 : 2000;
+    const chain = (member: (i: number) => string) =>
+      `interface I0 { ${member(0)} }\n` +
+      Array.from({ length: n - 1 }, (_, i) => `interface I${i + 1} extends I${i} { ${member(i + 1)} }\n`).join("") +
+      `declare const last: I${n - 1};\n`;
+    using dir = project({
+      "fields.ts": chain(i => `k${i}: number`) + `export const probe: never = [last.k0, last.k${n - 1}];\n`,
+      "methods.ts": chain(i => `m${i}(x: number): string`) + `export const probe: never = last.m0;\n`,
+    });
+    const { stdout, exitCode } = await check(dir);
+    expect(stdout).toBe(
+      [
+        `fields.ts(${n + 2},14): error TS2322: Type 'number[]' is not assignable to type 'never'.`,
+        `methods.ts(${n + 2},14): error TS2322: Type '(x: number) => string' is not assignable to type 'never'.`,
+      ].join("\n"),
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  // Cubic too: over 25 s for 1,000 generic interfaces in a release build, where it now takes 0.5 s.
+  test("a long chain whose members mention `this` or a type parameter, or have no annotation", async () => {
+    const n = isDebug || isASAN ? 150 : 1000;
+    const chain = (kind: string, member: (i: number) => string, parameters = "", argument = "") =>
+      `${kind} I0${parameters} { ${member(0)} }\n` +
+      Array.from(
+        { length: n - 1 },
+        (_, i) => `${kind} I${i + 1}${parameters} extends I${i}${parameters} { ${member(i + 1)} }\n`,
+      ).join("") +
+      `declare const last: I${n - 1}${argument};\n`;
+    using dir = project({
+      "classes.ts": chain("class", i => `m${i}() { return ${i}; }`) + `export const probe: never = last.m0;\n`,
+      "generic.ts": chain("interface", i => `k${i}: T`, "<T>", "<string>") + `export const probe: never = last.k0;\n`,
+      "this.ts": chain("interface", i => `k${i}: this`) + `export const probe: never = last.k0;\n`,
+    });
+    const { stdout, exitCode } = await check(dir);
+    expect(stdout).toBe(
+      [
+        `classes.ts(${n + 2},14): error TS2322: Type '() => number' is not assignable to type 'never'.`,
+        `generic.ts(${n + 2},14): error TS2322: Type 'string' is not assignable to type 'never'.`,
+        `this.ts(${n + 2},14): error TS2322: Type 'I${n - 1}' is not assignable to type 'never'.`,
+      ].join("\n"),
+    );
+    expect(exitCode).toBe(1);
+  });
+
   // One thread checks the files in program order, like `tsc --singleThreaded`: see differential.test.ts.
   test("modules that enter the same cycles produce the same output on any number of threads above one", async () => {
     const n = isDebug || isASAN ? 24 : 60;

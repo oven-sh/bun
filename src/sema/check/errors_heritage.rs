@@ -538,6 +538,7 @@ impl Checker<'_, '_> {
         let hir = self.hir(file);
         // `getPropertiesOfType`
         let apparent_base = self.apparent_type(base_type);
+        let apparent_base = self.object_with_properties_of(apparent_base);
         let (Some(base_members), Some(own_members)) =
             (self.members(apparent_base), self.members(class_type))
         else {

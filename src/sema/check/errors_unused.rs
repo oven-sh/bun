@@ -88,8 +88,9 @@ impl Checker<'_, '_> {
     pub(super) fn check_unused(&mut self, file: FileId) {
         let options = &self.p.files.options;
         let (locals, parameters) = (options.no_unused_locals, options.no_unused_parameters);
+        let renamed = std::mem::take(&mut self.renamed_binding_elements_in_types);
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if !(locals || parameters) || hir.kind == FileKind::Declaration {
+        if !(locals || parameters || !renamed.is_empty()) || hir.kind == FileKind::Declaration {
             return;
         }
         let parse_errors = hir
@@ -196,7 +197,44 @@ impl Checker<'_, '_> {
                 self.note_property_symbol(&mut u, symbol);
             }
         }
-        self.check_unused_identifiers(&u);
+        self.check_unused_renamed_binding_elements(&u, &renamed);
+        if locals || parameters {
+            self.check_unused_identifiers(&u);
+        }
+    }
+
+    /// `checkUnusedRenamedBindingElements`: 2842
+    fn check_unused_renamed_binding_elements(&mut self, u: &Unused, renamed: &[PatPropId]) {
+        let (file, hir, bound) = (u.file, u.hir, u.bound);
+        for &p in renamed {
+            let symbol = bound.pat_symbol[hir[p].value.idx()];
+            // `WalkUpBindingElementsAndPatterns`
+            let PatParent::Param(param) = root_declaration(bound, hir[p].value) else {
+                continue;
+            };
+            // A type parameter of the signature with that name is the same symbol.
+            if symbol.is_none() || u.is_referenced(symbol) {
+                continue;
+            }
+            let start = hir[hir[p].value].pos;
+            let (node, name) = match hir[hir[p].value].kind {
+                PatKind::Ident(name) if name != known::empty => (
+                    self.place_of_token(file, start),
+                    self.declaration_name_at(file, start),
+                ),
+                _ => ((file, start, start), b"(Missing)".to_vec()),
+            };
+            let property = self.declaration_name_at(file, hir[p].key_pos);
+            let related = hir[param].ty.is_none().then(|| {
+                let end = self.end_of_param(file, param);
+                self.new_diagnostic((file, end, end), 2843, &[Arg::Bytes(&property)])
+            });
+            let args = [Arg::Bytes(&name), Arg::Bytes(&property)];
+            let diagnostic = self.error_at(node, 2842, &args);
+            if let Some(related) = related {
+                diagnostic.add_related_info(related);
+            }
+        }
     }
 
     /// `getResolvedSymbol` of every identifier that is checked: `Resolve` with `isUse`.

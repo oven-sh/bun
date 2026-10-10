@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "async_hooks";
 import { tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 const assert = require("assert");
@@ -241,6 +242,61 @@ test("errors from fs.promises include async stack frames", async () => {
   expect(caught.stack).toContain("at async level3");
   expect(caught.stack).toContain("at async level2");
   expect(caught.stack).toContain("at async level1");
+});
+
+describe.each([
+  ["no async context", fn => fn()],
+  ["inside AsyncLocalStorage.run()", fn => new AsyncLocalStorage().run({}, fn)],
+])("fs.promises async stack through finally(), %s", (_, run) => {
+  const missing = "/nonexistent-path/does-not-exist.txt";
+
+  // The names of the leading `at async` frames, down to this helper.
+  async function asyncFramesOf(fn) {
+    try {
+      await run(fn);
+    } catch (e) {
+      expect(e.code).toBe("ENOENT");
+      const names = String(e.stack)
+        .split("\n")
+        .filter(line => line.includes("at async "))
+        .map(line => line.trim().split(" ")[2]);
+      return names.slice(0, names.indexOf("asyncFramesOf") + 1);
+    }
+    expect.unreachable();
+  }
+
+  test("the promise finally() was called on rejects", async () => {
+    async function finallyOnRejected() {
+      await readFile(missing).finally(() => {});
+    }
+    expect(await asyncFramesOf(finallyOnRejected)).toEqual(["finallyOnRejected", "asyncFramesOf"]);
+  });
+
+  test("the promise the callback returned rejects", async () => {
+    async function finallyReturnsRejected() {
+      await Promise.resolve().finally(() => readFile(missing));
+    }
+    expect(await asyncFramesOf(finallyReturnsRejected)).toEqual(["finallyReturnsRejected", "asyncFramesOf"]);
+  });
+
+  test("finally() further up the await chain", async () => {
+    async function inner() {
+      await readFile(missing);
+    }
+    async function finallyMidChain() {
+      await inner().finally(() => {});
+    }
+    expect(await asyncFramesOf(finallyMidChain)).toEqual(["inner", "finallyMidChain", "asyncFramesOf"]);
+  });
+
+  test("finally() on a promise that already has a reaction", async () => {
+    async function finallyAfterCatch() {
+      const promise = readFile(missing);
+      promise.catch(() => {});
+      await promise.finally(() => {});
+    }
+    expect(await asyncFramesOf(finallyAfterCatch)).toEqual(["finallyAfterCatch", "asyncFramesOf"]);
+  });
 });
 
 test("fs.promises async stack through Promise subclass", async () => {

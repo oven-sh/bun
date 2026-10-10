@@ -153,11 +153,15 @@ const TJCS_CMYK: c_int = 3;
 const TJCS_YCCK: c_int = 4;
 const TJSAMP_420: c_int = 2;
 
-pub(crate) fn decode(
-    bytes: &[u8],
-    max_pixels: u64,
-    hint: codecs::DecodeHint,
-) -> Result<codecs::Decoded, codecs::Error> {
+/// A JPEG whose header is parsed and within `max_pixels`. `decode` reads the pixels.
+pub(crate) struct Opened<'a> {
+    handle: Handle,
+    bytes: &'a [u8],
+    src_w: u32,
+    src_h: u32,
+}
+
+pub(crate) fn open(bytes: &[u8], max_pixels: u64) -> Result<Opened<'_>, codecs::Error> {
     let handle = Handle::init(1).ok_or(codecs::Error::OutOfMemory)?;
     let h = handle.as_ptr();
     // Ask libjpeg-turbo to keep the APP2/ICC_PROFILE markers so we can pull
@@ -167,6 +171,26 @@ pub(crate) fn decode(
     unsafe { tj3Set(h, TJPARAM_SAVEMARKERS, 2) };
     let (src_w, src_h) = handle.read_header(bytes)?;
     codecs::guard(src_w, src_h, max_pixels)?;
+    Ok(Opened {
+        handle,
+        bytes,
+        src_w,
+        src_h,
+    })
+}
+
+/// `hint`: the size the pipeline will resize to, in stored axes. `None` decodes at full size.
+pub(crate) fn decode(
+    jpeg: Opened<'_>,
+    hint: Option<(u32, u32)>,
+) -> Result<codecs::Decoded, codecs::Error> {
+    let Opened {
+        handle,
+        bytes,
+        src_w,
+        src_h,
+    } = jpeg;
+    let h = handle.as_ptr();
     // libjpeg-turbo won't convert 4-component JPEGs to RGB; decode as packed CMYK (also 4 bytes/px) and convert below.
     // SAFETY: `h` is live; tj3Get only reads handle state.
     let cmyk = matches!(
@@ -181,7 +205,8 @@ pub(crate) fn decode(
     // decode time goes, so this is roughly (8/M)² faster AND the RGBA
     // buffer shrinks by the same factor — both speed and RSS win in one
     // place. The subsequent resize pass takes it the rest of the way.
-    if hint.target_w != 0 && hint.target_h != 0 && (hint.target_w < src_w || hint.target_h < src_h)
+    if let Some((target_w, target_h)) = hint
+        && (target_w < src_w || target_h < src_h)
     {
         let mut n: c_int = 0;
         // SAFETY: FFI — writes a count into `n` and returns a pointer to a
@@ -201,7 +226,7 @@ pub(crate) fn decode(
                 let sh = scaled(src_h, sf);
                 // Never go BELOW target — that would force upscale and
                 // throw away detail the user asked for.
-                if sw < hint.target_w || sh < hint.target_h {
+                if sw < target_w || sh < target_h {
                     continue;
                 }
                 // Pick the smallest output (= largest reduction).

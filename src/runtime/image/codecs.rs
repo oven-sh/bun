@@ -253,22 +253,10 @@ bun_core::oom_from_alloc!(Error);
 /// cap is ~1 GiB, which is already past where you'd want to be.
 pub(crate) const DEFAULT_MAX_PIXELS: u64 = 0x3FFF * 0x3FFF;
 
-/// Hint from the pipeline about the eventual output size. JPEG can do M/8
-/// IDCT scaling for free, so when we know the resize target up front we
-/// decode at the smallest factor that still ≥ the target — skipping most of
-/// the IDCT work AND shrinking the RGBA buffer the resize pass touches. This
-/// is the same trick Sharp/libvips use and is where most of the perf gap was.
-#[derive(Copy, Clone, Default)]
-pub(crate) struct DecodeHint {
-    /// Final output dims (after rotate). 0 = "no resize, full decode".
-    pub(crate) target_w: u32,
-    pub(crate) target_h: u32,
-}
-
-pub(crate) fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded, Error> {
-    let fmt = Format::sniff(bytes).ok_or(Error::UnknownFormat)?;
+/// Decodes at full size. `PipelineTask::run` decodes a JPEG that it resizes through `jpeg::open`.
+pub(crate) fn decode(fmt: Format, bytes: &[u8], max_pixels: u64) -> Result<Decoded, Error> {
     match fmt {
-        Format::Jpeg => jpeg::decode(bytes, max_pixels, hint),
+        Format::Jpeg => jpeg::decode(jpeg::open(bytes, max_pixels)?, None),
         Format::Png => png::decode(bytes, max_pixels),
         Format::Webp => webp::decode(bytes, max_pixels),
         // Static codecs cover everything we ship; profiling on M-series showed

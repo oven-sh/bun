@@ -23,6 +23,7 @@ import {
   realpathSync,
   statSync,
   symlinkSync,
+  truncateSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -1210,6 +1211,23 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     expect(result.files["a.js"]).toBe(ugly);
     expect(result.stderr).toContain(message);
     expect(result.exitCode).toBe(2);
+  });
+
+  // It has holes for all its bytes. Node: "Cannot create a string longer than 0x1fffffe8 characters".
+  test("a file that JavaScript could not hold as a string is not read, and the others are", async () => {
+    const result = await format({ "a.json": "", "b.js": ugly }, ["--check", "."], {
+      before: dir => truncateSync(join(dir, "a.json"), 2 ** 29),
+    });
+    expect(result.stderr).toContain(`[error] Unable to read file "a.json":\n[error] EFBIG: `);
+    expect(result.stderr).toContain("[warn] b.js");
+    expect(result.exitCode).toBe(2);
+  });
+
+  test.skipIf(isWindows)("/dev/null is a file without patterns to ignore, and a configuration without options", async () => {
+    const files = { ".prettierignore": "a.js\n", ".prettierrc": `{ "semi": false }\n`, "a.js": formatted };
+    expect(await different(files, ["."])).toEqual([]);
+    expect(await different(files, ["--ignore-path", "/dev/null", "."])).toEqual(["a.js"]);
+    expect(await different(files, ["--ignore-path", "/dev/null", "--config", "/dev/null", "."])).toEqual([]);
   });
 
   // "Never break a line." Prettier takes every whole number from 0 on, and Infinity.

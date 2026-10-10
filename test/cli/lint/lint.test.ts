@@ -23,6 +23,7 @@ import {
   realpathSync,
   statSync,
   symlinkSync,
+  truncateSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, parse, posix, sep, win32 } from "node:path";
@@ -542,6 +543,28 @@ describe.concurrent("bun lint", () => {
       expect(stdout).toContain("<dir>/a.js:1:1: ");
       expect(stdout).not.toContain("pipe.js");
       expect(exitCode).toBe(1);
+    });
+
+    // git keeps a link to `/dev/zero` as it is.
+    test.skipIf(isWindows).each([
+      ["eslint.config.js", basic],
+      [".oxlintrc.json", "{}"],
+    ])("a link to a device with the name of a script is passed over: %s", async (name, text) => {
+      const { raw } = await lint({ [name]: text, "a.js": bad }, ["-f", "json", "."], {
+        before: dir => symlinkSync("/dev/null", join(dir, "device.js")),
+      });
+      expect(raw).toContain("a.js");
+      expect(raw).not.toContain("device.js");
+    });
+
+    // It has holes for all its bytes. Node: "Cannot create a string longer than 0x1fffffe8 characters".
+    test("a file that JavaScript could not hold as a string is not read", async () => {
+      const { stderr, exitCode } = await lint({ "eslint.config.js": basic, "a.js": "", "b.js": bad }, ["."], {
+        before: dir => truncateSync(join(dir, "a.js"), 2 ** 29),
+        mayFail: true,
+      });
+      expect(stderr).toContain("Cannot read <dir>/a.js: EFBIG: ");
+      expect(exitCode).toBe(2);
     });
 
     test("a link to a file is linted, a link to a directory is not followed", async () => {

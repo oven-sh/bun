@@ -97,6 +97,15 @@ __attribute__((minsize)) std::optional<RsaKeyPairJobCtx> RsaKeyPairJobCtx::fromJ
     V::validateUint32(scope, globalObject, modulusLengthValue, "options.modulusLength"_s, jsUndefined(), &modulusLength);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
 
+    // BoringSSL's RSA_generate_key_ex rounds the requested size down to a multiple of
+    // 128 bits (vendor/boringssl/crypto/fipsmodule/rsa/rsa_impl.cc.inc). Passing the
+    // value through unchecked would silently return a key up to 127 bits weaker than
+    // requested, so reject sizes that cannot be generated exactly.
+    if (modulusLength % 128 != 0) {
+        ERR::OUT_OF_RANGE(scope, globalObject, "options.modulusLength"_s, "a multiple of 128"_s, modulusLengthValue);
+        return std::nullopt;
+    }
+
     JSValue publicExponentValue = optionsValue.get(globalObject, Identifier::fromString(vm, "publicExponent"_s));
     RETURN_IF_EXCEPTION(scope, std::nullopt);
     uint32_t publicExponent = 0x10001;

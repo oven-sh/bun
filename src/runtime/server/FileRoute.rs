@@ -138,43 +138,56 @@ impl FileRoute {
         // `status_code` all take `&self`.
         if let Some(response) = argument.as_class_ref::<Response>() {
             let body_value = response.get_body_value();
-            body_value.to_blob_if_possible();
-            let needs_read = matches!(body_value, BodyValue::Blob(b) if b.needs_to_read_file());
-            if needs_read {
-                // `needs_to_read_file()` ⇒ `store` is Some and `data` is `File`.
-                let is_fd = matches!(
-                    body_value,
-                    BodyValue::Blob(b)
-                        if matches!(
-                            b.store.get().as_ref().unwrap().data,
-                            StoreData::File(ref f)
-                                if matches!(f.pathlike, PathOrFileDescriptor::Fd(_))
-                        )
-                );
-                if is_fd {
-                    return Err(global.throw_todo(
-                        b"Support serving files from a file descriptor. Please pass a path instead.",
-                    ));
+            // A file behind an unread `.body` stream is shared with that stream, which stays the
+            // program's. Lifting it out would spend the stream of a Response that stays unused.
+            let shared = match body_value {
+                BodyValue::Locked(locked) => locked.share_blob_of_unread_stream(),
+                _ => None,
+            };
+            let blob = match shared {
+                Some(blob) if blob.needs_to_read_file() => blob,
+                // In memory: `StaticRoute` shares it the same way.
+                Some(_) => return Ok(None),
+                None => {
+                    body_value.to_blob_if_possible();
+                    if !matches!(body_value, BodyValue::Blob(b) if b.needs_to_read_file()) {
+                        return Ok(None);
+                    }
+                    // `needs_to_read_file()` ⇒ `store` is Some and `data` is `File`.
+                    let is_fd = matches!(
+                        body_value,
+                        BodyValue::Blob(b)
+                            if matches!(
+                                b.store.get().as_ref().unwrap().data,
+                                StoreData::File(ref f)
+                                    if matches!(f.pathlike, PathOrFileDescriptor::Fd(_))
+                            )
+                    );
+                    if is_fd {
+                        return Err(global.throw_todo(
+                            b"Support serving files from a file descriptor. Please pass a path instead.",
+                        ));
+                    }
+
+                    let blob = body_value.use_();
+                    debug_assert!(
+                        !blob.is_heap_allocated(),
+                        "expected blob not to be heap-allocated"
+                    );
+                    *body_value = BodyValue::Blob(blob.dupe());
+                    blob
                 }
+            };
+            blob.global_this.set(std::ptr::from_ref(global));
+            let headers = headers_from(response.get_init_headers(), &blob);
+            let status_code = response.status_code();
 
-                let blob = body_value.use_();
-
-                blob.global_this.set(std::ptr::from_ref(global));
-                debug_assert!(
-                    !blob.is_heap_allocated(),
-                    "expected blob not to be heap-allocated"
-                );
-                *body_value = BodyValue::Blob(blob.dupe());
-                let headers = headers_from(response.get_init_headers(), &blob);
-                let status_code = response.status_code();
-
-                return Ok(Some(RefPtr::new(FileRoute::new(
-                    blob,
-                    headers,
-                    None,
-                    status_code,
-                ))));
-            }
+            return Ok(Some(RefPtr::new(FileRoute::new(
+                blob,
+                headers,
+                None,
+                status_code,
+            ))));
         }
         if let Some(blob) = argument.as_class_ref::<Blob>() {
             if blob.needs_to_read_file() {

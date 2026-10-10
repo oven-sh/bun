@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
 import { isBroken, isMacOS, tempDir } from "harness";
+import { join } from "node:path";
 import { routes, static_responses } from "./bun-serve-static-helpers";
 
 describe.todoIf(isBroken && isMacOS)("static", () => {
@@ -349,6 +350,64 @@ describe("static route preconditions (RFC 9110 §13.2.2)", () => {
 
     it("If-Match pass then If-None-Match match → 304", async () => {
       expect((await get("/s", { "If-Match": '"s1"', "If-None-Match": '"s1"' }, method)).status).toBe(304);
+    });
+  });
+});
+
+// A route shares the payload of its Response: the Response stays unused. A
+// stream the program took off `.body` before is still the body afterwards,
+// unlocked and with every byte. A Bun.file() body is a file route, the rest
+// are static routes.
+describe("a Response whose .body was read stays the program's after it is used as a route", () => {
+  const text = "every byte of a small file on disk\n";
+  const bodies: [string, (dir: string) => BodyInit][] = [
+    ["a string", () => text],
+    ["a Uint8Array", () => new TextEncoder().encode(text)],
+    ["a Blob", () => new Blob([text])],
+    ["a Bun.file()", dir => Bun.file(join(dir, "a.txt"))],
+  ];
+  const uses: [string, (response: Response, stream: ReadableStream, dir: string) => Promise<string>][] = [
+    ["a read of the stream", (response, stream) => new Response(stream).text()],
+    ["stream.tee()", (response, stream) => new Response(stream.tee()[0]).text()],
+    ["response.text()", response => response.text()],
+    ["response.clone().text()", response => response.clone().text()],
+    [
+      "Bun.write(path, response)",
+      async (response, stream, dir) => {
+        await Bun.write(join(dir, "out.txt"), response);
+        return Bun.file(join(dir, "out.txt")).text();
+      },
+    ],
+  ];
+
+  describe.each(bodies)("over %s", (bodyName, body) => {
+    test.each(uses)("%s gives the whole body", async (useName, use) => {
+      using dir = tempDir("serve-route-body-stream", { "a.txt": text });
+      const response = new Response(body(String(dir)));
+      const stream = response.body!;
+      await using server = Bun.serve({
+        port: 0,
+        // One Response on two routes: a route does not use its Response up.
+        routes: { "/a": response, "/b": response },
+        fetch: () => new Response("not found", { status: 404 }),
+      });
+      const head = await fetch(new URL("/a", server.url), { method: "HEAD" });
+      expect({
+        a: await (await fetch(new URL("/a", server.url))).text(),
+        b: await (await fetch(new URL("/b", server.url))).text(),
+        head: [head.status, head.headers.get("content-length")],
+        locked: stream.locked,
+        sameStream: response.body === stream,
+        bodyUsed: response.bodyUsed,
+      }).toEqual({
+        a: text,
+        b: text,
+        head: [200, String(text.length)],
+        locked: false,
+        sameStream: true,
+        bodyUsed: false,
+      });
+      expect(await use(response, stream, String(dir))).toBe(text);
     });
   });
 });

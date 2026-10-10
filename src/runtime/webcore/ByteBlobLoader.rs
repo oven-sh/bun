@@ -171,6 +171,18 @@ impl ByteBlobLoader {
         Some(blob::Any::Blob(blob))
     }
 
+    /// The Blob this loader has left to read, sharing its store. The loader keeps the store.
+    pub(crate) fn peek_blob(&self, global: &JSGlobalObject) -> Option<Blob> {
+        let blob = Blob::init_with_store(self.store.clone()?, global);
+        blob.offset.set(self.offset);
+        blob.size.set(self.remain);
+        if !self.content_type.is_empty() {
+            blob.content_type.set(self.content_type.clone());
+            blob.content_type_was_set.set(true);
+        }
+        Some(blob)
+    }
+
     pub(crate) fn detach_store(&mut self) -> Option<RefPtr<Store>> {
         if let Some(store) = self.store.take() {
             self.done = true;

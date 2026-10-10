@@ -1579,6 +1579,7 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
     locked: stream.locked,
   });
   const consumedState = { readable: false, errored: false, disturbed: true, locked: true };
+  const notFormData = { "content-type": "application/json" };
 
   for (const [ownerName, make] of owners) {
     describe(ownerName, () => {
@@ -1845,8 +1846,77 @@ describe("body stream bookkeeping does not depend on the body's source", () => {
           });
         }
       });
+
+      // A formData() that rejects the Content-Type has read nothing. The body
+      // stays as it was, and so does a stream that was taken off `.body` before:
+      // it is still the body, unlocked, with every byte.
+      describe("formData() on a body that is not form data leaves the body as it was", () => {
+        const cases = sources.flatMap(([name, init, content]) => [
+          [name, "", init, content, false] as const,
+          [name, " after .body", init, content, true] as const,
+        ]);
+        test.each(cases)("%s%s", async (name, when, init, content, touch) => {
+          const afterFailure = async () => {
+            const owner = make(init(), notFormData);
+            const stream = touch ? owner.body! : null;
+            expect(await owner.formData().then(String, e => e.code)).toBe("ERR_FORMDATA_PARSE_ERROR");
+            return { owner, stream };
+          };
+          const { owner, stream } = await afterFailure();
+          expect({
+            bodyUsed: owner.bodyUsed,
+            sameStream: stream === null || owner.body === stream,
+            locked: owner.body!.locked,
+            again: await owner.formData().then(String, e => e.code),
+            clone: await owner.clone().text(),
+          }).toEqual({
+            bodyUsed: false,
+            sameStream: true,
+            locked: false,
+            again: "ERR_FORMDATA_PARSE_ERROR",
+            clone: content,
+          });
+          expect({
+            text: await (await afterFailure()).owner.text(),
+            stream: await new Response((await afterFailure()).owner.body).text(),
+            teed: await new Response((await afterFailure()).owner.body!.tee()[0]).text(),
+          }).toEqual({ text: content, stream: content, teed: content });
+        });
+      });
     });
   }
+
+  // The same for a body over a file on disk, and for Bun.write() as the reader.
+  test.each([
+    ["", false],
+    [" after .body", true],
+  ] as const)(
+    "formData() on a Bun.file() body that is not form data leaves the body as it was%s",
+    async (when, touch) => {
+      const text = "every byte of a small file on disk\n";
+      using dir = tempDir("body-formdata-file", { "a.txt": text });
+      const afterFailure = async () => {
+        const response = new Response(Bun.file(join(String(dir), "a.txt")));
+        const stream = touch ? response.body! : null;
+        expect(await response.formData().then(String, e => e.code)).toBe("ERR_FORMDATA_PARSE_ERROR");
+        return { response, stream };
+      };
+      const { response, stream } = await afterFailure();
+      expect({
+        bodyUsed: response.bodyUsed,
+        sameStream: stream === null || response.body === stream,
+        locked: response.body!.locked,
+      }).toEqual({ bodyUsed: false, sameStream: true, locked: false });
+      const written = join(String(dir), "out.txt");
+      await Bun.write(written, (await afterFailure()).response);
+      expect({
+        text: await (await afterFailure()).response.text(),
+        stream: await new Response((await afterFailure()).response.body).text(),
+        teed: await new Response((await afterFailure()).response.body!.tee()[0]).text(),
+        written: await Bun.file(written).text(),
+      }).toEqual({ text, stream: text, teed: text, written: text });
+    },
+  );
 
   // A null body is not a zero-length body: nothing can use it up.
   test("Response.redirect() and Response.error() have a null body", async () => {

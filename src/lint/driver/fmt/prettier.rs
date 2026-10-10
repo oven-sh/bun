@@ -68,17 +68,17 @@ impl<'e> Prettier<'e> {
         }
     }
 
-    /// Formats the file at `path`, which is `size` bytes long. `shown`: its name for the user. `writes`: it is written if it
-    /// changes. Returns whether it changes. `Err`: for the user.
+    /// Formats the file at `path`. `shown`: its name for the user. `writes`: it is written if it changes. Returns whether it
+    /// changes. `Err`: for the user.
     pub(crate) fn format_file(
         &self,
-        (path, size, shown): (&[u8], u64, &[u8]),
+        (path, shown): (&[u8], &[u8]),
         config: Option<&[u8]>,
         writes: bool,
     ) -> Result<bool, Vec<u8>> {
         let fail = |what: &[u8], why: &[u8]| [what, b" file \"", shown, b"\":\n", why].concat();
-        let text = fs::read_sized(path, size)
-            .map_err(|error| fail(b"Unable to read", &fs::describe(&error)))?;
+        let text =
+            fs::read(path).map_err(|error| fail(b"Unable to read", &fs::describe(&error)))?;
         let formatted =
             (self.format(path, config, &text)).map_err(|why| [shown, b": ", &why].concat())?;
         if formatted == text {

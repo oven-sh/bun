@@ -607,7 +607,7 @@ impl Context<'_, '_> {
             return Ok(warns.then(|| self.ignored(&target.path, &target.status, flavor)));
         };
         let started = self.timing.now();
-        let text = match fs::read_sized(&target.path, target.size) {
+        let text = match fs::read(&target.path) {
             Ok(text) => text,
             // A link that leads nowhere. oxlint passes over it.
             Err(_)

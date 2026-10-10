@@ -1308,7 +1308,7 @@ impl Run<'_> {
                 if leaves_classes.load(Ordering::Relaxed) {
                     options.options.tailwind = None;
                 }
-                let text = fs::read_sized(&target.path, target.size).map_err(|error| {
+                let text = fs::read(&target.path).map_err(|error| {
                     [
                         b"Unable to read file \"",
                         &shown[..],
@@ -1394,7 +1394,7 @@ impl Run<'_> {
                 let began = Instant::now();
                 let shown = paths::relative(cwd, &target.path);
                 let config = configs.path_of_config(&target.scope);
-                let file = (&target.path[..], target.size, &shown[..]);
+                let file = (&target.path[..], &shown[..]);
                 results.lock()[index] = Some(match bridge.format_file(file, config, !only_looks) {
                     Ok(true) => Done::Different(began.elapsed()),
                     Ok(false) => Done::Unchanged,

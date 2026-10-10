@@ -74,17 +74,32 @@ pub(crate) fn is_file(path: &[u8]) -> bool {
     kind(path) == Some(Kind::File)
 }
 
+/// `EFBIG` for a file that JavaScript could not hold as a string, as Node has an error for it, and for more than 64 MB of what is
+/// no file: `/dev/null` and a pipe are read, and a link in a repository can lead to `/dev/zero`.
 pub(crate) fn read(path: &[u8]) -> bun_sys::Result<Vec<u8>> {
-    File::read_from(Fd::cwd(), path)
-}
-
-/// The same for a file that is known to have `size` bytes, or had when it was looked at.
-pub(crate) fn read_sized(path: &[u8], size: u64) -> bun_sys::Result<Vec<u8>> {
+    let too_large = || bun_sys::Error::from_code(bun_sys::E::EFBIG, bun_sys::Tag::read);
     let file = File::openat(Fd::cwd(), path, O::RDONLY, 0)?;
-    // One more, so that the end of the file is seen without growing.
-    let mut text = Vec::with_capacity((size as usize).min(64 << 20) + 1);
-    file.read_to_end_into(&mut text)?;
-    Ok(text)
+    let found = file.stat()?;
+    if matches!(bun_sys::kind_from_mode(found.st_mode as _), EntryKind::File) {
+        let size = found.st_size as u64;
+        if size > bun_lint::fix::MAX_STRING_LENGTH {
+            return Err(too_large());
+        }
+        // One more, so that the end of the file is seen without growing.
+        let mut text = Vec::with_capacity((size as usize).min(64 << 20) + 1);
+        file.read_to_end_into(&mut text)?;
+        return Ok(text);
+    }
+    let (mut text, mut part) = (Vec::new(), vec![0; 64 << 10]);
+    loop {
+        match file.read(&mut part)? {
+            0 => return Ok(text),
+            read => text.extend_from_slice(&part[..read]),
+        }
+        if text.len() > 64 << 20 {
+            return Err(too_large());
+        }
+    }
 }
 
 /// Fills `start` from the start of the file at `path`, and returns what has been read.

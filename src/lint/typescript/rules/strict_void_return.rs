@@ -11,18 +11,26 @@ pub struct StrictVoidReturn {
     allowed_return_type: TypeFlags,
 }
 
-const ASYNC_FUNC: Message =
-    Message::new("asyncFunc", "Async function used in a context where a void function is expected.");
+const ASYNC_FUNC: Message = Message::new(
+    "asyncFunc",
+    "Async function used in a context where a void function is expected.",
+);
 const NON_VOID_FUNC: Message = Message::new(
     "nonVoidFunc",
     "Value-returning function used in a context where a void function is expected.",
 );
-const NON_VOID_RETURN: Message =
-    Message::new("nonVoidReturn", "Value returned in a context where a void return is expected.");
-const SUGGEST_ADD_VOID_OP: Message =
-    Message::new("suggestAddVoidOp", "Add a void operator to discard the return value.");
-const SUGGEST_WRAP_IN_ASYNC_IIFE: Message =
-    Message::new("suggestWrapInAsyncIIFE", "Wrap the function body in an async IIFE.");
+const NON_VOID_RETURN: Message = Message::new(
+    "nonVoidReturn",
+    "Value returned in a context where a void return is expected.",
+);
+const SUGGEST_ADD_VOID_OP: Message = Message::new(
+    "suggestAddVoidOp",
+    "Add a void operator to discard the return value.",
+);
+const SUGGEST_WRAP_IN_ASYNC_IIFE: Message = Message::new(
+    "suggestWrapInAsyncIIFE",
+    "Wrap the function body in an async IIFE.",
+);
 
 /// What the functions return that all the signatures of a callee expect for an argument.
 #[derive(Copy, Clone)]
@@ -35,7 +43,11 @@ pub struct ExpectedReturnTypes {
 
 impl ExpectedReturnTypes {
     fn of<'a>(func_signatures: &[Signature<'a>], arg_idx: usize, callee: Expr<'a>) -> Self {
-        let mut found = ExpectedReturnTypes { are_all_void: true, is_any_void: false, are_all_nullish_or_any: true };
+        let mut found = ExpectedReturnTypes {
+            are_all_void: true,
+            is_any_void: false,
+            are_all_nullish_or_any: true,
+        };
         let return_types = func_signatures
             .iter()
             .filter_map(|signature| signature.parameters().get(arg_idx))
@@ -43,7 +55,8 @@ impl ExpectedReturnTypes {
             .flat_map(|param_type| param_type.get_call_signatures())
             .map(|param_signature| param_signature.get_return_type());
         for ty in return_types {
-            found.are_all_void &= is_void(ty) || is_nullish_or_any(ty) || tsutils::is_type_parameter(ty);
+            found.are_all_void &=
+                is_void(ty) || is_nullish_or_any(ty) || tsutils::is_type_parameter(ty);
             found.is_any_void |= is_void(ty);
             found.are_all_nullish_or_any &= is_nullish_or_any(ty);
         }
@@ -89,25 +102,38 @@ fn is_void(ty: Type) -> bool {
 }
 
 fn is_nullish_or_any(ty: Type) -> bool {
-    ty.has_flags(TypeFlags::VOID_LIKE | TypeFlags::UNDEFINED | TypeFlags::NULL | TypeFlags::ANY | TypeFlags::NEVER)
+    ty.has_flags(
+        TypeFlags::VOID_LIKE
+            | TypeFlags::UNDEFINED
+            | TypeFlags::NULL
+            | TypeFlags::ANY
+            | TypeFlags::NEVER,
+    )
 }
 
 fn is_void_returning_function_type(ty: Type) -> bool {
     let signatures = tsutils::get_call_signatures_of_type(ty);
     !signatures.is_empty()
-        && signatures.iter().all(|signature| tsutils::union_constituents(signature.get_return_type()).iter().all(is_void))
+        && signatures.iter().all(|signature| {
+            tsutils::union_constituents(signature.get_return_type())
+                .iter()
+                .all(is_void)
+        })
 }
 
 /// Whether the contextual type of `node` is that of a void function.
 fn expects_void_function(node: Expr) -> bool {
-    node.contextual_type().is_some_and(is_void_returning_function_type)
+    node.contextual_type()
+        .is_some_and(is_void_returning_function_type)
 }
 
 /// The `Property` or the `MethodDefinition` that the function is in, otherwise the function.
 fn func_head_span(func: Func) -> Span {
     match func.owner() {
         Node::Expr(e) => match e.parent() {
-            Node::Prop(prop) if !prop.is_jsx_attribute() && prop.kind() != PropKind::Spread => prop.span(),
+            Node::Prop(prop) if !prop.is_jsx_attribute() && prop.kind() != PropKind::Spread => {
+                prop.span()
+            }
             _ => e.span(),
         },
         owner => owner.span(),
@@ -118,7 +144,10 @@ fn func_head_span(func: Func) -> Span {
 fn make_sync_func_fix<'a>(fixer: Fixer<'a>, func: Func<'a>) -> Vec<Fix> {
     let mut fixes = Vec::new();
     if func.is_async()
-        && let Some(async_token) = fixer.file().tokens_in(func_head_span(func)).find(|token| token.value() == b"async")
+        && let Some(async_token) = fixer
+            .file()
+            .tokens_in(func_head_span(func))
+            .find(|token| token.value() == b"async")
     {
         fixes.push(fixer.remove(async_token));
     }
@@ -161,7 +190,8 @@ fn wrap_in_async_iife_fix<'a>(fixer: Fixer<'a>, func: Func<'a>) -> Vec<Fix> {
 impl StrictVoidReturn {
     fn is_allowed_return_type(&self, ty: Type) -> bool {
         let flags = ty.flags();
-        flags.intersects(self.allowed_return_type) || flags.intersects(TypeFlags::ANY) && ty.is_unresolved()
+        flags.intersects(self.allowed_return_type)
+            || flags.intersects(TypeFlags::ANY) && ty.is_unresolved()
     }
 
     /// Whether `node` is a function that is not void already. Nothing is ever reported for anything else, so this is asked first:
@@ -171,9 +201,13 @@ impl StrictVoidReturn {
             FuncNode::Expr(e) => e.ty(),
             FuncNode::Method(func) => func.type_at_location(),
         };
-        tsutils::get_call_signatures_of_type(actual_type.get_apparent_type()).iter().any(|signature| {
-            !tsutils::union_constituents(signature.get_return_type()).iter().all(|ty| self.is_allowed_return_type(ty))
-        })
+        tsutils::get_call_signatures_of_type(actual_type.get_apparent_type())
+            .iter()
+            .any(|signature| {
+                !tsutils::union_constituents(signature.get_return_type())
+                    .iter()
+                    .all(|ty| self.is_allowed_return_type(ty))
+            })
     }
 
     fn is_candidate(&self, node: Expr) -> bool {
@@ -205,19 +239,29 @@ impl StrictVoidReturn {
                     false => ty.get_call_signatures(),
                 };
                 let ty = call.callee().ty();
-                (ty, tsutils::union_constituents(ty).iter().flat_map(signatures_of).collect())
+                (
+                    ty,
+                    tsutils::union_constituents(ty)
+                        .iter()
+                        .flat_map(signatures_of)
+                        .collect(),
+                )
             });
 
             // The types from all of the call signatures.
             let find_expected = || ExpectedReturnTypes::of(func_signatures, arg_idx, call.callee());
             let expected = match func_signatures.len() > 16 {
-                true => *cx.state.entry((*callee_type, is_new, arg_idx)).or_insert_with(find_expected),
+                true => *cx
+                    .state
+                    .entry((*callee_type, is_new, arg_idx))
+                    .or_insert_with(find_expected),
                 false => find_expected(),
             };
             let has_single_signature = func_signatures.len() == 1;
 
             // The contextual type is that of the first overload, though another one may match the call.
-            let is_void_expected = (has_single_signature || expected.are_all_void) && expects_void_function(arg_node)
+            let is_void_expected = (has_single_signature || expected.are_all_void)
+                && expects_void_function(arg_node)
                 || expected.is_any_void && expected.are_all_nullish_or_any;
             if is_void_expected {
                 self.report_non_void_function(FuncNode::Expr(arg_node), cx);
@@ -243,7 +287,8 @@ impl StrictVoidReturn {
             // With a default value it is an `AssignmentPattern`.
             PropKind::Shorthand if value_node.tag() == ExprTag::Ident => {}
             PropKind::Method => {
-                let (Some(func), Some(key), Node::Expr(object)) = (prop_node.func(), prop_node.key(), prop_node.parent())
+                let (Some(func), Some(key), Node::Expr(object)) =
+                    (prop_node.func(), prop_node.key(), prop_node.parent())
                 else {
                     return;
                 };
@@ -251,7 +296,9 @@ impl StrictVoidReturn {
                     return;
                 };
                 if self.returns_a_value(FuncNode::Method(func))
-                    && let Some(prop_symbol) = object.contextual_type().and_then(|it| it.get_property(name.bytes()))
+                    && let Some(prop_symbol) = object
+                        .contextual_type()
+                        .and_then(|it| it.get_property(name.bytes()))
                     && is_void_returning_function_type(prop_symbol.get_type_at_location(prop_node))
                 {
                     self.report_non_void_function(FuncNode::Method(func), cx);
@@ -260,7 +307,10 @@ impl StrictVoidReturn {
             }
             _ => return,
         }
-        if self.is_candidate(value_node) && is_in_object_expression() && expects_void_function(value_node) {
+        if self.is_candidate(value_node)
+            && is_in_object_expression()
+            && expects_void_function(value_node)
+        {
             self.report_non_void_function(FuncNode::Expr(value_node), cx);
         }
     }
@@ -271,10 +321,12 @@ impl StrictVoidReturn {
             return;
         }
         let func_node = match member.kind() {
-            MemberKind::Property if !member.flags().contains(Flags::ACCESSOR) => match member.init() {
-                Some(value) if may_be_function(value) => FuncNode::Expr(value),
-                _ => return,
-            },
+            MemberKind::Property if !member.flags().contains(Flags::ACCESSOR) => {
+                match member.init() {
+                    Some(value) if may_be_function(value) => FuncNode::Expr(value),
+                    _ => return,
+                }
+            }
             MemberKind::Method | MemberKind::Getter | MemberKind::Setter => match member.func() {
                 Some(func) if func.has_body() => FuncNode::Method(func),
                 _ => return,
@@ -311,7 +363,11 @@ impl StrictVoidReturn {
         };
 
         // oxlint points at the function.
-        let head = if cx.language().is_oxlint { func.span() } else { get_function_head_loc(func) };
+        let head = if cx.language().is_oxlint {
+            func.span()
+        } else {
+            get_function_head_loc(func)
+        };
         if func.is_generator() {
             cx.report(head, NON_VOID_FUNC);
             return;
@@ -320,15 +376,28 @@ impl StrictVoidReturn {
         if func.is_async() {
             let report = cx.report(head, ASYNC_FUNC);
             match func.body() {
-                FnBody::Expr(body) => report.suggest(SUGGEST_ADD_VOID_OP, |fixer| add_void_to_arrow_fix(fixer, func, body)),
-                _ => report.suggest(SUGGEST_WRAP_IN_ASYNC_IIFE, |fixer| wrap_in_async_iife_fix(fixer, func)),
+                FnBody::Expr(body) => report.suggest(SUGGEST_ADD_VOID_OP, |fixer| {
+                    add_void_to_arrow_fix(fixer, func, body)
+                }),
+                _ => report.suggest(SUGGEST_WRAP_IN_ASYNC_IIFE, |fixer| {
+                    wrap_in_async_iife_fix(fixer, func)
+                }),
             };
             return;
         }
 
         if let FnBody::Expr(body) = func.body() {
-            cx.report(if cx.language().is_oxlint { body.outer_span() } else { body.span() }, NON_VOID_RETURN)
-                .suggest(SUGGEST_ADD_VOID_OP, |fixer| add_void_to_arrow_fix(fixer, func, body));
+            cx.report(
+                if cx.language().is_oxlint {
+                    body.outer_span()
+                } else {
+                    body.span()
+                },
+                NON_VOID_RETURN,
+            )
+            .suggest(SUGGEST_ADD_VOID_OP, |fixer| {
+                add_void_to_arrow_fix(fixer, func, body)
+            });
             return;
         }
 
@@ -345,7 +414,11 @@ impl StrictVoidReturn {
             {
                 // oxlint points at the statement.
                 let Span { start, end } = statement.span();
-                let end = if cx.language().is_oxlint { end } else { start + "return".len() as u32 };
+                let end = if cx.language().is_oxlint {
+                    end
+                } else {
+                    start + "return".len() as u32
+                };
                 cx.report(Span::new(start, end), NON_VOID_RETURN);
             }
         }
@@ -353,7 +426,16 @@ impl StrictVoidReturn {
 }
 
 impl Rule for StrictVoidReturn {
-    const META: Meta = Meta::typescript("strict-void-return", Kind::Problem).has_suggestions().requires_types();
+    const META: Meta = Meta::typescript("strict-void-return", Kind::Problem)
+        .has_suggestions()
+        .requires_types();
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Array, ExprTag::Assign, ExprTag::Call, ExprTag::New])
+        .stmts(&[StmtTag::Return])
+        .funcs()
+        .members()
+        .props()
+        .var_decls();
     type State<'a> = ExpectedByCallee<'a>;
 
     fn new(options: &Options) -> Self {
@@ -361,52 +443,69 @@ impl Rule for StrictVoidReturn {
         if options.object(0).bool_or("allowReturnAny", false) {
             allowed_return_type |= TypeFlags::ANY;
         }
-        StrictVoidReturn { allowed_return_type }
+        StrictVoidReturn {
+            allowed_return_type,
+        }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> ExpectedByCallee<'a> {
-        on.exprs([ExprTag::Array], |rule, node, cx| {
-            let ExprKind::Array(elements) = node.kind() else {
-                return;
-            };
-            for element in elements {
-                if rule.is_candidate(element) && !node.is_assignment_target() && expects_void_function(element) {
-                    rule.report_non_void_function(FuncNode::Expr(element), cx);
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<ExpectedByCallee<'a>> {
+        Some(ExpectedByCallee::default())
+    }
+
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match node.kind() {
+            ExprKind::Array(elements) => {
+                for element in elements {
+                    if self.is_candidate(element)
+                        && !node.is_assignment_target()
+                        && expects_void_function(element)
+                    {
+                        self.report_non_void_function(FuncNode::Expr(element), cx);
+                    }
                 }
             }
-        });
-        on.funcs(|rule, func, cx| {
-            if func.is_arrow()
-                && let FnBody::Expr(body) = func.body()
-            {
-                rule.check_expression_node(body, cx);
+            ExprKind::Assign { value, .. } => {
+                // A default value is in an `AssignmentPattern`.
+                let is_assignment_pattern = || {
+                    node.is_assignment_target()
+                        || matches!(node.parent(), Node::Prop(prop) if prop.kind() == PropKind::Shorthand)
+                };
+                if self.is_candidate(value)
+                    && !is_assignment_pattern()
+                    && expects_void_function(value)
+                {
+                    self.report_non_void_function(FuncNode::Expr(value), cx);
+                }
             }
-        });
-        on.exprs([ExprTag::Assign], |rule, node, cx| {
-            let ExprKind::Assign { value, .. } = node.kind() else {
-                return;
-            };
-            // A default value is in an `AssignmentPattern`.
-            let is_assignment_pattern = || {
-                node.is_assignment_target() || matches!(node.parent(), Node::Prop(prop) if prop.kind() == PropKind::Shorthand)
-            };
-            if rule.is_candidate(value) && !is_assignment_pattern() && expects_void_function(value) {
-                rule.report_non_void_function(FuncNode::Expr(value), cx);
-            }
-        });
-        on.exprs([ExprTag::Call, ExprTag::New], Self::check_function_call_node);
-        on.props(Self::check_prop);
-        on.members(Self::check_member);
-        on.stmts([StmtTag::Return], |rule, node, cx| {
-            if let StmtKind::Return(Some(argument)) = node.kind() {
-                rule.check_expression_node(argument, cx);
-            }
-        });
-        on.var_decls(|rule, node, cx| {
-            if let Some(init) = node.init() {
-                rule.check_expression_node(init, cx);
-            }
-        });
-        ExpectedByCallee::default()
+            _ => self.check_function_call_node(node, cx),
+        }
+    }
+
+    fn stmt<'a>(&self, node: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if let StmtKind::Return(Some(argument)) = node.kind() {
+            self.check_expression_node(argument, cx);
+        }
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if func.is_arrow()
+            && let FnBody::Expr(body) = func.body()
+        {
+            self.check_expression_node(body, cx);
+        }
+    }
+
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_member(member, cx);
+    }
+
+    fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_prop(prop, cx);
+    }
+
+    fn var_decl<'a>(&self, node: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(init) = node.init() {
+            self.check_expression_node(init, cx);
+        }
     }
 }

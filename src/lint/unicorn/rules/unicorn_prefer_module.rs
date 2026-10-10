@@ -28,6 +28,17 @@ impl Rule for PreferModule {
         PreferModule
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new().stmts(&[StmtTag::Return]);
+        if file.mentions("use strict") {
+            on = on.stmts(&[StmtTag::Expr]);
+        }
+        if file.mentions_any(&COMMON_JS_GLOBALS) {
+            on = on.exprs(&[ExprTag::Ident]);
+        }
+        on
+    }
+
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         if file.path().last_chunk::<4>().is_some_and(|it| it.eq_ignore_ascii_case(b".cjs")) {
             return None;
@@ -63,9 +74,6 @@ impl Rule for PreferModule {
 
 impl PreferModule {
     fn expression_statement<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        if !cx.file().mentions("use strict") {
-            return;
-        }
         if matches!(statement.kind(), StmtKind::Expr(e) if e.tag() == ExprTag::String)
             && statement.directive().is_some_and(|it| it == b"use strict")
         {

@@ -2,6 +2,7 @@
 
 use crate::matcher;
 use crate::node::Program;
+use crate::read_ignore;
 use crate::read_minimatch3;
 use crate::read_picomatch;
 use crate::segments::{self, Expansion};
@@ -239,6 +240,21 @@ impl Pattern {
                 }
             }
         }
+    }
+
+    /// `Glob::new(written)` of globset 0.4.18: a `*` crosses `/`. `None`: it is refused. A section of `.editorconfig` for oxfmt.
+    pub fn of_globset(written: &[u8]) -> Option<Pattern> {
+        Some(Pattern {
+            kind: Kind::Picomatch {
+                alternatives: vec![Alternative {
+                    written: Box::default(),
+                    program: read_ignore::globset_matcher(written)?,
+                    is_negated: false,
+                }],
+                is_asked_directly: true,
+            },
+            is_negated: false,
+        })
     }
 
     /// `GlobSet::new` of oxc for one element: `./` is dropped, a pattern without `/` is for a name in any directory.

@@ -31,19 +31,13 @@ pub struct ImportStyle {
 
 const IMPORT_STYLE: Message = Message::new("", "Use {{allowed_styles}} import for module `{{module_name}}`.");
 
-/// What is looked at in this file.
-pub struct State {
-    checks_require: bool,
-    checks_declarators: bool,
-}
-
 impl Rule for ImportStyle {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "import-style", Kind::Suggestion);
     const ON: On = On::new()
         .stmts(&[StmtTag::Import, StmtTag::ExportStar, StmtTag::ExportNamed, StmtTag::Expr])
         .exprs(&[ExprTag::ImportCall])
         .var_decls();
-    type State<'a> = State;
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -77,27 +71,37 @@ impl Rule for ImportStyle {
         }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<State> {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
+        if self.check_import {
+            on = on.stmts(&[StmtTag::Import]);
+        }
+        if self.check_export_from {
+            on = on.stmts(&[StmtTag::ExportStar, StmtTag::ExportNamed]);
+        }
         let checks_require = self.check_require && file.mentions("require");
-        Some(State {
-            checks_require,
-            checks_declarators: checks_require || self.check_dynamic_import && file.has_exprs([ExprTag::ImportCall]),
-        })
+        if self.check_dynamic_import {
+            on = on.exprs(&[ExprTag::ImportCall]);
+        }
+        if checks_require {
+            on = on.stmts(&[StmtTag::Expr]);
+        }
+        if checks_require || self.check_dynamic_import && file.has_exprs([ExprTag::ImportCall]) {
+            on = on.var_decls();
+        }
+        on
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         match stmt.tag() {
-            StmtTag::Import if self.check_import => self.import(stmt, cx),
-            StmtTag::ExportStar | StmtTag::ExportNamed if self.check_export_from => self.export_from(stmt, cx),
-            StmtTag::Expr if cx.state.checks_require => self.unassigned_require(stmt, cx),
+            StmtTag::Import => self.import(stmt, cx),
+            StmtTag::ExportStar | StmtTag::ExportNamed => self.export_from(stmt, cx),
+            StmtTag::Expr => self.unassigned_require(stmt, cx),
             _ => {}
         }
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if !self.check_dynamic_import {
-            return;
-        }
         if let ExprKind::ImportCall { args } = e.kind()
             && !is_assigned_dynamic_import(e)
             && let Some(source) = args.first().and_then(get_module_name)
@@ -107,9 +111,6 @@ impl Rule for ImportStyle {
     }
 
     fn var_decl<'a>(&self, declarator: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
-        if !cx.state.checks_declarators {
-            return;
-        }
         let Some(init) = declarator.init().and_then(plain) else {
             return;
         };

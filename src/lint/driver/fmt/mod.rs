@@ -1074,6 +1074,10 @@ impl Run<'_> {
         };
         if Kind::with_options(&path, &options.options).is_none() {
             let only_looks = self.options.check || self.options.list_different;
+            // `handleError` has nothing to say then. `listDifferent` has said it before.
+            if configs.flavor == Flavor::Prettier && self.options.ignore_unknown && !only_looks {
+                return self.out;
+            }
             let mut out = self.fail_to_start(
                 configs.flavor,
                 &[

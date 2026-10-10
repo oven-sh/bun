@@ -20,8 +20,7 @@ impl Rule for PreferAt {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "prefer-at", Kind::Suggestion).fixable(Fixable::Code).has_suggestions();
     const ON: On = On::new().exprs(&[ExprTag::Index, ExprTag::Call]);
-    /// Whether the file can have an `Index` that is reported, and a `Call`.
-    type State<'a> = (bool, bool);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -35,20 +34,25 @@ impl Rule for PreferAt {
         }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<(bool, bool)> {
-        let index = self.check_all_index_access || file.mentions_any(&["length", "slice"]);
-        let call = file.mentions_any(&["charAt", "substring", "slice", "last"]);
-        (index || call).then_some((index, call))
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
+        if self.check_all_index_access || file.mentions_any(&["length", "slice"]) {
+            on = on.exprs(&[ExprTag::Index]);
+        }
+        if file.mentions_any(&["charAt", "substring", "slice", "last"]) {
+            on = on.exprs(&[ExprTag::Call]);
+        }
+        on
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.tag() {
-            ExprTag::Index if cx.state.0 => {
+            ExprTag::Index => {
                 if !is_assignment_target(e) {
                     self.handle_computed_member(e, cx);
                 }
             }
-            ExprTag::Call if cx.state.1 => {
+            ExprTag::Call => {
                 if let Some(call_expr) = e.as_call()
                     && let Some(static_member) = as_static_member(call_expr.callee())
                     && !is_assignment_target(e)

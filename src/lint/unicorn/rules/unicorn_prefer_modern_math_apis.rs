@@ -20,6 +20,17 @@ impl Rule for PreferModernMathApis {
         PreferModernMathApis
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
+        if file.mentions("log") && file.mentions_any(&["LN10", "LN2", "LOG10E", "LOG2E"]) {
+            on = on.binaries(&[BinOp::Mul, BinOp::Div]);
+        }
+        if file.mentions("sqrt") {
+            on = on.exprs(&[ExprTag::Call]);
+        }
+        on
+    }
+
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         if !file.mentions("Math") {
             return None;
@@ -28,10 +39,6 @@ impl Rule for PreferModernMathApis {
     }
 
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let file = cx.file();
-        if !(file.mentions("log") && file.mentions_any(&["LN10", "LN2", "LOG10E", "LOG2E"])) {
-            return;
-        }
         let ExprKind::Binary { op, left, right } = e.kind() else {
             return;
         };
@@ -42,9 +49,6 @@ impl Rule for PreferModernMathApis {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if !cx.file().mentions("sqrt") {
-            return;
-        }
         let Some(arg) = e.as_call().and_then(|it| argument_of_math_method(it, "sqrt")) else {
             return;
         };

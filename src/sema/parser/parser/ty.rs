@@ -1236,7 +1236,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 let first_token = (p.lx.start, p.lx.end);
                 let ty = p.heritage_type(is_first_extends, 2499);
                 p.s.ids.push(ty.0);
-                element_error = element_error.or(p.import_with_type_arguments(first_token));
+                element_error = element_error.or_else(|| p.import_with_type_arguments(first_token));
             });
             // `checkGrammarHeritageClause`
             match comma {

@@ -33,6 +33,11 @@ impl Rule for NoUselessUndefined {
         }
     }
 
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let on = On::new().exprs(&[ExprTag::Ident]);
+        if self.check_arguments { on.exprs(&[ExprTag::Call]) } else { on }
+    }
+
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         if !file.mentions("undefined") {
             return None;
@@ -47,7 +52,7 @@ impl Rule for NoUselessUndefined {
     fn expr<'a>(&self, expr: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match expr.tag() {
             ExprTag::Ident => self.check_identifier(expr, cx),
-            ExprTag::Call if self.check_arguments => check_call(self, expr, cx),
+            ExprTag::Call => check_call(self, expr, cx),
             _ => {}
         }
     }

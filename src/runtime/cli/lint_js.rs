@@ -381,10 +381,6 @@ struct Desk {
     is_said: Condition,
     /// The engine was told to free its VM, and has.
     is_gone: core::sync::atomic::AtomicBool,
-    /// Of the last call that was measured, in nanoseconds: for how long it was the engine's turn, and for how much of that its
-    /// thread neither ran nor waited for a core.
-    turn_of_engine: core::sync::atomic::AtomicU64,
-    asleep: core::sync::atomic::AtomicU64,
 }
 
 impl Desk {
@@ -438,22 +434,6 @@ impl Start {
     }
 }
 
-/// For how many nanoseconds this thread has run or waited for a core.
-#[cfg(target_os = "linux")]
-fn time_of_this_thread() -> Option<u64> {
-    let text = bun_sys::File::read_from(bun_sys::Fd::cwd(), b"/proc/thread-self/schedstat").ok()?;
-    let mut numbers = strings::split(&text, b" ").map(|it| bun_core::fmt::parse_int::<u64>(it, 10));
-    Some(numbers.next()?.ok()? + numbers.next()?.ok()?)
-}
-
-#[cfg(not(target_os = "linux"))]
-fn time_of_this_thread() -> Option<u64> {
-    None
-}
-
-/// So many calls of an engine are measured: it goes on as it began.
-const CALLS_TO_MEASURE: u32 = 32;
-
 /// What the thread of an engine does. Nobody joins it: once its VM is freed it waits for a turn that never comes, until the
 /// process exits.
 fn run_engine(number: usize, start: &Start, desk: &Desk) -> ! {
@@ -465,7 +445,6 @@ fn run_engine(number: usize, start: &Start, desk: &Desk) -> ! {
         ));
     }
     let started = start.start_vm();
-    let mut calls = 0;
     loop {
         let heard = desk.hear(|turn| matches!(turn, Turn::Call { .. } | Turn::End | Turn::Free));
         let Turn::Call { kind, content } = heard else {
@@ -474,13 +453,7 @@ fn run_engine(number: usize, start: &Start, desk: &Desk) -> ! {
             desk.say(Turn::Returned(Ok(Vec::new())));
             continue;
         };
-        calls += 1;
-        let before = (calls <= CALLS_TO_MEASURE)
-            .then(time_of_this_thread)
-            .flatten();
-        let (since, mut turn_of_other) = (std::time::Instant::now(), std::time::Duration::ZERO);
         let mut ask = |kind: u32, details: &[u8], answer: &mut Vec<u8>| {
-            let since = std::time::Instant::now();
             desk.say(Turn::Asked {
                 kind,
                 details: details.to_vec(),
@@ -489,18 +462,12 @@ fn run_engine(number: usize, start: &Start, desk: &Desk) -> ! {
             if let Turn::Answered(answered) = desk.hear(|turn| matches!(turn, Turn::Answered(_))) {
                 *answer = answered;
             }
-            turn_of_other += since.elapsed();
         };
-        let returned = started
-            .clone()
-            .and_then(|()| ThreadVm.call(kind, &content, &mut ask));
-        if let Some((before, after)) = before.zip(time_of_this_thread()) {
-            let mine = since.elapsed().saturating_sub(turn_of_other).as_nanos() as u64;
-            let relaxed = core::sync::atomic::Ordering::Relaxed;
-            desk.turn_of_engine.store(mine, relaxed);
-            (desk.asleep).store(mine.saturating_sub(after - before), relaxed);
-        }
-        desk.say(Turn::Returned(returned));
+        desk.say(Turn::Returned(
+            started
+                .clone()
+                .and_then(|()| ThreadVm.call(kind, &content, &mut ask)),
+        ));
     }
 }
 
@@ -557,17 +524,7 @@ impl Borrowed<'_> {
         let mut state = self.engines.state.lock();
         let calls = &mut state.all[self.at].calls;
         *calls = calls.saturating_add(1);
-        let (calls, relaxed) = (*calls, core::sync::atomic::Ordering::Relaxed);
-        let measured = (
-            self.desk.turn_of_engine.swap(0, relaxed),
-            self.desk.asleep.swap(0, relaxed),
-        );
-        // With a file. What an engine loads it loads itself.
-        if calls > 2 {
-            state.turn_of_engines += measured.0;
-            state.asleep += measured.1;
-        }
-        if calls != 2 {
+        if *calls != 2 {
             return;
         }
         let left = self.engines.demand.left();
@@ -669,26 +626,12 @@ struct State {
     /// How often an engine was given back, and what that was when one was last freed.
     given_back: u32,
     freed_at: u32,
-    /// [`Desk::turn_of_engine`] and [`Desk::asleep`] of all calls with a file.
-    turn_of_engines: u64,
-    asleep: u64,
 }
 
 impl State {
     /// How many engines there are.
     fn count(&self) -> usize {
         self.all.iter().filter(|it| !it.is_freed).count()
-    }
-
-    /// How many threads an engine is. One that sleeps while it has a file waits for a thread of its own: a plugin that cannot
-    /// wait for a promise has a worker do the work. Until an engine has shown which it is, it is two.
-    fn threads_of_one(&self) -> usize {
-        let is_known_to_be_one = self.turn_of_engines > 0 && self.asleep < self.turn_of_engines / 2;
-        if cfg!(target_os = "linux") && !is_known_to_be_one {
-            2
-        } else {
-            1
-        }
     }
 
     /// `left`: [`Demand::left`]
@@ -772,10 +715,8 @@ impl Engines {
                 state.all[at].by = me;
                 break at;
             }
-            let threads = (state.count() - state.kept + 1) * state.threads_of_one();
-            let can_start = (!is_heavy || state.all.is_empty())
-                && (state.all.is_empty() || threads <= self.demand.most())
-                && self.has_room_for_another(&state);
+            let can_start =
+                (!is_heavy || state.all.is_empty()) && self.has_room_for_another(&state);
             if can_start && (self.demand).is_worth_another(state.count() - state.kept) {
                 let (at, desk) = (state.all.len(), Arc::<Desk>::default());
                 let (start, for_thread) = (Arc::clone(&self.start), Arc::clone(&desk));

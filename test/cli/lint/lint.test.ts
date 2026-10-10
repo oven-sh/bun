@@ -3261,6 +3261,182 @@ describe.concurrent("bun lint", () => {
       expect(exitCode).toBe(1);
     });
 
+    // The defaults of compiler options that TypeScript 6.0 has changed and that a rule can see, each in a project of its own.
+    // What is expected is what ESLint 10.12 with typescript-eslint 8.71.1 reports with TypeScript 5.9.3 and with 6.0.3 installed.
+    describe("the defaults of compiler options are those of the typescript that is installed for the project", () => {
+      const names = ["assignment", "call", "member-access", "return"].map(it => `no-unsafe-${it}`);
+      const rules = [...names, "no-unnecessary-condition"].map(it => `"@typescript-eslint/${it}": "error"`).join(", ");
+      const config = files["eslint.config.js"].replace(/rules: \{.*\}/, `rules: { ${rules} }`);
+      type Probe = { options: object; files: Record<string, string>; with5: string[]; with6: string[] };
+      const probes: Record<string, Probe> = {
+        // `strict`, and with it `strictNullChecks`
+        "strict": {
+          options: {
+            "noEmit": true,
+            "types": [],
+            "target": "es2022",
+            "lib": ["es2022"],
+            "module": "esnext",
+            "moduleResolution": "bundler",
+          },
+          files: { "a.ts": "declare const o: { b: number } | null;\nexport const x3 = o ? 1 : 2;\n" },
+          with5: ["0:1 no-unnecessary-condition", "2:19 no-unnecessary-condition"],
+          with6: [],
+        },
+        // `useUnknownInCatchVariables` and `noImplicitAny`, which `strict` stands for
+        "catch-variable": {
+          options: {
+            "noEmit": true,
+            "types": [],
+            "target": "es2022",
+            "lib": ["es2022"],
+            "module": "esnext",
+            "moduleResolution": "bundler",
+            "strictNullChecks": true,
+          },
+          files: {
+            "a.ts":
+              "export function g() { try { return 1; } catch (e) { return e.x; } }\nexport function h(p) { return p.x; }\n",
+          },
+          with5: [
+            "1:53 no-unsafe-return",
+            "1:62 no-unsafe-member-access",
+            "2:24 no-unsafe-return",
+            "2:33 no-unsafe-member-access",
+          ],
+          with6: ["1:53 no-unsafe-return", "2:24 no-unsafe-return", "2:33 no-unsafe-member-access"],
+        },
+        // `types`: every `@types/*` that is installed, or none
+        "types": {
+          options: {
+            "strict": true,
+            "noEmit": true,
+            "target": "es2022",
+            "lib": ["es2022"],
+            "module": "esnext",
+            "moduleResolution": "bundler",
+          },
+          files: {
+            "a.ts": "export const x1 = zzz.a;\n",
+            "node_modules/@types/zzz/index.d.ts": "declare const zzz: { a: number };\n",
+            "node_modules/@types/zzz/package.json":
+              '{ "name": "@types/zzz", "version": "1.0.0", "types": "index.d.ts" }\n',
+          },
+          with5: [],
+          with6: ["1:14 no-unsafe-assignment", "1:23 no-unsafe-member-access"],
+        },
+        // `target`, and with it the library: ES5 has no `includes`
+        "target": {
+          options: { "strict": true, "noEmit": true, "types": [], "module": "esnext", "moduleResolution": "bundler" },
+          files: { "a.ts": "export const x1 = [1].includes(1);\n" },
+          with5: ["1:14 no-unsafe-assignment", "1:19 no-unsafe-call"],
+          with6: [],
+        },
+        // `module`, and with it `moduleResolution`: `classic` does not look into node_modules
+        "module": {
+          options: { "strict": true, "noEmit": true, "types": [], "target": "es2022", "lib": ["es2022"] },
+          files: {
+            "a.ts": 'import { v } from "pkg";\nexport const x1 = v.a;\n',
+            "node_modules/pkg/index.d.ts": "export declare const v: { a: number };\n",
+            "node_modules/pkg/package.json": '{ "name": "pkg", "version": "1.0.0", "types": "index.d.ts" }\n',
+          },
+          with5: ["2:14 no-unsafe-assignment", "2:21 no-unsafe-member-access"],
+          with6: [],
+        },
+        // `moduleResolution` beside `module: esnext`
+        "module-resolution": {
+          options: {
+            "strict": true,
+            "noEmit": true,
+            "types": [],
+            "target": "es2022",
+            "lib": ["es2022"],
+            "module": "esnext",
+          },
+          files: {
+            "a.ts": 'import { v } from "pkg";\nexport const x1 = v.a;\n',
+            "node_modules/pkg/index.d.ts": "export declare const v: { a: number };\n",
+            "node_modules/pkg/package.json": '{ "name": "pkg", "version": "1.0.0", "types": "index.d.ts" }\n',
+          },
+          with5: ["2:14 no-unsafe-assignment", "2:21 no-unsafe-member-access"],
+          with6: [],
+        },
+        // `exports` of a package, which only the newer ways of resolving read
+        "exports-map": {
+          options: { "strict": true, "noEmit": true, "types": [], "lib": ["es2022"] },
+          files: {
+            "a.ts": 'import { v } from "pkg/sub";\nexport const x1 = v.a;\n',
+            "node_modules/pkg/lib/s.d.ts": "export declare const v: { a: number };\n",
+            "node_modules/pkg/package.json":
+              '{ "name": "pkg", "version": "1.0.0", "exports": { "./sub": { "types": "./lib/s.d.ts" } } }\n',
+          },
+          with5: ["2:14 no-unsafe-assignment", "2:21 no-unsafe-member-access"],
+          with6: [],
+        },
+        // `esModuleInterop`: a default import of `export =`
+        "es-module-interop": {
+          options: {
+            "strict": true,
+            "noEmit": true,
+            "types": [],
+            "target": "es2022",
+            "lib": ["es2022"],
+            "module": "commonjs",
+            "moduleResolution": "node10",
+          },
+          files: {
+            "a.ts": 'import f from "cjs";\nexport const x1 = f();\n',
+            "node_modules/cjs/index.d.ts": "declare function f(): number;\nexport = f;\n",
+            "node_modules/cjs/package.json": '{ "name": "cjs", "version": "1.0.0", "types": "index.d.ts" }\n',
+          },
+          with5: ["2:14 no-unsafe-assignment", "2:19 no-unsafe-call"],
+          with6: [],
+        },
+        // `libReplacement`: `@typescript/lib-dom` in place of lib.dom.d.ts
+        "lib-replacement": {
+          options: {
+            "strict": true,
+            "noEmit": true,
+            "types": [],
+            "target": "es2022",
+            "lib": ["es2022", "dom"],
+            "module": "esnext",
+            "moduleResolution": "bundler",
+          },
+          files: {
+            "a.ts": "export const x1 = marker.a;\nexport const x2 = document.title;\n",
+            "node_modules/@typescript/lib-dom/index.d.ts": "declare const marker: { a: number };\n",
+            "node_modules/@typescript/lib-dom/package.json":
+              '{ "name": "@typescript/lib-dom", "version": "1.0.0", "types": "index.d.ts" }\n',
+          },
+          with5: ["2:14 no-unsafe-assignment", "2:28 no-unsafe-member-access"],
+          with6: ["1:14 no-unsafe-assignment", "1:26 no-unsafe-member-access"],
+        },
+      };
+      const projects = Object.entries(probes).flatMap(([name, probe]) => [
+        [`${name}/tsconfig.json`, JSON.stringify({ compilerOptions: probe.options, include: ["*.ts"] })],
+        ...Object.entries(probe.files).map(([file, text]) => [`${name}/${file}`, text]),
+      ]);
+      test.each([
+        ["5.9.3", "with5"],
+        ["6.0.3", "with6"],
+      ] as const)(
+        "%s",
+        async (version, expected) => {
+          const installed = { "node_modules/typescript/package.json": JSON.stringify({ name: "typescript", version }) };
+          const all = { "eslint.config.js": config, ...installed, ...Object.fromEntries(projects) };
+          const { stdout } = await lint(all, ["-f", "unix"]);
+          const reports = Object.fromEntries(Object.keys(probes).map(name => [name, [] as string[]]));
+          for (const line of stdout.split("\n").filter(it => it.includes("[Error/"))) {
+            const [path, row, column] = line.split(":");
+            reports[path.split("/")[1]].push(`${row}:${column} ${line.slice(line.lastIndexOf("/") + 1, -1)}`);
+          }
+          expect(reports).toEqual(Object.fromEntries(Object.entries(probes).map(([name, it]) => [name, it[expected]])));
+        },
+        isDebug || isASAN ? 120_000 : 30_000,
+      );
+    });
+
     test("run with the types of the project", async () => {
       const { stdout, exitCode } = await lint(files, ["-f", "unix"]);
       expect(stdout).toMatchInlineSnapshot(`

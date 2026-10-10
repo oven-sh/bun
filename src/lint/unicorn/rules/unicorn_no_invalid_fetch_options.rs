@@ -56,11 +56,19 @@ impl Rule for NoInvalidFetchOptions {
         NoInvalidFetchOptions
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
+        if file.mentions("fetch") {
+            on = on.exprs(&[ExprTag::Call]);
+        }
+        if file.mentions("Request") {
+            on = on.exprs(&[ExprTag::New]);
+        }
+        on
+    }
+
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Known<'a>> {
         if !file.mentions("body") {
-            return None;
-        }
-        if !file.mentions("fetch") && !file.mentions("Request") {
             return None;
         }
         Some(Known::default())
@@ -69,9 +77,6 @@ impl Rule for NoInvalidFetchOptions {
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.tag() {
             ExprTag::Call => {
-                if !cx.file().mentions("fetch") {
-                    return;
-                }
                 if let Some(call) = e.as_call()
                     && get_inner_expression(call.callee()).is_ident("fetch")
                 {
@@ -79,9 +84,6 @@ impl Rule for NoInvalidFetchOptions {
                 }
             }
             ExprTag::New => {
-                if !cx.file().mentions("Request") {
-                    return;
-                }
                 if let ExprKind::New(new) = e.kind()
                     && is_new_expression(new, &["Request"], Some(2), None)
                 {

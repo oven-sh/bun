@@ -39,6 +39,13 @@ impl Rule for PreferNodeProtocol {
         PreferNodeProtocol
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let on = On::new()
+            .stmts(&[StmtTag::Import, StmtTag::ExportNamed, StmtTag::ImportEquals])
+            .exprs(&[ExprTag::ImportCall]);
+        if file.mentions("require") { on.exprs(&[ExprTag::Call]) } else { on }
+    }
+
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let module_name = match stmt.kind() {
             StmtKind::Import(import) => Some(import.spec()),
@@ -62,9 +69,6 @@ impl Rule for PreferNodeProtocol {
                 }
             }
             ExprTag::Call => {
-                if !cx.file().mentions("require") {
-                    return;
-                }
                 if let Some(call) = e.as_call()
                     && call.args().len() == 1
                     && !call.is_optional()

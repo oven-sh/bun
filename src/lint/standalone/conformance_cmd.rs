@@ -3,7 +3,7 @@
 //! what is in `test/cli/lint/conformance/bundle.zst`, decompressed (then with `--projects=<directory> --extract`), or a directory
 //! with the same files. A line for each rule is printed, with `--cases` one for each case that fails.
 
-use crate::host;
+use crate::host::{self, error_line};
 use crate::linter_cmd::{linter, with_file};
 use crate::types_cmd::{Project, lint_project};
 use bun_lint::linter::{Again, LintMessage, LintOptions, LintResult, Linter};
@@ -25,6 +25,10 @@ impl Host for Harness {
 
     fn lint(&self, case: &Case<'_>) -> Option<Vec<LintMessage>> {
         let (code, config) = (case.code, case.config);
+        // The formatter comes with the driver: `bun-lint cli --run-eslint-tests`.
+        if config.has_enabled(|meta| meta.plugin == Plugin::Prettier) {
+            return None;
+        }
         let path = crate::text(case.path);
         match case.place {
             Place::Nowhere => Some(with_file(&path, code, &config.language, |file| {
@@ -152,12 +156,19 @@ fn collect(root: &Path, directory: &Path, files: &mut Vec<(Vec<u8>, Vec<u8>)>) {
     }
 }
 
-pub(crate) fn run(args: &[String]) {
-    let path = Path::new(
-        args.iter()
-            .find(|it| !it.starts_with("--"))
-            .expect("the fixtures"),
+fn usage(problem: &str) -> ! {
+    error_line!("{problem}");
+    error_line!(
+        "usage: bun-lint conformance <fixtures> [--plugin=p] [--rule=r] [--verbose] [--cases] [--types] [--threads=n]"
     );
+    std::process::exit(2)
+}
+
+pub(crate) fn run(args: &[String]) {
+    let Some(path) = args.iter().find(|it| !it.starts_with("--")) else {
+        usage("<fixtures>: a directory, or bundle.zst decompressed");
+    };
+    let path = Path::new(path);
     let raw: Vec<&[u8]> = args.iter().map(String::as_bytes).collect();
     let mut flags = Flags::parse(&raw);
     flags.table = !args.iter().any(|it| it == "--cases");
@@ -165,7 +176,7 @@ pub(crate) fn run(args: &[String]) {
     let bytes = if path.is_dir() {
         Vec::new()
     } else {
-        host::read(path).expect("the fixtures")
+        host::read(path).unwrap_or_else(|_| usage("the fixtures cannot be read"))
     };
     let absolute = host::real_path(path)
         .unwrap_or_else(|_| path.to_owned())
@@ -181,7 +192,7 @@ pub(crate) fn run(args: &[String]) {
             flags.projects = flags.projects.or(Some(absolute.as_bytes()));
             bundle
         }
-        false => Bundle::parse(&bytes).expect("a bundle"),
+        false => Bundle::parse(&bytes).unwrap_or_else(|| usage("the file is no bundle")),
     };
     if let Some(projects) = flags.projects {
         let _ = PROJECTS.set(crate::text(projects));

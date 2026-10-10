@@ -472,6 +472,30 @@ fn check_print_width(value: &[u8]) -> Result<(), Fatal> {
     }
 }
 
+fn check_tab_width(value: &[u8]) -> Result<(), Fatal> {
+    match bun_core::fmt::parse_decimal::<u32>(value) {
+        Some(0..=24) => Ok(()),
+        _ => Err(Fatal(
+            b"Invalid tabWidth: The indent width should be between 0 and 24".to_vec(),
+        )),
+    }
+}
+
+/// `validate` of oxfmt, as far as it goes: `get`: the value of an option.
+fn check_widths<'v>(get: impl Fn(&[u8]) -> Option<&'v [u8]>) -> Result<(), Fatal> {
+    get(b"printWidth").map_or(Ok(()), check_print_width)?;
+    get(b"tabWidth").map_or(Ok(()), check_tab_width)
+}
+
+/// `useTabs` in `settings`.
+fn use_tabs_in<'s>(
+    settings: impl DoubleEndedIterator<Item = (&'s [u8], &'s [u8])>,
+) -> Option<bool> {
+    let mut settings = settings;
+    let value = settings.rfind(|it| it.0 == b"useTabs")?.1;
+    Some(value == b"true")
+}
+
 /// Of a file that `--config` names: `.oxfmtrc.json`, `oxfmt.config.ts`, `config/oxfmtrc.json`.
 fn is_name_of_oxfmt(name: &[u8]) -> bool {
     strings::contains(name, b"oxfmt")
@@ -782,7 +806,7 @@ impl<'c> Configs<'c> {
             configs.by_directory.get_mut().clear();
             if reads_editorconfig {
                 configs.editorconfig_of_oxfmt = paths::ancestors(&environment.cwd)
-                    .find_map(editorconfig::File::read)
+                    .find_map(editorconfig::File::read_as_oxfmt)
                     .map(Arc::new);
             }
         }
@@ -795,15 +819,17 @@ impl<'c> Configs<'c> {
             return Err(Fatal(error.0.clone()));
         }
         if self.flavor == Flavor::Oxfmt {
+            // `build_and_validate`: the configuration, and the first `[*]` of the `.editorconfig` for what it leaves open.
             let scope = self.for_directory(&self.environment.cwd)?;
-            let widths = self
-                .config_of(&scope)?
-                .into_iter()
-                .flat_map(|it| &it.settings)
-                .filter(|it| it.0 == b"printWidth");
-            for (_, width) in widths {
-                check_print_width(width)?;
-            }
+            let settings = (self.config_of(&scope)?.into_iter()).flat_map(|it| &it.settings);
+            let settings: Vec<(&[u8], &[u8])> = settings.map(|it| (&it.0[..], &it.1[..])).collect();
+            let use_tabs = use_tabs_in(settings.iter().copied());
+            let of_editorconfig = (scope.editorconfigs.first())
+                .map(|it| editorconfig::options_of_root_for_oxfmt(it, use_tabs))
+                .unwrap_or_default();
+            let of_editorconfig = of_editorconfig.iter().map(|it| (it.0, &it.1[..]));
+            let all: Vec<(&[u8], &[u8])> = of_editorconfig.chain(settings).collect();
+            check_widths(|name| all.iter().rfind(|it| it.0 == name).map(|it| it.1))?;
         }
         Ok(())
     }
@@ -1273,10 +1299,30 @@ impl<'c> Configs<'c> {
     pub(crate) fn options_for(&self, scope: &Scope, path: &[u8]) -> Result<Resolved, Fatal> {
         let config = self.config_of(scope)?;
         let is_oxfmt = self.is_oxfmt_for(scope);
+        let mut from_config: Vec<(&[u8], &[u8])> = Vec::new();
+        if let Some(config) = config {
+            from_config.extend(config.settings.iter().map(|it| (&it.0[..], &it.1[..])));
+            let relative = paths::relative(paths::dirname(&config.path), path);
+            for it in config.overrides.iter().filter(|it| it.matches(&relative)) {
+                from_config.extend(it.settings.iter().map(|it| (&it.0[..], &it.1[..])));
+            }
+            // oxfmt has no such option.
+            if config.is_oxfmt {
+                from_config.retain(|it| it.0 != b"parser");
+            }
+        }
         let mut from_files: Vec<(&[u8], &[u8])> = Vec::new();
-        let from_editorconfig = match self.options.config_lookup {
-            true => editorconfig::options_for(scope.editorconfigs.iter().map(|it| &**it), path),
-            false => Vec::new(),
+        let from_editorconfig = match (self.options.config_lookup, self.flavor) {
+            (false, _) => Vec::new(),
+            (true, Flavor::Prettier) => {
+                editorconfig::options_for(scope.editorconfigs.iter().map(|it| &**it), path)
+            }
+            (true, Flavor::Oxfmt) => {
+                let use_tabs = use_tabs_in(from_config.iter().copied());
+                (scope.editorconfigs.first())
+                    .map(|it| editorconfig::options_for_oxfmt(it, path, use_tabs))
+                    .unwrap_or_default()
+            }
         };
         // oxfmt does not know `max_line_length = off`, Prettier does not know `insert_final_newline`.
         let counts = |it: &&(&[u8], Vec<u8>)| match is_oxfmt {
@@ -1292,17 +1338,7 @@ impl<'c> Configs<'c> {
         if is_oxfmt && !from_files.iter().any(|it| it.0 == b"printWidth") {
             from_files.push((b"printWidth", b"100"));
         }
-        if let Some(config) = config {
-            from_files.extend(config.settings.iter().map(|it| (&it.0[..], &it.1[..])));
-            let relative = paths::relative(paths::dirname(&config.path), path);
-            for it in config.overrides.iter().filter(|it| it.matches(&relative)) {
-                from_files.extend(it.settings.iter().map(|it| (&it.0[..], &it.1[..])));
-            }
-            // oxfmt has no such option.
-            if config.is_oxfmt {
-                from_files.retain(|it| it.0 != b"parser");
-            }
-        }
+        from_files.extend(from_config);
         let has_files = config.is_some() || !from_editorconfig.is_empty();
         let from_flags = self.options.format.iter().map(|it| (it.0, &it.1[..]));
         let all: Vec<(&[u8], &[u8])> = match self.options.config_precedence {
@@ -1311,6 +1347,9 @@ impl<'c> Configs<'c> {
             Precedence::PreferFile if has_files => from_files,
             Precedence::PreferFile => from_flags.collect(),
         };
+        if is_oxfmt {
+            check_widths(|name| all.iter().rfind(|it| it.0 == name).map(|it| it.1))?;
+        }
         let mut resolved = Resolved::default();
         let mut sort = SortSettings::default();
         let _ = resolved.options.set(b"filepath", path);
@@ -1372,9 +1411,6 @@ impl<'c> Configs<'c> {
                             [b"Invalid ", name, b" value: ", value, b"."].concat(),
                         ));
                     }
-                }
-                b"printWidth" if is_oxfmt && check_print_width(value).is_err() => {
-                    check_print_width(value)?;
                 }
                 name if name == b"jsdoc" || name.starts_with(b"jsdoc.") => {
                     if resolved.options.set(name, value).is_err() {

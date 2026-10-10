@@ -17,8 +17,6 @@ const PREFER_NUMBER_PROPERTIES: Message =
 const FUNCTIONS: [&str; 4] = ["isNaN", "isFinite", "parseFloat", "parseInt"];
 
 pub struct State<'a> {
-    has_members: bool,
-    has_functions: bool,
     /// The nearest unary expression around something.
     nearest_unary: AncestorMemo<'a, Expr<'a>>,
 }
@@ -37,20 +35,30 @@ impl Rule for PreferNumberProperties {
         }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let has_constants = self.check_nan && file.mentions("NaN") || self.check_infinity && file.mentions("Infinity");
         let has_functions = file.mentions_any(&FUNCTIONS);
-        (has_constants || has_functions).then(|| State {
-            has_members: has_constants && file.mentions_any(&GLOBAL_OBJECT_NAMES),
-            has_functions,
-            nearest_unary: AncestorMemo::default(),
-        })
+        let mut on = On::new();
+        if has_constants && file.mentions_any(&GLOBAL_OBJECT_NAMES) {
+            on = on.exprs(&[ExprTag::Dot, ExprTag::Index]);
+        }
+        if has_functions {
+            on = on.exprs(&[ExprTag::Call]);
+        }
+        if has_constants || has_functions {
+            on = on.finish();
+        }
+        on
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State { nearest_unary: AncestorMemo::default() })
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.tag() {
-            ExprTag::Dot | ExprTag::Index if cx.state.has_members => self.check_member(e, cx),
-            ExprTag::Call if cx.state.has_functions => self.check_call(e, cx),
+            ExprTag::Dot | ExprTag::Index => self.check_member(e, cx),
+            ExprTag::Call => self.check_call(e, cx),
             _ => {}
         }
     }

@@ -4,6 +4,15 @@
 const { pathToFileURL } = require("node:url");
 const { resolve } = require("node:path");
 const fs = require("node:fs");
+// A configuration asks which modules are built in, to tell them from packages. It means Node.js, where `undici` and `ws` are
+// packages. The same is in `worker/main.js`.
+{
+  const nodeModule = require("node:module");
+  const isOfBun = name => /^bun(?::|$)/.test(name) || name === "undici" || name === "ws";
+  const { isBuiltin } = nodeModule;
+  nodeModule.builtinModules = nodeModule.builtinModules.filter(name => !isOfBun(name));
+  nodeModule.isBuiltin = name => !isOfBun(name) && isBuiltin(name);
+}
 // As it is given, with `/` on every system: what is answered has it as a key, by which it is looked up.
 const path = process.argv.at(-1);
 const marker = process.argv.at(-2);

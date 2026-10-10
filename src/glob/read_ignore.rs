@@ -2,7 +2,7 @@
 
 use crate::class::{self, Class, Escape, Read};
 use crate::ignore::{IgnoreOptions, IgnoreSyntax};
-use crate::node::{Assertion, MAX_NESTING, Node, simplify};
+use crate::node::{Assertion, MAX_NESTING, Node, Program, lower, simplify};
 use crate::unit::{Subject, Text, Unit, push_utf8};
 use bun_core::strings;
 
@@ -106,7 +106,7 @@ fn globset_line(mut line: &[u8], folds: bool) -> Result<Option<Line>, Vec<u8>> {
         actual.extend_from_slice(b"/*");
     }
     Ok(Some(Line {
-        node: globset_glob(&actual, folds)?,
+        node: globset_glob(&actual, Builder::OfIgnore { folds })?,
         is_negated,
         is_for_directories,
     }))
@@ -167,14 +167,38 @@ fn character(c: u32) -> Token {
     Token::Node(Node::Lit(bytes))
 }
 
-/// `GlobBuilder::new(glob).literal_separator(true).backslash_escape(true).allow_unclosed_class(true)`
-fn globset_glob(glob: &[u8], folds: bool) -> Result<Node, Vec<u8>> {
+/// How `GlobBuilder` is set.
+#[derive(Copy, Clone, PartialEq)]
+enum Builder {
+    /// `.literal_separator(true).backslash_escape(true).allow_unclosed_class(true)`
+    OfIgnore { folds: bool },
+    /// `Glob::new`: `*`, `?` take a `/`, a class that is not closed is refused.
+    Default,
+}
+
+/// `Glob::new(glob).ok().map(|it| it.compile_matcher())`
+pub(crate) fn globset_matcher(glob: &[u8]) -> Option<Program> {
+    let text = Text {
+        unit: Unit::Byte,
+        folds: false,
+    };
+    Some(lower(globset_glob(glob, Builder::Default).ok()?, text))
+}
+
+fn globset_glob(glob: &[u8], builder: Builder) -> Result<Node, Vec<u8>> {
+    let is_default = builder == Builder::Default;
+    let folds = builder == Builder::OfIgnore { folds: true };
     const SLASH: Option<u32> = Some(b'/' as u32);
     const STAR: Option<u32> = Some(b'*' as u32);
     const COMMA: Option<u32> = Some(b',' as u32);
     const OPEN: Option<u32> = Some(b'{' as u32);
     const CLOSE: Option<u32> = Some(b'}' as u32);
-    let star = || Token::Node(Node::Star);
+    let star = || {
+        Token::Node(match is_default {
+            true => anything(),
+            false => Node::Star,
+        })
+    };
     // The lists of tokens that are closed, and the one that is being written. `alternates`: where in `branches` each open group starts.
     let mut branches: Vec<Vec<Token>> = Vec::new();
     let mut branch: Vec<Token> = Vec::new();
@@ -192,6 +216,7 @@ fn globset_glob(glob: &[u8], folds: bool) -> Result<Node, Vec<u8>> {
             break;
         };
         match u8::try_from(c).unwrap_or(0) {
+            b'?' if is_default => branch.push(Token::Node(Node::Dot { newlines: true })),
             b'?' => branch.push(Token::Node(Node::Any)),
             b'*' => {
                 let before = chars.prev;
@@ -243,6 +268,9 @@ fn globset_glob(glob: &[u8], folds: bool) -> Result<Node, Vec<u8>> {
                     chars.cur = Some(u32::from(b']'));
                 }
                 Read::Never => return Ok(Node::Fail),
+                Read::NotAClass | Read::One { .. } if is_default => {
+                    return Err(b"unclosed character class; missing ']'".to_vec());
+                }
                 Read::NotAClass | Read::One { .. } => {
                     found_unclosed_class = true;
                     branch.push(character(c));

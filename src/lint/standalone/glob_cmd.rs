@@ -5,6 +5,7 @@
 //! |---|---|
 //! | `{ mode: "bun" \| "oxc" \| "minimatch" \| "minimatch-nodot" \| "micromatch" \| "micromatch-nodot" \| "fast-glob" \| "minimatch3" \| "minimatch3-nodot" \| "minimatch3-makere" \| "minimatch3-makere-dot", pattern, path, flipNegate?, partial?, matchBase?, nocomment?, nonegate? }` | `true`, `false` |
 //! | the same with `ask: "heads"` | an array, `null` |
+//! | `{ mode: "globset-glob", pattern, path }` | `true`, `false`, `null`: it is refused |
 //! | `{ mode: "git" \| "globset" \| "npm5" \| "npm705" \| "npm7012", lines or text, ignoreCase?, path, directory?, ask: "verdict" \| "parents" }` | `"ignored"`, `"kept"`, `"none"` |
 //! | the same with `ask: "ignores" \| "inside"` | `true`, `false` |
 //! | the same with `ask: "refused"` | an array of `{ line, why }` |
@@ -172,6 +173,8 @@ fn answer(case: &Json, memory: &mut Kept) -> Json {
         };
     }
     match mode {
+        b"globset-glob" => Pattern::of_globset(&bytes_of(case.get(b"pattern")))
+            .map_or(Json::Null, |it| Json::Bool(it.matches(&path))),
         b"is-glob" => Json::Bool(scan::is_glob(&text)),
         b"glob-parent" => Json::String(scan::glob_parent(&text)),
         b"braces" => bun_glob::testing::expand_braces(&text).map_or(Json::Null, |expanded| {

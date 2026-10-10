@@ -31,29 +31,40 @@ impl Rule for PreferArraySome {
         PreferArraySome
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        let has_find = file.mentions_any(&["find", "findLast", "findIndex", "findLastIndex"]);
-        if !has_find && !(file.mentions("filter") && file.mentions("length")) {
-            return None;
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
+        if file.mentions_any(&["find", "findLast"]) {
+            on = on.exprs(&[ExprTag::Call]);
         }
+        if file.mentions_any(&["findIndex", "findLastIndex"]) {
+            on = on.binaries(&[
+                BinOp::NotEqEq,
+                BinOp::NotEq,
+                BinOp::Gt,
+                BinOp::EqEqEq,
+                BinOp::EqEq,
+                BinOp::Ge,
+                BinOp::Lt,
+            ]);
+        }
+        if file.mentions("filter") && file.mentions("length") {
+            on = on.binaries(&[BinOp::Gt, BinOp::NotEqEq]);
+        }
+        on
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
         Some(AncestorMemo::default())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if cx.file().mentions_any(&["find", "findLast"]) {
-            check_find(self, e, cx);
-        }
+        check_find(self, e, cx);
     }
 
+    // Each finds nothing in a file that does not mention what it is about.
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let file = cx.file();
-        if file.mentions_any(&["findIndex", "findLastIndex"]) {
-            check_find_index(self, e, cx);
-        }
-        if file.mentions("filter")
-            && file.mentions("length")
-            && matches!(e.kind(), ExprKind::Binary { op: BinOp::Gt | BinOp::NotEqEq, .. })
-        {
+        check_find_index(self, e, cx);
+        if matches!(e.kind(), ExprKind::Binary { op: BinOp::Gt | BinOp::NotEqEq, .. }) {
             check_filter_length(self, e, cx);
         }
     }

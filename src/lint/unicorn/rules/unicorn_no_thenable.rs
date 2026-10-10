@@ -24,6 +24,16 @@ impl Rule for NoThenable {
         NoThenable
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let on = On::new()
+            .props()
+            .members()
+            .stmts(&[StmtTag::Var, StmtTag::Fn, StmtTag::Class])
+            .export_specs()
+            .exprs(&[ExprTag::Assign]);
+        if file.mentions_any(&["defineProperty", "fromEntries"]) { on.exprs(&[ExprTag::Call]) } else { on }
+    }
+
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Option<Name<'a>>> {
         if !file.mentions("then") {
             return None;
@@ -88,9 +98,6 @@ impl Rule for NoThenable {
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.tag() {
             ExprTag::Call => {
-                if !cx.file().mentions_any(&["defineProperty", "fromEntries"]) {
-                    return;
-                }
                 if let (Some(call), Some(then)) = (e.as_call(), cx.state) {
                     check_call_expression(call, then, cx);
                 }

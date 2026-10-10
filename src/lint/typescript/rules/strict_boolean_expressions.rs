@@ -9,7 +9,9 @@ use bun_lint::types::utils::{
 };
 use bun_lint::types::{Type, TypeFlags};
 use bun_lint::utils::estree_span;
-use bun_lint::utils::ts_utils::{WrappingFixerParams, get_wrapping_fixer, is_parenless_arrow_function};
+use bun_lint::utils::ts_utils::{
+    WrappingFixerParams, get_wrapping_fixer, is_parenless_arrow_function,
+};
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
@@ -106,8 +108,10 @@ const CONDITION_FIX_COMPARE_TRUE: Message = Message::new(
     "conditionFixCompareTrue",
     "Change condition to check if true (`value === true`)",
 );
-const CONDITION_FIX_COMPARE_ZERO: Message =
-    Message::new("conditionFixCompareZero", "Change condition to check for 0 (`value !== 0`)");
+const CONDITION_FIX_COMPARE_ZERO: Message = Message::new(
+    "conditionFixCompareZero",
+    "Change condition to check for 0 (`value !== 0`)",
+);
 const CONDITION_FIX_DEFAULT_EMPTY_STRING: Message = Message::new(
     "conditionFixDefaultEmptyString",
     "Explicitly treat nullish value the same as an empty string (`value ?? \"\"`)",
@@ -201,7 +205,11 @@ const fn wrap(message: Message, before: &'static str, after: &'static str) -> Su
     }
 }
 
-const fn wrap_in_place_of_negation(message: Message, before: &'static str, after: &'static str) -> Suggestion {
+const fn wrap_in_place_of_negation(
+    message: Message,
+    before: &'static str,
+    after: &'static str,
+) -> Suggestion {
     Suggestion {
         message,
         replaces_negation: true,
@@ -211,30 +219,41 @@ const fn wrap_in_place_of_negation(message: Message, before: &'static str, after
 }
 
 const CAST_BOOLEAN: Suggestion = wrap(CONDITION_FIX_CAST_BOOLEAN, "Boolean(", ")");
-const CAST_BOOLEAN_NEGATED: Suggestion = wrap_in_place_of_negation(CONDITION_FIX_CAST_BOOLEAN, "!Boolean(", ")");
+const CAST_BOOLEAN_NEGATED: Suggestion =
+    wrap_in_place_of_negation(CONDITION_FIX_CAST_BOOLEAN, "!Boolean(", ")");
 const COMPARE_NOT_NULLISH: Suggestion = wrap(CONDITION_FIX_COMPARE_NULLISH, "", " != null");
-const COMPARE_NULLISH: Suggestion = wrap_in_place_of_negation(CONDITION_FIX_COMPARE_NULLISH, "", " == null");
+const COMPARE_NULLISH: Suggestion =
+    wrap_in_place_of_negation(CONDITION_FIX_COMPARE_NULLISH, "", " == null");
 const DEFAULT_FALSE: Suggestion = wrap(CONDITION_FIX_DEFAULT_FALSE, "", " ?? false");
 const DEFAULT_ZERO: Suggestion = wrap(CONDITION_FIX_DEFAULT_ZERO, "", " ?? 0");
 const DEFAULT_EMPTY_STRING: Suggestion = wrap(CONDITION_FIX_DEFAULT_EMPTY_STRING, "", " ?? \"\"");
 
 const SUGGESTIONS_ANY: &[Suggestion] = &[CAST_BOOLEAN];
-const SUGGESTIONS_NULLABLE_BOOLEAN: &[Suggestion] =
-    &[DEFAULT_FALSE, wrap(CONDITION_FIX_COMPARE_TRUE, "", " === true")];
+const SUGGESTIONS_NULLABLE_BOOLEAN: &[Suggestion] = &[
+    DEFAULT_FALSE,
+    wrap(CONDITION_FIX_COMPARE_TRUE, "", " === true"),
+];
 const SUGGESTIONS_NULLABLE_BOOLEAN_NEGATED: &[Suggestion] = &[
     DEFAULT_FALSE,
     wrap_in_place_of_negation(CONDITION_FIX_COMPARE_FALSE, "", " === false"),
 ];
 const SUGGESTIONS_NULLABLE: &[Suggestion] = &[COMPARE_NOT_NULLISH];
 const SUGGESTIONS_NULLABLE_NEGATED: &[Suggestion] = &[COMPARE_NULLISH];
-const SUGGESTIONS_NULLABLE_NUMBER: &[Suggestion] = &[COMPARE_NOT_NULLISH, DEFAULT_ZERO, CAST_BOOLEAN];
-const SUGGESTIONS_NULLABLE_NUMBER_NEGATED: &[Suggestion] = &[COMPARE_NULLISH, DEFAULT_ZERO, CAST_BOOLEAN_NEGATED];
-const SUGGESTIONS_NULLABLE_STRING: &[Suggestion] = &[COMPARE_NOT_NULLISH, DEFAULT_EMPTY_STRING, CAST_BOOLEAN];
+const SUGGESTIONS_NULLABLE_NUMBER: &[Suggestion] =
+    &[COMPARE_NOT_NULLISH, DEFAULT_ZERO, CAST_BOOLEAN];
+const SUGGESTIONS_NULLABLE_NUMBER_NEGATED: &[Suggestion] =
+    &[COMPARE_NULLISH, DEFAULT_ZERO, CAST_BOOLEAN_NEGATED];
+const SUGGESTIONS_NULLABLE_STRING: &[Suggestion] =
+    &[COMPARE_NOT_NULLISH, DEFAULT_EMPTY_STRING, CAST_BOOLEAN];
 const SUGGESTIONS_NULLABLE_STRING_NEGATED: &[Suggestion] =
     &[COMPARE_NULLISH, DEFAULT_EMPTY_STRING, CAST_BOOLEAN_NEGATED];
-const SUGGESTIONS_ARRAY_LENGTH: &[Suggestion] = &[wrap(CONDITION_FIX_COMPARE_ARRAY_LENGTH_NONZERO, "", " > 0")];
-const SUGGESTIONS_ARRAY_LENGTH_NEGATED: &[Suggestion] =
-    &[wrap_in_place_of_negation(CONDITION_FIX_COMPARE_ARRAY_LENGTH_ZERO, "", " === 0")];
+const SUGGESTIONS_ARRAY_LENGTH: &[Suggestion] =
+    &[wrap(CONDITION_FIX_COMPARE_ARRAY_LENGTH_NONZERO, "", " > 0")];
+const SUGGESTIONS_ARRAY_LENGTH_NEGATED: &[Suggestion] = &[wrap_in_place_of_negation(
+    CONDITION_FIX_COMPARE_ARRAY_LENGTH_ZERO,
+    "",
+    " === 0",
+)];
 const SUGGESTIONS_NUMBER: &[Suggestion] = &[
     wrap(CONDITION_FIX_COMPARE_ZERO, "", " !== 0"),
     wrap(CONDITION_FIX_COMPARE_NAN, "!Number.isNaN(", ")"),
@@ -277,7 +296,10 @@ fn is_array_length_expression(node: Expr) -> bool {
 /// `type Foo = boolean & { __brand: 'Foo' }`
 fn is_branded_boolean(ty: Type) -> bool {
     ty.is_intersection()
-        && ty.types().iter().any(|it| it.has_flags(TypeFlags::BOOLEAN.union(TypeFlags::BOOLEAN_LITERAL)))
+        && ty
+            .types()
+            .iter()
+            .any(|it| it.has_flags(TypeFlags::BOOLEAN.union(TypeFlags::BOOLEAN_LITERAL)))
 }
 
 /// `&&` or `||`
@@ -326,7 +348,9 @@ fn is_traversed_from_parent(node: Expr) -> bool {
             _ => false,
         },
         Node::Stmt(parent) => match parent.kind() {
-            StmtKind::If { test, .. } | StmtKind::While { test, .. } | StmtKind::DoWhile { test, .. } => test == node,
+            StmtKind::If { test, .. }
+            | StmtKind::While { test, .. }
+            | StmtKind::DoWhile { test, .. } => test == node,
             StmtKind::For { test, .. } => test == Some(node),
             _ => false,
         },
@@ -339,15 +363,22 @@ fn inspect_variant_types(types: &mut dyn Iterator<Item = Type<'_>>) -> VariantTy
     let nullish = TypeFlags::NULL | TypeFlags::UNDEFINED | TypeFlags::VOID_LIKE;
     let number_like = TypeFlags::NUMBER_LIKE | TypeFlags::BIG_INT_LIKE;
     let any = TypeFlags::TYPE_PARAMETER | TypeFlags::ANY | TypeFlags::UNKNOWN;
-    let not_an_object =
-        nullish | TypeFlags::BOOLEAN_LIKE | TypeFlags::STRING_LIKE | number_like | any | TypeFlags::NEVER;
-    let an_object =
-        TypeFlags::OBJECT | TypeFlags::NON_PRIMITIVE | TypeFlags::ES_SYMBOL_LIKE | TypeFlags::INTERSECTION;
+    let not_an_object = nullish
+        | TypeFlags::BOOLEAN_LIKE
+        | TypeFlags::STRING_LIKE
+        | number_like
+        | any
+        | TypeFlags::NEVER;
+    let an_object = TypeFlags::OBJECT
+        | TypeFlags::NON_PRIMITIVE
+        | TypeFlags::ES_SYMBOL_LIKE
+        | TypeFlags::INTERSECTION;
 
     let mut variant_types = 0;
     let (mut booleans, mut is_first_boolean_true) = (0, false);
     let (mut has_strings, mut has_numbers, mut has_objects) = (false, false, false);
-    let (mut are_strings_truthy, mut are_numbers_truthy, mut has_branded_boolean) = (true, true, false);
+    let (mut are_strings_truthy, mut are_numbers_truthy, mut has_branded_boolean) =
+        (true, true, false);
     for ty in types {
         let flags = ty.flags();
         if flags.intersects(nullish) {
@@ -395,10 +426,18 @@ fn inspect_variant_types(types: &mut dyn Iterator<Item = Type<'_>>) -> VariantTy
         _ => {}
     }
     if has_strings {
-        variant_types |= if are_strings_truthy { TRUTHY_STRING } else { STRING };
+        variant_types |= if are_strings_truthy {
+            TRUTHY_STRING
+        } else {
+            STRING
+        };
     }
     if has_numbers {
-        variant_types |= if are_numbers_truthy { TRUTHY_NUMBER } else { NUMBER };
+        variant_types |= if are_numbers_truthy {
+            TRUTHY_NUMBER
+        } else {
+            NUMBER
+        };
     }
     if has_objects {
         variant_types |= if has_branded_boolean { BOOLEAN } else { OBJECT };
@@ -406,20 +445,31 @@ fn inspect_variant_types(types: &mut dyn Iterator<Item = Type<'_>>) -> VariantTy
     variant_types
 }
 
-fn get_suggestions_for_condition_error(node: Expr, condition_error: ConditionError) -> &'static [Suggestion] {
+fn get_suggestions_for_condition_error(
+    node: Expr,
+    condition_error: ConditionError,
+) -> &'static [Suggestion] {
     let is_negated = is_logical_negation_expression(node.parent());
     match (condition_error, is_negated) {
         (ConditionError::Any, _) => SUGGESTIONS_ANY,
         (ConditionError::NullableBoolean, false) => SUGGESTIONS_NULLABLE_BOOLEAN,
         (ConditionError::NullableBoolean, true) => SUGGESTIONS_NULLABLE_BOOLEAN_NEGATED,
-        (ConditionError::NullableEnum | ConditionError::NullableObject, false) => SUGGESTIONS_NULLABLE,
-        (ConditionError::NullableEnum | ConditionError::NullableObject, true) => SUGGESTIONS_NULLABLE_NEGATED,
+        (ConditionError::NullableEnum | ConditionError::NullableObject, false) => {
+            SUGGESTIONS_NULLABLE
+        }
+        (ConditionError::NullableEnum | ConditionError::NullableObject, true) => {
+            SUGGESTIONS_NULLABLE_NEGATED
+        }
         (ConditionError::NullableNumber, false) => SUGGESTIONS_NULLABLE_NUMBER,
         (ConditionError::NullableNumber, true) => SUGGESTIONS_NULLABLE_NUMBER_NEGATED,
         (ConditionError::NullableString, false) => SUGGESTIONS_NULLABLE_STRING,
         (ConditionError::NullableString, true) => SUGGESTIONS_NULLABLE_STRING_NEGATED,
-        (ConditionError::Number, false) if is_array_length_expression(node) => SUGGESTIONS_ARRAY_LENGTH,
-        (ConditionError::Number, true) if is_array_length_expression(node) => SUGGESTIONS_ARRAY_LENGTH_NEGATED,
+        (ConditionError::Number, false) if is_array_length_expression(node) => {
+            SUGGESTIONS_ARRAY_LENGTH
+        }
+        (ConditionError::Number, true) if is_array_length_expression(node) => {
+            SUGGESTIONS_ARRAY_LENGTH_NEGATED
+        }
         (ConditionError::Number, false) => SUGGESTIONS_NUMBER,
         (ConditionError::Number, true) => SUGGESTIONS_NUMBER_NEGATED,
         (ConditionError::String, false) => SUGGESTIONS_STRING,
@@ -446,7 +496,14 @@ fn suggest_for_condition_error<'a>(
                 WrappingFixerParams {
                     node,
                     inner_nodes,
-                    wrap: |code: &[&[u8]]| [suggestion.before.as_bytes(), code[0], suggestion.after.as_bytes()].concat(),
+                    wrap: |code: &[&[u8]]| {
+                        [
+                            suggestion.before.as_bytes(),
+                            code[0],
+                            suggestion.after.as_bytes(),
+                        ]
+                        .concat()
+                    },
                 },
             )
         });
@@ -455,21 +512,38 @@ fn suggest_for_condition_error<'a>(
 }
 
 /// The fix of `explicitBooleanReturnType`.
-fn add_boolean_return_type<'a>(fixer: Fixer<'a>, predicate_node: Expr<'a>, function: Func<'a>) -> Option<Vec<Fix>> {
+fn add_boolean_return_type<'a>(
+    fixer: Fixer<'a>,
+    predicate_node: Expr<'a>,
+    function: Func<'a>,
+) -> Option<Vec<Fix>> {
     let is_closing_parenthesis = |token: &Token| token.value() == b")";
     let closing_parenthesis = match function.params_with_this().last() {
         Some(only) if function.is_arrow() && is_parenless_arrow_function(function) => {
             let only = estree_span(Node::Param(only));
-            return Some(vec![fixer.insert_before(only, "("), fixer.insert_after(only, "): boolean")]);
+            return Some(vec![
+                fixer.insert_before(only, "("),
+                fixer.insert_after(only, "): boolean"),
+            ]);
         }
-        Some(last) => fixer.file().tokens_after(estree_span(Node::Param(last))).find(is_closing_parenthesis),
-        None => fixer.file().tokens_in(predicate_node).find(is_closing_parenthesis),
+        Some(last) => fixer
+            .file()
+            .tokens_after(estree_span(Node::Param(last)))
+            .find(is_closing_parenthesis),
+        None => fixer
+            .file()
+            .tokens_in(predicate_node)
+            .find(is_closing_parenthesis),
     };
     Some(vec![fixer.insert_after(closing_parenthesis?, ": boolean")])
 }
 
 impl StrictBooleanExpressions {
-    fn determine_report_type(&self, types: VariantTypes, is_oxlint: bool) -> Option<ConditionError> {
+    fn determine_report_type(
+        &self,
+        types: VariantTypes,
+        is_oxlint: bool,
+    ) -> Option<ConditionError> {
         let is = |wanted_types: VariantTypes| types == wanted_types;
         let unless = |is_allowed: bool, error: ConditionError| (!is_allowed).then_some(error);
 
@@ -477,8 +551,12 @@ impl StrictBooleanExpressions {
         if is_oxlint && types & ENUM != 0 {
             return match (types & NULLISH != 0, types & !(ENUM | NULLISH)) {
                 (true, _) => unless(self.allow_nullable_enum, ConditionError::NullableEnum),
-                (false, STRING | TRUTHY_STRING) => unless(self.allow_string, ConditionError::String),
-                (false, NUMBER | TRUTHY_NUMBER) => unless(self.allow_number, ConditionError::Number),
+                (false, STRING | TRUTHY_STRING) => {
+                    unless(self.allow_string, ConditionError::String)
+                }
+                (false, NUMBER | TRUTHY_NUMBER) => {
+                    unless(self.allow_number, ConditionError::Number)
+                }
                 (false, _) => None,
             };
         }
@@ -503,7 +581,9 @@ impl StrictBooleanExpressions {
             return unless(self.allow_nullable_boolean, ConditionError::NullableBoolean);
         }
         // Known edge case: truthy primitives and nullish values are always valid boolean expressions.
-        if (self.allow_number && is(NULLISH | TRUTHY_NUMBER)) || (self.allow_string && is(NULLISH | TRUTHY_STRING)) {
+        if (self.allow_number && is(NULLISH | TRUTHY_NUMBER))
+            || (self.allow_string && is(NULLISH | TRUTHY_STRING))
+        {
             return None;
         }
         if is(STRING) || is(TRUTHY_STRING) {
@@ -554,7 +634,9 @@ impl StrictBooleanExpressions {
         }
         let types = inspect_variant_types(&mut union_constituents(ty).iter());
         if let Some(report_type) = self.determine_report_type(types, cx.language().is_oxlint) {
-            let report = cx.report(node, report_type.message()).data("context", "conditional");
+            let report = cx
+                .report(node, report_type.message())
+                .data("context", "conditional");
             suggest_for_condition_error(report, node, report_type);
         }
     }
@@ -629,7 +711,9 @@ impl StrictBooleanExpressions {
             Node::Expr(call) if cx.language().is_oxlint => call.span(),
             _ => predicate_node.span(),
         };
-        let mut report = cx.report(place, report_type.message()).data("context", "array predicate return type");
+        let mut report = cx
+            .report(place, report_type.message())
+            .data("context", "array predicate return type");
         if let Some(function) = function {
             if let FnBody::Expr(body) = function.body() {
                 report = suggest_for_condition_error(report, body, report_type);
@@ -663,11 +747,21 @@ impl StrictBooleanExpressions {
     }
 }
 
+const CONDITIONS: On = On::new()
+    .exprs(&[
+        ExprTag::Cond,
+        ExprTag::Unary,
+        ExprTag::Binary,
+        ExprTag::Call,
+    ])
+    .stmts(&[StmtTag::If, StmtTag::While, StmtTag::DoWhile, StmtTag::For]);
+
 impl Rule for StrictBooleanExpressions {
     const META: Meta = Meta::typescript("strict-boolean-expressions", Kind::Suggestion)
         .has_suggestions()
         .requires_types();
-    type State<'a> = ();
+    const ON: On = CONDITIONS.finish();
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -679,58 +773,64 @@ impl Rule for StrictBooleanExpressions {
             allow_nullable_object: options.bool_or("allowNullableObject", true),
             allow_nullable_string: options.bool_or("allowNullableString", false),
             allow_number: options.bool_or("allowNumber", true),
-            allow_rule_to_run_without_strict_null_checks: options
-                .bool_or("allowRuleToRunWithoutStrictNullChecksIKnowWhatIAmDoing", false),
+            allow_rule_to_run_without_strict_null_checks: options.bool_or(
+                "allowRuleToRunWithoutStrictNullChecksIKnowWhatIAmDoing",
+                false,
+            ),
             allow_string: options.bool_or("allowString", true),
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let compiler_options = file.type_checker().compiler_options();
         if !is_strict_compiler_option_enabled(compiler_options, CompilerOption::StrictNullChecks)
             && !self.allow_rule_to_run_without_strict_null_checks
         {
-            on.finish(|_, cx| {
-                // tsgolint points at the start of the file.
-                if cx.language().is_oxlint {
-                    cx.report(Span::empty(0), NO_STRICT_NULL_CHECK);
-                    return;
-                }
-                let nowhere = Position { line: 0, column: 0 };
-                cx.report(Span::empty(0), NO_STRICT_NULL_CHECK).start_at(nowhere).end_at(nowhere);
-            });
+            CONDITIONS.finish()
+        } else {
+            CONDITIONS
         }
+    }
 
-        on.stmts(
-            [StmtTag::If, StmtTag::While, StmtTag::DoWhile, StmtTag::For],
-            |rule, node, cx| match node.kind() {
-                StmtKind::If { test, .. }
-                | StmtKind::While { test, .. }
-                | StmtKind::DoWhile { test, .. }
-                | StmtKind::For { test: Some(test), .. } => rule.traverse_node(test, true, cx),
-                _ => {}
-            },
-        );
-        on.exprs([ExprTag::Cond], |rule, node, cx| {
-            if let ExprKind::Cond { test, .. } = node.kind() {
-                rule.traverse_node(test, true, cx);
-            }
-        });
-        on.exprs([ExprTag::Unary], |rule, node, cx| {
-            if let ExprKind::Unary {
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match node.kind() {
+            ExprKind::Cond { test, .. } => self.traverse_node(test, true, cx),
+            ExprKind::Unary {
                 op: UnOp::Not,
                 operand,
-            } = node.kind()
-            {
-                rule.traverse_node(operand, true, cx);
+            } => self.traverse_node(operand, true, cx),
+            // On its own a logical expression is control flow, and no condition itself.
+            ExprKind::Binary { .. } => {
+                if is_logical_expression(node) && !is_traversed_from_parent(node) {
+                    self.traverse_node(node, false, cx);
+                }
             }
-        });
-        // On its own a logical expression is control flow, and no condition itself.
-        on.exprs([ExprTag::Binary], |rule, node, cx| {
-            if is_logical_expression(node) && !is_traversed_from_parent(node) {
-                rule.traverse_node(node, false, cx);
-            }
-        });
-        on.exprs([ExprTag::Call], |rule, node, cx| rule.traverse_call_expression(node, cx));
+            ExprKind::Call(_) => self.traverse_call_expression(node, cx),
+            _ => {}
+        }
+    }
+
+    fn stmt<'a>(&self, node: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match node.kind() {
+            StmtKind::If { test, .. }
+            | StmtKind::While { test, .. }
+            | StmtKind::DoWhile { test, .. }
+            | StmtKind::For {
+                test: Some(test), ..
+            } => self.traverse_node(test, true, cx),
+            _ => {}
+        }
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        // tsgolint points at the start of the file.
+        if cx.language().is_oxlint {
+            cx.report(Span::empty(0), NO_STRICT_NULL_CHECK);
+            return;
+        }
+        let nowhere = Position { line: 0, column: 0 };
+        cx.report(Span::empty(0), NO_STRICT_NULL_CHECK)
+            .start_at(nowhere)
+            .end_at(nowhere);
     }
 }

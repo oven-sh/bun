@@ -1813,6 +1813,57 @@ try {
     expect(named.exitCode).toBe(2);
   });
 
+  // `prettier.getSupportInfo()` has `bun` and `deno` among the interpreters of JavaScript, of Flow and of TypeScript. The first
+  // language counts, so the parser is `babel`, and Prettier 3.9.9 refuses a type in such a file.
+  test.each(["bun", "deno", "node", "zx"])(
+    "a file without an extension for %s is JavaScript, as for Prettier",
+    async interpreter => {
+      const files = {
+        "bin/a": `#!/usr/bin/env ${interpreter}\na  ;\n`,
+        "bin/b": `#!/usr/bin/env ${interpreter}\nconst  port: number = 3000\n`,
+      };
+      const result = await format(files, ["bin/a", "bin/b"], { reads: ["bin/a", "bin/b"] });
+      expect(result.files).toEqual({ ...files, "bin/a": `#!/usr/bin/env ${interpreter}\na;\n` });
+      expect(result.stderr).toContain("[error] bin/b: SyntaxError:");
+      expect(result.exitCode).toBe(2);
+    },
+  );
+
+  // The exit codes of Prettier 3.9.9. `handleError` sets none under `--check`, and `formatFiles` counts the file as one with an
+  // error all the same.
+  test.each([
+    [["--check"], 2],
+    [["--list-different"], 2],
+    [["--write"], 2],
+    [["--check", "--ignore-unknown"], 0],
+    [["--list-different", "--ignore-unknown"], 0],
+    [["--write", "--ignore-unknown"], 0],
+  ])("a file that there is no parser for: %j", async (flags, exitCode) => {
+    const files = { "FOO": "x   y\n", "a.xyz": "x   y\n" };
+    for (const named of ["FOO", "*.xyz"]) {
+      const result = await format(files, [...flags, named], { reads: Object.keys(files) });
+      expect(result.stderr.includes("[error] No parser could be inferred for file")).toBe(exitCode === 2);
+      expect(result.files).toEqual(files);
+      expect(result.exitCode).toBe(exitCode);
+    }
+  });
+
+  test.each([
+    [[], 2, true],
+    [["--write"], 2, true],
+    [["--check"], 0, true],
+    [["--list-different"], 0, true],
+    [["--check", "--ignore-unknown"], 0, true],
+    [["--list-different", "--ignore-unknown"], 0, true],
+    [["--ignore-unknown"], 0, false],
+    [["--write", "--ignore-unknown"], 0, false],
+  ])("standard input that there is no parser for: %j", async (flags, exitCode, isSaid) => {
+    const result = await format({}, [...flags, "--stdin-filepath", "FOO"], { stdin: "x   y\n" });
+    expect(result.raw).toBe("");
+    expect(result.stderr.includes("[error] No parser could be inferred for file")).toBe(isSaid);
+    expect(result.exitCode).toBe(exitCode);
+  });
+
   test("JSX in a block of MDX in Markdown is formatted, though what is printed of it is no program", async () => {
     // A number stays in its quotes there: the parser is not `babel`.
     const result = await format({ "a.md": '```mdx\n<hi/>\n<hello\n/>\n\n<a b={{ "200": 1,  c: 2 }} />\n```\n' }, [], {
@@ -2585,6 +2636,147 @@ try {
         "a.js": formatted,
         "a.ts": formatted,
         "b/c.js": formatted.replace("  return", " return"),
+      });
+    });
+
+    describe("how an .editorconfig is read", () => {
+      // The one above says whether the one that is read is a root: with it, the quotes are single.
+      const project = {
+        ".git/HEAD": "",
+        ".editorconfig": "[*]\nquote_type = single\n",
+        "sub/a.js": 'if (a) {\n  b("c");\n}\n',
+      };
+      const printed = (indent: string, quote: string) => `if (a) {\n${indent}b(${quote}c${quote});\n}\n`;
+
+      // What Prettier 3.9.9 prints. It has `editorconfig-without-wasm`, which knows no comment behind anything, and gives a
+      // file up at the first line that it does not understand.
+      test.each([
+        ["a comment behind a section: nothing of the file counts", "[*] ; all\nindent_size = 4\n", "  ", "'"],
+        ["a comment behind a later section", "[*]\nindent_size = 4\n[*.js] # scripts\nindent_size = 8\n", "  ", "'"],
+        ["a comment behind a value is of the value", "[*]\nindent_size = 4 # c\n", "  ", "'"],
+        ["a colon", "[*]\nindent_size: 4\n", "  ", "'"],
+        ["a line that is nothing", "[*]\nindent_size = 4\ngarbage\n", "  ", "'"],
+        ["a section that is not closed", "[*]\nindent_size = 4\n[*.py\n", "  ", "'"],
+        ["lines that end with a carriage return", "[*]\rindent_size = 4\r", "    ", "'"],
+        ["no-break spaces", "\u00a0[*]\u00a0\n\u00a0indent_size\u00a0=\u00a04\u00a0\n", "    ", "'"],
+        ["a byte order mark", "\ufeff[*]\nindent_size = 4\n", "    ", "'"],
+        ["root = yes", "root = yes\n[*]\nindent_size = 4\n", "    ", '"'],
+        ["root = true # c", "root = true # c\n[*]\nindent_size = 4\n", "    ", '"'],
+        ["root = null", "root = null\n[*]\nindent_size = 4\n", "    ", '"'],
+        ["root = 0", "root = 0\n[*]\nindent_size = 4\n", "    ", "'"],
+        ['root = ""', 'root = ""\n[*]\nindent_size = 4\n', "    ", "'"],
+        ["root = true, then false", "root = true\nroot = false\n[*]\nindent_size = 4\n", "    ", "'"],
+        ["a word that is not known in upper case", "[*]\nquote_type = Single\n", "  ", '"'],
+        ["a word that is known in upper case", "[*]\nindent_style = TAB\n", "\t", "'"],
+        ["a word in quotes", '[*]\nindent_style = "tab"\n', "\t", "'"],
+        ["a number in quotes", '[*]\nindent_size = "4"\n', "  ", "'"],
+        ["04", "[*]\nindent_size = 04\n", "  ", "'"],
+        ["4.0", "[*]\nindent_size = 4.0\n", "    ", "'"],
+        ["1e1", "[*]\nindent_size = 1e1\n", "          ", "'"],
+        ["+4", "[*]\nindent_size = +4\n", "  ", "'"],
+        ["4 // c", "[*]\nindent_size = 4 // c\n", "  ", "'"],
+        [
+          "a section twice goes on where it was",
+          "[*]\nindent_size = 2\n[*.js]\nindent_size = 4\n[*]\nindent_size = 8\n",
+          "    ",
+          "'",
+        ],
+      ])("by Prettier: %s", async (_, text, indent, quote) => {
+        const result = await format({ ...project, "sub/.editorconfig": text }, ["a.js"], {
+          cwd: "sub",
+          reads: ["sub/a.js"],
+        });
+        expect(result.files["sub/a.js"]).toBe(printed(indent, quote));
+        expect(result.exitCode).toBe(0);
+      });
+
+      // What oxfmt 0.72 prints. It has the crate `editorconfig-parser`, reads one file, and goes on behind what it does not
+      // understand. `indent_size` counts only if it is known that spaces are used.
+      test.each([
+        ["indent_size alone says nothing", {}, "[*]\nindent_size = 4\n", "  "],
+        ["indent_size with indent_style", {}, "[*]\nindent_style = space\nindent_size = 4\n", "    "],
+        ["indent_size with useTabs", { useTabs: false }, "[*]\nindent_size = 4\n", "    "],
+        ["indent_size before tab_width", { useTabs: false }, "[*]\nindent_size = 4\ntab_width = 8\n", "    "],
+        ["tab_width alone", {}, "[*]\ntab_width = 4\n", "    "],
+        [
+          "useTabs counts more than indent_style",
+          { useTabs: false },
+          "[*]\nindent_style = tab\nindent_size = 4\n",
+          "    ",
+        ],
+        [
+          "a comment behind a section: what follows is of the one before",
+          { useTabs: false },
+          "[*]\nindent_size = 4\n[*.py] ; c\nindent_size = 8\n",
+          "        ",
+        ],
+        ["a comment behind a value", { useTabs: false }, "[*]\nindent_size = 4 # c\n", "  "],
+        ["a colon", { useTabs: false }, "[*]\nindent_size: 4\n", "  "],
+        ["a line that is nothing", { useTabs: false }, "[*]\nindent_size = 4\ngarbage\n", "    "],
+        ["a byte order mark", { useTabs: false }, "\ufeff[*]\nindent_size = 4\n", "  "],
+        ["no-break spaces", { useTabs: false }, "\u00a0[*]\u00a0\n\u00a0indent_size\u00a0=\u00a04\u00a0\n", "    "],
+        ["a key in upper case", { useTabs: false }, "[*]\nINDENT_SIZE = 4\n", "  "],
+        ["+4", { useTabs: false }, "[*]\nindent_size = +4\n", "    "],
+        ["04", { useTabs: false }, "[*]\nindent_size = 04\n", "    "],
+        ["0", { useTabs: false }, "[*]\nindent_size = 0\n", ""],
+        ["260 is 4", { useTabs: false }, "[*]\nindent_size = 260\n", "    "],
+        [
+          "a wrong value takes the place of a right one",
+          { useTabs: false },
+          "[*]\nindent_size = 4\nindent_size = x\n",
+          "  ",
+        ],
+        [
+          "but not that of an earlier section",
+          { useTabs: false },
+          "[*]\nindent_size = 4\n[*.js]\nindent_size = x\n",
+          "    ",
+        ],
+        ["unset", { useTabs: false }, "[*]\nindent_size = 4\n[*.js]\nindent_size = unset\n", "  "],
+        [
+          "a width that is not allowed and does not count",
+          { printWidth: 80 },
+          "[*]\nmax_line_length = 1000\ntab_width = 4\n",
+          "    ",
+        ],
+      ])("by oxfmt: %s", async (_, config, text, indent) => {
+        const files = { ...project, "sub/.oxfmtrc.json": JSON.stringify(config), "sub/.editorconfig": text };
+        const result = await format(files, ["a.js"], { cwd: "sub", reads: ["sub/a.js"] });
+        expect(result.files["sub/a.js"]).toBe(printed(indent, '"'));
+        expect(result.exitCode).toBe(0);
+      });
+
+      test.each([
+        ["tabWidth", { tabWidth: 25 }, "", "Invalid tabWidth: The indent width should be between 0 and 24", 1],
+        ["tab_width", {}, "[*]\ntab_width = 25\n", "Invalid tabWidth: The indent width should be between 0 and 24", 1],
+        [
+          "max_line_length",
+          {},
+          "[*]\nmax_line_length = 321\n",
+          "Invalid printWidth: The line width should be between 1 and 320",
+          1,
+        ],
+        [
+          "max_line_length = 0",
+          {},
+          "[*]\nmax_line_length = 0\n",
+          "Invalid printWidth: The line width should be between 1 and 320",
+          1,
+        ],
+        // It is found out at the file.
+        [
+          "tab_width in a later section",
+          {},
+          "[*]\ntab_width = 4\n[*.js]\ntab_width = 25\n",
+          "Invalid tabWidth: The indent width should be between 0 and 24",
+          2,
+        ],
+      ])("oxfmt refuses a width that is not allowed: %s", async (_, config, text, message, exitCode) => {
+        const files = { ...project, "sub/.oxfmtrc.json": JSON.stringify(config), "sub/.editorconfig": text };
+        const result = await format(files, ["a.js"], { cwd: "sub", reads: ["sub/a.js"] });
+        expect(result.stderr).toContain(message);
+        expect(result.files["sub/a.js"]).toBe(project["sub/a.js"]);
+        expect(result.exitCode).toBe(exitCode);
       });
     });
   });

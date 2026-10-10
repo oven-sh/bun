@@ -1399,26 +1399,26 @@ describe("css tests", () => {
       .foo:not(:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
         border-left-color: #b32323;
         border-left-color: lab(40% 56.6 39);
-        border-right-color: #ee00be;
+        border-right-color: #f000c0;
         border-right-color: lch(50.998% 135.363 338);
       }
 
       .foo:not(:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi))) {
         border-left-color: #b32323;
         border-left-color: lab(40% 56.6 39);
-        border-right-color: #ee00be;
+        border-right-color: #f000c0;
         border-right-color: lch(50.998% 135.363 338);
       }
 
       .foo:-webkit-any(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
-        border-left-color: #ee00be;
+        border-left-color: #f000c0;
         border-left-color: lch(50.998% 135.363 338);
         border-right-color: #b32323;
         border-right-color: lab(40% 56.6 39);
       }
 
       .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
-        border-left-color: #ee00be;
+        border-left-color: #f000c0;
         border-left-color: lch(50.998% 135.363 338);
         border-right-color: #b32323;
         border-right-color: lab(40% 56.6 39);
@@ -1441,13 +1441,13 @@ describe("css tests", () => {
         border-left-color: #b32323;
         border-left-color: color(display-p3 .643308 .192455 .167712);
         border-left-color: lab(40% 56.6 39);
-        border-right-color: #ee00be;
+        border-right-color: #f000c0;
         border-right-color: color(display-p3 .972961 -.362078 .804206);
         border-right-color: lch(50.998% 135.363 338);
       }
 
       .foo:is(:lang(ae), :lang(ar), :lang(arc), :lang(bcc), :lang(bqi), :lang(ckb), :lang(dv), :lang(fa), :lang(glk), :lang(he), :lang(ku), :lang(mzn), :lang(nqo), :lang(pnb), :lang(ps), :lang(sd), :lang(ug), :lang(ur), :lang(yi)) {
-        border-left-color: #ee00be;
+        border-left-color: #f000c0;
         border-left-color: color(display-p3 .972961 -.362078 .804206);
         border-left-color: lch(50.998% 135.363 338);
         border-right-color: #b32323;
@@ -7805,7 +7805,7 @@ describe("css tests", () => {
         `,
         indoc`
           .foo {
-            background: background linear-gradient(#41001b, #da3671);
+            background: background linear-gradient(#42001b, #da3671);
             background: background linear-gradient(lch(8% 76 2), lch(51% 66 6));
           }
         `,
@@ -7837,7 +7837,7 @@ describe("css tests", () => {
         `,
         indoc`
           .foo {
-            background: linear-gradient(currentColor, #008675);
+            background: linear-gradient(currentColor, #008975);
             background: linear-gradient(currentColor, lch(50% 50 180));
           }
         `,
@@ -7853,7 +7853,7 @@ describe("css tests", () => {
         `,
         indoc`
           .foo {
-            background: buttonface linear-gradient(#008675, canvas);
+            background: buttonface linear-gradient(#008975, canvas);
             background: buttonface linear-gradient(lch(50% 50 180), canvas);
           }
         `,
@@ -7884,7 +7884,7 @@ describe("css tests", () => {
         `,
         indoc`
           .foo {
-            text-shadow: 0 0, 0 0 #008675;
+            text-shadow: 0 0, 0 0 #008975;
             text-shadow: 0 0, 0 0 lch(50% 50 180);
           }
         `,

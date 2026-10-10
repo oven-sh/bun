@@ -159,15 +159,39 @@ fn tag_comment(text: &[u8]) -> Vec<u8> {
     comment
 }
 
+/// `scanJSDocCommentForTags`, `hasJSDocTag`: the tag is looked for in a comment whose text has `@deprecated` before white space,
+/// a `}`, a `*` or its end. `@deprecated. Use x` is none.
+fn may_have_deprecated_tag(comment: &[u8]) -> bool {
+    let mut rest = comment;
+    while let Some(at) = bun_core::strings::index_of_char_usize(rest, b'@') {
+        rest = &rest[at + 1..];
+        if let Some(after) = rest.strip_prefix(b"deprecated")
+            && matches!(
+                after.first(),
+                None | Some(b' ' | b'\t' | b'\n' | b'\r' | b'}' | b'*')
+            )
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// `jsDoc.tags` of the comment of `text` from `start` to `end`: a tag that is in another tag is not among them.
 fn parse_tags(text: &[u8], start: usize, end: usize, is_stack_low: &dyn Fn() -> bool) -> Tags {
     let mut tags = Tags::default();
+    let comment_end = end;
     let rows = super::super::jsdoc::tags(text, start, end, is_stack_low);
     for row in rows.iter().filter(|row| row.depth == 0) {
         let (at, name_end, end) = (row.at as usize, row.name_end as usize, row.end as usize);
         tags.set |= TagSet::ANY;
         match &*unescaped_identifier(text.get(at + 1..name_end).unwrap_or_default()) {
-            b"deprecated" if tags.deprecated.is_none() => {
+            b"deprecated"
+                if tags.deprecated.is_none()
+                    && may_have_deprecated_tag(
+                        text.get(start..comment_end).unwrap_or_default(),
+                    ) =>
+            {
                 tags.deprecated = Some(tag_comment(text.get(name_end..end).unwrap_or_default()));
             }
             b"inheritDoc" | b"inheritdoc" => tags.set |= TagSet::INHERIT_DOC,

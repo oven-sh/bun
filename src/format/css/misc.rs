@@ -161,7 +161,7 @@ fn number_len(text: &[u8]) -> Option<usize> {
 /// `adjustNumbers`
 pub(crate) fn adjust_numbers(value: &[u8]) -> Cow<'_, [u8]> {
     let is_word_start = |b: u8| b == b'_' || b.is_ascii_alphabetic() || b >= 0x80;
-    let is_word_part = |b: u8| text::is_word_character(b) || b == b'-' || b >= 0x80;
+    let is_word_part = |b: u8| bun_core::strings::is_regexp_word_byte(b) || b == b'-' || b >= 0x80;
     if !value.iter().any(u8::is_ascii_digit) {
         return Cow::Borrowed(value);
     }

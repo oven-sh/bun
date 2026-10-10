@@ -128,13 +128,19 @@ pub fn to_upper_case(text: &[u8]) -> Cow<'_, [u8]> {
 /// `text === text.toUpperCase()`
 #[inline]
 pub fn is_upper_case(text: &[u8]) -> bool {
-    *to_upper_case(text) == *text
+    match text.is_ascii() {
+        true => !text.iter().any(u8::is_ascii_lowercase),
+        false => *to_upper_case(text) == *text,
+    }
 }
 
 /// `text === text.toLowerCase()`
 #[inline]
 pub fn is_lower_case(text: &[u8]) -> bool {
-    *to_lower_case(text) == *text
+    match text.is_ascii() {
+        true => !text.iter().any(u8::is_ascii_uppercase),
+        false => *to_lower_case(text) == *text,
+    }
 }
 
 /// ESLint's and typescript-eslint's `upperCaseFirst`: `text[0].toUpperCase() + text.slice(1)`.
@@ -153,43 +159,22 @@ pub fn upper_case_first(text: &[u8]) -> Cow<'_, [u8]> {
     }
 }
 
-/// typescript-eslint's `escapeRegExp`, and the package `escape-string-regexp` that ESLint uses:
-/// puts a backslash before each of `\ ^ $ . * + ? ( ) [ ] { } |`. With `escapes_hyphen`, `-` becomes
-/// `\x2d`, as in `escape-string-regexp`.
-pub fn escape_reg_exp_with(text: &[u8], escapes_hyphen: bool) -> Cow<'_, [u8]> {
-    const SPECIAL: &[u8] = b"\\^$.*+?()[]{}|-";
-    let special = if escapes_hyphen {
-        SPECIAL
-    } else {
-        &SPECIAL[..SPECIAL.len() - 1]
-    };
-    let Some(first) = strings::index_of_any(text, special) else {
+/// typescript-eslint's `escapeRegExp`: puts a backslash before each of `\ ^ $ . * + ? ( ) [ ] { } |`. The package
+/// `escape-string-regexp` that ESLint uses, for which `-` is `\x2d` too, is `bun_core::strings::escape_reg_exp`.
+pub fn escape_reg_exp(text: &[u8]) -> Cow<'_, [u8]> {
+    const SPECIAL: &[u8] = b"\\^$.*+?()[]{}|";
+    let Some(first) = strings::index_of_any(text, SPECIAL) else {
         return Cow::Borrowed(text);
     };
     let mut out = Vec::with_capacity(text.len() + 8);
     out.extend_from_slice(&text[..first]);
     for &c in &text[first..] {
-        match c {
-            b'-' if escapes_hyphen => out.extend_from_slice(b"\\x2d"),
-            c if c != b'-' && strings::contains_char(special, c) => {
-                out.extend_from_slice(&[b'\\', c])
-            }
-            c => out.push(c),
+        if strings::contains_char(SPECIAL, c) {
+            out.push(b'\\');
         }
+        out.push(c);
     }
     Cow::Owned(out)
-}
-
-/// typescript-eslint's `escapeRegExp`.
-#[inline]
-pub fn escape_reg_exp(text: &[u8]) -> Cow<'_, [u8]> {
-    escape_reg_exp_with(text, false)
-}
-
-/// The package `escape-string-regexp`, which ESLint's rules call `escapeRegExp`.
-#[inline]
-pub fn escape_string_regexp(text: &[u8]) -> Cow<'_, [u8]> {
-    escape_reg_exp_with(text, true)
 }
 
 /// `String(n)`

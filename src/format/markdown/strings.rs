@@ -7,25 +7,6 @@ pub(crate) fn is_in(table: &[(u32, u32)], c: u32) -> bool {
     after > 0 && table.get(after - 1).is_some_and(|range| c <= range.1)
 }
 
-/// The character that `text` starts with, and its length. What is not UTF-8 is a character of one byte.
-pub(crate) fn first_char(text: &[u8]) -> Option<(char, usize)> {
-    let (c, len) = bstr::decode_utf8(text);
-    match (c, len) {
-        (_, 0) => None,
-        (Some(c), len) => Some((c, len)),
-        (None, len) => Some((char::REPLACEMENT_CHARACTER, len)),
-    }
-}
-
-pub(crate) fn last_char(text: &[u8]) -> Option<(char, usize)> {
-    let (c, len) = bstr::decode_last_utf8(text);
-    match (c, len) {
-        (_, 0) => None,
-        (Some(c), len) => Some((c, len)),
-        (None, len) => Some((char::REPLACEMENT_CHARACTER, len)),
-    }
-}
-
 pub(crate) fn is_unicode_punctuation(c: char) -> bool {
     match c.is_ascii() {
         true => c.is_ascii_punctuation(),

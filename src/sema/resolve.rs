@@ -1009,7 +1009,7 @@ impl Options {
             matches!(options.module, ModuleKind::Node20 | ModuleKind::NodeNext) || is_bundler,
         );
         let interop = specified(b"esModuleInterop")
-            .unwrap_or(options.module.is_node() || options.module == ModuleKind::Preserve);
+            .unwrap_or_else(|| options.module.is_node() || options.module == ModuleKind::Preserve);
         options.forbids_synthetic_default_imports = before_6
             && !specified(b"allowSyntheticDefaultImports")
                 .unwrap_or(interop || options.module == ModuleKind::System || is_bundler);
@@ -1238,6 +1238,16 @@ pub(crate) fn ensure_path_is_non_module_name(path: Vec<u8>) -> Vec<u8> {
     } else {
         [&b"./"[..], &path[..]].concat()
     }
+}
+
+/// The options of eslint-import-resolver-node: [`Resolver::resolve_as_require`].
+pub struct AsRequire<'a> {
+    /// What is added to a name.
+    pub extensions: &'a [&'a [u8]],
+    /// `moduleDirectory`: what is looked for in each directory upwards. `node_modules`, unless it is said.
+    pub module_directories: &'a [&'a [u8]],
+    /// Absolute. Where a package is looked for after these.
+    pub paths: &'a [&'a [u8]],
 }
 
 /// `ForEachAncestorDirectory`: `dir`, then each of its ancestor directories up to the root.
@@ -2628,14 +2638,16 @@ impl<'h> Resolver<'h> {
     /// `jsnext:main` or its `main`, the first that leads to a file, or its `index`. There are no `exports`, `imports`,
     /// `typesVersions` or `paths`, and no link is followed. Whether a directory that an entry names is a package again
     /// is not asked.
+    ///
+    /// With it: in which of `how.paths` it was found, if it was.
     pub fn resolve_as_require(
         &self,
         spec: &[u8],
         from: &[u8],
-        extensions: &[&[u8]],
-    ) -> Option<Vec<u8>> {
+        how: &AsRequire,
+    ) -> Option<(Vec<u8>, Option<usize>)> {
         let outcome = Outcome {
-            require_extensions: extensions,
+            require_extensions: how.extensions,
             ..Outcome::default()
         };
         let look = Look {
@@ -2649,10 +2661,21 @@ impl<'h> Resolver<'h> {
         };
         let from_dir = dirname::<Posix>(from);
         match is_relative(spec) {
-            true => self.relative(spec, from_dir, look),
+            true => Some((self.relative(spec, from_dir, look)?, None)),
             // `node:fs`
             false if strings::contains_char(spec, b':') => None,
-            false => self.node_modules_once(spec, from_dir, look).file(),
+            false => {
+                // `nodeModulesPaths` of `resolve`
+                let names = how.module_directories.iter();
+                let upwards = ancestors(from_dir)
+                    .flat_map(|dir| names.clone().map(move |it| (join(dir, it), None)));
+                let after = (how.paths.iter().enumerate()).map(|(at, it)| (it.to_vec(), Some(at)));
+                let (found, at) = upwards.chain(after).find_map(|(it, at)| {
+                    let found = self.is_dir(&it).then(|| self.in_modules(&it, spec, look))?;
+                    (!matches!(found, Found::No)).then_some((found, at))
+                })?;
+                Some((found.file()?, at))
+            }
         }
     }
 

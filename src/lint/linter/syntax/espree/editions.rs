@@ -1,13 +1,11 @@
 //! What acorn cannot read in an edition of the language that is older than the code.
 //!
 //! ESLint 8 has a file read as ES5 unless `parserOptions.ecmaVersion` or an environment says otherwise, and then `let a` is a syntax
-//! error. The parser here always reads the latest edition. For each thing that an edition has brought, here is where acorn stumbles
+//! error. So it is with `languageOptions.ecmaVersion: 5` since. The parser here always reads the latest edition. For each thing that an edition has brought, here is where acorn stumbles
 //! without it, and over what: mostly over a token that it has no use for, as it takes `let`, `async` and `of` for names, and `=>`,
 //! `**`, `?.` and `??` for two tokens each.
 //!
-//! An edition is what acorn calls it: 3, 5, 6 for ES2015, up to 15 for ES2024, the last that espree 9 knows.
-//!
-//! Only the configuration files of ESLint 8 are followed that far.
+//! An edition is what acorn calls it: 3, 5, 6 for ES2015, up to 15 for ES2024, the last that espree 9 knows, and 17 for ES2026.
 
 use super::{Checks, is_module_syntax};
 use crate::ast::{
@@ -15,7 +13,7 @@ use crate::ast::{
     Param, Pat, PatElem, PatKind, PatProp, PatTag, Prop, PropKind, Stmt, StmtKind, StmtTag,
     VarKind,
 };
-use crate::language::SourceType;
+use crate::language::{LanguageOptions, SourceType};
 use crate::linter::comment::parse_list_config;
 use crate::linter::directives::Label;
 use crate::options::Json;
@@ -98,14 +96,23 @@ fn newer_in_string(written: &[u8], edition: u32) -> Option<&'static str> {
 impl<'a> Checks<'a, '_> {
     /// The errors of acorn for what is newer than the edition that the configuration asks for.
     pub(super) fn editions(&mut self) {
-        let file = self.file;
-        let Some(eslint_8) = file.language().eslint_8.as_deref() else {
-            return;
+        let (file, language) = (self.file, self.file.language());
+        let edition = match language.eslint_8.as_deref() {
+            Some(eslint_8) => eslint_8.edition(&environments_in_comments(file)),
+            // oxlint has no editions.
+            None if language.is_oxlint => return,
+            None => Ok(match language.ecma_version {
+                edition @ (3 | 5) => edition,
+                year => year.saturating_sub(2009),
+            }),
         };
         // What is wrong with the options is said without a look at the file: `refused_options`.
-        let Ok(edition) = eslint_8.edition(&environments_in_comments(file)) else {
+        let Ok(edition) = edition else {
             return;
         };
+        if edition >= LanguageOptions::LATEST_ECMA_VERSION - 2009 {
+            return;
+        }
         self.newer_declarations(edition);
         self.newer_statements(edition);
         self.newer_functions(edition);
@@ -579,6 +586,7 @@ impl<'a> Checks<'a, '_> {
                 let start = it.span().start;
                 match statement_starting_with(it) {
                     _ if edition < 6 => self.reserved(start),
+                    _ if edition >= 16 => {}
                     _ if edition >= 11 => self.second_argument_of_import(it, text),
                     None => self.unexpected(start),
                     // It is taken for a declaration.
@@ -721,7 +729,7 @@ impl<'a> Checks<'a, '_> {
                 self.unexpected(name.start());
             }
             // They came with ES2025.
-            if let Some(attributes) = it.import_attributes() {
+            if let Some(attributes) = it.import_attributes().filter(|_| edition < 16) {
                 self.unexpected(attributes.keyword_span().start);
             }
         }

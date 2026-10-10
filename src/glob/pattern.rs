@@ -114,12 +114,6 @@ pub struct Pattern {
 /// minimatch and picomatch throw beyond it. They count UTF-16 units.
 const MAX_PATTERN_LENGTH: usize = 65_536;
 
-fn has_line_terminator(path: &[u8]) -> bool {
-    strings::contains_any(path, b"\n\r")
-        || strings::contains(path, b"\xE2\x80\xA8")
-        || strings::contains(path, b"\xE2\x80\xA9")
-}
-
 fn bun(pattern: &[u8]) -> Pattern {
     let bangs = pattern.iter().take_while(|b| **b == b'!').count();
     let head = match strings::index_of_any(pattern, b"*?[{\\") {
@@ -270,7 +264,7 @@ impl Pattern {
                 let hit = it.program.matches(Subject::of(path));
                 match it.is_negated && !how.flip_negate {
                     // `^(?!^(?:..)$).*$`: `.` takes no line terminator.
-                    true => !hit && !has_line_terminator(path),
+                    true => !hit && !strings::contains_js_line_break(path),
                     false => hit,
                 }
             }),

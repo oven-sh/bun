@@ -7,7 +7,6 @@ use super::ast::{
     Comment, DirectiveKind, Element, ElementKind, Expression, ExpressionKind, FragmentId, Id, Kind,
     Pattern, Span, Tree, Value,
 };
-use crate::text;
 use bun_core::strings;
 use rustc_hash::FxHashSet;
 use std::borrow::Cow;
@@ -1312,7 +1311,7 @@ impl<'a> Parser<'a, '_> {
         (self.rest().strip_prefix(word)).is_some_and(|behind| {
             behind
                 .first()
-                .is_none_or(|&it| !text::is_word_character(it))
+                .is_none_or(|&it| !strings::is_regexp_word_byte(it))
         })
     }
 

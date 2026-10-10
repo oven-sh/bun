@@ -2391,26 +2391,6 @@ impl FileBuilder {
         }
         Span::new(start as u32, (self.names.len() - start) as u32)
     }
-    /// `before.text`, appended as the parser reaches it.
-    pub fn append_to_entity_name(
-        &mut self,
-        before: Span<NameId>,
-        text: Atom,
-        place: u32,
-    ) -> Span<NameId> {
-        let mut start = before.start;
-        // Other names have been added since.
-        if before.range().end != self.names.len() {
-            start = self.names.len() as u32;
-            self.names.extend_from_within(before.range());
-        }
-        let place = match before.is_empty() {
-            true => place,
-            false => place | Name::QUALIFIED,
-        };
-        self.names.push(Name { text, place });
-        Span::new(start, before.len + 1)
-    }
 }
 
 macro_rules! long_lists {

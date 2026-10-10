@@ -2,32 +2,9 @@
 
 use bun_core::strings;
 
-/// The first character of `text` and how many bytes it has. Bytes that are not UTF-8 are U+FFFD.
-pub(super) fn first_char(text: &[u8]) -> Option<(char, usize)> {
-    match text.first() {
-        None => None,
-        Some(&byte) if byte < 128 => Some((byte as char, 1)),
-        Some(_) => {
-            let (char, len) = bstr::decode_utf8(text);
-            Some((char.unwrap_or(char::REPLACEMENT_CHARACTER), len))
-        }
-    }
-}
-
-pub(super) fn last_char(text: &[u8]) -> Option<(char, usize)> {
-    match text.last() {
-        None => None,
-        Some(&byte) if byte < 128 => Some((byte as char, 1)),
-        Some(_) => {
-            let (char, len) = bstr::decode_last_utf8(text);
-            Some((char.unwrap_or(char::REPLACEMENT_CHARACTER), len))
-        }
-    }
-}
-
 /// `str::trim_start_matches`
 pub(super) fn trim_start_matches(mut text: &[u8], matches: impl Fn(char) -> bool) -> &[u8] {
-    while let Some((char, len)) = first_char(text).filter(|it| matches(it.0)) {
+    while let Some((char, len)) = crate::text::first_char(text).filter(|it| matches(it.0)) {
         let _ = char;
         text = &text[len..];
     }
@@ -36,7 +13,7 @@ pub(super) fn trim_start_matches(mut text: &[u8], matches: impl Fn(char) -> bool
 
 /// `str::trim_end_matches`
 pub(super) fn trim_end_matches(mut text: &[u8], matches: impl Fn(char) -> bool) -> &[u8] {
-    while let Some((_, len)) = last_char(text).filter(|it| matches(it.0)) {
+    while let Some((_, len)) = crate::text::last_char(text).filter(|it| matches(it.0)) {
         text = &text[..text.len() - len];
     }
     text

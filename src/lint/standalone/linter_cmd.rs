@@ -269,13 +269,12 @@ fn comment_parser(args: &[String]) {
 
 fn json_parse(args: &[String]) {
     let cases = read_cases(args);
-    let results =
-        cases.iter().map(
-            |case| match testing::json_parse(case.as_str().unwrap_or_default()) {
-                Ok(value) => Json::Object(vec![(b"value".to_vec(), value)]),
-                Err(message) => Json::Object(vec![(b"error".to_vec(), Json::String(message))]),
-            },
-        );
+    let results = cases.iter().map(|case| {
+        match bun_lint::linter::json_parse(case.as_str().unwrap_or_default()) {
+            Ok(value) => Json::Object(vec![(b"value".to_vec(), value)]),
+            Err(message) => Json::Object(vec![(b"error".to_vec(), Json::String(message))]),
+        }
+    });
     let mut out = Vec::new();
     testing::write_json(&mut out, &Json::Array(results.collect()));
     out.push(b'\n');

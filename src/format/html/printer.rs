@@ -204,7 +204,7 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
                     && value[..4].eq_ignore_ascii_case(b"html")
                     && !value
                         .get(4)
-                        .is_some_and(|&byte| text::is_word_character(byte))
+                        .is_some_and(|&byte| strings::is_regexp_word_byte(byte))
                 {
                     self.out.token("html");
                     value = &value[4..];

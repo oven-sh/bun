@@ -50,7 +50,8 @@ impl NoSideEffectsOnImport {
         let mut pending: SmallVec<[Expr<'a>; 8]> = smallvec![e];
         while let Some(e) = pending.pop() {
             match e.skip_type_wrappers().kind() {
-                ExprKind::Call(call) if self.allows(call.callee()) => {}
+                // `require()` is what `import` is.
+                ExprKind::Call(call) if call.callee().is_ident("require") || self.allows(call.callee()) => {}
                 ExprKind::Call(_) | ExprKind::New(_) | ExprKind::TaggedTemplate(_) | ExprKind::ImportCall { .. } => {
                     return Some((e, CALL));
                 }

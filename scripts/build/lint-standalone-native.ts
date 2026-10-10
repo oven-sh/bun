@@ -1,5 +1,5 @@
 // What `bun-lint` and the fuzzers link of Bun's C++ side: JavaScriptCore's regular expression engine, which `bun_lint::regex`
-// runs on, and WTF's `toFixed`, `toPrecision` and `toExponential`. There is no stand-in for them in
+// runs on, WTF's `toFixed`, `toPrecision` and `toExponential`, and ICU's collator. There is no stand-in for them in
 // `src/sema/standalone/native.rs`: a test binary runs the engine that ships.
 //
 //   bun scripts/build/lint-standalone-native.ts <directory> [--asan | --lto] [--fetch] [--force] [--dry-run]
@@ -33,6 +33,7 @@ import { fetchPrebuilt } from "./download.ts";
 const SOURCES = [
   "src/jsc/bindings/RegularExpression.cpp",
   "src/jsc/bindings/NumberConversions.cpp",
+  "src/jsc/bindings/bun_icu_collate.cpp",
   "src/lint/standalone/native.cpp",
 ];
 const ARCHIVES = ["JavaScriptCore", "WTF", "bmalloc", "icui18n", "icuuc", "icudata"];

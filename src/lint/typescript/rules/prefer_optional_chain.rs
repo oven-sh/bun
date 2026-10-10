@@ -1076,6 +1076,31 @@ fn tsgolint_takes_nothing_after(operator: BinOp, previous: ValidOperand, next: N
         }
 }
 
+/// tsgolint's `validateAndChainForReporting`, for two operands of `&&`: `a && a.b?.c`, where a `?.` is in what the
+/// second adds, is left alone. `a && a?.b` is not, unless that is compared.
+fn tsgolint_leaves_optional_extension(first: ValidOperand, second: ValidOperand) -> bool {
+    let links = chain_length(second.compared_name).saturating_sub(chain_length(first.compared_name));
+    let (mut e, mut left, mut has_optional) = (second.compared_name.expr(), links, false);
+    while left > 0 {
+        has_optional |= e.is_optional();
+        e = match e.kind() {
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
+            ExprKind::Call(call) => call.callee(),
+            ExprKind::NonNull(operand) => {
+                e = operand;
+                continue;
+            }
+            _ => break,
+        };
+        left -= 1;
+    }
+    match links {
+        _ if !has_optional => false,
+        1 => second.comparison_type == NullishComparisonType::Other,
+        _ => true,
+    }
+}
+
 /// tsgolint's `strictCheckRequiresSuggestion`: the chain tests for `null` only or for `undefined` only, with `===`, and
 /// that is all that the types of what it tests have. An optional chain tests for both.
 fn tsgolint_strict_check_requires_suggestion(chain: &[ValidOperand]) -> bool {
@@ -1522,6 +1547,13 @@ impl PreferOptionalChain {
                 BinOp::And => matches!(first, T::Boolean | T::NotStrictEqualNull | T::NotStrictEqualUndefined),
                 _ => chain.len() == 2,
             }
+        {
+            return;
+        }
+        if is_oxlint
+            && operator == BinOp::And
+            && let [first_operand, second_operand] = chain
+            && tsgolint_leaves_optional_extension(*first_operand, *second_operand)
         {
             return;
         }

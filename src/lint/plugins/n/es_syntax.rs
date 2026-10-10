@@ -85,8 +85,7 @@ fn camel_case(name: &[u8]) -> Vec<u8> {
     let mut camel = Vec::with_capacity(name.len());
     let mut rest = name.iter().copied().peekable();
     while let Some(byte) = rest.next() {
-        let word = |it: &u8| it.is_ascii_alphanumeric() || *it == b'_';
-        match rest.next_if(|it| byte == b'-' && word(it)) {
+        match rest.next_if(|it| byte == b'-' && bun_core::strings::is_regexp_word_byte(*it)) {
             Some(first) => camel.push(first.to_ascii_uppercase()),
             None => camel.push(byte),
         }

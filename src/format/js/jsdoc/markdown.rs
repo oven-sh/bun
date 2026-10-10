@@ -4,10 +4,11 @@ use super::embedded::{format_embedded_js, format_embedded_language, is_js_ts_lan
 use super::line_buffer::LineBuffer;
 use super::markers::{ListMarker, list_marker};
 use super::normalize::{append_trailing_dot, capitalize_first};
-use super::text::{first_char, lines, parse_index, push_number, push_spaces, trim_start_matches};
+use super::text::{lines, parse_index, push_number, push_spaces, trim_start_matches};
 use super::wrap::{format_table_block, wrap_paragraph, wrap_plain_paragraphs};
 use crate::markdown::ast::{Kind, Node, NodeId, ReferenceType, Tree};
 use crate::options::{FormatOptions, LineWrappingStyle};
+use crate::text::first_char;
 use bun_core::strings;
 use std::borrow::Cow;
 

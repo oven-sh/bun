@@ -71,11 +71,30 @@ unsafe extern "C" {
         offsets: *mut u32,
     ) -> bool;
     fn Yarr__RegularExpression__deinit(this: *mut c_void);
+    fn Yarr__unicodeProperty(
+        name: *const c_void,
+        name_length: u32,
+        value: *const c_void,
+        value_length: u32,
+        context: *mut c_void,
+        range: extern "C" fn(*mut c_void, u32, u32),
+        string: extern "C" fn(*mut c_void, *const u32, u32),
+    ) -> bool;
+    fn Yarr__canonicalized(
+        unicode: bool,
+        context: *mut c_void,
+        pair: extern "C" fn(*mut c_void, u32, u32),
+    );
 }
 
 unsafe extern "Rust" {
     /// Starts JavaScriptCore if nothing has: a match reads its options. Defined in `bun_jsc`, which is above this crate.
     safe fn __bun_yarr_initialize();
+}
+
+fn start() {
+    static START: std::sync::Once = std::sync::Once::new();
+    START.call_once(__bun_yarr_initialize);
 }
 
 /// The C++ object: the bytecode of a pattern, and what a match of it can go back to. So one match at a time.
@@ -182,8 +201,7 @@ pub struct Compiled {
 impl Compiled {
     /// `bits`: of [`flags`].
     pub fn new(pattern: Text<'_>, bits: u16) -> Result<Compiled, Error> {
-        static START: std::sync::Once = std::sync::Once::new();
-        START.call_once(__bun_yarr_initialize);
+        start();
         let both = flags::UNICODE | flags::UNICODE_SETS;
         if bits >> 8 != 0 || bits & both == both {
             return Err(Error::Syntax);
@@ -327,4 +345,106 @@ impl Drop for Taken<'_> {
     fn drop(&mut self) {
         self.of.put(Instance(self.handle));
     }
+}
+
+/// The characters of a `\p{..}`.
+#[derive(Default)]
+pub struct Property {
+    /// Both ends belong to it. Ascending, and no two touch.
+    pub ranges: Vec<(u32, u32)>,
+    /// The strings of a property of strings, as code points.
+    pub strings: Vec<Vec<u32>>,
+}
+
+extern "C" fn push_range(context: *mut c_void, begin: u32, end: u32) {
+    // SAFETY: `context` is the `Property` of `property`, which nothing else refers to during the call.
+    let property = unsafe { &mut *context.cast::<Property>() };
+    property.ranges.push((begin, end));
+}
+
+extern "C" fn push_string(context: *mut c_void, characters: *const u32, length: u32) {
+    if length == 0 {
+        return;
+    }
+    // SAFETY: C++ has `length` characters there until this returns.
+    let characters = unsafe { core::slice::from_raw_parts(characters, length as usize) };
+    // SAFETY: as in `push_range`.
+    let property = unsafe { &mut *context.cast::<Property>() };
+    property.strings.push(characters.to_vec());
+}
+
+extern "C" fn push_pair(context: *mut c_void, character: u32, canonical: u32) {
+    // SAFETY: `context` is the list of `case_classes`, which nothing else refers to during the call.
+    let pairs = unsafe { &mut *context.cast::<Vec<(u32, u32)>>() };
+    pairs.push((canonical, character));
+}
+
+/// `\p{name=value}`, or `\p{name}`: a binary property, a value of `General_Category` or a property of strings. By the long
+/// and the short names. As it is without the flag `i`. `None`: JavaScriptCore has no such property.
+pub fn property(name: &[u8], value: Option<&[u8]>) -> Option<Property> {
+    start();
+    let (name, name_length, _) = Text::Latin1(name).parts()?;
+    let (value, value_length) = match value {
+        Some(value) => {
+            let (value, length, _) = Text::Latin1(value).parts()?;
+            (value, length)
+        }
+        None => (core::ptr::null(), 0),
+    };
+    let mut property = Property::default();
+    // SAFETY: both names are slices of these lengths, which C++ does not keep a pointer to, and `property` outlives the call.
+    let is_known = unsafe {
+        Yarr__unicodeProperty(
+            name,
+            name_length,
+            value,
+            value_length,
+            (&raw mut property).cast(),
+            push_range,
+            push_string,
+        )
+    };
+    if !is_known {
+        return None;
+    }
+    property.ranges.sort_unstable();
+    property.ranges.dedup_by(|next, kept| {
+        let touches = next.0 <= kept.1.saturating_add(1);
+        if touches {
+            kept.1 = kept.1.max(next.1);
+        }
+        touches
+    });
+    Some(property)
+}
+
+/// Each set of two or more characters that `Canonicalize` of ECMAScript maps to one: those that the flag `i` makes equal.
+/// `unicode`: with the flag `u` or `v`. Without them the characters are UTF-16 code units. A set is ascending, and so are the
+/// sets by their first. It looks at every character: keep what it returns.
+pub fn case_classes(unicode: bool) -> Vec<Vec<u32>> {
+    start();
+    let mut pairs: Vec<(u32, u32)> = Vec::new();
+    // SAFETY: `pairs` outlives the call.
+    unsafe { Yarr__canonicalized(unicode, (&raw mut pairs).cast(), push_pair) };
+    pairs.sort_unstable();
+    let mut classes: Vec<Vec<u32>> = Vec::new();
+    for same in pairs.chunk_by(|a, b| a.0 == b.0) {
+        let mut class: Vec<u32> = same.iter().map(|it| it.1).collect();
+        if let Some((canonical, _)) = same.first() {
+            class.insert(class.partition_point(|it| it < canonical), *canonical);
+        }
+        classes.push(class);
+    }
+    let firsts = classes.iter().zip(0u32..);
+    let mut order: Vec<(u32, u32)> = firsts
+        .filter_map(|(class, at)| Some((*class.first()?, at)))
+        .collect();
+    order.sort_unstable();
+    let mut sorted = Vec::with_capacity(order.len());
+    for (_, at) in order {
+        if let Some(class) = classes.get_mut(at as usize) {
+            sorted.push(core::mem::take(class));
+        }
+    }
+    sorted
 }

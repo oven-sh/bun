@@ -101,66 +101,6 @@ impl Group {
     }
 }
 
-/// The characters of ASCII before the digits, in the order of the root collation of CLDR.
-const BEFORE_DIGITS: &[u8] = b"\t\n\x0B\x0C\r _-,;:!?.'\"()[]{}@*/\\&#%`^+<=>|~$";
-
-const NO_DIGITS: &[u8] = b"";
-
-/// What is compared at the position `at` of `text`, and where the next starts: the primary weight
-/// of a character, or for a run of digits their weight, how many there are without leading zeros,
-/// and the digits.
-fn collation_element(text: &[u8], mut at: usize) -> Option<((u32, usize, &[u8]), usize)> {
-    let digits_weight = BEFORE_DIGITS.len() as u32;
-    loop {
-        let &byte = text.get(at)?;
-        let weight = match byte {
-            b'0'..=b'9' => {
-                let rest = &text[at..];
-                let len = rest.iter().take_while(|b| b.is_ascii_digit()).count();
-                let zeros = rest[..len - 1].iter().take_while(|b| **b == b'0').count();
-                return Some(((digits_weight, len - zeros, &rest[zeros..len]), at + len));
-            }
-            b'a'..=b'z' | b'A'..=b'Z' => digits_weight + 1 + u32::from(byte.to_ascii_lowercase() - b'a'),
-            0x80.. => {
-                let mut code_points = strings::wtf8_codepoints(&text[at..]);
-                let (_, c) = code_points.next()?;
-                let lower = char::from_u32(c).and_then(|c| c.to_lowercase().next()).map_or(c, u32::from);
-                let next = code_points.next().map_or(text.len(), |(offset, _)| at + offset);
-                return Some(((0x100 + lower, 0, NO_DIGITS), next));
-            }
-            _ => match strings::index_of_char_usize(BEFORE_DIGITS, byte) {
-                Some(index) => index as u32,
-                // The other control characters are ignored.
-                None => {
-                    at += 1;
-                    continue;
-                }
-            },
-        };
-        return Some(((weight, 0, NO_DIGITS), at + 1));
-    }
-}
-
-/// `new Intl.Collator('en', { numeric: true, sensitivity: 'base' }).compare(a, b)`, exact for ASCII.
-/// Other characters come after ASCII in the order of their code points, without regard to case.
-// TODO(api): replace by utils::text::collator_compare
-fn collator_compare(a: &[u8], b: &[u8]) -> Ordering {
-    let (mut at_a, mut at_b) = (0, 0);
-    loop {
-        match (collation_element(a, at_a), collation_element(b, at_b)) {
-            (None, None) => return Ordering::Equal,
-            (None, Some(_)) => return Ordering::Less,
-            (Some(_), None) => return Ordering::Greater,
-            (Some((element_a, next_a)), Some((element_b, next_b))) => {
-                match element_a.cmp(&element_b) {
-                    Ordering::Equal => (at_a, at_b) = (next_a, next_b),
-                    order => return order,
-                }
-            }
-        }
-    }
-}
-
 impl SortTypeConstituents {
     fn position(&self, ty: TypeNode) -> u32 {
         Group::of(ty).map_or(u32::MAX, |group| self.positions[group as usize])
@@ -171,7 +111,7 @@ impl SortTypeConstituents {
             let (a, b) = (a.text(), b.text());
             match self.is_case_sensitive {
                 true => strings::order_utf16(a, b),
-                false => collator_compare(a, b).then_with(|| strings::order_utf16(a, b)),
+                false => strings::locale_compare_numeric_base(a, b).then_with(|| strings::order_utf16(a, b)),
             }
         })
     }

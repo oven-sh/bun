@@ -1,7 +1,8 @@
 //! What is in a paragraph and is not CommonMark's or GFM's as `bun_md` reads them: links that are not marked as such as micromark finds
 //! them, math. And how micromark and mdast write down a title and a text with NUL in it.
 
-use super::strings::{CharacterClass, classify, first_char, unescape};
+use super::strings::{CharacterClass, classify, unescape};
+use crate::text::first_char;
 
 fn is_space(byte: u8) -> bool {
     matches!(byte, b' ' | b'\t')

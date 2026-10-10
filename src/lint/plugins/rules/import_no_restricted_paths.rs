@@ -114,7 +114,7 @@ impl Zone {
     }
 
     /// What `checkForRestrictedImportPath` reports for the zone. `found`: the file that `import_path` means.
-    fn check<'a>(&self, (import_path, found): (&[u8], &[u8]), report: &dyn Fn(Message) -> Report<'a>) {
+    fn check<'a>(&self, (import_path, found, cwd): (&[u8], &[u8], &[u8]), report: &dyn Fn(Message) -> Report<'a>) {
         let restricted = || {
             let message = interpolate_text(&self.message, |name| (name == "importPath").then_some(import_path));
             report(RESTRICTED).data("message", message);
@@ -130,6 +130,9 @@ impl Zone {
                 }
             }
             Validators::Paths(from) => {
+                // `path.relative`
+                let absolute = paths::resolve(cwd, found);
+                let found = absolute.as_slice();
                 let applicable = || from.iter().filter(|it| contains_path(found, &it.0));
                 applicable().filter(|it| it.1.is_none()).for_each(|_| drop(report(EXCEPTION_IS_NO_DESCENDANT)));
                 for exceptions in applicable().filter_map(|it| it.1.as_ref()) {
@@ -199,9 +202,10 @@ impl NoRestrictedPaths {
         let Some(zones) = self.read.get() else {
             return;
         };
-        let Some(resolvers) = Resolvers::of(file.settings()) else {
+        let (Some(resolvers), Some(modules)) = (Resolvers::of(file.settings()), file.modules()) else {
             return;
         };
+        let cwd = modules.cwd();
         let systems = Systems { esmodule: true, commonjs: true, amd: false };
         for visited in module_visitor::visit(file, systems) {
             let Resolved::File(found) = resolvers.resolve(file, visited.specifier, visited.is_require) else {
@@ -209,7 +213,7 @@ impl NoRestrictedPaths {
             };
             let report = |message: Message| cx.report(visited.source, message).data("importPath", visited.specifier);
             for zone in cx.state.iter().filter_map(|it| zones.get(*it as usize)) {
-                zone.check((visited.specifier, &found), &report);
+                zone.check((visited.specifier, &found, cwd), &report);
             }
         }
     }

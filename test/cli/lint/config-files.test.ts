@@ -519,14 +519,46 @@ test.concurrent.each([
   ["webpack", "webpack", ["a.js:1:1 import/no-cycle"]],
   ["webpack beside node", { node: {}, webpack: { config: "webpack.config.js" } }, ["a.js:1:1 import/no-cycle"]],
   ["in a list", ["node", { alias: {} }], ["a.js:1:1 import/no-cycle"]],
-])("import/resolver: the package answers for a resolver that is not known here: %s", async (_, resolver, expected) => {
-  const theirs = `{ create: context => ({ Program(node) { context.report({ node, message: "theirs" }); } }) }`;
-  const config = `export default [
-    { settings: ${JSON.stringify({ "import/resolver": resolver })} },
+  ["the parsers that are here", undefined, [], { "espree": [".js"], "@typescript-eslint/parser": [".ts"] }],
+  ["another parser", "node", ["a.js:1:1 import/no-cycle"], { "@babel/eslint-parser": [".js"] }],
+  // As eslint-config-next writes them: `[require.resolve("eslint-import-resolver-node")]`.
+  [
+    "paths of the packages",
+    {
+      "/p/node_modules/eslint-import-resolver-node/index.js": {},
+      "C:\\p\\node_modules\\eslint-import-resolver-typescript\\lib\\index.cjs": {},
+    },
+    [],
+    { "/p/node_modules/.pnpm/a/node_modules/@typescript-eslint/parser/dist/index.js": [".ts"] },
+  ],
+  [
+    "the path of another",
+    { "/p/node_modules/eslint-import-resolver-webpack/index.js": {} },
+    ["a.js:1:1 import/no-cycle"],
+  ],
+] as [string, unknown, string[], object?][])(
+  "import/resolver: the package answers for a resolver that is not known here: %s",
+  async (_, resolver, expected, parsers) => {
+    const theirs = `{ create: context => ({ Program(node) { context.report({ node, message: "theirs" }); } }) }`;
+    const config = `export default [
+    { settings: ${JSON.stringify({ "import/resolver": resolver, "import/parsers": parsers })} },
     { plugins: { import: { meta: { name: "eslint-plugin-import" }, rules: { "no-cycle": ${theirs} } } }, rules: { "import/no-cycle": "error" } },
   ];`;
-  const { problems } = await lint({ "eslint.config.mjs": config, "a.js": "export {};\n" }, ["a.js"]);
-  expect(problems).toEqual(expected);
+    const { problems } = await lint({ "eslint.config.mjs": config, "a.js": "export {};\n" }, ["a.js"]);
+    expect(problems).toEqual(expected);
+  },
+);
+
+test.concurrent("import/ignore with a regular expression, of which JSON has nothing: the package answers", async () => {
+  const theirs = `{ create: context => ({ Program(node) { context.report({ node, message: "theirs" }); } }) }`;
+  const config = (ignore: string) => `export default [
+    { settings: { "import/ignore": [${ignore}] } },
+    { plugins: { import: { meta: { name: "eslint-plugin-import" }, rules: { "no-cycle": ${theirs} } } }, rules: { "import/no-cycle": "error" } },
+  ];`;
+  const problems = async (ignore: string) =>
+    (await lint({ "eslint.config.mjs": config(ignore), "a.js": "export {};\n" }, ["a.js"])).problems;
+  expect(await problems(String.raw`/\.css$/`)).toEqual(["a.js:1:1 import/no-cycle"]);
+  expect(await problems(String.raw`"\\.css$"`)).toEqual([]);
 });
 
 describe.concurrent("a note says that a plugin that is built in is installed in an older version", () => {

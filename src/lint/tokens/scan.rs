@@ -387,6 +387,12 @@ fn find(text: &[u8], at: usize, stops: &[u8]) -> usize {
     strings::index_of_any(rest, stops).map_or(text.len(), |found| at + found)
 }
 
+/// Where the line ends that `from` is in.
+fn find_line_end(text: &[u8], from: usize) -> usize {
+    let rest = text.get(from..).unwrap_or_default();
+    strings::find_js_line_break(rest).map_or(text.len(), |found| from + found.0)
+}
+
 /// `find` for what is likely within a few bytes, as the end of a string is: too near for the call
 /// of a vectorized search to pay off.
 #[inline]
@@ -641,7 +647,7 @@ pub(super) fn comments(file: &File) -> Option<Vec<RawToken>> {
     let mut comments = Vec::with_capacity(listed.len() + 1);
     let start = start_of_code(file);
     if text[start..].starts_with(b"#!") {
-        let end = line_end(text, start + 2);
+        let end = find_line_end(text, start + 2);
         if end > start + 2 || Dialect::of(file) != Dialect::TypeScript {
             comments.push(RawToken {
                 start: start as u32,
@@ -664,19 +670,6 @@ pub(super) fn comments(file: &File) -> Option<Vec<RawToken>> {
 /// After the byte order mark, which ESLint takes off before it looks for a `#!`.
 fn start_of_code(file: &File) -> usize {
     if file.has_bom() { 3 } else { 0 }
-}
-
-/// Where the line ends that `from` is in.
-fn line_end(text: &[u8], from: usize) -> usize {
-    let mut end = from;
-    loop {
-        // 0xE2 starts U+2028 and U+2029, which end a line too.
-        end = find(text, end, b"\n\r\xE2");
-        if text.get(end) != Some(&0xE2) || lexer::starts_with_line_break(&text[end..]) {
-            return end;
-        }
-        end += 1;
-    }
 }
 
 /// Whether the tokens of `file` are those of espree.
@@ -1182,7 +1175,7 @@ impl<'a> Scanner<'a> {
 
     /// From `//` or `#!` to the end of the line.
     fn line_comment(&mut self, kind: TokenKind) {
-        self.comment(kind, line_end(self.text, self.at + 2));
+        self.comment(kind, find_line_end(self.text, self.at + 2));
     }
 
     fn block_comment(&mut self) {

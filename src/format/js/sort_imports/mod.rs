@@ -8,7 +8,6 @@
 
 mod babel;
 mod builtins;
-mod collation_tables;
 mod compare;
 mod generator;
 mod ianvs;

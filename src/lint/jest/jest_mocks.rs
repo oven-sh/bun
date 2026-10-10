@@ -299,7 +299,10 @@ pub(crate) mod prefer_mock_return_shorthand {
             if !func.is_arrow() && found.has_this_expression || found.has_mutable_reference {
                 continue;
             }
-            let report = ctx.report(property_span, PREFER_MOCK_RETURN_SHORTHAND);
+            let report = ctx
+                .report(property_span, PREFER_MOCK_RETURN_SHORTHAND)
+                .data("current_property", ctx.file.slice(property_span))
+                .data("replacement", new_property_name);
             if !found.contains_call_like_expression {
                 report.fix(|fixer| {
                     [

@@ -50,6 +50,7 @@ pub use fixer::{
     max_fixed_len, verify_and_fix,
 };
 pub use globals::{CommentGlobal, GlobalVariable};
+pub use json_v8::parse as json_parse;
 pub use levn::parse_object as parse_levn_object;
 pub use message::{
     Details, LintMessage, RuleId, Suggestion, Suppression, SuppressionKind, Utf16Offsets,
@@ -84,7 +85,6 @@ pub mod testing {
     pub use super::comment::{
         parse_directive, parse_json_like_config, parse_list_config, parse_string_config,
     };
-    pub use super::json_v8::parse as json_parse;
     pub use super::message::write_json;
     pub use super::schema::{validate_by_id, validate_js};
     pub use super::syntax::{diagnostics, refusal_of_prettier_by_kind};
@@ -324,19 +324,26 @@ impl Linter {
         options: &LintOptions,
     ) -> LintResult {
         let locator = Locator::new(file);
+        let mut problems: Vec<LintMessage> = Vec::new();
         if let Some(fatal) = parse_error(file) {
-            if file.language().is_oxlint && syntax::is_flow(file) {
+            let is_oxlint = file.language().is_oxlint;
+            if is_oxlint && syntax::is_flow(file) {
                 return LintResult::default();
             }
-            return LintResult {
-                messages: vec![fatal],
-                ..LintResult::default()
-            };
+            // What oxc refuses, oxlint does not lint. tsgolint reads the file on its own, and oxlint, which has not seen the comments,
+            // passes on all that it reports. Here that is so where the tree is whole: the error is an early one.
+            if !is_oxlint || file.types.is_none() || file.has_parse_errors() {
+                return LintResult {
+                    messages: vec![fatal],
+                    ..LintResult::default()
+                };
+            }
+            problems.push(fatal);
         }
+        let is_refused = !problems.is_empty();
         let mut result = LintResult::default();
-        let mut problems: Vec<LintMessage> = Vec::new();
         let mut running: Vec<Running> = Vec::with_capacity(config.rules.len());
-        for rule in &config.rules {
+        for rule in (config.rules.iter()).filter(|it| !is_refused || it.entry.meta.requires_types) {
             if let Some(instance) = rule.instance() {
                 running.push(Running {
                     entry: rule.entry,
@@ -349,7 +356,8 @@ impl Linter {
                 });
             }
         }
-        let enabled_js = (config.js_rules.iter()).filter(|it| it.severity != Severity::Off);
+        let enabled_js =
+            (config.js_rules.iter()).filter(|it| it.severity != Severity::Off && !is_refused);
         let mut running_js: Vec<RunningJs> = enabled_js
             .map(|it| RunningJs {
                 severity: it.severity,
@@ -364,7 +372,7 @@ impl Linter {
         {
             file.ignore_config_comments();
         }
-        let comments = match options.allow_inline_config {
+        let comments = match options.allow_inline_config && !is_refused {
             true => file.config_comments(),
             false => &[],
         };

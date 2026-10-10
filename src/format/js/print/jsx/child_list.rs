@@ -111,23 +111,6 @@ fn split_first_word(text: &[u8]) -> (&[u8], &[u8]) {
     text.split_at(text.iter().take_while(|b| !is_jsx_whitespace(**b)).count())
 }
 
-/// The number of line breaks in `whitespace`.
-fn count_line_breaks(whitespace: &[u8]) -> usize {
-    let mut bytes = whitespace.iter().peekable();
-    let mut count = 0;
-    while let Some(byte) = bytes.next() {
-        match byte {
-            b'\r' => {
-                bytes.next_if_eq(&&b'\n');
-                count += 1;
-            }
-            b'\n' => count += 1,
-            _ => {}
-        }
-    }
-    count
-}
-
 #[derive(Copy, Clone, Default)]
 struct ChildrenMeta {
     /// There is an element or a fragment.
@@ -206,7 +189,7 @@ impl<'a> Children<'a> {
     fn push_text(&mut self, text: &'a [u8], next: Option<Child<'a>>) {
         if !is_meaningful_jsx_text(text) {
             // Up to one empty line between two children is kept.
-            if count_line_breaks(text) > 1 {
+            if bun_core::strings::split_crlf_lines(text).count() > 2 {
                 self.push_line(Separator::HardLine);
             }
             return;

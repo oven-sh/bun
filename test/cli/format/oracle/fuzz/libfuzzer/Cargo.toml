@@ -39,10 +39,6 @@ path = "regex.rs"
 name = "fuzz_glob"
 path = "glob.rs"
 
-[[bin]]
-name = "fuzz_readers"
-path = "readers.rs"
-
 [dependencies]
 libfuzzer-sys = "0.4"
 bun_format = { path = "../../../../../../src/format" }

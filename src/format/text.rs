@@ -23,12 +23,6 @@ pub(crate) fn leading_white_space_len(text: &[u8]) -> usize {
     text.len() - strings::trim_js_whitespace_start(text).len()
 }
 
-/// `\w`
-#[inline]
-pub(crate) fn is_word_character(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || byte == b'_'
-}
-
 /// A set of bytes, for the ends of tokens: they are a few bytes away, and there are more kinds of them
 /// than the vectorized search takes at once.
 pub(crate) struct ByteSet([bool; 256]);
@@ -208,4 +202,28 @@ pub(crate) fn has_pragma_in_hash_comment(text: &[u8], pragmas: [&[u8]; 2]) -> bo
         name.strip_prefix(*pragma)
             .is_some_and(|rest| matches!(without_blanks(rest), [] | [b'\n', ..]))
     })
+}
+
+/// The first character of `text` and how many bytes it has. Bytes that are not UTF-8 are U+FFFD.
+pub(crate) fn first_char(text: &[u8]) -> Option<(char, usize)> {
+    match text.first() {
+        None => None,
+        Some(&byte) if byte < 128 => Some((byte as char, 1)),
+        Some(_) => {
+            let (char, len) = bstr::decode_utf8(text);
+            Some((char.unwrap_or(char::REPLACEMENT_CHARACTER), len))
+        }
+    }
+}
+
+/// The same for the last character.
+pub(crate) fn last_char(text: &[u8]) -> Option<(char, usize)> {
+    match text.last() {
+        None => None,
+        Some(&byte) if byte < 128 => Some((byte as char, 1)),
+        Some(_) => {
+            let (char, len) = bstr::decode_last_utf8(text);
+            Some((char.unwrap_or(char::REPLACEMENT_CHARACTER), len))
+        }
+    }
 }

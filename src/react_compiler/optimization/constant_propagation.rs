@@ -34,7 +34,7 @@ use crate::hir::environment::Environment;
 use crate::hir::{
     BinaryOperator, BlockKind, FloatValue, FunctionId, GotoVariant, HirFunction, IdentifierId,
     InstructionValue, NonLocalBinding, Phi, Place, PrimitiveValue, PropertyLiteral, SourceLocation,
-    Terminal, UnaryOperator, UpdateOperator, format_js_number,
+    Terminal, UnaryOperator, UpdateOperator,
 };
 use crate::ssa::enter_ssa::placeholder_function;
 
@@ -597,7 +597,11 @@ fn evaluate_instruction(
                         result.extend_from_slice(if *b { b"true" } else { b"false" })
                     }
                     PrimitiveValue::Number(n) => {
-                        result.extend_from_slice(format_js_number(n.value()).as_bytes())
+                        let mut buffer = [0; 124];
+                        result.extend_from_slice(bun_core::fmt::FormatDouble::dtoa(
+                            &mut buffer,
+                            n.value(),
+                        ))
                     }
                     PrimitiveValue::String(s) => match s.as_bytes() {
                         Some(b) => result.extend_from_slice(b),

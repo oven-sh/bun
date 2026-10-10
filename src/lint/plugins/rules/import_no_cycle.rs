@@ -317,8 +317,16 @@ impl NoCycle {
                 oxlint_finds_within(modules, imported, me, self.max_depth.saturating_sub(1))
             };
             if leads_back {
-                let label = if imported == me { "this module references itself" } else { "" };
-                cx.report(request.span, DETECTED_BY_OXLINT).first_label(label);
+                let report = cx.report(request.span, DETECTED_BY_OXLINT);
+                if imported == me {
+                    let mut imports = file.stmts_of_kind(StmtTag::Import);
+                    report.first_label("this module references itself").help(
+                        match imports.any(|it| it.span().contains(request.span)) {
+                            true => "Remove the self-referencing import.",
+                            false => "Remove the self-referencing export and consider using a named export instead.",
+                        },
+                    );
+                }
             }
         }
     }

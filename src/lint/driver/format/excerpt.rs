@@ -70,6 +70,29 @@ struct Place<'r> {
     start: usize,
     /// What was asked for last, and the answer.
     last: (u32, u32, Vec<&'r [u8]>),
+    /// The file that [`with_help`] has asked about last, and the answer.
+    helped: Option<(&'r FileResult, Vec<LintMessage>)>,
+}
+
+/// The message of `problem` with what oxlint says besides it, if that was not made when the file was linted: [`Meta::help`]. It is
+/// what the same rule says at the same place in the same words.
+fn with_help<'r>(problem: Problem<'r>, meta: &Meta, place: &mut Place<'r>) -> Option<LintMessage> {
+    let (lint, Problem { result, message }) = (meta.help?, problem);
+    if !(place.helped.as_ref()).is_some_and(|it| std::ptr::eq(it.0, result)) {
+        place.helped = Some((result, lint(result)));
+    }
+    let rule = |it: &LintMessage| it.rule_id.as_ref().map(|id| id.to_vec());
+    let is_same = |it: &&LintMessage| {
+        (it.line, it.column, it.end) == (message.line, message.column, message.end)
+            && it.message == message.message
+            && rule(it) == rule(message)
+    };
+    let found = place.helped.as_ref()?.1.iter().find(is_same)?;
+    Some(LintMessage {
+        details: found.details.clone(),
+        constant_help: found.constant_help,
+        ..message.clone()
+    })
 }
 
 /// The lines `from..=to` of `text`, counted from 1 as ESLint counts them, without their ends.
@@ -169,7 +192,8 @@ fn write_pretty_problem<'r>(
     meta: &Meta,
     place: &mut Place<'r>,
 ) {
-    let Problem { result, message } = problem;
+    let helped = with_help(problem, meta, place);
+    let (result, message) = (problem.result, helped.as_ref().unwrap_or(problem.message));
     let mut text = message.message.clone();
     let rule = problem.rule();
     if !rule.is_empty() {
@@ -347,7 +371,8 @@ fn write_agent_problem<'r>(
     let Some(&problem) = group.first() else {
         return;
     };
-    let Problem { result, message } = problem;
+    let helped = with_help(problem, meta, place);
+    let (result, message) = (problem.result, helped.as_ref().unwrap_or(problem.message));
     let tag = if problem.is_error() {
         "error"
     } else {

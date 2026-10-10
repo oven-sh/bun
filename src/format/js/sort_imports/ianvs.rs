@@ -4,7 +4,7 @@ use super::babel::{
     Attached, CommentId, Declaration, Lines, List, Model, Node, SpecifierKind, Which,
 };
 use super::builtins::is_builtin_module;
-use super::compare::{collate_base_numeric, natural_sort_case_sensitive};
+use super::compare::natural_sort_case_sensitive;
 use super::generator::{Piece, PieceKind, Printer, Prologue};
 use super::layout::is_unchanged;
 use super::sort::stable_sort_by;
@@ -71,7 +71,7 @@ impl Options {
     fn compare(&self, a: &[u8], b: &[u8]) -> Ordering {
         match self.is_case_sensitive {
             true => natural_sort_case_sensitive(a, b),
-            false => collate_base_numeric(a, b),
+            false => bun_core::strings::locale_compare_numeric_base(a, b),
         }
     }
 

@@ -63,8 +63,9 @@ fn method_call<'a>(receiver: Expr<'a>) -> Option<(Name<'a>, Call<'a>, Expr<'a>)>
 type Known = FxHashMap<usize, bool>;
 
 fn has_listener(variable: Symbol) -> bool {
-    let mut uses = variable.references().filter(|it| !it.is_init()).filter_map(Reference::expr);
-    uses.any(|it| is_taken_care_of(it, None))
+    // What is no expression, as in `export { a }`, cannot be followed.
+    let mut uses = variable.references().filter(|it| !it.is_init()).map(Reference::expr);
+    uses.any(|it| it.is_none_or(|e| is_taken_care_of(e, None)))
 }
 
 /// Whether the emitter `e` gets a listener for `error`, or goes where that cannot be seen. `known`: it is not the name

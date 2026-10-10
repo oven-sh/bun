@@ -30,7 +30,7 @@
 //! | `s.split(re)` | [`re.split(s)`](Regex::split) |
 //! | `re.source`, `re.flags`, `re.global`, .. | [`Regex::source`], [`Regex::flags`]: `re.flags().global`, `re.flags().to_string()` |
 //! | `String(re)`, `` `${re}` `` | `re.to_string()`, `format!("{re}")` |
-//! | `escapeRegExp(s)` of `escape-string-regexp` | [`escape_string_regexp`](crate::utils::text::escape_string_regexp) |
+//! | `escapeRegExp(s)` of `escape-string-regexp` | [`bun_core::strings::escape_reg_exp`] |
 //!
 //! A [`Regex`] has no `lastIndex`: it does not change, and all threads can share it. [`Regex::test`]
 //! and [`Regex::find`] start at 0 whatever the flags.
@@ -68,7 +68,7 @@
 pub mod ast;
 mod parser;
 mod subject;
-mod unicode;
+pub mod unicode;
 mod unicode_tables;
 mod validator;
 mod wtf8;

@@ -1188,11 +1188,6 @@ pub(crate) mod casing {
             && !has_white_space(s)
     }
 
-    /// `\w`
-    fn is_regex_word(c: u8) -> bool {
-        c.is_ascii_alphanumeric() || c == b'_'
-    }
-
     /// `s` with `change` of its first character.
     fn with_first(s: &[u8], change: fn(&str) -> String) -> Vec<u8> {
         let first = s
@@ -1216,7 +1211,9 @@ pub(crate) mod casing {
         let mut out = Vec::with_capacity(s.len());
         let mut rest = s.iter().copied().peekable();
         while let Some(c) = rest.next() {
-            match rest.next_if(|next| matches!(c, b'-' | b'_') && is_regex_word(*next)) {
+            match rest
+                .next_if(|next| matches!(c, b'-' | b'_') && strings::is_regexp_word_byte(*next))
+            {
                 Some(next) => out.push(next.to_ascii_uppercase()),
                 None => out.push(c),
             }

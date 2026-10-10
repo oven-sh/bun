@@ -24,12 +24,13 @@ use bun_lint::modules::{
     Declaration, Flavor, Import, Lookup, MakeRecord, ModuleId, Modules, Reader, Record, Request,
     RequestKind, Resolved, requests_of,
 };
+use bun_lint::paths::{is_absolute, relative};
 use bun_sema::atom::Interner;
 use bun_sema::bind::{BindOptions, Recycled, bind_for_lint_in};
 use bun_sema::config::{Project, find_config, load_overriding, without_config};
 use bun_sema::hir::ResolutionMode;
 use bun_sema::json::Json;
-use bun_sema::resolve::{Host, Resolver, ScriptKind, ancestors, join, typescript_path};
+use bun_sema::resolve::{AsRequire, Host, Resolver, ScriptKind, ancestors, join, typescript_path};
 use bun_sema::session::Session;
 use bun_sema::util::{FxHashMap, ShardedMap};
 use bun_sema_driver::host::{Disk, from_native};
@@ -285,6 +286,35 @@ impl<'h> Graph<'h> {
             es_module_interop,
         };
         known.resolvers.insert_ref(config.to_vec(), resolver)
+    }
+
+    /// `written`: `paths`, which are from the working directory.
+    fn resolve_as_require(
+        &self,
+        (specifier, from): (&[u8], &[u8]),
+        extensions: &[&[u8]],
+        written: &[&[u8]],
+        module_directories: &[&[u8]],
+    ) -> Option<Vec<u8>> {
+        let paths: SmallVec<[Vec<u8>; 2]> =
+            (written.iter().map(|it| join(&self.store.cwd, it))).collect();
+        let paths: SmallVec<[&[u8]; 2]> = paths.iter().map(Vec::as_slice).collect();
+        let how = AsRequire {
+            extensions,
+            module_directories,
+            paths: &paths,
+        };
+        // No configuration of TypeScript has a say.
+        let plain = self.resolver_of(b"", &self.store.cwd);
+        let (found, at) = (plain.resolver).resolve_as_require(specifier, from, &how)?;
+        // `path.join(written, specifier)`
+        let is_relative = at
+            .and_then(|at| written.get(at))
+            .is_some_and(|it| !is_absolute(it));
+        Some(match is_relative {
+            true => relative(&self.store.cwd, &found),
+            false => found,
+        })
     }
 
     fn flavor(&self) -> Flavor {
@@ -766,12 +796,17 @@ impl Modules for Graph<'_> {
                 let from = self.store.disk().realpath(&from);
                 (self.resolve_path(&from, specifier, is_require)?.0).into_owned()
             }
-            Lookup::Node(extensions) if specifier.len() <= 4096 => {
-                // No configuration of TypeScript has a say.
-                let plain = self.resolver_of(b"", &self.store.cwd);
-                (plain.resolver).resolve_as_require(specifier, &from, extensions)?
+            _ if specifier.len() > 4096 => return None,
+            Lookup::Node(extensions) => {
+                self.resolve_as_require((specifier, &from), extensions, &[], &[b"node_modules"])?
             }
-            Lookup::Node(_) => return None,
+            Lookup::NodeWith {
+                extensions,
+                paths,
+                module_directories,
+            } => {
+                self.resolve_as_require((specifier, &from), extensions, paths, module_directories)?
+            }
         };
         Some(typescript_path(&found).to_vec())
     }

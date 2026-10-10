@@ -3,7 +3,7 @@
 
 use crate::ast::{File, Ident, Name};
 use crate::fix::{Fix, Fixer, IntoFix, SuggestionKind};
-use crate::oxlint_help::{self, Found, Help, Part};
+use crate::oxlint_help::{self, Edits, Found, Help, Part};
 use crate::rule::{Message, Meta, Rule};
 use crate::span::{Position, Span, Spanned};
 use smallvec::SmallVec;
@@ -380,11 +380,11 @@ impl<'a> Report<'a> {
     pub fn fix<F: IntoFix>(mut self, fix: impl FnOnce(Fixer<'a>) -> F) -> Self {
         if self.reads_fixes() {
             let fix = fix(Fixer::new(self.file));
-            self.take_help_of(fix.first_fix());
+            let fix = self.merged(fix);
             if self.file.sink.wants_fixes.get()
                 && let Some(diagnostic) = &mut self.diagnostic
             {
-                diagnostic.fix = fix.into_fix(self.file);
+                diagnostic.fix = fix;
             }
         }
         self
@@ -398,14 +398,23 @@ impl<'a> Report<'a> {
         })
     }
 
-    /// `LintContext::finish_create_fix` of oxlint: a diagnostic without a help takes what `RuleFixer` says about the fix: `first`.
+    /// [`IntoFix::into_fix`], and the help that oxlint makes of the fix.
+    fn merged<F: IntoFix>(&mut self, fix: F) -> Option<Fix> {
+        self.take_help_of(fix.first_fix(), Edits::First);
+        let fix = fix.into_fix(self.file);
+        self.take_help_of(fix.as_ref(), Edits::All);
+        fix
+    }
+
+    /// `LintContext::finish_create_fix` of oxlint: a diagnostic without a help takes what `RuleFixer` says about the fix. `fix` does
+    /// what `of` of its edits do.
     #[inline(never)]
-    fn take_help_of(&mut self, first: Option<&Fix>) {
+    fn take_help_of(&mut self, fix: Option<&Fix>, of: Edits) {
         let help = self.diagnostic.as_ref().and_then(|it| it.constant_help);
-        let Some(Found::OfTheFix { removes }) = help.map(|it| it.found(Part::Help)) else {
+        let Some(Found::OfTheFix { removes, edits }) = help.map(|it| it.found(Part::Help)) else {
             return;
         };
-        let Some(fix) = first else {
+        let Some(fix) = fix.filter(|_| edits == of) else {
             return;
         };
         // `possibly_truncate_snippet`
@@ -470,9 +479,8 @@ impl<'a> Report<'a> {
     ) -> Self {
         if self.reads_fixes() {
             let fix = fix(Fixer::new(self.file));
-            self.take_help_of(fix.first_fix());
-            if self.file.sink.wants_fixes.get()
-                && let Some(fix) = fix.into_fix(self.file)
+            if let Some(fix) = self.merged(fix)
+                && self.file.sink.wants_fixes.get()
             {
                 self.push_suggestion(kind, message, data, fix);
             }

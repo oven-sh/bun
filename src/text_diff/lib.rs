@@ -1232,9 +1232,17 @@ const CHAR_WORK_PER_BYTE: usize = 2;
 /// Of 7,566 pairs of a source file and the same file formatted, half spend 3 steps
 /// per element on fast-diff's shortcuts, one in a thousand 30. Long runs of one
 /// character would spend as many as they have elements.
+///
+/// A file that is indented anew is far from its formatted text. With the bounds of
+/// `CHARS` 35 of 8,042 such pairs are cut greedily, with 4 times as much 15, with 16
+/// times none: the dearest, of 93 KB, takes 52 million steps.
 const AS_FAST_DIFF: Policy = Policy {
+    probe: CHARS.probe,
+    exhaustive_max: 16 * CHARS.exhaustive_max,
+    exhaustive_per_elem: 16 * CHARS.exhaustive_per_elem,
+    exhaustive_quota: 16 * CHARS.exhaustive_quota,
+    work: 16 * CHARS.work,
     half_match: 64,
-    ..CHARS
 };
 const HALF_MATCH_FLOOR: usize = 64 << 10;
 

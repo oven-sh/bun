@@ -1,5 +1,5 @@
 #!/bin/sh
-# build.sh [asan | plain | coverage]: builds fuzz_format, fuzz_lint, fuzz_parser, fuzz_config, fuzz_regex, fuzz_glob and fuzz_readers into
+# build.sh [asan | plain | coverage]: builds fuzz_format, fuzz_lint, fuzz_parser, fuzz_config, fuzz_regex and fuzz_glob into
 # $CARGO_TARGET_DIR/<mode> (default: target/fuzz/<mode> at the root of the repository).
 #   asan      libFuzzer's instrumentation, AddressSanitizer, overflow checks, debug assertions
 #   plain     the same without AddressSanitizer: twice as fast, and frames on the stack of the size they have in Bun

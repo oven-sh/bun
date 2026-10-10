@@ -15,6 +15,7 @@ mod xml;
 
 use crate::results::{Counts, FileResult};
 use crate::run::Pool;
+use bun_lint::linter::LintMessage;
 
 /// `--format`
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -129,6 +130,11 @@ impl Format {
         )
     }
 
+    /// Whether it shows only some of many problems with all that there is to say about them, unless `--all` is given.
+    pub(crate) fn groups(self) -> bool {
+        matches!(self, Format::Pretty | Format::Agent | Format::OxlintDefault)
+    }
+
     /// Whether it prints fixes or suggestions, or counts what can be fixed.
     pub(crate) fn reads_fixes(self) -> bool {
         matches!(
@@ -144,7 +150,12 @@ impl Format {
 }
 
 /// ESLint's `ResultsMeta`, and what else a format wants to know.
+/// [`Context::with_help`](crate::lint::Context::with_help)
+pub(crate) type WithHelp<'m> = &'m (dyn Fn(&FileResult) -> Vec<LintMessage> + Sync);
+
 pub(crate) struct Meta<'m> {
+    /// If the messages lack what it makes.
+    pub(crate) help: Option<WithHelp<'m>>,
     pub(crate) cwd: &'m [u8],
     pub(crate) color: bool,
     /// `--color`, `--no-color`

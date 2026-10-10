@@ -24,7 +24,13 @@ impl Rule for JsxFilenameExtension {
         JsxFilenameExtension {
             allow_as_needed: options.str("allow") == Some("as-needed"),
             extensions: match options.get("extensions").and_then(Json::as_array) {
-                Some(extensions) => extensions.iter().filter_map(extension).collect(),
+                // oxlint keeps the first of each.
+                Some(extensions) => extensions.iter().filter_map(extension).fold(Vec::new(), |mut all, it| {
+                    if !all.contains(&it) {
+                        all.push(it);
+                    }
+                    all
+                }),
                 None => vec![Box::from(&b"jsx"[..])],
             },
             ignore_files_without_code: options.bool_or("ignoreFilesWithoutCode", false),

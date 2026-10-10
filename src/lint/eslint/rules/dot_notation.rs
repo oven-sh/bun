@@ -10,15 +10,6 @@ pub struct DotNotation {
 const USE_DOT: Message = Message::new("useDot", "[{{key}}] is better written in dot notation.");
 const USE_BRACKETS: Message = Message::new("useBrackets", ".{{key}} is a syntax error.");
 
-/// `/^[a-zA-Z_$][\w$]*$/u`
-fn is_valid_identifier(value: &[u8]) -> bool {
-    let is_start = |c: u8| c.is_ascii_alphabetic() || c == b'_' || c == b'$';
-    match value {
-        [first, rest @ ..] => is_start(*first) && rest.iter().all(|&c| is_start(c) || c.is_ascii_digit()),
-        [] => false,
-    }
-}
-
 /// Reports the `name` of `object.name`, which is a keyword.
 fn report_keyword<'a, R: Rule>(cx: &Cx<'a, R>, name: Ident<'a>, is_optional: bool, is_after_let: bool) {
     cx.report(name, USE_BRACKETS).data("key", name).fix(|fixer| {
@@ -53,7 +44,7 @@ impl DotNotation {
             },
             _ => return,
         };
-        if !is_valid_identifier(value)
+        if !(value.is_ascii() && bun_core::lexer::is_identifier(value))
             || (!self.allows_keywords && keywords::is_keyword(value))
             || self.allow_pattern.as_ref().is_some_and(|pattern| pattern.test(value))
         {

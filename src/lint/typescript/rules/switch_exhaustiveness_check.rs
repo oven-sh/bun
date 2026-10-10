@@ -8,7 +8,6 @@ use bun_lint::types::{Type, TypeFlags, TypeFormatFlags};
 use bun_lint::utils::eslint_utils::{is_closing_brace_token, is_opening_brace_token};
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
-use std::cmp::Ordering;
 
 /// Require switch-case statements to be exhaustive.
 pub struct SwitchExhaustivenessCheck {
@@ -29,37 +28,6 @@ const SWITCH_IS_NOT_EXHAUSTIVE: Message = Message::new(
     "switchIsNotExhaustive",
     "Switch is not exhaustive. Cases not matched: {{missingBranches}}",
 );
-
-/// The characters of ASCII before the digits, in the order of the root collation of CLDR.
-const BEFORE_DIGITS: &[u8] = b"\t\n\x0B\x0C\r _-,;:!?.'\"()[]{}@*/\\&#%`^+<=>|~$";
-
-/// `None`: the collation ignores it.
-fn primary_weight(byte: u8) -> Option<u16> {
-    let digits = BEFORE_DIGITS.len() as u16;
-    match byte {
-        b'0'..=b'9' => Some(digits + u16::from(byte - b'0')),
-        b'a'..=b'z' | b'A'..=b'Z' => {
-            Some(digits + 10 + u16::from(byte.to_ascii_lowercase() - b'a'))
-        }
-        0x80.. => Some(0x100 + u16::from(byte)),
-        _ => strings::index_of_char_usize(BEFORE_DIGITS, byte).map(|at| at as u16),
-    }
-}
-
-/// `a.localeCompare(b)`, exact for ASCII. Other characters come after ASCII in the order of their
-/// code points.
-// TODO(api): replace by utils::text::locale_compare
-fn locale_compare(a: &[u8], b: &[u8]) -> Ordering {
-    fn primary(text: &[u8]) -> impl Iterator<Item = u16> {
-        text.iter().filter_map(|&byte| primary_weight(byte))
-    }
-    /// A lower case letter comes before the upper case letter.
-    fn tertiary(text: &[u8]) -> impl Iterator<Item = bool> {
-        let weighted = text.iter().filter(|&&byte| primary_weight(byte).is_some());
-        weighted.map(u8::is_ascii_uppercase)
-    }
-    primary(a).cmp(primary(b)).then_with(|| tertiary(a).cmp(tertiary(b)))
-}
 
 fn type_to_string(ty: Type) -> Vec<u8> {
     ty.to_text_with(
@@ -249,7 +217,7 @@ impl SwitchExhaustivenessCheck {
                 missing_literal_branch_types.iter().map(|&it| (it, type_to_string(it))).collect();
             // tsgolint leaves them in the order of the union.
             if !cx.language().is_oxlint {
-                utils::sort::sort_by(&mut missing, |a, b| locale_compare(&a.1, &b.1));
+                utils::sort::sort_by(&mut missing, |a, b| strings::locale_compare(&a.1, &b.1));
             }
 
             let mut missing_branches = Vec::new();

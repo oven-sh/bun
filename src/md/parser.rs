@@ -119,6 +119,8 @@ pub(crate) struct Parser<'a> {
     pub(crate) last_list_item_starts_with_two_blank_lines: bool,
     // The last header in `block_bytes` is the opener of a list item.
     pub(crate) last_header_opens_list_item: bool,
+    // Nothing is on the last line behind the `[ ]` of its list item
+    pub(crate) last_line_is_only_a_task_mark: bool,
     pub(crate) max_ref_def_output: u64,
 
     // Stack overflow protection for recursive inline processing
@@ -355,6 +357,7 @@ impl<'a> Parser<'a> {
             last_line_has_list_loosening_effect: false,
             last_list_item_starts_with_two_blank_lines: false,
             last_header_opens_list_item: false,
+            last_line_is_only_a_task_mark: false,
             max_ref_def_output: 16 * (size as u64).min(1024 * 1024 / 16),
             stack_check: StackCheck::init(),
             track,

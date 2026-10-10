@@ -917,6 +917,7 @@ impl Run<'_> {
             keeps_text: format.reads_text() && !options.silent,
             reads_fixes: format.reads_fixes() && !options.silent,
             reads_help: format.reads_help() && !options.silent,
+            help_on_demand: format.groups() && !options.all,
             reads_suppressions: format.reads_suppressions() && !options.silent,
             js_plugins: &js_plugins,
             modules: &modules,
@@ -1146,7 +1147,9 @@ impl Run<'_> {
             is_oxlint && files == 0 && !options.stdin && !options.pass_on_no_patterns;
 
         let started = Instant::now();
+        let with_help: format::WithHelp = &|result: &FileResult| context.with_help(result);
         let meta = format::Meta {
+            help: (context.reads_help && context.help_on_demand).then_some(with_help),
             cwd: &environment.cwd,
             color: options.color.unwrap_or(environment.stdout.colors),
             color_option: options.color,

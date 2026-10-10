@@ -140,7 +140,7 @@ impl Config {
             Some(init) if is_port_of_oxlint => init.outer_span(),
             _ => declaration.span(),
         };
-        let report = cx.report(place, PREFER_DESTRUCTURING).data("type", type_in_message(kind, cx));
+        let report = cx.report(place, PREFER_DESTRUCTURING).data("type", type_in_message(kind, cx)).data("kind", kind);
         // oxlint's port also fixes `let x = a["x"]`, does not look for comments, and leaves most parentheses.
         if is_port_of_oxlint {
             if kind == "object" && has_same_name && declaration.ty().is_none() {
@@ -207,8 +207,9 @@ impl Config {
                     _ => (0, usize::from(self.enforce_for_renamed_properties && enabled.object)),
                 },
             };
-            for kind in std::iter::repeat_n("Array", arrays).chain(std::iter::repeat_n("Object", objects)) {
-                cx.report(e, PREFER_DESTRUCTURING).data("type", kind);
+            let arrays = std::iter::repeat_n(("Array", "array"), arrays);
+            for (said, kind) in arrays.chain(std::iter::repeat_n(("Object", "object"), objects)) {
+                cx.report(e, PREFER_DESTRUCTURING).data("type", said).data("kind", kind);
             }
             return;
         }
@@ -216,7 +217,7 @@ impl Config {
             // A default value in a pattern is not an assignment.
             && !utils::is_assignment_target(e)
         {
-            cx.report(e, PREFER_DESTRUCTURING).data("type", type_in_message(kind, cx));
+            cx.report(e, PREFER_DESTRUCTURING).data("type", type_in_message(kind, cx)).data("kind", kind);
         }
     }
 }

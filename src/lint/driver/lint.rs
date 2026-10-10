@@ -43,6 +43,9 @@ pub(crate) struct Context<'c, 'm> {
     pub(crate) reads_fixes: bool,
     /// Whether the help of oxlint is read.
     pub(crate) reads_help: bool,
+    /// It is read of the few problems that are shown with their code. So it is not made for each, which takes longer than to find
+    /// them, but when one is printed: [`Context::with_help`].
+    pub(crate) help_on_demand: bool,
     /// Whether it is read which comments suppress a message.
     pub(crate) reads_suppressions: bool,
     /// Runs the rules that are written in JavaScript.
@@ -88,6 +91,8 @@ struct How<'h> {
     vue_script: VueScript,
     /// It is only to be known whether it can be parsed.
     without_rules: bool,
+    /// [`Context::with_help`]
+    with_help: bool,
 }
 
 fn only_errors(_: &RuleId, severity: Severity) -> bool {
@@ -261,6 +266,24 @@ impl Context<'_, '_> {
         self.verify_as(path, text, config, &How::default())
     }
 
+    /// Lints the text that the messages of `result` are about once more, and makes what oxlint says besides each message. Nothing, if
+    /// that was made the first time or there is no such thing: see [`Context::help_on_demand`].
+    pub(crate) fn with_help(&self, result: &FileResult) -> Vec<LintMessage> {
+        let (Some(linted), Some(text)) = (&result.linted, &result.text) else {
+            return Vec::new();
+        };
+        let path = paths::from_native(&result.path);
+        let was_made = result.had_types || Framework::of(&path).is_some();
+        if was_made || !linted.config.language.is_oxlint {
+            return Vec::new();
+        }
+        let how = How {
+            with_help: true,
+            ..How::default()
+        };
+        self.verify_as(&path, text, &linted.config, &how).messages
+    }
+
     /// Whether `text` can be parsed as the file at `path`.
     pub(crate) fn parses(&self, path: &[u8], text: &[u8], config: &ResolvedConfig) -> bool {
         let how = How {
@@ -410,9 +433,15 @@ impl Context<'_, '_> {
                 file.set_formatter(self.formatter, as_what.physical_path_len);
                 file.set_vue_script(as_what.vue_script);
                 let options = self.lint_options();
+                // The parts of a file that is linted in parts are not put together a second time.
+                let is_whole = as_what.script.is_none() && as_what.physical_path_len.is_none();
+                let waits_for_demand = self.help_on_demand && is_whole && !as_what.with_help;
                 let options = LintOptions {
                     again: as_what.again,
                     wants_fixes: options.wants_fixes && !as_what.without_fixes,
+                    wants_help: options.wants_help && !waits_for_demand,
+                    // Its rules have no such thing.
+                    js_plugins: options.js_plugins.filter(|_| !as_what.with_help),
                     physical_path_len: as_what.physical_path_len,
                     rule_filter: match as_what.without_rules {
                         true => Some(&no_rule),

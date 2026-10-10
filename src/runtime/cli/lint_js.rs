@@ -467,13 +467,17 @@ struct Borrowed<'e> {
     engines: &'e Engines,
     at: usize,
     desk: Arc<Desk>,
+    /// `None`: a caller further up has borrowed it, and gives it back.
+    loan: Option<Loan>,
+}
+
+/// What is known when an engine is borrowed, for when it is given back.
+struct Loan {
     /// The size of the file that it is borrowed for.
     size: usize,
     since: std::time::Instant,
     /// It has not loaded what it needs yet.
     is_first: bool,
-    /// A caller further up has borrowed it, and gives it back.
-    is_borrowed_further_up: bool,
 }
 
 impl Vm for Borrowed<'_> {
@@ -514,7 +518,12 @@ impl Borrowed<'_> {
         if *calls != 2 {
             return;
         }
-        state.measure(self.engines.demand.left());
+        let left = self.engines.demand.left();
+        state.measure(left);
+        // How they grow is seen from here on: not by what a load takes.
+        if state.grows_by.is_none() {
+            state.looked_at = (state.taken, left);
+        }
         drop(state);
         // Those that wait may start another one by now.
         self.engines.is_idle.notify_all();
@@ -523,15 +532,18 @@ impl Borrowed<'_> {
 
 impl Drop for Borrowed<'_> {
     fn drop(&mut self) {
-        if self.is_borrowed_further_up {
+        let Some(loan) = &self.loan else {
             return;
-        }
+        };
         let mut state = self.engines.state.lock();
         state.borrowed.retain(|it| it.1 != self.at);
-        // They have grown since they were started. The first has the heavy files, and one is left beside those that are kept. What
-        // the last one gives back is seen a while after it is gone. Looking costs a system call: every time only from four fifths on.
+        // They have grown since they were started. The first has the heavy files, and one is left beside those that are
+        // kept. What the last one gives back is seen a while after it is gone. Looking costs a system call: every time
+        // only until it is known how they grow, and from four fifths on.
         state.given_back = state.given_back.wrapping_add(1);
-        if state.given_back.is_multiple_of(16) || state.taken / 4 * 5 >= self.engines.start.memory()
+        if state.given_back.is_multiple_of(16)
+            || state.grows_by.is_none()
+            || state.taken / 4 * 5 >= self.engines.start.memory()
         {
             state.measure(self.engines.demand.left());
         }
@@ -548,16 +560,16 @@ impl Drop for Borrowed<'_> {
             state.idle.push(self.at);
         }
         drop(state);
-        if self.size > 0 {
-            let seconds = self.since.elapsed().as_secs_f64();
-            (self.engines.demand).note(self.size, seconds, self.is_first);
+        if loan.size > 0 {
+            let seconds = loan.since.elapsed().as_secs_f64();
+            (self.engines.demand).note(loan.size, seconds, loan.is_first);
         }
         // Each of those that wait may wait for another one.
         self.engines.is_idle.notify_all();
     }
 }
 
-/// What an engine counts for before one has loaded what it needs: no configuration that was seen took more. So with 16 GB of
+/// What an engine counts for until the run has shown how its engines grow: none that was seen took much more. So with 16 GB of
 /// memory five engines start at once, and with less, or for a sixth, that is waited for.
 const NOT_LOADED_YET: usize = 2 << 30;
 
@@ -601,7 +613,7 @@ struct State {
     /// What it took, and how many bytes were still to be linted, when `grows_by` was last computed: by how many bytes it has
     /// grown since then for each byte that was linted.
     looked_at: (usize, u64),
-    grows_by: f64,
+    grows_by: Option<f64>,
     /// How often an engine was given back, and what that was when one was last freed.
     given_back: u32,
     freed_at: u32,
@@ -622,7 +634,7 @@ impl State {
         let (taken, left_then) = self.looked_at;
         let done = left_then.saturating_sub(left);
         if done > 0 && done >= left_then / 32 {
-            self.grows_by = self.taken.saturating_sub(taken) as f64 / done as f64;
+            self.grows_by = Some(self.taken.saturating_sub(taken) as f64 / done as f64);
             self.looked_at = (self.taken, left);
         }
         if let loaded @ 1.. = self.all.iter().filter(|it| it.is_loaded()).count() {
@@ -654,14 +666,16 @@ impl Engines {
     /// Whether one more engine fits in the memory that is for them: if those that have loaded go on growing with each byte as they
     /// have in this run, until all is linted, and it and those that have not loaded yet get as large as one of these.
     fn has_room_for_another(&self, state: &State) -> bool {
-        let (count, memory) = (state.count(), self.start.memory());
         let loaded = state.all.iter().filter(|it| it.is_loaded()).count();
-        if loaded == 0 {
-            return state.all.is_empty() || state.taken + (count + 1) * NOT_LOADED_YET <= memory;
-        }
-        let at_the_end = state.taken as f64 + state.grows_by * self.demand.left() as f64;
-        let one = (at_the_end / loaded as f64).max(state.most_for_one as f64);
-        one * (count + 1) as f64 <= memory as f64
+        let one = match state.grows_by {
+            Some(grows_by) if loaded > 0 => {
+                (state.taken as f64 + grows_by * self.demand.left() as f64) / loaded as f64
+            }
+            // What an engine has after its load says little about what it is going to have.
+            _ => NOT_LOADED_YET as f64,
+        };
+        let all = one.max(state.most_for_one as f64) * (state.count() + 1) as f64;
+        state.all.is_empty() || all <= self.start.memory() as f64
     }
 
     /// Waits for an engine.
@@ -674,10 +688,7 @@ impl Engines {
                 engines: self,
                 at,
                 desk: Arc::clone(&state.all[at].desk),
-                size,
-                since: std::time::Instant::now(),
-                is_first: false,
-                is_borrowed_further_up: true,
+                loan: None,
             });
         }
         let at = loop {
@@ -725,10 +736,11 @@ impl Engines {
             engines: self,
             at,
             desk: Arc::clone(&state.all[at].desk),
-            size,
-            since: std::time::Instant::now(),
-            is_first: !state.all[at].is_loaded(),
-            is_borrowed_further_up: false,
+            loan: Some(Loan {
+                size,
+                since: std::time::Instant::now(),
+                is_first: !state.all[at].is_loaded(),
+            }),
         })
     }
 }

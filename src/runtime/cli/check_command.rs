@@ -724,7 +724,9 @@ fn log_data_of(reported: &Diagnostic) -> bun_ast::Data {
     text.extend_from_slice(&reported.text);
     let line_text = || {
         let index = reported.line.checked_sub(reported.source_line)?;
-        Some(Cow::Owned(reported.source.get(index as usize)?.clone()))
+        let line = reported.source.get(index as usize)?;
+        // Of a longer one only the beginning is kept, which the column need not be in.
+        (line.len() <= bun_sema_driver::MAX_SHOWN_LINE).then(|| Cow::Owned(line.clone()))
     };
     bun_ast::Data {
         text: Cow::Owned(text),

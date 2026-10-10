@@ -74,6 +74,78 @@ describe.concurrent("Svelte", () => {
     }
   });
 
+  // What oxfmt 0.72 names.
+  test.each([
+    [
+      "only in an override",
+      { overrides: [{ files: ["**/*.svelte"], options: { svelte: {} } }] },
+      ["App.svelte", "legacy/Old.svelte"],
+    ],
+    [
+      "only for Markdown",
+      { overrides: [{ files: ["**/*.md"], options: { svelte: {} } }] },
+      ["README.md", "legacy/old.md"],
+    ],
+    [
+      "off in an override",
+      { svelte: {}, overrides: [{ files: ["legacy/**"], options: { svelte: false } }] },
+      ["App.svelte", "Doc.mdx", "README.md"],
+    ],
+    [
+      "off and on again",
+      {
+        svelte: {},
+        overrides: [
+          { files: ["legacy/**"], options: { svelte: false } },
+          { files: ["**/Old.svelte"], options: { svelte: true } },
+        ],
+      },
+      ["App.svelte", "Doc.mdx", "README.md", "legacy/Old.svelte"],
+    ],
+    [
+      "on and off again",
+      {
+        overrides: [
+          { files: ["**/*.svelte"], options: { svelte: true } },
+          { files: ["legacy/**"], options: { svelte: false } },
+        ],
+      },
+      ["App.svelte"],
+    ],
+  ])("oxfmt's `svelte` %s", async (_, config, named) => {
+    const block = `# a\n\n\`\`\`svelte\n${input}\`\`\`\n`;
+    const files = {
+      ".oxfmtrc.json": JSON.stringify(config),
+      "App.svelte": input,
+      "legacy/Old.svelte": input,
+      "README.md": block,
+      "Doc.mdx": block,
+      "legacy/old.md": block,
+    };
+    const result = await format(files, [], ["--list-different"]);
+    expect(
+      result.stdout
+        .split("\n")
+        .filter(it => /\.(svelte|mdx?)$/.test(it))
+        .sort(),
+    ).toEqual(named);
+    expect(result.exitCode).toBe(1);
+  });
+
+  test("oxfmt gives a component on standard input back if it is not to format it", async () => {
+    using dir = tempDir("bun-format-svelte", { ".oxfmtrc.json": "{}" });
+    await using proc = spawn({
+      cmd: [bunExe(), "format", "--stdin-filepath", "a.svelte"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdin: Buffer.from(input),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: input, stderr: "", exitCode: 0 });
+  });
+
   test("Prettier formats components only with the plugin", async () => {
     expect(await format({ ".prettierrc": prettierrc, "a.svelte": input }, ["a.svelte"])).toMatchObject({
       stderr: "",
@@ -180,6 +252,8 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
     async () => {
       // Where something took time in proportion to the square of this, it took a minute at 40,000.
       const n = isDebug || isASAN ? 2_000 : 40_000;
+      // The frames of such a build are larger, so the stack ends sooner.
+      const depth = isDebug || isASAN ? 100 : 390;
       const numbered = (text: (index: number) => string) =>
         Array.from({ length: n }, (_, index) => text(index)).join(" ");
       const shapes: Record<string, string> = {
@@ -195,7 +269,7 @@ exports.format = async text => "<!-- by Prettier -->\\n" + text;
         "attributes-with-values": `<a ${numbered(index => `a${index}="b c"`)}></a>`,
         "the-same-attribute": `<a ${"b ".repeat(n)}>`,
         "elements-in-each-other": "<b>".repeat(n),
-        "as-deep-as-it-may-be": `${"<b>".repeat(390)}x${"</b>".repeat(390)}\n`.repeat(n / 400),
+        "as-deep-as-it-may-be": `${"<b>".repeat(depth)}x${"</b>".repeat(depth)}\n`.repeat(n / 400),
         "inline-elements": "<b>x</b> ".repeat(n),
         "blocks": "<div>x</div>".repeat(n),
         "comments": "<!-- a -->".repeat(n),

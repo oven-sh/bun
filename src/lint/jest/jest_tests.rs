@@ -656,10 +656,6 @@ pub(crate) mod no_commented_out_tests {
     const NO_COMMENTED_OUT_TESTS: Message =
         Message::new("", "Some tests appear to be inside comments.");
 
-    fn is_regex_word_byte(byte: u8) -> bool {
-        byte.is_ascii_alphanumeric() || byte == b'_'
-    }
-
     /// `rest` without the bytes at its start for which `is_skipped` holds.
     fn skip(rest: &[u8], is_skipped: impl Fn(u8) -> bool) -> &[u8] {
         rest.get(rest.iter().take_while(|it| is_skipped(**it)).count()..)
@@ -682,7 +678,7 @@ pub(crate) mod no_commented_out_tests {
             return false;
         };
         let rest = match rest.split_first() {
-            Some((b'.', method)) => match skip(method, is_regex_word_byte) {
+            Some((b'.', method)) => match skip(method, strings::is_regexp_word_byte) {
                 after if after.len() < method.len() => after,
                 _ => return false,
             },
@@ -690,7 +686,7 @@ pub(crate) mod no_commented_out_tests {
                 let Some((quote @ (b'\'' | b'"'), method)) = quoted.split_first() else {
                     return false;
                 };
-                match skip(method, is_regex_word_byte) {
+                match skip(method, strings::is_regexp_word_byte) {
                     [end, b']', after @ ..] if end == quote && after.len() + 2 < method.len() => {
                         after
                     }
@@ -698,7 +694,9 @@ pub(crate) mod no_commented_out_tests {
                 }
             }
             // `item`, `testSomething`
-            Some((byte, _)) if is_regex_word_byte(*byte) || *byte == b'$' => return false,
+            Some((byte, _)) if strings::is_regexp_word_byte(*byte) || *byte == b'$' => {
+                return false;
+            }
             _ => rest,
         };
         skip(rest, |it| it.is_ascii_whitespace()).first() == Some(&b'(')

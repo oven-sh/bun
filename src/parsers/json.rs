@@ -126,56 +126,6 @@ fn parse_impl_in(
     )
 }
 
-/// [`parse_impl_in`] in one pass over the text, without the index.
-#[cfg(bun_sema_mimalloc)]
-fn parse_impl_in_one_pass(
-    source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
-    opts: JSONOptions,
-    check_len: bool,
-    tape_alloc: E::TapeAlloc,
-) -> crate::Result<ParseOutput> {
-    let mut opts = opts;
-    if opts.json_warn_duplicate_keys && source.path.is_node_module() {
-        opts.json_warn_duplicate_keys = false;
-    }
-    if source.contents.len() > i32::MAX as usize {
-        return Err(report_index_error(
-            IndexError::DocumentTooLarge,
-            source,
-            log,
-        ));
-    }
-    let log_mark = (log.errors, log.msgs.len());
-    let mut parser = crate::json_reader::Parser::new(source, log, opts, tape_alloc);
-    let mut root = parser.parse_value();
-    if root.is_ok() && check_len && !parser.at_trailing_end() {
-        root = Err(parser.unexpected_here());
-    }
-    parser.read_the_rest();
-    let (index_error, first_comment) = (parser.index_error, parser.first_comment);
-    let tape = parser.take_tape();
-    drop(parser);
-    let result = root.map(|root| ParseOutput {
-        root,
-        tape,
-        indentation: if opts.guess_indentation {
-            guess_indentation(&source.contents)
-        } else {
-            Indentation::default()
-        },
-    });
-    settle(
-        source,
-        log,
-        opts,
-        log_mark,
-        result,
-        index_error,
-        first_comment,
-    )
-}
-
 /// What the parse comes to: of what is wrong with a `/`, a comment where there can be none, and what
 /// the parser itself has said, the first in the text counts.
 fn settle(
@@ -511,46 +461,6 @@ fn parse_to_rows(
     Ok(ParsedJson {
         root: out.root,
         tape: out.tape,
-    })
-}
-
-/// For who compares the two parsers, as long as there are two: the rows for `opts`, with the index
-/// or in one pass. In the test harness only.
-#[cfg(bun_sema_mimalloc)]
-pub fn parse_rows_for_comparison(
-    source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
-    opts: JSONOptions,
-    check_len: bool,
-    is_one_pass: bool,
-) -> crate::Result<ParsedJson> {
-    if !is_one_pass || source.contents.is_empty() {
-        return parse_to_rows(source, log, opts, check_len);
-    }
-    let out = parse_impl_in_one_pass(source, log, opts, check_len, E::TapeAlloc::Global)?;
-    Ok(ParsedJson {
-        root: out.root,
-        tape: out.tape,
-    })
-}
-
-/// JSON5, read by the reader of JSON. In the test harness only, until it takes the place of `json5.rs`.
-#[cfg(bun_sema_mimalloc)]
-pub fn parse_json5_rows_for_comparison(
-    source: &bun_ast::Source,
-    log: &mut bun_ast::Log,
-) -> crate::Result<ParsedJson> {
-    let opts = JSONOptions {
-        json_warn_duplicate_keys: false,
-        ..TSCONFIG_OPTS
-    };
-    let mut parser = crate::json_reader::Parser::new(source, log, opts, E::TapeAlloc::Global);
-    parser.read_as_json5();
-    let root = parser.parse_value()?;
-    parser.json5_end()?;
-    Ok(ParsedJson {
-        root,
-        tape: parser.take_tape(),
     })
 }
 

@@ -6,6 +6,7 @@ use super::info::{Position, Source};
 use super::oxlint::{code, is_error, page_of};
 use crate::results::FileResult;
 use bun_core::printer::json_stringify;
+use bun_core::strings;
 use bun_lint::linter::{LintMessage, RuleId};
 use std::io::Write;
 
@@ -96,6 +97,14 @@ pub(super) fn write_json(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta)
 
 /// `compact_message`: the words of `str::split_whitespace`, with a blank between them.
 fn write_compact(out: &mut Vec<u8>, text: &[u8]) {
+    // Most texts are that as they are.
+    let is_plain = strings::index_of_needs_escape_for_java_script_string(text, b'"').is_none();
+    let has_more_blanks =
+        strings::contains(text, b"  ") || text.starts_with(b" ") || text.ends_with(b" ");
+    if is_plain && !has_more_blanks {
+        out.extend_from_slice(text);
+        return;
+    }
     let start = out.len();
     let mut is_after_blank = false;
     let mut put = |out: &mut Vec<u8>, part: &str| {

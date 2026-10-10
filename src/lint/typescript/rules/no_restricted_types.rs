@@ -1,6 +1,5 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
-use std::borrow::Cow;
 
 /// Disallow certain types.
 pub struct NoRestrictedTypes {
@@ -25,22 +24,6 @@ const BANNED_TYPE_REPLACEMENT: Message = Message::new(
     "bannedTypeReplacement",
     "Replace `{{name}}` with `{{replacement}}`.",
 );
-
-/// `str.replaceAll(/\s/g, '')`
-fn remove_spaces(text: &[u8]) -> Cow<'_, [u8]> {
-    if !text.iter().any(|b| matches!(b, 0x09..=0x0D | 0x20 | 0x80..)) {
-        return Cow::Borrowed(text);
-    }
-    let mut out = Vec::with_capacity(text.len());
-    let mut points = strings::wtf8_codepoints(text).peekable();
-    while let Some((at, c)) = points.next() {
-        let end = points.peek().map_or(text.len(), |next| next.0);
-        if !strings::is_js_whitespace(c) {
-            out.extend_from_slice(&text[at..end]);
-        }
-    }
-    Cow::Owned(out)
-}
 
 fn custom_message(message: &[u8]) -> Vec<u8> {
     match message.is_empty() {
@@ -104,7 +87,7 @@ impl NoRestrictedTypes {
         // What has more characters that are no spaces than the longest name is none of them.
         let text = cx.slice(at);
         if text.len() <= self.longest || text.iter().filter(|it| it.is_ascii_graphic()).nth(self.longest).is_none() {
-            self.check_named(at, &remove_spaces(text), cx);
+            self.check_named(at, &strings::without_js_whitespace(text), cx);
         }
     }
 
@@ -131,7 +114,7 @@ impl Rule for NoRestrictedTypes {
     fn new(options: &Options) -> Self {
         let mut banned: Vec<(Vec<u8>, Ban)> = Vec::new();
         for (name, value) in options.object(0).object("types").entries() {
-            let name = remove_spaces(name).into_owned();
+            let name = strings::without_js_whitespace(name).into_owned();
             // A later entry replaces an earlier one of the same name.
             banned.retain(|it| it.0 != name);
             let ban = match value {

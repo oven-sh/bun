@@ -348,7 +348,9 @@ pub(crate) fn run<'a>(
         return Err(Refused::new(Refusal::Reported));
     }
     if f.diagnostics.len() > errors {
-        f.diagnostics.shared_sort_by_key(|it| (it.start, it.code));
+        if options.dialect == Default::default() {
+            f.diagnostics.shared_sort_by_key(|it| (it.start, it.code));
+        }
         f.has_parse_diagnostics = true;
     }
     f.mentioned.extend_from_slice(scratch.names.mentioned());
@@ -502,7 +504,9 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
         if self.is_ecmascript && !self.is_flow && !self.has_failed() {
             bun_sema::ecmascript::report_syntax_of_typescript(&mut self.f, self.lx.src);
         }
-        if self.f.diagnostics.len() > 1 {
+        // typescript-estree, acorn and Babel throw the error that is reported first, which is not the first in the
+        // text: the scanner reports what is wrong in a token before the parser says that it expected another.
+        if self.f.diagnostics.len() > 1 && self.options.dialect == Default::default() {
             self.f
                 .diagnostics
                 .shared_sort_by_key(|it| (it.start, it.code));

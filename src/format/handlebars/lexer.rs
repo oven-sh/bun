@@ -86,16 +86,6 @@ pub(crate) fn id_len(text: &[u8]) -> usize {
     }
 }
 
-fn white_space_run(text: &[u8]) -> usize {
-    let mut at = 0;
-    loop {
-        match strings::js_whitespace_len(&text[at..]) {
-            0 => return at,
-            len => at += len,
-        }
-    }
-}
-
 /// `LOOKAHEAD`: `[=~}\s\/.)\]|]`
 fn is_lookahead(rest: &[u8]) -> bool {
     matches!(
@@ -299,7 +289,7 @@ impl Lexer<'_> {
         let at = if rest.get(2) == Some(&b'~') { 3 } else { 2 };
         // `\s*{RIGHT_STRIP}?"}}"`
         let close_len = |from: usize| {
-            let from = from + white_space_run(&rest[from..]);
+            let from = from + crate::text::leading_white_space_len(&rest[from..]);
             let from = if rest.get(from) == Some(&b'~') {
                 from + 1
             } else {
@@ -336,7 +326,7 @@ impl Lexer<'_> {
             }
             Some(b'*') => self.token(TokenKind::Open, at + 1),
             _ => {
-                let keyword = at + white_space_run(&rest[at..]);
+                let keyword = at + crate::text::leading_white_space_len(&rest[at..]);
                 let after = keyword + 4;
                 if !rest[keyword..].starts_with(b"else") {
                     self.token(TokenKind::Open, at);
@@ -403,7 +393,9 @@ impl Lexer<'_> {
             }
             b'@' => self.token(TokenKind::Data, 1),
             b'|' => self.token(TokenKind::CloseBlockParams, 1),
-            _ if strings::js_whitespace_len(rest) > 0 => self.at += white_space_run(rest),
+            _ if strings::js_whitespace_len(rest) > 0 => {
+                self.at += crate::text::leading_white_space_len(rest)
+            }
             _ if followed_by(b"true") => self.token(TokenKind::Boolean, 4),
             _ if followed_by(b"false") => self.token(TokenKind::Boolean, 5),
             _ if followed_by(b"undefined") => self.token(TokenKind::Undefined, 9),
@@ -414,7 +406,7 @@ impl Lexer<'_> {
                     return Ok(());
                 }
                 if let Some(after) = rest.strip_prefix(b"as") {
-                    let blanks = white_space_run(after);
+                    let blanks = crate::text::leading_white_space_len(after);
                     if blanks > 0 && after.get(blanks) == Some(&b'|') {
                         self.token(TokenKind::OpenBlockParams, 2 + blanks + 1);
                         return Ok(());

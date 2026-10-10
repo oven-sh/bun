@@ -1901,6 +1901,32 @@ describe("brackets behind the text of a link", () => {
   });
 });
 
+describe("a wiki link behind a !", () => {
+  const html = (text: string) => Markdown.html(text, { wikiLinks: true });
+
+  test("what is in it hides nothing behind it", () => {
+    expect(html("![[a`b]] then `code` and <br> and [x](u) and *em*\n")).toBe(
+      '<p>!<x-wikilink data-target="a`b">a`b</x-wikilink> then <code>code</code> and <br> and <a href="u">x</a> and <em>em</em></p>\n',
+    );
+    expect(html("![[a`b]] then <ab:c> `\n")).toBe(
+      '<p>!<x-wikilink data-target="a`b">a`b</x-wikilink> then <a href="ab:c">ab:c</a> `</p>\n',
+    );
+    expect(html('![[a<b c="]] x `code` [l](u) "> z\n')).toBe(
+      '<p>!<x-wikilink data-target="a&lt;b c=&quot;">a&lt;b c=&quot;</x-wikilink> x <code>code</code> <a href="u">l</a> &quot;&gt; z</p>\n',
+    );
+    expect(html("![[a`b]](u) `c`\n")).toBe(
+      '<p>!<x-wikilink data-target="a`b">a`b</x-wikilink>(u) <code>c</code></p>\n',
+    );
+  });
+
+  test("brackets in the description of an image are no wiki link", () => {
+    expect(html("![[a]](u) `c`\n")).toBe('<p><img src="u" alt="[a]" /> <code>c</code></p>\n');
+    expect(html("![[a|b]](u)\n")).toBe('<p><img src="u" alt="[a|b]" /></p>\n');
+    expect(html("![[a `b`]](u)\n")).toBe('<p><img src="u" alt="[a b]" /></p>\n');
+    expect(html("![[a]][r]\n\n[r]: /u\n")).toBe('<p><img src="/u" alt="[a]" /></p>\n');
+  });
+});
+
 describe("a line of dashes under reference definitions", () => {
   test("is a thematic break: there is nothing to make a heading of", () => {
     expect(Markdown.html("[ref]: /uri\n---\n")).toBe("<hr />\n");

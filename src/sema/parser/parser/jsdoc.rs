@@ -14,8 +14,8 @@ use super::{Checkpoint, ListKind, Parser, ctx, take_span};
 use crate::lexer::Mark;
 use crate::token::T;
 use crate::{Options, Refusal};
-use bun_core::lexer::{end_of_run, is_white_space_single_line, last_char};
-use bun_core::strings::{self, CodePoint};
+use bun_core::lexer::{end_of_run, is_white_space_like, last_char};
+use bun_core::strings;
 use bun_sema::atom::{Atom, known};
 use bun_sema::check::jsdoc::syntax::{
     self, JsDoc, Syntax, TagKind, TypeArguments, TypeExpr, TypeShape,
@@ -169,7 +169,7 @@ fn full_start_before(src: &[u8], comments: &[(u32, u32)], token: u32) -> u32 {
     let before = comments.partition_point(|comment| comment.0 < token);
     let mut first = token as usize;
     for &(start, end) in comments.get(..before).unwrap_or_default().iter().rev() {
-        if end_of_run(src, end as usize, is_blank) < first {
+        if end_of_run(src, end as usize, is_white_space_like) < first {
             break;
         }
         first = start as usize;
@@ -179,7 +179,7 @@ fn full_start_before(src: &[u8], comments: &[(u32, u32)], token: u32) -> u32 {
     }
     loop {
         let (c, start) = last_char(src.get(..first).unwrap_or_default());
-        if !is_blank(c) {
+        if !is_white_space_like(c) {
             return first as u32;
         }
         first = start;
@@ -313,11 +313,6 @@ pub(crate) fn read_by_checker(
         return flags::AUGMENTS;
     }
     0
-}
-
-/// `IsWhiteSpaceLike`
-fn is_blank(c: CodePoint) -> bool {
-    is_white_space_single_line(c) || matches!(c, 0x0A | 0x0D | 0x2028 | 0x2029)
 }
 
 /// A token of `Scan`, as the parser of JSDoc comments tells tokens apart.

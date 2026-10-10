@@ -1,7 +1,8 @@
 //! The names of tags, emphasis, capital letters, and types.
 
-use super::text::{first_char, last_char, lines, parse_index, push_number};
+use super::text::{lines, parse_index, push_number};
 use crate::options::QuoteStyle;
+use crate::text::{first_char, last_char};
 use bun_core::strings;
 use std::borrow::Cow;
 
@@ -573,14 +574,6 @@ fn normalize_type_quotes(type_str: &[u8], quote_style: QuoteStyle) -> Bytes<'_> 
     Cow::Owned(result)
 }
 
-fn is_valid_js_identifier(text: &[u8]) -> bool {
-    let is_start = |byte: &u8| byte.is_ascii_alphabetic() || *byte == b'_' || *byte == b'$';
-    text.first().is_some_and(is_start)
-        && text
-            .iter()
-            .all(|byte| is_start(byte) || byte.is_ascii_digit())
-}
-
 /// `"userId": string` becomes `userId: string`.
 fn unquote_object_property_names(type_str: &[u8]) -> Bytes<'_> {
     if !strings::contains_char(type_str, b'"') {
@@ -616,7 +609,8 @@ fn unquote_object_property_names(type_str: &[u8]) -> Bytes<'_> {
         };
         let content = &type_str[start..end];
         if strings::trim_unicode_whitespace_start(&type_str[i..]).starts_with(b":")
-            && is_valid_js_identifier(content)
+            && content.is_ascii()
+            && bun_core::lexer::is_identifier(content)
         {
             result.extend_from_slice(content);
         } else {

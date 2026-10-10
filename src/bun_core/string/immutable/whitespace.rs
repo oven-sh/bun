@@ -3,8 +3,27 @@
 //! terminators that end a line of a source text. Unicode's: the property `White_Space`, which Rust's
 //! `str::trim` goes by. ASCII's is std's: `<[u8]>::trim_ascii`, `u8::is_ascii_whitespace`.
 
-use super::{contains_char, index_of_any, index_of_char_usize};
+use super::{contains_char, index_of_any, index_of_char_usize, wtf8_codepoints};
 use std::borrow::Cow;
+
+/// `text.replace(/\s/g, "")`, for WTF-8.
+pub fn without_js_whitespace(text: &[u8]) -> Cow<'_, [u8]> {
+    if !text
+        .iter()
+        .any(|b| matches!(b, 0x09..=0x0D | 0x20 | 0x80..))
+    {
+        return Cow::Borrowed(text);
+    }
+    let mut out = Vec::with_capacity(text.len());
+    let mut points = wtf8_codepoints(text).peekable();
+    while let Some((at, cp)) = points.next() {
+        let end = points.peek().map_or(text.len(), |next| next.0);
+        if !is_js_whitespace(cp) {
+            out.extend_from_slice(&text[at..end]);
+        }
+    }
+    Cow::Owned(out)
+}
 
 /// ECMAScript's `LineTerminator`: LF, CR, U+2028 and U+2029.
 #[inline]

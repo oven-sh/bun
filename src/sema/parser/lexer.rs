@@ -8,7 +8,9 @@
 use crate::Refusal;
 use crate::names::{Names, Text};
 use crate::token::T;
-use bun_core::lexer::{is_identifier_part, is_identifier_start};
+use bun_core::lexer::{
+    is_identifier_part, is_identifier_start, is_white_space_like, is_white_space_single_line,
+};
 use bun_core::strings::{is_js_line_terminator, push_codepoint_wtf8_joined};
 use bun_sema::atom::{Atom, Intern};
 use bun_sema::hir::{CommentDirective, CommentDirectiveKind, Diagnostic, DiagnosticKind};
@@ -164,19 +166,6 @@ fn end_of_run_before(src: &[u8], mut pos: usize, ends: [u8; 4]) -> usize {
         pos += 1;
     }
     pos
-}
-
-/// `IsWhiteSpaceSingleLine` for a code point that is not ASCII.
-fn is_unicode_blank(c: u32) -> bool {
-    matches!(
-        c,
-        0x85 | 0xA0 | 0x1680 | 0x2000..=0x200B | 0x202F | 0x205F | 0x3000 | 0xFEFF
-    )
-}
-
-/// `IsWhiteSpaceLike`
-fn is_white_space_like(c: u32) -> bool {
-    matches!(c, 0x09..=0x0D | 0x20 | 0x2028 | 0x2029) || is_unicode_blank(c)
 }
 
 impl<'a> Lexer<'a> {
@@ -679,7 +668,7 @@ impl<'a> Lexer<'a> {
         };
         if c == 0x2028 || c == 0x2029 {
             self.newline_before = true;
-        } else if !is_unicode_blank(c) {
+        } else if !is_white_space_single_line(c as i32) {
             self.name_slowly(pos, pos);
             return None;
         }
@@ -1995,7 +1984,9 @@ impl<'a> Lexer<'a> {
         // "Whitespaces and semicolons at the end are not likely to be part of the regex"
         while end > start + 1 {
             match decode_last(src.get(..end).unwrap_or_default()) {
-                Some((c, len)) if is_white_space_like(c) || c == u32::from(b';') => end -= len,
+                Some((c, len)) if is_white_space_like(c as i32) || c == u32::from(b';') => {
+                    end -= len
+                }
                 _ => break,
             }
         }
@@ -2105,7 +2096,7 @@ impl Lexer<'_> {
     fn is_string_of_javascript(&mut self, before: usize, start: usize) -> bool {
         let mut pos = before;
         while let Some((c, len)) = decode(self.src.get(pos..start).unwrap_or_default())
-            && is_white_space_like(c)
+            && is_white_space_like(c as i32)
         {
             pos += len;
         }

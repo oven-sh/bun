@@ -190,7 +190,7 @@ fn starts_with_end_of_script(text: &[u8]) -> bool {
             .is_some_and(|name| name.eq_ignore_ascii_case(b"script"))
         && !text
             .get(8)
-            .is_some_and(|&byte| text::is_word_character(byte))
+            .is_some_and(|&byte| strings::is_regexp_word_byte(byte))
 }
 
 impl Substitutions<'_> {

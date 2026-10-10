@@ -1866,10 +1866,14 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
             export default [{ files: ["src/*"], plugins: { own }, rules: { "own/grows": "error", "id-match": ["error", "^[a-z]+$"] } }];`,
           "plugin.mjs": `
             const kept = [];
+            let files = 0;
             const grows = {
               create: context => ({
                 Program(node) {
-                  if (kept.length < 10) kept.push(new Uint8Array(32 << 20).fill(1));
+                  // It takes its time, so that more than one engine pays, and begins to grow when these have started.
+                  let sum = 0;
+                  for (let i = 0; i < 3e6; i++) sum += i % 7;
+                  if (++files > 6 && kept.length < 10) kept.push(new Uint8Array(32 << 20).fill(sum % 5));
                   context.report({ node, message: "seen" });
                 },
               }),

@@ -231,22 +231,6 @@ enum PredefinedFormat {
     UpperCase,
 }
 
-/// `text === text.toUpperCase()`
-fn is_upper_case(text: &[u8]) -> bool {
-    match text.is_ascii() {
-        true => !text.iter().any(u8::is_ascii_lowercase),
-        false => text::is_upper_case(text),
-    }
-}
-
-/// `text === text.toLowerCase()`
-fn is_lower_case(text: &[u8]) -> bool {
-    match text.is_ascii() {
-        true => !text.iter().any(u8::is_ascii_uppercase),
-        false => text::is_lower_case(text),
-    }
-}
-
 /// `is_in_case(name[0])`. Half of a surrogate pair has no case.
 fn is_first_in_case(name: &[u8], is_in_case: fn(&[u8]) -> bool) -> bool {
     let mut points = strings::wtf8_codepoints(name);
@@ -279,7 +263,7 @@ fn has_strict_camel_humps(name: &[u8], mut is_upper: bool) -> bool {
                 if unit == b"_" {
                     return false;
                 }
-                is_upper_case(unit) && !is_lower_case(unit)
+                text::is_upper_case(unit) && !text::is_lower_case(unit)
             }
         };
         is_first = false;
@@ -326,19 +310,19 @@ impl PredefinedFormat {
         name.is_empty()
             || match self {
                 PredefinedFormat::CamelCase => {
-                    is_first_in_case(name, is_lower_case) && !strings::contains_char(name, b'_')
+                    is_first_in_case(name, text::is_lower_case) && !strings::contains_char(name, b'_')
                 }
                 PredefinedFormat::StrictCamelCase => {
-                    is_first_in_case(name, is_lower_case) && has_strict_camel_humps(name, false)
+                    is_first_in_case(name, text::is_lower_case) && has_strict_camel_humps(name, false)
                 }
                 PredefinedFormat::PascalCase => {
-                    is_first_in_case(name, is_upper_case) && !strings::contains_char(name, b'_')
+                    is_first_in_case(name, text::is_upper_case) && !strings::contains_char(name, b'_')
                 }
                 PredefinedFormat::StrictPascalCase => {
-                    is_first_in_case(name, is_upper_case) && has_strict_camel_humps(name, true)
+                    is_first_in_case(name, text::is_upper_case) && has_strict_camel_humps(name, true)
                 }
-                PredefinedFormat::SnakeCase => is_lower_case(name) && validate_underscores(name),
-                PredefinedFormat::UpperCase => is_upper_case(name) && validate_underscores(name),
+                PredefinedFormat::SnakeCase => text::is_lower_case(name) && validate_underscores(name),
+                PredefinedFormat::UpperCase => text::is_upper_case(name) && validate_underscores(name),
             }
     }
 }

@@ -68,6 +68,7 @@ impl Parser<'_> {
         let follows_empty_item = self.last_header_opens_list_item
             && self.current_block.is_none()
             && !self.last_list_item_starts_with_two_blank_lines;
+        let follows_task_mark = core::mem::take(&mut self.last_line_is_only_a_task_mark);
         // Nothing is on the line but the markers of containers that were open before it.
         let mut is_empty = false;
 
@@ -260,6 +261,7 @@ impl Parser<'_> {
                     // A list item can begin with at most one blank line.
                     if n_parents > 0
                         && self.containers[(n_parents - 1) as usize].ch != b'>'
+                        && !self.containers[(n_parents - 1) as usize].is_task
                         && n_brothers + n_children == 0
                         && self.current_block.is_none()
                         && self.last_header_opens_list_item
@@ -682,7 +684,8 @@ impl Parser<'_> {
             // Default: normal text line
             line.r#type = LineType::Text;
             if (effective_pivot_type == LineType::Text
-                || (follows_empty_item && compat::text_goes_on_in_an_empty_item(&self.flags)))
+                || (follows_empty_item
+                    && (follows_task_mark || compat::text_goes_on_in_an_empty_item(&self.flags))))
                 && n_brothers + n_children == 0
                 && self.directives.last().is_none_or(|it| *it < n_parents)
             {
@@ -726,6 +729,7 @@ impl Parser<'_> {
                     // Nothing else is on the line
                     if off >= self.size || helpers::is_newline(self.text[off as usize]) {
                         line.r#type = LineType::Blank;
+                        self.last_line_is_only_a_task_mark = true;
                     }
                 }
             }

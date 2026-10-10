@@ -89,19 +89,6 @@ fn each_self_assigned_property<'a>(left: Prop<'a>, right: Prop<'a>, props: bool,
     }
 }
 
-/// `text.replace(/\s+/gu, "")`
-fn without_spaces(source: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(source.len());
-    let mut points = strings::wtf8_codepoints(source).peekable();
-    while let Some((start, c)) = points.next() {
-        if !strings::is_js_whitespace(c) {
-            let end = points.peek().map_or(source.len(), |next| next.0);
-            out.extend_from_slice(source.get(start..end).unwrap_or_default());
-        }
-    }
-    out
-}
-
 impl Rule for NoSelfAssign {
     const META: Meta = Meta::eslint("no-self-assign", Kind::Problem).recommended();
     type State<'a> = ();
@@ -123,7 +110,7 @@ impl Rule for NoSelfAssign {
             each_self_assignment(target, value, rule.props, &mut |found| {
                 // A default value in a destructuring assignment is not an assignment.
                 if !utils::is_assignment_target(e) {
-                    cx.report(found, SELF_ASSIGNMENT).data("name", without_spaces(found.text()));
+                    cx.report(found, SELF_ASSIGNMENT).data("name", strings::without_js_whitespace(found.text()));
                 }
             });
         });

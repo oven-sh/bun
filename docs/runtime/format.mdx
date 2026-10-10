@@ -332,6 +332,8 @@ The first line of the output tells you that the script ran: `$ bun format`.
 
 In another script, `bun format` runs the `format` script too, with the flags added. So `"format:check": "bun format --check"` runs the `format` script with `--check`.
 
+A file such as `format.ts`, a directory `format/` with an `index.js`, or `node_modules/.bin/format` keeps the name too: `bun format` runs that, as it did before.
+
 ## Differences from Prettier
 
 `bun format` aims to print exactly what Prettier 3 prints. If it prints something else, that is a bug in Bun. [Open an issue on GitHub](https://github.com/oven-sh/bun/issues) with code that shows the difference.

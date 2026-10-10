@@ -179,6 +179,8 @@ const STRING: VariantTypes = 1 << 7;
 const TRUTHY_BOOLEAN: VariantTypes = 1 << 8;
 const TRUTHY_NUMBER: VariantTypes = 1 << 9;
 const TRUTHY_STRING: VariantTypes = 1 << 10;
+/// For tsgolint 7.0: none of these, as `T[K]` and `Awaited<T>`, which typescript-eslint takes for objects.
+const MIXED: VariantTypes = 1 << 11;
 
 /// A call of `getWrappingFixer` whose `wrap` is `` code => `${before}${code}${after}` ``.
 #[derive(Copy, Clone)]
@@ -339,6 +341,8 @@ fn inspect_variant_types(types: &mut dyn Iterator<Item = Type<'_>>) -> VariantTy
     let any = TypeFlags::TYPE_PARAMETER | TypeFlags::ANY | TypeFlags::UNKNOWN;
     let not_an_object =
         nullish | TypeFlags::BOOLEAN_LIKE | TypeFlags::STRING_LIKE | number_like | any | TypeFlags::NEVER;
+    let an_object =
+        TypeFlags::OBJECT | TypeFlags::NON_PRIMITIVE | TypeFlags::ES_SYMBOL_LIKE | TypeFlags::INTERSECTION;
 
     let mut variant_types = 0;
     let (mut booleans, mut is_first_boolean_true) = (0, false);
@@ -371,6 +375,9 @@ fn inspect_variant_types(types: &mut dyn Iterator<Item = Type<'_>>) -> VariantTy
             variant_types |= ENUM;
         }
         if !flags.intersects(not_an_object) {
+            if !flags.intersects(an_object) && ty.file().language().is_oxlint {
+                variant_types |= MIXED;
+            }
             has_objects = true;
             has_branded_boolean = has_branded_boolean || is_branded_boolean(ty);
         }
@@ -474,6 +481,10 @@ impl StrictBooleanExpressions {
                 (false, NUMBER | TRUTHY_NUMBER) => unless(self.allow_number, ConditionError::Number),
                 (false, _) => None,
             };
+        }
+
+        if types & MIXED != 0 {
+            return Some(ConditionError::Other);
         }
 
         // `boolean` and `never` are always okay.

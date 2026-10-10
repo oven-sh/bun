@@ -10,7 +10,6 @@ pub struct JsxNoLeakedRender {
     allows_coerce: bool,
     /// The first of `validStrategies`.
     fix_strategy: Option<Strategy>,
-    ignore_attributes: bool,
 }
 
 #[derive(Copy, Clone)]
@@ -37,7 +36,6 @@ impl Rule for JsxNoLeakedRender {
             allows_ternary: strategies.contains(&"ternary"),
             allows_coerce: strategies.contains(&"coerce"),
             fix_strategy: strategies.first().map(strategy_of),
-            ignore_attributes: config.bool_or("ignoreAttributes", false),
         }
     }
 
@@ -53,11 +51,6 @@ impl Rule for JsxNoLeakedRender {
 }
 
 impl JsxNoLeakedRender {
-    /// Whether `e` is all that is in the braces of a `JSXExpressionContainer` that the rule looks at.
-    fn is_about(&self, e: Expr) -> bool {
-        e.jsx_container_span().is_some() && !(self.ignore_attributes && matches!(e.parent(), Node::Prop(_)))
-    }
-
     /// `ruleFixer`. Without a strategy upstream throws.
     fn fix<'a>(&self, fixer: Fixer<'a>, reported: Expr<'a>, left: Expr<'a>, right: Expr<'a>) -> Option<Fix> {
         let text = match self.fix_strategy? {
@@ -76,7 +69,8 @@ impl JsxNoLeakedRender {
 }
 
 fn check_logical_expression<'a>(rule: &JsxNoLeakedRender, e: Expr<'a>, cx: &mut Cx<'a, JsxNoLeakedRender>) {
-    if !rule.is_about(e) {
+    // `JSXExpressionContainer > ..`
+    if e.jsx_container_span().is_none() {
         return;
     }
     let ExprKind::Binary { left, right, .. } = e.kind() else {
@@ -92,7 +86,8 @@ fn check_logical_expression<'a>(rule: &JsxNoLeakedRender, e: Expr<'a>, cx: &mut 
 }
 
 fn check_conditional_expression<'a>(rule: &JsxNoLeakedRender, e: Expr<'a>, cx: &mut Cx<'a, JsxNoLeakedRender>) {
-    if !rule.is_about(e) {
+    // `JSXExpressionContainer > ..`
+    if e.jsx_container_span().is_none() {
         return;
     }
     let ExprKind::Cond { test, yes, no } = e.kind() else {

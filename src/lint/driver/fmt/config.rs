@@ -1177,13 +1177,27 @@ impl<'c> Configs<'c> {
         (self.config_of(scope).ok().flatten()).map(|config| &config.path[..])
     }
 
-    /// Whether the configuration of oxfmt has `svelte`, which turns on the formatting of `.svelte` files.
-    pub(crate) fn formats_svelte(&self, scope: &Scope) -> bool {
-        let is_on = |it: &(Vec<u8>, Vec<u8>)| it.0 == b"svelte" && it.1 != b"false";
-        self.config_of(scope)
-            .ok()
-            .flatten()
-            .is_some_and(|config| config.is_oxfmt && config.settings.iter().any(is_on))
+    /// Whether the configuration of oxfmt has `svelte` for the file at `path`, which has `scope`: that turns on the
+    /// formatting of a component, and of the blocks of Svelte in a Markdown file. An override can turn it on and off.
+    pub(crate) fn formats_svelte(&self, scope: &Scope, path: &[u8]) -> bool {
+        let Some(config) = (self.config_of(scope).ok().flatten()).filter(|it| it.is_oxfmt) else {
+            return false;
+        };
+        let last_in = |settings: &Settings| {
+            let about_it = settings.iter().rfind(|it| it.0 == b"svelte");
+            about_it.map(|it| it.1 != b"false")
+        };
+        let overrides = config.overrides.iter().rev();
+        let mut about_it = overrides.filter_map(|it| Some((it, last_in(&it.settings)?)));
+        let mut relative = None;
+        about_it
+            .find(|it| {
+                let directory = paths::dirname(&config.path);
+                (it.0).matches(relative.get_or_insert_with(|| paths::relative(directory, path)))
+            })
+            .map(|it| it.1)
+            .or_else(|| last_in(&config.settings))
+            .unwrap_or(false)
     }
 
     /// The option `parser` for the file at `path`, which has `scope`, if it is set.
@@ -1358,7 +1372,7 @@ impl<'c> Configs<'c> {
             let _ = resolved.options.set(b"parser", b"svelte");
         }
         let has_svelte = match is_oxfmt {
-            true => self.formats_svelte(scope),
+            true => self.formats_svelte(scope, path),
             false => self.has_our_svelte(scope),
         };
         if has_svelte {

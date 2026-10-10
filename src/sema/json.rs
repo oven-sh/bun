@@ -49,6 +49,17 @@ fn append_quote(out: &mut Vec<u8>, text: &[u8]) {
 }
 
 impl Json {
+    /// `Boolean(value)`
+    pub fn is_truthy(&self) -> bool {
+        match self {
+            Json::Null => false,
+            Json::Bool(value) => *value,
+            Json::Number(value) => *value != 0.0 && !value.is_nan(),
+            Json::String(value) => !value.is_empty(),
+            Json::Array(_) | Json::Object(_) => true,
+        }
+    }
+
     /// `core.StringifyJson` without indentation.
     pub fn stringify(&self, out: &mut Vec<u8>) {
         match self {

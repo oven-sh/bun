@@ -2130,12 +2130,12 @@ impl<'a> Room<'a> {
         }
     }
 
-    /// What is left of `bytes`, and no more than lets the request take half as much again as with one program after the other,
-    /// which is what they have in common and the largest.
+    /// What is left of `bytes`, and no more than lets the request take a third as much again as with one program after the
+    /// other, which is what they have in common and the largest.
     fn for_programs(&self, taken: &Taken) -> usize {
         let in_common = (self.in_common)();
         let left = self.bytes.saturating_sub(in_common);
-        left.min(taken.largest + (in_common + taken.largest) / 2)
+        left.min(taken.largest + (in_common + taken.largest) / 3)
     }
 
     /// Waits until there is room for one more, or nothing else runs.

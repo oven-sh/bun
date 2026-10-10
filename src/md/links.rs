@@ -250,9 +250,9 @@ impl Parser<'_> {
                 b'[' => {
                     let is_image = pos > 0 && content[pos - 1] == b'!' && escape_end != pos;
                     if self.flags.wiki_links
-                        && !is_image
                         && content.get(pos + 1) == Some(&b'[')
                         && let Some(wiki_link) = self.match_wiki_link(content, pos)
+                        && !(is_image && self.is_image_around_brackets(content, pos, &wiki_link))
                     {
                         around_wiki_labels.push((end, top));
                         (end, top) = (wiki_link.inner_end, BracketMatches::UNMATCHED);
@@ -656,6 +656,47 @@ impl Parser<'_> {
         }
 
         None
+    }
+
+    /// `![[a]](b)` is an image. Whether the `[` at `open` is closed as one by the second `]` of `wiki_link`, which starts there.
+    fn is_image_around_brackets(
+        &mut self,
+        content: &[u8],
+        open: usize,
+        wiki_link: &WikiLinkMatch,
+    ) -> bool {
+        let (mut pos, mut depth) = (wiki_link.inner_start, 0_u32);
+        let mut taken = pos;
+        while pos < wiki_link.inner_end {
+            if content[pos] == b'\\' {
+                pos += 1;
+                if content
+                    .get(pos)
+                    .is_some_and(|it| helpers::is_ascii_punctuation(*it))
+                {
+                    pos += 1;
+                    taken = pos;
+                }
+                continue;
+            }
+            if let Some(hidden) = self.hidden_at(content, pos, taken, true) {
+                pos = hidden.end;
+                taken = pos;
+                continue;
+            }
+            match content[pos] {
+                b'[' => depth += 1,
+                b']' if depth == 0 => return false,
+                b']' => depth -= 1,
+                _ => {}
+            }
+            pos += 1;
+        }
+        pos == wiki_link.inner_end
+            && depth == 0
+            && self
+                .link_end_behind(content, open, wiki_link.inner_end + 1)
+                .is_some()
     }
 
     /// Lookahead-only match of `[[destination]]` / `[[destination|label]]`,

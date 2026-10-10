@@ -146,6 +146,12 @@ pub enum Lookup<'e> {
     TypeScript,
     /// eslint-import-resolver-node, with its `extensions`.
     Node(SmallVec<[&'e [u8]; 4]>),
+    /// The same, with `paths`, which are as they are written, and `moduleDirectory`.
+    NodeWith {
+        extensions: SmallVec<[&'e [u8]; 4]>,
+        paths: SmallVec<[&'e [u8]; 2]>,
+        module_directories: SmallVec<[&'e [u8]; 1]>,
+    },
 }
 
 /// How a plugin reads a file that is not the one that is linted.
@@ -195,6 +201,8 @@ pub trait Modules: Sync {
     fn component(&self, module: ModuleId) -> u32;
 
     /// The file that `specifier` means in the file at `from`: absolute, separated by `/`. It can be asked at any time.
+    /// Only what is found in one of the `paths` of [`Lookup::NodeWith`] that is relative is relative too, to the
+    /// working directory: so eslint-import-resolver-node answers.
     fn resolve_file(
         &self,
         from: &[u8],

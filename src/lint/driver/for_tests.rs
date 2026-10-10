@@ -62,6 +62,7 @@ impl Host for Tester<'_> {
             keeps_text: true,
             reads_fixes: true,
             reads_help: true,
+            help_on_demand: false,
             reads_suppressions: true,
             js_plugins: &self.js_plugins,
             modules: &Graph::new(&store),
@@ -254,6 +255,8 @@ pub fn run_path_tests(args: &[&[u8]]) -> Option<Vec<u8>> {
             },
             b"dirname" => paths::dirname_as(style, a).to_vec(),
             b"namespaced" => paths::namespaced(a),
+            b"normalize" => paths::normalize(a),
+            b"join" => paths::join_normalized(a, b),
             _ => return None,
         });
         out.push(b'\n');

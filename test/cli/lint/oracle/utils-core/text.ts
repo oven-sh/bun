@@ -12,6 +12,10 @@ if (!eslintDir) throw new Error("set ESLINT_DIR");
 const fromEslint = createRequire(join(eslintDir, "package.json"));
 const astUtils = fromEslint("./lib/rules/utils/ast-utils.js");
 const escapeStringRegexp = fromEslint("escape-string-regexp");
+// `Number(text)` as V8 has it, on which ESLint runs. JavaScriptCore adds the digits of `0b` and `0o` up in a double, which is not the
+// nearest one from 2^53 on. A BigInt is rounded once in both.
+const toNumber = (text: string) =>
+  /^0[box][0-9a-f]+$/i.test(text.trim()) && !Number.isNaN(Number(text)) ? Number(BigInt(text.trim())) : Number(text);
 const naturalCompare = fromEslint("natural-compare");
 const esutils = fromEslint("esutils");
 
@@ -56,7 +60,7 @@ all.forEach((a, i) => {
         a === "" ? "" : a[0].toUpperCase() + a.slice(1),
         a.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
         escapeStringRegexp(a),
-        String(Number(a)),
+        String(toNumber(a)),
         JSON.stringify(a),
         String(a.split(lineBreak).length),
         a.slice(1, 3).isWellFormed() ? a.slice(1, 3) : null,

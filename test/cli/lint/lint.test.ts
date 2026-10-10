@@ -357,6 +357,13 @@ describe.concurrent("bun lint", () => {
             ["//server/share/a", "//other/share/a"],
           ],
           dirname: [["C:/a/b"], ["C:/a"], ["C:/"], ["//server/share/a"], ["//server/share/"]],
+          normalize: [["C:/a/../b/./c/"], ["C:/.."], ["//server/share/a/.."], ["C:a/.."]],
+          join: [
+            ["C:/a", "../b"],
+            ["C:/a/", "/b/"],
+            ["//server/share", "a"],
+            ["C:/", ""],
+          ],
           namespaced: [
             ["C:/a/b"],
             ["C:\\a\\b"],
@@ -383,6 +390,13 @@ describe.concurrent("bun lint", () => {
             ["/a", "/a"],
           ],
           dirname: [["/a/b"], ["/a"], ["/"]],
+          normalize: [["/a/../b/./c/"], ["a//b/.."], ["./a"], ["../../a/.."], [""]],
+          join: [
+            ["/a", "../b"],
+            ["a", "b/"],
+            ["", ""],
+            ["pkg", "./x/../y"],
+          ],
         },
       };
       for (const [style, path] of [
@@ -392,7 +406,8 @@ describe.concurrent("bun lint", () => {
         const all = Object.entries(cases[style]).flatMap(([name, list]) => list.map(([a, b = "."]) => [name, a, b]));
         const expected = all.map(([name, a, b]) => {
           if (name === "namespaced") return path.toNamespacedPath(a);
-          const answer = name === "dirname" ? path.dirname(a) : path[name as "resolve" | "relative"](a, b);
+          if (name === "normalize") return path.normalize(a).replaceAll("\\", "/");
+          const answer = name === "dirname" ? path.dirname(a) : path[name as "resolve" | "relative" | "join"](a, b);
           return answer.replaceAll("\\", "/");
         });
         const { stdout, exitCode } = await run(String(dir), ["--run-path-tests", style, ...all.flat()]);
@@ -976,6 +991,40 @@ describe.concurrent("bun lint", () => {
         });
         expect(start_time).toBeNumber();
         expect(exitCode).toBe(1);
+      });
+
+      // What oxlint says besides a message is made when the message is shown with its code: its text is linted once more.
+      describe("the help of a problem that is shown", () => {
+        const rules = { "no-underscore-dangle": "error", "no-var": "error" };
+        const help = "note: Remove the dangling '_' or add `_a` to the 'allow' configuration.\n";
+        const print = async (text: string, flags: string[], stdin?: string) => {
+          const files = { ".oxlintrc.json": rc({ rules }), "a.js": text };
+          return await lint(files, ["-f", "default", ...flags], { env: { NO_COLOR: "1" }, reads: ["a.js"], stdin });
+        };
+        const times = (raw: string) => raw.split(help).length - 1;
+
+        test("is there, however many problems there are", async () => {
+          const [few, many, all] = await Promise.all([
+            print("let _a;\n".repeat(3), ["a.js"]),
+            print("let _a;\n".repeat(60), ["a.js"]),
+            print("let _a;\n".repeat(60), ["--all", "a.js"]),
+          ]);
+          expect([few, many, all].map(it => times(it.raw))).toEqual([3, 1, 60]);
+          // The one that stands for all is printed like the first of all.
+          const first = (raw: string) => raw.slice(0, raw.indexOf(help) + help.length);
+          expect(first(many.raw)).toBe(first(all.raw));
+        });
+
+        test("is about the text that the message is about, which --fix has changed since", async () => {
+          const { raw, files } = await print("var _a;\n", ["--fix", "a.js"]);
+          expect(files["a.js"]).toBe("let _a;\n");
+          expect(times(raw)).toBe(1);
+        });
+
+        test("is there for a text from standard input", async () => {
+          const { raw } = await print("", ["--stdin", "--stdin-filename", "b.js"], "let _a;\n");
+          expect(times(raw)).toBe(1);
+        });
       });
 
       test("unix, stylish, github and agent are oxlint's: the path from the working directory, columns in bytes, plugin(rule)", async () => {
@@ -1625,7 +1674,7 @@ describe.concurrent("bun lint", () => {
         const helps = helpsOf(raw, messages).map((it, index) => ({ ...messages[index], said: it }));
         const wrong = helps.filter(it => it.said !== undefined && it.said !== it.help);
         expect(wrong.map(it => [it.rule, it.id])).toEqual([]);
-        expect(helps.filter(it => it.said === undefined && it.help !== undefined).length).toBeLessThanOrEqual(74);
+        expect(helps.filter(it => it.said === undefined && it.help !== undefined).length).toBeLessThanOrEqual(9);
       });
 
       // The table has no texts of messages, only numbers that are made of them: a message that is reworded would lose its help.
@@ -1637,7 +1686,7 @@ describe.concurrent("bun lint", () => {
         for (const file of new Bun.Glob("**/*.rs").scanSync(root)) {
           const text = readFileSync(join(root, file), "utf8");
           for (const [, id, plain, , raw] of text.matchAll(
-            /(?:Message::new|\bm)\(\s*"(\w*)",\s*(?:"((?:[^"\\]|\\.)*)"|r(#*)"(.*?)"\3)/gs,
+            /(?:Message::new|\bm)\(\s*"([\w-]*)",\s*(?:"((?:[^"\\]|\\.)*)"|r(#*)"(.*?)"\3)/gs,
           )) {
             if (!byId.has(id)) byId.set(id, new Set());
             byId.get(id)!.add(raw ?? unescaped(plain));
@@ -1649,7 +1698,7 @@ describe.concurrent("bun lint", () => {
           return (low(Bun.hash.wyhash(rule, 0n)) ^ ((message << 16) | (message >>> 16))) >>> 0;
         };
         const table = readFileSync(join(root, "oxlint_help.rs"), "utf8");
-        const entries = [...table.matchAll(/^ {4}\(0x([0-9A-F]{8}), .*\), \/\/ (\S+) ?(\w*)$/gm)];
+        const entries = [...table.matchAll(/^ {4}\(0x([0-9A-F]{8}), .*\), \/\/ (\S+) ?([\w-]*)$/gm)];
         expect(entries.length).toBeGreaterThan(700);
         const lost = entries.filter(
           ([, hash, rule, id]) => ![...(byId.get(id) ?? [])].some(text => key(rule, id, text) === parseInt(hash, 16)),
@@ -2309,6 +2358,108 @@ describe.concurrent("bun lint", () => {
 
   // What ESLint 10.12 does with these `rules`, given two lines more: a plugin `no-restricted-syntax` that hands out ESLint's own rule
   // under the names.
+  // What ESLint 10.12 says: it gives `languageOptions.ecmaVersion` to espree. Each row: the edition that has brought it, the code, and
+  // what the edition before makes of it.
+  test("syntax that is newer than ecmaVersion is a parsing error", async () => {
+    const rows: [number, string, string, string?][] = [
+      [2015, "const a = 1;", "1:1 The keyword 'const' is reserved"],
+      [2015, "let a;", "1:5 Unexpected token a"],
+      [2015, "(a) => a;", "1:6 Unexpected token >"],
+      [2015, "class A {}", "1:1 The keyword 'class' is reserved"],
+      [2015, "`a`;", "1:1 Unexpected character '`'"],
+      [2015, "var { a } = b;", "1:5 Unexpected token {"],
+      [2015, "var [a] = b;", "1:5 Unexpected token ["],
+      [2015, "for (a of b);", "1:8 Unexpected token of"],
+      [2015, "function* g() {}", "1:9 Unexpected token *"],
+      [2015, "var a = { b };", "1:13 Unexpected token }"],
+      [2015, "var a = { b() {} };", "1:12 Unexpected token ("],
+      [2015, "var a = { [b]: 1 };", "1:11 Unexpected token ["],
+      [2015, "[...a];", "1:2 Unexpected token ."],
+      [2015, "f(...a);", "1:3 Unexpected token ."],
+      [2015, "function f(a = 1) {}", "1:14 Unexpected token ="],
+      [2015, "function f(...a) {}", "1:12 Unexpected token ."],
+      [2015, "0b1;", "1:2 Identifier directly after number"],
+      [2015, "0o7;", "1:2 Identifier directly after number"],
+      [2015, "/a/u;", "1:2 Invalid regular expression flag"],
+      [2015, "/a/y;", "1:2 Invalid regular expression flag"],
+      [2015, "'\\u{61}';", "1:1 Unexpected token"],
+      [2016, "a ** b;", "1:4 Unexpected token *"],
+      [2016, "a **= b;", "1:4 Unexpected token *="],
+      [2017, "async function f() {}", "1:7 Unexpected token function"],
+      [2017, "async () => 1;", "1:10 Unexpected token =>"],
+      [2017, "f(a,);", "1:5 Unexpected token )"],
+      [2017, "function f(a,) {}", "1:14 Unexpected token )"],
+      [2017, "var a = { async b() {} };", "1:17 Unexpected token b"],
+      [2018, "var a = { ...b };", "1:11 Unexpected token ..."],
+      [2018, "var { ...a } = b;", "1:7 Unexpected token ..."],
+      [2018, "async function f() { for await (a of b); }", "1:26 Unexpected token await"],
+      [2018, "async function* f() {}", "1:15 Unexpected token *"],
+      [2018, "/(?<a>b)/;", "1:2 Invalid regular expression: /(?<a>b)/: Invalid group"],
+      [2018, "/(?<=a)b/;", "1:2 Invalid regular expression: /(?<=a)b/: Invalid group"],
+      [2018, "/a/s;", "1:2 Invalid regular expression flag"],
+      [2018, "/\\p{L}/u;", "1:2 Invalid regular expression: /\\p{L}/: Invalid escape"],
+      [2019, "try {} catch {}", "1:14 Unexpected token {"],
+      [2019, "'\u2028';", "1:1 Unterminated string constant"],
+      [2020, "a?.b;", "1:3 Unexpected token ."],
+      [2020, "a?.[b];", "1:3 Unexpected token ."],
+      [2020, "a?.();", "1:3 Unexpected token ."],
+      [2020, "a ?? b;", "1:4 Unexpected token ?"],
+      [2020, "1n;", "1:2 Identifier directly after number"],
+      [2020, "import('a');", "1:1 'import' and 'export' may appear only with 'sourceType: module'"],
+      [2020, "export * as a from 'a';", "1:10 Unexpected token as", "module"],
+      [2020, "import.meta;", "1:7 Unexpected token .", "module"],
+      [2021, "a ||= b;", "1:5 Unexpected token ="],
+      [2021, "a &&= b;", "1:5 Unexpected token ="],
+      [2021, "a ??= b;", "1:5 Unexpected token ="],
+      [2021, "1_000;", "1:2 Identifier directly after number"],
+      [2022, "class A { b = 1; }", "1:13 Unexpected token ="],
+      [2022, "class A { b; }", "1:12 Unexpected token ;"],
+      [2022, "class A { #b; }", "1:11 Unexpected character '#'"],
+      [2022, "class A { #b() {} }", "1:11 Unexpected character '#'"],
+      [2022, "class A { static b = 1; }", "1:20 Unexpected token ="],
+      [2022, "class A { static {} }", "1:18 Unexpected token {"],
+      [2022, "class A { #b; c() { #b in this; } }", "1:11 Unexpected character '#'"],
+      [2022, "await 1;", "1:1 Cannot use keyword 'await' outside an async function", "module"],
+      [2022, "/a/d;", "1:2 Invalid regular expression flag"],
+      [2022, "export { a as 'b' }; var a;", "1:15 Unexpected token 'b'", "module"],
+      [2022, "import { 'a' as b } from 'a';", "1:10 Unexpected token 'a'", "module"],
+      [2024, "/[a--b]/v;", "1:2 Invalid regular expression flag"],
+      [2025, "import a from 'a' with { type: 'json' };", "1:19 Unexpected token with", "module"],
+      [2025, "/(?i:a)/;", "1:2 Invalid regular expression: /(?i:a)/: Invalid group"],
+      [2025, "/(?<a>b)|(?<a>c)/;", "1:2 Invalid regular expression: /(?<a>b)|(?<a>c)/: Duplicate capture group name"],
+      [2025, "import('a', { with: {} });", "1:11 Unexpected token ,"],
+      [2026, "{ using a = b; }", "1:9 Unexpected token a"],
+      [2026, "async function f() { await using a = b; }", "1:34 Unexpected token a"],
+    ];
+    const editions = [5, ...Array.from({ length: 12 }, (_, i) => 2015 + i)];
+    const objects = editions.flatMap(ecmaVersion =>
+      ["script", "module"]
+        .filter(sourceType => ecmaVersion > 5 || sourceType === "script")
+        .map(sourceType => ({
+          files: [`${ecmaVersion}-${sourceType}/*.js`],
+          languageOptions: { ecmaVersion, sourceType },
+        })),
+    );
+    const files: Record<string, string> = { "eslint.config.mjs": `export default ${JSON.stringify(objects)};` };
+    const expected: Record<string, string[]> = {};
+    rows.forEach(([first, code, message, sourceType = "script"], i) => {
+      const before = first === 2015 ? 5 : first - 1;
+      files[`${before}-${sourceType}/${i}.js`] = files[`${first}-${sourceType}/${i}.js`] = code;
+      expected[`${before}-${sourceType}/${i}.js`] = [message.replace(" ", " Parsing error: ")];
+      expected[`${first}-${sourceType}/${i}.js`] = [];
+    });
+    const { raw, exitCode } = await lint(files, ["-f", "json", "."]);
+    const results = JSON.parse(raw) as { filePath: string; messages: any[] }[];
+    const said = results
+      .filter(it => it.filePath.endsWith(".js"))
+      .map(it => [
+        it.filePath.replaceAll("\\", "/").split("/").slice(-2).join("/"),
+        it.messages.map(it => `${it.line}:${it.column} ${it.message}`),
+      ]);
+    expect(Object.fromEntries(said)).toEqual(expected);
+    expect(exitCode).toBe(1);
+  });
+
   describe("no-restricted-syntax/<name> is one more instance of the rule", () => {
     const moment = { selector: 'ImportDeclaration[source.value="moment"]', message: "Use date-fns." };
     const environment = {
@@ -2767,6 +2918,40 @@ describe.concurrent("bun lint", () => {
       expect(b).toMatchObject({ errorCount: 1, messages: [{ ruleId: "no-debugger" }] });
       expect({ plain: plain.exitCode, strict: strict.exitCode }).toEqual({ plain: 1, strict: 2 });
     });
+  });
+
+  // What oxlint 1.87 does with tsgolint 7.0.2003. tsgolint reads the file on its own; oxlint has not seen the comments.
+  test("in a file that oxc refuses for an early error, the rules that need types go on", async () => {
+    const files = {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, noEmit: true, lib: ["es2022"], types: [] } }),
+      ".oxlintrc.json": JSON.stringify({
+        plugins: ["typescript"],
+        categories: { correctness: "off" },
+        rules: {
+          "no-var": "error",
+          "typescript/no-floating-promises": "error",
+          "typescript/no-unnecessary-type-assertion": "error",
+        },
+      }),
+      "a.ts":
+        "declare const p: Promise<number>;\nfunction f(a: number, a: number) { return a as number; }\n" +
+        "// oxlint-disable-next-line typescript/no-floating-promises\np;\n// oxlint-disable-next-line no-var\nvar y = 1;\n" +
+        "export { f, y };\n",
+    };
+    const flags = ["--type-aware", "--report-unused-disable-directives", "-f", "unix", "a.ts"];
+    const places = (stdout: string) =>
+      stdout
+        .split("\n")
+        .flatMap(it => /^a\.ts:(\d+:\d+): .* \[Error(\/.*)?\]$/.exec(it)?.slice(1, 3).join(" ").trim() ?? []);
+    const { stdout, exitCode } = await lint(files, flags);
+    expect(places(stdout).sort()).toEqual([
+      "2:12",
+      "2:43 /typescript(no-unnecessary-type-assertion)",
+      "4:1 /typescript(no-floating-promises)",
+    ]);
+    expect(exitCode).toBe(1);
+    const fixed = await lint(files, ["--fix", ...flags], { reads: ["a.ts"] });
+    expect(fixed.files["a.ts"]).toBe(files["a.ts"].replace("a as number", "a"));
   });
 
   describe("rules that need types", () => {
@@ -3549,6 +3734,37 @@ describe.concurrent("a lint script in package.json", () => {
       },
       [],
     );
+    expect(stdout).toContain("[Error/no-debugger]");
+    expect(exitCode).toBe(1);
+  });
+
+  // What `bun lint` meant before there was a linter.
+  test.each([
+    ["a file", { "lint.ts": `console.log("the file");` }, "the file"],
+    ["a directory with an index", { "lint/index.js": `console.log("the index");` }, "the index"],
+    // An install makes other files for it on Windows.
+    ...(isWindows
+      ? []
+      : [
+          [
+            "what a package has installed",
+            { "node_modules/.bin/lint": `#!/bin/sh\necho the executable\n` },
+            "the executable",
+          ],
+        ]),
+  ] as [string, Record<string, string>, string][])("%s of that name wins over the linter", async (_, more, printed) => {
+    const { "package.json": __, ...rest } = files;
+    using dir = tempDir("bun-lint-name", { ...rest, ...more });
+    if ("node_modules/.bin/lint" in more) chmodSync(join(String(dir), "node_modules/.bin/lint"), 0o755);
+    await using proc = spawn({ cmd: [bunExe(), "lint"], env, cwd: String(dir), stdout: "pipe", stderr: "pipe" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trim()).toBe(printed);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a directory of that name without an index does not", async () => {
+    const { "package.json": __, ...rest } = files;
+    const { stdout, exitCode } = await lint({ ...rest, "lint/notes.txt": "x" }, ["-f", "unix", "a.js"]);
     expect(stdout).toContain("[Error/no-debugger]");
     expect(exitCode).toBe(1);
   });

@@ -146,7 +146,8 @@ fn has_placeholder_in_first_selector(selector: &[u8]) -> bool {
 /// Whether oxfmt leaves `value`, of a custom property, as it is: there is something in it that is no value in the language,
 /// as in `--a: [{"b":1}]`, `--a: b:c` and `--a: 1px !b`. Prettier takes it for values all the same. Only what is on one line.
 fn is_more_than_values(value: &[u8], syntax: Syntax) -> bool {
-    let is_name_part = |byte: u8| text::is_word_character(byte) || byte == b'-' || byte >= 0x80;
+    let is_name_part =
+        |byte: u8| bun_core::strings::is_regexp_word_byte(byte) || byte == b'-' || byte >= 0x80;
     // How many `(` are open.
     let mut depth = 0u32;
     let mut at = 0;

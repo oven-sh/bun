@@ -518,6 +518,7 @@ pub(crate) fn lint(
             if file.config.language.is_oxlint {
                 crate::lint::order_fixes_as_oxlint(&mut result.messages);
             }
+            let was_refused = result.messages.iter().any(|it| it.is_fatal);
             let fixed = apply_fixes(text, std::mem::take(&mut result.messages), &|message| {
                 context.should_fix(message)
             });
@@ -540,7 +541,7 @@ pub(crate) fn lint(
             }
             // oxlint fixes once.
             if file.config.language.is_oxlint {
-                if !context.parses(file.path, &fixed.output, file.config) {
+                if !was_refused && !context.parses(file.path, &fixed.output, file.config) {
                     context.note_broken_fixes(file.path, fixed.applied);
                     *state = Fixing {
                         current: file.text.clone(),

@@ -17,7 +17,6 @@ use bun_core::strings;
 use bun_lint::ast::{BinOp, File};
 use bun_lint::span::{Position, Span};
 use bun_lint::utils::code_frame::{self, Frame, Place, Version};
-use bun_lint::utils::collation::locale_compare;
 use bun_lint::utils::sort;
 use bun_react_compiler::diagnostics::{
     CompilerSuggestionOperation, ErrorCategory, format_category_heading,
@@ -276,7 +275,7 @@ fn compare_dependencies(a: &[u8], b: &[u8]) -> Ordering {
     if let (Some(a), Some(b)) = (a.first(), b.first())
         && a.1 != b.1
     {
-        return locale_compare(a.1, b.1);
+        return strings::locale_compare(a.1, b.1);
     }
     if a.len() != b.len() {
         return a.len().cmp(&b.len());
@@ -286,7 +285,7 @@ fn compare_dependencies(a: &[u8], b: &[u8]) -> Ordering {
             return b.0.cmp(&a.0);
         }
         if a.1 != b.1 {
-            return locale_compare(a.1, b.1);
+            return strings::locale_compare(a.1, b.1);
         }
     }
     Ordering::Equal

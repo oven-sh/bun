@@ -168,7 +168,7 @@ fn file_of(
         // The file is not looked at any further: its first error is all that is said about it.
         Err((why, at)) => {
             let is_too_deep = why == Refusal::TooDeep;
-            let error = match scratch.error_before_refusal() {
+            let error = match scratch.error_before_refusal(dialect == Dialect::default()) {
                 Some(error) => error.clone(),
                 None => Diagnostic::new(DiagnosticKind::Parse, (at, 0), 1128, &[]),
             };

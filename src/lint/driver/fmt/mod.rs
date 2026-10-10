@@ -867,7 +867,7 @@ fn language_of(configs: &Configs, scope: &config::Scope, path: &[u8]) -> Languag
         Some(parser) if Kind::of_parser(&parser).is_none() => Language::Other,
         Some(_) => Language::Supported,
         None if configs.is_oxfmt_for(scope) => {
-            files::language_for_oxfmt(path, configs.formats_svelte(scope))
+            files::language_for_oxfmt(path, configs.formats_svelte(scope, path))
         }
         None => match files::language_of(path) {
             Language::Unknown if path.ends_with(b".svelte") && configs.has_our_svelte(scope) => {
@@ -1047,7 +1047,14 @@ impl Run<'_> {
             .and_then(|scope| {
                 let of_config = configs.ignores_of(&scope);
                 let options = configs.options_for(&scope, &path)?;
-                let is_another_language = language_of(configs, &scope, &path) == Language::Other;
+                let is_another_language = match language_of(configs, &scope, &path) {
+                    Language::Supported => false,
+                    Language::Other => true,
+                    // oxfmt gives a component back that it is not to format.
+                    Language::Unknown => {
+                        configs.is_oxfmt_for(&scope) && files::is_svelte_for_oxfmt(&path)
+                    }
+                };
                 Ok(
                     (!ignored.ignores_file(&path, of_config) && !is_another_language)
                         .then_some(options),

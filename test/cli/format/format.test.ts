@@ -3302,6 +3302,36 @@ describe.concurrent("a format script in package.json", () => {
   });
 });
 
+// What `bun format` meant before there was a formatter.
+describe.concurrent("what else is called format in the project", () => {
+  test.each([
+    ["a file", { "format.ts": 'console.log("the file");' }, "the file"],
+    ["the index of a directory", { "format/index.js": 'console.log("the index");' }, "the index"],
+  ])("%s wins over the formatter, and nothing is rewritten", async (_, files, printed) => {
+    const result = await format({ ...files, "a.js": ugly }, [], { reads: ["a.js"] });
+    expect(result.stdout).toBe(printed);
+    expect(result.files).toEqual({ "a.js": ugly });
+    expect(result.exitCode).toBe(0);
+  });
+
+  test.skipIf(isWindows)("an executable of a package wins over the formatter, and nothing is rewritten", async () => {
+    const files = { "node_modules/.bin/format": "#!/bin/sh\necho the executable\n", "a.js": ugly };
+    const result = await format(files, [], {
+      reads: ["a.js"],
+      before: dir => chmodSync(join(dir, "node_modules/.bin/format"), 0o755),
+    });
+    expect(result.stdout).toBe("the executable");
+    expect(result.files).toEqual({ "a.js": ugly });
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("a directory with nothing to run in it does not", async () => {
+    const result = await format({ "format/notes.txt": "x", "a.js": ugly }, [], { reads: ["a.js"] });
+    expect(result.files).toEqual({ "a.js": formatted });
+    expect(result.exitCode).toBe(0);
+  });
+});
+
 // What the formatter takes from the process that it runs in: the terminal, the arguments, the streams, the stack, a way to run a
 // configuration file that is a program. Where `bun format` is developed something else is in Bun's place for each of these.
 describe.concurrent("what bun format takes from Bun", () => {

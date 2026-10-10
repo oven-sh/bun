@@ -2,10 +2,11 @@
 
 use super::babel::{Attached, Declaration, Model, Node, SpecifierKind};
 use super::builtins::is_builtin_module;
-use super::compare::{locale_compare, natural_sort};
+use super::compare::natural_sort;
 use super::generator::{Piece, PieceKind, Printer, Prologue};
 use super::layout::is_unchanged;
 use super::sort::stable_sort_by;
+use bun_core::strings::locale_compare;
 use bun_lint::regex::Regex;
 use bun_lint::span::Span;
 use std::cmp::Ordering;

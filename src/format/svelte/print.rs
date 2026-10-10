@@ -2165,7 +2165,7 @@ fn says_end_of_region(data: &[u8]) -> bool {
             .is_some_and(|it| it.eq_ignore_ascii_case(b"endregion"))
             && word
                 .get(9)
-                .is_none_or(|&it| !crate::text::is_word_character(it))
+                .is_none_or(|&it| !strings::is_regexp_word_byte(it))
         {
             return true;
         }
@@ -2185,5 +2185,5 @@ pub(crate) fn has_pragma(text: &[u8]) -> bool {
         .strip_prefix(b"format")
         .or_else(|| word.strip_prefix(b"prettier")))
     .and_then(|rest| rest.first())
-    .is_some_and(|&it| !crate::text::is_word_character(it))
+    .is_some_and(|&it| !strings::is_regexp_word_byte(it))
 }

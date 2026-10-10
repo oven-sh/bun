@@ -824,6 +824,8 @@ const rules: Record<string, Case[]> = {
     `module.exports = a;`,
     `module.exports.a = a;`,
     `exports.a = a;`,
+    `module.exports = require("a");`,
+    `require("a");`,
     `import "a";`,
   ],
 

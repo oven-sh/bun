@@ -12,6 +12,7 @@ use crate::options::Json;
 use crate::paths;
 use crate::rule::{Plugin, minor_of};
 use crate::runner::RuleEntry;
+use bun_core::strings;
 use std::sync::Arc;
 
 /// Why a configuration cannot be used. The text is ESLint's where ESLint has one.
@@ -100,9 +101,41 @@ fn add_foreign_prefixes(json: &Json, depth: usize, into: &mut Vec<Box<[u8]>>) {
     }
 }
 
-/// Whether `settings` has an `import/resolver` that the rules here do not do the same as. The package answers then.
+/// The package that `name` is, or is a file of: eslint-config-next writes `require.resolve("eslint-import-resolver-node")`.
+fn package_of(name: &[u8]) -> &[u8] {
+    const FOLDER: &[u8] = b"node_modules";
+    let after = strings::last_index_of(name, FOLDER).and_then(|at| name.get(at + FOLDER.len()..));
+    let Some([b'/' | b'\\', inside @ ..]) = after else {
+        return name;
+    };
+    let end_of_part =
+        |from: usize| Some(from + strings::index_of_any(inside.get(from..)?, b"/\\")?);
+    let end = match (inside.first(), end_of_part(0)) {
+        (Some(b'@'), Some(scope)) => end_of_part(scope + 1),
+        (_, end) => end,
+    };
+    &inside[..end.unwrap_or(inside.len())]
+}
+
+/// Whether `settings` has an `import/resolver`, or a parser in `import/parsers`, that the rules here do not do the same as, or a
+/// regular expression, of which nothing is left in JSON. The package answers then.
 pub(super) fn names_unknown_resolver(settings: &Json) -> bool {
+    let is_lost = |key: &[u8]| (settings.get(key)).is_some_and(js_plugin::has_what_json_lacks);
+    if is_lost(b"import/ignore") || is_lost(b"import/internal-regex") {
+        return true;
+    }
+    let parsers = settings.get(b"import/parsers").and_then(Json::as_object);
+    let is_known_parser = |name: &[u8]| {
+        matches!(
+            package_of(name),
+            b"espree" | b"@typescript-eslint/parser" | b"@typescript-eslint\\parser"
+        )
+    };
+    if (parsers.unwrap_or_default().iter()).any(|it| !is_known_parser(&it.0)) {
+        return true;
+    }
     let is_known = |name: &[u8]| {
+        let name = package_of(name);
         let name = name
             .strip_prefix(b"eslint-import-resolver-")
             .unwrap_or(name);

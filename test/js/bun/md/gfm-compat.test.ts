@@ -870,6 +870,24 @@ describe("task list items with nothing behind the marker", () => {
       '<ul>\n<li class="task-list-item"><input type="checkbox" class="task-list-item-checkbox" disabled checked></li>\n</ul>\n<p>foo</p>\n',
     );
   });
+
+  const box = '<input type="checkbox" class="task-list-item-checkbox" disabled>';
+
+  test.each(["- [ ]\ntext\n", "- [ ] \ntext\n", "- [ ]\n  text\n"])("the text on the next line is in it: %j", text => {
+    expect(markdown.html(text)).toBe(`<ul>\n<li class="task-list-item">${box}text</li>\n</ul>\n`);
+  });
+
+  test("so is what is indented behind an empty line", () => {
+    expect(markdown.html("- [ ]\n\n  text\n")).toBe(
+      `<ul>\n<li class="task-list-item">${box}\n<p>text</p>\n</li>\n</ul>\n`,
+    );
+  });
+
+  test("the next item is not", () => {
+    expect(markdown.html("- [ ]\n- [ ]\n")).toBe(
+      `<ul>\n<li class="task-list-item">${box}</li>\n<li class="task-list-item">${box}</li>\n</ul>\n`,
+    );
+  });
 });
 
 describe("a table of one column", () => {

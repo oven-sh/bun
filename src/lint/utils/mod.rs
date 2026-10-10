@@ -18,11 +18,11 @@
 //! | `./utils/regular-expressions` | [`regular_expressions`] | `is_valid_with_unicode_flag(ecma_version, pattern, UnicodeFlag::U)`, `REGEXPP_LATEST_ECMA_VERSION` |
 //! | `./utils/string-utils`, `../shared/string-utils` | [`string_utils`] | `upper_case_first`, `get_grapheme_count`, `graphemes`, `LETTER_PATTERN`: `find_letter`, `contains_letter`, `is_letter` |
 //! | `../shared/naming`, `../shared/directives` | [`naming`], [`directives`] | `normalize_package_name`, `get_shorthand_name`, `get_namespace_from_term`, `directivesPattern`: `match_directives_pattern(text)` |
-//! | `require("natural-compare")`, `esutils.keyword.isIdentifierES5/ES6`, `require("escape-string-regexp")` | [`text`] | `text::natural_compare(a, b)`, `text::is_identifier_es6(name)`, `text::escape_string_regexp(s)` |
+//! | `require("natural-compare")`, `esutils.keyword.isIdentifierES5/ES6`, `require("escape-string-regexp")` | [`text`] | `text::natural_compare(a, b)`, `text::is_identifier_es6(name)`, `bun_core::strings::escape_reg_exp(s, &mut out)` |
 //! | `require("ignore")` | `bun_glob::ignore` | `IgnoreRules::from_lines(patterns, IgnoreOptions { syntax: IgnoreSyntax::Npm5, ignores_case }).ignores(path)` |
 //! | `node.type`, `node.range`, `node.parent`, `ChainExpression`, `SequenceExpression`, patterns in assignments | [`estree_compat`], re-exported from here | `utils::estree_type_name(node)`, `utils::estree_type_at(file, offset)`, `utils::sequence_expressions(e)`, `utils::Target` |
 //! | `array.sort((a, b) => a > b ? 1 : -1)`, a comparison that never answers 0 | [`array`] | `utils::array_sort_by(&mut items, \|a, b\| ..)` |
-//! | `a.localeCompare(b)`, `new Intl.Collator("en", { numeric: true, sensitivity: "base" })` | [`collation`] | `collation::locale_compare(a, b)`, `collation::collator_compare_numeric_base(a, b)` |
+//! | `a.localeCompare(b)`, `new Intl.Collator("en", { numeric: true, sensitivity: "base" })` | `bun_core::strings` | `strings::locale_compare(a, b)`, `strings::locale_compare_numeric_base(a, b)` |
 //! | a `Literal` listener that looks at strings or numbers: keys, module specifiers and literal types are not expressions here | `rule.rs` | `on.string_literals(f)`, `on.number_literals(f)` |
 //! | `n.toString(radix)`, `parseInt`, `parseFloat`, `ToInt32` | [`eslint_utils::js_number`] | `js_number::parse_int(text, 10)`, .. |
 //! | `n.toPrecision(p)`, `n.toFixed(d)`, `n.toExponential(d)`, `Number(s)` | `bun_core::fmt` | `FormatDouble::to_precision(&mut [0; 124], n, p)`, `js_string_to_number(s)` |
@@ -86,7 +86,6 @@ pub mod array;
 pub mod ast_utils;
 pub mod char_source;
 pub mod code_frame;
-pub mod collation;
 pub mod directives;
 pub mod eslint_utils;
 pub mod estree_compat;

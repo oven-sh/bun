@@ -1172,7 +1172,7 @@ impl<'a> Parser<'a> {
                 && self
                     .text_of(token)
                     .iter()
-                    .any(|&b| text::is_word_character(b))
+                    .any(|&b| bun_core::strings::is_regexp_word_byte(b))
             {
                 return Err(self.refuse(Message::ExpectedColon, token.range.start));
             }

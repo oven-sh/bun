@@ -141,12 +141,12 @@ impl Rule for NoWarningComments {
             let mut pattern = Vec::new();
             if is_at_start {
                 pattern.extend_from_slice(b"^[\\s");
-                pattern.extend_from_slice(&text::escape_string_regexp(&decoration));
+                let _ = strings::escape_reg_exp(&decoration, &mut pattern);
                 pattern.extend_from_slice(b"]*");
             } else if is_word_character(term.first()) {
                 pattern.extend_from_slice(b"\\b");
             }
-            pattern.extend_from_slice(&text::escape_string_regexp(term));
+            let _ = strings::escape_reg_exp(term, &mut pattern);
             if is_word_character(term.last()) {
                 pattern.extend_from_slice(b"\\b");
             }

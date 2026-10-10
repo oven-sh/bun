@@ -13,12 +13,21 @@
 #![forbid(unsafe_code)]
 
 mod bun;
+mod import_minimatch;
+mod import_package_path;
 mod import_resolve;
+mod import_settings;
 mod import_type;
 mod module_visitor;
 mod n;
 mod oxlint;
 mod prettier;
+mod regexp_ast_utils;
+mod regexp_char_set;
+mod regexp_raa_basic;
+mod regexp_replacements;
+mod regexp_syntax;
+mod regexp_type_builtins;
 
 bun_lint::rules! {
     bun_consistent_directive_prefix::ConsistentDirectivePrefix,

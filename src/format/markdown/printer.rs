@@ -5,12 +5,13 @@ use super::preprocess::{
     self, Token, TokenKind, is_indented_code, is_punctuation, is_punctuation_unit,
     ordered_item_info,
 };
-use super::strings::{character_reference, first_char, last_char};
+use super::strings::character_reference;
 use crate::FormatOptions;
 use crate::css::doc::{
     self, Alignment, Doc, Line, align_with_spaces, docs, fill, group, hardline, indent,
 };
 use crate::options::ProseWrap;
+use crate::text::{first_char, last_char};
 use std::borrow::Cow;
 
 /// Code in another language, to be formatted.

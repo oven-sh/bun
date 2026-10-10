@@ -302,9 +302,6 @@
     "src/format/graphql/printer.rs": {
       "leading_blanks": 1
     },
-    "src/format/handlebars/lexer.rs": {
-      "white_space_run": 1
-    },
     "src/format/handlebars/printer.rs": {
       "has_html_white_space": 1,
       "starts_with_upper_case": 1
@@ -332,27 +329,17 @@
     "src/format/js/jsdoc/imports.rs": {
       "cmp_ascii_case_insensitive": 1
     },
-    "src/format/js/jsdoc/normalize.rs": {
-      "is_valid_js_identifier": 1
-    },
     "src/format/js/jsdoc/param_order.rs": {
       "is_identifier_byte": 1
     },
     "src/format/js/jsdoc/text.rs": {
-      "first_char": 1,
-      "last_char": 1,
       "lines": 1,
       "parse_index": 1
-    },
-    "src/format/js/print/jsx/child_list.rs": {
-      "count_line_breaks": 1
     },
     "src/format/js/sort_imports/babel.rs": {
       "skip_whitespace": 1
     },
     "src/format/js/sort_imports/compare.rs": {
-      "collate_base_numeric": 1,
-      "locale_compare": 1,
       "lowercase": 1,
       "natord": 1,
       "natural_sort": 1
@@ -390,8 +377,6 @@
       "skip_spaces": 1
     },
     "src/format/markdown/strings.rs": {
-      "first_char": 1,
-      "last_char": 1,
       "push_lowercase": 1,
       "unescape": 1
     },
@@ -409,9 +394,10 @@
       "starts_with_white_space": 1
     },
     "src/format/text.rs": {
+      "first_char": 1,
       "has_newline": 1,
       "index_of_from": 1,
-      "is_word_character": 1,
+      "last_char": 1,
       "leading_white_space_len": 1,
       "skip_newline": 1,
       "skip_newline_backwards": 1,
@@ -430,9 +416,6 @@
     },
     "src/glob/braces.rs": {
       "parse_integer": 1
-    },
-    "src/glob/pattern.rs": {
-      "has_line_terminator": 1
     },
     "src/glob/read_picomatch.rs": {
       "count": 1,
@@ -499,9 +482,6 @@
     "src/lint/driver/fs.rs": {
       "replace": 1
     },
-    "src/lint/eslint/rules/dot_notation.rs": {
-      "is_valid_identifier": 1
-    },
     "src/lint/eslint/rules/keyword_spacing.rs": {
       "is_blank": 1
     },
@@ -511,9 +491,6 @@
     "src/lint/eslint/rules/newline_before_return.rs": {
       "line_breaks": 1
     },
-    "src/lint/eslint/rules/no_self_assign.rs": {
-      "without_spaces": 1
-    },
     "src/lint/eslint/rules/spaced_comment.rs": {
       "is_space_or_tab": 1
     },
@@ -522,9 +499,6 @@
     },
     "src/lint/jest/jest.rs": {
       "ident_hash": 1
-    },
-    "src/lint/jest/jest_tests.rs": {
-      "is_regex_word_byte": 1
     },
     "src/lint/linter/comment.rs": {
       "is_name_byte": 1
@@ -554,7 +528,6 @@
     "src/lint/plugins/oxlint/vue.rs": {
       "camel_case": 1,
       "has_white_space": 1,
-      "is_regex_word": 1,
       "kebab_case": 1,
       "pascal_case": 1
     },
@@ -641,28 +614,11 @@
       "code_points": 1,
       "is_whitespace": 1
     },
-    "src/lint/tokens/scan.rs": {
-      "line_end": 1
-    },
     "src/lint/types/tsutils.rs": {
       "is_array_index": 1
     },
-    "src/lint/typescript/rules/naming_convention.rs": {
-      "is_lower_case": 1,
-      "is_upper_case": 1
-    },
     "src/lint/typescript/rules/no_invalid_void_type.rs": {
       "without_spaces": 1
-    },
-    "src/lint/typescript/rules/no_restricted_types.rs": {
-      "remove_spaces": 1
-    },
-    "src/lint/typescript/rules/sort_type_constituents.rs": {
-      "collator_compare": 1
-    },
-    "src/lint/typescript/rules/switch_exhaustiveness_check.rs": {
-      "locale_compare": 1,
-      "primary_weight": 1
     },
     "src/lint/unicorn/rules/unicorn_filename_case.rs": {
       "is_digit": 1
@@ -672,10 +628,6 @@
     },
     "src/lint/utils/ast_utils.rs": {
       "starts_with_upper_case": 1
-    },
-    "src/lint/utils/collation.rs": {
-      "locale_compare": 1,
-      "primary_weight": 1
     },
     "src/lint/utils/eslint_utils/calls.rs": {
       "decode_uri": 1,
@@ -718,11 +670,6 @@
     },
     "src/parsers/json.rs": {
       "write_json_string": 1
-    },
-    "src/parsers/json_reader.rs": {
-      "is_identifier_continue": 1,
-      "is_identifier_start": 1,
-      "push_codepoint": 1
     },
     "src/parsers/json_stage2.rs": {
       "is_identifier_continue": 1,
@@ -794,15 +741,10 @@
     "src/sema/parser/lexer.rs": {
       "decimal_digits": 1,
       "decode_last": 1,
-      "is_name_byte": 1,
-      "is_unicode_blank": 1,
-      "is_white_space_like": 1
+      "is_name_byte": 1
     },
     "src/sema/parser/names.rs": {
       "hash_of": 1
-    },
-    "src/sema/parser/parser/jsdoc.rs": {
-      "is_blank": 1
     },
     "src/sema/parser/pragmas.rs": {
       "skip_blanks": 1

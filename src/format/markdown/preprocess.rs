@@ -4,8 +4,9 @@
 //! the tab width. What else that file notes on nodes is found out when it is asked for.
 
 use super::ast::{Kind, NodeId, Str, Tree};
-use super::strings::{first_char, is_in, last_char};
+use super::strings::is_in;
 use super::unicode_tables::{CJK, HANGUL, PUNCTUATION, VARIATION_SELECTORS};
+use crate::text::{first_char, last_char};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum TokenKind {

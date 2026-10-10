@@ -290,7 +290,7 @@ pub(super) static SCHEMAS: &[(&str, &str)] = &[
     ("react-hooks/unsupported-syntax", r##"{"$":9}"##),
     ("react-hooks/use-memo", r##"{"$":9}"##),
     ("react-hooks/void-use-memo", r##"{"$":9}"##),
-    ("react/jsx-no-leaked-render", r##"[[{"type":"object","properties":{"validStrategies":{"type":"array","items":{"enum":["ternary","coerce"]},"uniqueItems":true,"default":["ternary","coerce"]},"ignoreAttributes":{"$":10}},"additionalProperties":false}]]"##),
+    ("react/jsx-no-leaked-render", r##"[[{"type":"object","properties":{"validStrategies":{"type":"array","items":{"enum":["ternary","coerce"]},"uniqueItems":true,"default":["ternary","coerce"]}},"additionalProperties":false}]]"##),
     ("require-atomic-updates", r##"[[{"type":"object","properties":{"allowProperties":{"$":2}},"additionalProperties":false}],[{"allowProperties":false}]]"##),
     ("require-unicode-regexp", r##"[[{"type":"object","properties":{"requireFlag":{"enum":["u","v"]}},"additionalProperties":false}],[{}]]"##),
     ("rest-spread-spacing", r##"[[{"$":17}]]"##),

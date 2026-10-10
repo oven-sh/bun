@@ -25,7 +25,7 @@
   },
   "eslint-plugin-react": {
     "version": "7.37.5",
-    "commit": "394c78a0791db707f0f4920880182d02a8414adb"
+    "commit": "2c98b83c451a4297edf1787d9a616e50687e27e8"
   },
   "oxc": {
     "version": "1.70.0",

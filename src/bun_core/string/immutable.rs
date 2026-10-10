@@ -30,12 +30,21 @@ pub use whitespace::{
     js_line_break_len_back, js_lines, js_whitespace_len, js_whitespace_len_back, push_crlf_as_lf,
     split_crlf_lines, split_unicode_whitespace, trim_js_whitespace, trim_js_whitespace_end,
     trim_js_whitespace_start, trim_unicode_whitespace, trim_unicode_whitespace_end,
-    trim_unicode_whitespace_start,
+    trim_unicode_whitespace_start, without_js_whitespace,
 };
+#[path = "immutable/icu_collation.rs"]
+mod icu_collation;
 #[path = "immutable/unicode.rs"]
 mod unicode_draft;
+pub use icu_collation::{locale_compare, locale_compare_numeric_base};
 #[path = "immutable/visible.rs"]
 mod visible_impl;
+
+/// `\w` of a regular expression without flags.
+#[inline]
+pub const fn is_regexp_word_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
+}
 #[path = "immutable/wtf8_text.rs"]
 mod wtf8_text;
 pub use wtf8_text::{

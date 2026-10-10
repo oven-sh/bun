@@ -356,6 +356,11 @@ pub(crate) fn language_of(path: &[u8]) -> Language {
     }
 }
 
+/// Whether oxfmt takes the file at `path` for a component of Svelte.
+pub(crate) fn is_svelte_for_oxfmt(path: &[u8]) -> bool {
+    matches!(classify_for_oxfmt(path), Some(ForOxfmt::Svelte))
+}
+
 /// The same for oxfmt, which also has TOML and, if `formats_svelte`, Svelte.
 pub(crate) fn language_for_oxfmt(path: &[u8], formats_svelte: bool) -> Language {
     match classify_for_oxfmt(path) {
@@ -870,7 +875,8 @@ pub(crate) fn expand_as_oxfmt(
     }
     // Nothing is said about a file that there is no parser for, and it does not count.
     found.retain(|it| {
-        language_for_oxfmt(&it.path, configs.formats_svelte(&it.scope)) != Language::Unknown
+        language_for_oxfmt(&it.path, configs.formats_svelte(&it.scope, &it.path))
+            != Language::Unknown
     });
     index_sort::sort_slice_by(&mut found[..], |a, b| a.path.cmp(&b.path));
     found.dedup_by(|a, b| a.path == b.path);

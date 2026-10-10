@@ -364,7 +364,11 @@ fn text_facts(a: &[u8], b: &[u8]) -> String {
         text::to_upper_case(a).into_owned(),
         text::upper_case_first(a).into_owned(),
         text::escape_reg_exp(a).into_owned(),
-        text::escape_string_regexp(a).into_owned(),
+        {
+            let mut escaped = Vec::new();
+            let _ = bun_core::strings::escape_reg_exp(a, &mut escaped);
+            escaped
+        },
         text::number_to_string(number),
         bun_core::printer::json_stringify_alloc(a),
         bun_core::strings::js_lines(a).count().to_string().into(),
@@ -383,8 +387,8 @@ fn text_facts(a: &[u8], b: &[u8]) -> String {
         .into(),
         format!(
             "{:?} {:?}",
-            utils::collation::locale_compare(a, b),
-            utils::collation::collator_compare_numeric_base(a, b)
+            bun_core::strings::locale_compare(a, b),
+            bun_core::strings::locale_compare_numeric_base(a, b)
         )
         .into(),
         format!(

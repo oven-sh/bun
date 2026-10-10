@@ -1750,6 +1750,11 @@ pub mod lexer {
         is_whitespace(codepoint) || matches!(codepoint, 0x85 | 0x200B)
     }
 
+    /// `IsWhiteSpaceLike`: that, or a line break.
+    pub fn is_white_space_like(codepoint: CodePoint) -> bool {
+        is_white_space_single_line(codepoint) || matches!(codepoint, 0x0A | 0x0D | 0x2028 | 0x2029)
+    }
+
     /// `charAndSize`: the character at `at` and its length in bytes, 0 at the end. As in
     /// `utf8.DecodeRuneInString`, a byte that starts no valid UTF-8 sequence is U+FFFD
     /// (`utf8.RuneError`) with the length 1.

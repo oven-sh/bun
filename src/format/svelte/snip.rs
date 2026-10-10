@@ -3,7 +3,6 @@
 //!
 //! The plugin keeps what it takes out in an attribute, as Base64. Here the attribute has a number.
 
-use crate::text;
 use bun_core::strings;
 use rustc_hash::FxHashSet;
 use std::borrow::Cow;
@@ -313,7 +312,7 @@ fn snipped_tag(text: &[u8], from: usize) -> Option<(usize, usize, &[u8], usize)>
             text[at] == b'<'
                 && text
                     .get(at + 1)
-                    .is_some_and(|&it| text::is_word_character(it))
+                    .is_some_and(|&it| strings::is_regexp_word_byte(it))
         });
         if let Some(start) = start.filter(|&it| it + 1 < group_end) {
             let value = &text[value_start..value_start + value_len];

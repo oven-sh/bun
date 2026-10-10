@@ -5,7 +5,7 @@ use bun_alloc::ArenaVecExt as _;
 use bun_collections::{HashMap, VecExt};
 
 use crate::lexer as js_lexer;
-use crate::p::P;
+use crate::p::{BinaryExpressionSimplifyVisitor, P};
 use crate::parser::{ARGUMENTS_STR as arguments_str, Ref, TempRef};
 use bun_ast::g::{DeclList, Property, PropertyKind};
 use bun_ast::{self as js_ast, B, E, Expr, ExprNodeList, Flags, G, S, Stmt};
@@ -274,6 +274,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     }
 
     fn rewrite_private_accesses_in_expr(&mut self, expr: &mut Expr, map: &PrivateLoweredMap) {
+        if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
+            self.report_stack_overflow(expr.loc);
+            return;
+        }
         let expr_loc = expr.loc;
         match &mut expr.data {
             js_ast::ExprData::EIndex(e) => {
@@ -317,12 +321,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         }
                     }
                 }
-                let mut l = e.left;
-                self.rewrite_private_accesses_in_expr(&mut l, map);
-                e.left = l;
-                let mut r = e.right;
-                self.rewrite_private_accesses_in_expr(&mut r, map);
-                e.right = r;
+                // A link the loop passes has a binary `left`, so it is neither form above.
+                let stack_bottom = self.binary_expression_simplify_stack.len();
+                let mut binary = *e;
+                while let js_ast::ExprData::EBinary(left) = binary.left.data
+                    && matches!(left.left.data, js_ast::ExprData::EBinary(_))
+                {
+                    self.binary_expression_simplify_stack
+                        .push(BinaryExpressionSimplifyVisitor { bin: binary });
+                    binary = left;
+                }
+                self.rewrite_private_accesses_in_expr(&mut binary.left, map);
+                self.rewrite_private_accesses_in_expr(&mut binary.right, map);
+                while self.binary_expression_simplify_stack.len() > stack_bottom {
+                    let mut parent = self.binary_expression_simplify_stack.pop().unwrap().bin;
+                    self.rewrite_private_accesses_in_expr(&mut parent.right, map);
+                }
             }
             js_ast::ExprData::ECall(e) => {
                 if let js_ast::ExprData::EIndex(tgt_idx) = &mut e.target.data {
@@ -495,6 +509,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         binding: js_ast::Binding,
         map: &PrivateLoweredMap,
     ) {
+        if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
+            self.report_stack_overflow(binding.loc);
+            return;
+        }
         match binding.data {
             js_ast::b::B::BArray(mut array) => {
                 for item in array.items_mut() {
@@ -577,6 +595,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     }
 
     fn rewrite_private_accesses_in_stmts(&mut self, stmts: &mut [Stmt], map: &PrivateLoweredMap) {
+        if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
+            self.report_stack_overflow(stmts.first().map_or(bun_ast::Loc::EMPTY, |stmt| stmt.loc));
+            return;
+        }
         for stmt_item in stmts.iter_mut() {
             match &mut stmt_item.data {
                 js_ast::StmtData::SExpr(data) => {

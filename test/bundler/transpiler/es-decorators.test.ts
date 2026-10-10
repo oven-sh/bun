@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 
 // ES standard decorators are used for .js files (always) and for .ts files
 // when experimentalDecorators is NOT set in tsconfig.
@@ -990,6 +990,211 @@ describe("ES Decorators", () => {
       expect(output).not.toContain("class default");
       // the lowered output must still be valid syntax
       expect(() => new Bun.Transpiler({ loader: "js" }).transformSync(output)).not.toThrow();
+    });
+  });
+
+  // A class with a decorated `#private` member is walked a second time, after the visit
+  // pass, to rewrite each access to that member. The parser and the visit pass take a
+  // chain of binary operators in a loop, so only that second walk sees its length.
+  describe("long chains in a class with a decorated #private member", () => {
+    // A chain that has to be lowered whole. A debug build keeps frames several times
+    // larger and is 20 times slower, so it gets a shorter one.
+    const deep = isDebug ? 5000 : 100000;
+    // Members and statements, which the lowering joins into a chain of its own.
+    const many = isDebug ? 3000 : 50000;
+    const prelude = `
+      const repeat = (fill, count) => Buffer.alloc(fill.length * count, fill).toString();
+      const count = (text, part) => text.split(part).length - 1;
+      const classWith = (member, body) => "class A { " + member + " m() { " + body + " } }";
+      const overflow = "Maximum call stack size exceeded";
+    `;
+    const ok = { stdout: "ok\n", stderr: "", exitCode: 0, signalCode: null };
+
+    // The transpiler runs in a child: a walk that overflows the stack kills its process.
+    async function inChild(script: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", prelude + script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr: filterStderr(stderr), exitCode, signalCode: proc.signalCode };
+    }
+
+    test.concurrent("a chain of additions is lowered on the main thread", async () => {
+      const result = await inChild(`
+        const n = ${deep};
+        const source = classWith("@d #p() {}", "return " + repeat("a+", n) + "1");
+        const output = new Bun.Transpiler({ loader: "ts" }).transformSync(source);
+        if (!output.includes("return " + repeat("a + ", n) + "1;")) throw new Error("the chain is not whole");
+        console.log("ok");
+      `);
+      expect(result).toEqual(ok);
+    });
+
+    // transform() runs on a pool thread, whose stack is smaller than the main thread's
+    // on Linux and macOS.
+    test.concurrent("a chain of each operator is lowered on a transpiler thread", async () => {
+      const result = await inChild(`
+        const n = ${deep};
+        for (const [written, printed] of [["a&&", "a && "], ["a,", "a, "], ["a in ", "a in "]]) {
+          const source = classWith("@d #p() {}", "return (" + repeat(written, n) + "b)");
+          const output = await new Bun.Transpiler({ loader: "js" }).transform(source);
+          if (!output.includes("return " + repeat(printed, n) + "b;")) throw new Error(written + ": the chain is not whole");
+        }
+        console.log("ok");
+      `);
+      expect(result).toEqual(ok);
+    });
+
+    test.concurrent("each read of the lowered field in a long chain is rewritten", async () => {
+      const result = await inChild(`
+        const n = ${deep};
+        const source = classWith("@d #p = 1;", "return " + repeat("this.#p+", n) + "1");
+        const output = await new Bun.Transpiler({ loader: "js" }).transform(source);
+        if (output.includes("this.#p") || count(output, " + ") !== n) throw new Error("a read of #p is left or lost");
+        console.log("ok");
+      `);
+      expect(result).toEqual(ok);
+    });
+
+    // The lowering rewrites a member that holds no statement, so the walk of these
+    // chains never passes the entry for a statement list.
+    test.concurrent.each([
+      ["a field initializer", "@d #p() {} x = CHAIN;", ""],
+      ["a computed key", "@d #p() {} [CHAIN]() {}", ""],
+      // The visit pass reports the error for this chain and leaves it unvisited.
+      ["a method body", "@d #p() {}", "return CHAIN"],
+    ])("a chain in %s that the visit pass rejects is the one error", async (_what, member, body) => {
+      const result = await inChild(`
+        const chain = "a" + repeat("()", 100000);
+        const source = "class A { " + ${JSON.stringify(member)}.replace("CHAIN", chain) +
+          " m() { " + ${JSON.stringify(body)}.replace("CHAIN", chain) + " } }";
+        for (const [loader, method] of [["ts", "transformSync"], ["js", "transform"]]) {
+          let message = "no error";
+          try {
+            await new Bun.Transpiler({ loader })[method](source);
+          } catch (e) {
+            message = e.message;
+          }
+          if (message !== overflow) throw new Error(method + ": " + message);
+        }
+        console.log("ok");
+      `);
+      expect(result).toEqual(ok);
+    });
+
+    // For these two shapes the walk needs more stack per level than the visit pass. So
+    // between the two limits the visit pass accepts the depth, and the walk has to report.
+    test.concurrent.each([
+      ["nested conditional operators", `n => repeat("a?b:", n) + "c"`],
+      ["chained tagged templates", `n => "a" + repeat("\\u0060x\\u0060", n)`],
+    ])("the walk reports a depth of %s that the visit pass accepts", async (_what, shape) => {
+      const result = await inChild(`
+        const shape = ${shape};
+        // The first depth at which scan() reports the overflow. It has no printer to stop first.
+        const first = member => {
+          for (let n = 500; n <= 1000000; n = Math.ceil(n * 1.2)) {
+            try {
+              new Bun.Transpiler({ loader: "ts" }).scan(classWith(member, "return " + shape(n)));
+            } catch (e) {
+              if (e.message !== overflow) throw new Error(n + ": " + e.message);
+              return n;
+            }
+          }
+          throw new Error("no depth was reported");
+        };
+        const decorated = first("@d #p() {}");
+        const plain = first("#p() {}");
+        if (decorated > plain) throw new Error("the walk went deeper than the visit pass: " + decorated + " > " + plain);
+        console.log("ok");
+      `);
+      expect(result).toEqual(ok);
+    });
+
+    // `bun run` minifies the syntax, which inlines each single-use declaration into the
+    // next statement. Flat source becomes one deep chain that no earlier pass recursed on.
+    test.concurrent("a chain that the minifier builds from flat statements is reported, not a crash", async () => {
+      const result = await inChild(`
+        const n = ${isDebug ? 5000 : 100000};
+        const parts = ["let a0 = f();"];
+        for (let i = 1; i <= n; i++) parts.push("const a" + i + " = a" + (i - 1) + ".x();");
+        parts.push("return a" + n + ";");
+        const source = classWith("@d #p() {}", parts.join(" "));
+        let message = "no error";
+        try {
+          new Bun.Transpiler({ loader: "ts", minify: { syntax: true } }).transformSync(source);
+        } catch (e) {
+          message = e.message;
+        }
+        if (message !== overflow) throw new Error(message);
+        console.log("ok");
+      `);
+      expect(result).toEqual(ok);
+    });
+
+    test.concurrent("a class with many decorated #private methods is lowered", async () => {
+      // The lowering evaluates the decorator lists in one computed key, joined by the
+      // comma operator: a chain with one link for each method.
+      const result = await inChild(`
+        const n = ${many};
+        const members = Array.from({ length: n }, (_, i) => "@d #m" + i + "() {}").join(" ");
+        const output = await new Bun.Transpiler({ loader: "ts" }).transform("class A { " + members + " }");
+        if (count(output, "new WeakSet") !== n) throw new Error("a method is lost");
+        console.log("ok");
+      `);
+      expect(result).toEqual(ok);
+    });
+
+    test.concurrent("bun build --minify-syntax joins the statements of a method into a chain", async () => {
+      const n = many;
+      using dir = tempDir("es-dec-long-chain", {
+        "entry.js": `
+          function d() {}
+          function f() {}
+          export class A { @d #p() {} m() { ${Buffer.alloc(4 * n, "f();").toString()} } }
+        `,
+      });
+      const { stdout, stderr, exitCode } = await runIn(String(dir), ["build", "--minify-syntax", "entry.js"]);
+      expect({
+        stderr: filterStderr(stderr),
+        joined: stdout.includes(Buffer.alloc(5 * (n - 1), "f(), ").toString() + "f();"),
+        exitCode,
+      }).toEqual({ stderr: "", joined: true, exitCode: 0 });
+    });
+
+    test.concurrent("each operand of a chain is rewritten once, in source order", async () => {
+      // 200 links go past the preallocated part of the list that holds the chain. The
+      // innermost link of each chain is a form that the lowering replaces as a whole.
+      const links = Array.from({ length: 200 }, (_, i) => `this.id(${i + 1}).#q(${i + 1})`);
+      const chain = `${links[0]} + (${links[1]} + ${links[2]}) + ${links.slice(3).join(" + ")}`;
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value) { return value; }
+        const order = [];
+        class C {
+          @dec #q(n) { order.push("q" + n); return n; }
+          @dec #y = 1;
+          id(n) { order.push("id" + n); return this; }
+          sum() { return (this.#y = 10) + ${chain} + this.#y; }
+          has(o) { return #y in o && #q in o && o.#y; }
+        }
+        const c = new C();
+        console.log(JSON.stringify([c.sum(), order.join(), c.has(c), C.prototype.has.call(c, {})]));
+      `);
+      const order = Array.from({ length: 200 }, (_, i) => `id${i + 1},q${i + 1}`).join();
+      expect(stderr).toBe("");
+      expect(stdout).toBe(JSON.stringify([10 + (200 * 201) / 2 + 10, order, 10, false]) + "\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("the receiver temporaries of a chain are numbered in source order", () => {
+      const output = new Bun.Transpiler({ loader: "js" }).transformSync(
+        "class A { @d #q() {} m(o) { return o(1).#q() + (o(2).#q() + o(3).#q()) + o(4).#q() + o(5).#q(); } }",
+      );
+      // `_obj$5 = o(1)` and so on
+      const temps = Array.from(output.matchAll(/_obj\$(\d+) = o\(\d\)/g), match => Number(match[1]));
+      expect(temps.map(temp => temp - temps[0])).toEqual([0, 1, 2, 3, 4]);
     });
   });
 

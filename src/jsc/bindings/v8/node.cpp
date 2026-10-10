@@ -6,6 +6,7 @@
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/ThrowScope.h"
 #include "JSCommonJSModule.h"
+#include "JSBuffer.h"
 
 #include "node/node_version.h"
 
@@ -106,6 +107,150 @@ v8::MaybeLocal<v8::Value> MakeCallback(v8::Isolate* isolate,
 
     return isolate->currentHandleScope()->createLocal<Value>(vm, result);
 }
+
+v8::MaybeLocal<v8::Value> MakeCallback(v8::Isolate* isolate,
+    v8::Local<v8::Object> recv,
+    v8::Local<v8::String> symbol,
+    int argc,
+    v8::Local<v8::Value>* argv,
+    async_context asyncContext)
+{
+    auto* globalObject = isolate->globalObject();
+    auto& vm = isolate->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    JSC::Identifier name = symbol->localToJSString()->toIdentifier(globalObject);
+    RETURN_IF_EXCEPTION(scope, MaybeLocal<Value>());
+    JSC::JSValue callback = recv->localToJSValue().get(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, MaybeLocal<Value>());
+    // Like Node, a method that is not a function gives undefined and no exception.
+    if (!callback.isCallable()) {
+        return isolate->currentHandleScope()->createLocal<Value>(vm, JSC::jsUndefined());
+    }
+
+    return MakeCallback(isolate, recv, isolate->currentHandleScope()->createLocal<v8::Function>(vm, callback), argc, argv, asyncContext);
+}
+
+v8::MaybeLocal<v8::Value> MakeCallback(v8::Isolate* isolate,
+    v8::Local<v8::Object> recv,
+    const char* method,
+    int argc,
+    v8::Local<v8::Value>* argv,
+    async_context asyncContext)
+{
+    auto& vm = isolate->vm();
+    JSC::JSString* name = JSC::jsString(vm, WTF::String::fromUTF8(method));
+    return MakeCallback(isolate, recv, isolate->currentHandleScope()->createLocal<v8::String>(vm, name), argc, argv, asyncContext);
+}
+
+namespace Buffer {
+
+// Like Node, any ArrayBufferView is a buffer here, not only a Buffer.
+static JSC::JSArrayBufferView* arrayBufferView(JSC::JSValue value)
+{
+    return dynamicDowncast<JSC::JSArrayBufferView>(value);
+}
+
+bool HasInstance(v8::Local<v8::Value> val)
+{
+    return arrayBufferView(val->localToJSValue());
+}
+
+bool HasInstance(v8::Local<v8::Object> val)
+{
+    return arrayBufferView(val->localToJSValue());
+}
+
+char* Data(v8::Local<v8::Value> val)
+{
+    auto* view = arrayBufferView(val->localToJSValue());
+    return view ? static_cast<char*>(view->vector()) : nullptr;
+}
+
+char* Data(v8::Local<v8::Object> val)
+{
+    auto* view = arrayBufferView(val->localToJSValue());
+    return view ? static_cast<char*>(view->vector()) : nullptr;
+}
+
+size_t Length(v8::Local<v8::Value> val)
+{
+    auto* view = arrayBufferView(val->localToJSValue());
+    return view ? view->byteLength() : 0;
+}
+
+size_t Length(v8::Local<v8::Object> val)
+{
+    auto* view = arrayBufferView(val->localToJSValue());
+    return view ? view->byteLength() : 0;
+}
+
+v8::MaybeLocal<v8::Object> Copy(v8::Isolate* isolate, const char* data, size_t len)
+{
+    auto& vm = isolate->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    auto* buffer = WebCore::createBuffer(isolate->globalObject(), reinterpret_cast<const uint8_t*>(data), len);
+    RETURN_IF_EXCEPTION(scope, v8::MaybeLocal<v8::Object>());
+
+    return isolate->currentHandleScope()->createLocal<v8::Object>(vm, buffer);
+}
+
+v8::MaybeLocal<v8::Object> New(v8::Isolate* isolate, size_t length)
+{
+    auto& vm = isolate->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    auto* buffer = WebCore::createUninitializedBuffer(isolate->globalObject(), length);
+    RETURN_IF_EXCEPTION(scope, v8::MaybeLocal<v8::Object>());
+
+    return isolate->currentHandleScope()->createLocal<v8::Object>(vm, buffer);
+}
+
+// The Buffer owns data from here on. The deallocator runs once it is collected, or right
+// away when the Buffer is empty or cannot be created.
+static v8::MaybeLocal<v8::Object> adoptBytes(v8::Isolate* isolate, char* data, size_t length, JSTypedArrayBytesDeallocator deallocator, void* context)
+{
+    auto& vm = isolate->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    JSC::JSValue buffer = JSC::JSValue::decode(JSBuffer__bufferFromPointerAndLengthAndDeinit(isolate->globalObject(), data, length, context, deallocator));
+    RETURN_IF_EXCEPTION(scope, v8::MaybeLocal<v8::Object>());
+
+    return isolate->currentHandleScope()->createLocal<v8::Object>(vm, buffer);
+}
+
+struct FreeCallbackData {
+    FreeCallback callback;
+    void* hint;
+};
+
+static void callFreeCallback(void* data, void* context)
+{
+    auto* freeCallback = static_cast<FreeCallbackData*>(context);
+    if (freeCallback->callback) {
+        freeCallback->callback(static_cast<char*>(data), freeCallback->hint);
+    }
+    delete freeCallback;
+}
+
+static void freeData(void* data, void*)
+{
+    free(data);
+}
+
+v8::MaybeLocal<v8::Object> New(v8::Isolate* isolate, char* data, size_t length, FreeCallback callback, void* hint)
+{
+    return adoptBytes(isolate, data, length, callFreeCallback, new FreeCallbackData { callback, hint });
+}
+
+// Like Node, data must come from malloc.
+v8::MaybeLocal<v8::Object> New(v8::Isolate* isolate, char* data, size_t length)
+{
+    return adoptBytes(isolate, data, length, freeData, nullptr);
+}
+
+} // namespace Buffer
 
 void node_module_register(void* opaque_mod)
 {

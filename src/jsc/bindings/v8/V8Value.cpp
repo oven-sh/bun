@@ -160,6 +160,18 @@ MaybeLocal<Int32> Value::ToInt32(Local<Context> context) const
     return MaybeLocal<Int32>(context->currentHandleScope()->createLocal<Int32>(vm, JSC::jsNumber(i)));
 }
 
+Maybe<int32_t> Value::Int32Value(Local<Context> context) const
+{
+    Zig::GlobalObject* globalObject = context->globalObject();
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+    int32_t i = localToJSValue().toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, Nothing<int32_t>());
+
+    return Just(i);
+}
+
 Maybe<uint32_t> Value::Uint32Value(Local<Context> context) const
 {
     auto js_value = localToJSValue();

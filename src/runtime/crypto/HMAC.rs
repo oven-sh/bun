@@ -39,9 +39,13 @@ impl HMAC {
         Some(Box::new(HMAC { ctx, algorithm }))
     }
 
-    pub(crate) fn update(&mut self, data: &[u8]) {
+    /// Returns `false` when `HMAC_Update` fails. The BoringSSL error queue
+    /// is only meaningful after a `false`: unrelated earlier calls can leave
+    /// entries in it, so a caller must not read it on its own.
+    #[must_use]
+    pub(crate) fn update(&mut self, data: &[u8]) -> bool {
         // SAFETY: self.ctx is initialized; data is a valid readable slice.
-        let _ = unsafe { boringssl::HMAC_Update(&raw mut self.ctx, data.as_ptr(), data.len()) };
+        unsafe { boringssl::HMAC_Update(&raw mut self.ctx, data.as_ptr(), data.len()) == 1 }
     }
 
     pub(crate) fn size(&self) -> usize {

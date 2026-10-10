@@ -330,6 +330,27 @@ describe("HMAC", () => {
     });
   }
 
+  // A failed WebCrypto key parse leaves its error in BoringSSL's thread-local
+  // error queue. update() must not report that stale entry as its own failure.
+  test.each([
+    ["pkcs8", { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, ["sign"]],
+    ["spki", { name: "ECDSA", namedCurve: "P-256" }, ["verify"]],
+  ] as const)("update() after a failed subtle.importKey(%s) is unaffected", async (format, algorithm, usages) => {
+    const hmac = () => new Bun.CryptoHasher("sha256", "key").update("data").digest("hex");
+    const expected = hmac();
+
+    const rejection = await crypto.subtle
+      .importKey(format, new Uint8Array([0, 0, 0]), algorithm, false, usages as KeyUsage[])
+      .then(
+        () => "resolved",
+        (e: Error) => e.name,
+      );
+    expect(rejection).toBe("DataError");
+
+    expect(hmac()).toBe(expected);
+    expect(hmac()).toBe(expected);
+  });
+
   const unsupported = [["shake128"], ["shake256"]] as const;
   test.each(unsupported)("%s is not supported", algorithm => {
     expect(() => new Bun.CryptoHasher(algorithm, "key")).toThrow("HMAC is not supported for this algorithm yet");

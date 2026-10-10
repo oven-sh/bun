@@ -162,10 +162,7 @@ impl CryptoHasher {
                 zig.with_mut(|z| z.update(input));
                 true
             }
-            CryptoHasher::Evp(evp) => {
-                evp.with_mut(|e| e.update(input));
-                true
-            }
+            CryptoHasher::Evp(evp) => evp.with_mut(|e| e.update(input)),
             _ => false,
         }
     }
@@ -308,6 +305,17 @@ impl CryptoHasher {
         ))
     }
 
+    /// Turns the pending BoringSSL error queue into a thrown JS error and
+    /// empties the queue. Call it only after a BoringSSL call reported
+    /// failure through its return value: the queue on its own is not a
+    /// failure signal, because unrelated earlier calls can leave entries in it.
+    fn throw_boring_error(global: &JSGlobalObject) -> JsError {
+        let err = boring_ssl::ERR_get_error();
+        let instance = create_crypto_error(global, err);
+        boring_ssl::ERR_clear_error();
+        global.throw_value(instance)
+    }
+
     #[bun_jsc::host_fn(getter)]
     pub(crate) fn get_byte_length(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(JSValue::js_number(match this {
@@ -361,10 +369,7 @@ impl CryptoHasher {
 
         let Some(len) = evp.hash(boring_engine(global), input.slice(), &mut output_digest_buf)
         else {
-            let err = boring_ssl::ERR_get_error();
-            let instance = create_crypto_error(global, err);
-            boring_ssl::ERR_clear_error();
-            return Err(global.throw_value(instance));
+            return Err(Self::throw_boring_error(global));
         };
         encoding.encode_with_max_size(
             global,
@@ -406,10 +411,7 @@ impl CryptoHasher {
         }
 
         let Some(len) = evp.hash(boring_engine(global), input.slice(), output_digest_slice) else {
-            let err = boring_ssl::ERR_get_error();
-            let instance = create_crypto_error(global, err);
-            boring_ssl::ERR_clear_error();
-            return Err(global.throw_value(instance));
+            return Err(Self::throw_boring_error(global));
         };
 
         if let Some(output_buf) = output {
@@ -607,12 +609,8 @@ impl CryptoHasher {
 
         match this {
             CryptoHasher::Evp(inner) => {
-                inner.with_mut(|e| e.update(buffer.slice()));
-                let err = boring_ssl::ERR_get_error();
-                if err != 0 {
-                    let instance = create_crypto_error(global, err);
-                    boring_ssl::ERR_clear_error();
-                    return Err(global.throw_value(instance));
+                if !inner.with_mut(|e| e.update(buffer.slice())) {
+                    return Err(Self::throw_boring_error(global));
                 }
             }
             CryptoHasher::Hmac(inner) => {
@@ -622,12 +620,8 @@ impl CryptoHasher {
                 if inner.get().is_none() {
                     return Err(Self::throw_hmac_consumed(global));
                 }
-                inner.with_mut(|opt| opt.as_mut().unwrap().update(buffer.slice()));
-                let err = boring_ssl::ERR_get_error();
-                if err != 0 {
-                    let instance = create_crypto_error(global, err);
-                    boring_ssl::ERR_clear_error();
-                    return Err(global.throw_value(instance));
+                if !inner.with_mut(|opt| opt.as_mut().unwrap().update(buffer.slice())) {
+                    return Err(Self::throw_boring_error(global));
                 }
             }
             CryptoHasher::Zig(inner) => {
@@ -660,10 +654,7 @@ impl CryptoHasher {
                 break 'brk CryptoHasher::Hmac(JsCell::new(Some(match result {
                     Ok(h) => h,
                     Err(_) => {
-                        let code = boring_ssl::ERR_get_error();
-                        let err = create_crypto_error(global, code);
-                        boring_ssl::ERR_clear_error();
-                        return Err(global.throw_value(err));
+                        return Err(Self::throw_boring_error(global));
                     }
                 })));
             }

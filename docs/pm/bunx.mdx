@@ -46,6 +46,13 @@ bunx my-cli
 
 As with `npx`, `bunx` checks for a locally installed package first, then falls back to auto-installing it from `npm`. `bunx` stores installed packages in Bun's [global cache](/pm/global-cache) for future use.
 
+`bunx` does not install another copy from `npm` when the project has the command but cannot run it. It stops with an error that names the file and the reason in these two cases:
+
+- `node_modules/.bin` has a file with the name of the command, and the file has no execute permission.
+- The project's `node_modules` has the package, and the link in `node_modules/.bin` is missing or points to a file that does not exist.
+
+To run the copy from `npm`, ask for a version: `bunx my-cli@latest`.
+
 ## Arguments and flags
 
 To pass additional command-line flags and arguments through to the executable, place them after the executable name.

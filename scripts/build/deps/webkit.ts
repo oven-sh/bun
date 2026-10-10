@@ -251,7 +251,17 @@ export const webkit: Dependency = {
     // PIE-default distros — without it the driver still passes -pie and the
     // -fno-pic probe object fails R_X86_64_32S relocation, killing FindThreads.
     if (cfg.unix && cfg.abi !== "android") optFlags.push("-fno-pic", "-fno-pie", "-no-pie");
-    if (cfg.lto) optFlags.push("-flto=thin");
+    // Match the flags oven-sh/WebKit's artifact builders use for the -lto
+    // prebuilts (Dockerfile ARG LTO_FLAG on Linux, applied to both C and
+    // C++) — the final bun link uses -fwhole-program-vtables, which requires
+    // every bitcode module to have been compiled with -fsplit-lto-unit
+    // (implied by -fwhole-program-vtables) or the link fails with
+    // "inconsistent LTO Unit splitting". The gate mirrors the link-side
+    // predicate in flags.ts (unix && !darwin), which includes FreeBSD.
+    if (cfg.lto) {
+      if (cfg.unix && !cfg.darwin) optFlags.push("-flto=full", "-fwhole-program-vtables", "-fforce-emit-vtables");
+      else optFlags.push("-flto=thin");
+    }
     if (cfg.pgoGenerate) optFlags.push(`-fprofile-generate=${cfg.pgoGenerate}`);
     if (cfg.pgoUse) {
       optFlags.push(

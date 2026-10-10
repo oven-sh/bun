@@ -794,6 +794,33 @@ test.concurrent.each([
   },
 );
 
+// What eslint-import-resolver-typescript 4.4.5 finds, with eslint-plugin-import 2.32.0 under ESLint 10.12. TypeScript itself finds
+// none of the first seven: no style sheet, no picture, nothing behind a `?`, and under `node16` nothing without its extension.
+test.concurrent("import/resolver: typescript finds what is no script, as the package does", async () => {
+  const compilerOptions = { module: "node16", moduleResolution: "node16", baseUrl: ".", paths: { "@/*": ["./src/*"] } };
+  const found = ["./a.css", "./logo.svg?raw", "./data", "./b", "@/a.css", "src/logo.svg", "pkg/css"];
+  const missing = ["./none.css", "@/none.svg", "pkg/dist/a.css", "./b.ts/"];
+  const files = {
+    "eslint.config.mjs": `export default [{
+      settings: { "import/resolver": { typescript: true } },
+      plugins: { import: { meta: { name: "eslint-plugin-import" }, rules: {} } },
+      rules: { "import/no-unresolved": "error" },
+    }];`,
+    "package.json": "{}",
+    "tsconfig.json": JSON.stringify({ compilerOptions }),
+    "src/a.css": "",
+    "src/logo.svg": "",
+    "src/data.json": "{}",
+    "src/b.ts": "export {};\n",
+    "node_modules/pkg/package.json": JSON.stringify({ name: "pkg", exports: { "./css": "./dist/a.css" } }),
+    "node_modules/pkg/dist/a.css": "",
+    "src/a.mjs": [...found, ...missing].map(it => `import ${JSON.stringify(it)};\n`).join(""),
+  };
+  const { problems } = await lint(files, ["src/a.mjs"]);
+  // `lint` sorts them as strings.
+  expect(problems).toEqual(missing.map((_, at) => `src/a.mjs:${found.length + at + 1}:8 import/no-unresolved`).sort());
+});
+
 test.concurrent(
   "import/ignore with a regular expression that is not written as a string: the package answers",
   async () => {

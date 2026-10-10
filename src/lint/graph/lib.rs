@@ -484,8 +484,12 @@ impl<'h> Graph<'h> {
             paths: &[],
             through_paths: true,
         };
-        let from_base_url =
-            || resolver.resolve_as_require(&join(base_url.as_ref()?, specifier), from, &how);
+        let from_base_url = || {
+            let base_url = base_url
+                .as_ref()
+                .filter(|_| !specifier.starts_with(b".") && !specifier.starts_with(b"/"))?;
+            resolver.resolve_as_require(&join(base_url, specifier), from, &how)
+        };
         let found = resolver.resolve_as_require(specifier, from, &how);
         Some(found.or_else(from_base_url)?.0)
     }
@@ -1061,7 +1065,20 @@ impl Modules for Graph<'_> {
                     return None;
                 }
                 let real = self.store.disk().realpath(&from);
-                match self.resolve_any_path(&real, specifier, is_require) {
+                let found = self.resolve_any_path(&real, specifier, is_require);
+                // TypeScript adds neither `.json` nor `.node` to a name. Such a file comes before a directory.
+                let named = join(directory_of(&from), specifier);
+                let is_in_directory = |it: &[u8]| {
+                    let rest = it.strip_prefix(&named[..]);
+                    specifier.starts_with(b".") && rest.is_some_and(|it| it.starts_with(b"/"))
+                };
+                match found {
+                    Some(found) if is_in_directory(&found.0) => {
+                        let endings = [&b".json"[..], b".node"];
+                        let mut files = endings.iter().map(|it| [&named[..], *it].concat());
+                        let file = files.find(|it| self.store.disk().is_file(it));
+                        file.unwrap_or_else(|| found.0.into_owned())
+                    }
                     Some(found) => found.0.into_owned(),
                     None => self.resolve_other_file(specifier, &from)?,
                 }

@@ -181,13 +181,16 @@ impl<'a> Walk<'a> {
         is_es5_component(grandparent, &self.pragmas)
     }
 
-    /// `isStateReference`, of a `node` reached from above. What has no `name` is taken for a parameter without one.
-    fn is_state_reference(&self, node: Expr<'a>) -> bool {
-        let name = node.as_ident();
+    /// `isAliasedStateReference || isStateParameterReference(node)`, of a node with this `name`. What has none is taken
+    /// for a parameter without one.
+    fn is_name_of_state(&self, name: Option<Name<'a>>) -> bool {
         let aliases = self.class_info.as_ref().and_then(|it| it.aliases.as_ref());
-        (is_direct_state_reference(node) && !node.is_chain_root())
-            || name.is_some_and(|name| aliases.is_some_and(|it| it.contains(&name)))
-            || self.state_parameters.contains(&name)
+        name.is_some_and(|name| aliases.is_some_and(|it| it.contains(&name))) || self.state_parameters.contains(&name)
+    }
+
+    /// `isStateReference`, of a `node` reached from above.
+    fn is_state_reference(&self, node: Expr<'a>) -> bool {
+        (is_direct_state_reference(node) && !node.is_chain_root()) || self.is_name_of_state(node.as_ident())
     }
 
     fn has_aliases(&self) -> bool {
@@ -401,11 +404,21 @@ impl<'a> Walk<'a> {
             } else {
                 self.add_used_state_field(get_name_of_property(node));
             }
-        } else if (is_direct_state_reference(node) || self.state_parameters.contains(&None))
+        } else if (is_direct_state_reference(node) || self.is_name_of_state(None))
             && !node.is_chain_root()
             && matches!(node.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Call)
         {
             self.class_info = None;
+        }
+    }
+
+    /// The same for the `a.b.c` after `implements` or after the `extends` of an interface, which is no expression here.
+    fn qualified_name(&mut self, name: EntityName<'a>) {
+        for (index, property) in name.parts().enumerate().skip(1) {
+            let object = name.first().filter(|_| index == 1);
+            if self.is_name_of_state(object.map(Ident::name)) {
+                self.add_used_state_field(Some(Cow::Borrowed(property.bytes())));
+            }
         }
     }
 
@@ -458,6 +471,14 @@ impl<'a> Visitor<'a> for Walk<'a> {
                 }
             }
             Node::Prop(property) if property.kind() == PropKind::Spread => self.spread(node, property.value()),
+            Node::Type(ty) => {
+                if let TypeKind::Ref { name, .. } = ty.kind()
+                    && name.len() > 1
+                    && matches!(estree_type_name(node), "TSClassImplements" | "TSInterfaceHeritage")
+                {
+                    self.qualified_name(name);
+                }
+            }
             _ => {}
         }
     }

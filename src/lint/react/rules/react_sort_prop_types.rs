@@ -83,11 +83,12 @@ struct Moved<'a> {
     separator: &'a [u8],
 }
 
-/// A piece of a text, and its `length`.
 #[derive(Copy, Clone)]
-struct Piece<'t> {
-    bytes: &'t [u8],
-    units: u32,
+enum Piece<'t> {
+    /// With its `length`.
+    Text(&'t [u8], u32),
+    /// Half of a surrogate pair that an index was in.
+    Surrogate(u16),
 }
 
 /// A text that is cut and put together again at indices of JavaScript, as upstream does it with `slice` and `+`: also
@@ -352,7 +353,10 @@ impl SortPropTypes {
         source.move_to(units_until(whole.end));
         let mut sorted = Vec::new();
         for piece in &source.before {
-            sorted.extend_from_slice(piece.bytes);
+            match *piece {
+                Piece::Text(bytes, _) => sorted.extend_from_slice(bytes),
+                Piece::Surrogate(half) => strings::push_codepoint_wtf8_joined(&mut sorted, u32::from(half)),
+            }
         }
         sorted
     }
@@ -502,17 +506,12 @@ impl<'a> Checked<'a> {
     }
 }
 
-impl<'t> Piece<'t> {
-    fn new(bytes: &'t [u8]) -> Piece<'t> {
-        Piece { bytes, units: strings::wtf8_len_utf16(bytes) }
-    }
-
-    /// Its first `units` code units, which are fewer than it has, and the others.
-    fn split(self, units: u32) -> [Piece<'t>; 2] {
-        let is_ascii = self.units as usize == self.bytes.len();
-        let at = if is_ascii { units as usize } else { strings::wtf8_offset_of_utf16_index(self.bytes, units) };
-        let (first, others) = self.bytes.split_at(at.min(self.bytes.len()));
-        [Piece { bytes: first, units }, Piece { bytes: others, units: self.units.saturating_sub(units) }]
+impl Piece<'_> {
+    fn units(self) -> u32 {
+        match self {
+            Piece::Text(_, units) => units,
+            Piece::Surrogate(_) => 1,
+        }
     }
 }
 
@@ -523,40 +522,43 @@ impl<'t> Source<'t> {
 
     /// Takes a piece of at most `units` code units from what is after the place. `None`: the text ends here.
     fn take(&mut self, units: u32) -> Option<Piece<'t>> {
-        let Some(piece) = self.after.pop() else {
-            if self.rest.is_empty() {
-                return None;
-            }
-            let (taken, rest) = self.rest.split_at(strings::wtf8_offset_of_utf16_index(self.rest, units));
-            self.rest = rest;
-            return Some(if rest.is_empty() { Piece::new(taken) } else { Piece { bytes: taken, units } });
+        let (bytes, length) = match self.after.pop() {
+            Some(Piece::Text(bytes, length)) if length > units => (bytes, Some(length)),
+            Some(piece) => return Some(piece),
+            None if self.rest.is_empty() => return None,
+            None => (std::mem::take(&mut self.rest), None),
         };
-        if piece.units <= units {
-            return Some(piece);
+        let (taken, mut others) = bytes.split_at(strings::wtf8_offset_of_utf16_index(bytes, units));
+        let mut taken_units = strings::wtf8_len_utf16(taken);
+        let pair = match strings::wtf8_codepoint_at(others, 0) {
+            (pair @ 0x1_0000..=0x10_FFFF, size) if taken_units < units => {
+                others = others.get(size..).unwrap_or_default();
+                Some(strings::encode_surrogate_pair(pair))
+            }
+            _ => None,
+        };
+        let taken = Piece::Text(taken, taken_units);
+        taken_units += if pair.is_some() { 2 } else { 0 };
+        match length {
+            Some(length) => self.after.push(Piece::Text(others, length.saturating_sub(taken_units))),
+            None => self.rest = others,
         }
-        let [first, others] = piece.split(units);
-        self.after.push(others);
-        Some(first)
+        self.after.extend(pair.into_iter().flatten().rev().map(Piece::Surrogate));
+        Some(taken)
     }
 
     /// To the index `to`, or to the end of the text.
     fn move_to(&mut self, to: u32) {
         while self.at > to
-            && let Some(mut piece) = self.before.pop()
+            && let Some(piece) = self.before.pop()
         {
-            let back = self.at - to;
-            if piece.units > back {
-                let [first, others] = piece.split(piece.units - back);
-                self.before.push(first);
-                piece = others;
-            }
-            self.at -= piece.units;
+            self.at -= piece.units();
             self.after.push(piece);
         }
         while self.at < to
             && let Some(piece) = self.take(to - self.at)
         {
-            self.at += piece.units;
+            self.at += piece.units();
             self.before.push(piece);
         }
     }
@@ -566,12 +568,12 @@ impl<'t> Source<'t> {
         while units > 0
             && let Some(piece) = self.take(units)
         {
-            units -= piece.units;
+            units -= piece.units();
         }
     }
 
     /// `bytes` comes after the place.
     fn insert(&mut self, bytes: &'t [u8]) {
-        self.after.push(Piece::new(bytes));
+        self.after.push(Piece::Text(bytes, strings::wtf8_len_utf16(bytes)));
     }
 }

@@ -1193,7 +1193,9 @@ impl<'f> Collector<'f, '_> {
             let found = elements.iter().find_map(|&pos| {
                 let mut scope = tree.scope_at(pos);
                 while let Some(data) = tree.scopes.get(scope as usize) {
-                    if let Some(index) = variables.get(scope, name) {
+                    // It is in the `set` of its scope from where the Referencer has visited its declaration.
+                    let declared = |index: &u32| variables.list[*index as usize].first_pos < pos;
+                    if let Some(index) = variables.get(scope, name).filter(declared) {
                         return Some(index);
                     }
                     scope = data.parent;

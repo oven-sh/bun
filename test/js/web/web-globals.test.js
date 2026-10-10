@@ -1,5 +1,5 @@
 import { spawn } from "bun";
-import { expect, it, test } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, withoutAggressiveGC } from "harness";
 
 test("exists", () => {
@@ -417,6 +417,52 @@ test("confirm (no) windows newline", async () => {
   await proc.exited;
 
   expect(await proc.stderr.text()).toBe("No\n");
+});
+
+// prompt() and confirm() print the message to stdout and the fixture writes the JSON result to stderr.
+describe.concurrent("prompt", () => {
+  async function runDialog(call, stdin) {
+    await using proc = spawn({
+      cmd: [bunExe(), "-e", `console.error(JSON.stringify(${call}))`],
+      stdin: new Blob([stdin]),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.each([
+    ["no default, unix newline", `prompt("Q?")`, "\n", "Q? ", ""],
+    ["no default, windows newline", `prompt("Q?")`, "\r\n", "Q? ", ""],
+    ["undefined default is no default", `prompt("Q?", undefined)`, "\n", "Q? ", ""],
+    ["no default, EOF", `prompt("Q?")`, "", "Q? ", null],
+    ["no default, answer", `prompt("Q?")`, "hi\n", "Q? ", "hi"],
+    ["default, empty line", `prompt("Q?", "dflt")`, "\n", "Q? [dflt] ", "dflt"],
+    ["default, answer", `prompt("Q?", "dflt")`, "hi\n", "Q? [dflt] ", "hi"],
+    ["default is converted to a string", `prompt("Q?", 5)`, "\n", "Q? [5] ", "5"],
+    ["null default is the string null", `prompt("Q?", null)`, "\n", "Q? [null] ", "null"],
+    ["no message", `prompt()`, "hi\n", "Prompt ", "hi"],
+    ["undefined message is no message", `prompt(undefined)`, "hi\n", "Prompt ", "hi"],
+    ["undefined message, default", `prompt(undefined, "dflt")`, "\n", "Prompt [dflt] ", "dflt"],
+    [
+      "arguments convert in order, before the message prints",
+      `prompt({ toString: () => (console.log("m"), "Q?") }, { toString: () => (console.log("d"), "D") })`,
+      "\n",
+      "m\nd\nQ? [D] ",
+      "D",
+    ],
+  ])("%s", async (_, call, stdin, stdout, result) => {
+    expect(await runDialog(call, stdin)).toEqual({ stdout, stderr: JSON.stringify(result) + "\n", exitCode: 0 });
+  });
+
+  test.each([
+    ["confirm: undefined message is no message", `confirm(undefined)`, "y\n", "Confirm [y/N] ", true],
+    ["confirm: null message is the string null", `confirm(null)`, "\n", "null [y/N] ", false],
+  ])("%s", async (_, call, stdin, stdout, result) => {
+    expect(await runDialog(call, stdin)).toEqual({ stdout, stderr: JSON.stringify(result) + "\n", exitCode: 0 });
+  });
 });
 
 test("globalThis.self = 123 works", () => {

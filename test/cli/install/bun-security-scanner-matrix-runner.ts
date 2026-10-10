@@ -254,39 +254,48 @@ async function runSecurityScannerTest(options: SecurityScannerTestOptions) {
 
   if (hasTTY) {
     let responseSent = false;
+    const eof = Promise.withResolvers<void>();
 
-    await using terminal = new Bun.Terminal({
-      cols: 80,
-      rows: 24,
-      data(_term, data) {
-        const text = new TextDecoder().decode(data);
-        errAndOut += text;
-
-        if (DO_TEST_DEBUG) {
-          const lines = text.split("\n");
-          for (const line of lines) {
-            process.stdout.write(redSubprocessPrefix);
-            process.stdout.write(" ");
-            process.stdout.write(line);
-            process.stdout.write("\n");
-          }
-        }
-
-        // When we see the prompt, send the configured response
-        if (!responseSent && errAndOut.includes("Continue anyway? [y/N]")) {
-          responseSent = true;
-          terminal.write(ttyResponse + "\n");
-        }
-      },
-    });
-
+    // An inline terminal (not a pre-built `new Bun.Terminal()`): Bun drains the
+    // pty when the child exits and reports EOF through `exit`, so the child's
+    // last line is in errAndOut once `eof` settles. With a pre-built terminal
+    // nothing reads the pty between the child's exit and `terminal.close()`,
+    // and the last line is lost when `exited` resolves first.
     await using proc = Bun.spawn(cmd, {
       cwd: dir,
       env: bunEnv,
-      terminal,
+      terminal: {
+        cols: 80,
+        rows: 24,
+        data(terminal, data) {
+          const text = new TextDecoder().decode(data);
+          errAndOut += text;
+
+          if (DO_TEST_DEBUG) {
+            const lines = text.split("\n");
+            for (const line of lines) {
+              process.stdout.write(redSubprocessPrefix);
+              process.stdout.write(" ");
+              process.stdout.write(line);
+              process.stdout.write("\n");
+            }
+          }
+
+          // When we see the prompt, send the configured response
+          if (!responseSent && errAndOut.includes("Continue anyway? [y/N]")) {
+            responseSent = true;
+            terminal.write(ttyResponse + "\n");
+          }
+        },
+        exit() {
+          eof.resolve();
+        },
+      },
     });
 
     exitCode = await proc.exited;
+    await eof.promise;
+    proc.terminal?.close();
   } else {
     // Non-TTY mode: use piped stdin to ensure isatty(stdin) returns false
     await using proc = Bun.spawn({

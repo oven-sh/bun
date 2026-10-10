@@ -1,456 +1,399 @@
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { join } from "path";
+import { file } from "bun";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
+import { basename, join } from "node:path";
+import {
+  createTestContext,
+  destroyTestContext,
+  dummyAfterAll,
+  dummyBeforeAll,
+  setContextHandler,
+  type TestContext,
+} from "./dummy.registry.js";
 
-describe("bun update security edge cases", () => {
-  test("bun update detects vulnerability in updated version that was safe before", async () => {
-    // Start with an exact version that's "safe"
-    await using dir = tempDir("update-new-vuln", {
-      "package.json": JSON.stringify({
-        name: "test-app",
-        dependencies: {
-          "lodash": "4.17.20", // Exact version that's safe
-        },
-      }),
-    });
+beforeAll(dummyBeforeAll);
+afterAll(dummyAfterAll);
 
-    // First install - should be safe (no scanner yet)
-    await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
+type PackageMap = Record<string, Record<string, { dependencies?: Record<string, string> }>>;
 
-    // Now add scanner and update package.json to allow updates
-    await Bun.write(
-      join(dir, "package.json"),
-      JSON.stringify({
-        name: "test-app",
-        dependencies: {
-          "lodash": "^4.17.0", // Now allow updates
-        },
-      }),
-    );
+// Serves per-package version metadata from a local registry (tarballs live next
+// to this file), so these tests never touch the public npm registry.
+function makeRegistryHandler(ctx: TestContext, packages: PackageMap) {
+  return async (request: Request) => {
+    const url = request.url.replaceAll("%2f", "/");
+    if (url.endsWith(".tgz")) {
+      return new Response(file(join(import.meta.dir, basename(url).toLowerCase())));
+    }
+    const name = new URL(url).pathname.replace(`/${ctx.id}/`, "").replace(/^\//, "");
+    const versionInfo = packages[name];
+    if (!versionInfo) return new Response("not found", { status: 404 });
+    const versions: Record<string, unknown> = {};
+    let latest = "";
+    for (const version of Object.keys(versionInfo)) {
+      latest = version;
+      versions[version] = {
+        name,
+        version,
+        dist: { tarball: `${ctx.registry_url}${name}-${version}.tgz` },
+        dependencies: versionInfo[version].dependencies ?? {},
+      };
+    }
+    return new Response(JSON.stringify({ name, versions, "dist-tags": { latest } }));
+  };
+}
 
-    await Bun.write(
+async function setup(options: {
+  packages: PackageMap;
+  dependencies: Record<string, string>;
+  scanner: string;
+  scannerEnabled?: boolean;
+}) {
+  const ctx = await createTestContext();
+  setContextHandler(ctx, makeRegistryHandler(ctx, options.packages));
+  const dir = ctx.package_dir;
+
+  const writeBunfig = (withScanner: boolean) =>
+    Bun.write(
       join(dir, "bunfig.toml"),
-      `
-[install.security]
-scanner = "./scanner.js"
-`,
+      `[install]
+cache = false
+registry = "${ctx.registry_url}"
+saveTextLockfile = false
+${withScanner ? `\n[install.security]\nscanner = "./scanner.js"\n` : ""}`,
     );
 
-    await Bun.write(
-      join(dir, "scanner.js"),
-      `
+  await Promise.all([
+    Bun.write(join(dir, "package.json"), JSON.stringify({ name: "test-app", dependencies: options.dependencies })),
+    Bun.write(join(dir, "scanner.js"), options.scanner),
+    writeBunfig(options.scannerEnabled ?? false),
+  ]);
+
+  return { ctx, dir, writeBunfig };
+}
+
+async function run(dir: string, args: string[]) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd: dir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+// Concurrent spawns contend for CPU on slow debug/ASAN lanes, so per-test wall
+// time is higher than sequential even though total wall time drops. 30s matches
+// the sibling security-scanner tests.
+const timeout = 30_000;
+
+describe.concurrent("bun update security edge cases", () => {
+  test(
+    "bun update detects vulnerability in updated version that was safe before",
+    async () => {
+      const { ctx, dir, writeBunfig } = await setup({
+        packages: { baz: { "0.0.3": {}, "0.0.5": {} } },
+        dependencies: { baz: "0.0.3" },
+        scanner: `
 module.exports = {
   scanner: {
     version: "1",
-    scan: async function(payload) {
+    scan: async function (payload) {
       const results = [];
       for (const pkg of payload.packages) {
-        // Flag lodash 4.17.21 as vulnerable
-        if (pkg.name === "lodash" && pkg.version === "4.17.21") {
+        if (pkg.name === "baz" && pkg.version === "0.0.5") {
           results.push({
-            package: "lodash",
+            package: "baz",
             level: "fatal",
-            description: "CVE-2024-XXXX: Prototype pollution in lodash 4.17.21",
-            url: "https://example.com/CVE-2024-XXXX"
+            description: "CVE-2024-XXXX: Prototype pollution in baz 0.0.5",
+            url: "https://example.com/CVE-2024-XXXX",
           });
         }
       }
       return results;
-    }
-  }
-};
-`,
-    );
+    },
+  },
+};`,
+      });
+      try {
+        const install = await run(dir, ["install"]);
+        expect(install.stderr).toContain("Saved lockfile");
+        expect(install.exitCode).toBe(0);
 
-    // Simulate that a newer version (4.17.21) is now available with a vulnerability
-    // Run update which would get the newer, vulnerable version
-    const updateProc = Bun.spawn({
-      cmd: [bunExe(), "update"],
-      cwd: dir,
-      stdout: "pipe",
-      stderr: "pipe",
-      env: bunEnv,
-    });
+        await writeBunfig(true);
+        await Bun.write(
+          join(dir, "package.json"),
+          JSON.stringify({ name: "test-app", dependencies: { baz: ">=0.0.3" } }),
+        );
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      updateProc.stdout.text(),
-      updateProc.stderr.text(),
-      updateProc.exited,
-    ]);
+        const { stdout, exitCode } = await run(dir, ["update"]);
+        expect(stdout).toContain("FATAL: baz");
+        expect(stdout).toContain("CVE-2024-XXXX: Prototype pollution in baz 0.0.5");
+        expect(stdout).toContain("Installation aborted due to fatal security advisories");
+        expect(exitCode).toBe(1);
+      } finally {
+        destroyTestContext(ctx);
+      }
+    },
+    timeout,
+  );
 
-    // The scanner should detect the vulnerability in the updated version
-    if (stdout.includes("FATAL: lodash")) {
-      expect(stdout).toContain("FATAL: lodash");
-      expect(stdout).toContain("CVE-2024-XXXX");
-      expect(stdout).toContain("Installation aborted due to fatal security advisories");
-      expect(exitCode).toBe(1);
-    } else {
-      // If the version didn't update to 4.17.21+, it should be safe
-      expect(exitCode).toBe(0);
-    }
-  });
-
-  test("bun update <pkg> detects vulnerability in the specific updated package", async () => {
-    await using dir = tempDir("update-specific-vuln", {
-      "package.json": JSON.stringify({
-        name: "test-app",
-        dependencies: {
-          "axios": "0.21.0", // Old version
-          "lodash": "4.17.20",
-        },
-      }),
-      "bunfig.toml": `
-[install.security]
-scanner = "./scanner.js"
-`,
-      "scanner.js": `
+  test(
+    "bun update <pkg> detects vulnerability in the specific updated package",
+    async () => {
+      const { ctx, dir, writeBunfig } = await setup({
+        packages: { baz: { "0.0.3": {}, "0.0.5": {} } },
+        dependencies: { baz: "0.0.3" },
+        scanner: `
 module.exports = {
   scanner: {
     version: "1",
-    scan: async function(payload) {
+    scan: async function (payload) {
       const results = [];
       for (const pkg of payload.packages) {
-        // axios >=0.21.2 has a vulnerability
-        if (pkg.name === "axios" && Bun.semver.satisfies(pkg.version, ">=0.21.2")) {
+        if (pkg.name === "baz" && Bun.semver.satisfies(pkg.version, ">=0.0.5")) {
           results.push({
-            package: "axios",
+            package: "baz",
             level: "fatal",
-            description: "CVE-2023-45857: Axios vulnerable to SSRF in >=0.21.2",
-            url: "https://nvd.nist.gov/vuln/detail/CVE-2023-45857"
+            description: "CVE-2023-45857: baz vulnerable to SSRF in >=0.0.5",
+            url: "https://nvd.nist.gov/vuln/detail/CVE-2023-45857",
           });
         }
       }
       return results;
-    }
-  }
-};
-`,
-    });
+    },
+  },
+};`,
+      });
+      try {
+        const install = await run(dir, ["install"]);
+        expect(install.stderr).toContain("Saved lockfile");
+        expect(install.exitCode).toBe(0);
 
-    await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
+        await writeBunfig(true);
 
-    // Update only axios - newer version has vulnerability
-    const updateProc = Bun.spawn({
-      cmd: [bunExe(), "update", "axios"],
-      cwd: dir,
-      stdout: "pipe",
-      stderr: "pipe",
-      env: bunEnv,
-    });
+        const { stdout, exitCode } = await run(dir, ["update", "baz", "--latest"]);
+        expect(stdout).toContain("FATAL: baz");
+        expect(stdout).toContain("CVE-2023-45857: baz vulnerable to SSRF in >=0.0.5");
+        expect(stdout).toContain("Installation aborted due to fatal security advisories");
+        expect(exitCode).toBe(1);
+      } finally {
+        destroyTestContext(ctx);
+      }
+    },
+    timeout,
+  );
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      updateProc.stdout.text(),
-      updateProc.stderr.text(),
-      updateProc.exited,
-    ]);
-
-    // Should detect vulnerability in the updated axios
-    if (stdout.includes("FATAL: axios")) {
-      expect(stdout).toContain("FATAL: axios");
-      expect(stdout).toContain("CVE-2023-45857");
-      expect(stdout).toContain("Installation aborted");
-      expect(exitCode).toBe(1);
-    } else {
-      // If axios didn't update to vulnerable version
-      expect(exitCode).toBe(0);
-    }
-  });
-
-  test("bun update detects newly discovered vulnerability in existing package", async () => {
-    // Scenario: A package in lockfile was safe when installed,
-    // but a vulnerability was discovered later (without version change)
-    await using dir = tempDir("update-newly-discovered", {
-      "package.json": JSON.stringify({
-        name: "test-app",
-        dependencies: {
-          "express": "4.18.2", // This version exists in lockfile
-          "lodash": "4.17.21",
-        },
-      }),
-      // Initially no scanner in bunfig
-    });
-
-    // First install without security scanner (simulating before vulnerability was known)
-    await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
-
-    // Now add scanner configuration
-    await Bun.write(
-      join(dir, "bunfig.toml"),
-      `
-[install.security]
-scanner = "./scanner.js"
-`,
-    );
-
-    // Now add scanner that knows about the vulnerability
-    await Bun.write(
-      join(dir, "scanner.js"),
-      `
+  test(
+    "bun update detects newly discovered vulnerability in existing package",
+    async () => {
+      const { ctx, dir, writeBunfig } = await setup({
+        packages: { baz: { "0.0.3": {} }, bar: { "0.0.2": {} } },
+        dependencies: { baz: "0.0.3", bar: "0.0.2" },
+        scanner: `
 module.exports = {
   scanner: {
     version: "1",
-    scan: async function(payload) {
+    scan: async function (payload) {
       console.error("SCANNING_PACKAGES:", payload.packages.map(p => p.name + "@" + p.version).join(", "));
-      
       const results = [];
       for (const pkg of payload.packages) {
-        // Express 4.18.2 now has a known vulnerability
-        if (pkg.name === "express" && pkg.version === "4.18.2") {
+        if (pkg.name === "baz" && pkg.version === "0.0.3") {
           results.push({
-            package: "express",
+            package: "baz",
             level: "fatal",
-            description: "CVE-2024-NEW: Newly discovered vulnerability in express 4.18.2",
-            url: "https://example.com/CVE-2024-NEW"
+            description: "CVE-2024-NEW: Newly discovered vulnerability in baz 0.0.3",
+            url: "https://example.com/CVE-2024-NEW",
           });
         }
       }
       return results;
-    }
-  }
-};
-`,
-    );
+    },
+  },
+};`,
+      });
+      try {
+        const install = await run(dir, ["install"]);
+        expect(install.stderr).toContain("Saved lockfile");
+        expect(install.exitCode).toBe(0);
 
-    // Run update - should detect the vulnerability in the already-installed package
-    const updateProc = Bun.spawn({
-      cmd: [bunExe(), "update"],
-      cwd: dir,
-      stdout: "pipe",
-      stderr: "pipe",
-      env: bunEnv,
-    });
+        await writeBunfig(true);
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      updateProc.stdout.text(),
-      updateProc.stderr.text(),
-      updateProc.exited,
-    ]);
+        const { stdout, stderr, exitCode } = await run(dir, ["update"]);
+        expect(stderr).toContain("SCANNING_PACKAGES:");
+        expect(stderr).toMatch(/SCANNING_PACKAGES:.*baz@0\.0\.3/);
+        expect(stderr).toMatch(/SCANNING_PACKAGES:.*bar@0\.0\.2/);
+        expect(stdout).toContain("FATAL: baz");
+        expect(stdout).toContain("CVE-2024-NEW");
+        expect(stdout).toContain("Newly discovered vulnerability");
+        expect(exitCode).toBe(1);
+      } finally {
+        destroyTestContext(ctx);
+      }
+    },
+    timeout,
+  );
 
-    // Should scan and find the vulnerability
-    expect(stderr).toContain("SCANNING_PACKAGES:");
-    expect(stdout).toContain("FATAL: express");
-    expect(stdout).toContain("CVE-2024-NEW");
-    expect(stdout).toContain("Newly discovered vulnerability");
-    expect(exitCode).toBe(1);
-  });
-
-  test("bun pm scan detects vulnerability in existing transitive dependency after adding package", async () => {
-    // Scenario: After adding a new package, running pm scan finds vulnerabilities
-    // in existing transitive dependencies
-    await using dir = tempDir("scan-after-add", {
-      "package.json": JSON.stringify({
-        name: "test-app",
-        dependencies: {
-          "express": "^4.0.0", // Has body-parser as transitive dep
+  test(
+    "bun pm scan detects vulnerability in existing transitive dependency after adding package",
+    async () => {
+      const { ctx, dir, writeBunfig } = await setup({
+        packages: {
+          "depends-on-monkey": { "0.0.2": { dependencies: { monkey: "0.0.2" } } },
+          monkey: { "0.0.2": {} },
+          bar: { "0.0.2": {} },
         },
-      }),
-      "bunfig.toml": `
-[install.security]
-scanner = "./scanner.js"
-`,
-      "scanner.js": `
+        dependencies: { "depends-on-monkey": "^0.0.2" },
+        scanner: `
 module.exports = {
   scanner: {
     version: "1",
-    scan: async function(payload) {
+    scan: async function (payload) {
       const results = [];
       for (const pkg of payload.packages) {
-        // body-parser (transitive dep of express) has vulnerability
-        if (pkg.name === "body-parser") {
+        if (pkg.name === "monkey") {
           results.push({
-            package: "body-parser",
+            package: "monkey",
             level: "fatal",
-            description: "Previously unknown vulnerability in body-parser",
-            url: "https://example.com/body-parser-vuln"
+            description: "Previously unknown vulnerability in monkey",
+            url: "https://example.com/monkey-vuln",
           });
         }
       }
       return results;
-    }
-  }
-};
-`,
-    });
+    },
+  },
+};`,
+      });
+      try {
+        const install = await run(dir, ["install"]);
+        expect(install.stderr).toContain("Saved lockfile");
+        expect(install.exitCode).toBe(0);
 
-    // Install without scanner first
-    const tempBunfig = join(dir, "bunfig.toml");
-    const fs = await import("node:fs/promises");
-    await fs.rename(tempBunfig, `${tempBunfig}.bak`);
-    await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
-    await fs.rename(`${tempBunfig}.bak`, tempBunfig);
+        const add = await run(dir, ["add", "bar"]);
+        expect(add.stderr).toContain("Saved lockfile");
+        expect(add.exitCode).toBe(0);
 
-    // Add a new package without scanner
-    await Bun.$`${bunExe()} add lodash`.cwd(dir).env(bunEnv).quiet();
+        await writeBunfig(true);
 
-    // Now run pm scan with scanner to detect vulnerabilities
-    const scanProc = Bun.spawn({
-      cmd: [bunExe(), "pm", "scan"],
-      cwd: dir,
-      stdout: "pipe",
-      stderr: "pipe",
-      env: bunEnv,
-    });
+        const { stdout, exitCode } = await run(dir, ["pm", "scan"]);
+        expect(stdout).toContain("FATAL: monkey");
+        expect(stdout).toContain("via test-app › depends-on-monkey › monkey");
+        expect(stdout).toContain("Previously unknown vulnerability");
+        expect(exitCode).toBe(1);
+      } finally {
+        destroyTestContext(ctx);
+      }
+    },
+    timeout,
+  );
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      scanProc.stdout.text(),
-      scanProc.stderr.text(),
-      scanProc.exited,
-    ]);
-
-    // Should detect vulnerability in existing transitive dependency
-    expect(stdout).toContain("FATAL: body-parser");
-    expect(stdout).toContain("via test-app › express › body-parser");
-    expect(stdout).toContain("Previously unknown vulnerability");
-    expect(exitCode).toBe(1);
-  });
-
-  test("bun update with version range change exposes vulnerability", async () => {
-    // Scenario: package.json is updated to allow newer versions that have vulnerabilities
-    await using dir = tempDir("update-range-vuln", {
-      "package.json": JSON.stringify({
-        name: "test-app",
-        dependencies: {
-          "minimist": "1.2.5", // Exact version, safe
-        },
-      }),
-      "bunfig.toml": `
-[install.security]
-scanner = "./scanner.js"
-`,
-      "scanner.js": `
+  test(
+    "bun update with version range change exposes vulnerability",
+    async () => {
+      const { ctx, dir } = await setup({
+        packages: { baz: { "0.0.3": {}, "0.0.5": {} } },
+        dependencies: { baz: "0.0.3" },
+        scannerEnabled: true,
+        scanner: `
 module.exports = {
   scanner: {
     version: "1",
-    scan: async function(payload) {
+    scan: async function (payload) {
       const results = [];
       for (const pkg of payload.packages) {
-        // minimist >=1.2.6 has vulnerability
-        if (pkg.name === "minimist" && Bun.semver.satisfies(pkg.version, ">=1.2.6")) {
+        if (pkg.name === "baz" && Bun.semver.satisfies(pkg.version, ">=0.0.5")) {
           results.push({
-            package: "minimist",
+            package: "baz",
             level: "fatal",
-            description: "CVE-2021-44906: Prototype pollution in minimist >=1.2.6",
-            url: "https://nvd.nist.gov/vuln/detail/CVE-2021-44906"
+            description: "CVE-2021-44906: Prototype pollution in baz >=0.0.5",
+            url: "https://nvd.nist.gov/vuln/detail/CVE-2021-44906",
           });
         }
       }
       return results;
-    }
-  }
-};
-`,
-    });
+    },
+  },
+};`,
+      });
+      try {
+        const install = await run(dir, ["install"]);
+        expect(install.stdout).not.toContain("FATAL:");
+        expect(install.stderr).toContain("Saved lockfile");
+        expect(install.exitCode).toBe(0);
 
-    await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
+        await Bun.write(
+          join(dir, "package.json"),
+          JSON.stringify({ name: "test-app", dependencies: { baz: ">=0.0.3" } }),
+        );
 
-    // Update package.json to use caret range
-    await Bun.write(
-      join(dir, "package.json"),
-      JSON.stringify({
-        name: "test-app",
-        dependencies: {
-          "minimist": "^1.2.5", // Now allows 1.2.6+
-        },
-      }),
-    );
+        const { stdout, exitCode } = await run(dir, ["update"]);
+        expect(stdout).toContain("FATAL: baz");
+        expect(stdout).toContain("CVE-2021-44906");
+        expect(stdout).toContain("Prototype pollution");
+        expect(stdout).toContain("Installation aborted due to fatal security advisories");
+        expect(exitCode).toBe(1);
+      } finally {
+        destroyTestContext(ctx);
+      }
+    },
+    timeout,
+  );
 
-    // Run update - should detect vulnerability in newer allowed version
-    const updateProc = Bun.spawn({
-      cmd: [bunExe(), "update"],
-      cwd: dir,
-      stdout: "pipe",
-      stderr: "pipe",
-      env: bunEnv,
-    });
-
-    const [stdout, stderr, exitCode] = await Promise.all([
-      updateProc.stdout.text(),
-      updateProc.stderr.text(),
-      updateProc.exited,
-    ]);
-
-    // If it updated to vulnerable version
-    if (stdout.includes("FATAL: minimist")) {
-      expect(stdout).toContain("FATAL: minimist");
-      expect(stdout).toContain("CVE-2021-44906");
-      expect(stdout).toContain("Prototype pollution");
-      expect(exitCode).toBe(1);
-    } else {
-      expect(exitCode).toBe(0);
-    }
-  });
-
-  test("bun pm scan detects newly discovered vulnerabilities in existing lockfile", async () => {
-    // Scenario: Running pm scan with updated vulnerability database finds new issues
-    await using dir = tempDir("scan-new-vuln-db", {
-      "package.json": JSON.stringify({
-        name: "test-app",
-        dependencies: {
-          "lodash": "4.17.21",
-          "express": "4.18.2",
-        },
-      }),
-      // Initially no scanner
-    });
-
-    // First install without scanner
-    await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
-
-    // Add scanner with updated vulnerability database
-    await Bun.write(join(dir, "bunfig.toml"), `[install.security]\nscanner = "./scanner.js"`);
-    await Bun.write(
-      join(dir, "scanner.js"),
-      `
+  test(
+    "bun pm scan detects newly discovered vulnerabilities in existing lockfile",
+    async () => {
+      const { ctx, dir, writeBunfig } = await setup({
+        packages: { baz: { "0.0.3": {} }, bar: { "0.0.2": {} } },
+        dependencies: { baz: "0.0.3", bar: "0.0.2" },
+        scanner: `
 module.exports = {
   scanner: {
     version: "1",
-    scan: async function(payload) {
-      // Simulate updated vulnerability database
+    scan: async function (payload) {
       const results = [];
       for (const pkg of payload.packages) {
-        if (pkg.name === "lodash" && pkg.version === "4.17.21") {
+        if (pkg.name === "baz" && pkg.version === "0.0.3") {
           results.push({
-            package: "lodash",
+            package: "baz",
             level: "warn",
-            description: "New vulnerability discovered in lodash 4.17.21",
-            url: "https://example.com/new-lodash-vuln"
+            description: "New vulnerability discovered in baz 0.0.3",
+            url: "https://example.com/new-baz-vuln",
           });
         }
-        if (pkg.name === "express" && pkg.version === "4.18.2") {
+        if (pkg.name === "bar" && pkg.version === "0.0.2") {
           results.push({
-            package: "express",
+            package: "bar",
             level: "fatal",
-            description: "Critical vulnerability found in express 4.18.2",
-            url: "https://example.com/new-express-vuln"
+            description: "Critical vulnerability found in bar 0.0.2",
+            url: "https://example.com/new-bar-vuln",
           });
         }
       }
       return results;
-    }
-  }
-};
-`,
-    );
+    },
+  },
+};`,
+      });
+      try {
+        const install = await run(dir, ["install"]);
+        expect(install.stderr).toContain("Saved lockfile");
+        expect(install.exitCode).toBe(0);
 
-    // Run pm scan - should detect newly discovered vulnerabilities
-    const scanProc = Bun.spawn({
-      cmd: [bunExe(), "pm", "scan"],
-      cwd: dir,
-      stdout: "pipe",
-      stderr: "pipe",
-      env: bunEnv,
-    });
+        await writeBunfig(true);
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      scanProc.stdout.text(),
-      scanProc.stderr.text(),
-      scanProc.exited,
-    ]);
-
-    // Should detect the newly discovered vulnerabilities
-    expect(stdout).toContain("FATAL: express");
-    expect(stdout).toContain("WARNING: lodash");
-    expect(stdout).toContain("2 advisories");
-    expect(exitCode).toBe(1);
-  });
+        const { stdout, exitCode } = await run(dir, ["pm", "scan"]);
+        expect(stdout).toContain("FATAL: bar");
+        expect(stdout).toContain("Critical vulnerability found in bar 0.0.2");
+        expect(stdout).toContain("WARNING: baz");
+        expect(stdout).toContain("New vulnerability discovered in baz 0.0.3");
+        expect(stdout).toContain("2 advisories");
+        expect(exitCode).toBe(1);
+      } finally {
+        destroyTestContext(ctx);
+      }
+    },
+    timeout,
+  );
 });

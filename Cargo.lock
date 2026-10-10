@@ -1952,6 +1952,7 @@ dependencies = [
 name = "bun_text_diff"
 version = "0.0.0"
 dependencies = [
+ "bstr",
  "bun_core",
  "bun_wyhash",
 ]

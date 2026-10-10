@@ -276,8 +276,12 @@ pub(crate) fn has_one(directory: &[u8]) -> bool {
 
 /// `os.homedir()`
 fn home() -> Option<Vec<u8>> {
-    let home = bun_core::env_var::HOME::get().filter(|it| !it.is_empty())?;
-    Some(paths::resolve(b"/", &paths::from_native(home)))
+    let home = paths::from_native(bun_core::env_var::HOME::get().filter(|it| !it.is_empty())?);
+    // `resolve` takes the style of its base: `C:/Users/a` below `/` would be `/C:/Users/a`.
+    Some(match paths::Style::of(&home) {
+        paths::Style::Windows => paths::resolve(&home, b""),
+        paths::Style::Posix => paths::resolve(b"/", &home),
+    })
 }
 
 /// `loadInDirectory(os.homedir(), { name: "PersonalConfig" })`

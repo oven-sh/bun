@@ -1082,16 +1082,16 @@ describe("hoisted", () => {
     expect(await exists(installedPath(productionDir, "hoisted", "a-dep", "1.0.1"))).toBeTrue();
   });
 
-  // pnpm#5794: a pruned bun.lock a plain install would rewrite also fails frozen (the two checks are the same comparison).
+  // The frozen check compares the resolved trees. The locked a-dep satisfies package.json, so nothing is resolved again, for a workspace as for the root package.
   test.concurrent(
-    "a hand-edited specifier in the pruned bun.lock fails frozen and is rewritten by a plain install",
+    "a hand-edited specifier in the pruned bun.lock that the locked version satisfies passes frozen and is rewritten by a plain install",
     async () => {
       const { packageDir, pruned } = await prunedTree("hoisted");
       const edited = pruned.replace('"a-dep": "1.0.1"', '"a-dep": "1.0.0"');
       expect(edited).not.toBe(pruned);
       await write(join(packageDir, "bun.lock"), edited);
 
-      await frozen(packageDir, "hoisted", 1);
+      await frozen(packageDir, "hoisted", 0);
       expect(await lockText(packageDir)).toBe(edited);
 
       const { stderr } = await install(packageDir, "hoisted");

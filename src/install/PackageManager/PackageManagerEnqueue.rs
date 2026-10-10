@@ -2990,6 +2990,18 @@ fn get_or_put_resolved_package(
                     }));
                 }
             }
+            // The differ compared a member the lockfile loaded with its package.json and the
+            // install applied that to its record. Reading the package.json over the record here
+            // would drop the resolution of every row it has.
+            if let Some(member_id) = root_workspace_package_id(&this.lockfile, name_hash) {
+                if member_id < this.lockfile.loaded_package_count {
+                    success_fn(this, dependency_id, member_id);
+                    return Ok(Some(ResolvedPackageResult {
+                        package: *this.lockfile.packages.get(member_id as usize),
+                        ..Default::default()
+                    }));
+                }
+            }
             // package name hash should be used to find workspace path from map
             // SAFETY: `version.tag == Workspace` discriminates the union arm.
             let workspace_path_raw: SemverString = this

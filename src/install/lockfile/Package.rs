@@ -906,6 +906,21 @@ pub struct DiffSummary {
     pub(crate) workspace_versions_changed: bool,
 
     pub(crate) pruned_workspaces: Vec<PackageNameHash>,
+
+    /// Workspace members whose loaded record the install brings up to date with their package.json.
+    pub(crate) members: Vec<MemberDiff>,
+}
+
+/// A workspace member's package.json against its loaded record. The root's edge to the member
+/// stays mapped: the install applies this to the record in place, as it does for the root package.
+pub struct MemberDiff {
+    pub(crate) package_id: PackageID,
+    /// The member as parsed into the differ's `to_lockfile`.
+    pub(crate) to: Package,
+    /// Per row of `to`, the loaded row whose resolution it keeps, or `invalid_package_id` to
+    /// resolve it. `None`: no row changed, only the scripts and bin the lockfile did not record
+    /// are copied in.
+    pub(crate) mapping: Option<Box<[PackageID]>>,
 }
 
 impl DiffSummary {
@@ -966,6 +981,144 @@ impl Diff {
         )
     }
 
+    /// `bun update` resolves this row again. Without names: every row of a package in its scope,
+    /// and every `catalog:` row (catalogs belong to the root). With names: the rows they name in
+    /// a package in its scope.
+    #[inline]
+    fn is_update_target(
+        pm: &PackageManager,
+        update_requests: Option<&[UpdateRequest]>,
+        update_here: bool,
+        dep: &Dependency,
+        buf: &[u8],
+    ) -> bool {
+        match update_requests {
+            None => false,
+            Some([]) => update_here || dep.version.tag == dependency::version::Tag::Catalog,
+            Some(_) => update_here && pm.is_update_request(dep.name_hash, dep.name.slice(buf)),
+        }
+    }
+
+    /// Does the package `from_package_id` is locked to still satisfy the range `to_dep` has now?
+    #[inline]
+    fn locked_version_satisfies(
+        from_lockfile: &Lockfile,
+        to_lockfile: &Lockfile,
+        to_dep: &Dependency,
+        from_package_id: PackageID,
+    ) -> bool {
+        if (from_package_id as usize) >= from_lockfile.packages.len() {
+            return false;
+        }
+        let from_resolution = from_lockfile.packages.items_resolution()[from_package_id as usize];
+        to_dep.version.tag == dependency::version::Tag::Npm
+            && from_resolution.tag == ResolutionTag::Npm
+            && to_dep.version.npm().version.satisfies(
+                from_resolution.npm().version,
+                to_lockfile.buffers.string_bytes.as_slice(),
+                from_lockfile.buffers.string_bytes.as_slice(),
+            )
+    }
+
+    /// Is row `from_i` in `to_deps` under another group only (say it moved from devDependencies to
+    /// dependencies)? The lockfile records the group, so the row is rewritten, and it keeps the
+    /// package it is locked to. Not when either side lists the name more than once.
+    #[cold]
+    #[inline(never)]
+    fn moved_between_groups(
+        pm: &PackageManager,
+        update_requests: Option<&[UpdateRequest]>,
+        update_here: bool,
+        from_lockfile: &Lockfile,
+        to_lockfile: &Lockfile,
+        from_deps: &[Dependency],
+        from_resolutions: &[PackageID],
+        to_deps: &[Dependency],
+        from_i: usize,
+        id_mapping: Option<&mut [PackageID]>,
+    ) -> bool {
+        let from_dep = &from_deps[from_i];
+        if from_dep.behavior.is_workspace()
+            || from_deps
+                .iter()
+                .filter(|dep| dep.name_hash == from_dep.name_hash)
+                .count()
+                != 1
+        {
+            return false;
+        }
+        let mut moved_to = None;
+        for (to_i, to_dep) in to_deps.iter().enumerate() {
+            if to_dep.name_hash != from_dep.name_hash {
+                continue;
+            }
+            if moved_to.is_some() || to_dep.behavior.is_workspace() {
+                return false;
+            }
+            moved_to = Some(to_i);
+        }
+        let Some(moved_to) = moved_to else {
+            return false;
+        };
+
+        let to_dep = &to_deps[moved_to];
+        let from_buf = from_lockfile.buffers.string_bytes.as_slice();
+        let to_buf = to_lockfile.buffers.string_bytes.as_slice();
+        if !Self::is_update_target(pm, update_requests, update_here, from_dep, from_buf)
+            && (Dependency::eql(to_dep, from_dep, to_buf, from_buf)
+                || Self::locked_version_satisfies(
+                    from_lockfile,
+                    to_lockfile,
+                    to_dep,
+                    from_resolutions[from_i],
+                ))
+        {
+            if let Some(mapping) = id_mapping {
+                mapping[moved_to] = from_i as PackageID;
+            }
+        }
+        true
+    }
+
+    /// `rows_left` of the root package are not walked yet, so the list grows by at most that: one allocation.
+    #[cold]
+    #[inline(never)]
+    fn push_member(members: &mut Vec<MemberDiff>, rows_left: usize, member: MemberDiff) {
+        if members.capacity() == 0 {
+            members.reserve_exact(rows_left);
+        }
+        members.push(member);
+    }
+
+    /// A member whose rows or recorded scripts changed: pairs its rows again, this time keeping
+    /// the answer, so the install resolves only the rows that have no loaded row to keep.
+    #[cold]
+    #[inline(never)]
+    fn member_mapping(
+        pm: &mut PackageManager,
+        log: &mut bun_ast::Log,
+        from_lockfile: &mut Lockfile,
+        to_lockfile: &mut Lockfile,
+        from: &Package,
+        to: &Package,
+        update_requests: Option<&[UpdateRequest]>,
+        removed_names: &mut Vec<PackageNameHash>,
+    ) -> crate::Result<Box<[PackageID]>> {
+        let mut mapping = vec![invalid_package_id; to.dependencies.len as usize].into_boxed_slice();
+        Self::generate_inner(
+            pm,
+            log,
+            from_lockfile,
+            to_lockfile,
+            from,
+            to,
+            update_requests,
+            Some(&mut mapping[..]),
+            removed_names,
+        )?;
+        Ok(mapping)
+    }
+
     // The root summary's `remove` is the count of distinct names removed across root + workspaces.
     fn generate_inner(
         pm: &mut PackageManager,
@@ -979,17 +1132,15 @@ impl Diff {
         removed_names: &mut Vec<PackageNameHash>,
     ) -> crate::Result<DiffSummary> {
         let mut summary = DiffSummary::default();
-        let is_root = id_mapping.is_some();
-        let named_update_here = match update_requests {
-            Some(updates) if !updates.is_empty() => crate::update_scope::UpdateScope::of(&*pm)
-                .contains_workspace(
-                    from.resolution.tag == ResolutionTag::Root,
-                    from.name_hash,
-                    from.name
-                        .slice(from_lockfile.buffers.string_bytes.as_slice()),
-                ),
-            _ => true,
-        };
+        // A member is walked with a mapping too, once it is known to have changed.
+        let is_root = from.resolution.tag == ResolutionTag::Root;
+        let update_here = update_requests.is_some()
+            && crate::update_scope::UpdateScope::of(&*pm).contains_workspace(
+                from.resolution.tag == ResolutionTag::Root,
+                from.name_hash,
+                from.name
+                    .slice(from_lockfile.buffers.string_bytes.as_slice()),
+            );
         // `parseWithJSON` may grow `to_lockfile.buffers.dependencies` and
         // invalidate the old slice, so `to_deps` is re-derived after it. Held as raw fat
         // pointers so the `&mut to_lockfile`/`&mut from_lockfile` reborrows below
@@ -1019,12 +1170,14 @@ impl Diff {
         let (from_deps, from_resolutions) = (from_deps.slice(), from_resolutions.slice());
         let mut to_i: usize = 0;
 
-        if lockfile::OverrideMap::changed(
-            &mut from_lockfile.overrides,
-            from_lockfile.buffers.string_bytes.as_slice(),
-            &mut to_lockfile.overrides,
-            to_lockfile.buffers.string_bytes.as_slice(),
-        ) {
+        if is_root
+            && lockfile::OverrideMap::changed(
+                &mut from_lockfile.overrides,
+                from_lockfile.buffers.string_bytes.as_slice(),
+                &mut to_lockfile.overrides,
+                to_lockfile.buffers.string_bytes.as_slice(),
+            )
+        {
             summary.overrides_changed = true;
 
             if PackageManager::verbose_install() {
@@ -1170,136 +1323,6 @@ impl Diff {
             }
         }
 
-        'trusted_dependencies: {
-            // trusted dependency diff
-            //
-            // situations:
-            // 1 - Both old lockfile and new lockfile use default trusted dependencies, no diffs
-            // 2 - Both exist, only diffs are from additions and removals
-            //
-            // 3 - Old lockfile has trusted dependencies, new lockfile does not. Added are dependencies
-            //     from default list that didn't exist previously. We need to be careful not to add these
-            //     to the new lockfile. Removed are dependencies from old list that
-            //     don't exist in the default list.
-            //
-            // 4 - Old lockfile used the default list, new lockfile has trusted dependencies. Added
-            //     are dependencies are all from the new lockfile. Removed is empty because the default
-            //     list isn't appended to the lockfile.
-
-            // 1
-            if from_lockfile.trusted_dependencies.is_none()
-                && to_lockfile.trusted_dependencies.is_none()
-            {
-                break 'trusted_dependencies;
-            }
-
-            // 2
-            if let (Some(from_trusted_dependencies), Some(to_trusted_dependencies)) = (
-                from_lockfile.trusted_dependencies.as_mut(),
-                to_lockfile.trusted_dependencies.as_ref(),
-            ) {
-                // added
-                for (&to_trusted, to_name) in to_trusted_dependencies.iter() {
-                    // Empty name = legacy bun.lockb hash-only sentinel.
-                    let already_trusted = from_trusted_dependencies
-                        .get_mut(&to_trusted)
-                        .is_some_and(|from_name| {
-                            if from_name.is_empty() && !to_name.is_empty() {
-                                from_name.clone_from(to_name);
-                            }
-                            from_name.is_empty() || to_name.is_empty() || **from_name == **to_name
-                        });
-                    if !already_trusted {
-                        summary.added_trusted_dependencies.put(
-                            to_trusted,
-                            AddedTrustedDependency {
-                                add_to_lockfile: true,
-                                name: to_name.clone(),
-                            },
-                        )?;
-                    }
-                }
-
-                // removed
-                for (&from_trusted, from_name) in from_trusted_dependencies.iter() {
-                    let still_trusted =
-                        to_trusted_dependencies
-                            .get(&from_trusted)
-                            .is_some_and(|to_name| {
-                                from_name.is_empty()
-                                    || to_name.is_empty()
-                                    || **to_name == **from_name
-                            });
-                    if !still_trusted {
-                        summary
-                            .removed_trusted_dependencies
-                            .put(from_trusted, from_name.clone())?;
-                    }
-                }
-
-                break 'trusted_dependencies;
-            }
-
-            // 3
-            if let (Some(from_trusted_dependencies), None) = (
-                from_lockfile.trusted_dependencies.as_ref(),
-                to_lockfile.trusted_dependencies.as_ref(),
-            ) {
-                // added
-                for entry in default_trusted_dependencies::entries() {
-                    if !from_trusted_dependencies
-                        .contains(&(entry.hash as TruncatedPackageNameHash))
-                    {
-                        // although this is a new trusted dependency, it is from the default
-                        // list so it shouldn't be added to the lockfile
-                        summary.added_trusted_dependencies.put(
-                            entry.hash as TruncatedPackageNameHash,
-                            AddedTrustedDependency {
-                                add_to_lockfile: false,
-                                name: Box::from(entry.key),
-                            },
-                        )?;
-                    }
-                }
-
-                // removed
-                for (&from_trusted, from_name) in from_trusted_dependencies.iter() {
-                    if !default_trusted_dependencies::has_with_hash(u64::from(from_trusted)) {
-                        summary
-                            .removed_trusted_dependencies
-                            .put(from_trusted, from_name.clone())?;
-                    }
-                }
-
-                break 'trusted_dependencies;
-            }
-
-            // 4
-            if let (None, Some(to_trusted_dependencies)) = (
-                from_lockfile.trusted_dependencies.as_ref(),
-                to_lockfile.trusted_dependencies.as_ref(),
-            ) {
-                // add all to trusted dependencies, even if they exist in default because they weren't in the
-                // lockfile originally
-                for (&to_trusted, to_name) in to_trusted_dependencies.iter() {
-                    summary.added_trusted_dependencies.put(
-                        to_trusted,
-                        AddedTrustedDependency {
-                            add_to_lockfile: true,
-                            name: to_name.clone(),
-                        },
-                    )?;
-                }
-
-                {
-                    // removed
-                    // none
-                }
-
-                break 'trusted_dependencies;
-            }
-        }
-
         summary.patched_dependencies_changed = 'patched_dependencies_changed: {
             if from_lockfile.patched_dependencies.count()
                 != to_lockfile.patched_dependencies.count()
@@ -1400,6 +1423,22 @@ impl Diff {
             };
 
             if !found {
+                if Self::moved_between_groups(
+                    &*pm,
+                    update_requests,
+                    update_here,
+                    &*from_lockfile,
+                    &*to_lockfile,
+                    from_deps,
+                    from_resolutions,
+                    to_deps!(),
+                    i,
+                    id_mapping.as_deref_mut(),
+                ) {
+                    summary.update += 1;
+                    continue;
+                }
+
                 if is_root
                     && from_dep.behavior.is_workspace()
                     && lockfile::pruned_workspaces::workspace_is_missing_on_disk(
@@ -1433,26 +1472,25 @@ impl Diff {
                 to_lockfile.buffers.string_bytes.as_slice(),
                 from_lockfile.buffers.string_bytes.as_slice(),
             ) {
-                if let Some(updates) = update_requests {
-                    if updates.is_empty()
-                        || (named_update_here
-                            && pm.is_update_request(
-                                from_dep.name_hash,
-                                from_dep
-                                    .name
-                                    .slice(from_lockfile.buffers.string_bytes.as_slice()),
-                            ))
-                    {
-                        // Listed as to be updated
-                        summary.update += 1;
-                        continue;
-                    }
+                // The root's edge to a member is never resolved again: the member's own rows are diffed.
+                if update_requests.is_some()
+                    && !from_dep.behavior.is_workspace()
+                    && Self::is_update_target(
+                        &*pm,
+                        update_requests,
+                        update_here,
+                        from_dep,
+                        from_lockfile.buffers.string_bytes.as_slice(),
+                    )
+                {
+                    summary.update += 1;
+                    continue;
                 }
 
                 if let Some(mapping) = id_mapping.as_deref_mut() {
-                    let mut workspace_hooks_only = false;
                     let update_mapping = 'update_mapping: {
-                        if !is_root || !from_dep.behavior.is_workspace() {
+                        // Only the root package has an edge to a member.
+                        if !from_dep.behavior.is_workspace() {
                             break 'update_mapping true;
                         }
 
@@ -1518,7 +1556,8 @@ impl Diff {
                             .into();
                         survivors.push((workspace_pkg.name, workspace_pkg.dependencies));
 
-                        let from_pkg = from_lockfile.packages.get(from_resolutions[i] as usize);
+                        let member_id = from_resolutions[i];
+                        let from_pkg = from_lockfile.packages.get(member_id as usize);
                         let diff = Self::generate_inner(
                             pm,
                             log,
@@ -1546,16 +1585,47 @@ impl Diff {
                             );
                         }
 
-                        workspace_hooks_only = !diff.changes_dependencies();
-                        !diff.changes_resolutions()
+                        if diff.changes_resolutions() {
+                            let member_mapping = Self::member_mapping(
+                                pm,
+                                log,
+                                from_lockfile,
+                                to_lockfile,
+                                &from_pkg,
+                                &workspace_pkg,
+                                update_requests,
+                                removed_names,
+                            )?;
+                            Self::push_member(
+                                &mut summary.members,
+                                from_deps.len() - i,
+                                MemberDiff {
+                                    package_id: member_id,
+                                    to: workspace_pkg,
+                                    mapping: Some(member_mapping),
+                                },
+                            );
+                            summary.update += 1;
+                            if !diff.changes_dependencies() {
+                                summary.script_only_updates += 1;
+                            }
+                        } else if !from_pkg.scripts.filled && workspace_pkg.scripts.has_any() {
+                            Self::push_member(
+                                &mut summary.members,
+                                from_deps.len() - i,
+                                MemberDiff {
+                                    package_id: member_id,
+                                    to: workspace_pkg,
+                                    mapping: None,
+                                },
+                            );
+                        }
+                        true
                     };
 
                     if update_mapping {
                         mapping[cur_to_i] = i as PackageID;
                         continue;
-                    }
-                    if workspace_hooks_only {
-                        summary.script_only_updates += 1;
                     }
                 } else {
                     continue;
@@ -1563,33 +1633,24 @@ impl Diff {
             }
 
             // Changed literal: keep the locked resolution while it still satisfies the new range (npm's sticky rule), unless this row is being updated.
-            let is_explicit_update_target = matches!(update_requests, Some(updates)
-            if updates.is_empty()
-                || (named_update_here
-                    && pm.is_update_request(
-                        from_dep.name_hash,
-                        from_dep.name.slice(from_lockfile.buffers.string_bytes.as_slice()),
-                    )));
-            if !is_explicit_update_target {
+            if !Self::is_update_target(
+                &*pm,
+                update_requests,
+                update_here,
+                from_dep,
+                from_lockfile.buffers.string_bytes.as_slice(),
+            ) {
                 if let Some(mapping) = id_mapping.as_deref_mut() {
-                    let from_res_id = from_resolutions[i];
-                    if (from_res_id as usize) < from_lockfile.packages.len() {
-                        let from_pkg_resolution =
-                            from_lockfile.packages.items_resolution()[from_res_id as usize];
-                        let to_dep = &to_deps!()[cur_to_i];
-                        if to_dep.version.tag == dependency::version::Tag::Npm
-                            && from_pkg_resolution.tag == ResolutionTag::Npm
-                            && to_dep.version.npm().version.satisfies(
-                                from_pkg_resolution.npm().version,
-                                to_lockfile.buffers.string_bytes.as_slice(),
-                                from_lockfile.buffers.string_bytes.as_slice(),
-                            )
-                        {
-                            mapping[cur_to_i] = i as PackageID;
-                            // Still counted as an update so `had_any_diffs`
-                            // triggers the rebuild path; we just preserved
-                            // the resolved package.
-                        }
+                    if Self::locked_version_satisfies(
+                        &*from_lockfile,
+                        &*to_lockfile,
+                        &to_deps!()[cur_to_i],
+                        from_resolutions[i],
+                    ) {
+                        mapping[cur_to_i] = i as PackageID;
+                        // Still counted as an update so `had_any_diffs`
+                        // triggers the rebuild path; we just preserved
+                        // the resolved package.
                     }
                 }
             }
@@ -1606,6 +1667,7 @@ impl Diff {
         )) as u32;
         if is_root {
             summary.remove = removed_names.len() as u32;
+            Self::trusted_dependencies(&mut summary, from_lockfile, to_lockfile)?;
         }
 
         if !missing_workspaces.is_empty() {
@@ -1650,7 +1712,8 @@ impl Diff {
             );
         }
 
-        if from.resolution.tag != ResolutionTag::Root {
+        // bun.lock records no scripts: the installers read them from package.json.
+        if from.resolution.tag != ResolutionTag::Root && from.scripts.filled {
             for (to_hook, from_hook) in to.scripts.hooks().iter().zip(from.scripts.hooks().iter()) {
                 if !String::eql(
                     **to_hook,
@@ -1666,6 +1729,115 @@ impl Diff {
         }
 
         Ok(summary)
+    }
+
+    /// `trustedDependencies` of the root and of every member are one set in the lockfile, so
+    /// this runs once, after the member loop has parsed each member into `to_lockfile`.
+    fn trusted_dependencies(
+        summary: &mut DiffSummary,
+        from_lockfile: &mut Lockfile,
+        to_lockfile: &Lockfile,
+    ) -> crate::Result<()> {
+        // Both the old and the new lockfile use the default list: no diffs.
+        if from_lockfile.trusted_dependencies.is_none()
+            && to_lockfile.trusted_dependencies.is_none()
+        {
+            return Ok(());
+        }
+
+        // Both have a list: the diffs are its additions and removals.
+        if let (Some(from_trusted_dependencies), Some(to_trusted_dependencies)) = (
+            from_lockfile.trusted_dependencies.as_mut(),
+            to_lockfile.trusted_dependencies.as_ref(),
+        ) {
+            // added
+            for (&to_trusted, to_name) in to_trusted_dependencies.iter() {
+                // Empty name = legacy bun.lockb hash-only sentinel.
+                let already_trusted =
+                    from_trusted_dependencies
+                        .get_mut(&to_trusted)
+                        .is_some_and(|from_name| {
+                            if from_name.is_empty() && !to_name.is_empty() {
+                                from_name.clone_from(to_name);
+                            }
+                            from_name.is_empty() || to_name.is_empty() || **from_name == **to_name
+                        });
+                if !already_trusted {
+                    summary.added_trusted_dependencies.put(
+                        to_trusted,
+                        AddedTrustedDependency {
+                            add_to_lockfile: true,
+                            name: to_name.clone(),
+                        },
+                    )?;
+                }
+            }
+
+            // removed
+            for (&from_trusted, from_name) in from_trusted_dependencies.iter() {
+                let still_trusted =
+                    to_trusted_dependencies
+                        .get(&from_trusted)
+                        .is_some_and(|to_name| {
+                            from_name.is_empty() || to_name.is_empty() || **to_name == **from_name
+                        });
+                if !still_trusted {
+                    summary
+                        .removed_trusted_dependencies
+                        .put(from_trusted, from_name.clone())?;
+                }
+            }
+
+            return Ok(());
+        }
+
+        // Back to the default list: its entries are newly trusted but not written to the lockfile.
+        if let (Some(from_trusted_dependencies), None) = (
+            from_lockfile.trusted_dependencies.as_ref(),
+            to_lockfile.trusted_dependencies.as_ref(),
+        ) {
+            // added
+            for entry in default_trusted_dependencies::entries() {
+                if !from_trusted_dependencies.contains(&(entry.hash as TruncatedPackageNameHash)) {
+                    summary.added_trusted_dependencies.put(
+                        entry.hash as TruncatedPackageNameHash,
+                        AddedTrustedDependency {
+                            add_to_lockfile: false,
+                            name: Box::from(entry.key),
+                        },
+                    )?;
+                }
+            }
+
+            // removed: the old entries that are not on the default list
+            for (&from_trusted, from_name) in from_trusted_dependencies.iter() {
+                if !default_trusted_dependencies::has_with_hash(u64::from(from_trusted)) {
+                    summary
+                        .removed_trusted_dependencies
+                        .put(from_trusted, from_name.clone())?;
+                }
+            }
+
+            return Ok(());
+        }
+
+        // First explicit list: every entry is added, also one that is on the default list.
+        if let (None, Some(to_trusted_dependencies)) = (
+            from_lockfile.trusted_dependencies.as_ref(),
+            to_lockfile.trusted_dependencies.as_ref(),
+        ) {
+            for (&to_trusted, to_name) in to_trusted_dependencies.iter() {
+                summary.added_trusted_dependencies.put(
+                    to_trusted,
+                    AddedTrustedDependency {
+                        add_to_lockfile: true,
+                        name: to_name.clone(),
+                    },
+                )?;
+            }
+        }
+
+        Ok(())
     }
 }
 

@@ -272,6 +272,10 @@ pub fn install_with_manager(
                         .scripts
                         .clone_into(&lockfile.buffers.string_bytes, builder);
                     builder.clamp();
+                    if !manager.summary.members.is_empty() {
+                        // A member's bin that bun.lock does not have yet is all that is left to save.
+                        had_any_diffs = apply_member_diffs(manager, &lockfile)?.bin_changed;
+                    }
                     if bare_update {
                         transitive = TransitiveUpdate::plan(manager, &direct_deps_before)?;
                         transitive.enqueue(manager)?;
@@ -484,6 +488,13 @@ pub fn install_with_manager(
 
                     builder.clamp();
 
+                    // Before the loops below, so that they see the rows the members have now.
+                    let member_rows = if manager.summary.members.is_empty() {
+                        Vec::new()
+                    } else {
+                        apply_member_diffs(manager, &lockfile)?.unmapped
+                    };
+
                     let invalidates_rows = (manager.summary.overrides_changed
                         && !all_name_hashes.is_empty())
                         || manager.summary.catalogs_changed;
@@ -588,6 +599,23 @@ pub fn install_with_manager(
                                 }
                             }
                             counter_i += 1;
+                        }
+
+                        for dependency_i in member_rows {
+                            let dependency = manager.lockfile.buffers.dependencies
+                                [dependency_i as usize]
+                                .clone();
+                            let resolution =
+                                manager.lockfile.buffers.resolutions[dependency_i as usize];
+                            if let Err(err) = enqueue_dependency_with_main(
+                                manager,
+                                dependency_i,
+                                &dependency,
+                                resolution,
+                                false,
+                            ) {
+                                add_dependency_error(manager, &dependency, err);
+                            }
                         }
                     }
 
@@ -763,11 +791,7 @@ pub fn install_with_manager(
             let (first_index, _, entries) =
                 scripts.get_script_entries(string_bytes, ResolutionTag::Workspace, add_node_gyp);
 
-            debug_assert!(first_index != -1);
-
-            // In the `add_node_gyp` arm the assert already guarantees
-            // `first_index != -1`, so a single guarded loop covers
-            // both paths exactly.
+            // -1: its only scripts are preprepare or postprepare, which do not run for a workspace.
             if first_index != -1 {
                 for (i, maybe_entry) in entries.into_iter().enumerate() {
                     if let Some(entry) = maybe_entry {
@@ -1540,6 +1564,118 @@ fn report_lockfile_load_error(
         Global::crash();
     }
     Ok(())
+}
+
+struct AppliedMemberDiffs {
+    /// Rows that have no loaded row to keep. The caller resolves them.
+    unmapped: Vec<DependencyID>,
+    /// A member's `bin` is not the one the lockfile loaded.
+    bin_changed: bool,
+}
+
+/// Brings each member of `summary.members` up to date with the package.json the differ parsed
+/// into `to_lockfile`, in place, as `install_with_manager` does for the root package: a row keeps
+/// the resolution of the loaded row it is mapped to.
+#[cold]
+#[inline(never)]
+fn apply_member_diffs(
+    manager: &mut PackageManager,
+    to_lockfile: &Lockfile,
+) -> crate::Result<AppliedMemberDiffs> {
+    // Each entry indexes `to_lockfile`, which does not outlive the caller's block.
+    let members = core::mem::take(&mut manager.summary.members);
+    let to_buf = to_lockfile.buffers.string_bytes.as_slice();
+    let to_extern_strings = to_lockfile.buffers.extern_strings.as_slice();
+    let known_npm_aliases = &mut manager.known_npm_aliases;
+    let lockfile = &mut *manager.lockfile;
+    let mut applied = AppliedMemberDiffs {
+        unmapped: Vec::new(),
+        bin_changed: false,
+    };
+
+    for member in &members {
+        let id = member.package_id as usize;
+        let to = &member.to;
+        let to_deps: &[Dependency] = match member.mapping {
+            Some(_) => to
+                .dependencies
+                .get(to_lockfile.buffers.dependencies.as_slice()),
+            None => &[],
+        };
+        let bin_changed = !crate::Bin::eql(
+            &to.bin,
+            &lockfile.packages.items_bin()[id],
+            to_buf,
+            to_extern_strings,
+            lockfile.buffers.string_bytes.as_slice(),
+            lockfile.buffers.extern_strings.as_slice(),
+        );
+        applied.bin_changed |= bin_changed;
+
+        let mut builder = crate::string_builder!(lockfile);
+        to.scripts.count(to_buf, &mut builder);
+        let bin_strings = if bin_changed {
+            to.bin.count(to_buf, to_extern_strings, &mut builder) as usize
+        } else {
+            0
+        };
+        for dep in to_deps {
+            dep.count(to_buf, &mut builder);
+        }
+        builder.allocate()?;
+
+        let scripts = to.scripts.clone_into(to_buf, &mut builder);
+        if bin_changed {
+            let bin_off = lockfile.buffers.extern_strings.len();
+            bun_core::vec::grow_default(&mut lockfile.buffers.extern_strings, bin_strings);
+            lockfile.packages.items_bin_mut()[id] = to.bin.clone_with_buffers(
+                to_buf,
+                to_extern_strings,
+                bin_off as u32,
+                &mut lockfile.buffers.extern_strings[bin_off..],
+                &mut builder,
+            );
+        }
+
+        if let Some(mapping) = &member.mapping {
+            let off = lockfile.buffers.dependencies.len();
+            let old_resolutions: Vec<PackageID> = lockfile.packages.items_resolutions()[id]
+                .get(lockfile.buffers.resolutions.as_slice())
+                .to_vec();
+            lockfile.buffers.dependencies.reserve(to_deps.len());
+            lockfile.buffers.resolutions.reserve(to_deps.len());
+            for (i, (dep, &from_i)) in to_deps.iter().zip(mapping.iter()).enumerate() {
+                let cloned = dep.clone_in(known_npm_aliases, to_buf, &mut builder)?;
+                lockfile.buffers.dependencies.push(cloned);
+                let kept = if from_i == invalid_package_id {
+                    applied.unmapped.push((off + i) as DependencyID);
+                    invalid_package_id
+                } else {
+                    old_resolutions[from_i as usize]
+                };
+                lockfile.buffers.resolutions.push(kept);
+            }
+            let (off, len) = (off as u32, to_deps.len() as u32);
+            lockfile.packages.items_dependencies_mut()[id] =
+                lockfile::DependencySlice::new(off, len);
+            lockfile.packages.items_resolutions_mut()[id] = lockfile::PackageIDSlice::new(off, len);
+
+            // What a read of this package.json sets on a record that is not in the lockfile yet.
+            let has_install_script = scripts.has_any() || {
+                let workspace_path = *lockfile.packages.items_resolution()[id].workspace();
+                let mut binding_gyp = bun_paths::AutoAbsPath::init_top_level_dir();
+                let _ = binding_gyp.append(workspace_path.slice(builder.string_bytes.as_slice()));
+                let _ = binding_gyp.append(b"binding.gyp");
+                bun_sys::exists(binding_gyp.slice())
+            };
+            lockfile.packages.items_meta_mut()[id].set_has_install_script(has_install_script);
+        }
+        builder.clamp();
+
+        lockfile.packages.items_scripts_mut()[id] = scripts;
+    }
+
+    Ok(applied)
 }
 
 /// Returns the rows the plan re-resolved so the overrides/catalogs invalidation loops that follow leave them pinned; only tracked when those loops will run.

@@ -996,6 +996,27 @@ export const cases: Case[] = [
     reports: { "@typescript-eslint/no-duplicate-type-constituents": 2_399 },
     exitCode: 1,
   },
+  {
+    name: "a function with 200,000 parameters",
+    isHeavy: true,
+    file: "a.js",
+    text: () => `function f(${seq(200_000, i => `b${i}`, ", ")}) {}\nfunction g({ ${seq(200_000, i => `b${i}`, ", ")} }) {}\n`,
+    rules: {},
+    eslint: true,
+    reports: {},
+    exitCode: 0,
+  },
+  {
+    name: "a function with 200,000 parameters, the last of which is there twice",
+    isHeavy: true,
+    file: "a.js",
+    text: () => `function f(${seq(200_000, i => `b${i}`, ", ")}, b7 = 1) {}\n`,
+    rules: {},
+    eslint: true,
+    // Where espree says it.
+    matches: /a\.js:1:1688902: Parsing error: Argument name clash \[Error\]$/m,
+    exitCode: 1,
+  },
   // ── eslint-plugin-react: what many components share, and what is asked once for each of them ──
   {
     name: "5,000 components with one object of 5,000 prop types",

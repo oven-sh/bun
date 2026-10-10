@@ -254,10 +254,9 @@ impl fmt::Display for Integrity {
         let mut base64_buf = [0u8; 512];
         let bytes = self.slice();
 
-        // SAFETY: base64 alphabet is pure ASCII.
-        f.write_str(unsafe {
-            core::str::from_utf8_unchecked(base64.encoder.encode(&mut base64_buf, bytes))
-        })?;
+        let encoded = base64.encoder.encode(&mut base64_buf, bytes);
+        let encoded = core::str::from_utf8(encoded).expect("base64 encoder emits ASCII");
+        f.write_str(encoded)?;
 
         // consistentcy with yarn.lock
         match self.tag {

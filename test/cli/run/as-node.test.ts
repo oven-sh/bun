@@ -87,6 +87,34 @@ describe("fake node cli", () => {
     expect(fakeNodeRun(temp, ["-e", "console.log('pass')"]).stdout).toBe("pass");
   });
 
+  describe.each(["-e", "--eval", "-p", "--print"])("node %s arguments", flag => {
+    // Debug launchers recreate a shared node-shim directory.
+    test.each([
+      { args: [], expected: [] },
+      { args: ["42"], expected: ["42"] },
+      { args: ["first", "second"], expected: ["first", "second"] },
+      { args: ["", "second"], expected: ["", "second"] },
+      { args: ["--", "first", "second"], expected: ["first", "second"] },
+    ])("preserves $args", async ({ args, expected }) => {
+      using temp = tempDir("fake-node-eval-args", {});
+      const expression = "JSON.stringify(process.argv.slice(1))";
+      const source = flag === "-p" || flag === "--print" ? expression : `console.log(${expression})`;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--bun", "node", flag, source, ...args],
+        cwd: String(temp),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: `${JSON.stringify(expected)}\n`,
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
   test("process args work", () => {
     using temp = tempDir("fake-node", {
       "index.js": "console.log(JSON.stringify(process.argv.slice(1)))",

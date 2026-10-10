@@ -742,8 +742,9 @@ for (let i = 0; i < uploadPattern.length; i++) uploadPattern[i] = i % 251;
 // record, then take the HelloRequest. Resolves to what the server saw.
 async function renegotiateAgainstAParkedUpload() {
   const server = await (backpressureServer ??= startBackpressureServer());
-  const parked = Promise.withResolvers<void>();
+  let parked = Promise.withResolvers<void>();
   let sent = 0;
+  let drains = 0;
   let writing = true;
   const pump = (socket: { write(chunk: Uint8Array): number }) => {
     while (writing) {
@@ -762,17 +763,36 @@ async function renegotiateAgainstAParkedUpload() {
     hostname: "127.0.0.1",
     port: server.port,
     tls: { rejectUnauthorized: false },
-    socket: { handshake: pump, drain: pump, data() {} },
+    socket: {
+      handshake: pump,
+      drain(socket) {
+        drains++;
+        pump(socket);
+      },
+      data() {},
+    },
   });
   const peer = await server.accepted();
 
   // The server reads nothing, so the upload fills the connection and parks.
   // usockets now holds ciphertext for this socket in its spill buffer.
   await parked.promise;
-  // One read opens room for a record without making the socket writable, so
-  // nothing drains the spill before the HelloRequest arrives.
-  peer.say("A");
-  expect(await peer.nextLine()).toBe("READ mismatchAt=-1");
+  // The server reads a little, which gives the client room for one more
+  // record. The read must not make the client writable, or the spill drains
+  // before the HelloRequest arrives. It does on the first try where the kernel
+  // still grows the send buffer, so repeat until a read leaves the upload
+  // parked.
+  for (let round = 0; round < 6; round++) {
+    const drainsBefore = drains;
+    parked = Promise.withResolvers<void>();
+    peer.say(`A ${256 * 1024}`);
+    expect(await peer.nextLine()).toBe("READ mismatchAt=-1");
+    // Two loop turns, so a writable event that the read caused has run.
+    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => setImmediate(resolve));
+    if (drains === drainsBefore) break;
+    await parked.promise;
+  }
   writing = false;
   peer.say("R");
   expect(await peer.nextLine()).toBe("RENEG_REQUEST mismatchAt=-1");
@@ -784,11 +804,11 @@ async function renegotiateAgainstAParkedUpload() {
 // A HelloRequest that arrives while the upload is parked on backpressure used
 // to put the renegotiation ClientHello in the middle of an application record
 // that usockets still held in its spill buffer. The server then failed the MAC
-// on that record. Repeated, because the kernel can make the socket writable at
-// the wrong moment, which drains the spill before the HelloRequest lands.
+// on that record. Three connections, because about one in eight does not reach
+// that state on an unfixed build.
 it("keeps sealed ciphertext in order when a renegotiation starts under write backpressure", async () => {
   const seen: string[] = [];
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let connection = 0; connection < 3; connection++) {
     seen.push(await renegotiateAgainstAParkedUpload());
   }
   expect(seen).toEqual([

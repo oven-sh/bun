@@ -4,9 +4,11 @@
 // no step depends on relative speeds. A command applies to the latest
 // connection:
 //
-//   A      ->  take ONE read off the socket, then report READ. One read opens
-//              a receive window of about highWaterMark bytes: room for one
-//              record, and far too little to make the client writable.
+//   A <n>  ->  read <n> more bytes, stop, then report READ. The test asks for
+//              a fraction of what the client had to write to fill the
+//              connection: enough to reopen the receive window, which gives
+//              the client room for a record, and far too little to make the
+//              client writable.
 //   R      ->  ask for a renegotiation. Reports RENEG_REQUEST at once and
 //              RENEG_DONE err=<code|null> when the new handshake is over.
 //   D      ->  keep reading from now on.
@@ -38,7 +40,7 @@ const server = tls.createServer(
   socket => {
     const id = ++connections;
     const connection = {
-      reads: 0,
+      readUntil: 0,
       reportRead: false,
       closed: false,
       offset: 0,
@@ -64,10 +66,9 @@ const server = tls.createServer(
 
     const pull = () => {
       if (connection.closed) return;
-      while (connection.reads > 0) {
+      while (connection.offset < connection.readUntil) {
         const chunk = socket.read();
         if (!chunk) break;
-        connection.reads--;
         for (let i = 0; i < chunk.length; i++) {
           if (chunk[i] !== (connection.offset + i) % 251) {
             if (connection.mismatchAt < 0) connection.mismatchAt = connection.offset + i;
@@ -75,11 +76,11 @@ const server = tls.createServer(
           }
         }
         connection.offset += chunk.length;
-        if (connection.reportRead) {
-          connection.reportRead = false;
-          connection.tell("READ");
-        }
         connection.reportTotal();
+      }
+      if (connection.reportRead && connection.offset >= connection.readUntil) {
+        connection.reportRead = false;
+        connection.tell("READ");
       }
       setImmediate(pull);
     };
@@ -99,13 +100,13 @@ const server = tls.createServer(
 process.stdin.on("data", data => {
   for (const command of data.toString().split("\n")) {
     if (!current) continue;
-    if (command === "A") {
-      current.reads = 1;
+    if (command.startsWith("A ")) {
+      current.readUntil = current.offset + Number(command.slice(2));
       current.reportRead = true;
     } else if (command === "R") {
       current.renegotiate();
     } else if (command === "D") {
-      current.reads = Number.MAX_SAFE_INTEGER;
+      current.readUntil = Infinity;
     } else if (command.startsWith("E ")) {
       current.expectTotal = Number(command.slice(2));
       current.reportTotal();

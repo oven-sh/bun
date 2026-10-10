@@ -216,6 +216,8 @@ pub struct VirtualMachine {
     /// (`exit_tears_down_napi_envs`). The list is never walked again, so a hook
     /// pushed after this (a finalizer deferred from the final collection) would only leak.
     pub(crate) has_run_cleanup_hooks: bool,
+    /// Number of active runtime onResolve calls.
+    pub(crate) on_resolve_depth: u32,
     pub is_main_thread: bool,
     pub exit_handler: ExitHandler,
 
@@ -3901,6 +3903,7 @@ pub struct PendingIpc {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ResolveMode {
     Esm,
+    DynamicImport,
     Require,
     /// `require.resolve()`: returns the bare specifier for Node builtins.
     RequireResolve,
@@ -3909,13 +3912,14 @@ pub enum ResolveMode {
 impl ResolveMode {
     #[inline]
     pub fn is_esm(self) -> bool {
-        matches!(self, Self::Esm)
+        matches!(self, Self::Esm | Self::DynamicImport)
     }
 
     #[inline]
     pub fn import_kind(self) -> bun_ast::ImportKind {
         match self {
             Self::Esm => bun_ast::ImportKind::Stmt,
+            Self::DynamicImport => bun_ast::ImportKind::Dynamic,
             Self::Require => bun_ast::ImportKind::Require,
             Self::RequireResolve => bun_ast::ImportKind::RequireResolve,
         }
@@ -5258,7 +5262,7 @@ impl VirtualMachine {
         mode: ResolveMode,
     ) -> JsResult<Result<bun_core::String, JSValue>> {
         if global.has_plugins() {
-            match run_on_resolve(global, specifier, source)? {
+            match run_on_resolve(global, specifier, source, mode.import_kind())? {
                 None => {}
                 Some(Err(error)) => return Ok(Err(error)),
                 Some(Ok(answer)) => {
@@ -5274,7 +5278,7 @@ impl VirtualMachine {
                     drop(answer_utf8);
                     let is_own = is_bare
                         && (answer.eql(specifier)
-                            || match run_on_resolve(global, &answer, source)? {
+                            || match run_on_resolve(global, &answer, source, mode.import_kind())? {
                                 None => false,
                                 Some(Ok(_)) => true,
                                 Some(Err(error)) => return Ok(Err(error)),
@@ -7696,10 +7700,30 @@ fn run_on_resolve(
     global: &JSGlobalObject,
     specifier: &bun_core::String,
     importer: &bun_core::String,
+    kind: bun_ast::ImportKind,
 ) -> JsResult<Option<Result<bun_core::String, JSValue>>> {
     let specifier = specifier.to_utf8();
-    let Some((namespace, path)) = ModuleLoader::plugin_namespace_and_path(&specifier) else {
-        return Ok(None);
+    let (namespace, path) = match ModuleLoader::plugin_namespace_and_path(&specifier) {
+        Some(parts) => parts,
+        None => {
+            let vm = global.bun_vm();
+            if specifier.is_empty()
+                || !bun_resolver::is_package_path(&specifier)
+                || importer.length() == 0
+                || vm.on_resolve_depth != 0
+                || vm.transpiler.resolver.custom_dir_paths.is_some()
+                || ModuleLoader::HardcodedModule::Alias::get(
+                    &specifier,
+                    bun_ast::Target::Bun,
+                    Default::default(),
+                )
+                .is_some()
+            {
+                return Ok(None);
+            }
+            // Only onResolve admits bare names; onLoad keeps its builtin-safe pre-filter.
+            (&b""[..], specifier.slice())
+        }
     };
     // The importer's key ends in the query it was imported with.
     let importer = importer.to_utf8();
@@ -7711,6 +7735,7 @@ fn run_on_resolve(
         &bun_core::String::from_bytes(if namespace == b"file" { b"" } else { namespace }),
         &bun_core::String::borrow_utf8(path),
         &bun_core::String::borrow_utf8(importer),
+        kind,
     )?
     else {
         return Ok(None);

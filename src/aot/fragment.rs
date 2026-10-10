@@ -30,8 +30,8 @@ pub enum FuncKey {
     Module(FileId),
     /// The statements of the module. `Module` calls it. Of a module with top-level `await`, or that imports one: what it imports too.
     ModuleBody(FileId),
-    /// `import("./file")`
-    DynamicImport(FileId),
+    /// `import("./file")`; of a CommonJS module: whether as Node.js has it.
+    DynamicImport(FileId, bool),
     /// Evaluates the initializer of a variable of a module and stores it, when the variable is first read.
     Initializer(FileId, SymbolId),
     Function(FileId, FnId),
@@ -41,6 +41,11 @@ pub enum FuncKey {
     EnumObject(FileId, SymbolId),
     /// Yields the object for a module namespace or a TypeScript namespace used as a value.
     NamespaceObject(FileId, SymbolId),
+    /// Yields what the export of a number is now: see `MakeModuleNamespace`.
+    ModuleNamespaceReader(FileId),
+    /// What an ES module reads from a CommonJS module, as long as what that exports is not remembered: a name it is handed; `default`, as Node.js has it or not.
+    MemberOfExportedObject(FileId),
+    DefaultOfExportedObject(FileId, bool),
 }
 
 impl FuncKey {
@@ -49,12 +54,15 @@ impl FuncKey {
         match self {
             FuncKey::Module(file)
             | FuncKey::ModuleBody(file)
-            | FuncKey::DynamicImport(file)
+            | FuncKey::DynamicImport(file, _)
             | FuncKey::Initializer(file, _)
             | FuncKey::Function(file, _)
             | FuncKey::DefaultConstructor(file, _)
             | FuncKey::EnumObject(file, _)
-            | FuncKey::NamespaceObject(file, _) => file,
+            | FuncKey::NamespaceObject(file, _)
+            | FuncKey::ModuleNamespaceReader(file)
+            | FuncKey::MemberOfExportedObject(file)
+            | FuncKey::DefaultOfExportedObject(file, _) => file,
         }
     }
 }
@@ -95,6 +103,8 @@ pub enum GlobalKey {
     ClassVariable(FileId, ClassId, u32),
     /// What the compiler keeps for a module, by the name it has for it: `module`, `exports`, `evaluated`.
     OfModule(FileId, &'static str),
+    /// What a CommonJS module exports under the name, where it keeps that in variables.
+    Export(FileId, Box<[u8]>),
     /// What the compiler keeps for one place in the code of the file, by its number among those of the file: a template object. Only
     /// the fragment of the file mentions it.
     Hidden(FileId, u32),
@@ -106,7 +116,7 @@ impl GlobalKey {
     /// As `LayoutKey::file`.
     pub fn file(&self) -> Option<FileId> {
         match *self {
-            GlobalKey::Symbol(file, _) | GlobalKey::Enum(file, _) | GlobalKey::Namespace(file, _) | GlobalKey::ClassVariable(file, ..) | GlobalKey::OfModule(file, _) | GlobalKey::Hidden(file, _) => Some(file),
+            GlobalKey::Symbol(file, _) | GlobalKey::Enum(file, _) | GlobalKey::Namespace(file, _) | GlobalKey::ClassVariable(file, ..) | GlobalKey::OfModule(file, _) | GlobalKey::Export(file, _) | GlobalKey::Hidden(file, _) => Some(file),
             GlobalKey::ExternalModule(_) => None,
         }
     }
@@ -143,10 +153,66 @@ pub struct ModulePart {
     /// The blocks that were made for it, from the first to before the last of these numbers. The one it ends in is among them, unless it ends where it begins.
     pub blocks: (u32, u32),
     pub stores: Vec<GlobalId>,
+    /// Those of them that it does not read.
+    pub only_stores: Vec<GlobalId>,
     pub mentions: Mentions,
+    /// By parameter of the block it ends in, if that is not the one it begins in: the value from before the part that every way through the part
+    /// hands it. `NONE`: it is what the statement yields. The front end hands a local that lives across a join through the join.
+    pub handed_through: Vec<V>,
 }
 
 impl ModulePart {
+    pub fn find_what_is_handed_through(&mut self, func: &Func) {
+        let ((from, start), (to, _)) = (self.from, self.to);
+        if from == to || func.blocks[to.idx()].params.is_empty() {
+            return;
+        }
+        let is_own = |block: BlockId| (self.blocks.0..self.blocks.1).contains(&block.0);
+        let own_blocks = || (self.blocks.0..self.blocks.1).map(BlockId);
+        // By value of the part: what it is to whoever stands before the part. `NONE`: the part makes it.
+        let mut seen: rustc_hash::FxHashMap<V, V> = Default::default();
+        let own_operations = own_blocks().flat_map(|block| &func.blocks[block.idx()].ops);
+        seen.extend(func.blocks[from.idx()].ops[start as usize..].iter().chain(own_operations).map(|&v| (v, V::NONE)));
+        let mut handed_to: rustc_hash::FxHashMap<BlockId, Vec<crate::ir::Args>> = Default::default();
+        for source in std::iter::once(from).chain(own_blocks()) {
+            if let Some(term) = &func.blocks[source.idx()].term {
+                term.for_each_target(|target| handed_to.entry(target.block).or_default().push(target.args.clone()));
+            }
+        }
+        let mut is_asked: rustc_hash::FxHashSet<V> = Default::default();
+        let mut asked: Vec<V> = func.blocks[to.idx()].params.clone();
+        while let Some(&param) = asked.last() {
+            let Def::Param(block, index) = func.values[param.idx()].def else { unreachable!() };
+            if seen.contains_key(&param) {
+                asked.pop();
+                continue;
+            }
+            is_asked.insert(param);
+            let (mut found, mut agree, mut waits_for) = (V::NONE, true, V::NONE);
+            for args in handed_to.get(&block).map_or(&[][..], |list| &list[..]) {
+                let arg = args.get(index as usize).copied().unwrap_or(V::NONE);
+                let handed = match (seen.get(&arg), arg.is_some().then(|| &func.values[arg.idx()].def)) {
+                    (Some(&answer), _) => answer,
+                    (None, Some(&Def::Param(of, _))) if is_own(of) && is_asked.contains(&arg) => V::NONE,
+                    (None, Some(&Def::Param(of, _))) if is_own(of) => {
+                        waits_for = arg;
+                        break;
+                    }
+                    _ => arg,
+                };
+                agree &= handed.is_some() && (found.is_none() || found == handed);
+                found = handed;
+            }
+            if waits_for.is_some() {
+                asked.push(waits_for);
+                continue;
+            }
+            seen.insert(param, if agree { found } else { V::NONE });
+            asked.pop();
+        }
+        self.handed_through = func.blocks[to.idx()].params.iter().map(|param| seen[param]).collect();
+    }
+
     /// Its operations and the parameters of its blocks.
     pub fn values(&self, func: &Func) -> Vec<V> {
         let ((from, start), (to, end)) = (self.from, self.to);
@@ -157,6 +223,7 @@ impl ModulePart {
         for block in (self.blocks.0..self.blocks.1).map(BlockId) {
             let Block { params, ops, term: _ } = &func.blocks[block.idx()];
             if block == to {
+                values.extend(params.iter().zip(&self.handed_through).filter(|(_, handed)| handed.is_none()).map(|(&param, _)| param));
                 values.extend_from_slice(&ops[..end as usize]);
             } else {
                 values.extend_from_slice(params);
@@ -262,6 +329,10 @@ pub struct Fragment {
     pub stores_to_methods: Vec<MethodStore<Identity>>,
     /// Of a file of builtin functions: what native code asks for a function by, the function, its `ImplementationVisibility` as a number.
     pub builtin_functions: Vec<(u32, FuncKey, u32)>,
+    /// If `Explain::literals` is asked for: by `build::literals::WAYS`, how many object literals of the file are made with a layout, and how many as ordinary objects.
+    pub literals: Vec<[u32; 2]>,
+    /// `Explain::literal_at`: a line for each literal that is asked about.
+    pub literals_shown: Vec<String>,
     /// How many times the file has been translated, this time included: more than once if a task was invalid.
     pub times_translated: u32,
 }

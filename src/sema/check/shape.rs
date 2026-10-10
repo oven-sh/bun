@@ -1063,6 +1063,7 @@ impl<'p, 's> Checker<'p, 's> {
         let is_open = !built.is_some_and(|(built, _)| built.kept.is_some());
         let ended = self.end_scope_as(scope, is_open);
         let (built, mapper) = built?;
+        self.burn(1 + built.resolved.shape.props.len());
         if let (Some(shape), Ok(stored)) = (built.kept, ended) {
             let entry = CachedMembers { shape, mapper };
             self.p.members.insert(&self.task, ty, entry, stored);
@@ -6697,6 +6698,12 @@ impl<'p, 's> Checker<'p, 's> {
                     let Some(other) = earlier.resolved.prop(prop.name) else {
                         continue;
                     };
+                    // A name that all of n members have: n * n / 2 pairs, and two copies in the arena for each.
+                    self.burn(1);
+                    if self.is_stack_low() {
+                        self.bailed_out();
+                        return false;
+                    }
                     let (mut first, mut second) =
                         (other.clone_in(self.arena), prop.clone_in(self.arena));
                     self.instantiate_prop(&mut first, earlier.mapper);

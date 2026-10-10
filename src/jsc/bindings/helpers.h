@@ -280,7 +280,7 @@ static EncodedSlice toEncodedSlice(JSC::JSString* str, JSC::JSGlobalObject* glob
 static void throwException(JSC::ThrowScope& scope, JSC::EncodedJSValue err, JSC::JSGlobalObject* global)
 {
     scope.throwException(global,
-        JSC::Exception::create(global->vm(), JSC::JSValue::decode(err)));
+        JSC::Exception::create(global->vm(), JSC::JSValue::decode(err), JSC::Exception::StackCaptureAction::LeaveToUnwinder));
 }
 
 static const WTF::String toStringStatic(EncodedSlice str)

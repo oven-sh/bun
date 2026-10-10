@@ -34,8 +34,7 @@ use crate::check::Checker;
 use crate::hir::{Chain, ExprId, ExprKind, Flags, FnBody, FnId, PatKind, StmtId, StmtKind};
 use crate::program::FileId;
 use crate::types::TypeId;
-use crate::util::{FxHashMap, FxHashSet};
-use std::rc::Rc;
+use crate::util::FxHashMap;
 
 /// What has been noted of constructor functions. `T`: what a type is called by. The types are `laid_out_as`.
 pub(crate) struct Constructions<T = TypeId> {
@@ -208,12 +207,6 @@ pub struct FirstStore {
     pub value: ExprId,
 }
 
-#[derive(Default)]
-pub(super) struct State {
-    /// `prototype_property_names_in` of every file that is loaded.
-    prototype_property_names: Option<Rc<FxHashSet<Atom>>>,
-}
-
 impl<'p, 's> Checker<'p, 's> {
     /// The function declares its `this` and can be constructed with. `views`: the layouts in the type of `this`, as the IR has it. `stores`:
     /// those of `first_stores_of` that are translated as first stores, all or none.
@@ -323,18 +316,5 @@ impl<'p, 's> Checker<'p, 's> {
         let (hir, bound) = (self.hir(file), self.bound(file));
         let symbol = bound.expr_symbol[e.idx()];
         matches!(hir[e].kind, ExprKind::Ident(_)) && symbol.is_some() && hir[func].params.iter().any(|p| bound.pat_symbol[hir[p].pat.idx()] == symbol)
-    }
-
-    fn prototype_property_names(&mut self) -> Rc<FxHashSet<Atom>> {
-        if let Some(known) = &self.aot.first_stores.prototype_property_names {
-            return known.clone();
-        }
-        let mut names = Vec::new();
-        for file in self.files_declaring_classes() {
-            self.prototype_property_names_in(file, &mut names);
-        }
-        let names: Rc<FxHashSet<Atom>> = Rc::new(names.into_iter().collect());
-        self.aot.first_stores.prototype_property_names = Some(names.clone());
-        names
     }
 }

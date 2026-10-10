@@ -25,7 +25,7 @@ bitflags.workspace = true
 
 [dev-dependencies]
 # The native symbols that Bun's C and C++ side provides to `bun_core`.
-bun_sema_standalone = { path = "standalone" }
+bun_sema_standalone = { path = "standalone", default-features = false }
 
 [lints]
 workspace = true

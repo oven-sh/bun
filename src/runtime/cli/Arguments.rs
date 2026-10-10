@@ -443,7 +443,10 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--no-compile-autoload-package-json Disable autoloading of package.json at runtime in standalone executable"
         ),
         parse_param!(
-            "--compile-aot                    Compile JavaScript to machine code ahead of time in standalone executable. Implies --bytecode"
+            "--aot                            Compile JavaScript to machine code ahead of time in standalone executable. Requires --compile. Implies --bytecode"
+        ),
+        parse_param!(
+            "--compile-aot                    (deprecated) The former name of --aot"
         ),
         parse_param!(
             "--compile-run                    (internal) Run what was built in place of this process instead of writing an executable"
@@ -2126,7 +2129,7 @@ fn parse_build_command_options(
 ) {
     ctx.bundler_options.transform_only = args.flag(b"--no-bundle");
     ctx.bundler_options.check = args.flag(b"--check");
-    ctx.bundler_options.compile_aot = args.flag(b"--compile-aot");
+    ctx.bundler_options.aot = args.flag(b"--aot") || args.flag(b"--compile-aot");
     ctx.bundler_options.compile_run = args.flag(b"--compile-run");
     ctx.bundler_options.rewrite_jest_for_tests = args.flag(b"--rewrite-jest-for-tests");
     if args.flag(b"--expose-internals") {
@@ -2136,7 +2139,7 @@ fn parse_build_command_options(
         bun_resolve_builtins::set_stream_iter_enabled(true);
     }
     ctx.bundler_options.compile_run_args = slice_to_owned(args.options(b"--compile-run-arg"));
-    ctx.bundler_options.bytecode = args.flag(b"--bytecode") || ctx.bundler_options.compile_aot;
+    ctx.bundler_options.bytecode = args.flag(b"--bytecode") || ctx.bundler_options.aot;
     if let Some(depth) = args.option(b"--bytecode-depth") {
         ctx.bundler_options.bytecode_depth = match strings::parse_int::<u32>(depth, 10) {
             Ok(v) => v,
@@ -2171,7 +2174,7 @@ fn parse_build_command_options(
     ctx.bundler_options.optimize_bytecode = !args.flag(b"--no-optimize-bytecode");
 
     if ctx.bundler_options.bytecode {
-        ctx.bundler_options.output_format = if ctx.bundler_options.compile_aot {
+        ctx.bundler_options.output_format = if ctx.bundler_options.aot {
             options::Format::Esm
         } else {
             options::Format::Cjs
@@ -2496,13 +2499,13 @@ fn parse_build_command_options(
         Output::err_generic("--compile-run requires --compile", ());
         Global::crash();
     }
-    if ctx.bundler_options.compile_aot && !ctx.bundler_options.compile {
-        Output::err_generic("--compile-aot requires --compile", ());
+    if ctx.bundler_options.aot && !ctx.bundler_options.compile {
+        Output::err_generic("--aot requires --compile", ());
         Global::crash();
     }
-    if ctx.bundler_options.compile_aot {
+    if ctx.bundler_options.aot {
         if let Some(why) = crate::cli::aot::why_unsupported(&ctx.bundler_options.compile_target) {
-            Output::err_generic("--compile-aot: {}", format_args!("{}", why));
+            Output::err_generic("--aot: {}", format_args!("{}", why));
             Global::crash();
         }
     }
@@ -2701,8 +2704,8 @@ fn parse_build_command_options(
         }
 
         ctx.bundler_options.output_format = format;
-        if ctx.bundler_options.compile_aot && format != options::Format::Esm {
-            Output::err_generic("--compile-aot requires --format=esm", ());
+        if ctx.bundler_options.aot && format != options::Format::Esm {
+            Output::err_generic("--aot requires --format=esm", ());
             Global::exit(1);
         }
         if ctx.bundler_options.bytecode {

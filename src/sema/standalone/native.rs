@@ -1,14 +1,12 @@
 //! Native symbols that Bun's C and C++ side provides to the parser, for binaries that link the parser and nothing
-//! else: this crate's command line tool and `bun_sema`'s tests. Plain loops instead of SIMD, and a bump allocator
-//! instead of mimalloc. Never part of the real build.
+//! else: this crate's command line tool and `bun_sema`'s tests. Plain loops instead of SIMD. Never part of the real build.
 
 use core::ffi::{c_char, c_int, c_void};
 
 // ───────────────────────────── mimalloc ─────────────────────────────
 
-// With `--cfg bun_sema_mimalloc` the real mimalloc is linked instead, to measure with Bun's
-// allocator.
-#[cfg(not(bun_sema_mimalloc))]
+// The tool links the real one (the feature `mimalloc`). This is for the tests: a bump allocator: a block of an arena is never freed.
+#[cfg(not(feature = "mimalloc"))]
 mod fake_mimalloc {
     use super::*;
 
@@ -699,18 +697,18 @@ extern "C" fn Bun__StackCheck__initialize() {
 extern "C" fn WTF__numberOfProcessorCores() -> c_int {
     std::thread::available_parallelism().map_or(4, |n| n.get() as c_int)
 }
-#[cfg(not(bun_sema_mimalloc))]
+#[cfg(not(feature = "mimalloc"))]
 #[unsafe(no_mangle)]
 extern "C" fn mi_thread_set_in_threadpool() {}
-#[cfg(not(bun_sema_mimalloc))]
+#[cfg(not(feature = "mimalloc"))]
 #[unsafe(no_mangle)]
 extern "C" fn mi_on_thread_idle() {}
-#[cfg(not(bun_sema_mimalloc))]
+#[cfg(not(feature = "mimalloc"))]
 #[unsafe(no_mangle)]
 extern "C" fn mi_on_thread_idle_start() -> bool {
     false
 }
-#[cfg(not(bun_sema_mimalloc))]
+#[cfg(not(feature = "mimalloc"))]
 #[unsafe(no_mangle)]
 extern "C" fn mi_on_thread_idle_end() {}
 

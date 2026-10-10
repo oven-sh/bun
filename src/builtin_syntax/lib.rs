@@ -2,7 +2,7 @@
 //! expand to, and which registry id a `require` resolves to. `src/codegen/builtins-manifest.ts`
 //! writes them; every consumer of `src/js` reads them from here.
 //!
-//! And the archive `bun build --compile-aot` compiles the internal modules from, written by the same
+//! And the archive `bun build --compile --aot` compiles the internal modules from, written by the same
 //! script: the number of files as a `u32`, as many records sorted by name, then the files. Each file
 //! is a zstd frame of its own, so only what a program reaches is decompressed. Numbers are
 //! little-endian. The names are paths relative to `src/js`, and `manifest`.

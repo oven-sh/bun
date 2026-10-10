@@ -356,6 +356,8 @@ pub enum Why {
     /// object it does what `Cast` does, and an object that nothing can be done with stays what it is. So what it yields need not be a
     /// `T`: `to` is `T`, and the type of the value is what is known of it afterwards.
     Coerce,
+    /// The same of what nobody else can hold, nor anything below it: `JSON.parse(text) as T`: plain data is made what `T` says, all the way down. `Checker::is_fresh_graph_by_text`.
+    CoerceFreshGraph,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]

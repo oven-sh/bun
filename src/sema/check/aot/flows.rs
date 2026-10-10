@@ -27,8 +27,9 @@
 
 use crate::atom::{Atom, known};
 use crate::bind::{Decl, Flow, FnOwner, MemberOwner, Parent, PatParent, SymFlags, SymbolId};
-use crate::check::Checker;
+use crate::check::{Checker, ContextFlags};
 use crate::check::relate::Relation;
+use super::identity::Identity;
 use super::callees::{Callee, Hole};
 use super::subtypes::{self, AlteredViews, Cause, Facts, FieldTypes, Gathered, Sizes, Subtypes, ToldApart};
 use super::creation::Creations;
@@ -36,7 +37,7 @@ use super::alterations::{Alteration, DoorsCounted, NUMBER_OF_OPERANDS, UntypedAl
 use super::escape_closure::{ByDoor, Certainty, EscapeCause, Escapes};
 use super::first_stores::Constructions;
 use super::trust::Claim;
-use crate::hir::{BinOp, Chain, ClassId, ExprId, ExprKind, FileKind, FnId, MappedModifier, MemberKind, TypeNodeId};
+use crate::hir::{BinOp, Chain, ClassId, ExprId, ExprKind, ExprTag, FileKind, FnId, MappedModifier, MemberKind, PatKind, TypeNodeId, TypeNodeKind};
 use crate::program::{FileId, Sym};
 use crate::types::{ComponentsId, EnumValue, Follow, Intrinsic, MapperId, Origin, Prop, PropFlags, PropSource, Shape, SigId, TypeData, TypeId, Visitor};
 use crate::util::{FxHashMap, FxHashSet};
@@ -271,6 +272,9 @@ enum Root {
     Array,
     /// It extends `Function`, or it can be called or constructed.
     Function,
+    /// A declaration file of a package says that it can be called or constructed. That is a declaration without a body, which nothing is held to: what `memo(C)` yields is a
+    /// plain object, `Fragment` a symbol.
+    Claimed,
     /// A class of the engine.
     Class(Sym),
 }
@@ -278,6 +282,8 @@ enum Root {
 /// The same, for whoever describes the type.
 pub enum BuiltIn {
     Function,
+    /// Anything: see `Root::Claimed`.
+    Claimed,
     /// Objects of this type, which is a class of the engine.
     Instance(TypeId),
 }
@@ -294,6 +300,8 @@ pub(super) struct State {
     noted: Noted,
     /// `is_seen_as`, as far as it has been asked.
     seen_as: FxHashMap<(TypeId, TypeId), bool>,
+    /// What `is_provably_assignable` has given up on.
+    pub(super) cut_short: FxHashSet<(TypeId, TypeId, u8)>,
     /// `root_of`, as far as it has been asked. Arrays, functions and the classes of the engine are in it from the first time on.
     roots: FxHashMap<Sym, Root>,
     /// What is being translated: see `note_place`.
@@ -306,6 +314,72 @@ pub(super) struct State {
     stored: Option<Vec<u64>>,
     /// Cache of `canonical_type`.
     canonical: FxHashMap<TypeId, TypeId>,
+    /// `is_tainted`, as far as it has been asked.
+    tainted: FxHashMap<TypeId, bool>,
+    /// This checker is at the search from the doors. While it is, no type is tainted.
+    is_searching_from_doors: bool,
+    /// For the search: the untyped files that a tool has made of a TypeScript file which is still in the program, checked, and only declares (`P.tsx.js` of `P.tsx`), and those TypeScript files.
+    made_of_checked_text: FxHashSet<FileId>,
+    checked_texts: FxHashSet<FileId>,
+}
+
+/// What the search from the doors has found, as every task reads it: it mentions no type by its number. It follows from the program alone, so that it does not matter which task has made it.
+#[derive(Default)]
+pub(super) struct Given {
+    identities: FxHashSet<Identity>,
+    /// Of those that have properties: by name, `said_by` what the property holds. A name is its text: a text first seen during the check is an atom of the task that has seen it, and another task has another text by that number.
+    properties: Vec<FxHashMap<Box<[u8]>, Said>>,
+    /// By name of a property: the indexes in `properties` of those that have it.
+    by_name: FxHashMap<Box<[u8]>, Vec<u32>>,
+}
+
+/// Whether the name is that of a property keyed by a symbol, `{ readonly [brand]: "h" }`. No data has such a property, and nothing is laid out by a type that has one: it is left out of the names a type is known by.
+fn is_keyed_by_symbol(name: &[u8]) -> bool {
+    name.first() == Some(&0xFE)
+}
+
+/// What is read off the type of a property: `Checker::said_by`.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct Said {
+    kinds: u16,
+    /// The strings and the numbers that it can be, each kind by itself, if the type names them all: a discriminant. Empty: it can be others. By text and by bits: nothing that is numbered by task. In order.
+    strings: Vec<Box<[u8]>>,
+    numbers: Vec<u64>,
+}
+
+impl Said {
+    /// Whether a type that says this may be assignable to one that says `taken`.
+    fn may_fit(&self, taken: &Said) -> bool {
+        if !said::may_fit(self.kinds, taken.kinds) {
+            return false;
+        }
+        if (self.kinds | taken.kinds) & said::ANYTHING != 0 {
+            return true;
+        }
+        (self.kinds & said::STRING == 0 || taken.strings.is_empty() || !self.strings.is_empty() && self.strings.iter().all(|text| taken.strings.contains(text)))
+            && (self.kinds & said::NUMBER == 0 || taken.numbers.is_empty() || !self.numbers.is_empty() && self.numbers.iter().all(|bits| taken.numbers.contains(bits)))
+    }
+}
+
+/// `Checker::kinds_said_by`
+mod said {
+    pub(super) const TRUE: u16 = 1;
+    pub(super) const FALSE: u16 = 1 << 1;
+    pub(super) const NUMBER: u16 = 1 << 2;
+    pub(super) const STRING: u16 = 1 << 3;
+    pub(super) const BIGINT: u16 = 1 << 4;
+    pub(super) const SYMBOL: u16 = 1 << 5;
+    /// Objects that are neither of the two below.
+    pub(super) const RECORDS: u16 = 1 << 6;
+    pub(super) const ARRAYS: u16 = 1 << 7;
+    pub(super) const FUNCTIONS: u16 = 1 << 8;
+    /// Nothing is read off the type.
+    pub(super) const ANYTHING: u16 = 1 << 9;
+
+    /// Whether a type that says `held` may be assignable to one that says `taken`. That a string is a `{ length: number }`, an array too, and a function a `{ name: string }` is left aside: no property of what the program is given is looked at so.
+    pub(super) fn may_fit(held: u16, taken: u16) -> bool {
+        (held | taken) & ANYTHING != 0 || held & !taken == 0
+    }
 }
 
 /// What type arguments are applied to.
@@ -660,7 +734,7 @@ impl<'p, 's> Checker<'p, 's> {
                 return is_bounded && (sub_bound == sup_bound || self.differs_in_references_only(sub_bound, sup_bound, true));
             }
             let relation = if self.aot.flows.stored.is_some() { Relation::AssignableAsStored } else { Relation::Assignable };
-            return self.related(sub, sup, relation);
+            return self.is_provably_related(sub, sup, relation);
         }
         let is_nil = |part: TypeId| part.is_undefined() || part.is_null() || part == TypeId::VOID;
         let has_references = |c: &Self, ty: TypeId| c.parts(ty).iter().any(|&part| !c.has_primitive_flag(part));
@@ -751,6 +825,91 @@ impl<'p, 's> Checker<'p, 's> {
         self.aot.flows.applications[&ty].iter().any(|&(_, times)| times > MOST_APPLICATIONS_WITHIN_EACH_OTHER)
     }
 
+    /// The types that the record of the type refers to, those that its mappers map to among them.
+    fn types_referred_to_by(&self, at: TypeId) -> Vec<TypeId> {
+        let mut referred = Referred::default();
+        self.data(at).visit(&mut referred);
+        // What a spread was made of is no part of it: `{ ...a, ...b, ...c }` is made of `{ ...a, ...b }` and `c`, and has the properties of all three itself.
+        if let TypeData::Synth(shape) = self.data(at)
+            && let Some((left, right)) = shape.spread_of
+        {
+            for operand in [left, right] {
+                if let Some(index) = referred.types.iter().position(|&ty| ty == operand) {
+                    referred.types.swap_remove(index);
+                }
+            }
+        }
+        for mapper in std::mem::take(&mut referred.mappers) {
+            if mapper != MapperId::IDENTITY {
+                referred.types.extend(self.types().mapping(mapper).iter().map(|pair| pair.1));
+            }
+        }
+        referred.types
+    }
+
+    /// For `--aot-explain=literals`: which counter says that the type `is_nested_too_deeply`: 0 a generic class or interface, 1 a type that is written where type parameters are in scope, 2 a function
+    /// type, 3 what is computed, 4 a tuple, 5 a text.
+    pub fn counter_nested_too_deeply(&mut self, ty: TypeId) -> Option<usize> {
+        self.find_applications_in(ty);
+        let &(applied, _) = self.aot.flows.applications[&ty].iter().find(|known| known.1 > MOST_APPLICATIONS_WITHIN_EACH_OTHER)?;
+        Some(match applied {
+            Applied::Named(_) => 0,
+            Applied::Written(_) => 1,
+            Applied::Function(..) => 2,
+            Applied::Computed => 3,
+            Applied::Tuple => 4,
+            Applied::Text => 5,
+        })
+    }
+
+    /// The way from the type inwards along which that counter counts: at each step the kind of the record, what the counter says from there on, and through which of the types that the record refers to
+    /// the way goes on. No text of the program.
+    pub fn explain_nesting(&mut self, ty: TypeId) -> String {
+        self.find_applications_in(ty);
+        let Some(&(applied, _)) = self.aot.flows.applications[&ty].iter().find(|known| known.1 > MOST_APPLICATIONS_WITHIN_EACH_OTHER) else { return String::new() };
+        let times_in = |this: &Self, ty: TypeId| this.aot.flows.applications[&ty].iter().find(|known| known.0 == applied).map_or(0, |known| known.1);
+        let (mut steps, mut at) = (Vec::new(), ty);
+        while times_in(self, at) != 0 && steps.len() < 64 {
+            let kind = match self.data(at) {
+                TypeData::Ref { .. } => "a class or an interface that is applied",
+                TypeData::Anon { origin: Origin::TypeLiteral(..), .. } => "a type literal under type parameters",
+                TypeData::Anon { origin: Origin::Mapped(..), .. } => "a mapped type",
+                TypeData::Anon { origin: Origin::ObjectLiteral(..) | Origin::WidenedLiteral(..), .. } => "the type of a literal under type parameters",
+                TypeData::Anon { .. } => "another written type",
+                TypeData::Fns { .. } => "a function type",
+                TypeData::Synth(shape) if shape.spread_of.is_some() => "a spread",
+                TypeData::Synth(shape) if shape.is_object_rest_type => "a rest",
+                TypeData::Synth(shape) if shape.instantiation_target.is_some() => "an instantiation of what is computed",
+                TypeData::Synth(shape) if !shape.call.is_empty() || !shape.construct.is_empty() => "a signature that is computed",
+                TypeData::Synth(_) => "a record that is computed",
+                TypeData::ReverseMapped { .. } => "what a mapped type is inferred from",
+                TypeData::Tuple { .. } => "a tuple",
+                TypeData::Union(_) => "a union",
+                TypeData::Intersection(_) => "an intersection",
+                TypeData::Cond { .. } => "a conditional type",
+                TypeData::IndexedAccess { .. } => "an indexed access",
+                TypeData::Keyof(_) => "keyof",
+                TypeData::Substitution { .. } => "a substitution",
+                TypeData::Template { .. } | TypeData::StringMapping { .. } => "a template",
+                TypeData::StringLit { .. } => "a text",
+                TypeData::TypeParam(..) | TypeData::ThisParam(_) => "a type parameter",
+                _ => "another kind",
+            };
+            let referred = self.types_referred_to_by(at);
+            match referred.iter().copied().enumerate().max_by_key(|&(_, argument)| times_in(self, argument)) {
+                Some((index, argument)) if times_in(self, argument) != 0 => {
+                    steps.push(format!("{kind} ({}), on through #{} of {}", times_in(self, at), index + 1, referred.len()));
+                    at = argument;
+                }
+                _ => {
+                    steps.push(format!("{kind} ({})", times_in(self, at)));
+                    break;
+                }
+            }
+        }
+        steps.join(" | ")
+    }
+
     /// For each declaration: how often at most it is applied, one application within the other, in `ty` and its type arguments. It goes by
     /// the records of the types, which refer to older records only, so it ends: the arguments of `Json[]` in `type Json = string | Json[]`
     /// are a node there and not the type they resolve to. Types may be nested thousands deep, so it keeps its own list of what is to do.
@@ -761,20 +920,14 @@ impl<'p, 's> Checker<'p, 's> {
                 pending.pop();
                 continue;
             }
-            let mut referred = Referred::default();
-            self.data(at).visit(&mut referred);
-            for mapper in std::mem::take(&mut referred.mappers) {
-                if mapper != MapperId::IDENTITY {
-                    referred.types.extend(self.types().mapping(mapper).iter().map(|pair| pair.1));
-                }
-            }
+            let referred = self.types_referred_to_by(at);
             // The arguments first.
             let known = pending.len();
-            pending.extend(referred.types.iter().copied().filter(|argument| !self.aot.flows.applications.contains_key(argument)));
+            pending.extend(referred.iter().copied().filter(|argument| !self.aot.flows.applications.contains_key(argument)));
             if pending.len() > known {
                 continue;
             }
-            let arguments = referred.types.len() as u32;
+            let arguments = referred.len() as u32;
             let own = match *self.data(at) {
                 TypeData::StringLit { value, .. } => Some((Applied::Text, self.atoms().bytes(value).len() as u32 / 64)),
                 _ if arguments == 0 => None,
@@ -786,7 +939,7 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => None,
             };
             let mut all: Vec<(Applied, u32)> = Vec::new();
-            for argument in &referred.types {
+            for argument in &referred {
                 for &(applied, times) in &self.aot.flows.applications[argument] {
                     match all.iter_mut().find(|known| known.0 == applied) {
                         Some(known) => known.1 = known.1.max(times),
@@ -828,7 +981,7 @@ impl<'p, 's> Checker<'p, 's> {
             return known;
         }
         let (opaque, any) = (self.restrictive_instantiation(source), self.permissive_instantiation(target));
-        let is_seen = self.is_assignable(opaque, any);
+        let is_seen = self.is_provably_assignable(opaque, any);
         self.aot.flows.seen_as.insert((source, target), is_seen);
         is_seen
     }
@@ -1000,8 +1153,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// * An object stays the same object. It is made one of `target` if it can be: it is one, it was made as less and has what is
     ///   missing, it is plain data. Otherwise it is what it was. So the result is of `target` or of one of the object types of `source`.
     /// * If nothing is known of `e`, it is of `target` or anything: `view_of_anything_as` of the parts of `target` that say which properties
-    ///   an object has. An array, a function, an object of a class of the engine is what nothing can be made: those parts stay, and
-    ///   whoever emits the cast sees that there is no room for anything else and asserts.
+    ///   an object has. An array, an object of a class of the engine is what nothing can be made: those parts stay, and whoever emits the
+    ///   cast sees that there is no room for anything else and asserts. Not so with a function.
     /// * Not so with `Error` and what extends it, which are types like any other here: `catch (e) { (e as Error).message }` is everywhere,
     ///   and what is thrown may be anything. Where `target` is nothing else, see `lets_everything_through`, a primitive stays what it is too.
     /// * So it is if `target` has no objects: `raw as string` of a `string | Tree` is a string or a `Tree`.
@@ -1010,6 +1163,7 @@ impl<'p, 's> Checker<'p, 's> {
         let given = target;
         let (source, target) = (self.reduced(source), self.reduced(target));
         let is_untyped = self.is_untyped(source);
+        let may_be_any_object = is_untyped || self.is_of_several_kinds_of_primitives(source);
         if self.says_nothing(target) || (!is_untyped && self.is_provably_assignable(source, target)) {
             return given;
         }
@@ -1045,25 +1199,69 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let number_of_target = parts.len();
         // Of a value of which nothing is known as well: an object stays the object it is.
-        if is_untyped && !parts.iter().any(|&part| !self.has_primitive_flag(part)) {
+        // So it does under a cast to a function type, which asserts nothing: the call does, by the language. `memo(C) as typeof C` is an object that nobody calls.
+        let objects: Vec<TypeId> = parts.iter().copied().filter(|&part| !self.has_primitive_flag(part)).collect();
+        if may_be_any_object && objects.into_iter().all(|part| matches!(self.built_in_that_is(part), Some(BuiltIn::Function))) {
             parts.push(TypeId::OBJECT);
         }
         if !is_untyped {
             parts.extend(self.parts(source).iter().copied().filter(|&part| !self.has_primitive_flag(part)));
         }
-        // `undefined` and `null` pass: `o.flag as boolean` is how people strip `| undefined`, and they go on to compare with it. Only `!` asserts.
+        // `undefined` and `null` pass: `o.flag as boolean` is how people strip `| undefined`, and they go on to compare with it. Only `!` asserts. The type says so where it
+        // matters: a bare number or boolean has no room for them. Whatever else `target` is, is kept as a cell or boxed, which holds nil whatever the type says.
+        let is_kept_bare = self.parts(target).iter().all(|&part| self.has_primitive_flag(part)) && self.parts(target).iter().any(|&part| self.is_number_like(part) || part == TypeId::BOOLEAN || self.parts(TypeId::BOOLEAN).contains(&part));
         for nil in [TypeId::UNDEFINED, TypeId::NULL] {
-            if (is_untyped || self.parts(source).contains(&nil)) && !parts.contains(&nil) {
+            if is_kept_bare && (is_untyped || self.parts(source).contains(&nil)) && !parts.contains(&nil) {
                 parts.push(nil);
             }
         }
         if is_as_given && views.is_empty() && parts.len() == number_of_target { given } else { self.union(&parts) }
     }
 
+    /// Primitives of more than one kind and nothing else: `boolean | number | string`. Nil is no kind. A place of such a type has room for an object that an `as` has let through:
+    /// `Declared::is_of_several_kinds_of_primitives`.
+    pub fn is_of_several_kinds_of_primitives(&mut self, ty: TypeId) -> bool {
+        let ty = self.reduced(ty);
+        let parts: Vec<TypeId> = self.parts(ty).to_vec();
+        let mut kinds: Vec<TypeId> = Vec::new();
+        for part in parts {
+            if !self.has_primitive_flag(part) {
+                return false;
+            }
+            if part.is_undefined() || part.is_null() {
+                continue;
+            }
+            let kind = if self.is_number_like(part) {
+                TypeId::NUMBER
+            } else if self.is_string_like(part) {
+                TypeId::STRING
+            } else {
+                self.base_of_literal(part)
+            };
+            if !kinds.contains(&kind) {
+                kinds.push(kind);
+            }
+        }
+        kinds.len() > 1
+    }
+
     /// Whether an object of which nothing is known can be made one of the type, which is a part of the target of a cast: it says which properties an object has, and is no array, no function and
     /// no class of the engine.
     pub(super) fn can_be_made_of_anything(&mut self, part: TypeId) -> bool {
-        self.says_properties(part) && self.has_properties(part) && self.element_of_array_subtype(part).is_none() && (self.built_in_that_is(part).is_none() || self.extends_error(part))
+        self.says_properties(part)
+            && self.has_properties(part)
+            && self.element_of_array_subtype(part).is_none()
+            && (self.built_in_that_is(part).is_none() || self.extends_error(part))
+            && (!self.is_left_without_a_layout(part) || self.extends_error(part))
+    }
+
+    /// An interface that `lib.*.d.ts` declares, or all of whose declarations are ambient: it says what code without a body hands out. There is no layout for it, so nothing is made one of it:
+    /// `FileBuild::is_object_type_of_program`.
+    fn is_left_without_a_layout(&self, ty: TypeId) -> bool {
+        match *self.data(ty) {
+            TypeData::Ref { target, .. } => self.files().module(target.file).is_lib || self.is_ambient_interface(target),
+            _ => false,
+        }
     }
 
     /// Whether the objects of the type are those of the class `Error` of the engine, or of what extends it.
@@ -1102,6 +1300,10 @@ impl<'p, 's> Checker<'p, 's> {
         if known == self.type_of_expr(file, obj) || self.says_nothing(known) {
             return None;
         }
+        // `(x as string).length`: the string's: see `has_no_objects_by_its_type`.
+        if self.has_no_objects_by_its_type(file, obj) {
+            return None;
+        }
         let object = self.non_nullable(known);
         let is_of_anything = self.parts(object).iter().any(|&part| self.is_view_of_anything(part));
         let found = if is_of_anything { None } else { self.type_of_property(object, name) };
@@ -1109,6 +1311,25 @@ impl<'p, 's> Checker<'p, 's> {
         let may_be_missing = chain != Chain::No || found.is_none_or(|found| self.contains_undefined(found));
         let target = if may_be_missing { self.union(&[target, TypeId::UNDEFINED]) } else { target };
         Some((found.unwrap_or(TypeId::UNKNOWN), target))
+    }
+
+    /// `e` is a string, a number, a boolean and the like to the checker. What it yields may be an object all the same, which an `as` has let through. Whoever only looks sees that
+    /// object. A use that needs the primitive asserts that it is one, or goes by it as a prediction: `FileBuild::used_as_its_type`.
+    pub fn has_no_objects_by_its_type(&mut self, file: FileId, e: ExprId) -> bool {
+        let declared = self.type_of_expr(file, e);
+        let parts: Vec<TypeId> = self.parts(declared).to_vec();
+        !self.says_nothing(declared) && !parts.is_empty() && parts.into_iter().all(|part| self.has_primitive_flag(part))
+    }
+
+    /// Whether the type is one about what the program is given from outside. Such a type is a prediction, and a prediction never asserts.
+    pub fn is_prediction_about_what_is_given(&self, _declared: TypeId) -> bool {
+        false
+    }
+
+    /// `has_no_objects_by_its_type`, and a use of `e` asserts.
+    pub fn is_asserted_where_it_is_used(&mut self, file: FileId, e: ExprId) -> bool {
+        let declared = self.type_of_expr(file, e);
+        self.has_no_objects_by_its_type(file, e) && !self.is_prediction_about_what_is_given(declared)
     }
 
     /// An object of which nothing is known is in a place of the view from here on. `source`: the checker's type of it.
@@ -1348,6 +1569,627 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    // ───────────────────────────── what the program is given ─────────────────────────────
+
+    /// Whether declaration files alone declare the interface or the class. What they declare is made elsewhere: nothing is laid out by it, and what is read out of it is a prediction already (trust.rs), but for the language's and the host's own
+    /// objects, which are made of nobody's data and cannot be replaced: `Math`, `JSON`, `console`. Not an array: what is handed in as one need not be one.
+    fn is_declared_outside(&self, ty: TypeId) -> bool {
+        match *self.data(ty) {
+            TypeData::Ref { target, .. } => !self.is_array(ty) && self.files().decls_of(target).iter().all(|&(declared_in, _)| self.hir(declared_in).kind == FileKind::Declaration),
+            _ => false,
+        }
+    }
+
+    /// Whether data from outside the program is looked at as the type. Types are facts about what the program makes and predictions about what it is given: a place of such a type holds
+    /// anything, and the type is what it is expected to hold. ASSERTED.md 1.
+    pub fn is_tainted(&mut self, ty: TypeId) -> bool {
+        if self.aot.flows.is_searching_from_doors || !self.may_hold_objects(ty) || self.is_declared_outside(ty) {
+            return false;
+        }
+        if let Some(&known) = self.aot.flows.tainted.get(&ty) {
+            return known;
+        }
+        let given = self.given();
+        if given.identities.is_empty() {
+            return false;
+        }
+        // The type that a literal is checked against may be that of another literal.
+        self.aot.flows.tainted.insert(ty, false);
+        let identity = self.identity_of_type(ty);
+        let is_tainted = given.identities.contains(&identity) || self.takes_what_is_given(ty, given) || self.is_type_of_plain_literal(ty);
+        self.aot.flows.tainted.insert(ty, is_tainted);
+        is_tainted
+    }
+
+    /// Whether it is the type of an object literal that stands where a tainted type is expected. Such a literal is made as a plain object (`FileBuild::is_asked_to_be_dynamic`). A place that takes its type from an initializer takes it from
+    /// what the initializer is made as: the field of the literal around it, an element of the array literal around it, `const x = { .. } satisfies T`, a result that is inferred.
+    /// `{ A: { p: [] } } satisfies { [N in Names]?: Row<N> }`: the inner literal is checked against `Row<"A">` and stored to a field of the outer one, which is of the inner one's own type.
+    fn is_type_of_plain_literal(&mut self, ty: TypeId) -> bool {
+        let (TypeData::Anon { origin: Origin::ObjectLiteral(file, literal, ..), .. } | TypeData::Anon { origin: Origin::WidenedLiteral(file, literal, ..), .. }) = *self.data(ty) else { return false };
+        matches!(self.hir(file)[literal].kind, ExprKind::Object(_)) && self.contextual_type_of_literal(file, literal).is_some_and(|expected| self.has_tainted_part(expected))
+    }
+
+    /// The search is made once for the program: a task that finds it made reads it. Tasks that find it missing at the same time all make it, and come to the same.
+    fn given(&mut self) -> &'p Given {
+        let program = self.p;
+        if let Some(given) = program.aot.storage.given.get() {
+            return given;
+        }
+        // By a checker of its own, outside the plan: what it finds out on the way is dropped with it. So the task that happens to make the search is left as every other task is: with nothing looked at out of its order, and
+        // nothing remembered from while no type was tainted.
+        let mut searcher = program.checker();
+        (searcher.stack_base, searcher.stack_limit) = (self.stack_base, self.stack_limit);
+        searcher.aot.flows.is_searching_from_doors = true;
+        let given = searcher.find_given();
+        drop(searcher);
+        program.aot.storage.given.get_or_init(|| given)
+    }
+
+    /// The types as every task can read them.
+    fn given_of(&mut self, found: &FxHashSet<TypeId>) -> Given {
+        let mut given = Given::default();
+        // Those that say the same are one: every literal has a type of its own, and a program has many that are alike.
+        let mut said_so_far: FxHashSet<Vec<(Box<[u8]>, Said)>> = FxHashSet::default();
+        for &ty in found {
+            let identity = self.identity_of_type(ty);
+            if !given.identities.insert(identity) || self.is_array_or_tuple(ty) {
+                continue;
+            }
+            let Some(members) = self.members(ty) else { continue };
+            let mut properties = Vec::new();
+            for prop in members.shape().props.iter() {
+                let name: Box<[u8]> = self.atoms().bytes(prop.name).into();
+                if is_keyed_by_symbol(&name) {
+                    continue;
+                }
+                let of_prop = self.type_of_prop(prop, members.mapper);
+                properties.push((name, self.said_by(of_prop)));
+            }
+            properties.sort_unstable_by(|one, other| one.0.cmp(&other.0));
+            if properties.is_empty() || !said_so_far.insert(properties.clone()) {
+                continue;
+            }
+            for (name, _) in &properties {
+                given.by_name.entry(name.clone()).or_default().push(given.properties.len() as u32);
+            }
+            given.properties.push(properties.into_iter().collect());
+        }
+        given
+    }
+
+    fn said_by(&mut self, ty: TypeId) -> Said {
+        let ty = self.reduced(ty);
+        let mut said = Said { kinds: self.kinds_said_by(ty), strings: Vec::new(), numbers: Vec::new() };
+        for literal in self.literals_of_type(ty) {
+            match literal {
+                Literal::String(text) => said.strings.push(self.atoms().bytes(text).into()),
+                Literal::Number(number) => said.numbers.push(number.to_bits()),
+            }
+        }
+        said.strings.sort_unstable();
+        said.numbers.sort_unstable();
+        said
+    }
+
+    /// Which kinds of values the type has room for, nil aside, as far as that is read off it without a question to the checker's relations.
+    fn kinds_said_by(&mut self, ty: TypeId) -> u16 {
+        let ty = self.reduced(ty);
+        match self.data(ty) {
+            TypeData::Union(parts) => parts.to_vec().into_iter().fold(0, |all, part| all | self.kinds_said_by(part)),
+            TypeData::Intrinsic(intrinsic) => match intrinsic {
+                Intrinsic::String => said::STRING,
+                Intrinsic::Number => said::NUMBER,
+                Intrinsic::BigInt => said::BIGINT,
+                Intrinsic::Symbol => said::SYMBOL,
+                Intrinsic::Object => said::RECORDS | said::ARRAYS | said::FUNCTIONS,
+                Intrinsic::Undefined | Intrinsic::Missing | Intrinsic::UndefinedWidening | Intrinsic::Null | Intrinsic::NullWidening | Intrinsic::Never => 0,
+                _ => said::ANYTHING,
+            },
+            TypeData::StringLit { .. } | TypeData::EnumLit { value: EnumValue::String(_), .. } | TypeData::Template { .. } | TypeData::StringMapping { .. } => said::STRING,
+            TypeData::NumberLit { .. } | TypeData::EnumLit { value: EnumValue::Number(_), .. } => said::NUMBER,
+            TypeData::BigIntLit { .. } => said::BIGINT,
+            TypeData::BoolLit { value: true, .. } => said::TRUE,
+            TypeData::BoolLit { .. } => said::FALSE,
+            TypeData::UniqueSymbol { .. } => said::SYMBOL,
+            TypeData::Ref { .. } | TypeData::Tuple { .. } | TypeData::Anon { .. } | TypeData::Synth(_) | TypeData::ReverseMapped { .. } | TypeData::Fns { .. } => {
+                if self.is_array_or_tuple(ty) || self.element_of_array_subtype(ty).is_some() {
+                    said::ARRAYS
+                } else if self.is_declared_outside(ty) || self.is_empty_object_type(ty) {
+                    // `Iterable<T>`, `ArrayLike<T>`, `{}`
+                    said::ANYTHING
+                } else if matches!(self.built_in_that_is(ty), Some(BuiltIn::Function)) {
+                    said::FUNCTIONS
+                } else {
+                    said::RECORDS
+                }
+            }
+            _ => said::ANYTHING,
+        }
+    }
+
+    /// Where the data may go on to: whether one of the types that the search has found may be assignable to the type: `takeDeep(node: Deep<All>)`, handed a `node: All`; `Readonly<T>`, `Partial<T>`, `Pick<T, ..>`, a base interface. Asked of a
+    /// type when somebody has to do with it, once: nobody goes through the types of the program. It goes by the names of the properties and by the kinds of what they hold, which every task finds the same: whoever is assignable has every
+    /// required property and one of the properties at least, and holds nothing there that the type has no room for.
+    fn takes_what_is_given(&mut self, ty: TypeId, given: &Given) -> bool {
+        if !self.says_properties(ty) || self.is_type_of_instances(ty) || self.built_in_that_is(ty).is_some() || self.element_of_array_subtype(ty).is_some() {
+            return false;
+        }
+        let Some(members) = self.members(ty) else { return false };
+        let atoms = self.atoms();
+        let names: Vec<(&[u8], bool)> = members.shape().props.iter().map(|prop| (atoms.bytes(prop.name), prop.flags.contains(PropFlags::OPTIONAL))).filter(|name| !is_keyed_by_symbol(name.0)).collect();
+        let none = Vec::new();
+        let having = |name: &[u8]| given.by_name.get(name).unwrap_or(&none);
+        let lists: Vec<&Vec<u32>> = match names.iter().filter(|name| !name.1).map(|name| having(name.0)).min_by_key(|having| having.len()) {
+            Some(fewest) => vec![fewest],
+            None => names.iter().map(|name| having(name.0)).collect(),
+        };
+        // What the type itself says is only found out once one has the names.
+        let mut taken: Vec<(&[u8], Said)> = Vec::new();
+        for &index in lists.into_iter().flatten() {
+            let held = &given.properties[index as usize];
+            if !names.iter().all(|&(name, is_optional)| is_optional || held.contains_key(name)) {
+                continue;
+            }
+            if taken.is_empty() {
+                for prop in members.shape().props.iter() {
+                    let of_prop = self.type_of_prop(prop, members.mapper);
+                    taken.push((atoms.bytes(prop.name), self.said_by(of_prop)));
+                }
+            }
+            if taken.iter().all(|(name, taken)| held.get(*name).is_none_or(|held| held.may_fit(taken))) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Whether the value of the expression is what the program is given, or is read out of that: it is of a tainted type, a prediction, or a property or an element of one. Nothing is asserted of it, and no cast makes
+    /// anything of it.
+    pub fn is_given(&mut self, file: FileId, e: ExprId) -> bool {
+        let own = self.type_of_expr(file, e);
+        self.has_tainted_part(own) || self.unvouched_claim(file, e).is_some() || self.is_predicted(file, e)
+    }
+
+    /// `--aot-explain=given`: of the unions of two or more record types that are written in a typed text, of the program's graph or not: how many have a member that is tainted and one that is not, and how many there are. A place of such a union holds
+    /// anything, and a narrowing that names the other member expects its layout.
+    /// And of the first: how many have no member that the search has found: a member only takes what was found, by its names, kinds and discriminants: it looks like what is given.
+    pub fn count_unions_given_in_part(&mut self) -> (usize, usize, usize) {
+        let (mut in_part, mut by_looks, mut all) = (0, 0, 0);
+        for file in (0..self.files().modules.len() as u32).map(FileId) {
+            if self.hir(file).kind == FileKind::Declaration || self.is_untyped_file(file) {
+                continue;
+            }
+            let hir = self.hir(file);
+            for (index, node) in hir.types.iter().enumerate() {
+                if !matches!(node.kind, crate::hir::TypeNodeKind::Union(_)) {
+                    continue;
+                }
+                let union = self.type_from_node(file, TypeNodeId(index as u32));
+                let (mut tainted, mut found, mut records) = (0, 0, 0);
+                for member in self.parts(union).to_vec() {
+                    let member = self.reduced(member);
+                    if self.says_properties(member) && !self.is_type_of_instances(member) && self.built_in_that_is(member).is_none() && self.element_of_array_subtype(member).is_none() && !self.is_declared_outside(member) {
+                        records += 1;
+                        if self.is_tainted(member) {
+                            tainted += 1;
+                            let identity = self.identity_of_type(member);
+                            found += usize::from(self.given().identities.contains(&identity));
+                        }
+                    }
+                }
+                if records > 1 {
+                    all += 1;
+                    if tainted != 0 && tainted != records {
+                        in_part += 1;
+                        by_looks += usize::from(found == 0);
+                    }
+                }
+            }
+        }
+        (in_part, by_looks, all)
+    }
+
+    /// Whether there is such a type in the program at all.
+    pub fn is_any_type_tainted(&mut self) -> bool {
+        !self.aot.flows.is_searching_from_doors && !self.given().identities.is_empty()
+    }
+
+    /// Whether no object of the type is laid out by it, nor an element of an array of it: primitives, arrays of them, what the engine makes. Such a type is everybody's and cannot be tainted.
+    pub(super) fn is_laid_out_nowhere(&mut self, ty: TypeId) -> bool {
+        let (mut seen, mut found) = (FxHashSet::default(), Vec::new());
+        self.add_object_types_in(ty, true, &mut seen, &mut found);
+        found.is_empty()
+    }
+
+    /// The same for one of the parts of a union.
+    pub fn has_tainted_part(&mut self, ty: TypeId) -> bool {
+        if !matches!(self.data(ty), TypeData::Union(_)) {
+            return self.is_tainted(ty);
+        }
+        if !self.is_any_type_tainted() {
+            return false;
+        }
+        let parts: Vec<TypeId> = self.parts(ty).to_vec();
+        parts.into_iter().any(|part| self.is_tainted(part))
+    }
+
+    /// Whether the expression is of such a type by itself: `export const kept = { .. }`, which untyped code imports and stores to.
+    pub fn is_of_tainted_type(&mut self, file: FileId, e: ExprId) -> bool {
+        let own = self.type_of_expr(file, e);
+        self.has_tainted_part(own)
+    }
+
+    /// It goes by the trees, the symbols and the checker's types alone: every task finds the same, and nothing is remembered on the way that the answer would change.
+    fn find_given(&mut self) -> Given {
+        let mut held_to = Vec::new();
+        let count = self.files().modules.len() as u32;
+        let all = move || (0..count).map(FileId);
+        // `P.tsx.js`, which a tool has made of `P.tsx`, does what the checked text does. No value of another type gets anywhere than in the text: all that differs is that what the text makes is made as plain objects.
+        let standing_in: FxHashMap<&[u8], FileId> = all().filter(|&file| self.only_declares(file) && self.hir(file).kind != FileKind::Declaration).map(|file| (self.files().module(file).file_name(), file)).collect();
+        let made_of: Vec<(FileId, FileId)> = (all().filter(|&file| self.is_compiled(file) && self.is_untyped_file(file)))
+            .filter_map(|file| Some((file, *standing_in.get(self.files().module(file).file_name().strip_suffix(b".js")?)?)))
+            .collect();
+        self.aot.flows.made_of_checked_text = made_of.iter().map(|made| made.0).collect();
+        self.aot.flows.checked_texts = made_of.iter().map(|made| made.1).collect();
+        for &(_, text) in &made_of {
+            self.add_types_born_in(text, &mut held_to);
+        }
+        // So the text is gone through like that of a typed file.
+        let files: Vec<FileId> = all().filter(|&file| (self.is_compiled(file) || self.aot.flows.checked_texts.contains(&file)) && !self.is_untyped_file(file)).collect();
+        // A type is written where its alias is: also in a module that is imported for its types alone, which is no module of the program's graph.
+        let written: Vec<FileId> = all().filter(|&file| self.hir(file).kind != FileKind::Declaration && !self.is_untyped_file(file)).collect();
+        for &file in &files {
+            self.add_types_that_data_is_held_to(file, &mut held_to);
+        }
+        // Untyped code of the program is outside as well: it calls what it imports with what it has made, and stores to what it is handed.
+        let untyped: Vec<FileId> = all().filter(|&file| self.is_compiled(file) && self.is_untyped_file(file) && !self.aot.flows.made_of_checked_text.contains(&file)).collect();
+        let (mut imported, mut crossed) = (FxHashSet::default(), FxHashSet::default());
+        if !untyped.is_empty() {
+            for &file in untyped.iter().chain(&files) {
+                self.add_types_imported_across(file, &mut imported, &mut crossed, &mut held_to);
+            }
+            for &file in &files {
+                self.add_types_handed_to_javascript(file, &mut crossed, &mut held_to);
+            }
+        }
+        let (mut seen, mut views) = (FxHashSet::default(), Vec::new());
+        let mut tainted: FxHashSet<TypeId> = FxHashSet::default();
+        loop {
+          while !held_to.is_empty() {
+            for ty in held_to.drain(..) {
+                self.add_what_stays_untyped(ty, true, &mut seen, &mut views);
+            }
+            tainted.extend(views.drain(..));
+            let so_far: Vec<TypeId> = seen.iter().map(|&(ty, _)| ty).collect();
+            for &ty in &so_far {
+                if self.says_properties(ty) && !self.is_type_of_instances(ty) && self.built_in_that_is(ty).is_none() && self.element_of_array_subtype(ty).is_none() {
+                    tainted.insert(ty);
+                }
+            }
+            // An array of them that the data may hold. Not `string[]`, which is everybody's.
+            for ty in so_far {
+                if self.is_array_or_tuple(ty) && self.type_arguments(ty).iter().any(|&element| self.parts(element).iter().any(|part| tainted.contains(part))) {
+                    tainted.insert(ty);
+                }
+            }
+            // What the program has made and looks at as such a type is written to as the data is: `(second as ListItem).next = parsed`, `const item: ListItem = second`.
+            for &file in &files {
+                self.add_types_looked_at_as(file, &tainted, &seen, &mut held_to);
+            }
+          }
+            // The members of a union that is written go together, also where one of them only takes what has been found.
+            let given = self.given_of(&tainted);
+            let mut taking = FxHashMap::default();
+            for &file in &written {
+                self.add_members_of_written_unions(file, &tainted, &given, &mut taking, &seen, &mut held_to);
+            }
+            if held_to.is_empty() {
+                return given;
+            }
+        }
+    }
+
+    /// A place of `A | B` holds anything as soon as `A` is tainted, a literal there that no discriminant singles out is made plain, and what is narrowed to `B` is expected to be laid out as a `B`. `taking`: `takes_what_is_given`, as far as asked.
+    fn add_members_of_written_unions(&mut self, file: FileId, tainted: &FxHashSet<TypeId>, given: &Given, taking: &mut FxHashMap<TypeId, bool>, seen: &FxHashSet<(TypeId, bool)>, out: &mut Vec<TypeId>) {
+        let hir = self.hir(file);
+        for (index, node) in hir.types.iter().enumerate() {
+            if !matches!(node.kind, TypeNodeKind::Union(_)) {
+                continue;
+            }
+            let union = self.type_from_node(file, TypeNodeId(index as u32));
+            let mut members = Vec::new();
+            for member in self.parts(union).to_vec() {
+                let member = self.reduced(member);
+                if self.may_hold_objects(member) {
+                    members.push(member);
+                }
+            }
+            if members.len() < 2 || members.iter().all(|&member| seen.contains(&(member, true))) {
+                continue;
+            }
+            let mut is_given = false;
+            for &member in &members {
+                is_given = tainted.contains(&member)
+                    || match taking.get(&member) {
+                        Some(&known) => known,
+                        None => {
+                            let takes = self.takes_what_is_given(member, given);
+                            taking.insert(member, takes);
+                            takes
+                        }
+                    };
+                if is_given {
+                    break;
+                }
+            }
+            if is_given {
+                out.extend(members.into_iter().filter(|&member| !seen.contains(&(member, true))));
+            }
+        }
+    }
+
+    /// What a cast or an annotated variable with an initializer carries, both ways, as far as it has not been seen. BACK: the type of the operand of a cast to one of the types, of the initializer of a variable that is annotated with one.
+    /// ON: the type after `as`, or the annotation, where the operand is of one of the types (`base as Derived`: no assignability tells that), or where nothing is known of the operand and it is known for data (`origin_of_data`): `load(path) as Settings`
+    /// with a `load` of a package that yields `any`, `const s: Settings = loose` with a `loose` that holds what was parsed, the value of a JSON module. Not what goes through an `any` of the program's own, `(x: unknown) => x as T`: only a flow tells
+    /// what gets there.
+    fn add_types_looked_at_as(&mut self, file: FileId, tainted: &FxHashSet<TypeId>, seen: &FxHashSet<(TypeId, bool)>, out: &mut Vec<TypeId>) {
+        let hir = self.hir(file);
+        let casts = self.exprs_by_kind_of(file).of(ExprTag::As).iter().filter_map(|&cast| match hir[cast].kind {
+            ExprKind::As { expr, ty } => Some((ty, expr)),
+            _ => None,
+        });
+        let annotated = hir.var_decls.iter().filter(|declaration| declaration.ty.is_some() && declaration.init.is_some()).map(|declaration| (declaration.ty, declaration.init));
+        let written: Vec<(TypeNodeId, ExprId)> = casts.chain(annotated).collect();
+        for (written, value) in written {
+            let target = self.type_from_node(file, written);
+            let target = self.reduced(target);
+            if !self.may_hold_objects(target) {
+                continue;
+            }
+            self.prepare_enclosing(file, value);
+            // `x as unknown as T`: what is looked at as a `T` is `x`.
+            let (mut operand, mut source) = (value, self.type_of_expr(file, value));
+            while self.says_nothing(source)
+                && let ExprKind::As { expr, .. } | ExprKind::NonNull(expr) = hir[operand].kind
+            {
+                operand = expr;
+                source = self.type_of_expr(file, operand);
+            }
+            let source = self.reduced(source);
+            if self.parts(target).iter().any(|part| tainted.contains(part)) {
+                if self.may_hold_objects(source) && !seen.contains(&(source, true)) {
+                    out.push(source);
+                }
+                continue;
+            }
+            if seen.contains(&(target, true)) {
+                continue;
+            }
+            if self.parts(source).iter().any(|part| tainted.contains(part)) || self.says_nothing(source) && self.origin_of_data(file, operand).is_some_and(|origin| origin.is_known_for_data()) {
+                out.push(target);
+            }
+        }
+    }
+
+    /// Whether the code behind what the file declares is untyped code of the program that nobody has checked: JavaScript, or a TypeScript file that stands in for a declaration file. Not what a tool has made of a checked text.
+    fn is_declared_for_javascript(&self, declared_in: FileId) -> bool {
+        let flows = &self.aot.flows;
+        self.is_untyped_file(declared_in) && !flows.made_of_checked_text.contains(&declared_in)
+            || self.only_declares(declared_in) && self.hir(declared_in).kind != FileKind::Declaration && !flows.checked_texts.contains(&declared_in)
+    }
+
+    /// What the text makes, where untyped code made of it runs in its place: every object literal and the attributes of every JSX element, by its own type and by the type it is checked against. From there it gets on as in typed code.
+    fn add_types_born_in(&mut self, file: FileId, out: &mut Vec<TypeId>) {
+        let by_kind = self.exprs_by_kind_of(file);
+        for &literal in by_kind.of(ExprTag::Object) {
+            self.prepare_enclosing(file, literal);
+            out.push(self.type_of_expr(file, literal));
+            out.extend(self.contextual_type_of_literal(file, literal));
+        }
+        for &element in by_kind.of(ExprTag::Jsx) {
+            self.prepare_enclosing(file, element);
+            out.push(self.jsx_attributes_type(file, element));
+            out.extend(self.apparent_type_of_contextual_type_of_jsx_attributes(file, element, ContextFlags::empty()));
+        }
+    }
+
+    /// What an untyped file refers to that a typed file of the program declares, and what a typed file refers to that untyped code is behind. `imported`: what has been looked at, and whether from an untyped file.
+    fn add_types_imported_across(&mut self, file: FileId, imported: &mut FxHashSet<(Sym, bool)>, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
+        let bound = self.bound(file);
+        let is_untyped = self.is_untyped_file(file);
+        for &name in self.exprs_by_kind_of(file).of(ExprTag::Ident) {
+            let local = bound.expr_symbol[name.idx()];
+            if local.is_none() {
+                continue;
+            }
+            let local = self.files().sym(file, local);
+            if !self.files().flags(local).contains(SymFlags::ALIAS) {
+                continue;
+            }
+            let Some(target) = self.files().resolve_alias(local) else { continue };
+            if !imported.insert((target, is_untyped)) {
+                continue;
+            }
+            let is_across = self.files().decls_of(target).iter().any(|&(declared_in, _)| match is_untyped {
+                true => !self.is_untyped_file(declared_in) && self.hir(declared_in).kind != FileKind::Declaration,
+                false => self.is_declared_for_javascript(declared_in),
+            });
+            if is_across {
+                let of_target = self.type_of_symbol(target);
+                self.add_what_crosses(of_target, seen, out);
+            }
+        }
+    }
+
+    /// The arguments of the calls of the typed file whose callee is reached through a name that is imported from an untyped file, or from a file whose code is one: `render(state)`, `new View(options)`, `lib.store.set(item)`.
+    fn add_types_handed_to_javascript(&mut self, file: FileId, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let by_kind = self.exprs_by_kind_of(file);
+        for &e in by_kind.of(ExprTag::Call).iter().chain(by_kind.of(ExprTag::New)) {
+            let (ExprKind::Call(call) | ExprKind::New(call)) = hir[e].kind else { continue };
+            let mut named = hir[call].callee;
+            while let ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } | ExprKind::NonNull(obj) = hir[named].kind {
+                named = obj;
+            }
+            if !matches!(hir[named].kind, ExprKind::Ident(_)) || bound.expr_symbol[named.idx()].is_none() {
+                continue;
+            }
+            let local = self.files().sym(file, bound.expr_symbol[named.idx()]);
+            if !self.files().flags(local).contains(SymFlags::ALIAS) || !self.files().resolve_alias(local).is_some_and(|target| self.is_declared_for_javascript(target.file)) {
+                continue;
+            }
+            for argument in hir.ids(hir[call].args) {
+                let argument = match hir[argument].kind {
+                    ExprKind::Spread(spread) => spread,
+                    _ => argument,
+                };
+                self.prepare_enclosing(file, argument);
+                let handed = self.type_of_expr(file, argument);
+                self.add_what_crosses(handed, seen, out);
+            }
+        }
+    }
+
+    /// What untyped code has to do with once it holds a value of the type. A function it calls with what it has made, and what the function yields it holds in turn. Of an object it reads and stores the properties, of a
+    /// container the elements. `out`: the types among all that which say properties. What a declaration file declares is gone through by its type arguments alone: nothing is laid out by it.
+    fn add_what_crosses(&mut self, ty: TypeId, seen: &mut FxHashSet<TypeId>, out: &mut Vec<TypeId>) {
+        let ty = self.reduced(ty);
+        if !(self.may_hold_objects(ty) || matches!(self.data(ty), TypeData::Fns { .. })) || !seen.insert(ty) {
+            return;
+        }
+        // `wrap(): Box<Box<T>>`: it is laid out so far and no further.
+        if self.is_nested_too_deeply(ty) {
+            return;
+        }
+        if let TypeData::Union(parts) = self.data(ty) {
+            for part in parts.to_vec() {
+                self.add_what_crosses(part, seen, out);
+            }
+            return;
+        }
+        if self.is_instantiable(ty) {
+            let bound = self.base_constraint(ty);
+            self.add_what_crosses(bound, seen, out);
+            return;
+        }
+        for is_construct in [false, true] {
+            for signature in self.signatures(ty, is_construct).to_vec() {
+                let parameters = self.sig_params(signature);
+                // A rest parameter of a tuple type stands for several.
+                for index in 0..parameters.len() + 8 {
+                    let Some(parameter) = self.param_type_at(&parameters, index) else { break };
+                    self.add_what_crosses(parameter, seen, out);
+                }
+                let yielded = self.sig_return(signature);
+                self.add_what_crosses(yielded, seen, out);
+            }
+        }
+        if matches!(self.data(ty), TypeData::Ref { .. } | TypeData::Tuple { .. }) {
+            for argument in self.type_arguments(ty).to_vec() {
+                self.add_what_crosses(argument, seen, out);
+            }
+        }
+        // An array that untyped code hands in need not be one.
+        if self.is_array_or_tuple(ty) {
+            out.push(ty);
+            return;
+        }
+        if self.is_declared_outside(ty) {
+            return;
+        }
+        let Some(members) = self.members(ty) else { return };
+        for info in members.shape().index.iter() {
+            self.add_what_crosses(info.value, seen, out);
+        }
+        for prop in members.shape().props.iter() {
+            let of_prop = self.type_of_prop(prop, members.mapper);
+            self.add_what_crosses(of_prop, seen, out);
+        }
+        if self.says_properties(ty) {
+            out.push(ty);
+        }
+    }
+
+    /// `JSON.parse(..)`, `response.json()`, `structuredClone(..)`.
+    fn is_door_for_data(&mut self, file: FileId, e: ExprId) -> bool {
+        let hir = self.hir(file);
+        let ExprKind::Call(call) = hir[e].kind else { return false };
+        let callee = hir[call].callee;
+        match hir[callee].kind {
+            ExprKind::Dot { obj, name, .. } => match self.atoms().bytes(name) {
+                b"parse" => self.names_global_object(file, obj, b"JSON"),
+                b"json" => hir.ids(hir[call].args).next().is_none() && self.resolved_signature(file, e).sig.and_then(|sig| self.sig_decl(sig)).is_some_and(|(of, ..)| self.hir(of).kind == FileKind::Declaration),
+                _ => false,
+            },
+            ExprKind::Ident(name) => {
+                self.atoms().bytes(name) == b"structuredClone"
+                    && self.bound(file).expr_symbol[callee.idx()].is_none()
+                    && self.symbol_of_identifier(file, callee, name).is_some_and(|found| self.hir(found.file).kind == FileKind::Declaration)
+            }
+            _ => false,
+        }
+    }
+
+    /// The types that are written where what has come through a door of the file gets to.
+    fn add_types_that_data_is_held_to(&mut self, file: FileId, out: &mut Vec<TypeId>) {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let by_kind = self.exprs_by_kind_of(file);
+        let mut pending: Vec<ExprId> = Vec::new();
+        for &call in by_kind.of(ExprTag::Call) {
+            if self.is_door_for_data(file, call) {
+                pending.push(call);
+            }
+        }
+        let mut holders: FxHashSet<SymbolId> = FxHashSet::default();
+        while let Some(mut yielded) = pending.pop() {
+            let is_kept_by_name = loop {
+                match bound.expr_parent[yielded.idx()] {
+                    Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
+                        ExprKind::As { ty, .. } => {
+                            out.push(self.type_from_node(file, ty));
+                            yielded = parent;
+                        }
+                        ExprKind::Await(_) | ExprKind::NonNull(_) | ExprKind::Satisfies { .. } | ExprKind::Binary { op: BinOp::Or | BinOp::Nullish, .. } => yielded = parent,
+                        ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } if obj == yielded => yielded = parent,
+                        ExprKind::Cond { yes, no, .. } if yes == yielded || no == yielded => yielded = parent,
+                        ExprKind::Binary { op: BinOp::And | BinOp::Comma, right, .. } if right == yielded => yielded = parent,
+                        _ => break false,
+                    },
+                    Parent::VarInit(d) if hir[d].ty.is_none() && matches!(hir[hir[d].pat].kind, PatKind::Ident(_)) => {
+                        let holder = bound.pat_symbol[hir[d].pat.idx()];
+                        if holders.insert(holder) {
+                            pending.extend(by_kind.of(ExprTag::Ident).iter().copied().filter(|name| bound.expr_symbol[name.idx()] == holder));
+                        }
+                        break true;
+                    }
+                    _ => break false,
+                }
+            };
+            if is_kept_by_name {
+                continue;
+            }
+            self.prepare_enclosing(file, yielded);
+            if let Some(expected) = self.contextual_type(file, yielded, ContextFlags::empty()) {
+                out.push(expected);
+            }
+        }
+    }
+
+    /// Nobody else can hold what the expression yields, nor anything that hangs below it: `JSON.parse(text)`, with one argument: a reviver sees what is made. Not what a variable holds.
+    pub fn is_fresh_graph_by_text(&mut self, file: FileId, e: ExprId) -> bool {
+        match self.hir(file)[e].kind {
+            ExprKind::As { expr, .. } | ExprKind::Satisfies { expr, .. } | ExprKind::NonNull(expr) => self.is_fresh_graph_by_text(file, expr),
+            ExprKind::Call(call) => {
+                let has_one_argument = {
+                    let hir = self.hir(file);
+                    hir[call].args.len == 1 && !hir.ids(hir[call].args).any(|argument| matches!(hir[argument].kind, ExprKind::Spread(_) | ExprKind::Missing))
+                };
+                has_one_argument && self.origin_of_data(file, e) == Some(OriginOfData::Parsed)
+            }
+            _ => false,
+        }
+    }
+
     /// Where the value of the expression comes from, going by the text, if it is of type `any` or `unknown`. `None`: it has a type, or it is the program's own: `x as any` of an `x`
     /// that has a type, `(x as any).field`, what `new` makes.
     ///
@@ -1444,7 +2286,7 @@ impl<'p, 's> Checker<'p, 's> {
             self.add_what_stays_untyped(element, true, seen, out);
         } else {
             match self.built_in_that_is(ty) {
-                Some(BuiltIn::Function) => return,
+                Some(BuiltIn::Function | BuiltIn::Claimed) => return,
                 // `Map<K, V>`, `Set<T>`, `Promise<T>`
                 Some(BuiltIn::Instance(_)) => {
                     for &argument in self.type_arguments(ty) {
@@ -1613,7 +2455,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// there: the elements of an `S[]` that is taken for a `T[]`, what is in a `Map<K, S>` that is taken for a `Map<K, T>`, in a `Set`, a
     /// `Promise`, an `Iterable`, a dictionary. For each, the type of what is held and the type it is held as: the type arguments, where
     /// the two are instantiations of one declaration, or else what their index signatures say. Likewise what goes through a function:
-    /// its arguments the other way, from the type it is taken for to its own, and what it yields. The first time it is asked of the two
+    /// its arguments the other way, from the type it is taken for to its own, and what it yields; and through a function that is a property of the two. The first time it is asked of the two
     /// types, and nothing after that.
     pub fn types_held_entering(&mut self, source: TypeId, target: TypeId) -> Vec<(TypeId, TypeId)> {
         let mut entering = Vec::new();
@@ -1652,9 +2494,34 @@ impl<'p, 's> Checker<'p, 's> {
                         }
                     }
                 }
+                // So with a function that is a property: `{ deps: (ctx: A) => .. }` that is taken for a `{ deps: (ctx: Big) => .. }` is handed a `Big`.
+                // Not of what the standard library or a declaration file writes: `then` yields a `Promise` of a type parameter of its own, whose `then` yields another: that does not end.
+                if self.is_record_written_by_the_program(from)
+                    && self.is_record_written_by_the_program(to)
+                    && let Some(members) = self.members(to)
+                {
+                    let names: Vec<Atom> = members.shape().props.iter().map(|prop| prop.name).collect();
+                    for name in names {
+                        if let (Some(held), Some(held_as)) = (self.type_of_property(from, name), self.type_of_property(to, name))
+                            && held != held_as
+                            && self.parts(held_as).iter().any(|&part| !self.signatures(part, false).is_empty())
+                        {
+                            entering.push((held, held_as));
+                        }
+                    }
+                }
             }
         }
         entering
+    }
+
+    fn is_record_written_by_the_program(&self, ty: TypeId) -> bool {
+        let file = match *self.data(ty) {
+            TypeData::Ref { target, .. } => target.file,
+            TypeData::Anon { origin: Origin::TypeLiteral(file, _) | Origin::ObjectLiteral(file, ..) | Origin::WidenedLiteral(file, ..), .. } => file,
+            _ => return false,
+        };
+        !self.files.module(file).is_lib && self.hir(file).kind != FileKind::Declaration
     }
 
     /// Whether a value of type `source`, whose objects are not laid out, may enter a place for objects of one of `views` as it is: `source`
@@ -1812,7 +2679,14 @@ impl<'p, 's> Checker<'p, 's> {
             let hir = self.hir(file);
             matches!(decl, Decl::Interface(interface) if hir[interface].members.iter().any(|member| matches!(hir[member].kind, MemberKind::CallSignature | MemberKind::ConstructSignature)))
         });
-        let mut root = if is_called { Root::Function } else { Root::None };
+        let is_of_package = self.is_ambient_interface(sym) && self.files().decls_of(sym).iter().all(|&(file, _)| !self.files().module(file).is_lib);
+        let mut root = if !is_called {
+            Root::None
+        } else if is_of_package {
+            Root::Claimed
+        } else {
+            Root::Function
+        };
         for &base in self.base_types(sym).iter() {
             if root != Root::None {
                 break;
@@ -1846,6 +2720,7 @@ impl<'p, 's> Checker<'p, 's> {
         match *self.data(ty) {
             TypeData::Ref { target, .. } => match self.root_of(target) {
                 Root::Function => Some(BuiltIn::Function),
+                Root::Claimed => Some(BuiltIn::Claimed),
                 Root::Class(class) if class == target => Some(BuiltIn::Instance(ty)),
                 Root::Class(class) => {
                     let declared = self.declared_type(class);
@@ -1855,9 +2730,10 @@ impl<'p, 's> Checker<'p, 's> {
             },
             TypeData::Intersection(ref parts) => parts.iter().find_map(|&part| self.built_in_that_is(part)),
             TypeData::Fns { .. } | TypeData::Anon { origin: Origin::Function(_) | Origin::ClassStatic(_), .. } => Some(BuiltIn::Function),
-            TypeData::Anon { origin: Origin::TypeLiteral(..), .. } => {
+            TypeData::Anon { origin: Origin::TypeLiteral(file, _), .. } => {
                 let is_called = !self.signatures(ty, false).is_empty() || !self.signatures(ty, true).is_empty();
-                is_called.then_some(BuiltIn::Function)
+                let is_of_package = self.hir(file).kind == FileKind::Declaration && !self.files().module(file).is_lib;
+                is_called.then_some(if is_of_package { BuiltIn::Claimed } else { BuiltIn::Function })
             }
             _ => None,
         }
@@ -2059,7 +2935,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `goes_by_fields`: see below. Without it, it is assignability as the language has it, dead properties and type parameters aside.
     fn is_of_type_as(&mut self, made: TypeId, view: TypeId, goes_by_fields: bool) -> bool {
         let relation = if self.aot.flows.stored.is_some() { Relation::AssignableAsStored } else { Relation::Assignable };
-        if self.related(made, view, relation) {
+        if self.is_provably_related(made, view, relation) {
             return true;
         }
         // It has the live fields, with the same discriminants: a subtype whatever its reference fields are declared to point to. A read
@@ -2075,7 +2951,7 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         }
         let (made, view) = (self.permissive_instantiation(made), self.permissive_instantiation(view));
-        self.related(made, view, relation)
+        self.is_provably_related(made, view, relation)
     }
 
     /// Whether every field of `view` whose type is a set of constants takes what `made`, as it is declared, has in that field. `by_bounds`, for what no flow has brought
@@ -2095,7 +2971,7 @@ impl<'p, 's> Checker<'p, 's> {
             if !names_constants && !self.base_constraint_of(made_type).is_some_and(|bound| are_primitives(self, bound)) {
                 continue;
             }
-            if !self.related(made_type, view_type, relation) {
+            if !self.is_provably_related(made_type, view_type, relation) {
                 return false;
             }
         }
@@ -2315,7 +3191,7 @@ impl<'p, 's> Checker<'p, 's> {
         clock.say(format_args!("what is held within: {} copied into, {} untyped into", copied_into.len(), untyped_into.len()));
 
         let types: Vec<TypeId> = views.to_vec();
-        let altered = Alteration::ALL.map(|alteration| noted.escapes.alterations.closed(alteration));
+        let altered = Alteration::ALL.map(|alteration| noted.escapes.with_alterations(|noted| noted.closed(alteration)));
         let types_altered: [Vec<TypeId>; 2] = [0, 1].map(|alteration: usize| {
             let mut handed_over: Vec<TypeId> = altered[alteration].types.clone();
             handed_over.sort_unstable_by_key(|ty| ty.0);
@@ -2491,7 +3367,7 @@ impl<'p, 's> Checker<'p, 's> {
         let shape = members.shape();
         let (mut declared, mut live, mut required, mut open): (Vec<u32>, Vec<u32>, Vec<u32>, Vec<u32>) = Default::default();
         let mut constants: Vec<(u32, u64)> = Vec::new();
-        let (mut requires_a_property, mut is_flat) = (false, true);
+        let (mut requires_a_property, mut is_flat, mut is_flat_but_for_functions) = (false, true, true);
         for prop in shape.props.iter() {
             let name = prop.name.0;
             let is_live = !self.is_never_stored(prop.name);
@@ -2508,6 +3384,8 @@ impl<'p, 's> Checker<'p, 's> {
             let of_prop = self.type_of_prop(prop, members.mapper);
             // Also what no code of the program stores: plain data brings it along, and a read finds it.
             is_flat &= self.parts(of_prop).iter().all(|&part| self.has_primitive_flag(part));
+            // Nothing is ever made of a function either.
+            is_flat_but_for_functions &= self.parts(of_prop).iter().all(|&part| self.has_primitive_flag(part) || matches!(self.built_in_that_is(part), Some(BuiltIn::Function)));
             if of_prop.is_any() || of_prop.is_never() || self.has_type_variables(of_prop) {
                 open.push(name);
                 continue;
@@ -2539,8 +3417,11 @@ impl<'p, 's> Checker<'p, 's> {
         } else if !requires_a_property {
             flags |= subtypes::IS_WEAK;
         }
-        if is_flat && shape.index.is_empty() && shape.call.is_empty() && shape.construct.is_empty() && flags & subtypes::IS_INSTANCE == 0 {
-            flags |= subtypes::IS_FLAT;
+        if is_flat_but_for_functions && shape.index.is_empty() && shape.call.is_empty() && shape.construct.is_empty() && flags & subtypes::IS_INSTANCE == 0 {
+            flags |= subtypes::IS_FLAT_BUT_FOR_FUNCTIONS;
+            if is_flat {
+                flags |= subtypes::IS_FLAT;
+            }
         }
         for names in [&mut declared, &mut live, &mut required, &mut open] {
             names.sort_unstable();

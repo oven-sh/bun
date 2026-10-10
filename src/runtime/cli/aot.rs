@@ -69,7 +69,7 @@ pub(crate) fn exec_build(ctx: &ContextData, entry_points: &[&[u8]], for_tests: b
     let mut args: Vec<Vec<u8>> = [
         &b"build"[..],
         b"--compile",
-        b"--compile-aot",
+        b"--aot",
         b"--compile-run",
         b"--compile-autoload-tsconfig",
         b"--compile-autoload-package-json",

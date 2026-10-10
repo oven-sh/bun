@@ -47,6 +47,9 @@ pub enum Activation {
     Block(StmtId),
     /// An evaluation of a class that is not evaluated once.
     Class(ClassId),
+    /// An evaluation of a function expression that has a name: it binds the name, which only the function sees, to the closure it makes.
+    /// Where an activation is said to have ended: with the activation that evaluates the expression.
+    Expression(FnId),
 }
 
 /// Whose `this` an arrow function sees.
@@ -381,7 +384,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn scope_around(&self, file: FileId, scope: Activation) -> Option<Activation> {
         match scope {
             Activation::Block(stmt) => self.scope_at(file, self.bound(file).stmt_parent[stmt.idx()]),
-            Activation::Call(_) | Activation::Iteration(_) | Activation::Class(_) => None,
+            Activation::Call(_) | Activation::Iteration(_) | Activation::Class(_) | Activation::Expression(_) => None,
         }
     }
 
@@ -396,6 +399,7 @@ impl<'p, 's> Checker<'p, 's> {
             },
             Decl::Fn(func) => match bound.fns[func.idx()].owner {
                 FnOwner::Stmt(stmt) => stmt,
+                FnOwner::Expr(_) if self.names_its_closure(file, func) => return Some(Activation::Expression(func)),
                 _ => return of_function,
             },
             Decl::Class(class) => match bound.class_owner[class.idx()].to_parent() {
@@ -412,6 +416,12 @@ impl<'p, 's> Checker<'p, 's> {
             return Some(Activation::Block(handler));
         }
         self.scope_at(file, bound.stmt_parent[stmt.idx()])
+    }
+
+    /// Whether the function expression has a name, which stands for its closure wherever it is read. Nothing can be stored to it: an assignment throws or does nothing, see
+    /// `FileBuild::assign_sym`.
+    fn names_its_closure(&self, file: FileId, func: FnId) -> bool {
+        self.bound(file).fn_symbol[func.idx()].is_some()
     }
 
     /// Whether a direct child of `at` is evaluated at most once each time the scope is entered: it is in the scope, in no loop and no function
@@ -719,9 +729,10 @@ impl<'p, 's> Checker<'p, 's> {
 
         // A function declaration that nothing is stored to stands for its function.
         let declared_function = |this: &Self, reference: &Reference| -> Option<FnId> {
-            let Decl::Fn(_) = reference.decl else { return None };
+            let Decl::Fn(declared) = reference.decl else { return None };
             let symbol = &bound.symbols[reference.sym.id.idx()];
-            if symbol.flags.contains(SymFlags::ASSIGNED) || !bound.assignments_to(reference.sym.id).is_empty() || this.is_stored_through_casts(file, reference.sym.id) {
+            let is_own_name = matches!(bound.fns[declared.idx()].owner, FnOwner::Expr(_));
+            if !is_own_name && (symbol.flags.contains(SymFlags::ASSIGNED) || !bound.assignments_to(reference.sym.id).is_empty() || this.is_stored_through_casts(file, reference.sym.id)) {
                 return None;
             }
             // Of an overloaded function, the declaration with the body. Of several, the last, which is what the name stands for.
@@ -738,12 +749,30 @@ impl<'p, 's> Checker<'p, 's> {
             },
             _ => false,
         };
+        // A function expression whose own name is used as a value may capture the scope of that name, which nobody but itself has at hand.
+        let mut names_itself: FxHashSet<FnId> = (references.iter())
+            .filter(|reference| !is_called_directly(reference.e))
+            .filter_map(|reference| declared_function(self, reference))
+            .filter(|func| matches!(bound.fns[func.idx()].owner, FnOwner::Expr(_)))
+            .collect();
+        // So may one whose `arguments` object shows it: `arguments.callee`.
+        let mapped = self.mapped_arguments_of_file(file);
+        let mut showing_themselves: Vec<FnId> = mapped.functions.keys().copied().collect();
+        showing_themselves.sort_unstable();
+        names_itself.extend(showing_themselves.iter().copied().filter(|func| matches!(bound.fns[func.idx()].owner, FnOwner::Expr(_))));
         let mut captured: FxHashMap<Sym, (Decl, Vec<ExprId>)> = FxHashMap::default();
         let mut uses_as_value: FxHashMap<FnId, Vec<(ExprId, Code, Code)>> = FxHashMap::default();
         let mut symbol_of_function: FxHashMap<FnId, (Sym, Decl)> = FxHashMap::default();
         let mut mentions: FxHashMap<FnId, Vec<ExprId>> = FxHashMap::default();
         for reference in &references {
             let node = Node::Code(reference.code);
+            // It lives in the `arguments` object of its function.
+            if let Some((owner, _)) = self.mapped_parameter(reference.sym) {
+                if reference.code != reference.holder {
+                    raw.entry(node).or_default().insert(Need::Arguments(owner));
+                }
+                continue;
+            }
             if let Decl::Class(class) = reference.decl
                 && !self.is_class_evaluated_once(file, class)
                 && self.is_within_class(file, bound.expr_parent[reference.e.idx()], class)
@@ -754,8 +783,8 @@ impl<'p, 's> Checker<'p, 's> {
             if let Some(func) = declared_function(self, reference) {
                 edges.insert((node, Node::Code(self.code_of_fn(file, func))));
                 mentions.entry(func).or_default().push(reference.e);
-                // The name of a function expression within it: a closure of it is made where that is used as a value.
-                if !is_called_directly(reference.e) && matches!(bound.fns[func.idx()].owner, FnOwner::Stmt(_)) {
+                // The name of a function expression within it stands for the closure that the evaluation of the expression made.
+                if !is_called_directly(reference.e) && matches!(bound.fns[func.idx()].owner, FnOwner::Stmt(_) | FnOwner::Expr(_)) {
                     uses_as_value.entry(func).or_default().push((reference.e, reference.code, reference.holder));
                     symbol_of_function.insert(func, (reference.sym, reference.decl));
                     if reference.code != reference.holder {
@@ -767,6 +796,7 @@ impl<'p, 's> Checker<'p, 's> {
             // Whoever calls it needs what it captures, and not its closure.
             if is_called_directly(reference.e)
                 && let Some(func) = self.callee_with_captures_at_hand(reference.sym)
+                && !names_itself.contains(&func)
             {
                 edges.insert((node, Node::Code(Code::Function(func))));
                 continue;
@@ -775,6 +805,25 @@ impl<'p, 's> Checker<'p, 's> {
                 raw.entry(node).or_default().insert(Need::Variable(reference.sym));
                 captured.entry(reference.sym).or_insert((reference.decl, Vec::new())).1.push(reference.e);
             }
+        }
+
+        // The `arguments` object of a declaration shows its closure: as good as its name used as a value within it.
+        for &func in &showing_themselves {
+            let name = bound.fn_symbol[func.idx()];
+            if !matches!(bound.fns[func.idx()].owner, FnOwner::Stmt(_))
+                || name.is_none()
+                || bound.symbols[name.idx()].flags.contains(SymFlags::ASSIGNED)
+                || !bound.assignments_to(name).is_empty()
+                || self.is_stored_through_casts(file, name)
+            {
+                continue;
+            }
+            let Some(holder) = self.activation_binding(file, Decl::Fn(func)) else { continue };
+            let holder = holder.map_or(Code::Module, |around| self.code_of_fn(file, around));
+            let code = self.code_of_fn(file, func);
+            uses_as_value.entry(func).or_default().push((mapped.functions[&func], code, holder));
+            symbol_of_function.insert(func, (self.files.sym(file, name), Decl::Fn(func)));
+            raw.entry(Node::Code(code)).or_default().insert(Need::Closure(func));
         }
 
         // `this`, `super`, `#name`.
@@ -865,7 +914,7 @@ impl<'p, 's> Checker<'p, 's> {
             let Some(holder) = self.activation_binding(file, decl) else { continue };
             let Some(activation) = self.scope_declaring(file, decl, holder) else { continue };
             let uses = &uses_as_value[&func];
-            if uses.iter().all(|used| self.use_of_value(file, used.0, false) & argument_use::OBSERVED == 0) {
+            if !mapped.functions.contains_key(&func) && uses.iter().all(|used| self.use_of_value(file, used.0, false) & argument_use::OBSERVED == 0) {
                 found.declared_closures.insert(func, DeclaredClosure::Unobserved);
                 if let Activation::Call(outermost) = activation
                     && bound.fns[outermost.idx()].enclosing.is_none()
@@ -965,6 +1014,28 @@ impl<'p, 's> Checker<'p, 's> {
                 found.declared_closures.insert(func, DeclaredClosure::KeptInEnvironment(activation, index));
             }
         }
+        // A function expression whose `arguments` object shows it finds its closure in a scope of its own, as one that names itself does. Without a name there is no variable in it.
+        // So does a declaration whose name is stored to: the name is a variable, which is given the closure where its scope is entered and may hold anything later.
+        for &func in &showing_themselves {
+            let name = bound.fn_symbol[func.idx()];
+            let has_scope_of_its_own = match bound.fns[func.idx()].owner {
+                FnOwner::Expr(_) => true,
+                FnOwner::Stmt(_) => {
+                    name.is_some() && (bound.symbols[name.idx()].flags.contains(SymFlags::ASSIGNED) || !bound.assignments_to(name).is_empty() || self.is_stored_through_casts(file, name))
+                }
+                _ => false,
+            };
+            if !has_scope_of_its_own {
+                continue;
+            }
+            let activation = Activation::Expression(func);
+            if !matches!(found.declared_closures.get(&func), Some(DeclaredClosure::KeptInEnvironment(..))) {
+                found.environments.insert(activation, Vec::new());
+                found.expressions_kept.insert(activation, vec![func]);
+                found.kept_expressions.insert(func, (activation, 0));
+            }
+            raw.entry(Node::Code(self.code_of_fn(file, func))).or_default().insert(Need::Environment(activation, Sym { file, id: name }));
+        }
 
         // From here on a variable that lives in an environment stands for that: the sets stay small however many variables a scope has.
         for needed in raw.values_mut() {
@@ -986,6 +1057,8 @@ impl<'p, 's> Checker<'p, 's> {
         // Whose activation has what is needed.
         let owner_of = |this: &Self, need: Need| -> Code {
             match need {
+                // Whoever evaluates the expression: the initializer of a field is run by the constructor.
+                Need::Environment(Activation::Expression(func), _) => this.code_at(file, this.parent_of_node(file, Parent::FnBody(func))),
                 Need::Variable(sym) | Need::Environment(_, sym) => {
                     let decl = captured.get(&sym).map(|it| it.0).or_else(|| symbol_of_function.values().find(|it| it.0 == sym).map(|it| it.1));
                     decl.and_then(|decl| this.activation_binding(file, decl)).flatten().map_or(Code::Module, |func| this.code_of_fn(file, func))
@@ -1125,6 +1198,7 @@ impl<'p, 's> Checker<'p, 's> {
             Activation::Iteration(stmt) => format!("iteration {}", self.line_for_people(file, hir[stmt].start)),
             Activation::Block(stmt) => format!("block {}", self.line_for_people(file, hir[stmt].start)),
             Activation::Class(class) => format!("class {} {}", text_of(hir[class].name), self.line_for_people(file, hir[class].start)),
+            Activation::Expression(func) => format!("expression {} {}", text_of(hir[func].name), self.line_for_people(file, hir[func].start)),
         }
     }
 
@@ -1154,6 +1228,7 @@ impl<'p, 's> Checker<'p, 's> {
         for (&activation, held) in environments {
             let first = held.iter().find_map(|sym| found.not_copied.get(sym).map(|why| (sym, why)));
             let why = match first {
+                None if held.is_empty() => "it keeps the closure of its function, which the `arguments` object shows".to_owned(),
                 None => format!("more than {MOST_COPIES} variables"),
                 Some((&sym, &NotCopied::Stored(e))) => format!("{} is stored to at {}", name_of(sym), self.line_for_people(file, hir[e].pos)),
                 Some((&sym, &NotCopied::StoredThroughCast)) => format!("{} is stored to through a cast", name_of(sym)),

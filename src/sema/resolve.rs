@@ -491,6 +491,13 @@ pub struct Options {
     /// Whether 100001 is reported: `strict_variable_initialization`, with `strict_null_checks`. Where the option is not specified the
     /// driver says: it is on for a program that is compiled by its types.
     pub reports_uninitialized_variables: bool,
+    /// JavaScript without imports and exports that names `exports` or `module` is a CommonJS module, as it is for the runtime. TypeScript wants `require(..)`, `module.exports = ..` or
+    /// `exports.a = ..`, and takes a file with `var util = exports;` for a script. Not a TypeScript option. The driver says: it is on for a program that is compiled.
+    pub names_make_commonjs: bool,
+    /// What `getUndefinedProperty` makes has no declaration and is not readonly. TypeScript makes one for a name from the first property it is asked for, whose declarations it keeps: which
+    /// that is goes by the order of the check, so here by the files that share a task. Not a TypeScript option. The driver says: it is on for a program that is compiled, where a type
+    /// has to be the same in every task.
+    pub undefined_properties_name_nobody: bool,
     pub no_implicit_this: bool,
     pub allow_unreachable_code: Option<bool>,
     pub allow_unused_labels: Option<bool>,
@@ -593,6 +600,8 @@ pub struct Options {
     pub jsx: JsxEmit,
     /// `useDefineForClassFields`, as specified or as implied by the target.
     pub use_define_for_class_fields: bool,
+    /// As specified, if it is. What runs the program defines the fields of a class unless this is `Some(false)`, whatever the target.
+    pub specified_use_define_for_class_fields: Option<bool>,
     /// Class fields are emitted as in the source: the target supports them and no option overrides
     /// that.
     pub emit_standard_class_fields: bool,
@@ -899,6 +908,7 @@ impl Options {
             options.target == ScriptTarget::None || options.target >= ScriptTarget::ES2022;
         let use_define = specified(b"useDefineForClassFields");
         options.use_define_for_class_fields = use_define.unwrap_or(has_class_fields);
+        options.specified_use_define_for_class_fields = use_define;
         options.emit_standard_class_fields = use_define != Some(false) && has_class_fields;
         options.isolated_modules_reported = flag(b"isolatedModules");
         options.verbatim_module_syntax = flag(b"verbatimModuleSyntax");

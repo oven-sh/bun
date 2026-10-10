@@ -4319,6 +4319,58 @@ static void noteModuleEvaluation(Zig::GlobalObject* globalObject, JSModuleLoader
     Bun__VM__noteEntryEvaluationStarted(bunVM);
 }
 
+extern "C" bool Bun__VM__hasToLookForServer(void*);
+extern "C" void Bun__VM__didLookForServer(void*);
+
+// What `bun:main` does once the entry point has run, where there is no `bun:main`: VirtualMachine::reload_entry_point.
+static void lookForServer(Zig::GlobalObject* globalObject, JSModuleLoader* moduleLoader, JSValue moduleRecord)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Bun__VM__didLookForServer(globalObject->bunVM());
+    auto* entryNamespace = moduleLoader->getModuleNamespaceObject(globalObject, moduleRecord);
+    RETURN_IF_EXCEPTION(scope, void());
+    auto* startServer = JSC::JSFunction::create(vm, globalObject, entryPointStartServerCodeGenerator(vm), globalObject);
+    JSC::MarkedArgumentBuffer args;
+    args.append(entryNamespace);
+    scope.release();
+    JSC::call(globalObject, startServer, JSC::getCallData(startServer), jsUndefined(), args);
+}
+
+static JSC::AbstractModuleRecord* recordOfEntryPoint(Zig::GlobalObject* globalObject, JSModuleLoader* moduleLoader)
+{
+    BunString rootKey = Bun__VM__entryRootKey(globalObject->bunVM());
+    auto* entry = moduleLoader->registryEntry(JSC::Identifier::fromString(globalObject->vm(), rootKey.toWTFString(BunString::ZeroCopy)));
+    return entry ? entry->record() : nullptr;
+}
+
+// For an entry point with top-level await, whose body is not done when it returns.
+JSC_DEFINE_HOST_FUNCTION(functionLookForServerOnceEvaluated, (JSGlobalObject * lexicalGlobalObject, CallFrame*))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
+    if (!Bun__VM__hasToLookForServer(globalObject->bunVM()))
+        return JSValue::encode(jsUndefined());
+    if (auto* record = recordOfEntryPoint(globalObject, globalObject->moduleLoader()))
+        lookForServer(globalObject, globalObject->moduleLoader(), record);
+    if (auto* exception = scope.exception()) {
+        (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+    }
+    return JSValue::encode(jsUndefined());
+}
+
+extern "C" void Bun__lookForServerOnceEvaluated(JSC::JSGlobalObject* globalObject, JSC::JSPromise* promise)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSObject* derived = promise->then(globalObject, JSC::JSFunction::create(vm, globalObject, 0, String(), functionLookForServerOnceEvaluated, ImplementationVisibility::Private), jsUndefined());
+    scope.assertNoException();
+    // Whoever loads the entry point reports its promise. This reaction stands in nobody's way.
+    if (auto* derivedPromise = dynamicDowncast<JSC::JSPromise>(derived))
+        derivedPromise->markAsHandled();
+}
+
 JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObject,
     JSModuleLoader* moduleLoader, JSValue key,
     JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher> scriptFetcher,
@@ -4329,8 +4381,18 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
     Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, Bun::moduleGraphOfLoader(lexicalGlobalObject, moduleLoader));
     RETURN_IF_EXCEPTION(scope, {});
-    noteModuleEvaluation(defaultGlobalObject(lexicalGlobalObject), moduleLoader);
-    RELEASE_AND_RETURN(scope, moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode));
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    noteModuleEvaluation(globalObject, moduleLoader);
+    JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (Bun__VM__hasToLookForServer(globalObject->bunVM())) [[unlikely]] {
+        auto* record = dynamicDowncast<JSC::AbstractModuleRecord>(moduleRecordValue);
+        if (record && !record->hasTLA() && record == recordOfEntryPoint(globalObject, moduleLoader)) {
+            lookForServer(globalObject, moduleLoader, record);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+    return result;
 }
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);

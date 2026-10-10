@@ -24,6 +24,25 @@ impl Program {
     }
 
     pub fn dump(&self) -> String {
+        self.dump_where(&|_| true, &|_| true, &|_| true, true)
+    }
+
+    /// The functions, the types they mention, the shapes those mention, and the types of the fields of those.
+    pub fn dump_functions(&self, shown: &[usize]) -> String {
+        fn numbers_behind(text: &str, mark: &str) -> Vec<usize> {
+            text.match_indices(mark).filter_map(|(at, _)| text[at + mark.len()..].split(|c: char| !c.is_ascii_digit()).next()?.parse().ok()).collect()
+        }
+        let functions = self.dump_where(&|_| false, &|_| false, &|i| shown.contains(&i), false);
+        let mut types = numbers_behind(&functions, "#");
+        let described = self.dump_where(&|i| types.contains(&i), &|_| false, &|_| false, false);
+        let shapes = numbers_behind(&described, "class ");
+        types.extend(numbers_behind(&described, "<#"));
+        types.extend(numbers_behind(&described, ", #"));
+        types.extend(numbers_behind(&self.dump_where(&|_| false, &|i| shapes.contains(&i), &|_| false, false), " #"));
+        self.dump_where(&|i| types.contains(&i), &|i| shapes.contains(&i), &|i| shown.contains(&i), false)
+    }
+
+    fn dump_where(&self, shows_type: &dyn Fn(usize) -> bool, shows_shape: &dyn Fn(usize) -> bool, shows_function: &dyn Fn(usize) -> bool, shows_the_rest: bool) -> String {
         let mut out = String::new();
         let o = &mut out;
         let index = |o: &mut String, value: u32| {
@@ -70,7 +89,7 @@ impl Program {
             let _ = write!(o, "b{}", t.block.0);
             list(o, &t.args);
         };
-        for (i, declared) in self.tys.list.iter().enumerate() {
+        for (i, declared) in self.tys.list.iter().enumerate().filter(|&(i, _)| shows_type(i)) {
             let _ = write!(o, "type #{i}:");
             for (bit, name) in ["undefined", "null", "false", "true", "number", "string", "symbol", "bigint"].iter().enumerate() {
                 if declared.prims & (1 << bit) != 0 {
@@ -115,7 +134,7 @@ impl Program {
             }
             o.push('\n');
         }
-        for (i, layout) in self.layouts.iter().enumerate() {
+        for (i, layout) in self.layouts.iter().enumerate().filter(|&(i, _)| shows_shape(i)) {
             let _ = write!(o, "shape {i} {:?} ", layout.kind);
             self.quoted(o, layout.name);
             o.push_str(" base ");
@@ -205,7 +224,7 @@ impl Program {
                 let _ = writeln!(o, " variable {}{annotated}", variable & !crate::ir::STATIC_FIELD_IS_ANNOTATED);
             }
         }
-        for (i, global) in self.globals.iter().enumerate() {
+        for (i, global) in self.globals.iter().enumerate().filter(|_| shows_the_rest) {
             let _ = write!(o, "variable {i} ");
             self.quoted(o, global.name);
             o.push_str(" module ");
@@ -221,14 +240,14 @@ impl Program {
             only_function(o, global.only_function, global.only_function_flags);
             o.push('\n');
         }
-        for (i, module) in self.modules.iter().enumerate() {
+        for (i, module) in self.modules.iter().enumerate().filter(|_| shows_the_rest) {
             let _ = write!(o, "module {i} ");
             self.quoted(o, module.path);
             let _ = write!(o, " f{} ", module.init.0);
             self.quoted(o, module.display_path);
             let _ = writeln!(o, " line table {} bytes", module.line_table.len());
         }
-        if !self.prototype_property_names.is_empty() {
+        if !self.prototype_property_names.is_empty() && shows_the_rest {
             o.push_str("prototype property names");
             for &name in &self.prototype_property_names {
                 o.push(' ');
@@ -236,23 +255,23 @@ impl Program {
             }
             o.push('\n');
         }
-        for &(id, func) in &self.builtin_modules {
+        for &(id, func) in self.builtin_modules.iter().filter(|_| shows_the_rest) {
             let _ = writeln!(o, "builtin module {id} f{}", func.0);
         }
-        for &(id, func, visibility) in &self.builtin_functions {
+        for &(id, func, visibility) in self.builtin_functions.iter().filter(|_| shows_the_rest) {
             let _ = writeln!(o, "builtin function {id} f{} visibility {visibility}", func.0);
         }
-        for &(property, key, func) in &self.functions_by_key {
+        for &(property, key, func) in self.functions_by_key.iter().filter(|_| shows_the_rest) {
             o.push_str("by key ");
             self.quoted(o, property);
             o.push(' ');
             self.quoted(o, key);
             let _ = writeln!(o, " f{}", func.0);
         }
-        for entry in &self.entries {
+        for entry in self.entries.iter().filter(|_| shows_the_rest) {
             let _ = writeln!(o, "entry f{}", entry.0);
         }
-        for (i, func) in self.funcs.iter().enumerate() {
+        for (i, func) in self.funcs.iter().enumerate().filter(|&(i, _)| shows_function(i)) {
             let _ = write!(o, "function {i} ");
             self.quoted(o, func.name);
             let _ = write!(o, " {:?} flags {} module ", func.kind, func.flags);

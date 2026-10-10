@@ -4,7 +4,8 @@
 
 use crate::declared::Part;
 use crate::id::V;
-use crate::ir::{BinOp, Def, Literal, Op, Prediction, Program, RelOp, Target, Term, UnOp, Why};
+use crate::ir::{BinOp, Def, Func, Literal, Op, Prediction, Program, RelOp, Target, Term, UnOp, Why};
+use bun_sema::util::{InParallel, for_each_mut};
 
 pub const MAGIC: u32 = 0x5249_5442;
 pub const VERSION: u32 = 26;
@@ -230,6 +231,7 @@ pub fn record(def: &Def) -> Record<'_> {
                 Why::Flow => 4,
                 Why::Upcast => 5,
                 Why::Coerce => 6,
+                Why::CoerceFreshGraph => 6 | 2 << 8,
             };
             // The type is that of the value, but for `Why::Coerce`.
             let first = if let Why::NonNull(text) = asserted { text.0 } else { to.0 };
@@ -352,9 +354,95 @@ impl Writer {
         self.words.extend(words);
         [start, self.words.len() as u32 - start]
     }
+
+    fn functions(&mut self, funcs: &[Func]) {
+        for func in funcs {
+            let parameters = self.list(func.params.iter().enumerate().map(|(i, t)| if t.is_some() && func.why_of_param(i) == Why::Cast { t.0 | PARAMETER_IS_ANNOTATED } else { t.0 }));
+            let captures = self.list(func.captures.iter().map(|ty| ty.0));
+            let (blocks, values) = (self.blocks.len() as u32 / SIZES[9], self.values.len() as u32 / SIZES[10]);
+            for value in &func.values {
+                let r = record(&value.def);
+                let arguments = self.list(r.args.iter().map(|v| v.0));
+                let prediction = match value.prediction {
+                    Prediction::None => NONE,
+                    Prediction::Ty(ty) | Prediction::Field(ty) => ty.0,
+                    Prediction::Closure(func) => PREDICTION_IS_CLOSURE | func.0,
+                    Prediction::ByKey(property) => PREDICTION_IS_BY_KEY | property.0,
+                };
+                self.values.extend([
+                    r.opcode as u32,
+                    value.pos,
+                    r.children[0].0,
+                    r.children[1].0,
+                    r.children[2].0,
+                    r.immediates[0],
+                    r.immediates[1],
+                    arguments[0],
+                    arguments[1],
+                    value.ty.0,
+                    prediction,
+                ]);
+            }
+            for block in &func.blocks {
+                let parameters = self.list(block.params.iter().map(|v| v.0));
+                let ops = self.list(block.ops.iter().map(|v| v.0));
+                let (kind, value, targets, cases) = end_of(block.term.as_ref().unwrap_or(&Term::Unreachable));
+                let first = self.targets.len() as u32 / SIZES[11];
+                for target in &targets {
+                    let arguments = self.list(target.args.iter().map(|v| v.0));
+                    self.targets.extend([target.block.0, arguments[0], arguments[1]]);
+                }
+                let cases = self.list(cases.iter().flat_map(|&case| [case as u32, (case as u64 >> 32) as u32]));
+                self.blocks.extend([parameters[0], parameters[1], ops[0], ops[1], kind, value.0, first, targets.len() as u32, cases[0], cases[1]]);
+            }
+            self.functions.extend([
+                func.name.0,
+                func.module.0,
+                func.pos,
+                func.kind as u32,
+                func.flags as u32,
+                captures[0],
+                captures[1],
+                func.this_declared.0,
+                parameters[0],
+                parameters[1],
+                blocks,
+                func.blocks.len() as u32,
+                values,
+                func.values.len() as u32,
+                func.length as u32,
+                func.result.0,
+            ]);
+        }
+    }
+
+    /// What `functions` has written counts from the start of these tables. They are put behind others, which are that long.
+    fn put_behind(&mut self, words: u32, blocks: u32, values: u32, targets: u32) {
+        for function in self.functions.chunks_exact_mut(SIZES[8] as usize) {
+            function[5] += words;
+            function[8] += words;
+            function[10] += blocks;
+            function[12] += values;
+        }
+        for block in self.blocks.chunks_exact_mut(SIZES[9] as usize) {
+            block[0] += words;
+            block[2] += words;
+            block[6] += targets;
+            block[8] += words;
+        }
+        for value in self.values.chunks_exact_mut(SIZES[10] as usize) {
+            value[7] += words;
+        }
+        for target in self.targets.chunks_exact_mut(SIZES[11] as usize) {
+            target[1] += words;
+        }
+    }
 }
 
-pub fn write(p: &Program) -> Vec<u8> {
+/// How many functions are written at a time. The number does not show in what is written.
+const FUNCTIONS_OF_A_SLICE: usize = 256;
+
+pub fn write(p: &Program, in_parallel: InParallel<'_>) -> Vec<u8> {
     let mut w = Writer::default();
     for i in 0..p.strs.len() {
         let bytes = p.strs.get(crate::id::StrId::new(i));
@@ -418,99 +506,60 @@ pub fn write(p: &Program) -> Vec<u8> {
         w.modules.extend([module.path.0, module.init.0, module.display_path.0, w.bytes.len() as u32, module.line_table.len() as u32]);
         w.bytes.extend_from_slice(&module.line_table);
     }
-    for func in &p.funcs {
-        let parameters = w.list(func.params.iter().enumerate().map(|(i, t)| if t.is_some() && func.why_of_param(i) == Why::Cast { t.0 | PARAMETER_IS_ANNOTATED } else { t.0 }));
-        let captures = w.list(func.captures.iter().map(|ty| ty.0));
-        let (blocks, values) = (w.blocks.len() as u32 / SIZES[9], w.values.len() as u32 / SIZES[10]);
-        for value in &func.values {
-            let r = record(&value.def);
-            let arguments = w.list(r.args.iter().map(|v| v.0));
-            let prediction = match value.prediction {
-                Prediction::None => NONE,
-                Prediction::Ty(ty) | Prediction::Field(ty) => ty.0,
-                Prediction::Closure(func) => PREDICTION_IS_CLOSURE | func.0,
-                Prediction::ByKey(property) => PREDICTION_IS_BY_KEY | property.0,
-            };
-            w.values.extend([
-                r.opcode as u32,
-                value.pos,
-                r.children[0].0,
-                r.children[1].0,
-                r.children[2].0,
-                r.immediates[0],
-                r.immediates[1],
-                arguments[0],
-                arguments[1],
-                value.ty.0,
-                prediction,
-            ]);
-        }
-        for block in &func.blocks {
-            let parameters = w.list(block.params.iter().map(|v| v.0));
-            let ops = w.list(block.ops.iter().map(|v| v.0));
-            let (kind, value, targets, cases) = end_of(block.term.as_ref().unwrap_or(&Term::Unreachable));
-            let first = w.targets.len() as u32 / SIZES[11];
-            for target in &targets {
-                let arguments = w.list(target.args.iter().map(|v| v.0));
-                w.targets.extend([target.block.0, arguments[0], arguments[1]]);
-            }
-            let cases = w.list(cases.iter().flat_map(|&case| [case as u32, (case as u64 >> 32) as u32]));
-            w.blocks.extend([parameters[0], parameters[1], ops[0], ops[1], kind, value.0, first, targets.len() as u32, cases[0], cases[1]]);
-        }
-        w.functions.extend([
-            func.name.0,
-            func.module.0,
-            func.pos,
-            func.kind as u32,
-            func.flags as u32,
-            captures[0],
-            captures[1],
-            func.this_declared.0,
-            parameters[0],
-            parameters[1],
-            blocks,
-            func.blocks.len() as u32,
-            values,
-            func.values.len() as u32,
-            func.length as u32,
-            func.result.0,
-        ]);
-    }
+    let mut slices: Vec<(&[Func], Writer)> = p.funcs.chunks(FUNCTIONS_OF_A_SLICE).map(|funcs| (funcs, Writer::default())).collect();
+    for_each_mut(&mut slices, in_parallel, &|(funcs, slice)| slice.functions(funcs));
+    let mut before = [w.words.len() as u32, 0, 0, 0];
+    let mut slices: Vec<(Writer, [u32; 4])> = (slices.into_iter())
+        .map(|(_, slice)| {
+            let behind = before;
+            let lengths = [slice.words.len() as u32, slice.blocks.len() as u32 / SIZES[9], slice.values.len() as u32 / SIZES[10], slice.targets.len() as u32 / SIZES[11]];
+            before = [0, 1, 2, 3].map(|i| before[i] + lengths[i]);
+            (slice, behind)
+        })
+        .collect();
+    for_each_mut(&mut slices, in_parallel, &|(slice, [words, blocks, values, targets])| slice.put_behind(*words, *blocks, *values, *targets));
 
-    let extended_globals = w.list(p.extended_globals.iter().map(|name| name.0));
-    let prototype_property_names = w.list(p.prototype_property_names.iter().map(|name| name.0));
-    let builtin_modules = w.list(p.builtin_modules.iter().flat_map(|&(id, func)| [id, func.0]));
-    let builtin_functions = w.list(p.builtin_functions.iter().flat_map(|&(id, func, visibility)| [id, func.0, visibility]));
-    let functions_by_key = w.list(p.functions_by_key.iter().flat_map(|&(property, key, func)| [property.0, key.0, func.0]));
-    let entries = w.list(p.entries.iter().map(|func| func.0));
+    let head = std::mem::take(&mut w.words);
+    let mut list = |words: &mut dyn Iterator<Item = u32>| {
+        let [start, length] = w.list(words);
+        [before[0] + start, length]
+    };
+    let extended_globals = list(&mut p.extended_globals.iter().map(|name| name.0));
+    let prototype_property_names = list(&mut p.prototype_property_names.iter().map(|name| name.0));
+    let builtin_modules = list(&mut p.builtin_modules.iter().flat_map(|&(id, func)| [id, func.0]));
+    let builtin_functions = list(&mut p.builtin_functions.iter().flat_map(|&(id, func, visibility)| [id, func.0, visibility]));
+    let functions_by_key = list(&mut p.functions_by_key.iter().flat_map(|&(property, key, func)| [property.0, key.0, func.0]));
+    let entries = list(&mut p.entries.iter().map(|func| func.0));
 
     let number_of_bytes = w.bytes.len() as u32;
     while w.bytes.len() % 4 != 0 {
         w.bytes.push(0);
     }
     const HEADER_WORDS: usize = 5 + 14 * 2 + 12 + 12;
-    let tables: [(&[u32], u32); 13] = [
-        (&w.words, 1),
-        (&w.strings, SIZES[0]),
-        (&w.declared, SIZES[1]),
-        (&w.parts, SIZES[2]),
-        (&w.shapes, SIZES[3]),
-        (&w.fields, SIZES[4]),
-        (&w.methods, SIZES[5]),
-        (&w.variables, SIZES[6]),
-        (&w.modules, SIZES[7]),
-        (&w.functions, SIZES[8]),
-        (&w.blocks, SIZES[9]),
-        (&w.values, SIZES[10]),
-        (&w.targets, SIZES[11]),
+    let of_slices = |table: fn(&Writer) -> &[u32]| slices.iter().map(move |(slice, _)| table(slice));
+    let tables: [(Vec<&[u32]>, u32); 13] = [
+        (std::iter::once(&head[..]).chain(of_slices(|slice| &slice.words[..])).chain([&w.words[..]]).collect(), 1),
+        (vec![&w.strings[..]], SIZES[0]),
+        (vec![&w.declared[..]], SIZES[1]),
+        (vec![&w.parts[..]], SIZES[2]),
+        (vec![&w.shapes[..]], SIZES[3]),
+        (vec![&w.fields[..]], SIZES[4]),
+        (vec![&w.methods[..]], SIZES[5]),
+        (vec![&w.variables[..]], SIZES[6]),
+        (vec![&w.modules[..]], SIZES[7]),
+        (of_slices(|slice| &slice.functions[..]).collect(), SIZES[8]),
+        (of_slices(|slice| &slice.blocks[..]).collect(), SIZES[9]),
+        (of_slices(|slice| &slice.values[..]).collect(), SIZES[10]),
+        (of_slices(|slice| &slice.targets[..]).collect(), SIZES[11]),
     ];
     let mut header: Vec<u32> = vec![MAGIC, VERSION, 0, hash_of_opcode_names(), crate::builtins_generated::BUILTINS_HASH];
     let mut offset = HEADER_WORDS * 4;
     header.extend([offset as u32, number_of_bytes]);
     offset += w.bytes.len();
     for (table, size) in &tables {
-        header.extend([offset as u32, table.len() as u32 / size]);
-        offset += table.len() * 4;
+        let length: usize = table.iter().map(|part| part.len()).sum();
+        header.extend([offset as u32, length as u32 / size]);
+        offset += length * 4;
     }
     header.extend(extended_globals);
     header.extend(prototype_property_names);
@@ -522,12 +571,22 @@ pub fn write(p: &Program) -> Vec<u8> {
     header[2] = offset as u32;
     debug_assert_eq!(header.len(), HEADER_WORDS);
     let mut out = Vec::with_capacity(offset);
-    out.extend(header.iter().flat_map(|word| word.to_le_bytes()));
+    extend_with_words(&mut out, &header);
     out.extend_from_slice(&w.bytes);
-    for (table, _) in &tables {
-        out.extend(table.iter().flat_map(|word| word.to_le_bytes()));
+    for part in tables.iter().flat_map(|(table, _)| table) {
+        extend_with_words(&mut out, part);
     }
     out
+}
+
+/// Little-endian.
+fn extend_with_words(out: &mut Vec<u8>, words: &[u32]) {
+    if cfg!(target_endian = "little") {
+        // SAFETY: every byte of a `u32` is initialized, and a byte is aligned anywhere.
+        out.extend_from_slice(unsafe { words.align_to::<u8>() }.1);
+    } else {
+        out.extend(words.iter().flat_map(|word| word.to_le_bytes()));
+    }
 }
 
 #[cfg(test)]

@@ -5,18 +5,23 @@ mod builtin_constants;
 mod builtins_generated;
 mod callees;
 mod captures;
+mod class_bindings;
 mod classes;
+mod commonjs;
 mod creation;
 mod escape;
 mod escape_closure;
 mod first_stores;
 mod flows;
+pub mod given;
 mod identity;
 mod int32_fields;
 mod integers;
 mod javascript;
 mod kinds;
 mod libraries;
+mod mapped_arguments;
+mod sloppy;
 mod storage;
 mod subtypes;
 mod trust;
@@ -27,6 +32,7 @@ pub use captures::{Activation, Capture, CapturedVariable, DeclaredClosure, NotCo
 pub use escape::{Keeper, argument_use};
 pub use escape_closure::{ByDoor, Certainty, Door, Doubt, EscapeCause, ForClosure};
 pub use classes::{ClassFacts, MethodStore, ReplacedMethods};
+pub use commonjs::{CommonJsExports, ExportsMention};
 pub use first_stores::FirstStore;
 pub use identity::Identity;
 pub use int32_fields::{Contrary, FlowNode, FlowSource, Int32Verdict, NumberFlow, RunBy, expected_int32};
@@ -38,11 +44,15 @@ pub use storage::{Evaluates, Primitive, Recovery, ReferenceRead, Storage};
 pub use trust::Claim;
 
 use super::Checker;
+use super::relate::Relation;
 use crate::atom::known;
 use crate::hir::ExprsByKind;
 use crate::program::FileId;
 use crate::types::{TypeData, TypeId};
 use std::sync::OnceLock;
+
+/// What `Checker::is_provably_assignable` may make before it gives up.
+const FUEL: u64 = 1 << 20;
 
 /// A table by file. Each entry is made once, by whoever asks for it first, and is only read from then on. What is in it follows from
 /// the trees and the symbols alone, so that it does not matter who that is.
@@ -70,10 +80,12 @@ pub(super) struct Shared {
     /// `exprs_by_kind_of`
     exprs_by_kind: ByFile<ExprsByKind>,
     classes: classes::Shared,
+    commonjs: commonjs::Shared,
     escape: escape::Shared,
     integers: integers::Shared,
     javascript: javascript::Shared,
     storage: storage::Shared,
+    undeclared_fields: undeclared_fields::Shared,
 }
 
 /// What the queries of this module have found so far, a field for each part of it. It belongs to a checker.
@@ -81,8 +93,8 @@ pub(super) struct Shared {
 pub(super) struct State {
     callees: callees::State,
     captures: captures::State,
+    commonjs: commonjs::State,
     creation: creation::State,
-    first_stores: first_stores::State,
     undeclared_fields: undeclared_fields::State,
     escape: escape::State,
     escape_closure: escape_closure::State,
@@ -91,6 +103,7 @@ pub(super) struct State {
     identity: identity::State,
     integers: integers::State,
     kinds: kinds::State,
+    mapped_arguments: mapped_arguments::State,
     javascript: javascript::State,
     storage: storage::State,
 }
@@ -123,19 +136,36 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `any`, `unknown`, `never`, `void`: no value is known for what it is by it.
     /// `{}`, `Object`, an interface without members: a string or a number is one as well. `object` is not meant.
+    /// A type that data from outside the program is looked at as: whatever the data holds is there.
     pub fn admits_primitives(&mut self, ty: TypeId) -> bool {
-        ty != TypeId::OBJECT && !matches!(self.data(ty), TypeData::Union(_)) && (self.is_empty_object_type(ty) || ty == self.global_ref(known::Object, &[]))
+        ty != TypeId::OBJECT && !matches!(self.data(ty), TypeData::Union(_)) && (self.is_empty_object_type(ty) || ty == self.global_ref(known::Object, &[]) || self.is_tainted(ty))
     }
 
     /// `is_assignable`, for a question that checking the program need not have asked, and whose answer only saves something. `false` also
     /// where it is not known: where the checker has run into one of its limits, behind which is the error type, to which everything
     /// is assignable. `e as T[K]`: to be assignable to `T[K]` is to be assignable to all values of `T` at once, an intersection that is
     /// distributed over those that are unions. TypeScript builds up to 100,000 of them, each with members of its own.
+    ///
+    /// TypeScript's limits end every question, after minutes and gigabytes. This one may make `FUEL` things, see `burn`.
     pub fn is_provably_assignable(&mut self, source: TypeId, target: TypeId) -> bool {
-        let (limits, cross_product_limit) = (self.limits, std::mem::replace(&mut self.cross_product_limit, 256));
-        let is_assignable = self.is_assignable(source, target);
-        self.cross_product_limit = cross_product_limit;
-        is_assignable && self.limits == limits
+        self.is_provably_related(source, target, Relation::Assignable)
+    }
+
+    /// The same for any relation.
+    fn is_provably_related(&mut self, source: TypeId, target: TypeId, relation: Relation) -> bool {
+        if self.aot.flows.cut_short.contains(&(source, target, relation as u8)) {
+            return false;
+        }
+        let (cuts, fuel) = (self.cuts(), self.fuel.get());
+        self.fuel.set(fuel.min(FUEL));
+        let is_related = self.related(source, target, relation);
+        let burnt = fuel.min(FUEL) - self.fuel.get();
+        self.fuel.set(if fuel == u64::MAX { fuel } else { fuel - burnt });
+        if self.cuts() != cuts {
+            self.aot.flows.cut_short.insert((source, target, relation as u8));
+            return false;
+        }
+        is_related
     }
 
     pub fn says_nothing(&self, ty: TypeId) -> bool {

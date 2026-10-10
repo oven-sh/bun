@@ -1240,6 +1240,20 @@ pub struct TypeChecked<'a, 'i> {
     pub rewrite_jest_for_tests: bool,
     /// `BundleOptions::preserve_source_paths`
     pub preserve_source_paths: bool,
+    /// The path of each of `sources` in which the React Compiler has given a function a cache, and the module as it leaves it, as
+    /// JavaScript: the code that runs in the place of what is written. The types are those of what is written.
+    pub react_compiler_outputs: &'i mut dyn Iterator<Item = (&'a [u8], &'a [u8])>,
+    /// The path of each of `sources` whose JSX the tsconfig.json around it has lowered in another way than the one around the first entry point would, and how.
+    pub jsx: &'i mut dyn Iterator<Item = (&'a [u8], JsxOfFile<'a>)>,
+}
+
+/// `jsx`, `jsxFactory`, `jsxFragmentFactory` and `jsxImportSource` as they hold for a file.
+#[derive(Clone, Copy)]
+pub struct JsxOfFile<'a> {
+    pub is_classic: bool,
+    pub factory: &'a [u8],
+    pub fragment: &'a [u8],
+    pub import_source: &'a [u8],
 }
 
 /// `BundleOptions::type_check`. Errors are added to `log`, or reported in another way. Returns

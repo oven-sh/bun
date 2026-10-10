@@ -171,6 +171,8 @@ impl BuildCommand {
                 imports: &mut core::iter::empty(),
                 rewrite_jest_for_tests: false,
                 preserve_source_paths: false,
+                react_compiler_outputs: &mut core::iter::empty(),
+                jsx: &mut core::iter::empty(),
             };
             if !crate::cli::check_command::check_for_build_command(checked, log_ref) {
                 log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
@@ -287,7 +289,7 @@ impl BuildCommand {
         }
 
         this_transpiler.options.bytecode = ctx.bundler_options.bytecode;
-        this_transpiler.options.aot = ctx.bundler_options.compile_aot;
+        this_transpiler.options.aot = ctx.bundler_options.aot;
         this_transpiler.options.analyze = Some(crate::cli::check_command::analyze_for_build);
         this_transpiler.options.preserve_source_paths = ctx.bundler_options.compile_run;
         // What is run from its sources finds out that a module is missing when it asks for it, if it ever does.

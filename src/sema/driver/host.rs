@@ -183,6 +183,8 @@ pub struct Disk {
     pub(crate) script_kinds_by_extension: Vec<(Vec<u8>, ScriptKind)>,
     pub(crate) before_read: Option<BeforeRead>,
     pub(crate) scripts_of_page: Option<ScriptsOfPage>,
+    /// `Provided::jsx_of_files`, by `tspath.Path`.
+    pub(crate) jsx_of_files: Vec<(Vec<u8>, JsxOfFile)>,
     /// `Request::is_one_program`: what is compiled.
     pub(crate) compiled: Option<Compiled>,
 }
@@ -208,12 +210,24 @@ pub type BeforeRead = Box<dyn Fn(&[u8]) + Send + Sync>;
 /// `Host::scripts_of_page`. The paths are in the checker's format.
 pub type ScriptsOfPage = Box<dyn Fn(&[u8]) -> Vec<Vec<u8>> + Send + Sync>;
 
+/// How the JSX of a file is lowered, where that is not as the options of the project say: as if the file said so itself, by `@jsxRuntime`, `@jsx`, `@jsxFrag` and
+/// `@jsxImportSource`. What the file does say itself goes before this.
+#[derive(Clone)]
+pub struct JsxOfFile {
+    pub is_classic: bool,
+    pub factory: Vec<u8>,
+    pub fragment: Vec<u8>,
+    pub import_source: Vec<u8>,
+}
+
 /// What the caller of a check has for its host.
 #[derive(Default)]
 pub struct Provided {
     pub already_read: AlreadyRead,
     pub before_read: Option<BeforeRead>,
     pub scripts_of_page: Option<ScriptsOfPage>,
+    /// By path, as the caller has it.
+    pub jsx_of_files: Vec<(Vec<u8>, JsxOfFile)>,
     /// With `Request::is_one_program`: none of the runtime's own modules is compiled with the program (`Host::builtin_files`).
     pub without_builtin_modules: bool,
 }
@@ -394,6 +408,7 @@ impl Disk {
             script_kinds_by_extension: Vec::new(),
             before_read: None,
             scripts_of_page: None,
+            jsx_of_files: Vec::new(),
             compiled: None,
         }
     }
@@ -1194,7 +1209,7 @@ impl Host for Disk {
         options: &Options,
     ) -> hir::File<'s> {
         let began = Instant::now();
-        let (file, parsing) = bun_js_parser::sema::summarize(
+        let (mut file, parsing) = bun_js_parser::sema::summarize(
             arena,
             path,
             self.script_kind(path),
@@ -1205,6 +1220,18 @@ impl Host for Disk {
         );
         self.spent(Phase::Parse, parsing);
         self.spent(Phase::Lower, began.elapsed().saturating_sub(parsing));
+        if !self.jsx_of_files.is_empty()
+            && let key = to_path(path, self.case_sensitive)
+            && let Some((_, of_file)) = self.jsx_of_files.iter().find(|it| it.0 == *key)
+        {
+            let pragmas = &mut file.jsx_pragmas;
+            pragmas.classic.get_or_insert(of_file.is_classic);
+            for (pragma, said) in [(&mut pragmas.factory, &of_file.factory), (&mut pragmas.fragment_factory, &of_file.fragment), (&mut pragmas.import_source, &of_file.import_source)] {
+                if pragma.is_none() && !said.is_empty() {
+                    *pragma = atoms.intern(said);
+                }
+            }
+        }
         file
     }
     fn parse_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {

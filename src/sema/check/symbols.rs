@@ -2154,15 +2154,23 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getUndefinedProperty`. It is created once per name, from the first property it is requested
     /// for, whose declarations it keeps.
     fn get_undefined_property(&mut self, prop: &Prop) -> Prop<'s> {
-        if let Some(cached) = self.undefined_properties.get(&prop.name) {
-            return cached.clone_in(self.arena);
-        }
         // `undefinedOrMissingType`, which is not widened again wherever it is copied to.
         let missing = if self.p.files.options.exact_optional_property_types {
             TypeId::MISSING
         } else {
             TypeId::UNDEFINED
         };
+        if self.p.files.options.undefined_properties_name_nobody {
+            return Prop {
+                name: prop.name,
+                flags: PropFlags::OPTIONAL,
+                source: PropSource::Type(missing),
+                mapper: MapperId::IDENTITY,
+            };
+        }
+        if let Some(cached) = self.undefined_properties.get(&prop.name) {
+            return cached.clone_in(self.arena);
+        }
         let result = Prop {
             name: prop.name,
             // `createSymbolWithType`

@@ -1,4 +1,4 @@
-//! What the whole-program analysis of `bun build --compile-aot` found, as the bundler passes it on.
+//! What the whole-program analysis of `bun build --compile --aot` found, as the bundler passes it on.
 
 use std::collections::HashMap;
 

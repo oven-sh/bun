@@ -9,7 +9,7 @@ use crate::bind::{ClassOwner, Decl, FnOwner, MemberOwner, Parent, PatParent, Sym
 use crate::check::Checker;
 use crate::check::errors_names_and_exports::root_declaration;
 use crate::hir::{
-    BinOp, CallId, Chain, ClassId, ExprId, ExprKind, ExprTag, File, FileKind, Flags, FnBody, FnId, FnKind, IdList, MemberKind, ModuleId, PatId, PatKind, PropKey, PropKind, StmtId, StmtKind, TypeNodeId, TypeNodeKind, UnOp,
+    BinOp, CallId, Chain, ClassId, ExprId, ExprKind, ExprTag, File, FileKind, Flags, FnBody, FnId, FnKind, IdList, MemberId, MemberKind, ModuleId, PatId, PatKind, PropKey, PropKind, StmtId, StmtKind, TypeNodeId, TypeNodeKind, UnOp,
     VarKind,
 };
 use crate::program::{FileId, Sym};
@@ -33,6 +33,8 @@ pub(super) struct Shared {
     builtin_requires: OnceLock<FxHashMap<(FileId, Atom), FileId>>,
     /// `is_reified_namespace`
     reified_namespaces: OnceLock<ReifiedNamespaces>,
+    /// `prototype_property_names`
+    prototype_property_names: OnceLock<FxHashSet<Atom>>,
 }
 
 #[derive(Default)]
@@ -312,7 +314,8 @@ impl<'p, 's> Checker<'p, 's> {
         let files = self.files();
         let code = self.files_declaring_classes();
         let mut by_name: FxHashMap<Atom, Vec<Sym>> = FxHashMap::default();
-        for &file in &code {
+        // What a file declares whose code is elsewhere is made by that code: an object like any that is not the program's.
+        for &file in code.iter().filter(|&&file| self.is_compiled(file)) {
             let (hir, bound) = (self.hir(file), self.bound(file));
             for (m, module) in hir.modules.iter().enumerate() {
                 let m = ModuleId(m as u32);
@@ -438,6 +441,85 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
+    /// `anys.forEach((x: P) => ..)`: the parameters of the function expression that have an annotation while whoever the function is handed to is declared to hand over something of which
+    /// its type says nothing. By number.
+    pub fn parameters_handed_untyped(&mut self, file: FileId, func: FnId) -> Vec<usize> {
+        let own = self.hir(file)[func].params;
+        if !own.iter().any(|p| self.hir(file)[p].ty.is_some()) {
+            return Vec::new();
+        }
+        let Some(expected) = self.contextual_signature(file, func) else { return Vec::new() };
+        let expected = self.sig_params(expected);
+        (0..own.len())
+            .filter(|&index| {
+                let p = &self.hir(file)[own.at(index)];
+                p.ty.is_some() && !p.flags.contains(Flags::REST) && self.param_type_at(&expected, index).is_some_and(|handed| self.is_untyped(handed))
+            })
+            .collect()
+    }
+
+    /// `e`: what the function returns. If that is an async function with an annotation, `Promise<T>`, and `e` is no promise by its type, so that it is what the promise is fulfilled with:
+    /// `T`. What may be a promise, or says nothing of what it is, is awaited first: of that nothing is known here. Of a generator with an annotation, `Generator<Y, T>`,
+    /// `AsyncGenerator<Y, T>`: `T` likewise.
+    pub fn type_promised_for(&mut self, file: FileId, func: FnId, e: ExprId) -> Option<TypeId> {
+        self.type_written_for(file, func, e, false)
+    }
+
+    /// `yield e` in a generator with an annotation, `Generator<Y>`, `AsyncGenerator<Y>`, `Iterable<Y>`: `Y`, likewise.
+    pub fn type_yielded_for(&mut self, file: FileId, func: FnId, e: ExprId) -> Option<TypeId> {
+        self.type_written_for(file, func, e, true)
+    }
+
+    fn type_written_for(&mut self, file: FileId, func: FnId, e: ExprId, is_yielded: bool) -> Option<TypeId> {
+        if func.is_none() {
+            return None;
+        }
+        let f = &self.hir(file)[func];
+        let (is_async, is_generator) = (f.flags.contains(Flags::ASYNC), f.flags.contains(Flags::GENERATOR));
+        if f.ret.is_none() || !is_async && !is_generator || is_yielded && !is_generator {
+            return None;
+        }
+        let own = self.type_of_expr(file, e);
+        if self.is_untyped(own) || is_async && self.awaited(own) != own {
+            return None;
+        }
+        let declared = self.return_type_of_fn(file, func);
+        let written = if is_generator {
+            let types = self.iteration_types(declared, is_async)?;
+            if is_yielded { types.yielded } else { types.returned }
+        } else {
+            self.awaited(declared)
+        };
+        (written != declared && !self.says_nothing(written)).then_some(written)
+    }
+
+    /// Whether what the expression yields is spread into an object literal: `{ mode, ...{ a } }`, `{ ...(c && { a }) }`, `{ ...((g) => ({ a: g }))(x) }`, `{ ...(function () { return { a } })() }`.
+    /// Also of the function expression that is called there. The checker hands what is spread the type that the WHOLE literal is checked against, and a function that is called where it is
+    /// written the type that the call is checked against, to guide inference. Nothing is checked against it: it is a part, and may lack what the whole requires.
+    pub fn is_part_that_is_spread(&self, file: FileId, e: ExprId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let mut at = e;
+        loop {
+            at = match bound.expr_parent[at.idx()] {
+                Parent::Prop(prop) => return hir[prop].kind == PropKind::Spread,
+                Parent::Expr(parent) if parent.is_some() => match hir[parent].kind {
+                    ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma, .. } | ExprKind::Cond { .. } | ExprKind::Satisfies { .. } | ExprKind::NonNull(_) | ExprKind::Await(_) => parent,
+                    ExprKind::Call(call) if hir[call].callee == at && matches!(hir[at].kind, ExprKind::Fn(_)) => parent,
+                    _ => return false,
+                },
+                Parent::FnBody(func) => match bound.fns[func.idx()].owner {
+                    FnOwner::Expr(written) => written,
+                    _ => return false,
+                },
+                Parent::Stmt(stmt) if stmt.is_some() && matches!(hir[stmt].kind, StmtKind::Return(_)) => match self.enclosing_fn(file, Parent::Stmt(stmt)).map(|func| bound.fns[func.idx()].owner) {
+                    Some(FnOwner::Expr(written)) => written,
+                    _ => return false,
+                },
+                _ => return false,
+            };
+        }
+    }
+
     /// Whether every declaration of the interface is ambient: it stands in a declaration file, or under `declare global`, `declare module`,
     /// `declare namespace`. Such an interface says what the host hands out, and what it requires is a wish: `interface ProcessEnv { KEY:
     /// string }`. It is a declaration without a body, which nothing is held to.
@@ -468,6 +550,102 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// Whether a call of the function yields `undefined` and nothing else, going by its text: it has a block for its body, no `return` in that
+    /// has a value, and it is neither async nor a generator. `(): void => list.push(1)` yields a number.
+    pub fn returns_no_value(&self, file: FileId, func: FnId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        matches!(hir[func].body, FnBody::Block(_))
+            && !hir[func].flags.intersects(Flags::ASYNC | Flags::GENERATOR)
+            && bound.ids(bound.fns[func.idx()].returns).all(|stmt: StmtId| !matches!(hir[stmt].kind, StmtKind::Return(value) if value.is_some()))
+    }
+
+    /// `e`: an argument of a call or a `new`. Whether the parameter that takes it, as the call is resolved, says nothing of it: `any`, `unknown`.
+    pub fn is_taken_by_parameter_that_says_nothing(&mut self, file: FileId, e: ExprId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let Parent::Expr(parent) = bound.expr_parent[e.idx()] else { return false };
+        let (ExprKind::Call(call) | ExprKind::New(call)) = hir[parent].kind else { return false };
+        if hir.ids(hir[call].args).any(|argument| matches!(hir[argument].kind, ExprKind::Spread(_))) {
+            return false;
+        }
+        let Some(index) = hir.ids(hir[call].args).position(|argument| argument == e) else { return false };
+        let Some(sig) = self.resolved_signature(file, parent).sig else { return false };
+        let parameters = self.sig_params(sig);
+        self.param_type_at(&parameters, index).is_some_and(|taking| self.says_nothing(taking))
+    }
+
+    /// `{ ...C }` of a class, `{ ...new MyError("m") }`. `e`: the operand of a spread in an object literal. A spread copies the own enumerable
+    /// properties. The checker's type of the literal has every property of the operand's type but the methods of a class: `prototype` and
+    /// the static methods of a class object, `name` and `message` of an error, which are inherited or not enumerable. Whether the type
+    /// of the operand may have such: it is that of a class object or a function, of an object that the engine makes, or of a class that
+    /// extends one of the engine.
+    pub fn spread_claims_more_than_it_copies(&mut self, file: FileId, e: ExprId) -> bool {
+        let operand = self.type_of_expr(file, e);
+        let operand = self.non_nullable(operand);
+        self.parts(operand).to_vec().into_iter().any(|part| match *self.data(part) {
+            TypeData::Fns { .. } | TypeData::Anon { origin: Origin::Function(_) | Origin::ClassStatic(_), .. } => true,
+            TypeData::Ref { target, .. } => self.files().module(target.file).is_lib || self.is_array_like(part) || self.built_in_extended_by(part).is_some(),
+            _ => false,
+        })
+    }
+
+    /// `expect({ text }).toEqual({ text: anything })`. `e`: an object literal, which is checked against `expected`. Whether nobody has written
+    /// that type down for it, and it need not be of it: it is an argument, or within one, for a parameter whose declaration mentions a type
+    /// parameter, so that `expected` is what the checker has put in for that; and one of its values is an `any` where `expected` says
+    /// what the property is. The function that is called knows the value by the bound of the type parameter.
+    pub fn is_checked_against_what_is_inferred(&mut self, file: FileId, e: ExprId, expected: TypeId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        if !self.holds_any_where_told(file, e, expected) {
+            return false;
+        }
+        let mut argument = e;
+        let (call, parent) = loop {
+            let parent = match bound.expr_parent[argument.idx()] {
+                Parent::Prop(prop) if hir[prop].kind != PropKind::Spread && bound.prop_owner[prop.idx()].is_some() => bound.prop_owner[prop.idx()],
+                Parent::Expr(parent) if parent.is_some() => parent,
+                _ => return false,
+            };
+            match hir[parent].kind {
+                ExprKind::Call(call) | ExprKind::New(call) if hir[call].callee != argument => break (call, parent),
+                ExprKind::Object(_) | ExprKind::Array(_) => argument = parent,
+                _ => return false,
+            }
+        };
+        if hir.ids(hir[call].type_args).next().is_some() || hir.ids(hir[call].args).any(|argument| matches!(hir[argument].kind, ExprKind::Spread(_))) {
+            return false;
+        }
+        let Some(index) = hir.ids(hir[call].args).position(|it| it == argument) else { return false };
+        let Some(sig) = self.resolved_signature(file, parent).sig else { return false };
+        let Some((declared_in, func, _)) = self.sig_decl(sig) else { return false };
+        // `rows.push({ .. })`, `map.set(key, { .. })`: the type parameter is that of a container of the engine, which the program has written down
+        // where it declares the container. What is put in is read out as that.
+        if self.files().module(declared_in).is_lib {
+            return false;
+        }
+        let declared = self.sig_of_fn(declared_in, func);
+        let (declared, called) = (self.sig_params(declared), self.sig_params(sig));
+        matches!((self.param_type_at(&declared, index), self.param_type_at(&called, index)), (Some(declared), Some(called)) if declared != called)
+    }
+
+    /// Whether the literal, or a literal within it, has an `any` for a property of which `expected` says what it is.
+    fn holds_any_where_told(&mut self, file: FileId, e: ExprId, expected: TypeId) -> bool {
+        let hir = self.hir(file);
+        match hir[e].kind {
+            ExprKind::Object(props) => props.iter().any(|p| {
+                let PropKey::Name(name) = hir[p].key else { return false };
+                if !matches!(hir[p].kind, PropKind::Init | PropKind::Shorthand) {
+                    return false;
+                }
+                let Some(declared) = self.type_of_property(expected, name).filter(|&declared| !self.says_nothing(declared)) else { return false };
+                self.type_of_expr(file, hir[p].value).is_any() || self.holds_any_where_told(file, hir[p].value, declared)
+            }),
+            ExprKind::Array(elements) => match self.index_type_of_type(expected, TypeId::NUMBER) {
+                Some(declared) => hir.ids(elements).any(|element| self.holds_any_where_told(file, element, declared)),
+                None => false,
+            },
+            _ => false,
+        }
+    }
+
     /// `base`: the facts of the class of the program that the `extends` clause names, if it names one.
     pub fn class_facts(&mut self, file: FileId, class: ClassId, base: Option<ClassFacts>) -> ClassFacts {
         let found = self.class_facts_of_file(file);
@@ -476,7 +654,10 @@ impl<'p, 's> Checker<'p, 's> {
         // A class in JavaScript gets its fields by assignments to `this`, wherever they are.
         let constructor = self.constructor_of_class(file, class);
         let is_initialized_in_order = !constructor.is_some_and(|func| found.with_uninitialized_this.contains(&func));
-        let is_laid_out = !self.is_untyped_file(file) && (c.extends.is_none() || base.is_some_and(|base| base.is_laid_out) && is_initialized_in_order);
+        let is_laid_out = !self.is_untyped_file(file) && (c.extends.is_none() || base.is_some_and(|base| base.is_laid_out) && is_initialized_in_order) && {
+            let instances = self.type_of_instances(file, class);
+            !self.is_redefined_somewhere(instances)
+        };
         // A class that is not laid out constructs what it extends by its value, as the language has it, whatever that is.
         let base = base.filter(|_| is_laid_out);
         let mentions_new_target = constructor.is_some_and(|func| found.mentioning_new_target.contains(&func));
@@ -579,6 +760,29 @@ impl<'p, 's> Checker<'p, 's> {
         found
     }
 
+    /// `"useDefineForClassFields": false` in the tsconfig.json, as what runs the program carries it out (js_parser/visit: `lower_fields`): the instance fields of a class in a TypeScript file are
+    /// not defined. One with an initializer is assigned, `this.x = init`, where it would have been defined; one without is left out. Not so for any field of a class one of whose
+    /// instance fields has a computed key.
+    pub fn assigns_fields(&self, file: FileId, class: ClassId) -> bool {
+        let hir = self.hir(file);
+        self.files().options.specified_use_define_for_class_fields == Some(false)
+            && !hir.is_js
+            && !hir[class].members.iter().any(|member| {
+                let m = &hir[member];
+                m.kind == MemberKind::Property && !m.flags.intersects(Flags::STATIC | Flags::AMBIENT | Flags::ABSTRACT) && matches!(m.key, PropKey::Computed(_))
+            })
+    }
+
+    /// Whether the member is such a field without an initializer. No code comes of it, as of `declare x: T`. `#x` stays: that is what makes the name.
+    pub fn is_field_left_out(&self, file: FileId, member: MemberId) -> bool {
+        let m = &self.hir(file)[member];
+        m.kind == MemberKind::Property
+            && m.init.is_none()
+            && !m.flags.intersects(Flags::STATIC | Flags::ACCESSOR)
+            && matches!(m.key, PropKey::Name(_))
+            && matches!(self.bound(file).member_owner[member.idx()], MemberOwner::Class(class) if self.assigns_fields(file, class))
+    }
+
     /// Whether every declaration of the member is one that no code comes of: in an interface, or `declare x: T` in a class.
     fn is_only_declared_member(&self, member: Sym) -> bool {
         let declarations = self.files.decls(member);
@@ -588,7 +792,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let m_of = &self.hir(file)[m];
                 match self.bound(file).member_owner[m.idx()] {
                     MemberOwner::Interface(_) => true,
-                    MemberOwner::Class(_) => m_of.kind == MemberKind::Property && m_of.flags.contains(Flags::AMBIENT) && !m_of.flags.contains(Flags::STATIC),
+                    MemberOwner::Class(_) => m_of.kind == MemberKind::Property && (m_of.flags.contains(Flags::AMBIENT) || self.is_field_left_out(file, m)) && !m_of.flags.contains(Flags::STATIC),
                     _ => false,
                 }
             })
@@ -855,6 +1059,18 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => {}
             }
         }
+    }
+
+    /// `prototype_property_names_in` of every file that is loaded.
+    pub(super) fn prototype_property_names(&mut self) -> &'p FxHashSet<Atom> {
+        if let Some(known) = self.p.aot.classes.prototype_property_names.get() {
+            return known;
+        }
+        let mut names = Vec::new();
+        for file in self.files_declaring_classes() {
+            self.prototype_property_names_in(file, &mut names);
+        }
+        self.p.aot.classes.prototype_property_names.get_or_init(|| names.into_iter().collect())
     }
 
     /// Whether the objects that the function initializes may inherit from anything: the function is a `ConstructorFunction`, and the
@@ -1173,6 +1389,11 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// Whether `e` is the object of `e.name`, and that property is only read there.
+    pub fn is_object_of_a_read(&self, file: FileId, e: ExprId) -> bool {
+        matches!(self.bound(file).expr_parent[e.idx()], Parent::Expr(parent) if parent.is_some() && matches!(self.hir(file)[parent].kind, ExprKind::Dot { obj, .. } if obj == e) && self.store_to_access(file, parent).is_none())
+    }
+
     /// What is done to the property that the access `e` names, besides reading it: whether it is deleted, and not stored to. `None`: it
     /// is only read. What is stored to may be cast first: `(x.name as any) = value`.
     fn store_to_access(&self, file: FileId, mut e: ExprId) -> Option<bool> {
@@ -1199,7 +1420,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// The property names that the key of an element access can be, if those are a few strings that its type lists. None otherwise.
-    fn names_of_key(&mut self, file: FileId, key: ExprId) -> Vec<Atom> {
+    pub(super) fn names_of_key(&mut self, file: FileId, key: ExprId) -> Vec<Atom> {
         if let ExprKind::String(name) = self.hir(file)[key].kind {
             return vec![name];
         }

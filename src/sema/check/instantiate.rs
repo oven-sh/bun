@@ -376,6 +376,7 @@ impl<'p, 's> Checker<'p, 's> {
             return TypeId(known);
         }
         self.instantiation_count += 1;
+        self.burn(1);
         self.instantiate_cached(ty, mapper, serial)
     }
 

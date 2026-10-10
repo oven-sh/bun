@@ -126,8 +126,8 @@ pub enum Door {
 
 /// What has been noted for the closure.
 pub(crate) struct Escapes<T = TypeId> {
-    /// What a built-in may freeze or give another prototype: see `alterations.rs`.
-    pub(super) alterations: Alterations<T>,
+    /// What a built-in may freeze or give another prototype: see `alterations.rs`. `None`: nothing of it has been noted. It is large, and this is in the notes of every function.
+    pub(super) alterations: Option<Box<Alterations<T>>>,
     /// The nodes that `seeds` and `edges` number. One may be there twice.
     nodes: Vec<Node<T>>,
     /// Of the nodes that have been numbered since this was made, or absorbed. It is not kept with what is handed on.
@@ -149,7 +149,7 @@ pub(crate) struct Escapes<T = TypeId> {
 impl<T> Default for Escapes<T> {
     fn default() -> Escapes<T> {
         Escapes {
-            alterations: Alterations::default(),
+            alterations: None,
             nodes: Vec::new(),
             number_of: FxHashMap::default(),
             seeds: Vec::new(),
@@ -184,8 +184,17 @@ impl<T: Copy + Eq + Hash> Escapes<T> {
         self.edges.push(edge);
     }
 
+    pub(super) fn with_alterations<R>(&self, read: impl FnOnce(&Alterations<T>) -> R) -> R {
+        match &self.alterations {
+            Some(noted) => read(noted),
+            None => read(&Alterations::default()),
+        }
+    }
+
     pub(super) fn absorb(&mut self, other: Escapes<T>) {
-        self.alterations.absorb(other.alterations);
+        if let Some(noted) = other.alterations {
+            self.alterations.get_or_insert_with(Default::default).absorb(*noted);
+        }
         let numbers: Vec<u32> = other.nodes.into_iter().map(|node| self.number(node)).collect();
         self.seeds.extend(other.seeds.into_iter().map(|(node, at, door)| (numbers[node as usize], at, door)));
         self.edges.extend(other.edges.into_iter().map(|(from, to)| (numbers[from as usize], numbers[to as usize])));
@@ -210,7 +219,7 @@ impl<T: Copy + Eq + Hash> Escapes<T> {
                 keep_least(&mut out.opened_fields, (ty, name), at);
             }
         }
-        out.alterations = self.alterations.renamed(rename);
+        out.alterations = self.alterations.map(|noted| Box::new(noted.renamed(rename)));
         out.copies_fields = self.copies_fields.into_iter().filter_map(|(from, to)| Some((rename(from)?, rename(to)?))).collect();
         out.everything = self.everything;
         out
@@ -1853,15 +1862,18 @@ impl EscapeClosure {
         let members_out: Vec<Option<u32>> = input.types.members_out.iter().map(|node| node.map(&mut number)).collect();
         let members_in: Vec<Option<u32>> = input.types.members_in.iter().map(|node| node.map(&mut number)).collect();
         let nodes = nodes as usize;
-        edges.sort_unstable();
-        edges.dedup();
-        // By node: where its successors begin among `edges`.
+        // By node: where its successors begin among `successors`. In no order, and one may be there twice: it is passed over the second time.
         let mut begins = vec![0u32; nodes + 1];
         for &(from, _) in &edges {
             begins[from as usize + 1] += 1;
         }
         for node in 0..nodes {
             begins[node + 1] += begins[node];
+        }
+        let (mut successors, mut next) = (vec![0u32; edges.len()], begins.clone());
+        for (from, to) in edges {
+            successors[next[from as usize] as usize] = to;
+            next[from as usize] += 1;
         }
 
         // One worklist, the seeds in the order of their causes, each closed before the next is begun: the cause of a node is the least that
@@ -1887,7 +1899,7 @@ impl EscapeClosure {
                     continue;
                 }
                 holds[at] = Some(cause);
-                pending.extend(edges[begins[at] as usize..begins[at + 1] as usize].iter().map(|edge| (cause, edge.1)));
+                pending.extend(successors[begins[at] as usize..begins[at + 1] as usize].iter().map(|&successor| (cause, successor)));
                 if at < views {
                     // C1. Whoever has it writes its members as well.
                     pending.extend(input.sets[at].iter().filter(|&&layout| (layout as usize) < views).map(|&layout| (cause, layout)));

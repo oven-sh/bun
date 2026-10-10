@@ -6630,7 +6630,7 @@ impl<'a> Resolver<'a> {
     }
 
     /// `DirInfo::enclosing_tsconfig_json`, for this resolver.
-    pub(crate) fn enclosing_tsconfig_json(
+    pub fn enclosing_tsconfig_json(
         &mut self,
         dir_info: &DirInfo::DirInfo,
     ) -> Option<TSConfigRef> {

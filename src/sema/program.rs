@@ -5702,6 +5702,7 @@ impl<'s> Files<'s> {
             emit_standard_class_fields: options.emit_standard_class_fields,
             before_es2020: is_before(ScriptTarget::ES2020),
             before_es2017: is_before(ScriptTarget::ES2017),
+            names_make_commonjs: options.names_make_commonjs,
         };
         let mut bound = bind::bind(&hir, bind_options, atoms, arena);
         // The same result as when the parser runs out of stack: an empty HIR, which `check_file`

@@ -198,7 +198,7 @@ impl<'p, 's> Checker<'p, 's> {
             let Callee::One(file, func) = exported.callee else { return Err(Hole::Stored(exported.callee)) };
             return Ok(OnlyFunction { file, func, may_be_nil: exported.may_be_nil, outermost: sym, is_predicted: true });
         }
-        let (file, decl) = self.files().value_declaration(sym).ok_or(Hole::Declaration)?;
+        let (file, decl) = self.declaration_of_variable(sym).ok_or(Hole::Declaration)?;
         let (hir, bound) = (self.hir(file), self.bound(file));
         // What a declaration file declares, other code stores to. What a script declares, the other scripts see.
         if hir.kind == FileKind::Declaration || !self.files().module(file).is_module() {
@@ -441,6 +441,14 @@ impl<'p, 's> Checker<'p, 's> {
         }
     }
 
+    /// What `find` asks is no part of what is being asked about a variable: `OnlyFunction::outermost` of that one is the same whether or not it has been asked before.
+    pub(super) fn apart_from_the_variable_asked_about<R>(&mut self, find: impl FnOnce(&mut Self) -> R) -> R {
+        let around = self.aot.callees.came_by.take();
+        let found = find(self);
+        self.aot.callees.came_by = around;
+        found
+    }
+
     /// The functions that the value of the expression may be a closure of, and whether it may be `undefined` or `null` instead.
     pub(super) fn callee_yielded_by(&mut self, file: FileId, e: ExprId, depth: u32) -> Yielded {
         let hir = self.hir(file);
@@ -468,6 +476,11 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             ExprKind::Cond { yes, no, .. } => self.callee_yielded_by(file, yes, depth + 1).join(self.callee_yielded_by(file, no, depth + 1)),
+            // What the module exports. Whoever requires it while it is evaluated finds something else: then it is a prediction.
+            ExprKind::Call(_) if self.function_required_by(file, e).is_some() => match self.function_required_by(file, e) {
+                Some((of, func, is_sure)) => Yielded { is_predicted: !is_sure, ..Yielded::of(Callee::One(of, func), false) },
+                None => unknown,
+            },
             // What the one function that is probably called returns. Another may be called, so it is a prediction.
             ExprKind::Call(call) => {
                 let called = match hir[hir[call].callee].kind {

@@ -1704,6 +1704,77 @@ Process::~Process()
 
 extern "C" bool Bun__NODE_NO_WARNINGS();
 
+// Writes the text to file descriptor 2 as process.stderr would, if process.stderr is still the entry of the static table that nobody
+// has looked at. False: it is not, or the write has failed: nothing is lost by writing to the stream then.
+JSC_DEFINE_HOST_FUNCTION(Process_functionWriteToUntouchedStderr, (JSC::JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+#if OS(WINDOWS)
+    UNUSED_PARAM(lexicalGlobalObject);
+    UNUSED_PARAM(callFrame);
+    return JSValue::encode(jsBoolean(false));
+#else
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    Structure* structure = globalObject->processObject()->structure();
+    unsigned attributes;
+    if (globalObject->nodeWorkerStdioPorts() || !structure->hasNonReifiedStaticProperties() || isValidOffset(structure->get(vm, Identifier::fromString(vm, "stderr"_s), attributes)))
+        return JSValue::encode(jsBoolean(false));
+    String text = callFrame->argument(0).toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto bytes = text.utf8(WTF::StrictConversionReplacingUnpairedSurrogatesWithFFFD);
+    if (int flags = fcntl(STDERR_FILENO, F_GETFL); flags != -1 && flags & O_NONBLOCK)
+        fcntl(STDERR_FILENO, F_SETFL, flags & ~O_NONBLOCK);
+    for (auto rest = bytes.span(); !rest.empty();) {
+        ssize_t written = write(STDERR_FILENO, rest.data(), rest.size());
+        if (written < 0 && errno == EINTR)
+            continue;
+        // Nothing of the line is out yet: the stream reports the error. Else the rest is dropped, as there is no telling the stream.
+        if (written < 0)
+            return JSValue::encode(jsBoolean(rest.size() != bytes.length()));
+        rest = rest.subspan(written);
+    }
+    return JSValue::encode(jsBoolean(true));
+#endif
+}
+
+// fs.appendFileSync(path, text), and whether it has succeeded. Undefined: not on this platform.
+JSC_DEFINE_HOST_FUNCTION(Process_functionAppendWarningToFile, (JSC::JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+#if OS(WINDOWS)
+    UNUSED_PARAM(lexicalGlobalObject);
+    UNUSED_PARAM(callFrame);
+    return JSValue::encode(jsUndefined());
+#else
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String path = callFrame->argument(0).toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    String text = callFrame->argument(1).toWTFString(lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto pathBytes = path.utf8();
+    int fd;
+    do {
+        fd = open(reinterpret_cast<const char*>(pathBytes.data()), O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0666);
+    } while (fd < 0 && errno == EINTR);
+    if (fd < 0)
+        return JSValue::encode(jsBoolean(false));
+    auto bytes = text.utf8(WTF::StrictConversionReplacingUnpairedSurrogatesWithFFFD);
+    bool succeeded = true;
+    for (auto rest = bytes.span(); succeeded && !rest.empty();) {
+        ssize_t written = write(fd, rest.data(), rest.size());
+        if (written < 0 && errno == EINTR)
+            continue;
+        if (written < 0)
+            succeeded = false;
+        else
+            rest = rest.subspan(written);
+    }
+    close(fd);
+    return JSValue::encode(jsBoolean(succeeded));
+#endif
+}
+
 JSObject* Process::ensureOnWarning(Zig::GlobalObject* globalObject)
 {
     if (auto* onWarning = m_onWarning.get())
@@ -1745,6 +1816,8 @@ JSObject* Process::ensureOnWarning(Zig::GlobalObject* globalObject)
         disabled = array;
     }
     args.append(disabled);
+    args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), Process_functionWriteToUntouchedStderr, ImplementationVisibility::Private));
+    args.append(JSC::JSFunction::create(vm, globalObject, 2, String(), Process_functionAppendWarningToFile, ImplementationVisibility::Private));
     JSValue onWarning = JSC::profiledCall(globalObject, ProfilingReason::API, factory, JSC::getCallData(factory), jsUndefined(), args);
     RETURN_IF_EXCEPTION(scope, nullptr);
     m_onWarning.set(vm, this, asObject(onWarning));

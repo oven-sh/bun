@@ -215,7 +215,7 @@ struct ObjectsOf {
 
 impl<'p, 's> Checker<'p, 's> {
     fn alterations_noted(&mut self) -> &mut Alterations {
-        &mut self.escapes_noted().alterations
+        self.escapes_noted().alterations.get_or_insert_with(Default::default)
     }
 
     fn add_objects_of(&mut self, ty: TypeId, found: &mut ObjectsOf) {

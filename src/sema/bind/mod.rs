@@ -1851,6 +1851,8 @@ pub struct BindOptions {
     /// `GetEmitScriptTarget` is older than that.
     pub before_es2020: bool,
     pub before_es2017: bool,
+    /// `Options::names_make_commonjs`
+    pub names_make_commonjs: bool,
 }
 
 /// `bindSourceFile`

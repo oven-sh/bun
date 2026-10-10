@@ -178,6 +178,8 @@ pub struct PlanOptions {
     pub min_tasks: usize,
     /// What a type node adds to the cost estimate of a file, in which an identifier of an expression counts 1.
     pub type_node_cost: usize,
+    /// What a file adds by itself.
+    pub file_cost: usize,
     /// Nonzero: a declaration file is split if its cost estimate is more than the cost of the last step divided by this. Tasks of
     /// about that cost check ranges of its statements ahead and publish what they evaluate (`Checker::check_statements_ahead`). They
     /// stand where the task of the file stood, in the order of the ranges. The task of the file follows in a step of its own.
@@ -207,6 +209,7 @@ impl Default for PlanOptions {
             chunk_bytes: 64 << 10,
             min_tasks: 128,
             type_node_cost: 1,
+            file_cost: 1,
             split_files: 64,
             split_tolerates: 0,
             split_publishes_everything: false,
@@ -244,6 +247,7 @@ impl Plan {
         for file in 0..count {
             tasks[rank_of(file) % checkers].push(file);
         }
+        tasks.retain(|task| !task.is_empty());
         Plan {
             steps: vec![tasks],
             ahead: Vec::new(),
@@ -1137,6 +1141,11 @@ pub fn check_provided_then<R>(
     });
     disk.script_kinds = script_kinds.collect();
     disk.script_kinds_by_extension = request.script_kinds_by_extension.to_vec();
+    let jsx_of_files = provided.jsx_of_files.into_iter().map(|(path, of_file)| {
+        let path = disk.as_written(&host::from_argument(&cwd, &path));
+        (to_path(&path, disk.is_case_sensitive()).into_owned(), of_file)
+    });
+    disk.jsx_of_files = jsx_of_files.collect();
     // Work outside a parallel region runs on this thread.
     let lent = disk.caches.lend();
     let mut report = check_request(&disk, request);
@@ -1863,6 +1872,7 @@ fn check_project_of(
         }
         project.errors.retain(|error| !(error.is_about_options && project.options.is_removed_option_error(error.code)));
         project.options.allow_js = true;
+        project.options.module_detection = bun_sema::resolve::ModuleDetection::Force;
         project.references.clear();
         project.has_references = false;
         let cwd = host::from_native(request.cwd);
@@ -2779,6 +2789,8 @@ fn check_named_files(
     let written = std::mem::take(&mut project.raw_compiler_options);
     let is_true = |name: &[u8]| written.contains(&(name.to_vec(), Json::Bool(true)));
     project.options.drops_unreferenced = !request.retains_everything && !request.is_one_program;
+    project.options.names_make_commonjs = request.is_one_program;
+    project.options.undefined_properties_name_nobody = request.is_one_program;
     project.options.reports_uninitialized_variables = project.options.strict_null_checks
         && (project.options.strict_variable_initialization).unwrap_or(request.is_one_program);
     let before = host.times();
@@ -3200,7 +3212,7 @@ fn check_named_files(
             let hir = program.files.hir(file);
             let tags = hir.exprs.iter().map(|it| it.kind.tag());
             let type_nodes = hir.types.len() * request.plan_options.type_node_cost;
-            tags.filter(|&tag| is_identifier(tag)).count() + type_nodes + 1
+            tags.filter(|&tag| is_identifier(tag)).count() + type_nodes + request.plan_options.file_cost.max(1)
         })
         .collect();
     let size_of = |index: usize| costs[index];
@@ -3632,7 +3644,6 @@ fn check_named_files(
     if let Some(compile) = request.compile
         && is_all_checked
         && report.incomplete.is_empty()
-        && (report.diagnostics.iter().zip(&places)).all(|(d, place)| !is_error(d) || place.is_some())
     {
         let errors: Vec<(FileId, u32)> = places.iter().flatten().copied().collect();
         let mut stands = compile(program, &in_parallel, &errors).into_iter();

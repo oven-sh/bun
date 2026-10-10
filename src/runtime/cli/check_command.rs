@@ -785,7 +785,7 @@ pub(crate) fn check_for_bun_build(checked: TypeChecked, log: &mut bun_ast::Log) 
     check_for_build(checked, log, false)
 }
 
-/// `BundleOptions::analyze` for `bun build --compile-aot`: the entry points are checked as `bun check` checks them, and the bundle is
+/// `BundleOptions::analyze` for `bun build --compile --aot`: the entry points are checked as `bun check` checks them, and the bundle is
 /// compiled by the types of that program. What is an error there, in code that is in the program, is an error of the build, and nothing
 /// is compiled: see `bun_aot::Translation::finish`. The checker
 /// resolves every import itself, for its types. What the bundler has resolved it to is the code, which only the compiler is told. It
@@ -848,6 +848,8 @@ fn analyze_on_this_thread(
         features,
         rewrite_jest_for_tests,
         preserve_source_paths,
+        react_compiler_outputs,
+        jsx,
     } = checked;
     let file_url = |path: &[u8]| format!("{}", bun_url::file_url_from_string(&bun_core::String::from_bytes(path))).into_bytes();
     let mut constants = bun_aot::Constants {
@@ -874,6 +876,16 @@ fn analyze_on_this_thread(
     });
     let mut provided = Provided {
         already_read: already_read(cwd, &mut sources),
+        jsx_of_files: (jsx.map(|(path, of_file)| {
+            let of_file = bun_sema_driver::host::JsxOfFile {
+                is_classic: of_file.is_classic,
+                factory: of_file.factory.to_vec(),
+                fragment: of_file.fragment.to_vec(),
+                import_source: of_file.import_source.to_vec(),
+            };
+            (path.to_vec(), of_file)
+        }))
+        .collect(),
         ..Default::default()
     };
     for &(name, text) in bun_aot::prelude::FILES {
@@ -884,11 +896,36 @@ fn analyze_on_this_thread(
     let is_source = |path: &&[u8]| {
         has_types_with(&by_extension, path) || script_kinds.iter().any(|it| it.0 == **path)
     };
-    let paths: Vec<Vec<u8>> = (entry_points.filter(is_source))
+    let mut paths: Vec<Vec<u8>> = (entry_points.filter(is_source))
         .map(<[u8]>::to_vec)
         .collect();
     if paths.is_empty() {
         return None;
+    }
+    // `TypeChecked::react_compiler_outputs`: the code is under a path of its own. What is written is no code any more, so no root by that: it is
+    // checked in its own right.
+    let mut code_of: std::collections::HashMap<Vec<u8>, Vec<u8>> = Default::default();
+    for (path, javascript) in react_compiler_outputs {
+        let elsewhere = [path, b".js"].concat();
+        provided.already_read.insert(from_native(&elsewhere), javascript.to_vec());
+        for known in code.iter_mut().filter(|known| ***known == *path) {
+            known.clone_from(&elsewhere);
+        }
+        if !paths.iter().any(|known| **known == *path) {
+            paths.push(path.to_vec());
+        }
+        code_of.insert(from_native(path), from_native(&elsewhere));
+    }
+    if let Some(resolved) = &mut constants.resolved {
+        let own: Vec<_> = (resolved.iter())
+            .filter_map(|((from, specifier), to)| Some(((code_of.get(from)?.clone(), specifier.clone()), to.clone())))
+            .collect();
+        resolved.extend(own);
+        for to in resolved.values_mut() {
+            if let Some(elsewhere) = code_of.get(to) {
+                to.clone_from(elsewhere);
+            }
+        }
     }
     // What one entry function runs: an entry point of the bundle, then what `bun:main` does once that has run.
     let mut entry_functions: Vec<[Vec<u8>; 2]> = Vec::new();
@@ -1024,6 +1061,8 @@ fn check_for_build(checked: TypeChecked, log: &mut bun_ast::Log, shows_progress:
         features: _,
         rewrite_jest_for_tests: _,
         preserve_source_paths: _,
+        react_compiler_outputs: _,
+        jsx: _,
     } = checked;
     let by_extension = script_kinds_by_extension(loaders);
     // The bundler knows what it loads each file with. What is installed is what its name says.

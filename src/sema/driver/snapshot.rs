@@ -1,4 +1,4 @@
-//! Bring-up only: what `bun build --compile-aot` hands to the checker, written to a file, so that the standalone tool can repeat the
+//! Bring-up only: what `bun build --compile --aot` hands to the checker, written to a file, so that the standalone tool can repeat the
 //! analysis of a bundle without the bundler.
 
 use crate::host::AlreadyRead;

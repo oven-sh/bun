@@ -51,7 +51,7 @@ fn list_loaded(program: &bun_sema::check::Program) {
     }
 }
 
-#[cfg(bun_sema_mimalloc)]
+#[cfg(feature = "mimalloc")]
 #[global_allocator]
 static ALLOC: bun_alloc::Mimalloc = bun_alloc::Mimalloc;
 
@@ -160,7 +160,7 @@ fn run(args: &[String]) {
                 .into_owned();
             let arguments: Vec<&[u8]> = args[1..].iter().map(|arg| arg.as_bytes()).collect();
             let command_line = bun_sema_driver::parse_command_line(&arguments, cwd.as_bytes());
-            // `--snapshot=<file>`: the files, the entry points and the resolutions of a bundle, as `bun build --compile-aot` wrote them.
+            // `--snapshot=<file>`: the files, the entry points and the resolutions of a bundle, as `bun build --compile --aot` wrote them.
             let mut snapshot = args.iter().find_map(|a| a.strip_prefix("--snapshot=")).map(|path| {
                 let bytes = std::fs::read(path).expect("the snapshot cannot be read");
                 bun_sema_driver::snapshot::Snapshot::from_bytes(&bytes).expect("not a snapshot")
@@ -308,7 +308,10 @@ fn run(args: &[String]) {
             // `--aot-explain=deferred`: how many modules and top-level statements may run at their first use, and what stands in the way for the others. Numbers alone.
             // `--aot-explain=callees`: the variables and fields that may hold a function and have no one function, or none that is a fact, each with the hole in the proof.
             // `--aot-explain=keys`: the pairs of a property and a constant key under which one function of the program is stored: `e.on("x", listener)`.
-            let explain = bun_aot::Explain { keys: has("--aot-explain=keys"), foreign: has("--aot-explain=foreign"), members: has("--aot-explain=members"), escapes: has("--aot-explain=escapes"), alterations: has("--aot-explain=alterations"), uninitialized: has("--aot-explain=uninitialized"), kinds: has("--aot-explain=kinds"), captures: has("--aot-explain=captures"), escape: has("--aot-explain=escape"), fields: has("--aot-explain=fields"), disagreements: has("--aot-explain=disagreements"), integers: has("--aot-explain=integers"), predictions: has("--aot-explain=predictions"), callees: has("--aot-explain=callees"), progress: has("--aot-explain=progress"), parsed: has("--aot-explain=parsed"), deferred: has("--aot-explain=deferred") };
+            // `--aot-explain=literals`: how many object literals are made as the type they stand under, and for the others the first thing that stands in the way. Numbers alone.
+            // `--aot-explain=literals=<the end of a path>:<line>`: the literals that begin on the line, each with its row, and the functions that have an operation of the line, as they are in the end.
+            let literal_at = args.iter().find_map(|a| a.strip_prefix("--aot-explain=literals=")?.rsplit_once(':')).and_then(|(name, line)| Some((&*name.to_string().leak(), line.parse().ok()?)));
+            let explain = bun_aot::Explain { shared: has("--aot-explain=shared"), strangers: has("--aot-explain=strangers"), literal_at, literals: has("--aot-explain=literals"), keys: has("--aot-explain=keys"), given: has("--aot-explain=given"), foreign: has("--aot-explain=foreign"), members: has("--aot-explain=members"), escapes: has("--aot-explain=escapes"), alterations: has("--aot-explain=alterations"), uninitialized: has("--aot-explain=uninitialized"), kinds: has("--aot-explain=kinds"), arguments: has("--aot-explain=arguments"), captures: has("--aot-explain=captures"), escape: has("--aot-explain=escape"), fields: has("--aot-explain=fields"), disagreements: has("--aot-explain=disagreements"), integers: has("--aot-explain=integers"), predictions: has("--aot-explain=predictions"), callees: has("--aot-explain=callees"), progress: has("--aot-explain=progress"), parsed: has("--aot-explain=parsed"), deferred: has("--aot-explain=deferred") };
             let translation = bun_aot::Translation::new(&constants).explaining(explain);
             // `--aot-explain=react`, with or without `--aot`: what the React Compiler makes of the checker's tree of each `.jsx` and `.tsx` file: the candidates, the compiled functions with their scopes and slots, the bail-outs with their reasons.
             // `--aot-explain=react-locations`: the same, and each function is compiled again with its locations renumbered, which is to make no difference.
@@ -402,7 +405,7 @@ fn run(args: &[String]) {
                 );
                 if let Some(path) = args.iter().find_map(|a| a.strip_prefix("--aot-out=")) {
                     let linked_in = started.elapsed().as_secs_f64();
-                    let is_written = translated.problems.is_empty() && std::fs::write(path, bun_aot::format::write(&translated.program)).is_ok();
+                    let is_written = translated.problems.is_empty() && std::fs::write(path, bun_aot::format::write(&translated.program, in_parallel)).is_ok();
                     lacks_output.store(!is_written, std::sync::atomic::Ordering::Relaxed);
                     error_line!("aot: linked in {:.1} s, written in {:.1} s", linked_in, started.elapsed().as_secs_f64() - linked_in);
                     return translated.errors_that_stand;
@@ -462,6 +465,7 @@ fn run(args: &[String]) {
                 chunk_bytes: number("--chunk-bytes=", defaults.chunk_bytes),
                 min_tasks: number("--min-tasks=", defaults.min_tasks),
                 type_node_cost: number("--type-node-cost=", defaults.type_node_cost),
+                file_cost: number("--file-cost=", defaults.file_cost),
                 split_files: number("--split-files=", defaults.split_files as usize) as u32,
                 split_tolerates: number("--split-tolerates=", 0) as u8,
                 split_publishes_everything: has("--split-publishes-everything"),

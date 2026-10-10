@@ -260,6 +260,9 @@ impl Finder<'_> {
         if local.is_none() || out.is_none() {
             return String::new();
         }
+        if let ([Part::Array(here)], [Part::Array(there)]) = (&self.fragment.tys.get(local).parts[..], &self.all.program.tys.get(out).parts[..]) {
+            return self.about_the_layouts_of(kept, *here, *there);
+        }
         let only_class = |parts: &[Part]| match parts {
             [Part::Class(named)] => Some(*named),
             _ => None,
@@ -581,7 +584,7 @@ pub(super) fn of_undefined_layout(checked: &Checked<'_>, fragments: &[Fragment],
         declared.members.len(),
         yes_or_no(checked.checker().is_evaluated_once(file, bound.class_owner[class.idx()].to_parent())),
     ));
-    let place = match place_of_error(fragments, index, reach, (file, declared.start), &mut |_| false) {
+    let place = match place_of_error(checked, fragments, index, reach, (file, declared.start), &mut |_| false) {
         None => "code that is in the program",
         Some(Elsewhere::Cut(_)) => "code that a constant has cut",
         Some(Elsewhere::DroppedImport) => "an import that is dropped",

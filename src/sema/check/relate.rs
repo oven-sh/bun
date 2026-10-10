@@ -3812,6 +3812,7 @@ impl<'p, 's> Checker<'p, 's> {
             r.overflow = true;
             return Ternary::FALSE;
         }
+        self.burn(1);
         let maybe_start = r.maybe_keys.len();
         let scope = self.begin_scope();
         r.maybe_keys.push(key);

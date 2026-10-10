@@ -35,7 +35,7 @@ use crate::ir::{self, Def, Func, FuncKind, Layout, LayoutKind, Literal, NO_VARIA
 use bun_sema::atom::Atom;
 use bun_sema::check::task::Finished;
 use bun_sema::check::{Certainty, Checker, Doubt, Identity, Int32Verdict, MethodStore, Noted, NumberFlow, Program as Checked, Question, compute_ecma_line_starts, expected_int32};
-use bun_sema::hir::{ClassId, Flags};
+use bun_sema::hir::{self, ClassId, Flags, StmtKind};
 use bun_sema::program::{Builtin, FileId};
 use bun_sema::resolve::get_relative_path_from_directory;
 use bun_sema::types::TypeId;
@@ -48,6 +48,10 @@ use std::hash::Hash;
 use std::time::{Duration, Instant};
 
 mod disagreement;
+mod share;
+mod nil;
+mod reads;
+mod strangers;
 
 #[derive(Default)]
 pub struct Linked {
@@ -71,6 +75,8 @@ pub struct Linked {
 /// What the link says of what it has decided, for whoever asks why.
 #[derive(Default, Copy, Clone)]
 pub struct Explain {
+    /// How many function expressions that capture nothing are one function value, and why the others are not: `share::share_functions`.
+    pub shared: bool,
     /// Why each view that admits objects that are not laid out does: `Checker::explain_foreign`.
     pub foreign: bool,
     /// Which views have members only because a test has been left out, and from where: `Checker::explain_members`.
@@ -99,12 +105,22 @@ pub struct Explain {
     pub progress: bool,
     /// Which views data of which origin is held to: `Checker::explain_parsed`.
     pub parsed: bool,
+    /// How many functions have what only sloppy code has, in counts: `Checker::explain_arguments`.
+    pub arguments: bool,
     /// What kinds of values the variables hold, going by what is stored to them alone, in counts: `Checker::explain_kinds`.
     pub kinds: bool,
     /// How much of what the modules do when they are evaluated may be deferred: `Checker::explain_deferred`.
     pub deferred: bool,
     /// The one function that is stored under a constant key: `Checker::explain_functions_by_key`.
     pub keys: bool,
+    /// How the object literals are made, and what stands in the way where one is not made as the type it stands under, in numbers alone: `build::literals::explain`.
+    pub literals: bool,
+    /// How far the objects that are not laid out get, by place, from where they come into being; nothing is applied: `strangers::explain`.
+    pub strangers: bool,
+    /// The end of the path of a file, and a line: the object literals that begin on it, each with its row of `literals`, and the functions that have an operation of that line, as they are in the end.
+    pub literal_at: Option<(&'static str, u32)>,
+    /// How many of the places and of the reads of typed code go by a fact: `explain_given`.
+    pub given: bool,
 }
 
 /// Where the time of the link goes.
@@ -430,7 +446,8 @@ impl Reach {
         self.ty(fragments, index, at.fragment, declared);
     }
 
-    fn mention(&mut self, fragments: &[Fragment], index: &Index, from: u32, mentions: &Mentions, is_layout: bool) {
+    /// `only_stored`: the variables among them that are stored to and not read: what else is stored to them nobody can tell by that.
+    fn mention(&mut self, fragments: &[Fragment], index: &Index, from: u32, mentions: &Mentions, only_stored: &[GlobalId], is_layout: bool) {
         for &ty in &mentions.tys {
             self.ty(fragments, index, from, ty);
         }
@@ -438,7 +455,12 @@ impl Reach {
             self.layout(fragments, index, from, layout);
         }
         for &global in &mentions.globals {
-            self.global(fragments, index, from, global);
+            if only_stored.binary_search(&global).is_ok() {
+                let at = index.globals[&fragments[from as usize].globals[global.idx()].key].at;
+                self.ty(fragments, index, at.fragment, fragments[at.fragment as usize].globals[at.index as usize].global.declared);
+            } else {
+                self.global(fragments, index, from, global);
+            }
         }
         for &func in &mentions.called {
             let key = self.func(fragments, index, from, func, !is_layout);
@@ -460,7 +482,7 @@ impl Reach {
                     self.by = By::Func(at);
                     let fragment = &fragments[at.fragment as usize];
                     let Some(body) = &fragment.funcs[at.index as usize].body else { continue };
-                    self.mention(fragments, index, at.fragment, &body.mentions, false);
+                    self.mention(fragments, index, at.fragment, &body.mentions, &[], false);
                     for (number, part) in body.parts.iter().enumerate() {
                         let number = number as u32;
                         let stored = part.stores.iter().map(|global| &fragment.globals[global.idx()].key);
@@ -497,12 +519,13 @@ impl Reach {
                 Work::Part(at, number) => {
                     self.by = By::Func(at);
                     let Some(body) = &fragments[at.fragment as usize].funcs[at.index as usize].body else { continue };
-                    self.mention(fragments, index, at.fragment, &body.parts[number as usize].mentions, false);
+                    let part = &body.parts[number as usize];
+                    self.mention(fragments, index, at.fragment, &part.mentions, &part.only_stores, false);
                 }
                 Work::Layout(at) => {
                     self.by = By::Layout(at);
                     let Some(definition) = &fragments[at.fragment as usize].layouts[at.index as usize].definition else { continue };
-                    self.mention(fragments, index, at.fragment, &definition.mentions, true);
+                    self.mention(fragments, index, at.fragment, &definition.mentions, &[], true);
                     self.layout(fragments, index, at.fragment, definition.constructs);
                 }
             }
@@ -521,7 +544,12 @@ fn take_out(func: &mut Func, part: &ModulePart, anything: TyId) {
         return;
     }
     func.blocks[from.idx()].ops.truncate(start as usize);
-    func.blocks[from.idx()].term = Some(Term::Jump(ir::Target::new(to)));
+    func.blocks[from.idx()].term = Some(Term::Jump(ir::Target { block: to, args: part.handed_through.iter().copied().filter(|handed| handed.is_some()).collect() }));
+    let mut handed = part.handed_through.iter();
+    func.blocks[to.idx()].params.retain(|_| handed.next().is_some_and(|handed| handed.is_some()));
+    for (index, param) in func.blocks[to.idx()].params.clone().into_iter().enumerate() {
+        func.values[param.idx()].def = Def::Param(to, index as u32);
+    }
     func.blocks[to.idx()].ops.drain(..end as usize);
     for block in (part.blocks.0..part.blocks.1).filter(|&block| block != to.0) {
         func.blocks[block as usize] = ir::Block { params: Vec::new(), ops: Vec::new(), term: Some(Term::Unreachable) };
@@ -892,6 +920,45 @@ fn renumber_func(func: &mut Func, maps: &Maps) {
 }
 
 /// Runs the modules that the program starts with, in order.
+/// `--aot-explain=deferred`: what the functions that run when the program starts contain, by operation. An operation counts once wherever it stands. Numbers alone.
+fn explain_start(program: &Program, evaluating: &[(FuncId, FuncKey)]) -> Vec<String> {
+    let kinds: [(&str, fn(FuncKey) -> bool); 3] = [
+        ("functions that evaluate a module once", |key| matches!(key, FuncKey::Module(_))),
+        ("bodies of modules", |key| matches!(key, FuncKey::ModuleBody(_))),
+        ("initializers of lazy variables", |key| matches!(key, FuncKey::Initializer(..))),
+    ];
+    kinds
+        .into_iter()
+        .map(|(what, is_such)| {
+            let (mut functions, mut idle, mut operations) = (0u32, 0u32, 0u32);
+            let mut by_name: FxHashMap<String, u32> = FxHashMap::default();
+            for &(id, _) in evaluating.iter().filter(|found| is_such(found.1)) {
+                functions += 1;
+                let before = operations;
+                for value in &program.funcs[id.idx()].values {
+                    let Def::Op(op) = &value.def else { continue };
+                    let of_class = |func: FuncId| if program.funcs[func.idx()].kind == FuncKind::Constructor { " of a class" } else { "" };
+                    let name = match op {
+                        Op::Undefined | Op::Null | Op::Bool(_) | Op::Int(_) | Op::Double(_) => continue,
+                        Op::Operation { name, .. } => text_of(&program.strs, *name),
+                        Op::FuncRef(func) => format!("FuncRef{}", of_class(*func)),
+                        Op::Closure { func, .. } => format!("Closure{}", of_class(*func)),
+                        Op::CallDirect { func, .. } if program.funcs[func.idx()].kind == FuncKind::Module => "CallDirect of such a function".to_owned(),
+                        _ => format!("{op:?}").split(|c: char| !c.is_ascii_alphanumeric()).next().unwrap_or_default().to_owned(),
+                    };
+                    operations += 1;
+                    *by_name.entry(name).or_default() += 1;
+                }
+                idle += u32::from(operations == before);
+            }
+            let mut by_name: Vec<(String, u32)> = by_name.into_iter().collect();
+            by_name.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+            let by_name = by_name.into_iter().map(|(name, count)| format!("{name} {count}")).collect::<Vec<_>>().join(", ");
+            format!("deferred: in the linked program: {what} {functions}, with nothing to do {idle}; operations {operations}: {by_name}")
+        })
+        .collect()
+}
+
 fn entry_function(name: StrId, anything: TyId, roots: &[FuncId]) -> Func {
     let mut func = Func {
         name,
@@ -1309,6 +1376,60 @@ fn drop_facts_about_static_fields(program: &mut Program) {
 
 /// How many of the layouts that objects are made as have a field of each name that is flagged, the most first. Then those layouts, each
 /// with the fields that are flagged, those with the most first. Then what else goes by the names and is not acted on.
+/// In the functions that are written in TypeScript: how many places and reads have a type that says something. The rest holds anything, with or without a prediction.
+fn explain_given(program: &Program) -> Vec<String> {
+    let is_fact = |ty: TyId| ty.is_some() && ty != program.tys.anything;
+    // Facts, and all.
+    let (mut parameters, mut results, mut joins, mut fields) = ((0usize, 0usize), (0usize, 0usize), (0usize, 0usize), (0usize, 0usize));
+    let (mut receivers, mut properties, mut containers, mut elements) = ((0usize, 0usize), (0usize, 0usize), (0usize, 0usize), (0usize, 0usize));
+    let count = |counter: &mut (usize, usize), ty: TyId| {
+        counter.0 += usize::from(is_fact(ty));
+        counter.1 += 1;
+    };
+    for func in program.funcs.iter().filter(|func| func.flags & func_flags::IS_TYPED != 0) {
+        for &parameter in &func.params {
+            count(&mut parameters, parameter);
+        }
+        count(&mut results, func.result);
+        for value in &func.values {
+            match &value.def {
+                ir::Def::Param(block, _) if *block != Func::ENTRY => count(&mut joins, value.ty),
+                ir::Def::Op(Op::PropGet { obj, .. }) => {
+                    count(&mut receivers, func.values[obj.idx()].ty);
+                    count(&mut properties, value.ty);
+                }
+                ir::Def::Op(Op::ElemGet { obj, .. }) => {
+                    count(&mut containers, func.values[obj.idx()].ty);
+                    count(&mut elements, value.ty);
+                }
+                _ => {}
+            }
+        }
+    }
+    for layout in program.layouts.iter().filter(|layout| layout.kind != LayoutKind::Environment && layout.is_allocated) {
+        for field in &layout.fields {
+            count(&mut fields, field.declared);
+        }
+    }
+    let rows = [
+        ("parameters", parameters),
+        ("results", results),
+        ("joins", joins),
+        ("fields of the layouts that objects are made as", fields),
+        ("reads of a property: the receiver", receivers),
+        ("reads of a property: what is read", properties),
+        ("reads of an element: the container", containers),
+        ("reads of an element: what is read", elements),
+    ];
+    let share = |(facts, all): (usize, usize)| format!("{facts} of {all} ({:.1}%)", 100.0 * facts as f64 / all.max(1) as f64);
+    let sum = |counted: &[(usize, usize)]| counted.iter().fold((0, 0), |sum, counted| (sum.0 + counted.0, sum.1 + counted.1));
+    let in_all = format!("given: facts: {} of the places, {} of the reads", share(sum(&[parameters, results, joins, fields])), share(sum(&[properties, elements])));
+    // A view that admits objects that are not laid out stays a type, and every read through it tests for them.
+    let views = program.layouts.iter().filter(|layout| layout.kind != LayoutKind::Environment);
+    let strangers = format!("given: layouts that admit strangers: {}", share((views.clone().filter(|layout| layout.admits_foreign).count(), views.count())));
+    [in_all, strangers].into_iter().chain(rows.iter().map(|&(what, counted)| format!("given: {what}: {} are facts", share(counted)))).collect()
+}
+
 fn explain_fields(program: &Program, names: &Names) -> Vec<String> {
     let is_flagged = |field: &&ir::Field| field.flags & field_flags::NEVER_STORED != 0;
     let made: Vec<&Layout> = program.layouts.iter().filter(|layout| layout.kind != LayoutKind::Environment && layout.is_allocated).collect();
@@ -1416,6 +1537,8 @@ fn type_texts(checked: &Checked<'_>, program: &Program, views: &[(LayoutId, Type
 /// Where the checker has found errors, and `build::files_imported_by`.
 pub struct Errors<'a> {
     pub places: &'a [(FileId, u32)],
+    /// For each: it lies in an import or export declaration that the bundler has dropped.
+    pub in_dropped_imports: &'a [bool],
     pub imported_by: &'a mut dyn FnMut(FileId) -> Vec<FileId>,
 }
 
@@ -1447,11 +1570,31 @@ fn files_imported_for_types(fragments: &[Fragment], reach: &Reach, imported_by: 
     found
 }
 
+/// Of a file that is not compiled with the program: the name of a function with a body in whose text the position lies, or nothing for a name if it lies in a statement at the top level
+/// that declares nothing. That is code, and not the program's. `None`: it lies in what the file declares.
+fn code_around(checked: &Checked<'_>, file: FileId, pos: u32) -> Option<String> {
+    let hir = checked.files.hir(file);
+    let c = checked.checker();
+    let functions = (0..hir.fns.len() as u32).map(hir::FnId::from).filter(|&func| !matches!(hir[func].body, hir::FnBody::None));
+    if let Some(func) = functions.filter(|&func| hir[func].start <= pos && pos < c.end_of_fn(file, func)).min_by_key(|&func| c.end_of_fn(file, func) - hir[func].start) {
+        let name = hir[func].name;
+        return Some(if name.is_some() { String::from_utf8_lossy(checked.files.atoms.bytes(name)).into_owned() } else { String::new() });
+    }
+    let around = hir.ids(hir.body).find(|&stmt| hir[stmt].start <= pos && pos < hir[stmt].loc.end)?;
+    let declares_nothing = matches!(
+        hir[around].kind,
+        StmtKind::Expr(_) | StmtKind::If { .. } | StmtKind::For { .. } | StmtKind::ForIn { .. } | StmtKind::ForOf { .. } | StmtKind::While { .. } | StmtKind::DoWhile { .. } | StmtKind::Block(_) | StmtKind::Switch { .. } | StmtKind::Try { .. } | StmtKind::Throw(_) | StmtKind::Labeled { .. }
+    );
+    declares_nothing.then(String::new)
+}
+
 /// `None`: the position lies in code of the file that is in the program. It is code of the innermost function around it that the
 /// fragment of the file defines, or else of the body of the module. A function in code that is cut is not defined.
 /// `is_imported_for_types`: see `files_imported_for_types`. What such a file has outside of functions counts as what it declares.
-fn place_of_error(fragments: &[Fragment], index: &Index, reach: &Reach, (file, pos): (FileId, u32), is_imported_for_types: &mut dyn FnMut(FileId) -> bool) -> Option<Elsewhere> {
-    let Some(&number) = index.by_file.get(&file) else { return (!is_imported_for_types(file)).then_some(Elsewhere::NoModule) };
+fn place_of_error(checked: &Checked<'_>, fragments: &[Fragment], index: &Index, reach: &Reach, (file, pos): (FileId, u32), is_imported_for_types: &mut dyn FnMut(FileId) -> bool) -> Option<Elsewhere> {
+    let Some(&number) = index.by_file.get(&file) else {
+        return if is_imported_for_types(file) { code_around(checked, file, pos).map(Elsewhere::NotReached) } else { Some(Elsewhere::NoModule) };
+    };
     let fragment = &fragments[number as usize];
     let holds = |&&(start, end): &&(u32, u32)| start <= pos && pos < end;
     let bodies = fragment.funcs.iter().filter(|function| function.key.file() == file).filter_map(|function| Some((function, function.body.as_ref()?)));
@@ -1490,19 +1633,23 @@ pub fn link(
     builtin_modules: &[(u32, FileId)],
     prelude: &[FileId],
     shown_from: &[u8],
+    shows_whole_paths: bool,
     errors: Errors<'_>,
     in_parallel: InParallel<'_>,
     explain: Explain,
     describe: Describe<'_>,
 ) -> Linked {
+    let (mut times, mut since) = (Times::default(), Instant::now());
     fragments.sort_by_key(|fragment| checked.files.rank_of_file(fragment.file));
     let translated: Vec<FileId> = fragments.iter().map(|fragment| fragment.file).filter(|&file| file != NO_FILE).collect();
     let is_opaque = |file: FileId| file != NO_FILE && checked.files.module(file).is_opaque();
     let is_of_runtime = |file: FileId| file != NO_FILE && checked.files.module(file).builtin.is_some();
+    let mut literals_shown: Vec<String> = fragments.iter_mut().flat_map(|fragment| std::mem::take(&mut fragment.literals_shown)).collect();
+    let mut literals = crate::build::literals::explain(fragments.iter().filter(|_| explain.literals).map(|fragment| (is_of_runtime(fragment.file), &fragment.literals[..])));
     // For a problem that is in no file.
     let nowhere = roots.first().copied().unwrap_or(FileId(0));
     let mut problems: Vec<Problem> = Vec::new();
-    let (mut times, mut since) = (Times::default(), Instant::now());
+    times.add("order", &mut since);
     let (mut types, mut seen, mut ran_out_of_stack) = (FxHashMap::default(), FxHashSet::default(), false);
     add_kept_types(checked, &mut seen, &mut types, in_parallel);
     times.add("kept types", &mut since);
@@ -1511,6 +1658,7 @@ pub fn link(
     for (number, fragment) in fragments.iter().enumerate() {
         index.add(number, fragment);
     }
+    times.add("index", &mut since);
 
     let mut reach = Reach::default();
     reach.grow(&fragments);
@@ -1607,10 +1755,11 @@ pub fn link(
             why_they_disagree.push(disagreement::of_undefined_layout(checked, &fragments, &index, &reach, at, by));
         }
     }
-    let Errors { places, imported_by } = errors;
+    let Errors { places, in_dropped_imports, imported_by } = errors;
     let mut imported_for_types: Option<FxHashSet<FileId>> = None;
     let mut is_imported_for_types = |file: FileId| imported_for_types.get_or_insert_with(|| files_imported_for_types(&fragments, &reach, &mut *imported_by)).contains(&file);
-    let errors: Vec<Option<Elsewhere>> = places.iter().map(|&place| place_of_error(&fragments, &index, &reach, place, &mut is_imported_for_types)).collect();
+    let place_of = |(&place, &is_in_dropped_import): (&(FileId, u32), &bool)| place_of_error(checked, &fragments, &index, &reach, place, &mut is_imported_for_types).or(is_in_dropped_import.then_some(Elsewhere::DroppedImport));
+    let errors: Vec<Option<Elsewhere>> = places.iter().zip(in_dropped_imports).map(place_of).collect();
     // Nothing comes of a program with an error in it.
     if errors.iter().any(Option::is_none) {
         return Linked { problems, errors, times, ..Linked::default() };
@@ -1632,6 +1781,13 @@ pub fn link(
     let evaluates_module = |key: FuncKey| matches!(key, FuncKey::Module(file) | FuncKey::ModuleBody(file) if !of_the_runtime.contains(&file));
     included.sort_by_key(|&(at, _)| !evaluates_module(key_at(at)));
     let func_ids: FxHashMap<FuncKey, FuncId> = included.iter().enumerate().map(|(i, &(at, _))| (key_at(at), FuncId::new(entry_points.len() + i))).collect();
+    let evaluating: Vec<(FuncId, FuncKey)> = included
+        .iter()
+        .enumerate()
+        .filter(|found| explain.deferred && found.1.1)
+        .map(|(i, &(at, _))| (FuncId::new(entry_points.len() + i), key_at(at)))
+        .filter(|found| matches!(found.1, FuncKey::Module(file) | FuncKey::ModuleBody(file) | FuncKey::Initializer(file, _) if !of_the_runtime.contains(&file)))
+        .collect();
 
     let mut numbering = Numbering::new(&fragments, &index, func_ids);
     let name_of_entry = numbering.strs.intern(b"main");
@@ -1762,6 +1918,7 @@ pub fn link(
         };
         let shown = match builtin {
             Some(module) => module.name.to_vec(),
+            None if shows_whole_paths => checked.files.module(file).file_name().to_vec(),
             None => get_relative_path_from_directory(shown_from, checked.files.module(file).file_name(), checked.files.is_case_sensitive),
         };
         program.modules.push(ir::Module { path, init: init_of(file), display_path: program.strs.intern(&shown), line_table });
@@ -1895,8 +2052,13 @@ pub fn link(
     for (candidate, may_be_extended) in candidates.iter().zip(c.may_be_extended_by_value(&extending, &asked)) {
         if may_be_extended {
             program.layouts[candidate.0.idx()].class_flags |= class_flags::MAY_HAVE_OTHER_PROTOTYPE;
+            // `super()` there makes an object of this layout, be the class abstract.
+            if let Some(&(_, ty)) = views.iter().find(|view| view.0 == candidate.0) {
+                c.note_allocation(ty);
+            }
         }
     }
+    noted.absorb(c.take_noted());
 
     times.add("classes", &mut since);
 
@@ -2045,7 +2207,20 @@ pub fn link(
         }
     }
     // A read that stands in a test position is held to nothing. What a view says of a field is a fact all the same where every object that is
-    // looked at through it is one of the program's, with the prototype it was made with.
+    // looked at through it is one of the program's, with the prototype it was made with, and no other view of such an object takes more for
+    // the field: typed code stores through a view what the field of the VIEW takes, `(narrow as Wide).next = wide`.
+    let mut views_of: Vec<Vec<LayoutId>> = vec![Vec::new(); program.layouts.len()];
+    for (index, view) in program.layouts.iter().enumerate() {
+        for member in view.members.iter().filter(|member| member.idx() != index) {
+            views_of[member.idx()].push(LayoutId::new(index));
+        }
+    }
+    // By view, name and what the view says: what the field holds. `NONE`: anything.
+    let mut held_by_field: FxHashMap<(LayoutId, StrId, TyId), TyId> = FxHashMap::default();
+    // By view: the other views of the objects that are looked at through it, each once.
+    let mut views_beside: FxHashMap<LayoutId, Vec<LayoutId>> = FxHashMap::default();
+    let mut is_found = vec![false; program.layouts.len()];
+    let mut is_within_known: FxHashMap<(TyId, TyId), bool> = FxHashMap::default();
     for func in &mut program.funcs {
         for index in 0..func.values.len() {
             let Prediction::Field(ty) = func.values[index].prediction else { continue };
@@ -2053,7 +2228,7 @@ pub fn link(
                 Def::Op(Op::PropGet { obj, name }) => program.tys.get(func.values[obj.idx()].ty).only_layout().map(|view| (view, name)),
                 _ => None,
             };
-            let is_fact = read.is_some_and(|(view, name)| {
+            let read = read.filter(|&(view, name)| {
                 let view = &program.layouts[view.idx()];
                 let members = || view.members.iter().map(|member| &program.layouts[member.idx()]);
                 let is_as_made = |layout: &Layout| layout.class_flags & class_flags::MAY_HAVE_OTHER_PROTOTYPE == 0;
@@ -2064,11 +2239,74 @@ pub fn link(
                 };
                 !view.admits_foreign && is_as_made(view) && members().all(is_as_made) && (view.field(name).is_some() || !view.members.is_empty() && members().all(has_it))
             });
+            let held = match read {
+                None => TyId::NONE,
+                Some((view, name)) => match held_by_field.get(&(view, name, ty)) {
+                    Some(&known) => known,
+                    None => {
+                        let beside = views_beside.entry(view).or_insert_with(|| {
+                            let mut beside: Vec<LayoutId> = Vec::new();
+                            for &other in program.layouts[view.idx()].members.iter().chain([&view]).flat_map(|member| &views_of[member.idx()]) {
+                                if !std::mem::replace(&mut is_found[other.idx()], true) {
+                                    beside.push(other);
+                                }
+                            }
+                            for other in &beside {
+                                is_found[other.idx()] = false;
+                            }
+                            beside
+                        });
+                        let layouts_in = |described: &Declared| -> Vec<LayoutId> { described.parts.iter().filter_map(|part| if let Part::Class(layout) = part { layout.is_some().then_some(*layout) } else { None }).collect() };
+                        let is_subtype = |sub: LayoutId, sup: LayoutId| {
+                            let (below, above) = (&program.layouts[sub.idx()], &program.layouts[sup.idx()]);
+                            sub == sup || !below.admits_foreign && below.members.iter().all(|member| above.members.binary_search(member).is_ok())
+                        };
+                        let read_as = program.tys.get(ty);
+                        let is_within = |declared: TyId| {
+                            let taken = program.tys.get(declared);
+                            let besides = Declared { parts: taken.parts.iter().filter(|part| !matches!(part, Part::Class(_))).cloned().collect(), ..taken.clone() };
+                            besides.is_described_within(read_as) && (read_as.any_object || layouts_in(taken).into_iter().all(|sub| layouts_in(read_as).into_iter().any(|sup| is_subtype(sub, sup))))
+                        };
+                        // What the other views take for the field beyond that. A narrower declaration in a subtype adds nothing.
+                        let (mut more, mut takes_anything): (Vec<TyId>, bool) = (Vec::new(), false);
+                        for other in beside.iter() {
+                            let other = &program.layouts[other.idx()];
+                            let Some(field) = other.field(name) else { continue };
+                            let declared = other.fields[field as usize].declared;
+                            takes_anything |= declared.is_none();
+                            if declared.is_some() && declared != ty && !more.contains(&declared) && !*is_within_known.entry((declared, ty)).or_insert_with(|| is_within(declared)) {
+                                more.push(declared);
+                            }
+                        }
+                        let held = if takes_anything {
+                            TyId::NONE
+                        } else if more.is_empty() {
+                            ty
+                        } else {
+                            let described = more.iter().fold(read_as.clone(), |described, &declared| described.or(program.tys.get(declared)));
+                            program.tys.intern(described)
+                        };
+                        held_by_field.insert((view, name, ty), held);
+                        held
+                    }
+                },
+            };
             let value = &mut func.values[index];
-            (value.ty, value.prediction) = if is_fact { (ty, Prediction::None) } else { (value.ty, Prediction::Ty(ty)) };
+            (value.ty, value.prediction) = if held == ty {
+                (ty, Prediction::None)
+            } else if held.is_some() && value.ty == program.tys.anything {
+                (held, Prediction::Ty(ty))
+            } else {
+                (value.ty, Prediction::Ty(ty))
+            };
         }
     }
+    times.add("answers", &mut since);
+    reads::type_by_the_members(&mut program);
+    let roomier = nil::make_room_for_nil(&mut program);
+    times.add("nil", &mut since);
     say("the subtypes are in the program");
+    times.add("members", &mut since);
     let unsound_uses = crate::verify::unsound_uses(&program, if explain.disagreements { 10 } else { 1 }, in_parallel);
     if let Some(first) = unsound_uses.first() {
         problems.push(Problem { file: nowhere, pos: 0, what: first.what.clone().into() });
@@ -2081,16 +2319,23 @@ pub fn link(
         }
     }
     // By file that declares a view: its path as it is shown, and where its lines start.
-    let mut declaring: FxHashMap<FileId, (StrId, Vec<u32>)> = FxHashMap::default();
-    for &(layout, view) in &views {
-        // The text of a library that is not checked is not kept.
-        let Some(at) = c.declaration_of_view(view).filter(|at| (at.pos as usize) < checked.files.hir(at.file).text.len()) else { continue };
-        let (path, line_starts) = declaring.entry(at.file).or_insert_with(|| {
+    // The text of a library that is not checked is not kept.
+    let declared_at: Vec<_> = views.iter().map(|&(_, view)| c.declaration_of_view(view).filter(|at| (at.pos as usize) < checked.files.hir(at.file).text.len())).collect();
+    let mut declaring: FxHashMap<FileId, usize> = FxHashMap::default();
+    let mut line_starts: Vec<(FileId, StrId, Vec<u32>)> = Vec::new();
+    for at in declared_at.iter().flatten() {
+        declaring.entry(at.file).or_insert_with(|| {
             let shown = get_relative_path_from_directory(shown_from, checked.files.module(at.file).file_name(), checked.files.is_case_sensitive);
-            (program.strs.intern(&shown), compute_ecma_line_starts(&checked.files.hir(at.file).text))
+            line_starts.push((at.file, program.strs.intern(&shown), Vec::new()));
+            line_starts.len() - 1
         });
+    }
+    for_each_mut(&mut line_starts, in_parallel, &|(file, _, starts)| *starts = compute_ecma_line_starts(&checked.files.hir(*file).text));
+    for (&(layout, _), at) in views.iter().zip(&declared_at) {
+        let Some(at) = at else { continue };
+        let (_, path, starts) = &line_starts[declaring[&at.file]];
         let out = &mut program.layouts[layout.idx()];
-        (out.declared_path, out.declared_line) = (*path, line_starts.partition_point(|&start| start <= at.pos) as u32);
+        (out.declared_path, out.declared_line) = (*path, starts.partition_point(|&start| start <= at.pos) as u32);
     }
     times.add("type texts", &mut since);
     say("the texts of the types");
@@ -2131,6 +2376,12 @@ pub fn link(
             explained.extend(why.iter().map(|line| format!("disagreement {}: {line}", number + 1)));
         }
     }
+    if explain.uninitialized {
+        explained.push(format!(
+            "nil: room in {} parameters, {} results, {} fields, {} module variables that are kept unboxed; {} uses narrowed behind a test",
+            roomier.parameters, roomier.results, roomier.fields, roomier.variables, roomier.narrowed
+        ));
+    }
     if explain.foreign {
         explained.append(&mut c.explain_foreign(&asked, &membership));
     }
@@ -2170,6 +2421,7 @@ pub fn link(
             }
         }
     }
+    times.add("by key", &mut since);
     if explain.predictions {
         explained.append(&mut c.explain_predictions(&membership.predictions));
     }
@@ -2179,12 +2431,17 @@ pub fn link(
     if explain.uninitialized {
         explained.append(&mut c.explain_uninitialized());
     }
+    if explain.arguments {
+        explained.append(&mut c.explain_arguments());
+    }
     if explain.kinds {
         explained.append(&mut c.explain_kinds());
     }
     if explain.deferred {
         explained.append(&mut c.explain_deferred(&translated));
+        explained.append(&mut explain_start(&program, &evaluating));
         explained.append(&mut c.explain_modules(&roots.iter().map(|root| root.file()).collect::<Vec<FileId>>(), &translated));
+        explained.append(&mut c.explain_commonjs());
     }
     if explain.captures {
         for &file in &translated {
@@ -2199,6 +2456,29 @@ pub fn link(
     if explain.fields {
         explained.append(&mut explain_fields(&program, &names));
     }
+    if explain.given {
+        explained.append(&mut explain_given(&program));
+        let (in_part, by_looks, all) = checked.checker().count_unions_given_in_part();
+        explained.push(format!("given: written unions of records that are given in part: {in_part} of {all}; in {by_looks} of them no member was found: one only looks like what is given"));
+    }
+    if explain.strangers {
+        explained.append(&mut strangers::explain(&program));
+    }
+    if explain.literals {
+        explained.append(&mut literals);
+        explained.append(&mut crate::build::literals::explain_births(&program));
+    }
+    if let Some((name, line)) = explain.literal_at {
+        explained.append(&mut literals_shown);
+        for (module, &(file, _)) in modules.iter().enumerate().filter(|(_, module)| program.strs.get(module.1).ends_with(name.as_bytes())) {
+            let starts = compute_ecma_line_starts(&checked.files.hir(file).text);
+            let from = starts.get(line as usize - 1).copied().unwrap_or(u32::MAX);
+            let to = starts.get(line as usize).copied().unwrap_or(u32::MAX);
+            let is_shown = |func: &Func| func.module.idx() == module && func.values.iter().any(|value| from <= value.pos && value.pos < to);
+            let shown: Vec<usize> = program.funcs.iter().enumerate().filter(|(_, func)| func.module.is_some() && is_shown(func)).map(|(index, _)| index).collect();
+            explained.extend(program.dump_functions(&shown).lines().map(|text| format!("literal: {text}")));
+        }
+    }
     if explain.integers {
         let mut is_name_of_field = vec![false; program.strs.len()];
         let fields = program.layouts.iter().filter(|layout| layout.kind != LayoutKind::Environment).flat_map(|layout| &layout.fields);
@@ -2211,5 +2491,20 @@ pub fn link(
         explained.push(format!("integers: under {} of the {} names of fields that numbers are seen to get to, they are expected to be int32s", by_text.iter().filter(|verdict| verdict.is_expected_int32()).count(), by_text.len()));
         explained.append(&mut c.explain_int32_fields(&by_text));
     }
-    Linked { program, problems, members: membership.sizes.line(), explained, errors, builtin_modules_left_out, builtin_functions_left_out, times }
+    let mut has_escaped = vec![true; program.layouts.len()];
+    for (&(layout, _), escaped) in views.iter().zip(&membership.escaped) {
+        has_escaped[layout.idx()] = escaped.is_some();
+    }
+    let shared = share::share_functions(&mut program, &has_escaped);
+    times.add("shared functions", &mut since);
+    if explain.shared {
+        explained.push(format!("shared: {} function expressions capture nothing; {} of them are one function value", shared.candidates, shared.shared));
+        explained.extend(shared.refused.iter().map(|(why, sites)| format!("shared: {sites} are not: {why}")));
+    }
+    let members = membership.sizes.line();
+    since = Instant::now();
+    std::thread::spawn(move || drop((fragments, index, reach, maps, types, seen, func_ids, layout_ids, global_ids)));
+    drop((membership, names));
+    times.add("free", &mut since);
+    Linked { program, problems, members, explained, errors, builtin_modules_left_out, builtin_functions_left_out, times }
 }

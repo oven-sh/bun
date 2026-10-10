@@ -18,7 +18,7 @@ mod verify;
 
 use build::Problem;
 use bun_sema::check::{Checker, Program as Checked};
-use bun_sema::hir::FileKind;
+use bun_sema::hir::{FileKind, StmtKind};
 use bun_sema::program::FileId;
 use bun_sema::util::InParallel;
 use fragment::Fragments;
@@ -119,7 +119,7 @@ impl<'a> Translation<'a> {
     /// whichever it is started with, is translated. A program that is loaded again is begun again.
     pub fn begin(&self, program: &Checked<'_>, entry_points: &[Vec<FileId>]) {
         let without_whole_trees = program.files_without_whole_trees();
-        let translating = without_whole_trees.is_empty().then(|| (build::Shared::new(program, entry_points, self.constants), Fragments::new(program.files.modules.len())));
+        let translating = without_whole_trees.is_empty().then(|| (build::Shared::new(program, entry_points, self.constants).counting_literals(self.explain.literals, self.explain.literal_at), Fragments::new(program.files.modules.len())));
         *self.begun.write().unwrap_or_else(PoisonError::into_inner) = Some(Begun { without_whole_trees, translating });
     }
 
@@ -166,8 +166,20 @@ impl<'a> Translation<'a> {
         let mut linked = match &begun.translating {
             Some((shared, fragments)) => {
                 let mut c = program.checker();
-                let errors = Errors { places: errors, imported_by: &mut |file| build::files_imported_by(&mut c, shared, file) };
-                link::link(program, fragments.take(), shared.roots(), shared.entry_points(), shared.builtin_modules(), shared.prelude(), &self.constants.root, errors, in_parallel, self.explain, &|c, missing, is_defined| build::describe(c, shared, missing, is_defined))
+                // Also in a file that is not compiled with the program, whose fragment would have said so.
+                let is_in_dropped_import = |&(file, pos): &(FileId, u32)| {
+                    let hir = program.files.hir(file);
+                    let specifier = hir.ids(hir.body).filter(|&stmt| hir[stmt].start <= pos && pos < hir[stmt].loc.end).find_map(|stmt| match hir[stmt].kind {
+                        StmtKind::Import(import) => Some(hir[import].spec),
+                        StmtKind::ExportNamed(export) => Some(hir[export].spec),
+                        StmtKind::ExportStar { spec, .. } => Some(spec),
+                        _ => None,
+                    });
+                    specifier.filter(|specifier| specifier.is_some()).is_some_and(|specifier| self.constants.dropped_imports.contains(&(program.files.module(file).file_name().to_vec(), program.files.atoms.bytes(specifier).to_vec())))
+                };
+                let in_dropped_imports: Vec<bool> = errors.iter().map(is_in_dropped_import).collect();
+                let errors = Errors { places: errors, in_dropped_imports: &in_dropped_imports, imported_by: &mut |file| build::files_imported_by(&mut c, shared, file) };
+                link::link(program, fragments.take(), shared.roots(), shared.entry_points(), shared.builtin_modules(), shared.prelude(), &self.constants.root, self.constants.own_paths.is_some(), errors, in_parallel, self.explain, &|c, missing, is_defined| build::describe(c, shared, missing, is_defined))
             }
             // A file that is only code is not checked, so that nobody has reported it.
             None => {
@@ -211,7 +223,7 @@ impl<'a> Translation<'a> {
         } else if !translated.problems.is_empty() {
             Err(translated.problems)
         } else {
-            Ok(format::write(&translated.program))
+            Ok(format::write(&translated.program, in_parallel))
         };
         (written, translated.errors_that_stand)
     }

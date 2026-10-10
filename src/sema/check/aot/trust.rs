@@ -194,13 +194,19 @@ impl<'p, 's> Checker<'p, 's> {
                 if self.redefines_literal(file, e) || self.argument_handed_back_by(file, e).is_some_and(|first| self.is_predicted(file, first)) {
                     return Some(Claim::Call);
                 }
-                if matches!(hir[callee].kind, ExprKind::Super) || !self.is_predicted(file, callee) {
+                if matches!(hir[callee].kind, ExprKind::Super) {
                     return None;
                 }
                 let is_generic = match self.resolved_signature(file, e).sig {
                     Some(sig) => self.sig_decl(sig).is_some_and(|(of, func, _)| self.return_type_of_fn(of, func) != self.sig_return(sig)),
                     None => false,
                 };
+                if !self.is_predicted(file, callee) {
+                    // What `lib.*.d.ts` declares is typed by what it is handed: `Object.entries(given)`.
+                    let is_declared_by_lib = self.resolved_signature(file, e).sig.and_then(|sig| self.sig_decl(sig)).is_some_and(|(of, ..)| self.files.module(of).is_lib);
+                    let arguments: Vec<ExprId> = hir.ids(hir[call].args).collect();
+                    return (is_generic && is_declared_by_lib && arguments.into_iter().any(|argument| self.is_predicted(file, argument))).then_some(Claim::GenericCall);
+                }
                 Some(match (is_generic, hir[call].type_args.is_empty()) {
                     (false, _) => Claim::Call,
                     (true, true) => Claim::GenericCall,
@@ -370,7 +376,8 @@ impl<'p, 's> Checker<'p, 's> {
             _ => None,
         };
         let decls = self.files.decls(declared);
-        if decls.iter().all(|&(file, decl)| member_of_class(self, file, decl).is_some() && (self.only_declares(file) || self.hir(file).is_ambient(self.hir(file).node(decl)))) {
+        // Also of an interface or a type literal there: `element.props`, where `interface ReactElement<P> { props: P }`.
+        if decls.iter().all(|&(file, decl)| matches!(decl, Decl::Member(_)) && (self.only_declares(file) || self.hir(file).is_ambient(self.hir(file).node(decl)))) {
             return true;
         }
         // A field that the program declares again, `state = { seen: 0 }`: the code behind the class that it extends stores to it all the same.

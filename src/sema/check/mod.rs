@@ -118,7 +118,9 @@ use task::{Open, OrderDependent, Stored, Task};
 
 pub use aot::{ClassFacts, MethodStore, ReplacedMethods};
 pub use aot::CodeOfImport;
+pub use aot::{CommonJsExports, ExportsMention};
 pub use aot::Identity;
+pub use aot::given;
 pub use aot::{Contrary, FlowNode, FlowSource, Int32Verdict, NumberFlow, RunBy, expected_int32};
 pub use aot::{BuiltIn, Candidate, Literal, Membership, Noted, OriginOfData, Place, Question, Reach, WhyForeign};
 pub use aot::{Cause, FieldTypes, Sizes, Subtypes};
@@ -710,7 +712,7 @@ impl<'s> Program<'s> {
             lowest_unresolved_members_hit: u32::MAX,
             active_mappers: Default::default(),
             limits: 0,
-            cross_product_limit: 100_000,
+            fuel: std::cell::Cell::new(u64::MAX),
             instantiation_limit_hits: 0,
             comparisons_of_deeply_nested_types: 0,
             instantiations_up_to_a_limit: Default::default(),
@@ -1344,8 +1346,9 @@ pub struct Checker<'p, 's> {
     /// How many times `error_at_current_node` had nothing to report since `check_file` began: the
     /// computation in progress is not cached.
     limits: u64,
-    /// `checkCrossProductUnion` refuses a union of so many members. TypeScript's 100,000, but in `is_provably_assignable`.
-    cross_product_limit: usize,
+    /// How much a question that only the translation asks may still make: see `burn`, `is_provably_assignable`. `u64::MAX`: no such
+    /// question is being answered.
+    fuel: std::cell::Cell<u64>,
     /// How many times `instantiate` returned the error type at a limit since `check_file` began.
     instantiation_limit_hits: u64,
     /// How many comparisons were `TernaryMaybe` because both types were deeply nested (`isDeeplyNestedType`). That depends on the
@@ -1742,12 +1745,14 @@ impl<'p, 's> Checker<'p, 's> {
 
     #[inline]
     pub fn intern(&self, data: TypeData<'s>) -> TypeId {
+        self.burn(1);
         self.types().intern(data)
     }
 
     /// `intern` for a type with lists, which are copied to the arena only if the type is new.
     #[inline]
     pub fn intern_key(&self, key: TypeKey<'_>) -> TypeId {
+        self.burn(1);
         self.types().intern_key(key)
     }
 
@@ -1847,6 +1852,11 @@ impl<'p, 's> Checker<'p, 's> {
     /// Whether little stack is left for recursion. The file the task is in is then reported as incomplete.
     #[inline]
     pub fn is_stack_low(&self) -> bool {
+        // Whoever recurses gives up as it does for want of stack, and leaves as little behind. The file is not incomplete for it.
+        if self.fuel.get() == 0 {
+            self.times_cut_short.set(self.times_cut_short.get() + 1);
+            return true;
+        }
         let used = self.stack_base.saturating_sub(stack_pointer());
         if used > self.deepest_stack.get() {
             self.deepest_stack.set(used);
@@ -1857,6 +1867,15 @@ impl<'p, 's> Checker<'p, 's> {
             return true;
         }
         false
+    }
+
+    /// So many members, types, instantiations or comparisons have been made.
+    #[inline]
+    fn burn(&self, made: usize) {
+        let fuel = self.fuel.get();
+        if fuel != u64::MAX {
+            self.fuel.set(fuel.saturating_sub(made as u64));
+        }
     }
 
     /// `is_stack_low` for the printer. It elides what is nested too deeply, which loses no error, so the check has not run out of

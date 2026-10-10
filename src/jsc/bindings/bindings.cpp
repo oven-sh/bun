@@ -4271,6 +4271,10 @@ bool JSC__JSValue__isClass(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* ar
 
     switch (callData.type) {
     case CallData::Type::JS:
+#if ENABLE(AOT)
+        if (!callData.js.functionExecutable)
+            return false;
+#endif
         return callData.js.functionExecutable->isClassConstructorFunction();
     case CallData::Type::Native:
         if (callData.native.isBoundFunction)
@@ -5191,7 +5195,7 @@ void JSC__VM__throwError(JSC::VM* vm_, JSC::JSGlobalObject* arg1, JSC::EncodedJS
 
     // Do not call .getObject() on it.
     // https://github.com/oven-sh/bun/issues/13311
-    JSC::Exception* exception = JSC::Exception::create(vm, value);
+    JSC::Exception* exception = JSC::Exception::create(vm, value, JSC::Exception::StackCaptureAction::LeaveToUnwinder);
     scope.throwException(arg1, exception);
 }
 

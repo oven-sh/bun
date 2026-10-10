@@ -28,9 +28,16 @@ use crate::program::{FileId, Sym};
 use crate::types::{TypeData, TypeId};
 use crate::util::{FxHashMap, FxHashSet};
 use std::rc::Rc;
+use std::sync::OnceLock;
 
 /// The type of `this`, the interface that declares the name, the name. The types are `laid_out_as`.
 type Store = (TypeId, TypeId, Atom);
+
+#[derive(Default)]
+pub(super) struct Shared {
+    /// The functions with a store to `(this as ..).name`, of all the files, in their order, and in the order of the text. Syntax only.
+    storing_through_assertions: OnceLock<Vec<(FileId, FnId)>>,
+}
 
 #[derive(Default)]
 pub(super) struct State {
@@ -138,22 +145,8 @@ impl<'p, 's> Checker<'p, 's> {
             return known.clone();
         }
         let files: Vec<FileId> = self.files_declaring_classes().into_iter().filter(|&file| self.is_compiled(file) && !self.hir(file).is_js).collect();
-        let mut functions: Vec<(FileId, FnId)> = Vec::new();
-        for &file in &files {
-            let hir = self.hir(file);
-            for &e in self.exprs_by_kind_of(file).of(ExprTag::Assign) {
-                let ExprKind::Assign { op: None, target, .. } = hir[e].kind else { continue };
-                let ExprKind::Dot { obj, .. } = hir[target].kind else { continue };
-                if matches!(hir[obj].kind, ExprKind::As { expr, .. } if matches!(hir[expr].kind, ExprKind::This))
-                    && let Some(func) = self.enclosing_fn_of_expr(file, e)
-                    && !functions.contains(&(file, func))
-                {
-                    functions.push((file, func));
-                }
-            }
-        }
         let mut stores: Vec<Store> = Vec::new();
-        for (file, func) in functions {
+        for &(file, func) in self.functions_storing_through_assertions(&files) {
             let Some(constructed) = self.type_constructed_by(file, func) else { continue };
             let hir = self.hir(file);
             for store in self.first_stores_written_in(file, func) {
@@ -168,6 +161,28 @@ impl<'p, 's> Checker<'p, 's> {
         let stores = Rc::new(stores);
         self.aot.undeclared_fields.stores = Some(stores.clone());
         stores
+    }
+
+    fn functions_storing_through_assertions(&mut self, files: &[FileId]) -> &'p [(FileId, FnId)] {
+        let shared = &self.p.aot.undeclared_fields.storing_through_assertions;
+        if let Some(known) = shared.get() {
+            return known;
+        }
+        let mut functions: Vec<(FileId, FnId)> = Vec::new();
+        for &file in files {
+            let hir = self.hir(file);
+            for &e in self.exprs_by_kind_of(file).of(ExprTag::Assign) {
+                let ExprKind::Assign { op: None, target, .. } = hir[e].kind else { continue };
+                let ExprKind::Dot { obj, .. } = hir[target].kind else { continue };
+                if matches!(hir[obj].kind, ExprKind::As { expr, .. } if matches!(hir[expr].kind, ExprKind::This))
+                    && let Some(func) = self.enclosing_fn_of_expr(file, e)
+                    && !functions.contains(&(file, func))
+                {
+                    functions.push((file, func));
+                }
+            }
+        }
+        shared.get_or_init(|| functions)
     }
 
     /// The first interface without type parameters that is declared to extend `extended` and declares the property itself. None if

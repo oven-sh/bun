@@ -88,6 +88,12 @@ impl FuncBuilder {
         self.block = block;
     }
 
+    /// Whether control cannot come to where the next operation would go: the current block has ended, or nothing goes to it and nothing will.
+    pub fn is_dead_here(&self) -> bool {
+        let state = &self.states[self.block.idx()];
+        !self.is_open() || (self.block != crate::ir::Func::ENTRY && state.is_sealed && state.preds.is_empty())
+    }
+
     /// Whether the current block still takes operations.
     pub fn is_open(&self) -> bool {
         self.func.blocks[self.block.idx()].term.is_none()

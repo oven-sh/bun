@@ -1525,6 +1525,9 @@ impl<'a> Transpiler<'a> {
 
                 opts.features.inlining = self.options.inlining;
                 opts.features.auto_import_jsx = self.options.auto_import_jsx;
+                if loader.is_jsx() && !source.path.is_node_module() {
+                    opts.features.react_compiler = self.options.react_compiler;
+                }
                 // JavaScriptCore implements `using` / `await using` natively, so
                 // when targeting Bun there is no need to lower them.
                 opts.features.lower_using = !target.is_bun();

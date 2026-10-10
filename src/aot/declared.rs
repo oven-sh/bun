@@ -77,6 +77,12 @@ impl Declared {
     pub fn has_objects(&self) -> bool {
         self.any_object || self.any_function || !self.parts.is_empty()
     }
+    /// Primitives of more than one kind and no object: `boolean | number | string`. Nil is no kind. It is kept boxed: where it is kept there is room for any value.
+    pub fn is_of_several_kinds_of_primitives(&self) -> bool {
+        let kinds = [prim::BOOLEAN, prim::STRING, prim::SYMBOL, prim::BIGINT].iter().filter(|&&kind| self.prims & kind != 0).count();
+        let numbers = usize::from(self.prims & prim::NUMBER != 0 || self.ints.is_some());
+        !self.has_objects() && kinds + numbers > 1
+    }
     /// Whether some of it is kept as a reference.
     pub fn has_cells(&self) -> bool {
         self.prims & prim::CELLS != 0 || self.has_objects()

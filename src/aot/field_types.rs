@@ -63,7 +63,7 @@ pub(crate) fn field_types(program: &Program, views: &[(LayoutId, TypeId)]) -> Fi
         unions_in.push(unions);
     }
     let casts = program.funcs.iter().flat_map(|func| &func.values).filter_map(|value| match value.def {
-        Def::Op(Op::Coerce { to, why: Why::Cast | Why::Coerce, .. }) if to.is_some() => Some(to.0),
+        Def::Op(Op::Coerce { to, why: Why::Cast | Why::Coerce | Why::CoerceFreshGraph, .. }) if to.is_some() => Some(to.0),
         _ => None,
     });
     let mut copied_to: Vec<u32> = casts.collect();

@@ -10,6 +10,7 @@ use crate::atom::{Atom, known};
 use crate::bind::{Decl, Parent, PatParent, SymFlags, SymbolId};
 use crate::check::Checker;
 use crate::hir::{BinOp, CallId, ExprId, ExprKind, FileKind, Flags, FnBody, FnId, FnKind, MemberKind, ParamId, PatId, PatKind, PropKey, PropKind, StmtKind, UnOp};
+use super::kinds::kind;
 use crate::program::{FileId, Sym};
 use crate::types::{MapperId, Origin, Prop, PropFlags, PropSource, Shape, TypeData, TypeId};
 use bun_alloc::vec_from_iter_in;
@@ -271,6 +272,13 @@ impl<'p, 's> Checker<'p, 's> {
         if self.unvouched_claim(file, e).is_some() {
             return false;
         }
+        // So is the type of what the program is given. A cast goes by its operand: see `type_yielded_by`.
+        if !matches!(hir[e].kind, ExprKind::As { .. }) {
+            let own = self.type_of_expr(file, e);
+            if self.has_tainted_part(own) {
+                return false;
+            }
+        }
         let source = match hir[e].kind {
             ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
             ExprKind::Call(call) | ExprKind::New(call) | ExprKind::TaggedTemplate(call) => hir[call].callee,
@@ -280,6 +288,7 @@ impl<'p, 's> Checker<'p, 's> {
                 let import = found.filter(|&found| self.files.flags(found).contains(SymFlags::ALIAS));
                 return import.is_none_or(|import| self.files.resolve_alias(import).is_some_and(|target| !self.is_untyped_file(target.file)));
             }
+            ExprKind::Object(props) => return !props.iter().any(|p| hir[p].kind == PropKind::Spread && self.spread_claims_more_than_it_copies(file, hir[p].value)),
             _ => return true,
         };
         let ty = self.type_of_expr(file, source);
@@ -304,8 +313,44 @@ impl<'p, 's> Checker<'p, 's> {
         }
         match self.telling(checked) {
             Some(checked) => Some(checked),
-            None => self.predict(Subject::Expr(file, e), |c| c.predict_expr(file, e)),
+            None => self.predict(Subject::Expr(file, e), |c| c.predict_expr(file, e)).or_else(|| self.predicted_by_use(file, e)),
         }
+    }
+
+    /// `fiber.flags & 4`, `a.index < 10`, `-x.n`, `x.lanes |= lane`: what is only good for a number where it stands is expected to be one. Not an operand of `+`, which is as likely a
+    /// string.
+    fn predicted_by_use(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        // Of an array, a string, a function, a typed array.
+        if matches!(hir[e].kind, ExprKind::Dot { name, .. } if name == known::length) {
+            return Some(TypeId::NUMBER);
+        }
+        let Parent::Expr(parent) = bound.expr_parent[e.idx()] else { return None };
+        if let ExprKind::Index { obj, index, .. } = hir[parent].kind
+            && obj == e
+            && self.kinds_yielded_by(file, index) == kind::NUMBER
+        {
+            // A name goes by all that is done with it: `s[i]` beside `s.charCodeAt(i)` is a string.
+            let is_array = match bound.expr_symbol[e.idx()].some() {
+                Some(id) => self.is_used_as_array(Sym { file, id }),
+                None => true,
+            };
+            return is_array.then(|| self.array_of(TypeId::ANY));
+        }
+        let is_for_numbers = |op: BinOp| matches!(op, BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem | BinOp::Pow | BinOp::Shl | BinOp::Shr | BinOp::UShr | BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor);
+        let is_number = match hir[parent].kind {
+            ExprKind::Binary { op, .. } if is_for_numbers(op) => true,
+            ExprKind::Binary { op: BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge, left, right } => self.kinds_yielded_by(file, if left == e { right } else { left }) == kind::NUMBER,
+            // Beside a number a number is the likelier.
+            ExprKind::Binary { op: BinOp::Add, left, right } => self.kinds_yielded_by(file, if left == e { right } else { left }) == kind::NUMBER,
+            ExprKind::Assign { op: Some(BinOp::Add), target, value } => self.kinds_yielded_by(file, if target == e { value } else { target }) == kind::NUMBER,
+            ExprKind::Assign { op: Some(op), .. } => is_for_numbers(op),
+            // `Math.floor(x)` makes a number of whatever it is handed.
+            ExprKind::Call(call) => hir[call].callee != e && matches!(hir[hir[call].callee].kind, ExprKind::Dot { obj, .. } if self.names_global_object(file, obj, b"Math")),
+            ExprKind::Unary { op: UnOp::Minus | UnOp::BitNot | UnOp::Plus | UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec, .. } => true,
+            _ => false,
+        };
+        is_number.then_some(TypeId::NUMBER)
     }
 
     /// What the variable or the property probably holds, at any time.
@@ -839,6 +884,12 @@ impl<'p, 's> Checker<'p, 's> {
             && self.is_used_as_number(Sym { file, id })
         {
             passed = Some(TypeId::NUMBER);
+        }
+        if passed.is_none()
+            && let Some(id) = bound.pat_symbol[hir[p].pat.idx()].some()
+            && self.is_used_as_array(Sym { file, id })
+        {
+            passed = Some(self.array_of(TypeId::ANY));
         }
         self.or_default(file, passed, hir[p].default)
     }

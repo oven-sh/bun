@@ -81,6 +81,9 @@ pub(super) const IS_FLAT: u16 = 1 << 10;
 /// The program tells it from a layout that an object has to be made as: `Subtypes::tell_apart`. It admits nothing for being flat or for
 /// requiring nothing.
 const IS_TOLD_APART: u16 = 1 << 11;
+/// All its properties are primitives or functions (so whatever `IS_FLAT`): nothing has to be made of an object for it. It says one thing only: what is untyped and held to it is not copied into it. It
+/// is not taken for flat anywhere else: a type with methods has to be made, and what is not laid out does not pass a cast to it.
+pub(super) const IS_FLAT_BUT_FOR_FUNCTIONS: u16 = 1 << 12;
 
 /// Phase B asks about no more layouts than this for one target. Of a target that the program tells apart from others, or the type of the objects
 /// of a class, which cannot take any object instead: than that.
@@ -550,7 +553,7 @@ impl Subtypes {
         // what untyped code stores to a field `o: { v: number }` is refused there, and not where `o.v` is read.
         for at in 0..self.gathered.held_untyped.len() {
             let (view, place) = self.gathered.held_untyped[at];
-            if self.flags(view) & (IS_FLAT | IS_MADE_BY_COERCION) == IS_FLAT {
+            if self.flags(view) & (IS_FLAT_BUT_FOR_FUNCTIONS | IS_MADE_BY_COERCION) == IS_FLAT_BUT_FOR_FUNCTIONS {
                 self.let_in(view, self.nodes, WhyForeign::Flat { at: place });
             }
         }
@@ -618,6 +621,9 @@ impl Subtypes {
             }
             for (other, how) in told_from_it {
                 let facts = &mut self.gathered.facts[other as usize];
+                if !takes_any_object[other as usize] {
+                    facts.flags &= !IS_FLAT_BUT_FOR_FUNCTIONS;
+                }
                 if facts.admits_by_structure() && !takes_any_object[other as usize] {
                     facts.flags = (facts.flags & !IS_FLAT) | IS_TOLD_APART;
                     self.told_apart.push((other, made, how));
@@ -858,6 +864,7 @@ impl Subtypes {
                 (HAS_INDEX_SIGNATURE, "index signature"),
                 (HAS_CONCRETE_SUBTYPE, "has a concrete subtype"),
                 (IS_FLAT, "flat"),
+                (IS_FLAT_BUT_FOR_FUNCTIONS, "flat but for functions"),
                 (IS_TOLD_APART, "told apart"),
             ];
             let words: Vec<&str> = words.iter().filter(|word| facts.flags & word.0 != 0).map(|word| word.1).collect();
@@ -1616,22 +1623,40 @@ impl Subtypes {
         let mut known_by: Vec<FxHashMap<Atom, Callee>> = held_by.iter().map(|held| held.iter().copied().collect()).collect();
         let mut is_copied_into_blindly = vec![false; views];
         let copies = EscapeClosure::copies(&self.gathered.escapes, &self.gathered.index_of);
+        // By layout: how often what is known of it has changed. By copy: the sum over its sources at its last turn. Where that is what it was,
+        // the copy brings what it has brought.
+        let mut grown = vec![0u64; views];
+        let mut sources_as_of: Vec<Option<u64>> = vec![None; copies.len()];
         loop {
             let mut has_grown = false;
-            for &(source, target) in &copies {
-                let targets: Vec<u32> = self.sets[target as usize].iter().copied().filter(|&layout| (layout as usize) < views).collect();
+            for (&(source, target), as_of) in copies.iter().zip(&mut sources_as_of) {
                 let sources: &[u32] = source.map_or(&[], |source| &self.sets[source as usize]);
+                let now = sources.iter().filter(|&&layout| (layout as usize) < views).map(|&layout| grown[layout as usize]).sum();
+                if as_of.replace(now) == Some(now) {
+                    continue;
+                }
+                let targets: Vec<u32> = self.sets[target as usize].iter().copied().filter(|&layout| (layout as usize) < views).collect();
                 let is_blind = source.is_none() || sources.iter().any(|&layout| (layout as usize) >= views || is_copied_into_blindly[layout as usize]);
-                let read: Vec<(Atom, Callee)> = sources.iter().filter(|&&layout| (layout as usize) < views).flat_map(|&layout| known_by[layout as usize].iter().map(|(&name, &callee)| (name, callee))).collect();
+                let mut read: FxHashMap<Atom, Callee> = FxHashMap::default();
+                for &layout in sources.iter().filter(|&&layout| (layout as usize) < views) {
+                    for (&name, &callee) in &known_by[layout as usize] {
+                        let joined = read.entry(name).or_default();
+                        *joined = joined.join(callee);
+                    }
+                }
                 for layout in targets {
                     if is_blind && !std::mem::replace(&mut is_copied_into_blindly[layout as usize], true) {
                         has_grown = true;
+                        grown[layout as usize] += 1;
                     }
-                    for &(name, callee) in &read {
+                    for (&name, &callee) in &read {
                         let joined = known_by[layout as usize].entry(name).or_default();
                         let both = joined.join(callee);
-                        has_grown |= both != *joined;
-                        *joined = both;
+                        if both != *joined {
+                            has_grown = true;
+                            grown[layout as usize] += 1;
+                            *joined = both;
+                        }
                     }
                 }
             }
@@ -1660,7 +1685,8 @@ impl Subtypes {
             altered_by[alteration][1] = reached.iter().filter(|reach| is_marked(reach, alteration)).count() as u32;
             altered_by[alteration][2] = u32::from(altered.is_anything);
         }
-        let (alteration_sites, untyped_alterations) = (self.gathered.escapes.alterations.sites(), self.gathered.escapes.alterations.untyped_places());
+        let (alteration_sites, untyped_alterations) = self.gathered.escapes.with_alterations(|noted| (noted.sites(), noted.untyped_places()));
+        let (widest_alterations, doors) = self.gathered.escapes.with_alterations(|noted| (noted.widest(), noted.doors()));
         let doubt_about = |layout: u32, name: Atom, callee: Callee| -> Option<Doubt> {
             if closure.escaped[layout as usize].is_some() {
                 Some(Doubt::Escaped)
@@ -1708,8 +1734,8 @@ impl Subtypes {
             alteration_sites,
             altered_by,
             untyped_alterations,
-            widest_alterations: self.gathered.escapes.alterations.widest(),
-            doors: self.gathered.escapes.alterations.doors(),
+            widest_alterations,
+            doors,
             sizes: self.sizes,
             why_foreign,
             subtypes: self.sets,

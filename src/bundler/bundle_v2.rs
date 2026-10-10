@@ -2562,6 +2562,64 @@ pub mod bv2_impl {
             Err(crate::Error::BuildFailed)
         }
 
+        /// The compiler lowers JSX, fields and decorators by one tsconfig.json, that of the first entry point. The bundler goes by the
+        /// one around each file. Where the two say otherwise of JSX: `TypeChecked::jsx`, by index of the source: factory, fragment, source of the import, and whether it is the
+        /// classic transform. Where of fields or decorators: the file is not compiled.
+        fn other_tsconfigs(&mut self) -> Result<Vec<(usize, [Vec<u8>; 3], bool)>, Error> {
+            type Settings = ([Vec<u8>; 3], crate::options::jsx::Runtime, [bool; 3]);
+            let Some(first) = self.graph.entry_points.first().map(|it| it.get() as usize) else {
+                return Ok(Vec::new());
+            };
+            let (sources, loaders) = (self.graph.input_files.items_source(), self.graph.input_files.items_loader());
+            let unmerged = self.transpiler.options.jsx.clone();
+            let resolver = &mut self.transpiler.resolver;
+            let mut by_directory: bun_collections::StringHashMap<Settings> = Default::default();
+            let mut settings_around = |source: &bun_ast::Source| -> Settings {
+                let directory = source.path.name().dir;
+                if let Some(known) = by_directory.get(directory) {
+                    return known.clone();
+                }
+                let around = resolver.read_dir_info_ignore_error(directory).and_then(|info| resolver.enclosing_tsconfig_json(&info));
+                let jsx = around.as_ref().map_or_else(|| unmerged.clone(), |tsconfig| tsconfig.merge_jsx(unmerged.clone()));
+                let joined = |list: &crate::options::jsx::MemberList| list.iter().collect::<Vec<_>>().join(&b"."[..]);
+                let others = around.as_ref().map_or([true, false, false], |tsconfig| {
+                    [tsconfig.use_define_for_class_fields.unwrap_or(true), tsconfig.experimental_decorators, tsconfig.emit_decorator_metadata]
+                });
+                let settings = ([joined(&jsx.factory), joined(&jsx.fragment), jsx.package_name.to_vec()], jsx.runtime, others);
+                let _ = by_directory.put(directory, settings.clone());
+                settings
+            };
+            let expected = settings_around(&sources[first]);
+            let mut refused: Vec<(usize, &'static str)> = Vec::new();
+            let mut lowered_otherwise = Vec::new();
+            for (index, (source, loader)) in sources.iter().zip(loaders).enumerate() {
+                let is_jsx = matches!(source.path.name().ext, b".tsx" | b".jsx");
+                if !source.path.is_file() || !(loader.is_typescript() || is_jsx && loader.is_jsx()) {
+                    continue;
+                }
+                let found = settings_around(source);
+                let classic = crate::options::jsx::Runtime::Classic;
+                // The factories count for the classic transform, the source of the import for the automatic one.
+                let counts = [found.1 == classic, found.1 == classic, found.1 != classic];
+                if let Some(at) = (0..3).find(|&at| loader.is_typescript() && found.2[at] != expected.2[at]) {
+                    refused.push((index, ["useDefineForClassFields", "experimentalDecorators", "emitDecoratorMetadata"][at]));
+                } else if is_jsx && (found.1 != expected.1 || (0..3).any(|at| counts[at] && found.0[at] != expected.0[at])) {
+                    lowered_otherwise.push((index, found.0, found.1 == classic));
+                }
+            }
+            for &(index, option) in &refused {
+                self.transpiler.log_mut().add_range_error_fmt(
+                    Some(&sources[index]),
+                    bun_ast::Range::NONE,
+                    format_args!("not compiled yet: \"{option}\" of another tsconfig.json than the entry point's"),
+                );
+            }
+            match refused.is_empty() {
+                true => Ok(lowered_otherwise),
+                false => Err(crate::Error::BuildFailed),
+            }
+        }
+
         /// `BundleOptions::type_check`. Every file is parsed, so the pool is idle and the text of
         /// each file is in the graph.
         fn type_check(&mut self) -> Result<(), Error> {
@@ -2571,6 +2629,8 @@ pub mod bv2_impl {
             if type_check.is_none() && analyze.is_none() {
                 return Ok(());
             }
+            let react_compiler_outputs = if analyze.is_some() { self.print_react_compiler_outputs() } else { Vec::new() };
+            let lowered_otherwise = if analyze.is_some() { self.other_tsconfigs()? } else { Vec::new() };
             let sources = self.graph.input_files.items_source();
             let loaders = self.graph.input_files.items_loader();
             let import_records = self.graph.ast.items_import_records();
@@ -2755,6 +2815,10 @@ pub mod bv2_impl {
                 assets: &mut assets,
                 rewrite_jest_for_tests: self.transpiler.options.rewrite_jest_for_tests,
                 preserve_source_paths: self.transpiler.options.preserve_source_paths,
+                react_compiler_outputs: &mut react_compiler_outputs.iter().map(|(index, javascript)| (all_sources[*index].path.text, &javascript[..])),
+                jsx: &mut lowered_otherwise.iter().map(|(index, [factory, fragment, import_source], is_classic)| {
+                    (all_sources[*index].path.text, options::JsxOfFile { is_classic: *is_classic, factory, fragment, import_source })
+                }),
             };
             // The analysis starts with the check that `type_check` is, which so runs once.
             if let Some(analyze) = analyze {
@@ -2770,6 +2834,8 @@ pub mod bv2_impl {
                 self.linker.facts = facts;
                 if is_compiled {
                     self.empty_compiled_entry_points()?;
+                    // What is left are entry points that are no code. A helper of the runtime that they share would be a chunk of nothing else.
+                    self.transpiler.options.code_splitting = false;
                 }
                 return match self.transpiler.log().has_errors() {
                     true => Err(crate::Error::BuildFailed),
@@ -2780,6 +2846,87 @@ pub mod bv2_impl {
                 return Ok(());
             }
             Err(crate::Error::BuildFailed)
+        }
+
+        /// `TypeChecked::react_compiler_outputs`, by index of the source. In the graph a module is in parts, for the linker. So each is parsed once
+        /// more, by itself, as where nothing is bundled, and printed. Not an entry point: the engine knows that by its path.
+        fn print_react_compiler_outputs(&mut self) -> Vec<(usize, Box<[u8]>)> {
+            if !self.transpiler.options.react_compiler.is_enabled() {
+                return Vec::new();
+            }
+            let candidates: Vec<usize> = (self.graph.input_files.items_source().iter().zip(self.graph.input_files.items_loader()).enumerate())
+                .filter(|(index, (source, loader))| {
+                    loader.is_jsx()
+                        && source.path.is_file()
+                        && !source.path.is_node_module()
+                        && !self.graph.entry_points.iter().any(|entry_point| entry_point.get() as usize == *index)
+                })
+                .map(|(index, _)| index)
+                .collect();
+            let mut outputs = Vec::new();
+            for index in candidates {
+                let mut source = self.graph.input_files.items_source()[index].clone();
+                // It is printed by itself: its symbols are in the one list there is then.
+                source.index = bun_ast::Index(0);
+                let loader = self.graph.input_files.items_loader()[index];
+                let target = self.graph.ast.items_target()[index];
+                let arena = ThreadLocalArena::new();
+                let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
+                let _ast_scope = ast_memory_allocator.enter();
+                // SAFETY: `arena` outlives the parse and the print, and the transpiler gets its own back before it is dropped.
+                let arena_ref: &'a ThreadLocalArena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
+                let transpiler = self.transpiler_for_target(target);
+                let (own_arena, own_log) = (transpiler.arena, transpiler.log);
+                // What there is to say about the file has been said when it was parsed for the bundle.
+                let mut log = bun_ast::Log::init();
+                transpiler.set_arena(arena_ref);
+                transpiler.set_log(&raw mut log);
+                // As the resolver says it for the parse of the bundle.
+                let tsconfig_around = (transpiler.resolver.read_dir_info(source.path.name().dir).ok().flatten())
+                    .and_then(|dir| transpiler.resolver.enclosing_tsconfig_json(&dir));
+                let jsx = transpiler.options.jsx.clone();
+                let jsx = match &tsconfig_around {
+                    Some(tsconfig) => tsconfig.merge_jsx(jsx),
+                    None => jsx,
+                };
+                let parsed = transpiler.parse(
+                    crate::transpiler::ParseOptions {
+                        arena: arena_ref,
+                        dirname_fd: bun_sys::Fd::INVALID,
+                        file_descriptor: None,
+                        file_fd_ptr: None,
+                        path: source.path.clone(),
+                        loader,
+                        jsx,
+                        macro_remappings: Default::default(),
+                        macro_js_ctx: Default::default(),
+                        virtual_source: Some(&source),
+                        replace_exports: Default::default(),
+                        inject_jest_globals: false,
+                        set_breakpoint_on_first_line: false,
+                        emit_decorator_metadata: tsconfig_around.as_ref().is_some_and(|tsconfig| tsconfig.emit_decorator_metadata),
+                        experimental_decorators: tsconfig_around.as_ref().is_some_and(|tsconfig| tsconfig.experimental_decorators),
+                        use_define_for_class_fields: tsconfig_around.as_ref().and_then(|tsconfig| tsconfig.use_define_for_class_fields).unwrap_or(true),
+                        remove_cjs_module_wrapper: false,
+                        dont_bundle_twice: false,
+                        allow_commonjs: false,
+                        module_type: Default::default(),
+                        runtime_transpiler_cache: None,
+                        keep_json_and_toml_as_one_statement: false,
+                        allow_bytecode_cache: false,
+                    },
+                    None,
+                );
+                let mut printer = bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init());
+                let is_printed = parsed.is_some_and(|parsed| transpiler.print(arena_ref, parsed, &mut printer, bun_js_printer::Format::Esm).is_ok());
+                transpiler.set_arena(own_arena);
+                transpiler.set_log(own_log);
+                let javascript = printer.ctx.written();
+                if is_printed && strings::contains(javascript, b"react/compiler-runtime") {
+                    outputs.push((index, javascript.into()));
+                }
+            }
+            outputs
         }
 
         /// The compiled program is all that runs once one of its entry points is run, so those files become empty modules, and what
@@ -2830,6 +2977,8 @@ pub mod bv2_impl {
                 .ok_or(Error::ParserError)?,
             );
             ast.target = target;
+            // By its name alone an empty `.cjs` file is a CommonJS module, which the linker wraps in a function: code that is not of the compiled program.
+            ast.exports_kind = ExportsKind::None;
             self.graph.input_files.items_source_mut()[index] = source.clone();
             self.graph.ast.set(index, ast);
             Ok(())

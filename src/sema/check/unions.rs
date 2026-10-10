@@ -1406,7 +1406,9 @@ impl<'p, 's> Checker<'p, 's> {
             self.error_at_current_node(2590);
             return None;
         }
-        if size >= self.cross_product_limit {
+        // So many intersections, each of as many parts as there are types.
+        self.burn(size.saturating_mul(types.len()));
+        if self.fuel.get() == 0 {
             self.note_limit();
             self.mark_tainted_from(0);
             return None;

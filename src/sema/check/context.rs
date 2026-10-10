@@ -1178,6 +1178,9 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// The type an object literal is checked against, narrowed to the member of a union that its properties single out.
     pub fn contextual_type_of_literal(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
+        if self.is_part_that_is_spread(file, e) {
+            return None;
+        }
         self.prepare_enclosing(file, e);
         self.apparent_type_of_contextual_type(file, e, ContextFlags::empty())
     }

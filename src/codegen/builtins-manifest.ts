@@ -16,7 +16,7 @@
 //   always       id                     native code may require it, whatever the program does
 //   trigger      global.property, id..  native code requires them once the program reads that property
 //
-// With a second output file, also the archive `bun build --compile-aot` compiles the modules from: their sources as they
+// With a second output file, also the archive `bun build --compile --aot` compiles the modules from: their sources as they
 // are written, the two declaration files, and the manifest. The format is described in src/builtin_syntax/lib.rs.
 //
 // Usage: bun src/codegen/builtins-manifest.ts --debug=[OFF|ON] <manifest> [<archive>]

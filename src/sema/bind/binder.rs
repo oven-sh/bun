@@ -1183,8 +1183,9 @@ impl<'f, 's> Binder<'f, 's> {
     // ───────────────────────────── the file ─────────────────────────────
 
     fn file(&mut self) {
-        // `setCommonJSModuleIndicator`: not in a file that imports or exports.
-        if self.f.is_js && (!self.f.has_module_syntax || self.f.is_module_by_decree) {
+        // `setCommonJSModuleIndicator`: not in a file that imports or exports. To the runtime TypeScript is CommonJS by the same signs.
+        let is_asked = self.f.is_js || self.options.names_make_commonjs && self.f.kind != crate::hir::FileKind::Declaration;
+        if is_asked && (!self.f.has_module_syntax || self.f.is_module_by_decree) {
             self.b.commonjs_indicator = (0..self.f.exprs.len() as u32).map(ExprId).find(|&e| {
                 require_argument(self.f, e).is_some()
                     || matches!(
@@ -1193,6 +1194,13 @@ impl<'f, 's> Binder<'f, 's> {
                             | JsDeclarationKind::ExportsProperty(_)
                             | JsDeclarationKind::ObjectDefinePropertyExports
                     )
+                    || self.options.names_make_commonjs
+                        && match self.f[e].kind {
+                            ExprKind::Ident(known::exports | known::module) => true,
+                            // That of the file, for which the runtime's parser writes `exports`.
+                            ExprKind::This => self.f.kind(self.f.get_this_container(self.f.node(e), false, false)) == crate::node::Kind::SourceFile,
+                            _ => false,
+                        }
             });
         }
         let is_module = self.f.has_module_syntax || self.b.commonjs_indicator.is_some();

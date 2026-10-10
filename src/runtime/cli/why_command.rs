@@ -494,6 +494,7 @@ impl WhyCommand {
                     index_sort::sort_slice_by(&mut sorted, cmp_dependents);
 
                     let mut ctx_data = TreeContext::init(&all_dependents);
+                    ctx_data.path_tracker.insert(target_version.pkg_id, 0);
 
                     let len = sorted.len();
                     for (dep_idx, dep) in sorted.iter().enumerate() {

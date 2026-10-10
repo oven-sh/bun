@@ -579,4 +579,56 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
 
     expect(outputDepth2).toContain("mime-db@");
   });
+
+  it("should mark circular dependencies at the first repeat of the queried package", async () => {
+    // Static lockfile: dep-loop-entry <-> dep-loop-exit. No install needed.
+    using testDir = tempDir(`why-loop-${i++}`, {
+      "package.json": JSON.stringify({
+        name: "loop-test",
+        version: "1.0.0",
+        dependencies: { "dep-loop-entry": "1.0.0" },
+      }),
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: {
+          "": { name: "loop-test", version: "1.0.0", dependencies: { "dep-loop-entry": "1.0.0" } },
+        },
+        packages: {
+          "dep-loop-entry": [
+            "dep-loop-entry@1.0.0",
+            "",
+            { dependencies: { "dep-loop-exit": "1.0.0" } },
+            "sha512-XQR76R6M+i++Bl7qGqCU+aHLPNpFHvfGaH/fNrtVt24zhi/ahp6X7fWK+5JPh/2aHTPAXGndeyGnHAOsJ2DboQ==",
+          ],
+          "dep-loop-exit": [
+            "dep-loop-exit@1.0.0",
+            "",
+            { dependencies: { "dep-loop-entry": "1.0.0" } },
+            "sha512-iI3zFvAvGK76XyH346CHeM7KqzhY46zMZ28P7VmsIgAeYKFK7wR/zTtl4sP8ETW4cF+3SCJWD58pm30VQHtDgQ==",
+          ],
+        },
+      }),
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), ...cmd.split(" "), "dep-loop-exit"],
+      cwd: String(testDir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toMatchInlineSnapshot(`
+      "dep-loop-exit@1.0.0
+        └─ dep-loop-entry@1.0.0 (requires 1.0.0)
+           ├─ dep-loop-exit@1.0.0 (requires 1.0.0)
+           │  └─ *circular
+           └─ loop-test (requires 1.0.0)
+
+      "
+    `);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
 });

@@ -5,6 +5,7 @@ use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::ptr::{null, null_mut};
 
+use bun_collections::ArrayHashMap;
 use bun_collections::smallvec::SmallVec;
 use bun_io::KeepAlive;
 use bun_jsc::{
@@ -231,6 +232,8 @@ pub(crate) struct QuicEndpoint {
     processing: Cell<bool>,
     followup_due: Cell<bool>,
     sessions: JsCell<Vec<*mut QuicSession>>,
+    /// `sessions` by pointer, so `live_session` is a lookup and not a scan.
+    session_set: JsCell<ArrayHashMap<*mut QuicSession, ()>>,
     pub(super) server_local_tp: JsCell<lsquic::NqTransportParams>,
     pub(super) client_local_tp: JsCell<lsquic::NqTransportParams>,
     pending_new_sessions: JsCell<Vec<*mut QuicSession>>,
@@ -1148,6 +1151,7 @@ impl QuicEndpoint {
             processing: Cell::new(false),
             followup_due: Cell::new(false),
             sessions: JsCell::new(Vec::new()),
+            session_set: JsCell::new(ArrayHashMap::new()),
             server_local_tp: JsCell::new(lsquic::NqTransportParams::default()),
             client_local_tp: JsCell::new(lsquic::NqTransportParams::default()),
             pending_new_sessions: JsCell::new(Vec::new()),
@@ -1327,13 +1331,11 @@ impl QuicEndpoint {
         // SAFETY: see doc comment.
         unsafe { f(&mut *self.state_mut()) }
     }
-    /// Upgrade a session pointer to a reference, verifying it is still in
-    /// the `sessions` registry — `unregister_session` always precedes the
-    /// session's teardown/finalize, so a registered pointer is live on the
-    /// JS thread.
+    /// Upgrade a session pointer to a reference if it is still registered.
     fn live_session(&self, p: *mut QuicSession) -> Option<&QuicSession> {
-        // SAFETY: see doc comment.
-        self.sessions.get().contains(&p).then(|| unsafe { &*p })
+        // SAFETY: `unregister_session` removes `p` from `session_set` before
+        // the session's teardown/finalize, so a member is live on the JS thread.
+        self.session_set.get().contains(&p).then(|| unsafe { &*p })
     }
     fn write_stat(&self, idx: usize, value: u64) {
         if !self.stats.is_null() && idx < ENDPOINT_STATS_FIELDS.len() {
@@ -1732,7 +1734,7 @@ impl QuicEndpoint {
             true,
         )?;
         let applied = self.apply_server_session_options(global, session);
-        self.sessions.with_mut(|v| v.push(session));
+        self.register_session(session);
         self.pending_new_sessions.with_mut(|v| v.push(session));
         self.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
         self.provisional.with_mut(|v| {
@@ -1889,7 +1891,7 @@ impl QuicEndpoint {
                 if let Err(err) = self.apply_server_session_options(global, session) {
                     crate::dispatch::fold(Err(err));
                 }
-                self.sessions.with_mut(|v| v.push(session));
+                self.register_session(session);
                 self.pending_new_sessions.with_mut(|v| v.push(session));
                 self.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
                 // SAFETY: session was just created.
@@ -1952,8 +1954,17 @@ impl QuicEndpoint {
         self.processing.set(false);
     }
 
+    fn register_session(&self, session: *mut QuicSession) {
+        self.sessions.with_mut(|v| v.push(session));
+        self.session_set
+            .with_mut(|s| bun_core::handle_oom(s.put(session, ())));
+        debug_assert_eq!(self.sessions.get().len(), self.session_set.get().len());
+    }
+
     pub(super) fn unregister_session(&self, session: *mut QuicSession) {
         self.sessions.with_mut(|v| v.retain(|&s| s != session));
+        self.session_set.with_mut(|s| s.swap_remove(&session));
+        debug_assert_eq!(self.sessions.get().len(), self.session_set.get().len());
         self.pending_new_sessions
             .with_mut(|v| v.retain(|&s| s != session));
         self.pending_verneg
@@ -2422,7 +2433,7 @@ impl QuicEndpoint {
                 c.use_preferred_address(true);
             }
         }
-        self.sessions.with_mut(|v| v.push(session));
+        self.register_session(session);
         self.add_stat(IDX_STATS_CLIENT_SESSIONS, 1);
         self.schedule_process();
         Ok(handle)
@@ -2472,7 +2483,7 @@ impl QuicEndpoint {
         // A probe has no engine, so nothing else would ever arm the timer that
         // runs the sweep expiring it.
         self.schedule_process();
-        self.sessions.with_mut(|v| v.push(session));
+        self.register_session(session);
         self.add_stat(IDX_STATS_CLIENT_SESSIONS, 1);
         if let Some(socket) = self.socket.get() {
             uws::udp::Socket::opaque_mut(socket).send(

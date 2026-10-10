@@ -206,6 +206,62 @@ console.log("PRELOAD");
     },
   });
 
+  // autoloadDotenv: false only opts out of the .env files. Code the executable
+  // transpiles at runtime (here a package loaded from the cwd's node_modules)
+  // must still read process.env.NODE_ENV / BUN_ENV / process.browser live, as it
+  // does under `bun run` and in an executable built with autoloadDotenv on.
+  // It used to get the values from the launch environment inlined instead, on
+  // the main thread and in workers alike.
+  itBundled("compile/AutoloadDotenvDisabledDoesNotInlineNodeEnvCLI", {
+    compile: {
+      autoloadDotenv: false,
+    },
+    backend: "cli",
+    files: {
+      "/entry.ts": /* js */ `
+        process.env.NODE_ENV = "set-by-main";
+        process.env.BUN_ENV = "set-by-main";
+        process.browser = "set-by-main";
+        const imp = x => import(x);
+        const { read } = await imp("runtime-only");
+        console.log(JSON.stringify(read()));
+
+        const worker = new Worker("./worker.ts");
+        console.log(JSON.stringify(await new Promise(resolve => {
+          worker.onmessage = event => resolve(event.data);
+        })));
+        worker.terminate();
+      `,
+      "/worker.ts": /* js */ `
+        process.env.NODE_ENV = "set-by-worker";
+        process.env.BUN_ENV = "set-by-worker";
+        process.browser = "set-by-worker";
+        const imp = x => import(x);
+        const { read } = await imp("runtime-only");
+        postMessage(read());
+      `,
+      "/node_modules/runtime-only/index.js": `throw new Error("Must be loaded at runtime, not bundled.");`,
+    },
+    entryPointsRaw: ["./entry.ts", "./worker.ts"],
+    outfile: "dist/out",
+    runtimeFiles: {
+      "/node_modules/runtime-only/index.js": /* js */ `
+        export function read() {
+          return [process.env.NODE_ENV, process.env.BUN_ENV, process.browser];
+        }
+      `,
+    },
+    run: {
+      file: "dist/out",
+      setCwd: true,
+      env: {
+        NODE_ENV: "from-launch-env",
+        BUN_ENV: "from-launch-env",
+      },
+      stdout: `["set-by-main","set-by-main","set-by-main"]\n["set-by-worker","set-by-worker","set-by-worker"]`,
+    },
+  });
+
   // Test CLI backend with autoloadDotenv: true
   itBundled("compile/AutoloadDotenvEnabledCLI", {
     compile: {

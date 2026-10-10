@@ -2658,11 +2658,72 @@ test.skipIf(memoryForLongStrings < 10 * 1024 ** 3)(
   30_000,
 );
 
+// A collection scans the machine stack conservatively, so it can keep a context that one of the two fixtures below
+// dropped. That is not a leak only if nothing in the heap holds the context. This fixture source takes the sandboxes
+// of the kept contexts and returns, for each, the path from a root to it in a heap snapshot. A snapshot records no
+// stack word, so a context that only the stack held has no path. The snapshot sweeps every dead global, and the
+// tests need the dead globals unswept, so a fixture calls this after it has seen which work was cancelled.
+const heapPathsToKeptContexts = /* js */ `
+    function heapPathsToKeptContexts(kept) {
+      if (!kept.some(Boolean)) return [];
+      kept.heldForThisCheck = {}; // Finds this array in the snapshot: it is the test's own hold on the sandboxes.
+      const { nodes, edges, nodeClassNames, edgeTypes, edgeNames, roots, labels } = generateHeapSnapshotForDebugging();
+      const classOf = new Map();
+      for (let i = 0; i < nodes.length; i += 7) classOf.set(nodes[i], nodeClassNames[nodes[i + 2]]);
+      const rootReason = new Map();
+      for (let i = 0; i < roots.length; i += 3) rootReason.set(roots[i], labels[roots[i + 1]]);
+      const out = new Map();
+      const sandboxes = new Map();
+      let ownArray;
+      for (let i = 0; i < edges.length; i += 4) {
+        const from = edges[i];
+        if (out.has(from)) out.get(from).push(edges[i + 1]);
+        else out.set(from, [edges[i + 1]]);
+        // Each dropped sandbox has a property named "dropped" + its index.
+        const name = edgeTypes[edges[i + 2]] === "Property" ? edgeNames[edges[i + 3]] : "";
+        if (name === "heldForThisCheck") ownArray = from;
+        else if (name.startsWith("dropped")) sandboxes.set(Number(name.slice("dropped".length)), from);
+      }
+      // The walk below cannot tell a Strong or a protect() on a global from the WeakMap entry, so ask for those.
+      const strong = heapStats().protectedObjectTypeCounts.NodeVMGlobalObject;
+      const paths = strong ? ["a Strong or a protect() holds " + strong + " NodeVMGlobalObject"] : [];
+      kept.forEach((isKept, index) => {
+        if (!isKept) return;
+        const sandbox = sandboxes.get(index);
+        const global = [...out.keys()].find(
+          from => classOf.get(from) === "NodeVMGlobalObject" && out.get(from).includes(sandbox),
+        );
+        if (global === undefined) return paths.push("context " + index + " is not in the snapshot");
+        // Walk from the root (node 0). Three holds do not count: this check's own array, a WeakRef that deref()
+        // made strong until its job ends, and the root's edge to this global when its reason is the output
+        // constraint of a WeakMap. That edge is the entry of the WeakMap of contexts, keyed by the sandbox: it
+        // holds the global only while something else holds the sandbox.
+        const byWeakMap = ["Output", "WeakMapSpace"].includes(rootReason.get(global));
+        const parent = new Map([[0, undefined]]);
+        const queue = [0];
+        for (const node of queue) {
+          if (node === ownArray || classOf.get(node) === "WeakRef") continue;
+          for (const to of out.get(node) ?? []) {
+            if (parent.has(to) || (node === 0 && to === global && byWeakMap)) continue;
+            parent.set(to, node);
+            queue.push(to);
+          }
+        }
+        const held = [sandbox, global].find(node => parent.has(node));
+        if (held === undefined) return;
+        const path = [];
+        for (let node = held; node !== undefined; node = parent.get(node)) path.unshift(classOf.get(node));
+        paths.push("context " + index + ": " + path.join(" -> "));
+      });
+      return paths;
+    }
+`;
+
 test.concurrent("a FinalizationRegistry cleanup job is dropped when its context dies before the job runs", async () => {
   const fixture = /* js */ `
     import vm from "node:vm";
-    import { edenGC, fullGC } from "bun:jsc";
-
+    import { edenGC, fullGC, generateHeapSnapshotForDebugging, heapStats } from "bun:jsc";
+    ${heapPathsToKeptContexts}
     const nextTurn = () => new Promise(resolve => setImmediate(resolve));
     const liveContextCleanedUp = Promise.withResolvers();
     let liveContext;
@@ -2673,7 +2734,9 @@ test.concurrent("a FinalizationRegistry cleanup job is dropped when its context 
       // A collection sweeps the first 8 cells of a type itself and leaves the rest for later. ~JSGlobalObject
       // cancels the job too, so these contexts are past the first 8 and their registries are not.
       const swept = Array.from({ length: 8 }, () => vm.createContext({}));
-      const contexts = Array.from(cleanups, (_, index) => vm.createContext({ onCleanup: () => cleanups[index]++ }));
+      const contexts = Array.from(cleanups, (_, index) =>
+        vm.createContext({ onCleanup: () => cleanups[index]++, ["dropped" + index]: {} }),
+      );
       for (const context of contexts) dropped.push(new WeakRef(context));
       liveContext = vm.createContext({ onCleanup: liveContextCleanedUp.resolve });
       contexts.push(liveContext);
@@ -2687,19 +2750,19 @@ test.concurrent("a FinalizationRegistry cleanup job is dropped when its context 
     await nextTurn();
     edenGC(); // The registered objects are dead: every registry posts its cleanup job.
     fullGC(); // All contexts but one are dead, and their registries are destroyed.
-    // The stack scan is conservative: a stale word can keep a dropped context alive, and that context keeps its job.
-    const collected = dropped.map(context => context.deref() === undefined);
+    const kept = dropped.map(context => context.deref()); // A context that the collection kept keeps its job.
     await liveContextCleanedUp.promise;
     await nextTurn(); // A job posted after the live context's has run by now too.
     console.log({
-      someContextCollected: collected.includes(true),
-      cleanupsOfCollectedContexts: cleanups.reduce((sum, count, index) => sum + (collected[index] ? count : 0), 0),
+      someContextCollected: kept.includes(undefined),
+      cleanupsOfCollectedContexts: cleanups.reduce((sum, count, index) => sum + (kept[index] ? 0 : count), 0),
+      contextsTheHeapKeeps: heapPathsToKeptContexts(kept),
     });
   `;
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: "{\n  someContextCollected: true,\n  cleanupsOfCollectedContexts: 0,\n}\n",
+    stdout: "{\n  someContextCollected: true,\n  cleanupsOfCollectedContexts: 0,\n  contextsTheHeapKeeps: [],\n}\n",
     stderr: "",
     exitCode: 0,
   });
@@ -2708,18 +2771,21 @@ test.concurrent("a FinalizationRegistry cleanup job is dropped when its context 
 test.concurrent("Atomics.notify does not wake the Atomics.waitAsync of a context that died", async () => {
   const fixture = /* js */ `
     import vm from "node:vm";
-    import { fullGC } from "bun:jsc";
-
+    import { fullGC, generateHeapSnapshotForDebugging, heapStats } from "bun:jsc";
+    ${heapPathsToKeptContexts}
     const nextTurn = () => new Promise(resolve => setImmediate(resolve));
     const shared = new Int32Array(new SharedArrayBuffer(4));
     const liveContextWoke = Promise.withResolvers();
     let liveContext;
-    const dropped = []; // A WeakRef to each context that setup() drops.
+    const woke = [false, false, false, false]; // Whether the wait of each context setup() drops has resolved.
+    const dropped = []; // A WeakRef to each of those contexts.
 
     function setup() {
       // ~JSGlobalObject unregisters the waiter too. A collection sweeps the first 8 globals itself and leaves the rest for later.
       const swept = Array.from({ length: 8 }, () => vm.createContext({}));
-      const contexts = Array.from({ length: 4 }, () => vm.createContext({ shared, onWake() {} }));
+      const contexts = Array.from(woke, (_, index) =>
+        vm.createContext({ shared, onWake: () => (woke[index] = true), ["dropped" + index]: {} }),
+      );
       for (const context of contexts) dropped.push(new WeakRef(context));
       liveContext = vm.createContext({ shared, onWake: liveContextWoke.resolve });
       contexts.push(liveContext);
@@ -2730,17 +2796,23 @@ test.concurrent("Atomics.notify does not wake the Atomics.waitAsync of a context
     await nextTurn().then(setup);
     await nextTurn();
     fullGC();
-    // The stack scan is conservative: a stale word can keep a dropped context alive, and that context keeps its waiter.
-    const alive = dropped.filter(context => context.deref()).length;
-    console.log("a dropped context was collected:", alive < dropped.length);
-    console.log("woken in collected contexts:", Atomics.notify(shared, 0) - alive - 1);
+    const kept = dropped.map(context => context.deref()); // A context that the collection kept keeps its waiter.
+    const woken = Atomics.notify(shared, 0);
     console.log("the live context's wait resolved:", await liveContextWoke.promise);
+    await nextTurn(); // A wait that resolves after the live context's has resolved by now too.
+    console.log({
+      someContextCollected: kept.includes(undefined),
+      wokenInCollectedContexts: woken - 1 - kept.filter(Boolean).length,
+      wokeExactlyTheKeptContexts: woke.every((woke, index) => woke === Boolean(kept[index])),
+      contextsTheHeapKeeps: heapPathsToKeptContexts(kept),
+    });
   `;
   await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({
     stdout:
-      "a dropped context was collected: true\nwoken in collected contexts: 0\nthe live context's wait resolved: ok\n",
+      "the live context's wait resolved: ok\n" +
+      "{\n  someContextCollected: true,\n  wokenInCollectedContexts: 0,\n  wokeExactlyTheKeptContexts: true,\n  contextsTheHeapKeeps: [],\n}\n",
     stderr: "",
     exitCode: 0,
   });

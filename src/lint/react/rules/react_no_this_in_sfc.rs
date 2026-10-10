@@ -19,34 +19,33 @@ pub struct State<'a> {
 
 impl Rule for NoThisInSfc {
     const META: Meta = Meta::oxlint(Plugin::React, "no-this-in-sfc", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::This]);
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         NoThisInSfc
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if is_jsx(file) {
-            on.exprs([ExprTag::This], |_, this, cx| {
-                let Node::Expr(member) = this.parent() else {
-                    return;
-                };
-                if !matches!(member.tag(), ExprTag::Dot | ExprTag::Index)
-                    || this.is_parenthesized()
-                    || member.is_jsx_tag_name()
-                    || member.is_in_type_query()
-                {
-                    return;
-                }
-                if let Some((component, false)) =
-                    cx.state.parent_component.run(Node::Expr(this), false, get_parent_component)
-                    && get_parent_class_component(component, &mut cx.state.parent_class_component).is_none()
-                {
-                    cx.report(this, NO_THIS_IN_SFC);
-                }
-            });
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        is_jsx(file).then(State::default)
+    }
+
+    fn expr<'a>(&self, this: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Node::Expr(member) = this.parent() else {
+            return;
+        };
+        if !matches!(member.tag(), ExprTag::Dot | ExprTag::Index)
+            || this.is_parenthesized()
+            || member.is_jsx_tag_name()
+            || member.is_in_type_query()
+        {
+            return;
         }
-        State::default()
+        if let Some((component, false)) = cx.state.parent_component.run(Node::Expr(this), false, get_parent_component)
+            && get_parent_class_component(component, &mut cx.state.parent_class_component).is_none()
+        {
+            cx.report(this, NO_THIS_IN_SFC);
+        }
     }
 }
 

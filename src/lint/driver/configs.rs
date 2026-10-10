@@ -621,18 +621,22 @@ impl<'l> Loader<'l> {
         added
     }
 
-    /// `file`: the configuration file, if there is one. `None`: the package `eslint` is not installed.
-    fn for_eslint(&self, file: Option<&[u8]>, base_path: &[u8]) -> Option<ForEslint> {
-        let from = file.map_or_else(|| self.cwd(), paths::dirname);
+    /// `file`: the configuration file, if there is one, and what it says. `None`: the package `eslint` is not installed.
+    fn for_eslint(&self, file: Option<(&[u8], &Config)>, base_path: &[u8]) -> Option<ForEslint> {
         let has_eslint =
             |it: &[u8]| fs::is_file(&paths::join(it, b"node_modules/eslint/package.json"));
-        if !std::iter::successors(Some(from), |it| {
-            Some(paths::dirname(it)).filter(|up| up.len() < it.len())
-        })
-        .any(has_eslint)
-        {
-            return None;
-        }
+        let is_found_from = |from: &&[u8]| {
+            std::iter::successors(Some(*from), |it| {
+                Some(paths::dirname(it)).filter(|up| up.len() < it.len())
+            })
+            .any(has_eslint)
+        };
+        // Not every project has it above the configuration file: it is where the parser and the plugins are, whose peer it is.
+        let modules = file.into_iter().flat_map(|it| it.1.modules());
+        let file = file.map(|it| it.0);
+        let from = std::iter::once(file.map_or_else(|| self.cwd(), paths::dirname))
+            .chain(modules.map(paths::dirname))
+            .find(is_found_from)?;
         let options = self.options;
         let native = |path: &[u8]| Json::String(paths::to_native(path.to_vec()));
         let only_errors = options.quiet && options.max_warnings == -1;
@@ -956,6 +960,10 @@ impl<'l> Loader<'l> {
         let respects_eslint_comments =
             option(b"respectEslintDisableDirectives").and_then(Json::as_bool) != Some(false);
         let checks_types = is_on(b"typeCheck");
+        let for_eslint = match flavor {
+            Flavor::Eslint => self.for_eslint(Some((path, &config)), base_path),
+            _ => None,
+        };
         Ok(Arc::new(Loaded {
             config,
             flavor,
@@ -964,10 +972,7 @@ impl<'l> Loader<'l> {
             max_warnings,
             respects_eslint_comments,
             checks_types,
-            for_eslint: match flavor {
-                Flavor::Eslint => self.for_eslint(Some(path), base_path),
-                _ => None,
-            },
+            for_eslint,
         }))
     }
 

@@ -26,6 +26,7 @@ fn is_other_export_or_import(stmt: Stmt) -> bool {
 impl Rule for NoUselessEmptyExport {
     const META: Meta =
         Meta::typescript("no-useless-empty-export", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().stmts(&[StmtTag::ExportNamed]);
     /// Whether the file has another export or an import, once that is known.
     type State<'a> = Option<bool>;
 
@@ -33,19 +34,20 @@ impl Rule for NoUselessEmptyExport {
         NoUselessEmptyExport
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Option<bool> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         // There `export {}` keeps what is not exported out of the module.
         if ts_utils::is_definition_file(file.path()) {
             return None;
         }
-        on.stmts([StmtTag::ExportNamed], |_, stmt, cx| {
-            if is_empty_export(stmt)
-                && matches!(stmt.parent(), Node::File(_))
-                && *cx.state.get_or_insert_with(|| stmt.file().body().iter().any(is_other_export_or_import))
-            {
-                cx.report(stmt, USELESS_EXPORT).fix(|fixer| fixer.remove(stmt));
-            }
-        });
-        None
+        Some(None)
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if is_empty_export(stmt)
+            && matches!(stmt.parent(), Node::File(_))
+            && *cx.state.get_or_insert_with(|| stmt.file().body().iter().any(is_other_export_or_import))
+        {
+            cx.report(stmt, USELESS_EXPORT).fix(|fixer| fixer.remove(stmt));
+        }
     }
 }

@@ -2220,7 +2220,8 @@ describe.concurrent("bun lint", () => {
       },
     );
 
-    test("a file is not emptied", async () => {
+    // What ESLint 10.12 does.
+    test("a file of which the fixes leave nothing is written empty", async () => {
       const removes = `{
         meta: { fixable: "code" },
         create: context => ({
@@ -2230,14 +2231,34 @@ describe.concurrent("bun lint", () => {
         }),
       }`;
       const files = {
-        "eslint.config.mjs": `export default [{ files: ["a.js"], plugins: { mine: { rules: { removes: ${removes} } } }, rules: { "mine/removes": "error" } }];`,
+        "eslint.config.mjs": `export default [
+          { files: ["a.js"], plugins: { mine: { rules: { removes: ${removes} } } }, rules: { "mine/removes": "error" } },
+          { files: ["b.js"], rules: { "no-debugger": "error" } },
+        ];`,
         "a.js": "export const a = 1;\n",
+        "b.js": "debugger;\n",
       };
-      const result = await lint(files, ["--fix", "a.js"], { reads: ["a.js"] });
-      expect(result.files["a.js"]).toBe(files["a.js"]);
-      expect(result.stderr).toContain("a.js: The fixes leave nothing of it.");
-      expect(result.exitCode).toBe(2);
+      const result = await lint(files, ["--fix", "-f", "json", "a.js", "b.js"], { reads: ["a.js", "b.js"] });
+      expect(result.files).toEqual({ "a.js": "", "b.js": files["b.js"] });
+      const [a, b] = JSON.parse(result.raw);
+      expect([a.messages, a.output]).toEqual([[], ""]);
+      expect(b.messages.map((it: any) => it.ruleId)).toEqual(["no-debugger"]);
+      expect(result.exitCode).toBe(1);
     });
+
+    // ESLint prints no report then.
+    test.skipIf(process.getuid?.() === 0 || isWindows)(
+      "a file that cannot be written does not take the report with it",
+      async () => {
+        const files = { "eslint.config.js": basic, "a.js": "var a = 1;\nexport { a };\n", "b.js": "debugger;\n" };
+        const before = (dir: string) => chmodSync(join(dir, "a.js"), 0o444);
+        const result = await lint(files, ["--fix", "-f", "unix", "a.js", "b.js"], { reads: ["a.js"], before });
+        expect(result.files["a.js"]).toBe(files["a.js"]);
+        expect(result.stdout).toContain("[Error/no-debugger]");
+        expect(result.stderr).toMatch(/Cannot write .*a\.js: (EACCES|EPERM)/);
+        expect(result.exitCode).toBe(2);
+      },
+    );
 
     const files = { "eslint.config.js": basic, "a.js": bad, "b.js": "export const b = 1;\n" };
 

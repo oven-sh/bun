@@ -311,6 +311,11 @@ impl Rule for NoUselessDefaultAssignment {
         .has_suggestions()
         .presets(Presets::STRICT_TYPE_CHECKED)
         .requires_types();
+    const ON: On = On::new()
+        .finish()
+        .params()
+        .pats(&[PatTag::Object, PatTag::Array])
+        .exprs(&[ExprTag::Assign]);
     /// [`get_properties_in_all_branches`] of what has been asked about.
     type State<'a> = FxHashMap<Expr<'a>, FxHashSet<&'a [u8]>>;
 
@@ -322,23 +327,41 @@ impl Rule for NoUselessDefaultAssignment {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
         let compiler_options = file.type_checker().compiler_options();
         if !is_strict_compiler_option_enabled(compiler_options, CompilerOption::StrictNullChecks)
             && !self.allow_rule_to_run_without_strict_null_checks_i_know_what_i_am_doing
         {
-            on.finish(|_, cx| {
-                // tsgolint points at the start of the file.
-                if cx.language().is_oxlint {
-                    cx.report(Span::empty(0), NO_STRICT_NULL_CHECK);
-                    return;
-                }
-                let start_of_nothing = Position { line: 0, column: 0 };
-                cx.report(Span::empty(0), NO_STRICT_NULL_CHECK).start_at(start_of_nothing).end_at(start_of_nothing);
-            });
+            on = on.finish();
         }
-        on.params(|_, param, cx| check_parameter(param, cx));
-        on.pats([PatTag::Object, PatTag::Array], |_, pattern, cx| match pattern.kind() {
+        on.params()
+            .pats(&[PatTag::Object, PatTag::Array])
+            .exprs(&[ExprTag::Assign])
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(FxHashMap::default())
+    }
+
+    // A default in the target of a destructuring assignment. What is assigned has no type that
+    // upstream looks at, so only `= undefined` is useless there.
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let ExprKind::Assign {
+            op: None,
+            target,
+            value,
+        } = node.kind()
+            && value.is_ident("undefined")
+            && node.is_assignment_target()
+        {
+            let removal = Span::new(target.span().end, node.span().end);
+            report_useless(USELESS_UNDEFINED, value, removal, "property", cx);
+        }
+    }
+
+    fn pat<'a>(&self, pattern: Pat<'a>, cx: &mut Cx<'a, Self>) {
+        match pattern.kind() {
             PatKind::Object(properties) => properties.iter().for_each(|it| check_property(it, cx)),
             PatKind::Array(elements) => {
                 let mut source = None;
@@ -347,22 +370,20 @@ impl Rule for NoUselessDefaultAssignment {
                 }
             }
             _ => {}
-        });
-        // A default in the target of a destructuring assignment. What is assigned has no type that
-        // upstream looks at, so only `= undefined` is useless there.
-        on.exprs([ExprTag::Assign], |_, node, cx| {
-            if let ExprKind::Assign {
-                op: None,
-                target,
-                value,
-            } = node.kind()
-                && value.is_ident("undefined")
-                && node.is_assignment_target()
-            {
-                let removal = Span::new(target.span().end, node.span().end);
-                report_useless(USELESS_UNDEFINED, value, removal, "property", cx);
-            }
-        });
-        FxHashMap::default()
+        }
+    }
+
+    fn param<'a>(&self, param: Param<'a>, cx: &mut Cx<'a, Self>) {
+        check_parameter(param, cx);
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        // tsgolint points at the start of the file.
+        if cx.language().is_oxlint {
+            cx.report(Span::empty(0), NO_STRICT_NULL_CHECK);
+            return;
+        }
+        let start_of_nothing = Position { line: 0, column: 0 };
+        cx.report(Span::empty(0), NO_STRICT_NULL_CHECK).start_at(start_of_nothing).end_at(start_of_nothing);
     }
 }

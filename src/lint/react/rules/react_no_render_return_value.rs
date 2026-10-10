@@ -11,6 +11,7 @@ const NO_RENDER_RETURN_VALUE: Message = Message::new("", "Do not depend on the r
 
 impl Rule for NoRenderReturnValue {
     const META: Meta = Meta::oxlint(Plugin::React, "no-render-return-value", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     /// Whether the innermost function or class around something is an arrow function without braces.
     type State<'a> = AncestorMemo<'a, bool>;
 
@@ -18,11 +19,12 @@ impl Rule for NoRenderReturnValue {
         NoRenderReturnValue
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if is_jsx(file) && file.mentions("ReactDOM") && file.mentions("render") {
-            on.exprs([ExprTag::Call], check);
-        }
-        AncestorMemo::default()
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        (is_jsx(file) && file.mentions("ReactDOM") && file.mentions("render")).then(AncestorMemo::default)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        check(self, e, cx);
     }
 }
 

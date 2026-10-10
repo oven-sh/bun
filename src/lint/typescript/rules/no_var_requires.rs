@@ -52,6 +52,7 @@ impl NoVarRequires {
 
 impl Rule for NoVarRequires {
     const META: Meta = Meta::typescript("no-var-requires", Kind::Problem).deprecated();
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -62,10 +63,11 @@ impl Rule for NoVarRequires {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if !file.mentions("require") {
-            return;
-        }
-        on.exprs([ExprTag::Call], Self::check);
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("require").then_some(())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(e, cx);
     }
 }

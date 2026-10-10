@@ -68,9 +68,10 @@ impl<const KINDS: usize> Grouped<KINDS> {
         kinds: &[u8],
         counts: &[u32; MOST_KINDS + 2],
     ) -> Self {
-        const { assert!(KINDS <= MOST_KINDS) };
-        let mut starts = *counts;
+        const { assert!(KINDS <= MOST_KINDS && KINDS <= 128) };
+        let (mut starts, mut present) = (*counts, 0u128);
         for kind in 0..KINDS {
+            present |= u128::from(starts[kind + 1] != 0) << kind;
             starts[kind + 1] += starts[kind];
         }
         let mut next = starts;
@@ -83,22 +84,10 @@ impl<const KINDS: usize> Grouped<KINDS> {
                 *at += 1;
             }
         }
-        let mut grouped = Grouped {
+        Grouped {
             ids,
             starts,
-            present: 0,
-        };
-        grouped.note_present();
-        grouped
-    }
-
-    fn note_present(&mut self) {
-        const { assert!(KINDS <= 128) };
-        self.present = 0;
-        for kind in 0..KINDS {
-            if self.starts[kind + 1] > self.starts[kind] {
-                self.present |= 1 << kind;
-            }
+            present,
         }
     }
 
@@ -176,7 +165,11 @@ impl Exprs {
                 for first in &mut grouped.starts[strings + 1..=templates] {
                     *first -= moved.len() as u32;
                 }
-                grouped.note_present();
+                for kind in [strings, templates] {
+                    let has_any = grouped.starts[kind + 1] > grouped.starts[kind];
+                    grouped.present &= !(1 << kind);
+                    grouped.present |= u128::from(has_any) << kind;
+                }
             }
         }
         Some(Exprs {

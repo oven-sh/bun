@@ -860,7 +860,13 @@ impl<'a> Class<'a> {
             .or_else(|| self.type_params().angle_brackets_span().map(|it| it.end))
             .or_else(|| self.name().map(|name| name.span().end))
             .unwrap_or_else(|| self.keyword_span().end);
-        Span::new(skip_trivia(self.file.text(), head_end), self.span().end)
+        let text = self.file.text();
+        let mut start = skip_trivia(text, head_end);
+        // `class A extends B, {}`: TypeScript's parser takes the comma, and its checker reports it.
+        if text.get(start as usize) == Some(&b',') {
+            start = skip_trivia(text, start + 1);
+        }
+        Span::new(start, self.span().end)
     }
 }
 

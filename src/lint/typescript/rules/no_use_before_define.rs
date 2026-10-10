@@ -166,6 +166,7 @@ impl NoUseBeforeDefine {
 impl Rule for NoUseBeforeDefine {
     const META: Meta = Meta::typescript("no-use-before-define", Kind::Problem)
         .extends_base_rule("no-use-before-define");
+    const ON: On = On::new().symbols().export_specs().finish();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -174,12 +175,27 @@ impl Rule for NoUseBeforeDefine {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> State<'a> {
-        on.symbols(Self::check);
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        let mut on = On::new().symbols();
         if !self.config.allow_named_exports {
-            on.export_specs(|_, _, cx| cx.state.has_export_specs = true);
-            on.finish(Self::check_unresolved_exports);
+            on = on.export_specs().finish();
         }
-        State::default()
+        on
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn export_spec<'a>(&self, _: ExportSpec<'a>, cx: &mut Cx<'a, Self>) {
+        cx.state.has_export_specs = true;
+    }
+
+    fn symbol<'a>(&self, variable: Symbol<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(variable, cx);
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        self.check_unresolved_exports(cx);
     }
 }

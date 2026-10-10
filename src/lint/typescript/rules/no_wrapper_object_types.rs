@@ -32,40 +32,42 @@ impl Rule for NoWrapperObjectTypes {
     const META: Meta = Meta::typescript("no-wrapper-object-types", Kind::Problem)
         .fixable(Fixable::Code)
         .recommended();
+    const ON: On = On::new().types(&[TypeTag::Ref]);
     type State<'a> = GlobalFunctions<'a>;
 
     fn new(_: &Options) -> Self {
         NoWrapperObjectTypes
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> GlobalFunctions<'a> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<GlobalFunctions<'a>> {
         if !file.mentions_any(&["BigInt", "Boolean", "Number", "Object", "String", "Symbol"]) {
-            return GlobalFunctions::default();
+            return None;
         }
-        on.types([TypeTag::Ref], |_, ty, cx| {
-            let TypeKind::Ref { name, .. } = ty.kind() else {
-                return;
-            };
-            let Some(name) = name.as_ident() else {
-                return;
-            };
-            let preferred = match name.bytes() {
-                b"BigInt" => "bigint",
-                b"Boolean" => "boolean",
-                b"Number" => "number",
-                b"Object" => "object",
-                b"String" => "string",
-                b"Symbol" => "symbol",
-                _ => return,
-            };
-            if !is_reference_to_global(name.name(), ty, &mut cx.state) {
-                return;
-            }
-            cx.report(name, BANNED_CLASS_TYPE)
-                .data("preferred", preferred)
-                .data("typeName", name)
-                .fix(|fixer| (!is_heritage(ty)).then(|| fixer.replace(name, preferred)));
-        });
-        GlobalFunctions::default()
+        Some(GlobalFunctions::default())
+    }
+
+    fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        let TypeKind::Ref { name, .. } = ty.kind() else {
+            return;
+        };
+        let Some(name) = name.as_ident() else {
+            return;
+        };
+        let preferred = match name.bytes() {
+            b"BigInt" => "bigint",
+            b"Boolean" => "boolean",
+            b"Number" => "number",
+            b"Object" => "object",
+            b"String" => "string",
+            b"Symbol" => "symbol",
+            _ => return,
+        };
+        if !is_reference_to_global(name.name(), ty, &mut cx.state) {
+            return;
+        }
+        cx.report(name, BANNED_CLASS_TYPE)
+            .data("preferred", preferred)
+            .data("typeName", name)
+            .fix(|fixer| (!is_heritage(ty)).then(|| fixer.replace(name, preferred)));
     }
 }

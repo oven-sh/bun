@@ -55,6 +55,7 @@ impl Rule for NonNullableTypeAssertionStyle {
         .fixable(Fixable::Code)
         .presets(Presets::STYLISTIC_TYPE_CHECKED)
         .requires_types();
+    const ON: On = On::new().exprs(&[ExprTag::As]);
     /// [`same_type_without_nullish`] of an asserted and an original type: all their constituents are gone through, and
     /// many assertions are about the same types.
     type State<'a> = FxHashMap<(Type<'a>, Type<'a>), bool>;
@@ -63,42 +64,43 @@ impl Rule for NonNullableTypeAssertionStyle {
         NonNullableTypeAssertionStyle
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> FxHashMap<(Type<'a>, Type<'a>), bool> {
-        on.exprs([ExprTag::As], |_, node, cx| {
-            let ExprKind::As { expr, ty } = node.kind() else {
-                return;
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<FxHashMap<(Type<'a>, Type<'a>), bool>> {
+        Some(FxHashMap::default())
+    }
+
+    fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::As { expr, ty } = node.kind() else {
+            return;
+        };
+        let original = expr.ty();
+        if is_loose(original) {
+            return;
+        }
+        let asserted = ty.ty();
+        if is_loose(asserted) {
+            return;
+        }
+        let is_same = || same_type_without_nullish(asserted, original);
+        if !*cx.state.entry((asserted, original)).or_insert_with(is_same) {
+            return;
+        }
+        cx.report(node, PREFER_NON_NULL_ASSERTION).fix(|fixer| {
+            let precedence = get_operator_precedence(ts_syntax_kind(expr), SyntaxKind::Unknown, false);
+            // tsgolint 7.0 leaves the parentheses of `(a) as B`, and the `<B>` of `<B>a`.
+            if fixer.file().language().is_oxlint {
+                let (outer, is_simple) = (expr.outer_span(), expr.is_parenthesized());
+                let before = fixer.file().slice(Span::new(node.span().start, outer.start));
+                let text = fixer.file().slice(outer);
+                return fixer.replace(node, match is_simple || precedence > OperatorPrecedence::Unary {
+                    true => [before, text, b"!"].concat(),
+                    false => [before, b"(", text, b")!"].concat(),
+                });
+            }
+            let text = match precedence > OperatorPrecedence::Unary {
+                true => [expr.text(), b"!"].concat(),
+                false => [&b"("[..], expr.text(), b")!"].concat(),
             };
-            let original = expr.ty();
-            if is_loose(original) {
-                return;
-            }
-            let asserted = ty.ty();
-            if is_loose(asserted) {
-                return;
-            }
-            let is_same = || same_type_without_nullish(asserted, original);
-            if !*cx.state.entry((asserted, original)).or_insert_with(is_same) {
-                return;
-            }
-            cx.report(node, PREFER_NON_NULL_ASSERTION).fix(|fixer| {
-                let precedence = get_operator_precedence(ts_syntax_kind(expr), SyntaxKind::Unknown, false);
-                // tsgolint 7.0 leaves the parentheses of `(a) as B`, and the `<B>` of `<B>a`.
-                if fixer.file().language().is_oxlint {
-                    let (outer, is_simple) = (expr.outer_span(), expr.is_parenthesized());
-                    let before = fixer.file().slice(Span::new(node.span().start, outer.start));
-                    let text = fixer.file().slice(outer);
-                    return fixer.replace(node, match is_simple || precedence > OperatorPrecedence::Unary {
-                        true => [before, text, b"!"].concat(),
-                        false => [before, b"(", text, b")!"].concat(),
-                    });
-                }
-                let text = match precedence > OperatorPrecedence::Unary {
-                    true => [expr.text(), b"!"].concat(),
-                    false => [&b"("[..], expr.text(), b")!"].concat(),
-                };
-                fixer.replace(node, text)
-            });
+            fixer.replace(node, text)
         });
-        FxHashMap::default()
     }
 }

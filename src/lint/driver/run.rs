@@ -314,6 +314,12 @@ impl Run<'_> {
 
     /// Fails with the exit code that ESLint has for that, or oxlint, which says why on standard output.
     fn fail(mut self, text: &[u8]) -> Outcome {
+        self.failed(text);
+        self.out
+    }
+
+    /// Says what has gone wrong, and sets the exit code for it.
+    fn failed(&mut self, text: &[u8]) {
         match self.is_for_oxlint() {
             true => {
                 let colors = (self.options.color).unwrap_or(self.environment.stdout.colors);
@@ -325,7 +331,6 @@ impl Run<'_> {
                 self.out.exit_code = 2;
             }
         }
-        self.out
     }
 
     /// Refuses the command line, which both do on standard error.
@@ -1086,30 +1091,26 @@ impl Run<'_> {
         }
 
         let mut fixed = 0;
+        // Said after the report, which is about all the other files too.
+        let mut not_written: Vec<Vec<u8>> = Vec::new();
         if options.fix {
             let changed: Vec<&FileResult> = results.iter().filter(|it| it.is_fixed).collect();
-            let mut failure = Guarded::new(None);
+            let mut failures = Guarded::new(Vec::new());
             pool.for_each(changed.len(), 1, &|index| {
                 let result = changed[index];
-                // A file is not emptied: neither for a text that is not there, nor by fixes that leave nothing of it.
-                let has_text = |path: &[u8]| fs::read(path).is_ok_and(|it| !it.is_empty());
                 let written = match result.written() {
+                    // Not nothing in its place. Fixes that leave nothing of a file give an empty text, which is written.
                     None => Err(b"The fixed text is lost. This is a bug in bun lint.".to_vec()),
-                    Some(b"") if has_text(&paths::from_native(&result.path)) => {
-                        Err(b"The fixes leave nothing of it.".to_vec())
-                    }
                     Some(text) => fs::write_atomically(&environment.cwd, &result.path, text),
                 };
                 if let Err(why) = written {
-                    failure
-                        .lock()
-                        .get_or_insert([b"Cannot write ", &result.path[..], b": ", &why].concat());
+                    let line = [b"Cannot write ", &result.path[..], b": ", &why].concat();
+                    failures.lock().push(line);
                 }
             });
-            if let Some(error) = failure.get_mut().take() {
-                return self.fail(&error);
-            }
-            fixed = changed.len();
+            not_written = std::mem::take(failures.get_mut());
+            not_written.sort_unstable();
+            fixed = changed.len() - not_written.len();
         }
 
         let suppressed = match options.stdin {
@@ -1243,6 +1244,10 @@ impl Run<'_> {
         }
         if options.timing {
             self.write_timing(&timing, &phases, &pool, &js_plugins.loading());
+        }
+        if !not_written.is_empty() {
+            not_written.iter().for_each(|it| self.failed(it));
+            return self.out;
         }
         if has_unused && !is_oxlint {
             self.error(

@@ -403,6 +403,18 @@ impl Config {
         &self.notes
     }
 
+    /// The files that the parsers and the plugins in JavaScript are from, as far as they are from files of their own.
+    pub fn modules(&self) -> impl Iterator<Item = &[u8]> {
+        let parsers = self
+            .objects
+            .iter()
+            .filter_map(|it| it.parser_location.as_ref());
+        let plugins = self.js_locations.iter().map(|it| &it.1);
+        parsers
+            .chain(plugins)
+            .filter_map(|it| it.get(b"module")?.as_str())
+    }
+
     /// Sets [`LanguageOptions::eslint_major`] for all files. To be called before the configuration of a file is asked for.
     pub fn follow_eslint(&mut self, major: u8) {
         self.eslint_major = major;

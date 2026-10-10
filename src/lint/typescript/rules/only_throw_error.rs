@@ -100,7 +100,8 @@ impl Rule for OnlyThrowError {
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types()
         .extends_base_rule("no-throw-literal");
-    type State<'a> = ();
+    const ON: On = On::new().stmts(&[StmtTag::Throw]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -112,7 +113,7 @@ impl Rule for OnlyThrowError {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.stmts([StmtTag::Throw], Self::check_throw_argument);
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_throw_argument(statement, cx);
     }
 }

@@ -9,13 +9,14 @@ impl Rule for NoUselessConstructor {
         .has_suggestions()
         .presets(Presets::STRICT)
         .extends_base_rule("no-useless-constructor");
-    type State<'a> = ();
+    const ON: On = On::new().members();
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoUselessConstructor
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
-        on.members(|_, member, cx| check(member, cx));
+    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+        check(member, cx);
     }
 }

@@ -15,6 +15,7 @@ const STRING_IN_REF_DEPRECATED: Message = Message::new("", "Using string literal
 
 impl Rule for NoStringRefs {
     const META: Meta = Meta::oxlint(Plugin::React, "no-string-refs", Kind::Problem);
+    const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Dot, ExprTag::Index]);
     /// The component that something is in.
     type State<'a> = AncestorMemo<'a, Node<'a>>;
 
@@ -22,35 +23,49 @@ impl Rule for NoStringRefs {
         NoStringRefs { no_template_literals: options.object(0).bool_or("noTemplateLiterals", false) }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        if !is_jsx(file) {
-            return AncestorMemo::default();
-        }
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let mut on = On::new();
         if file.mentions("ref") {
-            on.exprs([ExprTag::Jsx], |rule, e, cx| {
-                let ExprKind::Jsx(jsx) = e.kind() else {
-                    return;
-                };
-                for attribute in
-                    jsx.attrs().iter().filter(|it| is_literal_ref_attribute(*it, rule.no_template_literals))
-                {
-                    cx.report(attribute, STRING_IN_REF_DEPRECATED);
-                }
-            });
+            on = on.exprs(&[ExprTag::Jsx]);
         }
         if file.mentions("refs") && file.has_exprs([ExprTag::This]) {
-            on.exprs([ExprTag::Dot, ExprTag::Index], |_, member, cx| {
-                if member.object().is_some_and(|object| object.tag() == ExprTag::This && !object.is_parenthesized())
-                    && static_property_name(member).is_some_and(|name| name.is("refs"))
-                    && !member.is_jsx_tag_name()
-                    && !member.is_in_type_query()
-                    && get_parent_component(Node::Expr(member), &mut cx.state).is_some()
-                {
-                    cx.report(member, THIS_REFS_DEPRECATED);
-                }
-            });
+            on = on.exprs(&[ExprTag::Dot, ExprTag::Index]);
         }
-        AncestorMemo::default()
+        on
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        is_jsx(file).then(AncestorMemo::default)
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        match e.tag() {
+            ExprTag::Jsx => self.jsx(e, cx),
+            ExprTag::Dot | ExprTag::Index => self.member_expression(e, cx),
+            _ => {}
+        }
+    }
+}
+
+impl NoStringRefs {
+    fn jsx<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let ExprKind::Jsx(jsx) = e.kind() else {
+            return;
+        };
+        for attribute in jsx.attrs().iter().filter(|it| is_literal_ref_attribute(*it, self.no_template_literals)) {
+            cx.report(attribute, STRING_IN_REF_DEPRECATED);
+        }
+    }
+
+    fn member_expression<'a>(&self, member: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if member.object().is_some_and(|object| object.tag() == ExprTag::This && !object.is_parenthesized())
+            && static_property_name(member).is_some_and(|name| name.is("refs"))
+            && !member.is_jsx_tag_name()
+            && !member.is_in_type_query()
+            && get_parent_component(Node::Expr(member), &mut cx.state).is_some()
+        {
+            cx.report(member, THIS_REFS_DEPRECATED);
+        }
     }
 }
 

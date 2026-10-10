@@ -20,7 +20,7 @@ use bun_sha_hmac::SHA512;
 
 pub(crate) struct PasswordObject;
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
 pub(crate) enum Algorithm {
     Argon2i,
@@ -334,15 +334,18 @@ impl PasswordObject {
             return Ok(false);
         }
 
-        let algo = match algorithm.or_else(|| Algorithm::get(previous_hash)) {
-            Some(a) => a,
-            None => return Err(crate::Error::UnsupportedAlgorithm),
+        let detected = Algorithm::get(previous_hash);
+        if algorithm.is_some_and(|named| detected != Some(named)) {
+            return Err(crate::Error::InvalidEncoding);
+        }
+        let Some(algo) = detected else {
+            return Err(crate::Error::UnsupportedAlgorithm);
         };
 
         Self::verify_with_algorithm(password, previous_hash, algo)
     }
 
-    pub(crate) fn verify_with_algorithm(
+    fn verify_with_algorithm(
         password: &[u8],
         previous_hash: &[u8],
         algorithm: Algorithm,

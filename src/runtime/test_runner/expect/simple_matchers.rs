@@ -35,11 +35,11 @@ crate::unary_predicate_matcher!(to_be_finite, "toBeFinite", |v| v.is_number() &&
 });
 crate::unary_predicate_matcher!(to_be_negative, "toBeNegative", |v| v.is_number() && {
     let n = v.as_number();
-    n.round() < 0.0 && !n.is_infinite() && !n.is_nan()
+    n.is_finite() && n < 0.0
 });
 crate::unary_predicate_matcher!(to_be_positive, "toBePositive", |v| v.is_number() && {
     let n = v.as_number();
-    n.round() > 0.0 && !n.is_infinite() && !n.is_nan()
+    n.is_finite() && n > 0.0
 });
 
 // ── numeric ordering: toBe{Greater,Less}Than[OrEqual] ──────────────────────

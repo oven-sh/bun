@@ -14,12 +14,16 @@ bun_opaque::opaque_ffi! {
 }
 
 impl Socket {
+    /// Without `recv_error_cb` the socket never gets `IP_RECVERR` (Linux), so
+    /// an ICMP error about one peer cannot fail a send to another. A failing
+    /// receive then has no handler: uSockets closes the socket and calls
+    /// `close_cb`, which must drop the handle.
     pub fn create(
         loop_: *mut Loop,
         data_cb: extern "C" fn(*mut Socket, *mut PacketBuffer, c_int),
         drain_cb: extern "C" fn(*mut Socket),
         close_cb: extern "C" fn(*mut Socket),
-        recv_error_cb: extern "C" fn(*mut Socket, c_int, c_int),
+        recv_error_cb: Option<extern "C" fn(*mut Socket, c_int, c_int)>,
         host: *const c_char,
         port: c_ushort,
         options: c_int,
@@ -54,7 +58,7 @@ impl Socket {
         data_cb: extern "C" fn(*mut Socket, *mut PacketBuffer, c_int),
         drain_cb: extern "C" fn(*mut Socket),
         close_cb: extern "C" fn(*mut Socket),
-        recv_error_cb: extern "C" fn(*mut Socket, c_int, c_int),
+        recv_error_cb: Option<extern "C" fn(*mut Socket, c_int, c_int)>,
         fd: c_int,
         shared: bool,
         err: Option<&mut c_int>,
@@ -201,7 +205,7 @@ unsafe extern "C" {
         data_cb: extern "C" fn(*mut Socket, *mut PacketBuffer, c_int),
         drain_cb: extern "C" fn(*mut Socket),
         close_cb: extern "C" fn(*mut Socket),
-        recv_error_cb: extern "C" fn(*mut Socket, c_int, c_int),
+        recv_error_cb: Option<extern "C" fn(*mut Socket, c_int, c_int)>,
         host: *const c_char,
         port: c_ushort,
         options: c_int,
@@ -235,7 +239,7 @@ unsafe extern "C" {
         data_cb: extern "C" fn(*mut Socket, *mut PacketBuffer, c_int),
         drain_cb: extern "C" fn(*mut Socket),
         close_cb: extern "C" fn(*mut Socket),
-        recv_error_cb: extern "C" fn(*mut Socket, c_int, c_int),
+        recv_error_cb: Option<extern "C" fn(*mut Socket, c_int, c_int)>,
         fd: LIBUS_SOCKET_DESCRIPTOR,
         shared: c_int,
         err: *mut c_int,

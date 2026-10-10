@@ -1438,6 +1438,17 @@ const now = await mysql`SELECT NOW() as current_time`;
 const uuid = await mysql`SELECT UUID() as id`;
 ```
 
+`lastInsertRowid` is a `number` up to `Number.MAX_SAFE_INTEGER`. A larger key follows the `bigint` option: it is a string by default and a `BigInt` with `bigint: true`. The server sends the key unsigned. A negative key that you insert explicitly reads back as that key plus 2^64, so `-5` reads back as `"18446744073709551611"`.
+
+```ts
+// An AUTO_INCREMENT key above Number.MAX_SAFE_INTEGER
+const { lastInsertRowid } = await mysql`INSERT INTO events (kind) VALUES (${"click"})`;
+console.log(lastInsertRowid); // "4611686018427387911", or 4611686018427387911n with `bigint: true`
+
+// The key binds back as a parameter in either form
+await mysql`UPDATE events SET kind = ${"tap"} WHERE id = ${lastInsertRowid}`;
+```
+
 ### MySQL Error Handling
 
 ```ts

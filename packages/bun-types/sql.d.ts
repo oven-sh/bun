@@ -400,6 +400,9 @@ declare module "bun" {
       /**
        * Return values outside the i32 range as `BigInt`. By default they are
        * returned as strings.
+       *
+       * A MySQL `lastInsertRowid` above `Number.MAX_SAFE_INTEGER` follows this
+       * option too: a `BigInt` when it is set, a string by default.
        * @default false
        */
       bigint?: boolean | undefined;

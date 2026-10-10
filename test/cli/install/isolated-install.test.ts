@@ -2,7 +2,17 @@ import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readFileSync, readlinkSync, statSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, isLinux, pack, readdirSorted, runBunInstall, tempDir } from "harness";
+import {
+  VerdaccioRegistry,
+  bunEnv,
+  bunExe,
+  isLinux,
+  isWindows,
+  pack,
+  readdirSorted,
+  runBunInstall,
+  tempDir,
+} from "harness";
 import { createRequire } from "module";
 import { basename, dirname, join } from "path";
 import { pathToFileURL } from "url";
@@ -1007,6 +1017,443 @@ test.concurrent(
     expect(exitCode).toBe(0);
   },
 );
+
+// The hoisted linker links the bins of a package before its lifecycle scripts run. When a script
+// of an optional dependency fails, the bin links into the package go with it. The links of other
+// packages stay.
+describe("bin links of a failed optional dependency (hoisted)", () => {
+  const cli = "#!/usr/bin/env bun\n";
+
+  // The bin names linked in `binDir`. On Windows a bin link is the pair `<name>.exe` + `<name>.bunx`.
+  async function linkedBins(binDir: string): Promise<string[]> {
+    if (!existsSync(binDir)) return [];
+    const entries = await readdirSorted(binDir);
+    return [...new Set(isWindows ? entries.map(entry => entry.replace(/\.(exe|bunx)$/, "")) : entries)].sort();
+  }
+
+  // The package that `node_modules/.bin/<name>` links into. A `.bunx` file starts with the target path.
+  function binOwner(nodeModules: string, name: string): string {
+    if (isWindows) {
+      const shim = readFileSync(join(nodeModules, ".bin", `${name}.bunx`)).toString("utf16le");
+      return shim.slice(0, shim.indexOf("\\"));
+    }
+    return readlinkSync(join(nodeModules, ".bin", name)).split("/")[1];
+  }
+
+  // A bin link into a package that is not installed.
+  async function linkMissingPackage(binDir: string, name: string) {
+    await mkdir(binDir, { recursive: true });
+    if (isWindows) {
+      await write(join(binDir, `${name}.bunx`), Buffer.from('gone\\cli.js"', "utf16le"));
+      await write(join(binDir, `${name}.exe`), "");
+    } else {
+      await symlink(join("..", "gone", "cli.js"), join(binDir, name));
+    }
+  }
+
+  const failing = (name: string, manifest: object, script: "preinstall" | "postinstall" = "postinstall") =>
+    JSON.stringify({ name, version: "1.0.0", ...manifest, scripts: { [script]: "exit 1" } });
+
+  const tarball = (manifest: string) =>
+    new Bun.Archive({ "package/package.json": manifest, "package/cli.js": cli }, { compress: "gzip" }).bytes();
+
+  // With one script at a time, the linker starts the later scripts from another call site.
+  test.concurrent.each([
+    ["", []],
+    [", one script at a time", ["--concurrent-scripts", "1"]],
+  ])("every form of `bin` is unlinked, other links stay%s", async (_, args) => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "optional-bins",
+          dependencies: { ok: "file:./ok", "str-keep": "file:./str-keep" },
+          optionalDependencies: {
+            str: "file:./str",
+            map: "file:./map",
+            dir: "file:./dir",
+            "@scope/pkg": "file:./scoped",
+            nobin: "file:./nobin",
+          },
+          trustedDependencies: ["str", "map", "dir", "@scope/pkg", "nobin"],
+        }),
+        "ok/package.json": JSON.stringify({ name: "ok", version: "1.0.0", bin: "cli.js" }),
+        "ok/cli.js": cli,
+        // The name of this folder starts with the name of a folder that is removed.
+        "str-keep/package.json": JSON.stringify({ name: "str-keep", version: "1.0.0", bin: "cli.js" }),
+        "str-keep/cli.js": cli,
+        "str/package.json": failing("str", { bin: "cli.js" }),
+        "str/cli.js": cli,
+        "map/package.json": failing("map", { bin: { "map-one": "cli.js", "map-two": "cli.js" } }, "preinstall"),
+        "map/cli.js": cli,
+        // The names of these bins are the file names in the folder, and the script removes the folder.
+        "dir/package.json": JSON.stringify({
+          name: "dir",
+          version: "1.0.0",
+          directories: { bin: "tools" },
+          scripts: { postinstall: "rm -rf tools && exit 1" },
+        }),
+        "dir/tools/dir-one": cli,
+        "dir/tools/dir-two": cli,
+        "scoped/package.json": failing("@scope/pkg", { bin: "cli.js" }),
+        "scoped/cli.js": cli,
+        "nobin/package.json": failing("nobin", {}),
+      },
+    });
+    const nodeModules = join(packageDir, "node_modules");
+    await linkMissingPackage(join(nodeModules, ".bin"), "stale");
+
+    const { stderr, exitCode } = await installCounted(packageDir, { args });
+
+    expect(stderr).not.toContain("error:");
+    expect({
+      installed: ["ok", "str-keep", "str", "map", "dir", "@scope/pkg", "nobin"].filter(name =>
+        existsSync(join(nodeModules, name)),
+      ),
+      bins: await linkedBins(join(nodeModules, ".bin")),
+    }).toEqual({ installed: ["ok", "str-keep"], bins: ["ok", "stale", "str-keep"] });
+    expect(exitCode).toBe(0);
+  });
+
+  // The root has another q, so the q of w is placed in packages/w/node_modules.
+  const nestedManifests = (rootQ: string, nestedQ: string, workspaces = ["w"]) => ({
+    "package.json": JSON.stringify({
+      name: "optional-bin-nested",
+      workspaces: ["packages/*"],
+      dependencies: { q: rootQ },
+      trustedDependencies: ["q"],
+    }),
+    ...Object.fromEntries(
+      workspaces.map(name => [
+        `packages/${name}/package.json`,
+        JSON.stringify({ name, version: "1.0.0", optionalDependencies: { q: nestedQ } }),
+      ]),
+    ),
+  });
+  const rootQ = JSON.stringify({ name: "q", version: "1.0.0", bin: "cli.js" });
+  const nestedQ = failing("q", { version: "2.0.0", bin: "cli.js" }, "preinstall");
+  const nestedState = async (packageDir: string, workspace = "w") => ({
+    rootBins: await linkedBins(join(packageDir, "node_modules", ".bin")),
+    nestedBins: await linkedBins(join(packageDir, "packages", workspace, "node_modules", ".bin")),
+    nestedInstalled: existsSync(join(packageDir, "packages", workspace, "node_modules", "q")),
+  });
+  const nestedRemoved = { rootBins: ["q"], nestedBins: [], nestedInstalled: false };
+
+  test.concurrent("a nested node_modules loses the link, the root keeps its link of the same name", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        ...nestedManifests("file:./q-root", "file:../../q-nested"),
+        "q-root/package.json": rootQ,
+        "q-root/cli.js": cli,
+        "q-nested/package.json": nestedQ,
+        "q-nested/cli.js": cli,
+      },
+    });
+
+    const { stderr, exitCode } = await installCounted(packageDir);
+
+    expect(stderr).not.toContain("error:");
+    expect(await nestedState(packageDir)).toEqual(nestedRemoved);
+    expect(exitCode).toBe(0);
+  });
+
+  // With a lockfile and a cold cache, the install phase extracts the package and places it from another call site.
+  test.concurrent("a package that the install phase extracts", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: nestedManifests("file:./q-1.0.0.tgz", "file:../../q-2.0.0.tgz"),
+    });
+    await write(join(packageDir, "q-1.0.0.tgz"), await tarball(rootQ));
+    await write(join(packageDir, "q-2.0.0.tgz"), await tarball(nestedQ));
+
+    const resolved = await installCounted(packageDir, { args: ["--lockfile-only"] });
+    expect(resolved.stderr).not.toContain("error:");
+    expect(resolved.exitCode).toBe(0);
+    await rm(join(packageDir, ".bun-cache"), { recursive: true, force: true });
+
+    const { stderr, exitCode } = await installCounted(packageDir);
+
+    expect(stderr).not.toContain("error:");
+    expect(await nestedState(packageDir)).toEqual(nestedRemoved);
+    expect(exitCode).toBe(0);
+  });
+
+  // A link text is resolved against the path of `.bin`. Through a `.bin` that is itself a link,
+  // that names another file than the link does, here the link of the root's q.
+  test.concurrent.skipIf(isWindows)("nothing is removed through a `.bin` that is a link", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        ...nestedManifests("file:./q-root", "file:../../q-nested", ["w1", "w2"]),
+        "q-root/package.json": rootQ,
+        "q-root/cli.js": cli,
+        "q-nested/package.json": nestedQ,
+        "q-nested/cli.js": cli,
+      },
+    });
+    const rootBin = join(packageDir, "node_modules", ".bin");
+    await mkdir(rootBin, { recursive: true });
+    await mkdir(join(packageDir, "packages", "w2", "node_modules"), { recursive: true });
+    await symlink(rootBin, join(packageDir, "packages", "w2", "node_modules", ".bin"));
+
+    const { stderr, exitCode } = await installCounted(packageDir);
+
+    expect(stderr).not.toContain("error:");
+    expect(await nestedState(packageDir, "w1")).toEqual(nestedRemoved);
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a workspace that the filter reaches only through an optional dependency", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({ name: "optional-bin-workspace", workspaces: ["packages/*"] }),
+        "packages/x/package.json": failing("x", { bin: { xbin: "cli.js" } }),
+        "packages/x/cli.js": cli,
+        "packages/y/package.json": JSON.stringify({
+          name: "y",
+          version: "1.0.0",
+          optionalDependencies: { x: "workspace:*" },
+        }),
+      },
+    });
+    const nodeModules = join(packageDir, "node_modules");
+
+    const { stderr, exitCode } = await installCounted(packageDir, { args: ["--filter", "y"] });
+
+    expect(stderr).not.toContain("error:");
+    expect({
+      bins: await linkedBins(join(nodeModules, ".bin")),
+      link: lstatSync(join(nodeModules, "x"), { throwIfNoEntry: false }) !== undefined,
+      source: existsSync(join(packageDir, "packages", "x", "cli.js")),
+    }).toEqual({ bins: [], link: false, source: true });
+    expect(exitCode).toBe(0);
+  });
+
+  // The first package in name order links a bin name that two packages declare.
+  test.concurrent("a bin name that two packages declare stays with the package that links it", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "optional-bin-collision",
+          dependencies: { a1: "file:./a1", z2: "file:./z2" },
+          optionalDependencies: { z1: "file:./z1", a2: "file:./a2" },
+          trustedDependencies: ["z1", "a2"],
+        }),
+        "a1/package.json": JSON.stringify({ name: "a1", version: "1.0.0", bin: { one: "cli.js" } }),
+        "a1/cli.js": cli,
+        "z1/package.json": failing("z1", { bin: { one: "cli.js", "z1-own": "cli.js" } }),
+        "z1/cli.js": cli,
+        "a2/package.json": failing("a2", { bin: { two: "cli.js", "a2-own": "cli.js" } }),
+        "a2/cli.js": cli,
+        "z2/package.json": JSON.stringify({ name: "z2", version: "1.0.0", bin: { two: "cli.js", "z2-own": "cli.js" } }),
+        "z2/cli.js": cli,
+      },
+    });
+    const nodeModules = join(packageDir, "node_modules");
+
+    const { stderr, exitCode } = await installCounted(packageDir);
+
+    expect(stderr).not.toContain("error:");
+    // `one` is the link of a1, so the failure of z1 leaves it. `two` was the link of a2. It is not
+    // linked again for z2, which is a gap: z2 declares it. npm leaves the same state.
+    expect(await linkedBins(join(nodeModules, ".bin"))).toEqual(["one", "z2-own"]);
+    expect(binOwner(nodeModules, "one")).toBe("a1");
+    expect(exitCode).toBe(0);
+  });
+
+  // The folder that is removed has the name of the dependency, not the name of the package.
+  test.concurrent("a dependency name that is another package's name", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "optional-bin-alias",
+          dependencies: { x: "file:./healthy-x" },
+          optionalDependencies: { al: "file:./x-1.0.0.tgz" },
+          trustedDependencies: ["al"],
+        }),
+        "healthy-x/package.json": JSON.stringify({ name: "x", version: "2.0.0", bin: { hx: "cli.js" } }),
+        "healthy-x/cli.js": cli,
+      },
+    });
+    await write(join(packageDir, "x-1.0.0.tgz"), await tarball(failing("x", { bin: "cli.js" })));
+    const nodeModules = join(packageDir, "node_modules");
+
+    const { stderr, exitCode } = await installCounted(packageDir);
+
+    expect(stderr).not.toContain("error:");
+    expect({
+      installed: ["al", "x"].filter(name => existsSync(join(nodeModules, name))),
+      bins: await linkedBins(join(nodeModules, ".bin")),
+    }).toEqual({ installed: ["x"], bins: ["hx"] });
+    expect(binOwner(nodeModules, "hx")).toBe("x");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("a dependency that is trusted after it was installed", async () => {
+    const manifest = { name: "optional-bin-late-trust", optionalDependencies: { x: "file:./x-1.0.0.tgz" } };
+    const { packageDir, packageJson } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: { "package.json": JSON.stringify(manifest) },
+    });
+    await write(join(packageDir, "x-1.0.0.tgz"), await tarball(failing("x", { bin: { xbin: "cli.js" } })));
+    const nodeModules = join(packageDir, "node_modules");
+    const state = async () => ({
+      bins: await linkedBins(join(nodeModules, ".bin")),
+      installed: existsSync(join(nodeModules, "x")),
+    });
+
+    // The script is blocked, so the install keeps x and its bin.
+    const blocked = await installCounted(packageDir);
+    expect(blocked.stderr).not.toContain("error:");
+    expect(await state()).toEqual({ bins: ["xbin"], installed: true });
+    expect(blocked.exitCode).toBe(0);
+
+    await write(packageJson, JSON.stringify({ ...manifest, trustedDependencies: ["x"] }));
+    const trusted = await installCounted(packageDir);
+    expect(trusted.stderr).not.toContain("error:");
+    expect(await state()).toEqual({ bins: [], installed: false });
+    expect(trusted.exitCode).toBe(0);
+  });
+
+  // With SIGCHLD ignored, Linux reaps the script itself and bun cannot wait for it. Bun then
+  // treats a script that exited 0 as failed, through a second exit path.
+  test.concurrent.skipIf(!isLinux)("a script that bun cannot wait for", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "optional-bin-cannot-wait",
+          optionalDependencies: { x: "file:./x" },
+          trustedDependencies: ["x"],
+        }),
+        "x/package.json": JSON.stringify({
+          name: "x",
+          version: "1.0.0",
+          bin: { xbin: "cli.js" },
+          scripts: { postinstall: "exit 0" },
+        }),
+        "x/cli.js": cli,
+      },
+    });
+    const nodeModules = join(packageDir, "node_modules");
+
+    const { stderr, exitCode } = await installCounted(packageDir, {
+      argv0: ["bash", "-c", 'trap "" CHLD; exec "$0" "$@"'],
+      args: ["--verbose"],
+    });
+
+    expect(stderr).not.toContain("error:");
+    expect(stderr).toContain("deleting optional dependency 'x' due to failed 'postinstall' script");
+    expect({
+      bins: await linkedBins(join(nodeModules, ".bin")),
+      installed: existsSync(join(nodeModules, "x")),
+    }).toEqual({ bins: [], installed: false });
+    expect(exitCode).toBe(0);
+  });
+
+  // The links go when the script fails, not when the install ends: a later failure ends the
+  // install at once. Here the required script waits for the optional package to be removed.
+  test.concurrent("an install that a required script ends afterwards", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "optional-bin-abort",
+          dependencies: { req: "file:./req" },
+          optionalDependencies: { opt: "file:./opt" },
+          trustedDependencies: ["req", "opt"],
+        }),
+        "opt/package.json": failing("opt", { bin: { optbin: "cli.js" } }),
+        "opt/cli.js": cli,
+        "req/package.json": JSON.stringify({
+          name: "req",
+          version: "1.0.0",
+          bin: { reqbin: "cli.js" },
+          scripts: { postinstall: `${bunExe()} wait.js` },
+        }),
+        "req/cli.js": cli,
+        "req/wait.js": `
+          const { existsSync } = require("fs");
+          const deadline = Date.now() + 30_000;
+          while (existsSync("../opt") && Date.now() < deadline) Bun.sleepSync(5);
+          process.exit(7);
+        `,
+      },
+    });
+    const nodeModules = join(packageDir, "node_modules");
+
+    const { stderr, exitCode } = await installCounted(packageDir);
+
+    expect(stderr).toContain('postinstall script from "req" exited with 7');
+    expect({
+      bins: await linkedBins(join(nodeModules, ".bin")),
+      installed: ["opt", "req"].filter(name => existsSync(join(nodeModules, name))),
+    }).toEqual({ bins: ["reqbin"], installed: ["req"] });
+    expect(exitCode).toBe(7);
+  });
+
+  // A native dependency links its bin into its platform package. That link goes with the
+  // platform package, which declares no bin itself.
+  test.concurrent("the bin of a native dependency that links into the removed platform package", async () => {
+    const packages: Record<string, object> = {
+      m: { bin: { mcmd: "cli.js" }, optionalDependencies: { p: "1.0.0" } },
+      p: { os: ["darwin", "linux", "win32"], cpu: ["arm64", "x64"], scripts: { postinstall: "exit 1" } },
+    };
+    const tarballs: Record<string, Uint8Array> = {};
+    for (const [name, fields] of Object.entries(packages)) {
+      tarballs[name] = await tarball(JSON.stringify({ name, version: "1.0.0", ...fields }));
+    }
+    await using server = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        const tarballOf = pathname.match(/^\/(.+)-1\.0\.0\.tgz$/)?.[1];
+        const name = tarballOf ?? pathname.slice(1);
+        if (!(name in packages)) return new Response("not found", { status: 404 });
+        if (tarballOf) return new Response(tarballs[name]);
+        const integrity = "sha512-" + new Bun.CryptoHasher("sha512").update(tarballs[name]).digest("base64");
+        return Response.json({
+          name,
+          "dist-tags": { latest: "1.0.0" },
+          versions: {
+            "1.0.0": {
+              name,
+              version: "1.0.0",
+              ...packages[name],
+              dist: { tarball: `${origin}/${name}-1.0.0.tgz`, integrity },
+            },
+          },
+        });
+      },
+    });
+    using dir = tempDir("optional-bin-native", {
+      "package.json": JSON.stringify({
+        name: "optional-bin-native",
+        dependencies: { m: "1.0.0" },
+        nativeDependencies: ["m"],
+        trustedDependencies: ["p"],
+      }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: server.url.href, linker: "hoisted" } }),
+    });
+    const packageDir = String(dir);
+    const nodeModules = join(packageDir, "node_modules");
+
+    const { stderr, exitCode } = await installCounted(packageDir, {
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") },
+    });
+
+    expect(stderr).not.toContain("error:");
+    expect({
+      installed: ["m", "p"].filter(name => existsSync(join(nodeModules, name))),
+      bins: await linkedBins(join(nodeModules, ".bin")),
+    }).toEqual({ installed: ["m"], bins: [] });
+    expect(exitCode).toBe(0);
+  });
+});
 
 describe("optional peers", () => {
   const tests = [

@@ -383,7 +383,8 @@ fn abs_node_modules_path(
     abs
 }
 
-/// Removes `node_modules/<alias>` of `tree_id`, the hoisted linker's own entry, never `scripts.cwd`.
+/// Removes `node_modules/<alias>` of `tree_id` and the bin links into it, the hoisted linker's own
+/// entries, never `scripts.cwd`.
 pub(crate) fn discard_failed_optional(
     lockfile: &Lockfile,
     tree_id: lockfile::tree::Id,
@@ -391,6 +392,8 @@ pub(crate) fn discard_failed_optional(
 ) {
     let mut path =
         abs_node_modules_path(lockfile, lockfile.buffers.string_bytes.as_slice(), tree_id);
+    // `link_tree_bins` ran before the script. The links go first, so none of them dangles.
+    crate::prune::remove_bins_linked_into(path.slice(), alias);
     path.append(alias).unwrap_or_oom();
     let Some(parent) = bun_core::dirname(path.slice()) else {
         return;

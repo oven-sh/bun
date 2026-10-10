@@ -171,7 +171,9 @@ fn link(ctx: command::Context) -> crate::Result<()> {
                 use bun_core::ZStr;
                 use bun_paths::{platform, resolve_path};
                 // create the junction
-                let top_level = FileSystem::instance().top_level_dir_without_trailing_slash();
+                let top_level = bun_paths::string_paths::without_trailing_slash_windows_path(
+                    FileSystem::instance().top_level_dir(),
+                );
                 let mut link_path_buf = bun_paths::path_buffer_pool::get();
                 link_path_buf.0[..top_level.len()].copy_from_slice(top_level);
                 link_path_buf.0[top_level.len()] = 0;

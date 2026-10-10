@@ -7,6 +7,7 @@ import {
   isWindows,
   readdirSorted,
   runBunInstall,
+  substDrive,
   tmpdirSync,
   toBeValidBin,
   toHaveBins,
@@ -470,4 +471,38 @@ it("should link dependency without crashing", async () => {
 
   // This should fail with a non-zero exit code.
   expect(await exited4).toBe(1);
+});
+
+// https://github.com/oven-sh/bun/issues/29273
+// `C:` is the current directory of drive C, it is not the root `C:\`.
+it.skipIf(!isWindows)("should link a package in the root of a drive", async () => {
+  const link_name = basename(link_dir).slice("bun-link.".length) + "-drive-root";
+  await writeFile(join(link_dir, "package.json"), JSON.stringify({ name: link_name, version: "0.0.1" }));
+  await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "bar", version: "0.0.2" }));
+  using drive = substDrive(link_dir);
+
+  async function run(cwd: string, ...args: string[]) {
+    await using proc = spawn({ cmd: [bunExe(), ...args], cwd, stdout: "pipe", stdin: "ignore", stderr: "pipe", env });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const registered = await run(drive.root, "link");
+  expect(registered.stderr).toBe("");
+  expect(registered.stdout).toContain(`Success! Registered "${link_name}"`);
+  expect(registered.exitCode).toBe(0);
+
+  const linked = await run(package_dir, "link", link_name);
+  expect(linked.stderr).toBe("");
+  expect(linked.stdout).toContain(`installed ${link_name}@link:${link_name}`);
+  expect(linked.exitCode).toBe(0);
+  expect(await file(join(package_dir, "node_modules", link_name, "package.json")).json()).toEqual({
+    name: link_name,
+    version: "0.0.1",
+  });
+
+  const unlinked = await run(drive.root, "unlink");
+  expect(unlinked.stderr).toBe("");
+  expect(unlinked.stdout).toContain(`success: unlinked package "${link_name}"`);
+  expect(unlinked.exitCode).toBe(0);
 });

@@ -115,7 +115,7 @@ fn target_for(manager: &PackageManager, owner: PackageID) -> Option<WorkspaceTar
         }),
         ResolutionTag::Workspace => {
             let buf = lockfile.buffers.string_bytes.as_slice();
-            let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+            let top_level = FileSystem::instance().top_level_dir();
             let mut path_buf = path_buffer_pool::get();
             Some(WorkspaceTarget {
                 name: Box::from(lockfile.packages.items_name()[owner as usize].slice(buf)),

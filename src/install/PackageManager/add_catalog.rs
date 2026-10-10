@@ -341,7 +341,7 @@ fn collect_root_entries(root: &Expr, group: &[u8], out: &mut Vec<RootEntry>) {
 }
 
 fn member_targets(ws: &WorkspaceMembers) -> Vec<WorkspaceTarget> {
-    let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+    let top_level = FileSystem::instance().top_level_dir();
     let mut buf = path_buffer_pool::get();
     ws.members
         .keys()

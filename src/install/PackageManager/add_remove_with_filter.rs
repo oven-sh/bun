@@ -37,7 +37,7 @@ pub(crate) struct WorkspaceTarget {
 }
 
 pub(crate) fn root_package_json_path() -> Box<[u8]> {
-    let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+    let top_level = FileSystem::instance().top_level_dir();
     let mut buf = path_buffer_pool::get();
     let path: Box<[u8]> =
         join_abs_string_buf::<platform::Auto>(top_level, &mut buf.0, &[b"package.json"]).into();
@@ -152,7 +152,7 @@ pub(crate) fn select_targets(
     manager: &mut PackageManager,
     original_cwd: &[u8],
 ) -> Result<Vec<WorkspaceTarget>, Error> {
-    let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+    let top_level = FileSystem::instance().top_level_dir();
     let WorkspaceMembers {
         root_path,
         root_name,

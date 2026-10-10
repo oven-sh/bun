@@ -31,19 +31,11 @@ EncodedJSValue customInspect(JSGlobalObject* lexicalGlobalObject, CallFrame* cal
     if (depth < 0)
         return JSValue::encode(thisValue);
 
-    JSObject* opts = constructEmptyObject(lexicalGlobalObject);
+    JSObject* opts = copyInspectOptions(lexicalGlobalObject, optionsValue);
+    RETURN_IF_EXCEPTION(scope, {});
     JSValue childDepth = jsNull();
     if (optionsValue.isObject()) {
-        JSObject* options = asObject(optionsValue);
-        PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
-        options->getPropertyNames(lexicalGlobalObject, names, DontEnumPropertiesMode::Exclude);
-        RETURN_IF_EXCEPTION(scope, {});
-        for (size_t i = 0; i < names.size(); ++i) {
-            JSValue v = options->get(lexicalGlobalObject, names[i]);
-            RETURN_IF_EXCEPTION(scope, {});
-            opts->putDirect(vm, names[i], v, 0);
-        }
-        JSValue optionsDepth = options->get(lexicalGlobalObject, Identifier::fromString(vm, "depth"_s));
+        JSValue optionsDepth = asObject(optionsValue)->get(lexicalGlobalObject, Identifier::fromString(vm, "depth"_s));
         RETURN_IF_EXCEPTION(scope, {});
         if (!optionsDepth.isUndefinedOrNull()) {
             double d = optionsDepth.toNumber(lexicalGlobalObject);
@@ -71,6 +63,28 @@ EncodedJSValue customInspect(JSGlobalObject* lexicalGlobalObject, CallFrame* cal
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(jsString(vm, makeString(name, " "_s, view.data)));
+}
+
+JSObject* copyInspectOptions(JSGlobalObject* lexicalGlobalObject, JSValue optionsValue)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSObject* copy = constructEmptyObject(lexicalGlobalObject);
+    JSObject* options = optionsValue.getObject();
+    if (!options)
+        return copy;
+
+    PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
+    options->methodTable()->getOwnPropertyNames(options, lexicalGlobalObject, names, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    for (const auto& name : names) {
+        JSValue value = options->get(lexicalGlobalObject, name);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        copy->putDirectMayBeIndex(lexicalGlobalObject, name, value);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    return copy;
 }
 
 WTF::String constructorNameOf(JSGlobalObject* lexicalGlobalObject, JSValue thisValue, ASCIILiteral fallback)

@@ -179,6 +179,11 @@ pg_tags! {
 }
 
 impl Tag {
+    /// OID 0 in Parse: the server infers the type. Bind still sees it on unnamed statements.
+    pub fn is_unspecified(self) -> bool {
+        self.0 == 0
+    }
+
     pub fn is_binary_format_supported(self) -> bool {
         match self {
             // TODO: .int2_array, .float8_array,

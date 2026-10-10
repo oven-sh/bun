@@ -113,7 +113,7 @@ Bun.serve({
     const sessionId = await generateSessionId();
     server.upgrade(req, {
       headers: { // [!code ++]
-        "Set-Cookie": `SessionId=${sessionId}`, // [!code ++]
+        "Set-Cookie": `SessionId=${sessionId}; HttpOnly; Secure; SameSite=Lax; Path=/`, // [!code ++]
       }, // [!code ++]
     });
   },
@@ -134,8 +134,18 @@ type WebSocketData = {
   authToken: string;
 };
 
+const ALLOWED_ORIGINS = new Set(["https://my-app.example"]);
+
 Bun.serve({
   fetch(req, server) {
+    // When authenticating with cookies, always verify the Origin header.
+    // Browsers send cookies on cross-origin WebSocket handshakes, so without
+    // this check any website could open a socket authenticated as your user.
+    const origin = req.headers.get("origin");
+    if (!origin || !ALLOWED_ORIGINS.has(origin)) {
+      return new Response("Forbidden", { status: 403 });
+    }
+
     const cookies = new Bun.CookieMap(req.headers.get("cookie")!);
 
     server.upgrade(req, {
@@ -181,12 +191,14 @@ socket.addEventListener("message", event => {
 });
 ```
 
-<Info>
-**Identifying users**
+<Warning>
+**Identifying users with cookies**
 
 The browser sends cookies set on the page along with the WebSocket upgrade request. They are available on `req.headers` in the `fetch` handler. Parse them to identify the connecting user and set `data` accordingly.
 
-</Info>
+The WebSocket handshake is a simple `GET` that is not covered by the same-origin policy, so a page on another origin can open a connection and, depending on the cookie's `SameSite` attribute and the browser's defaults, have the session cookie attached. If you authenticate the upgrade from a cookie, **always validate `req.headers.get("origin")` against an allowlist** before calling `server.upgrade()`, regardless of your `SameSite` settings. Skipping this check exposes the server to [cross-site WebSocket hijacking](https://portswigger.net/web-security/websockets/cross-site-websocket-hijacking): a hostile site can open a fully authenticated socket as the victim and read every message.
+
+</Warning>
 
 ### Pub/Sub
 

@@ -9,12 +9,23 @@ Bun's server-side `WebSocket` API includes native pub-sub. Subscribe a socket to
 This code snippet implements a single-channel chat server.
 
 ```ts server.ts icon="/icons/typescript.svg"
+const ALLOWED_ORIGINS = new Set(["https://my-app.example"]);
+
 const server = Bun.serve({
   fetch(req, server) {
-    const cookies = req.headers.get("cookie");
-    const username = getUsernameFromCookies(cookies);
-    const success = server.upgrade(req, { data: { username } });
-    if (success) return undefined;
+    if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
+      // Reject cross-origin WebSocket handshakes before trusting cookies,
+      // otherwise any site can open an authenticated socket as the victim.
+      const origin = req.headers.get("origin");
+      if (!origin || !ALLOWED_ORIGINS.has(origin)) {
+        return new Response("Forbidden", { status: 403 });
+      }
+
+      const cookies = req.headers.get("cookie");
+      const username = getUsernameFromCookies(cookies);
+      const success = server.upgrade(req, { data: { username } });
+      if (success) return undefined;
+    }
 
     return new Response("Hello world");
   },

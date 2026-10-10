@@ -476,6 +476,56 @@ it("Readable.fromWeb on an already-errored web stream emits 'error' and destroys
   expect(r.errored?.message).toBe("start-boom");
 });
 
+// destroy(null) emits 'close' alone, so a node stream cannot carry a falsy error. Node's adapter
+// destroys through destroyer(), which makes an AbortError of it while the stream is unfinished.
+it.each([[null], [undefined], [0], [""]])(
+  "Readable.fromWeb on a web stream errored with %p emits an AbortError",
+  async reason => {
+    const web = new ReadableStream({
+      start(c) {
+        c.error(reason);
+      },
+    });
+    const r = Readable.fromWeb(web);
+    const events = [];
+    const { promise, resolve } = Promise.withResolvers();
+    r.on("error", error => events.push(["error", error.name, error.code]));
+    r.on("end", () => events.push(["end"]));
+    r.on("close", resolve);
+    r.resume();
+    await promise;
+    expect(events).toEqual([["error", "AbortError", "ABORT_ERR"]]);
+    expect(r.destroyed).toBe(true);
+  },
+);
+
+// An HTMLRewriter output is a native stream, which Readable.fromWeb pulls from directly. If the
+// input failed before the first pull, pull() throws the stored value. If it fails later, the pull rejects.
+it.each([[null], [undefined], [0], [""]])(
+  "Readable.fromWeb on a native stream that failed with %p emits an AbortError",
+  async reason => {
+    let controller;
+    const input = new ReadableStream({
+      start(c) {
+        controller = c;
+      },
+    });
+    const body = new HTMLRewriter().transform(new Response(input)).body;
+    controller.error(reason);
+    await new Promise(resolve => setImmediate(resolve));
+    const r = Readable.fromWeb(body);
+    const events = [];
+    const { promise, resolve } = Promise.withResolvers();
+    r.on("error", error => events.push(["error", error.name, error.code]));
+    r.on("end", () => events.push(["end"]));
+    r.on("close", resolve);
+    r.resume();
+    await promise;
+    expect(events).toEqual([["error", "AbortError", "ABORT_ERR"]]);
+    expect(r.destroyed).toBe(true);
+  },
+);
+
 // Delivering a 64 KiB file chunk re-enters the native reader: push() over the
 // highWaterMark pauses it, and the next _read unpauses it mid-delivery. On
 // Windows that used to free the buffer an in-flight libuv file read was still

@@ -207,3 +207,8 @@ describe("URLPattern", () => {
     });
   });
 });
+
+test("node:url re-exports the URLPattern global", () => {
+  const { URLPattern: exported } = require("node:url");
+  expect(exported).toBe(globalThis.URLPattern);
+});

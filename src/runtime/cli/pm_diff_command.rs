@@ -599,10 +599,13 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
                     bun_install::package_manager::LogLevel::Silent,
                 )?;
                 let _ = dir.into_raw();
-                for (path, optional) in queue.into_paths() {
+                for (path, file) in queue.into_paths() {
                     let rel = path.as_bytes();
-                    match bun_sys::File::read_from(root_fd, rel) {
-                        Err(err) if optional && err.get_errno() == bun_sys::E::ENOENT => {}
+                    let bytes = match file {
+                        Some(file) => file.read_to_end(),
+                        None => bun_sys::File::read_from(root_fd, rel),
+                    };
+                    match bytes {
                         Ok(bytes) => {
                             #[cfg(not(windows))]
                             if let Ok(st) = bun_sys::fstatat(root_fd, path.as_zstr()) {

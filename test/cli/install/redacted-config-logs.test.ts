@@ -243,3 +243,320 @@ describe.concurrent("redact", async () => {
     });
   }
 });
+
+// A dependency declared as a tarball or git URL keeps that URL as its
+// resolution, and bun prints the resolution (or the specifier it was declared
+// with) in the install summary, in error messages and in the listing commands.
+// Any credential in the URL has to be masked at each of those places.
+describe.concurrent("tarball and git URLs declared in package.json are masked wherever bun echoes them", () => {
+  const password = "s3cret";
+  const token = "npm_" + "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8";
+
+  async function startTarballServer() {
+    const tarball = await new Bun.Archive(
+      {
+        "package/package.json": JSON.stringify({
+          name: "direct",
+          version: "1.0.0",
+          license: "MIT",
+          scripts: { postinstall: "echo postinstall" },
+        }),
+      },
+      { compress: "gzip" },
+    ).bytes();
+    return Bun.serve({
+      port: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname === "/cdn/direct-1.0.0.tgz") return new Response(tarball);
+        return new Response("not found", { status: 404 });
+      },
+    });
+  }
+
+  // Every download attempt is met with an immediately closed connection, so
+  // the tarball can never be fetched and bun reports the failure by name.
+  function startClosingServer() {
+    return Bun.listen({
+      hostname: "localhost",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.end();
+        },
+        data() {},
+      },
+    });
+  }
+
+  type Host = { hostname: string; port: number };
+  const spec = ({ hostname, port }: Host, query = `?token=${token}`) =>
+    `http://carol:${password}@${hostname}:${port}/cdn/direct-1.0.0.tgz${query}`;
+  const masked = ({ hostname, port }: Host, query = "?token=***") =>
+    `http://carol:******@${hostname}:${port}/cdn/direct-1.0.0.tgz${query}`;
+
+  const packageJson = (dependency: string) => JSON.stringify({ name: "app", dependencies: { direct: dependency } });
+  // What a previous install of `packageJson(dependency)` writes to bun.lock.
+  const bunLock = (dependency: string) =>
+    JSON.stringify({
+      lockfileVersion: 1,
+      workspaces: { "": { name: "app", dependencies: { direct: dependency } } },
+      packages: { direct: [`direct@${dependency}`, {}, ""] },
+    });
+
+  // None of these installs has anything to ask a registry for; pointing the
+  // registry at the test's own server keeps a stray request off the network.
+  async function run(cwd: string, { hostname, port }: Host, args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: {
+        ...bunEnv,
+        npm_config_registry: `http://${hostname}:${port}/`,
+        BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { out, err, exitCode };
+  }
+
+  function expectNoSecrets(...texts: string[]) {
+    for (const text of texts) {
+      expect(text).not.toContain(password);
+      expect(text).not.toContain(token);
+    }
+  }
+
+  test("install summary, then bun pm untrusted and bun pm licenses", async () => {
+    await using server = await startTarballServer();
+    const url = masked(server);
+    using dir = tempDir("redacted-resolution-install", { "package.json": packageJson(spec(server)) });
+
+    const install = await run(String(dir), server, ["install"]);
+    expect(install.out).toContain(`\n+ direct@${url}\n`);
+    expectNoSecrets(install.out, install.err);
+    expect(install.exitCode).toBe(0);
+
+    // The tarball's postinstall was blocked, so `bun pm untrusted` lists the
+    // package along with its resolution.
+    const untrusted = await run(String(dir), server, ["pm", "untrusted"]);
+    expect(untrusted.out).toContain(`direct @${url}\n`);
+    expectNoSecrets(untrusted.out, untrusted.err);
+    expect(untrusted.exitCode).toBe(0);
+
+    const licenses = await run(String(dir), server, ["pm", "licenses"]);
+    expect(licenses.out).toContain(`direct@${url}\n`);
+    expectNoSecrets(licenses.out, licenses.err);
+    expect(licenses.exitCode).toBe(0);
+
+    const licensesJson = await run(String(dir), server, ["pm", "licenses", "--json"]);
+    expect(JSON.parse(licensesJson.out)).toEqual({
+      MIT: [expect.objectContaining({ name: "direct", versions: [url] })],
+    });
+    expectNoSecrets(licensesJson.out, licensesJson.err);
+    expect(licensesJson.exitCode).toBe(0);
+  });
+
+  test("bun add <url>", async () => {
+    await using server = await startTarballServer();
+    using dir = tempDir("redacted-resolution-add", { "package.json": JSON.stringify({ name: "app" }) });
+
+    // No query string here: `bun add <url>` names its extraction directory
+    // after the URL's basename, and a `?` in a directory name is rejected on
+    // Windows, so a query string makes the add itself fail there.
+    const { out, err, exitCode } = await run(String(dir), server, ["add", spec(server, "")]);
+    expect(out).toContain(`installed direct@${masked(server, "")}\n`);
+    expectNoSecrets(out, err);
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun install --dry-run", async () => {
+    await using server = await startTarballServer();
+    using dir = tempDir("redacted-resolution-dry-run", { "package.json": packageJson(spec(server)) });
+
+    const { out, err, exitCode } = await run(String(dir), server, ["install", "--dry-run"]);
+    expect(out).toContain(` direct@${masked(server)}\n`);
+    expectNoSecrets(out, err);
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun pm ls and bun why read the resolution back out of bun.lock", async () => {
+    await using server = await startTarballServer();
+    const url = masked(server);
+    using dir = tempDir("redacted-resolution-ls", {
+      "package.json": packageJson(spec(server)),
+      "bun.lock": bunLock(spec(server)),
+    });
+
+    const ls = await run(String(dir), server, ["pm", "ls"]);
+    expect(ls.out).toContain(`└── direct@${url}\n`);
+    expectNoSecrets(ls.out, ls.err);
+    expect(ls.exitCode).toBe(0);
+
+    const why = await run(String(dir), server, ["why", "direct"]);
+    expect(why.out).toContain(`direct@${url}\n`);
+    expect(why.out).toContain(`app (requires ${url})\n`);
+    expectNoSecrets(why.out, why.err);
+    expect(why.exitCode).toBe(0);
+  });
+
+  test("an npm version whose pre-release tag looks like a UUID is printed unchanged", async () => {
+    await using server = await startTarballServer();
+    const stamped = "1.0.0-a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+    using dir = tempDir("redacted-resolution-versions", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { direct: spec(server), stamped } }),
+      "bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: { "": { name: "app", dependencies: { direct: spec(server), stamped } } },
+        packages: {
+          direct: [`direct@${spec(server)}`, {}, ""],
+          stamped: [`stamped@${stamped}`, "", {}, ""],
+        },
+      }),
+    });
+
+    const { out, err, exitCode } = await run(String(dir), server, ["pm", "ls"]);
+    expect(out).toContain(`direct@${masked(server)}\n`);
+    expect(out).toContain(`stamped@${stamped}\n`);
+    expectNoSecrets(out, err);
+    expect(exitCode).toBe(0);
+  });
+
+  test("download failure: retry warnings, the final error and the unresolved dependency", async () => {
+    using server = startClosingServer();
+    const url = masked(server);
+    using dir = tempDir("redacted-resolution-download-failure", { "package.json": packageJson(spec(server)) });
+
+    const { out, err, exitCode } = await run(String(dir), server, ["install", "--verbose"]);
+    expect(err).toContain(` downloading tarball direct@${url}. Retrying 1/`);
+    expect(err).toContain(` downloading tarball direct@${url}\n`);
+    expect(err).toContain(`error: direct@${url} failed to resolve\n`);
+    expectNoSecrets(out, err);
+    expect(exitCode).toBe(1);
+  });
+
+  test("download failure with the isolated linker and an existing bun.lock", async () => {
+    using server = startClosingServer();
+    using dir = tempDir("redacted-resolution-isolated-download-failure", {
+      "package.json": packageJson(spec(server)),
+      "bun.lock": bunLock(spec(server)),
+    });
+
+    const { err, exitCode } = await run(String(dir), server, ["install", "--linker", "isolated"]);
+    // Only the resolution in the message is asserted: the request URL bun
+    // prints on the following line is a separate operand of this message.
+    expect(err).toContain(`error: failed to download direct@${masked(server)}: `);
+    expect(exitCode).toBe(1);
+  });
+
+  test("git URL specifier", async () => {
+    // The clone fails at once (the connection is closed before TLS starts);
+    // what is being tested is how the specifier is echoed afterwards.
+    using server = startClosingServer();
+    using dir = tempDir("redacted-resolution-git", {
+      "package.json": JSON.stringify({
+        name: "app",
+        dependencies: { repo: `git+https://carol:${password}@${server.hostname}:${server.port}/org/repo.git` },
+      }),
+    });
+
+    const { out, err, exitCode } = await run(String(dir), server, ["install"]);
+    expect(err).toContain(
+      `error: repo@git+https://carol:******@${server.hostname}:${server.port}/org/repo.git failed to resolve\n`,
+    );
+    expectNoSecrets(out, err);
+    expect(exitCode).toBe(1);
+  });
+
+  // `bun add <url>` has no name for the dependency until the package is read,
+  // so the URL stands in for the name in every message about it.
+  test("bun add <git url> that cannot be cloned", async () => {
+    using server = startClosingServer();
+    using dir = tempDir("redacted-name-git", { "package.json": JSON.stringify({ name: "app" }) });
+    const url = `git+https://carol:${password}@${server.hostname}:${server.port}/org/repo.git`;
+
+    const { out, err, exitCode } = await run(String(dir), server, ["add", url]);
+    expect(err).toContain(
+      `error: Invalid dependency name "git+https://carol:******@${server.hostname}:${server.port}/org/repo.git"\n`,
+    );
+    expectNoSecrets(out, err);
+    expect(exitCode).toBe(1);
+  });
+
+  test("bun add <url> of a file that is not a tarball", async () => {
+    await using server = Bun.serve({ port: 0, fetch: () => new Response("not a gzip stream") });
+    using dir = tempDir("redacted-name-extract", { "package.json": JSON.stringify({ name: "app" }) });
+
+    const { out, err, exitCode } = await run(String(dir), server, ["add", spec(server, "")]);
+    expect(err).toContain(` extracting tarball from ${masked(server, "")}\n`);
+    expect(err).toContain(`error: Invalid dependency name "${masked(server, "")}"\n`);
+    expectNoSecrets(out, err);
+    expect(exitCode).toBe(1);
+  });
+
+  test("bun add <url> of a host that refuses the download", async () => {
+    using server = startClosingServer();
+    using dir = tempDir("redacted-name-download", { "package.json": JSON.stringify({ name: "app" }) });
+    // No `.tgz` and no path: the URL is both the name and the resolution.
+    const url = (pw: string) => `http://carol:${pw}@${server.hostname}:${server.port}`;
+
+    const { out, err, exitCode } = await run(String(dir), server, ["add", url(password)]);
+    expect(err).toContain(` downloading tarball ${url("******")}@${url("******")}`);
+    expectNoSecrets(out, err);
+    expect(exitCode).toBe(1);
+  });
+
+  // The URL does not start the argument in the first two forms.
+  test.each([
+    (pw: string) => `direct@ssh://carol:${pw}@localhost:1/org/repo`,
+    (pw: string) => `@https://carol:${pw}@localhost:1/org/repo`,
+    (pw: string) => `ftp://carol:${pw}@localhost:1/org/repo`,
+  ])("bun add of an argument that is not a dependency: %#", async argument => {
+    using server = startClosingServer();
+    using dir = tempDir("redacted-unrecognised", { "package.json": JSON.stringify({ name: "app" }) });
+
+    const { out, err, exitCode } = await run(String(dir), server, ["add", argument(password)]);
+    expect(err).toContain(`error: unrecognised dependency format: ${argument("******")}\n`);
+    expectNoSecrets(out, err);
+    expect(exitCode).toBe(1);
+  });
+
+  // The registry chooses `dist.tarball`. It can hold credentials of its own.
+  function startRegistry(tarballHost: Host) {
+    const version = (v: string) => ({ name: "direct", version: v, dist: { tarball: spec(tarballHost) } });
+    return Bun.serve({
+      port: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname !== "/direct") return new Response("{}", { status: 404 });
+        return Response.json({
+          name: "direct",
+          "dist-tags": { latest: "1.0.1" },
+          versions: { "1.0.0": version("1.0.0"), "1.0.1": version("1.0.1") },
+        });
+      },
+    });
+  }
+
+  test("bun pm view prints dist.tarball", async () => {
+    using tarballs = startClosingServer();
+    await using registry = startRegistry(tarballs);
+    using dir = tempDir("redacted-pm-view", { "package.json": JSON.stringify({ name: "app" }) });
+
+    const { out, err, exitCode } = await run(String(dir), registry, ["pm", "view", "direct"]);
+    expect(out).toContain(`tarball: ${masked(tarballs)}\n`);
+    expectNoSecrets(out, err);
+    expect(exitCode).toBe(0);
+  });
+
+  test("bun pm diff cannot download dist.tarball", async () => {
+    using tarballs = startClosingServer();
+    await using registry = startRegistry(tarballs);
+    using dir = tempDir("redacted-pm-diff", { "package.json": JSON.stringify({ name: "app" }) });
+
+    const { out, err, exitCode } = await run(String(dir), registry, ["pm", "diff", "direct@1.0.0", "direct@1.0.1"]);
+    expect(err).toContain(`GET ${masked(tarballs)} failed\n`);
+    expectNoSecrets(out, err);
+    expect(exitCode).toBe(1);
+  });
+});

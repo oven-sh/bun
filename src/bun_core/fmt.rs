@@ -297,6 +297,45 @@ pub fn redacted_npm_url(str: &[u8]) -> RedactedNpmUrlFormatter<'_> {
     RedactedNpmUrlFormatter { url: str }
 }
 
+/// [`redacted_npm_url`] for a value that only exists as a `Display` impl: a
+/// lockfile resolution or a dependency specifier, which is the tarball or git
+/// URL written in package.json when the package came from one. Anything that
+/// does not contain a URL (a version, a path, a `github:` specifier) is written
+/// unchanged: the token and UUID masks are meant for URLs, and a version whose
+/// pre-release tag happens to look like one must not be masked. So is what
+/// stands in front of the URL: the `npm:` of an alias, or the `name@` of a
+/// `bun add name@<url>` argument.
+pub struct Redacted<T>(T);
+
+impl<T: Display> Display for Redacted<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        // Rendered in full first: the inner impl may write in pieces, and the
+        // password scan is anchored at the start of the URL.
+        let mut text = String::new();
+        write!(text, "{}", self.0)?;
+        let Some(separator) = strings::index_of(text.as_bytes(), b"://") else {
+            return f.write_str(&text);
+        };
+        let scheme_len = text.as_bytes()[..separator]
+            .iter()
+            .rev()
+            .take_while(|&&b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.'))
+            .count();
+        // A scheme starts with a letter.
+        let url_start = text.as_bytes()[separator - scheme_len..separator]
+            .iter()
+            .take_while(|b| !b.is_ascii_alphabetic())
+            .count()
+            + (separator - scheme_len);
+        f.write_str(&text[..url_start])?;
+        redacted_npm_url(&text.as_bytes()[url_start..]).fmt(f)
+    }
+}
+
+pub fn redacted<T: Display>(value: T) -> Redacted<T> {
+    Redacted(value)
+}
+
 // ───────────────────────────────────────────────────────────────────────────
 // RedactedSourceFormatter
 // ───────────────────────────────────────────────────────────────────────────

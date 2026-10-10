@@ -3262,7 +3262,9 @@ pub(crate) fn parse_into_binary_lockfile(
                 .is_none_or(|manager| manager.options.link_workspace_packages),
         );
 
-        if let Err(tree::SubtreeError::OutOfMemory) = lockfile.resolve(log) {
+        // The install reports a refused name itself, after it applies package.json.
+        let mut refused_names = bun_ast::Log::init();
+        if let Err(tree::SubtreeError::OutOfMemory) = lockfile.resolve(&mut refused_names) {
             return Err(ParseError::OutOfMemory);
         }
     }

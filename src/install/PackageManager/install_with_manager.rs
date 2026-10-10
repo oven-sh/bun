@@ -685,6 +685,10 @@ pub fn install_with_manager(
         }
     };
     let lockfile_before_clean = core::mem::replace(&mut manager.lockfile, new_lockfile);
+    // The log was reset above, so this is a name the tree builder refused: stop before the linker.
+    if manager.log_mut().has_errors() {
+        manager.crash();
+    }
     if manager.subcommand == Subcommand::Update && !manager.options.dry_run {
         Output::flush();
         crate::update_transitive::warn_orphaned_patches(manager);

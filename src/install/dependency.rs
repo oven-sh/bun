@@ -551,6 +551,27 @@ pub(crate) fn is_safe_install_folder_name(name: &[u8]) -> bool {
     true
 }
 
+/// `name` or `@scope/name`, where neither half is a directory the installer owns.
+pub(crate) fn is_valid_node_modules_entry_name(name: &[u8]) -> bool {
+    if !is_safe_install_folder_name(name) {
+        return false;
+    }
+
+    let package = match name.strip_prefix(b"@") {
+        Some(scoped) => match strings::index_of_char_usize(scoped, b'/') {
+            Some(slash) if slash > 0 => &scoped[slash + 1..],
+            _ => return false,
+        },
+        None => name,
+    };
+
+    // On a case-insensitive volume `NODE_MODULES` is `node_modules`.
+    !strings::contains_char(package, b'/')
+        && !name.starts_with(b".")
+        && !package.starts_with(b".")
+        && !package.eq_ignore_ascii_case(b"node_modules")
+}
+
 /// assumes version is valid
 pub fn without_build_tag(version: &[u8]) -> &[u8] {
     if let Some(plus) = strings::index_of_char(version, b'+') {

@@ -364,25 +364,26 @@ fn abs_node_modules_path(
     abs
 }
 
-/// A dependency alias becomes the install destination inside `node_modules`
-/// (the existing entry is renamed aside, deleted, and re-created). Reject
-/// anything that could escape `node_modules`: empty names, `.`/`..`
-/// components, absolute paths, drive letters, backslashes, NUL bytes, and any
-/// separator other than the single `/` in a scoped name (`@scope/name`).
+/// A dependency alias is the install destination inside `node_modules`.
 pub(crate) fn alias_is_safe_install_target(alias: &[u8]) -> bool {
-    if alias.is_empty() || alias.len() >= MAX_PATH_BYTES || strings::contains_any(alias, b"\\:\0") {
+    alias.len() < MAX_PATH_BYTES && crate::dependency::is_valid_node_modules_entry_name(alias)
+}
+
+/// The path rules alone, for the own name of the project, a workspace or a folder dependency.
+pub(crate) fn name_is_single_path_entry(name: &[u8]) -> bool {
+    if name.is_empty() || name.len() >= MAX_PATH_BYTES || strings::contains_any(name, b"\\:\0") {
         return false;
     }
 
     let mut component_count = 0usize;
-    for component in strings::split(alias, b"/") {
+    for component in strings::split(name, b"/") {
         component_count += 1;
         if component.is_empty() || component == b"." || component == b".." {
             return false;
         }
     }
 
-    component_count == 1 || (component_count == 2 && alias[0] == b'@')
+    component_count == 1 || (component_count == 2 && name[0] == b'@')
 }
 
 /// Formats the version label `PackageInstall` verifies and hashes patches

@@ -433,7 +433,8 @@ impl PreferReadonly {
 impl Rule for PreferReadonly {
     const META: Meta = Meta::typescript("prefer-readonly", Kind::Suggestion)
         .fixable(Fixable::Code)
-        .requires_types();
+        .requires_types()
+        .reports_on_exit();
     const ON: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]).finish();
     type State<'a> = ClassScopes<'a>;
 

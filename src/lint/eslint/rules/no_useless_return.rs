@@ -430,7 +430,7 @@ impl NoUselessReturn {
 }
 
 impl Rule for NoUselessReturn {
-    const META: Meta = Meta::eslint("no-useless-return", Kind::Suggestion).fixable(Fixable::Code).reports_on_exit();
+    const META: Meta = Meta::eslint("no-useless-return", Kind::Suggestion).fixable(Fixable::Code).reports_on_code_path_end();
     const ON: On = On::new().stmts(&[StmtTag::Return]).finish();
     type State<'a> = State<'a>;
 

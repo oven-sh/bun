@@ -327,6 +327,15 @@ impl<'a> Report<'a> {
         self
     }
 
+    /// [`Meta::reports_at_the_end`](crate::rule::Meta::reports_at_the_end), for a rule of which only some listeners are called
+    /// when the program ends.
+    pub fn at_the_end(mut self) -> Self {
+        if let Some(diagnostic) = &mut self.diagnostic {
+            diagnostic.when = When::AtTheEnd;
+        }
+        self
+    }
+
     /// Of what the rule reports at one start, this comes with the shorter first.
     pub fn shorter_first(mut self) -> Self {
         if let Some(diagnostic) = &mut self.diagnostic {

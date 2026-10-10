@@ -1,6 +1,17 @@
 import { dlopen } from "bun:ffi";
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isMusl,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+} from "harness";
 import {
   chmodSync,
   chownSync,
@@ -3845,6 +3856,46 @@ describe("bun format on Windows, macOS and Linux", () => {
   const swapCase = (text: string) =>
     text.replace(/[a-z]/gi, letter => (letter === letter.toLowerCase() ? letter.toUpperCase() : letter.toLowerCase()));
 
+  /** Sets and reads an extended attribute of a file, where a file in the temporary directory takes one. */
+  const attributes = (() => {
+    if (!isLinux && !isMacOS) return undefined;
+    const c = (text: string) => Buffer.from(`${text}\0`);
+    // macOS has a position in the attribute before the flags.
+    const ofMacOS = () => {
+      const { symbols } = dlopen("libSystem.B.dylib", {
+        setxattr: { args: ["ptr", "ptr", "ptr", "u64", "u32", "i32"], returns: "i32" },
+        getxattr: { args: ["ptr", "ptr", "ptr", "u64", "u32", "i32"], returns: "i64" },
+      });
+      return {
+        set: (path: string, name: string, value: Buffer) =>
+          symbols.setxattr(c(path), c(name), value, value.length, 0, 0),
+        get: (path: string, name: string, into: Buffer) => symbols.getxattr(c(path), c(name), into, into.length, 0, 0),
+      };
+    };
+    const ofLinux = () => {
+      const machine = process.arch === "arm64" ? "aarch64" : "x86_64";
+      const { symbols } = dlopen(isMusl ? `libc.musl-${machine}.so.1` : "libc.so.6", {
+        setxattr: { args: ["ptr", "ptr", "ptr", "u64", "i32"], returns: "i32" },
+        getxattr: { args: ["ptr", "ptr", "ptr", "u64"], returns: "i64" },
+      });
+      return {
+        set: (path: string, name: string, value: Buffer) => symbols.setxattr(c(path), c(name), value, value.length, 0),
+        get: (path: string, name: string, into: Buffer) => symbols.getxattr(c(path), c(name), into, into.length),
+      };
+    };
+    const { set, get } = isMacOS ? ofMacOS() : ofLinux();
+    const all = {
+      set: (path: string, name: string, value: string) => set(path, name, Buffer.from(value)) === 0,
+      get(path: string, name: string) {
+        const into = Buffer.alloc(256);
+        const length = Number(get(path, name, into));
+        return length < 0 ? null : into.toString("utf8", 0, length);
+      },
+    };
+    using dir = tempDir("bun-attributes", { "a": "" });
+    return all.set(join(String(dir), "a"), "user.tag", "a") ? all : undefined;
+  })();
+
   const ugly = "a  ;\n";
   const formatted = "a;\n";
   const BOM = "\uFEFF";
@@ -4248,6 +4299,22 @@ describe("bun format on Windows, macOS and Linux", () => {
       expect(everythingIn(dir)).toEqual(before);
       expect(statSync(join(String(dir), "src", "c.js")).mtimeMs).toBe(stamp);
       expect(read(dir, "src", "b.js")).toBe(formatted);
+      expect(exitCode).toBe(0);
+    });
+
+    // A file that takes the name of another has none of its tags, nor its ACL. Prettier writes into every file.
+    test.skipIf(attributes === undefined)("a file keeps its extended attributes", async () => {
+      using dir = tempDir("bun-format-platform", { "tagged.js": ugly, "plain.js": ugly });
+      const [tagged, plain] = ["tagged.js", "plain.js"].map(name => join(String(dir), name));
+      expect(attributes!.set(tagged, "user.tag", "hello")).toBe(true);
+      const before = [tagged, plain].map(path => statSync(path).ino);
+      const { exitCode } = await format(dir, []);
+      expect([read(tagged), read(plain)]).toEqual([formatted, formatted]);
+      expect(attributes!.get(tagged, "user.tag")).toBe("hello");
+      expect(statSync(tagged).ino).toBe(before[0]);
+      // What the system gives every file, as a label of SELinux, is no reason to write in place.
+      if (isLinux) expect(statSync(plain).ino).not.toBe(before[1]);
+      expect(everythingIn(dir)).toEqual(["plain.js", "tagged.js"]);
       expect(exitCode).toBe(0);
     });
 

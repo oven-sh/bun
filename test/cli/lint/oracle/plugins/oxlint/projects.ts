@@ -9,6 +9,16 @@ export interface Project {
   typed?: boolean;
 }
 
+type Label = { label?: string; span: { line: number; column: number; length: number } };
+
+/** All that oxlint marks for a diagnostic, and what it says there, if that is more than one place without a text. */
+export function labelsOf({ labels }: { labels: Label[] }): string | undefined {
+  if (labels.length < 2 && !labels[0]?.label) return undefined;
+  const text = ({ label, span }: Label) =>
+    `${span.line}:${span.column}+${span.length}${label ? ` ${JSON.stringify(label)}` : ""}`;
+  return labels.map(text).join(" | ");
+}
+
 const rules = (plugins: string[], rules: object) => ({ plugins, categories: { correctness: "off" }, rules });
 const lines = (...lines: string[]) => lines.join("\n") + "\n";
 const hooks = rules(["react"], { "react-hooks/rules-of-hooks": "error", "react-hooks/exhaustive-deps": "warn" });

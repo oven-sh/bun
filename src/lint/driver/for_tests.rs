@@ -57,7 +57,12 @@ impl Host for Tester<'_> {
             ..*self.environment
         };
         let names = Session::new();
-        let (store, timing) = (Store::new(directory), Timing::default());
+        let (store, timing, pool) = (Store::new(directory), Timing::default(), Pool::new(1));
+        let modules = Graph::new(&store);
+        modules.list_files_by(Box::new(|patterns: &[&[u8]], extensions: &[&[u8]]| {
+            let of_the_run = (&self.linter, &environment, &self.js_plugins);
+            crate::discover::list_as_eslint_8(of_the_run, &pool, patterns, extensions)
+        }));
         let context = Context {
             linter: &self.linter,
             options: &options,
@@ -70,7 +75,7 @@ impl Host for Tester<'_> {
             help_on_demand: false,
             reads_suppressions: true,
             js_plugins: &self.js_plugins,
-            modules: &Graph::new(&store),
+            modules: &modules,
             formatter: &crate::fmt::ForRules::new(&environment, None),
             inferred: None,
             timing: &timing,

@@ -269,7 +269,8 @@ impl ConsistentTypeExports {
 impl Rule for ConsistentTypeExports {
     const META: Meta = Meta::typescript("consistent-type-exports", Kind::Suggestion)
         .fixable(Fixable::Code)
-        .requires_types();
+        .requires_types()
+        .reports_at_the_end();
     const ON: On = On::new().stmts(&[StmtTag::ExportStar, StmtTag::ExportNamed]);
     no_state!();
 

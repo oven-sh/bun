@@ -500,7 +500,10 @@ impl ConsistentTypeImports {
                         Some(_) => !report.is_type(Specifier::Default(import)) && !named.is_empty(),
                         None => named.iter().any(|it| report.is_type(Specifier::Named(it))),
                     };
-                let problem = cx.report(statement, SOME_IMPORTS_ARE_ONLY_TYPES).data("typeImports", type_imports);
+                let problem = cx
+                    .report(statement, SOME_IMPORTS_ARE_ONLY_TYPES)
+                    .at_the_end()
+                    .data("typeImports", type_imports);
                 let problem = match (cx.language().is_oxlint, adds_to_each) {
                     (false, _) => problem,
                     (true, true) => problem.help("Add type specifier to imported types"),
@@ -509,6 +512,7 @@ impl ConsistentTypeImports {
                 problem.fix(|fixer| self.fix_to_type_import_declaration(fixer, report, source_imports));
             } else if !has_attributes(report.import) {
                 cx.report(statement, TYPE_OVER_VALUE)
+                    .at_the_end()
                     .fix(|fixer| self.fix_to_type_import_declaration(fixer, report, source_imports));
             }
         }

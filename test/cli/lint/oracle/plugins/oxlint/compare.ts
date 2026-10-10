@@ -5,23 +5,26 @@
 //
 // Without OXLINT_BIN, what oxlint reports is read from expected.json, which `--record` writes: from oxlint 1.87.0 with tsgolint 7.0.2003.
 // A report is `file:line:column+length rule`, and is there as often as it is made: two reports can begin at one place.
+// labels.json has, in the same way, `file rule line:column+length "text" | ..` for each report for which oxlint marks more than one place or says something there.
 
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { projects } from "./projects.ts";
+import { labelsOf, projects } from "./projects.ts";
 
 const args = process.argv.slice(2);
 const names = args.filter(it => !it.startsWith("--"));
 const expectedPath = join(import.meta.dir, "expected.json");
+const labelsPath = join(import.meta.dir, "labels.json");
 const oxlint = process.env.OXLINT_BIN;
 const [ours, ...oursArgs] = (process.env.BUN_LINT ?? "bun lint").split(" ");
 // With names, `--record` leaves what is recorded for the other projects as it is.
 const expected: Record<string, string[]> = oxlint && names.length === 0 ? {} : JSON.parse(readFileSync(expectedPath, "utf8"));
+const expectedLabels: Record<string, string[]> = oxlint && names.length === 0 ? {} : JSON.parse(readFileSync(labelsPath, "utf8"));
 
-/** `file:line:column+length rule` of each diagnostic, at its first label, which is what oxlint prints. */
-function run(command: string, before: string[], cwd: string): string[] {
+/** `file:line:column+length rule` of each diagnostic, at its first label, which is what oxlint prints; and all the labels of those that have more. */
+function run(command: string, before: string[], cwd: string): { reports: string[]; labels: string[] } {
   const { stdout, stderr, error } = spawnSync(command, [...before, "-f", "json", "."], { cwd, encoding: "utf8", timeout: 60_000, maxBuffer: 1 << 28 });
   if (error) throw new Error(`${command} ${before.join(" ")}: ${error.message}`);
   let diagnostics;
@@ -35,10 +38,11 @@ function run(command: string, before: string[], cwd: string): string[] {
     // `TS(2391)` is an error of oxc's semantic analysis.
     if (!/^[a-z]/.test(it.code ?? "") && command === oxlint && !cwd.includes("syntax-error")) console.log(`NOT READ by oxlint: ${cwd} ${it.filename}: ${it.message}`);
   }
-  return diagnostics
-    .filter((it: any) => it.code)
-    .map((it: any) => `${it.filename}:${it.labels[0].span.line}:${it.labels[0].span.column}+${it.labels[0].span.length} ${it.code}`)
-    .sort();
+  const found = diagnostics.filter((it: any) => it.code);
+  return {
+    reports: found.map((it: any) => `${it.filename}:${it.labels[0].span.line}:${it.labels[0].span.column}+${it.labels[0].span.length} ${it.code}`).sort(),
+    labels: found.flatMap((it: any) => (labelsOf(it) ? [`${it.filename} ${it.code} ${labelsOf(it)}`] : [])).sort(),
+  };
 }
 
 /** What is in `some` more often than in `others`. */
@@ -63,11 +67,18 @@ for (const project of projects) {
       mkdirSync(dirname(join(cwd, path)), { recursive: true });
       writeFileSync(join(cwd, path), text);
     }
-    if (oxlint) expected[project.name] = run(oxlint, typed, cwd);
-    const wanted = expected[project.name] ?? [];
+    if (oxlint) {
+      const { reports, labels } = run(oxlint, typed, cwd);
+      expected[project.name] = reports;
+      // Only the projects that have some are in the file.
+      delete expectedLabels[project.name];
+      if (labels.length > 0) expectedLabels[project.name] = labels;
+    }
+    const wanted = [...(expected[project.name] ?? []), ...(expectedLabels[project.name] ?? [])];
     // With one thread, with fewer threads than files, and with as many as there are.
     for (const threads of project.name.startsWith("no-cycle/") ? ["--threads=1", "--threads=2", ""] : [""]) {
-      const actual = run(ours, [...oursArgs, ...typed, ...(threads ? [threads] : [])], cwd);
+      const { reports, labels } = run(ours, [...oursArgs, ...typed, ...(threads ? [threads] : [])], cwd);
+      const actual = [...reports, ...labels];
       const missing = more(wanted, actual);
       const extra = more(actual, wanted);
       if (missing.length + extra.length > 0) {
@@ -82,6 +93,9 @@ for (const project of projects) {
     rmSync(cwd, { recursive: true, force: true });
   }
 }
-if (args.includes("--record")) writeFileSync(expectedPath, JSON.stringify(expected, null, 1) + "\n");
+if (args.includes("--record")) {
+  writeFileSync(expectedPath, JSON.stringify(expected, null, 1) + "\n");
+  writeFileSync(labelsPath, JSON.stringify(expectedLabels, null, 1) + "\n");
+}
 console.log(`${projects.length} projects, ${failed} differ`);
 process.exit(failed > 0 ? 1 : 0);

@@ -1,6 +1,17 @@
 import { dlopen } from "bun:ffi";
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isMusl,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+} from "harness";
 import {
   chmodSync,
   chownSync,
@@ -3032,6 +3043,25 @@ describe.concurrent("bun lint", () => {
       expect(exitCode).toBe(2);
     });
 
+    // No suite sees this: they turn a rule on by its entry and validate nothing.
+    test.each([
+      ["import/no-absolute-path", { amd: true }],
+      ["import/max-dependencies", { max: 10 }],
+      ["import/newline-after-import", { count: 1 }],
+      ["import/no-anonymous-default-export", { allowArray: true }],
+      ["import/no-dynamic-require", { esmodule: true }],
+      ["import/no-nodejs-modules", { allow: ["fs"] }],
+      ["import/no-unassigned-import", { allow: ["**/*.css"] }],
+    ] as const)("the options of %s are taken, beside an .oxlintrc.json too", async (rule, options) => {
+      const rules = { [rule]: ["error", options] };
+      const oxlint = JSON.stringify({ plugins: ["import"], categories: { correctness: "off" }, rules });
+      for (const config of [{ ".oxlintrc.json": oxlint }, { "eslint.config.js": flat("", rules) }]) {
+        const { stderr, exitCode } = await lint({ ...config, "a.js": "export const a = 1;\n" }, ["a.js"]);
+        expect(stderr).not.toContain("should NOT have");
+        expect(exitCode).toBe(0);
+      }
+    });
+
     test("a plugin of the configuration that has the prefix answers for it", async () => {
       const plugin = `{ rules: { "no-env": { create: context => ({ Program(node) { context.report({ node, message: "theirs" }); } }) } } }`;
       const theirs = `export default [{ plugins: { "no-restricted-syntax": ${plugin} }, rules: { "no-restricted-syntax/no-env": "error" } }];`;
@@ -4770,6 +4800,46 @@ describe("bun lint on Windows, macOS and Linux", () => {
   const everythingIn = (dir: { toString(): string }) =>
     (readdirSync(String(dir), { recursive: true }) as string[]).map(it => it.replaceAll(sep, "/")).sort();
 
+  /** Sets and reads an extended attribute of a file, where a file in the temporary directory takes one. */
+  const attributes = (() => {
+    if (!isLinux && !isMacOS) return undefined;
+    const c = (text: string) => Buffer.from(`${text}\0`);
+    // macOS has a position in the attribute before the flags.
+    const ofMacOS = () => {
+      const { symbols } = dlopen("libSystem.B.dylib", {
+        setxattr: { args: ["ptr", "ptr", "ptr", "u64", "u32", "i32"], returns: "i32" },
+        getxattr: { args: ["ptr", "ptr", "ptr", "u64", "u32", "i32"], returns: "i64" },
+      });
+      return {
+        set: (path: string, name: string, value: Buffer) =>
+          symbols.setxattr(c(path), c(name), value, value.length, 0, 0),
+        get: (path: string, name: string, into: Buffer) => symbols.getxattr(c(path), c(name), into, into.length, 0, 0),
+      };
+    };
+    const ofLinux = () => {
+      const machine = process.arch === "arm64" ? "aarch64" : "x86_64";
+      const { symbols } = dlopen(isMusl ? `libc.musl-${machine}.so.1` : "libc.so.6", {
+        setxattr: { args: ["ptr", "ptr", "ptr", "u64", "i32"], returns: "i32" },
+        getxattr: { args: ["ptr", "ptr", "ptr", "u64"], returns: "i64" },
+      });
+      return {
+        set: (path: string, name: string, value: Buffer) => symbols.setxattr(c(path), c(name), value, value.length, 0),
+        get: (path: string, name: string, into: Buffer) => symbols.getxattr(c(path), c(name), into, into.length),
+      };
+    };
+    const { set, get } = isMacOS ? ofMacOS() : ofLinux();
+    const all = {
+      set: (path: string, name: string, value: string) => set(path, name, Buffer.from(value)) === 0,
+      get(path: string, name: string) {
+        const into = Buffer.alloc(256);
+        const length = Number(get(path, name, into));
+        return length < 0 ? null : into.toString("utf8", 0, length);
+      },
+    };
+    using dir = tempDir("bun-attributes", { "a": "" });
+    return all.set(join(String(dir), "a"), "user.tag", "a") ? all : undefined;
+  })();
+
   const BOM = "\uFEFF";
   const crlf = (text: string) => text.replaceAll("\n", "\r\n");
 
@@ -5285,6 +5355,22 @@ foo(b)
       const { exitCode } = await lint(dir, [...semi, "--fix"]);
       expect(everythingIn(dir)).toEqual(before);
       expect(readFileSync(join(String(dir), "src", "b.js"), "utf8")).toBe(fixed);
+      expect(exitCode).toBe(0);
+    });
+
+    // A file that takes the name of another has none of its tags, nor its ACL. ESLint writes into every file.
+    test.skipIf(attributes === undefined)("a file keeps its extended attributes", async () => {
+      using dir = tempDir("bun-lint-platform", { "tagged.js": fixable, "plain.js": fixable });
+      const [tagged, plain] = ["tagged.js", "plain.js"].map(name => join(String(dir), name));
+      expect(attributes!.set(tagged, "user.tag", "hello")).toBe(true);
+      const before = [tagged, plain].map(path => statSync(path).ino);
+      const { exitCode } = await lint(dir, [...semi, "--fix"]);
+      expect([tagged, plain].map(path => readFileSync(path, "utf8"))).toEqual([fixed, fixed]);
+      expect(attributes!.get(tagged, "user.tag")).toBe("hello");
+      expect(statSync(tagged).ino).toBe(before[0]);
+      // What the system gives every file, as a label of SELinux, is no reason to write in place.
+      if (isLinux) expect(statSync(plain).ino).not.toBe(before[1]);
+      expect(everythingIn(dir)).toEqual(["plain.js", "tagged.js"]);
       expect(exitCode).toBe(0);
     });
 

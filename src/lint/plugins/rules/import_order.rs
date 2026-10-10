@@ -186,7 +186,10 @@ fn path_groups_of(written: &[Json]) -> (Vec<PathGroup>, f64) {
 }
 
 impl Rule for Order {
-    const META: Meta = Meta::plugin(Plugin::Import, "order", Kind::Suggestion).fixable(Fixable::Code).needs_modules();
+    const META: Meta = Meta::plugin(Plugin::Import, "order", Kind::Suggestion)
+        .fixable(Fixable::Code)
+        .needs_modules()
+        .reports_at_the_end();
     const ON: On = On::new().finish().var_decls().stmts(&[StmtTag::ExportNamed]);
     no_state!();
 
@@ -747,9 +750,11 @@ impl Order {
                 (Some(a), Some(b)) => self.compare((a.1, a.0.import_kind), (b.1, b.0.import_kind), is_order),
                 _ => Ordering::Equal,
             };
-            // Each group as `Array.prototype.sort` sorts it, which what is no order depends on. Not a long one.
+            // Each group as `Array.prototype.sort` sorts it, which what is no order depends on. A long one only if that
+            // leaves it as it is.
             for group in order.chunk_by_mut(|a, b| rank(*a) == rank(*b)) {
-                match group.len() < 64 {
+                let mut pairs = group.iter().zip(group.iter().skip(1));
+                match group.len() < 64 || pairs.all(|(a, b)| compare(*b, *a, false) != Ordering::Less) {
                     true => utils::array_sort_by(group, |a, b| compare(a, b, false) == Ordering::Less),
                     false => sort_indices(group, &mut |a, b| compare(a, b, true)),
                 }
@@ -855,6 +860,8 @@ impl Order {
             .data("firstKind", description_of(first))
             .data("first", first.display_name.clone());
         if category == Category::Named {
+            // The names are looked at where the declaration is entered.
+            let report = report.on_exit(false);
             // `findSpecifierStart`, `findSpecifierEnd`
             let around = |it: &Entry| Some((file.token_before(it.node)?.end(), file.token_after(it.node)?.start()));
             let Some(((first_start, first_end), (second_start, second_end))) = around(first).zip(around(second)) else {

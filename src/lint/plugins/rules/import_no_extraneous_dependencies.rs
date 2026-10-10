@@ -97,11 +97,13 @@ impl Config {
 
 /// `readJSON`. `Err`: what it throws.
 fn read_json(modules: &dyn Modules, json_path: &[u8]) -> Result<Json, Option<Failure>> {
-    match modules.read(json_path) {
-        Some(content) => json_parse(&content).map_err(|message| Some((NOT_PARSED, message))),
-        None if modules.exists(json_path) => Err(None),
-        None => Err(Some((NOT_FOUND, Vec::new()))),
+    if let Some(content) = modules.read(json_path) {
+        return json_parse(&content).map_err(|message| Some((NOT_PARSED, message)));
     }
+    // `ENOENT`, and neither `EISDIR` nor `ENOTDIR`: what there is of the path is a directory, and not all of it.
+    let found = paths::ancestors(json_path).find(|it| modules.exists(it));
+    let is_missing = found.is_none_or(|it| it.len() < json_path.len() && modules.read(it).is_none());
+    Err(is_missing.then(|| (NOT_FOUND, Vec::new())))
 }
 
 /// `packageContent`

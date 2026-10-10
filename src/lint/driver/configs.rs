@@ -443,6 +443,18 @@ impl<'l> Loader<'l> {
         }
     }
 
+    /// One that reads the configuration files of ESLint 8, whatever else there is.
+    pub(crate) fn of_eslint_8(
+        linter: &'l Linter,
+        options: &'l Options,
+        environment: &'l Environment<'l>,
+        js_plugins: &'l Host<'l>,
+    ) -> Loader<'l> {
+        let loader = Loader::new(linter, options, environment, js_plugins);
+        let _ = loader.is_legacy.set(true);
+        loader
+    }
+
     pub(crate) fn warn(&self, parts: &[&[u8]]) {
         let warning = parts.concat();
         let mut warnings = self.warnings.lock();

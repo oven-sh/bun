@@ -176,7 +176,11 @@ impl Rule for FuncNames {
             true => (func.estree_span().start, utils::oxlint::get_function_name_with_kind(func)),
             false => (head.start, ast_utils::get_function_name_with_kind(func)),
         };
-        let report = cx.report(Span::new(start, head.end), message).data("name", name);
+        // `"FunctionExpression:exit"`
+        let report = cx
+            .report(Span::new(start, head.end), message)
+            .on_exit(func.kind() == FnKind::Expr)
+            .data("name", name);
         if cx.language().is_oxlint {
             match func.name() {
                 Some(name) => report.suggest(REMOVE_NAME, |fixer| fixer.remove(name)),

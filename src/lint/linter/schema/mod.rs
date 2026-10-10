@@ -177,6 +177,9 @@ pub(crate) fn validate_known_properties(
 ) -> Result<(), Vec<u8>> {
     let id = RuleId::Known(meta).to_vec();
     let found = find(&id);
+    if found.is_none() && may_lack_its_schema(&id) {
+        return Ok(());
+    }
     let mut names = Vec::new();
     if let Some(schema) = found.as_ref().and_then(|it| it.as_array()?.first()) {
         property_names(schema, &mut names);
@@ -203,6 +206,9 @@ pub fn validate_by_id(id: &[u8], options: &[Json]) -> Result<(), Vec<u8>> {
         return Ok(());
     }
     let found = find(id);
+    if found.is_none() && may_lack_its_schema(id) {
+        return Ok(());
+    }
     let parts = found.as_ref().and_then(Json::as_array).unwrap_or_default();
     validate_with(
         parts.first(),
@@ -210,6 +216,12 @@ pub fn validate_by_id(id: &[u8], options: &[Json]) -> Result<(), Vec<u8>> {
         options,
     )
     .map(drop)
+}
+
+/// Whether a rule that `data.rs` does not list may take options all the same: of these plugins not every rule's schema is there
+/// yet, and to refuse options that the rule reads ends the run.
+fn may_lack_its_schema(id: &[u8]) -> bool {
+    [&b"import/"[..], b"react/", b"regexp/"].iter().any(|it| id.starts_with(it))
 }
 
 /// `meta.schema` of the rule that ESLint calls `id`. `None`: it takes no options, or there is no such rule.

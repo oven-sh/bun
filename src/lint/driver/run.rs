@@ -852,6 +852,10 @@ impl Run<'_> {
         .measuring(options.timing);
         let store = bun_lint_graph::Store::new(&environment.cwd);
         let modules = bun_lint_graph::Graph::new(&store);
+        modules.list_files_by(Box::new(|patterns: &[&[u8]], extensions: &[&[u8]]| {
+            let of_the_run = (&linter, environment, &js_plugins);
+            discover::list_as_eslint_8(of_the_run, &pool, patterns, extensions)
+        }));
         let loader = Loader::new(&linter, options, environment, &js_plugins);
         if let Some((of_eslint, of_oxlint)) = loader.undecided() {
             self.error(

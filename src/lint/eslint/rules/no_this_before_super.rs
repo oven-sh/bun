@@ -220,7 +220,7 @@ impl NoThisBeforeSuper {
 }
 
 impl Rule for NoThisBeforeSuper {
-    const META: Meta = Meta::eslint("no-this-before-super", Kind::Problem).recommended().reports_on_exit();
+    const META: Meta = Meta::eslint("no-this-before-super", Kind::Problem).recommended().reports_on_code_path_end();
     const ON: On = On::new().classes();
     type State<'a> = State<'a>;
 

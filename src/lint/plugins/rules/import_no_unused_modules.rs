@@ -33,7 +33,7 @@ const EXPORT_ALL_DECLARATION: &[u8] = b"ExportAllDeclaration";
 const IMPORT_NAMESPACE_SPECIFIER: &[u8] = b"ImportNamespaceSpecifier";
 const IMPORT_DEFAULT_SPECIFIER: &[u8] = b"ImportDefaultSpecifier";
 const DEFAULT: &[u8] = b"default";
-/// The `name` of a node that has none.
+/// How the `name` of a node that has none is printed.
 const UNDEFINED: &[u8] = b"undefined";
 
 const DECLARATIONS: [StmtTag; 7] = [
@@ -64,6 +64,8 @@ struct Context {
 /// What upstream keeps between the files. It changes it with every file that it lints, for an editor: not so here.
 struct Prepared {
     context: Context,
+    /// Otherwise upstream throws: nothing is reported.
+    is_listed: bool,
     ignored_files: FxHashSet<Box<[u8]>>,
     export_list: FxHashMap<Box<[u8]>, Arc<Exports>>,
     /// The same for another context.
@@ -140,8 +142,8 @@ fn file_is_in_pkg(modules: &dyn Modules, file: &[u8]) -> bool {
         || field_of(&pkg, b"main").is_some_and(check_pkg_field_string)
 }
 
-/// `forEachDeclarationIdentifier`: the name, and `isTypeDeclaration`.
-fn for_each_declaration_identifier<'a>(declaration: Stmt<'a>, cb: &mut dyn FnMut(&'a [u8], bool)) {
+/// `forEachDeclarationIdentifier`: the name, which is `None` for `undefined`, and `isTypeDeclaration`.
+fn for_each_declaration_identifier<'a>(declaration: Stmt<'a>, cb: &mut dyn FnMut(Option<&'a [u8]>, bool)) {
     let (id, is_type_declaration) = match declaration.kind() {
         StmtKind::Fn(it) if it.has_body() => (it.name(), false),
         StmtKind::Class(it) => (it.name(), false),
@@ -157,16 +159,16 @@ fn for_each_declaration_identifier<'a>(declaration: Stmt<'a>, cb: &mut dyn FnMut
         _ => return,
     };
     if let Some(id) = id {
-        cb(id.bytes(), is_type_declaration);
+        cb(Some(id.bytes()), is_type_declaration);
     }
 }
 
 /// The same for the `id` of a declarator.
-fn for_each_identifier_of<'a>(id: Pat<'a>, cb: &mut dyn FnMut(&'a [u8], bool)) {
+fn for_each_identifier_of<'a>(id: Pat<'a>, cb: &mut dyn FnMut(Option<&'a [u8]>, bool)) {
     match id.kind() {
         PatKind::Object(_) => recursive_pattern_capture(id, &mut |pattern| {
             if let Some(name) = pattern.as_ident() {
-                cb(name.bytes(), false);
+                cb(Some(name.bytes()), false);
             }
         }),
         PatKind::Array(elements) => {
@@ -175,10 +177,10 @@ fn for_each_identifier_of<'a>(id: Pat<'a>, cb: &mut dyn FnMut(&'a [u8], bool)) {
                 let Some(pattern) = element.pat().filter(|it| !matches!(it.kind(), PatKind::Missing)) else { continue };
                 let is_identifier = !element.is_rest() && element.default().is_none();
                 let name = pattern.as_ident().filter(|_| is_identifier);
-                cb(name.map_or(UNDEFINED, Name::bytes), false);
+                cb(name.map(Name::bytes), false);
             }
         }
-        _ => cb(id.as_ident().map_or(UNDEFINED, Name::bytes), false),
+        _ => cb(id.as_ident().map(Name::bytes), false),
     }
 }
 
@@ -202,6 +204,7 @@ impl NoUnusedModules {
     fn prepare<'a>(&self, file: &'a File<'a>) -> Prepared {
         let mut prepared = Prepared {
             context: Context::of(file.language()),
+            is_listed: false,
             ignored_files: FxHashSet::default(),
             export_list: FxHashMap::default(),
             next: OnceLock::new(),
@@ -220,6 +223,7 @@ impl NoUnusedModules {
         else {
             return prepared;
         };
+        prepared.is_listed = true;
         prepared.ignored_files = ignored_files_list.into_iter().map(|it| it.path.into_boxed_slice()).collect();
         let mut export_list: FxHashMap<Box<[u8]>, Exports> = FxHashMap::default();
         let mut import_list: Vec<Used<'a>> = Vec::new();
@@ -301,20 +305,24 @@ impl NoUnusedModules {
     }
 
     /// `checkUsage`
-    fn check_usage<'a>(&self, node: Span, exported_value: &'a [u8], is_type_export: bool, cx: &Cx<'a, Self>) {
+    fn check_usage<'a>(&self, node: Span, exported_value: Option<&'a [u8]>, is_type_export: bool, cx: &Cx<'a, Self>) {
         if is_type_export && self.ignore_unused_type_exports {
             return;
         }
         let Some(exports) = cx.state.0.get_or_init(|| self.exports_of(cx.file())) else { return };
         let is_used = |key: &[u8]| exports.get(key).is_some_and(|it| *it);
         // "special case: export * from", "special case: namespace import"
-        if is_used(EXPORT_ALL_DECLARATION) && exported_value != IMPORT_DEFAULT_SPECIFIER
+        if is_used(EXPORT_ALL_DECLARATION) && exported_value != Some(IMPORT_DEFAULT_SPECIFIER)
             || is_used(IMPORT_NAMESPACE_SPECIFIER)
-            || is_used(key_of(exported_value))
+            || exported_value.is_some_and(|it| is_used(key_of(it)))
         {
             return;
         }
-        let value = if exported_value == IMPORT_DEFAULT_SPECIFIER { DEFAULT } else { exported_value };
+        let value = match exported_value {
+            Some(name) if name == IMPORT_DEFAULT_SPECIFIER => DEFAULT,
+            Some(name) => name,
+            None => UNDEFINED,
+        };
         cx.report(node, UNUSED).data("value", value);
     }
 }
@@ -350,12 +358,12 @@ impl Rule for NoUnusedModules {
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         if stmt.tag() == StmtTag::ExportDefault {
-            self.check_usage(stmt.span(), IMPORT_DEFAULT_SPECIFIER, false, cx);
+            self.check_usage(stmt.span(), Some(IMPORT_DEFAULT_SPECIFIER), false, cx);
         } else if stmt.is_exported()
             && let Some(node) = stmt.export_span()
         {
             if stmt.is_default_export() {
-                self.check_usage(node, IMPORT_DEFAULT_SPECIFIER, false, cx);
+                self.check_usage(node, Some(IMPORT_DEFAULT_SPECIFIER), false, cx);
                 return;
             }
             for_each_declaration_identifier(stmt, &mut |name, is_type_export| {
@@ -365,7 +373,7 @@ impl Rule for NoUnusedModules {
     }
 
     fn export_spec<'a>(&self, specifier: ExportSpec<'a>, cx: &mut Cx<'a, Self>) {
-        self.check_usage(specifier.span(), specifier.exported().bytes(), false, cx);
+        self.check_usage(specifier.span(), Some(specifier.exported().bytes()), false, cx);
     }
 
     /// `checkExportPresence`
@@ -374,9 +382,11 @@ impl Rule for NoUnusedModules {
         if file.body().iter().any(exports_something) {
             return;
         }
-        let path = paths::portable(file.path(), file.path());
-        if self.unused_exports && self.prepared(file).ignored_files.contains(&path[..]) {
-            return;
+        if self.unused_exports {
+            let (prepared, path) = (self.prepared(file), paths::portable(file.path(), file.path()));
+            if !prepared.is_listed || prepared.ignored_files.contains(&path[..]) {
+                return;
+            }
         }
         let node = match file.body().first() {
             Some(first) => first.export_span().unwrap_or_else(|| first.span()),

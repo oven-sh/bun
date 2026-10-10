@@ -278,18 +278,18 @@ describe.concurrent("bun lint and bun format", () => {
 
   // `bun lint` has a rule that holds a file against what `bun format` prints.
   test("[format] is read by both, [lint] by bun lint, and neither by another command", async () => {
-    const config = "[lint]\nnoSuchKey = 1\n\n[format]\nnoSuchKey = 1\n";
+    const [ofLint, ofFormat] = ["[lint]\nnoSuchKey = 1\n", "[format]\nnoSuchKey = 1\n"];
     const [lint, format, other] = await Promise.all([
-      run(["lint", "a.js"], config),
-      run(["format", "a.js"], config),
-      run(["-e", "console.log(1)"], config),
+      run(["lint", "a.js"], ofLint),
+      run(["format", "a.js"], ofFormat),
+      run(["-e", "console.log(1)"], ofLint + ofFormat),
     ]);
     expect(lint.error).toStartWith(`error: unknown key "noSuchKey" in [lint].`);
     expect(format.error).toStartWith(`error: unknown key "noSuchKey" in [format].`);
     expect(other).toEqual({ stdout: "1\n", error: undefined, exitCode: 0 });
     const [onlyFormat, onlyLint] = await Promise.all([
-      run(["lint", "--no-config-lookup", "a.js"], "[format]\nnoSuchKey = 1\n"),
-      run(["format", "--check", "a.js"], "[lint]\nnoSuchKey = 1\n"),
+      run(["lint", "--no-config-lookup", "a.js"], ofFormat),
+      run(["format", "--check", "a.js"], ofLint),
     ]);
     expect(onlyFormat.error).toStartWith(`error: unknown key "noSuchKey" in [format].`);
     expect(onlyFormat.exitCode).toBe(2);

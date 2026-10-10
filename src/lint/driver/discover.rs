@@ -7,13 +7,14 @@
 use crate::configs::{Flavor, Loaded, Loader};
 use crate::embedded::Framework;
 use crate::gitignore::{self, Chain};
-use crate::run::{Fatal, Pool};
-use crate::{fs, paths};
+use crate::run::{Environment, Fatal, Pool};
+use crate::{Linter, fs, paths};
 use bun_core::strings;
 use bun_glob::{Options, Pattern};
-use bun_lint::js_plugin::Route;
+use bun_lint::js_plugin::{Host, Route};
 use bun_lint::linter::config::Dotfiles;
 use bun_lint::linter::{FileConfig, ResolvedConfig};
+use bun_lint::modules::Listed;
 use bun_threading::Guarded;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -382,6 +383,43 @@ fn search(
         Some(error) => Err(error),
         None => Ok(is_matched.iter().position(|it| !it.load(Ordering::Relaxed))),
     }
+}
+
+/// What `new FileEnumerator({ extensions }).iterateFiles(patterns)` of ESLint 8 and 9 yields: from the working directory, by the
+/// configuration files of ESLint 8, whatever configures the run and whatever its command line says. Sorted by path. `Err`: the
+/// message of what it throws.
+pub(crate) fn list_as_eslint_8(
+    (linter, environment, js_plugins): (&Linter, &Environment, &Host),
+    pool: &Pool,
+    patterns: &[&[u8]],
+    extensions: &[&[u8]],
+) -> Result<Vec<Listed>, Vec<u8>> {
+    let options = crate::cli::Options {
+        ext: Some(extensions.iter().map(|it| it.to_vec()).collect()),
+        ..Default::default()
+    };
+    let loader = Loader::of_eslint_8(linter, &options, environment, js_plugins);
+    let patterns: Vec<Vec<u8>> = patterns.iter().map(|it| it.to_vec()).collect();
+    let mut targets = find_files(&loader, pool, &patterns, true).map_err(|error| error.0)?;
+    bun_lint::utils::sort::sort_by(&mut targets, |a, b| a.path.cmp(&b.path));
+    // `ConfigurationNotFoundError`
+    let mut directories = targets.iter().map(|it| paths::dirname(&it.path));
+    let has_none = |it: &&[u8]| !paths::ancestors(it).any(crate::eslintrc::has_one);
+    if let Some(directory) = directories.find(has_none) {
+        return Err([b"No ESLint configuration found in ", directory, b"."].concat());
+    }
+    let listed = targets.into_iter().filter_map(|it| {
+        let is_ignored = match it.status {
+            Status::Matched(_) => false,
+            Status::Ignored => true,
+            Status::External | Status::Unconfigured => return None,
+        };
+        Some(Listed {
+            path: it.path,
+            is_ignored,
+        })
+    });
+    Ok(listed.collect())
 }
 
 /// ESLint's `findFiles`. `patterns`: the arguments. The files are in no particular order, and

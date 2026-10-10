@@ -311,6 +311,8 @@ pub enum When {
     EnteringShorterFirst,
     /// [`Meta::reports_on_exit`]
     Leaving,
+    /// [`Meta::reports_on_code_path_end`]
+    LeavingCodePath,
     /// [`Meta::reports_at_the_end`]
     AtTheEnd,
 }
@@ -423,6 +425,13 @@ impl Meta {
     /// is called on leaving a node, the inner node first. Without it the longer comes first.
     pub const fn reports_on_exit(mut self) -> Meta {
         self.reports = When::Leaving;
+        self
+    }
+
+    /// As [`Meta::reports_on_exit`], for a rule that reports when the code path of a function ends: ESLint calls the listeners on
+    /// leaving the function first.
+    pub const fn reports_on_code_path_end(mut self) -> Meta {
+        self.reports = When::LeavingCodePath;
         self
     }
 

@@ -3426,6 +3426,12 @@ fn check_named_files(
             let may = may_declare_a_global(host, &roots[at], is_module);
             is_kept[at].store(may, Ordering::Relaxed);
         });
+        // A program without a root file has no libraries and no `types`.
+        if let Some(first) = is_kept.first()
+            && !is_kept.iter().any(|it| it.load(Ordering::Relaxed))
+        {
+            first.store(true, Ordering::Relaxed);
+        }
         let mut is_kept = is_kept.iter();
         (project.files).retain(|_| is_kept.next().is_some_and(|it| it.load(Ordering::Relaxed)));
     }

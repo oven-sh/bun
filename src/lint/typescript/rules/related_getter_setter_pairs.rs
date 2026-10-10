@@ -72,7 +72,8 @@ impl RelatedGetterSetterPairs {
 impl Rule for RelatedGetterSetterPairs {
     const META: Meta = Meta::typescript("related-getter-setter-pairs", Kind::Problem)
         .presets(Presets::STRICT_TYPE_CHECKED)
-        .requires_types();
+        .requires_types()
+        .reports_on_exit();
     const ON: On = On::new()
         .classes()
         .stmts(&[StmtTag::Interface])

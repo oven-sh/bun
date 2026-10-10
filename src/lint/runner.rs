@@ -1085,6 +1085,8 @@ fn sorted(diagnostics: Vec<Diagnostic>) -> Vec<Diagnostic> {
             When::Entering => ((u64::from(u32::MAX) - end) << 16) | rule,
             When::EnteringShorterFirst => (end << 16) | rule,
             When::Leaving => (1 << 48) | (end << 16) | rule,
+            // There are fewer than 1 << 15 rules.
+            When::LeavingCodePath => (1 << 48) | (end << 16) | (1 << 15) | rule,
             When::AtTheEnd => (2 << 48) | (rule << 32) | end,
         }
     };

@@ -1022,7 +1022,8 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     `;
     await withCustomServer(script, async (port, send, waitForStderr) => {
       expect(await fetchH3(port, "/").then(r => r.text())).toBe("ok");
-      const inflight = fetchH3(port, "/stop", {
+      // Handled from the start: the close can reach the client before "STOPPED" is read from the pipe.
+      const outcome = fetchH3(port, "/stop", {
         method: "POST",
         body: new ReadableStream({
           start(c) {
@@ -1030,10 +1031,12 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
             c.close();
           },
         }),
-      });
+      }).then(
+        r => r.text(),
+        e => e.code,
+      );
       await waitForStderr(/STOPPED/);
-      const outcome = await inflight.then(r => r.text()).catch(e => e.code);
-      expect(outcome).toBe("HTTP3StreamReset");
+      expect(await outcome).toBe("HTTP3StreamReset");
     });
   });
 

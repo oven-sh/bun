@@ -2361,3 +2361,40 @@ describe.concurrent("node:repl prints a frozen thrown error and continues", () =
     interactiveTimeout,
   );
 });
+
+// The completer returns nothing for a chain rooted at a Proxy, so that it does
+// not run a trap. util.types.isProxy must answer false for the global object.
+test.concurrent(
+  "node:repl completes a property of globalThis",
+  async () => {
+    const script = `
+      const repl = require("node:repl");
+      const { PassThrough } = require("node:stream");
+      const complete = useGlobal => new Promise((resolve, reject) => {
+        const inp = new PassThrough(), out = new PassThrough(); out.resume();
+        const r = repl.start({ input: inp, output: out, terminal: false, prompt: "", useGlobal });
+        r.complete("globalThis.JSO", (err, data) => {
+          r.close();
+          err ? reject(err) : resolve(data);
+        });
+      });
+      (async () => {
+        console.log(JSON.stringify({ useGlobal: await complete(true), ownContext: await complete(false) }));
+      })();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      useGlobal: [["globalThis.JSON"], "globalThis.JSO"],
+      ownContext: [["globalThis.JSON"], "globalThis.JSO"],
+    });
+    expect(exitCode).toBe(0);
+  },
+  interactiveTimeout,
+);

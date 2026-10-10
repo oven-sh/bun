@@ -6,6 +6,7 @@ const net = require("node:net");
 
 const N = 8;
 const WINDOW_MS = 1000;
+const MAX_WINDOWS = 3;
 const clients = new Map();
 const held = [];
 const counts = {};
@@ -23,12 +24,20 @@ function report() {
 
 function maybeMeasure() {
   if (peersGone !== N || held.length !== N) return;
+  measure(1);
+}
+
+function measure(nth) {
   const cpu0 = process.cpuUsage();
   setTimeout(() => {
     const cpu = process.cpuUsage(cpu0);
     const cpuMs = (cpu.user + cpu.system) / 1000;
-    // A spin burns >= the whole window; half leaves room for teardown + GC on debug/ASAN builds.
-    verdict = cpuMs < WINDOW_MS / 2 ? "idle" : "spun " + Math.round(cpuMs) + "ms cpu in " + WINDOW_MS + "ms";
+    // A spin burns the whole of every window; half leaves room for GC on debug/ASAN builds. The teardown of
+    // the sockets that the hangup closed is a one-time cost that can pass half of the first window on a debug
+    // build, so a busy window is measured again.
+    const idle = cpuMs < WINDOW_MS / 2;
+    if (!idle && nth < MAX_WINDOWS) return measure(nth + 1);
+    verdict = idle ? "idle" : `spun ${Math.round(cpuMs)}ms cpu in ${WINDOW_MS}ms, ${nth} windows in a row`;
     for (const socket of held) if (!socket.destroyed) socket.end();
     report();
   }, WINDOW_MS);

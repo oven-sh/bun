@@ -217,6 +217,17 @@ Test files matching the pattern behave as if you passed the `--concurrent` flag:
 
 The `--concurrent` CLI flag overrides this setting, forcing all tests to run concurrently regardless of the glob pattern.
 
+#### concurrent
+
+Treat all tests as `test.concurrent()` tests, as if you passed the `--concurrent` flag. Default `false` (tests run sequentially):
+
+```toml title="bunfig.toml" icon="settings"
+[test]
+concurrent = true
+```
+
+When both values are valid, the `--concurrent` CLI flag overrides this setting. Invalid `test.concurrent` values still fail validation.
+
 #### randomize
 
 Run tests in random order to identify tests with hidden dependencies:

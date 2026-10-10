@@ -59,6 +59,14 @@ const http1ServerPipeline: {
   kMustCloseConnection?: symbol;
 } = {};
 
+// node:_http_outgoing registers walkRawHead() here for node:_http_server, which keeps it out of its own exports.
+const outgoingMessageInternals: {
+  walkRawHead?: (
+    message: unknown,
+    headers: unknown,
+  ) => { connection: boolean; contLen: boolean; te: boolean; date: boolean; trailer: boolean; flat: string[] };
+} = {};
+
 export const enum NodeHTTPResponseAbortEvent {
   none = 0,
   abort = 1,
@@ -555,6 +563,7 @@ export {
   noBodySymbol,
   onDataIncomingMessage,
   optionsSymbol,
+  outgoingMessageInternals,
   parseProxyConfigFromEnv,
   parseProxyUrl,
   redactInvalidProxyUrl,

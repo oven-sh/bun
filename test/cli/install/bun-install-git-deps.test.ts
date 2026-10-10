@@ -5,9 +5,9 @@
 // a bare repo on disk (served over git's dumb HTTP protocol by Bun.serve
 // when an http URL is needed) or tarballs built in memory.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
-import { join } from "path";
+import { dirname, join } from "path";
 import { pathToFileURL } from "url";
 
 const gitEnv: NodeJS.Dict<string> = {
@@ -493,8 +493,8 @@ test.concurrent(
   30_000,
 );
 
-// With the isolated linker, a cold-cache frozen install re-enqueues each
-// dependency after the shared clone completes; the checkout id was derived
+// With the isolated linker, a cold-cache frozen install re-enqueued each
+// dependency after the shared clone completed; the checkout id was derived
 // from the branch committish's current tip instead of the lockfile's pinned
 // SHA, so a branch that moved after the lockfile was written installed the
 // wrong commit and stranded the install context. The hoisted linker had the
@@ -562,6 +562,381 @@ for (const linker of ["hoisted", "isolated"] as const) {
       expect(exitCode).toBe(0);
     },
     30_000,
+  );
+}
+
+// A registry that has version 1.0.0 of each package: name -> the rest of its
+// package.json. The marker its index.js exports is `<name>-from-registry`.
+async function serveRegistry(packages: Record<string, object>) {
+  const tarballs = new Map<string, Uint8Array>();
+  for (const [name, fields] of Object.entries(packages)) {
+    const files = {
+      "package.json": JSON.stringify({ name, version: "1.0.0", ...fields }),
+      "index.js": indexJs(`${name}-from-registry`),
+    };
+    tarballs.set(name, await tarballOf("package", files));
+  }
+  return Bun.serve({
+    port: 0,
+    fetch(req) {
+      const { origin, pathname } = new URL(req.url);
+      const name = pathname.slice(1).replace(/\.tgz$/, "");
+      const tarball = tarballs.get(name);
+      if (!tarball) return new Response("not found", { status: 404 });
+      if (pathname.endsWith(".tgz")) return new Response(tarball);
+      const dist = { tarball: `${origin}/${name}.tgz`, integrity: integrityOf(tarball) };
+      return Response.json({
+        name,
+        "dist-tags": { latest: "1.0.0" },
+        versions: { "1.0.0": { name, version: "1.0.0", ...packages[name], dist } },
+      });
+    },
+  });
+}
+
+// bun.lock's `packages` section as key -> `<name>@<resolution>`.
+async function lockedResolutions(project: string): Promise<Record<string, unknown>> {
+  return Object.fromEntries(
+    Object.entries(await lockedPackages(project)).map(([key, [resolution]]) => [key, resolution]),
+  );
+}
+
+// Where the isolated linker installed the `name` that `dir` resolves: the
+// store entry, whose node_modules has the package and what it resolves.
+function storeEntryOf(dir: string, name: string) {
+  return dirname(dirname(realpathSync(join(dir, "node_modules", name))));
+}
+
+// `<root>/project`, a workspace root with no dependencies of its own, and its
+// one member `packages/m`. A new workspace gets the isolated linker.
+function writeWorkspace(root: string, dependencies: Record<string, string>) {
+  const project = join(root, "project");
+  const member = join(project, "packages", "m");
+  mkdirSync(member, { recursive: true });
+  writeFileSync(join(project, "package.json"), JSON.stringify({ name: "project", workspaces: ["packages/*"] }));
+  writeFileSync(join(member, "package.json"), JSON.stringify({ name: "m", version: "1.0.0", dependencies }));
+  return { project, member };
+}
+
+// The isolated linker installs a package once for all the dependencies on it
+// and keeps one of them with it: the first that its depth-first, name-ordered
+// walk reaches. In the tests below that is, for the git package `b` of the
+// workspace member `m`, the peer dependency `b: "*"` of `a`, which is walked
+// first. It is not a git dependency, and bun.lock resolves a required one to
+// the registry's `b` (`a/b`). Once the repository was cloned, the install took
+// the checkout to start from that dependency: it started none and never exited.
+for (const peer of ["required", "optional"] as const) {
+  test.concurrent(
+    `installs a workspace's git dependency that is the ${peer} peer of an earlier package from a cold cache`,
+    async () => {
+      using dir = tempDir(`git-dep-${peer}-peer`, {});
+      const root = String(dir);
+      const bare = await makeSharedRepo(root, [{ name: "b", branch: "main" }], "b.git");
+      const repoUrl = `git+${pathToFileURL(bare)}`;
+      // A required peer is also resolved on its own, from the registry.
+      await using registry = await serveRegistry(
+        peer === "required"
+          ? { a: { peerDependencies: { b: "*" } }, b: {} }
+          : { a: { peerDependencies: { b: "*" }, peerDependenciesMeta: { b: { optional: true } } } },
+      );
+      const env = { BUN_CONFIG_REGISTRY: registry.url.href };
+      const { project, member } = writeWorkspace(root, { a: "1.0.0", b: `${repoUrl}#main` });
+      const locked = {
+        a: "a@1.0.0",
+        b: `b@${repoUrl}#${branchCommits(bare).main}`,
+        m: "m@workspace:packages/m",
+        ...(peer === "required" && { "a/b": "b@1.0.0" }),
+      };
+      // What `m` resolves, and the `b` that `a` resolves: the git one.
+      const installed = async () => ({
+        ...(await installedVersions(member, ["a", "b"])),
+        "a > b": await installedVersionOf(storeEntryOf(member, "a"), "b"),
+      });
+      const expected = { a: "a-from-registry", b: "main", "a > b": "main" };
+      const output = [expect.stringContaining("bun install v"), "", "2 packages installed"];
+
+      // fresh install to produce a complete lockfile
+      {
+        const { stdout, stderr, exitCode } = await runInstall(project, join(root, "cache-warm"), env);
+        expect(stderr).toContain("Saved lockfile");
+        expect(installOutput(stdout)).toEqual(output);
+        expect(await installed()).toEqual(expected);
+        expect(await lockedResolutions(project)).toEqual(locked);
+        expect(exitCode).toBe(0);
+      }
+
+      // simulate a fresh machine: keep bun.lock, drop node_modules + cache
+      rmSync(join(project, "node_modules"), { recursive: true });
+      rmSync(join(member, "node_modules"), { recursive: true });
+      const { stdout, stderr, exitCode } = await runInstall(
+        project,
+        join(root, "cache-cold"),
+        env,
+        "--frozen-lockfile",
+      );
+      expect(stderr).toBe("");
+      expect(installOutput(stdout)).toEqual(output);
+      expect(await installed()).toEqual(expected);
+      expect(exitCode).toBe(0);
+    },
+  );
+}
+
+// One clone serves every package of a repository. Three wait for it here, and
+// the one that a's peer dependency stands for is neither the first nor the last.
+test.concurrent("checks out every package of a repository when a peer dependency stands for one of them", async () => {
+  using dir = tempDir("git-dep-peer-shared-repo", {});
+  const root = String(dir);
+  const names = ["aa", "b", "c"];
+  const bare = await makeSharedRepo(
+    root,
+    names.map(name => ({ name, branch: name })),
+  );
+  const repoUrl = `git+${pathToFileURL(bare)}`;
+  const commits = branchCommits(bare);
+  await using registry = await serveRegistry({ a: { peerDependencies: { b: "*" } }, b: {} });
+  const env = { BUN_CONFIG_REGISTRY: registry.url.href };
+  const { project, member } = writeWorkspace(root, {
+    a: "1.0.0",
+    ...Object.fromEntries(names.map(name => [name, `${repoUrl}#${name}`])),
+  });
+  const locked = {
+    a: "a@1.0.0",
+    ...Object.fromEntries(names.map(name => [name, `${name}@${repoUrl}#${commits[name]}`])),
+    m: "m@workspace:packages/m",
+    "a/b": "b@1.0.0",
+  };
+  const installed = async () => ({
+    ...(await installedVersions(member, ["a", ...names])),
+    "a > b": await installedVersionOf(storeEntryOf(member, "a"), "b"),
+  });
+  const expected = { a: "a-from-registry", aa: "aa", b: "b", c: "c", "a > b": "b" };
+  const output = [expect.stringContaining("bun install v"), "", "4 packages installed"];
+
+  // fresh install to produce a complete lockfile
+  {
+    const { stdout, stderr, exitCode } = await runInstall(project, join(root, "cache-warm"), env);
+    expect(stderr).toContain("Saved lockfile");
+    expect(installOutput(stdout)).toEqual(output);
+    expect(await installed()).toEqual(expected);
+    expect(await lockedResolutions(project)).toEqual(locked);
+    expect(exitCode).toBe(0);
+  }
+
+  // simulate a fresh machine: keep bun.lock, drop node_modules + cache
+  rmSync(join(project, "node_modules"), { recursive: true });
+  rmSync(join(member, "node_modules"), { recursive: true });
+  const { stdout, stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), env, "--frozen-lockfile");
+  expect(stderr).toBe("");
+  expect(installOutput(stdout)).toEqual(output);
+  expect(await installed()).toEqual(expected);
+  expect(exitCode).toBe(0);
+});
+
+// The repository is gone when the cold install clones it. The failed clone
+// fails every package that waits for it. The one that a's peer dependency
+// stands for was left waiting, and the install never exited.
+test.concurrent(
+  "fails every package of a repository that cannot be cloned when a peer dependency stands for one of them",
+  async () => {
+    using dir = tempDir("git-dep-peer-clone-fails", {});
+    const root = String(dir);
+    const names = ["b", "c"];
+    const bare = await makeSharedRepo(
+      root,
+      names.map(name => ({ name, branch: name })),
+    );
+    const repoUrl = `git+${pathToFileURL(bare)}`;
+    await using registry = await serveRegistry({ a: { peerDependencies: { b: "*" } }, b: {} });
+    const env = { BUN_CONFIG_REGISTRY: registry.url.href };
+    const { project, member } = writeWorkspace(root, {
+      a: "1.0.0",
+      ...Object.fromEntries(names.map(name => [name, `${repoUrl}#${name}`])),
+    });
+
+    // fresh install to produce a complete lockfile
+    {
+      const { stderr, exitCode } = await runInstall(project, join(root, "cache-warm"), env);
+      expect(stderr).toContain("Saved lockfile");
+      expect(await installedVersions(member, ["a", ...names])).toEqual({ a: "a-from-registry", b: "b", c: "c" });
+      expect((await lockedResolutions(project))["a/b"]).toBe("b@1.0.0");
+      expect(exitCode).toBe(0);
+    }
+
+    // a fresh machine that cannot reach the repository
+    rmSync(join(project, "node_modules"), { recursive: true });
+    rmSync(join(member, "node_modules"), { recursive: true });
+    renameSync(bare, `${bare}.gone`);
+    const { stdout, stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), env, "--frozen-lockfile");
+    const failed = "error: failed to download ";
+    expect(
+      stderr
+        .split(/\r?\n/)
+        .filter(line => line.startsWith(failed))
+        .map(line => line.slice(failed.length, line.indexOf("@"))),
+    ).toEqual(names);
+    expect(stdout).toContain("Failed to install 2 packages");
+    expect(exitCode).toBe(1);
+  },
+);
+
+// `overrides` puts a git commit in place of a's registry dependency `b`. When
+// the clone ended, the install sent that dependency through the resolver, which
+// found the package of the pinned commit already loaded and started no checkout.
+test.concurrent(
+  "isolated linker installs a git package that an override puts in place of a registry dependency, from a cold cache",
+  async () => {
+    using dir = tempDir("git-dep-override", {});
+    const root = String(dir);
+    const bare = await makeSharedRepo(root, [{ name: "b", branch: "main" }], "b.git");
+    const repoUrl = `git+${pathToFileURL(bare)}`;
+    const sha = branchCommits(bare).main;
+    await using registry = await serveRegistry({ a: { dependencies: { b: "^1.0.0" } } });
+    const env = { BUN_CONFIG_REGISTRY: registry.url.href };
+    const project = join(root, "project");
+    mkdirSync(project);
+    writeFileSync(
+      join(project, "package.json"),
+      JSON.stringify({
+        name: "project",
+        version: "1.0.0",
+        dependencies: { a: "1.0.0" },
+        overrides: { b: `${repoUrl}#${sha}` },
+      }),
+    );
+    const installed = async () => ({
+      a: await installedVersionOf(project, "a"),
+      "a > b": await installedVersionOf(storeEntryOf(project, "a"), "b"),
+    });
+    const expected = { a: "a-from-registry", "a > b": "main" };
+    const output = [expect.stringContaining("bun install v"), "", "+ a@1.0.0", "", "2 packages installed"];
+
+    // fresh install to produce a complete lockfile
+    {
+      const { stdout, stderr, exitCode } = await runInstall(
+        project,
+        join(root, "cache-warm"),
+        env,
+        "--linker=isolated",
+      );
+      expect(stderr).toContain("Saved lockfile");
+      expect(installOutput(stdout)).toEqual(output);
+      expect(await installed()).toEqual(expected);
+      expect(await lockedResolutions(project)).toEqual({ a: "a@1.0.0", b: `b@${repoUrl}#${sha}` });
+      expect(exitCode).toBe(0);
+    }
+
+    // simulate a fresh machine: keep bun.lock, drop node_modules + cache
+    rmSync(join(project, "node_modules"), { recursive: true });
+    const { stdout, stderr, exitCode } = await runInstall(
+      project,
+      join(root, "cache-cold"),
+      env,
+      "--frozen-lockfile",
+      "--linker=isolated",
+    );
+    expect(stderr).toBe("");
+    expect(installOutput(stdout)).toEqual(output);
+    expect(await installed()).toEqual(expected);
+    expect(exitCode).toBe(0);
+  },
+);
+
+// bun.lock can spell a repository's URL differently from the dependency: an
+// scp-form URL comes back from it with `ssh://` in front. Here the locked URL
+// has a `.` segment. The install clones and checks out what bun.lock names. It
+// used to go by the dependency once the clone ended: it cloned a second time
+// and left the package waiting.
+test.concurrent(
+  "isolated linker checks out a git package whose URL bun.lock spells differently from the dependency",
+  async () => {
+    using dir = tempDir("git-dep-url-spelling", {});
+    const root = String(dir);
+    const name = nameOf("b");
+    const repoUrl = `git+${pathToFileURL(sharedBare)}`;
+    const lockedUrl = repoUrl.replace(/\/shared-repo\.git$/, "/./shared-repo.git");
+    expect(lockedUrl).not.toBe(repoUrl);
+    const sha = sharedCommits["pkg-b"];
+    const project = writeProject(root, { [name]: `${repoUrl}#pkg-b` });
+    writeFileSync(
+      join(project, "bun.lock"),
+      JSON.stringify({
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: { "": { name: "project", dependencies: { [name]: `${repoUrl}#pkg-b` } } },
+        packages: { [name]: [`${name}@${lockedUrl}#${sha}`, {}, sha] },
+      }),
+    );
+
+    const cache = join(root, "cache");
+    const { stdout, stderr, exitCode } = await runInstall(project, cache, {}, "--frozen-lockfile", "--linker=isolated");
+    expect(stderr).toBe("");
+    expectInstalled(stdout, { [name]: `${lockedUrl}#${sha}` });
+    expect(await installedVersions(project, [name])).toEqual(markers(["b"]));
+    // one bare clone of the repository
+    expect(readdirSync(cache).filter(entry => entry.endsWith(".git"))).toHaveLength(1);
+    expect(exitCode).toBe(0);
+  },
+);
+
+// A patch is applied to a git package right after its checkout when the
+// repository was cloned earlier in the same process, here to resolve the new
+// dependency `c`. The package to patch was looked up by the name of the
+// dependency, which an alias does not share with it: `panic: Package not found`.
+for (const [added, editsPackageJson] of [
+  ["`bun install <url>`", false],
+  ["an edit of package.json", true],
+] as const) {
+  test.concurrent(
+    `patches a git package under an alias when ${added} adds another package of its repository`,
+    async () => {
+      using dir = tempDir("git-dep-alias-patch", {
+        "project/patches/b.patch": `diff --git a/index.js b/index.js
+index 0000000000000000000000000000000000000000..1111111111111111111111111111111111111111 100644
+--- a/index.js
++++ b/index.js
+@@ -1 +1 @@
+-module.exports = "b";
++module.exports = "b-patched";
+`,
+      });
+      const root = String(dir);
+      const project = join(root, "project");
+      const bare = await makeSharedRepo(
+        root,
+        ["b", "c"].map(name => ({ name, branch: name })),
+      );
+      const repoUrl = `git+${pathToFileURL(bare)}`;
+      const writePackageJson = (dependencies: Record<string, string>) =>
+        writeFileSync(
+          join(project, "package.json"),
+          JSON.stringify({
+            name: "project",
+            version: "1.0.0",
+            dependencies,
+            patchedDependencies: { [`b@${repoUrl}#${branchCommits(bare).b}`]: "patches/b.patch" },
+          }),
+        );
+      writePackageJson({ "b-alias": `${repoUrl}#b` });
+
+      // fresh install to produce a complete lockfile
+      {
+        const { stderr, exitCode } = await runInstall(project, join(root, "cache-warm"), {});
+        expect(stderr).toContain("Saved lockfile");
+        expect(await installedVersions(project, ["b-alias"])).toEqual({ "b-alias": "b-patched" });
+        expect(exitCode).toBe(0);
+      }
+
+      // a fresh machine: keep bun.lock, drop node_modules + cache, and add `c`
+      rmSync(join(project, "node_modules"), { recursive: true });
+      const args: string[] = [];
+      if (editsPackageJson) writePackageJson({ "b-alias": `${repoUrl}#b`, c: `${repoUrl}#c` });
+      else args.push(`${repoUrl}#c`);
+      const { stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), {}, ...args);
+      expect(stderr).toContain("Saved lockfile");
+      expect(await installedVersions(project, ["b-alias", "c"])).toEqual({ "b-alias": "b-patched", c: "c" });
+      expect(exitCode).toBe(0);
+    },
   );
 }
 

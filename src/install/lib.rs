@@ -1090,7 +1090,15 @@ pub enum TaskCallbackContext {
     IsolatedPackageInstallContext(isolated_install::EntryId),
     RootDependency(DependencyID),
     RootRequestId(PackageID),
+    /// Install phase, parked on a git clone. `dependency_id` may resolve to another package.
+    GitCheckout {
+        dependency_id: DependencyID,
+        package_id: PackageID,
+    },
 }
+
+// One per waiter in `task_queue`.
+const _: () = assert!(core::mem::size_of::<TaskCallbackContext>() == 32);
 
 // We can't know all the packages we need until we've downloaded all the packages
 // The easy way would be:

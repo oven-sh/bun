@@ -69,7 +69,7 @@ impl Rule for JsxWrapMultilines {
             return;
         };
         let (file, span) = (cx.file(), node.span());
-        let report = |message| cx.report(node, message).on_exit(place == Place::Arrow);
+        let report = |message| cx.report(node, message).listened_on(node.parent()).on_exit(place == Place::Arrow);
         match self.get_option(place) {
             Wrap::Ignore => {}
             Wrap::Parens => {

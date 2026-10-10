@@ -47,6 +47,8 @@ pub struct Details {
     pub end_position: Option<Position>,
     /// [`Report::comments_apply_at`]
     pub comments_apply_at: Option<Span>,
+    /// [`Report::listened_on`]
+    pub listened_on: Option<Span>,
     /// What is said at the place of the report.
     pub first_label: Cow<'static, str>,
     /// The other places that are marked, and what is said at each.
@@ -348,6 +350,15 @@ impl<'a> Report<'a> {
     pub fn comments_apply_at(mut self, primary: impl Spanned) -> Self {
         if let Some(details) = self.details() {
             details.comments_apply_at = Some(primary.span());
+        }
+        self
+    }
+
+    /// The original reports this from the listener of `node`, which is not what is reported but is around it: an element for
+    /// its child, a tag for its attribute or a token. ESLint has it where that listener is called among what starts at one place.
+    pub fn listened_on(mut self, node: impl Spanned) -> Self {
+        if let Some(details) = self.details() {
+            details.listened_on = Some(node.span());
         }
         self
     }

@@ -78,7 +78,7 @@ fn check_line<'a>(mut line: ListIter<'a, Prop<'a>>, count: usize, max: usize, cx
         Some(name) => name.bytes(),
         None => prop.value().map_or(&b""[..], Expr::text),
     };
-    cx.report(prop, NEW_LINE).data("prop", name).fix(|fixer| {
+    cx.report(prop, NEW_LINE).listened_on(prop.parent()).data("prop", name).fix(|fixer| {
         let (mut code, mut range) = (Vec::new(), None::<Span>);
         for (i, node) in props_in_line.enumerate() {
             if i > 0 {

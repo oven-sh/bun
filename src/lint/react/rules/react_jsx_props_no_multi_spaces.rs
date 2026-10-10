@@ -52,6 +52,7 @@ fn check_spacing<'a>(
     let file = cx.file();
     let report = |message| {
         cx.report(node, message)
+            .listened_on(jsx.opening_span())
             .data("prop1", get_prop_name(jsx, prev))
             .data("prop2", get_prop_name(jsx, Some(node)))
     };

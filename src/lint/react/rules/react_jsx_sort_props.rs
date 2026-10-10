@@ -133,7 +133,8 @@ impl Rule for JsxSortProps {
                 match unreserved_words {
                     Some(words) => cx.report(decl, NO_UNRESERVED_PROPS).data("unreservedWords", words.clone()),
                     None => cx.report(decl, LIST_IS_EMPTY),
-                };
+                }
+                .listened_on(e);
             }
             return;
         }
@@ -299,7 +300,8 @@ impl<'a> Element<'a, '_> {
         let Some(name) = node_attribute.key() else {
             return;
         };
-        cx.report(name.span(cx.file()), message).fix(|fixer| self.fix.get_or_init(|| self.generate_fix(fixer)).clone());
+        let report = cx.report(name.span(cx.file()), message).listened_on(node_attribute.parent());
+        report.fix(|fixer| self.fix.get_or_init(|| self.generate_fix(fixer)).clone());
     }
 
     /// `generateFixerFunction`: the same for all reports in the element.

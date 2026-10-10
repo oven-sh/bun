@@ -150,6 +150,7 @@ impl JsxIndentProps {
             return;
         };
         cx.report(node, WRONG_INDENT)
+            .listened_on(opening)
             .data("needed", needed)
             .data("type", if character == b'\t' { "tab" } else { "space" })
             .data(

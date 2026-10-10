@@ -84,7 +84,7 @@ impl Rule for JsxOneExpressionPerLine {
             }
             // The one before it is not the last in its line.
             if let Some(it) = last_child {
-                it.report(None, cx);
+                it.report(None, e, cx);
             }
             // `/^\s*\n/`
             let blanks = raw.len() - strings::trim_js_whitespace_start(raw).len();
@@ -97,20 +97,21 @@ impl Rule for JsxOneExpressionPerLine {
             prev_child = (!strings::contains_char(blanks, b'\n')).then_some(span);
         }
         if let Some(it) = last_child {
-            it.report(prev_child.is_some().then_some(closing_element), cx);
+            it.report(prev_child.is_some().then_some(closing_element), e, cx);
         }
     }
 }
 
 impl<'a> Child<'a> {
     /// `next_child`: the closing tag, if that is after it in its line.
-    fn report(self, next_child: Option<Span>, cx: &Cx<'a, JsxOneExpressionPerLine>) {
+    fn report(self, next_child: Option<Span>, parent: Expr<'a>, cx: &Cx<'a, JsxOneExpressionPerLine>) {
         let Child { node, span, prev_child } = self;
         if prev_child.is_none() && next_child.is_none() {
             return;
         }
         let file = cx.file();
-        cx.report(span, MOVE_TO_NEW_LINE).data("descriptor", node_descriptor(node, file.slice(span))).fix(|fixer| {
+        let report = cx.report(span, MOVE_TO_NEW_LINE).listened_on(parent);
+        report.data("descriptor", node_descriptor(node, file.slice(span))).fix(|fixer| {
             let mut replace_text = Vec::new();
             if let Some(prev_child) = prev_child {
                 if is_space_between(file, prev_child, span) {

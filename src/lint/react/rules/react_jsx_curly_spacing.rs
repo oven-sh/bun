@@ -88,7 +88,7 @@ fn fix_by_trimming_whitespace(fixer: Fixer<'_>, range: Span, mode: Mode, spacing
 
 impl Config {
     /// `validateBraceSpacing`. What is next to a brace, a token or a comment, is found by skipping white space.
-    fn validate_brace_spacing(self, node: Span, cx: &mut Cx<'_, JsxCurlySpacing>) {
+    fn validate_brace_spacing(self, node: Span, cx: &Cx<'_, JsxCurlySpacing>) {
         let file = cx.file();
         let inside = node.shrink(1, 1);
         let between = file.slice(inside);
@@ -112,12 +112,12 @@ impl Config {
         };
         let spacing = if is_object_literal { self.object_literal_spaces } else { self.when };
         let (first, last) = (Span::before(node.start, inside), Span::after(inside, node.end));
-        self.check(Mode::Start, first, Span::after(first, second), spacing, cx);
-        self.check(Mode::End, last, Span::before(penultimate_end, last), spacing, cx);
+        self.check(Mode::Start, first, Span::after(first, second), spacing, (node, cx));
+        self.check(Mode::End, last, Span::before(penultimate_end, last), spacing, (node, cx));
     }
 
     /// `gap`: the white space between the brace `token` and what is next to it.
-    fn check(self, mode: Mode, token: Span, gap: Span, spacing: Spacing, cx: &mut Cx<'_, JsxCurlySpacing>) {
+    fn check(self, mode: Mode, token: Span, gap: Span, spacing: Spacing, (node, cx): (Span, &Cx<'_, JsxCurlySpacing>)) {
         let is_after = mode == Mode::Start;
         let (problem, message) = if gap.is_empty() {
             if spacing == Spacing::Never {
@@ -135,7 +135,7 @@ impl Config {
             }
             (Problem::Space, if is_after { NO_SPACE_AFTER } else { NO_SPACE_BEFORE })
         };
-        cx.report_at(token.start, message).data("token", cx.slice(token)).fix(|fixer| {
+        cx.report_at(token.start, message).listened_on(node).data("token", cx.slice(token)).fix(|fixer| {
             let file = fixer.file();
             let range = match (problem, mode) {
                 (Problem::SpaceNeeded, _) => return fixer.insert_before(gap, " "),

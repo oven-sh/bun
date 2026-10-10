@@ -1092,17 +1092,22 @@ fn sorted(diagnostics: Vec<Diagnostic>, when: &[When]) -> Vec<Diagnostic> {
     // listener that is called on entering a node, the outer node first; then, for one that is called on leaving, the inner;
     // then what is reported when the program ends, rule by rule. 51 bits.
     let within_start = |it: &Diagnostic| {
-        let (end, rule) = (u64::from(it.span.end), u64::from(it.rule));
+        // The node is what is reported unless the report names another. One that starts earlier is entered before all that
+        // start here, and left after them.
+        let named = it.details.as_deref().and_then(|it| it.listened_on);
+        let node = named.filter(|_| when.is_empty()).unwrap_or(it.span);
+        let is_outer = u64::from(node.start < it.span.start);
+        let (end, rule) = (u64::from(node.end), u64::from(it.rule));
         let longer_first = ((u64::from(u32::MAX) - end) << 16) | rule;
         match when.get(it.rule as usize).copied().unwrap_or(it.when) {
             When::Once => rule << 32,
-            When::Entering => (1 << 48) | longer_first,
-            When::EnteringShorterFirst => (1 << 48) | (end << 16) | rule,
-            When::Leaving => (2 << 48) | (end << 16) | rule,
+            When::Entering => ((2 - is_outer) << 48) | longer_first,
+            When::EnteringShorterFirst => (2 << 48) | (end << 16) | rule,
+            When::Leaving => ((3 + is_outer) << 48) | (end << 16) | rule,
             // There are fewer than 1 << 15 rules.
-            When::LeavingCodePath => (2 << 48) | (end << 16) | (1 << 15) | rule,
-            When::AtTheEnd => (3 << 48) | (rule << 32) | end,
-            When::Last => (4 << 48) | longer_first,
+            When::LeavingCodePath => (3 << 48) | (end << 16) | (1 << 15) | rule,
+            When::AtTheEnd => (5 << 48) | (rule << 32) | end,
+            When::Last => (6 << 48) | longer_first,
         }
     };
     if diagnostics.is_sorted_by_key(|it| (it.span.start, within_start(it))) {

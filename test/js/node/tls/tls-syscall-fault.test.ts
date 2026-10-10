@@ -136,7 +136,8 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     const WRITE_RESET = { name: "Error", code: "ECONNRESET", syscall: "write", message: "write ECONNRESET" };
     expect(await written.promise).toMatchObject(WRITE_RESET);
     await seen.closed;
-    expect({ events: seen.events, errors: seen.errors }).toEqual({
+    // The reads go on until the close, so the FIN that the peer answers with can come first.
+    expect({ events: seen.events.filter(event => event !== "end"), errors: seen.errors }).toEqual({
       events: ["error", "close(hadError=true)"],
       errors: [WRITE_RESET],
     });
@@ -192,7 +193,18 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
     const client = observe(c);
     await client.closed;
     fault.clear();
-    expect({ events: client.events, errors: client.errors, destroyed: c.destroyed }).toEqual(RESET_CLOSE);
+    expect({ events: client.events, errors: client.errors, destroyed: c.destroyed }).toEqual({
+      events: ["end", "error", "close(hadError=true)"],
+      errors: [
+        {
+          name: "Error",
+          code: "ECONNRESET",
+          syscall: undefined,
+          message: "Client network socket disconnected before secure TLS connection was established",
+        },
+      ],
+      destroyed: true,
+    });
   });
 
   // https://github.com/oven-sh/bun/issues/24845: the kernel rejects every send() and reports nothing on the read side.

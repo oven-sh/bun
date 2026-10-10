@@ -5162,3 +5162,79 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("accepted and injected connection
     }
   });
 });
+
+// The kernel rejects a send() to a peer that is gone. That ends the writes, not the reads.
+describe("a send that the kernel rejects", () => {
+  const turns = async (count: number) => {
+    for (let i = 0; i < count; i++) await new Promise(setImmediate);
+  };
+  async function listening(server: Server) {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    return { host: "127.0.0.1", port: (server.address() as AddressInfo).port, rejectUnauthorized: false };
+  }
+  function observed(socket: TLSSocket) {
+    const seen = { received: 0, events: [] as string[] };
+    socket.on("data", chunk => void (seen.received += chunk.length));
+    socket.on("end", () => seen.events.push("end"));
+    // Whether a send is rejected at all is up to how fast the reset of the peer arrives.
+    socket.on("error", () => {});
+    return new Promise<typeof seen>(resolve => socket.on("close", () => resolve(seen)));
+  }
+
+  it("does not drop what the peer sent before it closed", async () => {
+    const outcome = Promise.withResolvers<{ received: number; events: string[] }>();
+    await using server: Server = createServer(COMMON_CERT, socket => {
+      outcome.resolve(observed(socket));
+      // The Finished of the client, its message and its close_notify are one read, and this runs in the middle of it.
+      socket.write(Buffer.alloc(70000, "a"));
+      socket.write(Buffer.alloc(16384, "b"));
+    });
+    const client = connect(await listening(server), () =>
+      client.write(Buffer.alloc(100, "c"), () => client.destroySoon()),
+    );
+    client.on("error", () => {});
+    expect(await outcome.promise).toEqual({ received: 100, events: ["end"] });
+  });
+
+  it("of a close_notify leaves a paused reader what it has not read", async () => {
+    const outcome = Promise.withResolvers<{ received: number; events: string[] }>();
+    await using server: Server = createServer(COMMON_CERT, socket => {
+      socket.pause();
+      outcome.resolve(observed(socket));
+      socket.pause();
+      turns(3).then(() => socket.write("reply", () => socket.end()));
+      turns(5).then(() => socket.resume());
+    });
+    const client = connect(await listening(server), () => {
+      client.write(Buffer.alloc(16383, "c"));
+      client.destroySoon();
+    });
+    client.on("error", () => {}).pause();
+    expect(await outcome.promise).toEqual({ received: 16383, events: ["end"] });
+  });
+
+  it.each([true, false])("in the handshake is a 'tlsClientError' (allowHalfOpen: %p)", async allowHalfOpen => {
+    const clientHello = Promise.withResolvers<Buffer>();
+    await using recorder = net.createServer(socket => socket.on("error", () => {}).once("data", clientHello.resolve));
+    recorder.listen(0, "127.0.0.1");
+    await once(recorder, "listening");
+    const recorded = connect({ host: "127.0.0.1", port: (recorder.address() as AddressInfo).port });
+    recorded.on("error", () => {});
+    const hello = await clientHello.promise;
+    recorded.destroy();
+
+    const server: Server = createServer({ ...COMMON_CERT, allowHalfOpen });
+    const reported = once(server, "tlsClientError");
+    const { host, port } = await listening(server);
+    const raw = net.connect(port, host, () => {
+      raw.write(hello);
+      raw.resetAndDestroy();
+    });
+    raw.on("error", () => {});
+    const [error] = await reported;
+    expect(error.code).toBe("ECONNRESET");
+    // The connection is over for the server too.
+    await new Promise(resolve => server.close(resolve));
+  });
+});

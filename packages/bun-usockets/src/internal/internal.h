@@ -260,6 +260,7 @@ struct us_socket_t *us_internal_ssl_on_writable(us_socket_r s);
 struct us_socket_t *us_internal_ssl_on_timeout(us_socket_r s);
 struct us_socket_t *us_internal_ssl_on_close(us_socket_r s, int code, void *reason);
 struct us_socket_t *us_internal_ssl_on_end(us_socket_r s);
+struct us_socket_t *us_internal_ssl_on_end_after_rejected_send(us_socket_r s);
 int us_internal_ssl_is_low_prio(us_socket_r s);
 
 int us_internal_ssl_is_handshake_finished(us_socket_r s);
@@ -377,6 +378,8 @@ struct us_socket_t {
   unsigned char ssl_first_flight_before_fin : 1;
   /* us_internal_ssl_shutdown held its FIN back for that step. */
   unsigned char ssl_shutdown_after_first_flight : 1;
+  /* ssl_raw_write shut the write side down, not the owner. */
+  unsigned char ssl_send_rejected : 1;
   /* Consecutive send() failures with an errno that is neither
    * would-block/transient nor a known peer-gone error (see
    * us_socket_write_check_error). Reset by any send that makes progress.

@@ -926,7 +926,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 }
                 if (us_socket_is_shut_down(s)) {
                     /* We got FIN back after sending it */
-                    s = us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
+                    s = s->ssl && s->ssl_send_rejected ? us_internal_ssl_on_end_after_rejected_send(s)
+                                                       : us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
                     return;
                 }
                 if (s->flags.allow_half_open && !hangup && s->read_eof) {

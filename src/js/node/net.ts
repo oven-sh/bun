@@ -350,13 +350,30 @@ const kOnreadPendingEnd = Symbol("kOnreadPendingEnd");
 const kOnreadReadRequested = Symbol("kOnreadReadRequested");
 const kOnreadEmptyTail = Buffer.alloc(0);
 const kwriteCallback = Symbol("writeCallback");
+const kRejectedWrite = Symbol("kRejectedWrite");
 const kSocketClass = Symbol("kSocketClass");
 
 // A completed write whose status is a negative errno: Node hands it to the write
 // callback as errnoException(status, 'write') and destroys the stream when no
 // callback is pending. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L81-L92
 function failWrite(self, negErrno, callback) {
-  const er = writeErrnoException(negErrno);
+  if (self.encrypted && !self[kclosed]) {
+    // The TLS engine ended the write side only. It reads what the peer sent, then closes, and the write fails with that close.
+    self._pendingData = null;
+    self[kwriteCallback] = callback;
+    self[kRejectedWrite] = writeErrnoException(negErrno);
+    return;
+  }
+  failWriteWith(self, writeErrnoException(negErrno), callback);
+}
+function failRejectedWrite(self) {
+  const er = self[kRejectedWrite];
+  if (er === undefined) return false;
+  self[kRejectedWrite] = undefined;
+  failWriteWith(self, er, self[kwriteCallback]);
+  return true;
+}
+function failWriteWith(self, er, callback) {
   self._pendingData = null;
   self[kwriteCallback] = null;
   if (callback) {
@@ -800,7 +817,7 @@ const SocketHandlers = {
     if (!self) return;
     const callback = self[kwriteCallback];
     self.connecting = false;
-    if (callback) {
+    if (callback && self[kRejectedWrite] === undefined) {
       const writeChunk = self._pendingData;
       const res = socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
       if (typeof res === "number" && res < 0) {
@@ -972,6 +989,7 @@ function deferEndForOnreadTail(self) {
 }
 
 function SocketEmitEndNT(self, _err?) {
+  if (self[kclosed] && failRejectedWrite(self)) return;
   // A read error delivered with the close (e.g. a received RST surfacing as
   // ECONNRESET) is not a clean EOF — Node destroys the socket with the error
   // ("read ECONNRESET") instead of emitting a graceful 'end'. Guard on
@@ -1038,11 +1056,12 @@ function SocketEmitEndNT(self, _err?) {
   }
   if (!self[kended]) {
     finishSocketEnd(self);
-  } else if (_err && !self.destroyed) {
+  } else if (_err && !self.destroyed && !(teardownNoise && !self.readableEnded)) {
     // An error excluded from the synthesis above (teardown noise, or no
     // listener attached): nothing more is coming, but the socket still has to
     // finish its lifecycle - close it quietly instead of leaving it open with
-    // no further events.
+    // no further events. What a finished exchange left unread is still the
+    // reader's: its 'end' closes the socket.
     self.destroy();
   }
   // A write that was waiting on the native drain can never complete once the
@@ -1654,7 +1673,7 @@ const SocketHandlers2 = {
     const { self } = socket.data;
     const callback = self[kwriteCallback];
     self.connecting = false;
-    if (callback) {
+    if (callback && self[kRejectedWrite] === undefined) {
       const writeChunk = self._pendingData;
       const res = socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
       if (typeof res === "number" && res < 0) {
@@ -1701,6 +1720,7 @@ const SocketHandlers2 = {
     if (self[kclosed]) return;
     self[kclosed] = true;
     const leftToTLSSocket = closeWithTLSSocket(self, socket);
+    if (failRejectedWrite(self)) return;
     // A received RST surfacing as ECONNRESET with the close is not a clean
     // EOF - Node destroys the socket with "read ECONNRESET" instead of a
     // graceful 'end'. Only surface it when the closing handle is still the
@@ -3042,7 +3062,8 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
   if (res < 0) {
     // The kernel rejected the send outright (peer reset): $write returned the
     // negative errno; deliver it like the EBADF/EPIPE branch above.
-    callback(writeErrnoException(res));
+    if (this.encrypted) failWrite(this, res, callback);
+    else callback(writeErrnoException(res));
     return false;
   }
   if (res) {

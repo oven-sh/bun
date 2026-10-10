@@ -533,6 +533,7 @@ static int ssl_raw_write(struct loop_ssl_data *loop_ssl_data, struct us_socket_t
   int written = us_internal_socket_raw_write(s, data, length, &send_error);
   if (send_error) {
     loop_ssl_data->ssl_send_error = send_error;
+    s->ssl_send_rejected = 1;
     us_internal_socket_raw_shutdown(s);
     /* No write may close under its caller: us_internal_ssl_on_writable does. */
     us_internal_rearm_writable(s);
@@ -1794,6 +1795,7 @@ void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,
   s->ssl_pending_close_code = 0;
   s->ssl_first_flight_before_fin = 0;
   s->ssl_shutdown_after_first_flight = 0;
+  s->ssl_send_rejected = 0;
   s->ssl_is_server = is_client ? 0 : 1;
   s->ssl_inline_reject = 0;
   s->ssl_verify_failed = 0;
@@ -2423,7 +2425,21 @@ struct us_socket_t *us_internal_ssl_on_timeout(struct us_socket_t *s) {
 /* The read side delivers what the peer sent before it closes, unless the owner already let go. */
 static struct us_socket_t *ssl_close_after_rejected_send(struct us_socket_t *s, int send_error) {
   if (!s->ssl_close_after_spill && us_socket_queued_input(s) == LIBUS_QUEUED_INPUT_DATA) return s;
+  if (s->ssl_handshake_state == HANDSHAKE_PENDING) {
+    ssl_set_loop_data(s);
+    ssl_trigger_handshake_econnreset(s);
+    if (ssl_gone(s)) return s;
+  }
+  /* The close_notify is sealed behind all that the owner wrote: only this reply to the peer's own was refused. */
+  const int both_ended = SSL_SENT_SHUTDOWN | SSL_RECEIVED_SHUTDOWN;
+  if ((SSL_get_shutdown(s_ssl(s)) & both_ended) == both_ended) {
+    return us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
+  }
   return us_internal_socket_close_raw(s, send_error > 2 ? send_error : LIBUS_ECONNRESET, NULL);
+}
+
+struct us_socket_t *us_internal_ssl_on_end_after_rejected_send(struct us_socket_t *s) {
+  return ssl_close_after_rejected_send(s, LIBUS_ECONNRESET);
 }
 
 struct us_socket_t *us_internal_ssl_on_writable(struct us_socket_t *s) {

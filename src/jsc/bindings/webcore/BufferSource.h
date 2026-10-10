@@ -43,8 +43,6 @@ public:
     {
     }
 
-    const VariantType& variant() const { return m_variant; }
-
     const uint8_t* data() const
     {
         return std::visit([](auto& buffer) -> const uint8_t* {

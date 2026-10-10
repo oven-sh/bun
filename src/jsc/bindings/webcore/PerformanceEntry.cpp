@@ -35,8 +35,6 @@
 #include "PerformanceMeasure.h"
 #include "PerformanceResourceTiming.h"
 
-// #include "DeprecatedGlobalSettings.h"
-
 namespace WebCore {
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(PerformanceEntry);

@@ -519,7 +519,6 @@ function writeAll(data, size, pos, cb, retries = 0) {
 
     // Try writing non-zero number of bytes up to 5 times.
     if (retries > 5) {
-      // cb($ERR_SYSTEM_ERROR('write failed'));
       cb(new Error("write failed"));
     } else if (size) {
       writeAll.$call(this, buffer.slice(bytesWritten), size, pos, cb, retries);
@@ -549,7 +548,6 @@ function writevAll(chunks, size, pos, cb, retries = 0) {
 
     // Try writing non-zero number of bytes up to 5 times.
     if (retries > 5) {
-      // cb($ERR_SYSTEM_ERROR('writev failed'));
       cb(new Error("writev failed"));
     } else if (size) {
       writevAll.$call(this, [Buffer.concat(buffers).slice(bytesWritten)], size, pos, cb, retries);

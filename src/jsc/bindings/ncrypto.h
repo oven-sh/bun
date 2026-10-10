@@ -211,7 +211,6 @@ class X509Pointer;
 class ECDSASigPointer;
 class ECGroupPointer;
 class ECPointPointer;
-class ECKeyPointer;
 class Dsa;
 class Rsa;
 class Ec;
@@ -229,11 +228,6 @@ template<typename T>
 struct Buffer {
     T* data = nullptr;
     size_t len = 0;
-
-    static Buffer from(std::span<T> input)
-    {
-        return { input.data(), input.size() };
-    }
 };
 
 class Digest final {
@@ -255,7 +249,6 @@ public:
 
     size_t size() const;
 
-    inline const EVP_MD* get() const { return md_; }
     inline operator const EVP_MD*() const { return md_; }
     inline operator bool() const { return md_ != nullptr; }
 
@@ -1038,7 +1031,6 @@ public:
 
     inline bool operator==(std::nullptr_t) noexcept { return sig_ == nullptr; }
     inline operator bool() const { return sig_ != nullptr; }
-    inline ECDSA_SIG* get() const { return sig_.get(); }
     inline operator ECDSA_SIG*() const { return sig_.get(); }
     void reset(ECDSA_SIG* sig = nullptr);
     ECDSA_SIG* release();
@@ -1071,7 +1063,6 @@ public:
 
     inline bool operator==(std::nullptr_t) noexcept { return group_ == nullptr; }
     inline operator bool() const { return group_ != nullptr; }
-    inline EC_GROUP* get() const { return group_.get(); }
     inline operator EC_GROUP*() const { return group_.get(); }
     void reset(EC_GROUP* group = nullptr);
     EC_GROUP* release();
@@ -1208,7 +1199,6 @@ public:
 
     inline bool operator==(std::nullptr_t) noexcept { return ctx_ == nullptr; }
     inline operator bool() const { return ctx_ != nullptr; }
-    inline HMAC_CTX* get() const { return ctx_.get(); }
     inline operator HMAC_CTX*() const { return ctx_.get(); }
     void reset(HMAC_CTX* ctx = nullptr);
     HMAC_CTX* release();

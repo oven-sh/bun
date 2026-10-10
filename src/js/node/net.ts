@@ -360,16 +360,21 @@ function failWrite(self, negErrno, callback) {
   failWriteWith(self, writeErrnoException(negErrno), callback);
 }
 // The TLS engine ended the write side only. It reads what the peer sent, then closes, and the write fails with that close.
-// Not for a reader that stopped, which may be waiting for this very write: readStop() fails it too.
 function holdRejectedWrite(self, handle, negErrno, callback) {
-  if (!self.encrypted || self[kclosed] || self[kPausedUnref]) return false;
+  if (!self.encrypted || self[kclosed]) return false;
   if (self[kupgraded] && !(self[kupgraded] instanceof Socket)) return false;
   self._pendingData = null;
   self[kwriteCallback] = callback;
   self[kRejectedWrite] = writeErrnoException(negErrno);
   // It holds the loop as any pending write does (_write).
-  if (self[kended] && !self[kUserUnrefed]) handle.ref?.();
+  if ((self[kended] || self[kPausedUnref]) && !self[kUserUnrefed]) handle.ref?.();
+  if (self[kPausedUnref]) setImmediate(failRejectedWriteOfStoppedReader, self);
   return true;
+}
+// A reader that stopped may be waiting for this very write, while the engine waits for it to read. It has one turn of the
+// loop to go on, which is when Node reports a failed write.
+function failRejectedWriteOfStoppedReader(self) {
+  if (self[kPausedUnref]) failRejectedWrite(self);
 }
 function failRejectedWrite(self) {
   const er = self[kRejectedWrite];
@@ -945,7 +950,7 @@ function readStop(self, handle) {
   // A socket over a generic duplex has no fd and never held the loop.
   if (self[kupgraded] && !(self[kupgraded] instanceof Socket)) return;
   self[kPausedUnref] = true;
-  if (failRejectedWrite(self)) return;
+  if (self[kRejectedWrite] !== undefined) setImmediate(failRejectedWriteOfStoppedReader, self);
   if (!self[kwriteCallback]) handle?.unref?.();
 }
 

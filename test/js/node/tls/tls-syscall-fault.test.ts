@@ -188,7 +188,7 @@ describe.skipIf(skip)("node:tls under injected syscall faults", () => {
   });
 
   // The write fails with the close of the engine, which reads first. A reader that stopped may be waiting for the write.
-  test("send → EPIPE fails the write of a reader that stopped for backpressure at once", async () => {
+  test("send → EPIPE fails the write of a reader that stopped for backpressure and does not go on", async () => {
     using p = await connectedTLSPair();
     const client = observe(p.client);
     p.client.pause();

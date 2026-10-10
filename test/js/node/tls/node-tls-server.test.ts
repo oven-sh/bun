@@ -5214,6 +5214,25 @@ describe("a send that the kernel rejects", () => {
     expect(await outcome.promise).toEqual({ received: 16383, events: ["end"] });
   });
 
+  it("leaves a reader that stopped for backpressure the time to go on", async () => {
+    const sent = 70000 + 16385;
+    const outcome = Promise.withResolvers<number>();
+    await using server: Server = createServer(COMMON_CERT, socket => {
+      let received = 0;
+      // More than the socket buffers arrives in the one read, so the reads stop until this runs.
+      socket.on("readable", () => {
+        for (let chunk; (chunk = socket.read()) !== null; ) received += chunk.length;
+      });
+      socket.on("error", () => {}).on("close", () => outcome.resolve(received));
+      process.nextTick(() => socket.write(Buffer.alloc(8 * 1024 * 1024, "a")));
+    });
+    const client = connect(await listening(server));
+    client.on("error", () => {});
+    client.write(Buffer.alloc(70000, "c"));
+    client.write(Buffer.alloc(16385, "c"), () => client.destroySoon());
+    expect(await outcome.promise).toBe(sent);
+  });
+
   it.each([true, false])("in the handshake is a 'tlsClientError' (allowHalfOpen: %p)", async allowHalfOpen => {
     const clientHello = Promise.withResolvers<Buffer>();
     await using recorder = net.createServer(socket => socket.on("error", () => {}).once("data", clientHello.resolve));

@@ -134,6 +134,10 @@ export const lsquic: Dependency = {
     // H3_CLOSED_CRITICAL_STREAM and closes the connection, which kills the
     // requests the graceful stop was draining. Reject only request streams.
     "patches/lsquic/goaway-accept-uni-streams.patch",
+    // SETTINGS_ENABLE_CONNECT_PROTOCOL was only written inside the
+    // WebTransport server block, which Bun does not compile. Emit it from
+    // es_h3_connect_protocol so Bun.serve can accept RFC 9220 WebSockets.
+    "patches/lsquic/h3-connect-protocol.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

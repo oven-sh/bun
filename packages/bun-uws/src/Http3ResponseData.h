@@ -5,6 +5,7 @@
 #include "quic.h"
 
 #include <wtf/Vector.h>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 
@@ -61,6 +62,24 @@ struct Http3ResponseData {
 
     uint64_t offset = 0;
     uint8_t state = 0;
+
+    /* RFC 9220 Extended CONNECT, classified from the request HEADERS. */
+    bool connectRequest = false;
+    bool websocketConnect = false;
+    /* An accepted Extended CONNECT stream is a bidirectional tunnel: DATA is
+     * WebSocket bytes, not a request body the response has to outlive. */
+    bool tunnelMode = false;
+    /* The peer's FIN has been delivered through inStream. */
+    bool remoteFin = false;
+
+    /* Stream-local WebSocket idle/close deadline, listed in
+     * Http3ContextData::websocketStreams and swept by Http3Context. The Rust
+     * stream WebSocket core decides when to set and refresh it. */
+    bool websocketTracked = false;
+    bool websocketTimeoutActive = false;
+    bool websocketTimeoutRefreshOnWrite = false;
+    uint16_t websocketTimeoutS = 0;
+    std::chrono::steady_clock::time_point websocketDeadline;
 
     void appendHeader(const char *name, unsigned nlen, const char *value, unsigned vlen) {
         size_t off = hdrBuf.size();

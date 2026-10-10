@@ -22,6 +22,8 @@
 
 #include <cstdint>
 #include <cstring>
+#include <limits>
+#include <memory>
 
 namespace uWS {
     /* Compressor mode is 8 lowest bits where HIGH4(windowBits), LOW4(memLevel).
@@ -112,8 +114,25 @@ struct DeflationStream {
         deflateInit2(&deflationStream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, windowBits, memLevel, Z_DEFAULT_STRATEGY);
     }
 
-    /* Deflate and optionally reset. You must not deflate an empty string. */
-    std::string_view deflate(ZlibContext *zlibContext, std::string_view raw, bool reset) {
+    /* Conservative bound for the one Z_SYNC_FLUSH performed by deflate().
+     * deflateBound() is parameter-aware but only directly guarantees
+     * Z_FINISH/Z_NO_FLUSH. Z_SYNC_FLUSH appends one empty stored block: up to
+     * seven alignment bits, a three-bit block header, and four LEN/NLEN bytes,
+     * i.e. at most six bytes. The returned permessage-deflate view later
+     * removes its four-byte tail, so retaining all six here is conservative. */
+    std::optional<size_t> maxSizeForSyncFlush(size_t length) {
+        if (length > std::numeric_limits<uLong>::max()) return std::nullopt;
+        uLong bound = ::deflateBound(&deflationStream, (uLong) length);
+        if ((uint64_t) bound > (uint64_t) std::numeric_limits<size_t>::max() - 6) return std::nullopt;
+        return (size_t) bound + 6;
+    }
+
+private:
+    struct NoInit { };
+
+    explicit DeflationStream(NoInit) { }
+
+    std::string_view deflateWithStream(z_stream& stream, ZlibContext *zlibContext, std::string_view raw, bool reset) {
         /* Run a fast path in case of shared_compressor */
         if (reset) {
             size_t written = 0;
@@ -128,20 +147,20 @@ struct DeflationStream {
         /* Odd place to clear this one, fix */
         zlibContext->dynamicDeflationBuffer.clear();
 
-        deflationStream.next_in = (Bytef *) raw.data();
-        deflationStream.avail_in = (unsigned int) raw.length();
+        stream.next_in = (Bytef *) raw.data();
+        stream.avail_in = (unsigned int) raw.length();
 
         /* This buffer size has to be at least 6 bytes for Z_SYNC_FLUSH to work */
         const int DEFLATE_OUTPUT_CHUNK = LARGE_BUFFER_SIZE;
 
         int err;
         do {
-            deflationStream.next_out = (Bytef *) zlibContext->deflationBuffer;
-            deflationStream.avail_out = DEFLATE_OUTPUT_CHUNK;
+            stream.next_out = (Bytef *) zlibContext->deflationBuffer;
+            stream.avail_out = DEFLATE_OUTPUT_CHUNK;
 
-            err = ::deflate(&deflationStream, Z_SYNC_FLUSH);
-            if (Z_OK == err && deflationStream.avail_out == 0) {
-                zlibContext->dynamicDeflationBuffer.append(zlibContext->deflationBuffer, DEFLATE_OUTPUT_CHUNK - deflationStream.avail_out);
+            err = ::deflate(&stream, Z_SYNC_FLUSH);
+            if (Z_OK == err && stream.avail_out == 0) {
+                zlibContext->dynamicDeflationBuffer.append(zlibContext->deflationBuffer, DEFLATE_OUTPUT_CHUNK - stream.avail_out);
                 continue;
             } else {
                 break;
@@ -150,11 +169,11 @@ struct DeflationStream {
 
         /* This must not change avail_out */
         if (reset) {
-            deflateReset(&deflationStream);
+            deflateReset(&stream);
         }
 
         if (zlibContext->dynamicDeflationBuffer.length()) {
-            zlibContext->dynamicDeflationBuffer.append(zlibContext->deflationBuffer, DEFLATE_OUTPUT_CHUNK - deflationStream.avail_out);
+            zlibContext->dynamicDeflationBuffer.append(zlibContext->deflationBuffer, DEFLATE_OUTPUT_CHUNK - stream.avail_out);
 
             return std::string_view((char *) zlibContext->dynamicDeflationBuffer.data(), zlibContext->dynamicDeflationBuffer.length() - 4);
         }
@@ -163,13 +182,43 @@ struct DeflationStream {
          * from passing 0 as avail_in. Therefore we must not deflate an empty string */
         return {
             zlibContext->deflationBuffer,
-            DEFLATE_OUTPUT_CHUNK - deflationStream.avail_out - 4
+            DEFLATE_OUTPUT_CHUNK - stream.avail_out - 4
         };
+    }
+
+public:
+    /* deflateCopy() stores an internal backpointer to the destination z_stream,
+     * so the clone is allocated at its final address and must never be moved.
+     * zlib-ng copies source pointers into the destination before allocating;
+     * clear a failed copy so its destructor cannot release the source state. */
+    std::unique_ptr<DeflationStream> clone() {
+        auto copy = std::unique_ptr<DeflationStream>(new DeflationStream(NoInit {}));
+        if (::deflateCopy(&copy->deflationStream, &deflationStream) != Z_OK) {
+            copy->deflationStream = {};
+            return nullptr;
+        }
+        return copy;
+    }
+
+    /* Deflate and optionally reset. You must not deflate an empty string. */
+    std::string_view deflate(ZlibContext *zlibContext, std::string_view raw, bool reset) {
+        return deflateWithStream(deflationStream, zlibContext, raw, reset);
     }
 
     ~DeflationStream() {
         deflateEnd(&deflationStream);
     }
+};
+
+enum class InflationStatus {
+    SUCCESS,
+    TOO_LARGE,
+    INVALID_DATA,
+};
+
+struct InflationResult {
+    InflationStatus status;
+    std::string_view data;
 };
 
 struct InflationStream {
@@ -185,8 +234,11 @@ struct InflationStream {
         inflateEnd(&inflationStream);
     }
 
-    /* Zero length inflates are possible and valid */
-    std::optional<std::string_view> inflate(ZlibContext *zlibContext, std::string_view compressed, size_t maxPayloadLength, bool reset) {
+    /* Zero length inflates are possible and valid. Keep the detailed result
+     * separate from the established optional API so callers that need wire
+     * close-code fidelity can distinguish malformed DEFLATE from a payload
+     * that expanded past maxPayloadLength without slowing existing callers. */
+    InflationResult inflateWithStatus(ZlibContext *zlibContext, std::string_view compressed, size_t maxPayloadLength, bool reset) {
         /* The libdeflate fast path is stateless: it cannot resolve back-references into a
          * previous message's sliding window, and whatever it inflates never reaches the zlib
          * stream's window. Both are only correct without context takeover, i.e. when reset is set. */
@@ -204,9 +256,9 @@ struct InflationStream {
             if (res == 0) {
                 /* Fast path wins */
                 if (written > maxPayloadLength) {
-                    return std::nullopt;
+                    return { InflationStatus::TOO_LARGE, {} };
                 }
-                return std::string_view(buf, written);
+                return { InflationStatus::SUCCESS, std::string_view(buf, written) };
             }
         }
 
@@ -248,27 +300,41 @@ struct InflationStream {
         /* Restore the bytes we used for the tail */
         memcpy(tailLocation, preTailBytes, 4);
 
-        if ((err != Z_BUF_ERROR && err != Z_OK) || zlibContext->dynamicInflationBuffer.length() > maxPayloadLength) {
-            return std::nullopt;
+        size_t finalChunkLength = LARGE_BUFFER_SIZE - inflationStream.avail_out;
+        if (zlibContext->dynamicInflationBuffer.length() > maxPayloadLength ||
+            finalChunkLength > maxPayloadLength - zlibContext->dynamicInflationBuffer.length()) {
+            return { InflationStatus::TOO_LARGE, {} };
+        }
+
+        if (err != Z_BUF_ERROR && err != Z_OK) {
+            return { InflationStatus::INVALID_DATA, {} };
         }
 
         if (zlibContext->dynamicInflationBuffer.length()) {
-            zlibContext->dynamicInflationBuffer.append(zlibContext->inflationBuffer, LARGE_BUFFER_SIZE - inflationStream.avail_out);
+            zlibContext->dynamicInflationBuffer.append(zlibContext->inflationBuffer, finalChunkLength);
 
             /* Let's be strict about the max size */
             if (zlibContext->dynamicInflationBuffer.length() > maxPayloadLength) {
-                return std::nullopt;
+                return { InflationStatus::TOO_LARGE, {} };
             }
 
-            return std::string_view(zlibContext->dynamicInflationBuffer.data(), zlibContext->dynamicInflationBuffer.length());
+            return { InflationStatus::SUCCESS, std::string_view(zlibContext->dynamicInflationBuffer.data(), zlibContext->dynamicInflationBuffer.length()) };
         }
 
         /* Let's be strict about the max size */
-        if ((LARGE_BUFFER_SIZE - inflationStream.avail_out) > maxPayloadLength) {
-            return std::nullopt;
+        if (finalChunkLength > maxPayloadLength) {
+            return { InflationStatus::TOO_LARGE, {} };
         }
 
-        return std::string_view(zlibContext->inflationBuffer, LARGE_BUFFER_SIZE - inflationStream.avail_out);
+        return { InflationStatus::SUCCESS, std::string_view(zlibContext->inflationBuffer, finalChunkLength) };
+    }
+
+    std::optional<std::string_view> inflate(ZlibContext *zlibContext, std::string_view compressed, size_t maxPayloadLength, bool reset) {
+        InflationResult result = inflateWithStatus(zlibContext, compressed, maxPayloadLength, reset);
+        if (result.status != InflationStatus::SUCCESS) {
+            return std::nullopt;
+        }
+        return result.data;
     }
 
 };

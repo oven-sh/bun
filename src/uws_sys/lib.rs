@@ -161,6 +161,34 @@ pub enum SendStatus {
     Dropped = 2,
 }
 
+impl SendStatus {
+    /// Return the more severe result when combining independent sends.
+    ///
+    /// The ordering is `Dropped > Backpressure > Success`; this preserves the
+    /// aggregate status contract used by websocket publish operations.
+    #[inline]
+    pub const fn combine(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Dropped, _) | (_, Self::Dropped) => Self::Dropped,
+            (Self::Backpressure, _) | (_, Self::Backpressure) => Self::Backpressure,
+            _ => Self::Success,
+        }
+    }
+
+    /// Return the most severe status in an iterator, or `Dropped` when it is
+    /// empty (no recipient means nothing was sent).
+    #[inline]
+    pub fn worst<I>(statuses: I) -> Self
+    where
+        I: IntoIterator<Item = Self>,
+    {
+        statuses
+            .into_iter()
+            .reduce(Self::combine)
+            .unwrap_or(Self::Dropped)
+    }
+}
+
 /// `bun.timespec` — `us_loop_run_bun_tick` takes `*const timespec`.
 pub use bun_core::Timespec;
 
@@ -432,6 +460,8 @@ pub mod socket_context;
 pub mod socket_group;
 #[path = "SocketKind.rs"]
 pub mod socket_kind;
+#[path = "stream_websocket.rs"]
+pub mod stream_websocket;
 #[path = "thunk.rs"]
 pub mod thunk;
 // libuv only — use `bun_event_loop::EventLoopTimer` elsewhere.
@@ -525,3 +555,33 @@ pub use web_socket::{AnyWebSocket, RawWebSocket, WebSocketBehavior};
 pub type NewApp<const SSL: bool> = app::App<SSL>;
 pub type NewAppResponse<const SSL: bool> = response::Response<SSL>;
 pub type Socket = us_socket::us_socket_t;
+
+#[cfg(test)]
+mod tests {
+    use super::SendStatus;
+
+    #[test]
+    fn send_status_worst_orders_dropped_backpressure_success() {
+        assert_eq!(
+            SendStatus::Success.combine(SendStatus::Success),
+            SendStatus::Success
+        );
+        assert_eq!(
+            SendStatus::Success.combine(SendStatus::Backpressure),
+            SendStatus::Backpressure
+        );
+        assert_eq!(
+            SendStatus::Backpressure.combine(SendStatus::Dropped),
+            SendStatus::Dropped
+        );
+        assert_eq!(
+            SendStatus::worst([
+                SendStatus::Success,
+                SendStatus::Dropped,
+                SendStatus::Backpressure
+            ]),
+            SendStatus::Dropped
+        );
+        assert_eq!(SendStatus::worst(core::iter::empty()), SendStatus::Dropped);
+    }
+}

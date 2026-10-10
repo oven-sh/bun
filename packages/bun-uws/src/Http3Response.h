@@ -2,11 +2,14 @@
 #define UWS_H3RESPONSE_H
 
 #include "quic.h"
+#include "Http3ContextData.h"
 #include "Http3ResponseData.h"
 #include "HttpResponseData.h"
 #include "Utilities.h"
 
+#include <algorithm>
 #include <charconv>
+#include <chrono>
 #include <optional>
 #include <string_view>
 
@@ -133,6 +136,65 @@ struct Http3Response {
         return !(getHttpResponseData()->state & Http3ResponseData::HTTP_RESPONSE_PENDING);
     }
 
+    bool isWebSocketConnectRequest() { return getHttpResponseData()->websocketConnect; }
+    bool requestBodyEnded() { return getHttpResponseData()->remoteFin; }
+
+    /* Accept an RFC 9220 Extended CONNECT: send the 2xx HEADERS without
+     * ending the stream. From here on DATA in both directions carries the
+     * WebSocket; the stream ends through endStream()/cancel(). */
+    bool upgradeToWebSocket() {
+        Http3ResponseData *d = getHttpResponseData();
+        if (!d->websocketConnect || d->tunnelMode || d->remoteFin || hasResponded()) return false;
+        d->tunnelMode = true;
+        writeStatus("200");
+        flushHeaders();
+        return true;
+    }
+
+    /* Abort the stream (RESET_STREAM H3_REQUEST_CANCELLED). lsquic queues
+     * on_stream_close, which fires onAborted on a later connection tick. */
+    void cancel() {
+        clearOnWritable();
+        getHttpResponseData()->state |= Http3ResponseData::HTTP_END_CALLED;
+        us_quic_stream_reset((us_quic_stream_t *) this);
+    }
+
+    /* The WebSocket may still send: accepted, neither ended nor cancelled,
+     * and its context is not being torn down (a close callback running during
+     * engine teardown must not make lsquic tick a closing connection). */
+    bool isTunnelWritable() {
+        Http3ResponseData *d = getHttpResponseData();
+        return d->tunnelMode && !d->endAfterDrain && !(d->state & Http3ResponseData::HTTP_END_CALLED) &&
+            *contextData()->alive;
+    }
+
+    /* Would writing `length` more bytes keep our buffered bytes within
+     * maxBackpressure? Bytes QUIC flow control accepts immediately are not
+     * buffered, matching Http2Response. */
+    bool canWriteWithinBackpressure(size_t length, size_t maxBackpressure) {
+        if (!isTunnelWritable()) return false;
+        if (!maxBackpressure) return true;
+        size_t buffered = getHttpResponseData()->backpressure.length();
+        size_t immediate = buffered ? 0 : std::min(length, us_quic_stream_write_avail((us_quic_stream_t *) this));
+        size_t queued = length - immediate;
+        return buffered <= maxBackpressure && queued <= maxBackpressure - buffered;
+    }
+
+    /* Absolute WebSocket deadline, swept by Http3Context; 0 disables it. */
+    void setWebSocketTimeout(uint16_t seconds) {
+        Http3ResponseData *d = getHttpResponseData();
+        if (!d->websocketTracked) {
+            contextData()->websocketStreams.insert(this);
+            d->websocketTracked = true;
+        }
+        d->websocketTimeoutS = seconds;
+        d->websocketTimeoutActive = seconds != 0;
+        if (d->websocketTimeoutActive) d->websocketDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+    }
+    void setWebSocketTimeoutRefreshOnWrite(bool enabled) {
+        getHttpResponseData()->websocketTimeoutRefreshOnWrite = enabled;
+    }
+
     uint64_t getWriteOffset() { return getHttpResponseData()->offset; }
     void overrideWriteOffset(uint64_t o) { getHttpResponseData()->offset = o; }
     size_t getBufferedAmount() { return getHttpResponseData()->backpressure.length(); }
@@ -179,12 +241,17 @@ struct Http3Response {
     /* Called from Http3Context's on_stream_writable. */
     bool drain() {
         Http3ResponseData *d = getHttpResponseData();
+        bool hadBackpressure = d->backpressure.length() != 0;
         while (d->backpressure.length() != 0) {
             int w = us_quic_stream_write((us_quic_stream_t *) this,
                 d->backpressure.data(), (unsigned) d->backpressure.length());
             if (w <= 0) return false;
             d->offset += (uint64_t) w;
             d->backpressure.erase((unsigned) w);
+            /* Match H1: actual outbound progress keeps an active WebSocket
+             * alive. The Rust core disables this while awaiting a Pong or a
+             * close reply so a peer cannot evade those grace deadlines. */
+            if (d->websocketTimeoutRefreshOnWrite) touchWebSocketTimeout(d);
         }
         if (d->endAfterDrain) {
             d->endAfterDrain = false;
@@ -192,18 +259,42 @@ struct Http3Response {
             markDone(d);
             return true;
         }
-        if (d->onWritable) {
+        /* A WebSocket's drain means "backpressure cleared", as on HTTP/1.
+         * The writable callback after the 200 HEADERS is not one. */
+        if (d->onWritable && (hadBackpressure || !d->tunnelMode)) {
             return d->onWritable(this, d->offset, d->writableUserData);
         }
         return true;
     }
 
 private:
+    Http3ContextData *contextData() {
+        return (Http3ContextData *) us_quic_socket_context_ext(us_quic_stream_context((us_quic_stream_t *) this));
+    }
+
     void appendHeader(Http3ResponseData *d, std::string_view name, std::string_view value) {
         d->appendHeader(name.data(), (unsigned) name.size(), value.data(), (unsigned) value.size());
     }
 
+    /* A 2xx response to CONNECT accepts a tunnel. Bun's ordinary fetch
+     * response path cannot expose one; only upgradeToWebSocket() may send
+     * success. Never promise a tunnel and then write an HTTP body. */
+    void finalizeConnectStatus(Http3ResponseData *d) {
+        if (!d->connectRequest || d->tunnelMode || d->hdrs.isEmpty()) return;
+        us_quic_header_t &status = d->hdrs[0];
+        if (status.value_len != 3) return;
+        char *code = d->hdrBuf.mutableSpan().data() + (uintptr_t) status.value;
+        if (code[0] == '2') memcpy(code, "501", 3);
+    }
+
+    void touchWebSocketTimeout(Http3ResponseData *d) {
+        if (!d->websocketTracked || d->websocketTimeoutS == 0) return;
+        d->websocketTimeoutActive = true;
+        d->websocketDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(d->websocketTimeoutS);
+    }
+
     void sendBufferedHeaders(Http3ResponseData *d, bool endStream) {
+        finalizeConnectStatus(d);
         const char *base = d->hdrBuf.span().data();
         for (auto &h : d->hdrs) {
             h.name = base + (uintptr_t) h.name;
@@ -269,6 +360,14 @@ private:
 
     void markDone(Http3ResponseData *d) {
         d->onWritable = nullptr;
+        if (d->tunnelMode) {
+            /* Our FIN ends only the send half of a WebSocket tunnel. The peer
+             * still owes its close reply and FIN on the read half, so keep
+             * inStream and do not send STOP_SENDING. */
+            d->state |= Http3ResponseData::HTTP_END_CALLED;
+            d->state &= ~Http3ResponseData::HTTP_RESPONSE_PENDING;
+            return;
+        }
         d->inStream = nullptr;
         /* Leave onAborted armed: unlike an HTTP/1 socket, the QUIC stream
          * is freed once both sides FIN, so on_stream_close fires it for

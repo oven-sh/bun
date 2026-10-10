@@ -197,6 +197,8 @@ impl Stringifier {
             return Ok(());
         }
 
+        let is_array = unwrapped.is_array_including_proxy(global)?;
+
         // Object or array — check for circular references.
         // The call site is wired for fallible
         // allocation (Err → OutOfMemory), but `zig_hash_map`'s grow path currently
@@ -214,7 +216,7 @@ impl Stringifier {
         }
         // NOTE: a scopeguard here would hold `&mut self.visiting` across the recursive
         // `&mut self` calls below, so remove manually after the call instead.
-        let result = if unwrapped.is_array() {
+        let result = if is_array {
             self.stringify_array(global, unwrapped)
         } else {
             self.stringify_object(global, unwrapped)

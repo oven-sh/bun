@@ -132,7 +132,7 @@ fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     }
 
     let root = value.unwrap_boxed_primitive(global)?;
-    if !root.is_object() || root.is_array() {
+    if !root.is_object() || root.is_array_including_proxy(global)? {
         return Err(global.throw(format_args!(
             "XML.stringify expects an object: a {{ name, attributes, children }} node or an object with a single root element key"
         )));
@@ -167,7 +167,7 @@ fn stringify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 /// `children` or `attributes` property; their types are checked when the node
 /// is written.
 fn is_node(global: &JSGlobalObject, value: JSValue) -> JsResult<bool> {
-    if !value.is_object() || value.is_array() {
+    if !value.is_object() || value.is_array_including_proxy(global)? {
         return Ok(false);
     }
     let Some(name) = value.get(global, "name")? else {
@@ -321,7 +321,7 @@ impl Stringifier {
 
         if let Some(attributes) = node.get(global, "attributes")? {
             if !attributes.is_null() {
-                if !attributes.is_object() || attributes.is_array() {
+                if !attributes.is_object() || attributes.is_array_including_proxy(global)? {
                     return Err(global
                         .throw(format_args!(
                             "XML.stringify: a node's attributes must be an object"
@@ -343,7 +343,7 @@ impl Stringifier {
         }
 
         let children = match node.get(global, "children")? {
-            Some(children) if children.is_array() => Some(children),
+            Some(children) if children.is_array_including_proxy(global)? => Some(children),
             Some(children) if children.is_null() => None,
             Some(_) => {
                 return Err(global
@@ -371,7 +371,8 @@ impl Stringifier {
                     continue;
                 }
                 count += 1;
-                if !child.is_object() || child.is_array() || child.is_date() {
+                if !child.is_object() || child.is_array_including_proxy(global)? || child.is_date()
+                {
                     has_text = true;
                 }
             }
@@ -394,7 +395,8 @@ impl Stringifier {
             if pretty {
                 self.newline();
             }
-            if child.is_object() && !child.is_array() && !child.is_date() {
+            let child_is_array = child.is_array_including_proxy(global)?;
+            if child.is_object() && !child_is_array && !child.is_date() {
                 // Inside `children` there is no compact/node ambiguity: any
                 // object is an element (`name`), a comment (`comment`) or a
                 // processing instruction (`target`).
@@ -403,7 +405,7 @@ impl Stringifier {
                     continue;
                 }
                 self.stringify_node(global, child, name)?;
-            } else if child.is_array() {
+            } else if child_is_array {
                 return Err(global
                     .throw(format_args!(
                         "XML.stringify: a node's children cannot contain arrays"
@@ -570,7 +572,7 @@ impl Stringifier {
                     .throw(format_args!("XML.stringify: an XML document has exactly one root element, but the top-level object has more than one key"))
                     .into());
             }
-            if value.is_array() {
+            if value.is_array_including_proxy(global)? {
                 return Err(global
                     .throw(format_args!("XML.stringify: the root element '{}' cannot be an array (an XML document has exactly one root element)", key))
                     .into());
@@ -594,7 +596,7 @@ impl Stringifier {
         if skipped(value) {
             return Ok(false);
         }
-        if !value.is_array() {
+        if !value.is_array_including_proxy(global)? {
             return Ok(true);
         }
         let mut iter = value.array_iterator(global)?;
@@ -624,8 +626,9 @@ impl Stringifier {
         if !value.is_object() || value.is_date() {
             return self.stringify_compact_leaf(global, name, value);
         }
+        let is_array = value.is_array_including_proxy(global)?;
         self.mark_visiting(global, value)?;
-        let result = if value.is_array() {
+        let result = if is_array {
             self.stringify_compact_array(global, name, value, separate)
         } else {
             self.stringify_compact_object(global, name, value)
@@ -649,7 +652,7 @@ impl Stringifier {
             if skipped(item) {
                 continue;
             }
-            if item.is_array() {
+            if item.is_array_including_proxy(global)? {
                 return Err(global
                     .throw(format_args!(
                         "XML.stringify: nested arrays cannot be represented (element '{}')",

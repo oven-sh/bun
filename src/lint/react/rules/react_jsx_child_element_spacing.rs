@@ -41,11 +41,11 @@ impl Rule for JsxChildElementSpacing {
                 if let (Some(Some((element, name))), None | Some(Some(_))) = around
                     && is_text_following_element(&value)
                 {
-                    cx.report_at(element.span().end, SPACING_AFTER_PREV).data("element", name);
+                    cx.report_at(element.span().end, SPACING_AFTER_PREV).listened_on(e).data("element", name);
                 } else if let (None | Some(Some(_)), Some(Some((element, name)))) = around
                     && is_text_preceding_element(&value)
                 {
-                    cx.report_at(element.span().start, SPACING_BEFORE_NEXT).data("element", name);
+                    cx.report_at(element.span().start, SPACING_BEFORE_NEXT).listened_on(e).data("element", name);
                 }
             }
             (last_child, child) = (child, next_child);

@@ -53,18 +53,23 @@ impl Rule for JsxMaxPropsPerLine {
                 break;
             };
             if last.is_some_and(|last| !ast_utils::is_on_one_line(file, last.span().between(decl.span()))) {
-                check_line(line, count, max, cx);
+                check_line(line, count, max, (jsx.opening_span(), cx));
                 (line, count) = (from_here, 0);
             }
             count += 1;
             last = Some(decl);
         }
-        check_line(line, count, max, cx);
+        check_line(line, count, max, (jsx.opening_span(), cx));
     }
 }
 
 /// The first `count` of `line` are the attributes of one line.
-fn check_line<'a>(mut line: ListIter<'a, Prop<'a>>, count: usize, max: usize, cx: &Cx<'a, JsxMaxPropsPerLine>) {
+fn check_line<'a>(
+    mut line: ListIter<'a, Prop<'a>>,
+    count: usize,
+    max: usize,
+    (opening, cx): (Span, &Cx<'a, JsxMaxPropsPerLine>),
+) {
     if count <= max {
         return;
     }
@@ -78,7 +83,7 @@ fn check_line<'a>(mut line: ListIter<'a, Prop<'a>>, count: usize, max: usize, cx
         Some(name) => name.bytes(),
         None => prop.value().map_or(&b""[..], Expr::text),
     };
-    cx.report(prop, NEW_LINE).listened_on(prop.parent()).data("prop", name).fix(|fixer| {
+    cx.report(prop, NEW_LINE).listened_on(opening).data("prop", name).fix(|fixer| {
         let (mut code, mut range) = (Vec::new(), None::<Span>);
         for (i, node) in props_in_line.enumerate() {
             if i > 0 {

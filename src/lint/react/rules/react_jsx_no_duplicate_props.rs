@@ -54,7 +54,7 @@ impl Rule for JsxNoDuplicateProps {
             for attribute in attributes.iter().filter_map(identifier) {
                 let name = text::to_lower_case(attribute.name.bytes());
                 if is_own_property(&name) && !props.insert(name) {
-                    cx.report(attribute.prop, NO_DUPLICATE_PROPS);
+                    cx.report(attribute.prop, NO_DUPLICATE_PROPS).listened_on(jsx.opening_span());
                 }
             }
             return;
@@ -65,7 +65,7 @@ impl Rule for JsxNoDuplicateProps {
                 let (first, second) = (old.key.span(cx.file()), new.key.span(cx.file()));
                 cx.report(first, JSX_NO_DUPLICATE_PROPS).data("prop_name", new.name).label(second, "");
             } else if is_own_property(new.name.bytes()) {
-                cx.report(new.prop, NO_DUPLICATE_PROPS);
+                cx.report(new.prop, NO_DUPLICATE_PROPS).listened_on(jsx.opening_span());
             }
         };
         if count <= FEW {

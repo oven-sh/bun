@@ -78,7 +78,7 @@ impl Rule for NoRenderReturnValue {
             _ => false,
         };
         if is_child_of_parent && is_used {
-            cx.report(span, if is_oxlint { OXLINT } else { NO_RETURN_VALUE }).data("node", name);
+            cx.report(span, if is_oxlint { OXLINT } else { NO_RETURN_VALUE }).listened_on(e).data("node", name);
         }
         if !is_oxlint {
             return;

@@ -59,6 +59,7 @@ impl Rule for JsxFirstPropNewLine {
         if !wants_new_line {
             // The type arguments go with the blanks.
             cx.report(first_node, PROP_ON_SAME_LINE)
+                .listened_on(node)
                 .fix(|fixer| fixer.replace(name.span().between(first_node.span()), " "));
             return;
         }
@@ -68,7 +69,7 @@ impl Rule for JsxFirstPropNewLine {
         {
             return;
         }
-        cx.report(first_node, PROP_ON_NEW_LINE).fix(|fixer| {
+        cx.report(first_node, PROP_ON_NEW_LINE).listened_on(node).fix(|fixer| {
             let before = jsx.type_args().angle_brackets_span().unwrap_or_else(|| name.span());
             fixer.replace(before.between(first_node.span()), "\n")
         });

@@ -34,7 +34,7 @@ impl Rule for NoFindDomNode {
         };
         if !cx.language().is_oxlint {
             if callee.is_ident("findDOMNode") || is_member_called(callee, "findDOMNode") {
-                cx.report(callee, NO_FIND_DOM_NODE);
+                cx.report(callee, NO_FIND_DOM_NODE).listened_on(e);
             }
             return;
         }

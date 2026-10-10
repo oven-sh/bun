@@ -61,7 +61,7 @@ fn check<'a>(_: &JsxPropsNoSpreadMulti, e: Expr<'a>, cx: &mut Cx<'a, JsxPropsNoS
         // oxlint reports the first one, once, and removes all but the last.
         if !is_oxlint {
             for span in spans.iter().skip(1) {
-                cx.report(*span, NO_MULTI_SPREADING);
+                cx.report(*span, NO_MULTI_SPREADING).listened_on(jsx.opening_span());
             }
         } else if let [first, .., _] = spans[..] {
             (spans.iter().skip(1))

@@ -84,6 +84,7 @@ enum Found {
 /// What all reports in one element have in common.
 struct Element<'a, 'r> {
     rule: &'r JsxSortProps,
+    opening: Span,
     attributes: List<'a, Prop<'a>>,
     reserved_list: Option<ReservedList>,
     fix: OnceCell<Fix>,
@@ -134,7 +135,7 @@ impl Rule for JsxSortProps {
                     Some(words) => cx.report(decl, NO_UNRESERVED_PROPS).data("unreservedWords", words.clone()),
                     None => cx.report(decl, LIST_IS_EMPTY),
                 }
-                .listened_on(e);
+                .listened_on(jsx.opening_span());
             }
             return;
         }
@@ -149,7 +150,8 @@ impl Rule for JsxSortProps {
             ReservedFirst::List(list) => Some(list),
             _ => None,
         };
-        let element = Element { rule: self, attributes, reserved_list, fix: OnceCell::new() };
+        let element =
+            Element { rule: self, opening: jsx.opening_span(), attributes, reserved_list, fix: OnceCell::new() };
         let mut memo: Option<Attribute<'a>> = None;
         for decl in attributes {
             if cx.has_reported_too_much() {
@@ -300,7 +302,7 @@ impl<'a> Element<'a, '_> {
         let Some(name) = node_attribute.key() else {
             return;
         };
-        let report = cx.report(name.span(cx.file()), message).listened_on(node_attribute.parent());
+        let report = cx.report(name.span(cx.file()), message).listened_on(self.opening);
         report.fix(|fixer| self.fix.get_or_init(|| self.generate_fix(fixer)).clone());
     }
 

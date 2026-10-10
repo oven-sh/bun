@@ -569,7 +569,7 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
   });
 
   // execute() starts a query at once and then() starts it one job later: close({ timeout }) waits for both, as end()
-  // does in postgres.js. A first await calls then() one job later still, after close({ timeout }) stopped the handle.
+  // does in postgres.js. A first await calls then() after close({ timeout }) ran, and what comes after it is refused.
   test("reserved.close({ timeout }) waits for a query in flight and rejects one that starts later", async () => {
     const { result, sent } = await withServer(async sql => {
       const reserved = await sql.reserve();
@@ -577,12 +577,16 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
       const thenBefore = code(reserved.unsafe("SELECT 'then before'").then(rows => rows));
       const sameTick = code(reserved.unsafe("SELECT 'same tick'"));
       const closed = reserved.close({ timeout: 60 });
-      const during = code(reserved.unsafe("SELECT 'during'"));
+      const after = [
+        code(reserved.unsafe("SELECT 'unsafe after'")),
+        code(reserved`SELECT 'tagged after'`),
+        code(reserved.begin(async () => {})),
+      ];
       await closed;
       reserved.release();
-      return Promise.all([inFlight, thenBefore, sameTick, during]);
+      return Promise.all([inFlight, thenBefore, sameTick, ...after]);
     });
-    expect(result).toEqual([null, null, closedCode, closedCode]);
+    expect(result).toEqual([null, null, closedCode, closedCode, closedCode, closedCode]);
     expect(sent).toEqual(["SELECT 'in flight'", "SELECT 'then before'"]);
   });
 
@@ -598,7 +602,7 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
     expect(sent).toEqual(["SELECT 'KILL'"]);
   });
 
-  // release() runs in the job that close({ timeout }) gives to statements that already called then().
+  // release() runs in the job that close({ timeout }) gives to the statements that already called then().
   test("a reserved.close({ timeout }) that release() overtakes leaves the released connection alone", async () => {
     const { result, sent } = await withServer(async sql => {
       const reserved = await sql.reserve();

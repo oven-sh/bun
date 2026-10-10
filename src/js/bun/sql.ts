@@ -34,6 +34,8 @@ enum ReservedConnectionState {
   acceptQueries = 1 << 0,
   closed = 1 << 1,
   released = 1 << 2,
+  /// close({ timeout }) ran in this job: a statement whose then() ran before it can still start.
+  acceptStarted = 1 << 3,
 }
 
 interface TransactionState {
@@ -61,9 +63,17 @@ function settleReservedTransaction(
   settle: (value: any) => void,
   value: any,
 ) {
-  reservedTransaction.delete(finished.promise);
+  reservedTransaction.$delete(finished.promise);
   finished.resolve();
   settle(value);
+}
+
+/// For close({ timeout }): then() starts a query one job later. False when release() ended the handle in that job.
+async function letStartedQueriesStart(state: TransactionState) {
+  state.connectionState |= ReservedConnectionState.acceptStarted;
+  await Promise.$resolve();
+  state.connectionState &= ~ReservedConnectionState.acceptStarted;
+  return !(state.connectionState & ReservedConnectionState.closed);
 }
 
 function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions): Adapter | ListenableAdapter {
@@ -182,8 +192,7 @@ const SQL = function SQL(
     transactionQueries.$delete(query);
   }
 
-  /// Runs when a query of a reserved or transaction handle starts. `internal` marks a statement
-  /// that begins or ends the transaction or ends a savepoint.
+  /// Starts a query of a reserved or transaction handle. `internal`: a statement that the transaction sends for itself.
   function queryFromTransactionHandler(
     this: PooledConnection,
     state: TransactionState,
@@ -201,12 +210,11 @@ const SQL = function SQL(
     // Before the check below, so that its rejection counts as handled like any failure of a started query.
     query.finally(onTransactionQueryDisconnected.bind(state.queries, query));
 
-    // User statements: close() and a disconnect clear acceptQueries, release() and the end of begin() do not.
-    // Internal statements: close() sends its ROLLBACK after it cleared acceptQueries.
+    // User statements stop at close() and at a disconnect. close() sends its own ROLLBACK after that, until `closed`.
     if (
       internal
         ? state.connectionState & ReservedConnectionState.closed
-        : !(state.connectionState & ReservedConnectionState.acceptQueries)
+        : !(state.connectionState & (ReservedConnectionState.acceptQueries | ReservedConnectionState.acceptStarted))
     ) {
       return query.reject(state.storedError ?? pool.connectionClosedError());
     }
@@ -336,7 +344,7 @@ const SQL = function SQL(
   ) {
     const { promise, resolve, reject } = Promise.withResolvers();
     const finished = Promise.withResolvers<void>();
-    reservedTransaction.add(finished.promise);
+    reservedTransaction.$add(finished.promise);
     // lets just reuse the same code path as the transaction begin
     onTransactionConnected(
       callback,
@@ -493,17 +501,13 @@ const SQL = function SQL(
     };
     reserved_sql.close = async (options?: { timeout?: number }) => {
       const reserveQueries = state.queries;
-      let timeout = options?.timeout;
-      if (timeout) {
-        // Like end() in postgres.js: a statement whose then() ran before this call starts one job later.
-        await Promise.$resolve();
-      }
       if (
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
       ) {
         return Promise.$resolve(undefined);
       }
+      let timeout = options?.timeout;
       if (timeout) {
         timeout = Number(timeout);
         if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
@@ -512,6 +516,7 @@ const SQL = function SQL(
       }
       state.connectionState &= ~ReservedConnectionState.acceptQueries;
       if (timeout) {
+        if (!(await letStartedQueriesStart(state))) return;
         if (timeout > 0 && (reserveQueries.size > 0 || reservedTransaction.size > 0)) {
           const { promise, resolve } = Promise.withResolvers();
           // race all queries vs timeout
@@ -785,11 +790,6 @@ const SQL = function SQL(
     };
     transaction_sql.close = async function (options?: { timeout?: number }) {
       // we dont actually close the connection here, we just set the state to closed and rollback the transaction
-      let timeout = options?.timeout;
-      if (timeout) {
-        // Like end() in postgres.js: a statement whose then() ran before this call starts one job later.
-        await Promise.$resolve();
-      }
       if (
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
@@ -797,6 +797,7 @@ const SQL = function SQL(
         return Promise.$resolve(undefined);
       }
       const transactionQueries = state.queries;
+      let timeout = options?.timeout;
       if (timeout) {
         timeout = Number(timeout);
         if (timeout > 2 ** 31 || timeout < 0 || timeout !== timeout) {
@@ -805,6 +806,7 @@ const SQL = function SQL(
       }
       state.connectionState &= ~ReservedConnectionState.acceptQueries;
       if (timeout) {
+        if (!(await letStartedQueriesStart(state))) return;
         if (timeout > 0 && (transactionQueries.size > 0 || transactionSavepoints.size > 0)) {
           const { promise, resolve } = Promise.withResolvers();
           // race all queries vs timeout
@@ -847,7 +849,7 @@ const SQL = function SQL(
     transaction_sql.distributed = transaction_sql.beginDistributed;
     transaction_sql.end = transaction_sql.close;
     function onSavepointFinished(savepoint_promise: Promise<any>) {
-      transactionSavepoints.delete(savepoint_promise);
+      transactionSavepoints.$delete(savepoint_promise);
     }
     async function run_internal_savepoint(save_point_name: string, savepoint_callback: TransactionCallback) {
       // Like a user statement: a savepoint that did not start before close() does not start after it.
@@ -897,7 +899,7 @@ const SQL = function SQL(
         // matchs the format of the savepoint name in postgres package
         const save_point_name = `s${savepoints++}${name ? `_${name}` : ""}`;
         const promise = run_internal_savepoint(save_point_name, savepoint_callback);
-        transactionSavepoints.add(promise);
+        transactionSavepoints.$add(promise);
         return await promise.finally(onSavepointFinished.bind(null, promise));
       };
     }

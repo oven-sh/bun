@@ -1,7 +1,10 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, isPosix, tempDir, tempDirWithFiles } from "harness";
+import { mkfifo } from "mkfifo";
+import { chmodSync, closeSync, constants, openSync, readSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
@@ -171,6 +174,59 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_recurse");
   });
+});
+
+// The builtin is off on POSIX unless the flag is set, so this runs it in a child. The existing
+// regular file is the control: the system cp would leave it at 0600, so 100751 shows the builtin ran.
+test.if(isPosix)("builtin cp gives the source's mode to a regular destination, not to a FIFO", async () => {
+  using dir = tempDir("shell-cp-dest-mode", { "src.txt": "hello\n" });
+  const src = join(String(dir), "src.txt");
+  chmodSync(src, 0o751);
+  const file = join(String(dir), "existing.txt");
+  writeFileSync(file, "old contents", { mode: 0o600 });
+  const fifo = join(String(dir), "dest.fifo");
+  mkfifo(fifo, 0o600);
+
+  // Without a reader, open(O_WRONLY) on a FIFO blocks.
+  const reader = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
+  let fifoData: string;
+  try {
+    const script = /* ts */ `
+      import { $ } from "bun";
+      $.nothrow();
+      const results = {};
+      for (const dest of ["dest.fifo", "existing.txt"]) {
+        const r = await $\`cp src.txt \${dest}\`.quiet();
+        results[dest] = { stderr: r.stderr.toString(), exitCode: r.exitCode };
+      }
+      console.log(JSON.stringify(results));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "dest.fifo": { stderr: "", exitCode: 0 },
+      "existing.txt": { stderr: "", exitCode: 0 },
+    });
+    expect(exitCode).toBe(0);
+
+    const chunk = Buffer.alloc(16);
+    fifoData = chunk.toString("utf8", 0, readSync(reader, chunk, 0, chunk.length, null));
+  } finally {
+    closeSync(reader);
+  }
+
+  expect({
+    fifoMode: statSync(fifo).mode.toString(8),
+    fifoData,
+    fileMode: statSync(file).mode.toString(8),
+  }).toEqual({ fifoMode: "10600", fifoData: "hello\n", fileMode: "100751" });
 });
 
 function expectSortedOutput(expected: string) {

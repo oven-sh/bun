@@ -2275,6 +2275,23 @@ function hasInvalidTrailer(response) {
   return outHeaders !== null && outHeaders["trailer"] !== undefined;
 }
 
+// appendHeader pushes into a stored array, as in Node, so a header list folded here stores a copy of each array value.
+function copyHeaderValueArray(values) {
+  const length = values.length;
+  const copy = $newArrayWithSize(length);
+  for (let i = 0; i < length; i++) $putByValDirect(copy, i, values[i]);
+  return copy;
+}
+
+// For a fold with no remove pass: an array stored earlier can be one that a caller gave to setHeader.
+function detachStoredHeaderArrays(response) {
+  const outHeaders = response[kOutHeaders];
+  for (const key in outHeaders) {
+    const entry = outHeaders[key];
+    if ($isArray(entry[1])) entry[1] = copyHeaderValueArray(entry[1]);
+  }
+}
+
 function _writeHead(statusCode, reason, obj, response) {
   const originalStatusCode = statusCode;
   statusCode |= 0;
@@ -2305,9 +2322,15 @@ function _writeHead(statusCode, reason, obj, response) {
       const length = obj.length;
       // Append all the headers provided in the array:
       if (length && $isArray(obj[0])) {
+        if (response[kOutHeaders] !== null) detachStoredHeaderArrays(response);
         for (let i = 0; i < length; i++) {
           const k = obj[i];
-          if (k) response.appendHeader(k[0], k[1]);
+          if (k) {
+            const name = k[0];
+            let value = k[1];
+            if (typeof value === "object" && $isArray(value)) value = copyHeaderValueArray(value);
+            response.appendHeader(name, value);
+          }
         }
       } else {
         if (length % 2 !== 0) {
@@ -2331,7 +2354,12 @@ function _writeHead(statusCode, reason, obj, response) {
 
         for (let n = 0; n < length; n += 2) {
           k = obj[n];
-          if (k) response.appendHeader(k, obj[n + 1]);
+          if (k) {
+            let value = obj[n + 1];
+            // Node pushes into the caller's array here when a header was set before. Bun appends to a copy on purpose.
+            if (typeof value === "object" && $isArray(value)) value = copyHeaderValueArray(value);
+            response.appendHeader(k, value);
+          }
         }
       }
     } else if (obj) {
@@ -3221,19 +3249,21 @@ Object.defineProperty(ServerResponse.prototype, "headers", {
     throwIfServerHeadersSent(this, "set");
     this[kOutHeaders] = null;
     if (!value) return;
+    // Every form stores a copy of an array value, so that no appendHeader pushes into the caller's array.
     if ($isArray(value)) {
       // Array of [name, value] pairs, like the WHATWG Headers sequence init.
       for (const { 0: key, 1: val } of value) {
-        this.appendHeader(key, val);
+        this.appendHeader(key, typeof val === "object" && $isArray(val) ? copyHeaderValueArray(val) : val);
       }
     } else if (typeof value.entries === "function") {
       for (const { 0: key, 1: val } of value.entries()) {
-        this.appendHeader(key, val);
+        this.appendHeader(key, typeof val === "object" && $isArray(val) ? copyHeaderValueArray(val) : val);
       }
     } else {
       const keys = ObjectKeys(value);
       for (let i = 0; i < keys.length; i++) {
-        this.setHeader(keys[i], value[keys[i]]);
+        const val = value[keys[i]];
+        this.setHeader(keys[i], typeof val === "object" && $isArray(val) ? copyHeaderValueArray(val) : val);
       }
     }
   },

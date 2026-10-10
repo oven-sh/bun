@@ -474,8 +474,8 @@ impl<'h> Graph<'h> {
         })
     }
 
-    /// What eslint-import-resolver-typescript finds and TypeScript does not: a file by its whole name, whatever that ends
-    /// in, and with `.json` or `.node` behind it. Also through `paths` and `baseUrl`.
+    /// What eslint-import-resolver-typescript finds and TypeScript does not: a file by its whole name, whatever that
+    /// ends in, and with `.json` or `.node` behind it. Also through `paths` and `baseUrl`.
     fn resolve_other_file(&self, specifier: &[u8], from: &[u8]) -> Option<Vec<u8>> {
         let ProjectResolver {
             resolver, base_url, ..
@@ -740,14 +740,17 @@ impl<'h> Graph<'h> {
             return Some(self.make_record(path.to_vec(), &[], false, None));
         }
         // Whatever can be parsed.
+        let is_oxlint = self.flavor() == Flavor::Oxlint;
         let language = LanguageOptions {
             parser: Parser::TypeScript,
             experimental_decorators: true,
+            is_oxlint,
+            refuses_what_parser_refuses: !is_oxlint,
             ..LanguageOptions::default()
         };
         with_file(path, &text, &language, None, |file| {
             // As eslint-plugin-import: nothing is known of a file that cannot be parsed.
-            let mut requests = if file.has_parse_errors() {
+            let mut requests = if self.is_refused(file) {
                 Vec::new()
             } else {
                 requests_of(file, self.flavor())
@@ -768,13 +771,21 @@ impl<'h> Graph<'h> {
         })
     }
 
+    /// Whether nothing is known of `file`. oxlint also refuses a file that can be parsed, for an early error.
+    fn is_refused<'a>(&self, file: &'a File<'a>) -> bool {
+        match self.flavor() {
+            Flavor::Oxlint => bun_lint::linter::parse_error(file).is_some(),
+            Flavor::EslintPluginImport => file.has_parse_errors(),
+        }
+    }
+
     /// Makes the [`Record`] of `file`, which is at `path`, if a rule wants them and it is not known.
     fn keep_record<'a>(&self, path: Vec<u8>, file: &'a File<'a>) -> Option<&Record> {
         let make = self.record_maker.get()?;
         let known = match self.known().records.get_ref(&path[..]) {
             Some(known) => known,
             None => {
-                let record = (!file.has_parse_errors()).then(|| make(file));
+                let record = (!self.is_refused(file)).then(|| make(file));
                 self.known().records.insert_ref(path, record)
             }
         };

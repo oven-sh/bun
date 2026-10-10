@@ -1033,6 +1033,7 @@ impl Config {
             };
             let reported_as = self.reported_as(registry, entry, setting.written_for);
             config.has_named_rules |= name.is_some();
+            config.may_hand_back |= or_else.is_some() && setting.severity != Severity::Off;
             config.rules.push(
                 ConfiguredRule::new(entry, setting.severity, options)
                     .report_as(reported_as)

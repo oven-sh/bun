@@ -83,8 +83,6 @@ pub(crate) fn lower(
     // `build_identifier_loc_index`: not ported — Bun has no `node_id`; callers
     // read `Ref` + `Loc` straight off the AST node via `convert_loc`.
 
-    env.own_name = func.name_ref();
-
     // Pre-compute context identifiers: variables captured across function boundaries
     let context_identifiers = find_context_identifiers(func, host, env)?;
 
@@ -385,7 +383,6 @@ pub(super) fn gather_captured_context<'h>(
     func: &FunctionNode<'_>,
     enclosing_scope: &'h ast::Scope,
     _component_scope: &ast::Scope,
-    own_name: Option<Ref>,
 ) -> Result<IndexMap<Ref, Option<SourceLocation>>, CompilerDiagnostic> {
     let mut walker = CaptureWalker {
         host,
@@ -433,7 +430,7 @@ pub(super) fn gather_captured_context<'h>(
         ) {
             continue;
         }
-        if host.is_module_level(ref_) || own_name == Some(ref_) {
+        if host.is_module_level(ref_) {
             continue;
         }
         let pos = ref_loc.start;

@@ -183,6 +183,8 @@ pub struct ResolvedConfig {
     pub(super) prepared: OnceLock<Prepared>,
     /// One of them has a [name](ConfiguredRule::name).
     pub has_named_rules: bool,
+    /// [`ResolvedConfig::may_hand_back`]
+    pub(super) may_hand_back: bool,
     /// The file that the plugin was loaded from whose rule one of them [stands in for](ConfiguredRule::or_else), if it is on and
     /// the plugin is from a file of its own.
     pub(super) package_module: Option<Arc<[u8]>>,
@@ -256,8 +258,7 @@ impl ResolvedConfig {
 
     /// Whether a rule is on that has the rule of its package beside it, to which it can hand a file back.
     pub fn may_hand_back(&self) -> bool {
-        let mut on = self.rules.iter().filter(|it| it.severity != Severity::Off);
-        on.any(|it| it.or_else.is_some())
+        self.may_hand_back
     }
 
     /// The instance of a rule that the configuration calls `id`: [`ConfiguredRule::name`]. Only the configuration gives names.

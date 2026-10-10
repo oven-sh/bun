@@ -64,7 +64,6 @@ fn lower_function(
         &func,
         builder.current_scope(),
         component_scope,
-        builder.environment().own_name,
     )?;
     let merged_context: IndexMap<Ref, Option<SourceLocation>> = {
         let mut merged = builder.context().clone();
@@ -122,7 +121,6 @@ pub(super) fn lower_function_declaration(
         &func,
         builder.current_scope(),
         component_scope,
-        builder.environment().own_name,
     )?;
     let merged_context: IndexMap<Ref, Option<SourceLocation>> = {
         let mut merged = builder.context().clone();
@@ -247,7 +245,6 @@ fn lower_function_for_object_method(
         &func,
         builder.current_scope(),
         component_scope,
-        builder.environment().own_name,
     )?;
     let merged_context: IndexMap<Ref, Option<SourceLocation>> = {
         let mut merged = builder.context().clone();

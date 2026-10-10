@@ -16,11 +16,19 @@ pub struct NoUnusedState;
 
 const UNUSED_STATE_FIELD: Message = Message::new("unusedStateField", "Unused state field: '{{name}}'");
 
+/// `quasis[0].value.raw`, of what is written between the backticks: espree has a `\n` for each line break in it.
+fn raw_of<'a>(file: &File<'a>, written: &'a [u8]) -> Cow<'a, [u8]> {
+    match file.uses_typescript_parser() {
+        true => Cow::Borrowed(written),
+        false => strings::crlf_as_lf(written),
+    }
+}
+
 /// `getName`
 fn get_name(node: Expr<'_>) -> Option<Cow<'_, [u8]>> {
     match node.kind() {
         ExprKind::Ident(name) => Some(Cow::Borrowed(name.bytes())),
-        ExprKind::Template(template) => template.exprs().is_empty().then(|| strings::crlf_as_lf(template.raw(0))),
+        ExprKind::Template(template) => template.exprs().is_empty().then(|| raw_of(node.file(), template.raw(0))),
         _ => ast_utils::get_static_string_value(node),
     }
 }
@@ -33,7 +41,7 @@ fn get_name_of_key<'a>(file: &'a File<'a>, key: Key<'a>) -> Option<Cow<'a, [u8]>
         }
         // Of a template it is the text as it is written.
         KeyKind::ComputedString(name) => Some(match file.slice(key.inner_span(file)) {
-            [b'`', raw @ .., b'`'] => strings::crlf_as_lf(raw),
+            [b'`', written @ .., b'`'] => raw_of(file, written),
             _ => Cow::Borrowed(name.bytes()),
         }),
         KeyKind::Private(_) => None,
@@ -67,6 +75,19 @@ fn is_member_of_this(node: Expr<'_>, name: &[u8]) -> bool {
 fn is_direct_state_reference(node: Expr<'_>) -> bool {
     get_property_name(Node::Expr(node)).is_some_and(|it| it == b"state")
         && node.object().is_some_and(is_this_expression)
+}
+
+/// Whether ESTree has a node that is none here, and no `ChainExpression`, between `e` and `parent`, its parent here.
+fn is_wrapped<'a>(e: Expr<'a>, parent: Node<'a>) -> bool {
+    let is_in_braces = e.jsx_container_span().is_some() && e.tag() != ExprTag::Spread;
+    is_in_braces
+        || match parent {
+            // Each `!` is a `TSNonNullExpression`.
+            Node::Expr(above) => above.non_null_count() > 1,
+            // A `Decorator`.
+            Node::Class(class) => class.extends() != Some(e),
+            _ => false,
+        }
 }
 
 /// `param.name`
@@ -119,6 +140,28 @@ impl<'a> Walk<'a> {
     fn is_es5_component(&self, node: Expr<'a>) -> bool {
         matches!(node.parent(), Node::Expr(parent) if parent.callee().is_some())
             && is_es5_component(Node::Expr(node), &self.pragmas)
+    }
+
+    /// `isES5Component(node.parent.parent)`, of the `FunctionExpression` that `function` is.
+    fn is_in_es5_component(&self, function: Expr<'a>) -> bool {
+        let parent = estree_parent(Node::Expr(function));
+        if is_wrapped(function, parent) {
+            let is_deeper = matches!(parent, Node::Expr(above) if above.non_null_count() > 2);
+            return !is_deeper && is_es5_component(parent, &self.pragmas);
+        }
+        let above = estree_parent(parent);
+        let grandparent = match parent.as_written() {
+            Node::Prop(property) if property.is_jsx_attribute() => return false,
+            Node::Prop(_) | Node::Param(_) => above,
+            // A `ChainExpression`: the callee of the call that it is in gets the same answer.
+            Node::Expr(e) if e.is_chain_root() => match above.as_expr().and_then(Expr::callee) {
+                Some(callee) if e.jsx_container_span().is_none() => Node::Expr(callee),
+                _ => return false,
+            },
+            Node::Expr(e) if !is_wrapped(e, above) => above,
+            _ => return false,
+        };
+        is_es5_component(grandparent, &self.pragmas)
     }
 
     /// `isStateReference`, of a `node` reached from above. What has no `name` is taken for a parameter without one.
@@ -290,29 +333,10 @@ impl<'a> Walk<'a> {
         let Node::Expr(function) = node.owner() else {
             return;
         };
-        if estree_type_name(Node::Func(node)) != "FunctionExpression" {
+        if estree_type_name(Node::Func(node)) != "FunctionExpression" || !self.is_in_es5_component(function) {
             return;
         }
-        let parent = estree_parent(Node::Func(node));
-        let grandparent = match parent {
-            // The braces of JSX are a node of ESTree.
-            _ if function.jsx_container_span().is_some() => parent,
-            Node::Prop(property) if !property.is_jsx_attribute() => property.parent(),
-            Node::Expr(above) if above.jsx_container_span().is_some() => return,
-            // A `ChainExpression`: the callee of the call that it is in gets the same answer.
-            Node::Expr(above) if above.is_chain_root() => {
-                match estree_parent(parent).as_expr().and_then(Expr::callee) {
-                    Some(callee) => Node::Expr(callee),
-                    None => return,
-                }
-            }
-            Node::Expr(_) | Node::Func(_) | Node::Param(_) | Node::Class(_) => estree_parent(parent),
-            _ => return,
-        };
-        if !is_es5_component(grandparent, &self.pragmas) {
-            return;
-        }
-        let key = match parent {
+        let key = match function.parent() {
             Node::Prop(property) => property.key(),
             _ => None,
         };

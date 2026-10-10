@@ -1096,8 +1096,9 @@ describe("bundler", () => {
     },
   });
 
-  // The name of a function expression was taken for a local that nobody declares. Read from a callback it got a new symbol,
-  // `Callback3`, which is not bound. Read directly, the component was left alone.
+  // The name of a function expression is taken for a local that nobody declares. Upstream stops at that with an invariant,
+  // and leaves the function alone. Where the name is read from a callback the port went on, and printed a symbol of its own
+  // for it, `Callback3`, which is not bound.
   itBundled("react-compiler/FunctionExpressionThatNamesItself", {
     files: {
       "/entry.jsx": /* jsx */ `
@@ -1150,6 +1151,13 @@ describe("bundler", () => {
     target: "browser",
     backend: "cli",
     run: { stdout: "true true true p function" },
+    onAfterBundle(api) {
+      // Not compiled: a compiled function takes `t0` and destructures it in its body.
+      const out = api.readFile("/out.js");
+      expect(out).toMatch(/function Callback\d*\(\{ depth, items \}\)/);
+      expect(out).toMatch(/function Direct\d*\(\{ depth, items \}\)/);
+      expect(out).toMatch(/function Inner\d*\(\{ depth, items \}, ref\)/);
+    },
   });
 
   // Sibling of the above: `WAS_ORIGINALLY_TYPEOF_IDENTIFIER` was also dropped,

@@ -1132,8 +1132,14 @@ fn compute_memoized_identifiers(
         memoized: &mut HashSet<DeclarationId>,
         env: &Environment,
     ) -> Result<bool, CompilerError> {
+        // TS: CompilerError.invariant(node !== undefined, ...)
         let Some(&(level, _, _, _, seen)) = identifier_nodes.get(id) else {
-            return Ok(false);
+            let found = format!("none found for `{}`", id.0);
+            return Err(cold_invariant(
+                "Expected a node for all identifiers",
+                Some(found),
+                None,
+            ));
         };
         if seen {
             return Ok(identifier_nodes.get(id).unwrap().1);

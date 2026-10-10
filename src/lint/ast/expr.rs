@@ -1282,6 +1282,16 @@ pub enum JsxChild<'a> {
     Whitespace(Span),
 }
 
+impl<'a> JsxChild<'a> {
+    /// ESLint's `value` of a `JSXText`. `None`: it is no text.
+    pub fn text_value(self, file: &'a File<'a>) -> Option<std::borrow::Cow<'a, [u8]>> {
+        match self {
+            JsxChild::Expr(e) => e.jsx_text_value(),
+            JsxChild::Whitespace(span) => Some(std::borrow::Cow::Borrowed(file.slice(span))),
+        }
+    }
+}
+
 /// See [`Jsx::children_with_whitespace`].
 #[derive(Copy, Clone)]
 pub struct JsxChildren<'a> {

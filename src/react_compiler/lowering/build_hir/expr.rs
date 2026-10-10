@@ -1475,7 +1475,7 @@ fn is_module_level_or_global(builder: &HirBuilder, ref_: Ref) -> bool {
     ) {
         return true;
     }
-    builder.is_bound_outside(ref_)
+    builder.host().is_module_level(ref_)
 }
 
 // =============================================================================

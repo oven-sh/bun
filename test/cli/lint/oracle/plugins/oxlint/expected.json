@@ -5137,5 +5137,9 @@
   "c.ts:22:28+14 typescript(no-unnecessary-type-assertion)",
   "c.ts:3:28+17 typescript(no-unnecessary-type-assertion)",
   "c.ts:6:28+15 typescript(no-unnecessary-type-assertion)"
+ ],
+ "no-unsafe-assignment/methods-and-accessors-are-left-alone": [
+  "a.ts:10:24+9 typescript(no-unsafe-assignment)",
+  "a.ts:16:52+1 typescript(no-unsafe-assignment)"
  ]
 }

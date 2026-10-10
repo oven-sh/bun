@@ -1356,5 +1356,9 @@
   "a.ts typescript(no-unnecessary-type-parameters) 2:21+1 \"This is the only usage of type parameter V in the signature.\" | 2:12+1",
   "a.ts typescript(no-unnecessary-type-parameters) 4:23+1 \"This is the only usage of type parameter A in the signature.\" | 4:11+1",
   "a.ts typescript(no-unnecessary-type-parameters) 4:30+1 \"This is the only usage of type parameter B in the signature.\" | 4:14+1"
+ ],
+ "no-unsafe-assignment/methods-and-accessors-are-left-alone": [
+  "a.ts typescript(no-unsafe-assignment) 10:24+9 \"Assigned value has type `error`.\" | 10:21+1 \"Target expects type `error`.\" | 10:22+1",
+  "a.ts typescript(no-unsafe-assignment) 16:52+1 \"Assigned value has type `any`.\" | 16:49+1 \"Target expects type `any`.\" | 16:50+1"
  ]
 }

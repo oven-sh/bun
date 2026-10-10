@@ -1,7 +1,6 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
-use std::borrow::Cow;
 
 /// Enforce or disallow spaces inside of curly braces in JSX attributes and expressions
 pub struct JsxChildElementSpacing;
@@ -37,7 +36,7 @@ impl Rule for JsxChildElementSpacing {
         }
         let (mut last_child, mut child): (Option<JsxChild<'a>>, Option<JsxChild<'a>>) = (None, None);
         for next_child in jsx.children_with_whitespace().map(Some).chain([None]) {
-            if let Some(value) = child.and_then(|it| value_of_text(it, cx.file())) {
+            if let Some(value) = child.and_then(|it| it.text_value(cx.file())) {
                 let around = (last_child.map(inline_element), next_child.map(inline_element));
                 if let (Some(Some((element, name))), None | Some(Some(_))) = around
                     && is_text_following_element(&value)
@@ -64,14 +63,6 @@ fn inline_element(child: JsxChild<'_>) -> Option<(Expr<'_>, Name<'_>)> {
     };
     let name = jsx.tag()?.as_ident()?;
     (name.is_any(&INLINE_ELEMENTS) && e.jsx_container_span().is_none()).then_some((e, name))
-}
-
-/// The `value` of a `JSXText`.
-fn value_of_text<'a>(child: JsxChild<'a>, file: &'a File<'a>) -> Option<Cow<'a, [u8]>> {
-    match child {
-        JsxChild::Expr(e) => e.jsx_text_value(),
-        JsxChild::Whitespace(span) => Some(Cow::Borrowed(file.slice(span))),
-    }
 }
 
 /// `/^\s*\n\s*\S/`

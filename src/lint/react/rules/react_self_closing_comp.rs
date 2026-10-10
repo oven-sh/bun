@@ -7,7 +7,6 @@ use bun_lint_oxlint::text::contains_name;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
-use std::borrow::Cow;
 
 /// Disallow extra closing tags for components without children
 pub struct SelfClosingComp {
@@ -88,11 +87,7 @@ fn children_is_multiline_spaces<'a>(jsx: Jsx<'a>, file: &'a File<'a>) -> bool {
     let (Some(child), None) = (children.next(), children.next()) else {
         return false;
     };
-    let value = match child {
-        JsxChild::Expr(e) => e.jsx_text_value(),
-        JsxChild::Whitespace(span) => Some(Cow::Borrowed(file.slice(span))),
-    };
-    value.is_some_and(|value| {
+    child.text_value(file).is_some_and(|value| {
         strings::contains_char(&value, b'\n')
             && strings::is_all_js_whitespace(&value)
             && !strings::contains(&value, "\u{a0}".as_bytes())

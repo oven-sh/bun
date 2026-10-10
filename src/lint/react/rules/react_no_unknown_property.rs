@@ -230,7 +230,8 @@ static DOM_PROPERTIES_NAMES: [&str; 560] = [
     "y1", "y2", "yChannelSelector", "z", "zoomAndPan",
 ];
 
-/// The names that only oxlint knows, or looks for before it looks in [`DOM_ATTRIBUTES_TO_CAMEL`].
+/// The names that only oxlint knows, or looks for before it looks in [`DOM_ATTRIBUTES_TO_CAMEL`]. Upstream has
+/// `hreflang` and never gets to it: it finds `hrefLang` first.
 static OXLINT_NAMES: [&str; 15] = [
     "hreflang", "maskType", "onFullscreenChange", "onFullscreenChangeCapture", "onFullscreenError",
     "onFullscreenErrorCapture", "onScrollEnd", "onScrollEndCapture", "onTransitionCancel", "onTransitionCancelCapture",
@@ -376,7 +377,7 @@ fn is_in_react(name: &[u8], version: &mut dyn FnMut() -> Version) -> bool {
     match name {
         b"allowTransparency" => version() < (16, 1, 0),
         b"precedence" => version() >= (19, 0, 0),
-        _ => !strings::contains(name, b"Pointer") || version() >= (16, 4, 0),
+        _ => !(name.starts_with(b"on") && strings::contains(name, b"Pointer")) || version() >= (16, 4, 0),
     }
 }
 

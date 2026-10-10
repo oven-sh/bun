@@ -61,9 +61,6 @@ pub struct Environment {
     stack: bun_core::StackCheck,
     is_out_of_stack: std::cell::Cell<bool>,
 
-    /// The name of the function that is compiled. That of a function expression is bound nowhere else.
-    pub own_name: Option<bun_ast::Ref>,
-
     // Function type classification (Component, Hook, Other)
     pub fn_type: ReactFunctionType,
 
@@ -197,7 +194,6 @@ impl Environment {
             errors: CompilerError::new(),
             stack: bun_core::StackCheck::init(),
             is_out_of_stack: std::cell::Cell::new(false),
-            own_name: None,
             fn_type: ReactFunctionType::Other,
             output_mode: OutputMode::Client,
             code: None,

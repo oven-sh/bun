@@ -49,7 +49,9 @@ impl Rule for PreferReadOnlyProps {
             let Some(declared_prop_types) = &components.component(id).declared_prop_types else { continue };
             for (prop_name, prop) in declared_prop_types.iter() {
                 // A method, a getter and a setter are `TSMethodSignature`s.
+                // What upstream assigns to `__proto__` is no key of its object.
                 if let Some(Node::Member(signature)) = prop.node
+                    && prop_name != b"__proto__"
                     && signature.kind() == MemberKind::Property
                     && !is_readonly(signature)
                 {

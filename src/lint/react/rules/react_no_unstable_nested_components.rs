@@ -53,6 +53,8 @@ pub struct State<'a> {
     queue: Queue<'a>,
     in_jsx_attribute_expression: AncestorMemo<'a, bool>,
     inside_create_element_props_object: AncestorMemo<'a, bool>,
+    nearest_create_element_call: AncestorMemo<'a, Expr<'a>>,
+    nearest_object: AncestorMemo<'a, Expr<'a>>,
     nearest_jsx_attribute_name: AncestorMemo<'a, Option<Name<'a>>>,
     nearest_call: AncestorMemo<'a, Expr<'a>>,
     /// The name of the component that something is in. `Some(None)`: it has none.
@@ -113,6 +115,8 @@ impl Rule for NoUnstableNestedComponents {
             queue: Queue::default(),
             in_jsx_attribute_expression: AncestorMemo::default(),
             inside_create_element_props_object: AncestorMemo::default(),
+            nearest_create_element_call: AncestorMemo::default(),
+            nearest_object: AncestorMemo::default(),
             nearest_jsx_attribute_name: AncestorMemo::default(),
             nearest_call: AncestorMemo::default(),
             in_component: AncestorMemo::default(),
@@ -187,12 +191,12 @@ fn check<'a>(
             == Some(true)
     {
         is_returning_jsx
+    } else if !file.mentions("createElement") {
+        false
+    } else if let Some(pragma) = pragma {
+        is_component && is_component_inside_create_elements_prop(outer, pragma, state)
     } else {
-        (is_oxlint || is_component)
-            && file.mentions("createElement")
-            && (state.inside_create_element_props_object)
-                .find(outer, |child, parent| is_inside_create_element_props_object(child, parent, pragma))
-                == Some(true)
+        state.inside_create_element_props_object.find(outer, is_inside_create_element_props_object) == Some(true)
     };
     let is_candidate = is_component_in_prop
         || is_component
@@ -276,6 +280,20 @@ fn check<'a>(
             .data("parentName", parent_name.unwrap_or_else(|| b" ".to_vec()))
             .data("info", if is_component_in_prop { COMPONENT_AS_PROPS_INFO } else { "" });
     }
+}
+
+/// upstream's `isComponentInsideCreateElementsProp`, for a component. What is in no object, in a call without a second
+/// argument, is in the props too.
+fn is_component_inside_create_elements_prop<'a>(node: Node<'a>, pragma: &[u8], state: &mut State<'a>) -> bool {
+    let of_kind = |node: Node<'a>, tag: ExprTag| node.as_expr().filter(|it| it.tag() == tag);
+    let create_element_parent = state.nearest_create_element_call.find(node, |_, ancestor| {
+        of_kind(ancestor, ExprTag::Call).filter(|it| is_create_element(*it, pragma))
+    });
+    create_element_parent.and_then(Expr::as_call).is_some_and(|call| {
+        let is_object_expression = |it: &Expr| !it.is_assignment_target();
+        call.args().get(1)
+            == state.nearest_object.find(node, |_, it| of_kind(it, ExprTag::Object).filter(is_object_expression))
+    })
 }
 
 /// upstream's `isFunctionComponentInsideClassComponent`, for a `node` that returns JSX.
@@ -472,21 +490,8 @@ fn is_in_jsx_attribute_expression<'a>(child: Node<'a>, parent: Node<'a>, is_oxli
 }
 
 /// One step of the way up: whether the first object that is an argument of `createElement` is the second argument.
-/// With upstream's `pragma`: whether the first object is the second argument of the first call of `createElement`.
-fn is_inside_create_element_props_object<'a>(
-    child: Node<'a>,
-    parent: Node<'a>,
-    pragma: Option<&[u8]>,
-) -> Option<bool> {
-    let object = child.as_expr().filter(|it| it.tag() == ExprTag::Object);
-    if let Some(pragma) = pragma {
-        let call = parent.as_expr().filter(|it| it.tag() == ExprTag::Call && is_create_element(*it, pragma));
-        return match object.filter(|it| !it.is_assignment_target()) {
-            Some(_) => Some(call.and_then(Expr::as_call).is_some_and(|call| call.args().get(1) == object)),
-            None => call.map(|_| false),
-        };
-    }
-    let object = object.filter(|it| !it.is_parenthesized())?;
+fn is_inside_create_element_props_object<'a>(child: Node<'a>, parent: Node<'a>) -> Option<bool> {
+    let object = child.as_expr().filter(|it| it.tag() == ExprTag::Object && !it.is_parenthesized())?;
     let call = parent.as_expr()?.as_call().filter(|call| is_create_element_call(*call))?;
     Some(call.args().get(1) == Some(object))
 }

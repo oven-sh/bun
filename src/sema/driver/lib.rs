@@ -19,9 +19,7 @@ use bun_sema::atom::RecentAtoms;
 use bun_sema::check::errors::Checked;
 use bun_sema::check::explain::Explained;
 use bun_sema::check::task::{Finished, Published};
-use bun_sema::check::{
-    FOREIGN_EVALUATION_KINDS, Program, Requested, compute_ecma_line_starts, decode_rune,
-};
+use bun_sema::check::{FOREIGN_EVALUATION_KINDS, Program, Requested, compute_ecma_line_starts};
 use bun_sema::config::{self, ConfigError};
 use bun_sema::hir::{ExprTag, FileKind};
 use bun_sema::json::Json;
@@ -1266,7 +1264,7 @@ fn line_and_character(text: &[u8], starts: &[u32], offset: u32, counted: &Counte
         .filter(|&i| (starts[line]..=offset).contains(&places[i].0))
         .max_by_key(|&i| places[i].0);
     let (from, units) = nearest.map_or((starts[line], 0), |i| places[i]);
-    let character = units + utf16_len(&text[from as usize..offset as usize]) as u32;
+    let character = units + strings::utf8_lossy_len_utf16(&text[from as usize..offset as usize]);
     let written = nearest.unwrap_or_else(|| counted.older.get());
     places[written] = (offset, character);
     counted.places.set(places);
@@ -1281,20 +1279,6 @@ struct Counted {
     places: std::cell::Cell<[(u32, u32); 2]>,
     /// Which of them was written before the other.
     older: std::cell::Cell<usize>,
-}
-
-/// `core.UTF16Len`: a byte that is not part of a well-formed sequence is a U+FFFD of its own.
-fn utf16_len(text: &[u8]) -> usize {
-    let Some(ascii) = strings::first_non_ascii(text) else {
-        return text.len();
-    };
-    let (mut units, mut rest) = (ascii as usize, &text[ascii as usize..]);
-    while !rest.is_empty() {
-        let (rune, size) = decode_rune(rest);
-        units += if rune < 0x10000 { 1 } else { 2 };
-        rest = &rest[size..];
-    }
-    units
 }
 
 fn line_text(text: &[u8], starts: &[u32], line: u32) -> Vec<u8> {

@@ -53,6 +53,8 @@ async function lint(files: Record<string, string>, args: string[] = ["."], optio
   });
   return {
     problems: problems.sort(),
+    /** As it was printed. */
+    raw: stdout,
     stdout: normalizeBunSnapshot(stdout, String(dir)),
     stderr: normalizeBunSnapshot(stderr, String(dir)),
     exitCode,
@@ -277,6 +279,49 @@ describe.concurrent("an eslint.config.js", () => {
     ]);
     expect(exitCode).toBe(1);
   });
+
+  // What eslint-plugin-import 2.32.0 reports and writes.
+  test("import/order: the kinds of modules by their names and by `settings`, path groups, names in braces, the fix", async () => {
+    const files = {
+      "eslint.config.mjs": `const order = {
+          meta: { schema: false },
+          create: context => ({ Program: node => context.report({ node, message: "from JavaScript" }) }),
+        };
+        const options = {
+          groups: ["builtin", "external", "internal", ["parent", "sibling", "index"]],
+          pathGroups: [{ pattern: "#internal/**", group: "internal", position: "after" }],
+          "newlines-between": "always",
+          alphabetize: { order: "asc" },
+          named: true,
+        };
+        export default [
+          {
+            plugins: { import: { meta: { name: "eslint-plugin-import", version: "2.32.0" }, rules: { order } } },
+            settings: { "import/internal-regex": "^@app/" },
+            rules: { "import/order": ["error", options] },
+          },
+        ];`,
+      "package.json": "{}",
+      "node_modules/lodash/index.js": "",
+      "a.js":
+        'import b from "./b"; // the sibling\nimport fs from "node:fs";\nimport { z, a } from "lodash";\nimport own from "#internal/y";\nimport app from "@app/x";\n\nimport up from "../up";\nfoo(b, fs, z, a, own, app, up);\n',
+    };
+    const { problems } = await lint(files, ["a.js"]);
+    expect(problems).toEqual([
+      "a.js:1:1 import/order",
+      "a.js:1:1 import/order",
+      "a.js:2:1 import/order",
+      "a.js:3:1 import/order",
+      "a.js:3:13 import/order",
+      "a.js:4:1 import/order",
+      "a.js:4:1 import/order",
+    ]);
+    const fixed = await lint(files, ["a.js", "--fix-dry-run"]);
+    expect(JSON.parse(fixed.raw).results[0].output).toBe(
+      'import fs from "node:fs";\n\nimport { a, z } from "lodash";\n\nimport app from "@app/x";\n\nimport own from "#internal/y";\n\nimport b from "./b"; // the sibling\nimport up from "../up";\nfoo(b, fs, z, a, own, app, up);\n',
+    );
+  });
+
   // What ESLint 10.12 prints.
   test("usedDeprecatedRules has the rules of a plugin in JavaScript, in the order of the configuration", async () => {
     const info = {
@@ -364,7 +409,7 @@ describe.concurrent("an eslint.config.js", () => {
   // What it answers is looked up by the paths that it was given, which have `/` on every system. `path.win32` makes `\\` of them.
   test("what the program for ESLint 8 answers has the paths that it was given as keys, also on Windows", async () => {
     using dir = tempDir("bun-lint-config-files", {});
-    const parts = ["track", "describe", "eslintrc"];
+    const parts = ["start", "describe", "eslintrc"];
     const source = parts
       .map(it => readFileSync(join(import.meta.dir, `../../../src/lint/driver/evaluate-${it}.js`), "utf8"))
       .join("")
@@ -403,7 +448,7 @@ describe.concurrent("an eslint.config.js", () => {
   // `extends: [require.resolve("./base")]`
   test("what the program for ESLint 8 answers about a path that is extended is under that path with `/`", async () => {
     using dir = tempDir("bun-lint-config-files", {});
-    const parts = ["track", "describe", "eslintrc"];
+    const parts = ["start", "describe", "eslintrc"];
     const source = parts
       .map(it => readFileSync(join(import.meta.dir, `../../../src/lint/driver/evaluate-${it}.js`), "utf8"))
       .join("")
@@ -440,7 +485,7 @@ describe.concurrent("an eslint.config.js", () => {
       ".eslintrc.js": `module.exports = { extends: "./base.json" };`,
       "base.json": "{}",
     });
-    const parts = ["track", "describe", "eslintrc"];
+    const parts = ["start", "describe", "eslintrc"];
     const source = parts.map(it =>
       readFileSync(join(import.meta.dir, `../../../src/lint/driver/evaluate-${it}.js`), "utf8"),
     );
@@ -467,7 +512,7 @@ describe.concurrent("an eslint.config.js", () => {
         export default [{ plugins: { local }, rules: { "local/r": "error" } }];`,
     });
     symlinkSync(join(String(dir), "real"), join(String(dir), "link"), "junction");
-    const parts = ["track", "describe", "eslint"];
+    const parts = ["start", "describe", "eslint"];
     const source = parts.map(it =>
       readFileSync(join(import.meta.dir, `../../../src/lint/driver/evaluate-${it}.js`), "utf8"),
     );

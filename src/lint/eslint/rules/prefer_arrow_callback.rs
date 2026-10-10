@@ -194,8 +194,24 @@ fn fix_as_oxlint<'a>(fixer: Fixer<'a>, e: Expr<'a>, func: Func<'a>, is_lexical_t
     })
 }
 
-impl PreferArrowCallback {
-    fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+impl Rule for PreferArrowCallback {
+    const META: Meta = Meta::eslint("prefer-arrow-callback", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().exprs(&[ExprTag::Fn]);
+    type State<'a> = Values<'a>;
+
+    fn new(options: &Options) -> Self {
+        let options = options.object(0);
+        PreferArrowCallback {
+            allow_named_functions: options.bool_or("allowNamedFunctions", false),
+            allow_unbound_this: options.bool_or("allowUnboundThis", true),
+        }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Values<'a>> {
+        Some(Values::default())
+    }
+
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let ExprKind::Fn(func) = e.kind() else {
             return;
         };
@@ -234,23 +250,5 @@ impl PreferArrowCallback {
                 false => fix(fixer, e, func, is_lexical_this),
             }
         });
-    }
-}
-
-impl Rule for PreferArrowCallback {
-    const META: Meta = Meta::eslint("prefer-arrow-callback", Kind::Suggestion).fixable(Fixable::Code);
-    type State<'a> = Values<'a>;
-
-    fn new(options: &Options) -> Self {
-        let options = options.object(0);
-        PreferArrowCallback {
-            allow_named_functions: options.bool_or("allowNamedFunctions", false),
-            allow_unbound_this: options.bool_or("allowUnboundThis", true),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Values<'a> {
-        on.exprs([ExprTag::Fn], Self::check);
-        Values::default()
     }
 }

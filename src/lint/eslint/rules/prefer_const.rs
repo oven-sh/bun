@@ -447,8 +447,36 @@ impl PreferConst {
             }
         }
     }
+}
 
-    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
+impl Rule for PreferConst {
+    const META: Meta = Meta::eslint("prefer-const", Kind::Suggestion).fixable(Fixable::Code);
+    const ON: On = On::new().stmts(&[StmtTag::Var]).finish();
+    /// The `let` declarations.
+    type State<'a> = Vec<Stmt<'a>>;
+
+    fn new(options: &Options) -> Self {
+        let object = options.object(0);
+        PreferConst {
+            should_match_any_destructured_variable: object.str("destructuring") != Some("all"),
+            ignore_read_before_assign: object.bool_or("ignoreReadBeforeAssign", false),
+        }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Vec<Stmt<'a>>> {
+        Some(Vec::new())
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if let StmtKind::Var(declarations) = stmt.kind()
+            && declarations.first().is_some_and(|it| it.var_kind() == VarKind::Let)
+            && (!is_init_of_for_statement(stmt) || cx.language().is_oxlint)
+        {
+            cx.state.push(stmt);
+        }
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
         let mut statements = std::mem::take(&mut cx.state);
         utils::sort::sort_unstable_by_key(&mut statements, |it| it.span().start);
         let (mut groups, mut known) = (Groups::default(), Known::default());
@@ -482,32 +510,5 @@ impl PreferConst {
         for nodes in &groups.nodes {
             self.check_group(nodes, &mut checked, &mut known.patterns, cx);
         }
-    }
-}
-
-impl Rule for PreferConst {
-    const META: Meta = Meta::eslint("prefer-const", Kind::Suggestion).fixable(Fixable::Code);
-    /// The `let` declarations.
-    type State<'a> = Vec<Stmt<'a>>;
-
-    fn new(options: &Options) -> Self {
-        let object = options.object(0);
-        PreferConst {
-            should_match_any_destructured_variable: object.str("destructuring") != Some("all"),
-            ignore_read_before_assign: object.bool_or("ignoreReadBeforeAssign", false),
-        }
-    }
-
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> Vec<Stmt<'a>> {
-        on.stmts([StmtTag::Var], |_, stmt, cx| {
-            if let StmtKind::Var(declarations) = stmt.kind()
-                && declarations.first().is_some_and(|it| it.var_kind() == VarKind::Let)
-                && (!is_init_of_for_statement(stmt) || cx.language().is_oxlint)
-            {
-                cx.state.push(stmt);
-            }
-        });
-        on.finish(Self::finish);
-        Vec::new()
     }
 }

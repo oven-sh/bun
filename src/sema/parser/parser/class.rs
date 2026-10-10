@@ -32,6 +32,18 @@ pub(crate) fn flags_of_member_name(name_token: T, name_kind: NameKind, key: Prop
     }
 }
 
+/// The key by which a member is declared. `key`: what is written, which starts with `name_token`. `is_default`: `default` is
+/// among its modifiers.
+pub(super) fn declared_key(key: PropKey, name_token: T, is_default: bool) -> PropKey {
+    match key {
+        // `getDeclarationName`: a bigint name declares nothing.
+        _ if name_token == T::BigInt => PropKey::None,
+        // `declareSymbolEx`: `isDefaultExport && parent != nil`
+        PropKey::Name(_) if is_default => PropKey::Name(known::default),
+        _ => key,
+    }
+}
+
 impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// `parseClassDeclaration`
     pub(crate) fn class_declaration(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
@@ -475,7 +487,15 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         }
         let name_token = self.token();
         let name_end = self.lx.end;
-        let is_name_escaped = self.recovers() && self.lx.has_escape;
+        // `tryParseConstructorDeclaration` leaves the keyword with `nextToken`.
+        if name_token == T::Constructor
+            && self.lx.has_escape
+            && self.recovers()
+            && kind == MemberKind::Property
+            && !is_generator
+        {
+            self.error_at_token(1260, &[]);
+        }
         let has_name = kind != MemberKind::Property
             || is_generator
             || name_token == T::OpenBracket
@@ -492,13 +512,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 )
             }
         };
-        if name_token == T::BigInt {
-            key = PropKey::None;
-        }
-        // `declareSymbolEx`: `isDefaultExport && parent != nil`
-        if is_default && matches!(key, PropKey::Name(_)) {
-            key = PropKey::Name(known::default);
-        }
+        key = declared_key(key, name_token, is_default);
         flags |= flags_of_member_name(name_token, name_kind, key);
         // Neither `tryParseConstructorDeclaration` nor the property without a name looks for it.
         let mut question = None;
@@ -555,10 +569,6 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 MemberKind::Getter => FnKind::Getter,
                 MemberKind::Setter => FnKind::Setter,
                 _ if is_constructor => {
-                    // `parseExpected(KindConstructorKeyword)`
-                    if is_name_escaped && name_token == T::Constructor {
-                        self.error(1260, (name_pos, name_end), &[]);
-                    }
                     member.kind = MemberKind::Constructor;
                     FnKind::Constructor
                 }

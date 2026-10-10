@@ -354,7 +354,7 @@ impl<'a> FormatExpr<'a> {
         match is_chain_expression {
             true => {
                 print::expressions::write_chain_expression(self.expr, f);
-                if !f.is_quiet() {
+                if f.comments().has_comments_trailing_links() {
                     write_comments_trailing_chain_element(self.expr, f);
                 }
             }

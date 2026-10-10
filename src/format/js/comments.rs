@@ -123,6 +123,16 @@ impl Comment {
         self.flags & FOLLOWED_BY_NEWLINE != 0
     }
 
+    /// `a⏎// comment⏎.b.c`: whether it has been moved to the start of `e` because it leads something that `e` starts
+    /// with, here `a.b`, and not `e`.
+    pub(crate) fn leads_left_edge_of(self, e: Expr<'_>) -> bool {
+        self.is_moved()
+            && e.span().contains_offset(self.span.start)
+            && inner_of_link(e).is_none_or(|inner| {
+                self.span.start < inner.span().end && inner.tag() != ExprTag::Ident
+            })
+    }
+
     /// Prettier's `isIndentableBlockComment`: it has several lines, and every line but the first
     /// starts with a `*`, so the stars can be lined up.
     #[inline]
@@ -448,7 +458,7 @@ fn attach_in_link<'a>(
         }
         (true, _) => (inner.span().end, None, Some(b'!')),
     };
-    let end = following.map_or(link.span().end, |it| it.0);
+    let end = following.map_or_else(|| link.span().end, |it| it.0);
     if first.span.start < start || end < first.span.end {
         return None;
     }
@@ -1047,6 +1057,8 @@ pub(crate) struct Comments<'a> {
     /// Some comment is a type cast: `/** @type {T} */ (e)`.
     has_type_cast_comments: bool,
     has_suppression_comments: bool,
+    /// See [`Comments::comments_trailing_link`].
+    has_comments_trailing_links: bool,
     /// See [`Comments::mark_suppressed_after_operator`].
     suppressed_after_operator: u32,
     /// See [`Comments::hide_comments_from`].
@@ -1082,6 +1094,7 @@ impl<'a> Comments<'a> {
             view_limit: None,
             has_type_cast_comments: flags & TYPE_CAST != 0,
             has_suppression_comments: flags & SUPPRESSION != 0,
+            has_comments_trailing_links: flags & TRAILS_LINK != 0,
             suppressed_after_operator: u32::MAX,
             hidden_from: usize::MAX,
         }
@@ -1242,6 +1255,12 @@ impl<'a> Comments<'a> {
             })
             .count();
         &comments[..count]
+    }
+
+    /// Whether any comment of the file is one of [`Comments::comments_trailing_link`].
+    #[inline]
+    pub(crate) fn has_comments_trailing_links(&self) -> bool {
+        self.has_comments_trailing_links
     }
 
     /// The next comments, as far as they trail what ends at `end` and is written: a link of a member chain, what the

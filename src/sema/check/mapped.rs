@@ -861,7 +861,7 @@ impl<'p, 's> Checker<'p, 's> {
                         value: EnumValue::String(value),
                         ..
                     } if c.is_numeric_name(value) => {
-                        crate::atom::parse_number(c.atoms().bytes(value)).unwrap_or(f64::NAN)
+                        bun_core::fmt::parse_f64(c.atoms().bytes(value)).unwrap_or(f64::NAN)
                     }
                     _ => return false,
                 };
@@ -1021,7 +1021,7 @@ impl<'p, 's> Checker<'p, 's> {
                 });
             }
             if self.is_numeric_name(name) && self.every_type(object, |c, t| c.is_tuple(t)) {
-                let at = crate::atom::parse_number(self.atoms().bytes(name)).unwrap_or(f64::NAN);
+                let at = bun_core::fmt::parse_f64(self.atoms().bytes(name)).unwrap_or(f64::NAN);
                 let ends = |c: &Self, t: TypeId| matches!(c.data(t), TypeData::Tuple { flags, .. } if Self::fixed_length(flags) == flags.len());
                 if access_node != AccessNode::None
                     && !access_flags.contains(AccessFlags::ALLOW_MISSING)

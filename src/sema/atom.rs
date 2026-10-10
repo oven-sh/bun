@@ -767,11 +767,6 @@ impl<'p, 's> Atoms<'p, 's> {
     }
 }
 
-/// The number whose decimal notation is `text`.
-pub fn parse_number(text: &[u8]) -> Option<f64> {
-    bun_core::fmt::parse_f64(text)
-}
-
 /// `String(n)`, which is the property name of a number.
 pub fn number_to_string(n: f64) -> Vec<u8> {
     bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], n).to_vec()

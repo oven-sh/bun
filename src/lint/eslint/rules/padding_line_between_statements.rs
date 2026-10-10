@@ -358,6 +358,7 @@ impl Rule for PaddingLineBetweenStatements {
     const META: Meta = Meta::eslint("padding-line-between-statements", Kind::Layout)
         .fixable(Fixable::Whitespace)
         .deprecated();
+    const ON: On = On::new().stmts(&[StmtTag::Block, StmtTag::Switch]).funcs().cases().finish();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -384,29 +385,40 @@ impl Rule for PaddingLineBetweenStatements {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) {
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<()> {
         if self.configure_list.iter().all(|it| it.blank_line == PaddingType::Any) {
-            return;
+            return None;
         }
-        on.finish(|rule, cx| rule.verify_statements(cx.file().body(), cx));
-        on.funcs(|rule, func, cx| {
-            if let Some(statements) = func.body_statements() {
-                rule.verify_statements(statements, cx);
-            }
-        });
-        on.cases(|rule, case, cx| rule.verify_statements(case.body(), cx));
-        on.stmts([StmtTag::Block, StmtTag::Switch], |rule, statement, cx| match statement.kind() {
-            StmtKind::Block(statements) => rule.verify_statements(statements, cx),
+        Some(())
+    }
+
+    fn finish(&self, cx: &mut Cx<'_, Self>) {
+        self.verify_statements(cx.file().body(), cx);
+    }
+
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(statements) = func.body_statements() {
+            self.verify_statements(statements, cx);
+        }
+    }
+
+    fn case<'a>(&self, case: Case<'a>, cx: &mut Cx<'a, Self>) {
+        self.verify_statements(case.body(), cx);
+    }
+
+    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match statement.kind() {
+            StmtKind::Block(statements) => self.verify_statements(statements, cx),
             StmtKind::Switch { cases, .. } => {
                 let mut prev_node = None;
                 for case in cases {
                     if let Some(prev_node) = prev_node {
-                        rule.verify(Node::Case(prev_node), Node::Case(case), cx);
+                        self.verify(Node::Case(prev_node), Node::Case(case), cx);
                     }
                     prev_node = Some(case);
                 }
             }
             _ => {}
-        });
+        }
     }
 }

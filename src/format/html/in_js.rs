@@ -278,7 +278,8 @@ impl MapString for Substitutions<'_> {
 }
 
 /// Whether `document`, which is what has become of `text`, has all that is in `text` and nothing else: the check that a
-/// file gets before it is written.
+/// file gets before it is written. For oxfmt also no substitution twice: `<${a}>` gets the end tag `</${a}>` from
+/// Prettier, which is another program: no file is written with that. oxfmt leaves such a template as it is.
 fn keeps_content(
     text: &[u8],
     document: Interned,
@@ -302,6 +303,9 @@ fn keeps_content(
     )
     .is_ok()
         && super::verify::has_same_content(text, &printed, parser)
+        && (!options.flavor.is_oxfmt()
+            || strings::split(text, PLACEHOLDER_START).count()
+                == strings::split(&printed, PLACEHOLDER_START).count())
 }
 
 /// Writes the template `e` as HTML, if that is what Prettier takes it for: `printEmbedHtmlLike`. Returns whether it

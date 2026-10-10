@@ -1843,8 +1843,10 @@ pub struct Resolver<'h> {
     /// `knownSymlinks.Directories`: the symlink target of a package directory in `node_modules`.
     /// `None`: it is not a symlink.
     linked_packages: ShardedMap<&'h [u8], Option<&'h [u8]>>,
-    /// `GetCompilerOptionsWithRedirect`: one for each of `options.referenced_options`.
-    redirected: Vec<Resolver<'h>>,
+    /// `GetCompilerOptionsWithRedirect`: one for each of `options.referenced_options`, made when a file of that project is
+    /// first resolved from: the empty maps of a resolver are five times 64 shards, and a project of a monorepo references
+    /// hundreds.
+    redirected: Vec<std::sync::OnceLock<Resolver<'h>>>,
     /// `redirectedReference != nil`: it is one of the `redirected` of another resolver.
     is_redirect: bool,
 }
@@ -2138,10 +2140,10 @@ pub fn is_javascript(path: &[u8]) -> bool {
 
 impl<'h> Resolver<'h> {
     pub fn new(session: &'h Session, host: &'h dyn Host, options: &'h Options) -> Self {
-        let redirected = options.referenced_options.iter().map(|options| Resolver {
-            is_redirect: true,
-            ..Resolver::new(session, host, options)
-        });
+        let redirected = options
+            .referenced_options
+            .iter()
+            .map(|_| Default::default());
         Resolver {
             session,
             host,
@@ -2201,7 +2203,16 @@ impl<'h> Resolver<'h> {
             return (self, path);
         };
         let (_, source, _, project) = &sources[index];
-        (&self.redirected[*project as usize], source)
+        let project = *project as usize;
+        let redirected = self.redirected[project].get_or_init(|| Resolver {
+            is_redirect: true,
+            ..Resolver::new(
+                self.session,
+                self.host,
+                &self.options.referenced_options[project],
+            )
+        });
+        (redirected, source)
     }
 
     /// `realPath`
@@ -2273,7 +2284,7 @@ impl<'h> Resolver<'h> {
         };
         // The imports of a file of a referenced project are resolved by the resolver of that project.
         let mut links: Vec<(&[u8], &[u8])> = self.links.lock().to_vec();
-        for redirected in &self.redirected {
+        for redirected in self.redirected.iter().filter_map(|it| it.get()) {
             links.extend(redirected.links.lock().iter().copied());
         }
         links.shared_sort();

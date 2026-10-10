@@ -68,6 +68,10 @@ impl NoLabels {
 
 impl Rule for NoLabels {
     const META: Meta = Meta::eslint("no-labels", Kind::Suggestion);
+    const ON: On = On::new()
+        .stmts(&[StmtTag::Labeled, StmtTag::Break, StmtTag::Continue])
+        .enter(NodeTags::new().stmts(&[StmtTag::Labeled, StmtTag::Break, StmtTag::Continue]))
+        .exit(NodeTags::new().stmts(&[StmtTag::Labeled]));
     /// For each name, whether the labels of that name around the current statement are allowed, the innermost last.
     type State<'a> = FxHashMap<Name<'a>, Vec<bool>>;
 
@@ -79,15 +83,28 @@ impl Rule for NoLabels {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a> {
-        on.stmts([StmtTag::Labeled], Self::check_labeled);
-        if !self.allow_loop && !self.allow_switch {
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(FxHashMap::default())
+    }
+
+    fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        match stmt.tag() {
+            StmtTag::Labeled => self.check_labeled(stmt, cx),
             // Whatever has the label.
-            on.stmts([StmtTag::Break, StmtTag::Continue], Self::check_jump);
-        } else if file.has_stmts([StmtTag::Labeled]) && file.has_stmts([StmtTag::Break, StmtTag::Continue]) {
-            on.enter([StmtTag::Labeled, StmtTag::Break, StmtTag::Continue], |rule, node, cx| rule.visit(node, true, cx));
-            on.exit(StmtTag::Labeled, |rule, node, cx| rule.visit(node, false, cx));
+            _ if !self.allow_loop && !self.allow_switch => self.check_jump(stmt, cx),
+            _ => {}
         }
-        FxHashMap::default()
+    }
+
+    fn enter<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        if self.allow_loop || self.allow_switch {
+            self.visit(node, true, cx);
+        }
+    }
+
+    fn exit<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        if self.allow_loop || self.allow_switch {
+            self.visit(node, false, cx);
+        }
     }
 }

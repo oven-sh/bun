@@ -204,7 +204,9 @@ impl<'a> ChainMember<'a> {
         match *self {
             Self::StaticMember(member) => {
                 // Those after the `.` are before it too.
-                let name_start = member.member_name_start().unwrap_or(member.span().end);
+                let name_start = member
+                    .member_name_start()
+                    .unwrap_or_else(|| member.span().end);
                 let comments = f.comments().comments_before(name_start);
                 FormatLeadingComments::Comments(comments).fmt(f);
             }

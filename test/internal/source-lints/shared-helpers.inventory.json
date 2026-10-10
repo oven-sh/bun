@@ -724,8 +724,7 @@
       "encode_uri_component": 1
     },
     "src/sema/atom.rs": {
-      "hash_of": 1,
-      "parse_number": 1
+      "hash_of": 1
     },
     "src/sema/baselines/lib.rs": {
       "contains": 1,
@@ -758,9 +757,6 @@
       "from_native": 1,
       "split": 1,
       "to_native": 1
-    },
-    "src/sema/driver/lib.rs": {
-      "utf16_len": 1
     },
     "src/sema/parser/lexer.rs": {
       "decimal_digits": 1,

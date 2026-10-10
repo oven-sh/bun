@@ -121,7 +121,31 @@ impl Rule for Eqeqeq {
     const META: Meta = Meta::eslint("eqeqeq", Kind::Suggestion)
         .fixable(Fixable::Code)
         .has_suggestions();
-    type State<'a> = ();
+    const ON: On = On::new().binaries(&[
+        BinOp::EqEq,
+        BinOp::NotEq,
+        BinOp::EqEqEq,
+        BinOp::NotEqEq,
+        BinOp::Add,
+        BinOp::Sub,
+        BinOp::Mul,
+        BinOp::Div,
+        BinOp::Rem,
+        BinOp::Pow,
+        BinOp::Shl,
+        BinOp::Shr,
+        BinOp::UShr,
+        BinOp::BitAnd,
+        BinOp::BitOr,
+        BinOp::BitXor,
+        BinOp::Lt,
+        BinOp::Le,
+        BinOp::Gt,
+        BinOp::Ge,
+        BinOp::In,
+        BinOp::Instanceof,
+    ]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let mode = options.str(0).unwrap_or("always");
@@ -136,33 +160,14 @@ impl Rule for Eqeqeq {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        on.binaries([BinOp::EqEq, BinOp::NotEq], Self::check);
-        if self.null == Null::Never {
-            on.binaries([BinOp::EqEqEq, BinOp::NotEqEq], Self::check);
-        }
-        if self.null == Null::Never && file.language().is_oxlint {
-            let others = [
-                BinOp::Add,
-                BinOp::Sub,
-                BinOp::Mul,
-                BinOp::Div,
-                BinOp::Rem,
-                BinOp::Pow,
-                BinOp::Shl,
-                BinOp::Shr,
-                BinOp::UShr,
-                BinOp::BitAnd,
-                BinOp::BitOr,
-                BinOp::BitXor,
-                BinOp::Lt,
-                BinOp::Le,
-                BinOp::Gt,
-                BinOp::Ge,
-                BinOp::In,
-                BinOp::Instanceof,
-            ];
-            on.binaries(others, Self::check);
+    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let is_asked = match e.kind() {
+            ExprKind::Binary { op: BinOp::EqEq | BinOp::NotEq, .. } => true,
+            ExprKind::Binary { op: BinOp::EqEqEq | BinOp::NotEqEq, .. } => self.null == Null::Never,
+            _ => self.null == Null::Never && cx.language().is_oxlint,
+        };
+        if is_asked {
+            self.check(e, cx);
         }
     }
 }

@@ -55,9 +55,10 @@ pub mod prelude {
     pub use crate::fix::{Fix, Fixer};
     pub use crate::language::{Global, LanguageOptions, SourceType};
     pub use crate::literal::Literal;
+    pub use crate::no_state;
     pub use crate::options::{Json, Object, Options};
     pub use crate::regex::Regex;
-    pub use crate::rule::{Fixable, Kind, Listeners, Message, Meta, NodeTags, Presets, Rule};
+    pub use crate::rule::{Fixable, Kind, Listeners, Message, Meta, NodeTags, On, Presets, Rule};
     pub use crate::semantic::{
         Declaration, DeclarationKind, Reference, ReferenceFlags, Scope, ScopeKind, Symbol,
     };

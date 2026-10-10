@@ -338,7 +338,7 @@ fn is_callback<'a>(param: TsSymbol<'a>, node: TsNode<'a>) -> bool {
 
 /// `isNumericPropertyName(name)`: `String(+name) === name`
 pub fn is_numeric_property_name(name: &[u8]) -> bool {
-    let Some(number) = bun_sema::atom::parse_number(name) else {
+    let Some(number) = bun_core::fmt::parse_f64(name) else {
         return matches!(name, b"NaN" | b"Infinity" | b"-Infinity");
     };
     bun_sema::atom::number_to_string(number) == name

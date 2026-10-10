@@ -13,6 +13,7 @@ const MAXIMUM_EXCEEDED: Message = Message::new(
 
 impl Rule for MaxClassesPerFile {
     const META: Meta = Meta::eslint("max-classes-per-file", Kind::Suggestion);
+    const ON: On = On::new().classes().finish();
     /// The number of classes that count.
     type State<'a> = usize;
 
@@ -26,25 +27,27 @@ impl Rule for MaxClassesPerFile {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> usize {
-        on.classes(|rule, class, cx| {
-            if !rule.ignores_expressions || matches!(class.owner(), Node::Stmt(_)) {
-                cx.state += 1;
-            }
-        });
-        on.finish(|rule, cx| {
-            let body = cx.file().body();
-            if cx.state > rule.max
-                && let (Some(first), Some(last)) = (body.first(), body.last())
-            {
-                let start = first.export_span().unwrap_or_else(|| first.span()).start;
-                // oxlint points at the first byte.
-                let end = if cx.language().is_oxlint { start + 1 } else { last.span().end };
-                cx.report(Span::new(start, end), MAXIMUM_EXCEEDED)
-                    .data("classCount", cx.state)
-                    .data("max", rule.max);
-            }
-        });
-        0
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<usize> {
+        Some(0)
+    }
+
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        if !self.ignores_expressions || matches!(class.owner(), Node::Stmt(_)) {
+            cx.state += 1;
+        }
+    }
+
+    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
+        let body = cx.file().body();
+        if cx.state > self.max
+            && let (Some(first), Some(last)) = (body.first(), body.last())
+        {
+            let start = first.export_span().unwrap_or_else(|| first.span()).start;
+            // oxlint points at the first byte.
+            let end = if cx.language().is_oxlint { start + 1 } else { last.span().end };
+            cx.report(Span::new(start, end), MAXIMUM_EXCEEDED)
+                .data("classCount", cx.state)
+                .data("max", self.max);
+        }
     }
 }

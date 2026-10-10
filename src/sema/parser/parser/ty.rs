@@ -1,5 +1,6 @@
 //! Types, and the declarations that consist of types.
 
+use super::class::declared_key;
 use super::stmt::{ModifiersOf, Start};
 use super::{GrammarError, ListKind, Parser, ctx, take_span};
 use crate::Refusal;
@@ -2042,18 +2043,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             }
             // `parsePropertyOrMethodSignature`
             let name_token = self.token();
-            let (mut key, name_kind, name_pos) = self.property_name();
-            // `getDeclarationName`: a bigint name declares nothing.
-            if name_token == T::BigInt {
-                key = PropKey::None;
-            }
+            let (key, name_kind, name_pos) = self.property_name();
+            let is_default = member.flags.contains(Flags::DEFAULT);
+            let mut key = declared_key(key, name_token, is_default);
             // `getDeclarationName`: a private name outside a class declares nothing.
             if self.classes_around == 0 && matches!(key, PropKey::Private(_)) {
                 key = PropKey::None;
-            }
-            // `declareSymbolEx`: `isDefaultExport && parent != nil`
-            if member.flags.contains(Flags::DEFAULT) && matches!(key, PropKey::Name(_)) {
-                key = PropKey::Name(known::default);
             }
             (member.key, member.name_pos) = (key, name_pos);
             member.flags |= flags_of_type_member_name(name_token, name_kind, key);

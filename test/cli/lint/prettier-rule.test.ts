@@ -234,7 +234,8 @@ describe.concurrent("prettier/prettier", () => {
 
   test("a comment turns the rule of the package off as well, and is not called unused", async () => {
     const files = {
-      "a.js": "// eslint-disable-next-line prettier/prettier\nconst a = {b:1}\n",
+      // The stand-in reports the `Program`, which begins where the text does.
+      "a.js": "const a = {b:1} // eslint-disable-line prettier/prettier\n",
       "b.js": "/* eslint-disable prettier/prettier */\nconst a = {b:1}\n",
       "c.js": "const a = {b:1}\n",
       ...installed("3.3.3"),

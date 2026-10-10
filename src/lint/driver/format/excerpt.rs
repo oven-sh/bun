@@ -8,7 +8,8 @@ use crate::results::FileResult;
 use bstr::BStr;
 use bun_core::strings;
 use bun_lint::context::Severity;
-use bun_lint::linter::LintMessage;
+use bun_lint::linter::{LintMessage, RuleId};
+use bun_lint::rule::Plugin;
 use bun_sema::util::FxHashMap;
 use std::io::Write;
 
@@ -151,13 +152,33 @@ fn all<'r>(results: &'r [FileResult]) -> Vec<Problem<'r>> {
     problems.collect()
 }
 
+/// What is the same for two problems if [`Problem::rule`] is, and is not written anew for each.
+#[derive(PartialEq, Eq, Hash)]
+enum Rule<'r> {
+    None,
+    BuiltIn(Plugin, &'static str),
+    Written(&'r [u8]),
+}
+
+impl<'r> Rule<'r> {
+    fn of(problem: &Problem<'r>) -> Rule<'r> {
+        match &problem.message.rule_id {
+            None => Rule::None,
+            Some(RuleId::Known(meta)) => Rule::BuiltIn(meta.plugin, meta.name),
+            Some(RuleId::Js(rule)) => Rule::Written(&rule.id),
+            Some(RuleId::Named(_, id)) => Rule::Written(id),
+            Some(RuleId::Unknown(id)) => Rule::Written(id),
+        }
+    }
+}
+
 /// The groups of problems with the same rule and message, the largest first.
 fn grouped<'r>(problems: &[Problem<'r>]) -> Vec<Vec<Problem<'r>>> {
-    let mut index: FxHashMap<(Vec<u8>, &[u8]), usize> = FxHashMap::default();
+    let mut index: FxHashMap<(Rule, &[u8]), usize> = FxHashMap::default();
     let mut groups: Vec<Vec<Problem>> = Vec::new();
     for problem in problems {
         let at = *index
-            .entry((problem.rule(), &problem.message.message[..]))
+            .entry((Rule::of(problem), &problem.message.message[..]))
             .or_insert_with(|| {
                 groups.push(Vec::new());
                 groups.len() - 1

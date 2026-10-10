@@ -101,6 +101,5 @@
   "names: .eslintrc.yml: two documents": "text",
   "names: .eslintrc.yml: a tag of JavaScript": "exit",
   "names: .eslintrc: keys without quotes, single quotes, a comma at the end": "exit",
-  "names: .eslintrc.json: single quotes": "exit",
-  "presets: radix as-needed": "messages"
+  "names: .eslintrc.json: single quotes": "exit"
 }

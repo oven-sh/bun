@@ -9,7 +9,7 @@ use crate::code_path::{Event, Step, steps};
 use crate::context::{Cx, CxBase, Diagnostic, Severity};
 use crate::literal::Literal;
 use crate::options::Options;
-use crate::rule::{Entries, Entry, Kept, Listeners, Meta, NodeTags, Rule};
+use crate::rule::{Entries, Entry, Kept, Listeners, Meta, NodeTags, On, Rule};
 use crate::span::Span;
 use bun_sema::hir;
 use std::cell::OnceCell;
@@ -242,8 +242,14 @@ impl File<'_> {
         grouped.of(tag as usize)
     }
 
-    #[inline(never)]
+    #[inline]
     pub(crate) fn binaries_of(&self, op: BinOp) -> &[u32] {
+        self.binaries_at(op as usize)
+    }
+
+    /// `op`: a `BinOp` as a number.
+    #[inline(never)]
+    fn binaries_at(&self, op: usize) -> &[u32] {
         let grouped = self.by_kind().binaries.get_or_init(|| {
             Grouped::of_ids(
                 self.exprs_of(ExprTag::Binary).iter().copied(),
@@ -253,11 +259,17 @@ impl File<'_> {
                 },
             )
         });
-        grouped.of(op as usize)
+        grouped.of(op)
     }
 
-    #[inline(never)]
+    #[inline]
     pub(crate) fn unaries_of(&self, op: UnOp) -> &[u32] {
+        self.unaries_at(op as usize)
+    }
+
+    /// `op`: an `UnOp` as a number.
+    #[inline(never)]
+    fn unaries_at(&self, op: usize) -> &[u32] {
         let grouped = self.by_kind().unaries.get_or_init(|| {
             Grouped::of_ids(
                 self.exprs_of(ExprTag::Unary).iter().copied(),
@@ -267,7 +279,7 @@ impl File<'_> {
                 },
             )
         });
-        grouped.of(op as usize)
+        grouped.of(op)
     }
 
     /// Whether the file has an expression of one of these kinds. For a rule that has nothing to do otherwise, and whose listeners
@@ -501,12 +513,41 @@ pub struct Start<'a> {
     severity: Severity,
 }
 
+impl<'a> Start<'a> {
+    #[inline]
+    fn base(self) -> CxBase<'a> {
+        CxBase {
+            file: self.file,
+            meta: self.meta,
+            rule: self.rule,
+            severity: self.severity,
+            reports: std::cell::Cell::new(0),
+            is_capped: std::cell::Cell::new(false),
+        }
+    }
+}
+
 impl<R: Rule> AnyRule for R {
     fn meta(&self) -> &'static Meta {
         &R::META
     }
 
     fn start<'r, 'a: 'r>(&'r self, start: Start<'a>) -> Option<Box<dyn Running<'a> + 'r>> {
+        if !R::ON.registers() {
+            let file = start.file;
+            if !has_any_of(file, R::ON) {
+                return None;
+            }
+            let mut cx = Cx {
+                state: Rule::start(self, file)?,
+                base: start.base(),
+            };
+            call_unordered(self, file, &mut cx);
+            if !R::ON.has_later() {
+                return None;
+            }
+            return Some(Box::new(Later { rule: self, cx }));
+        }
         let mut on = Listeners::new(start.file);
         let state = self.register(&mut on, start.file);
         if on.entries.is_empty() {
@@ -532,18 +573,209 @@ fn run_started<'r, 'a: 'r, R: Rule>(
         entries: on.entries,
         cx: Cx {
             state,
-            base: CxBase {
-                file: start.file,
-                meta: start.meta,
-                rule: start.rule,
-                severity: start.severity,
-                reports: std::cell::Cell::new(0),
-                is_capped: std::cell::Cell::new(false),
-            },
+            base: start.base(),
         },
     };
     run_unordered(rule, &run.entries, start.file, &mut run.cx);
     on.has_later.then(|| Box::new(run))
+}
+
+// ───────────── a rule that says in a constant what it listens to ─────────────
+
+/// Calls `visit` with the number of each bit that is set, from the lowest.
+#[inline(always)]
+fn each_bit(mut bits: u64, mut visit: impl FnMut(usize)) {
+    while bits != 0 {
+        visit(bits.trailing_zeros() as usize);
+        bits &= bits - 1;
+    }
+}
+
+/// Whether `file` has something that a rule with `on` is called with. `on` is a constant where this is inlined.
+#[inline(always)]
+fn has_any_of<'a>(file: &'a File<'a>, on: On) -> bool {
+    let always = On::SYMBOLS | On::STRING_LITERALS | On::NUMBER_LITERALS;
+    let mut has_any = on.has_later() || on.has(always) || !on.nodes.is_empty();
+    each_bit(on.exprs, |kind| {
+        has_any = has_any || !file.exprs_of(EXPR_TAGS[kind]).is_empty();
+    });
+    if on.has(On::OPTIONAL_CHAINS) {
+        has_any = has_any
+            || CHAINED
+                .iter()
+                .any(|&kind| !file.chained_exprs_of(kind).is_empty());
+    }
+    each_bit(on.binaries, |op| {
+        has_any = has_any || !file.binaries_at(op).is_empty()
+    });
+    each_bit(on.unaries, |op| {
+        has_any = has_any || !file.unaries_at(op).is_empty()
+    });
+    each_bit(on.stmts, |kind| {
+        has_any = has_any || !file.stmts_of(StmtTag::ALL[kind]).is_empty();
+    });
+    each_bit(on.types, |kind| {
+        has_any = has_any || !file.types_of(TypeTag::ALL[kind]).is_empty();
+    });
+    each_bit(on.pats, |kind| {
+        has_any = has_any || !file.pats_of(PatTag::ALL[kind]).is_empty();
+    });
+    macro_rules! sorts {
+        ($($sort:ident $field:ident;)*) => {
+            $(has_any = has_any || on.has(On::$sort) && !file.hir.$field.is_empty();)*
+        };
+    }
+    sorts! {
+        FUNCS fns;
+        CLASSES classes;
+        MEMBERS members;
+        PROPS props;
+        PARAMS params;
+        TYPE_PARAMS type_params;
+        VAR_DECLS var_decls;
+        CASES cases;
+        ENUM_MEMBERS enum_members;
+        IMPORT_SPECS import_specs;
+        EXPORT_SPECS export_specs;
+    }
+    has_any
+}
+
+/// What can be part of an optional chain.
+const CHAINED: [ExprTag; 3] = [ExprTag::Dot, ExprTag::Index, ExprTag::Call];
+
+/// Calls what takes the nodes in no particular order, in the order in which [`Rule`] has the methods.
+#[inline]
+fn call_unordered<'a, R: Rule>(rule: &R, file: &'a File<'a>, cx: &mut Cx<'a, R>) {
+    let on = R::ON;
+    each_bit(on.exprs, |kind| {
+        for &id in file.exprs_of(EXPR_TAGS[kind]) {
+            rule.expr(Expr::from_raw(file, id), cx);
+        }
+    });
+    if on.has(On::OPTIONAL_CHAINS) {
+        for kind in CHAINED {
+            for &id in file.chained_exprs_of(kind) {
+                rule.optional_chain(Expr::from_raw(file, id), cx);
+            }
+        }
+    }
+    each_bit(on.binaries, |op| {
+        for &id in file.binaries_at(op) {
+            rule.binary(Expr::from_raw(file, id), cx);
+        }
+    });
+    each_bit(on.unaries, |op| {
+        for &id in file.unaries_at(op) {
+            rule.unary(Expr::from_raw(file, id), cx);
+        }
+    });
+    each_bit(on.stmts, |kind| {
+        for &id in file.stmts_of(StmtTag::ALL[kind]) {
+            rule.stmt(Stmt::from_raw(file, id), cx);
+        }
+    });
+    each_bit(on.types, |kind| {
+        for &id in file.types_of(TypeTag::ALL[kind]) {
+            rule.ty(TypeNode::from_raw(file, id), cx);
+        }
+    });
+    each_bit(on.pats, |kind| {
+        for &id in file.pats_of(PatTag::ALL[kind]) {
+            rule.pat(Pat::from_raw(file, id), cx);
+        }
+    });
+    macro_rules! sorts {
+        ($($sort:ident $every:ident $method:ident;)*) => {
+            $(if on.has(On::$sort) {
+                file.$every(|it| rule.$method(it, cx));
+            })*
+        };
+    }
+    sorts! {
+        FUNCS every_func func;
+        CLASSES every_class class;
+        MEMBERS every_member member;
+        PROPS every_prop prop;
+        PARAMS every_param param;
+        TYPE_PARAMS every_type_param type_param;
+        VAR_DECLS every_var_decl var_decl;
+        CASES every_case case;
+        ENUM_MEMBERS every_enum_member enum_member;
+        IMPORT_SPECS every_import_spec import_spec;
+        EXPORT_SPECS every_export_spec export_spec;
+    }
+    if on.has(On::SYMBOLS) {
+        for symbol in file.symbols() {
+            rule.symbol(symbol, cx);
+        }
+    }
+    if on.has(On::STRING_LITERALS) {
+        file.every_string_literal(|it| rule.string_literal(it, cx));
+    }
+    if on.has(On::NUMBER_LITERALS) {
+        for it in number_literals(file) {
+            rule.number_literal(it, cx);
+        }
+    }
+    if !on.nodes.is_empty() {
+        for node in nodes_of(file, on.nodes) {
+            rule.node(node, cx);
+        }
+    }
+}
+
+/// Such a rule at work on a file, after `call_unordered`.
+struct Later<'r, 'a, R: Rule> {
+    rule: &'r R,
+    cx: Cx<'a, R>,
+}
+
+impl<'a, R: Rule> Running<'a> for Later<'_, 'a, R> {
+    fn listeners_of_walk(&self, add: &mut dyn FnMut(WalkListener)) {
+        if !R::ON.enter.is_empty() {
+            add(WalkListener::Enter(R::ON.enter, 0));
+        }
+        if !R::ON.exit.is_empty() {
+            add(WalkListener::Exit(R::ON.exit, 1));
+        }
+        for event in 0..EVENTS {
+            if R::ON.has(On::CODE_PATH_START << event) {
+                add(WalkListener::CodePath(event, 0));
+            }
+        }
+    }
+
+    #[inline]
+    fn call(&mut self, entry: u16, node: Node<'a>) {
+        match entry {
+            0 => self.rule.enter(node, &mut self.cx),
+            _ => self.rule.exit(node, &mut self.cx),
+        }
+    }
+
+    fn code_path_event(&mut self, _: u16, event: Event<'a>) {
+        let (rule, cx) = (self.rule, &mut self.cx);
+        match event {
+            Event::CodePathStart(path, node) => rule.code_path_start(path, node, cx),
+            Event::CodePathEnd(path, node) => rule.code_path_end(path, node, cx),
+            Event::SegmentStart(segment, node) => rule.segment_start(segment, node, cx),
+            Event::SegmentEnd(segment, node) => rule.segment_end(segment, node, cx),
+            Event::UnreachableSegmentStart(segment, node) => {
+                rule.unreachable_segment_start(segment, node, cx);
+            }
+            Event::UnreachableSegmentEnd(segment, node) => {
+                rule.unreachable_segment_end(segment, node, cx);
+            }
+            Event::SegmentLoop(from, to, node) => rule.segment_loop(from, to, node, cx),
+        }
+    }
+
+    fn finish(&mut self) {
+        if R::ON.has(On::FINISH) {
+            self.rule.finish(&mut self.cx);
+        }
+    }
 }
 
 /// How a rule is found by its name and made from its options.

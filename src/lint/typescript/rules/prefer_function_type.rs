@@ -161,8 +161,12 @@ fn check_member<'a>(member: Member<'a>, owner: Owner<'a>, cx: &Cx<'a, PreferFunc
             let mut this_types = ThisTypes::default();
             walk_node(Node::Stmt(interface.stmt()), &mut this_types);
             if let Some(this) = this_types.first {
-                cx.report(this, UNEXPECTED_THIS_ON_FUNCTION_ONLY_INTERFACE)
-                    .data("interfaceName", interface.name());
+                let report = cx.report(this, UNEXPECTED_THIS_ON_FUNCTION_ONLY_INTERFACE);
+                let report = report.data("interfaceName", interface.name());
+                // For the help of oxlint.
+                if cx.language().is_oxlint {
+                    report.data("suggestion", function_type(member, return_type).unwrap_or_default());
+                }
                 return;
             }
             ("Interface", interface.stmt().is_default_export())

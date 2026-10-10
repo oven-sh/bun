@@ -48,16 +48,22 @@ impl NoUndefined {
 
 impl Rule for NoUndefined {
     const META: Meta = Meta::eslint("no-undefined", Kind::Suggestion);
+    const ON: On = On::new().symbols().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoUndefined
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) {
-        if file.mentions("undefined") {
-            on.symbols(Self::check_symbol);
-            on.finish(Self::check_global);
-        }
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.mentions("undefined").then_some(())
+    }
+
+    fn symbol<'a>(&self, symbol: Symbol<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_symbol(symbol, cx);
+    }
+
+    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
+        self.check_global(cx);
     }
 }

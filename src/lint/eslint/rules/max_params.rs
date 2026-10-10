@@ -95,6 +95,13 @@ impl Config {
             {
                 head.end = only.span().start;
             }
+            // Before ESLint 10 the head of a function type is what is before its parameters.
+            if cx.language().eslint_major < 10
+                && func.kind() == FnKind::FunctionType
+                && let Some(paren) = func.open_paren()
+            {
+                head = Span::new(func.estree_span().start, paren);
+            }
             // oxlint points at the parameters.
             let params = func.params_span().filter(|_| is_oxlint);
             cx.report(params.unwrap_or(head), EXCEED)

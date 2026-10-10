@@ -1003,6 +1003,18 @@ fn member_type(member: Member) -> NodeType {
 // ───────────────────────────── where it is ─────────────────────────────
 
 impl<'a> VNode<'a> {
+    /// [`VNode::node_type`] and [`VNode::span`], for less than the two: a token is looked at once.
+    pub fn type_and_span(self) -> (NodeType, Span) {
+        match self.part {
+            Part::Main => None,
+            _ => self.leaf(),
+        }
+        .map_or_else(
+            || (self.node_type(), self.span()),
+            |(leaf, span)| (leaf.node_type(), span),
+        )
+    }
+
     /// ESTree's `range`, in bytes.
     pub fn span(self) -> Span {
         if self.part != Part::Main

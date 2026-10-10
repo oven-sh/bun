@@ -1200,7 +1200,7 @@ impl<'p, 's> Checker<'p, 's> {
         // An index past the fixed prefix of a tuple falls in the part covered by its rest element.
         if let TypeData::Tuple { flags, .. } = self.data(part)
             && self.is_numeric_name(name)
-            && crate::atom::parse_number(self.atoms().bytes(name)).is_some_and(|n| n >= 0.0)
+            && bun_core::fmt::parse_f64(self.atoms().bytes(name)).is_some_and(|n| n >= 0.0)
         {
             let elems = self.type_arguments(part);
             let fixed = Self::fixed_length(flags);

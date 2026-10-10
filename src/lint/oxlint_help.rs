@@ -245,6 +245,7 @@ static INDEX: &[(u32, u32)] = &[
     (0x1E244682, more(11)), // prefer-event-target
     (0x1E4D2974, at(43558, 112)), // no-thenable
     (0x1EEBBE80, at(51954, 74)), // prefer-called-exactly-once-with
+    (0x1F7FDA40, at(25218, 111)), // no-control-regex unexpected
     (0x1F90CE4A, at(21699, 99)), // no-await-expression-member
     (0x1FAC619A, at(31545, 75)), // no-for-in-array forInViolation
     (0x20D05EE5, at(55349, 46)), // prefer-literal-enum-member notLiteral
@@ -338,6 +339,7 @@ static INDEX: &[(u32, u32)] = &[
     (0x3A0B6013, at(11393, 119)), // empty-brace-spaces
     (0x3A63C3F6, at(14127, 44)), // func-names named
     (0x3A6CD864, at(21604, 62)), // no-async-promise-executor async
+    (0x3A9AE125, WITH_DATA | at(41671, 17)), // no-restricted-imports patternAndImportNameWithCustomMessage
     (0x3B71AA53, WITH_DATA | at(50070, 41)), // no-zero-fractions
     (0x3BC6501C, at(12674, 34)), // exhaustive-deps
     (0x3C576391, WITH_DATA | at(64329, 68)), // yoda expected
@@ -583,6 +585,7 @@ static INDEX: &[(u32, u32)] = &[
     (0x78474DB3, at(62772, 49)), // use-isnan indexOfNaN
     (0x784C8E87, at(25073, 109)), // no-constructor-return unexpected
     (0x78ED9184, at(25997, 49)), // no-deprecated-events-api
+    (0x78F396CE, WITH_DATA | at(54673, 101)), // prefer-function-type unexpectedThisOnFunctionOnlyInterface
     (0x797AD421, more(39)), // no-non-null-asserted-optional-chain noNonNullOptionalChain
     (0x798BFAED, at(6103, 51)), // capitalized-comments unexpectedLowercaseComment
     (0x79D87FD1, at(51762, 105)), // prefer-await-to-then
@@ -936,6 +939,7 @@ static INDEX: &[(u32, u32)] = &[
     (0xCA374218, at(6517, 36)), // checked-requires-onchange-or-readonly
     (0xCA492FE3, at(57322, 57)), // prefer-spread
     (0xCA4A3180, at(60054, 36)), // require-returns
+    (0xCA94982D, WITH_DATA | at(41671, 17)), // no-restricted-imports patternAndEverythingWithRegexImportNameAndCustomMessage
     (0xCB04B359, at(60970, 39)), // require-yields
     (0xCB07DF7B, at(15946, 59)), // init-declarations initialized
     (0xCB71F493, at(42367, 65)), // no-setter-return returnsValue

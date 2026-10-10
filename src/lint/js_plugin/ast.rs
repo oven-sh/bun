@@ -198,7 +198,7 @@ impl<'a> Writer<'a, '_> {
     /// Adds `node`, and returns its number.
     fn start_node(&mut self, node: VNode<'a>, parent: u32) -> u32 {
         let id = self.tree.types.len() as u32;
-        let node_type = node.node_type();
+        let (node_type, span) = node.type_and_span();
         self.nodes.push(node);
         if !self.selectors.is_empty() {
             let es_node = EsNode::of(node, node_type);
@@ -208,7 +208,6 @@ impl<'a> Writer<'a, '_> {
                 }
             }
         }
-        let span = node.span();
         self.tree.types.push(node_type as u8);
         self.tree.starts.push(self.offsets.to_utf16(span.start));
         self.tree.ends.push(self.offsets.to_utf16(span.end));

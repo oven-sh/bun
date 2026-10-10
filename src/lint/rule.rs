@@ -420,7 +420,11 @@ impl Meta {
 pub trait Rule: Send + Sync + Sized + 'static {
     const META: Meta;
 
-    /// What the rule keeps while one file is linted: [`Cx::state`]. `()` if nothing.
+    /// What it listens to: the methods below that are called. A file that has none of it is passed over without a call.
+    const ON: On = On::REGISTERS;
+
+    /// What the rule keeps while one file is linted: [`Cx::state`]. [`no_state!`](crate::no_state) writes this line and
+    /// [`Rule::start`] for a rule that keeps nothing.
     type State<'a>;
 
     /// `options`: what follows the severity in the configuration.
@@ -431,8 +435,249 @@ pub trait Rule: Send + Sync + Sized + 'static {
         Ok(())
     }
 
-    /// Called for each file, like ESLint's `create`.
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> Self::State<'a>;
+    /// Called for each file, like ESLint's `create`. Of a rule that does not say what it is [`Rule::ON`].
+    fn register<'a>(&self, _on: &mut Listeners<'a, Self>, _file: &'a File<'a>) -> Self::State<'a> {
+        unreachable!("a rule has `ON` or `register`")
+    }
+
+    /// Once for each file that has something of [`Rule::ON`]. `None`: not this file.
+    fn start<'a>(&self, _file: &'a File<'a>) -> Option<Self::State<'a>> {
+        None
+    }
+
+    // In no particular order within a kind. The sorts in this order, the kinds of a sort in the order of their `enum`.
+
+    fn expr<'a>(&self, _expr: Expr<'a>, _cx: &mut Cx<'a, Self>) {}
+    fn optional_chain<'a>(&self, _expr: Expr<'a>, _cx: &mut Cx<'a, Self>) {}
+    fn binary<'a>(&self, _expr: Expr<'a>, _cx: &mut Cx<'a, Self>) {}
+    fn unary<'a>(&self, _expr: Expr<'a>, _cx: &mut Cx<'a, Self>) {}
+    fn stmt<'a>(&self, _stmt: Stmt<'a>, _cx: &mut Cx<'a, Self>) {}
+    fn ty<'a>(&self, _ty: TypeNode<'a>, _cx: &mut Cx<'a, Self>) {}
+    fn pat<'a>(&self, _pat: Pat<'a>, _cx: &mut Cx<'a, Self>) {}
+    fn func<'a>(&self, _func: Func<'a>, _cx: &mut Cx<'a, Self>) {}
+    fn class<'a>(&self, _class: Class<'a>, _cx: &mut Cx<'a, Self>) {}
+    fn member<'a>(&self, _member: Member<'a>, _cx: &mut Cx<'a, Self>) {}
+    fn prop<'a>(&self, _prop: Prop<'a>, _cx: &mut Cx<'a, Self>) {}
+    fn param<'a>(&self, _param: Param<'a>, _cx: &mut Cx<'a, Self>) {}
+    fn type_param<'a>(&self, _type_param: TypeParam<'a>, _cx: &mut Cx<'a, Self>) {}
+    fn var_decl<'a>(&self, _var_decl: VarDecl<'a>, _cx: &mut Cx<'a, Self>) {}
+    fn case<'a>(&self, _case: Case<'a>, _cx: &mut Cx<'a, Self>) {}
+    fn enum_member<'a>(&self, _enum_member: EnumMember<'a>, _cx: &mut Cx<'a, Self>) {}
+    fn import_spec<'a>(&self, _import_spec: ImportSpec<'a>, _cx: &mut Cx<'a, Self>) {}
+    fn export_spec<'a>(&self, _export_spec: ExportSpec<'a>, _cx: &mut Cx<'a, Self>) {}
+    fn symbol<'a>(&self, _symbol: Symbol<'a>, _cx: &mut Cx<'a, Self>) {}
+    fn string_literal<'a>(&self, _literal: Literal<'a>, _cx: &mut Cx<'a, Self>) {}
+    fn number_literal<'a>(&self, _literal: Literal<'a>, _cx: &mut Cx<'a, Self>) {}
+    fn node<'a>(&self, _node: Node<'a>, _cx: &mut Cx<'a, Self>) {}
+
+    // After those of all rules, in the order of the source.
+
+    fn enter<'a>(&self, _node: Node<'a>, _cx: &mut Cx<'a, Self>) {}
+    fn exit<'a>(&self, _node: Node<'a>, _cx: &mut Cx<'a, Self>) {}
+    fn code_path_start<'a>(&self, _path: CodePath<'a>, _node: Node<'a>, _cx: &mut Cx<'a, Self>) {}
+    fn code_path_end<'a>(&self, _path: CodePath<'a>, _node: Node<'a>, _cx: &mut Cx<'a, Self>) {}
+    fn segment_start<'a>(&self, _segment: Segment<'a>, _node: Node<'a>, _cx: &mut Cx<'a, Self>) {}
+    fn segment_end<'a>(&self, _segment: Segment<'a>, _node: Node<'a>, _cx: &mut Cx<'a, Self>) {}
+    fn unreachable_segment_start<'a>(
+        &self,
+        _segment: Segment<'a>,
+        _node: Node<'a>,
+        _cx: &mut Cx<'a, Self>,
+    ) {
+    }
+    fn unreachable_segment_end<'a>(
+        &self,
+        _segment: Segment<'a>,
+        _node: Node<'a>,
+        _cx: &mut Cx<'a, Self>,
+    ) {
+    }
+    fn segment_loop<'a>(
+        &self,
+        _from: Segment<'a>,
+        _to: Segment<'a>,
+        _node: Node<'a>,
+        _cx: &mut Cx<'a, Self>,
+    ) {
+    }
+
+    /// At the end.
+    fn finish(&self, _cx: &mut Cx<'_, Self>) {}
+}
+
+/// In the `impl` of a [`Rule`] that keeps nothing while a file is linted, and that is for every file.
+#[macro_export]
+macro_rules! no_state {
+    () => {
+        type State<'a> = ();
+
+        fn start<'a>(&self, _: &'a $crate::ast::File<'a>) -> Option<()> {
+            Some(())
+        }
+    };
+}
+
+/// What a rule listens to: [`Rule::ON`]. Each method here names the method of [`Rule`] that is then called, and is documented at
+/// the method of [`Listeners`] of the same name.
+///
+/// `On::new().exprs(&[ExprTag::Call, ExprTag::New]).binaries(&[BinOp::EqEq]).funcs().finish()`
+#[derive(Copy, Clone)]
+pub struct On {
+    // A bit for each kind.
+    pub(crate) exprs: u64,
+    pub(crate) binaries: u64,
+    pub(crate) unaries: u64,
+    pub(crate) stmts: u64,
+    pub(crate) types: u64,
+    pub(crate) pats: u64,
+    /// The constants below.
+    sorts: u32,
+    pub(crate) nodes: NodeTags,
+    pub(crate) enter: NodeTags,
+    pub(crate) exit: NodeTags,
+}
+
+const _: () = assert!(ExprTag::COUNT <= 64 && StmtTag::COUNT <= 64 && TypeTag::COUNT <= 64);
+
+macro_rules! on_kinds {
+    ($($method:ident $called:ident $kind:ident;)*) => {
+        $(
+            #[doc = concat!("[`Rule::", stringify!($called), "`]")]
+            pub const fn $method(mut self, kinds: &[$kind]) -> On {
+                let mut at = 0;
+                while at < kinds.len() {
+                    self.$method |= 1 << kinds[at] as u32;
+                    at += 1;
+                }
+                self
+            }
+        )*
+    };
+}
+
+macro_rules! on_sorts {
+    ($($method:ident $called:ident $bit:ident $shift:literal;)*) => {
+        $(
+            pub(crate) const $bit: u32 = 1 << $shift;
+
+            #[doc = concat!("[`Rule::", stringify!($called), "`]")]
+            pub const fn $method(mut self) -> On {
+                self.sorts |= On::$bit;
+                self
+            }
+        )*
+    };
+}
+
+macro_rules! on_events {
+    ($($method:ident $index:literal;)*) => {
+        $(
+            #[doc = concat!("[`Rule::", stringify!($method), "`]")]
+            pub const fn $method(mut self) -> On {
+                self.sorts |= On::CODE_PATH_START << $index;
+                self
+            }
+        )*
+    };
+}
+
+impl On {
+    /// The rule has [`Rule::register`] instead.
+    pub const REGISTERS: On = On {
+        sorts: 1 << 31,
+        ..On::new()
+    };
+
+    pub const fn new() -> On {
+        On {
+            exprs: 0,
+            binaries: 0,
+            unaries: 0,
+            stmts: 0,
+            types: 0,
+            pats: 0,
+            sorts: 0,
+            nodes: NodeTags::EMPTY,
+            enter: NodeTags::EMPTY,
+            exit: NodeTags::EMPTY,
+        }
+    }
+
+    on_kinds! {
+        exprs expr ExprTag;
+        binaries binary BinOp;
+        unaries unary UnOp;
+        stmts stmt StmtTag;
+        types ty TypeTag;
+        pats pat PatTag;
+    }
+
+    on_sorts! {
+        optional_chains optional_chain OPTIONAL_CHAINS 0;
+        funcs func FUNCS 1;
+        classes class CLASSES 2;
+        members member MEMBERS 3;
+        props prop PROPS 4;
+        params param PARAMS 5;
+        type_params type_param TYPE_PARAMS 6;
+        var_decls var_decl VAR_DECLS 7;
+        cases case CASES 8;
+        enum_members enum_member ENUM_MEMBERS 9;
+        import_specs import_spec IMPORT_SPECS 10;
+        export_specs export_spec EXPORT_SPECS 11;
+        symbols symbol SYMBOLS 12;
+        string_literals string_literal STRING_LITERALS 13;
+        number_literals number_literal NUMBER_LITERALS 14;
+        code_path_start code_path_start CODE_PATH_START 16;
+        finish finish FINISH 23;
+    }
+
+    // The bits after `CODE_PATH_START`, as `event_index` in `runner.rs` counts.
+    on_events! {
+        code_path_end 1;
+        segment_start 2;
+        segment_end 3;
+        unreachable_segment_start 4;
+        unreachable_segment_end 5;
+        segment_loop 6;
+    }
+
+    /// [`Rule::node`]
+    pub const fn nodes(mut self, kinds: NodeTags) -> On {
+        self.nodes = self.nodes.union(kinds);
+        self
+    }
+
+    /// [`Rule::enter`]
+    pub const fn enter(mut self, kinds: NodeTags) -> On {
+        self.enter = self.enter.union(kinds);
+        self
+    }
+
+    /// [`Rule::exit`]
+    pub const fn exit(mut self, kinds: NodeTags) -> On {
+        self.exit = self.exit.union(kinds);
+        self
+    }
+
+    #[inline]
+    pub(crate) const fn registers(self) -> bool {
+        self.sorts & On::REGISTERS.sorts != 0
+    }
+
+    /// `sort`: one or more of the constants.
+    #[inline]
+    pub(crate) const fn has(self, sort: u32) -> bool {
+        self.sorts & sort != 0
+    }
+
+    /// Something is called in the order of the source or at the end.
+    #[inline]
+    pub(crate) const fn has_later(self) -> bool {
+        self.has((0x7f * On::CODE_PATH_START) | On::FINISH)
+            || !self.enter.is_empty()
+            || !self.exit.is_empty()
+    }
 }
 
 /// A function of the rule `R` that is called with an `N`.
@@ -778,6 +1023,43 @@ impl NodeTags {
     pub const ALL: NodeTags = NodeTags(u128::MAX);
 
     pub(crate) const COUNT: usize = REST as usize + 16;
+
+    /// In a constant: `NodeTags::new().exprs(&[ExprTag::Fn]).stmts(&[StmtTag::Block]).union(NodeTags::FUNC)`
+    pub const fn new() -> NodeTags {
+        NodeTags::EMPTY
+    }
+
+    pub const fn exprs(mut self, kinds: &[ExprTag]) -> NodeTags {
+        let mut at = 0;
+        while at < kinds.len() {
+            self.0 |= 1 << kinds[at] as u32;
+            at += 1;
+        }
+        self
+    }
+
+    pub const fn stmts(mut self, kinds: &[StmtTag]) -> NodeTags {
+        let mut at = 0;
+        while at < kinds.len() {
+            self.0 |= 1 << (STMTS + kinds[at] as u32);
+            at += 1;
+        }
+        self
+    }
+
+    pub const fn types(mut self, kinds: &[TypeTag]) -> NodeTags {
+        let mut at = 0;
+        while at < kinds.len() {
+            self.0 |= 1 << (TYPES + kinds[at] as u32);
+            at += 1;
+        }
+        self
+    }
+
+    #[inline]
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
 
     #[inline]
     pub const fn union(self, other: NodeTags) -> NodeTags {

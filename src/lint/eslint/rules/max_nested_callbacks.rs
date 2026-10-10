@@ -14,7 +14,39 @@ const EXCEED: Message = Message::new(
     "Too many nested callbacks ({{num}}). Maximum allowed is {{max}}.",
 );
 
+#[derive(Default)]
+pub struct State<'a> {
+    ancestors: AncestorCounter<'a>,
+    /// ESLint before 10 counts while it walks.
+    depth: usize,
+}
+
+/// A `FunctionExpression` or an `ArrowFunctionExpression` of ESLint.
+fn as_function_expression(node: Node<'_>) -> Option<Func<'_>> {
+    match node {
+        Node::Func(func) if func.has_body() && !matches!(func.kind(), FnKind::Decl | FnKind::StaticBlock) => Some(func),
+        _ => None,
+    }
+}
+
 impl MaxNestedCallbacks {
+    /// What is called counts too. Every function expression is looked at, and takes one away where it ends, also one
+    /// that has not been counted: so what follows it is less deep by one.
+    fn enter_before_10<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        let (Some(max), Some(func)) = (self.max, as_function_expression(node)) else {
+            return;
+        };
+        if matches!(func.owner(), Node::Expr(e) if e.tag() == ExprTag::Fn
+            && matches!(e.parent(), Node::Expr(parent) if parent.tag() == ExprTag::Call))
+        {
+            cx.state.depth += 1;
+        }
+        let depth = cx.state.depth;
+        if depth > max {
+            cx.report(func.estree_span(), EXCEED).data("num", depth).data("max", max);
+        }
+    }
+
     /// Whether the function expression `e` is an argument of a call.
     fn is_callback(&self, e: Expr) -> bool {
         // For oxlint also what is called, and what is in `as T` and the like.
@@ -38,14 +70,14 @@ impl MaxNestedCallbacks {
         if !self.is_callback(e) {
             return;
         }
-        let around = cx.state.count(Node::Expr(e), |ancestor| match ancestor {
+        let around = cx.state.ancestors.count(Node::Expr(e), |ancestor| match ancestor {
             Node::Expr(outer) if outer.tag() == ExprTag::Fn && self.is_callback(outer) => Ancestor::Counted,
             _ => Ancestor::Passed,
         });
         let depth = around + 1;
         if depth > max {
-            // oxlint points at the whole function, and so does ESLint before 10.
-            let place = match cx.language().is_oxlint || cx.language().eslint_major < 10 {
+            // oxlint points at the whole function.
+            let place = match cx.language().is_oxlint {
                 true => func.estree_span(),
                 false => ast_utils::get_function_head_loc(func),
             };
@@ -56,7 +88,7 @@ impl MaxNestedCallbacks {
 
 impl Rule for MaxNestedCallbacks {
     const META: Meta = Meta::eslint("max-nested-callbacks", Kind::Suggestion);
-    type State<'a> = AncestorCounter<'a>;
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -69,8 +101,17 @@ impl Rule for MaxNestedCallbacks {
         }
     }
 
-    fn register<'a>(&self, on: &mut Listeners<'a, Self>, _: &'a File<'a>) -> AncestorCounter<'a> {
+    fn register<'a>(&self, on: &mut Listeners<'a, Self>, file: &'a File<'a>) -> State<'a> {
+        if file.language().eslint_major < 10 {
+            on.enter(NodeTags::FUNC, Self::enter_before_10);
+            on.exit(NodeTags::FUNC, |_, node, cx| {
+                if as_function_expression(node).is_some() {
+                    cx.state.depth = cx.state.depth.saturating_sub(1);
+                }
+            });
+            return State::default();
+        }
         on.exprs([ExprTag::Fn], Self::check);
-        AncestorCounter::default()
+        State::default()
     }
 }

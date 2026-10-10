@@ -387,7 +387,12 @@ impl Cmd {
                         // expansion that did *not* see a `""` literal pushes
                         // no arg at all — `$unset` vanishes, only `""` yields
                         // an empty argv word.
-                        if !out.buf.is_empty() || out.has_quoted_empty {
+                        if !out.buf.is_empty()
+                            || out.has_quoted_empty
+                            // `"$unset"` and `"$(true)"` keep the word, as `""` does.
+                            || me.ast_node().name_and_args[new_idx as usize - 1]
+                                .has_quoted_expansion()
+                        {
                             me.args.push(out.buf);
                         }
                     } else {
@@ -431,17 +436,19 @@ impl Cmd {
             }
         }
 
-        // Empty/null argv[0] → exit
-        // with the exit code from a sole command-substitution (stashed by
-        // `child_done` from `Expansion::out_exit_code`), else 0.
+        // No argv[0] at all → exit with the exit code from a sole
+        // command-substitution (stashed by `child_done` from
+        // `Expansion::out_exit_code`), else 0. An empty-string argv[0] is a
+        // real word (e.g. `""` or `"$empty"`) and falls through to `which()`
+        // → "command not found".
         let first_arg: Vec<u8> = {
             let me = interp.as_cmd(this);
             match me.args.first() {
-                Some(a) if a.len() > 1 => {
+                Some(a) => {
                     // strip the trailing NUL we just added
                     a[..a.len() - 1].to_vec()
                 }
-                _ => {
+                None => {
                     let exit = me.exit_code.unwrap_or(0);
                     let parent = me.base.parent;
                     return interp.child_done(parent, this, exit);

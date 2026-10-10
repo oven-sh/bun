@@ -6,7 +6,7 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, mkdirSync } from "fs";
+import { chmodSync, mkdirSync, readdirSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import { bunExe, isPosix, isWindows, rss, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { join, sep } from "path";
@@ -699,6 +699,110 @@ describe("bunshell", () => {
     TestBuilder.command`$(exit 0) && echo hi`.stdout("hi\n").runAsTest("empty command subst");
     TestBuilder.command`$(exit 1) && echo hi`.exitCode(1).runAsTest("empty command subst 2");
     TestBuilder.command`FOO="" $FOO`.runAsTest("empty var");
+    TestBuilder.command`"" arg`
+      .exitCode(1)
+      .stderr("bun: command not found: \n")
+      .runAsTest("empty string literal as argv[0]");
+    TestBuilder.command`${""} arg`
+      .exitCode(1)
+      .stderr("bun: command not found: \n")
+      .runAsTest("empty JS string as argv[0]");
+    TestBuilder.command`"" && echo hi`
+      .exitCode(1)
+      .stderr("bun: command not found: \n")
+      .runAsTest("empty string argv[0] short-circuits &&");
+
+    // bash and dash keep a word that has a double-quoted expansion when it
+    // expands to nothing, and drop it when it has no quotes. `echo` prints
+    // one more space for a kept word.
+    describe("a word with a double-quoted expansion", () => {
+      const kept: [word: string, name: string][] = [
+        [`"$EMPTY_VAR"`, "a variable set to the empty string"],
+        [`"$UNSET_VAR"`, "an unset variable"],
+        [`"$(true)"`, "a command substitution"],
+        ['"`true`"', "a backtick command substitution"],
+        [`"$UNSET_VAR$EMPTY_VAR"`, "two variables in one pair of quotes"],
+        [`"$UNSET_VAR"$EMPTY_VAR`, "a quoted variable, then an unquoted one"],
+        [`$UNSET_VAR"$EMPTY_VAR"`, "an unquoted variable, then a quoted one"],
+        [`"$UNSET_VAR""$EMPTY_VAR"`, "two quoted variables"],
+        [`"$UNSET_VAR$(true)"`, "a variable and a command substitution"],
+        [`$(true)"$(true)"`, "an unquoted command substitution, then a quoted one"],
+      ];
+      for (const [word, name] of kept) {
+        TestBuilder.command`EMPTY_VAR=; echo a ${{ raw: word }} b`
+          .stdout("a  b\n")
+          .runAsTest(`${name} is one empty word`);
+      }
+      TestBuilder.command`echo a "$EMPTY_VAR" "$EMPTY_VAR" b`
+        .env({ ...bunEnv, EMPTY_VAR: "" })
+        .stdout("a   b\n")
+        .runAsTest("an empty variable from .env() is one empty word each time");
+      TestBuilder.command`${{ raw: 'echo é "$UNSET_VAR" b' }}`
+        .stdout("é  b\n")
+        .runAsTest("in a script that is not ASCII");
+
+      for (const word of ["$UNSET_VAR", "$EMPTY_VAR", "$(true)", "`true`", "$UNSET_VAR$(true)"]) {
+        TestBuilder.command`EMPTY_VAR=; echo a ${{ raw: word }} b`
+          .stdout("a b\n")
+          .runAsTest(`${word} without quotes is no word`);
+      }
+
+      TestBuilder.command`${BUN} -e ${"console.log(JSON.stringify(process.argv.slice(1)))"} -- a "$UNSET_VAR" "$(true)" b`
+        .stdout('["a","","","b"]\n')
+        .runAsTest("a command receives the empty words");
+
+      TestBuilder.command`"$UNSET_VAR" arg`
+        .exitCode(1)
+        .stderr("bun: command not found: \n")
+        .runAsTest("an empty quoted variable as argv[0]");
+      TestBuilder.command`"$(exit 3)"`
+        .exitCode(1)
+        .stderr("bun: command not found: \n")
+        .runAsTest("an empty quoted command substitution as argv[0]");
+
+      // Like `rm -rf ""`, the operand names no file.
+      TestBuilder.command`rm -rf "$UNSET_VAR"`
+        .ensureTempDir()
+        .file("keep.txt", "keep")
+        .directory("sub")
+        .file("sub/inner.txt", "inner")
+        .fileEquals("keep.txt", "keep")
+        .fileEquals("sub/inner.txt", "inner")
+        .runAsTest("rm -rf with an empty quoted variable removes nothing");
+
+      // `cp` is a builtin on Windows. It must not take the operand for the cwd.
+      test("cp -R with an empty quoted variable copies nothing", async () => {
+        using dir = tempDir("shell-cp-empty-quoted", { "keep.txt": "keep", "sub": { "inner.txt": "inner" } });
+        await using proc = Bun.spawn({
+          cmd: [BUN, "exec", 'cp -R "$UNSET_VAR" out'],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain("No such file or directory");
+        expect({ stdout, exitCode, entries: readdirSync(String(dir)).sort() }).toEqual({
+          stdout: "",
+          exitCode: 1,
+          entries: ["keep.txt", "sub"],
+        });
+      });
+
+      // What bash prints for the words that are still different.
+      TestBuilder.command`echo a "$(echo -n ' ')" b`
+        .stdout("a   b\n")
+        .todo("a quoted command substitution loses its trailing blanks, so this word is empty")
+        .runAsTest("a quoted command substitution that prints one space is one space");
+      TestBuilder.command`${{ raw: 'echo a\\\n"$UNSET_VAR" b' }}`
+        .stdout("a b\n")
+        .todo("a backslash-newline ends the word, so the quoted variable is a word of its own")
+        .runAsTest("a line continuation joins an empty quoted variable to the word before it");
+      TestBuilder.command`echo a ""$(echo -n ' ')"" b`
+        .stdout("a   b\n")
+        .todo("a word gives at most one empty field")
+        .runAsTest("two quoted parts around a blank are two empty words");
+    });
   });
 
   describe("tilde_expansion", () => {
@@ -713,6 +817,16 @@ describe("bunshell", () => {
       TestBuilder.command`echo ~~`.stdout(`~~\n`).runAsTest("double tilde");
       TestBuilder.command`echo ~ hi hello`.stdout(`${process.env.HOME} hi hello\n`).runAsTest("multiple words");
     });
+
+    // bash gives a literal `~` here. $HOME would turn `rm -rf ~"$DIR"` with
+    // an empty DIR into `rm -rf $HOME`.
+    TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo ~"$UNSET_VAR" ~"$(true)" ~"$UNSET_VAR"""`
+      .stdout("~ ~ ~\n")
+      .runAsTest("a tilde before an empty quoted expansion stays a tilde");
+    TestBuilder.command`HOME=/home/user USERPROFILE=/home/user && echo "$UNSET_VAR"~ ~"$UNSET_VAR"/`
+      .stdout("~ ~/\n")
+      .todo("a tilde after a quoted part, and a tilde before a quoted part and a slash, expand to $HOME")
+      .runAsTest("a tilde next to a quoted part stays a tilde");
 
     TestBuilder.command`HOME="" USERPROFILE="" && echo ~ && echo ~/Documents`
       .stdout("\n/Documents\n")

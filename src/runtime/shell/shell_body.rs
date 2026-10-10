@@ -262,6 +262,69 @@ pub(crate) mod test {
 
 // ───────────────────────────── JS bridge ─────────────────────────────
 
+/// The JS string that [`throw_if_nul`] checks, named in its error message.
+pub(crate) enum NulSubject<'a> {
+    Argument,
+    Cwd,
+    EnvKey,
+    EnvValue { key: &'a [u8] },
+}
+
+impl fmt::Display for NulSubject<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Argument => f.write_str("argument"),
+            Self::Cwd => f.write_str("cwd"),
+            Self::EnvKey => f.write_str("env key"),
+            Self::EnvValue { key } => write!(f, "env value for {}", bun_core::fmt::quote(key)),
+        }
+    }
+}
+
+/// The shell gives its strings to the OS as C strings, which end at the first NUL byte.
+#[inline(always)]
+pub(crate) fn throw_if_nul(
+    global: &JSGlobalObject,
+    subject: NulSubject<'_>,
+    string: &BunString,
+) -> JsResult<()> {
+    if string.index_of_ascii_char(0).is_some() {
+        return Err(nul_error(global, subject, string));
+    }
+    Ok(())
+}
+
+/// [`throw_if_nul`] for a string that is UTF-8 bytes already.
+#[inline(always)]
+pub(crate) fn throw_if_nul_bytes(
+    global: &JSGlobalObject,
+    subject: NulSubject<'_>,
+    bytes: &[u8],
+) -> JsResult<()> {
+    if strings::contains_char(bytes, 0) {
+        return Err(nul_error(
+            global,
+            subject,
+            &bun_core::StringView::borrow_utf8(bytes),
+        ));
+    }
+    Ok(())
+}
+
+#[cold]
+#[inline(never)]
+fn nul_error(global: &JSGlobalObject, subject: NulSubject<'_>, string: &BunString) -> jsc::JsError {
+    global
+        .err(
+            jsc::ErrorCode::INVALID_ARG_VALUE,
+            format_args!(
+                "The shell {subject} must be a string without null bytes. Received {}",
+                bun_core::fmt::quote(&string.to_utf8())
+            ),
+        )
+        .throw()
+}
+
 pub(crate) fn shell_cmd_from_js(
     global: &JSGlobalObject,
     string_args: JSValue,
@@ -348,16 +411,7 @@ pub(crate) fn handle_template_value(
                 if let crate::webcore::blob::store::Data::File(file) = &store.data {
                     if let crate::node::PathOrFileDescriptor::Path(p) = &file.pathlike {
                         let path: &[u8] = p.slice();
-
-                        // Check for null bytes in path (security: prevent null byte injection)
-                        if strings::index_of_char(path, 0).is_some() {
-                            return Err(global
-                                .err(jsc::ErrorCode::INVALID_ARG_VALUE, format_args!(
-                                    "The shell argument must be a string without null bytes. Received {}",
-                                    bun_core::fmt::quote(path)
-                                ))
-                                .throw());
-                        }
+                        throw_if_nul_bytes(global, NulSubject::Argument, path)?;
 
                         if !builder.append_utf8::<true>(path)? {
                             return Err(global.throw(format_args!(
@@ -468,16 +522,7 @@ pub(crate) fn handle_template_value(
         if template_value.is_object() {
             if let Some(maybe_str) = template_value.get_own_truthy(global, "raw")? {
                 let bunstr = maybe_str.to_bun_string(global)?;
-
-                // Check for null bytes in shell argument (security: prevent null byte injection)
-                if bunstr.index_of_ascii_char(0).is_some() {
-                    return Err(global
-                        .err(jsc::ErrorCode::INVALID_ARG_VALUE, format_args!(
-                            "The shell argument must be a string without null bytes. Received \"{}\"",
-                            bunstr
-                        ))
-                        .throw());
-                }
+                throw_if_nul(global, NulSubject::Argument, &bunstr)?;
 
                 if !builder.append_bun_str::<false>(bunstr)? {
                     return Err(
@@ -544,20 +589,7 @@ impl<'a> ShellSrcBuilder<'a> {
         jsval: JSValue,
     ) -> JsResult<bool> {
         let bunstr = jsval.to_bun_string(self.global_this)?;
-
-        // Check for null bytes in shell argument (security: prevent null byte injection)
-        if bunstr.index_of_ascii_char(0).is_some() {
-            return Err(self
-                .global_this
-                .err(
-                    jsc::ErrorCode::INVALID_ARG_VALUE,
-                    format_args!(
-                        "The shell argument must be a string without null bytes. Received \"{}\"",
-                        bunstr
-                    ),
-                )
-                .throw());
-        }
+        throw_if_nul(self.global_this, NulSubject::Argument, &bunstr)?;
 
         Ok(self.append_bun_str::<ALLOW_ESCAPE>(bunstr)?)
     }

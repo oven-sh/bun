@@ -6,7 +6,7 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, mkdirSync, symlinkSync } from "fs";
+import { chmodSync, mkdirSync, readdirSync, symlinkSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import {
   bunExe,
@@ -3540,6 +3540,224 @@ test("cd treats interpolated arguments starting with tilde or dash as literal di
     expect(stdout.toString()).toBe("");
     expect(exitCode).toBe(1);
   }
+});
+
+// The shell gives its strings to the OS as C strings, which end at the first NUL byte.
+describe("a NUL byte in a string given to the shell", () => {
+  const nulError = (subject: string, received: string) => ({
+    name: "TypeError",
+    code: "ERR_INVALID_ARG_VALUE",
+    message: `The shell ${subject} must be a string without null bytes. Received ${JSON.stringify(received)}`,
+  });
+  // A message must show the NUL as an escape. A raw one becomes <NUL> here, so that no test output holds the byte.
+  const errorOf = (e: any) => ({ name: e.name, code: e.code, message: String(e.message).replaceAll("\0", "<NUL>") });
+  const thrownBy = (fn: () => unknown) => {
+    try {
+      fn();
+    } catch (e) {
+      return errorOf(e);
+    }
+    return "did not throw";
+  };
+  const run = async (command: () => $.ShellPromise) => {
+    try {
+      const { stdout, stderr, exitCode } = await command().quiet().nothrow();
+      return { stdout: stdout.toString(), stderr: stderr.toString(), exitCode };
+    } catch (e) {
+      return errorOf(e);
+    }
+  };
+  const values: [string, string][] = [
+    ["in the middle", "a\0b"],
+    ["at the end", "tool\0"],
+    ["at the start", "\0a"],
+    ["in a Latin-1 string", "caf\xe9\0"],
+    ["in a UTF-16 string", "\u4e2d\0b"],
+  ];
+  const expected = (value: string) => ({
+    cwd: nulError("cwd", value),
+    envKey: nulError("env key", value),
+    envValue: nulError('env value for "X"', value),
+  });
+
+  test.each(values)("%s: $`cmd`.cwd() and .env() throw", (_, value) => {
+    expect({
+      cwd: thrownBy(() => $`true`.cwd(value)),
+      envKey: thrownBy(() => $`true`.env({ [value]: "1" })),
+      envValue: thrownBy(() => $`true`.env({ X: value })),
+    }).toEqual(expected(value));
+  });
+
+  test.each(values)("%s: an interpolated value throws the same error", (_, value) => {
+    expect({
+      string: thrownBy(() => $`echo ${value}`),
+      array: thrownBy(() => $`echo ${[value]}`),
+      raw: thrownBy(() => $`echo ${{ raw: value }}`),
+    }).toEqual({
+      string: nulError("argument", value),
+      array: nulError("argument", value),
+      raw: nulError("argument", value),
+    });
+  });
+
+  // `$` has process-wide defaults in this file, so a default under test goes on an instance.
+  describe.each([
+    ["new $.Shell()", () => new $.Shell()],
+    ["a subclass of $.Shell", () => new (class extends $.Shell {})()],
+  ])("as a default of %s", (_, create) => {
+    test.each(values)("%s: the next command throws", (_, value) => {
+      expect({
+        cwd: thrownBy(() => create().cwd(value)`true`),
+        envKey: thrownBy(() => create().env({ [value]: "1" })`true`),
+        envValue: thrownBy(() => create().env({ X: value })`true`),
+      }).toEqual(expected(value));
+    });
+  });
+
+  test("a value that becomes a string in the shell is checked after the conversion", () => {
+    const value: any = { toString: () => "a\0b" };
+    expect({
+      cwd: thrownBy(() => $`true`.cwd(value)),
+      envValue: thrownBy(() => $`true`.env({ X: value })),
+      defaultEnvValue: thrownBy(() => new $.Shell().env({ X: value })`true`),
+    }).toEqual({
+      cwd: nulError("cwd", "a\0b"),
+      envValue: nulError('env value for "X"', "a\0b"),
+      defaultEnvValue: nulError('env value for "X"', "a\0b"),
+    });
+  });
+
+  test("the error names the env variable with its special characters escaped", () => {
+    expect(thrownBy(() => $`true`.env({ 'a "quoted"\nkey': "\0" }))).toEqual(
+      nulError(String.raw`env value for "a \"quoted\"\nkey"`, "\0"),
+    );
+  });
+
+  test("a rejected value leaves the earlier cwd and env of the command in place", async () => {
+    using dir = tempDir("shell-nul-kept", { "inner": {} });
+    const cwd = String(dir).replaceAll("\\", "/");
+    const command = $`echo $X > out.txt`.cwd(`${cwd}/inner`).env({ ...bunEnv, X: "kept" });
+
+    expect({
+      cwd: thrownBy(() => command.cwd(`${cwd}\0/inner`)),
+      env: thrownBy(() => command.env({ ...bunEnv, X: "kept\0" })),
+    }).toEqual({
+      cwd: nulError("cwd", `${cwd}\0/inner`),
+      env: nulError('env value for "X"', "kept\0"),
+    });
+
+    await command;
+    // The bytes before the NUL name `cwd`. The command does not run there.
+    expect(readdirSync(cwd)).toEqual(["inner"]);
+    expect(await Bun.file(join(cwd, "inner", "out.txt")).text()).toBe("kept\n");
+  });
+
+  test("a default with a NUL is rejected by each command until the default is replaced", async () => {
+    using dir = tempDir("shell-nul-default", {});
+    const cwd = String(dir).replaceAll("\\", "/");
+    const sh = new $.Shell().cwd("a\0b").env({ X: "a\0b" });
+
+    // The shell applies the cwd before the env.
+    expect(thrownBy(() => sh`true`)).toEqual(nulError("cwd", "a\0b"));
+    sh.cwd(cwd);
+    expect(thrownBy(() => sh`true`)).toEqual(nulError('env value for "X"', "a\0b"));
+    sh.env({ ...bunEnv, X: "replaced" });
+
+    await sh`echo $X > out.txt`;
+    expect(await Bun.file(join(cwd, "out.txt")).text()).toBe("replaced\n");
+  });
+
+  test("a command named by an env value that ends in a NUL does not run", async () => {
+    using dir = tempDir("shell-nul-command", {});
+    const cwd = String(dir).replaceAll("\\", "/");
+
+    // `touch` is a builtin. The name before the NUL would create the file.
+    const outcome = await run(() => $`$TOOL ran`.cwd(cwd).env({ ...bunEnv, TOOL: "touch\0" }));
+
+    expect({ outcome, files: readdirSync(cwd) }).toEqual({
+      outcome: nulError('env value for "TOOL"', "touch\0"),
+      files: [],
+    });
+  });
+
+  test("an env value with a NUL does not reach a child process as the bytes before the NUL", async () => {
+    const print = "process.stdout.write(JSON.stringify(process.env.X))";
+
+    expect({
+      control: await run(() => $`${BUN} -e ${print}`.env({ ...bunEnv, X: "safe" })),
+      nul: await run(() => $`${BUN} -e ${print}`.env({ ...bunEnv, X: "safe\0tail" })),
+    }).toEqual({
+      control: { stdout: '"safe"', stderr: "", exitCode: 0 },
+      nul: nulError('env value for "X"', "safe\0tail"),
+    });
+  });
+
+  test("values without a NUL and keys without a value are accepted", async () => {
+    const { stdout, stderr, exitCode } = await $`echo $EMPTY.$LATIN1.$UTF16.$NUMBER`
+      .env({ ...bunEnv, EMPTY: "", LATIN1: "caf\xe9", UTF16: "\u4e2d", NUMBER: 5 as any, "NO\0VALUE": undefined })
+      .quiet()
+      .nothrow();
+
+    expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+      stdout: ".caf\xe9.\u4e2d.5\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // `process.env` and the defaults of `$` are process-wide, so this runs in its own process.
+  test("process.env and the defaults of `$` are checked by each command", async () => {
+    // The `.env` file puts the value in `process.env` when the process starts.
+    using dir = tempDir("shell-nul-process-env", { ".env": "SHELL_NUL=a\0b\n" });
+    const fixture = /* js */ `
+      import { $ } from "bun";
+
+      const thrownBy = fn => {
+        try {
+          fn();
+        } catch (e) {
+          return { name: e.name, code: e.code, message: e.message };
+        }
+        return "did not throw";
+      };
+      const results = { fromDotEnv: process.env.SHELL_NUL };
+
+      results.processEnv = thrownBy(() => $\`true\`);
+      results.processEnvOfInstance = thrownBy(() => new $.Shell()\`true\`);
+      delete process.env.SHELL_NUL;
+      results.afterDelete = thrownBy(() => $\`true\`);
+
+      $.cwd("a\\0b");
+      results.defaultCwd = thrownBy(() => $\`true\`);
+      $.cwd();
+      $.env({ X: "a\\0b" });
+      results.defaultEnv = thrownBy(() => $\`true\`);
+      $.env();
+      results.afterReset = await $\`echo ok\`.text();
+
+      console.log(JSON.stringify(results));
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const results = {
+      fromDotEnv: "a\0b",
+      processEnv: nulError('env value for "SHELL_NUL"', "a\0b"),
+      processEnvOfInstance: nulError('env value for "SHELL_NUL"', "a\0b"),
+      afterDelete: "did not throw",
+      defaultCwd: nulError("cwd", "a\0b"),
+      defaultEnv: nulError('env value for "X"', "a\0b"),
+      afterReset: "ok\n",
+    };
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: JSON.stringify(results) + "\n", stderr: "", exitCode: 0 });
+  });
 });
 
 describe("literal digits after an interpolated value", () => {

@@ -22,12 +22,13 @@ import http, {
   validateHeaderName,
   validateHeaderValue,
 } from "node:http";
+import http2 from "node:http2";
 import https, { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { Duplex, duplexPair, PassThrough, Writable } from "node:stream";
+import { Duplex, duplexPair, getDefaultHighWaterMark, PassThrough, Writable } from "node:stream";
 import { connect as tlsConnect } from "node:tls";
 import { inspect } from "node:util";
 import tunnel from "tunnel";
@@ -3308,6 +3309,657 @@ it("a pipelined response is started when no response is in flight to hand it the
     socket?.destroy();
     server.close();
   }
+});
+
+// Node.js has one function that writes bytes now or keeps them for the turn of the response:
+// OutgoingMessage.prototype._writeRaw(). res._send() puts the stored head before its data and
+// calls it. It is private, and packages call it. write() and end() of OutgoingMessage.prototype
+// are the methods of a ServerResponse there.
+// The expected bytes are those of Node.js v26.3.0. A comment says where Bun differs.
+// No test stores the head of a queued response with a Buffer or a string in another encoding behind
+// raw bytes: Node.js then moves the head in front of those bytes, and Bun keeps the call order.
+describe("res._send() and the OutgoingMessage.prototype methods on a response", () => {
+  const FIRST = "HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: 1\r\n\r\n1";
+  const THIRD = "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 5\r\n\r\nTHIRD";
+  // A whole response that a caller of res._send() framed itself.
+  const MESSAGE = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi";
+  const transports = {
+    "socket": "on a TCP connection",
+    "https": "on a TLS connection",
+    "duplex": "on a duplex given to 'connection'",
+    "http2": "on an HTTP/1.1 connection to an http2 server with allowHTTP1",
+  } as const;
+  type Transport = keyof typeof transports;
+  const MiB = 1024 * 1024;
+  // http.OutgoingMessage.prototype. `.call()` of an overloaded method takes only its last signature.
+  const OutgoingMessagePrototype: any = OutgoingMessage.prototype;
+
+  // A run of 64 or more equal characters becomes <x*N>, so that a failure prints a short string.
+  function collapse(wire: string) {
+    let out = "";
+    for (let i = 0; i < wire.length; ) {
+      let j = i + 1;
+      while (j < wire.length && wire.charCodeAt(j) === wire.charCodeAt(i)) j++;
+      out += j - i >= 64 ? `<${wire[i]}*${j - i}>` : wire.slice(i, j);
+      i = j;
+    }
+    return out;
+  }
+
+  // With `queued`, one connection has /first and /second pipelined, and /third behind them when
+  // `third` is given. The response to /first stays open until the handler of the last request
+  // has returned, so the response to /second is queued behind it.
+  // Without `queued` there is no /first: the response to /second owns the connection.
+  // `seen(text)` resolves when the client has received `text`.
+  async function exchange(
+    transport: Transport,
+    queued: boolean,
+    second: (res: any, seen: (text: string) => Promise<void>) => unknown,
+    third?: (res: any) => void,
+    options: object = {},
+  ) {
+    const errors: unknown[] = [];
+    const returned: unknown[] = [];
+    const chunks: Buffer[] = [];
+    const waiting: { text: string; resolve: () => void }[] = [];
+    const received = () => Buffer.concat(chunks).toString("latin1");
+    const seen = (text: string) => {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      if (received().includes(text)) resolve();
+      else waiting.push({ text, resolve });
+      return promise;
+    };
+    let first: ServerResponse | undefined;
+    const handler = (req, res) => {
+      res.sendDate = false;
+      if (req.url === "/first") {
+        first = res;
+        return;
+      }
+      try {
+        if (req.url === "/second") returned.push(second(res, seen));
+        else third!(res);
+        if (req.url === "/third" || !third) first?.end("1");
+      } catch (e: any) {
+        errors.push(e.code);
+        req.socket.destroy();
+      }
+    };
+    const server =
+      transport === "https"
+        ? createHttpsServer({ ...tlsCert, ...options }, handler)
+        : transport === "http2"
+          ? http2.createSecureServer({ ...tlsCert, allowHTTP1: true, ...options }, handler)
+          : createServer(options, handler);
+    let client: Duplex | undefined;
+    try {
+      if (transport === "duplex") {
+        const [clientSide, serverSide] = duplexPair();
+        server.emit("connection", serverSide);
+        client = clientSide;
+      } else {
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        const { port } = server.address() as AddressInfo;
+        client =
+          transport === "socket"
+            ? connect(port, "127.0.0.1")
+            : tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false, ALPNProtocols: ["http/1.1"] });
+      }
+      const { promise: ended, resolve: onEnded } = Promise.withResolvers<void>();
+      client.on("data", chunk => {
+        chunks.push(chunk);
+        if (waiting.length === 0) return;
+        const text = received();
+        for (let i = waiting.length - 1; i >= 0; i--) {
+          if (text.includes(waiting[i].text)) waiting.splice(i, 1)[0].resolve();
+        }
+      });
+      client.on("error", e => errors.push((e as NodeJS.ErrnoException).code));
+      client.on("end", onEnded).on("close", onEnded);
+      const get = (url: string, last: boolean) =>
+        `GET ${url} HTTP/1.1\r\nHost: x\r\n${last ? "Connection: close\r\n" : ""}\r\n`;
+      client.write((queued ? get("/first", false) : "") + get("/second", !third) + (third ? get("/third", true) : ""));
+      await ended;
+      return { errors, returned, wire: collapse(received()) };
+    } finally {
+      client?.destroy();
+      server.close();
+    }
+  }
+
+  for (const transport of Object.keys(transports) as Transport[]) {
+    // The native response handle serves these two. A handle in JavaScript serves the other two.
+    const native = transport === "socket" || transport === "https";
+
+    for (const queued of [true, false]) {
+      const ahead = queued ? FIRST : "";
+      const position = queued
+        ? "a response that is queued behind a pipelined one"
+        : "a response that owns the connection";
+
+      describe(`${transports[transport]}, ${position}`, () => {
+        it.concurrent("res._send() sends its data as it is, between the chunks of write() and end()", async () => {
+          const result = await exchange(transport, queued, res => {
+            res.setHeader("Transfer-Encoding", "chunked");
+            res.write("a");
+            const accepted = res._send("RAW");
+            res.end("b");
+            return accepted;
+          });
+          expect(result).toEqual({
+            errors: [],
+            returned: [true],
+            wire:
+              ahead +
+              "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n1\r\na\r\nRAW1\r\nb\r\n0\r\n\r\n",
+          });
+        });
+
+        it.concurrent("res._send() before a head sends its data, and the head keeps what comes later", async () => {
+          const result = await exchange(transport, queued, res => {
+            res.statusCode = 404;
+            res.setHeader("X-Custom", "yes");
+            const accepted = res._send("RAW");
+            const headersSent = res.headersSent;
+            res.setHeader("X-Late", "1");
+            res.end("b");
+            return { accepted, headersSent };
+          });
+          expect(result).toEqual({
+            errors: [],
+            returned: [{ accepted: true, headersSent: false }],
+            wire:
+              ahead +
+              "RAW" +
+              "HTTP/1.1 404 Not Found\r\nX-Custom: yes\r\nX-Late: 1\r\nConnection: close\r\nContent-Length: 1\r\n\r\nb",
+          });
+        });
+
+        it.concurrent("res._send() after writeHead() sends the head first, and takes each callback form", async () => {
+          const called: string[] = [];
+          const result = await exchange(transport, queued, res => {
+            res.writeHead(200, { "Content-Length": "10" });
+            const accepted = [
+              res._send("RAW", () => called.push("in place of the encoding")),
+              res._send(Buffer.from("RAW"), "latin1", () => called.push("after the encoding")),
+              res._send("RAW", "latin1", null),
+            ];
+            res.end("b");
+            return accepted;
+          });
+          expect({ ...result, called }).toEqual({
+            errors: [],
+            returned: [[true, true, true]],
+            wire: ahead + "HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nRAWRAWRAWb",
+            called: ["in place of the encoding", "after the encoding"],
+          });
+        });
+
+        it.concurrent("res._send() after an empty write() sends its data behind the head", async () => {
+          const result = await exchange(transport, queued, res => {
+            res.setHeader("Content-Length", "4");
+            res.write("");
+            const accepted = res._send("RAW");
+            res.end("b");
+            return accepted;
+          });
+          expect(result).toEqual({
+            errors: [],
+            returned: [true],
+            wire: ahead + "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nRAWb",
+          });
+        });
+
+        it.concurrent("res._send() on a 204 response keeps its data", async () => {
+          const result = await exchange(transport, queued, res => {
+            res.statusCode = 204;
+            const accepted = res._send("RAW");
+            res.end();
+            return accepted;
+          });
+          expect(result).toEqual({
+            errors: [],
+            returned: [true],
+            wire: ahead + "RAW" + "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n",
+          });
+        });
+
+        // In Node.js the write() of the socket throws this. For a queued response that is at its turn,
+        // where nothing can catch it. Bun throws at the call for both.
+        it.concurrent("res._send() throws for an encoding that is not known, and sends nothing", async () => {
+          const result = await exchange(transport, queued, res => {
+            res.setHeader("Content-Length", "1");
+            const codes: unknown[] = [];
+            for (const encoding of ["bogus", "buffer"]) {
+              try {
+                res._send("RAW", encoding);
+              } catch (e: any) {
+                codes.push(e.code);
+              }
+            }
+            res.end("b");
+            return codes;
+          });
+          expect(result).toEqual({
+            errors: [],
+            returned: [["ERR_UNKNOWN_ENCODING", "ERR_UNKNOWN_ENCODING"]],
+            wire: ahead + "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nConnection: close\r\n\r\nb",
+          });
+        });
+
+        it.concurrent("res._send() writes a string in the encoding of the call", async () => {
+          const result = await exchange(transport, queued, res => {
+            res.writeHead(200, { "Content-Length": "6" });
+            const accepted = [res._send("AB", "utf-16le"), res._send("QUI=", "base64")];
+            res.end();
+            return accepted;
+          });
+          expect(result).toEqual({
+            errors: [],
+            returned: [[true, true]],
+            wire: ahead + "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nA\0B\0AB",
+          });
+        });
+
+        // The bytes of a small write fit in a buffer of the server. They must have left it when the callback runs.
+        it.concurrent(
+          "res._send() of a small message calls back when it is out: a destroy() there loses none",
+          async () => {
+            const result = await exchange(transport, queued, res => res._send(MESSAGE, () => res.destroy()));
+            expect(result).toEqual({ errors: [], returned: [true], wire: ahead + MESSAGE });
+          },
+        );
+
+        it.concurrent("res._send() in a later turn sends the stored head and its data before a destroy()", async () => {
+          const result = await exchange(transport, queued, res => {
+            setImmediate(() => {
+              res.writeHead(200, { "Content-Length": "5" });
+              res._send("hello", () => res.destroy());
+            });
+          });
+          expect(result).toEqual({
+            errors: [],
+            returned: [undefined],
+            wire: ahead + "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello",
+          });
+        });
+
+        it.concurrent("http.OutgoingMessage.prototype.write() is the write() of the response", async () => {
+          const events: string[] = [];
+          const result = await exchange(transport, queued, res => {
+            res.on("finish", () => events.push("finish"));
+            const accepted = OutgoingMessagePrototype.write.call(res, "SUPER", () => events.push("write callback"));
+            res.end("b", () => events.push("end callback"));
+            return accepted;
+          });
+          const order = ["write callback", "finish", "end callback"];
+          expect({ ...result, events }).toEqual({
+            errors: [],
+            returned: [true],
+            wire:
+              ahead +
+              "HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nSUPER\r\n1\r\nb\r\n0\r\n\r\n",
+            // On a duplex, Bun emits 'finish' before the callback of res.write(). The order is not checked there.
+            events: transport === "duplex" ? expect.arrayContaining(order) : order,
+          });
+        });
+
+        it.concurrent("http.OutgoingMessage.prototype.end() ends the response", async () => {
+          const events: string[] = [];
+          const result = await exchange(transport, queued, res => {
+            res.on("finish", () => events.push("finish"));
+            OutgoingMessagePrototype.end.call(res, "SUPER", () => events.push("callback"));
+            return res.finished;
+          });
+          expect({ ...result, events }).toEqual({
+            errors: [],
+            returned: [true],
+            wire: ahead + "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 5\r\n\r\nSUPER",
+            events: ["finish", "callback"],
+          });
+        });
+
+        it.concurrent("http.OutgoingMessage.prototype.write() and end() refuse a chunk of a wrong type", async () => {
+          const result = await exchange(transport, queued, res => {
+            res.setHeader("Content-Length", "1");
+            const codes: unknown[] = [];
+            for (const call of [
+              () => OutgoingMessagePrototype.write.call(res, 123),
+              () => OutgoingMessagePrototype.write.call(res, null),
+              () => OutgoingMessagePrototype.end.call(res, 123),
+            ]) {
+              try {
+                call();
+              } catch (e: any) {
+                codes.push(e.code);
+              }
+            }
+            res.end("b");
+            return codes;
+          });
+          expect(result).toEqual({
+            errors: [],
+            returned: [["ERR_INVALID_ARG_TYPE", "ERR_STREAM_NULL_VALUES", "ERR_INVALID_ARG_TYPE"]],
+            wire: ahead + "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nConnection: close\r\n\r\nb",
+          });
+        });
+
+        it.concurrent("http.OutgoingMessage.prototype.flushHeaders() sends the head before end()", async () => {
+          const result = await exchange(transport, queued, (res, seen) => {
+            res.setHeader("Content-Length", "1");
+            OutgoingMessagePrototype.flushHeaders.call(res);
+            const headersSent = res.headersSent;
+            seen("Content-Length: 1\r\nConnection: close\r\n\r\n").then(() => res.end("b"));
+            return headersSent;
+          });
+          expect(result).toEqual({
+            errors: [],
+            returned: [true],
+            wire: ahead + "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nConnection: close\r\n\r\nb",
+          });
+        });
+
+        it.concurrent(
+          "a loop of http.OutgoingMessage.prototype.write() stops at false and goes on from 'drain'",
+          async () => {
+            // A stream buffers 16 KiB on Windows and 64 KiB elsewhere. The fourth chunk reaches the mark.
+            const mark = getDefaultHighWaterMark(false);
+            const size = mark / 4;
+            const chunk = Buffer.alloc(size, "x").toString();
+            const framed = `${size.toString(16)}\r\n<x*${size}>\r\n`;
+            const result = await exchange(transport, queued, res => {
+              let accepted = 0;
+              while (accepted < 8 && OutgoingMessagePrototype.write.call(res, chunk)) accepted++;
+              res.on("drain", () => res.end("END"));
+              return { accepted, mark: res.writableHighWaterMark };
+            });
+            expect(result).toEqual({
+              errors: [],
+              returned: [{ accepted: 3, mark }],
+              wire:
+                ahead +
+                "HTTP/1.1 200 OK\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n" +
+                framed +
+                framed +
+                framed +
+                framed +
+                "3\r\nEND\r\n0\r\n\r\n",
+            });
+          },
+        );
+
+        // The http2 server does not take the option, and Bun does not apply it on a duplex.
+        if (native) {
+          // In Node.js the write() that throws has stored the head, also the one that writeHead() did not make.
+          for (const head of ["writeHead(204)", "statusCode = 204"]) {
+            it.concurrent(`res._send() sends the head of ${head} after a write() that threw`, async () => {
+              const result = await exchange(
+                transport,
+                queued,
+                res => {
+                  if (head === "writeHead(204)") res.writeHead(204);
+                  else res.statusCode = 204;
+                  let code: unknown;
+                  try {
+                    res.write("x");
+                  } catch (e: any) {
+                    code = e.code;
+                  }
+                  const headersSent = res.headersSent;
+                  const accepted = res._send("RAW");
+                  res.end();
+                  return { code, headersSent, accepted };
+                },
+                undefined,
+                { rejectNonStandardBodyWrites: true },
+              );
+              expect(result).toEqual({
+                errors: [],
+                returned: [{ code: "ERR_HTTP_BODY_NOT_ALLOWED", headersSent: true, accepted: true }],
+                wire: ahead + "HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\nRAW",
+              });
+            });
+          }
+        }
+
+        if (queued) {
+          it.concurrent("res._send() returns false when the data that waits reaches the high water mark", async () => {
+            const result = await exchange(transport, true, res => {
+              res.setHeader("Content-Length", "70001");
+              res.write("a");
+              const accepted = res._send(Buffer.alloc(70000, "x"));
+              res.end();
+              return accepted;
+            });
+            expect(result).toEqual({
+              errors: [],
+              returned: [false],
+              wire: FIRST + "HTTP/1.1 200 OK\r\nContent-Length: 70001\r\nConnection: close\r\n\r\na<x*70000>",
+            });
+          });
+
+          it.concurrent("res.flushHeaders() sends the head when the response gets the connection", async () => {
+            const result = await exchange(transport, true, (res, seen) => {
+              res.writeHead(200, { "Content-Length": "1" });
+              res.flushHeaders();
+              res.flushHeaders();
+              seen("Content-Length: 1\r\nConnection: close\r\n\r\n").then(() => res.end("b"));
+            });
+            expect(result).toEqual({
+              errors: [],
+              returned: [undefined],
+              wire: FIRST + "HTTP/1.1 200 OK\r\nContent-Length: 1\r\nConnection: close\r\n\r\nb",
+            });
+          });
+
+          it.concurrent(
+            "the response behind one that http.OutgoingMessage.prototype.end() ended follows it",
+            async () => {
+              const result = await exchange(
+                transport,
+                true,
+                res => {
+                  res.setHeader("Content-Length", "6");
+                  OutgoingMessagePrototype.end.call(res, "SECOND");
+                },
+                res => res.end("THIRD"),
+              );
+              expect(result).toEqual({
+                errors: [],
+                returned: [undefined],
+                wire:
+                  FIRST +
+                  "HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\n\r\nSECOND" +
+                  THIRD,
+              });
+            },
+          );
+        } else {
+          // A queued response has no socket yet: res.destroy() leaves the connection to its turn.
+          it.concurrent("a raw write after res.destroy() returns false and never calls back", async () => {
+            const called: string[] = [];
+            const { returned, wire } = await exchange(transport, false, res => {
+              res.destroy();
+              return [
+                res._send("x", () => called.push("_send callback")),
+                res._writeRaw("y", "latin1", () => called.push("_writeRaw callback")),
+              ];
+            });
+            // The connection has closed. A callback that was to run has run by the next turn of the loop.
+            await new Promise(resolve => setImmediate(resolve));
+            expect({ returned, wire, called }).toEqual({ returned: [[false, false]], wire: "", called: [] });
+          });
+
+          it.concurrent("res._send() sends its bytes before a res.destroy() that follows it", async () => {
+            const { wire } = await exchange(transport, false, res => {
+              res._send(MESSAGE);
+              res.destroy();
+            });
+            expect(wire).toBe(MESSAGE);
+          });
+
+          // A handle in JavaScript gives the head and the data to its stream as two writes, and the
+          // stream drops the second one at the destroy(). Main does the same.
+          if (native) {
+            it.concurrent(
+              "res._send() behind writeHead() sends both before a res.destroy() in a later turn",
+              async () => {
+                const { wire } = await exchange(transport, false, res => {
+                  setImmediate(() => {
+                    res.writeHead(200, { "Content-Length": "5" });
+                    res._send("hello");
+                    res.destroy();
+                  });
+                });
+                expect(wire).toBe("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello");
+              },
+            );
+          }
+
+          it.concurrent(
+            "res._send() and res.flushHeaders() do not throw for a stored head after res.destroy()",
+            async () => {
+              const { returned, wire } = await exchange(transport, false, res => {
+                res.writeHead(200, { "Content-Length": "1" });
+                res.destroy();
+                const accepted = res._send("x");
+                res.flushHeaders();
+                return accepted;
+              });
+              expect({ returned, wire }).toEqual({ returned: [false], wire: "" });
+            },
+          );
+        }
+
+        // Each of the next three sends 8 MiB. They run one at a time: on a debug build, together they
+        // hold the thread for longer than the tests beside them can wait.
+        it("res._send() sends its data behind a write() that the socket still holds", async () => {
+          const held = Buffer.alloc(8 * MiB, "x");
+          const result = await exchange(transport, queued, res => {
+            res.setHeader("Content-Length", String(held.length + 4));
+            res.write(held);
+            const accepted = res._send("RAW");
+            res.end("b");
+            return accepted;
+          });
+          expect(result).toEqual({
+            errors: [],
+            // False says that the socket holds bytes. Winsock can take all of the write at once.
+            returned: [isWindows && native && !queued ? expect.any(Boolean) : false],
+            wire:
+              ahead +
+              `HTTP/1.1 200 OK\r\nContent-Length: ${held.length + 4}\r\nConnection: close\r\n\r\n<x*${held.length}>RAWb`,
+          });
+        });
+
+        it("res._send() calls back when its bytes are out: a destroy() there loses none", async () => {
+          const data = Buffer.alloc(8 * MiB, "y");
+          const result = await exchange(transport, queued, res => {
+            res.writeHead(200, { "Content-Length": String(data.length) });
+            return res._send(data, () => res.destroy());
+          });
+          expect(result).toEqual({
+            errors: [],
+            // Bun asks the socket. Winsock can take all of the data at once, and then nothing waits.
+            returned: [isWindows && native && !queued ? expect.any(Boolean) : false],
+            wire:
+              ahead +
+              `HTTP/1.1 200 OK\r\nContent-Length: ${data.length}\r\nConnection: close\r\n\r\n<y*${data.length}>`,
+          });
+        });
+
+        if (native) {
+          it("a write() behind res._send() on a response with no body does not run its callback early", async () => {
+            const data = Buffer.alloc(8 * MiB, "w");
+            const result = await exchange(transport, queued, res => {
+              res.writeHead(204);
+              res._send(data, () => res.destroy());
+              res.write("x");
+            });
+            expect(result).toEqual({
+              errors: [],
+              returned: [undefined],
+              wire: ahead + `HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n<w*${data.length}>`,
+            });
+          });
+        }
+
+        // In Node.js the bytes of a raw write after end() go out behind the message. Bun sends none of
+        // them, so the test takes them out of the stream.
+        it("a raw write after end() does not hold back 'finish' or the next response", async () => {
+          const body = Buffer.alloc(8 * MiB, "z");
+          const events: string[] = [];
+          const result = await exchange(
+            transport,
+            queued,
+            res => {
+              res.on("finish", () => events.push("finish"));
+              res.end(body, () => events.push("end callback"));
+              res._send("RAW", () => events.push("_send callback"));
+              res._writeRaw("RAW", "latin1", () => events.push("_writeRaw callback"));
+            },
+            res => res.end("THIRD"),
+          );
+          expect({ ...result, wire: result.wire.replaceAll("RAW", ""), events }).toEqual({
+            errors: [],
+            returned: [undefined],
+            wire:
+              ahead +
+              `HTTP/1.1 200 OK\r\nConnection: keep-alive\r\nKeep-Alive: timeout=5\r\nContent-Length: ${body.length}\r\n\r\n<z*${body.length}>` +
+              THIRD,
+            events: ["finish", "end callback", "_send callback", "_writeRaw callback"],
+          });
+        });
+      });
+    }
+  }
+
+  // The HTTP/1 handle in JavaScript goes to the response class of the server. A class that extends
+  // OutgoingMessage, and not ServerResponse, keeps the write() and end() of OutgoingMessage.
+  it("a response class that extends http.OutgoingMessage writes on a duplex given to 'connection'", async () => {
+    class Response extends OutgoingMessage {
+      req: IncomingMessage;
+      statusCode = 200;
+      constructor(req: IncomingMessage) {
+        super();
+        this.req = req;
+      }
+      _implicitHeader() {
+        (this as any)._storeHeader("HTTP/1.1 200 OK\r\n", this.getHeaders());
+      }
+      assignSocket(socket: any) {
+        socket._httpMessage = this;
+        (this as any).socket = socket;
+        this.emit("socket", socket);
+        (this as any)._flush();
+      }
+      detachSocket(socket: any) {
+        socket._httpMessage = null;
+        (this as any).socket = null;
+      }
+    }
+    const events: string[] = [];
+    const { returned, wire } = await exchange(
+      "duplex",
+      false,
+      (res, seen) => {
+        res.on("finish", () => events.push("finish"));
+        const accepted = res.write("a");
+        res.end("b");
+        seen("0\r\n\r\n").then(() => res.req.socket.destroy());
+        return accepted;
+      },
+      undefined,
+      { ServerResponse: Response },
+    );
+    // Bun answers `Connection: keep-alive` for such a class, also on main. The test leaves those lines out.
+    expect({ returned, wire: wire.replace(/(Connection|Keep-Alive): [^\r]*\r\n/g, ""), events }).toEqual({
+      returned: [true],
+      wire: "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n1\r\nb\r\n0\r\n\r\n",
+      events: ["finish"],
+    });
+  });
 });
 
 // The native dispatch tail answers a throw by ending the connection's current response. For a

@@ -313,10 +313,7 @@ pub fn basename_posix_t<'a, T: PathCharCwd>(path: &'a [T], suffix: Option<&[T]>)
 
 /// Based on Node v21.6.1 path.win32.basename:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L753
-pub fn basename_windows_t<'a, T: PathCharCwd>(
-    path: &'a [T],
-    suffix: Option<&[T]>,
-) -> &'a [T] {
+pub fn basename_windows_t<'a, T: PathCharCwd>(path: &'a [T], suffix: Option<&[T]>) -> &'a [T] {
     // validateString of `path` is performed in pub fn basename.
     let len = path.len();
     // Exit early for easier number type use.

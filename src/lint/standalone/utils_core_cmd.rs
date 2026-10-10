@@ -296,7 +296,9 @@ impl<'a> Facts<'a> {
 }
 
 fn json_string(text: &str, out: &mut String) {
-    out.push_str(&host::text(&bun_core::printer::json_stringify_alloc(text.as_bytes())));
+    out.push_str(&host::text(&bun_core::printer::json_stringify_alloc(
+        text.as_bytes(),
+    )));
 }
 
 fn dump(case: Object<'_>) -> String {
@@ -356,7 +358,9 @@ fn text_facts(a: &[u8], b: &[u8]) -> String {
     let number = bun_core::fmt::js_string_to_number(a);
     let fields: [Vec<u8>; 18] = [
         bun_core::strings::wtf8_len_utf16(a).to_string().into(),
-        bun_core::strings::wtf8_codepoint_count(a).to_string().into(),
+        bun_core::strings::wtf8_codepoint_count(a)
+            .to_string()
+            .into(),
         bun_core::strings::trim_js_whitespace(a).to_vec(),
         bun_core::strings::trim_js_whitespace_start(a).to_vec(),
         bun_core::strings::trim_js_whitespace_end(a).to_vec(),

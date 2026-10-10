@@ -41,34 +41,90 @@ use bun_sys::windows::libuv::{UvHandle as _, UvStream as _};
 pub(crate) struct InternalMsgHolder {
     pub seq: i32,
 
-    // TODO: move this to an Array or a JS Object or something which doesn't
-    // individually create a Strong for every single IPC message...
-    pub callbacks: bun_collections::ArrayHashMap<i32, bun_jsc::StrongOptional>,
+    // Child side only. The primary keeps this state in the Subprocess wrapper's cached slots.
     pub worker: bun_jsc::StrongOptional,
     pub cb: bun_jsc::StrongOptional,
-    pub(crate) messages: Vec<bun_jsc::StrongOptional>,
+    /// A JS Array of the messages that arrived before the listener was installed.
+    pub(crate) messages: bun_jsc::StrongOptional,
 }
 
 impl Default for InternalMsgHolder {
     fn default() -> Self {
         Self {
             seq: 0,
-            callbacks: bun_collections::ArrayHashMap::default(),
             worker: bun_jsc::StrongOptional::empty(),
             cb: bun_jsc::StrongOptional::empty(),
-            messages: Vec::new(),
+            messages: bun_jsc::StrongOptional::empty(),
         }
     }
 }
 
 impl InternalMsgHolder {
+    /// The ack-callback `Map` in the Subprocess wrapper's `ipcAckCallbacks` slot.
+    fn ack_callbacks(subprocess: JSValue) -> Option<&'static mut bun_jsc::JSMap> {
+        if subprocess.is_empty() {
+            return None;
+        }
+        let map = crate::api::bun::subprocess::js::ipc_ack_callbacks_get_cached(subprocess)?;
+        Some(bun_jsc::JSMap::opaque_mut(
+            bun_jsc::JSMap::from_js(map)?.as_ptr(),
+        ))
+    }
+
+    /// Store `callback` under `seq` in the wrapper's ack-callback `Map`, created on first use.
+    pub(crate) fn put_callback(
+        subprocess: JSValue,
+        global: &JSGlobalObject,
+        seq: i32,
+        callback: JSValue,
+    ) -> JsResult<()> {
+        let map = match Self::ack_callbacks(subprocess) {
+            Some(map) => map,
+            None => {
+                let created = bun_jsc::JSMap::create(global);
+                crate::api::bun::subprocess::js::ipc_ack_callbacks_set_cached(
+                    subprocess, global, created,
+                );
+                Self::ack_callbacks(subprocess).ok_or(JsError::OutOfMemory)?
+            }
+        };
+        map.set(global, JSValue::js_number(seq as f64), callback)
+    }
+
+    /// Remove and return the callback stored under `seq`, or `None` when absent.
+    pub(crate) fn take_callback(
+        subprocess: JSValue,
+        global: &JSGlobalObject,
+        seq: i32,
+    ) -> JsResult<Option<JSValue>> {
+        let Some(map) = Self::ack_callbacks(subprocess) else {
+            return Ok(None);
+        };
+        let key = JSValue::js_number(seq as f64);
+        let cb = map.get(global, key)?;
+        if cb.is_undefined() {
+            return Ok(None);
+        }
+        map.remove(global, key)?;
+        Ok(Some(cb))
+    }
+
     pub(crate) fn is_ready(&self) -> bool {
         self.worker.has() && self.cb.has()
     }
 
-    pub(crate) fn enqueue(&mut self, message: JSValue, global: &JSGlobalObject) {
-        self.messages
-            .push(bun_jsc::StrongOptional::create(message, global));
+    pub(crate) fn enqueue(&mut self, message: JSValue, global: &JSGlobalObject) -> JsResult<()> {
+        let arr = match self.messages.get() {
+            Some(a) => a,
+            None => {
+                let a = JSValue::create_empty_array(global, 0)?;
+                self.messages.set(global, a);
+                a
+            }
+        };
+        // Own-slot writes and reads: an indexed accessor on `Array.prototype` must not see the queue.
+        let len = arr.get_length(global)? as u32;
+        arr.put_index(global, len, message)
     }
 
     pub(crate) fn dispatch(
@@ -80,8 +136,7 @@ impl InternalMsgHolder {
         if !self.is_ready() {
             // Queued messages drop their handle; the cluster listener is
             // installed before any handle-bearing reply can arrive.
-            self.enqueue(message, global);
-            return Ok(());
+            return self.enqueue(message, global);
         }
         self.dispatch_unsafe(message, handle, global)
     }
@@ -109,28 +164,24 @@ impl InternalMsgHolder {
 
     pub(crate) fn flush(&mut self, global: &JSGlobalObject) -> JsResult<()> {
         debug_assert!(self.is_ready());
-        // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
-        // `dispatch_unsafe` → `event_loop.run_callback` runs the JS IPC
-        // listener which can re-enter via a fresh `&mut Self` from the
-        // owner's `m_ctx` and write `self.cb` / `self.worker` /
-        // `self.callbacks`. With the loop body inlined, LLVM was hoisting the
-        // `self.cb`/`self.worker` reads (at the top of `dispatch_unsafe`) out
-        // of the loop — ASM-verified PROVEN_CACHED. Launder so each iteration
-        // re-reads through an opaque pointer.
+        let Some(messages) = self.messages.try_swap() else {
+            return Ok(());
+        };
+        let _keep = bun_jsc::EnsureStillAlive(messages);
+        // Re-read `cb` / `worker` each iteration: the JS listener can replace them through `child_singleton()`.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        // SAFETY: `this` aliases the live `&mut self`; single JS thread.
-        let messages = core::mem::take(unsafe { &mut (*this).messages });
-        for strong in messages {
-            if let Some(message) = strong.get() {
-                // SAFETY: `this` is still live across re-entry — the IPC
-                // dispatcher is owned by the Subprocess/Worker which outlives
-                // this `flush` frame; `&mut *this` is the unique mutable view
-                // for this call.
-                unsafe { &mut *this }.dispatch_unsafe(message, JSValue::NULL, global)?;
+        let len = messages.get_length(global)? as u32;
+        for i in 0..len {
+            let message = messages.get_direct_index(global, i)?;
+            if message.is_empty() {
+                continue;
             }
-            // strong drops here (== `strong.deinit()`)
+            // SAFETY: `this` is still live across re-entry — the IPC
+            // dispatcher is owned by the Subprocess/Worker which outlives
+            // this `flush` frame; `&mut *this` is the unique mutable view
+            // for this call.
+            unsafe { &mut *this }.dispatch_unsafe(message, JSValue::NULL, global)?;
         }
-        // messages Vec drops here (== `messages.deinit(bun.default_allocator)`)
         Ok(())
     }
 
@@ -1007,6 +1058,14 @@ impl SendQueue {
         self.owner.get()
     }
 
+    /// The owning Subprocess's JS wrapper, or `ZERO` for the VM-side owner.
+    #[inline]
+    pub(crate) fn owner_this_jsvalue(&self) -> JSValue {
+        self.owner_ref()
+            .map(SendQueueOwner::this_jsvalue)
+            .unwrap_or_default()
+    }
+
     pub(crate) fn set_owner(&self, owner: SendQueueOwner) {
         self.owner.set(Some(owner));
     }
@@ -1391,13 +1450,17 @@ impl SendQueue {
                 .waiting_for_ack
                 .with_mut(|w| w.as_ref().and_then(|i| i.handle.as_ref()?.cluster_seq));
             if let Some(seq) = cluster_seq {
-                let cb = self.internal_msg_queue.with_mut(|q| {
-                    let entry = q.callbacks.get(&seq).map(|s| s.get());
-                    if entry.is_some() {
-                        q.callbacks.swap_remove(&seq);
+                let cb = match InternalMsgHolder::take_callback(
+                    self.owner_this_jsvalue(),
+                    global,
+                    seq,
+                ) {
+                    Ok(cb) => cb,
+                    Err(err) => {
+                        crate::dispatch::fold(Err(err));
+                        None
                     }
-                    entry.flatten()
-                });
+                };
                 if let Some(cb) = cb {
                     let reply = JSValue::create_empty_object(global, 1);
                     reply.put(global, b"accepted", JSValue::FALSE);

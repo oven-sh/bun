@@ -6,6 +6,30 @@ import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
 
+it.skipIf(isWindows)("resolves POSIX paths with literal backslashes through symlinks", () => {
+  using dir = tempDir("resolve-backslash", {
+    "real\\root/target.ts": "export const value = 42;",
+  });
+  const realDirectory = join(String(dir), "real\\root");
+  const aliasDirectory = join(String(dir), "alias\\root");
+  symlinkSync(realDirectory, aliasDirectory);
+  const target = join(aliasDirectory, "target.ts");
+  expect(Bun.resolveSync(target, String(dir))).toBe(realpathSync.native(target));
+
+  const preserved = Bun.spawnSync({
+    cmd: [
+      bunExe(),
+      "--preserve-symlinks",
+      "-e",
+      `console.log(Bun.resolveSync(${JSON.stringify(target)}, ${JSON.stringify(String(dir))}))`,
+    ],
+    env: bunEnv,
+  });
+  expect(preserved.stderr.toString()).toBe("");
+  expect(preserved.exitCode).toBe(0);
+  expect(preserved.stdout.toString().trim()).toBe(target);
+});
+
 it("spawn test file", () => {
   writePackageJSONImportsFixture();
   writePackageJSONExportsFixture();
@@ -1987,3 +2011,62 @@ test.concurrent.each(["import", "require"])(
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "later.mjs\nlater.mjs\n", stderr: "", exitCode: 0 });
   },
 );
+
+it.skipIf(isWindows)("literal POSIX backslashes retain file and module identity", async () => {
+  using dir = tempDir("resolve-backslash-identity", {
+    "real\\root/target.mjs": `export const marker = {}; export const value = "literal";`,
+    "real/root/target.mjs": `export const value = "separator";`,
+  });
+  const literal = join(String(dir), "real\\root", "target.mjs");
+  const alias = join(String(dir), "alias\\root");
+  symlinkSync(join(String(dir), "real\\root"), alias);
+  expect(Bun.resolveSync("./real\\root/target.mjs", String(dir))).toBe(realpathSync.native(literal));
+  expect(() => Bun.resolveSync(literal + "\0suffix", String(dir))).toThrow(
+    expect.objectContaining({ code: "ERR_MODULE_NOT_FOUND" }),
+  );
+  const script = `
+    const assert = require("node:assert/strict");
+    const direct = await import(${JSON.stringify(literal)});
+    const linked = await import(${JSON.stringify(join(alias, "target.mjs"))});
+    const dotted = await import(${JSON.stringify(join(String(dir), "real\\root") + "/./target.mjs")});
+    assert.equal(direct.value, "literal");
+    assert.equal(direct.marker, linked.marker);
+    assert.equal(direct.marker, dotted.marker);
+    const firstQuery = await import(${JSON.stringify(literal + "?one")});
+    const secondQuery = await import(${JSON.stringify(literal + "?two")});
+    const linkedQuery = await import(${JSON.stringify(join(alias, "target.mjs") + "?one")});
+    assert.notEqual(firstQuery.marker, secondQuery.marker);
+    assert.notEqual(firstQuery.marker, direct.marker);
+    assert.equal(firstQuery.marker, linkedQuery.marker);
+    console.log("ok");
+  `;
+  await using child = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  await using preserved = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "--preserve-symlinks",
+      "-e",
+      `
+      const assert = require("node:assert/strict");
+      assert.equal(Bun.resolveSync(${JSON.stringify("./alias\\root/target.mjs")}, "."), ${JSON.stringify(join(alias, "target.mjs"))});
+      console.log("ok");
+    `,
+    ],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [preservedOut, preservedErr, preservedExit] = await Promise.all([
+    preserved.stdout.text(),
+    preserved.stderr.text(),
+    preserved.exited,
+  ]);
+  expect({ stdout: preservedOut, stderr: preservedErr, exitCode: preservedExit }).toEqual({
+    stdout: "ok\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});

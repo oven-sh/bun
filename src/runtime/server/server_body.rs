@@ -2660,6 +2660,7 @@ where
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let this_value = callframe.this();
+        self.user_unrefed.set(false);
         self.ref_();
         Ok(this_value)
     }
@@ -2671,6 +2672,7 @@ where
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let this_value = callframe.this();
+        self.user_unrefed.set(true);
         self.unref();
         Ok(this_value)
     }

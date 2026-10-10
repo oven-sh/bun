@@ -1999,26 +1999,40 @@ fn prune_bins(dir: &Dir) {
     let Some(bin) = open_real_subdir(dir, b".bin") else {
         return;
     };
-    let mut dangling: Vec<Box<[u8]>> = Vec::new();
-    let mut iter = sys::iterate_dir(bin.fd());
-    while let Ok(Some(entry)) = iter.next() {
-        let name = entry.name.slice_u8();
-        if entry_kind(&bin, name, entry.kind) == EntryKind::SymLink && is_dangling(&bin, name) {
-            dangling.push(name.into());
-        }
-    }
-    drop(iter);
-    for name in &dangling {
-        let _ = remove_link(&bin, name);
-    }
+    remove_links(&bin, &mut |name| is_dangling(&bin, name.as_bytes()));
 }
 
-// `.bunx` layout: windows-shim/BinLinkingShim.rs (target path is relative to this node_modules folder).
 #[cfg(windows)]
 fn prune_bins(dir: &Dir) {
     let Some(bin) = open_real_subdir(dir, b".bin") else {
         return;
     };
+    remove_shims(&bin, &mut |target| is_dangling(dir, target));
+}
+
+/// Removes each symlink of `bin` that `should_remove` accepts.
+#[cfg(not(windows))]
+fn remove_links(bin: &Dir, should_remove: &mut dyn FnMut(&ZStr) -> bool) {
+    let mut links: Vec<Box<[u8]>> = Vec::new();
+    let mut iter = sys::iterate_dir(bin.fd());
+    while let Ok(Some(entry)) = iter.next() {
+        let name = entry.name.slice_u8();
+        if entry_kind(bin, name, entry.kind) == EntryKind::SymLink
+            && should_remove(entry.name.as_zstr())
+        {
+            links.push(name.into());
+        }
+    }
+    drop(iter);
+    for name in &links {
+        let _ = remove_link(bin, name);
+    }
+}
+
+/// Removes each `.bunx` + `.exe` pair of `bin` whose target `should_remove` accepts.
+/// `.bunx` layout: windows-shim/BinLinkingShim.rs (the target path is relative to the parent of `bin`).
+#[cfg(windows)]
+fn remove_shims(bin: &Dir, should_remove: &mut dyn FnMut(&[u8]) -> bool) {
     let mut shims: Vec<Box<[u8]>> = Vec::new();
     let mut iter = sys::iterate_dir(bin.fd());
     while let Ok(Some(entry)) = iter.next() {
@@ -2040,14 +2054,57 @@ fn prune_bins(dir: &Dir) {
             continue;
         };
         let target = strings::to_utf8_alloc_from_le_bytes(&shim[..target_len * 2]);
-        if !is_dangling(dir, &target) {
+        if !should_remove(&target) {
             continue;
         }
-        let _ = remove_link(&bin, &file_name);
+        let _ = remove_link(bin, &file_name);
         file_name.truncate(stem.len());
         file_name.extend_from_slice(b".exe");
-        let _ = remove_link(&bin, &file_name);
+        let _ = remove_link(bin, &file_name);
     }
+}
+
+/// Removes the entries of `<node_modules>/.bin` that link into `<node_modules>/<alias>`: the bins
+/// of that package, and a native binlink of another package into it.
+pub(crate) fn remove_bins_linked_into(node_modules: &[u8], alias: &[u8]) {
+    let mut package_dir_buf = bun_paths::path_buffer_pool::get();
+    let Some(package_dir) = bun_paths::resolve_path::join_abs_string_buf_checked::<
+        bun_paths::platform::Auto,
+    >(node_modules, &mut package_dir_buf[..], &[alias]) else {
+        return;
+    };
+    let Ok(dir) = Dir::open(node_modules) else {
+        return;
+    };
+    // A stored target is joined onto the path of `.bin`. That is the real target only while
+    // `.bin` is not a link, so nothing is removed through one.
+    let Some(bin) = open_real_subdir(&dir, b".bin") else {
+        return;
+    };
+    let mut target_buf = bun_paths::path_buffer_pool::get();
+
+    #[cfg(not(windows))]
+    {
+        let mut link_buf = bun_paths::path_buffer_pool::get();
+        remove_links(&bin, &mut |name| {
+            sys::readlinkat(bin.fd(), name, link_buf.as_mut_slice()).is_ok_and(|len| {
+                let parts: [&[u8]; 2] = [b".bin", &link_buf[..len]];
+                is_inside(node_modules, &parts, &mut target_buf[..], package_dir)
+            })
+        });
+    }
+
+    #[cfg(windows)]
+    remove_shims(&bin, &mut |target| {
+        is_inside(node_modules, &[target], &mut target_buf[..], package_dir)
+    });
+}
+
+/// `base` joined with `parts` is a path inside `dir`.
+fn is_inside(base: &[u8], parts: &[&[u8]], buf: &mut [u8], dir: &[u8]) -> bool {
+    use bun_paths::resolve_path::{self, ParentEqual};
+    resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(base, buf, parts)
+        .is_some_and(|path| resolve_path::is_parent_or_equal(dir, path) == ParentEqual::Parent)
 }
 
 fn housekeeping(plan: &Plan, layout: Layout, manager: &PackageManager) {

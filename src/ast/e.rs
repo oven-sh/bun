@@ -2372,7 +2372,9 @@ impl RegExp {
     pub fn flags(&self) -> &[u8] {
         // Behind the last slash. Not by `flags_offset`, which wraps at 65,536.
         let slash = bun_core::strings::last_index_of_char(&self.value, b'/');
-        slash.and_then(|it| self.value.get(it + 1..)).unwrap_or_default()
+        slash
+            .and_then(|it| self.value.get(it + 1..))
+            .unwrap_or_default()
     }
 }
 

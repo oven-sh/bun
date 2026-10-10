@@ -460,6 +460,54 @@ console.log("survived", require("./late.js"));`,
     expect(m.exports).toEqual({});
   });
 
+  // https://github.com/oven-sh/bun/issues/9860
+  test("new Module() inherits require from its prototype", async () => {
+    const src = `
+      const Module = require("module");
+      const path = require("path");
+      const assert = require("assert");
+
+      const m = new Module(__filename, module);
+      m.filename = __filename;
+      m.paths = Module._nodeModulePaths(path.dirname(__filename));
+
+      assert.strictEqual(typeof Module.prototype.require, "function");
+      assert.strictEqual(typeof Module.prototype._compile, "function");
+      assert.strictEqual(typeof m.require, "function");
+      assert.strictEqual(typeof Object.getPrototypeOf(m).require, "function");
+
+      // vite-plugin-top-level-await's pattern: resolve a dependency from a
+      // synthetic module anchored at another package's path.
+      assert.strictEqual(m.require("path"), path);
+
+      // Assigning require on an instance must not replace the global override.
+      const original = Module.prototype.require;
+      m.require = () => "instance";
+      assert.strictEqual(m.require(), "instance");
+      assert.strictEqual(Module.prototype.require, original);
+      assert.strictEqual(require("path"), path);
+
+      // A plain-object receiver on the prototype chain must shadow locally,
+      // not rewrite the process-wide override.
+      const wrapper = Object.create(new Module(__filename));
+      wrapper.require = () => "wrapper";
+      assert.strictEqual(wrapper.require(), "wrapper");
+      assert.strictEqual(Module.prototype.require, original);
+      assert.strictEqual(require("path"), path);
+
+      console.log("ok");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
+  });
+
   test("_nodeModulePaths() works", () => {
     const root = path.resolve("/");
     expect(() => {

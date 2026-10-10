@@ -236,7 +236,6 @@ declare const $asyncContext: InternalFieldObject<[import("./node/async_hooks").F
 // We define our intrinsics in ./BunBuiltinNames.h. Some of those are globals.
 
 declare var $_events: TODO;
-declare function $addAbortAlgorithmToSignal(signal: AbortSignal, algorithm: () => void): TODO;
 declare function $autoAllocateChunkSize(): TODO;
 declare function $basename(): TODO;
 declare function $body(): TODO;
@@ -284,7 +283,6 @@ declare function $port(): TODO;
 declare function $pull(): TODO;
 declare function $read(): TODO;
 declare function $readable(): TODO;
-declare function $removeAbortAlgorithmFromSignal(signal: AbortSignal, algorithmIdentifier: number): TODO;
 declare function $redirect(): TODO;
 declare function $relative(): TODO;
 declare function $require(): TODO;

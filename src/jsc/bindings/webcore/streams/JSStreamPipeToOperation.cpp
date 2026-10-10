@@ -88,7 +88,6 @@ void JSStreamPipeToOperation::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Signal), "signal"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::Promise), "promise"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::CurrentWrite), "currentWrite"_s);
-    analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::ShutdownActionPromise), "shutdownActionPromise"_s);
     analyzeBarrierEdge(vm, analyzer, cell, thisObject->internalField(Field::ShutdownError), "shutdownError"_s);
 }
 
@@ -184,7 +183,7 @@ static void startPipeAbortBothActions(JSC::VM& vm, JSGlobalObject* globalObject,
     }
     if (!actionCount)
         RELEASE_AND_RETURN(scope, op->finalize(globalObject));
-    op->setShutdownActionPromise(vm, actions[0]);
+    op->m_shutdownActionStarted = true;
     op->m_pendingShutdownActions = static_cast<uint8_t>(actionCount);
     auto* runtime = JSStreamsRuntime::from(globalObject);
     for (unsigned i = 0; i < actionCount; i++)
@@ -196,7 +195,7 @@ static void performPipeShutdownAction(JSGlobalObject* globalObject, JSStreamPipe
 {
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (op->m_finalized || op->shutdownActionPromise())
+    if (op->m_finalized || op->m_shutdownActionStarted)
         return;
     JSValue error = pipeShutdownError(op);
     JSPromise* actionPromise = nullptr;
@@ -216,7 +215,7 @@ static void performPipeShutdownAction(JSGlobalObject* globalObject, JSStreamPipe
         RELEASE_AND_RETURN(scope, startPipeAbortBothActions(vm, globalObject, op, error));
     }
     RETURN_IF_EXCEPTION(scope, );
-    op->setShutdownActionPromise(vm, actionPromise);
+    op->m_shutdownActionStarted = true;
     auto* runtime = JSStreamsRuntime::from(globalObject);
     registerPipeReaction(globalObject, actionPromise, runtime->onPipeShutdownActionFulfilled(), runtime->onPipeShutdownActionRejected(), op);
 }
@@ -314,10 +313,10 @@ void JSStreamPipeToOperation::finalize(JSGlobalObject* globalObject)
     // error to settle with) so a throwing release cannot skip them.
     writer->m_pipeOperation.clear();
     reader->m_pipeOperation.clear();
-    if (m_abortAlgorithmId) {
+    if (m_abortAlgorithmId != AbortAlgorithmIdentifier {}) {
         auto& signal = downcast<JSAbortSignal>(this->signal())->wrapped();
         AbortSignal::removeAbortAlgorithmFromSignal(signal, m_abortAlgorithmId);
-        m_abortAlgorithmId = 0;
+        m_abortAlgorithmId = {};
     }
     auto* promise = this->promise();
     bool hasShutdownError = m_hasShutdownError;

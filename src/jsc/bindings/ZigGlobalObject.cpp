@@ -87,7 +87,6 @@
 #include "IDLTypes.h"
 #include "ImportMetaObject.h"
 #include "JS2Native.h"
-#include "JSAbortAlgorithm.h"
 #include "JSAbortController.h"
 #include "JSAbortSignal.h"
 #include "streams/JSCompressionStream.h"
@@ -1907,35 +1906,6 @@ JSC_DEFINE_HOST_FUNCTION(makeDOMExceptionForBuiltins, (JSGlobalObject * globalOb
     return JSValue::encode(value);
 }
 
-JSC_DEFINE_HOST_FUNCTION(addAbortAlgorithmToSignal, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    ASSERT(callFrame);
-    ASSERT(callFrame->argumentCount() == 2);
-
-    auto& vm = JSC::getVM(globalObject);
-    auto* abortSignal = dynamicDowncast<JSAbortSignal>(callFrame->uncheckedArgument(0));
-    if (!abortSignal) [[unlikely]]
-        return JSValue::encode(JSValue(JSC::JSValue::JSFalse));
-
-    Ref<AbortAlgorithm> abortAlgorithm = JSAbortAlgorithm::create(vm, callFrame->uncheckedArgument(1).getObject());
-
-    auto algorithmIdentifier = AbortSignal::addAbortAlgorithmToSignal(abortSignal->wrapped(), WTF::move(abortAlgorithm));
-    return JSValue::encode(JSC::jsNumber(algorithmIdentifier));
-}
-
-JSC_DEFINE_HOST_FUNCTION(removeAbortAlgorithmFromSignal, (JSGlobalObject*, CallFrame* callFrame))
-{
-    ASSERT(callFrame);
-    ASSERT(callFrame->argumentCount() == 2);
-
-    auto* abortSignal = dynamicDowncast<JSAbortSignal>(callFrame->uncheckedArgument(0));
-    if (!abortSignal) [[unlikely]]
-        return JSValue::encode(JSValue(JSC::JSValue::JSFalse));
-
-    AbortSignal::removeAbortAlgorithmFromSignal(abortSignal->wrapped(), callFrame->uncheckedArgument(1).asUInt32());
-    return JSValue::encode(JSC::jsUndefined());
-}
-
 JSC_DEFINE_HOST_FUNCTION(isAbortSignal, (JSGlobalObject*, CallFrame* callFrame))
 {
     ASSERT(callFrame->argumentCount() == 1);
@@ -2950,8 +2920,6 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     static constexpr PrivateFunction privateFunctions[] = {
         { BuiltinName::k_makeGetterTypeError, 2, makeGetterTypeErrorForBuiltins },
         { BuiltinName::k_makeDOMException, 2, makeDOMExceptionForBuiltins },
-        { BuiltinName::k_addAbortAlgorithmToSignal, 2, addAbortAlgorithmToSignal },
-        { BuiltinName::k_removeAbortAlgorithmFromSignal, 2, removeAbortAlgorithmFromSignal },
         { BuiltinName::k_isAbortSignal, 1, isAbortSignal },
         { BuiltinName::k_peekPromiseStatus, 1, jsBunPeekPromiseStatus },
         { BuiltinName::k_peekPromiseSettledValue, 1, jsBunPeekPromiseSettledValue },

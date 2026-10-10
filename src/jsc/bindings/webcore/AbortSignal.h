@@ -47,6 +47,9 @@ class AbortAlgorithm;
 class ScriptExecutionContext;
 class WebCoreOpaqueRoot;
 
+// 64 bits, so one signal never issues the same identifier twice: a repeated one removes the wrong algorithm. Zero is never issued and means "none".
+enum class AbortAlgorithmIdentifier : uint64_t {};
+
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(AbortSignal);
 
 enum class CommonAbortReason : uint8_t {
@@ -80,8 +83,8 @@ public:
     static Ref<AbortSignal> timeout(ScriptExecutionContext&, uint64_t milliseconds);
     static Ref<AbortSignal> any(ScriptExecutionContext&, const Vector<RefPtr<AbortSignal>>&);
 
-    static uint32_t addAbortAlgorithmToSignal(AbortSignal&, Ref<AbortAlgorithm>&&);
-    static void removeAbortAlgorithmFromSignal(AbortSignal&, uint32_t algorithmIdentifier);
+    static AbortAlgorithmIdentifier addAbortAlgorithmToSignal(AbortSignal&, Ref<AbortAlgorithm>&&);
+    static void removeAbortAlgorithmFromSignal(AbortSignal&, AbortAlgorithmIdentifier);
 
     void signalAbort(JSC::JSGlobalObject* globalObject, CommonAbortReason reason);
     void signalAbort(JSC::JSValue reason);
@@ -116,8 +119,9 @@ public:
     USING_CAN_MAKE_WEAKPTR(EventTargetWithInlineData);
 
     using Algorithm = Function<void(JSC::JSValue reason)>;
-    uint32_t addAlgorithm(Algorithm&&);
-    void removeAlgorithm(uint32_t);
+    AbortAlgorithmIdentifier addAlgorithm(Algorithm&&);
+    void removeAlgorithm(AbortAlgorithmIdentifier);
+    void setAlgorithmIdentifierForTesting(AbortAlgorithmIdentifier identifier) { m_algorithmIdentifier = identifier; }
 
     template<typename Visitor> void visitAbortAlgorithms(Visitor&);
 
@@ -165,6 +169,7 @@ private:
     };
     explicit AbortSignal(ScriptExecutionContext*, Aborted = Aborted::No, JSC::JSValue reason = JSC::jsUndefined());
 
+    AbortAlgorithmIdentifier nextAlgorithmIdentifier();
     void markAsDependent() { setIsDependent(true); }
     void addSourceSignal(AbortSignal&);
     void addDependentSignal(AbortSignal&);
@@ -203,12 +208,12 @@ private:
     void derefEventTarget() final { deref(); }
     void eventListenersDidChange() final;
 
-    Vector<std::pair<uint32_t, Algorithm>> m_algorithms;
+    Vector<std::pair<AbortAlgorithmIdentifier, Algorithm>> m_algorithms;
     // Kept separate from m_algorithms so the GC thread can visit the weak JS
     // callbacks via visitAbortAlgorithms(). Erasing Ref<AbortAlgorithm> into
     // an Algorithm lambda would hide it from the GC and reintroduce the
     // Strong-ref cycle leak.
-    Vector<std::pair<uint32_t, Ref<AbortAlgorithm>>> m_abortAlgorithms WTF_GUARDED_BY_LOCK(m_abortAlgorithmsLock);
+    Vector<std::pair<AbortAlgorithmIdentifier, Ref<AbortAlgorithm>>> m_abortAlgorithms WTF_GUARDED_BY_LOCK(m_abortAlgorithmsLock);
     Lock m_abortAlgorithmsLock;
     AbortSignalSet m_sourceSignals;
     AbortSignalSet m_dependentSignals;
@@ -221,7 +226,7 @@ private:
     // listeners (1 while any exist), pending activity, m_algorithms,
     // m_abortAlgorithms, dependent signals.
     std::atomic<uint32_t> m_timeoutObserverCount { 0 };
-    uint32_t m_algorithmIdentifier { 0 };
+    AbortAlgorithmIdentifier m_algorithmIdentifier {};
     AbortSignalTimeout m_timeout { nullptr };
     uint8_t m_flags { 0 };
 };

@@ -6,6 +6,7 @@
 #include "JavaScriptCore/JSArrayBufferView.h"
 #include "headers-handwritten.h"
 #include "webcore/HTTPHeaderMap.h"
+#include "webcore/JSAbortSignal.h"
 #include <wtf/text/AtomStringImpl.h>
 #include <wtf/text/StringImpl.h>
 #include <wtf/text/WTFString.h>
@@ -34,6 +35,19 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_lowercaseHeaderNameSIMD, (JSC::JSGlobalObjec
     auto string = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(JSC::jsString(vm, WebCore::lowercaseHeaderName(string)));
+}
+
+// Lets a test register abort algorithms with identifiers past 2^32 without 2^32 registrations.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_setAbortAlgorithmIdentifierForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* signal = dynamicDowncast<WebCore::JSAbortSignal>(callFrame->argument(0));
+    JSValue identifier = callFrame->argument(1);
+    if (!signal || !identifier.isAnyInt() || identifier.asAnyInt() < 0)
+        return throwVMTypeError(globalObject, scope, "Expected an AbortSignal and a non-negative integer"_s);
+    signal->wrapped().setAlgorithmIdentifierForTesting(WebCore::AbortAlgorithmIdentifier { static_cast<uint64_t>(identifier.asAnyInt()) });
+    return JSValue::encode(jsUndefined());
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_arrayBufferViewHasBuffer, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

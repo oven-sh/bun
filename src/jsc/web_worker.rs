@@ -31,7 +31,7 @@
 //!
 //! Threads: everything the worker thread needs from its parent VM (transform
 //! options, an env snapshot, the standalone graph) is copied on the parent
-//! thread in `create()`, and the thread holds a `Ticket` on the parent for its
+//! thread in `start()`, and the thread holds a `Ticket` on the parent for its
 //! whole life, so the parent cannot be destroyed under it. The parent (or an
 //! exiting ancestor) reaches the worker's VM only through `vm_handle` — the
 //! worker VM's uncounted handle, published once the VM exists — never through
@@ -81,6 +81,8 @@ pub struct WebWorker {
     exec_argv_ptr: *const WTFStringImpl,
     exec_argv_len: usize,
     inherit_exec_argv: bool,
+    /// `None` when the worker inherits the parent's execArgv.
+    exec_argv_flags: Option<ExecArgvFlags>,
     unresolved_specifier: Box<[u8]>,
     preloads: Vec<Box<[u8]>>,
     name: bun_core::ZBox,
@@ -97,7 +99,7 @@ pub struct WebWorker {
     vm_handle: bun_threading::Guarded<Option<crate::VmHandle>>,
 
     // ---- Parent-thread only ---------------------------------------------------
-    /// Keep-alive on the parent's event loop: taken in `create()`, toggled by
+    /// Keep-alive on the parent's event loop: taken in `start()`, toggled by
     /// `.ref()`/`.unref()`, released when the parent releases the thread.
     parent_poll_ref: JsCell<KeepAlive>,
     /// Taken by the parent to join the OS thread.
@@ -121,6 +123,12 @@ pub struct WebWorker {
     /// parent) while its VM was live — as opposed to the thread stopping itself,
     /// or being stopped before it started. Written under the `vm_handle` lock.
     terminated_by_parent: AtomicBool,
+}
+
+#[derive(Copy, Clone)]
+struct ExecArgvFlags {
+    allow_addons: bool,
+    allow_ffi_cc: bool,
 }
 
 /// Copied from the parent VM on its thread at `new Worker()`; consumed by
@@ -162,6 +170,7 @@ unsafe extern "C" {
         stopped_by_parent: bool,
     );
     safe fn WebWorker__parentContextWillDestroy(proxy: *mut c_void);
+    safe fn WebWorker__generateContextIdentifier() -> u32;
     safe fn WebWorker__entrySettled(global: &JSGlobalObject);
     /// Loads `node:worker_threads` in this VM (it rebinds process stdio and
     /// registers parentPort). May leave an exception pending.
@@ -229,7 +238,7 @@ impl WebWorker {
 
     /// Closure-scoped `&mut KeepAlive` accessor for `parent_poll_ref`. The cell
     /// is touched only on the parent thread (`set_ref`,
-    /// `release_parent_poll_ref`, `create`) so no lock is required; `JsCell`
+    /// `release_parent_poll_ref`, `start`) so no lock is required; `JsCell`
     /// provides the interior mutability because `WebWorker` is shared `&self`
     /// across threads.
     #[inline]
@@ -274,9 +283,7 @@ impl WebWorker {
     // Construction (parent thread)
     // =========================================================================
 
-    /// Allocate the thread object (one ref, owned by the calling proxy), take a
-    /// keep-alive on the parent event loop, register as a child of the parent VM,
-    /// and spawn the thread. On any failure returns null with `error_message`
+    /// Validate the options and allocate the thread object (one ref, the proxy's). On failure: null, `error_message`
     /// set and nothing to clean up.
     #[unsafe(export_name = "WebWorker__create")]
     pub(crate) unsafe extern "C" fn create(
@@ -287,9 +294,8 @@ impl WebWorker {
         error_message: &mut BunString,
         error_is_invalid_exec_argv: &mut bool,
         _parent_context_id: u32,
-        this_context_id: u32,
+        this_context_id: &mut u32,
         mini: bool,
-        default_unref: bool,
         eval_mode: bool,
         is_node_worker: bool,
         argv_ptr: *const WTFStringImpl,
@@ -301,7 +307,6 @@ impl WebWorker {
         preload_modules_len: usize,
     ) -> *mut WebWorker {
         jsc::mark_binding();
-        log!("[{}] create", this_context_id);
 
         let spec_slice = specifier_str.to_utf8();
         let mut temp_log = bun_ast::Log::default();
@@ -347,11 +352,7 @@ impl WebWorker {
             }
         }
 
-        // Everything the worker thread needs from this VM is copied here, on
-        // its own thread; the worker never dereferences `parent`.
-        // SAFETY: `parent` is the calling thread's live VM.
-        let parent_ref = unsafe { &*parent };
-        let mut transform_options = (*parent_ref.transpiler.options.transform_options).clone();
+        let mut exec_argv_flags = None;
         if !inherit_exec_argv {
             let hooks = runtime_hooks().expect("RuntimeHooks not installed");
             // SAFETY: caller passed valid (ptr,len) borrowed from C++ WorkerOptions;
@@ -373,36 +374,19 @@ impl WebWorker {
                     *error_is_invalid_exec_argv = true;
                     return core::ptr::null_mut();
                 }
-                let parent_allows_addons = transform_options.allow_addons.unwrap_or(true);
-                transform_options.allow_addons = Some(parent_allows_addons && flags.allow_addons);
-                let parent_allows_ffi_cc = transform_options.allow_ffi_cc.unwrap_or(true);
-                transform_options.allow_ffi_cc = Some(parent_allows_ffi_cc && flags.allow_ffi_cc);
+                exec_argv_flags = Some(ExecArgvFlags {
+                    allow_addons: flags.allow_addons,
+                    allow_ffi_cc: flags.allow_ffi_cc,
+                });
             }
         }
-        // The worker's `process.env` starts as a copy of the parent's now (as in
-        // Node). Proxy-env values may be RefCountedEnvValue bytes owned by the
-        // parent's proxy_env_storage: snapshot slots + map under its lock so
-        // every slice copied is backed by a ref the snapshot holds.
-        let mut proxy_env_slots = jsc::rare_data::ProxyEnvSlots::default();
-        let mut env_loader = {
-            let parent_slots = parent_ref.proxy_env_storage.lock();
-            proxy_env_slots.clone_from(&parent_slots);
-            match parent_ref.env_loader().clone_for_worker() {
-                Ok(loader) => loader,
-                Err(_) => {
-                    *error_message = BunString::static_("Out of memory");
-                    return core::ptr::null_mut();
-                }
-            }
-        };
-        proxy_env_slots.sync_into(&mut env_loader.map);
-        let init = WorkerVmInit {
-            transform_options,
-            env_loader,
-            proxy_env_slots,
-        };
 
-        // The construction ref: handed to C++ on success, dropped on failure.
+        // Node assigns the threadId here too, after its option checks: a rejected option uses none.
+        *this_context_id = WebWorker__generateContextIdentifier();
+        log!("[{}] create", *this_context_id);
+        // SAFETY: `parent` is the calling thread's live VM.
+        let parent_ref = unsafe { &*parent };
+        // The construction ref, handed to C++.
         let worker = bun_ptr::RefPtr::new(WebWorker {
             messaging_proxy: proxy,
             parent,
@@ -411,7 +395,7 @@ impl WebWorker {
                 && parent_ref.is_main_thread()
                 && bun_core::env_var::feature_flag::BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE::get()
                     .unwrap_or(false),
-            execution_context_id: this_context_id,
+            execution_context_id: *this_context_id,
             mini,
             eval_mode,
             is_node_worker,
@@ -420,6 +404,7 @@ impl WebWorker {
             exec_argv_ptr,
             exec_argv_len,
             inherit_exec_argv,
+            exec_argv_flags,
             unresolved_specifier: spec_slice.slice().to_vec().into_boxed_slice(),
             preloads,
             name: if name_str.is_empty() {
@@ -438,8 +423,50 @@ impl WebWorker {
             worker_env_loader: Cell::new(core::ptr::null_mut()),
             exit_called: AtomicBool::new(false),
             terminated_by_parent: AtomicBool::new(false),
-        });
-        let worker_ref = bun_ptr::ParentRef::from(worker.as_non_null());
+        })
+        .into_raw();
+        // SAFETY: `parent` is the calling thread's VM; parent-thread-only list.
+        unsafe { (*parent).child_workers.push(worker) };
+        worker
+    }
+
+    /// Spawn the thread of a worker `create()` made, once, on the same thread. False if the OS refused it.
+    #[unsafe(export_name = "WebWorker__start")]
+    pub(crate) unsafe extern "C" fn start(this: *mut WebWorker, default_unref: bool) -> bool {
+        let worker_ref = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
+        debug_assert!(
+            worker_ref.join_handle.with_mut(|h| h.is_none()),
+            "started twice"
+        );
+        log!("[{}] start", worker_ref.execution_context_id);
+
+        // Everything the worker thread needs from this VM is copied here, on
+        // its own thread; the worker never dereferences `parent`.
+        // SAFETY: `parent` is the calling thread's live VM.
+        let parent_ref = unsafe { &*worker_ref.parent };
+        let mut transform_options = (*parent_ref.transpiler.options.transform_options).clone();
+        if let Some(flags) = worker_ref.exec_argv_flags {
+            let parent_allows_addons = transform_options.allow_addons.unwrap_or(true);
+            transform_options.allow_addons = Some(parent_allows_addons && flags.allow_addons);
+            let parent_allows_ffi_cc = transform_options.allow_ffi_cc.unwrap_or(true);
+            transform_options.allow_ffi_cc = Some(parent_allows_ffi_cc && flags.allow_ffi_cc);
+        }
+        // The worker's `process.env` starts as a copy of the parent's now (as in
+        // Node). Proxy-env values may be RefCountedEnvValue bytes owned by the
+        // parent's proxy_env_storage: snapshot slots + map under its lock so
+        // every slice copied is backed by a ref the snapshot holds.
+        let mut proxy_env_slots = jsc::rare_data::ProxyEnvSlots::default();
+        let mut env_loader = {
+            let parent_slots = parent_ref.proxy_env_storage.lock();
+            proxy_env_slots.clone_from(&parent_slots);
+            bun_core::handle_oom(parent_ref.env_loader().clone_for_worker())
+        };
+        proxy_env_slots.sync_into(&mut env_loader.map);
+        let init = WorkerVmInit {
+            transform_options,
+            env_loader,
+            proxy_env_slots,
+        };
 
         // Keep the parent's event loop alive until the parent releases this
         // thread, unless the user opted out with `{ ref: false }`.
@@ -449,7 +476,8 @@ impl WebWorker {
         }
 
         // The thread's own ref, taken before it exists so it can never observe zero.
-        let thread_ref = worker.clone();
+        // SAFETY: fn contract. `this` is live.
+        let thread_ref = unsafe { bun_ptr::RefPtr::init_ref(this) };
         // The thread is something of this VM's on another thread for as long as
         // it runs: the parent joins it before its own teardown's wait, which
         // this ticket would otherwise hold.
@@ -483,16 +511,12 @@ impl WebWorker {
         match spawn {
             Ok(handle) => {
                 worker_ref.join_handle.set(Some(handle));
-                let worker = worker.into_raw();
-                // SAFETY: `parent` is the calling thread's VM; parent-thread-only list.
-                unsafe { (*parent).child_workers.push(worker) };
-                worker
+                true
             }
             Err(_) => {
-                // The thread's ref went down with the closure; ours drops on return.
+                // The thread's ref went down with the closure.
                 worker_ref.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
-                *error_message = BunString::static_("Failed to spawn worker thread");
-                core::ptr::null_mut()
+                false
             }
         }
     }

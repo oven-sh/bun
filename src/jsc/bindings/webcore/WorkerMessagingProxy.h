@@ -69,7 +69,7 @@ class WorkerMessagingProxy final : public ThreadSafeRefCounted<WorkerMessagingPr
 
 public:
     enum class State : uint8_t {
-        Pending, // created; worker thread starting up
+        Pending, // created; the worker thread is not spawned yet, or is starting up
         Running, // workerGlobalScopeStarted() has run on the worker thread
         Closing, // workerGlobalScopeDestroyedInternal() is dispatching 'close' on the parent
         Closed, // the thread is joined and released; nothing further will happen
@@ -79,7 +79,12 @@ public:
     ~WorkerMessagingProxy();
 
     // -- WorkerGlobalScopeProxy (parent thread) --------------------------------------------------
-    ExceptionOr<void> startWorkerGlobalScope(const String& scriptURL);
+    // Validates the options and allocates the thread object. startWorkerGlobalScope() spawns the thread.
+    ExceptionOr<void> prepareWorkerGlobalScope(const String& scriptURL);
+    // Cannot reject an option: what it reads was validated above. Fails only if the OS refuses the thread.
+    ExceptionOr<void> startWorkerGlobalScope(Ref<SerializedScriptValue>&& workerDataAndEnvironmentData, Vector<TransferredMessagePort>&& dataMessagePorts, RefPtr<Bun::SharedEnvStore>&&);
+    // Releases a thread object that was never started. Dispatches nothing.
+    void discardUnstartedWorkerGlobalScope();
     void terminateWorkerGlobalScope();
     void postMessageToWorkerGlobalScope(MessageWithMessagePorts&&);
     // Queued while Pending, posted while Running, refused (false) once Closing.
@@ -139,11 +144,12 @@ private:
     // The parent loop that was current at `new Worker()`: a macro that creates a worker and awaits
     // it is the one that hears from it.
     const BunLoopKind m_loaderLoopKind;
-    const ScriptExecutionContextIdentifier m_workerContextIdentifier;
+    // Assigned by prepareWorkerGlobalScope() once the options have validated; 0 for a worker stopped at birth.
+    ScriptExecutionContextIdentifier m_workerContextIdentifier { 0 };
     WorkerOptions m_options;
 
     // The native thread object (src/jsc/web_worker.rs). Holds one ref on it from
-    // startWorkerGlobalScope() until releaseWorkerThread().
+    // prepareWorkerGlobalScope() until releaseWorkerThread().
     void* m_workerThread { nullptr };
 
     std::atomic<State> m_state { State::Pending };

@@ -80,10 +80,20 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
     auto worker = adoptRef(*new Worker(context, WTF::move(options)));
     worker->suspendIfNeeded();
 
-    auto started = worker->m_contextProxy->startWorkerGlobalScope(url);
-    if (started.hasException())
-        return started.releaseException();
+    auto prepared = worker->m_contextProxy->prepareWorkerGlobalScope(url);
+    if (prepared.hasException())
+        return prepared.releaseException();
     return worker;
+}
+
+ExceptionOr<void> Worker::start(Ref<SerializedScriptValue>&& workerDataAndEnvironmentData, Vector<TransferredMessagePort>&& dataMessagePorts, RefPtr<Bun::SharedEnvStore>&& sharedEnvStore)
+{
+    return m_contextProxy->startWorkerGlobalScope(WTF::move(workerDataAndEnvironmentData), WTF::move(dataMessagePorts), WTF::move(sharedEnvStore));
+}
+
+void Worker::discardUnstarted()
+{
+    m_contextProxy->discardUnstartedWorkerGlobalScope();
 }
 
 Worker::~Worker()
@@ -191,6 +201,11 @@ extern "C" void WebWorker__workerGlobalScopeDestroyed(WorkerMessagingProxy* prox
 extern "C" void WebWorker__parentContextWillDestroy(WorkerMessagingProxy* proxy)
 {
     proxy->parentContextWillDestroy();
+}
+
+extern "C" ScriptExecutionContextIdentifier WebWorker__generateContextIdentifier()
+{
+    return ScriptExecutionContext::generateIdentifier();
 }
 
 // An uncaught error inside the worker: dispatch 'error' on the worker's own global scope, then report

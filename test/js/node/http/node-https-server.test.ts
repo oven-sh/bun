@@ -425,7 +425,10 @@ describe("server.blockList", () => {
 });
 
 // A close waits, up to 10 s, for ciphertext that write() reported and the kernel has not taken. closeAllConnections() does not.
-test("closeAllConnections() does not wait for a client that stopped reading", async () => {
+test.each([
+  ["in the middle of its request", 0],
+  ["behind its request", 3],
+])("closeAllConnections() does not wait for a client that stopped reading, %s", async (_when, turns) => {
   const stalled = Promise.withResolvers<void>();
   const server = https.createServer(validCert, (_req, res) => {
     const chunk = Buffer.alloc(1024 * 1024, "a");
@@ -458,10 +461,16 @@ test("closeAllConnections() does not wait for a client that stopped reading", as
     stdout: "inherit",
     stderr: "inherit",
   });
-  await stalled.promise;
-  const closed = new Promise(resolve => server.close(resolve));
-  server.closeAllConnections();
-  // Within the timeout of the test, which is under the deadline of the close.
-  expect(await closed).toBeUndefined();
-  client.kill();
+  // Closed from here on, whatever becomes of the client.
+  const closed = stalled.promise.then(async () => {
+    for (let i = 0; i < turns; i++) await new Promise(setImmediate);
+    const from = performance.now();
+    const { promise, resolve } = Promise.withResolvers<number>();
+    server.close(() => resolve(performance.now() - from));
+    server.closeAllConnections();
+    return promise;
+  });
+  client.exited.then(() => stalled.resolve());
+  // The deadline, 10 s on a 4 s tick, is 8 s away at the least.
+  expect(await closed).toBeLessThan(5_000);
 });

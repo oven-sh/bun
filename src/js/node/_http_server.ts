@@ -86,6 +86,9 @@ const kPendingCloseGenerations = Symbol("http.server.pendingCloseGenerations");
 const kListenerGeneration = Symbol("http.server.listenerGeneration");
 // Set on the 'connect'/'upgrade' handoff; closeAll/closeIdleConnections() skip these, as in Node.
 const kHandedOff = Symbol("http.server.socketHandedOff");
+function closeHandle(handle) {
+  if (!handle.closed) handle.close();
+}
 const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
 const kMaxHeadersCount = Symbol("http.server.maxHeadersCount");
 
@@ -1927,7 +1930,10 @@ function getNodeHTTPServerSocket() {
     destroyNow() {
       this.destroy();
       const handle = this.#closingHandle;
-      if (handle && !handle.closed) handle.close();
+      if (!handle || handle.closed) return;
+      handle.close();
+      // In the middle of its own request a handle only takes note, and closes behind it, for the first time.
+      if (!handle.closed) setImmediate(closeHandle, handle);
     }
     #onCloseForDestroy(closeCallback, err: Error | undefined, handle) {
       this.#closingHandle = undefined;

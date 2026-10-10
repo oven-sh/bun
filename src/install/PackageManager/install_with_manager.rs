@@ -1873,7 +1873,12 @@ fn root_package_json_source(
         root_package_json_path.as_bytes(),
         Default::default(),
     ) {
-        WorkspacePackageJsonCacheResult::Entry(entry) => return Ok(entry.source.clone()),
+        WorkspacePackageJsonCacheResult::Entry(entry) => {
+            if entry.source.contents.is_empty() {
+                exit_on_empty_package_json(root_package_json_path.as_bytes());
+            }
+            return Ok(entry.source.clone());
+        }
         WorkspacePackageJsonCacheResult::ReadErr(err) => ("read", err),
         WorkspacePackageJsonCacheResult::ParseErr(err) => ("parse", err),
     };
@@ -1888,6 +1893,16 @@ fn root_package_json_source(
         (verb, bstr::BStr::new(root_package_json_path.as_bytes())),
     );
     Global::exit(1);
+}
+
+/// An empty file parses as `{}`, and installing from `{}` deletes the lockfile.
+pub(crate) fn exit_on_empty_package_json(path: &[u8]) -> ! {
+    Output::err_generic(
+        "failed to parse '{}': file is empty",
+        (bstr::BStr::new(path),),
+    );
+    bun_core::note!("Restore package.json, or write {{}} to it to start without dependencies");
+    Global::exit(1)
 }
 
 #[cold]

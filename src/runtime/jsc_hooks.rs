@@ -2325,7 +2325,7 @@ fn transpile_source_code_inner(
             };
             let mut cache = bun_ast::RuntimeTranspilerCache {
                 r#impl: Some(bun_ast::TranspilerCacheImplKind::Jsc),
-                esm_record: bun_ast::EsmRecordUse::for_reader(
+                esm_record_use: bun_ast::EsmRecordUse::for_reader(
                     use_isolation_source_provider_cache,
                     macro_mode,
                 ),

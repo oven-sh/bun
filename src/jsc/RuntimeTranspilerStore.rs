@@ -714,9 +714,8 @@ impl TranspilerJob {
         let use_isolation_source_provider_cache = unsafe { (*vm).test_isolation_enabled }
             && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE::get()
                 .unwrap_or(false);
-        // The copy has the macro target if it was made while the JS thread
-        // evaluates a macro.
-        cache.esm_record = bun_ast::EsmRecordUse::for_reader(
+        // The copy has the macro target if the JS thread was in a macro when it was made.
+        cache.esm_record_use = bun_ast::EsmRecordUse::for_reader(
             use_isolation_source_provider_cache,
             transpiler.options.target == bun_ast::Target::BunMacro,
         );

@@ -90,6 +90,14 @@ fn is_built_in(
     prefix == b"@" || answers && Plugin::answers_in_place_of(prefix, package)
 }
 
+/// What a plugin is called: what it says, with its version; else the package that it was exported from, if it was found in a module.
+/// `name`, `located`: what `plugins` and `$jsPlugins` of the object have for it. eslint-plugin-import, eslint-plugin-react and
+/// eslint-plugin-import-lite, which `@antfu/eslint-config` has as `import`, all say nothing.
+fn called<'j>(name: &'j Json, located: Option<&'j Json>) -> Option<&'j [u8]> {
+    let module = || located?.get(b"module")?.as_str();
+    name.as_str().or_else(|| module().map(package_of))
+}
+
 /// Adds the names of the plugins in `json`, which is what a configuration file exports or a part of it, that are not
 /// [built in](is_built_in). An object can have the rules of a plugin that an object after it has.
 fn add_foreign_prefixes(registry: &Registry, json: &Json, depth: usize, into: &mut Vec<Box<[u8]>>) {
@@ -102,8 +110,8 @@ fn add_foreign_prefixes(registry: &Registry, json: &Json, depth: usize, into: &m
     let plugins = json.get(b"plugins").and_then(Json::as_object);
     let located = json.get(b"$jsPlugins");
     for (prefix, name) in plugins.unwrap_or_default() {
-        let can_be_loaded = located.is_some_and(|it| it.get(prefix).is_some());
-        if !is_built_in(registry, prefix, name.as_str(), can_be_loaded)
+        let located = located.and_then(|it| it.get(prefix));
+        if !is_built_in(registry, prefix, called(name, located), located.is_some())
             && !into.iter().any(|it| **it == prefix[..])
         {
             into.push(prefix[..].into());
@@ -504,10 +512,10 @@ impl Reader<'_> {
             .and_then(Json::as_object)
             .unwrap_or_default()
         {
-            let located = json.get(b"$jsPlugins");
-            let can_be_loaded = located.is_some_and(|it| it.get(prefix).is_some())
-                || self.js_locations.iter().any(|it| *it.0 == prefix[..]);
-            match is_built_in(self.registry, prefix, name.as_str(), can_be_loaded) {
+            let located = json.get(b"$jsPlugins").and_then(|it| it.get(prefix));
+            let can_be_loaded =
+                located.is_some() || self.js_locations.iter().any(|it| *it.0 == prefix[..]);
+            match is_built_in(self.registry, prefix, called(name, located), can_be_loaded) {
                 true => {
                     object.plugins.push(prefix[..].into());
                     if let Some(name) = name.as_str() {

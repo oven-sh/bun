@@ -1739,6 +1739,8 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// JS-side cached stream when present, then resync this owner's
     /// `body`/`stream` cache slots with whatever the body now holds.
     fn clone_body_value_via_cached_stream(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<Value> {
+        // Every copy that keeps this owner readable passes here.
+        self.throw_if_body_unusable(cx.global())?;
         let cloned = 'brk: {
             if let Some(js_ref) = self.js_ref() {
                 if let Some(stream) = Self::stream_get_cached(js_ref) {
@@ -1757,6 +1759,90 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         }
         self.check_body_stream_ref(cx.global());
         Ok(cloned)
+    }
+
+    /// Fetch Request ctor step 45: throw if unusable, else move the body out and leave
+    /// this owner `Used`. A stream JS may hold is proxied (45.2) and stays its locked `.body`.
+    fn transfer_body_value(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<Value> {
+        let global_this = cx.global();
+        if matches!(self.get_body_value(), Value::Null) {
+            return Ok(Value::Null);
+        }
+        // Node's text: the constructor is the only caller.
+        if self.body_is_unusable(global_this) {
+            return Err(global_this
+                .err(
+                    jsc::ErrorCode::BODY_ALREADY_USED,
+                    format_args!(
+                        "Cannot construct a Request with a Request object that has already been used."
+                    ),
+                )
+                .throw());
+        }
+        // A Bun.serve body shares its slot with the RequestContext (= `task`):
+        // hand out a detached PendingValue instead of moving the Locked out.
+        if matches!(self.get_body_value(), Value::Locked(l) if l.task.is_some()) {
+            let seen = self.get_body_readable_stream();
+            let readable = match seen {
+                Some(rs) => rs.proxy(global_this)?,
+                None => {
+                    let v = self.get_body_value().to_readable_stream(cx)?;
+                    ReadableStream::from_js_direct(v)
+                }
+            };
+            *self.get_body_value() = Value::Used;
+            self.set_body_cache_after_transfer(global_this, seen);
+            return Ok(match readable {
+                Some(rs) => Value::Locked(PendingValue {
+                    readable: webcore::readable_stream::Strong::init(rs, global_this),
+                    ..PendingValue::new(global_this)
+                }),
+                None => Value::Null,
+            });
+        }
+        // JS is the source of truth for the stream (see `get_body_readable_stream`).
+        let cached_stream = self
+            .js_ref()
+            .and_then(Self::stream_get_cached)
+            .and_then(ReadableStream::from_js_direct);
+        let seen = match self.get_body_value() {
+            Value::Locked(locked) => cached_stream.or_else(|| locked.readable.get()),
+            _ => None,
+        };
+        // As in `clone()`: an unread native blob, file, or buffered byte stream
+        // goes back to being a Blob, so the copy keeps the store's type and length.
+        if let Value::Locked(locked) = self.get_body_value() {
+            if let Some(blob) = locked.take_blob_from_unread_stream(global_this, cached_stream) {
+                *self.get_body_value() = Value::from(blob);
+            }
+        }
+        // Proxy (step 45.2) before the move so a failure leaves the input untouched.
+        let proxied = match (self.get_body_value(), seen) {
+            (Value::Locked(_), Some(rs)) => rs.proxy(global_this)?.or(Some(rs)),
+            _ => None,
+        };
+        let mut body = core::mem::replace(self.get_body_value(), Value::Used);
+        if let (Value::Locked(locked), Some(rs)) = (&mut body, proxied) {
+            locked.readable = webcore::readable_stream::Strong::init(rs, global_this);
+        }
+        self.set_body_cache_after_transfer(global_this, seen);
+        Ok(body)
+    }
+
+    /// `.body` stays the stream script could reach (`seen`, now locked).
+    fn set_body_cache_after_transfer(
+        &self,
+        global_this: &JSGlobalObject,
+        seen: Option<ReadableStream>,
+    ) {
+        if let Some(js_ref) = self.js_ref() {
+            Self::stream_set_cached(js_ref, global_this, JSValue::ZERO);
+            Self::body_set_cached(
+                js_ref,
+                global_this,
+                seen.map_or(JSValue::ZERO, |stream| stream.value),
+            );
+        }
     }
 
     fn get_text(&self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
@@ -1884,13 +1970,16 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         JSValue::from(self.body_stream_check(global_object, ReadableStream::is_disturbed))
     }
 
+    /// "This is unusable": the body is non-null and its stream is disturbed or
+    /// locked. <https://fetch.spec.whatwg.org/#body-unusable>
+    fn body_is_unusable(&self, global_object: &JSGlobalObject) -> bool {
+        self.body_stream_check(global_object, ReadableStream::is_disturbed_or_locked)
+    }
+
     /// Fetch spec step 1 of both `clone()` algorithms: throw a `TypeError`
-    /// when "this is unusable", i.e. the body is non-null and its stream is
-    /// disturbed or locked. <https://fetch.spec.whatwg.org/#body-unusable>
+    /// when "this is unusable".
     fn throw_if_body_unusable(&self, global_object: &JSGlobalObject) -> JsResult<()> {
-        let unusable =
-            self.body_stream_check(global_object, ReadableStream::is_disturbed_or_locked);
-        if unusable {
+        if self.body_is_unusable(global_object) {
             return Err(global_object
                 .err(
                     jsc::ErrorCode::BODY_ALREADY_USED,

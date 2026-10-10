@@ -118,6 +118,37 @@ describe("bundler", () => {
       api.expectFile("out.js").not.toInclude("import ");
     },
   });
+  // util.types was an empty function, so every predicate threw "is not a
+  // function". Node checks internal slots, not Symbol.toStringTag, so a spoofed
+  // tag, a bare prototype, and a bound async function are all rejected. The
+  // expected output is what Node.js prints for the same code.
+  itBundled("browser/NodeUtilTypes", {
+    files: {
+      "/entry.js": /* js */ `
+        import { types } from "node:util";
+        const tag = t => ({ [Symbol.toStringTag]: t });
+        console.log(typeof types, Object.keys(types).length > 40);
+        console.log(types.isDate(new Date()), types.isDate(tag("Date")), types.isDate(Date.prototype));
+        console.log(types.isRegExp(/x/), types.isRegExp(RegExp.prototype), types.isRegExp(tag("RegExp")));
+        console.log(types.isMap(new Map()), types.isSet(new Set()), types.isWeakMap(new WeakMap()), types.isMap(new Set()));
+        console.log(types.isPromise(Promise.resolve()), types.isPromise({ then() {} }));
+        console.log(types.isNativeError(new TypeError()), types.isNativeError(tag("Error")), types.isNativeError(Object.create(Error.prototype)));
+        const masked = Object.defineProperties(new Error(), { [Symbol.toStringTag]: { value: "X" }, message: { get() { throw 1; } } });
+        console.log(types.isNativeError(masked));
+        console.log(types.isAsyncFunction(async () => {}), types.isAsyncFunction(async function () {}.bind(null)), types.isGeneratorFunction(function* () {}));
+        console.log(types.isGeneratorObject((function* () {})()), types.isGeneratorObject([].values()));
+        console.log(types.isArgumentsObject((function () { return arguments; })()), types.isArgumentsObject(tag("Arguments")));
+        console.log(types.isNumberObject(Object(1)), types.isNumberObject(1), types.isBoxedPrimitive(Object("s")));
+        console.log(types.isUint8Array(new Uint8Array(1)), types.isUint8Array(new Int8Array(1)), types.isTypedArray(new DataView(new ArrayBuffer(1))));
+        console.log(types.isArrayBuffer(new ArrayBuffer(1)), types.isDataView(new DataView(new ArrayBuffer(1))), types.isArrayBufferView(new Uint8Array(1)));
+      `,
+    },
+    target: "browser",
+    run: {
+      stdout:
+        "object true\ntrue false false\ntrue false false\ntrue true true false\ntrue false\ntrue false false\ntrue\ntrue false true\ntrue false\ntrue false\ntrue false true\ntrue false false\ntrue true true",
+    },
+  });
   // The polyfill is plain JS bundled into the user's output, so it cannot use
   // JSC builtin intrinsics ($newPromiseCapability and friends). Those are
   // only rewritten inside src/js; in a browser bundle they are bare globals.

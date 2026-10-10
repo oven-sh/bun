@@ -433,7 +433,184 @@ function reduceToSingleString(output, base, braces) {
   return braces[0] + base + " " + output.join(", ") + " " + braces[1];
 }
 
-export const types = /* @__PURE__ */ () => {};
+// util.types checks an object's internal slots, not its Symbol.toStringTag, so
+// `{ [Symbol.toStringTag]: "Date" }` is not a date. Each predicate below uses a
+// brand check: an intrinsic method or getter that throws, or returns a
+// sentinel, when its receiver lacks the slot. None of them call a
+// Symbol.toStringTag getter, mark a promise handled, or advance an iterator or
+// generator. A proxy's traps do run, as for any operation on a proxy.
+//
+// These predicates cannot be exact in plain JavaScript:
+// - isPromise: the only brand check for [[PromiseState]] is `then`, which
+//   marks the promise as handled and would hide a real unhandled rejection.
+//   It uses `instanceof`, so `Object.create(Promise.prototype)` passes.
+// - isMapIterator / isSetIterator: the only brand check is `next`, which
+//   advances the iterator. They compare the prototype instead.
+// - isAsyncFunction / isGeneratorFunction: they compare the prototype, so an
+//   ordinary function given the intrinsic prototype with Object.setPrototypeOf
+//   passes.
+// - isGeneratorObject: it checks the prototype chain, so an ordinary object
+//   that indirectly inherits a generator prototype passes.
+// - isModuleNamespaceObject: a frozen null-prototype object whose
+//   Symbol.toStringTag is "Module" looks the same as an empty namespace.
+// - isArgumentsObject: an arguments object whose Symbol.toStringTag is a
+//   getter reports false, since reading the tag would run the getter.
+// - isNativeError: it uses Error.isError where the browser has it. Without
+//   it, an error whose Symbol.toStringTag hides [[ErrorData]] reports false.
+// - isProxy: a proxy cannot be detected from JavaScript.
+// isExternal and isKeyObject are always false: neither kind of object exists
+// in a browser.
+export const types = /* @__PURE__ */ (() => {
+  const getProto = Object.getPrototypeOf;
+  const objectToString = Object.prototype.toString;
+  const fnToString = Function.prototype.toString;
+  const isObject = v => (typeof v === "object" && v !== null) || typeof v === "function";
+  const getter = (proto, key) => Object.getOwnPropertyDescriptor(proto, key).get;
+  // Calls `fn` with `v` as its receiver; true if it does not throw.
+  const brand = (fn, v, ...args) => {
+    try {
+      fn.call(v, ...args);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  // Bound functions and proxies report native source; real async and
+  // generator functions never do.
+  const isNativeSource = fn => {
+    try {
+      return /\{\s*\[native code\]\s*\}\s*$/.test(fnToString.call(fn));
+    } catch {
+      return true;
+    }
+  };
+
+  const AsyncFunctionPrototype = getProto(async function () {});
+  const GeneratorFunctionPrototype = getProto(function* () {});
+  const AsyncGeneratorFunctionPrototype = getProto(async function* () {});
+  // %GeneratorFunction.prototype.prototype% is %GeneratorPrototype% itself. Its own
+  // prototype is %IteratorPrototype%, which every built-in iterator shares.
+  const GeneratorPrototype = GeneratorFunctionPrototype.prototype;
+  const AsyncGeneratorPrototype = AsyncGeneratorFunctionPrototype.prototype;
+  const MapIteratorPrototype = getProto(new Map().entries());
+  const SetIteratorPrototype = getProto(new Set().entries());
+  // Returns the [[TypedArrayName]] of a typed array, and undefined otherwise.
+  const typedArrayName = getter(getProto(Uint8Array.prototype), Symbol.toStringTag);
+
+  const arrayBufferByteLength = getter(ArrayBuffer.prototype, "byteLength");
+  const sharedArrayBufferByteLength =
+    typeof SharedArrayBuffer === "function" ? getter(SharedArrayBuffer.prototype, "byteLength") : undefined;
+  const dataViewBuffer = getter(DataView.prototype, "buffer");
+  const regExpGlobal = getter(RegExp.prototype, "global");
+  const cryptoKeyType =
+    typeof CryptoKey === "function" ? Object.getOwnPropertyDescriptor(CryptoKey.prototype, "type")?.get : undefined;
+
+  const isTypedArrayOf = name => v => isObject(v) && typedArrayName.call(v) === name;
+  // Boxed primitives: valueOf throws unless the receiver has the matching slot.
+  const isBoxed = valueOf => v => typeof v === "object" && v !== null && brand(valueOf, v);
+
+  // Arguments and native errors are the only slots that Object.prototype.toString
+  // reports, and a Symbol.toStringTag hides them. With no tag, toString is an
+  // exact check that also works across realms.
+  // The Symbol.toStringTag the object exposes, found without calling a getter:
+  // undefined when there is no string data property, the string when there is
+  // one, and null for an accessor. Reading the tag through `v[...]` or
+  // Object.prototype.toString would run a getter, which Node.js never does.
+  const tagOf = v => {
+    try {
+      for (let o = v; o !== null; o = getProto(o)) {
+        const d = Object.getOwnPropertyDescriptor(o, Symbol.toStringTag);
+        if (d) return "value" in d ? (typeof d.value === "string" ? d.value : undefined) : null;
+      }
+      return undefined;
+    } catch {
+      return null;
+    }
+  };
+
+  const isNumberObject = isBoxed(Number.prototype.valueOf);
+  const isStringObject = isBoxed(String.prototype.valueOf);
+  const isBooleanObject = isBoxed(Boolean.prototype.valueOf);
+  const isBigIntObject = typeof BigInt === "function" ? isBoxed(BigInt.prototype.valueOf) : () => false;
+  const isSymbolObject = isBoxed(Symbol.prototype.valueOf);
+  const isArrayBuffer = v => isObject(v) && brand(arrayBufferByteLength, v);
+  const isSharedArrayBuffer = v =>
+    sharedArrayBufferByteLength !== undefined && isObject(v) && brand(sharedArrayBufferByteLength, v);
+
+  return {
+    isArgumentsObject: v => isObject(v) && tagOf(v) === undefined && objectToString.call(v) === "[object Arguments]",
+    isArrayBuffer,
+    isAsyncFunction: v =>
+      typeof v === "function" &&
+      (getProto(v) === AsyncFunctionPrototype || getProto(v) === AsyncGeneratorFunctionPrototype) &&
+      !isNativeSource(v),
+    isBigIntObject,
+    isBooleanObject,
+    isDataView: v => isObject(v) && brand(dataViewBuffer, v),
+    isDate: v => isObject(v) && brand(Date.prototype.getTime, v),
+    isExternal: () => false,
+    isGeneratorFunction: v =>
+      typeof v === "function" &&
+      (getProto(v) === GeneratorFunctionPrototype || getProto(v) === AsyncGeneratorFunctionPrototype) &&
+      !isNativeSource(v),
+    // A generator object's prototype is its function's `prototype`, which in
+    // turn inherits from %GeneratorPrototype%.
+    isGeneratorObject: v =>
+      isObject(v) &&
+      ((getProto(v) !== GeneratorPrototype && GeneratorPrototype.isPrototypeOf(v)) ||
+        (getProto(v) !== AsyncGeneratorPrototype && AsyncGeneratorPrototype.isPrototypeOf(v))),
+    isMap: v => isObject(v) && brand(Map.prototype.has, v, undefined),
+    isMapIterator: v => isObject(v) && getProto(v) === MapIteratorPrototype,
+    isModuleNamespaceObject: v => {
+      if (typeof v !== "object" || v === null || getProto(v) !== null || Object.isExtensible(v)) return false;
+      const tag = Object.getOwnPropertyDescriptor(v, Symbol.toStringTag);
+      return tag !== undefined && tag.value === "Module" && !tag.writable && !tag.configurable;
+    },
+    isNativeError:
+      typeof Error.isError === "function"
+        ? v => Error.isError(v)
+        : v => isObject(v) && tagOf(v) === undefined && objectToString.call(v) === "[object Error]",
+    isNumberObject,
+    isPromise: v => typeof Promise === "function" && v instanceof Promise,
+    isProxy: () => false,
+    // The `global` getter returns undefined for %RegExp.prototype% and throws for
+    // anything else without [[OriginalFlags]].
+    isRegExp: v => {
+      if (!isObject(v)) return false;
+      try {
+        return typeof regExpGlobal.call(v) === "boolean";
+      } catch {
+        return false;
+      }
+    },
+    isSet: v => isObject(v) && brand(Set.prototype.has, v, undefined),
+    isSetIterator: v => isObject(v) && getProto(v) === SetIteratorPrototype,
+    isSharedArrayBuffer,
+    isStringObject,
+    isSymbolObject,
+    isWeakMap: v => isObject(v) && brand(WeakMap.prototype.has, v, {}),
+    isWeakSet: v => isObject(v) && brand(WeakSet.prototype.has, v, {}),
+    isAnyArrayBuffer: v => isArrayBuffer(v) || isSharedArrayBuffer(v),
+    isBoxedPrimitive: v =>
+      isNumberObject(v) || isStringObject(v) || isBooleanObject(v) || isBigIntObject(v) || isSymbolObject(v),
+    isArrayBufferView: v => ArrayBuffer.isView(v),
+    isTypedArray: v => isObject(v) && typedArrayName.call(v) !== undefined,
+    isUint8Array: isTypedArrayOf("Uint8Array"),
+    isUint8ClampedArray: isTypedArrayOf("Uint8ClampedArray"),
+    isUint16Array: isTypedArrayOf("Uint16Array"),
+    isUint32Array: isTypedArrayOf("Uint32Array"),
+    isInt8Array: isTypedArrayOf("Int8Array"),
+    isInt16Array: isTypedArrayOf("Int16Array"),
+    isInt32Array: isTypedArrayOf("Int32Array"),
+    isFloat16Array: isTypedArrayOf("Float16Array"),
+    isFloat32Array: isTypedArrayOf("Float32Array"),
+    isFloat64Array: isTypedArrayOf("Float64Array"),
+    isBigInt64Array: isTypedArrayOf("BigInt64Array"),
+    isBigUint64Array: isTypedArrayOf("BigUint64Array"),
+    isKeyObject: () => false,
+    isCryptoKey: v => cryptoKeyType !== undefined && isObject(v) && brand(cryptoKeyType, v),
+  };
+})();
 
 export function isArray(ar) {
   return Array.isArray(ar);

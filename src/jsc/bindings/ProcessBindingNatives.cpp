@@ -115,6 +115,7 @@ static JSValue processBindingNativesReturnUndefined(VM& vm, JSObject* bindingObj
     internal/fs/cp-sync                         processBindingNativesGetter     PropertyCallback
     internal/fs/cp                              processBindingNativesGetter     PropertyCallback
     internal/fs/glob                            processBindingNativesGetter     PropertyCallback
+    internal/fs/minimatch                       processBindingNativesGetter     PropertyCallback
     internal/fs/streams                         processBindingNativesGetter     PropertyCallback
     internal/fs/watch                           processBindingNativesGetter     PropertyCallback
     internal/fs/watchfile                       processBindingNativesGetter     PropertyCallback

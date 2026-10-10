@@ -27,13 +27,7 @@
  * Modifications were made to the original code.
  */
 const { isTypedArray } = require("node:util/types");
-const {
-  hideFromStack,
-  hasObserver,
-  enqueueNodeEntry,
-  PerformanceNodeEntry,
-  ErrnoException,
-} = require("internal/shared");
+const { hideFromStack, hasObserver, enqueueNodeEntry, PerformanceNodeEntry } = require("internal/shared");
 const { STATUS_CODES, utcDate } = require("internal/http");
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const tls = require("node:tls");
@@ -2072,10 +2066,8 @@ enum StreamState {
   CorkedUntilId = 1 << 9, // 1000000000 = 512
   // The write in flight did not leave (queued, refused, or no id yet): _destroy settles it.
   UnsentWrite = 1 << 10, // 10000000000 = 1024
-  // The server completed its response and then sent RST_STREAM(NO_ERROR) (RFC 9113 section 8.1).
-  PeerStoppedUpload = 1 << 11, // 100000000000 = 2048
   // bunHTTP2StreamFinal holds the callback of a queued END_STREAM frame, for completeQueuedFinal.
-  FinalQueued = 1 << 12, // 1000000000000 = 4096
+  FinalQueued = 1 << 11, // 100000000000 = 2048
 }
 // native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
 // h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
@@ -2277,7 +2269,7 @@ function rstClosedPendingStreamNT(session: Http2Session, stream: Http2Stream, co
   if (typeof id !== "number") return;
   session[bunHTTP2Native]?.rstStream(id, code);
   completeQueuedFinal(stream);
-  // close(0) waits for a 'finish' that the dropped body never gives: _destroy fails the write.
+  // close(0) waits for a 'finish' that the dropped body never gives: _destroy settles the write.
   if (
     code === NGHTTP2_NO_ERROR &&
     !stream.destroyed &&
@@ -2286,34 +2278,9 @@ function rstClosedPendingStreamNT(session: Http2Session, stream: Http2Stream, co
     stream.destroy();
   }
 }
-// node fails the dropped write in the same turn as this RST_STREAM (Http2Stream::Destroy).
 function rstDestroyedStreamNT(session: Http2Session, stream: Http2Stream, id: number, rstCode: number) {
   session[bunHTTP2Native]?.rstStream(id, rstCode);
-  settleUnsentWrite(stream);
   completeQueuedFinal(stream);
-}
-let uvECANCELED: number | undefined;
-// Like node's onWriteComplete(UV_ECANCELED) in lib/internal/stream_base_commons.js.
-function settleUnsentWrite(stream: Http2Stream) {
-  const status = stream[bunHTTP2StreamStatus];
-  if ((status & StreamState.UnsentWrite) === 0) return;
-  stream[bunHTTP2StreamStatus] = status & ~StreamState.UnsentWrite;
-  const state = stream._writableState;
-  if ((status & StreamState.PeerStoppedUpload) !== 0) {
-    // No error, as RFC 9113 8.1 asks: grpc-js turns a write error into UNAVAILABLE.
-    state.onwrite();
-    return;
-  }
-  uvECANCELED ??= $newRustFunction("node_util_binding.rs", "ecanceledErrorCode", 0)() as number;
-  state.onwrite(new ErrnoException(uvECANCELED, "write"));
-}
-// node still holds this write in the buffer of the corked request: the error of errorBuffer.
-function failUnsentWriteOfCorkedRequest(stream: Http2Stream) {
-  const status = stream[bunHTTP2StreamStatus];
-  if ((status & StreamState.UnsentWrite) === 0) return;
-  stream[bunHTTP2StreamStatus] = status & ~StreamState.UnsentWrite;
-  const state = stream._writableState;
-  state.onwrite(state.errored ?? $ERR_STREAM_DESTROYED("write"));
 }
 // native.writeStream() queued the chunk, or refused it (`false`: the stream cannot send).
 function writeNotFlushed(stream: Http2Stream, status: number | false, callback: () => void) {
@@ -2346,8 +2313,12 @@ function completeQueuedFinal(stream: Http2Stream) {
 function streamWriteDone(_session: Http2Session, stream: Http2Stream, writers: number) {
   if (typeof stream !== "object") return;
   if (writers & StreamWriter.Stream) {
-    stream[bunHTTP2StreamStatus] &= ~StreamState.UnsentWrite;
-    stream._writableState.onwrite();
+    const status = stream[bunHTTP2StreamStatus];
+    // _destroy settles the write itself when the stream is destroyed before this report.
+    if ((status & StreamState.UnsentWrite) !== 0) {
+      stream[bunHTTP2StreamStatus] = status & ~StreamState.UnsentWrite;
+      stream._writableState.onwrite();
+    }
   }
   if (writers & StreamWriter.FileSink) stream[kFileResponseSink]._writableState.onwrite();
   if (writers & StreamWriter.Final) completeQueuedFinal(stream);
@@ -2407,7 +2378,6 @@ interface Http2StreamReadableState {
 interface Http2StreamWritableState {
   ending: boolean;
   destroyed: boolean;
-  errored: Error | null;
   onwrite(error?: Error | null): void;
 }
 type DuplexStream = import("node:stream").Duplex;
@@ -2795,13 +2765,6 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       (rstCode !== 0 || (this[bunHTTP2StreamStatus] & StreamState.NativeClosed) === 0)
     ) {
       setImmediate(rstDestroyedStreamNT, session, this, this.#id, rstCode);
-    } else if ((this[bunHTTP2StreamStatus] & StreamState.UnsentWrite) !== 0) {
-      // No RST_STREAM is due, but the write in flight did not leave.
-      if ((this[bunHTTP2StreamStatus] & StreamState.CorkedUntilId) !== 0) {
-        process.nextTick(failUnsentWriteOfCorkedRequest, this);
-      } else {
-        setImmediate(settleUnsentWrite, this);
-      }
     }
 
     // Diagnostics channels: published after the stream is closed and destroyed, with the same error
@@ -2812,6 +2775,12 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
       } else if (onServerStreamErrorChannel.hasSubscribers) {
         onServerStreamErrorChannel.publish({ stream: this, error: err });
       }
+    }
+    const status = this[bunHTTP2StreamStatus];
+    // https://github.com/nodejs/node/blob/v26.11.1/lib/internal/http2/core.js#L2573-L2580
+    if ((status & (StreamState.UnsentWrite | StreamState.CorkedUntilId)) === StreamState.UnsentWrite) {
+      this[bunHTTP2StreamStatus] = status & ~StreamState.UnsentWrite;
+      this._writableState.onwrite(err);
     }
     callback(err);
   }
@@ -5226,17 +5195,12 @@ class ClientHttp2Session extends Http2Session {
       self.#connections--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
     }),
-    streamError: withStreamFrame(
-      (self: ClientHttp2Session, stream: ClientHttp2Stream, error: number, stateAtReset?: number) => {
-        if (!self || typeof stream !== "object") return;
-        // 6 is half-closed (remote): the response was complete when the peer's RST_STREAM came.
-        if (error === NGHTTP2_NO_ERROR && stateAtReset === 6) {
-          stream[bunHTTP2StreamStatus] |= StreamState.PeerStoppedUpload;
-        }
-        self.#connections--;
-        process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
-      },
-    ),
+    streamError: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, error: number) => {
+      if (!self || typeof stream !== "object") return;
+
+      self.#connections--;
+      process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
+    }),
     streamEnd: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, state: number) => {
       if (!self || typeof stream !== "object") return;
       if (state === 7 && stream[kSendingTrailers]) {

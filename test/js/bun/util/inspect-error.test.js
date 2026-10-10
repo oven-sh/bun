@@ -510,3 +510,29 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
     expect(exitCode).toBe(1);
   });
 });
+
+// The position of `xyz is not defined` is the end of the identifier, which is
+// the end of the text here. `Malloc=1` lets ASAN see a read past the source.
+describe("source excerpt for an error at the end of the source text", () => {
+  test.concurrent.each([
+    ["8-bit", "xyz"],
+    ["16-bit", "中文"],
+  ])("%s source", async (_, source) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `(0, eval)(${JSON.stringify(source)});`],
+      env: { ...bunEnv, NO_COLOR: "1", Malloc: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, excerpt: stderr.split("\n").slice(0, 3) }).toEqual({
+      stdout: "",
+      excerpt: [
+        `1 | ${source}`,
+        Buffer.alloc(4 + source.length, " ").toString() + "^",
+        `ReferenceError: ${source} is not defined`,
+      ],
+    });
+    expect(exitCode).toBe(1);
+  });
+});

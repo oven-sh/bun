@@ -1360,6 +1360,38 @@ error: Hello World`,
       },
     },
   });
+  // The non-ASCII comment makes JSC hold the module as a 16-bit string, and the
+  // argument list below `new` makes the position fix-up read that string.
+  itBundled("compile/NoSourceMapNonAsciiSource", {
+    target: "bun",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        /*! © café 中 */
+        function code() {
+          throw new (class Boom extends Error {
+            constructor(message: string) {
+              super(message);
+            }
+          })("boom");
+        }
+        code();
+      `,
+    },
+    run: {
+      exitCode: 1,
+      validate({ stderr }) {
+        expect(stderr).toInclude("| /*! © café 中 */\n");
+        expect(stderr).toInclude(
+          `5 |   throw new class Boom extends Error {
+            ^
+error: boom
+`,
+        );
+        expect(stderr).toMatch(/at code \(.*:5:9\)\n/);
+      },
+    },
+  });
   itBundled("compile/SourceMapBigFile", {
     target: "bun",
     compile: true,

@@ -345,6 +345,360 @@ describe("web worker", () => {
     });
   });
 
+  describe("self.close()", () => {
+    function workerFromSource(src: string) {
+      return new Worker("data:text/javascript," + encodeURIComponent(src));
+    }
+
+    // Rejects when the worker reports an error, so a failing run does not wait for the timeout.
+    function errored(worker: Worker): Promise<never> {
+      return new Promise((_, reject) => (worker.onerror = e => reject(new Error(e.message))));
+    }
+
+    async function firstMessage(worker: Worker): Promise<any> {
+      const [event] = await Promise.race([once(worker, "message"), errored(worker)]);
+      return event.data;
+    }
+
+    // Resolves with every message the worker posts, in order, once its "close" event fires.
+    async function messagesUntilClose(worker: Worker): Promise<{ messages: any[]; code: number }> {
+      const messages: any[] = [];
+      worker.addEventListener("message", e => messages.push(e.data));
+      const [close] = await Promise.race([once(worker, "close"), errored(worker)]);
+      return { messages, code: close.code };
+    }
+
+    test("is a function on the worker global", async () => {
+      const worker = workerFromSource(
+        `postMessage({ hasClose: "close" in self, type: typeof self.close, sameAsGlobal: self.close === globalThis.close });`,
+      );
+      const data = await firstMessage(worker);
+      worker.terminate();
+      expect(data).toEqual({ hasClose: true, type: "function", sameAsGlobal: true });
+    });
+
+    test("the calling script finishes its task, queued work is discarded, and the close code is 0", async () => {
+      const { messages, code } = await messagesUntilClose(
+        workerFromSource(`
+          const seen = [];
+          const ac = new AbortController();
+          ac.signal.addEventListener("abort", () => seen.push("abort"));
+          setTimeout(() => postMessage("timer"), 0);
+          setImmediate(() => postMessage("immediate"));
+          queueMicrotask(() => {
+            seen.push("microtask");
+            postMessage(seen);
+          });
+          self.close();
+          ac.abort();
+          seen.push("sync");
+          postMessage("after close");
+        `),
+      );
+      expect(messages).toEqual(["after close", ["abort", "sync", "microtask"]]);
+      expect(code).toBe(0);
+    });
+
+    test("runs the process 'exit' handlers of the worker", async () => {
+      const { messages, code } = await messagesUntilClose(
+        workerFromSource(`
+          process.on("exit", code => postMessage("exit:" + code));
+          self.close();
+        `),
+      );
+      expect(messages).toEqual(["exit:0"]);
+      expect(code).toBe(0);
+    });
+
+    test("from a timer callback, a later timer does not fire", async () => {
+      const { messages, code } = await messagesUntilClose(
+        workerFromSource(`
+          setTimeout(() => { postMessage("first"); self.close(); }, 0);
+          setTimeout(() => postMessage("second"), 0);
+        `),
+      );
+      expect(messages).toEqual(["first"]);
+      expect(code).toBe(0);
+    });
+
+    test("during a pending top-level await with a live handle, the worker exits with code 0", async () => {
+      const { messages, code } = await messagesUntilClose(
+        workerFromSource(`
+          setInterval(() => postMessage("tick"), 1e6);
+          self.close();
+          postMessage("closing");
+          await new Promise(() => {});
+        `),
+      );
+      expect(messages).toEqual(["closing"]);
+      expect(code).toBe(0);
+    });
+
+    test("terminate() still interrupts a script that keeps running after close()", async () => {
+      const worker = workerFromSource(`self.close(); postMessage("closing"); while (true) {}`);
+      expect(await firstMessage(worker)).toBe("closing");
+      worker.terminate();
+      // The worker never reached the checkpoint that consumes close(): the parent stopped it, code 0.
+      const [close] = await once(worker, "close");
+      expect(close.code).toBe(0);
+    });
+
+    // The worker chose to exit: the entry's unsettled top-level await is not the exit code 13.
+    for (const exit of ["self.close()", "process.exit(0)"]) {
+      test(`${exit} from a 'beforeExit' listener with the entry still pending gives close code 0, not 13`, async () => {
+        const { messages, code } = await messagesUntilClose(
+          workerFromSource(`
+            process.on("exit", code => postMessage("exit:" + code));
+            process.on("beforeExit", () => ${exit});
+            await new Promise(() => {});
+          `),
+        );
+        expect(messages).toEqual(["exit:0"]);
+        expect(code).toBe(0);
+      });
+    }
+
+    // The two tests below run in a child process: the test runner takes a worker's uncaught
+    // errors itself, so its process listeners do not run and its exit code stays 0.
+    const childProcessPrelude = `
+      const run = (src, post) =>
+        new Promise(resolve => {
+          const events = [];
+          const worker = new Worker("data:text/javascript," + encodeURIComponent(src));
+          worker.addEventListener("message", e => events.push(e.data));
+          // The message is the formatted error: a code frame, an "error: <message>" line, the stack.
+          worker.onerror = e => {
+            e.preventDefault();
+            events.push(e.message.split("\\n").find(line => line.startsWith("error: ")) ?? e.message);
+          };
+          worker.addEventListener("close", e => resolve({ events, code: e.code }));
+          for (const message of Array.isArray(post) ? post : post ? ["go"] : []) worker.postMessage(message);
+        });
+    `;
+    async function runInChildProcess(script: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", childProcessPrelude + script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      return { result: JSON.parse(stdout), exitCode };
+    }
+
+    test("what the closing task leaves uncaught is reported before the 'exit' listeners run", async () => {
+      const { result, exitCode } = await runInChildProcess(`
+        const onExit = 'process.on("exit", code => postMessage("exit:" + code));';
+        console.log(
+          JSON.stringify({
+            entryThrows: await run(onExit + 'self.close(); throw new Error("boom");'),
+            handlerRejects: await run('self.onmessage = async () => { self.close(); throw new Error("boom"); };', true),
+            exitListenerSetsCode: await run(
+              'process.on("exit", () => { process.exitCode = 5; }); self.close(); throw new Error("boom");',
+            ),
+          }),
+        );
+      `);
+      expect(result).toEqual({
+        entryThrows: { events: ["error: boom", "exit:1"], code: 1 },
+        handlerRejects: { events: ["error: boom"], code: 1 },
+        // As without close(): the code an 'exit' listener sets is the close code.
+        exitListenerSetsCode: { events: ["error: boom"], code: 5 },
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    // No checkpoint follows an 'unhandledRejection' listener, so the worker loop carries its close() out.
+    test("from an 'unhandledRejection' listener, no later task runs", async () => {
+      const { result, exitCode } = await runInChildProcess(`
+        console.log(
+          JSON.stringify(
+            await run(\`
+              process.on("unhandledRejection", () => {
+                postMessage("rejection");
+                setImmediate(() => postMessage("an immediate ran after close()"));
+                self.close();
+                queueMicrotask(() => postMessage("microtask of the listener"));
+              });
+              self.onmessage = () => {};
+              Promise.reject(new Error("boom"));
+            \`),
+          ),
+        );
+      `);
+      expect(result).toEqual({ events: ["rejection", "microtask of the listener"], code: 0 });
+      expect(exitCode).toBe(0);
+    });
+
+    // The test runner takes a worker's uncaught errors itself, so this runs in a child process.
+    test("from an 'uncaughtException' listener after a rejected top-level await, no later task runs", async () => {
+      const { result, exitCode } = await runInChildProcess(`
+        console.log(
+          JSON.stringify(
+            await run(\`
+              process.on("uncaughtException", () => {
+                postMessage("caught");
+                self.close();
+              });
+              self.onmessage = e => postMessage("message:" + e.data);
+              await Promise.reject(new Error("boom"));
+            \`, true),
+          ),
+        );
+      `);
+      expect(result).toEqual({ events: ["caught"], code: 0 });
+      expect(exitCode).toBe(0);
+    });
+
+    // The checkpoint that ends the handler reports the error; the close still follows it.
+    test("from a message handler whose microtask throws into an 'uncaughtException' listener, the rest of the batch is dropped", async () => {
+      const { result, exitCode } = await runInChildProcess(`
+        console.log(
+          JSON.stringify(
+            await run(\`
+              process.on("uncaughtException", () => postMessage("handled"));
+              self.onmessage = e => {
+                postMessage(e.data);
+                if (e.data === 0) {
+                  self.close();
+                  queueMicrotask(() => { throw new Error("x"); });
+                }
+              };
+            \`, [0, 1, 2, 3, 4]),
+          ),
+        );
+      `);
+      expect(result).toEqual({ events: [0, "handled"], code: 0 });
+      expect(exitCode).toBe(0);
+    });
+
+    test("a checkpoint beneath the calling script does not end its task", async () => {
+      const { messages, code } = await messagesUntilClose(
+        workerFromSource(`
+          queueMicrotask(() => postMessage("microtask"));
+          self.close();
+          require("bun:jsc").drainMicrotasks();
+          postMessage("after the nested checkpoint");
+        `),
+      );
+      expect(messages).toEqual(["microtask", "after the nested checkpoint"]);
+      expect(code).toBe(0);
+    });
+
+    test("a synchronous wait beneath the calling script does not end its task", async () => {
+      const { messages, code } = await messagesUntilClose(
+        workerFromSource(`
+          self.close();
+          const rewriter = new HTMLRewriter().on("p", {
+            async element(el) {
+              await null;
+              el.setInnerContent("rewritten");
+            },
+          });
+          postMessage(rewriter.transform("<p>original</p>"));
+        `),
+      );
+      expect(messages).toEqual(["<p>rewritten</p>"]);
+      expect(code).toBe(0);
+    });
+
+    for (const kind of ["Web", "node:worker_threads"] as const) {
+      test(`closing a ${kind} MessagePort from its own handler after close() does not cut the handler`, async () => {
+        const channel =
+          kind === "Web" ? "new MessageChannel()" : `new (require("node:worker_threads").MessageChannel)()`;
+        const listen = kind === "Web" ? "port1.onmessage = e => handle(e.data)" : `port1.on("message", handle)`;
+        const { messages, code } = await messagesUntilClose(
+          workerFromSource(`
+            const { port1, port2 } = ${channel};
+            const handle = n => {
+              postMessage("message " + n);
+              if (n === 0) {
+                self.close();
+                port1.close();
+                postMessage("after port1.close()");
+              }
+            };
+            ${listen};
+            for (let i = 0; i < 3; i++) port2.postMessage(i);
+          `),
+        );
+        // port.close() inside a dispatch first delivers what that port had queued. Then the handler runs on.
+        expect(messages).toEqual(["message 0", "message 1", "message 2", "after port1.close()"]);
+        expect(code).toBe(0);
+      });
+    }
+
+    for (const when of ["synchronously", "from a microtask"] as const) {
+      test(`from a message handler ${when}, the rest of the batch is dropped`, async () => {
+        const call = when === "synchronously" ? "self.close()" : "queueMicrotask(() => self.close())";
+        const worker = workerFromSource(`self.onmessage = e => { postMessage(e.data); if (e.data === 0) ${call}; };`);
+        const failed = errored(worker);
+        await Promise.race([once(worker, "open"), failed]);
+        for (let i = 0; i < 5; i++) worker.postMessage(i);
+        const { messages, code } = await messagesUntilClose(worker);
+        expect(messages).toEqual([0]);
+        expect(code).toBe(0);
+      });
+    }
+
+    test("from a MessagePort handler, the rest of that port's batch is dropped", async () => {
+      const worker = workerFromSource(`
+        const { port1, port2 } = new MessageChannel();
+        port1.onmessage = e => { postMessage(e.data); if (e.data === 0) self.close(); };
+        self.onmessage = () => { for (let i = 0; i < 5; i++) port2.postMessage(i); };
+      `);
+      const failed = errored(worker);
+      await Promise.race([once(worker, "open"), failed]);
+      worker.postMessage("go");
+      const { messages, code } = await messagesUntilClose(worker);
+      expect(messages).toEqual([0]);
+      expect(code).toBe(0);
+    });
+
+    // Several datagrams read in one poll reach the handler one after another inside one
+    // native callback, with no task boundary between them.
+    test("from a datagram handler, the rest of the read batch is dropped", async () => {
+      const worker = workerFromSource(`
+        const sock = await Bun.udpSocket({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            data(_socket, buf) {
+              const text = buf.toString();
+              postMessage(text);
+              if (text === "0") self.close();
+            },
+          },
+        });
+        postMessage({ port: sock.port });
+      `);
+      const messages: any[] = [];
+      worker.addEventListener("message", e => messages.push(e.data));
+      const failed = errored(worker);
+      const { promise: ready, resolve } = Promise.withResolvers<number>();
+      worker.addEventListener("message", e => e.data?.port && resolve(e.data.port));
+      const port = await Promise.race([ready, failed]);
+      using sender = await Bun.udpSocket({ hostname: "127.0.0.1", port: 0 });
+      for (let i = 0; i < 5; i++) sender.send(String(i), port, "127.0.0.1");
+      const [close] = await Promise.race([once(worker, "close"), failed]);
+      expect(messages).toEqual([{ port }, "0"]);
+      expect(close.code).toBe(0);
+    });
+
+    test("is not defined on the main-thread global", () => {
+      expect("close" in globalThis).toBe(false);
+    });
+
+    test("is not defined in a node:worker_threads worker", async () => {
+      const worker = new wt.Worker(`require("worker_threads").parentPort.postMessage("close" in globalThis)`, {
+        eval: true,
+      });
+      const [hasClose] = await once(worker, "message");
+      await worker.terminate();
+      expect(hasClose).toBe(false);
+    });
+  });
+
   describe("worker event", () => {
     test("is fired with the right object", () => {
       const { promise, resolve } = Promise.withResolvers();

@@ -1074,7 +1074,7 @@ describe.each([
   });
 
   it("fetch rejects", async () => {
-    expect(fetch("https://127.0.0.1:1/", { tls: makeTls() as any })).rejects.toThrow(message);
+    await expect(fetch("https://127.0.0.1:1/", { tls: makeTls() as any })).rejects.toThrow(message);
   });
 });
 

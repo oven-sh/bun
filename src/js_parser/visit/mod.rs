@@ -971,6 +971,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
         // Introduce a fake block scope for function declarations inside if statements
         if has_if_scope {
+            self.mark_sloppy_only_syntax();
             self.push_scope_for_visit_pass(ScopeKind::Block, stmt.loc)
                 .expect("unreachable");
         }

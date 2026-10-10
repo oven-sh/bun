@@ -2092,6 +2092,7 @@ impl<'a> Parser<'a> {
                     }
                     // Otherwise, if they use CommonJS features its CommonJS.
                     // If you add a 'use strict'; at the top, you probably meant CommonJS because "use strict"; does nothing in ESM.
+                    // Syntax that strict code rejects cannot be in an ES module.
                     else if p.symbols.as_slice()[p.require_ref.inner_index() as usize]
                         .use_count_estimate
                         > 0
@@ -2101,6 +2102,7 @@ impl<'a> Parser<'a> {
                             // SAFETY: `module_scope` is non-null after `prepare_for_visit_pass`.
                             && p.module_scope().strict_mode
                                 == bun_ast::StrictModeKind::ExplicitStrictMode)
+                        || p.has_sloppy_only_syntax
                     {
                         exports_kind = js_ast::ExportsKind::Cjs;
                     } else {

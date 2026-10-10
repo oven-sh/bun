@@ -681,6 +681,24 @@ impl CssColor {
         fallbacks
     }
 
+    /// The features that this color uses.
+    pub(crate) fn get_features(&self) -> targets::Features {
+        use targets::Features;
+        match self {
+            CssColor::Lab(lab) => match **lab {
+                LABColor::Lab(_) | LABColor::Lch(_) => Features::LAB_COLORS,
+                LABColor::Oklab(_) | LABColor::Oklch(_) => Features::OKLAB_COLORS,
+            },
+            CssColor::Predefined(predefined) => match **predefined {
+                PredefinedColor::DisplayP3(_) => Features::COLOR_FUNCTION | Features::P3_COLORS,
+                _ => Features::COLOR_FUNCTION,
+            },
+            CssColor::Float(_) => Features::SPACE_SEPARATED_COLOR_NOTATION,
+            CssColor::LightDark { light, dark } => light.get_features() | dark.get_features(),
+            CssColor::CurrentColor | CssColor::Rgba(_) | CssColor::System(_) => Features::empty(),
+        }
+    }
+
     #[inline]
     pub(crate) fn deep_clone(&self, _arena: &Arena) -> CssColor {
         self.clone()

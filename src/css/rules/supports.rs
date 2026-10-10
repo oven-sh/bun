@@ -53,6 +53,25 @@ impl Declaration {
 }
 
 impl Declaration {
+    /// The features that a browser supports if it accepts this declaration.
+    fn supported_features(&self, arena: &bun_alloc::Arena) -> css::Features {
+        // Every browser with custom properties accepts any value for one.
+        if matches!(
+            self.property_id,
+            PropertyId::Custom(css::css_properties::custom::CustomPropertyName::Custom(_))
+        ) {
+            return css::Features::empty();
+        }
+        css::parse_utility::parse_string(arena, self.value, |parser| {
+            css::TokenList::parse(parser, &css::ParserOptions::default(None), 0)
+        })
+        .ok()
+        .and_then(|tokens| tokens.get_features())
+        .unwrap_or_default()
+    }
+}
+
+impl Declaration {
     fn eql(&self, other: &Self) -> bool {
         // `PropertyId` carries its own tag+prefix `PartialEq` (see
         // properties_generated.rs `impl PartialEq for PropertyId`); `value` is
@@ -116,6 +135,42 @@ impl SupportsCondition {
 }
 
 impl SupportsCondition {
+    /// The features the condition tests for. The rules in the block need no fallbacks for them.
+    pub(crate) fn get_supported_features(&self, arena: &bun_alloc::Arena) -> css::Features {
+        self.supported_features(arena).unwrap_or_default()
+    }
+
+    /// `None` if the condition contains `not` or `or`. Nothing is inferred then.
+    fn supported_features(&self, arena: &bun_alloc::Arena) -> Option<css::Features> {
+        match self {
+            SupportsCondition::And(conditions) => {
+                let mut features = css::Features::empty();
+                for condition in conditions {
+                    features |= condition.supported_features(arena)?;
+                }
+                Some(features)
+            }
+            SupportsCondition::Declaration(declaration) => {
+                Some(declaration.supported_features(arena))
+            }
+            // `parse_in_parens` keeps a `(property: value)` group as the raw text of an `Unknown`.
+            SupportsCondition::Unknown(group) => {
+                let declaration = css::parse_utility::parse_string(arena, group, |parser| {
+                    parser.expect_parenthesis_block()?;
+                    parser.parse_nested_block(SupportsCondition::parse_declaration)
+                });
+                Some(match declaration {
+                    Ok(SupportsCondition::Declaration(declaration)) => {
+                        declaration.supported_features(arena)
+                    }
+                    _ => css::Features::empty(),
+                })
+            }
+            SupportsCondition::Not(_) | SupportsCondition::Or(_) => None,
+            SupportsCondition::Selector(_) => Some(css::Features::empty()),
+        }
+    }
+
     fn needs_parens(&self, parent: &SupportsCondition) -> bool {
         match self {
             SupportsCondition::Not(_) => true,
@@ -418,7 +473,16 @@ impl<R> SupportsRule<R> {
         // behind it multiply against the enclosing nesting levels exactly like
         // plain nested rules — leaving them unvisited here lets the printer
         // expand them exponentially.
-        self.rules.minify(context, parent_is_unused)
+        let exclude = context.targets.exclude;
+        context
+            .targets
+            .exclude
+            .insert(self.condition.get_supported_features(context.arena));
+        context.handler_context.targets = context.targets;
+        let result = self.rules.minify(context, parent_is_unused);
+        context.targets.exclude = exclude;
+        context.handler_context.targets = context.targets;
+        result
     }
 }
 
@@ -429,10 +493,18 @@ impl<R> SupportsRule<R> {
 
         dest.write_str(b"@supports ")?;
         self.condition.to_css(dest)?;
-        dest.block(|d| {
+
+        // Don't downlevel the features the condition tests for inside the block.
+        let exclude = dest.targets.exclude;
+        dest.targets
+            .exclude
+            .insert(self.condition.get_supported_features(dest.arena));
+        let result = dest.block(|d| {
             d.newline()?;
             self.rules.to_css(d)
-        })
+        });
+        dest.targets.exclude = exclude;
+        result
     }
 }
 

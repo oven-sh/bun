@@ -60,7 +60,7 @@ impl<R> StyleRule<R> {
             self.vendor_prefix = selector::downlevel_selectors(
                 context.arena,
                 self.selectors.v.slice_mut(),
-                context.targets,
+                &context.targets,
             );
         }
     }
@@ -434,7 +434,7 @@ impl<R> StyleRule<R> {
         let saved_expansion_multiplier = context.selector_expansion_multiplier;
         let selectors_incompatible = self.selectors.v.len() > 1
             && context.targets.should_compile_selectors()
-            && !self.is_compatible(context.targets);
+            && !self.is_compatible(&context.targets);
         let splits_selectors = selectors_incompatible
             && !(context.targets.is_compatible(css::Feature::IsSelector)
                 && !self.selectors.any_has_pseudo_element()

@@ -1897,6 +1897,104 @@ describe("package-lock.json migration fixes", () => {
     expect(lock.packages).toStrictEqual({});
   });
 
+  // bun.lockb starts with a 42-byte header and a u32 format version. The 32-byte meta hash follows.
+  const storedMetaHash = (dir: string) =>
+    fs
+      .readFileSync(join(String(dir), "bun.lockb"))
+      .subarray(46, 78)
+      .toString("hex");
+
+  test.concurrent.each([
+    ["a root lifecycle script", { scripts: { postinstall: "echo root" } }, {}],
+    ["a root binding.gyp", {}, { "binding.gyp": "{}" }],
+    [
+      "a workspace lifecycle script",
+      { workspaces: ["packages/wa"] },
+      {
+        "packages/wa/package.json": JSON.stringify({
+          name: "wa",
+          version: "1.0.0",
+          scripts: { postinstall: "echo wa" },
+        }),
+      },
+    ],
+  ])(
+    "bun pm migrate to bun.lockb stores the meta hash a frozen install computes with %s",
+    async (_, manifest, files) => {
+      const dependencies = { x: "1.0.0" };
+      const workspaces = "workspaces" in manifest ? { workspaces: manifest.workspaces } : {};
+      using dir = synthetic("npm-migrate-lockb-meta-hash", {
+        "package.json": JSON.stringify({ name: "lockb-meta-hash", dependencies, ...manifest }),
+        ...files,
+        "package-lock.json": npmLock("lockb-meta-hash", {
+          "": { name: "lockb-meta-hash", dependencies, ...workspaces },
+          "node_modules/x": { version: "1.0.0" },
+          ...("workspaces" in manifest && {
+            "node_modules/wa": { resolved: "packages/wa", link: true },
+            "packages/wa": { name: "wa", version: "1.0.0" },
+          }),
+        }),
+      });
+      fs.appendFileSync(join(String(dir), "bunfig.toml"), "saveTextLockfile = false\n");
+
+      const migrated = await run(dir, "pm", "migrate");
+      expect(migrated.stderr).toContain("migrated lockfile from package-lock.json");
+      expect(migrated.exitCode).toBe(0);
+      const hash = storedMetaHash(dir);
+
+      const frozen = await run(dir, "install", "--frozen-lockfile", "--lockfile-only");
+      expect(frozen.stderr).not.toContain("lockfile had changes");
+      expect(frozen.exitCode).toBe(0);
+
+      // An install that saves the lockfile stores the same hash.
+      const install = await run(dir, "install", "--lockfile-only");
+      expect(install.exitCode).toBe(0);
+      expect(storedMetaHash(dir)).toBe(hash);
+    },
+  );
+
+  test.concurrent.each([
+    ["passes with a root lifecycle script", { x: "1.0.0", y: "1.0.0" }, 0],
+    ["fails when package.json dropped a dependency", { x: "1.0.0" }, 1],
+  ])("the first frozen install from package-lock.json %s", async (_, dependencies, expectedExitCode) => {
+    using dir = synthetic("npm-first-frozen-install", {
+      "package.json": JSON.stringify({ name: "first-frozen", scripts: { postinstall: "echo root" }, dependencies }),
+      "package-lock.json": npmLock("first-frozen", {
+        "": { name: "first-frozen", dependencies: { x: "1.0.0", y: "1.0.0" } },
+        "node_modules/x": { version: "1.0.0" },
+        "node_modules/y": { version: "1.0.0" },
+      }),
+    });
+
+    const frozen = await run(dir, "install", "--frozen-lockfile", "--lockfile-only");
+    expect(frozen.stderr).toContain("migrated lockfile from package-lock.json");
+    expect(frozen.stderr.includes("lockfile had changes, but lockfile is frozen")).toBe(expectedExitCode === 1);
+    expect(frozen.exitCode).toBe(expectedExitCode);
+  });
+
+  test.concurrent("the first frozen install from package-lock.json passes with workspace install scripts", async () => {
+    const workspaces = ["packages/wa", "packages/wb"];
+    using dir = synthetic("npm-first-frozen-workspace-scripts", {
+      "package.json": JSON.stringify({ name: "first-frozen-ws", workspaces, dependencies: { x: "1.0.0" } }),
+      "packages/wa/package.json": JSON.stringify({ name: "wa", version: "1.0.0", scripts: { postinstall: "echo wa" } }),
+      "packages/wb/package.json": JSON.stringify({ name: "wb", version: "1.0.0" }),
+      "packages/wb/binding.gyp": "{}",
+      "package-lock.json": npmLock("first-frozen-ws", {
+        "": { name: "first-frozen-ws", workspaces, dependencies: { x: "1.0.0" } },
+        "node_modules/x": { version: "1.0.0" },
+        "node_modules/wa": { resolved: "packages/wa", link: true },
+        "packages/wa": { name: "wa", version: "1.0.0", hasInstallScript: true },
+        "node_modules/wb": { resolved: "packages/wb", link: true },
+        "packages/wb": { name: "wb", version: "1.0.0", hasInstallScript: true },
+      }),
+    });
+
+    const frozen = await run(dir, "install", "--frozen-lockfile", "--lockfile-only");
+    expect(frozen.stderr).toContain("migrated lockfile from package-lock.json");
+    expect(frozen.stderr).not.toContain("lockfile had changes");
+    expect(frozen.exitCode).toBe(0);
+  });
+
   describe("arborist fixtures", () => {
     // Snapshot matchers are unsupported inside a concurrent group, so these stay sequential.
     test.each(arboristFixtures.map(f => f.name))("%s", async name => {

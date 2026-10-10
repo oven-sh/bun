@@ -2634,7 +2634,7 @@ pub fn bytes_to_hex_lower_string(input: &[u8]) -> String {
 
 /// Prints each byte
 /// as two hex digits with no separator. `LOWER == true` → lowercase, else
-/// uppercase. Used by `Lockfile::MetaHashFormatter` and tmp-lockfile naming.
+/// uppercase. Used by the lockfile's `MetaHash` and tmp-lockfile naming.
 pub struct HexBytes<'a, const LOWER: bool>(pub &'a [u8]);
 
 impl<'a, const LOWER: bool> Display for HexBytes<'a, LOWER> {

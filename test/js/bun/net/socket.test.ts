@@ -1731,6 +1731,7 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
     });
   let timeouts = 0;
   const reported: number[] = [0];
+  const endedAt: number[] = [];
   // A write that ends short leaves ciphertext unsent, and end() in the same tick finds it there.
   const fillAndEnd = (socket: Socket) => {
     let total = 0;
@@ -1739,16 +1740,17 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
     // The owner's own timeout is over with its close.
     socket.timeout(1);
     socket.end();
+    endedAt.push(performance.now());
   };
 
   const probeReady = Promise.withResolvers<Socket>();
   await connected(probeReady.resolve);
   const probe = await probeReady.promise;
-  const closed: Promise<void>[] = [];
+  const closed: Promise<number>[] = [];
   for (const _peer of [SILENT, DRIPPING, UNANSWERING]) {
-    const { promise, resolve } = Promise.withResolvers<void>();
+    const { promise, resolve } = Promise.withResolvers<number>();
     closed.push(promise);
-    await connected(fillAndEnd, resolve);
+    await connected(fillAndEnd, () => resolve(performance.now()));
   }
   const destroyed = tlsConnect({ port: server.port, host: "127.0.0.1", ca: tls.cert });
   await Promise.all([once(destroyed, "secureConnect"), lastPeerPaused.promise]);
@@ -1767,8 +1769,7 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
   try {
     const before = { fdIsOpen: openAfterDestroy, wrote: probeBatching(probe) };
     const waitedFrom = performance.now();
-    const closedAfter = closed.map(promise => promise.then(() => Math.round(performance.now() - waitedFrom)));
-    await Promise.all(closed);
+    const closedAfterMs = (await Promise.all(closed)).map((at, i) => Math.round(at - endedAt[i]));
     // Its own deadline: the other closes end early where their peers' kernel buffers took everything.
     while (fdIsOpen(destroyedFd) && performance.now() - waitedFrom < 16_000) await Bun.sleep(100);
     const after = { fdIsOpen: fdIsOpen(destroyedFd), wrote: probeBatching(probe) };
@@ -1778,7 +1779,7 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
     const measured = {
       reported,
       received: peers.map(peer => peer.data.received),
-      closedAfterMs: await Promise.all(closedAfter),
+      closedAfterMs,
     };
     expect(
       {
@@ -1786,7 +1787,7 @@ it("a TLS close that waits for unsent ciphertext ends at a fixed deadline", asyn
         after,
         timeouts,
         cutShort: [missing(SILENT) > 0, missing(DRIPPING) > 0],
-        // 10 s on a 4 s tick is 8 to 12 s, counted from a little after the end().
+        // 10 s on a 4 s tick is 8 to 12 s after the end().
         atTheDeadline: measured.closedAfterMs.slice(0, 2).map(ms => ms > 7_000 && ms < 16_000),
         missing: missing(UNANSWERING),
       },

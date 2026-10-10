@@ -2,12 +2,13 @@ import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readFileSync, readlinkSync, statSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
+import { bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
 import { createRequire } from "module";
 import { basename, dirname, join } from "path";
+import { TestRegistry } from "registry";
 import { pathToFileURL } from "url";
 
-const registry = new VerdaccioRegistry();
+const registry = new TestRegistry();
 
 // With the global virtual store enabled, dependency symlinks inside a store
 // entry point at sibling global-store directories whose names carry a 16-hex
@@ -1364,7 +1365,21 @@ test("ranged peer dependency resolution is stable across installs from bun.lock"
   // That silently changed the runtime dependency tree on the second install
   // and re-keyed the isolated store entry (`+<peer hash>` suffix) on every
   // warm install.
-  const { packageJson, packageDir } = await registry.createTestDir({
+  //
+  // Which version two-range-deps gets depends on the order of the packuments:
+  // once no-deps@1.0.1 is in the graph, bun resolves `^1.0.0` to it, and the
+  // graph has one version. So this registry answers for normal-dep-and-dev-dep
+  // only after bun asked for no-deps, which it does when it has the packument
+  // of two-range-deps.
+  const askedForNoDeps = Promise.withResolvers<void>();
+  using ordered = new TestRegistry({
+    intercept: async request => {
+      const { pathname } = new URL(request.url);
+      if (pathname === "/no-deps") askedForNoDeps.resolve();
+      if (pathname === "/normal-dep-and-dev-dep") await askedForNoDeps.promise;
+    },
+  }).start();
+  const { packageJson, packageDir } = await ordered.createTestDir({
     bunfigOpts: { linker: "isolated" },
   });
 
@@ -2110,7 +2125,7 @@ test("runs lifecycle scripts correctly", async () => {
 });
 
 // Self-contained HTTP server that serves package manifests & tarballs
-// directly from the Verdaccio fixtures, with Cache-Control: max-age=300
+// directly from the registry fixtures, with Cache-Control: max-age=300
 // to replicate npmjs.org behavior (fully synchronous on warm cache).
 function serveFixtures() {
   const packagesDir = join(import.meta.dir, "registry", "packages");

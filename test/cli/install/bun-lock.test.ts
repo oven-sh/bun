@@ -11,15 +11,15 @@ import {
   runBunInstall,
   tempDir,
   toBeValidBin,
-  VerdaccioRegistry,
 } from "harness";
 import { join } from "path";
+import { TestRegistry } from "registry";
 
 expect.extend({
   toBeValidBin,
 });
 
-var registry = new VerdaccioRegistry();
+var registry = new TestRegistry();
 
 beforeAll(async () => {
   await registry.start();

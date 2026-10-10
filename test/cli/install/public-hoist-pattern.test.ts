@@ -1,10 +1,11 @@
 import { spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { readlinkSync } from "fs";
-import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall } from "harness";
+import { bunEnv, bunExe, readdirSorted, runBunInstall } from "harness";
 import { join } from "path";
+import { TestRegistry } from "registry";
 
-const registry = new VerdaccioRegistry();
+const registry = new TestRegistry();
 
 beforeAll(async () => {
   await registry.start();

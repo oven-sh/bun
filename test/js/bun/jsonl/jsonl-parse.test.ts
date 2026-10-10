@@ -1284,7 +1284,8 @@ describe("Bun.JSONL", () => {
         expect(({} as any).polluted).toBeUndefined();
         expect(({} as any).bad).toBeUndefined();
         // The keys should just be normal properties
-        expect(result[0]).toStrictEqual({ __proto__: { polluted: "yes" } });
+        expect(Object.keys(result[0])).toEqual(["__proto__"]);
+        expect(result[0]).toStrictEqual(JSON.parse('{"__proto__":{"polluted":"yes"}}'));
       });
 
       test("prototype pollution via nested __proto__", () => {

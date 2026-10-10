@@ -2204,7 +2204,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return;
             }
 
-            if p.options.warn_about_unbundled_modules {
+            // After a stack overflow the visit skipped a part of the arguments.
+            if p.options.warn_about_unbundled_modules && !p.reported_stack_overflow.get() {
                 let r = js_lexer::range_of_identifier(p.source, e_.target.loc);
                 p.log()
                     .add_range_debug(

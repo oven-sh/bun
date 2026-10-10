@@ -5413,8 +5413,9 @@ it("deeply nested expressions error instead of crashing the process", () => {
 }, 60_000);
 
 // After a stack overflow the visit pass skips each expression that it did not visit yet. The code
-// that runs after a skipped visit must not read that expression.
-describe.concurrent("a stack overflow in the visit pass", () => {
+// that runs after a skipped visit must not read that expression. The tests with a child process
+// are not concurrent: a debug build is slow when several children fill their stacks at once.
+describe("a stack overflow in the visit pass", () => {
   const overflow = "Maximum call stack size exceeded";
   const repeat = (fill, count) => Buffer.alloc(fill.length * count, fill).toString();
   const messageOf = call => {
@@ -5537,14 +5538,17 @@ describe.concurrent("a stack overflow in the visit pass", () => {
     expect(result).toEqual(ok);
   });
 
-  it("is the one error for a conditional argument of require.resolve() at the debug log level", () => {
-    // At this log level, a require.resolve() of something that is not a string literal logs a
-    // note, and the transpiler then throws "Parse error" with the list of messages.
+  it("is the one error for require() and require.resolve() at the debug log level", () => {
+    // At this log level, a require() or require.resolve() of something that is not a string
+    // literal logs a note, and the transpiler then throws "Parse error" with the list of messages.
     const transpiler = new Bun.Transpiler({ loader: "js", target: "node", logLevel: "debug" });
-    const messages = [`${chain} ? "./d" : "./e"`, `y ? ${chain} : "./d"`].map(argument =>
-      messageOf(() => transpiler.transformSync(`x = require.resolve(${argument});`)),
-    );
-    expect(messages).toEqual([overflow, overflow]);
+    const calls = [
+      `require(${chain})`,
+      `require.resolve(${chain} ? "./d" : "./e")`,
+      `require.resolve(y ? ${chain} : "./d")`,
+    ];
+    const messages = calls.map(call => messageOf(() => transpiler.transformSync(`x = ${call};`)));
+    expect(messages).toEqual([overflow, overflow, overflow]);
   });
 
   // The identifier is the deepest expression of a member chain. At the first number of levels
@@ -5598,7 +5602,7 @@ describe.concurrent("a stack overflow in the visit pass", () => {
     expect(oneError(result)).toEqual(failed);
   });
 
-  it.each([
+  it.concurrent.each([
     ["require()", `x = require(${chain});`],
     ["require.resolve()", `x = require.resolve(${chain});`],
     ["feature()", `import { feature } from "bun:bundle";\nif (feature(${chain})) {}`],

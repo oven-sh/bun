@@ -1192,7 +1192,8 @@ pub struct ParseResult<T: VersionInt> {
     pub wildcard: Wildcard,
     pub valid: bool,
     pub version: Partial<T>,
-    pub(crate) len: u32,
+    /// Where parsing stopped; shorter than the input when trailing bytes are not part of the version.
+    pub len: u32,
 }
 
 impl<T: VersionInt> Default for ParseResult<T> {

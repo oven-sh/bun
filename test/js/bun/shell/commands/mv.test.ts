@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { isPosix } from "harness";
+import { isPosix, isWindows } from "harness";
 import {
   accessSync,
   chmodSync,
@@ -66,6 +66,28 @@ describe("mv", async () => {
     .exitCode(20 /* ENOTDIR */)
     .stderr("mv: a: Not a directory\n")
     .runAsTest("move dir -> file fails");
+
+  // An empty operand names nothing. On Windows it used to resolve to the
+  // shell's cwd itself: as the source, mv tried to rename the cwd; as the
+  // destination, it moved the file "into" the cwd and reported success.
+  TestBuilder.command`mv ${""} b`
+    .ensureTempDir()
+    .file("a", "file")
+    .exitCode(2 /* ENOENT */)
+    .stderr("mv: No such file or directory\n")
+    .fileEquals("a", "file")
+    .doesNotExist("b")
+    .runAsTest("empty source fails");
+
+  // The POSIX renameat() wrapper attaches the source path to its errors; the
+  // Windows one does not yet, so the message differs by platform.
+  TestBuilder.command`mv a ${""}`
+    .ensureTempDir()
+    .file("a", "file")
+    .exitCode(2 /* ENOENT */)
+    .stderr(isWindows ? "mv: No such file or directory\n" : "mv: a: No such file or directory\n")
+    .fileEquals("a", "file")
+    .runAsTest("empty destination fails");
 
   // POSIX `mv` must fall back to copy+unlink when `rename()` returns EXDEV
   // (source and destination on different filesystems). Requires a writable

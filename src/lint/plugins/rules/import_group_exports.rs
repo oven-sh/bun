@@ -90,8 +90,8 @@ impl Rule for GroupExports {
     }
 }
 
-/// Whether upstream's `accessorChain` is `exports.a`, `module.exports` or `module.exports.a`. A name in brackets is as one after a
-/// dot, and the chain begins after what is neither a member nor a name: `f().exports[a]`.
+/// Whether upstream's `accessorChain` is `exports.a`, `module.exports` or `module.exports.a`. A name in brackets is as
+/// one after a dot, and the chain begins after what is neither a member nor a name: `f().exports[a]`.
 fn has_exporting_accessor_chain(left: Expr) -> bool {
     // From the last to the first. `None`: what is in the brackets is no name.
     let mut chain: SmallVec<[Option<&[u8]>; 5]> = SmallVec::new();
@@ -110,7 +110,10 @@ fn has_exporting_accessor_chain(left: Expr) -> bool {
         }
         node = object;
     }
-    matches!(chain[..], [_, Some(b"exports")] | [Some(b"exports"), Some(b"module")] | [_, Some(b"exports"), Some(b"module")])
+    matches!(
+        chain[..],
+        [_, Some(b"exports")] | [Some(b"exports"), Some(b"module")] | [_, Some(b"exports"), Some(b"module")]
+    )
 }
 
 /// oxlint's: `exports.a`, `module.exports`, `module.exports.a`

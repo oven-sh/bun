@@ -475,6 +475,13 @@ impl Ignored {
             .any(|name| self.directories.contains(&name))
     }
 
+    /// Prettier adds the line `node_modules` to what every ignore file has, unless it is run `--with-node-modules`.
+    pub(crate) fn is_in_node_modules(&self, path: &[u8]) -> bool {
+        const NAME: &[u8] = b"node_modules";
+        self.directories.contains(&NAME)
+            && strings::split(&paths::relative(&self.cwd, path), b"/").any(|name| name == NAME)
+    }
+
     fn is_negated(&self, path: &[u8]) -> bool {
         !self.negative.is_empty() && {
             let relative = paths::relative(&self.cwd, path);

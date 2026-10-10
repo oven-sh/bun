@@ -980,14 +980,15 @@ fn move_comments<'a>(
         }
     }
     if has_moved {
-        // A moved comment comes before one that starts where it is, what trails a link before what leads the next.
+        // A moved comment comes before one that starts where it is, what trails a link before what leads the next, and
+        // what leads `a.b.c` before what leads the `a.b` in it.
         crate::sort::sort_by_key(comments, |comment| {
             let rank = match (comment.is_moved(), comment.flags & TRAILS_LINK != 0) {
                 (true, true) => 0,
                 (true, false) => 1,
                 (false, _) => 2,
             };
-            (comment.start(), rank)
+            (comment.start(), rank, std::cmp::Reverse(comment.leads_until))
         });
     }
 }
@@ -1393,7 +1394,8 @@ impl<'a> Comments<'a> {
                 .rev()
                 .take_while(|it| it.span.start >= start)
                 .count();
-        for comment in &printed[first..] {
+        // One that has been moved is printed ahead of its turn.
+        for comment in printed[first..].iter().filter(|it| !it.is_moved()) {
             if self
                 .source_text
                 .contains_byte(Span::before(start, comment.span), character)

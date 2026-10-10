@@ -20,21 +20,26 @@ const NO_IMPORT: Message = Message::new(
 /// `Object.keys(Module._extensions)`
 const EXTENSIONS: [&[u8]; 3] = [b".js", b".json", b".node"];
 
-/// `getEntryPoint`: what `require.resolve` finds for the directory of the closest `package.json`.
+/// `getEntryPoint`: `require.resolve` of the directory of the closest `package.json`. It follows links, this does not.
 fn get_entry_point(modules: &dyn Modules, file_name: &[u8]) -> Option<Vec<u8>> {
     let (pkg @ Json::Object(_), pkg_path) = read_pkg_up(modules, file_name)? else {
         return None;
     };
+    // Without extensions a path means itself only if it is a file.
+    let (lookup, is_require) = (Lookup::Node(SmallVec::new()), true);
+    let try_file = |path: Vec<u8>| modules.resolve_file(&pkg_path, &path, is_require, &lookup).filter(|it| *it == path);
+    let try_extensions = |path: &[u8]| EXTENSIONS.iter().find_map(|it| try_file([path, *it].concat()));
+    let try_index = |directory: &[u8]| try_extensions(&paths::join(directory, b"index"));
     let directory = paths::dirname(&pkg_path);
     // A file of that name comes before the directory, and is not in it.
-    if EXTENSIONS.iter().any(|it| modules.exists(&[directory, *it].concat())) {
+    if try_extensions(directory).is_some() {
         return None;
     }
-    let lookup = Lookup::Node(SmallVec::from_slice(&EXTENSIONS));
-    let is_require = true;
-    let find = |request: &[u8]| modules.resolve_file(&pkg_path, request, is_require, &lookup);
+    // `tryPackage`
     let main = pkg.get(b"main").and_then(Json::as_str).filter(|it| !it.is_empty());
-    main.and_then(|it| find(&paths::resolve(directory, it))).or_else(|| find(&paths::join(directory, b"index")))
+    let main = main.map(|it| paths::resolve(directory, it));
+    main.and_then(|it| try_file(it.clone()).or_else(|| try_extensions(&it)).or_else(|| try_index(&it)))
+        .or_else(|| try_index(directory))
 }
 
 /// `hasCJSExportReference && !isImportBinding`
@@ -81,11 +86,6 @@ impl Rule for NoImportModuleExports {
         let exceptions = options.object(0).strings("exceptions");
         let minimatch = |glob: &str| Pattern::new(&paths::from_native(glob.as_bytes()), GlobOptions::MINIMATCH_3);
         NoImportModuleExports { exceptions: exceptions.into_iter().map(minimatch).collect() }
-    }
-
-    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
-        let on = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]).finish();
-        if file.is_javascript() { on } else { on.classes().stmts(&[StmtTag::Interface]) }
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {

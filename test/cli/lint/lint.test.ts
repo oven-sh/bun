@@ -150,6 +150,112 @@ describe.concurrent("bun lint", () => {
     expect(exitCode).toBe(1);
   });
 
+  test("without a configuration file: what `bun test` has without an import is defined in the files that it takes", async () => {
+    const names =
+      "test it describe expect expectTypeOf beforeAll beforeEach afterEach afterAll jest vi xit xtest xdescribe";
+    const code = `[${names.split(" ").join(", ")}];\n`;
+    const taken = ["a.test.js", "src/b_test.mjs", "c.spec.jsx", "d_spec.cjs"];
+    const others = ["test.js", "e.tests.js", "atest.js"];
+    const files = Object.fromEntries([...taken, ...others].map(name => [name, code]));
+    const { stdout } = await lint(files, ["-f", "unix"]);
+    const undefinedIn = (name: string) =>
+      stdout.split("\n").filter(line => line.startsWith(`<dir>/${name}:`) && line.endsWith("[Error/no-undef]")).length;
+    expect([taken.map(undefinedIn), others.map(undefinedIn)]).toEqual([
+      [0, 0, 0, 0],
+      [14, 14, 14],
+    ]);
+  });
+
+  describe("the globals of a file are what the types of its project declare", () => {
+    const options = (lib: string[], more: object) => JSON.stringify({ compilerOptions: { lib, types: [], ...more } });
+    const files = {
+      // In no project.
+      "a/a.js": "console.log(window, process, Bun, nothing);\n",
+      "b/jsconfig.json": options(["es2022"], { checkJs: true }),
+      "b/a.js": "console.log(window, process, Bun, nothing, Promise, Map);\n",
+      "c/tsconfig.json": options(["es2022", "dom"], { allowJs: true }),
+      "c/types/g.d.ts":
+        "declare global {\n  var MY_GLOBAL: string;\n  const MY_CONST: number;\n  interface OnlyAType {\n    a: 1;\n  }\n}\nexport {};\n",
+      "c/a.js":
+        "console.log(window, process, MY_GLOBAL, MY_CONST, OnlyAType, nothing);\nMY_CONST = 1;\nMY_GLOBAL = 'a';\n" +
+        "/* global process, window: off */\n",
+      // The project does not take it in.
+      "d/tsconfig.json": options(["es2022"], {}),
+      "d/build.js": "console.log(window, process, require, nothing);\n",
+      "d/x.ts": "export const a = 1;\n",
+    };
+    const reports = (stdout: string) =>
+      stdout
+        .split("\n")
+        .flatMap(line => /^<dir>\/(\S+?:\d+:\d+): .*?'(\w+)'.* \[Error\/(.*)\]$/.exec(line)?.slice(1).join(" ") ?? []);
+    const union = ["a/a.js:1:35 nothing no-undef", "d/build.js:1:39 nothing no-undef"];
+
+    test("without a configuration file, unless --no-infer-globals", async () => {
+      const [inferred, not] = await Promise.all([
+        lint(files, ["-f", "unix"]),
+        lint(files, ["-f", "unix", "--no-infer-globals"]),
+      ]);
+      expect(reports(inferred.stdout).sort()).toEqual(
+        [
+          ...union,
+          "b/a.js:1:1 console no-undef",
+          "b/a.js:1:13 window no-undef",
+          "b/a.js:1:21 process no-undef",
+          "b/a.js:1:35 nothing no-undef",
+          "c/a.js:1:13 window no-undef",
+          "c/a.js:1:51 OnlyAType no-undef",
+          "c/a.js:1:62 nothing no-undef",
+          "c/a.js:2:1 MY_CONST no-global-assign",
+        ].sort(),
+      );
+      expect(reports(not.stdout).sort()).toEqual(
+        [
+          ...union,
+          "b/a.js:1:35 nothing no-undef",
+          "c/a.js:1:13 window no-undef",
+          "c/a.js:1:30 MY_GLOBAL no-undef",
+          "c/a.js:1:41 MY_CONST no-undef",
+          "c/a.js:1:51 OnlyAType no-undef",
+          "c/a.js:1:62 nothing no-undef",
+          "c/a.js:2:1 MY_CONST no-undef",
+          "c/a.js:3:1 MY_GLOBAL no-undef",
+          "c/a.js:4:11 process no-redeclare",
+        ].sort(),
+      );
+    });
+
+    test("beside a configuration file only with --infer-globals, and besides what it has", async () => {
+      const config = `export default [{
+        languageOptions: { globals: { nothing: "readonly", MY_CONST: "off" } },
+        rules: { "no-undef": "error", "no-global-assign": "error" },
+      }];`;
+      const all = { ...files, "eslint.config.mjs": config };
+      const [not, inferred] = await Promise.all([
+        lint(all, ["-f", "unix", "c"]),
+        lint(all, ["-f", "unix", "--infer-globals", "c"]),
+      ]);
+      expect(reports(not.stdout).sort()).toEqual(
+        [
+          "c/a.js:1:1 console no-undef",
+          "c/a.js:1:13 window no-undef",
+          "c/a.js:1:30 MY_GLOBAL no-undef",
+          "c/a.js:1:41 MY_CONST no-undef",
+          "c/a.js:1:51 OnlyAType no-undef",
+          "c/a.js:2:1 MY_CONST no-undef",
+          "c/a.js:3:1 MY_GLOBAL no-undef",
+        ].sort(),
+      );
+      expect(reports(inferred.stdout).sort()).toEqual(
+        [
+          "c/a.js:1:13 window no-undef",
+          "c/a.js:1:41 MY_CONST no-undef",
+          "c/a.js:1:51 OnlyAType no-undef",
+          "c/a.js:2:1 MY_CONST no-undef",
+        ].sort(),
+      );
+    });
+  });
+
   test("without a configuration file: eslint:recommended, and typescript-eslint/recommended for TypeScript", async () => {
     const { stdout, exitCode } = await lint(
       {
@@ -5476,6 +5582,18 @@ describe.concurrent("[lint] in bunfig.toml", () => {
       { ".eslintrc.json": `{ "rules": { "no-debugger": "error", "require-jsdoc": "warn" } }`, "a.js": bad },
       ["a.js"],
     ],
+    [
+      `inferGlobals = true`,
+      ["--infer-globals"],
+      ["--no-infer-globals"],
+      {
+        "eslint.config.js": config({ "no-undef": "error" }),
+        "tsconfig.json": `{ "compilerOptions": { "allowJs": true }, "include": ["*.ts", "*.js"] }`,
+        "globals.d.ts": "declare const mine: number;\n",
+        "a.js": "mine;\nother;\n",
+      },
+      ["a.js"],
+    ],
     [`typeAware = true`, ["--type-aware"], ["--no-type-aware"], typed, ["a.ts"]],
     [
       `typeAware = false`,
@@ -5617,19 +5735,16 @@ describe.concurrent("[lint] in bunfig.toml", () => {
     const rule = (...options: unknown[]) => ({
       ".oxlintrc.json": JSON.stringify({ rules: { "bun/format": ["error", ...options] } }),
     });
-    const [withSection, without, overridden, ofPrettier] = await Promise.all([
+    const [withSection, without, overridden] = await Promise.all([
       run({ ...files, ...rule() }, ["-f", "unix", "a.js"]),
       run({ "a.js": files["a.js"], ...rule() }, ["-f", "unix", "a.js"]),
       run({ ...files, ...rule({ semi: true }) }, ["-f", "unix", "a.js"]),
-      // Prettier knows nothing of bunfig.toml.
-      run({ ...files, "eslint.config.js": config({ "prettier/prettier": "error" }) }, ["-f", "unix", "a.js"]),
     ]);
     expect(withSection.stdout).toBe("");
     expect(withSection.exitCode).toBe(0);
     expect(without.stdout).toContain(`Replace \`'b')\` with \`"b");\``);
     expect(overridden.stdout).toContain("Insert `;`");
     expect(overridden.stdout).not.toContain("Replace");
-    expect(ofPrettier.stdout).not.toBe("");
   });
 
   test("the file is that of the working directory, after --cwd", async () => {

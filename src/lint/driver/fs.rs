@@ -199,9 +199,24 @@ fn remove(path: &[u8]) {
     let _ = bun_sys::unlinkat(Fd::cwd(), terminated(&path, &mut path_buffer_pool::get()));
 }
 
-/// Writes a file next to the one at `real`, which then takes its name. `before`: what the latter is like. `false`: nothing has
-/// changed: nothing can be added to the directory, the new file would belong to somebody else, or the old one is in use.
-fn replace(real: &[u8], text: &[u8], before: &bun_sys::Stat) -> bun_sys::Result<bool> {
+/// The tags of a file, its ACL, its label: what a file that takes its name does not take over. `None`: they cannot be read.
+#[cfg(unix)]
+fn attributes(file: &File) -> Option<Vec<(Vec<u8>, Vec<u8>)>> {
+    bun_sys::extended_attributes(file.handle()).ok()
+}
+
+/// What the file at a path is like.
+struct Before {
+    stat: bun_sys::Stat,
+    #[cfg(unix)]
+    attributes: Option<Vec<(Vec<u8>, Vec<u8>)>>,
+}
+
+/// Writes a file next to the one at `real`, which then takes its name. `old`: what the latter is like. `false`: nothing has
+/// changed: nothing can be added to the directory, the new file would belong to somebody else or be without an attribute of the
+/// old one, or the old one is in use.
+fn replace(real: &[u8], text: &[u8], old: &Before) -> bun_sys::Result<bool> {
+    let before = &old.stat;
     let temporary = [real, temporary_suffix().as_bytes()].concat();
     let mode = before.st_mode as bun_sys::Mode & 0o7777;
     let Ok(file) = File::openat(
@@ -215,6 +230,13 @@ fn replace(real: &[u8], text: &[u8], before: &bun_sys::Stat) -> bun_sys::Result<
     let written = file.stat().and_then(|created| {
         if (created.st_uid, created.st_gid) != (before.st_uid, before.st_gid) {
             return Ok(false);
+        }
+        // The directory gives a new file a label, and an ACL if it has one for that: the same as it gave the old one.
+        #[cfg(unix)]
+        {
+            if old.attributes.is_none() || attributes(&file) != old.attributes {
+                return Ok(false);
+            }
         }
         // What `umask` has taken away.
         if cfg!(unix) && created.st_mode as bun_sys::Mode & 0o7777 != mode {
@@ -234,9 +256,16 @@ fn replace(real: &[u8], text: &[u8], before: &bun_sys::Stat) -> bun_sys::Result<
 /// reads a part of `text`, where that leaves all else as it is. Otherwise in place, as ESLint and Prettier write every file.
 fn write_through(real: &[u8], text: &[u8]) -> bun_sys::Result<()> {
     // Who may not write a file may not replace it either.
-    let before = File::openat(Fd::cwd(), real, O::RDWR | O::CLOEXEC | O::NOFOLLOW, 0)?.stat()?;
+    let file = File::openat(Fd::cwd(), real, O::RDWR | O::CLOEXEC | O::NOFOLLOW, 0)?;
+    let before = Before {
+        stat: file.stat()?,
+        #[cfg(unix)]
+        attributes: attributes(&file),
+    };
+    // On Windows nothing takes the name of a file that is open.
+    drop(file);
     // A file with two names would be two files afterwards.
-    if before.st_nlink <= 1 && replace(real, text, &before)? {
+    if before.stat.st_nlink <= 1 && replace(real, text, &before)? {
         return Ok(());
     }
     let flags = O::WRONLY | O::TRUNC | O::CLOEXEC | O::NOFOLLOW;
@@ -247,7 +276,9 @@ fn write_through(real: &[u8], text: &[u8]) -> bun_sys::Result<()> {
 fn repository(cwd: &[u8]) -> Option<Vec<u8>> {
     let cwd = real_path(cwd)?;
     let is_root = |it: &&[u8]| {
-        [&b".git"[..], b".jj"].iter().any(|name| link_kind_and_size(&paths::join(it, name)).is_some())
+        [&b".git"[..], b".jj"]
+            .iter()
+            .any(|name| link_kind_and_size(&paths::join(it, name)).is_some())
     };
     let found = paths::ancestors(&cwd).find(is_root).map(<[u8]>::to_vec);
     Some(found.unwrap_or(cwd))

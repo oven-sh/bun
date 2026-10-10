@@ -11,7 +11,7 @@ set -e
 here=$(cd "$(dirname "$0")" && pwd)
 binaries=$1 work=$2 target=$3 seconds=${4:-600} jobs=${5:-4} largest=${6:-4096}
 case $target in
-  lint | parser | imports) dictionary=js ;;
+  lint | lint-* | parser | imports) dictionary=js ;;
   options) dictionary=options ;;
   config) dictionary=config ;;
   md) dictionary=markdown ;;

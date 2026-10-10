@@ -1018,7 +1018,9 @@ impl Run<'_> {
         };
         let path = paths::resolve(&self.environment.cwd, &paths::from_native(name));
         // The configuration of a file that is ignored is not even read.
-        if ignored.ignores_file(&path, &None) {
+        let is_of_a_package =
+            configs.flavor == Flavor::Prettier && ignored.is_in_node_modules(&path);
+        if is_of_a_package || ignored.ignores_file(&path, &None) {
             self.out.stdout = text;
             return self.out;
         }

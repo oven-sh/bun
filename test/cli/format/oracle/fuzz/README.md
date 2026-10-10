@@ -10,6 +10,7 @@ Each makes small programs, formats them with the npm package of Prettier and wit
 | `ternaries.ts` | conditional expressions with `experimentalTernaries` |
 | `jsx-children.mjs` | JSX children, for narrow widths |
 | `comments-in-expressions.ts`, `comments-in-statements.ts`, `comments-in-types.ts` (+ `-seeds.ts`) | a comment of every form in every gap of small programs |
+| `comments-in-chains.ts` | a comment of six forms in every gap of member chains, member accesses and calls, also with parentheses around every prefix of the chain, two comments at once, long names |
 | `comments-in-real-code.ts` (+ `-report.ts`) | a comment at every line of statements of real code. It can also compare with oxfmt, in its flavor |
 | `line-endings.ts` | fixtures with CRLF and CR |
 | `cursor.ts` | the cursor at every offset of real files: `cursorOffset` |

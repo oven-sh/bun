@@ -2837,6 +2837,29 @@ try {
       expect(ignored.raw).toBe(ugly);
     });
 
+    // Prettier adds the line `node_modules` to every ignore file. oxfmt formats what it is handed.
+    test("the code of a package is left alone, as by Prettier, unless --with-node-modules says otherwise", async () => {
+      const print = async (files: Record<string, string>, ...args: string[]) => {
+        const { raw, stderr, exitCode } = await format(files, args, { stdin: ugly });
+        return { raw, stderr, exitCode };
+      };
+      const [alone, done] = [ugly, formatted].map(raw => ({ raw, stderr: "", exitCode: 0 }));
+      const results = await Promise.all([
+        print({}, "--stdin-filepath", "node_modules/x/a.js"),
+        print({}, "--stdin-filepath", "sub/node_modules/y/a.js"),
+        print({}, "--stdin-filepath", "../node_modules/a.js"),
+        print({}, "--check", "--stdin-filepath", "node_modules/x/a.js"),
+        print({}, "-l", "--stdin-filepath", "node_modules/x/a.js"),
+        print({}, "--stdin-filepath", "my_node_modules/a.js"),
+        print({}, "--stdin-filepath", ".git/a.js"),
+        print({}, "--with-node-modules", "--stdin-filepath", "node_modules/x/a.js"),
+        print({ "bunfig.toml": "[format]\nwithNodeModules = true\n" }, "--stdin-filepath", "node_modules/x/a.js"),
+        print({ ".oxfmtrc.json": "{}" }, "--stdin-filepath", "node_modules/x/a.js"),
+        print({}, "--flavor=oxfmt", "--stdin-filepath", "node_modules/x/a.js"),
+      ]);
+      expect(results).toEqual([alone, alone, alone, alone, alone, done, done, done, done, done, done]);
+    });
+
     test("--check", async () => {
       const result = await format({}, ["--check", "--stdin-filepath", "a.js"], { stdin: ugly });
       expect(result.raw).toBe("(stdin)\n");

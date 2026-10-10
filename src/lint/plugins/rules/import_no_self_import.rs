@@ -40,7 +40,7 @@ impl Rule for NoSelfImport {
         let is_oxlint = file.language().is_oxlint;
         let visited = visitor(is_oxlint).visit(file);
         if is_oxlint {
-            // oxlint knows the declarations at the top level, resolves them in its own way, and points at the specifier.
+            // oxlint knows the declarations at the top level, resolves in its own way, and points at the specifier.
             let Some(me) = file.modules().and_then(|it| it.find(file.path())) else {
                 return;
             };

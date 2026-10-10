@@ -20,7 +20,7 @@ impl Rule for Unambiguous {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         let is_unambiguous = match file.language().is_oxlint {
-            // oxlint asks about a script too, and its parser, for which `import.meta` and `await` make a module as well.
+            // oxlint asks about a script too. For its parser `import.meta` and `await` make a module as well.
             true => has_module_syntax(file),
             false => !file.is_module_program() || is_module(file),
         };

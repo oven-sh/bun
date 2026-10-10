@@ -75,7 +75,8 @@ impl Rule for NoRelativeParentImports {
         let (Some(types), Some(modules)) = (ImportTypes::of(file), file.modules()) else {
             return;
         };
-        let my_path = paths::portable(file.path(), file.path());
+        let cwd = modules.cwd();
+        let directory = paths::resolve(cwd, paths::dirname(&paths::portable(file.path(), file.path())));
         for it in self.visitor.visit(file) {
             let resolved = types.resolvers().resolve(file, it.specifier, it.is_require);
             let Some(abs_dep_path) = resolved.file() else {
@@ -84,7 +85,7 @@ impl Rule for NoRelativeParentImports {
             if types.of_resolved(it.specifier, &resolved) == ImportType::External {
                 continue;
             }
-            let rel_dep_path = paths::relative(paths::dirname(&my_path), &paths::resolve(modules.cwd(), abs_dep_path));
+            let rel_dep_path = paths::relative(&directory, &paths::resolve(cwd, abs_dep_path));
             // No other name is in a parent, and to ask about a name can mean to resolve it.
             if rel_dep_path.starts_with(b"..") && types.of_name(&rel_dep_path, it.is_require) == ImportType::Parent {
                 let filename = paths::basename(file.path());

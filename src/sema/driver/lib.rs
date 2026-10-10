@@ -3297,7 +3297,8 @@ pub fn check_project(
 
 /// Whether the root file at `path` can add to the globals of its program: it is a declaration file; or a script, which
 /// has neither `import` nor `export`, nor `require` in JavaScript; or it has `declare global`. By the words in its text: one
-/// that is kept for nothing costs its parse. A script that has such a word in a comment is not seen.
+/// that is kept for nothing costs its parse. A script that has such a word in a comment is not seen, nor a comment between
+/// `declare` and `global`.
 fn may_declare_a_global(host: &dyn Host, path: &[u8], every_file_is_a_module: bool) -> bool {
     if is_declaration_file_name(path) {
         return true;
@@ -3309,11 +3310,18 @@ fn may_declare_a_global(host: &dyn Host, path: &[u8], every_file_is_a_module: bo
         return false;
     };
     let has = |word: &[u8]| strings::contains(&text, word);
-    has(b"global")
-        || !every_file_is_a_module
-            && !has(b"import")
-            && !has(b"export")
-            && !(is_javascript(path) && has(b"require"))
+    let mut from = 0;
+    while let Some(found) = strings::index_of(&text[from..], b"global") {
+        let before = text[..from + found].trim_ascii_end();
+        if before.len() < from + found && before.ends_with(b"declare") {
+            return true;
+        }
+        from += found + b"global".len();
+    }
+    !every_file_is_a_module
+        && !has(b"import")
+        && !has(b"export")
+        && !(is_javascript(path) && has(b"require"))
 }
 
 /// `check_project`. `named`: of all loaded files, only these files (sorted) and the files they

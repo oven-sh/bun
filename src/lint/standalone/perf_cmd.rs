@@ -101,61 +101,63 @@ fn rules(args: &[String]) {
         let started = Instant::now();
         let session = Session::new();
         let atoms = Interner::new_in(&session);
-        let arena = session.arena();
         let options = language.parse_options(path.as_bytes());
-        let mut hir = bun_sema_parser::summarize_as(
+        // As the driver parses: the file has its own atoms, without which `File::mentions` is always true.
+        bun_sema_parser::with_summary(
             options.dialect,
-            arena,
+            (session.arena(), &session),
             path.as_bytes(),
             options.script_kind,
             code,
             &atoms,
             options.experimental_decorators,
             options.every_file_is_a_module,
+            |hir, atoms| {
+                let bind_options = BindOptions {
+                    emit_standard_class_fields: true,
+                    before_es2020: false,
+                    before_es2017: false,
+                };
+                let mut recycled = Recycled::of_this_thread();
+                let bound = bind_for_lint_in(&hir, bind_options, atoms, &mut recycled);
+                front_end.fetch_add(started.elapsed().as_nanos() as u64, Relaxed);
+                for (count, len) in nodes.iter().zip([
+                    hir.exprs.len(),
+                    hir.stmts.len(),
+                    hir.types.len(),
+                    hir.pats.len(),
+                ]) {
+                    count.fetch_add(len as u64, Relaxed);
+                }
+                // On a file of which nothing is computed yet, then once more: how long each takes, and how much is
+                // reported.
+                let measure = |rules: &[Enabled<Rules>]| {
+                    let file = File::new(path.as_bytes(), &hir, bound, atoms, &language, None);
+                    let (cold, found) = nanos_of(&file, rules);
+                    (cold, nanos_of(&file, rules).0, found)
+                };
+                if hir.has_errors || hir.has_parse_diagnostics {
+                    return;
+                }
+                together.fetch_add(
+                    (0..repeat).map(|_| measure(&enabled).0).min().unwrap_or(0),
+                    Relaxed,
+                );
+                for (at, rule) in enabled.iter().enumerate() {
+                    let rule = std::slice::from_ref(rule);
+                    let (mut least_cold, mut least_warm, mut reported) = (u64::MAX, u64::MAX, 0);
+                    for _ in 0..repeat {
+                        let (cold, warm, found) = measure(rule);
+                        least_cold = least_cold.min(cold);
+                        least_warm = least_warm.min(warm);
+                        reported = found;
+                    }
+                    reports[at].fetch_add(reported, Relaxed);
+                    cold[at].fetch_add(least_cold, Relaxed);
+                    warm[at].fetch_add(least_warm, Relaxed);
+                }
+            },
         );
-        hir.text = code.clone().into();
-        let bind_options = BindOptions {
-            emit_standard_class_fields: true,
-            before_es2020: false,
-            before_es2017: false,
-        };
-        let mut recycled = Recycled::of_this_thread();
-        let bound = bind_for_lint_in(&hir, bind_options, &atoms, &mut recycled);
-        front_end.fetch_add(started.elapsed().as_nanos() as u64, Relaxed);
-        for (count, len) in nodes.iter().zip([
-            hir.exprs.len(),
-            hir.stmts.len(),
-            hir.types.len(),
-            hir.pats.len(),
-        ]) {
-            count.fetch_add(len as u64, Relaxed);
-        }
-        // On a file of which nothing is computed yet, then once more: how long each takes, and how much is reported.
-        let measure = |rules: &[Enabled<Rules>]| {
-            let file = File::new(path.as_bytes(), &hir, bound, &atoms, &language, None);
-            let (cold, found) = nanos_of(&file, rules);
-            (cold, nanos_of(&file, rules).0, found)
-        };
-        if hir.has_errors || hir.has_parse_diagnostics {
-            return;
-        }
-        together.fetch_add(
-            (0..repeat).map(|_| measure(&enabled).0).min().unwrap_or(0),
-            Relaxed,
-        );
-        for (at, rule) in enabled.iter().enumerate() {
-            let rule = std::slice::from_ref(rule);
-            let (mut least_cold, mut least_warm, mut reported) = (u64::MAX, u64::MAX, 0);
-            for _ in 0..repeat {
-                let (cold, warm, found) = measure(rule);
-                least_cold = least_cold.min(cold);
-                least_warm = least_warm.min(warm);
-                reported = found;
-            }
-            reports[at].fetch_add(reported, Relaxed);
-            cold[at].fetch_add(least_cold, Relaxed);
-            warm[at].fetch_add(least_warm, Relaxed);
-        }
     });
     let ms = |nanos: &AtomicU64| nanos.load(Relaxed) as f64 / 1e6;
     let mut table: Vec<usize> = (0..enabled.len()).collect();

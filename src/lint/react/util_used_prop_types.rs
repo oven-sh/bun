@@ -6,7 +6,7 @@
 //! |---|---|
 //! | `usedPropTypesInstructions(context, components, utils)` | [`used`] |
 //! | `hasSpreadOperator(context, property)` | `property.is_rest()` |
-//! | `name in Object.prototype` | [`is_in_object_prototype`] |
+//! | `name in Object.prototype` | `util_prop_types::is_in_object_prototype(name)` |
 //!
 //! Where upstream throws, nothing is done: an `ObjectPattern` that is no parameter, two levels
 //! below a property with the name of a lifecycle method.
@@ -19,6 +19,7 @@ use crate::util_component_util::{Pragmas, get_parent_es5_component, get_parent_e
 use crate::util_components::{Components, Instructions, Visit};
 use crate::util_components_list::{Component, ComponentId, UsedPropType};
 use crate::util_is_create_element::is_member_called;
+use crate::util_prop_types::is_in_object_prototype;
 use crate::util_version::get_react_version_from_context;
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
@@ -254,25 +255,6 @@ fn get_property_name<'a>(
         },
         _ => None,
     }
-}
-
-/// `name in Object.prototype`
-pub(crate) fn is_in_object_prototype(name: &[u8]) -> bool {
-    matches!(
-        name,
-        b"constructor"
-            | b"__defineGetter__"
-            | b"__defineSetter__"
-            | b"hasOwnProperty"
-            | b"__lookupGetter__"
-            | b"__lookupSetter__"
-            | b"isPrototypeOf"
-            | b"propertyIsEnumerable"
-            | b"toString"
-            | b"valueOf"
-            | b"__proto__"
-            | b"toLocaleString"
-    )
 }
 
 /// `param.type === "AssignmentPattern" ? param.left.properties : param.properties`

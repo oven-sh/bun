@@ -93,6 +93,17 @@ const BUILT_IN: &[u8] = br#"[
             "parserOptions": { "ecmaFeatures": { "jsx": true } }
         }
     },
+    {
+        "files": ["**/*{.,_}{test,spec}.{js,mjs,cjs,jsx,ts,mts,cts,tsx}"],
+        "languageOptions": {
+            "globals": {
+                "test": "readonly", "it": "readonly", "describe": "readonly", "expect": "readonly",
+                "expectTypeOf": "readonly", "beforeAll": "readonly", "beforeEach": "readonly",
+                "afterEach": "readonly", "afterAll": "readonly", "jest": "readonly", "vi": "readonly",
+                "xit": "readonly", "xtest": "readonly", "xdescribe": "readonly"
+            }
+        }
+    },
     { "files": ["**/*.{ts,mts,cts,tsx}"], "extends": ["typescript-eslint/TYPESCRIPT"] }
 ]"#;
 

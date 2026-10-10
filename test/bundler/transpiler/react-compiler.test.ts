@@ -861,6 +861,34 @@ describe("bundler", () => {
     },
   });
 
+  // The scope depends on `a` and assigns it. What it remembered to compare with was `a` after the assignment, so `null`
+  // in the second render looked like no change. babel-plugin-react-compiler 1.0.0 does the same.
+  itBundled("react-compiler/DependencyThatTheScopeAssigns", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function Component(props) {
+          let a = props.a;
+          const c = (a = a ? null : 3) || { k: 1 };
+          return <div>{a}{c}</div>;
+        }
+        const rendered = [Component({ a: 1 }), Component({ a: null }), Component({ a: 1 }), Component({ a: 1 })];
+        console.log(rendered.map(it => JSON.stringify(it.p.children)).join(", "));
+        console.log(rendered[2] === rendered[3]);
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+      "/node_modules/react/compiler-runtime.js": `let cache; exports.c = n => (cache ??= new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));`,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: { stdout: `[null,{"k":1}], [3,3], [null,{"k":1}], [null,{"k":1}]\ntrue` },
+    onAfterBundle(api) {
+      expect(api.readFile("/out.js")).toContain("react.memo_cache_sentinel");
+    },
+  });
+
   // Sibling of the above: `WAS_ORIGINALLY_TYPEOF_IDENTIFIER` was also dropped,
   // so the printer wrapped `typeof undeclared` as `typeof (0, undeclared)`,
   // which throws ReferenceError instead of returning "undefined" — breaking

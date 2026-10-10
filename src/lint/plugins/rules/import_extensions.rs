@@ -1,15 +1,22 @@
+use crate::import_minimatch::Glob;
+use crate::import_resolve::Resolved;
+use crate::import_type::{ImportTypes, is_scoped};
+use crate::module_visitor::{self, Systems, Visited, Visitor};
 use bun_lint_oxlint::ast_util::is_enabled_global;
 use bun_lint_oxlint::import::is_nodejs_builtin_module;
 use bun_lint_oxlint::module_record::{get_loaded_module, is_waiting_for_modules, requested_modules};
 use bun_lint_oxlint::text::{file_extension, file_name, glob_match};
 use bun_core::strings;
+use bun_lint::paths;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 
-/// Enforce consistent use of file extensions in import paths.
+/// Ensure consistent use of file extension within the import path.
 pub struct Extensions {
+    /// The options as the original reads them. What follows: as oxlint does.
+    props: Props,
     ignore_packages: bool,
     require_extension: Option<ExtensionRule>,
     check_type_imports: bool,
@@ -17,6 +24,9 @@ pub struct Extensions {
     path_group_overrides: Vec<PathGroupOverride>,
 }
 
+const MISSING: Message = Message::new("", "Missing file extension {{extension}}for \"{{importPath}}\"");
+const UNEXPECTED: Message =
+    Message::new("", "Unexpected use of file extension \"{{extension}}\" for \"{{importPath}}\"");
 const EXTENSION_SHOULD_NOT_BE_INCLUDED: Message =
     Message::new("", "File extension \"{{extension}}\" should not be included in the {{import_or_export}} declaration.");
 const EXTENSION_MISSING: Message = Message::new("", "Missing file extension in {{import_or_export}} declaration.");
@@ -45,35 +55,52 @@ struct PathGroupOverride {
     enforces: bool,
 }
 
-/// The extension of the file that each specifier of an `import` or an `export .. from` stands for, in lower case.
+/// What `buildProperties` returns.
+struct Props {
+    default_config: ExtensionRule,
+    pattern: FxHashMap<Box<[u8]>, ExtensionRule>,
+    ignore_packages: bool,
+    check_type_imports: bool,
+    /// Each with whether its `action` is "enforce", not "ignore".
+    path_group_overrides: Vec<(Glob, bool)>,
+}
+
+const SYSTEMS: Systems = Systems { esmodule: true, commonjs: true, amd: false };
+
+/// For oxlint: the extension of the file that each specifier of an `import` or an `export .. from` stands for, in lower
+/// case.
 pub struct State<'a>(FxHashMap<Name<'a>, Option<Vec<u8>>>);
 
 impl Rule for Extensions {
-    const META: Meta = Meta::oxlint(Plugin::Import, "extensions", Kind::Suggestion).needs_modules();
+    const META: Meta = Meta::plugin(Plugin::Import, "extensions", Kind::Suggestion).needs_modules();
     const ON: On = On::new().exprs(&[ExprTag::Call]).finish();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
+        let props = Props::new(options);
         let Some(first) = options.get(0) else {
-            return Extensions::from_json_value(None, None);
+            return Extensions::from_json_value(props, None, None);
         };
         if first.as_str().is_none() {
-            return Extensions::from_json_value(Some(first), None);
+            return Extensions::from_json_value(props, Some(first), None);
         }
         // What is beside a `pattern` is not read.
         let root = options.get(1).map(|it| it.get(b"pattern").unwrap_or(it));
-        Extensions::from_json_value(root, ExtensionRule::from_json(first))
+        Extensions::from_json_value(props, root, ExtensionRule::from_json(first))
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let mut on = On::new().finish();
-        if file.mentions("require") {
+        if file.language().is_oxlint && file.mentions("require") {
             on = on.exprs(&[ExprTag::Call]);
         }
         on
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
+        if !file.language().is_oxlint {
+            return Visitor::of(SYSTEMS).may_visit(file).then(|| State(FxHashMap::default()));
+        }
         let enforces_nothing = self.require_extension.is_none() && self.extensions.is_empty() && self.path_group_overrides.is_empty();
         if !enforces_nothing && !is_waiting_for_modules(file) {
             // Before the calls are looked at.
@@ -91,8 +118,152 @@ impl Rule for Extensions {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        if !cx.state.0.is_empty() {
-            self.check_module_record(cx);
+        // oxlint asks its record of the modules, which is of the files that are linted. The original asks the resolver.
+        if cx.language().is_oxlint {
+            if !cx.state.0.is_empty() {
+                self.check_module_record(cx);
+            }
+        } else if let Some(types) = ImportTypes::of(cx.file()) {
+            for visited in module_visitor::visit(cx.file(), SYSTEMS) {
+                self.props.check_file_extension(&visited, &types, cx);
+            }
+        }
+    }
+}
+
+/// `isExternalRootModule`
+fn is_external_root_module(file: &[u8]) -> bool {
+    match strings::count_char(file, b'/') {
+        0 => !matches!(file, b"." | b".."),
+        1 => is_scoped(file),
+        _ => false,
+    }
+}
+
+/// `path.replace(/\?(.*)$/, "")`, where a `.` is no line break.
+fn without_query_string(path: &[u8]) -> &[u8] {
+    let last_line = strings::js_lines(path).last().unwrap_or(path);
+    match strings::index_of_char_usize(last_line, b'?') {
+        Some(at) => &path[..path.len() - last_line.len() + at],
+        None => path,
+    }
+}
+
+/// `node.importKind === "type" || node.exportKind === "type"`
+fn is_type_only(node: Node) -> bool {
+    let Node::Stmt(node) = node else {
+        return false;
+    };
+    match node.kind() {
+        StmtKind::Import(import) => import.is_type_only(),
+        StmtKind::ExportNamed(export) => export.is_type_only(),
+        StmtKind::ExportStar { type_only, .. } => type_only,
+        _ => false,
+    }
+}
+
+impl Props {
+    /// `buildProperties`
+    fn new(options: &Options) -> Props {
+        let mut result = Props {
+            default_config: ExtensionRule::Never,
+            pattern: FxHashMap::default(),
+            ignore_packages: false,
+            check_type_imports: false,
+            path_group_overrides: Vec::new(),
+        };
+        for obj in options.all() {
+            if obj.as_str().is_some() {
+                result.default_config = ExtensionRule::from_json(obj).unwrap_or(result.default_config);
+                continue;
+            }
+            let obj = Object::of(Some(obj));
+            if !(obj.has("pattern") || obj.has("ignorePackages") || obj.has("checkTypeImports")) {
+                result.assign(obj);
+                continue;
+            }
+            result.assign(obj.object("pattern"));
+            result.ignore_packages = obj.bool_or("ignorePackages", result.ignore_packages);
+            result.check_type_imports = obj.bool_or("checkTypeImports", result.check_type_imports);
+            if obj.has("pathGroupOverrides") {
+                let read = |it: Object| (Glob::of_path_group(it), it.str("action") == Some("enforce"));
+                let overrides = obj.array("pathGroupOverrides").iter();
+                result.path_group_overrides = overrides.map(|it| read(Object::of(Some(it)))).collect();
+            }
+        }
+        if result.default_config == ExtensionRule::IgnorePackages {
+            (result.default_config, result.ignore_packages) = (ExtensionRule::Always, true);
+        }
+        result
+    }
+
+    /// `Object.assign(result.pattern, obj)`
+    fn assign(&mut self, obj: Object) {
+        for (extension, value) in obj.entries() {
+            // What is neither "always" nor "never" asks for nothing. What is falsy gives way to the default.
+            let other = || value.is_truthy().then_some(ExtensionRule::IgnorePackages);
+            match ExtensionRule::from_json(value).or_else(other) {
+                Some(rule) => self.pattern.insert(extension.as_slice().into(), rule),
+                None => self.pattern.remove(extension.as_slice()),
+            };
+        }
+    }
+
+    /// `getModifier`
+    fn modifier(&self, extension: &[u8]) -> ExtensionRule {
+        self.pattern.get(extension).copied().unwrap_or(self.default_config)
+    }
+
+    /// `checkFileExtension`
+    fn check_file_extension<'a>(&self, visited: &Visited<'a>, types: &ImportTypes<'a>, cx: &Cx<'a, Extensions>) {
+        let import_path_with_query_string = visited.specifier;
+        if import_path_with_query_string.is_empty() {
+            return;
+        }
+        let mut overrides = self.path_group_overrides.iter();
+        let is_overridden = match overrides.find(|it| it.0.matches(import_path_with_query_string)) {
+            Some((_, enforces)) if !enforces => return,
+            action => action.is_some(),
+        };
+        if !is_overridden && types.is_built_in(import_path_with_query_string, None) {
+            return;
+        }
+        let import_path = without_query_string(import_path_with_query_string);
+        if !is_overridden && is_external_root_module(import_path) {
+            return;
+        }
+        let resolve = |name: &[u8]| types.resolvers().resolve(cx.file(), name, visited.is_require);
+        let resolved_path = resolve(import_path);
+        let extension = paths::extname(resolved_path.file().unwrap_or(import_path)).get(1..).unwrap_or_default();
+        let before_extension = import_path.strip_suffix(extension).filter(|_| !extension.is_empty());
+        let is_written = before_extension.is_some_and(|it| it.ends_with(b"."));
+        if !is_written {
+            let is_package = || types.is_external_module(import_path, &resolved_path) || is_scoped(import_path);
+            if self.modifier(extension) == ExtensionRule::Always
+                && (self.check_type_imports || !is_type_only(visited.importer))
+                && !(self.ignore_packages && !is_overridden && is_package())
+            {
+                let quoted = if extension.is_empty() { Vec::new() } else { [&b"\""[..], extension, b"\" "].concat() };
+                cx.report(visited.source, MISSING)
+                    .data("extension", quoted)
+                    .data("importPath", import_path_with_query_string);
+            }
+        } else if self.modifier(extension) == ExtensionRule::Never {
+            // `isResolvableWithoutExtension`. Without an extension, `file.slice(0, -0)` is empty.
+            let file_without_extension = match paths::extname(import_path) {
+                b"" => &b""[..],
+                extension => &import_path[..import_path.len() - extension.len()],
+            };
+            let is_resolvable_without_extension = match (resolve(file_without_extension), &resolved_path) {
+                (Resolved::File(without), Resolved::File(with)) => without == *with,
+                (Resolved::Builtin, Resolved::Builtin) | (Resolved::Nothing, Resolved::Nothing) => true,
+                _ => false,
+            };
+            if is_resolvable_without_extension {
+                cx.report(visited.source, UNEXPECTED)
+                    .data("extension", extension.to_vec())
+                    .data("importPath", import_path_with_query_string);
+            }
         }
     }
 }
@@ -107,7 +278,7 @@ fn is_standard_extension(extension: &[u8]) -> bool {
 }
 
 impl Extensions {
-    fn from_json_value(value: Option<&Json>, default: Option<ExtensionRule>) -> Self {
+    fn from_json_value(props: Props, value: Option<&Json>, default: Option<ExtensionRule>) -> Self {
         let object = Object::of(value);
         // "ignorePackages" is "always" with `ignorePackages: true`.
         let (default, default_ignore_packages) = match default {
@@ -124,6 +295,7 @@ impl Extensions {
             Some(PathGroupOverride { pattern: it.get(b"pattern")?.as_str()?.into(), enforces })
         };
         Extensions {
+            props,
             ignore_packages: object.bool_or("ignorePackages", default_ignore_packages),
             require_extension: default,
             check_type_imports: object.bool_or("checkTypeImports", false),

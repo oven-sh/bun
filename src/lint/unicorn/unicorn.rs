@@ -295,9 +295,8 @@ impl ValueType {
     }
 }
 
-/// `depth`: how many operators have been looked into. Nobody writes constants that are nested deeper.
-fn value_type(e: Expr, depth: u32) -> ValueType {
-    if depth > 8 {
+fn value_type(e: Expr) -> ValueType {
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return ValueType::Other;
     }
     match e.kind() {
@@ -316,11 +315,11 @@ fn value_type(e: Expr, depth: u32) -> ValueType {
             UnOp::Typeof => ValueType::String,
             UnOp::Void => ValueType::Undefined,
             UnOp::Plus => ValueType::Number,
-            UnOp::Minus | UnOp::BitNot => value_type(operand, depth + 1).to_numeric(),
+            UnOp::Minus | UnOp::BitNot => value_type(operand).to_numeric(),
             _ => ValueType::Other,
         },
         ExprKind::Binary { op, left, right } => match op {
-            BinOp::Add => match (value_type(left, depth + 1), value_type(right, depth + 1)) {
+            BinOp::Add => match (value_type(left), value_type(right)) {
                 (ValueType::String, _) | (_, ValueType::String) => ValueType::String,
                 (left, right) if left.to_numeric() == right.to_numeric() => left.to_numeric(),
                 _ => ValueType::Other,
@@ -335,8 +334,8 @@ fn value_type(e: Expr, depth: u32) -> ValueType {
             | BinOp::BitAnd
             | BinOp::BitOr
             | BinOp::BitXor => {
-                let left = value_type(left, depth + 1).to_numeric();
-                if left == value_type(right, depth + 1).to_numeric() {
+                let left = value_type(left).to_numeric();
+                if left == value_type(right).to_numeric() {
                     left
                 } else {
                     ValueType::Other
@@ -344,15 +343,13 @@ fn value_type(e: Expr, depth: u32) -> ValueType {
             }
             BinOp::UShr => ValueType::Number,
             BinOp::And | BinOp::Or | BinOp::Nullish => ValueType::Other,
-            BinOp::Comma => value_type(right, depth + 1),
+            BinOp::Comma => value_type(right),
             _ => ValueType::Boolean,
         },
         ExprKind::As { .. }
         | ExprKind::AsConst(_)
         | ExprKind::Satisfies { .. }
-        | ExprKind::NonNull(_) => e
-            .operand()
-            .map_or(ValueType::Other, |it| value_type(it, depth + 1)),
+        | ExprKind::NonNull(_) => e.operand().map_or(ValueType::Other, value_type),
         _ => ValueType::Other,
     }
 }
@@ -363,7 +360,7 @@ fn value_type(e: Expr, depth: u32) -> ValueType {
 /// where they are written, the members of classes, `{ ...{ a } }`, `[a][0]` and `1 instanceof Array` is left out. All
 /// these "may have side effects" here.
 pub(crate) fn may_have_side_effects(e: Expr) -> bool {
-    let is_primitive = |e: Expr| value_type(e, 0) != ValueType::Other;
+    let is_primitive = |e: Expr| value_type(e) != ValueType::Other;
     let mut pending: SmallVec<[Expr; 8]> = smallvec![e];
     while let Some(e) = pending.pop() {
         match e.kind() {
@@ -391,7 +388,7 @@ pub(crate) fn may_have_side_effects(e: Expr) -> bool {
                 let throws = match op {
                     UnOp::Void | UnOp::Not | UnOp::Typeof => false,
                     UnOp::Plus => {
-                        matches!(value_type(operand, 0), ValueType::Other | ValueType::BigInt)
+                        matches!(value_type(operand), ValueType::Other | ValueType::BigInt)
                     }
                     UnOp::Minus | UnOp::BitNot => !is_primitive(operand),
                     _ => true,
@@ -402,7 +399,7 @@ pub(crate) fn may_have_side_effects(e: Expr) -> bool {
                 pending.push(operand);
             }
             ExprKind::Binary { op, left, right } => {
-                let (left_type, right_type) = (value_type(left, 0), value_type(right, 0));
+                let (left_type, right_type) = (value_type(left), value_type(right));
                 let throws = match op {
                     BinOp::In | BinOp::Instanceof => true,
                     BinOp::Add if left_type == ValueType::String => right_type == ValueType::Other,
@@ -486,7 +483,7 @@ pub(crate) fn may_have_side_effects(e: Expr) -> bool {
             // `[].length`, `"a".length`
             ExprKind::Dot { obj, name, .. } if name.name().is("length") => {
                 let is_array = obj.tag() == ExprTag::Array && !obj.is_parenthesized();
-                if !is_array && value_type(obj, 0) != ValueType::String {
+                if !is_array && value_type(obj) != ValueType::String {
                     return true;
                 }
                 pending.push(obj);

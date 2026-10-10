@@ -100,10 +100,13 @@ fn called<'j>(name: &'j Json, located: Option<&'j Json>) -> Option<&'j [u8]> {
 
 /// Adds the names of the plugins in `json`, which is what a configuration file exports or a part of it, that are not
 /// [built in](is_built_in). An object can have the rules of a plugin that an object after it has.
-fn add_foreign_prefixes(registry: &Registry, json: &Json, depth: usize, into: &mut Vec<Box<[u8]>>) {
+fn add_foreign_prefixes(registry: &Registry, json: &Json, into: &mut Vec<Box<[u8]>>) {
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
+        return;
+    }
     if let Json::Array(items) = json {
-        for item in items.iter().filter(|_| depth < 64) {
-            add_foreign_prefixes(registry, item, depth + 1, into);
+        for item in items {
+            add_foreign_prefixes(registry, item, into);
         }
         return;
     }
@@ -118,7 +121,7 @@ fn add_foreign_prefixes(registry: &Registry, json: &Json, depth: usize, into: &m
         }
     }
     if let Some(extends) = json.get(b"extends") {
-        add_foreign_prefixes(registry, extends, depth + 1, into);
+        add_foreign_prefixes(registry, extends, into);
     }
 }
 
@@ -191,12 +194,15 @@ pub(super) fn names_unknown_resolver(settings: &Json) -> bool {
 }
 
 /// The same for what a configuration file exports, or a part of it.
-fn has_unknown_resolver(json: &Json, depth: usize) -> bool {
+fn has_unknown_resolver(json: &Json) -> bool {
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
+        return false;
+    }
     if let Json::Array(items) = json {
-        return depth < 64 && items.iter().any(|it| has_unknown_resolver(it, depth + 1));
+        return items.iter().any(has_unknown_resolver);
     }
     json.get(b"settings").is_some_and(names_unknown_resolver)
-        || (json.get(b"extends")).is_some_and(|it| has_unknown_resolver(it, depth + 1))
+        || (json.get(b"extends")).is_some_and(has_unknown_resolver)
 }
 
 const META_KEYS: [&[u8]; 2] = [b"name", b"basePath"];
@@ -743,24 +749,24 @@ impl Config {
             js_locations: Vec::new(),
             defaults: 0,
             foreign_prefixes: Vec::new(),
-            has_unknown_resolver: has_unknown_resolver(json, 0),
+            has_unknown_resolver: has_unknown_resolver(json),
             handing_back: Vec::new(),
         };
-        add_foreign_prefixes(registry, json, 0, &mut reader.foreign_prefixes);
+        add_foreign_prefixes(registry, json, &mut reader.foreign_prefixes);
         let defaults = crate::json::parse(DEFAULT_CONFIG).unwrap_or(Json::Null);
         for object in defaults.as_array().unwrap_or_default() {
             reader.object_with_extends(object)?;
         }
         reader.defaults = reader.objects.len();
-        fn read(reader: &mut Reader, json: &Json, depth: usize) -> Result<(), ConfigError> {
+        fn read(reader: &mut Reader, json: &Json) -> Result<(), ConfigError> {
             match json {
-                Json::Array(items) if depth < 64 => items
-                    .iter()
-                    .try_for_each(|item| read(reader, item, depth + 1)),
+                Json::Array(items) if bun_core::StackCheck::init().is_safe_to_recurse() => {
+                    items.iter().try_for_each(|item| read(reader, item))
+                }
                 json => reader.object_with_extends(json),
             }
         }
-        read(&mut reader, json, 0)?;
+        read(&mut reader, json)?;
         if let Some(load) = load_plugin {
             reader.load_js_plugins(load)?;
         }

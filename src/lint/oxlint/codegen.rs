@@ -112,8 +112,6 @@ fn print_number(out: &mut Vec<u8>, n: f64) {
 pub struct Codegen {
     pub code: Vec<u8>,
     indent: usize,
-    /// How many objects and arrays are being printed.
-    depth: usize,
 }
 
 impl Codegen {
@@ -159,12 +157,14 @@ impl Codegen {
                 self.code.extend_from_slice(b"...");
                 self.print_expr(argument, in_list);
             }
-            // The stack is not for what is nested deeper than anybody writes it.
-            ExprKind::Object(properties) if self.depth < 64 => {
+            _ if !bun_core::StackCheck::init().is_safe_to_recurse() => {
+                self.code.extend_from_slice(e.text())
+            }
+            ExprKind::Object(properties) => {
                 let properties: SmallVec<[Prop; 8]> = properties.iter().collect();
                 self.print_object_expression(&properties);
             }
-            ExprKind::Array(elements) if self.depth < 64 => self.print_array_expression(elements),
+            ExprKind::Array(elements) => self.print_array_expression(elements),
             _ => self.code.extend_from_slice(e.text()),
         }
         if is_wrapped {
@@ -175,7 +175,6 @@ impl Codegen {
     /// An object literal with `properties`.
     pub fn print_object_expression(&mut self, properties: &[Prop]) {
         let is_multi_line = properties.len() > 1;
-        self.depth += 1;
         self.indent += usize::from(is_multi_line);
         self.code.push(b'{');
         for (i, property) in properties.iter().enumerate() {
@@ -195,7 +194,6 @@ impl Codegen {
             _ => self.print_soft_newline(),
         }
         self.code.push(b'}');
-        self.depth -= 1;
     }
 
     fn print_object_property(&mut self, property: Prop) {
@@ -238,7 +236,6 @@ impl Codegen {
 
     fn print_array_expression<'a>(&mut self, elements: List<'a, Expr<'a>>) {
         let (len, is_multi_line) = (elements.len(), elements.len() > 2);
-        self.depth += 1;
         self.indent += usize::from(is_multi_line);
         self.code.push(b'[');
         for (i, element) in elements.iter().enumerate() {
@@ -261,14 +258,13 @@ impl Codegen {
             self.print_soft_newline();
         }
         self.code.push(b']');
-        self.depth -= 1;
     }
 }
 
 /// [`Codegen::print_expression`], which leaves a call as it is written. Here calls, `new`, member expressions and `a, b` are printed as
 /// oxc prints them, so that what is in their parentheses and brackets is printed anew too. The parentheses around `e` are not printed.
 pub fn print_expression(codegen: &mut Codegen, e: Expr) {
-    print_expression_in(codegen, e, 0, false);
+    print_expression_in(codegen, e, false);
 }
 
 /// Whether oxc prints no parentheses around it where it is called or a member of it is read.
@@ -295,11 +291,9 @@ fn is_primary(e: Expr) -> bool {
     }
 }
 
-/// `depth`: in how many pairs of parentheses and brackets that are printed anew. `is_callee_of_new`: a call that it starts with is
-/// in parentheses.
-fn print_expression_in(codegen: &mut Codegen, e: Expr, depth: usize, is_callee_of_new: bool) {
-    // The stack is not for what is nested deeper than anybody writes it.
-    if depth > 32 {
+/// `is_callee_of_new`: a call that it starts with is in parentheses.
+fn print_expression_in(codegen: &mut Codegen, e: Expr, is_callee_of_new: bool) {
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return codegen.print_expression(e);
     }
     // Also `a, (b, c)` is `a, b, c`.
@@ -308,7 +302,7 @@ fn print_expression_in(codegen: &mut Codegen, e: Expr, depth: usize, is_callee_o
             if i != 0 {
                 codegen.code.extend_from_slice(b", ");
             }
-            print_expression_in(codegen, *item, depth + 1, false);
+            print_expression_in(codegen, *item, false);
         }
         return;
     }
@@ -339,7 +333,7 @@ fn print_expression_in(codegen: &mut Codegen, e: Expr, depth: usize, is_callee_o
     match at.kind() {
         _ if is_in_parentheses => {
             codegen.code.push(b'(');
-            print_expression_in(codegen, at, depth + 1, false);
+            print_expression_in(codegen, at, false);
             codegen.code.push(b')');
         }
         ExprKind::New(call) if call.type_args().is_empty() => {
@@ -349,11 +343,11 @@ fn print_expression_in(codegen: &mut Codegen, e: Expr, depth: usize, is_callee_o
             codegen
                 .code
                 .extend_from_slice(if is_wrapped { "new (" } else { "new " }.as_bytes());
-            print_expression_in(codegen, callee, depth + 1, !is_wrapped);
+            print_expression_in(codegen, callee, !is_wrapped);
             codegen
                 .code
                 .extend_from_slice(if is_wrapped { ")(" } else { "(" }.as_bytes());
-            print_arguments(codegen, call, depth);
+            print_arguments(codegen, call);
         }
         _ => codegen.print_expression(at),
     }
@@ -385,14 +379,14 @@ fn print_expression_in(codegen: &mut Codegen, e: Expr, depth: usize, is_callee_o
                 codegen
                     .code
                     .extend_from_slice(if is_optional { "?.[" } else { "[" }.as_bytes());
-                print_expression_in(codegen, index, depth + 1, false);
+                print_expression_in(codegen, index, false);
                 codegen.code.push(b']');
             }
             ExprKind::Call(call) => {
                 codegen
                     .code
                     .extend_from_slice(if is_optional { "?.(" } else { "(" }.as_bytes());
-                print_arguments(codegen, call, depth);
+                print_arguments(codegen, call);
             }
             _ => {}
         }
@@ -404,7 +398,7 @@ fn print_expression_in(codegen: &mut Codegen, e: Expr, depth: usize, is_callee_o
 }
 
 /// The arguments and the `)`.
-fn print_arguments(codegen: &mut Codegen, call: Call, depth: usize) {
+fn print_arguments(codegen: &mut Codegen, call: Call) {
     for (i, argument) in call.args().iter().enumerate() {
         if i != 0 {
             codegen.code.extend_from_slice(b", ");
@@ -420,7 +414,7 @@ fn print_arguments(codegen: &mut Codegen, call: Call, depth: usize) {
         if is_sequence {
             codegen.code.push(b'(');
         }
-        print_expression_in(codegen, argument, depth + 1, false);
+        print_expression_in(codegen, argument, false);
         if is_sequence {
             codegen.code.push(b')');
         }

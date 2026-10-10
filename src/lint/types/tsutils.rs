@@ -234,21 +234,17 @@ pub fn type_constituents<'a>(ty: Type<'a>) -> TypeList<'a> {
 /// `getCallSignaturesOfType(type)`: of a union, those of all its constituents. Of an intersection,
 /// those of the one constituent that has any.
 pub fn get_call_signatures_of_type<'a>(ty: Type<'a>) -> Vec<Signature<'a>> {
-    fn collect<'a>(ty: Type<'a>, depth: u32) -> Vec<Signature<'a>> {
-        if depth > 64 {
+    fn collect<'a>(ty: Type<'a>) -> Vec<Signature<'a>> {
+        if !bun_core::StackCheck::init().is_safe_to_recurse() {
             return Vec::new();
         }
         if is_union_type(ty) {
-            return ty
-                .types()
-                .iter()
-                .flat_map(|it| collect(it, depth + 1))
-                .collect();
+            return ty.types().iter().flat_map(collect).collect();
         }
         if is_intersection_type(ty) {
             let mut signatures: Option<Vec<Signature>> = None;
             for it in ty.types() {
-                let found = collect(it, depth + 1);
+                let found = collect(it);
                 if !found.is_empty() {
                     if signatures.is_some() {
                         return Vec::new();
@@ -260,7 +256,7 @@ pub fn get_call_signatures_of_type<'a>(ty: Type<'a>) -> Vec<Signature<'a>> {
         }
         ty.get_call_signatures().iter().collect()
     }
-    collect(ty, 0)
+    collect(ty)
 }
 
 /// `getWellKnownSymbolPropertyOfType(type, wellKnownSymbolName, typeChecker)`: the property whose
@@ -346,11 +342,7 @@ pub fn is_numeric_property_name(name: &[u8]) -> bool {
 
 /// `isPropertyReadonlyInType(type, name, typeChecker)`
 pub fn is_property_readonly_in_type(ty: Type, name: &[u8]) -> bool {
-    is_property_readonly_in_type_at(ty, name, 0)
-}
-
-fn is_property_readonly_in_type_at(ty: Type, name: &[u8], depth: u32) -> bool {
-    if depth > 64 {
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return false;
     }
     let (mut seen_property, mut seen_readonly_signature) = (false, false);
@@ -367,9 +359,7 @@ fn is_property_readonly_in_type_at(ty: Type, name: &[u8], depth: u32) -> bool {
                 }
                 seen_readonly_signature = true;
             }
-        } else if seen_readonly_signature
-            || is_readonly_property_intersection(sub_type, name, depth)
-        {
+        } else if seen_readonly_signature || is_readonly_property_intersection(sub_type, name) {
             return true;
         } else {
             seen_property = true;
@@ -387,7 +377,7 @@ fn is_array_index(name: &[u8]) -> bool {
     }
 }
 
-fn is_readonly_property_from_mapped_type(ty: Type, name: &[u8], depth: u32) -> Option<bool> {
+fn is_readonly_property_from_mapped_type(ty: Type, name: &[u8]) -> Option<bool> {
     let TypeStructure::Mapped { readonly, .. } = ty.structure() else {
         return None;
     };
@@ -396,14 +386,10 @@ fn is_readonly_property_from_mapped_type(ty: Type, name: &[u8], depth: u32) -> O
         return Some(readonly != MappedModifier::Remove);
     }
     let modifiers_type = ty.get_modifiers_type_from_mapped_type()?;
-    Some(is_property_readonly_in_type_at(
-        modifiers_type,
-        name,
-        depth + 1,
-    ))
+    Some(is_property_readonly_in_type(modifiers_type, name))
 }
 
-fn is_readonly_property_intersection(ty: Type, name: &[u8], depth: u32) -> bool {
+fn is_readonly_property_intersection(ty: Type, name: &[u8]) -> bool {
     intersection_constituents(ty).iter().any(|constituent| {
         let Some(prop) = constituent.get_property(name) else {
             return false;
@@ -414,9 +400,7 @@ fn is_readonly_property_intersection(ty: Type, name: &[u8], depth: u32) -> bool 
             {
                 return target.readonly();
             }
-            if let Some(is_readonly) =
-                is_readonly_property_from_mapped_type(constituent, name, depth)
-            {
+            if let Some(is_readonly) = is_readonly_property_from_mapped_type(constituent, name) {
                 return is_readonly;
             }
         }

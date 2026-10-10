@@ -315,14 +315,11 @@ fn globals_of(options: &Options) -> Option<Json> {
 }
 
 /// `preprocessConfig` under `--no-ignore`: an object that only has `ignores` loses them.
-fn without_global_ignores(json: Json, depth: usize) -> Json {
+fn without_global_ignores(json: Json) -> Json {
     match json {
-        Json::Array(items) if depth < 64 => Json::Array(
-            items
-                .into_iter()
-                .map(|item| without_global_ignores(item, depth + 1))
-                .collect(),
-        ),
+        Json::Array(items) if bun_core::StackCheck::init().is_safe_to_recurse() => {
+            Json::Array(items.into_iter().map(without_global_ignores).collect())
+        }
         Json::Object(mut entries) => {
             let is_meta = |key: &[u8]| matches!(key, b"name" | b"basePath");
             let is_ignores = |key: &[u8]| matches!(key, b"ignores" | b"$ignorePatterns");
@@ -700,7 +697,7 @@ impl<'l> Loader<'l> {
         all.extend(self.added());
         let mut all = Json::Array(all);
         if !self.options.ignore {
-            all = without_global_ignores(all, 0);
+            all = without_global_ignores(all);
         }
         let mut load_plugin =
             |location: &Json, prefix: &[u8]| self.js_plugins.load_located(location, prefix);

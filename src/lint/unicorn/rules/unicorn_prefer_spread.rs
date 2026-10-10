@@ -112,8 +112,8 @@ fn is_typed_array_or_buffer_construction(expr: Expr) -> bool {
 /// `expr`: whether it is in parentheses or not.
 fn is_not_array(expr: Expr) -> bool {
     let (mut at, mut is_parenthesized) = (expr, false);
-    // Not further than anybody writes it: `var a = b, b = a` goes in a circle, and of `var b = a, c = b ..` each can be asked about.
-    let mut steps = 0;
+    // `var a = b, b = a` goes in a circle.
+    let mut seen = rustc_hash::FxHashSet::default();
     loop {
         let name = match at.kind() {
             ExprKind::Template(_) => return true,
@@ -137,8 +137,7 @@ fn is_not_array(expr: Expr) -> bool {
                 if let Some(Node::VarDecl(variable_declarator)) = declaration.and_then(Declaration::node)
                     && let Some(init) = variable_declarator.init()
                 {
-                    steps += 1;
-                    if steps > 32 {
+                    if !seen.insert(init) {
                         return false;
                     }
                     (at, is_parenthesized) = (init, init.is_parenthesized());

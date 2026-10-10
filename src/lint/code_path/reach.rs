@@ -141,7 +141,7 @@ pub(super) fn is_end_reachable(root: Node, method: Method, mut reach: Option<&mu
             tries: Vec::new(),
             targets: Vec::new(),
             label: None,
-            depth: 0,
+            stack: bun_core::StackCheck::init(),
             is_generator: matches!(root, Node::Func(func) if func.is_generator()),
             has_given_up: false,
         };
@@ -196,9 +196,6 @@ struct Jumps {
     is_repeating: bool,
 }
 
-/// More nesting than this is left to the analysis, which does not recurse.
-const MAX_DEPTH: u32 = 200;
-
 /// ESLint's `CodePathState`, with a bit in the place of a segment.
 struct Quick<'r> {
     reach: Option<&'r mut Reach>,
@@ -212,7 +209,7 @@ struct Quick<'r> {
     targets: Vec<Jumps>,
     /// The label of the statement that is about to be entered.
     label: Option<Atom>,
-    depth: u32,
+    stack: bun_core::StackCheck,
     is_generator: bool,
     has_given_up: bool,
 }
@@ -260,8 +257,8 @@ impl<'a> Quick<'_> {
             return;
         }
         self.enter(stmt);
-        self.depth += 1;
-        if self.depth > MAX_DEPTH {
+        // The rest is left to the analysis, which does not recurse.
+        if !self.stack.is_safe_to_recurse() {
             self.has_given_up = true;
         }
         let label = self.label.take();
@@ -377,7 +374,6 @@ impl<'a> Quick<'_> {
             } => self.try_statement(block, param, handler, finalizer),
             _ => self.may_throw(stmt.into()),
         }
-        self.depth -= 1;
         if self.head != 0
             && let Some(reach) = &mut self.reach
         {

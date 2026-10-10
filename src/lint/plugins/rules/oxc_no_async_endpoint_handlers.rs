@@ -48,8 +48,8 @@ impl NoAsyncEndpointHandlers {
     fn check_endpoint_arg<'a>(&self, endpoint: Option<Name<'a>>, arg: Expr<'a>, cx: &Cx<'a, Self>) {
         let mut at = get_inner_expression(arg);
         let mut registered_at = None;
-        // Not further than anybody writes it: `const a = b, b = a` goes in a circle, and of `const b = a, c = b ..` each can be registered.
-        let mut steps = 0;
+        // `const a = b, b = a` goes in a circle.
+        let mut seen = rustc_hash::FxHashSet::default();
         let handler = loop {
             match at.kind() {
                 ExprKind::Ident(_) => {
@@ -66,8 +66,8 @@ impl NoAsyncEndpointHandlers {
                     let Some(init) = declarator.init().filter(|it| !it.is_parenthesized()) else {
                         return;
                     };
-                    steps += 1;
-                    if steps > 32 || init.as_ident().is_some_and(|name| declarator.pat().as_ident() == Some(name)) {
+                    let is_itself = init.as_ident().is_some_and(|name| declarator.pat().as_ident() == Some(name));
+                    if is_itself || !seen.insert(init) {
                         return;
                     }
                     at = init;

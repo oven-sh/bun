@@ -245,7 +245,7 @@ fn get_module_name(expr: Expr<'_>) -> Option<Cow<'_, [u8]>> {
     while let Some(expr) = pending.pop().map(get_inner_expression) {
         match expr.kind() {
             ExprKind::Binary { op: BinOp::Add, left, right } => pending.extend([right, left]),
-            _ if to_js_string(expr, &mut name, 0) => {}
+            _ if to_js_string(expr, &mut name) => {}
             _ => return None,
         }
     }
@@ -253,7 +253,7 @@ fn get_module_name(expr: Expr<'_>) -> Option<Cow<'_, [u8]>> {
 }
 
 /// `ToJsString` of `oxc_ecmascript`, for strings, templates, numbers, booleans, `null` and `void 0`.
-fn to_js_string(expr: Expr, out: &mut Vec<u8>, depth: u32) -> bool {
+fn to_js_string(expr: Expr, out: &mut Vec<u8>) -> bool {
     match expr.kind() {
         ExprKind::String(value) | ExprKind::BigInt(value) => out.extend_from_slice(value.bytes()),
         ExprKind::Number(value) => out.extend_from_slice(&text::number_to_string(value)),
@@ -261,14 +261,13 @@ fn to_js_string(expr: Expr, out: &mut Vec<u8>, depth: u32) -> bool {
         ExprKind::True => out.extend_from_slice(b"true"),
         ExprKind::False => out.extend_from_slice(b"false"),
         ExprKind::Unary { op: UnOp::Void, .. } => out.extend_from_slice(b"undefined"),
-        ExprKind::Template(template) if depth < 32 => {
+        ExprKind::Template(template) if bun_core::StackCheck::init().is_safe_to_recurse() => {
             for i in 0..template.quasi_count() {
                 let Some(cooked) = template.cooked(i) else {
                     return false;
                 };
                 out.extend_from_slice(cooked.bytes());
-                if template.exprs().get(i).is_some_and(|it| it.is_parenthesized() || !to_js_string(it, out, depth + 1))
-                {
+                if template.exprs().get(i).is_some_and(|it| it.is_parenthesized() || !to_js_string(it, out)) {
                     return false;
                 }
             }

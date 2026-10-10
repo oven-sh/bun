@@ -26,13 +26,13 @@ impl Rule for PreferLogicalOperatorOverTernary {
             return;
         };
         // What is on the left of the `||` and what is on the right, each with whether its parentheses stay.
-        let (left, right) = if is_same_node(test, consequent, 0) {
+        let (left, right) = if is_same_node(test, consequent) {
             // `foo ? foo : bar`
             let preferred = if test.is_parenthesized() { consequent } else { test };
             ((get_inner_expression(preferred), false), (alternate, true))
         } else if let ExprKind::Unary { op: UnOp::Not, operand: argument } = test.kind()
             && !test.is_parenthesized()
-            && is_same_node(argument, alternate, 0)
+            && is_same_node(argument, alternate)
         {
             // `!bar ? foo : bar`. Of `!!bar ? foo : !bar` it is `bar`.
             let preferred = match argument.kind() {
@@ -81,9 +81,12 @@ fn is_update(op: UnOp) -> bool {
 }
 
 /// oxlint asks `is_same_expression` at every level on the way down, which takes quadratic time for `a && a && ..` and
-/// `!!!..a`. Here it is asked at the bottom, and the answer for each level is made of the one below. `depth`: of the
-/// operands on the right, which are nested only by precedence and by parentheses.
-fn is_same_node<'a>(left: Expr<'a>, right: Expr<'a>, depth: u32) -> bool {
+/// `!!!..a`. Here it is asked at the bottom, and the answer for each level is made of the one below. It calls itself
+/// for the operands on the right, which are nested only by precedence and by parentheses.
+fn is_same_node<'a>(left: Expr<'a>, right: Expr<'a>) -> bool {
+    if !bun_core::StackCheck::init().is_safe_to_recurse() {
+        return false;
+    }
     let mut levels: SmallVec<[Both<'a>; 8]> = SmallVec::new();
     let (mut left, mut right) = (left, right);
     loop {
@@ -118,7 +121,7 @@ fn is_same_node<'a>(left: Expr<'a>, right: Expr<'a>, depth: u32) -> bool {
         is_same_inner = match level {
             Both::Logical(is_same_operator, a, b) => {
                 let is_same_level = is_same_operator && is_same_inner && is_same_inner_expression(a, b);
-                is_same = is_same_level || is_same && depth < 64 && is_same_node(a, b, depth + 1);
+                is_same = is_same_level || is_same && is_same_node(a, b);
                 is_same_level
             }
             Both::Unary(is_same_operator) => is_same_operator && is_same_inner,

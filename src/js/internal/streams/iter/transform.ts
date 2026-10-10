@@ -209,9 +209,7 @@ function createBrotliHandle(mode, options, processCallback, onError) {
   }
 
   handle.onerror = onError;
-  if (!handle.init(brotliInitParamsArray, writeState, processCallback, dictionary)) {
-    throw $ERR_ZLIB_INITIALIZATION_FAILED();
-  }
+  handle.init(brotliInitParamsArray, writeState, processCallback, dictionary);
 
   return { __proto__: null, handle, writeState, chunkSize };
 }

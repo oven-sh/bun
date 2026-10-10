@@ -66,3 +66,65 @@ describe("zlib native handle onerror re-entrancy", () => {
     });
   }
 });
+
+// A failed init() calls onerror before it throws. The handle is closed by
+// then, so nothing the callback does reaches a handle that has no context.
+describe.concurrent("zlib native handle onerror during a failed init()", () => {
+  const prelude = /* js */ `
+    const zlib = require("zlib");
+    const show = fn => { try { return "returned " + fn(); } catch (e) { return "threw " + e.code + ": " + e.message; } };
+    const h = new (zlib.createZstdDecompress()._handle.constructor)(11);
+    const badDictionary = Buffer.from([0x37, 0xa4, 0x30, 0xec, 1, 2, 3, 4, 5, 6, 7, 8]);
+    const init = onWrite => h.init(new Uint32Array(0), undefined, new Uint32Array(2), onWrite, badDictionary);
+  `;
+  const INIT_FAILED = "threw ERR_ZLIB_INITIALIZATION_FAILED: Failed to load zstd dictionary";
+  const CLOSED = "threw ERR_INVALID_STATE: zlib binding closed";
+
+  async function run(body: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", prelude + body],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim().split("\n"), exitCode };
+  }
+
+  test("init(), writeSync(), write() and close() from onerror", async () => {
+    const result = await run(/* js */ `
+      const out = new Uint8Array(64);
+      let writeCallbacks = 0;
+      const inside = [];
+      h.onerror = function () {
+        inside.push("init: " + show(() => this.init(new Uint32Array(0), undefined, new Uint32Array(2), () => {})));
+        inside.push("writeSync: " + show(() => this.writeSync(0, null, 0, 0, out, 0, 64)));
+        inside.push("write: " + show(() => this.write(0, null, 0, 0, out, 0, 64)));
+        inside.push("close: " + show(() => this.close()));
+      };
+      console.log("outer: " + show(() => init(() => writeCallbacks++)));
+      console.log(inside.join("\\n"));
+      process.on("exit", () => console.log("write callbacks: " + writeCallbacks));
+    `);
+    expect(result).toEqual({
+      stdout: [
+        `outer: ${INIT_FAILED}`,
+        `init: ${CLOSED}`,
+        `writeSync: ${CLOSED}`,
+        `write: ${CLOSED}`,
+        "close: returned undefined",
+        "write callbacks: 0",
+      ],
+      exitCode: 0,
+    });
+  });
+
+  test("an onerror that throws does not replace the init error", async () => {
+    const result = await run(/* js */ `
+      process.on("uncaughtException", () => {});
+      h.onerror = () => { throw new Error("from onerror"); };
+      console.log(show(() => init(() => {})));
+    `);
+    expect(result).toEqual({ stdout: [INIT_FAILED], exitCode: 0 });
+  });
+});

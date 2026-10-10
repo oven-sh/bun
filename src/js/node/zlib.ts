@@ -785,9 +785,7 @@ function Brotli(opts, mode) {
   const handle = new NativeBrotli(mode);
 
   this._writeState = new Uint32Array(2);
-  if (!handle.init(brotliInitParamsArray, this._writeState, processCallback, dictionary)) {
-    throw $ERR_ZLIB_INITIALIZATION_FAILED();
-  }
+  handle.init(brotliInitParamsArray, this._writeState, processCallback, dictionary);
 
   ZlibBase.$apply(this, [opts, mode, handle, brotliDefaultOpts]);
 }

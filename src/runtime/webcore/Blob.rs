@@ -1975,21 +1975,16 @@ impl BlobExt for Blob {
     fn get_last_modified(&self, _: &JSGlobalObject) -> JSValue {
         if let Some(store) = self.store.get() {
             if matches!(store.data, store::Data::File(_)) {
-                // do not hold a pattern-bound `&File` across
-                // `resolve_file_stat` — it materializes `&mut File` on the same
-                // memory (Stacked Borrows UB; the optimizer may legally cache the
-                // pre-call `last_modified` and return the stale `INIT_TIMESTAMP`).
-                // Re-read via `Store::data_mut` (raw-ptr-backed accessor) after
-                // the mutating call.
-                let last_modified = Store::data_mut(store).as_file().last_modified;
-                // last_modified can be already set during read.
-                if last_modified == jsc::INIT_TIMESTAMP && !self.is_s3() {
+                let mut last_modified = Store::data_mut(store).as_file().last_modified;
+                if last_modified == jsc::INIT_TIMESTAMP {
                     resolve_file_stat(store);
+                    last_modified = Store::data_mut(store).as_file().last_modified;
+                    // Still the marker: the stat failed (the path may not exist yet).
+                    if last_modified == jsc::INIT_TIMESTAMP {
+                        return JSValue::js_number(0.0);
+                    }
                 }
-                // Fresh borrow after possible mutation by `resolve_file_stat`.
-                return JSValue::js_number(JSValue::purify_nan(
-                    Store::data_mut(store).as_file().last_modified as f64,
-                ));
+                return JSValue::js_number(JSValue::purify_nan(last_modified as f64));
             }
         }
 
@@ -1997,7 +1992,7 @@ impl BlobExt for Blob {
             return JSValue::js_number(JSValue::purify_nan(self.last_modified.get()));
         }
 
-        JSValue::js_number(jsc::INIT_TIMESTAMP as f64)
+        JSValue::js_number(0.0)
     }
 
     fn get_size_for_bindings(&self) -> u64 {

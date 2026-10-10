@@ -794,6 +794,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             p.forbid_suffix_after_as_loc = p.lexer.loc();
             return Ok(Continuation::Done);
         }
+        Self::sfx_end_after_update(p);
         Ok(Continuation::Next)
     }
 
@@ -817,7 +818,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             p.forbid_suffix_after_as_loc = p.lexer.loc();
             return Ok(Continuation::Done);
         }
+        Self::sfx_end_after_update(p);
         Ok(Continuation::Next)
+    }
+
+    /// Outside `SEMA`, whose parser is tolerant and stops above: the expression ends before a token
+    /// that cannot follow `a++` / `a--`. `forbid_suffix_after_as_loc` is only checked for
+    /// TypeScript. Every suffix loop checks this one.
+    #[inline]
+    fn sfx_end_after_update(p: &mut Self) {
+        if !SEMA && Self::token_cannot_follow_update(p) {
+            p.after_arrow_body_loc = p.lexer.loc();
+        }
     }
 
     /// `parseUpdateExpression`: `a++` and `++a` are not a LeftHandSideExpression. Whether the
@@ -826,6 +838,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
     #[cold]
     #[inline(never)]
     pub(crate) fn cannot_follow_update(p: &Self) -> bool {
+        Self::token_cannot_follow_update(p)
+    }
+
+    #[inline]
+    fn token_cannot_follow_update(p: &Self) -> bool {
         match p.lexer.token {
             T::TPlusPlus | T::TMinusMinus | T::TExclamation => !p.lexer.has_newline_before,
             T::TDot

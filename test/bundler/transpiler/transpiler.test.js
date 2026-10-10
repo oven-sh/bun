@@ -3100,6 +3100,114 @@ console.log(<div {...obj} key="after" />);`),
       expectParseError("await -x ** 0", "Unexpected **");
     });
 
+    describe.each(["js", "ts"])("postfix ++ and -- end their expression (%s)", loader => {
+      const print = loader === "ts" ? code => ts.parsed(code, false, false) : code => parsed(code, false, false);
+      // Error recovery can report more errors after the first one. The first one is the cause.
+      const firstError = code => {
+        try {
+          print(code);
+        } catch (e) {
+          return (e instanceof AggregateError ? e.errors[0] : e).message;
+        }
+        return "parsed without an error";
+      };
+
+      it("a line break before [ ( or a template ends the statement", () => {
+        const rows = [
+          ["i++\n[a, b] = [b, a]", "i++;\n[a, b] = [b, a];\n"],
+          ["i--\n(f)()", "i--;\nf();\n"],
+          ["i++\n`t${x}`", "i++;\n`t${x}`;\n"],
+          ["o.x++\n[a] = [7]", "o.x++;\n[a] = [7];\n"],
+          // The end is also the end of every expression around the update.
+          ["a = i++\n[b] = c", "a = i++;\n[b] = c;\n"],
+          ["a ? b : i++\n[c] = d", "a ? b : i++;\n[c] = d;\n"],
+          ["x = () => i++\n[c] = d", "x = () => i++;\n[c] = d;\n"],
+          ["y = typeof i++\n[b] = c", "y = typeof i++;\n[b] = c;\n"],
+          ["if (a) i++\n[b] = c", "if (a)\n  i++;\n[b] = c;\n"],
+          ["class A { x = i++\n[y] = 1 }", "class A {\n  x = i++;\n  [y] = 1;\n}\n"],
+        ];
+        for (const gap of ["\r", "\r\n", "\u2028", "\u2029", " // c\n", " /* c\n */ "]) {
+          rows.push([`i++${gap}[a, b] = [b, a]`, "i++;\n[a, b] = [b, a];\n"]);
+        }
+        for (const [code, out] of rows) {
+          expect({ code, out: print(code) }).toEqual({ code, out });
+        }
+      });
+
+      it("the swap happens when the transpiled program runs", () => {
+        const out = print(
+          "function run() {\n  var i = 0, a = 1, b = 2\n  i++\n  [a, b] = [b, a]\n  return [i, a, b]\n}",
+        );
+        expect(new Function(`${out}; return run();`)()).toEqual([1, 2, 1]);
+      });
+
+      it("a member access, a call, a template or a second update on the same line is a syntax error", () => {
+        const rows = [
+          ["i++[0]", 'Expected ";" but found "["'],
+          ["i++.y", 'Expected ";" but found "."'],
+          ["i--(1)", 'Expected ";" but found "("'],
+          ["i++`t`", 'Expected ";" but found "`t`"'],
+          ["i++?.y", 'Expected ";" but found "?."'],
+          ["i++ --", 'Expected ";" but found "--"'],
+          ["f(i++[0])", 'Expected ")" but found "["'],
+          ["class A { x = i++ [y] = 1 }", 'Expected ";" but found "["'],
+          // A line break does not help where a statement cannot end.
+          ["[i++\n[0]]", 'Expected "]" but found "["'],
+          ["i++\n.y", "Unexpected ."],
+        ];
+        for (const [code, error] of rows) {
+          expect({ code, error: firstError(code) }).toEqual({ code, error });
+        }
+      });
+
+      it("other code after a postfix update parses as before", () => {
+        const rows = [
+          ["(i++)[0]", "(i++)[0];\n"],
+          ["(i++)(1)", "(i++)(1);\n"],
+          ["(i++)`t`", "(i++)`t`;\n"],
+          ["i++ + 1", "i++ + 1;\n"],
+          ["i++\n/2/g", "i++ / 2 / g;\n"],
+          ["i++\n++\nj", "i++;\n++j;\n"],
+          // No postfix update: the line break does not end this statement.
+          ["x = i\n[y] = 1", "x = i[y] = 1;\n"],
+        ];
+        for (const [code, out] of rows) {
+          expect({ code, out: print(code) }).toEqual({ code, out });
+        }
+      });
+
+      it("a bare yield before a line break ends its expression", () => {
+        const rows = [
+          ["function* g() { yield\n[a, b] = [b, a] }", "function* g() {\n  yield;\n  [a, b] = [b, a];\n}\n"],
+          ["function* g() { yield\n(f)() }", "function* g() {\n  yield;\n  f();\n}\n"],
+          // An operand on the same line and a parenthesized yield still take a suffix.
+          ["function* g() { yield x\n[a] }", "function* g() {\n  yield x[a];\n}\n"],
+          ["function* g() { (yield)[a] }", "function* g() {\n  (yield)[a];\n}\n"],
+        ];
+        for (const [code, out] of rows) {
+          expect({ code, out: print(code) }).toEqual({ code, out });
+        }
+      });
+    });
+
+    it("a TypeScript non-null assertion cannot follow a postfix ++ or --", () => {
+      expect(ts.parsed("i!++\n[a] = b", false, false)).toBe("i++;\n[a] = b;\n");
+      expect(ts.parsed("a![0]", false, false)).toBe("a[0];\n");
+      ts.expectParseError("i++!", 'Expected ";" but found "!"');
+      ts.expectParseError("i++![0]", 'Expected ";" but found "!"');
+    });
+
+    // tsc 6.0.2 reads two arguments, `i++ < a` and `b > (c)`. Bun reads `<a, b>` as type arguments
+    // and prints `check((i++)(c));`.
+    it.failing("TypeScript: `<` after a postfix update is a comparison, not type arguments", () => {
+      expect(ts.parsed("check(i++ < a, b > (c))", false, false)).toBe("check(i++ < a, b > c);\n");
+    });
+
+    // tsc 6.0.2 reads two arguments. Bun prints `check(x(c));`.
+    it.failing("TypeScript: `<` after an `as` cast is a comparison, not type arguments", () => {
+      expect(ts.parsed("check(x as any < a, b > (c))", false, false)).toBe("check(x < a, b > c);\n");
+    });
+
     it("for-of loop variable named async", () => {
       // "\u0061sync" is the identifier `async`, which is legal as a for-of loop
       // variable, but printing it as the raw token sequence `async of` is a

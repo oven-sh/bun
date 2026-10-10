@@ -2249,7 +2249,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             (*server).any_server_packed = AnyServer::from(server.cast_const()).to_packed() as usize;
         }
 
-        // The bake options (and the arena that backs `root`) live in
+        // The bake options (`root`, and the arena the transpilers live in) are in
         // `(*server).config.bake` for the server's lifetime. Initialise
         // DevServer AFTER the server box exists so the `Options::arena` borrow
         // points into the heap-allocated config rather than the caller's
@@ -2265,15 +2265,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             };
             let dev = match crate::bake::DevServer::init(crate::bake::DevServer::Options {
                 arena: &bake_options.arena,
-                root: bake_options.root,
+                root: bake_options.root.as_zstr(),
                 // SAFETY: per-thread VM singleton; STATIC lifetime.
                 vm: jsc::VirtualMachine::get(),
-                // LAYERING: `UserOptions` carries the `bake_body` shapes;
-                // `DevServer::Options` consumes the keystone shapes;
-                // `From` impls in `bake/mod.rs` bridge
-                // until the duplicates are collapsed.
-                framework: core::mem::take(&mut bake_options.framework).into(),
-                bundler_options: core::mem::take(&mut bake_options.bundler_options).into(),
+                framework: core::mem::take(&mut bake_options.framework),
+                bundler_options: core::mem::take(&mut bake_options.bundler_options),
                 broadcast_console_log_from_browser_to_server: broadcast,
             }) {
                 Ok(d) => d,

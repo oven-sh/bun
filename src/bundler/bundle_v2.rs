@@ -475,7 +475,7 @@ pub mod bv2_impl {
         }
         impl Framework {
             /// Construct the bundler-side TYPE_ONLY view. Called from
-            /// `bun_runtime::bake::Framework::init_transpiler_with_options`; the
+            /// `bun_runtime::bake::Framework::init_transpiler`; the
             /// runtime owns the canonical `bake.Framework` and projects the
             /// fields the bundler reads.
             pub fn new(

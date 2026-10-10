@@ -7522,8 +7522,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         }
                     }
 
-                    // TODO: prop.kind == .declare and prop.value == null
-
                     if prop.ts_decorators.len_u32() > 0 {
                         let descriptor_key = prop.key.expect("infallible: prop has key");
                         let loc = descriptor_key.loc;
@@ -7893,7 +7891,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         }
 
         match prop.kind {
-            PropertyKind::Normal | PropertyKind::Abstract => {
+            // typescript emits design:type for decorated `declare`/`abstract` fields too.
+            PropertyKind::Normal | PropertyKind::Abstract | PropertyKind::Declare => {
                 {
                     // design:type
                     let v = self
@@ -8005,8 +8004,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                     }
                 }
             }
-            PropertyKind::Spread | PropertyKind::Declare | PropertyKind::AutoAccessor => {} // not allowed in a class (auto_accessor is standard decorators only)
-            PropertyKind::ClassStaticBlock => {} // not allowed to decorate this
+            // not allowed in a class (auto_accessor is standard decorators only)
+            PropertyKind::Spread | PropertyKind::AutoAccessor => {}
+            // not allowed to decorate this
+            PropertyKind::ClassStaticBlock => {}
         }
     }
 

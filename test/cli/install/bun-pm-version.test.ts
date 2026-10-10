@@ -526,6 +526,32 @@ describe.concurrent("bun pm version", () => {
         },
       });
     });
+
+    it("rewrites a package.json that is not valid UTF-8 as valid UTF-8", async () => {
+      // "Jos\xE9": Latin-1, not UTF-8. Each stray byte becomes U+FFFD and its neighbours survive.
+      await using testDir = tempDir(`version-${i++}`, {
+        "package.json": Buffer.concat([
+          Buffer.from('{\n  "name": "test",\n  "version": "1.0.0",\n  "author": "Jos'),
+          Buffer.from([0xe9]),
+          Buffer.from(" P"),
+          Buffer.from([0xe9]),
+          Buffer.from('rez"\n}\n'),
+        ]),
+      });
+
+      const { output, error, code } = await runCommand(
+        [bunExe(), "pm", "version", "patch", "--no-git-tag-version"],
+        String(testDir),
+      );
+      expect(error).toBe("");
+      expect(output.trim()).toBe("v1.0.1");
+
+      const bytes = await Bun.file(join(String(testDir), "package.json")).bytes();
+      expect(new TextDecoder("utf-8", { fatal: true }).decode(bytes)).toBe(
+        '{\n  "name": "test",\n  "version": "1.0.1",\n  "author": "Jos\uFFFD P\uFFFDrez"\n}\n',
+      );
+      expect(code).toBe(0);
+    });
   });
 
   describe("prerelease handling", () => {

@@ -1,6 +1,6 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { exists, lstat } from "fs/promises";
+import { exists, lstat, rm } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
 import { dirname, join } from "path";
 
@@ -718,6 +718,113 @@ describe.each(["hoisted", "isolated"] as Linker[])("linker: %s", linker => {
     expect(await exists(installedPath(packageDir, linker, "left-pad", "1.0.0"))).toBeFalse();
     expect(await exists(installedPath(packageDir, linker, "a-dep", "1.0.1"))).toBeTrue();
   });
+
+  // electron is on the default trusted list and its preinstall writes preinstall.txt. The only
+  // package.json that turns the default list off is the one missing from the pruned checkout.
+  // The lifecycle hook is a diff of its own, so that install also copies the list from the manifests.
+  test.concurrent.each([
+    ["absent", "no other diff"],
+    ["intact", "no other diff"],
+    ["absent", "a lifecycle hook in the surviving workspace"],
+    ["intact", "a lifecycle hook in the surviving workspace"],
+  ] as const)(
+    "a missing workspace that declared an empty trustedDependencies list keeps the default list off (node_modules %s, %s)",
+    async (nodeModules, otherDiff) => {
+      const hook = otherDiff === "no other diff" ? {} : { scripts: { postinstall: "echo ok" } };
+      const tree: Tree = {
+        root: { name: "mono", workspaces: ["packages/*"] },
+        packages: {
+          "packages/declares": { name: "declares", trustedDependencies: [] },
+          "packages/uses": { name: "uses", dependencies: { electron: "1.0.0" }, ...hook },
+        },
+      };
+      const { fullDir, full } = await fullInstall(linker, tree);
+      const electron = dirname(installedPath(fullDir, linker, "electron", "1.0.0"));
+      expect(full).toContain('"trustedDependencies": [],');
+      expect(await exists(join(electron, "preinstall.txt"))).toBeFalse();
+
+      await rm(join(fullDir, "packages", "declares"), { recursive: true, force: true });
+      if (nodeModules === "absent") {
+        await rm(join(fullDir, "node_modules"), { recursive: true, force: true });
+        await rm(join(fullDir, "packages", "uses", "node_modules"), { recursive: true, force: true });
+      }
+
+      const { stderr } = await frozen(fullDir, linker, 0);
+
+      expect(stderr).toContain('note: skipped 1 workspace listed in bun.lock but not on disk: "declares"');
+      expect(await exists(join(electron, "package.json"))).toBeTrue();
+      expect(await exists(join(electron, "preinstall.txt"))).toBeFalse();
+      expect(await lockText(fullDir)).toBe(full);
+    },
+  );
+
+  // Only an empty recorded list is kept. With entries, the default list applies again, and it has electron.
+  test.concurrent.each([
+    ["[]", "absent", [], false],
+    ["[]", "intact", [], false],
+    ['["electron"]', "absent", ["electron"], true],
+  ] as const)(
+    "bun.lockb: a missing workspace that declared trustedDependencies %s (node_modules %s)",
+    async (_list, nodeModules, trustedDependencies, runs) => {
+      const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker, saveTextLockfile: false } });
+      const tree: Tree = {
+        root: { name: "mono", workspaces: ["packages/*"] },
+        packages: {
+          "packages/declares": { name: "declares", trustedDependencies },
+          "packages/uses": { name: "uses", dependencies: { electron: "1.0.0" } },
+        },
+      };
+      await writeTree(packageDir, tree);
+      await install(packageDir, linker);
+      const electron = dirname(installedPath(packageDir, linker, "electron", "1.0.0"));
+      const lockb = await file(join(packageDir, "bun.lockb")).bytes();
+      expect(await exists(join(electron, "preinstall.txt"))).toBe(runs);
+
+      await rm(join(packageDir, "packages", "declares"), { recursive: true, force: true });
+      if (nodeModules === "absent") {
+        await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+        await rm(join(packageDir, "packages", "uses", "node_modules"), { recursive: true, force: true });
+      }
+
+      await frozen(packageDir, linker, 0);
+
+      expect(await exists(join(electron, "package.json"))).toBeTrue();
+      expect(await exists(join(electron, "preinstall.txt"))).toBe(runs);
+      expect(await file(join(packageDir, "bun.lockb")).bytes()).toEqual(lockb);
+    },
+  );
+
+  // uses-what-bin is not on the default list and its install script writes what-bin.txt.
+  // bun.lock still records the list that package.json no longer has, and the missing workspace never declared one.
+  test.concurrent(
+    "a trustedDependencies list deleted from package.json is not kept for a missing workspace",
+    async () => {
+      const root: PackageJson = { name: "mono", workspaces: ["packages/*"] };
+      const tree: Tree = {
+        root: { ...root, trustedDependencies: ["uses-what-bin"] },
+        packages: {
+          "packages/other": { name: "other" },
+          "packages/uses": { name: "uses", dependencies: { "uses-what-bin": "1.0.0" } },
+        },
+      };
+      const { fullDir, full } = await fullInstall(linker, tree);
+      const usesWhatBin = dirname(installedPath(fullDir, linker, "uses-what-bin", "1.0.0"));
+      expect(full).toContain('"trustedDependencies": [\n    "uses-what-bin",\n  ],');
+      expect(await exists(join(usesWhatBin, "what-bin.txt"))).toBeTrue();
+
+      await write(join(fullDir, "package.json"), JSON.stringify(root));
+      await rm(join(fullDir, "packages", "other"), { recursive: true, force: true });
+      await rm(join(fullDir, "node_modules"), { recursive: true, force: true });
+      await rm(join(fullDir, "packages", "uses", "node_modules"), { recursive: true, force: true });
+
+      const { stderr } = await frozen(fullDir, linker, 0);
+
+      expect(stderr).toContain('note: skipped 1 workspace listed in bun.lock but not on disk: "other"');
+      expect(await exists(join(usesWhatBin, "package.json"))).toBeTrue();
+      expect(await exists(join(usesWhatBin, "what-bin.txt"))).toBeFalse();
+      expect(await lockText(fullDir)).toBe(full);
+    },
+  );
 });
 
 describe("hoisted", () => {

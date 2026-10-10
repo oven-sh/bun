@@ -525,11 +525,18 @@ impl Stringifier {
 
                     // intentionally not checking default trusted dependencies
                     if let Some(trusted_dependencies) = &lockfile.trusted_dependencies {
-                        if let Some(trusted_name) =
-                            trusted_dependencies.get(&(dep.name_hash as TruncatedPackageNameHash))
-                        {
-                            if **trusted_name == *dep.name.slice(buf) {
-                                found_trusted_dependencies.insert(dep.name_hash, dep.name);
+                        let by_alias = (dep.name, dep.name_hash);
+                        let checked = res.trusted_name(by_alias, (pkg_name, pkg_name_hash));
+                        // The alias still matches, so a recorded section does not lose a name.
+                        let alias_too = (checked.1 != by_alias.1).then_some(by_alias);
+                        // One insert per name: a repeat can grow the map, and that reorders the section.
+                        for (name, name_hash) in std::iter::once(checked).chain(alias_too) {
+                            if let Some(trusted_name) =
+                                trusted_dependencies.get(&(name_hash as TruncatedPackageNameHash))
+                            {
+                                if **trusted_name == *name.slice(buf) {
+                                    found_trusted_dependencies.insert(name_hash, name);
+                                }
                             }
                         }
                     }
@@ -540,17 +547,22 @@ impl Stringifier {
 
             index_sort::sort_slice_by(&mut tree_sort_buf, tree_sort_is_less_than);
 
-            if found_trusted_dependencies.len() > 0 {
+            // Written even when empty: the key is what turns the default list off.
+            if lockfile.trusted_dependencies.is_some() {
                 Self::write_indent(writer, *indent)?;
-                writer.write_all(b"\"trustedDependencies\": [\n")?;
-                *indent += 1;
-                for dep_name in found_trusted_dependencies.values() {
-                    Self::write_indent(writer, *indent)?;
-                    writeln!(writer, "\"{}\",", bstr::BStr::new(dep_name.slice(buf)))?;
-                }
+                if found_trusted_dependencies.len() == 0 {
+                    writer.write_all(b"\"trustedDependencies\": [],\n")?;
+                } else {
+                    writer.write_all(b"\"trustedDependencies\": [\n")?;
+                    *indent += 1;
+                    for dep_name in found_trusted_dependencies.values() {
+                        Self::write_indent(writer, *indent)?;
+                        writeln!(writer, "\"{}\",", bstr::BStr::new(dep_name.slice(buf)))?;
+                    }
 
-                Self::dec_indent(writer, indent)?;
-                writer.write_all(b"],\n")?;
+                    Self::dec_indent(writer, indent)?;
+                    writer.write_all(b"],\n")?;
+                }
             }
 
             if found_patched_dependencies.len() > 0 {

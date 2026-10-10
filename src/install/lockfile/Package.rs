@@ -899,6 +899,10 @@ pub struct DiffSummary {
     pub(crate) added_trusted_dependencies:
         ArrayHashMap<TruncatedPackageNameHash, AddedTrustedDependency, ArrayIdentityContext>,
     pub(crate) removed_trusted_dependencies: TrustedDependenciesSet,
+    /// A list appeared or disappeared. `[]` adds no name, so the two maps above cannot report it.
+    pub(crate) trusted_dependencies_list_toggled: bool,
+    /// A manifest is missing and the recorded list is empty, so the install keeps that list.
+    pub(crate) keeps_recorded_trusted_dependencies: bool,
 
     pub(crate) patched_dependencies_changed: bool,
     /// A workspace's `version` changed. No edge changed with it (those count as updates), but the
@@ -909,6 +913,12 @@ pub struct DiffSummary {
 }
 
 impl DiffSummary {
+    /// A workspace listed in the lockfile is missing on disk, so its package.json was not parsed.
+    #[inline]
+    pub(crate) fn manifests_incomplete(&self) -> bool {
+        !self.pruned_workspaces.is_empty()
+    }
+
     #[inline]
     pub(crate) fn changes_resolutions(&self) -> bool {
         self.add > 0
@@ -923,6 +933,7 @@ impl DiffSummary {
         self.changes_resolutions()
             || self.added_trusted_dependencies.count() > 0
             || self.removed_trusted_dependencies.count() > 0
+            || self.trusted_dependencies_list_toggled
             || self.patched_dependencies_changed
             || self.workspace_versions_changed
     }
@@ -1167,136 +1178,6 @@ impl Diff {
                         }
                     }
                 }
-            }
-        }
-
-        'trusted_dependencies: {
-            // trusted dependency diff
-            //
-            // situations:
-            // 1 - Both old lockfile and new lockfile use default trusted dependencies, no diffs
-            // 2 - Both exist, only diffs are from additions and removals
-            //
-            // 3 - Old lockfile has trusted dependencies, new lockfile does not. Added are dependencies
-            //     from default list that didn't exist previously. We need to be careful not to add these
-            //     to the new lockfile. Removed are dependencies from old list that
-            //     don't exist in the default list.
-            //
-            // 4 - Old lockfile used the default list, new lockfile has trusted dependencies. Added
-            //     are dependencies are all from the new lockfile. Removed is empty because the default
-            //     list isn't appended to the lockfile.
-
-            // 1
-            if from_lockfile.trusted_dependencies.is_none()
-                && to_lockfile.trusted_dependencies.is_none()
-            {
-                break 'trusted_dependencies;
-            }
-
-            // 2
-            if let (Some(from_trusted_dependencies), Some(to_trusted_dependencies)) = (
-                from_lockfile.trusted_dependencies.as_mut(),
-                to_lockfile.trusted_dependencies.as_ref(),
-            ) {
-                // added
-                for (&to_trusted, to_name) in to_trusted_dependencies.iter() {
-                    // Empty name = legacy bun.lockb hash-only sentinel.
-                    let already_trusted = from_trusted_dependencies
-                        .get_mut(&to_trusted)
-                        .is_some_and(|from_name| {
-                            if from_name.is_empty() && !to_name.is_empty() {
-                                from_name.clone_from(to_name);
-                            }
-                            from_name.is_empty() || to_name.is_empty() || **from_name == **to_name
-                        });
-                    if !already_trusted {
-                        summary.added_trusted_dependencies.put(
-                            to_trusted,
-                            AddedTrustedDependency {
-                                add_to_lockfile: true,
-                                name: to_name.clone(),
-                            },
-                        )?;
-                    }
-                }
-
-                // removed
-                for (&from_trusted, from_name) in from_trusted_dependencies.iter() {
-                    let still_trusted =
-                        to_trusted_dependencies
-                            .get(&from_trusted)
-                            .is_some_and(|to_name| {
-                                from_name.is_empty()
-                                    || to_name.is_empty()
-                                    || **to_name == **from_name
-                            });
-                    if !still_trusted {
-                        summary
-                            .removed_trusted_dependencies
-                            .put(from_trusted, from_name.clone())?;
-                    }
-                }
-
-                break 'trusted_dependencies;
-            }
-
-            // 3
-            if let (Some(from_trusted_dependencies), None) = (
-                from_lockfile.trusted_dependencies.as_ref(),
-                to_lockfile.trusted_dependencies.as_ref(),
-            ) {
-                // added
-                for entry in default_trusted_dependencies::entries() {
-                    if !from_trusted_dependencies
-                        .contains(&(entry.hash as TruncatedPackageNameHash))
-                    {
-                        // although this is a new trusted dependency, it is from the default
-                        // list so it shouldn't be added to the lockfile
-                        summary.added_trusted_dependencies.put(
-                            entry.hash as TruncatedPackageNameHash,
-                            AddedTrustedDependency {
-                                add_to_lockfile: false,
-                                name: Box::from(entry.key),
-                            },
-                        )?;
-                    }
-                }
-
-                // removed
-                for (&from_trusted, from_name) in from_trusted_dependencies.iter() {
-                    if !default_trusted_dependencies::has_with_hash(u64::from(from_trusted)) {
-                        summary
-                            .removed_trusted_dependencies
-                            .put(from_trusted, from_name.clone())?;
-                    }
-                }
-
-                break 'trusted_dependencies;
-            }
-
-            // 4
-            if let (None, Some(to_trusted_dependencies)) = (
-                from_lockfile.trusted_dependencies.as_ref(),
-                to_lockfile.trusted_dependencies.as_ref(),
-            ) {
-                // add all to trusted dependencies, even if they exist in default because they weren't in the
-                // lockfile originally
-                for (&to_trusted, to_name) in to_trusted_dependencies.iter() {
-                    summary.added_trusted_dependencies.put(
-                        to_trusted,
-                        AddedTrustedDependency {
-                            add_to_lockfile: true,
-                            name: to_name.clone(),
-                        },
-                    )?;
-                }
-
-                {
-                    // removed
-                    // none
-                }
-
-                break 'trusted_dependencies;
             }
         }
 
@@ -1665,7 +1546,116 @@ impl Diff {
             }
         }
 
+        if is_root {
+            Self::diff_trusted_dependencies(from_lockfile, to_lockfile, &mut summary)?;
+        }
+
         Ok(summary)
+    }
+
+    /// Root only, after the member loop: the set is the union over every parsed manifest.
+    fn diff_trusted_dependencies(
+        from_lockfile: &mut Lockfile,
+        to_lockfile: &Lockfile,
+        summary: &mut DiffSummary,
+    ) -> Result<(), bun_alloc::AllocError> {
+        match (
+            from_lockfile.trusted_dependencies.as_mut(),
+            to_lockfile.trusted_dependencies.as_ref(),
+        ) {
+            // Both use the default list.
+            (None, None) => {}
+
+            // Both have a list. The only diffs are additions and removals.
+            (Some(from_trusted_dependencies), Some(to_trusted_dependencies)) => {
+                for (&to_trusted, to_name) in to_trusted_dependencies.iter() {
+                    // Empty name = legacy bun.lockb hash-only sentinel.
+                    let already_trusted = from_trusted_dependencies
+                        .get_mut(&to_trusted)
+                        .is_some_and(|from_name| {
+                            if from_name.is_empty() && !to_name.is_empty() {
+                                from_name.clone_from(to_name);
+                            }
+                            from_name.is_empty() || to_name.is_empty() || **from_name == **to_name
+                        });
+                    if !already_trusted {
+                        summary.added_trusted_dependencies.put(
+                            to_trusted,
+                            AddedTrustedDependency {
+                                add_to_lockfile: true,
+                                name: to_name.clone(),
+                            },
+                        )?;
+                    }
+                }
+
+                for (&from_trusted, from_name) in from_trusted_dependencies.iter() {
+                    let still_trusted =
+                        to_trusted_dependencies
+                            .get(&from_trusted)
+                            .is_some_and(|to_name| {
+                                from_name.is_empty()
+                                    || to_name.is_empty()
+                                    || **to_name == **from_name
+                            });
+                    if !still_trusted {
+                        summary
+                            .removed_trusted_dependencies
+                            .put(from_trusted, from_name.clone())?;
+                    }
+                }
+            }
+
+            // The list was removed: the default list applies again.
+            (Some(from_trusted_dependencies), None) => {
+                // The missing manifest can declare the `[]`. An empty list trusts nothing, so it is kept.
+                if summary.manifests_incomplete() && from_trusted_dependencies.count() == 0 {
+                    summary.keeps_recorded_trusted_dependencies = true;
+                    return Ok(());
+                }
+
+                summary.trusted_dependencies_list_toggled = true;
+
+                for entry in default_trusted_dependencies::entries() {
+                    if !from_trusted_dependencies
+                        .contains(&(entry.hash as TruncatedPackageNameHash))
+                    {
+                        summary.added_trusted_dependencies.put(
+                            entry.hash as TruncatedPackageNameHash,
+                            AddedTrustedDependency {
+                                add_to_lockfile: false,
+                                name: Box::from(entry.key),
+                            },
+                        )?;
+                    }
+                }
+
+                for (&from_trusted, from_name) in from_trusted_dependencies.iter() {
+                    if !default_trusted_dependencies::has_with_hash(u64::from(from_trusted)) {
+                        summary
+                            .removed_trusted_dependencies
+                            .put(from_trusted, from_name.clone())?;
+                    }
+                }
+            }
+
+            // A list replaced the default list.
+            (None, Some(to_trusted_dependencies)) => {
+                summary.trusted_dependencies_list_toggled = true;
+
+                for (&to_trusted, to_name) in to_trusted_dependencies.iter() {
+                    summary.added_trusted_dependencies.put(
+                        to_trusted,
+                        AddedTrustedDependency {
+                            add_to_lockfile: true,
+                            name: to_name.clone(),
+                        },
+                    )?;
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 

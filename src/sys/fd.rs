@@ -16,12 +16,6 @@ use crate as sys;
 
 bun_core::define_scoped_log!(log, SYS, visible);
 
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub enum ErrorCase {
-    CloseOnFail,
-    LeakFdOnFail,
-}
-
 #[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum MakeLibUvOwnedError {
     #[error("SystemFdQuotaExceeded")]
@@ -58,11 +52,8 @@ pub trait FdExt: Copy + Sized {
     fn close_allowing_standard_io(self, return_address: Option<usize>) -> Option<sys::Error>;
     /// Assumes given a valid file descriptor. If error, the handle has not been closed.
     fn make_lib_uv_owned(self) -> Result<Fd, MakeLibUvOwnedError>;
-    fn make_lib_uv_owned_for_syscall(
-        self,
-        syscall_tag: sys::Tag,
-        error_case: ErrorCase,
-    ) -> sys::Result<Fd>;
+    /// On failure the fd is closed.
+    fn make_lib_uv_owned_for_syscall(self, syscall_tag: sys::Tag) -> sys::Result<Fd>;
     fn make_path_u8(self, subpath: &[u8]) -> sys::Maybe<()>;
     fn delete_tree(self, subpath: &[u8]) -> sys::Maybe<()>;
 }
@@ -232,14 +223,10 @@ impl FdExt for Fd {
         }
     }
 
-    fn make_lib_uv_owned_for_syscall(
-        self,
-        syscall_tag: sys::Tag,
-        error_case: ErrorCase,
-    ) -> sys::Result<Fd> {
+    fn make_lib_uv_owned_for_syscall(self, syscall_tag: sys::Tag) -> sys::Result<Fd> {
         #[cfg(not(windows))]
         {
-            let _ = (syscall_tag, error_case);
+            let _ = syscall_tag;
             Ok(self)
         }
         #[cfg(windows)]
@@ -247,9 +234,7 @@ impl FdExt for Fd {
             match self.make_lib_uv_owned() {
                 Ok(fd) => Ok(fd),
                 Err(MakeLibUvOwnedError::SystemFdQuotaExceeded) => {
-                    if matches!(error_case, ErrorCase::CloseOnFail) {
-                        self.close();
-                    }
+                    self.close();
                     Err(sys::Error {
                         errno: sys::E::EMFILE as _,
                         syscall: syscall_tag,

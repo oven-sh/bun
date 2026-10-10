@@ -15,23 +15,6 @@ pub enum PerfEvent {
     SymbolsFollowAll = 55,
 }
 
-impl From<PerfEvent> for &'static str {
-    fn from(e: PerfEvent) -> &'static str {
-        match e {
-            PerfEvent::_Stub => "_Stub",
-            PerfEvent::FolderResolverReadPackageJSONFromDiskFolder => {
-                "FolderResolver.readPackageJSONFromDisk.folder"
-            }
-            PerfEvent::FolderResolverReadPackageJSONFromDiskWorkspace => {
-                "FolderResolver.readPackageJSONFromDisk.workspace"
-            }
-            PerfEvent::ModuleResolverResolve => "ModuleResolver.resolve",
-            PerfEvent::StandaloneModuleGraphSerialize => "StandaloneModuleGraph.serialize",
-            PerfEvent::SymbolsFollowAll => "Symbols.followAll",
-        }
-    }
-}
-
 impl PerfEvent {
     /// NUL-terminated tag name. Required for FFI to `Bun__linux_trace_emit`
     /// (expects C string).

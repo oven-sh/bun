@@ -429,14 +429,14 @@ test.each([
   ["in the middle of its request", 0],
   ["behind its request", 3],
 ])("closeAllConnections() does not wait for a client that stopped reading, %s", async (_when, turns) => {
-  const stalled = Promise.withResolvers<void>();
+  const stalled = Promise.withResolvers<string>();
   const server = https.createServer(validCert, (_req, res) => {
     const chunk = Buffer.alloc(1024 * 1024, "a");
     let left = 16;
     (function more() {
       while (left-- > 0) {
         if (!res.write(chunk)) {
-          stalled.resolve();
+          stalled.resolve("a write that the client does not take");
           return void res.once("drain", more);
         }
       }
@@ -462,15 +462,16 @@ test.each([
     stderr: "inherit",
   });
   // Closed from here on, whatever becomes of the client.
-  const closed = stalled.promise.then(async () => {
+  const closed = stalled.promise.then(async closedAt => {
     for (let i = 0; i < turns; i++) await new Promise(setImmediate);
     const from = performance.now();
-    const { promise, resolve } = Promise.withResolvers<number>();
-    server.close(() => resolve(performance.now() - from));
+    const { promise, resolve } = Promise.withResolvers<void>();
+    server.close(() => resolve());
     server.closeAllConnections();
-    return promise;
+    await promise;
+    // The deadline, 10 s on a 4 s tick, is 8 s away at the least.
+    return { closedAt, wellAheadOfTheDeadline: performance.now() - from < 5_000 };
   });
-  client.exited.then(() => stalled.resolve());
-  // The deadline, 10 s on a 4 s tick, is 8 s away at the least.
-  expect(await closed).toBeLessThan(5_000);
+  client.exited.then(() => stalled.resolve("the exit of the client"));
+  expect(await closed).toEqual({ closedAt: "a write that the client does not take", wellAheadOfTheDeadline: true });
 });

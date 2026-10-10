@@ -13,6 +13,10 @@ test/js/third_party/astro/astro-post.test.js
 # hit a debug assert
 test/bundler/bundler_compile.test.ts
 
+# `bun build --app` config loading: unchecked throw scopes in bakeModuleLoaderResolve
+# (BakeGlobalObject.cpp) and BakeGetDefaultExportFromModule (BakeSourceProvider.cpp)
+test/bake/build-app-options.test.ts
+
 # 3rd party napi
 test/js/third_party/prisma/prisma.test.ts
 test/js/third_party/remix/remix.test.ts

@@ -296,6 +296,20 @@ afterAll(async () => {
     const describeNames = describes.map(d => d.name).sort();
     expect(describeNames).toEqual(["suite A", "suite B"]);
 
+    // Retroactively reported tests must carry real source locations, the same
+    // as tests reported live during collection. The retroactive path reads the
+    // stored line number, which previously was only captured for the JUnit
+    // reporter and otherwise left at 0.
+    for (const t of testsArray) {
+      expect(t.url).toEndWith("delayed.test.ts");
+      expect(t.line).toBeGreaterThan(0);
+    }
+    // Spot-check an exact line to catch off-by-one regressions. "test A1" is on
+    // line 6 of delayed.test.ts (leading newline in the template literal makes
+    // the import on line 2).
+    const testA1 = tests.find(t => t.name === "test A1");
+    expect(testA1?.line).toBe(6);
+
     // Receiving the retroactive `found` events proves TestReporter.enable has been
     // processed on the JS thread. Release A1 so its `end` event fires with the agent
     // enabled, then wait for all three tests to report completion.

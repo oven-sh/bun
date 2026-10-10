@@ -615,14 +615,7 @@ impl Response {
             }
         }
 
-        if let BodyValue::Blob(blob) = self.body.get().value.get() {
-            let content_type = blob.content_type_slice();
-            if !content_type.is_empty() {
-                return Ok(Some(Utf8Bytes::Borrowed(content_type)));
-            }
-        }
-
-        Ok(None)
+        Ok(self.body.get().value.get().blob_content_type())
     }
 }
 

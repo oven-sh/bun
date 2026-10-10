@@ -354,14 +354,7 @@ impl Request {
             }
         }
 
-        if let BodyValue::Blob(blob) = self.body_value() {
-            let ct = blob.content_type_slice();
-            if !ct.is_empty() {
-                return Ok(Some(bun_core::Utf8Bytes::Borrowed(ct)));
-            }
-        }
-
-        Ok(None)
+        Ok(self.body_value().blob_content_type())
     }
 }
 

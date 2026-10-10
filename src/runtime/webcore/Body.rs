@@ -398,6 +398,35 @@ impl PendingValue {
         Some(blob)
     }
 
+    /// The payload behind this body's unread stream as a Blob that shares it, for an owner that
+    /// does not use the body up: the stream stays the body and stays readable. `None` when the
+    /// payload is not all here, or when a second reader would compete with the stream for it.
+    pub(crate) fn share_blob_of_unread_stream(&self) -> Option<Blob> {
+        if self.promise.is_some() || self.on_receive_value.is_some() {
+            return None;
+        }
+        let blob = self.readable.get()?.peek_blob(self.global())?;
+        if let Some(store) = blob.store.get() {
+            if !blob::store_reads_repeatably(store) {
+                return None;
+            }
+        }
+        Some(blob)
+    }
+
+    /// The Content-Type of the Blob or file behind this body's unread stream, which is the type
+    /// the body has once [`Self::to_any_blob`] lifts that Blob back out.
+    fn unread_stream_content_type(&self) -> Option<Vec<u8>> {
+        use webcore::readable_stream::Source;
+        let stream = self.readable.get()?;
+        if !matches!(stream.ptr, Source::Blob(_) | Source::File(_)) {
+            return None;
+        }
+        let blob = stream.peek_blob(self.global())?;
+        let content_type = blob.content_type_slice();
+        (!content_type.is_empty()).then(|| content_type.to_vec())
+    }
+
     fn set_promise(
         &mut self,
         global_this: &JSGlobalObject,
@@ -737,6 +766,19 @@ impl Value {
 
         if let Some(blob) = locked.to_any_blob() {
             *self = Value::from(blob);
+        }
+    }
+
+    /// The Content-Type the body itself carries: that of its Blob, also while the Blob is behind
+    /// an unread `.body` stream. Nothing is taken out of the stream.
+    pub(crate) fn blob_content_type(&self) -> Option<Utf8Bytes<'_>> {
+        match self {
+            Value::Blob(blob) => {
+                let content_type = blob.content_type_slice();
+                (!content_type.is_empty()).then_some(Utf8Bytes::Borrowed(content_type))
+            }
+            Value::Locked(locked) => locked.unread_stream_content_type().map(Utf8Bytes::Owned),
+            _ => None,
         }
     }
 
@@ -2073,8 +2115,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 if let Some(rejected) = handle_body_stream_unusable(&readable, global_object) {
                     return Ok(rejected);
                 }
-                let value = self.get_body_value();
-                value.to_blob_if_possible();
             }
             let value = self.get_body_value();
             if let Value::Locked(locked) = value {
@@ -2083,11 +2123,11 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
-                let value = self.get_body_value();
-                value.to_blob_if_possible();
             }
         }
 
+        // The type is decided before the payload is lifted out of an unread `.body` stream:
+        // the lift spends that stream, and a body that is not form data is left as it is.
         let Some(encoder) = self.get_form_data_encoding()? else {
             // TODO: catch specific errors from getFormDataEncoding
             return Ok(global_object
@@ -2101,6 +2141,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         };
 
         let value = self.get_body_value();
+        if matches!(value, Value::Locked(_)) {
+            value.to_blob_if_possible();
+        }
         if let Value::Locked(_locked) = value {
             let owned_readable = self.get_body_readable_stream();
             // reshaped for borrowck — re-borrow after self method call.

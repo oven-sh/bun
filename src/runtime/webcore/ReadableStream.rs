@@ -206,25 +206,7 @@ impl ReadableStream {
                 let blobby = unsafe { &mut *blobby };
                 blobby.to_any_blob(global_this)?
             }
-            Source::File(_) => {
-                // BACKREF: see `Source::file()` — payload valid while stream alive.
-                // R-2: `lazy`/`started` are `JsCell`/`Cell`; shared borrow suffices.
-                let blobby = self.ptr.file().expect("matched File");
-                let webcore::file_reader::Lazy::Blob(store) = blobby.lazy.get() else {
-                    return None;
-                };
-                let blob = Blob::init_with_store(store.clone(), global_this);
-                // The window `from_blob_copy_ref` moved onto the reader.
-                if let Some(offset) = blobby.start_offset {
-                    blob.offset.set(offset as webcore::blob::SizeType);
-                }
-                if let Some(size) = blobby.max_size {
-                    blob.size.set(size as webcore::blob::SizeType);
-                }
-                // it should be lazy, file shouldn't have opened yet.
-                debug_assert!(!blobby.started.get());
-                webcore::blob::Any::Blob(blob)
-            }
+            Source::File(_) => webcore::blob::Any::Blob(self.file_blob(global_this)?),
             Source::Bytes(_) => {
                 // BACKREF: see `Source::bytes()` — payload valid while stream alive.
                 let bytes = self.ptr.bytes().expect("matched Bytes");
@@ -241,6 +223,52 @@ impl ReadableStream {
 
         self.done();
         ReadableStream__closeConsumedAsBody(self.value, global_this);
+        Some(blob)
+    }
+
+    /// What [`Self::to_any_blob`] would lift out of this unread stream, as a Blob that shares the
+    /// payload. Nothing is taken: the stream keeps its payload and stays readable.
+    pub fn peek_blob(&self, global_this: &JSGlobalObject) -> Option<Blob> {
+        if self.is_disturbed(global_this) || self.is_locked(global_this) {
+            return None;
+        }
+        let stream = ReadableStream::from_js_direct(self.value)?;
+        match stream.ptr {
+            Source::Blob(loader) => {
+                // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive. Read-only.
+                unsafe { &*loader }.peek_blob(global_this)
+            }
+            Source::File(_) => stream.file_blob(global_this),
+            Source::Bytes(_) => {
+                // BACKREF: see `Source::bytes()` — payload valid while stream alive.
+                let bytes = stream.ptr.bytes().expect("matched Bytes");
+                Some(Blob::init(bytes.peek_bytes()?, global_this))
+            }
+            Source::JavaScript if ReadableStream__isClosedUnread(self.value, global_this) => {
+                Some(Blob::init_empty(global_this))
+            }
+            Source::JavaScript | Source::Invalid => None,
+        }
+    }
+
+    /// The file a lazy, not yet started file stream reads, with the stream's window.
+    fn file_blob(&self, global_this: &JSGlobalObject) -> Option<Blob> {
+        // BACKREF: see `Source::file()` — payload valid while stream alive.
+        // R-2: `lazy`/`started` are `JsCell`/`Cell`; shared borrow suffices.
+        let reader = self.ptr.file()?;
+        let webcore::file_reader::Lazy::Blob(store) = reader.lazy.get() else {
+            return None;
+        };
+        let blob = Blob::init_with_store(store.clone(), global_this);
+        // The window `from_blob_copy_ref` moved onto the reader.
+        if let Some(offset) = reader.start_offset {
+            blob.offset.set(offset as webcore::blob::SizeType);
+        }
+        if let Some(size) = reader.max_size {
+            blob.size.set(size as webcore::blob::SizeType);
+        }
+        // it should be lazy, file shouldn't have opened yet.
+        debug_assert!(!reader.started.get());
         Some(blob)
     }
 

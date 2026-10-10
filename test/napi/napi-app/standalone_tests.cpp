@@ -11,6 +11,12 @@
 #include <string>
 #include <thread>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <sys/mman.h>
+#endif
+
 #include "utils.h"
 
 namespace napitests {
@@ -4067,6 +4073,195 @@ test_node_api_sharedarraybuffer(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// JSC caps an ArrayBuffer at 2^32 bytes and V8 at 2^53 - 1, so Node wraps
+// lengths that Bun has to refuse. The bytes handed over below are reserved
+// address space: nothing is committed, and nothing may read them.
+static constexpr size_t kReservedBytes = (size_t{1} << 32) + 4096;
+
+static void *reserve_address_space() {
+#ifdef _WIN32
+  return VirtualAlloc(nullptr, kReservedBytes, MEM_RESERVE, PAGE_NOACCESS);
+#else
+  void *reserved = mmap(nullptr, kReservedBytes, PROT_NONE,
+                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  return reserved == MAP_FAILED ? nullptr : reserved;
+#endif
+}
+
+static void release_address_space(void *reserved) {
+#ifdef _WIN32
+  VirtualFree(reserved, 0, MEM_RELEASE);
+#else
+  munmap(reserved, kReservedBytes);
+#endif
+}
+
+static std::atomic<int> reserved_finalize_count{0};
+
+static void finalize_reserved(napi_env, void *data, void *) {
+  reserved_finalize_count++;
+  release_address_space(data);
+}
+
+static void finalize_reserved_noenv(void *data, void *) {
+  reserved_finalize_count++;
+  release_address_space(data);
+}
+
+static std::string string_property(napi_env env, napi_value object,
+                                   const char *name) {
+  napi_value value;
+  char buf[256];
+  size_t len = 0;
+  if (napi_get_named_property(env, object, name, &value) != napi_ok ||
+      napi_get_value_string_utf8(env, value, buf, sizeof(buf), &len) !=
+          napi_ok) {
+    return "<none>";
+  }
+  return std::string(buf, len);
+}
+
+// Prints whether an exception is pending. If one is, clears it and prints its
+// constructor name and code.
+static void print_pending_exception(napi_env env, bool with_message) {
+  bool pending = false;
+  napi_is_exception_pending(env, &pending);
+  printf(" pending=%s", pending ? "true" : "false");
+  if (!pending) {
+    return;
+  }
+  napi_value exception;
+  napi_value constructor;
+  napi_get_and_clear_last_exception(env, &exception);
+  napi_get_named_property(env, exception, "constructor", &constructor);
+  printf(" error=%s code=%s", string_property(env, constructor, "name").c_str(),
+         string_property(env, exception, "code").c_str());
+  if (with_message) {
+    printf(" message=\"%s\"",
+           string_property(env, exception, "message").c_str());
+  }
+}
+
+// test_external_buffer_length_limit(gc, length): one line per external buffer
+// API, called with `length` over a fresh reservation.
+static napi_value
+test_external_buffer_length_limit(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  double length = 0;
+  NODE_API_CALL(env, napi_get_value_double(env, info[1], &length));
+
+  static const char *const names[] = {
+      "napi_create_external_arraybuffer",
+      "napi_create_external_buffer",
+      "node_api_create_external_sharedarraybuffer",
+  };
+  // Never dereferenced. A failed call must leave *result alone.
+  const napi_value untouched =
+      reinterpret_cast<napi_value>(&reserved_finalize_count);
+
+  for (int api = 0; api < 3; api++) {
+    void *reserved = reserve_address_space();
+    if (reserved == nullptr) {
+      printf("FAIL: could not reserve %zu bytes of address space\n",
+             kReservedBytes);
+      return ok(env);
+    }
+    reserved_finalize_count = 0;
+    napi_value result = untouched;
+    napi_status status;
+    if (api == 0) {
+      status = napi_create_external_arraybuffer(
+          env, reserved, static_cast<size_t>(length), finalize_reserved,
+          nullptr, &result);
+    } else if (api == 1) {
+      status = napi_create_external_buffer(env, static_cast<size_t>(length),
+                                           reserved, finalize_reserved, nullptr,
+                                           &result);
+    } else {
+      status = node_api_create_external_sharedarraybuffer(
+          env, reserved, static_cast<size_t>(length), finalize_reserved_noenv,
+          nullptr, &result);
+    }
+
+    printf("%s: status=%d", names[api], static_cast<int>(status));
+    print_pending_exception(env, true);
+    printf(" finalized=%d result=%s", reserved_finalize_count.load(),
+           result == untouched ? "untouched" : "set");
+    if (status == napi_ok) {
+      napi_value byte_length_value;
+      double byte_length = -1;
+      NODE_API_CALL(env, napi_get_named_property(env, result, "byteLength",
+                                                 &byte_length_value));
+      NODE_API_CALL(
+          env, napi_get_value_double(env, byte_length_value, &byte_length));
+      printf(" byteLength=%.0f", byte_length);
+    } else if (reserved_finalize_count == 0) {
+      // The call failed and the finalizer did not run: the bytes are still
+      // the caller's.
+      release_address_space(reserved);
+    }
+    printf("\n");
+  }
+  return ok(env);
+}
+
+// test_buffer_too_large_parity(gc, length): every Buffer constructor with a
+// length that the runtime refuses. 2^53 is above Node's limit too, so both
+// runtimes print the same lines. The message is not printed because it names
+// each runtime's limit. The finalizer is NULL because Node runs it on this
+// path and Bun leaves the bytes with the caller.
+static napi_value test_buffer_too_large_parity(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  double length = 0;
+  NODE_API_CALL(env, napi_get_value_double(env, info[1], &length));
+  const size_t too_large = static_cast<size_t>(length);
+  // A runtime that refuses the length never reads the bytes.
+  static uint8_t never_read;
+
+  auto report = [&](const char *what, napi_status status) {
+    printf("%s: status=%d", what, static_cast<int>(status));
+    print_pending_exception(env, false);
+    printf("\n");
+  };
+
+  napi_value result;
+  report("napi_create_external_buffer(data)",
+         napi_create_external_buffer(env, too_large, &never_read, nullptr,
+                                     nullptr, &result));
+  report("napi_create_external_arraybuffer(data)",
+         napi_create_external_arraybuffer(env, &never_read, too_large, nullptr,
+                                          nullptr, &result));
+  // The length is checked before the NULL data pointer.
+  report("napi_create_external_buffer(NULL)",
+         napi_create_external_buffer(env, too_large, nullptr, nullptr, nullptr,
+                                     &result));
+  report("napi_create_external_arraybuffer(NULL)",
+         napi_create_external_arraybuffer(env, nullptr, too_large, nullptr,
+                                          nullptr, &result));
+  void *allocated = nullptr;
+  report("napi_create_buffer",
+         napi_create_buffer(env, too_large, &allocated, &result));
+  report("napi_create_buffer_copy",
+         napi_create_buffer_copy(env, too_large, &never_read, &allocated,
+                                 &result));
+  // A NULL result and an exception that is already pending both win over the
+  // length.
+  report("napi_create_external_buffer(result=NULL)",
+         napi_create_external_buffer(env, too_large, &never_read, nullptr,
+                                     nullptr, nullptr));
+  NODE_API_CALL(env, napi_throw_error(env, nullptr, "pending before the call"));
+  napi_status buffer_status = napi_create_external_buffer(
+      env, too_large, &never_read, nullptr, nullptr, &result);
+  napi_status arraybuffer_status = napi_create_external_arraybuffer(
+      env, &never_read, too_large, nullptr, nullptr, &result);
+  napi_value pending_before_the_call;
+  napi_get_and_clear_last_exception(env, &pending_before_the_call);
+  printf("with an exception pending: napi_create_external_buffer status=%d "
+         "napi_create_external_arraybuffer status=%d\n",
+         static_cast<int>(buffer_status), static_cast<int>(arraybuffer_status));
+  return ok(env);
+}
+
 static void noop_tsfn_cb(napi_env, napi_value, void *, void *) {}
 
 // Each case below returns a different napi_status in Bun than in Node.js 26
@@ -4670,6 +4865,8 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_node_api_set_prototype);
   REGISTER_FUNCTION(env, exports, test_node_api_create_object_with_properties);
   REGISTER_FUNCTION(env, exports, test_node_api_sharedarraybuffer);
+  REGISTER_FUNCTION(env, exports, test_external_buffer_length_limit);
+  REGISTER_FUNCTION(env, exports, test_buffer_too_large_parity);
   REGISTER_FUNCTION(env, exports, test_napi_status_codes_node26);
   REGISTER_FUNCTION(env, exports, test_tsfn_null_js_callback);
   REGISTER_FUNCTION(env, exports, test_tsfn_null_js_callback_ran);

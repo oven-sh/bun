@@ -620,6 +620,219 @@ describe("fs.watch", () => {
     ]);
   });
 
+  // A recursive watch adds one inotify watch per directory, so a change behind a
+  // symlink entry whose target is outside the tree needs a watch on the target.
+  // node's recursive watcher (lib/internal/fs/recursive_watch.js) reports every
+  // event on that watch as a rename of the link itself. Linux only: FSEvents
+  // reports paths under the root.
+  // Each step acts, then waits for the named file to be reported. The inotify
+  // queue is ordered, so every earlier event of the step has been delivered by
+  // then. A handler drops a repeat of its last event within 1ms, so a step whose
+  // expected event repeats the previous one needs another event in between.
+  // https://github.com/oven-sh/bun/issues/43065
+  async function recursiveWatchSteps(root: string, steps: [act: () => void, until: string][]) {
+    const events: string[] = [];
+    let onEvent = (_: string) => {};
+    let onError = (_: Error) => {};
+    const watcher = fs.watch(root, { recursive: true }, (eventType, filename) => {
+      events.push(`${eventType}:${filename}`);
+      onEvent(String(filename));
+    });
+    watcher.on("error", err => onError(err));
+    try {
+      for (const [act, until] of steps) {
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        onEvent = filename => {
+          if (filename === until) resolve();
+        };
+        onError = reject;
+        act();
+        await promise;
+      }
+    } finally {
+      watcher.close();
+    }
+    return events;
+  }
+  const unique = (events: string[]) => [...new Set(events)].sort();
+
+  test.skipIf(!isLinux)("recursive watch reports a change behind a symlink entry that leaves the tree", async () => {
+    using dir = tempDir("fs-watch-recursive-symlink", {
+      "real": { "target.txt": "x", "target-dir": {} },
+      "watched": { "plain.txt": "x" },
+    });
+    const base = String(dir);
+    fs.symlinkSync(path.join(base, "real", "target.txt"), path.join(base, "watched", "link.txt"));
+    fs.symlinkSync(path.join(base, "real", "target-dir"), path.join(base, "watched", "link-dir"));
+    const events = await recursiveWatchSteps(path.join(base, "watched"), [
+      [
+        () => {
+          fs.appendFileSync(path.join(base, "real", "target.txt"), "y");
+          fs.writeFileSync(path.join(base, "real", "target-dir", "child.txt"), "y");
+          fs.appendFileSync(path.join(base, "watched", "plain.txt"), "y");
+        },
+        "plain.txt",
+      ],
+    ]);
+    expect(unique(events)).toEqual(["change:plain.txt", "rename:link-dir", "rename:link.txt"]);
+  });
+
+  test.skipIf(!isLinux)("recursive watch reports a change behind a symlink entry created later", async () => {
+    using dir = tempDir("fs-watch-recursive-symlink-new", {
+      "real": { "target.txt": "x" },
+      "watched": { "plain.txt": "x" },
+    });
+    const base = String(dir);
+    const events = await recursiveWatchSteps(path.join(base, "watched"), [
+      // The watch on the link target is added when the create event for the
+      // link is processed, so wait for that event before the target changes.
+      [() => fs.symlinkSync(path.join(base, "real", "target.txt"), path.join(base, "watched", "link.txt")), "link.txt"],
+      [() => fs.appendFileSync(path.join(base, "watched", "plain.txt"), "y"), "plain.txt"],
+      [() => fs.appendFileSync(path.join(base, "real", "target.txt"), "y"), "link.txt"],
+    ]);
+    expect(events).toEqual(["rename:link.txt", "change:plain.txt", "rename:link.txt"]);
+  });
+
+  test.skipIf(!isLinux)("recursive watch stops reporting a symlink entry once it is removed or renamed", async () => {
+    using dir = tempDir("fs-watch-recursive-symlink-gone", {
+      "real": { "target.txt": "x" },
+      "watched": { "plain.txt": "x" },
+    });
+    const base = String(dir);
+    const target = path.join(base, "real", "target.txt");
+    const plain = path.join(base, "watched", "plain.txt");
+    fs.symlinkSync(target, path.join(base, "watched", "a.txt"));
+    fs.symlinkSync(target, path.join(base, "watched", "b.txt"));
+    const events = await recursiveWatchSteps(path.join(base, "watched"), [
+      // Two links to one target: node reports both names.
+      [() => fs.appendFileSync(target, "y"), "b.txt"],
+      [() => fs.appendFileSync(plain, "y"), "plain.txt"],
+      [() => fs.unlinkSync(path.join(base, "watched", "a.txt")), "a.txt"],
+      [() => fs.appendFileSync(plain, "y"), "plain.txt"],
+      [() => fs.appendFileSync(target, "y"), "b.txt"],
+      [() => fs.appendFileSync(plain, "y"), "plain.txt"],
+      [() => fs.renameSync(path.join(base, "watched", "b.txt"), path.join(base, "watched", "c.txt")), "c.txt"],
+      [() => fs.appendFileSync(plain, "y"), "plain.txt"],
+      [() => fs.appendFileSync(target, "y"), "c.txt"],
+    ]);
+    expect(events.slice(0, 2).sort()).toEqual(["rename:a.txt", "rename:b.txt"]);
+    expect(events.slice(2)).toEqual([
+      "change:plain.txt",
+      "rename:a.txt",
+      "change:plain.txt",
+      "rename:b.txt",
+      "change:plain.txt",
+      "rename:b.txt",
+      "rename:c.txt",
+      "change:plain.txt",
+      "rename:c.txt",
+    ]);
+  });
+
+  test.skipIf(!isLinux)("recursive watch drops a symlink entry that a rename replaced or carried away", async () => {
+    using dir = tempDir("fs-watch-recursive-symlink-replaced", {
+      "real": { "target.txt": "x", "other.txt": "x" },
+      "watched": { "plain.txt": "x", "old": {}, "file.txt": "x" },
+    });
+    const base = String(dir);
+    const target = path.join(base, "real", "target.txt");
+    const plain = path.join(base, "watched", "plain.txt");
+    fs.symlinkSync(target, path.join(base, "watched", "old", "link"));
+    fs.symlinkSync(target, path.join(base, "watched", "swap"));
+    const events = await recursiveWatchSteps(path.join(base, "watched"), [
+      // A directory with a link inside is renamed: the link is known under its
+      // new path only.
+      [() => fs.renameSync(path.join(base, "watched", "old"), path.join(base, "watched", "new")), "new"],
+      [() => fs.appendFileSync(plain, "y"), "plain.txt"],
+      [() => fs.appendFileSync(target, "y"), "new/link"],
+      // A regular file is renamed over a link: the name is no longer a link.
+      [() => fs.renameSync(path.join(base, "watched", "file.txt"), path.join(base, "watched", "swap")), "swap"],
+      [() => fs.appendFileSync(plain, "y"), "plain.txt"],
+      [() => fs.appendFileSync(target, "y"), "new/link"],
+    ]);
+    expect(events).toEqual([
+      "rename:old",
+      "rename:new",
+      "rename:new/link",
+      // IN_MOVE_SELF on the moved directory's own watch.
+      "rename:new",
+      "change:plain.txt",
+      // Both links still point at the target.
+      "rename:swap",
+      "rename:new/link",
+      "rename:file.txt",
+      "rename:swap",
+      "change:plain.txt",
+      "rename:new/link",
+    ]);
+  });
+
+  test.skipIf(!isLinux)(
+    "recursive watch follows a symlink entry again after its target is saved by rename",
+    async () => {
+      using dir = tempDir("fs-watch-recursive-symlink-atomic-save", {
+        "real": { "target.txt": "x" },
+        "watched": { "plain.txt": "x" },
+      });
+      const base = String(dir);
+      const target = path.join(base, "real", "target.txt");
+      const plain = path.join(base, "watched", "plain.txt");
+      fs.symlinkSync(target, path.join(base, "watched", "link"));
+      const events = await recursiveWatchSteps(path.join(base, "watched"), [
+        // The watch is on the old inode. Its retirement puts a watch on the new one.
+        [
+          () => {
+            fs.writeFileSync(path.join(base, "real", "target.txt.tmp"), "y");
+            fs.renameSync(path.join(base, "real", "target.txt.tmp"), target);
+          },
+          "link",
+        ],
+        [() => fs.appendFileSync(plain, "y"), "plain.txt"],
+        [() => fs.appendFileSync(target, "y"), "link"],
+      ]);
+      expect(events.slice(-2)).toEqual(["change:plain.txt", "rename:link"]);
+    },
+  );
+
+  test.skipIf(!isLinux)("recursive watch ignores a symlink entry to a device", async () => {
+    // A watch on /dev/stdout would report every write the handler makes.
+    using dir = tempDir("fs-watch-recursive-symlink-device", { "watched": { "plain.txt": "x" } });
+    const base = String(dir);
+    const plain = path.join(base, "watched", "plain.txt");
+    fs.symlinkSync("/dev/null", path.join(base, "watched", "null"));
+    const events = await recursiveWatchSteps(path.join(base, "watched"), [
+      [
+        () => {
+          fs.writeFileSync("/dev/null", "y");
+          fs.appendFileSync(plain, "y");
+        },
+        "plain.txt",
+      ],
+    ]);
+    expect(events).toEqual(["change:plain.txt"]);
+  });
+
+  test.skipIf(!isLinux)("recursive watch reports a directory reached through a symlink under both names", async () => {
+    // inotify hands out one wd per inode, so a link to a directory of the tree
+    // (or to the root) shares the wd of the real path. Each name reports, as in
+    // node. The walk must not follow the link to the root, or it never ends.
+    using dir = tempDir("fs-watch-recursive-symlink-alias", { "watched": { "sub": {}, "done.txt": "x" } });
+    const base = String(dir);
+    fs.symlinkSync(path.join(base, "watched", "sub"), path.join(base, "watched", "alias"));
+    fs.symlinkSync(path.join(base, "watched"), path.join(base, "watched", "sub", "up"));
+    const events = await recursiveWatchSteps(path.join(base, "watched"), [
+      [() => fs.writeFileSync(path.join(base, "watched", "sub", "f.txt"), "y"), "sub/f.txt"],
+      [() => fs.appendFileSync(path.join(base, "watched", "done.txt"), "y"), "done.txt"],
+    ]);
+    expect(unique(events)).toEqual([
+      "change:done.txt",
+      "change:sub/f.txt",
+      "rename:alias",
+      "rename:sub/f.txt",
+      "rename:sub/up",
+    ]);
+  });
+
   // Past fs.inotify.max_queued_events the kernel drops events and queues one
   // IN_Q_OVERFLOW; Bun reports it as ('change', null) on every watcher sharing
   // the inotify fd, the same shape node uses for overflow on Windows.

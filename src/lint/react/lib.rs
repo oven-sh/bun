@@ -37,6 +37,7 @@ mod util_prop_types;
 mod util_prop_types_declaration;
 mod util_prop_wrapper;
 mod util_props;
+mod util_steps;
 mod util_used_prop_types;
 mod util_variable;
 mod util_version;

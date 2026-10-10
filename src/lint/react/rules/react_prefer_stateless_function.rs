@@ -6,6 +6,7 @@ use crate::util_components::Components;
 use crate::util_components_list::{At, ComponentId, Queue};
 use crate::util_jsx::Branches;
 use crate::util_pragma::{self, get_create_class_from_context};
+use crate::util_steps::scopes_around;
 use crate::util_version::get_react_version_from_context;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -78,7 +79,7 @@ fn is_props_or_context(name: Option<&[u8]>) -> bool {
 /// Whether the first `MethodDefinition` or `Property` that the block of a scope around `statement` is directly in is
 /// called `render`.
 fn is_in_render(statement: Stmt<'_>) -> bool {
-    let block_node = Node::Stmt(statement).scope().chain().find_map(|scope| {
+    let block_node = scopes_around(Node::Stmt(statement)).find_map(|scope| {
         let block = Some(scope.node()).filter(|it| matches!(it, Node::Func(_) | Node::Class(_)))?;
         let parent = estree_parent(block);
         // ESTree has a `Decorator` or an `AssignmentPattern` in between.

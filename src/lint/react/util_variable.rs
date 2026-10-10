@@ -4,12 +4,13 @@
 //! `findVariable(variables, name)` and `getVariable(variables, name)` with
 //! `variablesInScope` are [`Scope::get_name`] up the [`Scope::chain`].
 
+use crate::util_steps::scopes_around;
 use bun_lint::prelude::*;
 
 /// `getVariableFromContext`: it also looks into the first scope in each scope, and into the first
 /// in that.
 pub(crate) fn get_variable_from_context<'a>(node: Node<'a>, name: Name<'a>) -> Option<Symbol<'a>> {
-    node.scope().chain().find_map(|scope| {
+    scopes_around(node).find_map(|scope| {
         scope.get_name(name).or_else(|| {
             // For ESLint a class declaration declares its name in its own scope as well.
             if let Node::Class(class) = scope.node()

@@ -31,6 +31,7 @@ use crate::util_is_first_letter_capitalized::is_first_letter_capitalized;
 use crate::util_jsx::{self, Branches, Nulls};
 use crate::util_pragma::{get_create_class_from_context, mentions_create_class};
 use crate::util_props::{is_default_props_declaration, is_prop_types_declaration};
+use crate::util_steps::Way;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
@@ -237,8 +238,6 @@ struct Returning {
     answers: u8,
 }
 
-const MAX_ASKED: u32 = 1 << 22;
-
 /// What a rule gets from `Components.detect`: `components` and `utils`.
 pub(crate) struct Components<'a> {
     file: &'a File<'a>,
@@ -256,8 +255,6 @@ pub(crate) struct Components<'a> {
     is_finished: bool,
     /// See [`Components::closest_candidate`].
     candidates: FxHashMap<Scope<'a>, Option<Scope<'a>>>,
-    /// How many scopes [`Components::get_parent_stateless_component`] has asked about.
-    asked: u32,
     /// [`may_have_explicit_components`]
     may_have_explicit: OnceCell<bool>,
     /// For [`is_explicit_component_function`].
@@ -304,7 +301,6 @@ impl<'a> Components<'a> {
             is_started: false,
             is_finished: false,
             candidates: FxHashMap::default(),
-            asked: 0,
             may_have_explicit: OnceCell::new(),
             documented_at: AncestorMemo::default(),
         }
@@ -856,13 +852,13 @@ impl<'a> Components<'a> {
         found
     }
 
-    /// `getParentStatelessComponent`. After [`MAX_ASKED`] there is none: many nodes under many
-    /// functions that are given to wrappers.
+    /// `getParentStatelessComponent`
     pub(crate) fn get_parent_stateless_component(&mut self, node: Node<'a>) -> Option<Node<'a>> {
+        let way = Way::new(self.file);
         let mut scope = Some(node.scope());
         while let Some(candidate) = scope.and_then(|it| self.closest_candidate(it)) {
-            self.asked = self.asked.saturating_add(1);
-            if self.asked > MAX_ASKED {
+            // Many nodes under many functions that are given to wrappers.
+            if !way.take(8) {
                 return None;
             }
             let found = self.get_stateless_component(candidate.node());

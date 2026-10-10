@@ -13,6 +13,7 @@
 //! The whole of an optional chain is taken for the `MemberExpression`, not for the
 //! `ChainExpression` around it: who gets to it from above asks `is_chain_root()` first.
 
+use crate::util_steps::scopes_around;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::utils::estree_compat::{get_node_by_range_index, normalize};
@@ -379,7 +380,7 @@ pub(crate) fn is_node_first_in_line<'a>(file: &'a File<'a>, node: Span) -> bool 
 
 /// `inConstructor`
 pub(crate) fn in_constructor(node: Node<'_>) -> bool {
-    node.scope().chain().any(|scope| match scope.node() {
+    scopes_around(node).any(|scope| match scope.node() {
         Node::Func(func) => matches!(func.owner(), Node::Member(it) if it.is_constructor()),
         _ => false,
     })

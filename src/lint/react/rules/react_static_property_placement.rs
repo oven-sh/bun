@@ -4,6 +4,7 @@ use crate::util_props::{
     is_child_context_types_declaration, is_context_type_declaration, is_context_types_declaration,
     is_default_props_declaration, is_display_name_declaration, is_display_name_key, is_prop_types_declaration,
 };
+use crate::util_steps::scopes_around;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::estree_parent;
@@ -211,6 +212,6 @@ fn parent_has_right(node: Expr<'_>) -> bool {
 
 /// upstream's `isContextInClass`: in a class declaration, not in a class expression.
 fn is_context_in_class(node: Expr<'_>) -> bool {
-    let mut scopes = Node::Expr(node).scope().chain();
+    let mut scopes = scopes_around(Node::Expr(node));
     scopes.any(|scope| matches!(scope.node(), Node::Class(class) if matches!(class.owner(), Node::Stmt(_))))
 }

@@ -2,6 +2,7 @@
 //! `sourceCode.isSpaceBetweenTokens`, which ESLint 10 no longer has: eslint-plugin-react gets it
 //! from `fixupPluginRules` of @eslint/compat. And `markVariableAsUsed` of `lib/util/eslint.js`.
 
+use crate::util_steps::Way;
 use bun_core::strings;
 use bun_lint::prelude::*;
 
@@ -55,11 +56,14 @@ pub(crate) fn mark_variable_as_used<'a>(name: Name<'a>, node: Node<'a>) {
         return;
     };
     // In a class its name is a second variable for ESLint: that one is found, and nobody asks it.
-    let declared_in = variable.scope();
-    let is_name_of_class_around = scope
-        .chain()
-        .take_while(|it| *it != declared_in)
-        .any(|it| matches!(it.node(), Node::Class(class) if class.symbol() == Some(variable)));
+    let (declared_in, way) = (variable.scope(), Way::new(node.file()));
+    let mut declarations = variable.declarations().take_while(|_| way.take(1));
+    let is_name_of_class_around = declarations.any(|it| match it {
+        Declaration::Class(class) => {
+            (class.scope()).is_some_and(|inside| inside != declared_in && inside.contains(scope))
+        }
+        _ => false,
+    });
     if !is_name_of_class_around {
         variable.mark_used();
     }

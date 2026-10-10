@@ -971,6 +971,43 @@ test.concurrent.each([
   },
 );
 
+// Recorded from eslint-import-resolver-typescript 4.4.5 with eslint-plugin-import 2.32.0 under ESLint 10.12. `core.wasm.js` cannot be
+// written without its extension: `core.wasm` is another file. TypeScript would add `.js` to that.
+test.concurrent(
+  "import/resolver: typescript: a name that is a file is that file, before anything is added to it",
+  async () => {
+    const never = Object.fromEntries(["js", "jsx", "mjs", "ts", "mts", "tsx"].map(it => [it, "never"]));
+    const names = [
+      "pkg.js-core/core.wasm.js?url",
+      "pkg.js-core/worker.min.js?url",
+      "pkg.js-core/core.wasm.js",
+      "./a.css.ts",
+      "@/b.ts",
+    ];
+    const files = {
+      "eslint.config.mjs": `export default [{
+      files: ["**/*.ts"],
+      settings: { "import/resolver": { typescript: { project: "tsconfig.json" } } },
+      plugins: { import: { meta: { name: "eslint-plugin-import" }, rules: {} } },
+      rules: { "import/extensions": ["error", "always", ${JSON.stringify(never)}] },
+    }];`,
+      "package.json": "{}",
+      "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@/*": ["./src/*"] } } }),
+      "node_modules/pkg.js-core/package.json": `{ "name": "pkg.js-core" }`,
+      "node_modules/pkg.js-core/core.wasm": "",
+      "node_modules/pkg.js-core/core.wasm.js": "",
+      "node_modules/pkg.js-core/worker.min.js": "",
+      "src/a.css": "",
+      "src/a.css.ts": "export {};\n",
+      "src/b": "",
+      "src/b.ts": "export {};\n",
+      "src/main.ts": names.map(it => `import(${JSON.stringify(it)});\n`).join(""),
+    };
+    const { problems } = await lint(files, ["src/main.ts"]);
+    expect(problems).toEqual(["src/main.ts:2:8 import/extensions"]);
+  },
+);
+
 test.concurrent(
   "import/ignore with a regular expression that is not written as a string: the package answers",
   async () => {

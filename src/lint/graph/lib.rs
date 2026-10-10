@@ -1251,7 +1251,13 @@ impl Modules for Graph<'_> {
                         return Some((Cow::Owned(very), false));
                     }
                     let found = self.resolve_any_path(config, &real, specifier, is_require);
-                    found.or_else(|| Some((Cow::Owned(other(&[b".json", b".node"])?), false)))
+                    let added: &[&[u8]] = match is_script {
+                        true => &[b".json", b".node"],
+                        false => &[
+                            b".ts", b".tsx", b".d.ts", b".js", b".jsx", b".json", b".node",
+                        ],
+                    };
+                    found.or_else(|| Some((Cow::Owned(other(added)?), false)))
                 });
                 // TypeScript adds neither `.json` nor `.node` to a name. Such a file comes before a directory.
                 let named = join(directory_of(&from), specifier);

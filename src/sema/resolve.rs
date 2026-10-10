@@ -3615,7 +3615,7 @@ impl<'h> Resolver<'h> {
     /// it is substituted.
     fn named_file(&self, path: &[u8], package_json_value: &[u8], look: Look) -> Option<Vec<u8>> {
         if look.as_require {
-            return self.is_file(path).then(|| path.to_vec());
+            return self.file_or_directory(path, look);
         }
         let is_declaration = is_declaration_file_name(path);
         let is_implementation = !is_declaration && has_ts_implementation_extension(path);

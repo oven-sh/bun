@@ -1,5 +1,6 @@
 use bun_lint_oxlint::ast_util::is_enabled_global;
 use crate::react::is_jsx;
+use crate::util_steps::Way;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -52,9 +53,10 @@ impl JsxNoUndef {
     /// first scope in that one and in the first scope in that.
     fn is_name_of_variable<'a>(&self, node: Expr<'a>, name: Name<'a>) -> bool {
         let is_in = |scope: Scope<'a>| scope.get_name(name).is_some();
-        let mut scope = Node::Expr(node).scope();
+        let (mut scope, way) = (Node::Expr(node).scope(), Way::new(node.file()));
         loop {
-            if is_in(scope) {
+            // Without steps nothing is said.
+            if is_in(scope) || !way.take(1) {
                 return true;
             }
             let is_upper_bound = !self.allow_globals && scope.kind() == ScopeKind::Module;

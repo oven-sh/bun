@@ -11,6 +11,7 @@
 //! `getDefaultReactImports`, `getNamedReactImports` and the two that add to them have one reader,
 //! `hook-use-state`, which asks the imports itself.
 
+use crate::util_steps::Way;
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::{estree_parent, estree_span, normalize, sort};
@@ -354,8 +355,11 @@ pub(crate) struct ComponentList<'a> {
     /// `Object.values(Lists.get(this))`
     list: Vec<Component<'a>>,
     by_id: FxHashMap<Span, ComponentId>,
-    /// For `set`: the component around a node, until another node becomes one or ceases to be one.
-    around: AncestorMemo<'a, ComponentId>,
+    /// For `set`: the component around a node, until a node that it can have been asked about
+    /// becomes one or ceases to be one. `None`: no steps were left.
+    around: AncestorMemo<'a, Option<ComponentId>>,
+    /// Where the last of the nodes starts that `around` has been asked about.
+    asked_until: u32,
     /// How many components [`ComponentList::list_in_the_walk`] has gone through.
     listed: usize,
 }
@@ -391,8 +395,10 @@ impl<'a> ComponentList<'a> {
                 (id, 0, confidence)
             }
         };
-        if (before >= 1) != (after >= 1) {
+        // What starts before `node` is not in it.
+        if (before >= 1) != (after >= 1) && At::place(node).0.start <= self.asked_until {
             self.around = AncestorMemo::default();
+            self.asked_until = 0;
         }
         id
     }
@@ -418,10 +424,16 @@ impl<'a> ComponentList<'a> {
     pub(crate) fn set(&mut self, node: Node<'a>) -> Option<ComponentId> {
         let (list, by_id) = (&self.list, &self.by_id);
         let id = ComponentList::get_in(list, by_id, node).or_else(|| {
+            self.asked_until = self.asked_until.max(At::place(node).0.start);
+            let way = Way::new(node.file());
             self.around
                 .find_with(normalize(node), estree_parent, |_, parent| {
-                    ComponentList::get_in(list, by_id, parent)
+                    match way.take(1) {
+                        true => ComponentList::get_in(list, by_id, parent).map(Some),
+                        false => Some(None),
+                    }
                 })
+                .flatten()
         })?;
         self.component_mut(id)
             .used_prop_types

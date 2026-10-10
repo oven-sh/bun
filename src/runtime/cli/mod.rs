@@ -1919,12 +1919,17 @@ To create a project with the official Next.js scaffolding tool, run\n\
     #[cold]
     #[inline(never)]
     fn bun_lockb(ctx: &mut ContextData) -> crate::Result<()> {
-        use bun_install::lockfile::{Printer, PrinterFormat};
+        use bun_install::lockfile::Printer;
+
+        // SAFETY: single-threaded CLI dispatch; `ctx.log` was populated by
+        // `create_context_data` and no other `&mut Log` borrow is live for the
+        // rest of this function.
+        let log = unsafe { ctx.log_mut() };
+        let entry = &ctx.args.entry_points[0];
 
         for arg in bun::argv() {
             if arg == b"--hash" {
                 let mut path_buf = bun_paths::path_buffer_pool::get();
-                let entry = &ctx.args.entry_points[0];
                 path_buf[..entry.len()].copy_from_slice(entry);
                 path_buf[entry.len()] = 0;
                 // SAFETY: NUL terminator written at `path_buf[entry.len()]` above.
@@ -1937,16 +1942,12 @@ To create a project with the official Next.js scaffolding tool, run\n\
                     }
                 };
                 return super::package_manager_command::PackageManagerCommand::print_hash(
-                    ctx, &file,
+                    log, &file,
                 );
             }
         }
 
-        let entry = ctx.args.entry_points[0].clone();
-        // SAFETY: single-threaded CLI dispatch; `ctx.log` was populated by
-        // `create_context_data` and no other `&mut Log` borrow is live for the
-        // duration of this `Printer::print` call.
-        Printer::print(unsafe { ctx.log_mut() }, &entry, PrinterFormat::Yarn).map_err(Into::into)
+        Printer::print(log, entry).map_err(Into::into)
     }
 
     #[cold]

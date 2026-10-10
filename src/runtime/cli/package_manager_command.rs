@@ -105,10 +105,7 @@ impl PackageManagerCommand {
     }
 
     #[cold]
-    pub(crate) fn print_hash(ctx: Command::Context, file: &File) -> crate::Result<()> {
-        let cli = CommandLineArguments::parse(Subcommand::Pm)?;
-        let (pm, _cwd) = PackageManager::init(ctx, cli, Subcommand::Pm)?;
-
+    pub(crate) fn print_hash(log: &mut bun_ast::Log, file: &File) -> crate::Result<()> {
         let bytes = match file.read_to_end() {
             Ok(bytes) => bytes,
             Err(err) => {
@@ -117,26 +114,13 @@ impl PackageManagerCommand {
             }
         };
 
-        let log_level = pm.options.log_level;
-        // Reshaped for borrowck — `pm.lockfile.load_from_bytes(pm, …)`
-        // is a self-referential split borrow. Derive both halves through `pm`
-        // (not the raw `pm_ptr`) so the outer borrow stays on the stack.
-        let pm_raw: *mut PackageManager = pm;
-        // SAFETY: `pm.lockfile` is `Box<Lockfile>` whose pointee lives in a
-        // separate heap allocation; `&mut Lockfile` and `&mut PackageManager`
-        // cannot alias. `load_from_bytes` reads `manager.options`/`manager.log`
-        // only and never re-projects `manager.lockfile`.
-        let load_lockfile = unsafe {
-            let lockfile: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
-            let log: *mut bun_ast::Log = (*pm_raw).log;
-            (*lockfile).load_from_bytes(Some(&mut *pm_raw), bytes, &mut *log)
-        };
-
-        Self::handle_load_lockfile_errors_for(&load_lockfile, log_level, "hash");
+        let mut lockfile = Box::<Lockfile>::default();
+        let load_lockfile = lockfile.load_from_bytes(None, bytes, log);
+        Self::handle_load_lockfile_errors_for(&load_lockfile, LogLevel::Default, "hash");
 
         Output::flush();
         Output::disable_buffering();
-        Output::writer().print(format_args!("{}", pm.lockfile.fmt_meta_hash()))?;
+        Output::writer().print(format_args!("{}", lockfile.fmt_meta_hash()))?;
         Output::enable_buffering();
         Global::exit(0);
     }

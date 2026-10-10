@@ -15,10 +15,10 @@ use bun_install::lockfile::package;
 // `bun_collections::multi_array_list::Slice<Package<_>>`; the `items_<field>()`
 // column accessors are an extension trait (hand-expanded per Package.rs).
 use crate::integrity;
-use crate::lockfile_real::Printer;
+use crate::lockfile_real::Lockfile;
 
 pub(crate) fn print(
-    this: &mut Printer,
+    lockfile: &Lockfile,
     writer: &mut impl bun_io::Write,
 ) -> Result<(), crate::Error> {
     // internal for debugging, print the lockfile as custom json
@@ -32,7 +32,7 @@ pub(crate) fn print(
             indent: 2,
             emit_nonportable_numbers_as_strings: true,
         });
-        crate::lockfile_real::json_stringify(this.lockfile, &mut stream)?;
+        crate::lockfile_real::json_stringify(lockfile, &mut stream)?;
         writer.write_all(&stream.into_bytes())?;
         writer.write_all(b"\n")?;
         return Ok(());
@@ -43,13 +43,13 @@ pub(crate) fn print(
           # yarn lockfile v1\n\
           # bun ./bun.lockb --hash:",
     )?;
-    write!(writer, " {}\n\n", this.lockfile.fmt_meta_hash())?;
+    write!(writer, " {}\n\n", lockfile.fmt_meta_hash())?;
 
-    packages(this, writer)
+    packages(lockfile, writer)
 }
 
-fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), crate::Error> {
-    let slice = this.lockfile.packages.slice();
+fn packages(lockfile: &Lockfile, writer: &mut impl bun_io::Write) -> Result<(), crate::Error> {
+    let slice = lockfile.packages.slice();
     let names: &[SemverString] = slice.items_name();
     let resolved: &[Resolution] = slice.items_resolution();
     let metas: &[package::Meta] = slice.items_meta();
@@ -57,8 +57,8 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), c
         return Ok(());
     }
     let dependency_lists = slice.items_dependencies();
-    let resolutions_buffer: &[PackageID] = this.lockfile.buffers.resolutions.as_slice();
-    let dependencies_buffer: &[Dependency] = this.lockfile.buffers.dependencies.as_slice();
+    let resolutions_buffer: &[PackageID] = lockfile.buffers.resolutions.as_slice();
+    let dependencies_buffer: &[Dependency] = lockfile.buffers.dependencies.as_slice();
 
     // Store (start, len) into `all_requested_versions_buf` instead of
     // overlapping &mut [Version] slices.
@@ -72,7 +72,7 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), c
     let package_count = names.len() as PackageID;
     let mut alphabetized_names: Vec<PackageID> = vec![0; (package_count - 1) as usize];
 
-    let string_buf: &[u8] = this.lockfile.buffers.string_bytes.as_slice();
+    let string_buf: &[u8] = lockfile.buffers.string_bytes.as_slice();
 
     // First, we need to build a map of all requested versions
     // This is so we can print requested versions

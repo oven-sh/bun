@@ -306,6 +306,7 @@ When the minimum age filter is active:
   - The check searches up to 7 days past the age gate; if releases are still rapid beyond that, Bun ignores the stability check
   - Exact version requests (like `package@1.1.1`) still respect the age gate but bypass the stability check
 - Bun treats versions without a `time` field as passing the age check (the npm registry should always provide timestamps)
+- Bun blocks a version whose `time` value is not a date string that `Date.parse` can read, because its age is unknown
 
 For more advanced security scanning, including integration with services and custom filtering, see the [Security Scanner API](/pm/security-scanner-api).
 

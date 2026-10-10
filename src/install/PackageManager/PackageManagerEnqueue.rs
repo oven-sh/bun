@@ -958,36 +958,43 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     }
                                 }
                                 return Ok(());
-                            } else if err == crate::Error::TooRecentVersion {
+                            } else if err == crate::Error::TooRecentVersion
+                                || err == crate::Error::UnreadablePublishTime
+                            {
                                 if dependency.behavior.is_required() {
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
                                     } else {
                                         let age_gate_ms =
                                             this.options.minimum_release_age_ms.unwrap_or(0.0);
+                                        let blocked_by = AgeGateBlock {
+                                            unreadable_publish_time: err
+                                                == crate::Error::UnreadablePublishTime,
+                                            age_gate_ms,
+                                        };
                                         if version.tag == dependency::version::Tag::DistTag {
                                             bun_ast::add_error_pretty!(
                                                 this.log_mut(),
                                                 None,
                                                 bun_ast::Loc::EMPTY,
-                                                "Package \"{}\" with tag \"{}\" not found<r> <d>(all versions blocked by minimum-release-age: {} seconds)<r>",
+                                                "Package \"{}\" with tag \"{}\" not found<r> <d>(all versions blocked by minimum-release-age: {})<r>",
                                                 bstr::BStr::new(this.lockfile.str(&name)),
                                                 bstr::BStr::new(
                                                     this.lockfile.str(&version.dist_tag().tag)
                                                 ),
-                                                age_gate_ms / MS_PER_S,
+                                                blocked_by,
                                             );
                                         } else {
                                             bun_ast::add_error_pretty!(
                                                 this.log_mut(),
                                                 None,
                                                 bun_ast::Loc::EMPTY,
-                                                "No version matching \"{}\" found for specifier \"{}\"<r> <d>(blocked by minimum-release-age: {} seconds)<r>",
+                                                "No version matching \"{}\" found for specifier \"{}\"<r> <d>(blocked by minimum-release-age: {})<r>",
                                                 bstr::BStr::new(this.lockfile.str(&name)),
                                                 bstr::BStr::new(
                                                     this.lockfile.str(&version.literal)
                                                 ),
-                                                age_gate_ms / MS_PER_S,
+                                                blocked_by,
                                             );
                                         }
                                     }
@@ -1175,8 +1182,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         if version.tag == dependency::version::Tag::Npm
                                             && version.npm().version.is_exact()
                                         {
-                                            if let Some(find_result) =
-                                                loaded_manifest.as_ref().unwrap().find_by_version(
+                                            if let Some(find_result) = loaded_manifest
+                                                .as_ref()
+                                                .unwrap()
+                                                .find_by_version(
                                                     version
                                                         .npm()
                                                         .version
@@ -1186,6 +1195,17 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                         .left
                                                         .version,
                                                 )
+                                                // A cached "not a date" cannot become a date: fetch an expired manifest again.
+                                                .filter(|found| {
+                                                    !(expired
+                                                        && this
+                                                            .options
+                                                            .minimum_release_age_ms
+                                                            .is_some_and(|age| age > 0.0)
+                                                        && found
+                                                            .package
+                                                            .has_unreadable_publish_time())
+                                                })
                                             {
                                                 if let Some(min_age_ms) =
                                                     this.options.minimum_release_age_ms
@@ -1200,19 +1220,21 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                             find_result.package, min_age_ms,
                                                         )
                                                     {
-                                                        let package_name = this.lockfile.str(&name);
-                                                        let min_age_seconds = min_age_ms / MS_PER_S;
-                                                        let _ = this.log_mut().add_error_fmt(
-                                                            None,
-                                                            bun_ast::Loc::EMPTY,
-                                                            format_args!(
-                                                                "Version \"{}@{}\" was published within minimum release age of {} seconds",
-                                                                bstr::BStr::new(package_name),
-                                                                find_result.version.fmt(this.lockfile.buffers.string_bytes.as_slice()),
-                                                                min_age_seconds,
-                                                            ),
+                                                        // Reported by the error arm above, like a fresh manifest would be.
+                                                        resolve_result_ = Err(
+                                                            if find_result
+                                                                .package
+                                                                .has_unreadable_publish_time()
+                                                            {
+                                                                crate::Error::UnreadablePublishTime
+                                                            } else {
+                                                                crate::Error::TooRecentVersion
+                                                            },
                                                         );
-                                                        return Ok(());
+                                                        let _ = this
+                                                            .network_dedupe_map
+                                                            .remove(&task_id);
+                                                        continue 'retry_with_new_resolve_result;
                                                     }
                                                 }
                                                 // reshaped for borrowck — `find_result`
@@ -1831,6 +1853,22 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             Ok(())
         }
         _ => Ok(()),
+    }
+}
+
+/// Why minimum-release-age blocked a version: the text after "minimum-release-age:" in the errors.
+struct AgeGateBlock {
+    unreadable_publish_time: bool,
+    age_gate_ms: f64,
+}
+
+impl core::fmt::Display for AgeGateBlock {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if self.unreadable_publish_time {
+            f.write_str("the publish time in the registry is not a valid date")
+        } else {
+            write!(f, "{} seconds", self.age_gate_ms / MS_PER_S)
+        }
     }
 }
 
@@ -2799,9 +2837,17 @@ fn get_or_put_resolved_package(
                     break 'blk Some(result);
                 }
                 Npm::FindVersionResult::Err(err_type) => match err_type {
-                    Npm::FindVersionError::TooRecent
-                    | Npm::FindVersionError::AllVersionsTooRecent => {
-                        return Err(crate::Error::TooRecentVersion);
+                    Npm::FindVersionError::TooRecent {
+                        unreadable_publish_time,
+                    }
+                    | Npm::FindVersionError::AllVersionsTooRecent {
+                        unreadable_publish_time,
+                    } => {
+                        return Err(if unreadable_publish_time {
+                            crate::Error::UnreadablePublishTime
+                        } else {
+                            crate::Error::TooRecentVersion
+                        });
                     }
                     Npm::FindVersionError::NotFound => None, // Handle below with existing logic
                 },

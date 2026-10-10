@@ -10,8 +10,8 @@
 
 use bun_boringssl as boringssl;
 use bun_boringssl::c::OwnedSslCtx;
+use bun_core::String as BunString;
 use bun_core::ffi::FfiSlice;
-use bun_core::{EncodedSlice, String as BunString};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{ContextId, JSGlobalObject, JSValue, JsResult, VirtualMachineRef};
 use bun_ptr::ThisPtr;
@@ -95,11 +95,7 @@ unsafe extern "C" {
         body: FfiSlice<'_>,
     );
     safe fn WebSocket__didClose(websocket_context: &CppWebSocket, code: u16, reason: BunString);
-    safe fn WebSocket__didReceiveText(
-        websocket_context: &CppWebSocket,
-        clone: bool,
-        text: &EncodedSlice,
-    );
+    safe fn WebSocket__didReceiveText(websocket_context: &CppWebSocket, text: BunString);
     safe fn WebSocket__didReceiveBytes(
         websocket_context: &CppWebSocket,
         bytes: FfiSlice<'_>,
@@ -170,10 +166,11 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
-    pub(crate) fn did_receive_text(&self, clone: bool, text: &EncodedSlice) {
+    /// C++ takes ownership of `text` (`transferToWTFString`).
+    pub(crate) fn did_receive_text(&self, text: BunString) {
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
-        WebSocket__didReceiveText(self, clone, text);
+        WebSocket__didReceiveText(self, text);
         event_loop.exit();
     }
 

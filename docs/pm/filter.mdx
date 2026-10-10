@@ -167,4 +167,4 @@ Use `--if-present` with `--workspaces` to skip packages that don't have the requ
 
 ### Dependency Order
 
-Bun respects package dependency order when running scripts. Say you have a package `foo` that depends on another package `bar` in your workspace, and both have a `build` script. When you run `bun --filter '*' build`, `foo` only starts once `bar` is done.
+Bun respects package dependency order when running scripts. Say you have a package `foo` that depends on another package `bar` in your workspace, and both have a `build` script. When you run `bun --filter '*' build`, `foo` only starts once `bar` is done. A package counts as depending on another when it lists it in `dependencies`, `devDependencies`, or `optionalDependencies`.

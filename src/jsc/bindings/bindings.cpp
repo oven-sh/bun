@@ -1980,6 +1980,23 @@ static std::optional<bool> specialObjectsDequalSlow(const DeepEqualsMode& mode, 
     return std::nullopt;
 }
 
+// An entry that is a Set or a Map joins the cycle stack, because a cycle can run through such entries alone.
+static ALWAYS_INLINE bool entryJoinsCycleStack(JSValue left)
+{
+    if (!left.isCell())
+        return false;
+    uint8_t type = left.asCell()->type();
+    return type == JSSetType || type == JSMapType;
+}
+
+// JSMap::get() answers undefined for an absent key and for a key that holds undefined. This answers an empty value for an absent key, in one lookup.
+static ALWAYS_INLINE JSValue mapValueOrEmpty(JSC::JSGlobalObject* globalObject, JSMap* map, JSValue key)
+{
+    return map->getImpl(globalObject, [&](JSMap::Storage& storage) ALWAYS_INLINE_LAMBDA {
+        return JSMap::Helper::find(globalObject, storage, key);
+    });
+}
+
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
 std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSCell* _Nonnull c1, JSCell* _Nonnull c2)
 {
@@ -2013,11 +2030,20 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
 
             // We couldn't find the key in the second set. This may be a false positive due to how
             // JSValues are represented in JSC, so we need to fall back to a linear search to be sure.
+            if constexpr (!enableAsymmetricMatchers) {
+                // Without matchers a primitive equals only itself, and the lookup has ruled on that.
+                if (key1.isPrimitive()) {
+                    return false;
+                }
+            }
             auto iter2 = JSSetIterator::create(vm, globalObject->setIteratorStructure(), set2, IterationKind::Keys);
             JSValue key2;
             bool foundMatchingKey = false;
             while (iter2->next(globalObject, key2)) {
-                bool equal = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, key1, key2, gcBuffer, stack, scope, false);
+                if (key1.isPrimitive() && key2.isPrimitive()) {
+                    continue;
+                }
+                bool equal = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, key1, key2, gcBuffer, stack, scope, entryJoinsCycleStack(key1));
                 RETURN_IF_EXCEPTION(scope, {});
                 if (equal) {
                     foundMatchingKey = true;
@@ -2052,34 +2078,51 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         auto iter1 = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map1, IterationKind::Entries);
         JSValue key1, value1;
         while (iter1->nextKeyValue(globalObject, key1, value1)) {
-            JSValue value2 = map2->get(globalObject, key1);
+            JSValue value2 = mapValueOrEmpty(globalObject, map2, key1);
             RETURN_IF_EXCEPTION(scope, {});
-            if (value2.isUndefined()) {
-                // We couldn't find the key in the second map. This may be a false positive due to
-                // how JSValues are represented in JSC, so we need to fall back to a linear search
-                // to be sure.
-                auto iter2 = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map2, IterationKind::Entries);
-                JSValue key2;
-                bool foundMatchingKey = false;
-                while (iter2->nextKeyValue(globalObject, key2, value2)) {
-                    bool keysEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, key1, key2, gcBuffer, stack, scope, false);
-                    RETURN_IF_EXCEPTION(scope, {});
-                    if (keysEqual) {
-                        foundMatchingKey = true;
-                        break;
-                    }
+            if (!value2.isEmpty()) {
+                bool valuesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, value1, value2, gcBuffer, stack, scope, entryJoinsCycleStack(value1));
+                RETURN_IF_EXCEPTION(scope, {});
+                if (valuesEqual) {
+                    continue;
                 }
-
-                if (!foundMatchingKey) {
+                if constexpr (checkPrototypes) {
                     return false;
                 }
-
-                // Compare both values below.
             }
 
-            bool valuesEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, value1, value2, gcBuffer, stack, scope, false);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (!valuesEqual) {
+            if constexpr (!enableAsymmetricMatchers) {
+                // Without matchers a primitive equals only itself, and the lookup has ruled on that.
+                if (key1.isPrimitive()) {
+                    return false;
+                }
+            }
+            // No equal value under this key: an entry of the other map matches on its key and its value together.
+            auto iter2 = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map2, IterationKind::Entries);
+            JSValue key2;
+            bool foundMatchingEntry = false;
+            while (iter2->nextKeyValue(globalObject, key2, value2)) {
+                if (key1 == key2 || (key1.isPrimitive() && key2.isPrimitive())) {
+                    continue;
+                }
+                bool entryEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, key1, key2, gcBuffer, stack, scope, entryJoinsCycleStack(key1));
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!entryEqual) {
+                    continue;
+                }
+                entryEqual = Bun__deepEquals<isStrict, enableAsymmetricMatchers, checkPrototypes, skipPrototypeIdentity>(globalObject, value1, value2, gcBuffer, stack, scope, entryJoinsCycleStack(value1));
+                RETURN_IF_EXCEPTION(scope, {});
+                if (entryEqual) {
+                    foundMatchingEntry = true;
+                    break;
+                }
+                if constexpr (checkPrototypes) {
+                    // node pairs entries one-to-one, which this walk does not do. Its entry points keep the answer of the first deep-equal key.
+                    break;
+                }
+            }
+
+            if (!foundMatchingEntry) {
                 return false;
             }
         }

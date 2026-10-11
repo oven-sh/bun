@@ -64,7 +64,7 @@ impl Rule for NoUnnecessaryAwait {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Await(argument) = e.kind() else {
+        let Some(argument) = e.operand() else {
             return;
         };
         if !not_promise(argument) {

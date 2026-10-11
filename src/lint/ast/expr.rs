@@ -141,10 +141,7 @@ impl<'a> Expr<'a> {
         match raw.kind {
             hir::ExprKind::Missing => ExprKind::Missing,
             hir::ExprKind::Ident(name) => ExprKind::Ident(file.name(name)),
-            hir::ExprKind::PrivateIdentifier(name) => match PLAIN {
-                true => ExprKind::PrivateIdentifier(file.name(name)),
-                false => self.kind_of_private_identifier(name),
-            },
+            hir::ExprKind::PrivateIdentifier(name) => self.kind_of_private_identifier(name),
             hir::ExprKind::This => ExprKind::This,
             hir::ExprKind::Super => ExprKind::Super,
             hir::ExprKind::Null => ExprKind::Null,
@@ -174,10 +171,7 @@ impl<'a> Expr<'a> {
                 chain,
             } => ExprKind::Dot {
                 obj: e(obj),
-                name: match PLAIN {
-                    true => file.ident(name, name_pos),
-                    false => file.member_name(name, name_pos),
-                },
+                name: file.member_name(name, name_pos),
                 chain,
             },
             hir::ExprKind::Index { obj, index, chain } => ExprKind::Index {
@@ -1098,18 +1092,16 @@ impl<'a> File<'a> {
     /// The `name` of a `Dot`, which is written at `start`.
     #[inline]
     fn member_name(&'a self, name: Atom, start: u32) -> Ident<'a> {
-        match self.spells_private_names_apart() {
-            true => self.member_name_that_may_be_private(name, start),
+        match self.spells_private_names_apart() && self.hir.text.get(start as usize) == Some(&b'#')
+        {
+            true => self.private_member_name(name, start),
             false => self.ident(name, start),
         }
     }
 
     #[inline(never)]
-    fn member_name_that_may_be_private(&'a self, name: Atom, start: u32) -> Ident<'a> {
-        match self.hir.text.get(start as usize) {
-            Some(b'#') => self.ident(self.private_name(name).atom(), start),
-            _ => self.ident(name, start),
-        }
+    fn private_member_name(&'a self, name: Atom, start: u32) -> Ident<'a> {
+        self.ident(self.private_name(name).atom(), start)
     }
 }
 

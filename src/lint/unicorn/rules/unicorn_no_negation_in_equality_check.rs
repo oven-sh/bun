@@ -19,10 +19,10 @@ impl Rule for NoNegationInEqualityCheck {
     }
 
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Binary { op, left, right } = e.kind() else {
+        let Some((op, left, right)) = e.as_binary() else {
             return;
         };
-        let ExprKind::Unary { op: UnOp::Not, operand: argument } = left.kind() else {
+        let Some((UnOp::Not, argument)) = left.as_unary() else {
             return;
         };
         if left.is_parenthesized() || argument.unary_op() == Some(UnOp::Not) && !argument.is_parenthesized() {

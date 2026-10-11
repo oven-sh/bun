@@ -150,6 +150,8 @@ pub(super) struct Prepared {
     /// They, in the order of the configuration. Those of a configuration of oxlint: by the numbers that oxlint gives
     /// its rules.
     pub(super) order: Box<[Slot]>,
+    /// They, made from their options, in the same order: a list that the linter has made, which knows the type of its rules.
+    pub(super) rules: Arc<dyn std::any::Any + Send + Sync>,
     /// What the first of them that refuses its options throws.
     pub(super) refusal: Option<Arc<[u8]>>,
     /// Those that need types.

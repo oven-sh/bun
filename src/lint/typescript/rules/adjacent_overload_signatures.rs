@@ -1,5 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ts_utils::{MemberName, MemberNameType, get_name_from_member};
+use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::hash::Hash;
@@ -142,9 +143,8 @@ impl Rule for AdjacentOverloadSignatures {
     const META: Meta = Meta::typescript("adjacent-overload-signatures", Kind::Suggestion)
         .presets(Presets::STYLISTIC);
     const ON: On = On::new()
-        .stmts(&[StmtTag::Block, StmtTag::Module, StmtTag::Interface])
+        .stmts(&[StmtTag::Interface])
         .types(&[TypeTag::Object])
-        .funcs()
         .classes()
         .finish();
     no_state!();
@@ -156,17 +156,14 @@ impl Rule for AdjacentOverloadSignatures {
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let on = On::new().classes().stmts(&[StmtTag::Interface]).types(&[TypeTag::Object]);
         match file.has_stmts([StmtTag::Fn]) {
-            true => on.stmts(&[StmtTag::Block, StmtTag::Module]).funcs().finish(),
+            true => on.finish(),
             false => on,
         }
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        match statement.kind() {
-            StmtKind::Block(body) => check_statements(body, cx),
-            StmtKind::Module(module) => check_statements(module.body(), cx),
-            StmtKind::Interface(interface) => check_members(interface.members(), false, cx),
-            _ => {}
+        if let Some(interface) = statement.as_interface() {
+            check_members(interface.members(), false, cx);
         }
     }
 
@@ -176,19 +173,27 @@ impl Rule for AdjacentOverloadSignatures {
         }
     }
 
-    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
-        if func.kind() != FnKind::StaticBlock
-            && let Some(body) = func.body_statements()
-        {
-            check_statements(body, cx);
-        }
-    }
-
     fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
         check_members(class.members(), true, cx);
     }
 
+    /// The statements of the file, of each block, of each function and of each namespace, where two of them are functions.
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        check_statements(cx.file().body(), cx);
+        let (mut with_one, mut with_two) = (FxHashSet::default(), FxHashSet::default());
+        for function in cx.file().stmts_of_kind(StmtTag::Fn) {
+            let parent = function.parent();
+            if with_one.insert(parent) || !with_two.insert(parent) {
+                continue;
+            }
+            let statements = match parent {
+                Node::File(file) => Some(file.body()),
+                Node::Func(func) if func.kind() != FnKind::StaticBlock => func.body_statements(),
+                Node::Stmt(statement) => statement.as_block().or_else(|| Some(statement.as_module()?.body())),
+                _ => None,
+            };
+            if let Some(statements) = statements {
+                check_statements(statements, cx);
+            }
+        }
     }
 }

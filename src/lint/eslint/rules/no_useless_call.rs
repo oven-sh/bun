@@ -8,27 +8,30 @@ const UNNECESSARY_CALL: Message = Message::new("unnecessaryCall", "Unnecessary '
 impl Rule for NoUselessCall {
     const META: Meta = Meta::eslint("no-useless-call", Kind::Suggestion);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// `call` and `apply`, as far as the file mentions them.
+    type State<'a> = [Option<Name<'a>>; 2];
 
     fn new(_: &Options) -> Self {
         NoUselessCall
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions_any(&["call", "apply"]).then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        let mentioned = ["call", "apply"].map(|it| file.mentions(it).then(|| file.name_of(it)));
+        mentioned.iter().any(Option::is_some).then_some(mentioned)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Call(call) = e.kind() else {
+        let Some(call) = e.as_call() else {
             return;
         };
-        let ExprKind::Dot { obj: applied, name, .. } = call.callee().kind() else {
+        let (Some(applied), Some(name)) = (call.callee().object(), call.callee().member_name()) else {
             return;
         };
         let args = call.args();
-        let is_call_or_non_variadic_apply = match name.bytes() {
-            b"call" => !args.is_empty(),
-            b"apply" => args.len() == 2 && args.get(1).is_some_and(|it| it.tag() == ExprTag::Array),
+        let [call_name, apply_name] = cx.state;
+        let is_call_or_non_variadic_apply = match Some(name.name()) {
+            it if it == call_name => !args.is_empty(),
+            it if it == apply_name => args.len() == 2 && args.get(1).is_some_and(|it| it.tag() == ExprTag::Array),
             _ => false,
         };
         if !is_call_or_non_variadic_apply {

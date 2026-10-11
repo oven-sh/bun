@@ -71,9 +71,9 @@ impl Rule for NoEmptyPattern {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let kind = match e.kind() {
-            ExprKind::Object(props) if props.is_empty() => "object",
-            ExprKind::Array(elements) if elements.is_empty() => "array",
+        let kind = match e.tag() {
+            ExprTag::Object if e.as_object().is_some_and(List::is_empty) => "object",
+            ExprTag::Array if e.as_array().is_some_and(List::is_empty) => "array",
             _ => return,
         };
         if utils::is_assignment_target(e) {

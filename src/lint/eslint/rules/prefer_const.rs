@@ -468,6 +468,10 @@ impl Rule for PreferConst {
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        // `const`, `var`
+        if matches!(cx.text().get(stmt.span().start as usize), Some(b'c' | b'v')) {
+            return;
+        }
         if let StmtKind::Var(declarations) = stmt.kind()
             && declarations.first().is_some_and(|it| it.var_kind() == VarKind::Let)
             && (!is_init_of_for_statement(stmt) || cx.language().is_oxlint)

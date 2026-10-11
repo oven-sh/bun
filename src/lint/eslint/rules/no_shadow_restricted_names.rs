@@ -36,6 +36,8 @@ fn name_span(declaration: Declaration) -> Option<Span> {
 pub struct State<'a> {
     /// Those of the restricted names that the file mentions.
     restricted: SmallVec<[Name<'a>; 6]>,
+    /// A bit for the last bits of the number of each of them.
+    numbers: u64,
     /// Where the names that have been reported start.
     reported: FxHashSet<u32>,
     /// `safely_shadows_undefined`, for the variables with several declarations that have been looked
@@ -46,7 +48,7 @@ pub struct State<'a> {
 impl NoShadowRestrictedNames {
     #[inline]
     fn is_restricted<'a>(name: Name<'a>, cx: &Cx<'a, Self>) -> bool {
-        cx.state.restricted.contains(&name)
+        cx.state.numbers >> (name.atom().0 % 64) & 1 != 0 && cx.state.restricted.contains(&name)
     }
 
     fn report_once<'a>(at: Span, name: Name<'a>, cx: &mut Cx<'a, Self>) {
@@ -124,8 +126,11 @@ impl Rule for NoShadowRestrictedNames {
         let report_global_this = self.report_global_this.unwrap_or_else(|| file.language().eslint_major >= 10);
         let last = if report_global_this { "globalThis" } else { "eval" };
         let names = ["undefined", "NaN", "Infinity", "arguments", "eval", last];
+        let restricted: SmallVec<[Name<'a>; 6]> =
+            names.into_iter().filter(|name| file.mentions(name)).map(|name| file.name_of(name)).collect();
         let state = State {
-            restricted: names.into_iter().filter(|name| file.mentions(name)).map(|name| file.name_of(name)).collect(),
+            numbers: restricted.iter().fold(0, |numbers, name| numbers | 1 << (name.atom().0 % 64)),
+            restricted,
             reported: FxHashSet::default(),
             seen: FxHashMap::default(),
         };

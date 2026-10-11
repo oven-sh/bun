@@ -23,7 +23,7 @@ impl Rule for NoThisAssignment {
                 }
             }
             Node::Expr(assignment) => {
-                if let ExprKind::Assign { target, .. } = assignment.kind()
+                if let Some((_, target, _)) = assignment.as_assign()
                     && let Some(ident_name) = target.as_ident()
                     // Not the default value in a pattern.
                     && !assignment.is_assignment_target()

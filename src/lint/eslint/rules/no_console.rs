@@ -78,7 +78,8 @@ impl NoConsole {
 impl Rule for NoConsole {
     const META: Meta = Meta::eslint("no-console", Kind::Suggestion).has_suggestions().reports_at_the_end();
     const ON: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]);
-    type State<'a> = ();
+    /// `console`
+    type State<'a> = Name<'a>;
 
     fn new(options: &Options) -> Self {
         let allowed = options.object(0).strings("allow");
@@ -87,15 +88,15 @@ impl Rule for NoConsole {
         }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("console").then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Name<'a>> {
+        file.mentions("console").then(|| file.name_of("console"))
     }
 
     fn expr<'a>(&self, member: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = member.kind() else {
+        let Some(obj) = member.object() else {
             return;
         };
-        if !obj.is_ident("console") || self.is_allowed(member) || member.is_jsx_tag_name() {
+        if obj.as_ident() != Some(cx.state) || self.is_allowed(member) || member.is_jsx_tag_name() {
             return;
         }
         // oxlint says nothing about `console[a]` and `console[0]`.

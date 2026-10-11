@@ -173,18 +173,14 @@ pub struct Linter<S: RuleSet> {
     /// For each rule of `registry`, its number in `S`.
     numbers: Vec<u16>,
     /// What the configurations name by numbers.
-    instances: Instances<S>,
+    instances: Instances<Arc<S>>,
 }
 
 /// A rule as it runs on the file: as it is configured, or as a comment changes that.
 struct Running<'r, S> {
     entry: &'static RuleEntry,
-    /// [`ConfiguredRule::reported_as`]
-    reported_as: &'static Meta,
-    /// [`ConfiguredRule::name`]
-    name: Option<&'r Arc<[u8]>>,
-    /// [`ConfiguredRule::or_else`]
-    or_else: Option<&'r ConfiguredJsRule>,
+    /// What the configuration has for it.
+    configured: Option<&'r ConfiguredRule>,
     severity: Severity,
     /// [`Slot::when`]
     when: When,
@@ -193,12 +189,24 @@ struct Running<'r, S> {
     refusal: Option<Cow<'r, [u8]>>,
 }
 
-impl<S> Running<'_, S> {
+impl<'r, S> Running<'r, S> {
+    /// [`ConfiguredRule::reported_as`]
+    #[inline]
+    fn reported_as(&self) -> &'static Meta {
+        (self.configured).map_or(self.entry.meta, ConfiguredRule::reported_as)
+    }
+
+    /// [`ConfiguredRule::name`]
+    #[inline]
+    fn name(&self) -> Option<&'r Arc<[u8]>> {
+        self.configured.and_then(ConfiguredRule::name)
+    }
+
     /// ESLint's `ruleId` of what it reports.
     fn id(&self) -> RuleId {
-        match self.name {
+        match self.name() {
             Some(name) => RuleId::Named(self.entry.meta, Arc::clone(name)),
-            None => RuleId::Known(self.reported_as),
+            None => RuleId::Known(self.reported_as()),
         }
     }
 }
@@ -344,16 +352,18 @@ impl<S: RuleSet> Linter<S> {
         let mut on = RuleBits::EMPTY;
         let (mut order, mut typed, mut refusal) = (Vec::new(), Vec::new(), None);
         for (at, rule) in config.rules.iter().enumerate() {
-            let Some(number) = self.instance(rule).map(S::number) else {
+            let Some(instance) = self.instance(rule) else {
                 continue;
             };
+            let number = instance.number();
             on.insert(number);
             let (when, oxlint_number) = match config.language.is_oxlint {
                 true => crate::oxlint_order::of(rule.reported_as()),
                 false => (rule.entry.meta.reports, 0),
             };
             let at = at as u32;
-            order.push((oxlint_number, Slot { at, number, when }));
+            let slot = Slot { at, number, when };
+            order.push((oxlint_number, slot, Arc::clone(instance)));
             if rule.entry.meta.requires_types {
                 typed.push(rule.entry.meta);
             }
@@ -362,16 +372,18 @@ impl<S: RuleSet> Linter<S> {
             }
         }
         order.sort_by_key(|it| it.0);
+        let rules: Vec<Arc<S>> = order.iter().map(|it| Arc::clone(&it.2)).collect();
         Prepared {
             on,
             order: order.into_iter().map(|it| it.1).collect(),
+            rules: Arc::new(rules),
             refusal,
             typed: typed.into(),
         }
     }
 
     /// `rule` made from its options. `None` if it is off.
-    fn instance(&self, rule: &ConfiguredRule) -> Option<&S> {
+    fn instance(&self, rule: &ConfiguredRule) -> Option<&Arc<S>> {
         if rule.severity == Severity::Off {
             return None;
         }
@@ -379,7 +391,7 @@ impl<S: RuleSet> Linter<S> {
             Some(at) => *at,
             None => {
                 let index = self.registry.index_of(rule.entry)?;
-                let make = || self.build(index, &rule.options);
+                let make = || self.build(index, &rule.options).map(Arc::new);
                 let at = self.instances.of(index, &rule.options, make)?;
                 *rule.instance.get_or_init(|| at)
             }
@@ -461,21 +473,19 @@ impl<S: RuleSet> Linter<S> {
             None => prepared.order.len(),
         };
         let mut running: Vec<Running<S>> = Vec::with_capacity(count);
-        for slot in &prepared.order {
+        let made = prepared.rules.downcast_ref::<Vec<Arc<S>>>();
+        let made = made.map_or(&[][..], |it| &it[..]);
+        for (slot, instance) in prepared.order.iter().zip(made) {
             if listening.as_ref().is_some_and(|it| !it.has(slot.number)) {
                 continue;
             }
             let Some(rule) = config.rules.get(slot.at as usize) else {
                 continue;
             };
-            if let Some(instance) = self.instance(rule)
-                && (!is_refused || rule.entry.meta.requires_types)
-            {
+            if !is_refused || rule.entry.meta.requires_types {
                 running.push(Running {
                     entry: rule.entry,
-                    reported_as: rule.reported_as(),
-                    name: rule.name(),
-                    or_else: rule.or_else(),
+                    configured: Some(rule),
                     severity: rule.severity,
                     when: slot.when,
                     rule: RuleRef::Shared(instance),
@@ -740,23 +750,23 @@ impl<S: RuleSet> Linter<S> {
             if follows_oxlint && changes.0 != key {
                 changes = (
                     key,
-                    config::oxlint_changes(rule.reported_as, diagnostic.message_id),
+                    config::oxlint_changes(rule.reported_as(), diagnostic.message_id),
                 );
             }
-            problems.push(to_message(diagnostic, rule.reported_as, places));
+            problems.push(to_message(diagnostic, rule.reported_as(), places));
             let Some(message) =
-                (problems.last_mut()).filter(|_| changes_something || rule.name.is_some())
+                (problems.last_mut()).filter(|_| changes_something || rule.name().is_some())
             else {
                 continue;
             };
-            if rule.name.is_some() {
+            if rule.name().is_some() {
                 message.rule_id = Some(rule.id());
             }
             if follows_oxlint {
                 change_as_oxlint(message, changes.1);
             }
             if changes_something && file.language().eslint_8.is_some() {
-                let (fixes, suggests) = config::eslint8::changes_of(rule.reported_as);
+                let (fixes, suggests) = config::eslint8::changes_of(rule.reported_as());
                 message.fix = message.fix.take().filter(|_| fixes);
                 if !suggests {
                     message.suggestions.clear();
@@ -773,7 +783,7 @@ impl<S: RuleSet> Linter<S> {
                 .filter_map(|it| {
                     let rule = RunningJs {
                         severity: it.severity,
-                        configured: Cow::Borrowed(&it.or_else?.configured),
+                        configured: Cow::Borrowed(&it.configured?.or_else()?.configured),
                     };
                     Some((rule, it.id()))
                 })
@@ -1281,7 +1291,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 }
             };
             let name = existing.and_then(ConfiguredRule::name);
-            let is_it = |it: &Running<S>| is_same_rule(it.entry, entry) && it.name == name;
+            let is_it = |it: &Running<S>| is_same_rule(it.entry, entry) && it.name() == name;
             let linter = self.linter;
             let shared = existing
                 .filter(|_| keeps_options)
@@ -1294,7 +1304,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 None => linter.validate(entry, options).err().map(Cow::Owned),
             };
             let rule = match shared {
-                Some(rule) => RuleRef::Shared(rule),
+                Some(rule) => RuleRef::Shared(&**rule),
                 None if severity == Severity::Off => {
                     running.retain(|it| !is_it(it));
                     continue;
@@ -1309,9 +1319,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
             };
             let new = Running {
                 entry,
-                reported_as: existing.map_or(entry.meta, ConfiguredRule::reported_as),
-                name,
-                or_else: existing.and_then(ConfiguredRule::or_else),
+                configured: existing,
                 severity,
                 when: entry.meta.reports,
                 rule,

@@ -26,7 +26,7 @@ impl Rule for SwitchCaseBraces {
         let Some(first) = case.body().first() else {
             return;
         };
-        if let StmtKind::Block(body) = first.kind()
+        if let Some(body) = first.as_block()
             && case.body().len() == 1
         {
             if body.is_empty() {

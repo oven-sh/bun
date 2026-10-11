@@ -117,10 +117,9 @@ impl NoExtraBooleanCast {
 
     /// `e`: `!!argument`
     fn check_negation<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Unary { op: UnOp::Not, operand } = e.kind() else {
-            return;
-        };
-        let ExprKind::Unary { op: UnOp::Not, operand: argument } = operand.kind() else {
+        let is_negation = |it: &Expr| it.unary_op() == Some(UnOp::Not);
+        let operand = Some(e).filter(is_negation).and_then(Expr::operand);
+        let Some(argument) = operand.filter(is_negation).and_then(Expr::operand) else {
             return;
         };
         if !self.is_in_flagged_context(e, cx) {
@@ -140,7 +139,7 @@ impl NoExtraBooleanCast {
 
     /// `e`: `Boolean(..)`
     fn check_call<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Call(call) = e.kind() else {
+        let Some(call) = e.as_call() else {
             return;
         };
         if !call.callee().is_ident("Boolean") || !self.is_in_flagged_context(e, cx) || !calls_boolean(call) {

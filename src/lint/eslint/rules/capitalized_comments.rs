@@ -123,7 +123,22 @@ fn is_consecutive_comment<'a>(file: &'a File<'a>, comment: Token<'a>) -> bool {
 }
 
 impl CapitalizedComments {
+    /// Whether `comment` plainly starts with no letter, or with one of ASCII as it is expected.
+    fn is_plainly_right(&self, comment: Token) -> bool {
+        let [b'/', b'/' | b'*', rest @ ..] = comment.text() else {
+            return false;
+        };
+        match rest.iter().find(|b| !matches!(b, 0x09..=0x0D | b' ' | b'*')) {
+            Some(first) if self.is_always => first.is_ascii() && !first.is_ascii_lowercase(),
+            Some(first) => first.is_ascii() && !first.is_ascii_uppercase(),
+            None => true,
+        }
+    }
+
     fn process_comment<'a>(&self, comment: Token<'a>, cx: &Cx<'a, Self>) {
+        if self.is_plainly_right(comment) {
+            return;
+        }
         let options = match comment.kind() {
             TokenKind::Line => &self.line,
             TokenKind::Block => &self.block,

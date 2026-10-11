@@ -11,7 +11,7 @@ const USE_HAS_OWN: Message = Message::new(
 /// The object of `e`, if ESLint has a `MemberExpression` for `e` and not a `ChainExpression`
 /// around one.
 fn object_of_member(e: Expr<'_>) -> Option<Expr<'_>> {
-    ast_utils::member_object(e).filter(|_| !e.is_chain_root())
+    e.object().filter(|_| !e.is_chain_root())
 }
 
 fn is_named(member: Expr<'_>, name: &str) -> bool {
@@ -39,7 +39,7 @@ impl Rule for PreferObjectHasOwn {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("hasOwnProperty").then_some(())
+        (file.mentions("hasOwnProperty") && file.mentions("call")).then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

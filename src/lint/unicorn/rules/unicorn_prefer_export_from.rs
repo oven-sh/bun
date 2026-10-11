@@ -17,8 +17,6 @@ const USE_EXPORT_FROM: Message = Message::new("", "use `export ... from ...;`");
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// Whether the file exports anything in a way that the rule is about.
-    has_candidates: Option<bool>,
     /// The `export { .. } from` of the file, by the module.
     exports_from: Option<FxHashMap<Name<'a>, SmallVec<[Export<'a>; 1]>>>,
 }
@@ -32,27 +30,26 @@ impl Rule for PreferExportFrom {
         PreferExportFrom { check_used_variables: options.object(0).bool_or("checkUsedVariables", true) }
     }
 
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some(State::default())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        has_candidates(file).then(State::default)
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        let file = cx.file();
-        if let StmtKind::Import(import_decl) = statement.kind()
+        if let Some(import_decl) = statement.as_import()
             && !import_decl.is_side_effect()
-            && *cx.state.has_candidates.get_or_insert_with(|| has_candidates(file))
         {
             self.check_re_export(import_decl, cx);
         }
     }
 }
 
-/// Nothing is asked about variables in a file without one of these.
+/// Whether the file exports anything in a way that the rule is about. Nothing is asked about variables in a file
+/// without one of these.
 fn has_candidates<'a>(file: &'a File<'a>) -> bool {
     let is_identifier = |e: Expr| e.tag() == ExprTag::Ident;
     // What a namespace exports is not looked for.
     file.has_stmts([StmtTag::Module])
-        || file.body().iter().any(|it| match it.kind() {
+        || file.body().iter().filter(|it| it.tag() != StmtTag::Import).any(|it| match it.kind() {
             StmtKind::ExportDefault(e) => is_identifier(e),
             StmtKind::ExportNamed(export) => !export.has_from() && !export.items().is_empty(),
             StmtKind::Var(declarations) => it.is_exported() && declarations.iter().filter_map(VarDecl::init).any(is_identifier),

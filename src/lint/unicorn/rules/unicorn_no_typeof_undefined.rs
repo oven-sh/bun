@@ -11,7 +11,7 @@ const NO_TYPEOF_UNDEFINED: Message = Message::new("", "Compare with `undefined` 
 impl Rule for NoTypeofUndefined {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "no-typeof-undefined", Kind::Suggestion).fixable(Fixable::Code).has_suggestions();
-    const ON: On = On::new().binaries(&[BinOp::EqEqEq, BinOp::NotEqEq, BinOp::EqEq, BinOp::NotEq]);
+    const ON: On = On::new().unaries(&[UnOp::Typeof]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -22,14 +22,15 @@ impl Rule for NoTypeofUndefined {
         file.mentions("undefined").then_some(())
     }
 
-    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Binary { op, left, right } = e.kind() else {
+    fn unary<'a>(&self, left: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let (Some(argument), Node::Expr(e)) = (left.operand(), left.parent()) else {
             return;
         };
-        let ExprKind::Unary { op: UnOp::Typeof, operand: argument } = left.kind() else {
+        let Some((op @ (BinOp::EqEqEq | BinOp::NotEqEq | BinOp::EqEq | BinOp::NotEq), _, right)) = e.as_binary() else {
             return;
         };
-        if left.is_parenthesized()
+        if e.left() != Some(left)
+            || left.is_parenthesized()
             || right.is_parenthesized()
             || !right.as_string().is_some_and(|it| it.is("undefined"))
         {

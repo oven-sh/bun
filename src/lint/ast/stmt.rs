@@ -728,6 +728,12 @@ impl<'a> Stmt<'a> {
 }
 
 impl super::File<'_> {
+    /// Whether the file has a `with` statement, which is a [`StmtKind::With`] with the tag `Block`.
+    #[inline]
+    pub fn has_with_statements(&self) -> bool {
+        !self.hir.with_bodies.is_empty()
+    }
+
     /// The HIR stores `with (object) body` as a block of the two, positioned at the keyword.
     #[inline]
     fn is_with(&self, raw: &hir::Stmt) -> bool {

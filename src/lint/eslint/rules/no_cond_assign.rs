@@ -24,11 +24,7 @@ fn test_of(node: Node<'_>) -> Option<(Expr<'_>, &'static str)> {
             StmtKind::For { test, .. } => Some((test?, "a 'for' statement")),
             _ => None,
         },
-        Node::Expr(e) if e.tag() != ExprTag::Cond => None,
-        Node::Expr(e) => match e.kind() {
-            ExprKind::Cond { test, .. } => Some((test, "ConditionalExpression")),
-            _ => None,
-        },
+        Node::Expr(e) => Some((e.as_cond()?.0, "ConditionalExpression")),
         _ => None,
     }
 }

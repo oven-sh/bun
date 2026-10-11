@@ -149,6 +149,15 @@ fn remove_braces<'a>(fixer: Fixer<'a>, body: Stmt<'a>) -> Option<Fix> {
 
 impl Curly {
     fn prepare_check<'a>(&self, body: Stmt<'a>, name: &'static str, has_condition: bool) -> Check<'a> {
+        if self.mode == Mode::All {
+            return Check {
+                body,
+                name,
+                has_condition,
+                actual: body.tag() == StmtTag::Block && (body.text().starts_with(b"{") || body.as_block().is_some()),
+                expected: Some(true),
+            };
+        }
         let block = body.as_block();
         let only = block.and_then(|it| it.first().filter(|_| it.len() == 1));
         let is_oxlint = body.file().language().is_oxlint;
@@ -221,6 +230,7 @@ impl Curly {
     /// The whole chain of `if`, `else if` and `else` that starts with `first`.
     fn check_if<'a>(&self, first: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         if let Node::Stmt(parent) = first.parent()
+            && parent.tag() == StmtTag::If
             && matches!(parent.kind(), StmtKind::If { no, .. } if no == Some(first))
         {
             return;

@@ -20,7 +20,7 @@ impl Rule for NoSparseArrays {
     }
 
     fn expr<'a>(&self, array: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Array(elements) = array.kind() else {
+        let Some(elements) = array.as_array() else {
             return;
         };
         if !elements.iter().any(Expr::is_missing) || utils::is_assignment_target(array) {

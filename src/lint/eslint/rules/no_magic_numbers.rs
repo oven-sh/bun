@@ -279,13 +279,15 @@ impl Checker {
     }
 
     fn check_expr<'a, R: Rule>(&self, e: Expr<'a>, cx: &Cx<'a, R>) {
-        let value = match e.kind() {
-            ExprKind::Number(value) => Value::Number(value),
-            ExprKind::BigInt(digits) => Value::BigInt {
-                is_negative: false,
-                digits: digits.bytes(),
+        let value = match e.as_number() {
+            Some(value) => Value::Number(value),
+            None => match e.kind() {
+                ExprKind::BigInt(digits) => Value::BigInt {
+                    is_negative: false,
+                    digits: digits.bytes(),
+                },
+                _ => return,
             },
-            _ => return,
         };
         let parent = e.parent();
         let (full, sign, value, parent) = match parent.as_expr().map(|it| (it, it.unary_op())) {

@@ -83,7 +83,7 @@ impl Rule for NoConstantCondition {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let ExprKind::Cond { test, .. } = e.kind()
+        if let Some((test, ..)) = e.as_cond()
             && is_constant(test)
         {
             cx.report(place(test), UNEXPECTED);

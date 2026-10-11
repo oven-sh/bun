@@ -19,7 +19,7 @@ impl Rule for NoConstAssign {
         if !matches!(decl.var_kind(), VarKind::Const | VarKind::Using | VarKind::AwaitUsing) {
             return;
         }
-        decl.pat().for_each_binding(&mut |pat| {
+        let mut check = |pat: Pat<'a>| {
             let Some(symbol) = pat.symbol().filter(|it| it.has_modifying_references()) else {
                 return;
             };
@@ -31,6 +31,10 @@ impl Rule for NoConstAssign {
                     labels.push(reference.span(), format!("{name} is re-assigned here."));
                 });
             }
-        });
+        };
+        match decl.pat() {
+            name if name.tag() == PatTag::Ident => check(name),
+            pattern => pattern.for_each_binding(&mut check),
+        }
     }
 }

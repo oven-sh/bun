@@ -25,11 +25,11 @@ fn is_type_any_or_iterable_type(ty: Type) -> bool {
 
 /// The `object` of `node`, if that is `object[0]`: `isArrayLiteralIntegerIndexAccess`.
 fn object_of_integer_index_access(node: Expr<'_>) -> Option<Expr<'_>> {
-    let ExprKind::Index { obj, index, chain: Chain::No } = node.kind() else {
+    let Some((obj, index, Chain::No)) = node.as_index() else {
         return None;
     };
-    match index.kind() {
-        ExprKind::Number(n) if n.is_finite() && n.fract() == 0.0 => Some(obj),
+    match index.as_number() {
+        Some(n) if n.is_finite() && n.fract() == 0.0 => Some(obj),
         _ => None,
     }
 }
@@ -73,7 +73,7 @@ impl PreferDestructuring {
     }
 
     fn check_assignment_expression<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Assign { op: None, value, .. } = node.kind() else {
+        let Some((None, _, value)) = node.as_assign() else {
             return;
         };
         if !matches!(value.tag(), ExprTag::Dot | ExprTag::Index) || utils::is_assignment_target(node) {

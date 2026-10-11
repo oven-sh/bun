@@ -52,7 +52,7 @@ impl Rule for NoUnreadableArrayDestructuring {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Array(elements) = e.kind() else {
+        let Some(elements) = e.as_array() else {
             return;
         };
         if elements.len() < 3 || !e.is_assignment_target() {

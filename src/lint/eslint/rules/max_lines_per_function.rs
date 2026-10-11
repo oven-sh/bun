@@ -57,15 +57,18 @@ pub(super) fn count_comment_lines_as_oxlint<'a>(file: &'a File<'a>) -> Vec<(u32,
     counts.collect()
 }
 
-/// Whether `text` plainly has fewer than `max` line breaks. If not, the lines tell.
-fn has_fewer_line_breaks(text: &[u8], max: u32) -> bool {
-    let max = max as usize;
-    text.len() < max || strings::count_char(text, b'\n') < max && strings::index_of_any(text, b"\r\xE2").is_none()
+/// Whether a line of `text` can end with something else than a `\n`.
+fn may_have_other_line_breaks(text: &[u8]) -> bool {
+    strings::index_of_any(text, b"\r\xE2").is_some()
 }
 
 /// What is counted once in a file, when it is needed.
 #[derive(Default)]
-pub struct Counts {
+pub struct Counts<'a> {
+    /// The functions that are long enough to have too many lines, with what of each is counted.
+    candidates: Vec<(Func<'a>, Span)>,
+    /// [`may_have_other_line_breaks`] for the file.
+    may_have_other_line_breaks: Option<bool>,
     /// What [`MaxLinesPerFunction::count_lines`] returns.
     lines: Option<Vec<u32>>,
     /// What [`count_comment_lines_as_oxlint`] returns.
@@ -88,12 +91,21 @@ impl MaxLinesPerFunction {
         });
         std::iter::once(0).chain(counts).collect()
     }
+
+    /// Whether `span` plainly has fewer than `max` line breaks. If not, the lines tell.
+    fn has_fewer_line_breaks<'a>(&self, span: Span, cx: &mut Cx<'a, Self>) -> bool {
+        let (file, text) = (cx.file(), cx.slice(span));
+        let in_file = &mut cx.state.may_have_other_line_breaks;
+        strings::count_char(text, b'\n') < self.max as usize
+            && !(*in_file.get_or_insert_with(|| may_have_other_line_breaks(file.text()))
+                && may_have_other_line_breaks(text))
+    }
 }
 
 impl Rule for MaxLinesPerFunction {
     const META: Meta = Meta::eslint("max-lines-per-function", Kind::Suggestion);
-    const ON: On = On::new().funcs();
-    type State<'a> = Counts;
+    const ON: On = On::new().funcs().finish();
+    type State<'a> = Counts<'a>;
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -105,8 +117,8 @@ impl Rule for MaxLinesPerFunction {
         }
     }
 
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<Counts> {
-        Some(Counts::default())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Counts<'a>> {
+        (file.text().len() >= self.max as usize).then(Counts::default)
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
@@ -129,10 +141,30 @@ impl Rule for MaxLinesPerFunction {
             (Node::Expr(e), _) if !self.counts_iifes && ast_utils::is_callee(e) => return,
             _ => func.estree_span(),
         };
-        let file = cx.file();
-        if has_fewer_line_breaks(file.slice(span), self.max) {
-            return;
+        if span.len() >= self.max {
+            cx.state.candidates.push((func, span));
         }
+    }
+
+    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
+        // The last of them that has few lines. So has what is in it, which comes before it.
+        let mut short = Span::default();
+        for (func, span) in std::mem::take(&mut cx.state.candidates).into_iter().rev() {
+            if short.contains(span) {
+                continue;
+            }
+            match self.has_fewer_line_breaks(span, cx) {
+                true => short = span,
+                false => self.check(func, span, cx),
+            }
+        }
+    }
+}
+
+impl MaxLinesPerFunction {
+    /// `span`: what of `func` is counted.
+    fn check<'a>(&self, func: Func<'a>, span: Span, cx: &mut Cx<'a, Self>) {
+        let (file, is_oxlint) = (cx.file(), cx.language().is_oxlint);
         let (first, last) = (file.line_of(span.start), file.line_of(span.end));
         if last - first < self.max {
             return;

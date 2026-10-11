@@ -34,7 +34,7 @@ impl Rule for NoNegatedCondition {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let ExprKind::Cond { test, yes, no } = e.kind()
+        if let Some((test, yes, no)) = e.as_cond()
             && is_negated(test)
         {
             match cx.language().is_oxlint {

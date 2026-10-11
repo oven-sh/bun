@@ -23,6 +23,9 @@ impl Rule for NoAnonymousDefaultExport {
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        if stmt.tag() != StmtTag::ExportDefault && !stmt.is_default_export() {
+            return;
+        }
         match stmt.kind() {
             StmtKind::ExportDefault(e) => check(e, cx),
             StmtKind::Fn(func) if stmt.is_default_export() && func.name().is_none() => {
@@ -37,7 +40,7 @@ impl Rule for NoAnonymousDefaultExport {
 
     // `module.exports = ..`
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let ExprKind::Assign { target, value, .. } = e.kind()
+        if let Some((_, target, value)) = e.as_assign()
             && matches!(get_inner_expression(value).tag(), ExprTag::Fn | ExprTag::Class)
             && is_common_js_export(target)
             && matches!(iter_outer_expressions(e).next(), Some(Node::Stmt(it)) if it.tag() == StmtTag::Expr)

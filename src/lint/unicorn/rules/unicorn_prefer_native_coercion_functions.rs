@@ -75,10 +75,16 @@ fn is_array_callback(arrow: Expr) -> bool {
 impl Rule for PreferNativeCoercionFunctions {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-native-coercion-functions", Kind::Suggestion);
     const ON: On = On::new().funcs();
-    no_state!();
+    type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         PreferNativeCoercionFunctions
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        let mentions_any = file.mentions_any(&NATIVE_COERCION_FUNCTION_NAMES)
+            || file.mentions_any(&ARRAY_METHODS_WITH_BOOLEAN_CALLBACK);
+        mentions_any.then_some(())
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {

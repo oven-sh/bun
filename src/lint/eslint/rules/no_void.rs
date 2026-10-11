@@ -9,7 +9,7 @@ const NO_VOID: Message = Message::new("noVoid", "Expected 'undefined' and instea
 
 impl Rule for NoVoid {
     const META: Meta = Meta::eslint("no-void", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Unary]);
+    const ON: On = On::new().unaries(&[UnOp::Void]);
     no_state!();
 
     fn new(options: &Options) -> Self {
@@ -18,10 +18,7 @@ impl Rule for NoVoid {
         }
     }
 
-    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if !matches!(e.kind(), ExprKind::Unary { op: UnOp::Void, .. }) {
-            return;
-        }
+    fn unary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if self.allows_as_statement
             && matches!(e.parent(), Node::Stmt(parent) if utils::is_expression_statement(parent))
         {

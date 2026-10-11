@@ -379,6 +379,9 @@ impl IdLength {
 
     /// The names in types that refer to no variable.
     fn check_type_as_oxlint<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
+        if ty.as_ref().is_some_and(|(name, _)| name.len() == 1) {
+            return;
+        }
         match ty.kind() {
             TypeKind::Tuple(elements) => {
                 for name in elements.iter().filter_map(|it| it.name()) {

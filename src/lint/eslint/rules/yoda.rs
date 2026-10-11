@@ -41,9 +41,18 @@ fn as_negative_numeric_literal(e: Expr<'_>) -> Option<Expr<'_>> {
 
 /// A `Literal`, or ESLint's `looksLikeLiteral`.
 fn is_literal_like(e: Expr) -> bool {
-    ast_utils::is_literal(e)
-        || as_negative_numeric_literal(e).is_some()
-        || ast_utils::is_static_template_literal(e)
+    match e.tag() {
+        ExprTag::Null
+        | ExprTag::True
+        | ExprTag::False
+        | ExprTag::Number
+        | ExprTag::String
+        | ExprTag::BigInt
+        | ExprTag::Regex => true,
+        ExprTag::Unary => as_negative_numeric_literal(e).is_some(),
+        ExprTag::Template => ast_utils::is_static_template_literal(e),
+        _ => false,
+    }
 }
 
 /// The value of a literal, as far as `<=` tells values apart.
@@ -238,7 +247,16 @@ fn flipped_text<'a>(
 
 impl Rule for Yoda {
     const META: Meta = Meta::eslint("yoda", Kind::Suggestion).fixable(Fixable::Code);
-    const ON: On = On::new().exprs(&[ExprTag::Binary]);
+    const ON: On = On::new().binaries(&[
+        BinOp::EqEq,
+        BinOp::EqEqEq,
+        BinOp::NotEq,
+        BinOp::NotEqEq,
+        BinOp::Lt,
+        BinOp::Gt,
+        BinOp::Le,
+        BinOp::Ge,
+    ]);
     no_state!();
 
     fn new(options: &Options) -> Self {
@@ -250,8 +268,8 @@ impl Rule for Yoda {
         }
     }
 
-    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Binary { op, left, right } = e.kind() else {
+    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let (Some(op), Some(left), Some(right)) = (e.binary_op(), e.left(), e.right()) else {
             return;
         };
         let Some(flipped) = flipped(op) else {

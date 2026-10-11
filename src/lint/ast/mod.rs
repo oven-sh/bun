@@ -213,8 +213,7 @@ pub struct VueScript {
 /// The file that is linted or formatted.
 pub struct File<'a> {
     pub(crate) hir: Hir<'a>,
-    /// `hir.exprs`, if each is what the HIR says: there are no casts to hide and no private names
-    /// to respell. Otherwise empty.
+    /// `hir.exprs`, if there are no casts to hide. Otherwise empty.
     plain_exprs: &'a [hir::Expr],
     /// `hir.stmts`, if there are no casts to hide. Otherwise empty.
     plain_stmts: &'a [hir::Stmt],
@@ -262,7 +261,7 @@ impl<'a> File<'a> {
             is_js: hir.is_js,
             is_flow: hir.is_flow,
             hides_casts,
-            plain_exprs: match hides_casts || types.is_some() {
+            plain_exprs: match hides_casts {
                 true => &[],
                 false => &hir.exprs[..],
             },

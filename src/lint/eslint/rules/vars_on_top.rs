@@ -45,6 +45,10 @@ impl Rule for VarsOnTop {
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        // `const`, `let`
+        if matches!(cx.text().get(statement.span().start as usize), Some(b'c' | b'l')) {
+            return;
+        }
         let StmtKind::Var(declarations) = statement.kind() else {
             return;
         };

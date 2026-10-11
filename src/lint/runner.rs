@@ -19,22 +19,22 @@ pub(crate) struct Grouped<const KINDS: usize> {
     ids: Vec<u32>,
     /// Where each kind starts in `ids`, and where the last ends.
     starts: [u32; MOST_KINDS + 2],
-    /// A bit for each kind of which there is a node.
-    present: u128,
+    /// A bit for each kind of which there is a node, if there are no more than 64 kinds.
+    present: u64,
 }
 
 const MOST_KINDS: usize = 2 * ExprTag::COUNT;
-// `Grouped::present` has a bit for each.
-const _: () = assert!(MOST_KINDS <= 128);
+const _: () = assert!(MOST_KINDS < NOT_IN_TREE as usize);
 
 /// At `kind + 1`: how many of `kinds` are `kind`.
 fn count_kinds(kinds: &[u8]) -> [u32; MOST_KINDS + 2] {
-    let mut counts = [0u32; MOST_KINDS + 2];
+    // A place for each number that there can be: nothing is asked for each of `kinds`.
+    let mut of_all = [0u32; u8::MAX as usize + 2];
     for &kind in kinds {
-        if let Some(count) = counts.get_mut(kind as usize + 1) {
-            *count += 1;
-        }
+        of_all[kind as usize + 1] += 1;
     }
+    let mut counts = [0u32; MOST_KINDS + 2];
+    counts.copy_from_slice(&of_all[..MOST_KINDS + 2]);
     counts
 }
 
@@ -70,17 +70,20 @@ impl<const KINDS: usize> Grouped<KINDS> {
         counts: &[u32; MOST_KINDS + 2],
     ) -> Self {
         const { assert!(KINDS <= MOST_KINDS) };
-        let (mut starts, mut present) = (*counts, 0u128);
+        let (mut starts, mut present) = (*counts, 0u64);
         for kind in 0..KINDS {
-            present |= u128::from(starts[kind + 1] != 0) << kind;
+            if KINDS <= 64 {
+                present |= u64::from(starts[kind + 1] != 0) << kind;
+            }
             starts[kind + 1] += starts[kind];
         }
-        let mut next = starts;
+        // Where the next of each kind goes. What is left out has no place.
+        let mut next = [u32::MAX; u8::MAX as usize + 1];
+        next[..KINDS].copy_from_slice(&starts[..KINDS]);
         let mut ids = vec![0u32; starts[KINDS] as usize];
         for (id, &kind) in all.zip(kinds) {
-            if let Some(at) = next.get_mut(kind as usize)
-                && let Some(place) = ids.get_mut(*at as usize)
-            {
+            let at = &mut next[kind as usize];
+            if let Some(place) = ids.get_mut(*at as usize) {
                 *place = id;
                 *at += 1;
             }
@@ -120,10 +123,12 @@ fn grouped_expr<'a>(file: &'a File<'a>, id: u32) -> Expr<'a> {
 impl Exprs {
     fn new(file: &File) -> Exprs {
         let mut exprs = Exprs::from_binder(file).unwrap_or_else(|| Exprs::from_hir(file));
+        let starts = &exprs.grouped.starts;
         for kind in 0..ExprTag::COUNT {
-            let parts = (exprs.grouped.present >> (2 * kind)) & 3;
-            exprs.present |= u64::from(parts != 0) << kind;
-            exprs.chained |= u64::from(parts & 2 != 0) << kind;
+            let (first, chained, end) =
+                (starts[2 * kind], starts[2 * kind + 1], starts[2 * kind + 2]);
+            exprs.present |= u64::from(first < end) << kind;
+            exprs.chained |= u64::from(chained < end) << kind;
         }
         exprs
     }
@@ -175,11 +180,6 @@ impl Exprs {
                 grouped.ids.get_mut(start..end)?.copy_from_slice(&rest);
                 for first in &mut grouped.starts[strings + 1..=templates] {
                     *first -= moved.len() as u32;
-                }
-                for kind in [strings, templates] {
-                    let has_any = grouped.starts[kind + 1] > grouped.starts[kind];
-                    grouped.present &= !(1 << kind);
-                    grouped.present |= u128::from(has_any) << kind;
                 }
             }
         }
@@ -363,27 +363,27 @@ impl File<'_> {
 
     #[inline(never)]
     fn present_binaries(&self) -> u64 {
-        self.binaries().present as u64
+        self.binaries().present
     }
 
     #[inline(never)]
     fn present_unaries(&self) -> u64 {
-        self.unaries().present as u64
+        self.unaries().present
     }
 
     #[inline(never)]
     fn present_stmts(&self) -> u64 {
-        self.stmts().present as u64
+        self.stmts().present
     }
 
     #[inline(never)]
     fn present_types(&self) -> u64 {
-        self.type_nodes().present as u64
+        self.type_nodes().present
     }
 
     #[inline(never)]
     fn present_pats(&self) -> u64 {
-        self.pats().present as u64
+        self.pats().present
     }
 }
 

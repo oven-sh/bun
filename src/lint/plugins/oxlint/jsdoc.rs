@@ -41,6 +41,9 @@ enum Nearest {
 struct Comments {
     /// In source order.
     all: Vec<Comment>,
+    /// A bit for the low bits of each `Comment::attached_to`, 16 bits or more for each comment: few tokens have one before them.
+    /// The number of words is a power of two, or 0.
+    attached: Box<[u64]>,
     /// By the index of the function.
     nearest: RefCell<Vec<Nearest>>,
 }
@@ -50,17 +53,37 @@ impl Comments {
         let is_jsdoc =
             |it: Token| it.kind() == TokenKind::Block && is_jsdoc_content(it.comment_value());
         let jsdoc = leading_comments(file, is_jsdoc).into_iter();
+        let all: Vec<Comment> = jsdoc
+            .map(|(comment, attached_to)| Comment {
+                start: comment.start(),
+                end: comment.end(),
+                attached_to,
+                has_at: strings::contains_char(comment.text(), b'@'),
+            })
+            .collect();
+        let words = match all.len() {
+            0 => 0,
+            count => (count / 4 + 1).next_power_of_two(),
+        };
+        let mut attached = vec![0u64; words].into_boxed_slice();
+        for comment in &all {
+            let (word, bit) = Comments::place_in(&attached, comment.attached_to);
+            if let Some(word) = attached.get_mut(word) {
+                *word |= bit;
+            }
+        }
         Comments {
-            all: jsdoc
-                .map(|(comment, attached_to)| Comment {
-                    start: comment.start(),
-                    end: comment.end(),
-                    attached_to,
-                    has_at: strings::contains_char(comment.text(), b'@'),
-                })
-                .collect(),
+            all,
+            attached,
             nearest: RefCell::default(),
         }
+    }
+
+    /// The word of `attached` and the bit in it that stand for `at`.
+    #[inline]
+    fn place_in(attached: &[u64], at: u32) -> (usize, u64) {
+        let mask = attached.len().wrapping_sub(1);
+        ((at as usize / 64) & mask, 1 << (at % 64))
     }
 
     /// From the first that is before the token that starts at `at`, or before a later one.
@@ -78,7 +101,9 @@ impl Comments {
     }
 
     fn has(&self, at: u32) -> bool {
-        self.from(at).first().is_some_and(|it| it.attached_to == at)
+        let (word, bit) = Comments::place_in(&self.attached, at);
+        self.attached.get(word).is_some_and(|it| it & bit != 0)
+            && self.from(at).first().is_some_and(|it| it.attached_to == at)
     }
 }
 

@@ -178,17 +178,19 @@ pub(crate) fn for_each_on_this_thread(
 
 static OWN_POOL: OnceLock<bun_threading::ThreadPool> = OnceLock::new();
 
+/// The parser nests as deep as on a thread of Bun's pool. The binder, the checker, hundreds of rules and the printers then walk
+/// the tree by recursion, with frames of their own size, so their threads have eight times that stack. What is not touched
+/// costs no memory.
+const STACK_OF_A_WORKER: u32 = 8 * bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE;
+
 /// From now on parallel regions run on a pool of their own. For work that waits on its thread for what Bun's pool does:
 /// `bun lint` waits for rules in JavaScript, and such a rule can wait for a `Worker`, whose files are read and whose modules
 /// are loaded on that pool. `name`: what its threads are called, before their number.
-///
-/// The parser nests as deep as on a thread of Bun's pool. Hundreds of rules and printers then walk the tree by recursion,
-/// with frames of their own size, so their threads have eight times that stack. What is not touched costs no memory.
 pub fn use_a_pool_of_their_own(name: &'static str) {
     OWN_POOL.get_or_init(|| {
         bun_threading::ThreadPool::init(bun_threading::thread_pool::Config {
             max_threads: u32::from(bun_core::get_thread_count()),
-            stack_size: 8 * bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE,
+            stack_size: STACK_OF_A_WORKER,
             ..Default::default()
         })
         .named(name)
@@ -1363,6 +1365,8 @@ pub fn check_provided_then<R>(
     provided: host::Provided,
     then: impl FnOnce(Report) -> R,
 ) -> R {
+    // Unless `bun lint` or `bun format` has one.
+    use_a_pool_of_their_own("Bun Check");
     let threads = match request.threads {
         0 => usize::from(bun_core::get_thread_count()),
         n => n,
@@ -2087,7 +2091,7 @@ fn check_paths(disk: &host::Disk, request: &Request) -> Report {
         for _ in 1..at_once {
             // Without the thread, the others check its share.
             let _ = std::thread::Builder::new()
-                .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
+                .stack_size(STACK_OF_A_WORKER as usize)
                 .spawn_scoped(scope, || {
                     // As a thread of the pool does when it starts: the parsers check the stack.
                     bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Check"));
@@ -3178,7 +3182,7 @@ fn check_with_references(
         for _ in 1..at_once {
             // Without the thread, the others build its share.
             let _ = std::thread::Builder::new()
-                .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
+                .stack_size(STACK_OF_A_WORKER as usize)
                 .spawn_scoped(scope, || {
                     // As a thread of the pool does when it starts: the parsers check the stack.
                     bun_core::Output::Source::configure_named_thread(bun_core::zstr!("Check"));

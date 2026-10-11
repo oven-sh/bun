@@ -151,7 +151,7 @@ impl Rule for NoShadowRestrictedNames {
                 }
             }
             StmtTag::Import => {
-                let StmtKind::Import(import) = stmt.kind() else {
+                let Some(import) = stmt.as_import() else {
                     return;
                 };
                 let named = import.named().iter().map(ImportSpec::local);

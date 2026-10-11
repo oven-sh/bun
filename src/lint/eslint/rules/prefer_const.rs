@@ -472,7 +472,7 @@ impl Rule for PreferConst {
         if matches!(cx.text().get(stmt.span().start as usize), Some(b'c' | b'v')) {
             return;
         }
-        if let StmtKind::Var(declarations) = stmt.kind()
+        if let Some(declarations) = stmt.as_var()
             && declarations.first().is_some_and(|it| it.var_kind() == VarKind::Let)
             && (!is_init_of_for_statement(stmt) || cx.language().is_oxlint)
         {

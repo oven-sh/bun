@@ -302,7 +302,7 @@ impl Rule for NoVar {
         if matches!(cx.text().get(statement.span().start as usize), Some(b'c' | b'l')) {
             return;
         }
-        let StmtKind::Var(declarations) = statement.kind() else {
+        let Some(declarations) = statement.as_var() else {
             return;
         };
         if declarations.first().is_none_or(|it| it.var_kind() != VarKind::Var) {

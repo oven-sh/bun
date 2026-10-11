@@ -113,7 +113,9 @@ pub enum ExprKind<'a> {
 }
 
 impl<'a> Expr<'a> {
-    #[inline]
+    /// Where one or two kinds are of interest, [`Expr::tag`] and `as_call()`, `as_binary()` and so on are a few loads in
+    /// the caller. This is a call.
+    #[inline(never)]
     pub fn kind(self) -> ExprKind<'a> {
         match self.file.plain_exprs.get(self.id.idx()) {
             Some(raw) => self.kind_of::<true>(raw),

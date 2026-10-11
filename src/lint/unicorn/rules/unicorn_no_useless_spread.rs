@@ -83,6 +83,7 @@ fn is_useless_spread_in_list(literal: ExprTag, list: ExprTag) -> bool {
     }
 }
 
+#[inline(never)]
 fn check<'a>(spread: Spread<'a>, cx: &mut Cx<'a, NoUselessSpread>) {
     let Spread { argument, list, .. } = spread;
     if is_useless_spread_in_list(argument.tag(), list.tag()) {

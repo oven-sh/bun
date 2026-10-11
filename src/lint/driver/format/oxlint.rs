@@ -129,13 +129,14 @@ impl<'t> Offsets<'t> {
             let (text, mut marks) = (self.text, Vec::new());
             if !self.is_ascii && std::str::from_utf8(text).is_ok() {
                 let (mut at, mut units) = (0, 0);
-                while at < text.len() {
-                    if at >= marks.len() * Self::STEP {
+                for step in (0..text.len()).step_by(Self::STEP) {
+                    let in_character = text[step..].iter().take_while(|it| *it & 0xC0 == 0x80);
+                    let next = step + in_character.count();
+                    if next < text.len() {
+                        units += strings::element_length_utf8_into_utf16(&text[at..next]);
+                        at = next;
                         marks.push((at, units));
                     }
-                    let Sizes { bytes, in_utf16 } = sizes(text[at]);
-                    at += bytes;
-                    units += in_utf16;
                 }
             }
             marks
@@ -147,6 +148,12 @@ impl<'t> Offsets<'t> {
     /// From `at`, which has `units` code units before it, to the first start of a character that has `wanted` or more.
     fn forward(&self, (mut at, mut units): (usize, usize), wanted: usize) -> usize {
         while units < wanted && at < self.text.len() {
+            // What is ASCII at once.
+            let most = (at + (wanted - units)).min(self.text.len());
+            let Some(ascii) = strings::first_non_ascii(&self.text[at..most]) else {
+                return most;
+            };
+            (at, units) = (at + ascii as usize, units + ascii as usize);
             let Sizes { bytes, in_utf16 } = sizes(self.text[at]);
             at += bytes;
             units += in_utf16;
@@ -180,12 +187,8 @@ impl<'t> Offsets<'t> {
                 self.marks().get((start / Self::STEP).checked_sub(1)?)
             })
         {
-            let (mut counted, mut units_before_line) = before;
-            while counted < start {
-                let Sizes { bytes, in_utf16 } = sizes(self.text[counted]);
-                counted += bytes;
-                units_before_line += in_utf16;
-            }
+            let between = self.text.get(before.0..start).unwrap_or_default();
+            let units_before_line = before.1 + strings::element_length_utf8_into_utf16(between);
             let wanted = units_before_line + after_start;
             let later = self.marks().partition_point(|it| it.1 <= wanted);
             self.forward(

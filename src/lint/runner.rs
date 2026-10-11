@@ -10,7 +10,7 @@ use crate::rule::{Meta, NAME_CLASSES, NodeTags, On, Rule, When, name_class};
 use crate::rule_set::{RuleBits, RuleSet};
 use crate::span::Span;
 use bun_sema::atom::Atom;
-use bun_sema::bind::kind_counts;
+use bun_sema::bind::{ClassOwner, FnOwner, MemberOwner, kind_counts};
 use bun_sema::hir;
 use rustc_hash::FxHashMap;
 use std::cell::{Cell, OnceCell};
@@ -68,7 +68,7 @@ impl<const KINDS: usize> Grouped<KINDS> {
 
     /// A bit for each kind of which there is one, if there are no more than 64 kinds. `counts`: as below.
     fn present(counts: &[u32; MOST_KINDS + 2]) -> u64 {
-        let kinds = 0..KINDS.min(64);
+        let kinds = 0..if KINDS <= 64 { KINDS } else { 0 };
         kinds.fold(0, |present, kind| {
             present | u64::from(counts[kind + 1] != 0) << kind
         })
@@ -679,16 +679,24 @@ impl File<'_> {
 }
 
 /// Declares `File::$method`, which calls a function with every `$handle` of the file that is part of the tree. Which these are
-/// is found out once for all rules, by `File::$list`.
+/// is found out once for all rules, by `File::$list`. `$owners`, `$no_owner`: what each is part of, by the binder, and what that
+/// is for one that is part of nothing.
 macro_rules! every {
-    ($($method:ident $list:ident $handle:ident $field:ident;)*) => {
+    ($($method:ident $list:ident $handle:ident $field:ident $owners:expr, $no_owner:expr;)*) => {
         impl<'a> File<'a> {
             $(
                 #[inline(never)]
                 fn $list(&'a self) -> &'a [u32] {
                     self.by_kind().$field.get_or_init(|| {
-                        // Nearly all are in the tree: room for all of them is made at once.
                         let all = 0..self.hir.$field.len() as u32;
+                        // In nearly every file all are. That is told without a look at each on its own.
+                        if !self.has_synthetic_nodes()
+                            && self.hir.import_attributes.is_empty()
+                            && have_all_owners(($owners)(self), all.len(), &$no_owner)
+                        {
+                            return all.collect();
+                        }
+                        // Nearly all are in the tree: room for all of them is made at once.
                         let mut in_tree = Vec::with_capacity(all.len());
                         in_tree.extend(all.filter(|&id| <$handle as Handle>::from_raw(self, id).is_in_tree()));
                         in_tree
@@ -706,18 +714,40 @@ macro_rules! every {
     };
 }
 
+/// Whether there are `count` of `owners`, and none is `no_owner`.
+#[inline]
+fn have_all_owners<T: PartialEq>(
+    owners: impl ExactSizeIterator<Item = T>,
+    count: usize,
+    no_owner: &T,
+) -> bool {
+    // Not left at the first: that way several are compared at once.
+    owners.len() == count && owners.fold(true, |all, it| all & (it != *no_owner))
+}
+
 every! {
-    every_func funcs_in_tree Func fns;
-    every_class classes_in_tree Class classes;
-    every_member members_in_tree Member members;
-    every_prop props_in_tree Prop props;
-    every_param params_in_tree Param params;
-    every_type_param type_params_in_tree TypeParam type_params;
-    every_var_decl var_decls_in_tree VarDecl var_decls;
-    every_case cases_in_tree Case cases;
-    every_enum_member enum_members_in_tree EnumMember enum_members;
-    every_import_spec import_specs_in_tree ImportSpec import_specs;
-    every_export_spec export_specs_in_tree ExportSpec export_specs;
+    every_func funcs_in_tree Func fns
+        |file: &'a File<'a>| file.bound.fns.iter().map(|it| it.owner), FnOwner::None;
+    every_class classes_in_tree Class classes
+        |file: &'a File<'a>| file.bound.class_owner.iter().copied(), ClassOwner::Stmt(hir::StmtId::NONE);
+    every_member members_in_tree Member members
+        |file: &'a File<'a>| file.bound.member_owner.iter().copied(), MemberOwner::None;
+    every_prop props_in_tree Prop props
+        |file: &'a File<'a>| file.bound.prop_owner.iter().copied(), hir::ExprId::NONE;
+    every_param params_in_tree Param params
+        |file: &'a File<'a>| file.bound.param_fn.iter().copied(), hir::FnId::NONE;
+    every_type_param type_params_in_tree TypeParam type_params
+        |file: &'a File<'a>| file.bound.type_param_scope.iter().map(|it| it.is_some()), false;
+    every_var_decl var_decls_in_tree VarDecl var_decls
+        |file: &'a File<'a>| file.bound.var_stmt.iter().copied(), hir::StmtId::NONE;
+    every_case cases_in_tree Case cases
+        |file: &'a File<'a>| file.bound.case_stmt.iter().copied(), hir::StmtId::NONE;
+    every_enum_member enum_members_in_tree EnumMember enum_members
+        |file: &'a File<'a>| file.hir.enum_members.iter().map(|_| true), false;
+    every_import_spec import_specs_in_tree ImportSpec import_specs
+        |file: &'a File<'a>| file.hir.import_specs.iter().map(|_| true), false;
+    every_export_spec export_specs_in_tree ExportSpec export_specs
+        |file: &'a File<'a>| file.hir.export_specs.iter().map(|_| true), false;
 }
 
 impl<'a> File<'a> {

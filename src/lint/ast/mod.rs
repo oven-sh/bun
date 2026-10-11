@@ -178,6 +178,8 @@ pub(crate) struct Lazy {
     has_types_that_are_errors: OnceCell<bool>,
     /// [`crate::utils::oxlint::source_type`]
     pub(crate) oxc_source_type: OnceCell<crate::language::SourceType>,
+    /// [`File::backslashes`]
+    backslashes: OnceCell<Box<[u32]>>,
     /// Where the text has a `\u`, in order.
     unicode_escapes: OnceCell<Box<[u32]>>,
     unicode_escape_range: UnicodeEscapeRange,
@@ -408,6 +410,21 @@ impl<'a> File<'a> {
         self.hir.text.starts_with(b"\xEF\xBB\xBF")
     }
 
+    /// Where the text has a `\`, in order: in strings, templates, regular expressions, names and comments alike. The text is
+    /// searched once, for all who ask.
+    pub fn backslashes(&self) -> &[u32] {
+        self.lazy.backslashes.get_or_init(|| {
+            let (mut all, mut from) = (Vec::new(), 0);
+            while let Some(at) = (self.hir.text.get(from..))
+                .and_then(|rest| bun_core::strings::index_of_char_usize(rest, b'\\'))
+            {
+                all.push((from + at) as u32);
+                from += at + 1;
+            }
+            all.into_boxed_slice()
+        })
+    }
+
     /// It is known that the text has no `\u` from `pos` to `end`: an identifier there ends where the
     /// HIR says. Most files have none at all, and most of the others have a few in strings.
     #[inline]
@@ -430,14 +447,9 @@ impl<'a> File<'a> {
     fn end_of_identifier_that_may_have_escapes(&self, pos: u32, end: u32) -> u32 {
         let text = self.hir.text;
         let escapes = self.lazy.unicode_escapes.get_or_init(|| {
-            let (mut all, mut from) = (Vec::new(), 0);
-            while let Some(at) = text
-                .get(from..)
-                .and_then(|rest| bun_core::strings::index_of(rest, b"\\u"))
-            {
-                all.push((from + at) as u32);
-                from += at + 2;
-            }
+            let is_before_u = |at: &u32| text.get(*at as usize + 1) == Some(&b'u');
+            let all = self.backslashes().iter().copied().filter(is_before_u);
+            let all: Vec<u32> = all.collect();
             self.lazy
                 .unicode_escape_range
                 .0

@@ -168,7 +168,8 @@ tags! {
 }
 
 impl<'a> Stmt<'a> {
-    #[inline]
+    /// See [`Expr::kind`].
+    #[inline(never)]
     pub fn kind(self) -> StmtKind<'a> {
         match self.file.plain_stmts.get(self.id.idx()) {
             Some(raw) => self.kind_of::<true>(raw),

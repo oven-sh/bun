@@ -334,6 +334,14 @@ impl<'a> File<'a> {
         let (from, to) = (span.start.min(len), span.end.min(len));
         let (line, start) = lines.starts.line_at(from);
         let (end_line, end_start) = lines.starts.line_from(line - 1, to);
+        if lines.is_ascii {
+            let (column, end_column) = (from - start, to - end_start);
+            let end = Position {
+                line: end_line,
+                column: end_column,
+            };
+            return (Position { line, column }, end);
+        }
         (
             self.position_in_line(line, start, from, lines.is_ascii),
             self.position_in_line(end_line, end_start, to, lines.is_ascii),

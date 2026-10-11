@@ -26,7 +26,10 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult]) {
             write_place(out, message.line as usize, message.column as usize);
             out.extend_from_slice(&message.message);
             let is_error = message.is_fatal || message.severity == Severity::Error;
-            out.extend_from_slice(if is_error { b" [Error" } else { b" [Warning" });
+            match is_error {
+                true => out.extend_from_slice(b" [Error"),
+                false => out.extend_from_slice(b" [Warning"),
+            }
             if let Some(id) = &message.rule_id {
                 out.push(b'/');
                 id.write_to(out);
@@ -54,10 +57,10 @@ pub(super) fn write_as_oxlint(out: &mut Vec<u8>, results: &[FileResult], meta: &
             out.extend_from_slice(&source.name);
             write_place(out, start.line, start.column);
             out.extend_from_slice(&message.message);
-            out.extend_from_slice(match is_error(message) {
-                true => b" [Error",
-                false => b" [Warning",
-            });
+            match is_error(message) {
+                true => out.extend_from_slice(b" [Error"),
+                false => out.extend_from_slice(b" [Warning"),
+            }
             codes.write(out, b"/", message);
             out.extend_from_slice(b"]\n");
         }

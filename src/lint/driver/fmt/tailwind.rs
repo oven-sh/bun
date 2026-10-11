@@ -1,4 +1,4 @@
-//! oxfmt's `sortTailwindcss` and `prettier-plugin-tailwindcss`: where the order of classes comes from.
+//! oxfmt's `sortTailwindcss`: where the order of classes comes from.
 //!
 //! Only the Tailwind CSS of the project knows it, and that is JavaScript. The formatter asks for the order of each list of
 //! classes that it comes across. A file with a class that is not known yet is put aside. When all files have had their
@@ -6,7 +6,7 @@
 
 use super::files::Kind;
 use crate::evaluate::evaluate_input;
-use crate::run::{Environment, Fatal};
+use crate::run::Environment;
 use crate::{fs, paths};
 use bun_core::strings;
 use bun_format::FormatOptions;
@@ -101,13 +101,6 @@ pub(crate) fn version_in(package: &Json) -> Option<[u64; 3]> {
         .then_some([version.major, version.minor, version.patch])
 }
 
-/// Of the `prettier-plugin-tailwindcss` that Prettier loads from `directory`: the first two numbers of its version.
-fn version_of_plugin(directory: &[u8]) -> Option<(u64, u64)> {
-    let [major, minor, _] = version_of_package(b"prettier-plugin-tailwindcss", directory)?;
-    // `0.0.0-insiders.d539a72` is newer than all.
-    (minor > 0).then_some((major, minor))
-}
-
 /// The classes in files for which the same Tailwind is asked.
 #[derive(Default)]
 struct Group {
@@ -120,14 +113,10 @@ struct Group {
 #[derive(Default)]
 struct Known {
     by_directory: FxHashMap<Vec<u8>, Option<Found>>,
-    /// [`version_of_plugin`], by the directory.
-    plugins: FxHashMap<Vec<u8>, Option<(u64, u64)>>,
     groups: FxHashMap<Which, Group>,
     /// The first, in the order of their names, of the directories with files that have classes from which there is no
     /// Tailwind to be found.
     without_package: Option<Vec<u8>>,
-    /// It is the plugin of Prettier that sorts.
-    follows_plugin: bool,
 }
 
 /// What a run knows about the order of classes.
@@ -256,25 +245,13 @@ pub(crate) fn for_file(
     };
     let is_on = |key: &[u8]| get(key).and_then(Json::as_bool) == Some(true);
     let mut known = classes.known.lock();
-    // The project's own plugin is what this stands in for. One that is not installed is the newest.
-    let plugin = match is_on(b"followsPlugin") {
-        true => *(known.plugins.entry(base.to_vec())).or_insert_with(|| version_of_plugin(base)),
-        false => None,
-    };
-    let is_before = |minor: u64| plugin.is_some_and(|it| it < (0, minor));
-    // Since 0.7.0 it looks for Tailwind and its configuration from the file. Before, it looked from Prettier's configuration
-    // file.
-    let directory = match of_config {
-        Some(of_config) if is_before(7) => of_config,
-        _ => paths::dirname(path),
-    };
+    let directory = paths::dirname(path);
     if !known.by_directory.contains_key(directory) {
         known
             .by_directory
             .insert(directory.to_vec(), find(directory));
     }
     let found = known.by_directory.get(directory).cloned().flatten();
-    known.follows_plugin = is_on(b"followsPlugin");
     drop(known);
     // The plugin's `getTailwindConfig`.
     let (sheets, config): (Vec<_>, Vec<_>) =
@@ -291,11 +268,8 @@ pub(crate) fn for_file(
     Tailwind {
         functions: Names::new(names(b"functions")),
         attributes: Names::new(names(b"attributes")),
-        // Since 0.6.0 it does more than sort.
-        preserves_whitespace: is_on(b"preserveWhitespace") || is_before(6),
-        preserves_duplicates: is_on(b"preserveDuplicates") || is_before(6),
-        follows_plugin: is_on(b"followsPlugin"),
-        is_plugin_before_0_7: is_before(7),
+        preserves_whitespace: is_on(b"preserveWhitespace"),
+        preserves_duplicates: is_on(b"preserveDuplicates"),
         orders: Box::new(OfGroup {
             classes: Arc::clone(classes),
             which: which.ok_or_else(|| directory.to_vec()),
@@ -304,48 +278,11 @@ pub(crate) fn for_file(
     }
 }
 
-/// The options of `prettier-plugin-tailwindcss`, as JSON in the shape of `sortTailwindcss`.
-pub(crate) fn options_of_plugin(settings: &[(&[u8], &[u8])]) -> Result<Vec<u8>, Fatal> {
-    let mut entries = vec![(b"followsPlugin".to_vec(), Json::Bool(true))];
-    for &(name, value) in settings {
-        let text = || Json::String(value.to_vec());
-        let list = || bun_lint::json::parse(value).unwrap_or(Json::Null);
-        let (key, value): (&[u8], Json) = match name {
-            b"tailwindConfig" => (b"config", text()),
-            b"tailwindStylesheet" => (b"stylesheet", text()),
-            b"tailwindEntryPoint" => (b"entryPoint", text()),
-            b"tailwindFunctions" => (b"functions", list()),
-            b"tailwindAttributes" => (b"attributes", list()),
-            b"tailwindPreserveWhitespace" => (b"preserveWhitespace", Json::Bool(value == b"true")),
-            b"tailwindPreserveDuplicates" => (b"preserveDuplicates", Json::Bool(value == b"true")),
-            b"tailwindPackageName" if value != b"tailwindcss" => {
-                let text = b"prettier-plugin-tailwindcss: tailwindPackageName is not supported.";
-                return Err(Fatal(text.to_vec()));
-            }
-            _ => continue,
-        };
-        entries.retain(|it| it.0 != key);
-        entries.push((key.to_vec(), value));
-    }
-    let mut text = Vec::new();
-    write_json(&mut text, &Json::Object(entries));
-    Ok(text)
-}
-
 impl Classes {
-    /// What sorts, for a message.
-    pub(crate) fn name(&self) -> &'static str {
-        match self.known.lock().follows_plugin {
-            true => "prettier-plugin-tailwindcss",
-            false => "sortTailwindcss",
-        }
-    }
-
     /// Asks Tailwind about the classes that are not known. `Err`: for the user: there are files for which it cannot be
     /// asked. What it says about the others is known all the same.
     pub(crate) fn ask(&self, environment: &Environment) -> Result<(), Vec<u8>> {
-        let name = self.name().as_bytes();
-        let fail = |why: &[u8]| [name, b": ", why].concat();
+        let fail = |why: &[u8]| [b"sortTailwindcss: ", why].concat();
         let needs_package = |directory: &[u8]| {
             fail(
                 &[

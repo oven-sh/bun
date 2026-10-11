@@ -293,7 +293,7 @@ pub(crate) mod valid_title {
                     if i > 0 {
                         pattern.push(b'|');
                     }
-                    pattern.extend_from_slice(&text::escape_reg_exp(word.as_bytes()));
+                    let _ = strings::escape_reg_exp(word.as_bytes(), &mut pattern);
                 }
                 pattern.extend_from_slice(b")\\b");
                 Regex::from_bytes(&pattern, b"iu").ok()

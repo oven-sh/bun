@@ -75,7 +75,7 @@ Checking formatting...
     bun remove prettier
     ```
 
-    Remove the plugins that are built in too: the three that [sort imports](#sort-imports), and `prettier-plugin-tailwindcss`. Leave their names in `plugins`.
+    Remove the plugins that are built in too: the two that [sort imports](#sort-imports). Leave their names in `plugins`.
 
     Keep `prettier` in any of these cases:
 
@@ -205,7 +205,7 @@ For each file, `bun format` uses the nearest configuration file: it looks in the
 }
 ```
 
-See [Prettier's options](https://prettier.io/docs/options) for what each option does. Plugins do not load. The two that sort imports and `prettier-plugin-tailwindcss` are built in: see [Sort imports](#sort-imports) and [Sort Tailwind CSS classes](#sort-tailwind-css-classes). For any other, see [Differences from Prettier](#differences-from-prettier).
+See [Prettier's options](https://prettier.io/docs/options) for what each option does. Plugins do not load. The two that sort imports are built in: see [Sort imports](#sort-imports). For any other, see [Differences from Prettier](#differences-from-prettier).
 
 A flag overrides the configuration file:
 
@@ -272,10 +272,7 @@ Every option of the three works as it does there. Comments move with their impor
 
 ## Sort Tailwind CSS classes
 
-`bun format` sorts the classes of Tailwind CSS if the configuration asks for it:
-
-- `"plugins": ["prettier-plugin-tailwindcss"]` in a Prettier configuration, with the plugin's options (`tailwindStylesheet`, `tailwindConfig`, `tailwindFunctions`, `tailwindAttributes`, `tailwindPreserveWhitespace`, `tailwindPreserveDuplicates`). The plugin does not have to be installed.
-- `sortTailwindcss` in `.oxfmtrc.json`.
+`bun format` sorts the classes of Tailwind CSS if `sortTailwindcss` in `.oxfmtrc.json` asks for it.
 
 The order is that of the project's own `tailwindcss`, version 3 or 4, which has to be installed. `bun format` asks it once in a run.
 
@@ -359,7 +356,7 @@ These differences are intentional:
 - **No arguments means the current directory.**
 - **Only changed files are printed**, without the time each took, and a summary line goes to stderr.
 - **No Svelte or Astro of its own.** Their files go to the project's own Prettier and its plugin, if they are installed. If not, they are left as they are, and the run ends with an error that counts them. With `--allow-unsupported` it is a warning. A `svelte` code block in Markdown stays as it is.
-- **Plugins do not load.** The two that sort imports and `prettier-plugin-tailwindcss` are built in. A plugin that only adds a language, like `prettier-plugin-astro`, changes nothing for the rest: the files of that language are handed to the project's own Prettier. Those whose `parser` in the configuration is that of a plugin that `bun format` does not know count as files in a language that is not supported. Any other plugin, like `prettier-plugin-brace-style`, may print the files of the project in another way than `bun format` would, so the files that its configuration file is for are left as they are, and the run ends with an error that names the plugin. With `--allow-unsupported` they are formatted without it.
+- **Plugins do not load.** The two that sort imports are built in. A plugin that only adds a language, like `prettier-plugin-astro`, changes nothing for the rest: the files of that language are handed to the project's own Prettier. Those whose `parser` in the configuration is that of a plugin that `bun format` does not know count as files in a language that is not supported. Any other plugin, like `prettier-plugin-brace-style`, may print the files of the project in another way than `bun format` would, so the files that its configuration file is for are left as they are, and the run ends with an error that names the plugin. With `--allow-unsupported` they are formatted without it.
 - **An unknown flag is an error.** Prettier warns and goes on.
 - **A file is checked before it is written.** `bun format` parses what it is about to write and compares it with what it read. If the two are not the same program, it leaves the file as it is and reports a bug.
 - **HTML is checked too.** If what is about to be written does not have the same elements, attributes, and text as the file, `bun format` leaves the file as it is, reports it, and exits with 2.

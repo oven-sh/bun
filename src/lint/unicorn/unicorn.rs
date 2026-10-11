@@ -198,6 +198,16 @@ pub(crate) fn is_number_value(e: Expr, value: f64) -> bool {
         && matches!(e.kind(), ExprKind::Number(n) if (n - value).abs() < f64::EPSILON)
 }
 
+/// `Expression::UnaryExpression`
+pub(crate) fn is_unary_expression(e: Expr) -> bool {
+    e.unary_op().is_some_and(|op| {
+        !matches!(
+            op,
+            UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec
+        )
+    })
+}
+
 /// `Expression::is_number_0`
 pub(crate) fn is_number_0(e: Expr) -> bool {
     !e.is_parenthesized() && matches!(e.kind(), ExprKind::Number(n) if n == 0.0)
@@ -598,6 +608,21 @@ pub(crate) fn pad_fix_with_token_boundary(
         replacement.push(b' ');
     }
 }
+
+pub(crate) const TYPED_ARRAYS: [&str; 12] = [
+    "Int8Array",
+    "Uint8Array",
+    "Uint8ClampedArray",
+    "Int16Array",
+    "Uint16Array",
+    "Int32Array",
+    "Uint32Array",
+    "Float16Array",
+    "Float32Array",
+    "Float64Array",
+    "BigInt64Array",
+    "BigUint64Array",
+];
 
 pub(crate) const BUILT_IN_ERRORS: [&str; 10] = [
     "Error",

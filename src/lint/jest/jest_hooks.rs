@@ -7,6 +7,7 @@ use crate::jest::{
 };
 use bun_core::strings;
 use bun_lint::prelude::*;
+use bun_lint_oxlint::ast_util::is_null_or_undefined;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
@@ -257,12 +258,5 @@ pub(crate) mod require_hook {
                     .iter()
                     .any(|it| it.as_bytes() == name)
         }
-    }
-
-    fn is_null_or_undefined(e: Expr) -> bool {
-        !e.is_parenthesized()
-            && (e.tag() == ExprTag::Null
-                || e.is_ident("undefined")
-                || e.unary_op() == Some(UnOp::Void))
     }
 }

@@ -54,6 +54,12 @@ pub fn as_member_expression(e: Expr<'_>) -> Option<Expr<'_>> {
     .then_some(e)
 }
 
+/// `Expression::is_null_or_undefined`
+pub fn is_null_or_undefined(e: Expr) -> bool {
+    !e.is_parenthesized()
+        && (e.tag() == ExprTag::Null || e.is_ident("undefined") || e.unary_op() == Some(UnOp::Void))
+}
+
 /// `Expression::CallExpression`
 pub fn as_call_expression(e: Expr<'_>) -> Option<Call<'_>> {
     e.as_call()

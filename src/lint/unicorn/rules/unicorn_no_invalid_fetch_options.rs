@@ -1,4 +1,4 @@
-use bun_lint_oxlint::ast_util::{get_inner_expression, is_new_expression};
+use bun_lint_oxlint::ast_util::{get_inner_expression, is_new_expression, is_null_or_undefined};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use rustc_hash::FxHashMap;
@@ -124,10 +124,6 @@ fn is_invalid_fetch_options<'a>(properties: List<'a, Prop<'a>>, known: &mut Know
         }
     }
     body.filter(|_| method != Method::Unknown).map(|body| (method, body))
-}
-
-fn is_null_or_undefined(e: Expr) -> bool {
-    !e.is_parenthesized() && (e.tag() == ExprTag::Null || e.is_ident("undefined") || e.unary_op() == Some(UnOp::Void))
 }
 
 /// `None`: the method is what it was before.

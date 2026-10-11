@@ -701,30 +701,11 @@ fn format_as(how: &How, text: &[u8], scratch: &mut Scratches) -> Result<Formatte
         let how_to_sort = how.resolved.options.sort_imports.as_deref();
         match how_to_sort.and_then(|how| bun_format::sort_imports::sorted_text(file, how)) {
             Some(sorted) => with_file(how, &sorted, |file, program, refused| {
-                print_with_sorted_classes((file, program), refused, how, scratch)
+                print((file, program), refused, how, scratch)
             }),
-            None => print_with_sorted_classes((file, program), refused, how, scratch),
+            None => print((file, program), refused, how, scratch),
         }
     })
-}
-
-/// [`print`]. For `prettier-plugin-tailwindcss` a file whose classes move is parsed again.
-fn print_with_sorted_classes<'a>(
-    (file, program): (&'a File<'a>, &Program<'a>),
-    refused: Refused<'_>,
-    how: &How,
-    scratch: &mut Scratches,
-) -> Result<Formatted, Failure> {
-    if refused.is_nested_too_deeply {
-        return Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec()));
-    }
-    let tailwind = how.resolved.options.tailwind.as_deref();
-    match tailwind.and_then(|it| bun_format::tailwind::plugin::sorted_text(file, it)) {
-        Some(sorted) => with_file(how, &sorted, |file, program, refused| {
-            print((file, program), refused, how, scratch)
-        }),
-        None => print((file, program), refused, how, scratch),
-    }
 }
 
 /// Why `bun format` leaves a file as it is.
@@ -1359,8 +1340,7 @@ impl Run<'_> {
                 Some(Done::PutAside) => {
                     failed += 1;
                     classes_are_unknown.get_or_insert_with(|| {
-                        let name = configs.classes.name().as_bytes();
-                        [name, b": The order of some classes cannot be found."].concat()
+                        b"sortTailwindcss: The order of some classes cannot be found.".to_vec()
                     });
                 }
                 Some(Done::Different(took)) => {

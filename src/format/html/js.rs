@@ -11,7 +11,7 @@ use crate::js::print::program::{FormatStatements, write_hashbang};
 use crate::js::sort_imports::{SortImports, sorted_text};
 use crate::options::{Code, Flavor, HtmlRoot, InHtml, JavaScriptParser, ParseJavaScript, Then};
 use crate::prelude::*;
-use crate::tailwind::{Ends, Tailwind, plugin};
+use crate::tailwind::{Ends, Tailwind};
 use crate::{format_args, text, write};
 use bun_core::strings;
 use bun_lint::ast::walk::{Visitor, walk};
@@ -158,8 +158,6 @@ enum Attempt {
     Refused,
     /// Nothing has been written: this is to be parsed in its place.
     Sorted(Vec<u8>),
-    /// The same, and its classes are sorted.
-    WithSortedClasses(Vec<u8>),
     /// What `write` has returned.
     Written(bool),
 }
@@ -187,9 +185,8 @@ pub(crate) fn with_file(
     }
     // The plugin that sorts classes takes over the parsers for programs and `__js_expression`, no other. Bindings are
     // oxfmt's own, and it does not sort there.
-    let follows_plugin = (options.tailwind.as_deref()).is_some_and(|it| it.follows_plugin);
     let sorts_classes = match (piece, in_html.root) {
-        (Piece::Binding(_), _) => follows_plugin,
+        (Piece::Binding(_), _) => false,
         (_, HtmlRoot::Program) => true,
         (_, HtmlRoot::JsExpression) => paths == [EXPRESSION_JSX],
         _ => false,
@@ -197,7 +194,6 @@ pub(crate) fn with_file(
     if !sorts_classes {
         options.tailwind = None;
     }
-    let tailwind = options.tailwind.clone();
     if let Piece::Binding(flavor) = piece {
         options.flavor = flavor;
     }
@@ -218,9 +214,7 @@ pub(crate) fn with_file(
     };
     for path in paths {
         for &is_script in kinds {
-            let mut attempt = |code: &[u8],
-                               sorts_text: Option<&SortImports>,
-                               tailwind: Option<&Tailwind>| {
+            let mut attempt = |code: &[u8], sorts_text: Option<&SortImports>| {
                 let mut result = Attempt::Refused;
                 parse.call(path, code, is_script, &mut |file| {
                     if file.has_parse_errors()
@@ -248,22 +242,14 @@ pub(crate) fn with_file(
                         result = Attempt::Sorted(sorted);
                         return;
                     }
-                    if let Some(sorted) = tailwind.and_then(|it| plugin::sorted_text(file, it)) {
-                        result = Attempt::WithSortedClasses(sorted);
-                        return;
-                    }
                     let context = JsFormatContext::new(file, options.clone(), comments);
                     let is_written = f.write_embedded(context, file.text(), |f| write(file, f));
                     result = Attempt::Written(is_written);
                 });
                 result
             };
-            let result = match attempt(code, sorts_text.as_deref(), tailwind.as_deref()) {
-                Attempt::Sorted(sorted) => attempt(&sorted, None, tailwind.as_deref()),
-                result => result,
-            };
-            let result = match result {
-                Attempt::WithSortedClasses(sorted) => attempt(&sorted, None, None),
+            let result = match attempt(code, sorts_text.as_deref()) {
+                Attempt::Sorted(sorted) => attempt(&sorted, None),
                 result => result,
             };
             if let Attempt::Written(is_written) = result {

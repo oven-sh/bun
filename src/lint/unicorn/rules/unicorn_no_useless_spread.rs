@@ -3,6 +3,7 @@ use bun_lint_oxlint::ast_util::{
     static_property_name,
 };
 use bun_lint_oxlint::codegen::Codegen;
+use crate::unicorn::TYPED_ARRAYS;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -17,21 +18,6 @@ const ITERABLE_TO_ARRAY: Message = Message::new(
     "",
     "`{{ctor_name}}` accepts an iterable, so it's unnecessary to convert the iterable to an array.",
 );
-
-const TYPED_ARRAYS: [&str; 12] = [
-    "Int8Array",
-    "Uint8Array",
-    "Uint8ClampedArray",
-    "Int16Array",
-    "Uint16Array",
-    "Int32Array",
-    "Uint32Array",
-    "Float16Array",
-    "Float32Array",
-    "Float64Array",
-    "BigInt64Array",
-    "BigUint64Array",
-];
 
 impl Rule for NoUselessSpread {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-useless-spread", Kind::Problem).fixable(Fixable::Code);

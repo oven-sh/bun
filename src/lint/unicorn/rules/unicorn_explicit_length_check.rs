@@ -1,6 +1,6 @@
 use crate::unicorn::{
     expression_uses_optional_chain, get_boolean_ancestor, is_boolean_node, is_number_value,
-    pad_fix_with_token_boundary,
+    is_unary_expression, pad_fix_with_token_boundary,
 };
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -35,10 +35,6 @@ fn is_zero_length_check(comparison: Expr) -> Option<bool> {
         BinOp::Le if one_left => Some(false),
         _ => None,
     }
-}
-
-fn is_unary_expression(e: Expr) -> bool {
-    e.unary_op().is_some_and(|op| !matches!(op, UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec))
 }
 
 impl ExplicitLengthCheck {

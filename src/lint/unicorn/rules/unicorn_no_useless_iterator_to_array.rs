@@ -1,5 +1,5 @@
 use bun_lint_oxlint::ast_util::{get_inner_expression, get_member_expr, is_method_call, is_new_expression};
-use crate::unicorn::outermost_wrapper;
+use crate::unicorn::{TYPED_ARRAYS, outermost_wrapper};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -14,21 +14,6 @@ const SPREAD: Message = Message::new("", "Spread works on iterables, `.toArray()
 const ITERATOR_METHOD: Message =
     Message::new("", "`Iterator` has a `.{{method}}()` method, `.toArray()` is unnecessary.");
 const REMOVE_TO_ARRAY: Message = Message::new("", "Remove `.toArray()`.");
-
-const TYPED_ARRAYS: &[&str] = &[
-    "Int8Array",
-    "Uint8Array",
-    "Uint8ClampedArray",
-    "Int16Array",
-    "Uint16Array",
-    "Int32Array",
-    "Uint32Array",
-    "Float16Array",
-    "Float32Array",
-    "Float64Array",
-    "BigInt64Array",
-    "BigUint64Array",
-];
 
 /// The `a.method` of `a.method(..)`, if neither has a `?.` and the name is not computed.
 fn plain_method_callee(call: Call<'_>) -> Option<Expr<'_>> {
@@ -57,14 +42,14 @@ fn problem_of(to_array: Expr<'_>) -> Option<Problem<'_>> {
     match parent.kind() {
         ExprKind::New(new) if new.args().first() == Some(to_array) => {
             let is_iterable_accepting = is_new_expression(new, &["Map", "WeakMap", "Set", "WeakSet"], Some(1), Some(1))
-                || is_new_expression(new, TYPED_ARRAYS, Some(1), None);
+                || is_new_expression(new, &TYPED_ARRAYS, Some(1), None);
             let name = get_inner_expression(new.callee()).as_ident().filter(|_| is_iterable_accepting)?;
             let description = [&b"new "[..], name.bytes(), "(…)".as_bytes()].concat();
             Some(Problem::IterableAccepting { description, is_safe: true })
         }
         ExprKind::Call(call) if call.args().first() == Some(to_array) => {
             let is_safe = is_method_call(call, Some(&["Array"]), Some(&["from"]), Some(1), None)
-                || is_method_call(call, Some(TYPED_ARRAYS), Some(&["from"]), Some(1), None)
+                || is_method_call(call, Some(&TYPED_ARRAYS), Some(&["from"]), Some(1), None)
                 || is_method_call(call, Some(&["Object"]), Some(&["fromEntries"]), Some(1), None);
             let methods_of_promise = ["all", "allSettled", "any", "race"];
             if !is_safe && !is_method_call(call, Some(&["Promise"]), Some(&methods_of_promise), Some(1), Some(1)) {

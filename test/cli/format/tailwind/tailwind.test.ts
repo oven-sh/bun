@@ -1,4 +1,4 @@
-// oxfmt's `sortTailwindcss`, and `prettier-plugin-tailwindcss`. cases.json: the inputs of oxfmt's apps/oxfmt/test/api/sort_tailwindcss.test.ts (MIT: see LICENSE) and
+// oxfmt's `sortTailwindcss`. cases.json: the inputs of oxfmt's apps/oxfmt/test/api/sort_tailwindcss.test.ts (MIT: see LICENSE) and
 // some more, with what oxfmt 0.72 prints for them with tailwindcss 4.3.3. order.json: the classes in them that Tailwind knows, in
 // its order. Both are made by test/cli/format/oracle/tailwind/make-fixtures.ts.
 //
@@ -9,7 +9,6 @@ import { chmodSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { endChildren, spawn } from "../../children";
 import cases from "./cases.json";
-import { forPrettier } from "./for-prettier";
 import order from "./order.json";
 
 afterAll(endChildren);
@@ -67,23 +66,6 @@ describe.concurrent("sortTailwindcss", () => {
       expect(result.stderr).toBe("");
       for (const [index, it] of group.entries()) {
         if ("todo" in it) continue;
-        expect({ name: it.name, output: result.files[index] }).toEqual({ name: it.name, output: it.output });
-      }
-      expect(result.exitCode).toBe(0);
-    });
-  }
-
-  const forPlugin = cases.flatMap(it => {
-    const options = forPrettier(it.options);
-    return options && "prettier" in it ? [{ ...it, options, output: it.prettier }] : [];
-  });
-  for (const [options, group] of Map.groupBy(forPlugin, it => JSON.stringify(it.options))) {
-    test(`as prettier-plugin-tailwindcss: ${options}`, async () => {
-      const names = group.map((it, index) => `${index}/${it.filename}`);
-      const files = Object.fromEntries(group.map((it, index) => [names[index], it.input]));
-      const result = await format({ ...version4, ".prettierrc": options, ...files }, names);
-      expect(result.stderr).toBe("");
-      for (const [index, it] of group.entries()) {
         expect({ name: it.name, output: result.files[index] }).toEqual({ name: it.name, output: it.output });
       }
       expect(result.exitCode).toBe(0);
@@ -313,71 +295,6 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
       expect(written.files).toEqual(expected.with(2, allows ? '<a className="p-4 flex" />;\na;\n' : expected[2]));
       expect(written.exitCode).toBe(allows ? 0 : 2);
     }
-  });
-
-  test("before 0.7.0 the plugin of Prettier looked from the configuration file of Prettier, not from the file", async () => {
-    const files = {
-      ...version3,
-      ".prettierrc": '{ "plugins": ["prettier-plugin-tailwindcss"] }',
-      "docs/tailwind.config.js": "module.exports = { reversed: true };\n",
-      "docs/a.jsx": sorted,
-    };
-    const plugin = (version: string) => ({
-      "node_modules/prettier-plugin-tailwindcss/package.json": JSON.stringify({ version }),
-    });
-    for (const version of ["0.6.6", "0.6.14", "0.5.0"]) {
-      expect(await format({ ...files, ...plugin(version) }, ["docs/a.jsx"])).toMatchObject({
-        stderr: "",
-        files: [sorted],
-      });
-    }
-    for (const version of ["0.7.0", "0.8.1", "1.0.0"]) {
-      expect(await format({ ...files, ...plugin(version) }, ["docs/a.jsx"])).toMatchObject({
-        stderr: "",
-        files: [reversed],
-      });
-    }
-    expect(await format(files, ["docs/a.jsx"])).toMatchObject({ stderr: "", files: [reversed] });
-    // Nor did it look at a call on what a call returns, or at the quotes of these.
-    const more = {
-      ...files,
-      ".prettierrc": '{ "plugins": ["prettier-plugin-tailwindcss"], "tailwindFunctions": ["cn"] }',
-      "a.js": 'cn("p-4 flex").b("p-4 flex");\ncn.c("p-4 flex");\n',
-      "a.css": "@plugin 'a';\n@config 'b';\n@source 'c';\n",
-    };
-    expect((await format({ ...more, ...plugin("0.6.14") }, ["a.js", "a.css"])).files).toEqual([
-      'cn("flex p-4").b("p-4 flex");\ncn.c("flex p-4");\n',
-      more["a.css"],
-    ]);
-    expect((await format({ ...more, ...plugin("0.7.0") }, ["a.js", "a.css"])).files).toEqual([
-      'cn("flex p-4").b("flex p-4");\ncn.c("flex p-4");\n',
-      '@plugin "a";\n@config "b";\n@source "c";\n',
-    ]);
-    // Before 0.6.0 it did nothing but sort.
-    const twice = { ...files, "a.jsx": '<a className="p-4  flex   p-4" />;\n' };
-    expect((await format({ ...twice, ...plugin("0.5.14") }, ["a.jsx"])).files).toEqual([
-      '<a className="flex  p-4   p-4" />;\n',
-    ]);
-    expect((await format({ ...twice, ...plugin("0.6.0") }, ["a.jsx"])).files).toEqual([
-      '<a className="flex p-4" />;\n',
-    ]);
-    // That of the directory of the configuration file counts, and so does its Tailwind.
-    const nearer = { "docs/.prettierrc": files[".prettierrc"], ...plugin("0.6.6") };
-    expect(await format({ ...files, ...nearer }, ["docs/a.jsx"])).toMatchObject({ stderr: "", files: [reversed] });
-  });
-
-  test("the options of the plugin of Prettier count if it is among the plugins", async () => {
-    const plugins = ["prettier-plugin-tailwindcss"];
-    const files = { ...version4, "css/app.css": "/* reversed */\n", "src/a.js": 'tw("flex p-4 m-2");\n' };
-    const options = { tailwindStylesheet: "./css/app.css", tailwindFunctions: ["tw"] };
-    const withIt = await format({ ...files, ".prettierrc": JSON.stringify({ plugins, ...options }) }, ["src/a.js"]);
-    expect(withIt).toMatchObject({ stderr: "", files: ['tw("p-4 flex m-2");\n'], exitCode: 0 });
-    const without = await format({ ...files, ".prettierrc": JSON.stringify(options) }, ["src/a.js"]);
-    expect(without.stderr).toContain('[warn] Ignored unknown option { tailwindStylesheet: "./css/app.css" }.');
-    expect(without.files).toEqual(['tw("flex p-4 m-2");\n']);
-    const alone = await format({ ".prettierrc": JSON.stringify({ plugins }), "a.jsx": input }, ["a.jsx"]);
-    expect(alone.stderr).toContain("[error] prettier-plugin-tailwindcss: It needs the package tailwindcss");
-    expect(alone.exitCode).toBe(2);
   });
 
   test("nothing is run for files without classes", async () => {

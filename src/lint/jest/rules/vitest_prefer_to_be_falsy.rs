@@ -3,11 +3,16 @@ use crate::jest_matchers::prefer_to_be_simply_bool;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
-/// Prefer `toBeFalsy()` over `toBe(false)`.
-pub struct PreferToBeFalsy;
+/// Prefer `toBeFalsy()` over `toBe(false)`, or `toBeTruthy()` over `toBe(true)`.
+pub struct PreferToBeFalsy<const TRUTHY: bool = false>;
 
-impl Rule for PreferToBeFalsy {
-    const META: Meta = Meta::oxlint(Plugin::Vitest, "prefer-to-be-falsy", Kind::Suggestion).has_suggestions();
+impl<const TRUTHY: bool> Rule for PreferToBeFalsy<TRUTHY> {
+    const META: Meta = Meta::oxlint(
+        Plugin::Vitest,
+        if TRUTHY { "prefer-to-be-truthy" } else { "prefer-to-be-falsy" },
+        Kind::Suggestion,
+    )
+    .has_suggestions();
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -21,6 +26,6 @@ impl Rule for PreferToBeFalsy {
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
-        jest::run_on_jest_nodes(&ctx, &|node, ctx| prefer_to_be_simply_bool::run(node, ctx, false));
+        jest::run_on_jest_nodes(&ctx, &|node, ctx| prefer_to_be_simply_bool::run(node, ctx, TRUTHY));
     }
 }

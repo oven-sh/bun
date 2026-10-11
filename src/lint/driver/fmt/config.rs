@@ -214,17 +214,9 @@ fn package_of(plugin: &[u8]) -> &[u8] {
     &rest[..end.unwrap_or(rest.len())]
 }
 
-/// What the plugins that sort imports do is built in, and what the one does that sorts the classes of Tailwind CSS.
+/// What the plugins that sort imports do is built in.
 pub(super) fn is_built_in_plugin(name: &[u8]) -> bool {
-    let name = package_of(name);
-    name.ends_with(b"/prettier-plugin-sort-imports") || is_tailwind_plugin(name)
-}
-
-/// `prettier-plugin-tailwindcss`, by its name or by a path to it.
-fn is_tailwind_plugin(name: &[u8]) -> bool {
-    name == b"prettier-plugin-tailwindcss"
-        || name.ends_with(b"/prettier-plugin-tailwindcss")
-        || strings::contains(name, b"/prettier-plugin-tailwindcss/")
+    package_of(name).ends_with(b"/prettier-plugin-sort-imports")
 }
 
 fn is_built_in(plugin: &Json) -> bool {
@@ -1310,10 +1302,6 @@ impl<'c> Configs<'c> {
         }
         let mut sort_imports: Option<Vec<u8>> = None;
         let mut sort_tailwindcss: Option<Vec<u8>> = None;
-        // `prettier-plugin-tailwindcss`: whether it is among the plugins, and its options.
-        let is_named_by_a_flag = (self.options.plugins.iter()).any(|it| is_tailwind_plugin(it));
-        let mut sorts_classes = is_named_by_a_flag;
-        let mut of_tailwind: Vec<(&[u8], &[u8])> = Vec::new();
         // Prettier knows the options of the plugins that it has loaded.
         let knows_all_options = !is_oxfmt
             && !(self.plugins_for(scope, path)).is_some_and(|it| it.names_others)
@@ -1328,19 +1316,6 @@ impl<'c> Configs<'c> {
                         .map_or_else(|| value.to_vec(), |before| merged_objects(before, value));
                     sort.set(b"sortImports", &merged);
                     sort_imports = Some(merged);
-                }
-                b"plugins" if !is_oxfmt => {
-                    // The last list that applies is the list.
-                    let plugins = json::parse(value);
-                    sorts_classes = is_named_by_a_flag
-                        || (plugins.as_ref().and_then(Json::as_array))
-                            .unwrap_or_default()
-                            .iter()
-                            .any(|it| it.as_str().is_some_and(is_tailwind_plugin));
-                    sort.set(name, value);
-                }
-                name if !is_oxfmt && name.starts_with(b"tailwind") => {
-                    of_tailwind.push((name, value));
                 }
                 name if sort.set(name, value) => {}
                 b"insertFinalNewline" if is_oxfmt => {
@@ -1395,11 +1370,6 @@ impl<'c> Configs<'c> {
         }
         for name in &self.options.plugins {
             sort.add_plugin(name);
-        }
-        if sorts_classes {
-            sort_tailwindcss = Some(tailwind::options_of_plugin(&of_tailwind)?);
-        } else if knows_all_options {
-            unknown.append(&mut of_tailwind);
         }
         for (name, value) in sort.of_plugins_not_named().chain(unknown) {
             // A string and what else there is in JSON are told apart by their looks here.

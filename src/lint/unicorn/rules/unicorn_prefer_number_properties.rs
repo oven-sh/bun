@@ -1,5 +1,5 @@
 use bun_lint_oxlint::ast_util::{as_member_expression, is_global_reference, static_property_name};
-use crate::unicorn::GLOBAL_OBJECT_NAMES;
+use crate::unicorn::{GLOBAL_OBJECT_NAMES, is_unary_expression};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
@@ -108,10 +108,6 @@ impl Rule for PreferNumberProperties {
 
 fn is_global_object(e: Expr) -> bool {
     !e.is_parenthesized() && e.as_ident().is_some_and(|it| it.is_any(&GLOBAL_OBJECT_NAMES))
-}
-
-fn is_unary_expression(e: Expr) -> bool {
-    e.unary_op().is_some_and(|op| !matches!(op, UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec))
 }
 
 impl PreferNumberProperties {

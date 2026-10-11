@@ -4,10 +4,13 @@ use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
 /// Restrict the use of specific `jest` and `vi` methods.
-pub struct NoRestrictedJestMethods(NoRestrictedTestMethodsConfig);
+pub struct NoRestrictedJestMethods<const VITEST: bool = false>(NoRestrictedTestMethodsConfig);
 
-impl Rule for NoRestrictedJestMethods {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "no-restricted-jest-methods", Kind::Suggestion);
+impl<const VITEST: bool> Rule for NoRestrictedJestMethods<VITEST> {
+    const META: Meta = match VITEST {
+        true => Meta::oxlint(Plugin::Vitest, "no-restricted-vi-methods", Kind::Suggestion),
+        false => Meta::oxlint(Plugin::Jest, "no-restricted-jest-methods", Kind::Suggestion),
+    };
     const ON: On = On::new().finish();
     type State<'a> = ();
 

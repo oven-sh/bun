@@ -1,10 +1,8 @@
-//! oxfmt's `sortTailwindcss` and `prettier-plugin-tailwindcss`: the classes of Tailwind CSS in a string are put in the order
-//! in which Tailwind writes their rules.
+//! oxfmt's `sortTailwindcss`: the classes of Tailwind CSS in a string are put in the order in which Tailwind writes their
+//! rules.
 //!
 //! A port of `sortClasses` and `sortClassList` of `prettier-plugin-tailwindcss`, which oxfmt calls. The order is known to
 //! Tailwind alone, which is JavaScript, so whoever calls the formatter brings it: [`Orders`].
-
-pub mod plugin;
 
 use bun_core::strings;
 use bun_lint::regex::Regex;
@@ -53,10 +51,6 @@ impl Names {
         &self.names
     }
 
-    pub fn has_patterns(&self) -> bool {
-        !self.patterns.is_empty()
-    }
-
     /// Whether `name` is one of the names. oxfmt's own rules know no patterns.
     pub fn has_name(&self, name: &[u8]) -> bool {
         self.names.iter().any(|it| it == name)
@@ -81,10 +75,6 @@ pub struct Tailwind {
     pub attributes: Names,
     pub preserves_whitespace: bool,
     pub preserves_duplicates: bool,
-    /// It is the plugin of Prettier, which finds the classes of a program in another way than oxfmt: [`plugin`].
-    pub follows_plugin: bool,
-    /// And one before 0.7.0, which does not look for classes in `a("..").b("..")` and leaves the quotes of `@plugin 'a'` alone.
-    pub is_plugin_before_0_7: bool,
     pub orders: Box<dyn Orders>,
     /// See [`Tailwind::has_missed`].
     pub has_missed: AtomicBool,

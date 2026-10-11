@@ -278,14 +278,13 @@ To see Prettier's document for a snippet: `prettier --parser babel --debug-print
 
 `f.options().flavor.is_oxfmt()`: whoever has an `.oxfmtrc.json` gets what oxfmt prints where that is not what Prettier 3.9.9 prints, so that switching gives no diff. oxfmt follows Prettier 3.8 in those places, or has a rule of its own. Each is behind a function next to its use that is named after the behaviour (`union_breaks_one_per_line(f)`), to be deleted when oxfmt catches up. The default flavor must not change because of one. MDX is Prettier's in both flavors: oxfmt hands it to the Prettier that it brings along.
 
-## `sortTailwindcss` and `prettier-plugin-tailwindcss`
+## `sortTailwindcss`
 
-oxfmt's option, and the plugin of Prettier that it is made of: the classes of Tailwind CSS in a text are put in the order of their rules. `Tailwind::follows_plugin` says which of the two it is. They differ in programs only.
+oxfmt's option, which is made of `prettier-plugin-tailwindcss`: the classes of Tailwind CSS in a text are put in the order of their rules.
 
 - **One function**: `tailwind.rs::Tailwind::sorted_between` is `sortClasses` and `sortClassList` of `prettier-plugin-tailwindcss`, which everything in oxfmt ends in. A language only says where a text with classes is, and what is at its ends (`Ends`).
 - **The order** is known to the Tailwind of the project alone, which is JavaScript. The formatter asks `Orders` for the ranks of a list of classes. The driver implements it (`src/lint/driver/fmt/tailwind.rs`): a class that is not known is noted, the text stays as it is, and `Tailwind::has_missed` says that what has been printed is of no use. The driver puts such a file aside, asks once for all classes (`tailwind.js`, run by `evaluate.rs`), and formats those files again. Where Tailwind 3 and 4 put a class does not depend on what else they are asked about (27,345 real lists: no pair in another order), only the numbers that they answer with do, so all classes are asked about at once. So the formatter is what collects the classes, and nothing is run for files without any. What is sorted is not sorted again further down: that would ask for a list that only the second pass knows of.
-- **JavaScript, for the plugin**: `tailwind/plugin.rs::sorted_text`, its `transformJavaScript`. The plugin changes the tree before Prettier prints it, so this changes the text, and a file whose classes move is parsed again, as for the plugins that sort imports.
-- **JavaScript, for oxfmt**: `js/utils/tailwindcss.rs`, a port of oxc's, with its stack of contexts (`JsFormatContext::tailwind_context`) and what follows from it: no context for the arguments of a call that is written as a member chain, a text of a template is sorted in a call of another function and a string is not.
+- **JavaScript**: `js/utils/tailwindcss.rs`, a port of oxc's, with its stack of contexts (`JsFormatContext::tailwind_context`) and what follows from it: no context for the arguments of a call that is written as a member chain, a text of a template is sorted in a call of another function and a string is not.
 - **Style sheets**: `@apply`, in `print_at_rule_up_to_block`.
 - **Handlebars**: the plugin changes the tree, and so does `handlebars/tailwind.rs`.
 - **HTML, Vue and Angular**: the plugin rewrites the values of attributes in the tree, so `html/tailwind.rs` rewrites the text before it is parsed. Of the code in HTML the plugin takes over programs and `__js_expression`, nothing else: `js.rs::with_file`.

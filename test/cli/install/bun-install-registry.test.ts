@@ -22,6 +22,7 @@ import {
   isFlaky,
   isLinux,
   isMacOS,
+  isRoot,
   isWindows,
   mergeWindowEnvs,
   normalizeBunSnapshot,
@@ -3922,6 +3923,106 @@ describe.concurrent("binaries", () => {
       expect(err).toContain("Failed to link test-native-binlink: EEXIST");
       expect(await file(join(binDir, binEntry("test-binlink-cmd"))).text()).toBe("not a bin of test-native-binlink");
       expect(exitCode).toBe(1);
+    });
+
+    test("a foreign entry fails the install with --silent too", async () => {
+      const { packageDir, env } = await setupTest();
+      const binDir = join(packageDir, "global-bin-dir");
+      await Promise.all([
+        write(join(binDir, binEntry("test-binlink-cmd")), "not a bin of test-native-binlink"),
+        write(
+          join(packageDir, "global-install-dir", "install", "global", "package.json"),
+          JSON.stringify({ dependencies: {}, nativeDependencies: ["test-native-binlink"] }),
+        ),
+      ]);
+
+      const { out, err, exitCode } = await runGlobal(packageDir, env, "install", "test-native-binlink", "--silent");
+      expect({ out, err }).toEqual({ out: "", err: "" });
+      expect(await file(join(binDir, binEntry("test-binlink-cmd"))).text()).toBe("not a bin of test-native-binlink");
+      expect(exitCode).toBe(1);
+    });
+  });
+
+  // `--silent` stops the output of a failed bin link. It must not stop the failure: the command
+  // ends like the one without the flag, with exit code 1 and nothing saved.
+  describe("`node_modules/.bin` is a regular file, so no bin can be linked", () => {
+    const installs = { name: "foo", dependencies: { "what-bin": "1.0.0" } };
+    const adds = { name: "foo" };
+
+    test.each([
+      ["bun install", ["install"], installs],
+      ["bun install --silent", ["install", "--silent"], installs],
+      ["bun add", ["add", "what-bin@1.0.0"], adds],
+      ["bun add --silent", ["add", "what-bin@1.0.0", "--silent"], adds],
+    ])("%s fails and saves nothing", async (_command, args, manifest) => {
+      const { packageDir, packageJson, env } = await setupTest();
+      await Promise.all([
+        write(packageJson, JSON.stringify(manifest)),
+        write(join(packageDir, "node_modules", ".bin"), "not a folder"),
+      ]);
+
+      await using proc = spawn({ cmd: [bunExe(), ...args], cwd: packageDir, stdout: "pipe", stderr: "pipe", env });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      if (args.includes("--silent")) {
+        expect({ out, err }).toEqual({ out: "", err: "" });
+      } else {
+        // A path below a regular file is ENOTDIR on POSIX. Windows reports another errno.
+        expect(err).toContain(`error: Failed to link what-bin: ${isWindows ? "" : "ENOTDIR"}`);
+        expect(out).not.toContain("installed");
+      }
+      expect({
+        packageJson: await file(packageJson).json(),
+        lockfiles: (await readdirSorted(packageDir)).filter(name => name.startsWith("bun.lock")),
+        // The package itself is installed. Only its bin is missing.
+        package: await exists(join(packageDir, "node_modules", "what-bin", "package.json")),
+        bin: await exists(join(packageDir, "node_modules", ".bin", "what-bin")),
+      }).toEqual({ packageJson: manifest, lockfiles: [], package: true, bin: false });
+      expect(exitCode).toBe(1);
+    });
+  });
+
+  // A link at `.bin` is removed before any bin is linked. When that fails, no bin of the tree is
+  // linked, and that has to fail the install with `--silent` too. Root ignores the mode of a
+  // directory, so as root the install runs without that capability.
+  const setpriv = isRoot ? Bun.which("setpriv") : null;
+  describe.skipIf(isWindows || (isRoot && !setpriv))("a link at `.bin` that cannot be removed", () => {
+    test.each([
+      ["bun install", []],
+      ["bun install --silent", ["--silent"]],
+    ])("%s fails", async (_command, flags) => {
+      const { packageDir, packageJson, env } = await setupTest();
+      await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "what-bin": "1.0.0" } }));
+      await runBunInstall(env, packageDir);
+
+      const nodeModules = join(packageDir, "node_modules");
+      await rm(join(nodeModules, ".bin"), { recursive: true });
+      await mkdir(join(packageDir, "elsewhere"));
+      await symlink(join("..", "elsewhere"), join(nodeModules, ".bin"));
+      chmodSync(nodeModules, 0o555);
+      try {
+        const unprivileged = setpriv ? [setpriv, "--bounding-set", "-dac_override,-dac_read_search"] : [];
+        await using proc = spawn({
+          cmd: [...unprivileged, bunExe(), "install", ...flags],
+          cwd: packageDir,
+          stdout: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        if (flags.length > 0) {
+          expect({ out, err }).toEqual({ out: "", err: "" });
+        } else {
+          expect(err).toContain(`error: Failed to link into ${join(realpathSync(nodeModules), ".bin")}: EACCES`);
+        }
+        // The link is still there, and no bin went through it.
+        expect(await readlink(join(nodeModules, ".bin"))).toBe(join("..", "elsewhere"));
+        expect(await readdirSorted(join(packageDir, "elsewhere"))).toEqual([]);
+        expect(exitCode).toBe(1);
+      } finally {
+        chmodSync(nodeModules, 0o755);
+      }
     });
   });
 

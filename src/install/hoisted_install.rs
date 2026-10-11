@@ -540,7 +540,7 @@ pub(crate) fn install_hoisted_packages(
 
         // need to make sure bins are linked before completing any remaining scripts.
         // this can happen if a package fails to download
-        installer.link_remaining_bins(log_level);
+        installer.link_remaining_bins();
         // Bin linking reads `successfully_installed`, so the summary takes it after.
         installer.summary.successfully_installed =
             Some(core::mem::take(&mut installer.successfully_installed));

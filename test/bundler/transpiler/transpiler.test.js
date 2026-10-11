@@ -257,6 +257,93 @@ describe("Bun.Transpiler", () => {
       ]);
       expect(exitCode).toBe(0);
     });
+    it("bails out when the access is a template tag, which receives the object as `this`", () => {
+      ts.expectPrintedMin_("x = ({ f: h }).f`x`", "x = { f: h }.f`x`");
+      ts.expectPrintedMin_('x = ({ f: h })["f"]`x`', "x = { f: h }.f`x`");
+      ts.expectPrintedMin_('x = ({ "a-b": h })["a-b"]`x`', 'x = { "a-b": h }["a-b"]`x`');
+      ts.expectPrintedMin_("x = ({ é: h }).é`x`", "x = { é: h }.é`x`");
+      ts.expectPrintedMin_('x = ({ "é": h }).é`x`', 'x = { "é": h }.é`x`');
+    });
+
+    // A string key with a non-ASCII character is stored as UTF-16. The name of
+    // the access is UTF-8. `twin(name)` has one character for each UTF-8 byte
+    // of `name` ("é" gives "Ã©"), so it is a different string with the same
+    // numbers.
+    describe("with a non-ASCII string key", () => {
+      const twin = name => Buffer.from(name).toString("latin1");
+      const escaped = s =>
+        s
+          .split("")
+          .map(unit => "\\u" + unit.charCodeAt(0).toString(16).padStart(4, "0"))
+          .join("");
+      // 2, 2, 3 and 4 UTF-8 bytes.
+      const names = ["é", "α", "中", "𠮷"];
+
+      it("keeps the access when the key is the twin of the name", () => {
+        for (const name of names) {
+          const key = twin(name);
+          const kept = `x = { "${key}": 1 }.${name}`;
+          ts.expectPrintedMin_(`x = ({ "${key}": 1 }).${name}`, kept);
+          ts.expectPrintedMin_(`x = ({ "${escaped(key)}": 1 }).${name}`, kept);
+        }
+        const key = twin("é");
+        ts.expectPrintedMin_(`x = ({ "${key}": 1 })?.é`, `x = { "${key}": 1 }.é`);
+        ts.expectPrintedMin_(`x = ({ "${key}": 1 }).\\u00e9`, `x = { "${key}": 1 }.é`);
+        ts.expectPrintedMin_(`x = typeof ({ "${key}": 1 }).é`, `x = typeof { "${key}": 1 }.é`);
+        ts.expectPrintedMin_(`x = ({ "${key}": 1 }).é.toString()`, `x = { "${key}": 1 }.é.toString()`);
+      });
+      it("folds when the key is the same string as the name", () => {
+        for (const name of names) {
+          ts.expectPrintedMin_(`x = ({ "${name}": 1 }).${name}`, "x = 1");
+          ts.expectPrintedMin_(`x = ({ "${escaped(name)}": 1 }).${name}`, "x = 1");
+          ts.expectPrintedMin_(`x = ({ ${name}: 1 }).${name}`, "x = 1");
+        }
+        ts.expectPrintedMin_('x = ({ "é": 1 }).\\u00e9', "x = 1");
+        ts.expectPrintedMin_('x = ({ "é": 1 })?.é', "x = 1");
+      });
+      it("compares an index that a define injects in the same way", () => {
+        const withDefine = new Bun.Transpiler({ loader: "ts", minify: { syntax: true }, define: { K: '"é-x"' } });
+        const key = twin("é") + "-x";
+        expect(withDefine.transformSync(`x = ({ "${key}": 1 })[K]`)).toBe(`x = { "${key}": 1 }["é-x"];\n`);
+        expect(withDefine.transformSync('x = ({ "é-x": 1 })[K]')).toBe("x = 1;\n");
+      });
+      it("gives the value of the property read when bun runs a file", async () => {
+        const key = twin("é");
+        const codePoint = name => "U+" + name.codePointAt(0).toString(16).toUpperCase().padStart(4, "0");
+        // [label, expression, printed result]
+        const rows = [
+          ...names.map(name => [`twin ${codePoint(name)}`, `({ "${twin(name)}": 1 }).${name}`, "undefined"]),
+          ["twin ?.", `({ "${key}": 1 })?.é`, "undefined"],
+          ["twin escaped name", `({ "${key}": 1 }).\\u00e9`, "undefined"],
+          ["twin typeof", `typeof ({ "${key}": 1 }).é`, "undefined"],
+          ["twin method call", `({ "${key}": 1 }).é.toString()`, "TypeError"],
+          ...names.map(name => [`same ${codePoint(name)}`, `({ "${name}": 1 }).${name}`, "1"]),
+          ["tag with an ASCII key", "({ f: getThis }).f`x`.f === getThis", "true"],
+          ["tag with a non-ASCII key", '({ "é": getThis }).é`x`.é === getThis', "true"],
+        ];
+        using dir = tempDir("inline-non-ascii-key", {
+          "index.js": `
+            function getThis() { return this; }
+            function check(label, fn) {
+              var got;
+              try { got = String(fn()); } catch (e) { got = e.constructor.name; }
+              console.log(label + ": " + got);
+            }
+            ${rows.map(([label, expression]) => `check(${JSON.stringify(label)}, () => ${expression});`).join("\n")}
+          `,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "index.js"],
+          env: bunEnv,
+          cwd: String(dir),
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(stdout.trim().split("\n")).toEqual(rows.map(([label, , result]) => `${label}: ${result}`));
+        expect(exitCode).toBe(0);
+      });
+    });
     it("bails out on optional-chain index into enum", () => {
       const pre = "enum Foo { A }\nenum Bar { 'a-b' = 1 }\n";
       const lastLine = out => out.trimEnd().split("\n").at(-1);

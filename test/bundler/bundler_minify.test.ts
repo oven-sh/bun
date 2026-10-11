@@ -736,14 +736,8 @@ describe("bundler", () => {
     minifySyntax: true,
     target: "bun",
     onAfterBundle(api) {
-      const out = api.readFile("/out.js");
-      // the mismatched key must not fold to its value: 4097 should still
-      // live inside an object literal, not as a bare expression
-      expect(out).toMatch(/:\s*4097\s*\}/);
-      // the matching non-ascii keys must fold: their object literals are gone
-      expect(out).not.toMatch(/:\s*8194\b/);
-      expect(out).not.toMatch(/:\s*12291\b/);
-      expect(out).not.toMatch(/:\s*16388\b/);
+      api.expectFile("/out.js").toContain('var a = { "\\xC3\\xA9": 4097 }.\\u{e9};');
+      api.expectFile("/out.js").toContain("console.log(JSON.stringify([a, 8194, 12291, 16388]));");
     },
     run: {
       stdout: "[null,8194,12291,16388]",

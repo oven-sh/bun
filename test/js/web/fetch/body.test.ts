@@ -2112,14 +2112,20 @@ describe("formData() on a body that is not form data leaves the body as it was",
     ] as const)("a body that is form data still parses%s", async (when, touch) => {
       const form = new FormData();
       form.append("a", "1");
-      const parsed = async (body: Bun.BodyInit) => {
-        const owner = make(body);
+      const parsed = async (body: Bun.BodyInit, headers?: Bun.HeadersInit) => {
+        const owner = make(body, headers);
         if (touch) owner.body;
         return { entries: Object.fromEntries(await owner.formData()), bodyUsed: owner.bodyUsed };
       };
-      expect({ multipart: await parsed(form), urlencoded: await parsed(new URLSearchParams("a=1")) }).toEqual({
+      expect({
+        multipart: await parsed(form),
+        urlencoded: await parsed(new URLSearchParams("a=1")),
+        // An empty Content-Type header is no Content-Type.
+        emptyHeader: await parsed(new URLSearchParams("a=1"), { "content-type": "" }),
+      }).toEqual({
         multipart: { entries: { a: "1" }, bodyUsed: true },
         urlencoded: { entries: { a: "1" }, bodyUsed: true },
+        emptyHeader: { entries: { a: "1" }, bodyUsed: true },
       });
     });
   });

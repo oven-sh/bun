@@ -2074,7 +2074,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         };
         if let Some(headers) = BodyMixin::get_fetch_headers(self) {
             let headers = bun_opaque::opaque_deref_mut(headers.as_ptr());
-            if headers.fast_has(HTTPHeaderName::ContentType) {
+            if headers.fast_get(HTTPHeaderName::ContentType).is_some() {
                 return Ok(None);
             }
         }

@@ -130,12 +130,47 @@ pub(crate) fn validate(meta: &'static Meta, options: &[Json]) -> Result<(), Vec<
     validate_by_id(&RuleId::Known(meta).to_vec(), options)
 }
 
+/// What stands in `json` for something that a configuration file has and JSON has not, other than a regular expression: what
+/// it is.
+pub(crate) fn placeholder(json: &Json) -> Option<&[u8]> {
+    match json {
+        Json::Array(items) => items.iter().find_map(placeholder),
+        Json::Object(entries) => match json.get(b"$unserializable") {
+            Some(kind) => kind.as_str(),
+            None => entries.iter().find_map(|it| placeholder(&it.1)),
+        },
+        _ => None,
+    }
+}
+
+/// `options` as ajv sees them and as `JSON.stringify` prints them: a `Map`, a `Date` or a `RegExp` is an object without properties.
+fn without_placeholders(json: &Json) -> Json {
+    match json {
+        Json::Array(items) => Json::Array(items.iter().map(without_placeholders).collect()),
+        Json::Object(entries)
+            if entries
+                .iter()
+                .any(|it| it.0 == b"$unserializable" || it.0 == b"$regexp") =>
+        {
+            Json::Object(Vec::new())
+        }
+        Json::Object(entries) => {
+            let entries = entries
+                .iter()
+                .map(|it| (it.0.clone(), without_placeholders(&it.1)));
+            Json::Object(entries.collect())
+        }
+        other => other.clone(),
+    }
+}
+
 /// The same for the rule that ESLint calls `id`, whether it is implemented or not.
 pub fn validate_by_id(id: &[u8], options: &[Json]) -> Result<(), Vec<u8>> {
     // Nearly no rule needs options: `generate-schemas.mjs` lists those that do.
     if options.is_empty() && !data::NEED_OPTIONS.iter().any(|it| it.as_bytes() == id) {
         return Ok(());
     }
+    let options = &options.iter().map(without_placeholders).collect::<Vec<_>>()[..];
     let found = find(id);
     let parts = found.as_ref().and_then(Json::as_array).unwrap_or_default();
     validate_with(
@@ -156,6 +191,7 @@ pub(crate) fn schema_of(id: &[u8]) -> Option<Json> {
 
 /// Validates `options` with `schema`, which is `meta.schema`, as ESLint 8 does: it knows no `meta.defaultOptions`.
 pub(crate) fn validate_as_eslint_8(schema: Option<&Json>, options: &[Json]) -> Result<(), Vec<u8>> {
+    let options = &options.iter().map(without_placeholders).collect::<Vec<_>>()[..];
     validate_with(schema, &[], options).map(drop)
 }
 

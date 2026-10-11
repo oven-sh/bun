@@ -96,5 +96,22 @@ fn run(environment: &Environment, script: &Script) -> Result<Json, Vec<u8>> {
         return Err(SILENT.to_vec());
     };
     let config = entries.into_iter().find(|it| it.0 == b"config");
-    Ok(config.map_or(Json::Null, |it| it.1))
+    Ok(config.map_or(Json::Null, |mut it| {
+        read_what_is_no_number(&mut it.1);
+        it.1
+    }))
+}
+
+/// `NaN`, which JSON has no word for: `serialize` in evaluate-describe.js.
+fn read_what_is_no_number(json: &mut Json) {
+    match json {
+        Json::Array(items) => items.iter_mut().for_each(read_what_is_no_number),
+        Json::Object(entries) => match &entries[..] {
+            [(key, Json::String(kind))] if key == b"$unserializable" && kind == b"number" => {
+                *json = Json::Number(f64::NAN);
+            }
+            _ => (entries.iter_mut()).for_each(|it| read_what_is_no_number(&mut it.1)),
+        },
+        _ => {}
+    }
 }

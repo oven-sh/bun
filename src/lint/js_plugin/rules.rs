@@ -89,6 +89,7 @@ fn write_option(out: &mut Vec<u8>, value: &Json) {
         Json::Number(value) if value.is_infinite() => {
             out.extend_from_slice(if *value > 0.0 { b"1e999" } else { b"-1e999" });
         }
+        Json::Number(value) if value.is_nan() => out.extend_from_slice(b"{\"$number\":\"NaN\"}"),
         Json::Array(items) => {
             out.push(b'[');
             for (i, item) in items.iter().enumerate() {

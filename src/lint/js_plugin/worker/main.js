@@ -57,13 +57,14 @@ function ask(kind, details = "") {
   return length;
 }
 
-// What `evaluate-eslint.js` has written for a `RegExp`.
-const reviveRegExp = (_, value) => (Array.isArray(value?.$regexp) ? new RegExp(...value.$regexp) : value);
+// What `evaluate-eslint.js` has written for a `RegExp`, and `write_option` for `NaN`.
+const revive = (_, value) =>
+  Array.isArray(value?.$regexp) ? new RegExp(...value.$regexp) : value?.$number === "NaN" ? NaN : value;
 
 function askForJson(kind, details) {
   const length = ask(kind, details);
   const json = decode(buffers[kind], 0, length);
-  return json.includes('"$regexp"') ? JSON.parse(json, reviveRegExp) : JSON.parse(json);
+  return json.includes('"$regexp"') || json.includes('"$number"') ? JSON.parse(json, revive) : JSON.parse(json);
 }
 
 // ───────────── plugins ─────────────

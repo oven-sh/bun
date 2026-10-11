@@ -181,6 +181,37 @@ function portablePath(path, system) {
   return path.split(system.sep).join("/");
 }
 
+// The setting of a rule. ESLint hands the options on as `structuredClone` makes them: it throws at a function, and an instance of
+// a class is an object with its properties.
+function serializeRule(setting) {
+  if (!Array.isArray(setting)) return serialize(setting);
+  return setting.map((item, index) => (index === 0 ? serialize(item) : serializeOption(item, [setting])) ?? null);
+}
+
+function serializeOption(value, ancestors) {
+  // As V8 says it.
+  const uncloneable = why => ({ ...unserializable(typeof value), why });
+  if (typeof value === "function" || typeof value === "symbol")
+    return uncloneable(`${String(value)} could not be cloned.`);
+  if (typeof value !== "object" || value === null || value instanceof RegExp) return serialize(value);
+  if (ancestors.includes(value)) return unserializable("circular");
+  const inner = [...ancestors, value];
+  if (Array.isArray(value)) return value.map(item => serializeOption(item, inner) ?? null);
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) {
+    let clone;
+    try {
+      clone = structuredClone(value);
+    } catch {
+      return uncloneable("Cannot clone object of unsupported type.");
+    }
+    // What is more than its properties: a `Map`, a `Date`.
+    if (Object.getPrototypeOf(clone) !== Object.prototype && !ArrayBuffer.isView(clone)) return serialize(value);
+  }
+  const entries = Object.entries(value).map(([key, item]) => [key, serializeOption(item, inner)]);
+  return Object.fromEntries(entries.filter(([, item]) => item !== undefined));
+}
+
 function serialize(value, ancestors = []) {
   switch (typeof value) {
     case "string":

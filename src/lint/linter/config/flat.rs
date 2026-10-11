@@ -215,6 +215,21 @@ fn config_name(json: &Json) -> Vec<u8> {
     }
 }
 
+/// What `structuredClone` throws at the options of a rule: `serializeOption` in evaluate-describe.js.
+fn uncloneable_option(json: &Json) -> Option<Vec<u8>> {
+    fn why(json: &Json) -> Option<&[u8]> {
+        match json {
+            Json::Array(items) => items.iter().find_map(why),
+            Json::Object(_) if json.get(b"$unserializable").is_some() => json.get(b"why")?.as_str(),
+            Json::Object(entries) => entries.iter().find_map(|it| why(&it.1)),
+            _ => None,
+        }
+    }
+    let rules = json.get(b"rules")?.as_object()?;
+    let (id, why) = rules.iter().find_map(|it| Some((&it.0, why(&it.1)?)))?;
+    Some([b"Key \"rules\": Key \"", &id[..], b"\": ", why].concat())
+}
+
 /// `ValidationStrategy.object`
 fn is_object(value: &Json) -> bool {
     matches!(value, Json::Object(_) | Json::Array(_))
@@ -390,6 +405,20 @@ impl Reader<'_> {
                         b"'",
                     ]));
                 }
+                // A worker reads JSON.
+                let kind = setting
+                    .options
+                    .iter()
+                    .find_map(crate::linter::schema::placeholder);
+                if let (Some(kind), true) = (kind, setting.severity != Severity::Off) {
+                    return Err(ConfigError::new(&[
+                        b"Key \"rules\": Key \"",
+                        id,
+                        b"\": An option of a rule in JavaScript cannot be handed on: ",
+                        kind,
+                        b".",
+                    ]));
+                }
                 setting.plugin = prefix.into();
                 settings.push(setting);
                 continue;
@@ -509,7 +538,7 @@ impl Reader<'_> {
             object.ignore_lines = Some(IgnoreLines::of_eslint_8(&strings_of(Some(lines))));
             object.is_global_ignores = true;
         }
-        if let Some(message) = validate_object(entries) {
+        if let Some(message) = validate_object(entries).or_else(|| uncloneable_option(json)) {
             object.error = Some([&config_name(json)[..], &message].concat());
             return Ok(object);
         }

@@ -291,6 +291,11 @@ impl FormatOptions {
                 Ok(n)
             }
         };
+        // What Prettier takes for an integer: `Number(value)` of what is on the command line, `Infinity` too.
+        let integer = || match bun_core::fmt::js_string_to_number(value) {
+            it if it.is_nan() || (it.is_finite() && it.fract() != 0.0) => Err(InvalidOption),
+            it => Ok(it),
+        };
         let quotes = |single: bool| {
             if single {
                 QuoteStyle::Single
@@ -299,9 +304,13 @@ impl FormatOptions {
             }
         };
         match name {
-            b"printWidth" if value == b"Infinity" => self.line_width = LineWidth(u32::MAX),
-            b"printWidth" => self.line_width = LineWidth(number(u32::MAX)?),
-            b"tabWidth" => self.indent_width = IndentWidth(number(u32::MAX)?),
+            // Less than nothing is nothing, and more than there is room for is all of it.
+            b"printWidth" => self.line_width = LineWidth(integer()? as u32),
+            // Prettier fails where it repeats a blank less than no times.
+            b"tabWidth" => match integer()? {
+                it if it < 0.0 => return Err(InvalidOption),
+                it => self.indent_width = IndentWidth(it as u32),
+            },
             b"useTabs" => {
                 self.indent_style = if boolean()? {
                     IndentStyle::Tab

@@ -465,6 +465,42 @@ impl Override {
     }
 }
 
+/// Prettier's words for a `printWidth` or a `tabWidth` that is no integer. `is_flag`: it is on the command line, where
+/// `value` is a text that Prettier makes a number of.
+fn not_an_integer(name: &[u8], value: &[u8], is_flag: bool) -> Option<Vec<u8>> {
+    let flag: &[u8] = match name {
+        b"printWidth" => b"--print-width",
+        b"tabWidth" => b"--tab-width",
+        _ => return None,
+    };
+    let number = bun_core::fmt::js_string_to_number(value);
+    // `tabWidth: -1` is one.
+    if number.fract() == 0.0 {
+        return None;
+    }
+    let mut buffer = [0; 124];
+    let (name, received) = match is_flag {
+        true if number.is_nan() => (flag, &b"null"[..]),
+        true => (flag, bun_core::fmt::FormatDouble::dtoa(&mut buffer, number)),
+        false => (name, value),
+    };
+    Some(
+        [
+            b"Invalid ",
+            name,
+            b" value. Expected an integer, but received ",
+            received,
+            b".",
+        ]
+        .concat(),
+    )
+}
+
+/// Whether `error` is what Prettier ends the run with, and 1.
+pub(super) fn is_invalid_value(error: &[u8]) -> bool {
+    error.starts_with(b"Invalid ") && strings::contains(error, b" value. Expected ")
+}
+
 /// oxfmt's limits.
 fn check_print_width(value: &[u8]) -> Result<(), Fatal> {
     match bun_core::fmt::parse_decimal::<u32>(value) {
@@ -1454,9 +1490,12 @@ impl<'c> Configs<'c> {
                     }
                 }
                 name if OPTIONS.contains(&name) && resolved.options.set(name, value).is_err() => {
-                    return Err(Fatal(
-                        [b"Invalid ", name, b" value: ", value, b"."].concat(),
-                    ));
+                    let flags = &self.options.format;
+                    let is_flag = flags.iter().any(|it| std::ptr::eq(&it.1[..], value));
+                    return Err(Fatal(match not_an_integer(name, value, is_flag) {
+                        Some(refusal) if !is_oxfmt => refusal,
+                        _ => [b"Invalid ", name, b" value: ", value, b"."].concat(),
+                    }));
                 }
                 name if knows_all_options
                     && !OPTIONS.contains(&name)

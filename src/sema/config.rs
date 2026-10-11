@@ -1222,6 +1222,8 @@ impl GlobPattern {
             parts.push(&b"**"[..]);
             parts.push(&b"*"[..]);
         }
+        // As one, for tsc too.
+        parts.dedup_by(|a, b| *a == b"**" && *b == b"**");
         Some(GlobPattern {
             components: parts
                 .into_iter()
@@ -1258,53 +1260,64 @@ impl GlobPattern {
         self.match_parts(path, 0, 0, true)
     }
 
-    /// `matchPathParts`. `from`: the first of the parts of `path` that is not matched yet.
-    fn match_parts(
-        &self,
-        path: PathParts,
-        mut from: usize,
-        mut at: usize,
-        prefix_only: bool,
-    ) -> bool {
-        loop {
-            let Some(part) = path.get(from) else {
-                // Only trailing `**` can match nothing.
-                return prefix_only
-                    || self.components[at.min(self.components.len())..]
-                        .iter()
-                        .all(|c| matches!(c, Component::DoubleAsterisk));
-            };
-            let Some(component) = self.components.get(at) else {
-                return self.is_exclude && !prefix_only;
-            };
-            match component {
-                Component::DoubleAsterisk => {
-                    if self.match_parts(path, from, at + 1, prefix_only) {
+    /// `matchPathParts`. `from`: the first of the parts of `path` that is not matched yet, `at`: the first of the components.
+    ///
+    /// typescript-go tries each number of parts for a `**` in turn, by recursion: a level of the stack for each `**`, and with n
+    /// of them time that grows like a power of n. This has the same answers.
+    fn match_parts(&self, path: PathParts, from: usize, at: usize, prefix_only: bool) -> bool {
+        // How many parts the components so far can match, in ascending order.
+        let mut reached: smallvec::SmallVec<[usize; 16]> = smallvec::SmallVec::new();
+        let mut next = reached.clone();
+        reached.push(from);
+        for component in &self.components[at.min(self.components.len())..] {
+            for &from in &reached {
+                let Some(part) = path.get(from) else {
+                    if prefix_only {
                         return true;
                     }
-                    if !self.is_exclude && (is_hidden(part) || is_package_folder(part)) {
-                        return false;
+                    // Only a `**` can match nothing.
+                    let is_new = next.last().is_none_or(|&last| last < from);
+                    if is_new && matches!(component, Component::DoubleAsterisk) {
+                        next.push(from);
                     }
-                    from += 1;
                     continue;
-                }
-                Component::Literal(literal) => {
-                    if !self.equal(literal, part) {
-                        return false;
+                };
+                match component {
+                    // What starts in the run before ends where that ends.
+                    Component::DoubleAsterisk if next.last().is_some_and(|&last| from <= last) => {}
+                    Component::DoubleAsterisk => {
+                        let is_passed = |part: &[u8]| {
+                            self.is_exclude || !is_hidden(part) && !is_package_folder(part)
+                        };
+                        let mut to = from;
+                        next.push(to);
+                        while path.get(to).is_some_and(is_passed) {
+                            to += 1;
+                            next.push(to);
+                        }
                     }
-                }
-                Component::Wildcard(segments) => {
-                    if !self.is_exclude && is_package_folder(part) {
-                        return false;
+                    Component::Literal(literal) => {
+                        if self.equal(literal, part) {
+                            next.push(from + 1);
+                        }
                     }
-                    if !self.match_wildcard(segments, part) {
-                        return false;
+                    Component::Wildcard(segments) => {
+                        if (self.is_exclude || !is_package_folder(part))
+                            && self.match_wildcard(segments, part)
+                        {
+                            next.push(from + 1);
+                        }
                     }
                 }
             }
-            from += 1;
-            at += 1;
+            if next.is_empty() {
+                return false;
+            }
+            std::mem::swap(&mut reached, &mut next);
+            next.clear();
         }
+        let is_whole = |&from: &usize| path.get(from).is_none();
+        reached.iter().any(is_whole) || self.is_exclude && !prefix_only
     }
 
     /// `stringsEqual`

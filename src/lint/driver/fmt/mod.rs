@@ -1012,7 +1012,7 @@ impl Run<'_> {
     /// The configuration, or what says which files to ignore, cannot be used.
     fn fail_to_start(self, flavor: Flavor, text: &[u8]) -> Outcome {
         let mut out = self.fail(text);
-        if flavor == Flavor::Oxfmt {
+        if flavor == Flavor::Oxfmt || config::is_invalid_value(text) {
             out.exit_code = 1;
         }
         out
@@ -1066,7 +1066,7 @@ impl Run<'_> {
             match bridge.format(&path, configs.path_of_config(&scope), &text) {
                 Err(why) => self.error(&[name, b": ", &why].concat()),
                 Ok(formatted) if self.options.check || self.options.list_different => {
-                    if formatted != text {
+                    if formatted != text && !self.options.write {
                         self.log(b"(stdin)");
                         self.out.exit_code = 1;
                     }
@@ -1157,8 +1157,9 @@ impl Run<'_> {
                 }
             }
             Err(failure) => self.error(&Self::describe(name, failure)),
+            // Prettier's `listDifferent`: with `--write` it has nothing to say, and nothing is printed either.
             Ok((formatted, _)) if self.options.check || self.options.list_different => {
-                if formatted != text {
+                if formatted != text && !self.options.write {
                     self.log(b"(stdin)");
                     self.out.exit_code = 1;
                 }
@@ -1447,6 +1448,12 @@ impl Run<'_> {
                 Some(Done::Unread(warning)) => {
                     unchanged += 1;
                     self.warn(&warning);
+                }
+                // Prettier goes no further.
+                Some(Done::Failed(error)) if config::is_invalid_value(&error) => {
+                    self.error(&error);
+                    self.out.exit_code = 1;
+                    return self.out;
                 }
                 Some(Done::Failed(error)) => {
                     failed += 1;

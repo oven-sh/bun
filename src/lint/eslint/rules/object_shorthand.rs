@@ -224,8 +224,8 @@ impl ObjectShorthand {
     }
 
     fn find<'a>(&self, prop: Prop<'a>, key: Key<'a>, value: Expr<'a>, file: &'a File<'a>) -> Option<Finding<'a>> {
-        match (prop.kind(), value.kind()) {
-            (PropKind::Method, ExprKind::Fn(func)) => {
+        match (prop.kind(), value.as_fn(), value.as_ident()) {
+            (PropKind::Method, Some(func), _) => {
                 let message = if self.is_never {
                     EXPECTED_METHOD_LONGFORM
                 } else if self.avoids_quotes && is_string_literal_key(key, file) {
@@ -235,11 +235,11 @@ impl ObjectShorthand {
                 };
                 Some(Finding::MethodLongform(message, func))
             }
-            (PropKind::Shorthand, _) if self.is_never => match key.kind() {
+            (PropKind::Shorthand, ..) if self.is_never => match key.kind() {
                 KeyKind::Ident(name) => Some(Finding::PropertyLongform(name)),
                 _ => None,
             },
-            (PropKind::Init, ExprKind::Fn(func)) if self.applies_to_methods && func.name().is_none() => {
+            (PropKind::Init, Some(func), _) if self.applies_to_methods && func.name().is_none() => {
                 let name = ast_utils::get_static_key_name(key);
                 let name = name.as_deref();
                 // oxlint takes only a key that is written as a name for that of a constructor.
@@ -262,7 +262,7 @@ impl ObjectShorthand {
                 };
                 is_method.then_some(Finding::MethodShorthand(func))
             }
-            (PropKind::Init, ExprKind::Ident(name)) if self.applies_to_props => {
+            (PropKind::Init, _, Some(name)) if self.applies_to_props => {
                 let is_quoted = match key.kind() {
                     KeyKind::Ident(key) if key == name => false,
                     KeyKind::String(key) if key == name && !self.avoids_quotes => true,

@@ -129,9 +129,9 @@ fn may_have_useless_escape(pattern: &[u8]) -> bool {
 }
 
 /// Where the `\` of a file are.
-pub struct Backslashes {
+pub struct Backslashes<'a> {
     /// In order.
-    at: Vec<u32>,
+    at: &'a [u32],
     /// How many are before the start of the span that was asked about last.
     before_last: Cell<usize>,
 }
@@ -139,7 +139,7 @@ pub struct Backslashes {
 /// Whether there is a `\` in `span`.
 #[inline]
 fn has_backslash(span: Span, cx: &Cx<'_, NoUselessEscape>) -> bool {
-    let all = &cx.state.at;
+    let all = cx.state.at;
     // Mostly there is none between one span and the next.
     let mut next = cx.state.before_last.get();
     let before = next.checked_sub(1).and_then(|it| all.get(it));
@@ -292,7 +292,7 @@ impl Rule for NoUselessEscape {
         .props()
         .members()
         .pats(&[PatTag::Object]);
-    type State<'a> = Backslashes;
+    type State<'a> = Backslashes<'a>;
 
     fn new(options: &Options) -> Self {
         let allowed = options.object(0).strings("allowRegexCharacters");
@@ -302,15 +302,14 @@ impl Rule for NoUselessEscape {
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
-        let text = file.text();
-        if !strings::contains_char(text, b'\\') {
+        if file.backslashes().is_empty() {
             return On::new();
         }
         let on = On::new()
             .string_literals()
             .exprs(&[ExprTag::Template])
             .exprs(&[ExprTag::Regex]);
-        if !strings::contains_char(text, b'`') {
+        if !strings::contains_char(file.text(), b'`') {
             return on;
         }
         on.types(&[TypeTag::StringLit, TypeTag::Template])
@@ -319,13 +318,8 @@ impl Rule for NoUselessEscape {
             .pats(&[PatTag::Object])
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<Backslashes> {
-        let (text, mut backslashes, mut at) = (file.text(), Vec::new(), 0);
-        while let Some(found) = text.get(at..).and_then(|rest| strings::index_of_char_usize(rest, b'\\')) {
-            backslashes.push((at + found) as u32);
-            at += found + 1;
-        }
-        Some(Backslashes { at: backslashes, before_last: Cell::new(0) })
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Backslashes<'a>> {
+        Some(Backslashes { at: file.backslashes(), before_last: Cell::new(0) })
     }
 
     fn string_literal<'a>(&self, literal: Literal<'a>, cx: &mut Cx<'a, Self>) {

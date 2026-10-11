@@ -10,15 +10,21 @@ const SELF_ASSIGNMENT: Message = Message::new("selfAssignment", "'{{name}}' is a
 
 /// ESLint's `eachSelfAssignment`: goes through the target `left` and the value `right` in parallel.
 fn each_self_assignment<'a>(left: Expr<'a>, right: Expr<'a>, props: bool, report: &mut dyn FnMut(Expr<'a>)) {
+    // Nearly all are of two kinds, or two names.
+    let is_member = |tag: ExprTag| matches!(tag, ExprTag::Dot | ExprTag::Index);
+    if left.tag() != right.tag() && !(is_member(left.tag()) && is_member(right.tag())) {
+        return;
+    }
     if !bun_core::StackCheck::init().is_safe_to_recurse() {
         return;
     }
-    match (left.kind(), right.kind()) {
-        (ExprKind::Ident(l), ExprKind::Ident(r)) => {
-            if l == r {
-                report(right);
-            }
+    if let (Some(l), Some(r)) = (left.as_ident(), right.as_ident()) {
+        if l == r {
+            report(right);
         }
+        return;
+    }
+    match (left.kind(), right.kind()) {
         (ExprKind::Array(targets), ExprKind::Array(values)) => {
             let count = values.len();
             for (i, (target, value)) in targets.iter().zip(values).enumerate() {

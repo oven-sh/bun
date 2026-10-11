@@ -63,7 +63,7 @@ impl NoUnderscoreDangle {
     }
 
     fn check_function_declaration<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        if let StmtKind::Fn(func) = statement.kind()
+        if let Some(func) = statement.as_fn()
             && let Some(name) = func.name()
             && self.is_unexpected(name.bytes())
             && (func.has_body() || cx.language().is_oxlint)

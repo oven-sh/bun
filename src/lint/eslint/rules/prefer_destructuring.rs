@@ -110,7 +110,7 @@ impl Config {
     ) -> Option<&'static str> {
         // For oxlint's port every number is an index, and it says nothing about a template.
         if let Property::Computed(index) = property
-            && let ExprKind::Number(n) = index.kind()
+            && let Some(n) = index.as_number()
             && (is_port_of_oxlint || n.is_finite() && n.fract() == 0.0)
         {
             return enabled.array.then_some("array");

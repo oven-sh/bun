@@ -921,8 +921,19 @@ impl<'f> Collector<'f, '_> {
         // Which are identifiers, if the binder has noted the kinds.
         const IDENT: u8 = 2 * hir::ExprTag::Ident as u8;
         let (kinds, parents) = (self.file.bound.expr_kinds, self.file.bound.expr_parent);
+        // Where it has not, each can be one.
+        let not_noted: Vec<u8> = match kinds.len() == exprs.len() {
+            true => Vec::new(),
+            false => (0..exprs.len())
+                .map(|i| kinds.get(i).map_or(IDENT, |kind| *kind))
+                .collect(),
+        };
+        let kinds = match kinds.len() == exprs.len() {
+            true => kinds,
+            false => &not_noted[..],
+        };
         // `false`: the expression at `i` is an identifier that is before the last one.
-        let mut take = |i: usize| {
+        let take = |i: usize| {
             let (Some(e), Some(parent)) = (exprs.get(i), parents.get(i)) else {
                 return true;
             };
@@ -955,14 +966,8 @@ impl<'f> Collector<'f, '_> {
             self.identifier(id, e, name, &skipped, &mut merge)
         };
         // The parser stores nearly every file in source order.
-        let is_in_order = match kinds.len() == exprs.len() {
-            true => (kinds.iter().enumerate())
-                .filter(|it| *it.1 == IDENT)
-                .all(|it| take(it.0)),
-            false => {
-                (0..exprs.len()).all(|i| kinds.get(i).is_some_and(|kind| *kind != IDENT) || take(i))
-            }
-        };
+        let identifiers = kinds.iter().enumerate().filter(|it| *it.1 == IDENT);
+        let is_in_order = identifiers.map(|it| it.0).all(take);
         if !is_in_order {
             merge = start();
             let identifiers = exprs

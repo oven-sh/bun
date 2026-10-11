@@ -489,8 +489,16 @@ impl Cursor<'_> {
     }
 
     /// The same. `take` is called with every step on the way, in order.
-    #[inline]
-    pub(crate) fn seek_by_steps(&mut self, pos: u32, mut take: impl FnMut(Step)) -> u32 {
+    #[inline(always)]
+    pub(crate) fn seek_by_steps(&mut self, pos: u32, take: impl FnMut(Step)) -> u32 {
+        if pos >= self.until {
+            self.go_on_to(pos, take);
+        }
+        self.from
+    }
+
+    #[inline(never)]
+    fn go_on_to(&mut self, pos: u32, mut take: impl FnMut(Step)) {
         while pos >= self.until {
             if let Some(change) = self.then {
                 self.from = change.from;
@@ -502,7 +510,6 @@ impl Cursor<'_> {
                 break;
             }
         }
-        self.from
     }
 }
 

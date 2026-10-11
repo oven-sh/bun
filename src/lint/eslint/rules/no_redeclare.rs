@@ -140,16 +140,26 @@ fn report<'a, R: Rule>(cx: &Cx<'a, R>, name: &'a [u8], declarations: &[(Declarat
     }
 }
 
-/// For [`Rule::symbol`].
-pub fn check_symbol<'a, R: Rule>(config: Config, symbol: Symbol<'a>, cx: &Cx<'a, R>) {
+/// For [`Rule::start`]: whether what is declared once can redeclare a global variable.
+pub fn can_redeclare_globals<'a>(config: Config, file: &'a File<'a>) -> bool {
+    match file.language().is_oxlint {
+        // For oxlint, outside of a module whatever has the name of a global redeclares it, in whatever scope.
+        true => config.builtin_globals && utils::oxlint::source_type(file) != SourceType::Module,
+        false => file.scope().symbols().len() != 0,
+    }
+}
+
+/// For [`Rule::symbol`]. The state: [`can_redeclare_globals`].
+#[inline]
+pub fn check_symbol<'a, R: Rule<State<'a> = bool>>(config: Config, symbol: Symbol<'a>, cx: &Cx<'a, R>) {
+    if symbol.declaration_count() > 1 || cx.state {
+        check_declarations(config, symbol, cx);
+    }
+}
+
+fn check_declarations<'a, R: Rule<State<'a> = bool>>(config: Config, symbol: Symbol<'a>, cx: &Cx<'a, R>) {
     let count = symbol.declaration_count();
     let is_oxlint = cx.language().is_oxlint;
-    // For oxlint, outside of a module whatever has the name of a global redeclares it, in whatever scope.
-    let oxlint_asks_globals =
-        || config.builtin_globals && utils::oxlint::source_type(cx.file()) != SourceType::Module;
-    if is_oxlint && count < 2 && !oxlint_asks_globals() {
-        return;
-    }
     let scope = symbol.scope();
     let is_global = scope.kind() == ScopeKind::Global;
     // oxlint looks at all scopes.
@@ -163,7 +173,7 @@ pub fn check_symbol<'a, R: Rule>(config: Config, symbol: Symbol<'a>, cx: &Cx<'a,
     }
     let name = symbol.name().bytes();
     let global = match is_oxlint {
-        true if oxlint_asks_globals() => {
+        true if cx.state => {
             // Not what an `env` defines.
             let is_asked = ast_utils::is_builtin_global_of_oxlint(name) || cx.language().is_written_global(name);
             if is_asked { cx.file().global(name) } else { None }
@@ -221,7 +231,7 @@ pub fn check_globals_in_comments<'a, R: Rule>(config: Config, cx: &Cx<'a, R>) {
 impl Rule for NoRedeclare {
     const META: Meta = Meta::eslint("no-redeclare", Kind::Suggestion).recommended();
     const ON: On = On::new().symbols().finish();
-    no_state!();
+    type State<'a> = bool;
 
     fn new(options: &Options) -> Self {
         NoRedeclare {
@@ -230,6 +240,10 @@ impl Rule for NoRedeclare {
                 ignore_declaration_merge: None,
             },
         }
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<bool> {
+        Some(can_redeclare_globals(self.config, file))
     }
 
     fn symbol<'a>(&self, symbol: Symbol<'a>, cx: &mut Cx<'a, Self>) {

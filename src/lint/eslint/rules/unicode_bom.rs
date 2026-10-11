@@ -13,12 +13,16 @@ const BOM: &str = "\u{FEFF}";
 impl Rule for UnicodeBom {
     const META: Meta = Meta::eslint("unicode-bom", Kind::Layout).fixable(Fixable::Whitespace);
     const ON: On = On::new().finish();
-    no_state!();
+    type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         UnicodeBom {
             is_required: options.str(0) == Some("always"),
         }
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        (file.has_bom() != self.is_required).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

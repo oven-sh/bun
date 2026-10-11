@@ -9,10 +9,14 @@ const UNEXPECTED: Message =
 impl Rule for NoConstructorReturn {
     const META: Meta = Meta::eslint("no-constructor-return", Kind::Problem);
     const ON: On = On::new().funcs();
-    no_state!();
+    type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoConstructorReturn
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.has_classes().then_some(())
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {

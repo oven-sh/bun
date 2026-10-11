@@ -129,12 +129,17 @@ impl NameTable {
     }
 
     /// The index of the slot of `name`, or of the free slot where it belongs.
-    #[inline]
+    #[inline(always)]
     fn place(&self, name: Atom) -> usize {
-        let mask = self.slots.len() - 1;
-        if self.is_by_number {
-            return (name.0 as usize).min(mask);
+        match self.is_by_number {
+            true => (name.0 as usize).min(self.slots.len() - 1),
+            false => self.place_by_hash(name),
         }
+    }
+
+    #[inline(never)]
+    fn place_by_hash(&self, name: Atom) -> usize {
+        let mask = self.slots.len() - 1;
         // Atoms are numbered sequentially: Fibonacci hashing spreads them.
         let mut at = (u64::from(name.0).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32) as usize & mask;
         while self.slots[at].name != name && self.slots[at].name.is_some() {

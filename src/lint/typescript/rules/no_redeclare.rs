@@ -1,5 +1,5 @@
 use bun_lint::prelude::*;
-use bun_lint_eslint::rules::no_redeclare::{Config, check_globals_in_comments, check_symbol};
+use bun_lint_eslint::rules::no_redeclare::{Config, can_redeclare_globals, check_globals_in_comments, check_symbol};
 
 /// Disallow variable redeclaration.
 pub struct NoRedeclare {
@@ -9,7 +9,7 @@ pub struct NoRedeclare {
 impl Rule for NoRedeclare {
     const META: Meta = Meta::typescript("no-redeclare", Kind::Suggestion).extends_base_rule("no-redeclare");
     const ON: On = On::new().symbols().finish();
-    no_state!();
+    type State<'a> = bool;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -19,6 +19,10 @@ impl Rule for NoRedeclare {
                 ignore_declaration_merge: Some(options.bool_or("ignoreDeclarationMerge", true)),
             },
         }
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<bool> {
+        Some(can_redeclare_globals(self.config, file))
     }
 
     fn symbol<'a>(&self, symbol: Symbol<'a>, cx: &mut Cx<'a, Self>) {

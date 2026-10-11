@@ -416,13 +416,17 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                 };
             } else {
                 // Skip the components associated with the literal path
-                starting_component_idx += 1;
+                starting_component_idx = self
+                    .walker
+                    .pattern_components
+                    .get(starting_component_idx as usize)
+                    .map_or(Component::END, |literal| literal.next);
 
                 // This means we got a pattern without any special glob syntax, for example:
                 // `/Users/zackradisic/foo/bar`
                 //
                 // In that case we don't need to do any walking and can just open up the FS entry
-                if starting_component_idx as usize >= self.walker.pattern_components.len() {
+                if starting_component_idx == Component::END {
                     // Matched-path payload must respect SENTINEL. The open()
                     // probe always needs a NUL — use a separate dupeZ for it so
                     // SENTINEL=false matched paths don't carry a spurious 0x00.
@@ -450,7 +454,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     return Ok(Ok(()));
                 }
 
-                // In the above branch, if `starting_component_idx >= pattern_components.len` then
+                // In the above branch, if no component follows the literal ones then
                 // it should also mean that `end_byte_of_basename_excluding_special_syntax >= pattern.len`
                 //
                 // So if we see that `end_byte_of_basename_excluding_special_syntax < self.walker.pattern.len` we
@@ -604,7 +608,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                     }
                     Ok(i) => i,
                 };
-                if norm as usize >= self.walker.pattern_components.len() {
+                if norm == Component::END {
                     if let Some(fd) = work_item.fd {
                         self.close_disallowing_cwd(fd);
                     }
@@ -658,7 +662,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         // Skip for multi-index masks since each index has different needs.
         if active.count() == 1 {
             let idx: u32 = u32::try_from(active.find_first_set().unwrap()).expect("int cast");
-            if idx as usize == self.walker.pattern_components.len().saturating_sub(1)
+            if self.walker.pattern_components[idx as usize].is_last()
                 && self.walker.pattern_components[idx as usize].syntax_hint == SyntaxHint::Literal
             {
                 // `close_disallowing_cwd(fd)` is covered explicitly on
@@ -862,7 +866,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                         Err(e) => return Ok(Err(e)),
                                         Ok(i) => i,
                                     };
-                                    if norm as usize >= walker.pattern_components.len() {
+                                    if norm == Component::END {
                                         self.iter_state = IterState::GetNext;
                                         continue;
                                     }
@@ -1337,10 +1341,14 @@ pub struct Component {
     pub(crate) len: u32,
     /// Position in `pattern_components`.
     index: u32,
+    /// Index of the component one directory level down, `END` for the last one.
+    pub(crate) next: u32,
 
     pub(crate) syntax_hint: SyntaxHint,
     pub(crate) trailing_sep: bool,
 }
+
+const _: () = assert!(size_of::<Component>() == 20);
 
 impl Default for Component {
     fn default() -> Self {
@@ -1348,6 +1356,7 @@ impl Default for Component {
             start: 0,
             len: 0,
             index: 0,
+            next: Self::END,
             syntax_hint: SyntaxHint::None,
             trailing_sep: false,
         }
@@ -1355,6 +1364,13 @@ impl Default for Component {
 }
 
 impl Component {
+    pub(crate) const END: u32 = u32::MAX;
+
+    #[inline]
+    fn is_last(&self) -> bool {
+        self.next == Self::END
+    }
+
     pub(crate) fn pattern_slice<'a>(&self, pattern: &'a [u8]) -> &'a [u8] {
         let end = (self.start + self.len - u32::from(self.trailing_sep)) as usize;
         &pattern[self.start as usize..end]
@@ -1546,7 +1562,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     ) -> Maybe<u32> {
         let mut component_idx = idx;
         let mut len = *dir_path_len;
-        while (component_idx as usize) < pattern_components.len() {
+        while component_idx != Component::END {
             match pattern_components[component_idx as usize].syntax_hint {
                 SyntaxHint::Dot => {
                     if len + 2 >= MAX_PATH_BYTES {
@@ -1563,7 +1579,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                         path_buf[len + 2] = 0;
                         len += 2;
                     }
-                    component_idx += 1;
+                    component_idx = pattern_components[component_idx as usize].next;
                 }
                 SyntaxHint::DotBack => {
                     *encountered_dot_dot = true;
@@ -1583,7 +1599,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                         path_buf[len + 3] = 0;
                         len += 3;
                     }
-                    component_idx += 1;
+                    component_idx = pattern_components[component_idx as usize].next;
                 }
                 _ => break,
             }
@@ -1596,15 +1612,24 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
 
     // NOTE you must check that the pattern at `idx` has `syntax_hint == .Double` first
     fn collapse_successive_double_wildcards(&self, idx: u32) -> u32 {
+        Self::collapse_successive_double_wildcards_disjoint(&self.pattern_components, idx)
+    }
+
+    fn collapse_successive_double_wildcards_disjoint(
+        pattern_components: &[Component],
+        idx: u32,
+    ) -> u32 {
         let mut component_idx = idx;
         // Collapse successive double wildcards
-        while ((component_idx + 1) as usize) < self.pattern_components.len()
-            && self.pattern_components[(component_idx + 1) as usize].syntax_hint
-                == SyntaxHint::Double
-        {
-            component_idx += 1;
+        loop {
+            let next = pattern_components[component_idx as usize].next;
+            if next == Component::END
+                || pattern_components[next as usize].syntax_hint != SyntaxHint::Double
+            {
+                return component_idx;
+            }
+            component_idx = next;
         }
-        component_idx
     }
 
     pub(crate) fn skip_special_components(
@@ -1634,36 +1659,31 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         scratch_path_buf: &mut PathBuffer,
         encountered_dot_dot: &mut bool,
     ) -> Maybe<u32> {
+        let Some(first) = pattern_components.get(work_item_idx as usize) else {
+            return Ok(Component::END);
+        };
         let mut component_idx = work_item_idx;
 
-        if (component_idx as usize) < pattern_components.len() {
-            // Skip `.` and `..` while also appending them to `dir_path`
-            component_idx = match pattern_components[component_idx as usize].syntax_hint {
-                SyntaxHint::Dot | SyntaxHint::DotBack => Self::collapse_dots_disjoint(
-                    pattern_components,
-                    component_idx,
-                    dir_path_len,
-                    scratch_path_buf,
-                    encountered_dot_dot,
-                )?,
-                _ => component_idx,
-            };
+        // Skip `.` and `..` while also appending them to `dir_path`
+        if matches!(first.syntax_hint, SyntaxHint::Dot | SyntaxHint::DotBack) {
+            component_idx = Self::collapse_dots_disjoint(
+                pattern_components,
+                component_idx,
+                dir_path_len,
+                scratch_path_buf,
+                encountered_dot_dot,
+            )?;
+            if component_idx == Component::END {
+                return Ok(Component::END);
+            }
         }
 
-        if (component_idx as usize) < pattern_components.len() {
-            // Skip to the last `**` if there is a chain of them
-            component_idx = match pattern_components[component_idx as usize].syntax_hint {
-                SyntaxHint::Double => {
-                    let mut i = component_idx;
-                    while ((i + 1) as usize) < pattern_components.len()
-                        && pattern_components[(i + 1) as usize].syntax_hint == SyntaxHint::Double
-                    {
-                        i += 1;
-                    }
-                    i
-                }
-                _ => component_idx,
-            };
+        // Skip to the last `**` if there is a chain of them
+        if pattern_components[component_idx as usize].syntax_hint == SyntaxHint::Double {
+            component_idx = Self::collapse_successive_double_wildcards_disjoint(
+                pattern_components,
+                component_idx,
+            );
         }
 
         Ok(component_idx)
@@ -1674,7 +1694,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         pattern: &Component,
         next_pattern: Option<&Component>,
         entry_name: &[u8],
-        component_idx: u32,
         is_last: bool,
         add: &mut bool,
     ) -> Option<u32> {
@@ -1696,7 +1715,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                 // component, it should match and propagate the
                 // double wildcard recursion to the directory's
                 // children
-                if (component_idx + 1) as usize == self.pattern_components.len() - 1 {
+                if next_pattern.unwrap().is_last() {
                     *add = true;
                     // Matched via the explicit next segment; don't keep the
                     // wildcard recursion alive through a hidden directory.
@@ -1753,7 +1772,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     fn match_pattern_file(
         &self,
         entry_name: &[u8],
-        component_idx: u32,
         is_last: bool,
         pattern: &Component,
         next_pattern: Option<&Component>,
@@ -1765,7 +1783,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         // Handle case b)
         if !is_last {
             return pattern.syntax_hint == SyntaxHint::Double
-                && (component_idx + 1) as usize == self.pattern_components.len().saturating_sub(1)
+                && next_pattern.unwrap().is_last()
                 && next_pattern.unwrap().syntax_hint != SyntaxHint::Double
                 && self.match_pattern_impl(next_pattern.unwrap(), entry_name);
         }
@@ -1828,34 +1846,29 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     fn eval_dir(&self, active: &ComponentSet, entry_name: &[u8], add: &mut bool) -> ComponentSet {
         let mut child = self.make_set();
         let comps = &self.pattern_components;
-        let len: u32 = u32::try_from(comps.len()).expect("int cast");
         let hidden = !self.dot && Self::starts_with_dot(entry_name);
         let mut it = active.iterator::<true, true>();
         while let Some(i) = it.next() {
             let idx: u32 = u32::try_from(i).expect("int cast");
             let pattern = &comps[idx as usize];
-            let next_pattern = if idx + 1 < len {
-                Some(&comps[(idx + 1) as usize])
-            } else {
-                None
-            };
-            let is_last = idx == len - 1;
+            // `Component::END` is not an index, so the last component has none.
+            let next_pattern = comps.get(pattern.next as usize);
+            let is_last = pattern.is_last();
             let mut add_this = false;
-            if let Some(bump) = self.match_pattern_dir(
-                pattern,
-                next_pattern,
-                entry_name,
-                idx,
-                is_last,
-                &mut add_this,
-            ) {
-                child.set(self.normalize_idx(idx + bump) as usize);
+            if let Some(bump) =
+                self.match_pattern_dir(pattern, next_pattern, entry_name, is_last, &mut add_this)
+            {
+                // `bump`: 0 stays on this component, 1 is its successor, 2 the one after.
+                let target = match bump {
+                    0 => idx,
+                    1 => pattern.next,
+                    _ => next_pattern.unwrap().next,
+                };
+                child.set(self.normalize_idx(target) as usize);
                 // At `**/X` boundaries, keep the outer `**` alive unless
-                // idx+2 is itself `**` (whose recursion already covers it)
+                // what follows X is itself `**` (whose recursion already covers it)
                 // or the entry is hidden (a `**` must not traverse dotdirs).
-                if bump == 2
-                    && !hidden
-                    && comps[(idx + 2) as usize].syntax_hint != SyntaxHint::Double
+                if bump == 2 && !hidden && comps[target as usize].syntax_hint != SyntaxHint::Double
                 {
                     child.set(idx as usize);
                 }
@@ -1869,18 +1882,11 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
 
     fn eval_file(&self, active: &ComponentSet, entry_name: &[u8]) -> bool {
         let comps = &self.pattern_components;
-        let len: u32 = u32::try_from(comps.len()).expect("int cast");
         let mut it = active.iterator::<true, true>();
-        while let Some(i) = it.next() {
-            let idx: u32 = u32::try_from(i).expect("int cast");
-            let pattern = &comps[idx as usize];
-            let next_pattern = if idx + 1 < len {
-                Some(&comps[(idx + 1) as usize])
-            } else {
-                None
-            };
-            let is_last = idx == len - 1;
-            if self.match_pattern_file(entry_name, idx, is_last, pattern, next_pattern) {
+        while let Some(idx) = it.next() {
+            let pattern = &comps[idx];
+            let next_pattern = comps.get(pattern.next as usize);
+            if self.match_pattern_file(entry_name, pattern.is_last(), pattern, next_pattern) {
                 return true;
             }
         }
@@ -1898,8 +1904,8 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             // Mirror match_pattern_dir's `**/X` peek so the SymLink/Unknown
             // pre-filter doesn't drop entries eval_dir would accept.
             if comp.syntax_hint == SyntaxHint::Double
-                && idx + 1 < comps.len()
-                && self.match_pattern_impl(&comps[idx + 1], entry_name)
+                && !comp.is_last()
+                && self.match_pattern_impl(&comps[comp.next as usize], entry_name)
             {
                 return true;
             }
@@ -1934,9 +1940,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
 
     #[inline]
     fn normalize_idx(&self, idx: u32) -> u32 {
-        if (idx as usize) < self.pattern_components.len()
-            && self.pattern_components[idx as usize].syntax_hint == SyntaxHint::Double
-        {
+        if self.pattern_components[idx as usize].syntax_hint == SyntaxHint::Double {
             return self.collapse_successive_double_wildcards(idx);
         }
         idx
@@ -2206,13 +2210,16 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                 }
                 if let Some(component) = Self::make_component(pattern, start_byte, end_byte) {
                     saw_special = saw_special || component.syntax_hint.is_special_syntax();
+                    let idx = u32::try_from(pattern_components.len()).expect("int cast");
                     if !saw_special {
-                        *basename_excluding_special_syntax_component_idx =
-                            u32::try_from(pattern_components.len()).expect("int cast");
+                        *basename_excluding_special_syntax_component_idx = idx;
                         *end_byte_of_basename_excluding_special_syntax =
                             (i + width).min(pattern_len);
                     }
-                    pattern_components.push(component);
+                    pattern_components.push(Component {
+                        next: idx + 1,
+                        ..component
+                    });
                 }
                 start_byte = i + width;
             } else if c == b'\\' {
@@ -2245,6 +2252,10 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             *basename_excluding_special_syntax_component_idx =
                 u32::try_from(pattern_components.len()).expect("int cast");
             *end_byte_of_basename_excluding_special_syntax = (i + width).min(pattern_len);
+        }
+
+        if let Some(last) = pattern_components.last_mut() {
+            last.next = Component::END;
         }
 
         Ok(())

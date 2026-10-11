@@ -1189,6 +1189,104 @@ describe.skipIf(!canCreateDirSymlink)("literal path segment through a symlinked 
   });
 });
 
+// A `**` does not always lead to the component after it. It stays active below
+// a directory, it folds into a `**` that follows it, and it looks one name
+// ahead.
+describe("what a `**` component leads to", () => {
+  const norm = (paths: string[]) => paths.map(p => p.replaceAll("\\", "/")).sort();
+  const scan = (pattern: string, cwd: string, opts: GlobScanOptions = {}) =>
+    norm([...new Glob(pattern).scanSync({ cwd, ...opts })]);
+  const tree = (prefix: string, files: string[]) => tempDir(prefix, Object.fromEntries(files.map(f => [f, ""])));
+
+  describe("successive `**` fold into one", () => {
+    const files = ["x", "d/x", "a/x", "a/b/x", "a/b/c/x", "a/b/c/d/e/x"];
+    const underAB = ["a/b/x", "a/b/c/x", "a/b/c/d/e/x"];
+    const dirsUnderAB = ["a/b/c", "a/b/c/d", "a/b/c/d/e"];
+    const dirs = ["a", "a/b", "d", ...dirsUnderAB];
+
+    test.each([
+      ["**/**", files, [...files, ...dirs]],
+      ["**/**/x", files, files],
+      ["**/**/*", files, [...files, ...dirs]],
+      ["**/**/**/x", files, files],
+      ["**/**/a/**/**/x", ["a/x", ...underAB], ["a/x", ...underAB]],
+      ["**/a/b/**/**", underAB, [...underAB, ...dirsUnderAB]],
+      ["**/a/b/**/**/x", underAB, underAB],
+      ["**/a/b/**/**/*", underAB, [...underAB, ...dirsUnderAB]],
+    ])("%j", (pattern, onlyFiles, withDirectories) => {
+      using dir = tree("glob-scan-globstar-run", files);
+      expect(scan(pattern, String(dir))).toEqual([...onlyFiles].sort());
+      expect(scan(pattern, String(dir), { onlyFiles: false })).toEqual([...withDirectories].sort());
+    });
+  });
+
+  describe("`**` stays active below a directory that has the name after it", () => {
+    const files = [
+      "b/x/b/f.txt",
+      "b/g.txt",
+      "a/b/a/b/f.txt",
+      "src/vendor/src/index.ts",
+      "src/lib.ts",
+      "nm/p/nm/q/package.json",
+    ];
+
+    test.each([
+      ["**/b/f.txt", ["a/b/a/b/f.txt", "b/x/b/f.txt"]],
+      ["**/src/index.ts", ["src/vendor/src/index.ts"]],
+      ["**/nm/*/package.json", ["nm/p/nm/q/package.json"]],
+      ["**/b/*.txt", ["a/b/a/b/f.txt", "b/g.txt", "b/x/b/f.txt"]],
+      ["**/src/*.ts", ["src/lib.ts", "src/vendor/src/index.ts"]],
+    ])("%j", (pattern, expected) => {
+      using dir = tree("glob-scan-globstar-stays", files);
+      expect(scan(pattern, String(dir))).toEqual(expected);
+      expect(scan(pattern, String(dir), { onlyFiles: false })).toEqual(expected);
+    });
+
+    test("directories are matched the same way", () => {
+      using dir = tree("glob-scan-globstar-stays", files);
+      expect(scan("**/b/*", String(dir), { onlyFiles: false })).toEqual([
+        "a/b/a",
+        "a/b/a/b/f.txt",
+        "b/g.txt",
+        "b/x",
+        "b/x/b/f.txt",
+      ]);
+    });
+
+    test("also when a `**` ends the pattern", () => {
+      using dir = tree("glob-scan-globstar-stays-tail", ["a/b/x", "a/q/a/b/y"]);
+      expect(scan("**/a/b/**", String(dir))).toEqual(["a/b/x", "a/q/a/b/y"]);
+    });
+  });
+
+  describe.skipIf(!canCreateDirSymlink)("`**` looks at the name after it for hidden symlinks", () => {
+    function makeTree() {
+      const dir = tree("glob-scan-globstar-peek", ["real/inner.txt", "sub/keep.txt"]);
+      fs.symlinkSync(path.join("real", "inner.txt"), path.join(String(dir), ".env"), "file");
+      fs.symlinkSync("real", path.join(String(dir), ".dlink"), "dir");
+      fs.symlinkSync(path.join("..", "real", "inner.txt"), path.join(String(dir), "sub", ".env"), "file");
+      return dir;
+    }
+
+    test.each([
+      ["**/.env", [".env", "sub/.env"], [".env", "sub/.env"]],
+      ["sub/**/.env", ["sub/.env"], ["sub/.env"]],
+      ["**", ["real/inner.txt", "sub/keep.txt"], ["real", "real/inner.txt", "sub", "sub/keep.txt"]],
+      ["sub/**", ["sub/keep.txt"], ["sub/keep.txt"]],
+    ])("%j", (pattern, onlyFiles, withDirectories) => {
+      using dir = makeTree();
+      expect(scan(pattern, String(dir), { followSymlinks: true })).toEqual(onlyFiles);
+      expect(scan(pattern, String(dir), { followSymlinks: true, onlyFiles: false })).toEqual(withDirectories);
+    });
+  });
+
+  test("an empty pattern matches nothing and does not open the cwd", () => {
+    using dir = tree("glob-scan-empty-pattern", ["f"]);
+    expect(scan("", String(dir))).toEqual([]);
+    expect(scan("", path.join(String(dir), "missing"))).toEqual([]);
+  });
+});
+
 // A directory the user can read but not write (RX-only grant) must still be
 // descended by the scanner: directory opens used to request FILE_ADD_FILE and
 // fail ACCESS_DENIED there. Elevated tokens bypass the ACL; the precondition

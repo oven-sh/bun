@@ -270,6 +270,12 @@ pub(crate) fn for_file(
 }
 
 impl Classes {
+    /// Whether the package has been looked for from the directory of `path`, in vain.
+    pub(crate) fn has_no_package_for(&self, path: &[u8]) -> bool {
+        let known = self.known.lock();
+        matches!(known.by_directory.get(paths::dirname(path)), Some(None))
+    }
+
     /// Asks Tailwind about the classes that are not known. `Err`: for the user: there are files for which it cannot be
     /// asked. What it says about the others is known all the same.
     pub(crate) fn ask(&self, environment: &Environment) -> Result<(), Vec<u8>> {

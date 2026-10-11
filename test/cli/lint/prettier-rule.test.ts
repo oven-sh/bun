@@ -379,6 +379,22 @@ describe.concurrent("prettier/prettier", () => {
       "a.js:1:2: Delete `··` [Error/bun(format)]",
     ]);
     expect(exitCode).toBe(1);
+    // Without the package the classes stay as they are. With it only `bun format` knows where they go.
+    const classes = {
+      ".oxlintrc.json": files[".oxlintrc.json"],
+      ".oxfmtrc.json": '{ "sortTailwindcss": true }',
+      "bunfig.toml": files["bunfig.toml"],
+      "a.js": 'html`<a class="p-4 flex"></a>`  ;\n',
+      "b.js": 'html`<a class="p-4 flex"></a>`;\n',
+    };
+    const reportsOf = async (files: Record<string, string>) =>
+      (await run(files, "-f", "unix")).stdout.split("\n").filter(it => it.includes("bun(format)"));
+    expect(await reportsOf(classes)).toEqual(["a.js:1:31: Delete `··` [Error/bun(format)]"]);
+    const unchecked = "Files like this are not checked: only bun format asks Tailwind CSS where their classes go.";
+    expect(await reportsOf({ ...classes, "node_modules/tailwindcss/package.json": "{}" })).toEqual([
+      `a.js:1:1: ${unchecked} [Error/bun(format)]`,
+      `b.js:1:1: ${unchecked} [Error/bun(format)]`,
+    ]);
   });
 
   // It is linted script by script, under the name of the file. `--fix` once made one comment of this script.

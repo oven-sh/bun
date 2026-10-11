@@ -190,9 +190,68 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `isContextSensitiveFunctionLikeDeclaration`
     fn is_context_sensitive_function_like_declaration(&self, file: FileId, f: FnId) -> bool {
-        self.has_context_sensitive_parameters(file, f)
-            || self.has_context_sensitive_return_expression(file, f)
-            || self.has_context_sensitive_yield_expression(file, f)
+        /// Of fewer functions in each other nothing is kept.
+        const MANY: usize = 8;
+        // A function that returns nothing but a function is what that one is, unless its own parameters decide. It is asked of
+        // each from every one around it: so not by recursion, and what many of them come to is kept. It depends on the tree alone.
+        let times_cut_short = self.times_cut_short.get();
+        let (mut at, mut passed) = (f, 0);
+        let answer = loop {
+            if let Some(&known) = self.context_sensitive_functions.borrow().get(&(file, at)) {
+                break known;
+            }
+            if self.has_context_sensitive_parameters(file, at) {
+                break true;
+            }
+            let Some(returned) = self.only_function_returned(file, at) else {
+                break self.has_context_sensitive_return_expression(file, at)
+                    || self.has_context_sensitive_yield_expression(file, at);
+            };
+            (at, passed) = (returned, passed + 1);
+        };
+        // Where the stack was low the answer is that of who asked.
+        if passed >= MANY && self.times_cut_short.get() == times_cut_short {
+            let mut known = self.context_sensitive_functions.borrow_mut();
+            let mut at = Some(f);
+            for _ in 0..passed {
+                let Some(it) = at else { break };
+                known.insert((file, it), answer);
+                at = self.only_function_returned(file, it);
+            }
+        }
+        answer
+    }
+
+    /// The function expression that is all that `f` returns, where `hasContextSensitiveReturnExpression` and
+    /// `hasContextSensitiveYieldExpression` ask nothing else.
+    fn only_function_returned(&self, file: FileId, f: FnId) -> Option<FnId> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let func = &hir[f];
+        if !func.type_params.is_empty()
+            || func.ret.is_some()
+            || func.flags.contains(Flags::GENERATOR)
+        {
+            return None;
+        }
+        let value = match func.body {
+            FnBody::None => return None,
+            FnBody::Expr(body) => body,
+            FnBody::Block(_) => {
+                let mut returns = bound.ids(bound.fns[f.idx()].returns);
+                match (returns.next().map(|s| hir[s].kind), returns.next()) {
+                    (Some(StmtKind::Return(value)), None) if value.is_some() => value,
+                    _ => return None,
+                }
+            }
+        };
+        match hir[value].kind {
+            ExprKind::Fn(returned)
+                if !matches!(hir[returned].kind, FnKind::Getter | FnKind::Setter) =>
+            {
+                Some(returned)
+            }
+            _ => None,
+        }
     }
 
     /// `HasContextSensitiveParameters`

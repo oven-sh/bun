@@ -182,6 +182,7 @@ impl Checker<'_, '_> {
         self.provisional.clear();
         self.refused_expressions.clear();
         self.side_effect_free.get_mut().clear();
+        self.context_sensitive_functions.get_mut().clear();
         self.work_trap = WORK_TRAP_DISARMED;
         self.limits = 0;
         // tsgo never resets it, so each of its checkers reports nothing that needs the type of a

@@ -634,20 +634,54 @@ pub(crate) struct Resolved {
 }
 
 /// Adds what the `tsconfig.json` at `path` says about JSX, after what the files that it extends say.
-fn read_tsconfig(path: &[u8], settings: &mut Settings, depth: u32) {
-    let Some(json) = fs::read(path)
-        .ok()
-        .and_then(|text| bun_lint::json::parse(&text))
-    else {
-        return;
+fn read_tsconfig(path: &[u8], settings: &mut Settings) {
+    struct Open {
+        path: Vec<u8>,
+        json: Json,
+        /// How many of the files that it extends have been looked at.
+        extended: usize,
+    }
+    let open = |path: Vec<u8>| {
+        let json = bun_lint::json::parse(&fs::read(&path).ok()?)?;
+        Some(Open {
+            path,
+            json,
+            extended: 0,
+        })
     };
-    let extended: Vec<&[u8]> = match json.get(b"extends") {
-        Some(Json::String(one)) => vec![one],
-        Some(Json::Array(all)) => all.iter().filter_map(Json::as_str).collect(),
-        _ => Vec::new(),
-    };
-    let directory = paths::dirname(path);
-    for name in extended.into_iter().filter(|_| depth < 16) {
+    // Each extends the next.
+    let mut chain = Vec::from_iter(open(path.to_vec()));
+    while let Some(last) = chain.last_mut() {
+        let extended = match last.json.get(b"extends") {
+            Some(one @ Json::String(_)) => std::slice::from_ref(one),
+            Some(Json::Array(all)) => &all[..],
+            _ => &[],
+        };
+        let Some(name) = extended.get(last.extended) else {
+            for name in [
+                &b"jsx"[..],
+                b"jsxFactory",
+                b"jsxFragmentFactory",
+                b"reactNamespace",
+            ] {
+                if let Some(value) = (last.json)
+                    .get(b"compilerOptions")
+                    .and_then(|it| it.get(name))
+                    .and_then(Json::as_str)
+                {
+                    let name = [b"tsconfig.", name].concat();
+                    settings.retain(|it| it.0 != name);
+                    settings.push((name, value.to_vec()));
+                }
+            }
+            chain.pop();
+            continue;
+        };
+        last.extended += 1;
+        let Some(name) = name.as_str() else {
+            continue;
+        };
+        let directory = paths::dirname(&last.path);
         let candidates = |base: Vec<u8>| {
             [
                 base.clone(),
@@ -664,25 +698,9 @@ fn read_tsconfig(path: &[u8], settings: &mut Settings, depth: u32) {
                 .flat_map(|it| candidates(paths::join(&paths::join(it, b"node_modules"), name)))
                 .find(|it| fs::is_file(it)),
         };
-        if let Some(found) = found {
-            read_tsconfig(&found, settings, depth + 1);
-        }
-    }
-    for name in [
-        &b"jsx"[..],
-        b"jsxFactory",
-        b"jsxFragmentFactory",
-        b"reactNamespace",
-    ] {
-        if let Some(value) = json
-            .get(b"compilerOptions")
-            .and_then(|it| it.get(name))
-            .and_then(Json::as_str)
-        {
-            let name = [b"tsconfig.", name].concat();
-            settings.retain(|it| it.0 != name);
-            settings.push((name, value.to_vec()));
-        }
+        // Not one that extends itself.
+        let found = found.filter(|found| chain.iter().all(|it| it.path != *found));
+        chain.extend(found.and_then(open));
     }
 }
 
@@ -1510,7 +1528,7 @@ impl<'c> Configs<'c> {
             .find(|it| fs::is_file(it));
         let mut settings = Settings::new();
         if let Some(path) = nearest {
-            read_tsconfig(&path, &mut settings, 0);
+            read_tsconfig(&path, &mut settings);
         }
         let settings = Arc::new(settings);
         self.tsconfigs

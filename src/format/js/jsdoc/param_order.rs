@@ -52,17 +52,13 @@ pub(super) fn reorder_param_tags<'a>(
     });
 }
 
-/// How deep in the tree the function is looked for. A chain of calls can be as long as the file, with a comment
-/// in each call.
-const MAX_DEPTH: usize = 256;
-
 /// The function whose head starts with what follows the comment that ends at `comment_end`.
 fn function_behind<'a>(file: &'a File<'a>, comment_end: u32) -> Option<Func<'a>> {
     let after = file.text().get(comment_end as usize..)?;
     let start = comment_end
         + (after.len() - bun_core::strings::trim_unicode_whitespace_start(after).len()) as u32;
     let mut node = Node::File(file);
-    for _ in 0..MAX_DEPTH {
+    loop {
         let mut child_at_start = None;
         node.for_each_child_near(start, |child| {
             if child_at_start.is_none() && child.span().contains_offset(start) {
@@ -76,7 +72,6 @@ fn function_behind<'a>(file: &'a File<'a>, comment_end: u32) -> Option<Func<'a>>
             return Some(func);
         }
     }
-    None
 }
 
 /// The function that `node` is or declares. oxfmt looks for the `(` of the parameters in the text behind the

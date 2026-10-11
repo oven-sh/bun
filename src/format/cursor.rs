@@ -1690,9 +1690,7 @@ struct Path {
 ///
 /// Prettier adds up the lengths of what is added or kept before the run of removals with the cursor
 /// in it. Removals do not add to that, so it is what has been added or kept when the cursor goes.
-///
-/// `None` if there are more than `max_differences`: the time it takes is quadratic in their number.
-fn units_before_cursor(old: &[Unit], new: &[Unit], max_differences: i64) -> Option<usize> {
+fn units_before_cursor(old: &[Unit], new: &[Unit]) -> usize {
     let (old_len, new_len) = (old.len() as i64, new.len() as i64);
 
     // `extractCommon`. Returns the last unit of the new text that is dealt with.
@@ -1712,10 +1710,12 @@ fn units_before_cursor(old: &[Unit], new: &[Unit], max_differences: i64) -> Opti
         path.old_pos - diagonal
     };
 
-    let max_edit_length = (old_len + new_len).min(max_differences);
-    // `bestPath[diagonal]` is at `diagonal + max_edit_length + 1`.
-    let mut best_path: Vec<Option<Path>> = vec![None; (2 * max_edit_length + 3) as usize];
-    let slot = |diagonal: i64| (diagonal + max_edit_length + 1) as usize;
+    // `bestPath[diagonal]`: 0, -1, 1, -2, 2 and so on. It grows with the number of changes.
+    let mut best_path: Vec<Option<Path>> = Vec::new();
+    let slot = |diagonal: i64| match diagonal < 0 {
+        true => (-2 * diagonal - 1) as usize,
+        false => (2 * diagonal) as usize,
+    };
 
     let mut first = Path {
         old_pos: -1,
@@ -1723,12 +1723,14 @@ fn units_before_cursor(old: &[Unit], new: &[Unit], max_differences: i64) -> Opti
     };
     let new_pos = extract_common(&mut first, 0);
     if first.old_pos + 1 >= old_len && new_pos + 1 >= new_len {
-        return Some(first.new_units_before_cursor as usize);
+        return first.new_units_before_cursor as usize;
     }
-    best_path[slot(0)] = Some(first);
+    best_path.push(Some(first));
 
     let (mut min_diagonal, mut max_diagonal) = (i64::MIN, i64::MAX);
-    for edit_length in 1..=max_edit_length {
+    // To remove all of `old` and to add all of `new` is that many changes.
+    for edit_length in 1..=old_len + new_len {
+        best_path.resize(slot(edit_length + 1) + 1, None);
         let mut diagonal = min_diagonal.max(-edit_length);
         while diagonal <= max_diagonal.min(edit_length) {
             let remove_path = best_path[slot(diagonal - 1)].take();
@@ -1753,7 +1755,7 @@ fn units_before_cursor(old: &[Unit], new: &[Unit], max_differences: i64) -> Opti
             };
             let new_pos = extract_common(&mut base, diagonal);
             if base.old_pos + 1 >= old_len && new_pos + 1 >= new_len {
-                return Some(base.new_units_before_cursor as usize);
+                return base.new_units_before_cursor as usize;
             }
             best_path[slot(diagonal)] = Some(base);
             if base.old_pos + 1 >= old_len {
@@ -1764,25 +1766,6 @@ fn units_before_cursor(old: &[Unit], new: &[Unit], max_differences: i64) -> Opti
             }
             diagonal += 2;
         }
-    }
-    None
-}
-
-/// What stands in for the comparison if there are too many differences: the cursor is behind as
-/// many characters that are not blanks as before.
-fn bytes_before_cursor_by_count(old: &[u8], cursor: usize, new: &[u8]) -> usize {
-    let is_blank = |byte: &&u8| byte.is_ascii_whitespace();
-    let mut count = old
-        .get(..cursor)
-        .unwrap_or(old)
-        .iter()
-        .filter(|byte| !is_blank(byte))
-        .count();
-    for (at, byte) in new.iter().enumerate() {
-        if count == 0 {
-            return at;
-        }
-        count -= usize::from(!byte.is_ascii_whitespace());
     }
     new.len()
 }
@@ -1871,14 +1854,7 @@ fn resolve(
     }
     old_units.insert(units_before, CURSOR);
 
-    const MAX_DIFFERENCES: i64 = 20_000;
-    new_start
-        + units_before_cursor(&old_units, &new_units, MAX_DIFFERENCES).unwrap_or_else(|| {
-            let bytes = bytes_before_cursor_by_count(old_text, cursor, new_text);
-            bun_core::strings::element_length_utf8_into_utf16(
-                new_text.get(..bytes).unwrap_or(new_text),
-            )
-        })
+    new_start + units_before_cursor(&old_units, &new_units)
 }
 
 /// `options.cursor_offset`, which counts UTF-16 code units, as an offset in `source`. Prettier's

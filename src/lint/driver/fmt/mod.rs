@@ -233,15 +233,10 @@ fn write_frame<'a>(out: &mut Vec<u8>, lines: &(impl Lines<'a> + ?Sized), line: u
         lines_above: 2,
         lines_below: 3,
     };
-    // Not lines that nobody has written, which fill the screen.
-    let first = line.saturating_sub(frame.lines_above).max(1);
-    let last = line.saturating_add(frame.lines_below).min(lines.count());
-    if (first..=last).all(|it| lines.line(it).len() <= 1000) {
-        let len = out.len();
-        out.push(b'\n');
-        if !code_frame::write(out, lines, &frame) {
-            out.truncate(len);
-        }
+    let len = out.len();
+    out.push(b'\n');
+    if !code_frame::write(out, lines, &frame) {
+        out.truncate(len);
     }
 }
 

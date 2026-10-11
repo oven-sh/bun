@@ -588,6 +588,69 @@ pub(crate) fn js_node_test_mark_result(
     Ok(JSValue::UNDEFINED)
 }
 
+// The frame of one `node:test` `run()` event on the child's stdout. The parent's
+// half, and the reason for each byte, is `src/js/internal/test_runner/run_frames.ts`.
+const RUN_FRAME_LEAD: u8 = 0xFF;
+const RUN_FRAME_TAG: &[u8] = b"bun:test:run";
+const RUN_FRAME_END: u8 = 0xFE;
+const RUN_FRAME_MAX_PAYLOAD: usize = 64 * 1024 * 1024;
+
+/// Reached only from `node:test` in a `run()` child: writes `event` to stdout as
+/// one frame, all of it before returning, after what `process.stdout` (its sink
+/// is `stdout_sink`) still holds. Returns false, with nothing written, when the
+/// JSON of the event is over the bound. The drain and the raw write are the
+/// stopgap `FileSink::drain_sync` describes.
+pub(crate) fn js_node_test_write_run_frame(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    let [event, stdout_sink] = callframe.arguments_as_array::<2>();
+    let json = event.json_stringify_fast(global)?;
+    if json.tag() == bun_core::Tag::Dead {
+        return Ok(JSValue::FALSE);
+    }
+    let payload = json.to_utf8();
+    if payload.len() > RUN_FRAME_MAX_PAYLOAD {
+        return Ok(JSValue::FALSE);
+    }
+    let mut frame = Vec::with_capacity(1 + RUN_FRAME_TAG.len() + 4 + payload.len() + 1);
+    frame.push(RUN_FRAME_LEAD);
+    frame.extend_from_slice(RUN_FRAME_TAG);
+    frame.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+    frame.extend_from_slice(&payload);
+    frame.push(RUN_FRAME_END);
+
+    if let Some(sink) = crate::webcore::file_sink::JSSink::from_js(stdout_sink) {
+        // SAFETY: `from_js` returned the live `*mut JSSink<FileSink>` behind the JS
+        // wrapper, which is `repr(transparent)` over the `FileSink` it was allocated as.
+        let sink: *mut crate::webcore::FileSink = sink.cast();
+        #[cfg(unix)]
+        {
+            // SAFETY: `sink` is that canonical live pointer.
+            let _ = unsafe { crate::webcore::FileSink::drain_sync(sink) };
+        }
+        // A Windows sink cannot be drained from here, so a frame goes behind
+        // what the sink still holds and out with it.
+        #[cfg(windows)]
+        {
+            // SAFETY: `sink` is that canonical live pointer; `write` queues and does not run JS.
+            let queued = unsafe {
+                !(*sink).done.get()
+                    && (*sink).writer.get().has_pending_data()
+                    && !matches!(
+                        (*sink).writer.with_mut(|w| w.write(&frame)),
+                        bun_io::WriteResult::Err(_) | bun_io::WriteResult::Done(_)
+                    )
+            };
+            if queued {
+                return Ok(JSValue::TRUE);
+            }
+        }
+    }
+    let _ = Output::raw_writer().write(&frame);
+    Ok(JSValue::TRUE)
+}
+
 pub(crate) mod on_unhandled_rejection {
     use super::*;
 

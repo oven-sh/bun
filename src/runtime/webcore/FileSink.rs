@@ -1003,6 +1003,91 @@ impl FileSink {
         sys::Result::Ok(())
     }
 
+    /// Writes everything queued in the writer to the fd now, waiting (`poll`)
+    /// while the fd is full, so that bytes `process.stdout.write()` had to queue
+    /// do not come out after what the caller writes to the same fd next.
+    ///
+    /// A stopgap with one caller, the frames of `node:test`'s `run()`
+    /// (`js_node_test_write_run_frame`): `console.*` writes fd 1 directly while
+    /// `process.stdout` queues here, and both this and that raw write go away
+    /// when the two share one sink (the TODO in `constructStdioWriteStream`,
+    /// BunProcess.cpp). Unix only: a Windows sink sends its queue from a libuv
+    /// callback, so another caller needs a Windows implementation first.
+    ///
+    /// # Safety
+    /// `this` must be the canonical live `*mut FileSink` (see
+    /// [`on_attached_process_exit`](Self::on_attached_process_exit)). A pending
+    /// write settles on a task, not from here; a source parked on backpressure
+    /// resumes from here, as in [`on_auto_flush`](Self::on_auto_flush).
+    #[cfg(unix)]
+    pub(crate) unsafe fn drain_sync(this: *mut FileSink) -> sys::Result<()> {
+        use bun_io::pipe_writer::PosixPipeWriter;
+        // SAFETY: caller contract — `this` is live with write+dealloc provenance.
+        unsafe {
+            // After `end()` the writable poll drains the tail and drops the ref.
+            if (*this).done.get() || !(*this).writer.get().has_pending_data() {
+                return Ok(());
+            }
+            let _guard = RefPtr::init_ref(this);
+
+            let mut result = Ok(());
+            while (*this).writer.get().has_pending_data() {
+                // SAFETY(JsCell): `IOWriter::flush` is pure I/O; it does not call `on_write`.
+                match (*this).writer.with_mut(|w| w.flush()) {
+                    WriteResult::Err(err) => {
+                        // As in `on_auto_flush`: `flush()` does not route a write
+                        // error through `_on_error`, so latch it and end the sink.
+                        (*this).record_stream_error(streams::StreamError::Error(err.clone()));
+                        (*this).done.set(true);
+                        if (*this).pending.get().state == streams::PendingState::Pending {
+                            (*this)
+                                .pending
+                                .with_mut(|p| p.result = streams::Writable::Err(err.clone()));
+                        }
+                        (*this).writer.with_mut(|w| w.end());
+                        result = Err(err);
+                        break;
+                    }
+                    WriteResult::Done(written) => {
+                        (*this).written.set((*this).written.get() + written);
+                        break;
+                    }
+                    WriteResult::Wrote(written) | WriteResult::Pending(written) => {
+                        (*this).written.set((*this).written.get() + written);
+                        if (*this).writer.get().has_pending_data() {
+                            // Another writer of the fd can take the space between
+                            // this wake-up and the next write, so wait again.
+                            let fd = PosixPipeWriter::get_fd((*this).writer.get());
+                            if fd == Fd::INVALID {
+                                break;
+                            }
+                            let mut pollfd = [sys::posix::PollFd {
+                                fd: fd.native(),
+                                events: sys::posix::POLL_OUT,
+                                revents: 0,
+                            }];
+                            if sys::posix::poll(&mut pollfd, -1).is_err() {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // `flush()` bypasses `on_write`: release what it holds while bytes
+            // are queued, and settle a write that waited on them on the next tick.
+            (*this).update_ref(false);
+            if (*this).pending.get().state == streams::PendingState::Pending {
+                (*this).run_pending_later();
+            }
+            if result.is_ok() && (*this).source_pending_pull.replace(false) {
+                let mut src = *(*this).source.get();
+                src.ready(None, None);
+            }
+            result
+        }
+    }
+
     pub(crate) fn flush_from_js(
         &self,
         cx: &bun_jsc::JsThread<'_>,

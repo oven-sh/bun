@@ -697,6 +697,8 @@ impl Run<'_> {
         let mut without_types: Vec<&Target> = Vec::with_capacity(supported.len());
         let mut with_types: Vec<(&Target, Typed)> = Vec::new();
         let mut rules_without_types: Vec<&'static str> = Vec::new();
+        // The configurations whose rules are in that list. Many files have one.
+        let (mut listed, mut last) = (FxHashSet::default(), None);
         for target in &supported {
             let Status::Matched(config) = &target.status else {
                 without_types.push(target);
@@ -723,12 +725,16 @@ impl Run<'_> {
                 }
                 continue;
             }
+            without_types.push(target);
+            let config = Arc::as_ptr(config);
+            if last.replace(config) == Some(config) || !listed.insert(config) {
+                continue;
+            }
             for rule in needing.map(|it| it.entry.meta.name) {
                 if !rules_without_types.contains(&rule) {
                     rules_without_types.push(rule);
                 }
             }
-            without_types.push(target);
         }
         // oxlint leaves them out too, and says nothing.
         if !rules_without_types.is_empty() && !is_oxlint {

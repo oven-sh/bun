@@ -1652,20 +1652,26 @@ pub(crate) fn sorted(diagnostics: &[Diagnostic], when: &[When]) -> Vec<u32> {
     order.into_iter().map(|place| place as u32).collect()
 }
 
-/// Calls `add` with each of [`On::ROWS`] for which `file` has something. `wants(sort)`: whether a row of `On::KINDS[sort]` matters:
-/// what groups the nodes of a sort is called only then. `wants_chains`: the same for the row of the optional chains.
+/// A bit for each of [`On::ROWS`].
+type Rows = [u64; On::ROWS.div_ceil(64)];
+
+/// Those of [`On::ROWS`] for which `file` has something. `wants(sort)`: whether a row of `On::KINDS[sort]` matters: what groups
+/// the nodes of a sort is called only then. `wants_chains`: the same for the row of the optional chains.
 #[inline]
-fn each_row_of<'a>(
-    file: &'a File<'a>,
-    wants: impl Fn(usize) -> bool,
-    wants_chains: bool,
-    mut add: impl FnMut(usize),
-) {
-    add(On::ALWAYS);
+fn rows_of<'a>(file: &'a File<'a>, wants: impl Fn(usize) -> bool, wants_chains: bool) -> Rows {
+    let mut rows: Rows = [0; _];
+    // `bits`: of the rows from `first` on.
+    let mut add = |first: usize, bits: u64| {
+        rows[first / 64] |= bits << (first % 64);
+        if !first.is_multiple_of(64) && first / 64 + 1 < rows.len() {
+            rows[first / 64 + 1] |= bits >> (64 - first % 64);
+        }
+    };
+    add(On::ALWAYS, 1);
     macro_rules! kinds {
         ($($sort:literal $present:ident;)*) => {
             $(if wants($sort) {
-                each_bit(file.$present(), |kind| add(On::KINDS[$sort].0 + kind));
+                add(On::KINDS[$sort].0, file.$present());
             })*
         };
     }
@@ -1677,15 +1683,14 @@ fn each_row_of<'a>(
         4 present_types;
         5 present_pats;
     }
-    if wants_chains && file.present_chained() != 0 {
-        add(On::SORTS);
-    }
+    add(
+        On::SORTS,
+        u64::from(wants_chains && file.present_chained() != 0),
+    );
     // After `optional_chains`, in the order of the bits of `On`.
     macro_rules! sorts {
         ($($bit:literal $field:ident;)*) => {
-            $(if !file.hir.$field.is_empty() {
-                add(On::SORTS + $bit);
-            })*
+            $(add(On::SORTS + $bit, u64::from(!file.hir.$field.is_empty()));)*
         };
     }
     sorts! {
@@ -1701,11 +1706,19 @@ fn each_row_of<'a>(
         10 import_specs;
         11 export_specs;
     }
+    rows
+}
+
+/// Calls `visit` with the number of each of `rows`.
+#[inline(always)]
+fn each_row(rows: &Rows, mut visit: impl FnMut(usize)) {
+    for (word, &bits) in rows.iter().enumerate() {
+        each_bit(bits, |bit| visit(64 * word + bit));
+    }
 }
 
 /// Those of `enabled` for which `file` has something: all others would not be started.
 pub fn listening<'a, S: RuleSet>(file: &'a File<'a>, enabled: &RuleBits) -> RuleBits {
-    let rows = S::LISTENS;
     let mut all = RuleBits::EMPTY;
     if *enabled == all {
         return all;
@@ -1715,16 +1728,18 @@ pub fn listening<'a, S: RuleSet>(file: &'a File<'a>, enabled: &RuleBits) -> Rule
         let both = enabled.0.iter().zip(&row.0);
         both.fold(0, |any, (a, b)| any | (a & b)) != 0
     };
-    each_row_of(
+    let rows = rows_of(
         file,
         |sort| is_wanted(&S::LISTENS_TO_KINDS[sort]),
-        is_wanted(&rows[On::SORTS]),
-        |row| {
-            for (to, from) in all.0.iter_mut().zip(&rows[row].0) {
+        is_wanted(&S::LISTENS[On::SORTS]),
+    );
+    each_row(&rows, |row| {
+        if let Some(row) = S::LISTENS.get(row) {
+            for (to, from) in all.0.iter_mut().zip(&row.0) {
                 *to |= from;
             }
-        },
-    );
+        }
+    });
     for (to, from) in all.0.iter_mut().zip(&enabled.0) {
         *to &= from;
     }
@@ -1784,22 +1799,40 @@ impl Listeners {
 
     /// The places of those for which `file` has something: all others would not be started.
     pub(crate) fn of<'a>(&self, file: &'a File<'a>) -> Places {
-        let mut all = Places::from_elem(0, self.words);
         if self.words == 0 {
-            return all;
+            return Places::new();
         }
-        each_row_of(
-            file,
-            |sort| self.wants[sort],
-            self.wants_chains,
-            |row| {
-                let row = self.rows.get(row * self.words..(row + 1) * self.words);
-                for (to, from) in all.iter_mut().zip(row.unwrap_or_default()) {
+        let rows = rows_of(file, |sort| self.wants[sort], self.wants_chains);
+        match self.words {
+            1 => self.joined::<1>(&rows),
+            2 => self.joined::<2>(&rows),
+            3 => self.joined::<3>(&rows),
+            4 => self.joined::<4>(&rows),
+            words => {
+                let mut all = Places::from_elem(0, words);
+                each_row(&rows, |row| {
+                    let row = self.rows.get(row * words..(row + 1) * words);
+                    for (to, from) in all.iter_mut().zip(row.unwrap_or_default()) {
+                        *to |= from;
+                    }
+                });
+                all
+            }
+        }
+    }
+
+    /// `rows` of them joined, where a row has `WORDS` words.
+    fn joined<const WORDS: usize>(&self, rows: &Rows) -> Places {
+        let (all_rows, _) = self.rows.as_chunks::<WORDS>();
+        let mut all = [0; WORDS];
+        each_row(rows, |row| {
+            if let Some(row) = all_rows.get(row) {
+                for (to, from) in all.iter_mut().zip(row) {
                     *to |= from;
                 }
-            },
-        );
-        all
+            }
+        });
+        Places::from_slice(&all)
     }
 }
 

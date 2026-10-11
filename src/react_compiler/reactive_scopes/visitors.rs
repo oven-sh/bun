@@ -9,8 +9,8 @@
 
 use crate::diagnostics::CompilerError;
 use crate::hir::{
-    EvaluationOrder, FunctionId, Place, PrunedReactiveScopeBlock, ReactiveBlock, ReactiveFunction,
-    ReactiveInstruction, ReactiveScopeBlock, ReactiveStatement, ReactiveTerminal,
+    EvaluationOrder, FunctionId, InstructionValue, Place, PrunedReactiveScopeBlock, ReactiveBlock,
+    ReactiveFunction, ReactiveInstruction, ReactiveScopeBlock, ReactiveStatement, ReactiveTerminal,
     ReactiveTerminalStatement, ReactiveValue, environment::Environment,
 };
 
@@ -50,16 +50,10 @@ pub(crate) trait ReactiveFunctionVisitor {
             let place = param.place();
             self.visit_param(place, state);
         }
-        let block_ids: Vec<_> = inner_func.body.blocks.keys().copied().collect();
-        for block_id in block_ids {
-            let inner_func = &self.env().functions[func_id.0 as usize];
-            let block = &inner_func.body.blocks[&block_id];
-            let instr_ids = block.instructions.clone();
-            let terminal_operands = crate::hir::visitors::each_terminal_operand(&block.terminal);
+        for block in inner_func.body.blocks.values() {
             let terminal_id = block.terminal.evaluation_order();
 
-            for instr_id in &instr_ids {
-                let inner_func = &self.env().functions[func_id.0 as usize];
+            for instr_id in &block.instructions {
                 let instr = &inner_func.instructions[instr_id.0 as usize];
                 // Build a temporary ReactiveInstruction for the visitor
                 let reactive_instr = ReactiveInstruction {
@@ -71,7 +65,7 @@ pub(crate) trait ReactiveFunctionVisitor {
                 };
                 self.visit_instruction(&reactive_instr, state);
             }
-            for operand in &terminal_operands {
+            for operand in crate::hir::visitors::terminal_operands(&block.terminal) {
                 self.visit_place(terminal_id, operand, state);
             }
         }
@@ -115,9 +109,7 @@ pub(crate) trait ReactiveFunctionVisitor {
                 self.visit_value(*seq_id, inner, state);
             }
             ReactiveValue::Instruction(instr_value) => {
-                let operands =
-                    crate::hir::visitors::each_instruction_value_operand(instr_value, self.env());
-                for place in &operands {
+                for place in crate::hir::visitors::operands(instr_value, &self.env().functions) {
                     self.visit_place(id, place, state);
                 }
             }
@@ -136,8 +128,8 @@ pub(crate) trait ReactiveFunctionVisitor {
         }
         // Visit value-level lvalues (TS: eachInstructionValueLValue)
         if let ReactiveValue::Instruction(iv) = &instruction.value {
-            for place in crate::hir::visitors::each_instruction_value_lvalue(iv) {
-                self.visit_lvalue(instruction.id, &place, state);
+            for place in crate::hir::visitors::value_lvalues(iv) {
+                self.visit_lvalue(instruction.id, place, state);
             }
         }
         self.visit_value(instruction.id, &instruction.value, state);
@@ -416,12 +408,21 @@ pub(crate) trait ReactiveFunctionTransform {
                 }
                 self.transform_value(seq_id, inner, state)?;
             }
-            ReactiveValue::Instruction(instr_value) => {
+            ReactiveValue::Instruction(
+                InstructionValue::FunctionExpression { lowered_func, .. }
+                | InstructionValue::ObjectMethod { lowered_func, .. },
+            ) => {
                 // Collect operands before visiting to avoid borrow conflict
                 // (self.env() borrows self immutably, self.visit_place() needs &mut self).
-                let operands =
-                    crate::hir::visitors::each_instruction_value_operand(instr_value, self.env());
-                for place in &operands {
+                let context = self.env().functions[lowered_func.func.0 as usize]
+                    .context
+                    .clone();
+                for place in &context {
+                    self.visit_place(id, place, state)?;
+                }
+            }
+            ReactiveValue::Instruction(instr_value) => {
+                for place in crate::hir::visitors::operands(instr_value, &[]) {
                     self.visit_place(id, place, state)?;
                 }
             }
@@ -458,8 +459,8 @@ pub(crate) trait ReactiveFunctionTransform {
         }
         // Visit value-level lvalues (TS: eachInstructionValueLValue)
         if let ReactiveValue::Instruction(iv) = &instruction.value {
-            for place in crate::hir::visitors::each_instruction_value_lvalue(iv) {
-                self.visit_lvalue(instruction.id, &place, state)?;
+            for place in crate::hir::visitors::value_lvalues(iv) {
+                self.visit_lvalue(instruction.id, place, state)?;
             }
         }
         self.transform_value(instruction.id, &mut instruction.value, state)?;
@@ -680,6 +681,17 @@ pub(crate) trait ReactiveFunctionTransform {
         if !self.env().has_stack() {
             return Err(crate::lowering::nested_too_deeply().into());
         }
+        // `block` is discarded once there is a `next_block`.
+        fn take(statement: &mut ReactiveStatement) -> ReactiveStatement {
+            let placeholder = ReactiveStatement::Instruction(ReactiveInstruction {
+                id: EvaluationOrder(0),
+                lvalue: None,
+                value: ReactiveValue::Instruction(InstructionValue::Debugger { loc: None }),
+                effects: None,
+                loc: None,
+            });
+            std::mem::replace(statement, placeholder)
+        }
         let mut next_block: Option<Vec<ReactiveStatement>> = None;
         let len = block.len();
         for i in 0..len {
@@ -699,35 +711,21 @@ pub(crate) trait ReactiveFunctionTransform {
             match transformed {
                 Transformed::Keep => {
                     if let Some(ref mut nb) = next_block {
-                        // `block` is discarded.
-                        let placeholder = ReactiveStatement::Instruction(ReactiveInstruction {
-                            id: EvaluationOrder(0),
-                            lvalue: None,
-                            value: ReactiveValue::Instruction(
-                                crate::hir::InstructionValue::Debugger { loc: None },
-                            ),
-                            effects: None,
-                            loc: None,
-                        });
-                        nb.push(std::mem::replace(&mut block[i], placeholder));
+                        nb.push(take(&mut block[i]));
                     }
                 }
                 Transformed::Remove => {
-                    if next_block.is_none() {
-                        next_block = Some(block[..i].to_vec());
-                    }
+                    next_block.get_or_insert_with(|| block[..i].iter_mut().map(take).collect());
                 }
                 Transformed::Replace(replacement) => {
-                    if next_block.is_none() {
-                        next_block = Some(block[..i].to_vec());
-                    }
-                    next_block.as_mut().unwrap().push(replacement);
+                    next_block
+                        .get_or_insert_with(|| block[..i].iter_mut().map(take).collect())
+                        .push(replacement);
                 }
                 Transformed::ReplaceMany(replacements) => {
-                    if next_block.is_none() {
-                        next_block = Some(block[..i].to_vec());
-                    }
-                    next_block.as_mut().unwrap().extend(replacements);
+                    next_block
+                        .get_or_insert_with(|| block[..i].iter_mut().map(take).collect())
+                        .extend(replacements);
                 }
             }
         }

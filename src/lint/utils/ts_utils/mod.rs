@@ -27,7 +27,6 @@
 //!
 //! | upstream | here |
 //! | --- | --- |
-//! | `astUtils.ts`: `getNameLocationInGlobalDirectiveComment(sourceCode, comment, name)` | [`get_name_location_in_global_directive_comment`]`(&comment, name)` |
 //! | `astUtils.ts`: `forEachReturnStatement(body, visitor)` | [`for_each_return_statement`]`(func, visitor)`, or `func.returns()` |
 //! | `astUtils.ts`: `forEachChildESTree(node, callback)` | [`for_each_child_estree`] |
 //! | `escapeRegExp.ts` | [`escape_reg_exp`] |
@@ -56,7 +55,6 @@
 //! | `isHigherPrecedenceThanAwait.ts` | [`is_higher_precedence_than_await`]`(expr)` |
 //! | `isStartOfExpressionStatement.ts`, `isStartOfExpressionStatementNeedingParentheses.ts`, `isStartOfArrowFunctionBodyNeedingParentheses.ts`, `needsPrecedingSemiColon.ts` | the same in snake case. A token is a `&Token` |
 //! | `isTypeImport.ts` | [`is_type_import`]`(declaration)` |
-//! | `skipChainExpression.ts` | [`skip_chain_expression`], the identity |
 //! | `walkStatements.ts` | [`walk_statements`]`(statements)`, an iterator |
 //! | `misc.ts`: `isDefinitionFile`, `upperCaseFirst`, `formatWordList`, `typeNodeRequiresParentheses`, `isRestParameterDeclaration`, `isParenlessArrowFunction`, `getNameFromIndexSignature` | the same in snake case |
 //! | `misc.ts`: `getNameFromMember`, `MemberNameType` | [`get_name_from_member`]`(member_or_prop)` returns a [`MemberName`], [`MemberNameType`] |
@@ -91,8 +89,7 @@ pub use statement_start::*;
 pub use wrapping_fixer::*;
 
 pub use super::ast_utils::{
-    get_name_location_in_global_directive_comment, get_static_string_value, is_function, is_loop,
-    is_null_literal, is_start_of_expression_statement, is_token_on_same_line,
-    skip_chain_expression,
+    get_static_string_value, is_function, is_loop, is_null_literal,
+    is_start_of_expression_statement, is_token_on_same_line,
 };
 pub use super::text::{escape_reg_exp, upper_case_first};

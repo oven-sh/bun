@@ -5,7 +5,7 @@
 //! | `node.type`, as text for a message | [`estree_type_name`] |
 //! | `node.range` where it differs from `.span()` | [`estree_span`] |
 //! | `node.parent`, for a walk that compares `type`s | [`estree_parent`], [`normalize`] |
-//! | `ChainExpression` | [`is_chain_root`], [`chain_root`], [`is_in_optional_chain`] |
+//! | `ChainExpression` | [`is_chain_root`] |
 //! | `SequenceExpression.expressions` | [`sequence_expressions`], [`is_sequence_root`], [`sequence_root`] |
 //! | `ExpressionStatement`, as opposed to the `init` of a `for` | [`is_expression_statement`], [`is_for_init`] |
 //! | `TSQualifiedName` in `typeof a.b` | [`is_in_type_query`] |
@@ -14,7 +14,6 @@
 //! | `TSTypeAnnotation.range` | [`type_annotation_span`] |
 //! | `sourceCode.getNodeByRangeIndex(i)` | [`get_node_by_range_index`] |
 //! | `sourceCode.getNodeByRangeIndex(i).type` | [`estree_type_at`](super::estree_type_at) |
-//! | `CatchClause.range` | [`catch_clause_span`] |
 
 use crate::ast::{
     BinOp, Class, Expr, ExprKind, File, Flags, FnKind, Func, Key, Keyword, MemberKind, Name, Node,
@@ -32,28 +31,6 @@ use smallvec::SmallVec;
 #[inline]
 pub fn is_chain_root(e: Expr<'_>) -> bool {
     e.is_chain_root()
-}
-
-/// The whole optional chain that `e` is a link of: what ESTree has a `ChainExpression` around.
-/// `None` if `e` is not in a chain, or is before its first `?.`: the `a` of `a?.b`.
-pub fn chain_root(e: Expr<'_>) -> Option<Expr<'_>> {
-    if !e.is_in_optional_chain() {
-        return None;
-    }
-    let mut root = e;
-    while !root.is_chain_root()
-        && let Some(parent) = root.parent().as_expr()
-    {
-        root = parent;
-    }
-    Some(root)
-}
-
-/// [`Expr::is_in_optional_chain`]: evaluating `e` can be cut short by a `?.` in it or before it in
-/// the same chain.
-#[inline]
-pub fn is_in_optional_chain(e: Expr<'_>) -> bool {
-    e.is_in_optional_chain()
 }
 
 // ───────────────────────────── the comma operator ─────────────────────────────
@@ -745,13 +722,6 @@ pub fn type_annotation_span(ty: TypeNode<'_>) -> Span {
     ty.annotation_span()
 }
 
-/// [`Stmt::catch_clause_span`]: ESTree's range of the `CatchClause` of a `try` statement, from
-/// `catch` to the end of the handler.
-#[inline]
-pub fn catch_clause_span(statement: Stmt<'_>) -> Option<Span> {
-    statement.catch_clause_span()
-}
-
 // ───────────────────────────── node.parent ─────────────────────────────
 
 /// One node for what ESTree has one node for: the `Expr` or the `Stmt` that is a function becomes
@@ -803,15 +773,6 @@ pub fn estree_parent(node: Node<'_>) -> Node<'_> {
         }
         _ => normalize(parent),
     }
-}
-
-/// [`estree_parent`], the parent of that, and so on. The last is the file.
-pub fn estree_ancestors(node: Node<'_>) -> impl Iterator<Item = Node<'_>> {
-    std::iter::successors(Some(node), |&at| match at {
-        Node::File(_) => None,
-        _ => Some(estree_parent(at)),
-    })
-    .skip(1)
 }
 
 /// ESLint's `sourceCode.getNodeByRangeIndex`: the innermost node whose span contains `offset`.

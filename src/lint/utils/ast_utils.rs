@@ -164,37 +164,16 @@ pub fn is_builtin_global_of_oxlint(name: &[u8]) -> bool {
 
 // ───────────────────────────── tokens ─────────────────────────────
 
-macro_rules! punctuator_predicates {
-    ($($is:ident $is_js:literal, $is_not:ident $is_not_js:literal, $text:literal;)*) => {
-        $(
-            #[doc = concat!("ESLint's `", $is_js, "`.")]
-            #[inline]
-            pub fn $is(token: &Token<'_>) -> bool {
-                token.is_punctuator($text)
-            }
-
-            #[doc = concat!("ESLint's `", $is_not_js, "`.")]
-            #[inline]
-            pub fn $is_not(token: &Token<'_>) -> bool {
-                !token.is_punctuator($text)
-            }
-        )*
-    };
-}
-
-punctuator_predicates! {
-    is_dot_token "isDotToken", is_not_dot_token "isNotDotToken", ".";
-    is_eq_token "isEqToken", is_not_eq_token "isNotEqToken", "=";
-    is_question_dot_token "isQuestionDotToken", is_not_question_dot_token "isNotQuestionDotToken", "?.";
+/// ESLint's `isNotQuestionDotToken`.
+#[inline]
+pub fn is_not_question_dot_token(token: &Token<'_>) -> bool {
+    !token.is_punctuator("?.")
 }
 
 pub use super::eslint_utils::{
-    is_arrow_token, is_closing_brace_token, is_closing_bracket_token, is_closing_paren_token,
-    is_colon_token, is_comma_token, is_comment_token, is_not_arrow_token,
-    is_not_closing_brace_token, is_not_closing_bracket_token, is_not_closing_paren_token,
-    is_not_colon_token, is_not_comma_token, is_not_comment_token, is_not_opening_brace_token,
-    is_not_opening_bracket_token, is_not_opening_paren_token, is_not_semicolon_token,
-    is_opening_brace_token, is_opening_bracket_token, is_opening_paren_token, is_semicolon_token,
+    is_arrow_token, is_closing_brace_token, is_closing_paren_token, is_colon_token, is_comma_token,
+    is_not_closing_paren_token, is_not_semicolon_token, is_opening_brace_token,
+    is_opening_bracket_token, is_opening_paren_token, is_semicolon_token,
 };
 
 /// ESLint's `isKeywordToken`.
@@ -584,34 +563,6 @@ pub fn can_tokens_be_adjacent<'t>(
     matches!(left, String | Template | Block)
         || matches!(right, String | Template | Block | Line | PrivateIdentifier)
         || (left != Numeric && right == Numeric && right_text.starts_with(b"."))
-}
-
-/// ESLint's `getNameLocationInGlobalDirectiveComment`: where `name` is written in a
-/// `/* global name */` comment.
-pub fn get_name_location_in_global_directive_comment(comment: &Token<'_>, name: &[u8]) -> Span {
-    let value = comment.comment_value();
-    let base = comment.start() + 2;
-    let is_separator = |c: u32| strings::is_js_whitespace(c) || c == u32::from(b',');
-    let limit = strings::index_of(value, b"global")
-        .map_or(5, |at| at + 6)
-        .min(value.len());
-    let mut from = limit;
-    while !name.is_empty()
-        && let Some(found) = value
-            .get(from..)
-            .and_then(|rest| strings::index_of(rest, name))
-    {
-        let at = from + found;
-        let after = strings::wtf8_first_codepoint(&value[at + name.len()..]);
-        if text::last_code_point(&value[limit..at]).is_some_and(is_separator)
-            && after.is_none_or(|c| is_separator(c) || c == u32::from(b':'))
-        {
-            let start = base + at as u32;
-            return Span::new(start, start + name.len() as u32);
-        }
-        from = at + 1;
-    }
-    Span::new(base, base + 1)
 }
 
 // ───────────────────────────── kinds of nodes ─────────────────────────────
@@ -1024,12 +975,6 @@ fn static_property_name_of(node: Node<'_>) -> Option<Cow<'_, [u8]>> {
         Node::Member(member) => get_static_key_name(member.key()?),
         _ => None,
     }
-}
-
-/// ESLint's `skipChainExpression`. `ChainExpression` is not a node, so this is `e`.
-#[inline]
-pub fn skip_chain_expression(e: Expr<'_>) -> Expr<'_> {
-    e
 }
 
 /// ESLint's `isSpecificId`.

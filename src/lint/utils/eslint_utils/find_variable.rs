@@ -1,4 +1,4 @@
-//! `find-variable.mjs`, `get-innermost-scope.mjs`
+//! `find-variable.mjs`
 
 use crate::ast::{Expr, Node};
 use crate::semantic::{Scope, Symbol};
@@ -17,11 +17,4 @@ pub fn find_variable<'a>(scope: Scope<'a>, name: impl AsRef<[u8]>) -> Option<Sym
 /// a global variable, as with [`find_variable`].
 pub fn find_variable_of(expr: Expr<'_>) -> Option<Symbol<'_>> {
     Node::Expr(expr).scope().resolve_name(expr.as_ident()?)
-}
-
-/// eslint-utils' `getInnermostScope`: the innermost scope that contains the start of `node`. For a
-/// node that creates a scope, that scope. It is `node.scope()`, whatever `initial_scope` is.
-#[inline]
-pub fn get_innermost_scope<'a>(_initial_scope: Scope<'a>, node: impl Into<Node<'a>>) -> Scope<'a> {
-    node.into().scope()
 }

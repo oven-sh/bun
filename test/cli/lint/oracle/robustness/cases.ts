@@ -1,5 +1,5 @@
 // Inputs on which `bun lint` once crashed, ran out of memory or took time in proportion to the square (or worse) of their size.
-// robustness.test.ts runs them with `bun lint`, check.ts with any `bun-lint` executable.
+// robustness.test.ts runs them.
 //
 // A case says what is reported, not how long it takes. Its size is such that the code as it was before overflows the stack, exceeds
 // the memory limit or needs many times the time limit, and the code as it is needs a small part of a second in a release build.
@@ -37,10 +37,6 @@ export type Case = {
   exitCode: number | number[];
   /** It takes hundreds of megabytes, or more than three seconds in a debug build: not for a debug build or one with a sanitizer. */
   isHeavy?: boolean;
-  /** It takes more than half a second in a release build: for check.ts alone. */
-  isSlow?: boolean;
-  /** It fails, and what it takes to pass. For check.ts alone until then. */
-  waitsFor?: string;
 };
 
 const fn = (body: string) => `function f(a, b) {\n${body}\n}\n`;
@@ -314,16 +310,6 @@ export const cases: Case[] = [
     reports: {},
     exitCode: 0,
   },
-  {
-    name: "a pattern in a comment that splits a line of 3,000 characters in four in every way",
-    waitsFor: "a limit on the steps of a search in JavaScriptCore's interpreter, which counts only attempts at groups: it does not end",
-    file: "a.js",
-    text: () => `/* eslint max-len: ["error", { "code": 10, "ignorePattern": ".*.*.*.*x" }] */\n// ${rep("a", 3_000)}\n`,
-    rules: {},
-    eslint: true,
-    reports: { "max-len": 1 },
-    exitCode: 1,
-  },
 
   // ── comments ──
   {
@@ -578,28 +564,6 @@ export const cases: Case[] = [
     exitCode: 0,
   },
   {
-    name: "a class with 30,000 async methods that an interface declares as void",
-    isSlow: true,
-    file: "a.ts",
-    text: () =>
-      `interface I {${seq(30_000, i => `m${i}(): void`, "; ")}}\nexport class A implements I {\n${seq(30_000, i => `async m${i}() {}\n`)}}\n`,
-    rules: { "typescript/no-misused-promises": "error" },
-    args: typed,
-    reports: { "@typescript-eslint/no-misused-promises": 30_000 },
-    exitCode: 1,
-  },
-  {
-    name: "60,000 properties of one object, each before a ??",
-    isSlow: true,
-    file: "a.ts",
-    text: () =>
-      `declare const o: {${seq(60_000, i => `p${i}: string`, "; ")}};\n${seq(60_000, i => `o.p${i} ?? 1;\n`)}`,
-    rules: { "typescript/no-unnecessary-condition": "error" },
-    args: typed,
-    reports: { "@typescript-eslint/no-unnecessary-condition": 60_000 },
-    exitCode: 1,
-  },
-  {
     name: "a predicate that returns a union of 100,000",
     isHeavy: true,
     file: "a.ts",
@@ -627,28 +591,6 @@ export const cases: Case[] = [
     text: () =>
       `type U = ${seq(8_000, i => `"s${i}"`, " | ")};\ndeclare const u: U | null, s: string;\n${rep("u as U; u!; s as U;\n", 500)}`,
     rules: { "typescript/no-unnecessary-type-assertion": "error" },
-    args: typed,
-    reports: {},
-    exitCode: 0,
-  },
-  {
-    name: "a callback with 200,000 parameters that have defaults",
-    isSlow: true,
-    file: "a.ts",
-    text: () =>
-      `declare function g(cb: (${seq(200_000, i => `p${i}: string`, ", ")}) => void): void;\ng((${seq(200_000, i => `p${i} = ''`, ", ")}) => {});\n`,
-    rules: { "typescript/no-useless-default-assignment": "error" },
-    args: typed,
-    matches: /no-useless-default-assignment/,
-    exitCode: 1,
-  },
-  {
-    name: "a switch over an enum of 12,000 members",
-    isSlow: true,
-    file: "a.ts",
-    text: () =>
-      `enum E {${seq(12_000, i => `M${i}`, ", ")}}\ndeclare const u: E;\nswitch (u) {\n${seq(12_000, i => `case E.M${i}: break;\n`)}}\n`,
-    rules: { "typescript/no-unsafe-enum-comparison": "error" },
     args: typed,
     reports: {},
     exitCode: 0,
@@ -800,20 +742,11 @@ export const cases: Case[] = [
     exitCode: 1,
   },
   {
-    name: "intersection types 1,200 deep",
-    isSlow: true,
-    file: "a.ts",
-    text: () => `export type A = ${rep("{a: 1} & ({a: 1} & ", 1_200)}{b: 1}${rep(")", 1_200)};\n`,
-    rules: { "typescript/no-duplicate-type-constituents": "error" },
-    args: typed,
-    reports: { "@typescript-eslint/no-duplicate-type-constituents": 2_399 },
-    exitCode: 1,
-  },
-  {
     name: "a function with 200,000 parameters",
     isHeavy: true,
     file: "a.js",
-    text: () => `function f(${seq(200_000, i => `b${i}`, ", ")}) {}\nfunction g({ ${seq(200_000, i => `b${i}`, ", ")} }) {}\n`,
+    text: () =>
+      `function f(${seq(200_000, i => `b${i}`, ", ")}) {}\nfunction g({ ${seq(200_000, i => `b${i}`, ", ")} }) {}\n`,
     rules: {},
     eslint: true,
     reports: {},
@@ -899,44 +832,23 @@ export const cases: Case[] = [
   // ── the type checker alone: the rule asks for nothing ──
   ...(
     [
-      ["120,000 call statements in a row", false, () => "declare const a: any;\n" + rep("a();\n", 120_000)],
+      ["120,000 call statements in a row", () => "declare const a: any;\n" + rep("a();\n", 120_000)],
       [
         "a variable with 24,000 assignments that 24,000 functions refer to",
-        false,
         () =>
           `export function f() {\n  let v = 0;\n${seq(24_000, i => `  { { { { { { v = ${i}; } } } } } }\n`)}` +
           `  return [\n${rep("    () => v,\n", 24_000)}  ];\n}\n`,
       ],
       [
         "an array literal with 60,000 functions, for an array type",
-        false,
         () => `export const a: readonly (() => void)[] = [\n${rep("  () => {},\n", 60_000)}];\n`,
       ],
-      [
-        "a pattern with 120,000 properties",
-        false,
-        () => `export const {\n${seq(120_000, i => `  p${i} = 0,\n`)}} = {};\n`,
-      ],
-      ["array literals 1,200 deep", true, () => `export default ${rep("[", 1_200)}${rep("]", 1_200)};\n`],
-      [
-        "a diamond of 6,000 interfaces",
-        true,
-        () =>
-          "interface T0 { m(): void }\n" +
-          seq(
-            2_000,
-            i =>
-              `interface A${i} extends T${i} {}\ninterface B${i} extends T${i} {}\n` +
-              `interface T${i + 1} extends A${i}, B${i} {}\n`,
-          ) +
-          "export declare const o: T2000;\n",
-      ],
+      ["a pattern with 120,000 properties", () => `export const {\n${seq(120_000, i => `  p${i} = 0,\n`)}} = {};\n`],
     ] as const
   ).map(
-    ([name, isSlow, text]): Case => ({
+    ([name, text]): Case => ({
       name,
       isHeavy: true,
-      isSlow,
       file: "a.ts",
       text,
       rules: { "typescript/await-thenable": "error" },

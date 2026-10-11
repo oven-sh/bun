@@ -28,10 +28,8 @@ import {
 } from "node:fs";
 import { basename, dirname, join, parse, posix, sep, win32 } from "node:path";
 import { endChildren, spawn } from "../children";
-import { configurations } from "./oracle/plugins/oxlint/compare-options";
 import whatOxlintReports from "./oracle/plugins/oxlint/expected.json";
 import { directoryOf, filesOf, cases as fixCases, flagSets } from "./oracle/plugins/oxlint/fixes";
-import fixDifferences from "./oracle/plugins/oxlint/fixes.differences.json";
 import whatOxlintFixes from "./oracle/plugins/oxlint/fixes.expected.json";
 import whatOxlintMarks from "./oracle/plugins/oxlint/labels.json";
 import { filesOf as filesOfMessages, helpsOf, entries as messages, messagesOf } from "./oracle/plugins/oxlint/messages";
@@ -2251,12 +2249,10 @@ describe.concurrent("bun lint", () => {
       test.serial.each(kindsOfFixes)(
         "the flags of %s change what they change with oxlint (rules that need types: %p)",
         async (flags, typed) => {
-          // fixes.expected.json is what oxlint 1.87.0 with tsgolint 7.0.2003 makes of the files. fixes.differences.json: not yet.
-          const differs = (directory: string) =>
-            (fixDifferences as Record<string, string[]>)[directory]?.includes(flags);
+          // fixes.expected.json is what oxlint 1.87.0 with tsgolint 7.0.2003 makes of the files.
           const some = fixCases
             .map((it, index) => ({ it, directory: directoryOf(index) }))
-            .filter(({ it, directory }) => !!it.typed === typed && !differs(directory));
+            .filter(({ it }) => !!it.typed === typed);
           expect(some.length).toBeGreaterThan(5);
           const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
           for (const { it, directory } of some) {
@@ -2278,8 +2274,15 @@ describe.concurrent("bun lint", () => {
 
       test("the options that oxlint accepts are accepted", async () => {
         // A configuration that is refused ends the run. options.json is what oxlint 1.87.0 accepts. Each of the configurations has
-        // options for many rules.
-        const configs = configurations(optionsOfOxlint);
+        // options for many rules: the first of each rule, the second of each rule that has two, ..
+        const accepted = Object.entries(optionsOfOxlint as Record<string, unknown[][]>);
+        const configs = Array.from({ length: Math.max(...accepted.map(([, it]) => it.length)) }, (_, index) => ({
+          plugins: ["typescript"],
+          categories: { correctness: "off" },
+          rules: Object.fromEntries(
+            accepted.filter(([, it]) => index < it.length).map(([rule, it]) => [rule, ["error", ...it[index]]]),
+          ),
+        }));
         expect(configs.length).toBeGreaterThan(100);
         const files: Record<string, string> = { ".oxlintrc.json": rc({ rules: {} }) };
         configs.forEach((config, index) => {

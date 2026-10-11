@@ -49,11 +49,10 @@
 //! | `STATEMENT_LIST_PARENTS.has(node.parent.type)` | `is_statement_list_parent(stmt.parent())` |
 //! | `ECMASCRIPT_GLOBALS` | `is_ecmascript_global(name)`, `ecmascript_global_since(name)` |
 //! | `isTokenOnSameLine(a, b)` | `is_token_on_same_line(file, a, b)` |
-//! | `isArrowToken`, `isCommaToken`, `isSemicolonToken`, `isColonToken`, `isDotToken`, `isQuestionDotToken`, `isEqToken`, `isOpening/ClosingParen/Bracket/BraceToken`, `isNot..Token`, `isCommentToken`, `isKeywordToken` | the same in snake case, on `&Token` |
+//! | `isArrowToken`, `isCommaToken`, `isSemicolonToken`, `isColonToken`, `isOpening/ClosingParen/BraceToken`, `isNot..Token`, `isKeywordToken` | the same in snake case, on `&Token` |
 //! | `canContinueExpressionInClassBody`, `isDirectiveComment` | the same, on `&Token` |
 //! | `equalTokens(a, b, sourceCode)` | `equal_tokens(file, a, b)` |
 //! | `canTokensBeAdjacent(a, b)` | `can_tokens_be_adjacent(a, b)`: tokens, `&str` or `&[u8]` |
-//! | `getNameLocationInGlobalDirectiveComment(sourceCode, comment, name)` | `get_name_location_in_global_directive_comment(&comment, name)` |
 //! | `isFunction`, `isLoop`, `isInLoop`, `getUpperFunction` | `is_function(node)`, `as_function(node)`, `is_loop(node)`, `is_in_loop(node)`, `get_upper_function(node)` |
 //! | `isBreakableStatement`, `isEmptyBlock`, `isDirective`, `isTopLevelExpressionStatement`, `getTrailingStatement`, `areBracesNecessary` | the same, on `Stmt` |
 //! | `isEmptyFunction`, `isES5Constructor`, `getFunctionNameWithKind`, `getFunctionHeadLoc`, `getOpeningParenOfParams` | the same, on `Func` |
@@ -64,7 +63,6 @@
 //! | `getPrecedence({ type: "BinaryExpression", operator })` | `get_binary_operator_precedence(op)` |
 //! | `isLogicalAssignmentOperator(node.operator)` | `is_logical_assignment_operator(op)` |
 //! | `getStaticPropertyName(node)` | `get_static_property_name(expr_or_prop_or_member)`, `get_static_key_name(key)` |
-//! | `skipChainExpression(node)` | `skip_chain_expression(e)`, the identity |
 //! | `isSpecificId(node, name)` | `is_specific_id(e, "name")`, `is_specific_id_with(e, \|name\| ..)` |
 //! | `isSpecificMemberAccess(node, object, property)` | `is_specific_member_access(e, Some("object"), Some("property"))`, `is_member_access_of_any(e, &["a", "b"])` |
 //! | `equalLiteralValue`, `isSameReference(a, b, disableStaticComputedKey)` | the same, on `Expr` |
@@ -106,10 +104,9 @@ pub mod unicode;
 
 pub use array::array_sort_by;
 pub use estree_compat::{
-    Target, TargetElement, TargetKind, catch_clause_span, chain_root, estree_ancestors,
-    estree_parent, estree_span, estree_type_name, get_node_by_range_index, is_assignment_target,
-    is_chain_root, is_expression_statement, is_for_init, is_in_optional_chain, is_in_type_query,
-    is_sequence_root, last_sequence_expression, normalize, sequence_expressions, sequence_root,
-    type_annotation_span,
+    Target, TargetElement, TargetKind, estree_parent, estree_span, estree_type_name,
+    get_node_by_range_index, is_assignment_target, is_chain_root, is_expression_statement,
+    is_for_init, is_in_type_query, is_sequence_root, last_sequence_expression, normalize,
+    sequence_expressions, sequence_root, type_annotation_span,
 };
 pub use estree_type_at::estree_type_at;

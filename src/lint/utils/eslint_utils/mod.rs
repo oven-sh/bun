@@ -5,7 +5,6 @@
 //! | --- | --- |
 //! | `findVariable(scope, "name")` | [`find_variable`] |
 //! | `findVariable(scope, identifierNode)` | [`find_variable_of`] |
-//! | `getInnermostScope` | [`get_innermost_scope`] |
 //! | `getFunctionHeadLocation` | [`get_function_head_location`] |
 //! | `getFunctionNameWithKind` | [`get_function_name_with_kind`] |
 //! | `getPropertyName` | [`get_property_name`], for a [`Key`](crate::ast::Key) [`property_name_of_key`] |
@@ -19,17 +18,7 @@
 //! | `READ`, `CALL`, `CONSTRUCT` as keys | [`TraceMap::read`], [`TraceMap::call`], [`TraceMap::construct`] |
 //! | `READ`, `CALL`, `CONSTRUCT` as `type` | [`ReferenceKind`] |
 //! | `ESM` | [`TraceMap::esm`] |
-//! | `isArrowToken`, `isNotArrowToken` | [`is_arrow_token`], [`is_not_arrow_token`] |
-//! | `isCommaToken`, `isNotCommaToken` | [`is_comma_token`], [`is_not_comma_token`] |
-//! | `isSemicolonToken`, `isNotSemicolonToken` | [`is_semicolon_token`], [`is_not_semicolon_token`] |
-//! | `isColonToken`, `isNotColonToken` | [`is_colon_token`], [`is_not_colon_token`] |
-//! | `isOpeningParenToken`, `isNotOpeningParenToken` | [`is_opening_paren_token`], [`is_not_opening_paren_token`] |
-//! | `isClosingParenToken`, `isNotClosingParenToken` | [`is_closing_paren_token`], [`is_not_closing_paren_token`] |
-//! | `isOpeningBracketToken`, `isNotOpeningBracketToken` | [`is_opening_bracket_token`], [`is_not_opening_bracket_token`] |
-//! | `isClosingBracketToken`, `isNotClosingBracketToken` | [`is_closing_bracket_token`], [`is_not_closing_bracket_token`] |
-//! | `isOpeningBraceToken`, `isNotOpeningBraceToken` | [`is_opening_brace_token`], [`is_not_opening_brace_token`] |
-//! | `isClosingBraceToken`, `isNotClosingBraceToken` | [`is_closing_brace_token`], [`is_not_closing_brace_token`] |
-//! | `isCommentToken`, `isNotCommentToken` | [`is_comment_token`], [`is_not_comment_token`] |
+//! | `isArrowToken`, `isCommaToken`, `isNotSemicolonToken`, .. | the same in snake case |
 //!
 //! What `getStaticValue` needs of JavaScript's numbers is of use on its own: [`js_number`].
 //!
@@ -72,7 +61,7 @@ mod static_value;
 mod token_predicate;
 
 pub use builtins::Builtin;
-pub use find_variable::{find_variable, find_variable_of, get_innermost_scope};
+pub use find_variable::{find_variable, find_variable_of};
 pub use get_function_head_location::get_function_head_location;
 pub use get_function_name_with_kind::get_function_name_with_kind;
 pub use get_property_name::{get_property_name, property_name_of_key};

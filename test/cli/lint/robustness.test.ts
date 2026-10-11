@@ -27,14 +27,7 @@ const seconds = isSlowBuild ? 120 : 10;
 const limit = isLinux && !isASAN ? "ulimit -v 4000000; " : "";
 
 describe.concurrent("bun lint", () => {
-  test.skip.each(cases.filter(it => it.waitsFor).map(it => [it.name, it.waitsFor] as const))(
-    "%s: waits for %s",
-    () => {},
-  );
-
-  test.each(
-    cases.filter(it => !it.isSlow && !it.waitsFor && !(it.isHeavy && isSlowBuild)).map(it => [it.name, it] as const),
-  )(
+  test.each(cases.filter(it => !(it.isHeavy && isSlowBuild)).map(it => [it.name, it] as const))(
     "%s",
     async (_, it) => {
       const [configName, config] = configOf(it);

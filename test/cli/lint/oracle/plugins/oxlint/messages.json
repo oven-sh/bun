@@ -4358,7 +4358,6 @@
   "file": "a.ts",
   "code": "\n        function foo(flag: boolean) {\n          if (flag) {\n            return 1;\n          }\n        }\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Function 'foo' expected a return value."
  },
  {
@@ -4443,7 +4442,6 @@
   "file": "a.ts",
   "code": "\ntype T = 1;\nexport { type T, T };\n      ",
   "options": [],
-  "typed": true,
   "message": "All exports in the declaration are only used as types.",
   "help": "Use `export type`."
  },
@@ -4646,7 +4644,6 @@
   "file": "a.ts",
   "code": "\n!console.log('foo');\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Placing a void expression inside another expression is forbidden.",
   "help": "Move it to its own statement instead."
  },
@@ -4656,7 +4653,6 @@
   "file": "a.ts",
   "code": "() => console.log('foo');\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Returning a void expression from an arrow function shorthand is forbidden.",
   "help": "Add braces to the arrow function."
  },
@@ -4670,7 +4666,6 @@
     "ignoreVoidReturningFunctions": true
    }
   ],
-  "typed": true,
   "message": "Returning a void expression from a function is forbidden.",
   "help": "Move it before the `return` statement."
  },
@@ -4684,7 +4679,6 @@
     "ignoreVoidReturningFunctions": true
    }
   ],
-  "typed": true,
   "message": "Returning a void expression from a function is forbidden.",
   "help": "Remove the `return` statement."
  },
@@ -4694,7 +4688,6 @@
   "file": "a.tsx",
   "code": "\n/** @deprecated Reason. */ const a = { b: 1 };\nconst c = a;\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "`a` is deprecated."
  },
  {
@@ -4712,7 +4705,6 @@
   "file": "a.ts",
   "code": "type T = true & true;\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Intersection type constituent is duplicated with  true."
  },
  {
@@ -4721,7 +4713,6 @@
   "file": "a.ts",
   "code": "type T = 'A' | 'A';\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Union type constituent is duplicated with  'A'."
  },
  {
@@ -4730,7 +4721,6 @@
   "file": "a.ts",
   "code": "\ntype A = 'A';\ntype T = A | A;\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Union type constituent is duplicated with  A."
  },
  {
@@ -4739,7 +4729,6 @@
   "file": "a.ts",
   "code": "\ntype IsArray<T> = T extends any[] ? true : false;\ntype ActuallyDuplicated = IsArray<number> | IsArray<string>;\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Union type constituent is duplicated with  IsArray<number>."
  },
  {
@@ -4748,7 +4737,6 @@
   "file": "a.ts",
   "code": "type T = Set<string> | Set<string>;\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Union type constituent is duplicated with  Set<string>."
  },
  {
@@ -4757,7 +4745,6 @@
   "file": "a.ts",
   "code": "type T = [1, 2, 3] | [1, 2, 3];\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Union type constituent is duplicated with  [1, 2, 3]."
  },
  {
@@ -4766,7 +4753,6 @@
   "file": "a.ts",
   "code": "type T = any | any;\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Union type constituent is duplicated with  any."
  },
  {
@@ -4775,7 +4761,6 @@
   "file": "a.ts",
   "code": "type T = null | null;\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Union type constituent is duplicated with  null."
  },
  {
@@ -4784,7 +4769,6 @@
   "file": "a.ts",
   "code": "type T = () => string | string;\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Union type constituent is duplicated with  string."
  },
  {
@@ -4793,7 +4777,6 @@
   "file": "a.ts",
   "code": "type T = string[] | string[];\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Union type constituent is duplicated with  string[]."
  },
  {
@@ -4802,7 +4785,6 @@
   "file": "a.ts",
   "code": "type T = string[][] | string[][];\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Union type constituent is duplicated with  string[][]."
  },
  {
@@ -4811,7 +4793,6 @@
   "file": "a.ts",
   "code": "class A { constructor(readonly name?: string | undefined | undefined) {} }\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Union type constituent is duplicated with  undefined."
  },
  {
@@ -4820,7 +4801,6 @@
   "file": "a.ts",
   "code": "type T = 1 | 1;\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Union type constituent is duplicated with  1."
  },
  {
@@ -4829,7 +4809,6 @@
   "file": "a.ts",
   "code": "type X = { a: 1 }; type Y = { b: 1 };\nexport type B = (X | Y | X)[];\n",
   "options": [],
-  "typed": true,
   "message": "Union type constituent is duplicated with X."
  },
  {
@@ -4838,7 +4817,6 @@
   "file": "a.ts",
   "code": "type X = { a: 1 }; type Y = { b: 1 };\nexport type C = Y &\n    X &\n    X;\n",
   "options": [],
-  "typed": true,
   "message": "Intersection type constituent is duplicated with \n    X."
  },
  {
@@ -4847,7 +4825,6 @@
   "file": "a.ts",
   "code": "type X = { a: 1 }; type Y = { b: 1 };\nexport type D = Y | /* c */ X | X;\n",
   "options": [],
-  "typed": true,
   "message": "Union type constituent is duplicated with  /* c */ X."
  },
  {
@@ -4856,7 +4833,6 @@
   "file": "a.ts",
   "code": "type X = { a: 1 }; type Y = { b: 1 };\nexport type H = Y | ( X ) | X;\n",
   "options": [],
-  "typed": true,
   "message": "Union type constituent is duplicated with  ( X )."
  },
  {
@@ -4932,7 +4908,6 @@
     "ignoreVoid": false
    }
   ],
-  "typed": true,
   "message": "Promises must be awaited, add await operator.",
   "help": "The promise must end with a call to .catch, or end with a call to .then with a rejection handler."
  },
@@ -4946,7 +4921,6 @@
     "ignoreVoid": false
    }
   ],
-  "typed": true,
   "message": "An array of Promises may be unintentional.",
   "help": "Consider handling the promises' fulfillment or rejection with Promise.all or similar."
  },
@@ -4956,7 +4930,6 @@
   "file": "a.ts",
   "code": "\n[1, 2, Promise.reject(), 3];\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "An array of Promises may be unintentional.",
   "help": "Consider handling the promises' fulfillment or rejection with Promise.all or similar, or explicitly marking the expression as ignored with the `void` operator."
  },
@@ -4970,7 +4943,6 @@
     "ignoreVoid": false
    }
   ],
-  "typed": true,
   "message": "Promises must be awaited, add await operator.",
   "help": "The promise must end with a call to .catch, or end with a call to .then with a rejection handler. A rejection handler that is not a function will be ignored."
  },
@@ -4980,7 +4952,6 @@
   "file": "a.ts",
   "code": "\nPromise.reject().catch(undefined).finally(() => {});\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Promises must be awaited, add void operator to ignore.",
   "help": "The promise must end with a call to .catch, or end with a call to .then with a rejection handler, or be explicitly marked as ignored with the `void` operator. A rejection handler that is not a function will be ignored."
  },
@@ -4990,7 +4961,6 @@
   "file": "a.ts",
   "code": "\n<Promise<number>>{};\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Promises must be awaited, add void operator to ignore.",
   "help": "The promise must end with a call to .catch, or end with a call to .then with a rejection handler, or be explicitly marked as ignored with the `void` operator."
  },
@@ -5000,7 +4970,6 @@
   "file": "a.ts",
   "code": "\nfor (const x in [3, 4, 5]) {\n  console.log(x);\n}\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "For-in loops over arrays skips holes, returns indices as strings, and may visit the prototype chain or other enumerable properties.",
   "help": "Use a more robust iteration method such as for-of or array.forEach instead."
  },
@@ -5010,7 +4979,6 @@
   "file": "a.ts",
   "code": "\nconst foo = 'foo';\nconst bar = () => {};\n\nsetTimeout(Math.radom() > 0.5 ? foo : bar, 0);\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Implied eval.",
   "help": "Consider passing a function."
  },
@@ -5112,7 +5080,6 @@
   "file": "a.ts",
   "code": "declare function f(): void;\nexport const o = { ...f };\n",
   "options": [],
-  "typed": true,
   "message": "Using the spread operator on a function without additional properties can cause unexpected behavior.",
   "help": "Did you forget to call the function?"
  },
@@ -5122,7 +5089,6 @@
   "file": "a.ts",
   "code": "declare const m: Map<string, number>;\nexport const o = { ...m };\n",
   "options": [],
-  "typed": true,
   "message": "Using the spread operator on a Map in an object will result in an empty object.",
   "help": "Did you mean to use `Object.fromEntries(map)` instead?"
  },
@@ -5132,7 +5098,6 @@
   "file": "a.ts",
   "code": "declare const p: Promise<number>;\nexport const o = { ...p };\n",
   "options": [],
-  "typed": true,
   "message": "Using the spread operator on Promise in an object can cause unexpected behavior.",
   "help": "Did you forget to await the promise before spreading it?"
  },
@@ -5142,7 +5107,6 @@
   "file": "a.ts",
   "code": "declare const s: string;\nexport const a = [...s];\n",
   "options": [],
-  "typed": true,
   "message": "Using the spread operator on a string can mishandle special characters, because it produces Unicode code points, which will break complex characters (like emojis) into multiple parts.",
   "help": "Consider using `Intl.Segmenter` for locale-aware string decomposition. Otherwise, if you don't need to preserve emojis or other non-ASCII characters, disable this lint rule on this line or configure the 'allow' rule option."
  },
@@ -5170,7 +5134,6 @@
   "file": "a.ts",
   "code": "type T = '' | string;\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": " is overridden by string in this union type."
  },
  {
@@ -5179,7 +5142,6 @@
   "file": "a.ts",
   "code": "type T = true | boolean;\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "literal type is overridden by boolean in this union type."
  },
  {
@@ -5188,7 +5150,6 @@
   "file": "a.ts",
   "code": "type T = true & boolean;\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "boolean is overridden by the literal type in this intersection type."
  },
  {
@@ -5197,7 +5158,6 @@
   "file": "a.ts",
   "code": "type T = '' & string;\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "string is overridden by the  in this intersection type."
  },
  {
@@ -5206,7 +5166,6 @@
   "file": "a.ts",
   "code": "import type * as NS from \"nowhere\";\nexport type C = NS.Deep & { a: 1 };\n",
   "options": [],
-  "typed": true,
   "message": "'NS.Deep' is an 'error' type that acts as 'any' and overrides all other types in this intersection type."
  },
  {
@@ -5215,7 +5174,6 @@
   "file": "a.ts",
   "code": "import type { Missing } from \"nowhere\";\nexport type D = Missing<string> | number;\n",
   "options": [],
-  "typed": true,
   "message": "'Missing<string>' is an 'error' type that acts as 'any' and overrides all other types in this union type."
  },
  {
@@ -5224,7 +5182,6 @@
   "file": "a.ts",
   "code": "import type { Missing, Other } from \"nowhere\";\nexport type A = Partial<Missing> | 1;\n",
   "options": [],
-  "typed": true,
   "message": "'Missing' is an 'error' type that acts as 'any' and overrides all other types in this union type."
  },
  {
@@ -5233,7 +5190,6 @@
   "file": "a.ts",
   "code": "import type { Missing, Other } from \"nowhere\";\nexport type A = Missing<\n  string,\n  Other\n> | 1;\n",
   "options": [],
-  "typed": true,
   "message": "'Missing<string, Other>' is an 'error' type that acts as 'any' and overrides all other types in this union type."
  },
  {
@@ -5242,7 +5198,6 @@
   "file": "a.ts",
   "code": "import type { Missing, Other } from \"nowhere\";\nexport type A = Missing<{ a: 1 }> | 1;\n",
   "options": [],
-  "typed": true,
   "message": "'Missing<{ a: 1; }>' is an 'error' type that acts as 'any' and overrides all other types in this union type."
  },
  {
@@ -5251,7 +5206,6 @@
   "file": "a.ts",
   "code": "import type * as NS from \"nowhere\";\nexport type A = Required<Partial<NS.Deep>> | 1;\n",
   "options": [],
-  "typed": true,
   "message": "'NS.Deep' is an 'error' type that acts as 'any' and overrides all other types in this union type."
  },
  {
@@ -5291,7 +5245,6 @@
   "file": "a.ts",
   "code": "\ndeclare let foo: null;\nfoo ??= null;\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Unnecessary conditional, value is always nullish."
  },
  {
@@ -5300,7 +5253,6 @@
   "file": "a.ts",
   "code": "\n2n < 2n;\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Unnecessary comparison between literal values."
  },
  {
@@ -5309,7 +5261,6 @@
   "file": "a.ts",
   "code": "\ndeclare let foo: {};\nfoo ??= 1;\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Unnecessary conditional, expected left-hand side of `??` operator to be possibly null or undefined."
  },
  {
@@ -5318,7 +5269,6 @@
   "file": "a.ts",
   "code": "\nfunction test(value: string) {\n  switch (value) {\n    case undefined:\n      break;\n  }\n}\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "This condition will always return the same value since the types have no overlap."
  },
  {
@@ -5331,7 +5281,6 @@
     "checkTypePredicates": true
    }
   ],
-  "typed": true,
   "message": "Type predicate is unnecessary as the parameter type already satisfies the predicate."
  },
  {
@@ -5349,7 +5298,6 @@
   "file": "a.ts",
   "code": "\ntype Storage = {\n  list<T = unknown>(): Promise<Map<string, T>>;\n};\ndeclare const db: Storage;\nconst results = (alert(), db.list()) as Promise<Map<string, Uint8Array>>;\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "This assertion is unnecessary since it does not change the type of the expression."
  },
  {
@@ -5358,7 +5306,6 @@
   "file": "a.ts",
   "code": "Proxy!;\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "This assertion is unnecessary since it does not change the type of the expression."
  },
  {
@@ -5376,7 +5323,6 @@
   "file": "a.ts",
   "code": "~~1;\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "This type conversion does not change the type or value of the expression."
  },
  {
@@ -5385,7 +5331,6 @@
   "file": "a.ts",
   "code": "\ntype T = [number, T[]];\ndeclare function foo(t: T): void;\ndeclare const t: T;\nfoo(t as any);\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Unsafe argument of type any assigned to a parameter of type T."
  },
  {
@@ -5394,7 +5339,6 @@
   "file": "a.ts",
   "code": "\ndeclare function foo(arg: number): void;\nfoo(1 as any);\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Unsafe argument of type any assigned to a parameter of type number."
  },
  {
@@ -5403,7 +5347,6 @@
   "file": "a.ts",
   "code": "\ndeclare function foo(arg1: number, arg2: string): void;\nfoo(1, 1 as any);\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Unsafe argument of type any assigned to a parameter of type string."
  },
  {
@@ -5412,7 +5355,6 @@
   "file": "a.ts",
   "code": "\ndeclare function foo(arg: { x: number }): void;\ndeclare const anyValue: any;\nfoo({ ...anyValue });\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Unsafe argument of type any assigned to a parameter of type { x: number; }."
  },
  {
@@ -5421,7 +5363,6 @@
   "file": "a.ts",
   "code": "\ndeclare function foo(arg: number): void;\nfoo(error);\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Unsafe argument of type error typed assigned to a parameter of type number."
  },
  {
@@ -5430,7 +5371,6 @@
   "file": "a.ts",
   "code": "\ndeclare function foo(arg1: string, arg2: number): void;\n\nfoo(...(x as any[]));\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Unsafe spread of an any[] array type."
  },
  {
@@ -5439,7 +5379,6 @@
   "file": "a.ts",
   "code": "\ndeclare function foo(arg1: string, arg2: number): void;\n\nfoo(...(x as any));\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Unsafe spread of an any type."
  },
  {
@@ -5448,7 +5387,6 @@
   "file": "a.ts",
   "code": "\ndeclare function foo(arg1: string, arg2: number): void;\n\nconst x = ['a', error] as const;\nfoo(...x);\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Unsafe spread of a tuple type. The argument is error typed and is assigned to a parameter of type number."
  },
  {
@@ -5457,7 +5395,6 @@
   "file": "a.ts",
   "code": "\ndeclare function foo(arg1: string, arg2: number): void;\n\nconst x = ['a', 1 as any] as const;\nfoo(...x);\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Unsafe spread of a tuple type. The argument is of type any and is assigned to a parameter of type number."
  },
  {
@@ -5466,7 +5403,6 @@
   "file": "a.ts",
   "code": "export function f() {\n  const x = this;\n  return 1;\n}\n",
   "options": [],
-  "typed": true,
   "tsconfig": {
    "compilerOptions": {
     "strict": true,
@@ -5482,7 +5418,6 @@
   "file": "a.ts",
   "code": "declare const a: any[];\nexport const [x] = a;\n",
   "options": [],
-  "typed": true,
   "message": "Unsafe array destructuring of an any array value."
  },
  {
@@ -5491,7 +5426,6 @@
   "file": "a.ts",
   "code": "declare const t: [any];\nexport const [x] = t;\n",
   "options": [],
-  "typed": true,
   "message": "Unsafe array destructuring of a tuple element with an any value."
  },
  {
@@ -5500,7 +5434,6 @@
   "file": "a.ts",
   "code": "declare const a: any[];\nexport const x = [...a];\n",
   "options": [],
-  "typed": true,
   "message": "Unsafe spread of an any value in an array."
  },
  {
@@ -5509,7 +5442,6 @@
   "file": "a.ts",
   "code": "declare const s: Set<any>;\nexport const x: Set<string> = s;\n",
   "options": [],
-  "typed": true,
   "message": "Unsafe assignment between incompatible types."
  },
  {
@@ -5518,7 +5450,6 @@
   "file": "a.ts",
   "code": "declare const o: { a: any };\nexport const { a } = o;\n",
   "options": [],
-  "typed": true,
   "message": "Unsafe array destructuring of a tuple element with an any value."
  },
  {
@@ -5527,7 +5458,6 @@
   "file": "a.ts",
   "code": "declare const e: Missing;\ne();\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Unsafe call of a(n) `error` type typed value."
  },
  {
@@ -5536,7 +5466,6 @@
   "file": "a.ts",
   "code": "export function f(this: Missing) {\n  this();\n}\n",
   "options": [],
-  "typed": true,
   "tsconfig": {
    "compilerOptions": {
     "strict": true,
@@ -5552,7 +5481,6 @@
   "file": "a.ts",
   "code": "declare const e: Missing;\nnew e();\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Unsafe construction of a(n) `error` type typed value."
  },
  {
@@ -5561,7 +5489,6 @@
   "file": "a.ts",
   "code": "declare const e: Missing;\ne``;\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Unsafe use of a(n) `error` type typed template tag."
  },
  {
@@ -5570,7 +5497,6 @@
   "file": "a.ts",
   "code": "export function f() {\n  this();\n}\n",
   "options": [],
-  "typed": true,
   "tsconfig": {
    "compilerOptions": {
     "strict": true,
@@ -5595,7 +5521,6 @@
   "file": "a.ts",
   "code": "declare const o: { a: 1 };\ndeclare const k: Missing;\no[k];\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Computed name [k] resolves to an `error` typed value."
  },
  {
@@ -5604,7 +5529,6 @@
   "file": "a.ts",
   "code": "declare const e: Missing;\ne.a;\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Unsafe member access .a on an `error` typed value."
  },
  {
@@ -5613,7 +5537,6 @@
   "file": "a.ts",
   "code": "export function f() {\n  this.a;\n}\n",
   "options": [],
-  "typed": true,
   "tsconfig": {
    "compilerOptions": {
     "strict": true,
@@ -5629,7 +5552,6 @@
   "file": "a.ts",
   "code": "export function f() {\n  return this;\n}\n",
   "options": [],
-  "typed": true,
   "tsconfig": {
    "compilerOptions": {
     "strict": true,
@@ -5645,7 +5567,6 @@
   "file": "a.ts",
   "code": "\ndeclare const a: [any];\na as [number];\n        \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Unsafe assertion from `any` detected.",
   "help": "Consider using type guards or a safer assertion."
  },
@@ -5655,7 +5576,6 @@
   "file": "a.ts",
   "code": "\n'foo' as any;\n        \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Unsafe assertion to `any` detected.",
   "help": "Consider using a more specific type to ensure safety."
  },
@@ -5665,7 +5585,6 @@
   "file": "a.ts",
   "code": "\nconst bar = 'foo' as errorType;\n        \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Unsafe assertion to error typed detected.",
   "help": "Consider using a more specific type to ensure safety."
  },
@@ -5675,7 +5594,6 @@
   "file": "a.ts",
   "code": "\nfunction unconstrained<T>(x: T, y: string) {\n  y as T;\n}\n        \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Unsafe type assertion: 'T' could be instantiated with an arbitrary type which could be unrelated to the original type."
  },
  {
@@ -5684,7 +5602,6 @@
   "file": "a.ts",
   "code": "\n[1, 2, 3].map((a = 42) => a + 1);\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Default value is useless because the parameter has type `number` (not nullish). This default assignment will never be used.",
   "help": "Remove the default assignment"
  },
@@ -5694,7 +5611,6 @@
   "file": "a.ts",
   "code": "\ninterface B {\n  foo: (b: boolean | string) => void;\n}\n\nconst h: B = {\n  foo: (b = false) => {},\n};\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Default value is useless because the parameter is not nullish. This default assignment will never be used.",
   "help": "Remove the default assignment"
  },
@@ -5704,7 +5620,6 @@
   "file": "a.ts",
   "code": "\nfunction Bar({ foo = '' }: { foo: string }) {\n  return foo;\n}\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Default value is useless because the property has type `string` (not nullish). This default assignment will never be used.",
   "help": "Remove the default assignment"
  },
@@ -5714,7 +5629,6 @@
   "file": "a.ts",
   "code": "\nconst { a = 'baz' } = cond ? { a() {} } : { a: 'bar' };\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Default value is useless because the property is not nullish. This default assignment will never be used.",
   "help": "Remove the default assignment"
  },
@@ -5724,7 +5638,6 @@
   "file": "a.ts",
   "code": "\nfunction foo(a = undefined) {}\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Default value is useless because it is undefined. Optional parameters are already undefined by default.",
   "help": "Remove the default assignment"
  },
@@ -5734,7 +5647,6 @@
   "file": "a.ts",
   "code": "\nconst [a = undefined] = [];\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Default value is useless because it is undefined. Optional properties are already undefined by default.",
   "help": "Remove the default assignment"
  },
@@ -5842,7 +5754,6 @@
     "ignoreTernaryTests": false
    }
   ],
-  "typed": true,
   "message": "Prefer using nullish coalescing operator (`??`) instead of a ternary expression, as it is simpler to read."
  },
  {
@@ -5851,7 +5762,6 @@
   "file": "a.ts",
   "code": "Promise.reject();\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Expected the Promise rejection reason to be an Error."
  },
  {
@@ -5860,7 +5770,6 @@
   "file": "a.ts",
   "code": "\nclass Test {\n  private prop = 10;\n}\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Member 'prop' is never reassigned.",
   "help": "Mark it as `readonly`."
  },
@@ -5870,7 +5779,6 @@
   "file": "a.ts",
   "code": "function foo(arg: string[]);\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Parameter should be a readonly type."
  },
  {
@@ -5879,7 +5787,6 @@
   "file": "a.ts",
   "code": "/foo$/.test('string');\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Use 'String#endsWith' method instead."
  },
  {
@@ -5897,7 +5804,6 @@
   "file": "a.ts",
   "code": "\nfunction promiseInUnionWithoutExplicitReturnType(p: boolean) {\n  return p ? Promise.resolve(5) : 5;\n}\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Functions that return promises must be async.",
   "help": "Consider adding an explicit return type annotation if the function is intended to return a union of promise and non-promise types."
  },
@@ -5907,7 +5813,6 @@
   "file": "a.ts",
   "code": "async () => doSomething();\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Function has no 'await' expression."
  },
  {
@@ -5916,7 +5821,6 @@
   "file": "a.ts",
   "code": "let foo = 1 + 1n;\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Numeric '+' operations must either be both bigints or both numbers."
  },
  {
@@ -5925,7 +5829,6 @@
   "file": "a.ts",
   "code": "'' + new Date();\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Invalid operand of type 'Date' for a '+' operation.",
   "help": "Operands must each be a number or string, allowing a string + any of: `any`, `boolean`, `null`, `RegExp`, `undefined`."
  },
@@ -5943,7 +5846,6 @@
     "allowRegExp": false
    }
   ],
-  "typed": true,
   "message": "Operands of '+' operations must be of the same type.",
   "help": "Operands must both be a number or both be string."
  },
@@ -5953,7 +5855,6 @@
   "file": "a.ts",
   "code": "declare const s: string, u: string | string[];\nexport const x = s + u;\n",
   "options": [],
-  "typed": true,
   "message": "Invalid operand of type 'string | string[]' for a '+' operation.",
   "help": "Operands must each be a number or string, allowing a string + any of: `any`, `boolean`, `null`, `RegExp`, `undefined`."
  },
@@ -5967,7 +5868,6 @@
     "allowNumber": false
    }
   ],
-  "typed": true,
   "message": "Invalid type used in template literal expression."
  },
  {
@@ -5976,7 +5876,6 @@
   "file": "a.ts",
   "code": "x => !x;\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Unexpected any value in conditional.",
   "help": "Use a more specific type to ensure type safety."
  },
@@ -5990,7 +5889,6 @@
     "allowNullableBoolean": false
    }
   ],
-  "typed": true,
   "message": "Unexpected nullable boolean value in conditional.",
   "help": "Handle the nullish case explicitly."
  },
@@ -6004,7 +5902,6 @@
     "allowNullableEnum": false
    }
   ],
-  "typed": true,
   "message": "Unexpected nullable enum value in conditional.",
   "help": "Handle the nullish and falsy enum cases explicitly."
  },
@@ -6014,7 +5911,6 @@
   "file": "a.ts",
   "code": "(x?: number) => !x;\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Unexpected nullable number value in conditional.",
   "help": "Handle the nullish and zero cases explicitly."
  },
@@ -6028,7 +5924,6 @@
     "allowNullableObject": false
    }
   ],
-  "typed": true,
   "message": "Unexpected nullable object value in conditional.",
   "help": "Handle the nullish case explicitly."
  },
@@ -6038,7 +5933,6 @@
   "file": "a.ts",
   "code": "(x?: string) => !x;\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Unexpected nullable string value in conditional.",
   "help": "Handle the nullish and empty string cases explicitly."
  },
@@ -6048,7 +5942,6 @@
   "file": "a.ts",
   "code": "null || {};\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Unexpected nullish value in conditional. The expression is always falsy."
  },
  {
@@ -6061,7 +5954,6 @@
     "allowNumber": false
    }
   ],
-  "typed": true,
   "message": "Unexpected number value in conditional. A number can be falsy (0, NaN) or truthy."
  },
  {
@@ -6070,7 +5962,6 @@
   "file": "a.ts",
   "code": "[] || 1;\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Unexpected object value in conditional. An object is always truthy."
  },
  {
@@ -6084,7 +5975,6 @@
     "allowString": true
    }
   ],
-  "typed": true,
   "message": "Unexpected value in conditional. A union of different types has inconsistent truthiness."
  },
  {
@@ -6097,7 +5987,6 @@
     "allowString": false
    }
   ],
-  "typed": true,
   "message": "Unexpected string value in conditional. A string can be falsy (empty string) or truthy."
  },
  {
@@ -6106,7 +5995,6 @@
   "file": "a.ts",
   "code": "export function f<T>(t: T | null) {\n  if (t) {}\n}\n",
   "options": [],
-  "typed": true,
   "message": "Unexpected any value in conditional.",
   "help": "Use a more specific type to ensure type safety."
  },
@@ -6116,7 +6004,6 @@
   "file": "a.ts",
   "code": "\n        enum Enum {\n          'a' = 1,\n          \"'a' `b` \\\"c\\\"\" = 2,\n        }\n\n        declare const a: Enum;\n\n        switch (a) {}\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Switch is not exhaustive. Cases not matched: Enum.a | (typeof Enum)[\"'a' `b` \\\"c\\\"\"]"
  },
  {
@@ -6125,7 +6012,6 @@
   "file": "a.ts",
   "code": "\nenum Enum {\n  zebra = 'z',\n  apple = 'a',\n}\ndeclare const value: Enum;\nswitch (value) {\n}\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Switch is not exhaustive. Cases not matched: Enum.zebra | Enum.apple"
  },
  {
@@ -6134,7 +6020,6 @@
   "file": "a.ts",
   "code": "\nenum Status {\n  Pending = 2,\n  Active = 0,\n  Done = 1,\n}\ndeclare const value: Status;\nswitch (value) {\n}\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Switch is not exhaustive. Cases not matched: Status.Pending | Status.Active | Status.Done"
  },
  {
@@ -6143,7 +6028,6 @@
   "file": "a.ts",
   "code": "\nenum Zebra {\n  same = 'zebra',\n  zLast = 'zLast',\n}\nenum Apple {\n  same = 'apple',\n  aLast = 'aLast',\n}\ndeclare const value: Zebra | Apple;\nswitch (value) {\n}\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Switch is not exhaustive. Cases not matched: Zebra.same | Zebra.zLast | Apple.same | Apple.aLast"
  },
  {
@@ -6152,7 +6036,6 @@
   "file": "a.ts",
   "code": "\ndeclare const value: 'c' | 'a' | 'B' | null | undefined;\nswitch (value) {\n}\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Switch is not exhaustive. Cases not matched: undefined | null | \"B\" | \"a\" | \"c\""
  },
  {
@@ -6161,7 +6044,6 @@
   "file": "a.ts",
   "code": "\nenum Enum {\n  b = 'b',\n  a = 'a',\n}\ndeclare const value: 'x' | 10 | 2n | true | Enum | null | undefined;\nswitch (value) {\n}\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Switch is not exhaustive. Cases not matched: undefined | null | \"x\" | 10 | 2n | true | Enum.b | Enum.a"
  },
  {
@@ -6170,7 +6052,6 @@
   "file": "a.ts",
   "code": "\ndeclare const value: 10 | 2 | 1 | 20 | 100;\nswitch (value) {\n}\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Switch is not exhaustive. Cases not matched: 1 | 2 | 10 | 20 | 100"
  },
  {
@@ -6179,7 +6060,6 @@
   "file": "a.ts",
   "code": "\nclass Foo {\n  unbound = function (this: Foo) {};\n}\nconst unbound = new Foo().unbound;\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Avoid referencing unbound methods which may cause unintentional scoping of `this`."
  },
  {
@@ -6188,7 +6068,6 @@
   "file": "a.ts",
   "code": "const x = Promise.all;\nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Avoid referencing unbound methods which may cause unintentional scoping of `this`.",
   "help": "If your function does not access `this`, you can annotate it with `this: void`, or consider using an arrow function instead."
  },
@@ -6222,7 +6101,6 @@
   "file": "a.ts",
   "code": "\nPromise.reject(new Error('I will reject!')).catch(([err]: [unknown]) => {\n  console.log(err);\n});\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Prefer the safe `: unknown` for a `catch` callback variable. The thrown error may not be iterable."
  },
  {
@@ -6231,7 +6109,6 @@
   "file": "a.ts",
   "code": "\nPromise.resolve('object destructuring').catch(({}) => {});\n      \nexport {};\n",
   "options": [],
-  "typed": true,
   "message": "Prefer the safe `: unknown` for a `catch` callback variable. The thrown error may be nullable, or may not have the expected shape."
  },
  {
@@ -6344,7 +6221,6 @@
   "file": "a.ts",
   "code": "type S = \"a\" | \"b\";\nexport type U = S | string;\n",
   "options": [],
-  "typed": true,
   "message": "\"\\\"a\\\"\" | \"\\\"b\\\"\" is overridden by string in this union type."
  },
  {
@@ -6353,7 +6229,6 @@
   "file": "a.ts",
   "code": "type S = 'it\"s' | \"back\\\\slash\";\nexport type U = S | string;\n",
   "options": [],
-  "typed": true,
   "message": "\"\\\"back\\\\\\\\slash\\\"\" | \"\\\"it\\\\\\\"s\\\"\" is overridden by string in this union type."
  },
  {
@@ -6362,7 +6237,6 @@
   "file": "a.ts",
   "code": "type S = `x-${string}`;\nexport type U = S | string;\n",
   "options": [],
-  "typed": true,
   "message": "`x-${string}` is overridden by string in this union type."
  },
  {
@@ -6371,7 +6245,6 @@
   "file": "a.ts",
   "code": "type S = \"a\" | \"b\";\nexport type U = S & string;\n",
   "options": [],
-  "typed": true,
   "message": "\"\\\"a\\\"\" | \"\\\"b\\\"\" is overridden by the string in this intersection type."
  },
  {
@@ -6380,7 +6253,6 @@
   "file": "a.ts",
   "code": "type N = 1 | 2;\nexport type U = N & number;\n",
   "options": [],
-  "typed": true,
   "message": "1 | 2 is overridden by the number in this intersection type."
  },
  {
@@ -6389,7 +6261,6 @@
   "file": "a.ts",
   "code": "class K {\n  /** @deprecated See {@link K.other} */\n  a = 1;\n  other = 2;\n}\ndeclare const k: K;\nexport const r = k.a;\n",
   "options": [],
-  "typed": true,
   "message": "`a` is deprecated. See"
  },
  {
@@ -6398,7 +6269,6 @@
   "file": "a.ts",
   "code": "class K {\n  /**\n   * @deprecated two\n   * lines {@link K.other}\n   */\n  a = 1;\n  other = 2;\n}\ndeclare const k: K;\nexport const r = k.a;\n",
   "options": [],
-  "typed": true,
   "message": "`a` is deprecated. two\nlines"
  }
 ]

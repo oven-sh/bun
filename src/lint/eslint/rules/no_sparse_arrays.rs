@@ -13,10 +13,14 @@ const UNEXPECTED_COMMAS: Message =
 impl Rule for NoSparseArrays {
     const META: Meta = Meta::eslint("no-sparse-arrays", Kind::Problem).recommended();
     const ON: On = On::new().exprs(&[ExprTag::Array]);
-    no_state!();
+    type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoSparseArrays
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.may_have_missing_exprs().then_some(())
     }
 
     fn expr<'a>(&self, array: Expr<'a>, cx: &mut Cx<'a, Self>) {

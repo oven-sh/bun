@@ -832,10 +832,7 @@ pub(crate) mod expect_expect {
             tasks: impl Iterator<Item = Task<'a>>,
         ) -> bool {
             if self.has_assertion.is_none() {
-                // The first name of a chain is one of the texts of the file.
-                let may_have_one = !self.first_name_only
-                    || (file.own_names())
-                        .is_none_or(|mut texts| texts.any(|it| self.is_match(&[it.bytes()])));
+                let may_have_one = !self.first_name_only || self.may_have_assertion(file);
                 let mut calls = file.exprs_of_kind(ExprTag::Call).filter_map(Expr::as_call);
                 self.has_assertion = Some(may_have_one && calls.any(|it| self.is_assertion(it)));
             }
@@ -862,6 +859,24 @@ pub(crate) mod expect_expect {
             self.positions.clear();
             self.open.clear();
             is_found
+        }
+
+        /// For names of assertions of which only the first name of a chain counts, which is one of the texts of the file.
+        fn may_have_assertion(&self, file: &'a File<'a>) -> bool {
+            let expected = || {
+                self.assert_function_matchers
+                    .iter()
+                    .filter_map(|it| match it {
+                        AssertFunctionMatcher::Exact(expected) => Some(expected.as_str()),
+                        AssertFunctionMatcher::Pattern(_) => None,
+                    })
+            };
+            let shortest = expected().map(str::len).min().unwrap_or(0);
+            // As it is written in nearly every file that has one. Otherwise in another mix of cases, or before a dot in a string.
+            expected().any(|it| file.find_name(it).is_some())
+                || file.own_names().is_none_or(|mut texts| {
+                    texts.any(|it| it.len() >= shortest && self.is_match(&[it.bytes()]))
+                })
         }
 
         fn is_match(&self, names: &[&[u8]]) -> bool {

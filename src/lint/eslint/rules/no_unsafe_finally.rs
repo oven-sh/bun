@@ -26,11 +26,8 @@ fn leaves<'a>(at: Node<'a>, parent: Node<'a>, stops_at_loops: bool, stops_at_swi
         Node::File(_) | Node::Class(_) => Some(None),
         Node::Func(func) if func.kind() != FnKind::StaticBlock => Some(None),
         Node::Stmt(parent) => match parent.tag() {
-            StmtTag::Try => match parent.kind() {
-                StmtKind::Try {
-                    finalizer: Some(finalizer),
-                    ..
-                } if Node::Stmt(finalizer) == at => Some(Some(finalizer.span())),
+            StmtTag::Try => match parent.as_try() {
+                Some((.., Some(finalizer))) if Node::Stmt(finalizer) == at => Some(Some(finalizer.span())),
                 _ => None,
             },
             StmtTag::Switch if stops_at_switch => Some(None),
@@ -62,7 +59,7 @@ impl Rule for NoUnsafeFinally {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
-        let has_finalizer = |it: Stmt| matches!(it.kind(), StmtKind::Try { finalizer: Some(_), .. });
+        let has_finalizer = |it: Stmt| matches!(it.as_try(), Some((.., Some(_))));
         file.stmts_of_kind(StmtTag::Try).any(has_finalizer).then(State::default)
     }
 
@@ -93,10 +90,7 @@ impl Rule for NoUnsafeFinally {
             return;
         }
         utils::sort::sort_unstable_by_key(&mut jumps, |it| it.0.span().start);
-        let labeled = cx.file().stmts_of_kind(StmtTag::Labeled).filter_map(|it| match it.kind() {
-            StmtKind::Labeled { label, .. } => Some((it.span(), label)),
-            _ => None,
-        });
+        let labeled = cx.file().stmts_of_kind(StmtTag::Labeled).filter_map(|it| Some((it.span(), it.as_labeled()?.0)));
         let mut labeled: Vec<(Span, Name<'a>)> = labeled.collect();
         utils::sort::sort_unstable_by_key(&mut labeled, |it| it.0.start);
         // One pass through the labeled statements and the jumps, in the order of the source: the labeled statements

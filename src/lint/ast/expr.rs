@@ -649,14 +649,6 @@ impl<'a> Expr<'a> {
     }
 
     #[inline]
-    pub fn as_jsx(self) -> Option<Jsx<'a>> {
-        match self.try_raw()?.kind {
-            hir::ExprKind::Jsx(jsx) => Some(Jsx::new(self.file, jsx, self)),
-            _ => None,
-        }
-    }
-
-    #[inline]
     pub fn as_template(self) -> Option<Template<'a>> {
         let raw = self.try_raw()?;
         let (exprs, only_text) = match raw.kind {
@@ -698,14 +690,6 @@ impl<'a> Expr<'a> {
         }
     }
 
-    #[inline]
-    pub fn as_bigint(self) -> Option<Name<'a>> {
-        match self.try_raw()?.kind {
-            hir::ExprKind::BigInt(text) => Some(self.file.name(text)),
-            _ => None,
-        }
-    }
-
     /// The name of a `PrivateIdentifier`, with the `#`.
     #[inline]
     pub fn as_private_identifier(self) -> Option<Name<'a>> {
@@ -724,44 +708,6 @@ impl<'a> Expr<'a> {
         }
     }
 
-    /// The operand of an `Await`.
-    #[inline]
-    pub fn as_await(self) -> Option<Expr<'a>> {
-        match self.try_raw()?.kind {
-            hir::ExprKind::Await(operand) => Some(Expr::new(self.file, operand)),
-            _ => None,
-        }
-    }
-
-    /// The operand of a `NonNull`.
-    #[inline]
-    pub fn as_non_null(self) -> Option<Expr<'a>> {
-        match self.try_raw()?.kind {
-            hir::ExprKind::NonNull(operand) => Some(Expr::new(self.file, operand)),
-            _ => None,
-        }
-    }
-
-    /// The operand of an `AsConst`.
-    #[inline]
-    pub fn as_const_assertion(self) -> Option<Expr<'a>> {
-        match self.try_raw()?.kind {
-            hir::ExprKind::AsConst(operand) => Some(Expr::new(self.file, operand)),
-            _ => None,
-        }
-    }
-
-    /// The `expr` and the `ty` of an `As`.
-    #[inline]
-    pub fn as_type_assertion(self) -> Option<(Expr<'a>, TypeNode<'a>)> {
-        match self.try_raw()?.kind {
-            hir::ExprKind::As { expr, ty } => {
-                Some((Expr::new(self.file, expr), TypeNode::new(self.file, ty)))
-            }
-            _ => None,
-        }
-    }
-
     /// The `expr` and the `ty` of a `Satisfies`.
     #[inline]
     pub fn as_satisfies(self) -> Option<(Expr<'a>, TypeNode<'a>)> {
@@ -773,13 +719,10 @@ impl<'a> Expr<'a> {
         }
     }
 
-    /// The `expr` and the `type_args` of an `Instantiation`.
     #[inline]
-    pub fn as_instantiation(self) -> Option<(Expr<'a>, List<'a, TypeNode<'a>>)> {
+    pub fn as_bigint(self) -> Option<Name<'a>> {
         match self.try_raw()?.kind {
-            hir::ExprKind::Instantiation { expr, type_args } => {
-                Some((Expr::new(self.file, expr), List::ids(self.file, type_args)))
-            }
+            hir::ExprKind::BigInt(text) => Some(self.file.name(text)),
             _ => None,
         }
     }

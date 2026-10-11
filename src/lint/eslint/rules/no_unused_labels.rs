@@ -123,7 +123,7 @@ impl Rule for NoUnusedLabels {
             if is_used {
                 continue;
             }
-            let (StmtKind::Labeled { body, .. }, Some(label)) = (statement.kind(), statement.label()) else {
+            let (Some((_, body)), Some(label)) = (statement.as_labeled(), statement.label()) else {
                 continue;
             };
             cx.report(label, UNUSED).data("name", label).fix(|fixer| {

@@ -144,7 +144,7 @@ fn lift_property_span<'a>(file: &'a File<'a>, prop: Prop<'a>, after: Result<Prop
     };
     let token_before = token_before.or_else(|| file.token_before(prop).map(|it| it.span()));
     let is_on_line_before = |at: u32| {
-        token_before.is_some_and(|it| !strings::contains_js_line_break(file.slice(Span::new(it.end, at))))
+        token_before.is_some_and(|it| !strings::contains_js_line_break(file.slice(Span::after(it, at))))
     };
     let follows_on_the_line = is_on_line_before(whole.start);
     for comment in file.comments_before(prop).rev() {

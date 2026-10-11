@@ -495,6 +495,29 @@ impl<'a> Lexer<'a> {
             .unwrap_or_default()
     }
 
+    /// The first byte of the next token, if it is written right after the token or after one space.
+    /// 0: there is more between the two, or the byte does not say what the token is.
+    #[inline]
+    pub(crate) fn first_byte_of_next(&self) -> u8 {
+        let rest = self.src.get(self.end as usize..).unwrap_or_default();
+        match *rest {
+            // `<!--` starts a comment.
+            _ if self.is_script => 0,
+            [b' ', b'/' | b'\\', ..] | [b'/' | b'\\', ..] => 0,
+            [b' ', first @ b'!'..=b'~', ..] | [first @ b'!'..=b'~', ..] => first,
+            _ => 0,
+        }
+    }
+
+    /// At a `const`: the text says without a scan that no `enum` follows. `false`: it may.
+    #[inline]
+    pub(crate) fn is_const_before_binding(&self) -> bool {
+        let Some([b' ', first, ..]) = self.src.get(self.end as usize..) else {
+            return false;
+        };
+        matches!(first, b'a'..=b'd' | b'f'..=b'z' | b'A'..=b'Z' | b'_' | b'$' | b'{' | b'[')
+    }
+
     #[inline(always)]
     fn set(&mut self, token: T, start: usize, end: usize) {
         self.token = token;

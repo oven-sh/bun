@@ -47,11 +47,6 @@ impl<'a> Name<'a> {
     }
 
     #[inline]
-    pub fn is_empty(self) -> bool {
-        self.len() == 0
-    }
-
-    #[inline]
     pub fn atom(self) -> Atom {
         self.atom
     }

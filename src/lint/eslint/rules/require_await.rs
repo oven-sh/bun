@@ -136,7 +136,7 @@ impl Rule for RequireAwait {
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        if matches!(statement.kind(), StmtKind::ForOf { is_await: true, .. }) {
+        if statement.as_for_of().is_some_and(|(.., is_await)| is_await) {
             mark_function_around(statement.into(), cx);
         }
     }

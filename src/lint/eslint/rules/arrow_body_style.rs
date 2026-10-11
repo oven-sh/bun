@@ -256,7 +256,7 @@ fn is_inside_for_loop_init(arrow: Expr) -> bool {
     for ancestor in Node::Expr(arrow).ancestors() {
         match ancestor {
             Node::Stmt(statement) => {
-                if let StmtKind::For { init, .. } = statement.kind() {
+                if let Some((init, ..)) = statement.as_for() {
                     return init.is_some_and(|init| {
                         init.span().contains(arrow.span())
                             && !matches!(init.kind(), StmtKind::Expr(head) if head == arrow && !arrow.is_parenthesized())

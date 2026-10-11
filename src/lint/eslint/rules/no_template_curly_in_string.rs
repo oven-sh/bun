@@ -140,11 +140,9 @@ impl Rule for NoTemplateCurlyInString {
             return None;
         }
         // Each starts with a `${` of its own: if there are as many, no candidate is in a string.
-        let substitutions = file.exprs_of_kind(ExprTag::Template).map(|e| match e.kind() {
-            ExprKind::Template(template) => template.exprs().len(),
-            _ => 0,
-        });
-        (substitutions.sum::<usize>() != candidates.len()).then_some(candidates)
+        let in_expressions = file.exprs_of_kind(ExprTag::Template).filter_map(Expr::as_template).map(|it| it.exprs().len());
+        let in_types = file.types_of_kind(TypeTag::Template).filter_map(TypeNode::as_template).map(|it| it.types().len());
+        (in_expressions.chain(in_types).sum::<usize>() != candidates.len()).then_some(candidates)
     }
 
     #[inline]

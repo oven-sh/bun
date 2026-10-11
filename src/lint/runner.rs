@@ -303,18 +303,16 @@ impl ByName {
     const OTHERS: usize = ByName::FUNCTIONS + NAME_CLASSES / 2;
     const GROUPS: usize = ByName::OTHERS + 1;
 
-    /// `group_of`: the group of each of `all`.
-    fn new(all: &[u32], mut group_of: impl FnMut(u32) -> u8) -> ByName {
+    /// `groups`: the group of each.
+    fn new(groups: Vec<u8>) -> ByName {
         const { assert!(ByName::GROUPS <= 4 * 64 && NAME_CLASSES < Classes::UNKNOWN as usize) };
         let (mut counts, mut present) = ([0u32; ByName::GROUPS], [0u64; 4]);
-        let groups: Vec<u8> = (all.iter())
-            .map(|&id| {
-                let group = (group_of(id) as usize).min(ByName::OTHERS);
-                counts[group] += 1;
-                present[group / 64] |= 1 << (group % 64);
-                group as u8
-            })
-            .collect();
+        for &group in &groups {
+            if let Some(count) = counts.get_mut(group as usize) {
+                *count += 1;
+                present[group as usize / 64] |= 1 << (group % 64);
+            }
+        }
         // A file has few of the groups: nothing is done for the others.
         let (mut starts, mut end) = ([0u32; ByName::GROUPS], 0);
         for (word, &present) in present.iter().enumerate() {
@@ -344,7 +342,7 @@ impl ByName {
 
     fn of_calls<'a>(file: &'a File<'a>) -> ByName {
         let (hir, mut classes) = (&file.hir, Classes::new(file));
-        ByName::new(file.exprs_of(ExprTag::Call), |id| {
+        let group_of = |&id: &u32| {
             let callee = match hir.exprs.get(id as usize).map(|it| &it.kind) {
                 Some(&hir::ExprKind::Call(call)) => hir.calls.get(call.idx()),
                 _ => None,
@@ -359,19 +357,17 @@ impl ByName {
                 }
                 _ => ByName::OTHERS as u8,
             }
-        })
+        };
+        ByName::new(file.exprs_of(ExprTag::Call).iter().map(group_of).collect())
     }
 
     fn of_members<'a>(file: &'a File<'a>) -> ByName {
         let mut classes = Classes::new(file);
-        ByName::new(file.exprs_of(ExprTag::Dot), |id| {
-            match file.hir.exprs.get(id as usize).map(|it| &it.kind) {
-                Some(&hir::ExprKind::Dot { name, name_pos, .. }) => {
-                    classes.of_member(name, name_pos)
-                }
-                _ => ByName::OTHERS as u8,
-            }
-        })
+        let group_of = |&id: &u32| match file.hir.exprs.get(id as usize).map(|it| &it.kind) {
+            Some(&hir::ExprKind::Dot { name, name_pos, .. }) => classes.of_member(name, name_pos),
+            _ => ByName::OTHERS as u8,
+        };
+        ByName::new(file.exprs_of(ExprTag::Dot).iter().map(group_of).collect())
     }
 
     fn has_any_of(&self, groups: [u64; 4]) -> bool {
@@ -850,20 +846,7 @@ impl<'a> File<'a> {
     /// The `Call`s that a rule with this `on` is called with: see [`On::method_calls`] and [`On::function_calls`]. For a rule that
     /// looks at the calls from [`Rule::start`] or [`Rule::finish`]: `file.calls_on(&On::new().method_calls(&["then"]))`.
     pub fn calls_on(&'a self, on: &On) -> impl Iterator<Item = Expr<'a>> + use<'a> {
-        self.exprs_on(ExprTag::Call, on, on.groups_of_calls())
-    }
-
-    /// The `Dot`s that a rule with this `on` is called with: see [`On::members_named`].
-    pub fn members_on(&'a self, on: &On) -> impl Iterator<Item = Expr<'a>> + use<'a> {
-        self.exprs_on(ExprTag::Dot, on, on.groups_of_members())
-    }
-
-    fn exprs_on(
-        &'a self,
-        kind: ExprTag,
-        on: &On,
-        groups: [u64; 4],
-    ) -> impl Iterator<Item = Expr<'a>> + use<'a> {
+        let (kind, groups) = (ExprTag::Call, on.groups_of_calls());
         let found = match (groups[3] != 0, on.exprs & (1 << kind as u32) != 0) {
             (true, _) => self.named(kind, groups, self.may_have_names_of(on)),
             (false, true) => self.exprs_of(kind).to_vec(),

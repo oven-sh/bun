@@ -15,9 +15,7 @@ fn is_await_using(stmt: Stmt) -> bool {
 fn is_boundary(node: Node) -> bool {
     match node {
         Node::Func(func) => func.kind() != FnKind::StaticBlock,
-        Node::Stmt(stmt) => {
-            stmt.tag() == StmtTag::ForOf && matches!(stmt.kind(), StmtKind::ForOf { is_await: true, .. })
-        }
+        Node::Stmt(stmt) => stmt.as_for_of().is_some_and(|(.., is_await)| is_await),
         _ => false,
     }
 }
@@ -85,7 +83,7 @@ impl Rule for NoAwaitInLoop {
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        if matches!(stmt.kind(), StmtKind::ForOf { is_await: true, .. }) {
+        if stmt.as_for_of().is_some_and(|(.., is_await)| is_await) {
             self.validate(stmt.into(), cx);
         }
     }

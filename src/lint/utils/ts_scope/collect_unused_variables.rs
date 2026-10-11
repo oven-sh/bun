@@ -961,7 +961,13 @@ fn is_plainly_used(symbol: Symbol, properties: &SymbolSet) -> bool {
         | DeclarationKinds::FUNCTION_NAME
         | DeclarationKinds::IMPORT_BINDING;
     // What nothing modifies is on the left of no assignment, and is not read for itself.
-    if kinds.is_empty() || !plain.contains(kinds) || symbol.has_modifying_references() {
+    if symbol.has_modifying_references() {
+        return false;
+    }
+    if kinds == DeclarationKinds::TYPE {
+        return is_plainly_used_type(symbol);
+    }
+    if kinds.is_empty() || !plain.contains(kinds) {
         return false;
     }
     if kinds.contains(DeclarationKinds::PARAMETER)
@@ -980,12 +986,39 @@ fn is_plainly_used(symbol: Symbol, properties: &SymbolSet) -> bool {
             || read.scope().variable_scope() == symbol.scope().variable_scope())
 }
 
+/// [`is_plainly_used`] for what only interfaces, type aliases and type parameters declare.
+fn is_plainly_used_type(symbol: Symbol) -> bool {
+    if symbol.declaration_count() != 1 {
+        return false;
+    }
+    // `self_reference_range`
+    let range = match symbol.declarations().next() {
+        Some(Declaration::TypeParam(it)) if it.file().hir.mapped.is_empty() => None,
+        Some(Declaration::Interface(it)) => Some(it.stmt().span()),
+        Some(Declaration::TypeAlias(it)) => Some(it.stmt().span()),
+        _ => return false,
+    };
+    symbol.references().find(|it| it.is_read()).is_some_and(|read| {
+        !is_type_only_reference(symbol, read)
+            && range.is_none_or(|it| !it.contains_offset(read.ident().start()))
+    })
+}
+
+/// Whether the kinds of its declarations tell that [`Facts::MARKED`] holds for `symbol`.
+#[inline]
+fn is_plainly_marked(symbol: Symbol, properties: &SymbolSet) -> bool {
+    let kinds = symbol.declaration_kinds();
+    kinds == DeclarationKinds::TS_ENUM_MEMBER
+        || kinds == DeclarationKinds::PARAMETER && properties.contains(symbol)
+}
+
 /// What the parameter properties of the file declare.
 fn parameter_properties<'a>(file: &'a File<'a>) -> SymbolSet {
     let mut properties = SymbolSet::default();
     for id in 0..file.hir.params.len() {
         let param = Param::new(file, hir::ParamId(id as u32));
         if param.is_parameter_property()
+            && param.func().map(Func::kind) != Some(FnKind::IndexSignature)
             && let Some(symbol) = param.pat().symbol()
         {
             properties.insert(symbol);
@@ -1090,13 +1123,19 @@ fn collect<'a>(
     let mut walks = Walks::default();
     let properties = parameter_properties(file);
     for symbol in file.symbols() {
-        if !keeps_used
-            && !declares_globals
-            && is_plainly_used(symbol, &properties)
-            && !marked_by_loops.contains(symbol)
-            && !symbol.is_marked_used()
-        {
-            continue;
+        if !keeps_used && !declares_globals {
+            // What is marked is used, if it has a definition.
+            if marks.contains(symbol)
+                || is_plainly_used(symbol, &properties)
+                    && !marked_by_loops.contains(symbol)
+                    && !symbol.is_marked_used()
+            {
+                continue;
+            }
+            if is_plainly_marked(symbol, &properties) {
+                marks.mark(symbol);
+                continue;
+            }
         }
         let variable = Variable::new(symbol);
         let facts = Facts::of(variable);

@@ -57,7 +57,7 @@ fn has_async_iterator(ty: Type) -> bool {
 /// Whether the generator `func` delegates to an async generator or yields something thenable.
 fn is_async_yield(func: Func) -> bool {
     func.yields().any(|node| {
-        let ExprKind::Yield { value: Some(argument), star } = node.kind() else {
+        let Some((Some(argument), star)) = node.as_yield() else {
             return false;
         };
         match argument.kind() {
@@ -135,7 +135,7 @@ impl Rule for RequireAwait {
     }
 
     fn stmt<'a>(&self, node: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        if matches!(node.kind(), StmtKind::ForOf { is_await: true, .. }) {
+        if node.as_for_of().is_some_and(|(.., is_await)| is_await) {
             mark_function_around(node.into(), cx);
         }
     }

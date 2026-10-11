@@ -470,28 +470,29 @@ fn written_by<'a>(
     })
 }
 
-/// Whether `written`, the only assignment to `variable`, is the initializer of a `let`, `const` or `using` declaration
-/// in a list of statements, and a statement that can be reached evaluates the variable after that initializer, in the
-/// same function (`home`). It is in the block of the list, where every way to it leads over the declaration.
+/// [`is_read_after_declarator`], if `written`, the only assignment to `variable` in its code path, is the initializer of a
+/// declarator.
 fn is_read_after_declaration<'a>(
-    variable: Binding<'a>,
+    variable: Symbol<'a>,
     written: Reference<'a>,
-    home: Scope<'a>,
     (writers, evaluated_in): (&mut AncestorMemo<'a, Writer<'a>>, &mut AncestorMemo<'a, Option<Stmt<'a>>>),
 ) -> bool {
-    if written.expr().is_some() || variable.symbol.declaration_count() != 1 {
-        return false;
-    }
-    let Node::Pat(name) = written.node() else {
-        return false;
-    };
-    let declarator = match name.parent() {
-        Node::VarDecl(declarator) => declarator,
-        _ => match written_by(written, writers).map(|it| it.node) {
-            Some(Node::VarDecl(declarator)) => declarator,
-            _ => return false,
-        },
-    };
+    written.expr().is_none()
+        && variable.declaration_count() == 1
+        && matches!(
+            written_by(written, writers).map(|it| it.node),
+            Some(Node::VarDecl(declarator)) if is_read_after_declarator(variable, declarator, evaluated_in)
+        )
+}
+
+/// Whether `declarator`, the only declaration of `variable` and the only assignment to it in its code path, is one with
+/// `let`, `const` or `using` in a list of statements, and a statement that can be reached evaluates the variable after
+/// it, in the same function. That is in the block of the list, where every way to it leads over the declaration.
+fn is_read_after_declarator<'a>(
+    variable: Symbol<'a>,
+    declarator: VarDecl<'a>,
+    evaluated_in: &mut AncestorMemo<'a, Option<Stmt<'a>>>,
+) -> bool {
     if declarator.var_kind() == VarKind::Var || declarator.init().is_none() {
         return false;
     }
@@ -506,24 +507,35 @@ fn is_read_after_declaration<'a>(
     if !is_in_list {
         return false;
     }
-    let end = declarator.span().end;
-    let read = variable.symbol.references().find(|&it| {
-        it.is_read() && start_of(&it) >= end && it.scope().variable_scope() == home && variable.has(it)
+    let (end, scope) = (declarator.span().end, variable.scope());
+    let read = variable.references().find(|&it| {
+        it.is_read()
+            && start_of(&it) >= end
+            && (it.scope() == scope || it.scope().variable_scope() == scope.variable_scope())
+            && Binding::outer(variable).has(it)
     });
-    let Some(mut e) = read.and_then(Reference::expr) else {
+    let Some(identifier) = read.and_then(Reference::expr) else {
         return false;
     };
     // Mostly the statement is near.
-    for _ in 0..4 {
-        match e.parent() {
-            Node::Expr(parent) => e = parent,
-            _ => break,
+    let (mut node, mut statement) = (Node::Expr(identifier), None);
+    for _ in 0..16 {
+        node = node.parent();
+        match node {
+            Node::Expr(_) | Node::Prop(_) | Node::VarDecl(_) => {}
+            Node::Stmt(it) => {
+                statement = Some(Some(it));
+                break;
+            }
+            _ => return false,
         }
     }
-    let statement = evaluated_in.find(Node::Expr(e), |_, parent| match parent {
-        Node::Expr(_) | Node::Prop(_) | Node::VarDecl(_) => None,
-        Node::Stmt(statement) => Some(Some(statement)),
-        _ => Some(None),
+    let statement = statement.or_else(|| {
+        evaluated_in.find(node, |_, parent| match parent {
+            Node::Expr(_) | Node::Prop(_) | Node::VarDecl(_) => None,
+            Node::Stmt(statement) => Some(Some(statement)),
+            _ => Some(None),
+        })
     });
     // Not where the body of a loop comes first.
     statement.flatten().is_some_and(|it| {
@@ -1174,6 +1186,15 @@ impl NoUselessAssignment {
         if !variable.has_writes() || !variable.has_reads() {
             return;
         }
+        // Nearly all are a name with an initializer that nothing else assigns to.
+        if !variable.has_modifying_references()
+            && variable.declaration_count() == 1
+            && let Some(Declaration::Var(name)) = variable.declarations().next()
+            && let Node::VarDecl(declarator) = name.parent()
+            && is_read_after_declarator(variable, declarator, &mut cx.state.evaluated_in)
+        {
+            return;
+        }
         if !variable
             .declaration_kinds()
             .contains(DeclarationKinds::CLASS_NAME)
@@ -1210,7 +1231,7 @@ impl NoUselessAssignment {
             }
         }
         if let (1, None, Some(written)) = (writes, variable.class, written)
-            && is_read_after_declaration(variable, written, home, (writers, evaluated_in))
+            && is_read_after_declaration(variable.symbol, written, (writers, evaluated_in))
         {
             return;
         }

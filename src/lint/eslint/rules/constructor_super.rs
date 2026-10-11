@@ -166,7 +166,7 @@ fn is_update_of_for(node: Node<'_>) -> bool {
     let (Node::Expr(e), Node::Stmt(parent)) = (node, node.parent()) else {
         return false;
     };
-    matches!(parent.kind(), StmtKind::For { update, .. } if update == Some(e))
+    parent.as_for().is_some_and(|(_, _, update, _)| update == Some(e))
 }
 
 /// On which of the paths that lead through a segment `super()` is called.

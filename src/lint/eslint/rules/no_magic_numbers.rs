@@ -295,12 +295,12 @@ impl Checker {
     fn check_expr<'a, R: Rule>(&self, e: Expr<'a>, parent: Node<'a>, cx: &Cx<'a, R>) {
         let value = match e.as_number() {
             Some(value) => Value::Number(value),
-            None => match e.kind() {
-                ExprKind::BigInt(digits) => Value::BigInt {
+            None => match e.as_bigint() {
+                Some(digits) => Value::BigInt {
                     is_negative: false,
                     digits: digits.bytes(),
                 },
-                _ => return,
+                None => return,
             },
         };
         let (full, sign, value, parent) = match parent.as_expr().map(|it| (it, it.unary_op())) {

@@ -414,15 +414,6 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         self.next_can_follow_default_keyword()
     }
 
-    /// At a `const`: the text says without a scan that no `enum` follows. `false`: it may.
-    #[inline]
-    fn is_const_before_binding(&self) -> bool {
-        let Some([b' ', first, ..]) = self.lx.src.get(self.lx.end as usize..) else {
-            return false;
-        };
-        matches!(first, b'a'..=b'd' | b'f'..=b'z' | b'A'..=b'Z' | b'_' | b'$' | b'{' | b'[')
-    }
-
     /// `parseModifiers`: pushes the modifiers at the token on the stack of modifiers. Returns their
     /// flags. The caller pops them from `base`, the length of the stack before.
     pub(crate) fn modifiers(&mut self, of: ModifiersOf) -> Flags {
@@ -450,7 +441,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             if !token.is_modifier() {
                 return flags;
             }
-            if token == T::Const && !permit_const && self.is_const_before_binding() {
+            if token == T::Const && !permit_const && self.lx.is_const_before_binding() {
                 return flags;
             }
             let pos = self.pos();
@@ -526,7 +517,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             | T::Import
             | T::Interface
             | T::Type => Flags::empty(),
-            T::Const if self.is_const_before_binding() => Flags::empty(),
+            T::Const if self.lx.is_const_before_binding() => Flags::empty(),
             _ => self.modifiers(ModifiersOf::Declaration),
         };
         // No other modifier is before a declaration.

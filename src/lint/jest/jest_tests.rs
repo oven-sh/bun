@@ -1182,13 +1182,8 @@ pub(crate) mod prefer_lowercase_title {
             else {
                 return;
             };
-            let literal = match arg.kind() {
-                ExprKind::String(value) => value.bytes(),
-                ExprKind::Template(template) => match template.as_static() {
-                    Some(quasi) => quasi.bytes(),
-                    None => return,
-                },
-                _ => return,
+            let Some(literal) = static_string(arg).map(Name::bytes) else {
+                return;
             };
             let is_upper = match self.lowercase_first_character_only {
                 true => literal.first().is_some_and(u8::is_ascii_uppercase),

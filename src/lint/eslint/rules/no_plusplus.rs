@@ -17,9 +17,9 @@ fn is_for_loop_afterthought<'a>(e: Expr<'a>, known: &mut AncestorMemo<'a, bool>)
     let is_oxlint = e.file().language().is_oxlint;
     let found = known.find(Node::Expr(e), |at, parent| match parent {
         Node::Expr(parent) if parent.binary_op() == Some(BinOp::Comma) => None,
-        Node::Stmt(parent) if is_oxlint => Some(matches!(parent.kind(), StmtKind::For { update: Some(_), .. })),
+        Node::Stmt(parent) if is_oxlint => Some(matches!(parent.as_for(), Some((_, _, Some(_), _)))),
         Node::Stmt(parent) => {
-            Some(matches!(parent.kind(), StmtKind::For { update: Some(update), .. } if Node::Expr(update) == at))
+            Some(matches!(parent.as_for(), Some((_, _, Some(update), _)) if Node::Expr(update) == at))
         }
         _ => Some(false),
     });

@@ -32,7 +32,7 @@ impl NoLabels {
     }
 
     fn check_labeled<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        if let StmtKind::Labeled { body, .. } = stmt.kind()
+        if let Some((_, body)) = stmt.as_labeled()
             && !self.allows(body)
         {
             cx.report(place(stmt), UNEXPECTED_LABEL);

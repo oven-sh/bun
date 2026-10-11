@@ -290,14 +290,14 @@ fn join_declarations<'a>(fixer: Fixer<'a>, statement: Stmt<'a>, previous: Stmt<'
     };
     let mut text = b",".to_vec();
     text.extend_from_slice(file.slice(previous.span().between(first)));
-    let mut end = first.end;
+    let mut last = first;
     if kind == VarKind::AwaitUsing {
-        let using = skip_trivia(file.text(), end);
-        text.extend_from_slice(file.slice(Span::new(end, using)));
-        end = using + "using".len() as u32;
+        let using = skip_trivia(file.text(), first.end);
+        text.extend_from_slice(file.slice(Span::after(first, using)));
+        last = Span::new(using, using + "using".len() as u32);
     }
     let start = previous.semicolon().map_or_else(|| previous.span().end, |it| it.start);
-    Some(fixer.replace(Span::new(start, end), text))
+    Some(fixer.replace(Span::new(start, last.end), text))
 }
 
 /// ESLint's `splitDeclarations`

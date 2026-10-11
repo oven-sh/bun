@@ -15,7 +15,7 @@ fn is_unnecessary<'a>(statement: Stmt<'a>, label: Name<'a>, cx: &mut Cx<'a, NoEx
         _ => None,
     });
     matches!(breakable.flatten().map(Stmt::parent), Some(Node::Stmt(parent))
-        if matches!(parent.kind(), StmtKind::Labeled { label: it, .. } if it == label))
+        if parent.as_labeled().is_some_and(|it| it.0 == label))
 }
 
 impl Rule for NoExtraLabel {

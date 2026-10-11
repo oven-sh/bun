@@ -227,27 +227,25 @@ pub(crate) mod require_hook {
 
         fn check_block_body<'a>(&self, statements: List<'a, Stmt<'a>>, ctx: &Ctx<'a, '_>) {
             for stmt in statements {
-                match stmt.kind() {
-                    StmtKind::Expr(expr) if !expr.is_parenthesized() && !expr.is_chain_root() => {
-                        if let Some(call_expr) = expr.as_call()
-                            && !self.is_allowed(&get_node_name_vec(call_expr.callee()))
-                        {
-                            ctx.report(expr, USE_HOOK);
-                        }
+                if let Some(expr) = stmt.as_expr() {
+                    if let Some(call_expr) = expr.as_call()
+                        && !expr.is_parenthesized()
+                        && !expr.is_chain_root()
+                        && !self.is_allowed(&get_node_name_vec(call_expr.callee()))
+                    {
+                        ctx.report(expr, USE_HOOK);
                     }
-                    StmtKind::Var(declarations) if !stmt.is_exported() => {
-                        if declarations
-                            .first()
-                            .is_some_and(|it| it.var_kind() != VarKind::Const)
-                            && declarations
-                                .iter()
-                                .filter_map(VarDecl::init)
-                                .any(|it| !is_null_or_undefined(it))
-                        {
-                            ctx.report(stmt, USE_HOOK);
-                        }
-                    }
-                    _ => {}
+                } else if let Some(declarations) = stmt.as_var()
+                    && !stmt.is_exported()
+                    && declarations
+                        .first()
+                        .is_some_and(|it| it.var_kind() != VarKind::Const)
+                    && declarations
+                        .iter()
+                        .filter_map(VarDecl::init)
+                        .any(|it| !is_null_or_undefined(it))
+                {
+                    ctx.report(stmt, USE_HOOK);
                 }
             }
         }

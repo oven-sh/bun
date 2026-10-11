@@ -756,31 +756,27 @@ pub fn do_patch_remove(manager: &mut PackageManager, log_level: LogLevel) -> Pat
             // values are written by `bun patch --commit` as project-relative
             // paths, but a hand-edited manifest can point anywhere — only
             // delete files that resolve inside the project
-            let Some(patchfile) = resolve_patchfile_in_project(root_dir, path) else {
+            if let Some(patchfile) = resolve_patchfile_in_project(root_dir, path) {
+                let mut zbuf = patchfile;
+                zbuf.push(0);
+                let path_len = zbuf.len() - 1;
+                match sys::unlink(ZStr::from_buf(&zbuf, path_len)) {
+                    Err(e) if e.get_errno() != sys::E::ENOENT => {
+                        unlink_failures.push(Box::<[u8]>::from(&zbuf[..path_len]));
+                        Output::err(e, "failed to delete patch file {f}", (bun_fmt::quote(&zbuf[..path_len]),));
+                        Output::flush();
+                        continue;
+                    }
+                    _ => {}
+                }
+                remove_empty_patch_directories(root_dir, path);
+            } else {
                 bun_core::warn!(
                     "patch file <b>{}<r> resolves outside the project, not deleting it\n",
                     bstr::BStr::new(path)
                 );
                 Output::flush();
-                if log_level != LogLevel::Silent {
-                    bun_core::pretty!("<r>Removed patch <b>{}</b><r>\n", bstr::BStr::new(key));
-                    Output::flush();
-                }
-                continue;
-            };
-            let mut zbuf = patchfile;
-            zbuf.push(0);
-            let path_len = zbuf.len() - 1;
-            match sys::unlink(ZStr::from_buf(&zbuf, path_len)) {
-                Err(e) if e.get_errno() != sys::E::ENOENT => {
-                    unlink_failures.push(Box::<[u8]>::from(&zbuf[..path_len]));
-                    Output::err(e, "failed to delete patch file {f}", (bun_fmt::quote(&zbuf[..path_len]),));
-                    Output::flush();
-                    continue;
-                }
-                _ => {}
             }
-            remove_empty_patch_directories(root_dir, path);
         }
 
         if log_level != LogLevel::Silent {

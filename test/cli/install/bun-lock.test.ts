@@ -1159,6 +1159,8 @@ it("names folder and tarball packages without a package.json name after their fo
       "pkgs/empty-name-pkg/package.json": JSON.stringify({ name: "", version: "1.0.0" }),
       // "odd@folder" cannot be stored as a name either, so this one gets the generic name.
       "pkgs/odd@folder/package.json": noName,
+      // "#" and "?" end the path of a URL only.
+      "pkgs/c#-utils/package.json": noName,
     },
   });
   await Bun.Archive.write(
@@ -1175,6 +1177,7 @@ it("names folder and tarball packages without a package.json name after their fo
     "folder-dep": "file:./pkgs/folder-pkg",
     "empty-name-dep": "file:./pkgs/empty-name-pkg",
     "odd-folder-dep": "file:./pkgs/odd@folder",
+    "hash-folder-dep": "file:./pkgs/c#-utils",
     "tarball-dep": "file:./tarball-pkg.tgz",
     "remote-dep": `http://localhost:${server.port}/remote-pkg.tgz`,
     "signed-url-dep": `http://localhost:${server.port}/signed-pkg.tgz?token=abc/def`,
@@ -1196,6 +1199,7 @@ it("names folder and tarball packages without a package.json name after their fo
             "empty-name-dep": "file:./pkgs/empty-name-pkg",
             "folder-dep": "file:./pkgs/folder-pkg",
             "fragment-url-dep": "http://localhost:1234/pinned-pkg.tgz#abc/def",
+            "hash-folder-dep": "file:./pkgs/c#-utils",
             "odd-folder-dep": "file:./pkgs/odd@folder",
             "remote-dep": "http://localhost:1234/remote-pkg.tgz",
             "signed-url-dep": "http://localhost:1234/signed-pkg.tgz?token=abc/def",
@@ -1209,6 +1213,8 @@ it("names folder and tarball packages without a package.json name after their fo
         "folder-dep": ["folder-pkg@file:pkgs/folder-pkg", {}],
 
         "fragment-url-dep": ["pinned-pkg@http://localhost:1234/pinned-pkg.tgz#abc/def", {}, "<integrity>"],
+
+        "hash-folder-dep": ["c#-utils@file:pkgs/c#-utils", {}],
 
         "odd-folder-dep": ["unnamed-package@file:pkgs/odd@folder", {}],
 
@@ -1225,6 +1231,7 @@ it("names folder and tarball packages without a package.json name after their fo
     "empty-name-dep",
     "folder-dep",
     "fragment-url-dep",
+    "hash-folder-dep",
     "odd-folder-dep",
     "remote-dep",
     "signed-url-dep",

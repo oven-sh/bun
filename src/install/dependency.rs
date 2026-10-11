@@ -609,9 +609,11 @@ pub(crate) fn is_safe_lockfile_package_name(name: &[u8]) -> bool {
 
 /// For a package whose package.json has no name: `https://host/foo.tgz?token=x` -> `foo`.
 pub(crate) fn fallback_package_name(location: &[u8]) -> &[u8] {
-    let without_query =
-        &location[..strings::index_of_any(location, b"?#").unwrap_or(location.len())];
-    let basename = bun_paths::basename(without_query);
+    let path = match strings::index_of_any(location, b"?#") {
+        Some(end) if strings::contains(location, b"://") => &location[..end],
+        _ => location,
+    };
+    let basename = bun_paths::basename(path);
     let name = strings::without_suffix_comptime(
         strings::without_suffix_comptime(basename, b".tgz"),
         b".tar.gz",

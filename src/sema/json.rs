@@ -1,6 +1,8 @@
 //! The contents of a `package.json`, from `Host::parse_package_json`, and a `tsconfig.json` as
 //! parsed by the one shared parser.
 
+use std::collections::HashMap;
+
 use crate::atom::Interner;
 use crate::check::spans::{Spans, skip_trivia};
 use crate::config_options::Declaration;
@@ -499,11 +501,14 @@ impl<'s> TsConfigSourceFile<'s> {
             // `convertObjectLiteralExpressionToJson`
             ExprKind::Object(_) => {
                 let mut result: Vec<(Vec<u8>, Json)> = Vec::new();
+                let mut positions: HashMap<&[u8], usize> = HashMap::new();
                 for (p, key) in self.properties(e) {
                     let value = self.convert_property_value_to_json(hir[p].value);
-                    match result.iter_mut().find(|entry| entry.0 == key) {
-                        Some(entry) => entry.1 = value,
-                        None => result.push((key.to_vec(), value)),
+                    if let Some(&index) = positions.get(key) {
+                        result[index].1 = value;
+                    } else {
+                        positions.insert(key, result.len());
+                        result.push((key.to_vec(), value));
                     }
                 }
                 Json::Object(result)

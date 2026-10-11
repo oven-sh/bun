@@ -3057,6 +3057,73 @@ describe("bundler", () => {
       `,
     },
   });
+
+  // ValidateNoRefAccessInRender gives the join of two different refs a new ref
+  // id each time, also on the later passes of its fixpoint. The guard in
+  // `TwoRefs` then reads another id than the first pass stored, and the
+  // component stays as written, as upstream. The join of a ref with itself
+  // keeps the id, so `OneRef` compiles. The pass reuses the result of a join of
+  // two nested types only when that join made no ref id. `TwoRefs` compiles if
+  // it reuses this one.
+  itBundled("react-compiler/GuardOnARefFromAJoinOfTwoRefs", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useRef } from "react";
+        import { calls } from "react/compiler-runtime";
+
+        function OneRef(p) {
+          const aRef = useRef(null);
+          const refs = p.c ? [aRef] : [aRef];
+          const [xRef] = refs;
+          if (xRef.current == null) {
+            xRef.current = p.v;
+          }
+          return <div ref={aRef} />;
+        }
+        function TwoRefs(p) {
+          const aRef = useRef(null);
+          const bRef = useRef(null);
+          const refs = p.c ? [aRef] : [bRef];
+          const [xRef] = refs;
+          if (xRef.current == null) {
+            xRef.current = p.v;
+          }
+          return <div ref={aRef} />;
+        }
+
+        function render(fn, props) {
+          const before = calls();
+          const result = fn(props);
+          return [result.props.ref.current, calls() - before];
+        }
+        console.log(JSON.stringify({
+          OneRef: render(OneRef, { c: true, v: 1 }),
+          TwoRefs: render(TwoRefs, { c: true, v: 2 }),
+        }));
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": `exports.useRef = current => ({ current });`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+      "/node_modules/react/compiler-runtime.js": `
+        let count = 0;
+        exports.c = size => {
+          count++;
+          return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+        };
+        exports.calls = () => count;
+      `,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: JSON.stringify({
+        OneRef: [1, 1],
+        TwoRefs: [2, 0],
+      }),
+    },
+  });
 });
 
 // Three passes kept one copy of their work per basic block or per nesting
@@ -3291,5 +3358,54 @@ test("react-compiler compile time is not exponential in the function nesting dep
   // The outermost call is inlined. The other arrows stay, in one memoized scope.
   expect(stdout).toContain("p.a + s");
   expect(stdout).toMatch(/\b_c\(\d+\)/);
+  expect(exitCode).toBe(0);
+});
+
+// ValidateNoRefAccessInRender gives a function the type of the value it
+// returns, and an object the join of the types of its values. `v1` returns
+// `v0`, and `v0` is then assigned an array that holds `v1`, so the type of `v0`
+// holds its own previous type several times. The fixpoint stops after 10 passes
+// and the component stays as written, as upstream. The port nested these types
+// by value, so each pass multiplied the size of the type and each join cloned
+// it: `Comp` took more than 200 seconds and 5 GB.
+test("react-compiler ref validation does not multiply the type of a local that holds a closure over itself", async () => {
+  using dir = tempDir("react-compiler-ref-access-types", {
+    "entry.jsx": `
+      import { useState } from "react";
+      import { mutate } from "lib";
+      export function Comp(props) {
+        const [st] = useState(props.a);
+        let v0 = [st, st];
+        const v1 = () => v0;
+        const v2 = { k0: v1, k1: v0 };
+        const v3 = { k0: v2, k1: v1, k2: v0 };
+        if (props.b) { v0 = [...v2, v1, v3]; }
+        if (props.c) { v0 = [v3, v2, v0]; }
+        mutate(v0);
+        return st;
+      }
+      export function Other(props) {
+        return <div>{props.a}</div>;
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 30_000,
+    killSignal: "SIGKILL",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // The build ends on its own, well inside the 30 seconds.
+  expect(proc.signalCode).toBeNull();
+  expect(stderr).toBe("");
+  // `Comp` stays as written. `Other` compiles.
+  expect(stdout).toContain("v0 = [...v2, v1, v3]");
+  expect(stdout.match(/\b_c\(\d+\)/g)).toEqual(["_c(2)"]);
   expect(exitCode).toBe(0);
 });

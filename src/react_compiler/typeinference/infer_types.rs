@@ -1201,16 +1201,21 @@ impl Unifier {
             );
         }
 
+        if let Type::TypeVar { id } = t_a {
+            if matches!(t_b, Type::TypeVar { id: other } if other == id) {
+                return Ok(());
+            }
+            if let Some(why) = self.gave_up() {
+                return Err(why);
+            }
+            return self.bind_variable_to(id, t_b, shapes);
+        }
+
         if type_equals(&t_a, &t_b) {
             return Ok(());
         }
         if let Some(why) = self.gave_up() {
             return Err(why);
-        }
-
-        if let Type::TypeVar { id } = t_a {
-            self.bind_variable_to(id, t_b, shapes)?;
-            return Ok(());
         }
 
         if let Type::TypeVar { id } = t_b {
@@ -1238,10 +1243,11 @@ impl Unifier {
         Ok(())
     }
 
+    /// `ty` is not the variable.
     fn bind_variable_to(
         &mut self,
         v_id: TypeId,
-        ty: Type,
+        mut ty: Type,
         shapes: &ShapeRegistry,
     ) -> Result<(), CompilerDiagnostic> {
         if let Type::Poly = &ty {
@@ -1263,11 +1269,24 @@ impl Unifier {
         }
 
         let v = Type::TypeVar { id: v_id };
-        if let Type::TypeVar { id: ty_id } = &ty {
-            if let Some(existing) = self.substitutions.get(*ty_id).cloned() {
-                self.unify_impl(v, existing, shapes)?;
-                return Ok(());
+        // What `unify_impl` of the variable and `existing` comes to.
+        while let Type::TypeVar { id: ty_id } = ty
+            && let Some(existing) = self.substitutions.get(ty_id)
+        {
+            match existing {
+                Type::TypeVar { id } if *id == v_id => return Ok(()),
+                Type::Poly => return Ok(()),
+                Type::Property { .. } => {
+                    let existing = existing.clone();
+                    return self.unify_impl(v, existing, shapes);
+                }
+                _ => ty = existing.clone(),
             }
+        }
+        if let Type::TypeVar { .. } = ty {
+            // It is not bound and it is another: the variable does not occur in it.
+            self.substitute(v_id, ty);
+            return Ok(());
         }
 
         if let Type::Phi { ref operands } = ty {

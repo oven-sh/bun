@@ -7,7 +7,7 @@
 //!
 //! Port of ValidateNoSetStateInRender.ts.
 
-use crate::collections::FxHashSet as HashSet;
+use crate::collections::IdBitSet;
 
 use crate::diagnostics::{CompilerDiagnostic, CompilerDiagnosticDetail, ErrorCategory};
 use crate::hir::dominator::compute_unconditional_blocks;
@@ -21,7 +21,7 @@ pub(crate) fn validate_no_set_state_in_render(
     func: &HirFunction,
     env: &mut Environment,
 ) -> Result<(), CompilerDiagnostic> {
-    let mut unconditional_set_state_functions: HashSet<IdentifierId> = HashSet::default();
+    let mut unconditional_set_state_functions: IdBitSet<IdentifierId> = IdBitSet::default();
     let next_block_id = env.next_block_id().0;
     let diagnostics = validate_impl(
         func,
@@ -45,7 +45,7 @@ fn validate_impl(
     functions: &[HirFunction],
     next_block_id_counter: u32,
     enable_use_keyed_state: bool,
-    unconditional_set_state_functions: &mut HashSet<IdentifierId>,
+    unconditional_set_state_functions: &mut IdBitSet<IdentifierId>,
 ) -> Result<Vec<CompilerDiagnostic>, CompilerDiagnostic> {
     if !crate::lowering::thread_has_stack() {
         return Err(crate::lowering::nested_too_deeply());
@@ -61,12 +61,12 @@ fn validate_impl(
             let instr = &func.instructions[instr_id.0 as usize];
             match &instr.value {
                 InstructionValue::LoadLocal { place, .. } => {
-                    if unconditional_set_state_functions.contains(&place.identifier) {
+                    if unconditional_set_state_functions.contains(place.identifier) {
                         unconditional_set_state_functions.insert(instr.lvalue.identifier);
                     }
                 }
                 InstructionValue::StoreLocal { lvalue, value, .. } => {
-                    if unconditional_set_state_functions.contains(&value.identifier) {
+                    if unconditional_set_state_functions.contains(value.identifier) {
                         unconditional_set_state_functions.insert(lvalue.place.identifier);
                         unconditional_set_state_functions.insert(instr.lvalue.identifier);
                     }
@@ -79,7 +79,7 @@ fn validate_impl(
                     // For FunctionExpression/ObjectMethod, operands are the context captures.
                     let has_set_state_operand = inner_func.context.iter().any(|ctx_place| {
                         is_set_state_identifier(ctx_place.identifier, identifiers, types)
-                            || unconditional_set_state_functions.contains(&ctx_place.identifier)
+                            || unconditional_set_state_functions.contains(ctx_place.identifier)
                     });
 
                     if has_set_state_operand {
@@ -113,7 +113,7 @@ fn validate_impl(
                 }
                 InstructionValue::CallExpression { callee, .. } => {
                     if is_set_state_identifier(callee.identifier, identifiers, types)
-                        || unconditional_set_state_functions.contains(&callee.identifier)
+                        || unconditional_set_state_functions.contains(callee.identifier)
                     {
                         if active_manual_memo_id.is_some() {
                             errors.push(set_state_in_memo_diag(callee.loc));

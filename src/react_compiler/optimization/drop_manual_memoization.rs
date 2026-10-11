@@ -12,7 +12,6 @@
 //!
 //! Analogous to TS `Inference/DropManualMemoization.ts`.
 
-use crate::collections::FxHashMap as HashMap;
 use crate::collections::{IdBitSet, IdMap};
 use crate::diagnostics::CompilerDiagnostic;
 use crate::diagnostics::CompilerDiagnosticDetail;
@@ -68,7 +67,7 @@ struct IdentifierSidemap {
     /// Maps identifier id -> deps list info for array expressions
     maybe_deps_lists: IdMap<IdentifierId, MaybeDepsListInfo>,
     /// Maps identifier id -> ManualMemoDependency for dependency tracking
-    maybe_deps: HashMap<IdentifierId, ManualMemoDependency>,
+    maybe_deps: IdMap<IdentifierId, ManualMemoDependency>,
     /// Set of identifier ids that are results of optional chains
     optionals: IdBitSet<IdentifierId>,
 }
@@ -108,7 +107,7 @@ pub(crate) fn drop_manual_memoization(
         functions: IdBitSet::default(),
         manual_memos: IdMap::new(),
         react: IdBitSet::default(),
-        maybe_deps: HashMap::default(),
+        maybe_deps: IdMap::new(),
         maybe_deps_lists: IdMap::new(),
         optionals,
     };
@@ -405,7 +404,7 @@ fn collect_temporaries(
 /// Returns the variable + property reads represented by the instruction value.
 pub(crate) fn collect_maybe_memo_dependencies(
     value: &InstructionValue,
-    maybe_deps: &HashMap<IdentifierId, ManualMemoDependency>,
+    maybe_deps: &IdMap<IdentifierId, ManualMemoDependency>,
     optional: bool,
     env: &Environment,
 ) -> Option<ManualMemoDependency> {
@@ -423,7 +422,7 @@ pub(crate) fn collect_maybe_memo_dependencies(
             loc,
             ..
         } => {
-            if let Some(object_dep) = maybe_deps.get(&object.identifier) {
+            if let Some(object_dep) = maybe_deps.get(object.identifier) {
                 Some(ManualMemoDependency {
                     root: object_dep.root.clone(),
                     path: {
@@ -442,7 +441,7 @@ pub(crate) fn collect_maybe_memo_dependencies(
             }
         }
         InstructionValue::LoadLocal { place, .. } | InstructionValue::LoadContext { place, .. } => {
-            if let Some(source) = maybe_deps.get(&place.identifier) {
+            if let Some(source) = maybe_deps.get(place.identifier) {
                 Some(source.clone())
             } else if matches!(
                 &env.identifiers[place.identifier.0 as usize].name,
@@ -468,7 +467,7 @@ pub(crate) fn collect_maybe_memo_dependencies(
             // source depslists
             let lvalue_id = lvalue.place.identifier;
             let rvalue_id = val.identifier;
-            if let Some(aliased) = maybe_deps.get(&rvalue_id) {
+            if let Some(aliased) = maybe_deps.get(rvalue_id) {
                 let lvalue_name = &env.identifiers[lvalue_id.0 as usize].name;
                 if !matches!(lvalue_name, Some(IdentifierName::Named(_))) {
                     // Note: we can't insert into maybe_deps here since we only have
@@ -638,7 +637,7 @@ fn extract_manual_memoization_args(
     let deps_info = maybe_deps_list.unwrap();
     let mut deps_list: HirVec<ManualMemoDependency> = AstAlloc::vec();
     for dep in &deps_info.deps {
-        let maybe_dep = sidemap.maybe_deps.get(&dep.identifier);
+        let maybe_dep = sidemap.maybe_deps.get(dep.identifier);
         if let Some(d) = maybe_dep {
             deps_list.push(d.clone());
         } else {

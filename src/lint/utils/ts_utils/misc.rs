@@ -3,7 +3,6 @@
 use crate::ast::{
     Expr, ExprKind, Func, KeyKind, Member, MemberKind, Node, Prop, TypeKind, TypeNode,
 };
-use crate::semantic::Declaration;
 use crate::tokens::{skip_trivia, skip_trivia_back};
 use crate::utils::ast_utils::get_static_string_value;
 use crate::utils::estree_compat::estree_span;
@@ -208,14 +207,6 @@ pub fn type_node_requires_parentheses(node: TypeNode<'_>, text: &[u8]) -> bool {
         TypeKind::Intersection(_) => text.starts_with(b"&"),
         _ => false,
     }
-}
-
-/// typescript-eslint's `isRestParameterDeclaration`, for a declaration in the file: `...name`.
-pub fn is_rest_parameter_declaration(declaration: Declaration<'_>) -> bool {
-    matches!(
-        declaration,
-        Declaration::Param(pat) if matches!(pat.parent(), Node::Param(param) if param.is_rest())
-    )
 }
 
 /// typescript-eslint's `isParenlessArrowFunction`: `a => b`. As upstream, so is `(a,) => b`: the

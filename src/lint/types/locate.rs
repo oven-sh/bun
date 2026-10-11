@@ -225,11 +225,6 @@ impl<'a> Node<'a> {
         self.locate(self.file()).get_type_at_location()
     }
 
-    /// `services.getSymbolAtLocation(node)`
-    pub fn ts_symbol(self) -> Option<TsSymbol<'a>> {
-        self.locate(self.file()).get_symbol_at_location()
-    }
-
     /// `services.esTreeNodeToTSNodeMap.get(node)`
     pub fn ts_node(self) -> TsNode<'a> {
         self.locate(self.file())

@@ -34,7 +34,6 @@ mod is_parenthesized;
 pub mod js_number;
 mod js_string;
 mod operators;
-mod pattern_matcher;
 mod reference_tracker;
 mod static_value;
 mod token_predicate;
@@ -47,7 +46,6 @@ pub use get_static_value::get_static_value;
 pub use get_string_if_constant::get_string_if_constant;
 pub use has_side_effect::{HasSideEffectOptions, has_side_effect};
 pub use is_parenthesized::{is_parenthesized, is_parenthesized_times};
-pub use pattern_matcher::PatternMatcher;
 pub use reference_tracker::{
     Mode, ReferenceKind, ReferenceTracker, Trace, TraceMap, TrackedReference,
 };

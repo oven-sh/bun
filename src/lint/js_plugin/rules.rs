@@ -165,9 +165,6 @@ pub(crate) fn has_what_json_lacks(json: &Json) -> bool {
 }
 
 impl FileSettings {
-    pub fn new(language: &LanguageOptions) -> Arc<FileSettings> {
-        Self::from_objects(language, &[], None)
-    }
 
     /// `sources`: `$source` of the objects of an `eslint.config.js` that `language` is merged of, in their order. `parser`:
     /// `$parser` of the one that `languageOptions.parser` is from.

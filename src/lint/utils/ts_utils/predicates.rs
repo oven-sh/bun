@@ -1,8 +1,6 @@
 //! `@typescript-eslint/utils`' `ast-utils/predicates.ts`.
 
-use crate::ast::{
-    BinOp, Expr, ExprKind, Flags, FnKind, Func, MemberKind, Node, PropKind, StmtKind, TypeKind,
-};
+use crate::ast::{BinOp, Expr, ExprKind, FnKind, Func, Node, StmtKind, TypeKind};
 use crate::tokens::{Token, TokenKind};
 use crate::utils::ast_utils::is_function;
 
@@ -52,30 +50,6 @@ pub fn is_function_type<'a>(node: impl Into<Node<'a>>) -> bool {
 pub fn is_function_or_function_type<'a>(node: impl Into<Node<'a>>) -> bool {
     let node = node.into();
     is_function(node) || is_function_type(node)
-}
-
-/// typescript-eslint's `isConstructor`: the `Member` that is a constructor of a class, with or
-/// without a body. `static constructor() {}` is a method. For upstream's
-/// `isConstructor(node.parent)` pass `func.parent()`.
-pub fn is_constructor<'a>(node: impl Into<Node<'a>>) -> bool {
-    matches!(
-        node.into(),
-        Node::Member(member) if member.kind() == MemberKind::Constructor && !member.is_static()
-    )
-}
-
-/// typescript-eslint's `isSetter`: a `set` accessor of a class that is not abstract, or of an
-/// object literal.
-pub fn is_setter<'a>(node: impl Into<Node<'a>>) -> bool {
-    match node.into() {
-        Node::Member(member) => {
-            member.kind() == MemberKind::Setter
-                && !member.flags().contains(Flags::ABSTRACT)
-                && matches!(member.parent(), Node::Class(_))
-        }
-        Node::Prop(prop) => prop.kind() == PropKind::Setter,
-        _ => false,
-    }
 }
 
 /// typescript-eslint's `isAwaitKeyword`.

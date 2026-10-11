@@ -606,20 +606,6 @@ pub fn is_loop<'a>(node: impl Into<Node<'a>>) -> bool {
     matches!(node.into(), Node::Stmt(statement) if statement.is_loop())
 }
 
-/// ESLint's `isInLoop`: `node` is a loop or is in one, in the same function.
-pub fn is_in_loop<'a>(node: impl Into<Node<'a>>) -> bool {
-    let node = node.into();
-    for at in std::iter::once(node).chain(node.ancestors()) {
-        if is_function(at) {
-            return false;
-        }
-        if is_loop(at) {
-            return true;
-        }
-    }
-    false
-}
-
 /// ESLint's `getUpperFunction`: `node` if it is a function, or else the innermost function around
 /// it.
 pub fn get_upper_function<'a>(node: impl Into<Node<'a>>) -> Option<Func<'a>> {
@@ -757,12 +743,6 @@ pub fn is_process_exit_call(e: Expr<'_>) -> bool {
     };
     // In `(process?.exit)()` a `ChainExpression` is the callee.
     obj.is_ident("process") && !callee.is_chain_root()
-}
-
-/// ESLint's `isEmptyBlock`. The body of a function is not a `Stmt`: see [`is_empty_function`].
-#[inline]
-pub fn is_empty_block(statement: Stmt<'_>) -> bool {
-    statement.as_block().is_some_and(|body| body.is_empty())
 }
 
 /// ESLint's `isEmptyFunction`: its body is a block without statements.

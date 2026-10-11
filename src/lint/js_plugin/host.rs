@@ -485,18 +485,6 @@ impl<'e> Host<'e> {
         positions
     }
 
-    /// Runs the rules `enabled` on `file`. `wants_fixes`: whether anything reads [`Report::fix`] and
-    /// [`Report::suggestions`].
-    pub fn run<'a>(
-        &self,
-        file: &'a File<'a>,
-        settings: &FileSettings,
-        enabled: &[&Configured],
-        wants_fixes: bool,
-    ) -> Result<Vec<Report>, Failure> {
-        self.run_on_block(file, settings, enabled, wants_fixes, None)
-    }
-
     /// The same. `physical_path_len`: how much of the path of the file is ESLint's `physicalFilename`, if not all of it.
     pub fn run_on_block<'a>(
         &self,

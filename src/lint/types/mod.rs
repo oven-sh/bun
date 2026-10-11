@@ -420,11 +420,6 @@ impl<'a> Types<'a> {
         self.file.query(|q| q.current_directory())
     }
 
-    /// The file that is linted, as a file of the program.
-    pub fn source_file(self) -> SourceFile<'a> {
-        SourceFile::new(self.file, self.file.id_in_program())
-    }
-
     /// `ts.resolveModuleName(specifier, fileName, options, ts.sys).resolvedModule`, for a specifier
     /// that an import or an export of the file names.
     pub fn resolve_module_name(self, specifier: &[u8]) -> Option<SourceFile<'a>> {

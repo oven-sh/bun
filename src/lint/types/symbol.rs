@@ -258,9 +258,4 @@ impl<'a> TsSymbol<'a> {
     pub fn deprecation(self) -> Option<&'a [u8]> {
         self.file.query(|q| q.deprecation_of_symbol(self.id))
     }
-
-    /// `checker.symbolToString(symbol)`
-    pub fn to_text(self) -> Vec<u8> {
-        self.file.query(|q| q.symbol_to_string(self.id))
-    }
 }

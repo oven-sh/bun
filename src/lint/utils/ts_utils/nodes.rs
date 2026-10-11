@@ -1,9 +1,7 @@
 //! The small files of `util/`, one function each.
 
 use super::estree::is_pattern;
-use crate::ast::{
-    BinOp, Expr, ExprKind, File, Flags, Func, Ident, Node, PropKind, Stmt, StmtKind, UnOp,
-};
+use crate::ast::{BinOp, Expr, ExprKind, File, Flags, Func, Ident, Node, PropKind, StmtKind, UnOp};
 use crate::context::{Cx, Report};
 use crate::fix::{Fixer, IntoFix};
 use crate::rule::{Message, Rule};
@@ -273,52 +271,6 @@ pub fn report_at_line_zero<R: Rule>(cx: &Cx<'_, R>, message: Message) {
     if !cx.language().is_oxlint {
         let line_zero = Position { line: 0, column: 0 };
         report.start_at(line_zero).end_at(line_zero);
-    }
-}
-
-/// What [`walk_statements`] returns.
-pub struct WalkStatements<'a> {
-    /// What is left, the next on top.
-    stack: SmallVec<[Stmt<'a>; 16]>,
-}
-
-impl<'a> Iterator for WalkStatements<'a> {
-    type Item = Stmt<'a>;
-
-    fn next(&mut self) -> Option<Stmt<'a>> {
-        loop {
-            let statement = self.stack.pop()?;
-            let first = self.stack.len();
-            match statement.kind() {
-                StmtKind::Block(statements) => self.stack.extend(statements),
-                StmtKind::Switch { cases, .. } => {
-                    cases.iter().for_each(|case| self.stack.extend(case.body()));
-                }
-                StmtKind::If { yes, no, .. } => {
-                    self.stack.push(yes);
-                    self.stack.extend(no);
-                }
-                StmtKind::While { body, .. }
-                | StmtKind::DoWhile { body, .. }
-                | StmtKind::For { body, .. }
-                | StmtKind::ForIn { body, .. }
-                | StmtKind::ForOf { body, .. }
-                | StmtKind::With { body, .. }
-                | StmtKind::Labeled { body, .. } => self.stack.push(body),
-                StmtKind::Try {
-                    block,
-                    handler,
-                    finalizer,
-                    ..
-                } => {
-                    self.stack.push(block);
-                    self.stack.extend(handler);
-                    self.stack.extend(finalizer);
-                }
-                _ => return Some(statement),
-            }
-            self.stack[first..].reverse();
-        }
     }
 }
 

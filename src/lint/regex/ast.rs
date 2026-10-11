@@ -507,11 +507,6 @@ impl<'a> Node<'a> {
     }
 
     #[inline]
-    pub fn id(self) -> NodeId {
-        self.id
-    }
-
-    #[inline]
     pub fn ast(self) -> &'a Ast<'a> {
         self.ast
     }
@@ -794,26 +789,6 @@ impl<'a> Node<'a> {
             | Data::Backreference { .. }
             | Data::ModifierFlags(_)
             | Data::Flags(_) => {}
-        }
-    }
-
-    /// `visitRegExpAST(node, handlers)`
-    pub fn visit(self, visitor: &mut impl Visitor<'a>) {
-        let mut stack: SmallVec<[(NodeId, bool); 32]> = SmallVec::new();
-        stack.push((self.id, false));
-        while let Some((id, leaving)) = stack.pop() {
-            let node = self.at(id);
-            if leaving {
-                visitor.leave(node);
-                continue;
-            }
-            visitor.enter(node);
-            stack.push((id, true));
-            let first = stack.len();
-            node.each_child(|child| stack.push((child, false)));
-            if let Some(children) = stack.get_mut(first..) {
-                children.reverse();
-            }
         }
     }
 

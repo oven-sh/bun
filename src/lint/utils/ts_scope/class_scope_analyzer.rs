@@ -167,11 +167,6 @@ impl<'a> ClassMember<'a> {
         self.flags().contains(Flags::PRIVATE)
     }
 
-    #[inline]
-    pub fn is_static(&self) -> bool {
-        self.flags().contains(Flags::STATIC)
-    }
-
     /// It is read. For an accessor, which can have side effects, a write is a use too.
     pub fn is_used(&self) -> bool {
         self.read_count > 0 || (self.write_count > 0 && self.is_accessor())

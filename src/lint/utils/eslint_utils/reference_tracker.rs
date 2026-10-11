@@ -99,11 +99,6 @@ impl<'m, T: Copy> TraceMap<'m, T> {
             ..self
         }
     }
-
-    /// `[ESM]: true`
-    pub const fn esm(self) -> Self {
-        TraceMap { esm: true, ..self }
-    }
 }
 
 impl<'m> Trace<'m> for TraceMap<'m, ()> {

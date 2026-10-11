@@ -241,11 +241,6 @@ impl Regex {
         &self.source
     }
 
-    #[inline]
-    pub fn flags(&self) -> Flags {
-        self.flags
-    }
-
     /// Whether a character is a code point: the `u` or the `v` flag.
     #[inline]
     fn is_unicode(&self) -> bool {

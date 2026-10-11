@@ -267,6 +267,7 @@ describe("Bun.serve static routes", () => {
   test("static route handling", () => {
     using server = serve({
       port: 0,
+      // @ts-expect-error deprecated alias of routes
       static: {
         "/": new Response("Home"),
         "/about": new Response("About"),
@@ -334,8 +335,8 @@ describe("Bun.serve hostname and port validation", () => {
 
   test("hostname with unix should throw", () => {
     expect(() =>
+      // @ts-expect-error - Testing invalid combination
       serve({
-        // @ts-expect-error - Testing invalid combination
         hostname: defaultHostname,
         unix: "test.sock",
         fetch() {
@@ -445,7 +446,7 @@ describe("Bun.serve hostname and port validation", () => {
       let thrown: unknown;
       try {
         server.reload({
-          // @ts-expect-error - Testing invalid port values
+          // Testing invalid port values
           port: 65536,
           fetch() {
             return new Response("ok");
@@ -652,9 +653,9 @@ describe("Bun.serve hostname coercion", () => {
 describe("Bun.serve unix socket validation", () => {
   test("unix socket with hostname should throw", () => {
     expect(() =>
+      // @ts-expect-error - Testing invalid combination
       serve({
         unix: "/tmp/test.sock",
-        // @ts-expect-error - Testing invalid combination
         hostname: defaultHostname, // Cannot combine with unix
         fetch() {
           return new Response("ok");

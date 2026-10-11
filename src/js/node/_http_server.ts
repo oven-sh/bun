@@ -1,6 +1,7 @@
 // Hardcoded module "node:_http_server"
 const EventEmitter: typeof import("node:events").EventEmitter = require("node:events");
 const { Stream } = require("node:stream");
+const { isIP } = require("internal/net/isIP");
 const {
   _checkInvalidHeaderChar: checkInvalidHeaderChar,
   chunkExpression,
@@ -85,6 +86,9 @@ const kPendingCloseGenerations = Symbol("http.server.pendingCloseGenerations");
 const kListenerGeneration = Symbol("http.server.listenerGeneration");
 // Set on the 'connect'/'upgrade' handoff; closeAll/closeIdleConnections() skip these, as in Node.
 const kHandedOff = Symbol("http.server.socketHandedOff");
+function closeHandle(handle) {
+  if (!handle.closed) handle.close();
+}
 const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
 const kMaxHeadersCount = Symbol("http.server.maxHeadersCount");
 
@@ -266,16 +270,10 @@ function emitListenErrorNextTick(self, err) {
   self.emit("error", err);
 }
 
-// Node.js only requests a client certificate when `requestCert: true`.
-// The uSockets SSL context treats `ca` alone as "verify peer", so without
-// these two flags an `https.Server({ ca })` would reject every client that
-// doesn't present a cert. Mirror tls.Server (net.ts): default `requestCert`
-// to false and, when not requesting, force `rejectUnauthorized` to false so
-// the CA is loaded into the trust store without requiring a client cert.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1367-L1368
 function normalizeServerTls(tls) {
-  const requestCert = !!tls.requestCert;
-  tls.requestCert = requestCert;
-  tls.rejectUnauthorized = requestCert ? tls.rejectUnauthorized !== false : false;
+  tls.requestCert = tls.requestCert === true;
+  tls.rejectUnauthorized = tls.rejectUnauthorized !== false;
   return tls;
 }
 
@@ -300,6 +298,7 @@ interface Server extends NodeHTTPServer {
   httpValidation?: "strict" | "relaxed" | "insecure";
   requireHostHeader: boolean;
   httpAllowHalfOpen: boolean;
+  blockList?: import("node:net").BlockList;
 }
 function Server(options, callback): void {
   if (!(this instanceof Server)) return new Server(options, callback);
@@ -331,26 +330,26 @@ function Server(options, callback): void {
   } else {
     validateObject(options, "options");
     options = { ...options };
-    const tlsHelpers = options.pfx || options.cert || options.key || options.ca ? require("internal/tls") : undefined;
+    const tlsHelpers =
+      this[isTlsSymbol] || options.pfx || options.cert || options.key || options.ca
+        ? require("internal/tls")
+        : undefined;
 
     // Node's https.Server accepts PKCS#12 bundles (pfx [+ passphrase]); fold
     // them into plain key/cert/ca so the native TLS config sees PEM material.
     let tlsOptions = options;
     if (options.pfx) {
       tlsOptions = tlsHelpers.processPfxOptions(options);
-      this[isTlsSymbol] = true;
     }
 
     let cert = tlsOptions.cert;
     if (cert) {
       tlsHelpers.throwOnInvalidTLSArray("options.cert", cert);
-      this[isTlsSymbol] = true;
     }
 
     let key = tlsOptions.key;
     if (key) {
       tlsHelpers.throwOnInvalidTLSArray("options.key", key);
-      this[isTlsSymbol] = true;
     }
 
     let ca = tlsOptions.ca;
@@ -363,10 +362,9 @@ function Server(options, callback): void {
     }
     if (ca) {
       tlsHelpers.throwOnInvalidTLSArray("options.ca", ca);
-      this[isTlsSymbol] = true;
     }
 
-    let passphrase = options.passphrase;
+    let passphrase = options.passphrase || undefined;
     if (passphrase && typeof passphrase !== "string") {
       throw $ERR_INVALID_ARG_TYPE("options.passphrase", "string", passphrase);
     }
@@ -381,36 +379,59 @@ function Server(options, callback): void {
       throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
     }
 
-    if (this[isTlsSymbol]) {
-      const { validateSecureProtocol, secureProtocolToVersionRange, tlsStringToProtocolVersion } = tlsHelpers;
-      // Translate minVersion/maxVersion/secureProtocol into the integer
-      // protocol range the native layer applies (secureProtocol wins, like
-      // Node's SecureContext::Init); 0 keeps the native defaults.
-      validateSecureProtocol(options.secureProtocol);
+    if (tlsHelpers) {
+      const { secureProtocolToVersionRange, tlsStringToProtocolVersion } = tlsHelpers;
+      // A falsy value counts as absent: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1423-L1518
+      const secureProtocol = options.secureProtocol || undefined;
+      const minVersionOption = options.minVersion || undefined;
+      const maxVersionOption = options.maxVersion || undefined;
+      const sessionTimeout = options.sessionTimeout || undefined;
+      tlsHelpers.validateSecureContextOptions({
+        ...options,
+        secureProtocol,
+        minVersion: minVersionOption,
+        maxVersion: maxVersionOption,
+        sessionTimeout,
+        passphrase,
+        ciphers: options.ciphers || undefined,
+        clientCertEngine: options.clientCertEngine || undefined,
+        ticketKeys: options.ticketKeys || undefined,
+        // BoringSSL has no DHE suites to apply it to.
+        dhparam: undefined,
+      });
+      const crl = options.crl || undefined;
+      if (crl) {
+        tlsHelpers.throwOnInvalidTLSArray("options.crl", crl);
+      }
+      if (options.honorCipherOrder !== false) secureOptions |= tlsHelpers.SSL_OP_CIPHER_SERVER_PREFERENCE;
+      // secureProtocol, or else minVersion/maxVersion, as the integer range the native layer applies; 0 keeps its defaults.
       let minVersion, maxVersion;
-      const range = secureProtocolToVersionRange(options.secureProtocol);
+      const ciphers = options.ciphers ? tlsHelpers.stripTls13CipherNames(options.ciphers) : undefined;
+      const range = secureProtocolToVersionRange(secureProtocol);
       if (range) {
         minVersion = range[0];
         maxVersion = range[1];
       } else {
-        minVersion = tlsStringToProtocolVersion(options.minVersion);
-        maxVersion = tlsStringToProtocolVersion(options.maxVersion);
+        minVersion = tlsStringToProtocolVersion(ciphers?.tls13Only ? "TLSv1.3" : minVersionOption);
+        maxVersion = tlsStringToProtocolVersion(maxVersionOption);
       }
       this[tlsSymbol] = normalizeServerTls({
         serverName,
-        key,
+        key: tlsHelpers.normalizePemKeyOption(key, passphrase),
         cert,
         ca,
+        crl,
+        sessionTimeout: sessionTimeout ?? 0,
+        sigalgs: options.sigalgs,
+        ecdhCurve: options.ecdhCurve ?? require("node:tls").DEFAULT_ECDH_CURVE,
         passphrase,
         secureOptions,
         minVersion,
         maxVersion,
-        ciphers: typeof options.ciphers === "string" && options.ciphers ? options.ciphers : undefined,
+        ciphers: ciphers?.cipherList || undefined,
         requestCert: options.requestCert,
         rejectUnauthorized: options.rejectUnauthorized,
       });
-    } else {
-      this[tlsSymbol] = null;
     }
   }
 
@@ -500,7 +521,7 @@ Server.prototype.closeAllConnections = function () {
   const tracked = this[kTrackedConnections];
   if (tracked && tracked.size > 0) {
     for (const socket of $Array.from(tracked) as NodeHTTPServerSocket[]) {
-      if (!socket[kHandedOff]) socket.destroy();
+      if (!socket[kHandedOff]) socket.destroyNow();
     }
   }
 };
@@ -615,7 +636,7 @@ Server.prototype.listen = function () {
 
       const otherTLS = arg0.tls;
       if (otherTLS && $isObject(otherTLS)) {
-        tls = normalizeServerTls({ ...otherTLS });
+        tls = normalizeServerTls({ __proto__: null, ...otherTLS });
       }
     } else if (typeof arg0 === "string" && !(Number(arg0) >= 0)) {
       // (path[...][, cb])
@@ -1263,6 +1284,25 @@ function onServerConnection(this: Server, listenerGeneration, socketHandle) {
     return;
   }
 
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2338-L2346
+  const blockList = this.blockList;
+  if (blockList) {
+    const remoteAddress = socket.remoteAddress;
+    const addressType = isIP(remoteAddress);
+    if (addressType) {
+      let blocked = true;
+      try {
+        blocked = !!blockList.check(remoteAddress, `ipv${addressType}`);
+      } finally {
+        if (blocked) {
+          tracked?.delete(socket);
+          socket.destroy();
+        }
+      }
+      if (blocked) return;
+    }
+  }
+
   // Node's connectionListener attaches the HTTPParser (socket.parser) before
   // emitting 'connection'; expose the shim here so listeners see it populated.
   socket.parser = createServerParserShim(socket);
@@ -1647,6 +1687,7 @@ function getNodeHTTPServerSocket() {
     #pendingCallback = null;
     #pendingAbortMessage;
     #closeHandled = false;
+    #closingHandle;
     #resetSupported;
     #closeError: Error | undefined = undefined;
     declare encrypted: boolean;
@@ -1767,6 +1808,7 @@ function getNodeHTTPServerSocket() {
       // is deferred to #onClose so the dispatch promise resolves only after the
       // native on_abort has released the pending-request ref.
       this.#pendingAbortMessage = this._httpMessage;
+      this.#closingHandle = handle;
       handle.onclose = this.#onCloseForDestroy.bind(this, callback, err, handle);
       if (this.resetAndClosing) {
         this.resetAndClosing = false;
@@ -1884,7 +1926,17 @@ function getNodeHTTPServerSocket() {
         (pendingCallback as Function)(writeFailure);
       }
     }
+    // The close of a TLS handle waits for ciphertext that write() reported and a stalled peer does not take, but only once.
+    destroyNow() {
+      this.destroy();
+      const handle = this.#closingHandle;
+      if (!handle || handle.closed) return;
+      handle.close();
+      // In the middle of its own request a handle only takes note, and closes behind it, for the first time.
+      if (!handle.closed) setImmediate(closeHandle, handle);
+    }
     #onCloseForDestroy(closeCallback, err: Error | undefined, handle) {
+      this.#closingHandle = undefined;
       this.#onClose(handle);
       // Thread the destroy error through to the streams machinery (like
       // Node.js's net.Socket._destroy passing the exception to its callback),

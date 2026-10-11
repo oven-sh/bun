@@ -1070,7 +1070,7 @@ describe("Bun.JSONL", () => {
       });
 
       test("mixed valid and garbage lines", () => {
-        const lines = [];
+        const lines: string[] = [];
         for (let i = 0; i < 100; i++) {
           if (i % 3 === 0) lines.push(JSON.stringify({ i }));
           else lines.push("x".repeat(i) + "{[[[");

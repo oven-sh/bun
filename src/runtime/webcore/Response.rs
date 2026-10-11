@@ -427,10 +427,6 @@ impl Response {
 
 impl Response {
     #[inline]
-    pub(crate) fn get_body_len(&self) -> usize {
-        self.body.get().len() as usize
-    }
-
     pub(crate) fn get_form_data_encoding(
         &self,
     ) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>> {
@@ -646,11 +642,14 @@ impl Response {
         // `fmt::Error`.
         let js_err = |_: JsError| core::fmt::Error;
 
-        writeln!(
-            writer,
-            "Response ({}) {{",
-            bun_core::fmt::size(self.get_body_len(), Default::default())
-        )?;
+        match self.body.get().known_len() {
+            Some(len) => writeln!(
+                writer,
+                "Response ({}) {{",
+                bun_core::fmt::size(len, Default::default())
+            )?,
+            None => writeln!(writer, "Response {{")?,
+        }
 
         {
             let mut formatter = formatter.indented();

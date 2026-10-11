@@ -63,7 +63,6 @@ use crate::test_runner::jest::{self, FileColumns as _, Summary, TestRunner};
 use crate::test_runner::snapshot::Snapshots;
 use bun_collections::index_sort;
 
-#[allow(non_snake_case)]
 mod bun_test {
     //! Façade over `crate::test_runner` that preserves the legacy paths
     //! the body uses (`bun_test::Execution::Result`, `bun_test::BasicResult`,
@@ -155,7 +154,7 @@ fn fmt_status_text_line(
 /// currently failing, captured as they are printed so structured reporters
 /// get them without re-running the exception formatter.
 #[derive(Default)]
-pub struct TestFailure {
+pub(crate) struct TestFailure {
     pub name: Vec<u8>,
     pub(crate) message: Vec<u8>,
     pub(crate) body: Vec<u8>,
@@ -210,7 +209,7 @@ fn push_stripping_ansi(out: &mut Vec<u8>, input: &[u8]) {
 // - Add stdout/stderr to the JUnit report
 // - Add timestamp field to the JUnit report
 #[derive(Default)]
-pub struct JunitReporter {
+pub(crate) struct JunitReporter {
     pub(crate) contents: Vec<u8>,
     pub(crate) total_metrics: Metrics,
     pub(crate) offset_of_testsuites_value: usize,
@@ -225,7 +224,7 @@ pub struct JunitReporter {
 }
 
 #[derive(Default)]
-pub struct SuiteInfo {
+pub(crate) struct SuiteInfo {
     pub name: Box<[u8]>,
     pub(crate) offset_of_attributes: usize,
     pub(crate) metrics: Metrics,
@@ -237,7 +236,7 @@ pub struct SuiteInfo {
 // unconditional drop is correct.
 
 #[derive(Default, Clone, Copy)]
-pub struct Metrics {
+pub(crate) struct Metrics {
     pub(crate) test_cases: u32,
     pub(crate) assertions: u32,
     pub(crate) failures: u32,
@@ -948,7 +947,7 @@ pub(crate) fn exit_is_requested() -> bool {
     !should_drain_event_loop()
 }
 
-pub struct CommandLineReporter {
+pub(crate) struct CommandLineReporter {
     // `TestRunner<'a>` borrows `TestOptions`/regex from the CLI ctx; the
     // reporter is held in a `Box` local to `TestCommand::exec` which never
     // returns before process exit, so `'static` is sound here. Revisit if the
@@ -979,7 +978,7 @@ pub struct CommandLineReporter {
 }
 
 #[derive(Default)]
-pub struct ReportersConfig {
+pub(crate) struct ReportersConfig {
     pub(crate) dots: bool,
     pub(crate) only_failures: bool,
     pub(crate) junit: Option<Box<JunitReporter>>,
@@ -2320,6 +2319,24 @@ impl TestCommand {
                 }
                 _ => {}
             }
+        }
+
+        // After the file watcher is enabled: see `watching`.
+        let has_type_errors = ctx.runtime_options.check && {
+            use crate::cli::check_command::{EntryPoint, check_before, watching};
+            let paths = test_files.iter().map(|path| EntryPoint::file(path));
+            !check_before(&paths.collect::<Vec<_>>(), watching(vm))
+        };
+        if has_type_errors {
+            // No test is run.
+            if !vm.is_watcher_enabled() {
+                Global::exit(1);
+            }
+            let vm_ptr: *mut VirtualMachine = vm;
+            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
+            // `run_with_api_lock` takes `&self` only, so the closure holds the
+            // unique mutable access on this single-threaded path.
+            vm.run_with_api_lock(|| Self::run_event_loop_for_watch(unsafe { &mut *vm_ptr }));
         }
 
         let mut coverage_options: CodeCoverageOptions = ctx.test_options.coverage.clone();

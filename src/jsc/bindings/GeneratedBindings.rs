@@ -6,8 +6,6 @@
 //! `JSHostFn` (the `bindgen_*_js*` symbols emitted by the C++ dispatch shim)
 //! to a named JS function value.
 
-#![allow(non_snake_case)]
-
 use crate::{JSGlobalObject, JSHostFn, JSValue, host_fn};
 use bun_core::EncodedSlice;
 

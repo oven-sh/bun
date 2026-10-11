@@ -2060,7 +2060,6 @@ describe("Bun.Archive", () => {
     test("level without compress is TypeScript error but no runtime error", async () => {
       const files = { "hello.txt": "Hello, World!" };
 
-      // @ts-expect-error - level without compress is a TypeScript error
       const archive = new Bun.Archive(files, { level: 9 });
 
       // Should not throw at runtime - level is silently ignored, no compression used

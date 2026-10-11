@@ -1,4 +1,4 @@
-import type { Query as QueryType } from "./query";
+import type { QueryStrings, Query as QueryType } from "./query";
 
 const PublicArray = globalThis.Array;
 const {
@@ -121,7 +121,7 @@ const enum SSLMode {
 }
 export type { SSLMode };
 
-function normalizeSSLMode(value: string): SSLMode {
+function normalizeSSLMode(value: string | undefined): SSLMode {
   if (!value) {
     return SSLMode.disable;
   }
@@ -390,7 +390,7 @@ function pushBindParam(
 // - All other types are handled natively
 function normalizeQuery(
   adapter: QueryNormalizationAdapter,
-  strings: string | TemplateStringsArray,
+  strings: QueryStrings,
   values: unknown[],
   binding_idx = 1,
 ): [string, unknown[]] {
@@ -595,7 +595,7 @@ const enum PooledConnectionFlags {
   /// onConnectFired is used to indicate that handleConnected ran for this slot, so the user's onconnect callback already fired (with null or an error)
   onConnectFired = 1 << 3,
 }
-export type { PooledConnectionState };
+export type { BasePooledConnection, PooledConnectionState };
 
 function onQueryFinish(this: BasePooledConnection, onClose: (err: Error) => void) {
   this.queries.delete(onClose);
@@ -1017,7 +1017,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     }
   }
 
-  normalizeQuery(strings: string | TemplateStringsArray, values: unknown[], binding_idx = 1): [string, unknown[]] {
+  normalizeQuery(strings: QueryStrings, values: unknown[], binding_idx = 1): [string, unknown[]] {
     return normalizeQuery(this, strings, values, binding_idx);
   }
 
@@ -1087,13 +1087,13 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     return pooledConnection.connection;
   }
 
-  attachConnectionCloseHandler(connection: PooledConnection, handler: () => void): void {
+  attachConnectionCloseHandler(connection: PooledConnection, handler: (err: Error) => void): void {
     if (connection.onClose) {
       connection.onClose(handler);
     }
   }
 
-  detachConnectionCloseHandler(connection: PooledConnection, handler: () => void): void {
+  detachConnectionCloseHandler(connection: PooledConnection, handler: (err: Error) => void): void {
     const queries = connection.queries;
     if (queries) {
       queries.delete(handler);
@@ -1361,7 +1361,7 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
       const timer = setTimeout(() => {
         // timeout is reached, lets close and probably fail some queries
         this.#close().finally(resolve);
-      }, timeout * 1000);
+      }, timeout! * 1000);
       timer.unref(); // dont block the event loop
 
       this.onAllQueriesFinished = () => {
@@ -1861,10 +1861,11 @@ function parseOptions(
   // The rest of this function is logic specific to postgres/mysql/mariadb (they have the same options object)
 
   let sslMode: SSLMode = sslModeFromConnectionDetails || SSLMode.disable;
-  if (sslMode === SSLMode.disable) {
+  if (adapter === "postgres") {
     // libpq honours PGSSLMODE as the default; a URL ?sslmode= below overrides it.
-    const envSslMode = adapter === "postgres" ? env.PG_SSLMODE || env.PGSSLMODE : undefined;
-    if (envSslMode) sslMode = normalizeSSLMode(envSslMode);
+    const envSslMode = normalizeSSLMode(env.PG_SSLMODE || env.PGSSLMODE);
+    // The name of a TLS_* URL variable asks for at least `require`.
+    if (envSslMode > sslMode) sslMode = envSslMode;
   }
 
   let url = _url;
@@ -1874,13 +1875,13 @@ function parseOptions(
   let username: string | null | undefined;
   let password: string | (() => Bun.MaybePromise<string>) | undefined | null;
   let database: string | undefined;
-  let tls: Bun.TLSOptions | boolean | undefined;
+  let tls: Bun.TLSOptions | (Bun.BunFile & Bun.TLSOptions) | boolean | undefined;
   let query: string = "";
   let idleTimeout: number | null | undefined;
   let connectionTimeout: number | null | undefined;
   let maxLifetime: number | null | undefined;
-  let onconnect: ((error?: Error | undefined) => void) | undefined;
-  let onclose: ((error?: Error | undefined) => void) | undefined;
+  let onconnect: ((err: Error | null) => void) | undefined;
+  let onclose: ((err: Error | null) => void) | undefined;
   let max: number | null | undefined;
   let bigint: boolean | undefined;
   let path: string;
@@ -2059,17 +2060,20 @@ function parseOptions(
     }
   }
 
-  const tlsOption = options.tls || options.ssl;
+  const { tls: optionsTls, ssl: optionsSsl } = options;
+  const tlsOption = optionsTls || optionsSsl;
   if (typeof tlsOption === "string" && tlsOption) {
     sslMode = normalizeSSLMode(tlsOption);
     tls = undefined;
-  } else if (!tlsOption && (options.tls === false || options.ssl === false)) {
+  } else if (!tlsOption && (optionsTls === false || optionsSsl === false)) {
     sslMode = SSLMode.disable;
     tls = undefined;
+  } else if ($inheritsBlob(tlsOption)) {
+    // A `Bun.file()` is the CA bundle to verify the server certificate against.
+    tls = { ca: tlsOption };
   } else {
     tls = tlsOption || tls;
   }
-  const explicitTls = tls;
   max = options.max;
 
   idleTimeout ??= options.idleTimeout;
@@ -2148,26 +2152,32 @@ function parseOptions(
     }
   }
 
-  if ($isObject(tls) && sslMode < SSLMode.verify_ca) {
-    if (tls.rejectUnauthorized === true || (tls.rejectUnauthorized !== false && (tls.ca || tls.caFile))) {
-      sslMode = SSLMode.verify_full;
-    }
-  }
-
-  if (sslMode !== SSLMode.disable && !tls?.serverName) {
-    if (hostname) {
-      tls = { ...tls, serverName: hostname };
-    } else if (tls) {
-      tls = true;
-    }
-  }
-
   // Explicit tls/ssl options request an encrypted connection: if the server
   // declines TLS, the connection is aborted instead of continuing in plaintext.
   // Certificate verification is only enabled when explicitly requested
   // (ca, caFile, rejectUnauthorized, or a verify-* sslmode).
-  if (explicitTls && sslMode <= SSLMode.prefer) {
+  if (tls && sslMode <= SSLMode.prefer) {
     sslMode = SSLMode.require;
+  }
+
+  const tlsObject = { __proto__: null, ...(tls as Exclude<typeof tls, boolean>) };
+  if (sslMode < SSLMode.verify_ca) {
+    const { rejectUnauthorized } = tlsObject;
+    if (rejectUnauthorized === true || (rejectUnauthorized !== false && (tlsObject.ca || tlsObject.caFile))) {
+      sslMode = SSLMode.verify_full;
+    }
+  }
+
+  // `tls` is read before its alias; a mode the alias names still counts.
+  if (optionsTls && typeof optionsSsl === "string") {
+    const aliasMode = normalizeSSLMode(optionsSsl);
+    if (aliasMode > sslMode) sslMode = aliasMode;
+  }
+
+  // The native constructor rejects any other `tls`.
+  if (sslMode !== SSLMode.disable && (tls === undefined || tls === true || $isObject(tls))) {
+    tlsObject.serverName ||= tlsObject.servername || hostname;
+    tls = tlsObject;
   }
 
   port = Number(port);
@@ -2236,7 +2246,7 @@ export interface TransactionCommands {
 }
 
 export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
-  normalizeQuery(strings: string | TemplateStringsArray, values: unknown[]): [sql: string, values: unknown[]];
+  normalizeQuery(strings: QueryStrings, values: unknown[]): [sql: string, values: unknown[]];
   createQueryHandle(sql: string, values: unknown[], flags: number): QueryHandle;
   connect(onConnected: OnConnected<Connection>, reserved?: boolean): void;
   release(connection: Connection, connectingEvent?: boolean): void;
@@ -2249,8 +2259,8 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
   supportsReservedConnections?(): boolean;
   cancelReserve?(onConnected: OnConnected<Connection>): boolean;
   getConnectionForQuery?(pooledConnection: Connection): ConnectionHandle | null;
-  attachConnectionCloseHandler?(connection: Connection, handler: () => void): void;
-  detachConnectionCloseHandler?(connection: Connection, handler: () => void): void;
+  attachConnectionCloseHandler?(connection: Connection, handler: (err: Error) => void): void;
+  detachConnectionCloseHandler?(connection: Connection, handler: (err: Error) => void): void;
 
   getTransactionCommands(options?: string): TransactionCommands;
   array(values: any[], typeNameOrID?: number | string): SQLArrayParameter;

@@ -241,8 +241,13 @@ bun check packages/server packages/shared
 Bun checks each file with the same `tsconfig.json` your editor uses for it:
 
 - Bun uses the nearest `tsconfig.json`.
-- If that `tsconfig.json` does not include the file but has `references`, Bun uses the referenced project that includes the file. The `tsconfig.json` from `create vite` works this way.
+- If that `tsconfig.json` has `references` and a referenced project includes the file, Bun uses the referenced project. The `tsconfig.json` from `create vite` works this way. Bun also uses the referenced project if the nearest `tsconfig.json` includes the file too, because `tsc -b` checks the file there.
 - If no project includes the file, Bun still checks it, with the options of the nearest `tsconfig.json`.
+
+Two cases differ from an editor:
+
+- A `.d.ts` file that both projects include stays with the nearest `tsconfig.json`. Both projects read the file, and `tsc` reports its errors there.
+- Bun stops at the nearest `tsconfig.json` and the projects it references. An editor also looks at each `tsconfig.json` above it.
 
 A directory means the files of the project inside that directory. If the project has no files there, Bun checks every file in the directory that `exclude` does not rule out. An example is `bun check scripts` when `include` is `["src"]`.
 
@@ -316,7 +321,7 @@ To check one: bun check -p packages/server/tsconfig.json
 To check everything below this directory: bun check .
 ```
 
-`bun check .` checks every TypeScript file below the current directory. Bun checks each file once, with the nearest `tsconfig.json`. Files with no `tsconfig.json` get the [default compiler options](#without-a-tsconfigjson).
+`bun check .` checks every TypeScript file below the current directory. Bun checks each file once, with the `tsconfig.json` that [the rules for a file](#some-files-or-directories) choose. Files with no `tsconfig.json` get the [default compiler options](#without-a-tsconfigjson).
 
 To run the `typecheck` script of every workspace package, use [`--filter`](/pm/filter):
 

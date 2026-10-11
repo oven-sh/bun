@@ -285,6 +285,106 @@ describe("css tests", () => {
       `a { border-top-left-radius: 1px; border-top-left-radius: var(--r) }`,
       `a{border-top-left-radius:1px;border-top-left-radius:var(--r)}`,
     );
+    // The same for every typed property: `p: <parsed>; p: <unparsed>` prints as written.
+    test("every typed property keeps a parsed value ahead of an unparsed one", () => {
+      const parsed: [value: string, properties: string][] = [
+        ["normal", "align-content align-items place-content place-items"],
+        ["auto", "align-self place-self"],
+        ["1s a", "animation"],
+        ["a", "animation-name"],
+        ["1/2", "aspect-ratio"],
+        ["hidden", "backface-visibility overflow overflow-x overflow-y visibility"],
+        [
+          "red",
+          `background background-color border-block-color border-block-end-color border-block-start-color
+           border-bottom-color border-color border-inline-color border-inline-end-color border-inline-start-color
+           border-left-color border-right-color border-top-color color outline-color text-decoration-color
+           text-emphasis-color`,
+        ],
+        ["fixed", "background-attachment"],
+        ["padding-box", "background-clip background-origin mask-clip mask-origin"],
+        ["linear-gradient(red,red)", "background-image border-image-source mask mask-border-source mask-image"],
+        ["1px 2px", "background-position mask-position perspective-origin transform-origin"],
+        [
+          "1px",
+          `background-position-x background-position-y background-size block-size border-block-end-width
+           border-block-start-width border-block-width border-bottom-left-radius border-bottom-right-radius
+           border-bottom-width border-end-end-radius border-end-start-radius border-image-outset border-image-width
+           border-inline-end-width border-inline-start-width border-inline-width border-left-width border-radius
+           border-right-width border-spacing border-start-end-radius border-start-start-radius border-top-left-radius
+           border-top-right-radius border-top-width border-width bottom column-gap flex-basis gap height inline-size
+           inset inset-block inset-block-end inset-block-start inset-inline inset-inline-end inset-inline-start left
+           margin margin-block margin-block-end margin-block-start margin-bottom margin-inline margin-inline-end
+           margin-inline-start margin-left margin-right margin-top mask-border-outset mask-border-width
+           mask-position-x mask-position-y mask-size max-block-size max-height max-inline-size max-width
+           min-block-size min-height min-inline-size min-width outline-width padding padding-block padding-block-end
+           padding-block-start padding-bottom padding-inline padding-inline-end padding-inline-start padding-left
+           padding-right padding-top perspective right row-gap scroll-margin scroll-margin-block
+           scroll-margin-block-end scroll-margin-block-start scroll-margin-bottom scroll-margin-inline
+           scroll-margin-inline-end scroll-margin-inline-start scroll-margin-left scroll-margin-right
+           scroll-margin-top scroll-padding scroll-padding-block scroll-padding-block-end scroll-padding-block-start
+           scroll-padding-bottom scroll-padding-inline scroll-padding-inline-end scroll-padding-inline-start
+           scroll-padding-left scroll-padding-right scroll-padding-top top translate width`,
+        ],
+        ["no-repeat", "background-repeat mask-repeat"],
+        [
+          "1px solid red",
+          `border border-block border-block-end border-block-start border-bottom border-inline border-inline-end
+           border-inline-start border-left border-right border-top outline`,
+        ],
+        [
+          "solid",
+          `border-block-end-style border-block-start-style border-block-style border-bottom-style
+           border-inline-end-style border-inline-start-style border-inline-style border-left-style border-right-style
+           border-style border-top-style outline-style`,
+        ],
+        ["linear-gradient(red,red) 1", "border-image mask-border"],
+        ["round", "border-image-repeat mask-border-repeat"],
+        ["1", "border-image-slice flex flex-grow flex-shrink mask-border-slice order"],
+        ["0 0 1px red", "box-shadow text-shadow"],
+        ["border-box", "box-sizing"],
+        ["dark", "color-scheme"],
+        ["rtl", "direction"],
+        ["flex", "display"],
+        ["column", "flex-direction"],
+        ["column wrap", "flex-flow"],
+        ["wrap", "flex-wrap"],
+        ["12px serif", "font"],
+        ["serif", "font-family"],
+        ["12px", "font-size"],
+        ["50%", "font-stretch"],
+        ["italic", "font-style"],
+        ["small-caps", "font-variant-caps"],
+        ["700", "font-weight"],
+        ["center", "justify-content justify-items justify-self"],
+        ["2", "line-height scale"],
+        ["alpha", "mask-border-mode mask-mode mask-type"],
+        ["add", "mask-composite"],
+        [".5", "opacity"],
+        ["absolute", "position"],
+        ["1deg", "rotate"],
+        ["ellipsis", "text-overflow"],
+        ["scale(2)", "transform"],
+        ["fill-box", "transform-box"],
+        ["preserve-3d", "transform-style"],
+        ["all 1s", "transition"],
+        ["1s", "transition-delay transition-duration"],
+        ["opacity", "transition-property"],
+        ["linear", "transition-timing-function"],
+      ];
+      // These parse `inherit` as a custom identifier, so it is not an unparsed value for them.
+      const inheritIsIdent = ["color-scheme", "font-family", "transition", "transition-property"];
+      const sources = parsed.flatMap(([value, properties]) =>
+        properties
+          .split(/\s+/)
+          .flatMap(property =>
+            ["var(--x)", "banana(1)", "inherit"]
+              .filter(unparsed => unparsed !== "inherit" || !inheritIsIdent.includes(property))
+              .map(unparsed => `a{${property}:${value};${property}:${unparsed}}`),
+          ),
+      );
+      expect(sources.map(css => minify_test_with_options(css, css))).toEqual(sources);
+    });
   });
   describe("border_spacing", () => {
     minify_test(

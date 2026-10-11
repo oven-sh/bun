@@ -10,7 +10,7 @@ const BAD_MIN_MAX_FUNC: Message = Message::new("", "Math.min and Math.max combin
 
 impl Rule for BadMinMaxFunc {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "bad-min-max-func", Kind::Problem);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["min", "max"]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {

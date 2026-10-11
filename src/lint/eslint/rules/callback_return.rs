@@ -1,9 +1,12 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 
 /// Require `return` statements after callbacks.
 pub struct CallbackReturn {
     callbacks: Vec<Box<[u8]>>,
+    /// The calls whose callee can be written as one of them.
+    on: On,
 }
 
 const MISSING_RETURN: Message =
@@ -56,12 +59,24 @@ impl Rule for CallbackReturn {
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
-        CallbackReturn {
-            callbacks: match options.get(0).and_then(Json::as_array) {
-                Some(names) => names.iter().filter_map(Json::as_str).map(Box::from).collect(),
-                None => [&b"callback"[..], b"cb", b"next"].into_iter().map(Box::from).collect(),
-            },
+        let callbacks: Vec<Box<[u8]>> = match options.get(0).and_then(Json::as_array) {
+            Some(names) => names.iter().filter_map(Json::as_str).map(Box::from).collect(),
+            None => [&b"callback"[..], b"cb", b"next"].into_iter().map(Box::from).collect(),
+        };
+        let is_word = |it: &[u8]| !it.is_empty() && it.iter().all(|it| it.is_ascii_alphanumeric() || matches!(it, b'_' | b'$'));
+        let mut on = On::new();
+        for callback in &callbacks {
+            on = match strings::rsplit_once_char(callback, b'.') {
+                None if is_word(callback) => on.function_call(callback),
+                Some((_, name)) if is_word(name) => on.method_call(name),
+                _ => Self::ON,
+            };
         }
+        CallbackReturn { callbacks, on }
+    }
+
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        self.on
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {

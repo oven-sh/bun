@@ -38,7 +38,7 @@ impl Rule for NoRequiredPropWithDefault {
         let mut on = On::new();
         let is_setup = is_vue_file(file) && is_vue_setup(file);
         if is_setup && file.mentions("defineProps") || file.mentions("defineComponent") {
-            on = on.exprs(&[ExprTag::Call]);
+            on = on.function_calls(&["defineProps", "withDefaults", "defineComponent"]);
         }
         if is_vue_file(file) && !is_vue_setup(file) && file.mentions("props") {
             on = on.stmts(&[StmtTag::ExportDefault]);

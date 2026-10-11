@@ -13,7 +13,7 @@ const PREFER_AWAIT_TO_THEN: Message = Message::new("", "Prefer await to then()/c
 
 impl Rule for PreferAwaitToThen {
     const META: Meta = Meta::oxlint(Plugin::Promise, "prefer-await-to-then", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["then", "catch", "finally"]);
     /// Whether something is in a `yield` or an `await`.
     type State<'a> = AncestorMemo<'a, ()>;
 

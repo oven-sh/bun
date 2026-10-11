@@ -1,4 +1,4 @@
-use crate::oxlint::promise::is_promise_with_context;
+use crate::oxlint::promise::{PROMISE_CALLS, is_promise_with_context};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -13,7 +13,7 @@ const ONE_ARGUMENT_REQUIRED: Message = Message::new("", "`Promise.{{prop_name}}(
 
 impl Rule for ValidParams {
     const META: Meta = Meta::oxlint(Plugin::Promise, "valid-params", Kind::Problem);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = PROMISE_CALLS;
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {

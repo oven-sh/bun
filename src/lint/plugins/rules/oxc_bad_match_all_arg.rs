@@ -17,7 +17,7 @@ const MESSAGES: [Message; 2] = [
 
 impl<const REPLACE: bool> Rule for BadAllArg<REPLACE> {
     const META: Meta = Meta::oxlint(Plugin::Oxc, TEXTS[REPLACE as usize][0], Kind::Problem);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&[TEXTS[REPLACE as usize][1]]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {

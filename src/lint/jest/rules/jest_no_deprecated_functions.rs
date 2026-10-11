@@ -42,8 +42,7 @@ impl Rule for NoDeprecatedFunctions {
         if !file.mentions("jest") && !file.mentions("require") {
             return None;
         }
-        let mentioned = DEPRECATED_FUNCTIONS.iter().filter(|it| file.mentions(it.0));
-        let names: Self::State<'a> = mentioned.map(|it| file.name_of(it.0)).collect();
+        let names: Self::State<'a> = DEPRECATED_FUNCTIONS.iter().filter_map(|it| file.find_name(it.0)).collect();
         (!names.is_empty()).then_some(names)
     }
 

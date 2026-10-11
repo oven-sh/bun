@@ -192,7 +192,7 @@ impl Rule for NoInvalidHtmlAttribute {
         let on = On::new().exprs(&[ExprTag::Jsx]);
         // `React.#createElement()` is a call of it too.
         let mentions_create_element = file.mentions("createElement") || file.mentions("#createElement");
-        if file.mentions("React") && mentions_create_element { on.exprs(&[ExprTag::Call]) } else { on }
+        if file.mentions("React") && mentions_create_element { on.method_calls(&["createElement"]) } else { on }
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {

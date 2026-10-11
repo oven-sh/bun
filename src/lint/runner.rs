@@ -1318,18 +1318,16 @@ pub(crate) fn sorted(diagnostics: &[Diagnostic], when: &[When]) -> Vec<u32> {
 pub fn listening<'a, S: RuleSet>(file: &'a File<'a>, enabled: &RuleBits) -> RuleBits {
     let rows = S::LISTENS;
     let mut all = RuleBits::EMPTY;
-    // Only the words in which a rule is enabled are looked at: with a few rules that is one of them.
-    let Some(first) = enabled.0.iter().position(|word| *word != 0) else {
+    if *enabled == all {
         return all;
-    };
-    let last = enabled.0.iter().rposition(|word| *word != 0);
-    let words = first..last.unwrap_or(first) + 1;
+    }
+    // All the words of a row, whichever have a rule that is enabled: how many there are is a constant, so there is no loop.
     let is_wanted = |row: &RuleBits| {
-        let both = enabled.0[words.clone()].iter().zip(&row.0[words.clone()]);
+        let both = enabled.0.iter().zip(&row.0);
         both.fold(0, |any, (a, b)| any | (a & b)) != 0
     };
     let mut add = |row: &RuleBits| {
-        for (to, from) in all.0[words.clone()].iter_mut().zip(&row.0[words.clone()]) {
+        for (to, from) in all.0.iter_mut().zip(&row.0) {
             *to |= from;
         }
     };
@@ -1374,7 +1372,7 @@ pub fn listening<'a, S: RuleSet>(file: &'a File<'a>, enabled: &RuleBits) -> Rule
         10 import_specs;
         11 export_specs;
     }
-    for (to, from) in all.0[words.clone()].iter_mut().zip(&enabled.0[words]) {
+    for (to, from) in all.0.iter_mut().zip(&enabled.0) {
         *to &= from;
     }
     all

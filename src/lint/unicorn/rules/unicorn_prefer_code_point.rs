@@ -9,7 +9,7 @@ const PREFER_CODE_POINT: Message = Message::new("", "Prefer `{{good_method}}` ov
 
 impl Rule for PreferCodePoint {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-code-point", Kind::Suggestion).fixable(Fixable::Code);
-    const ON: On = On::new().exprs(&[ExprTag::Dot]);
+    const ON: On = On::new().members_named(&["fromCharCode", "charCodeAt"]);
     /// `fromCharCode`, `charCodeAt`
     type State<'a> = [Name<'a>; 2];
 

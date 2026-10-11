@@ -3,12 +3,13 @@ use crate::unicorn::{call_expr_member_expr_property_span, does_expr_match_any_pa
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
-use smallvec::SmallVec;
 
 /// Encourages using `Object.fromEntries` when converting an array of key-value pairs into an object.
 pub struct PreferObjectFromEntries {
     /// `a.b` is `["a", "b"]`.
     functions: Vec<Vec<String>>,
+    /// The calls of `reduce` and of what has the last name of one of `functions`.
+    on: On,
 }
 
 const PREFER_OBJECT_FROM_ENTRIES: Message =
@@ -35,8 +36,7 @@ fn is_plain_property(property: Prop) -> bool {
 impl Rule for PreferObjectFromEntries {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-object-from-entries", Kind::Suggestion);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    /// `reduce`, and the last names of the functions: those that the file mentions.
-    type State<'a> = (Option<Name<'a>>, SmallVec<[Name<'a>; 2]>);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -46,14 +46,16 @@ impl Rule for PreferObjectFromEntries {
         };
         let part = |it: &[u8]| std::str::from_utf8(it).unwrap_or_default().to_owned();
         let split = |function: &str| strings::split(function.as_bytes(), b".").map(part).collect();
-        PreferObjectFromEntries { functions: functions.into_iter().map(split).collect() }
+        let functions: Vec<Vec<String>> = functions.into_iter().map(split).collect();
+        let on = functions.iter().filter_map(|it| it.last()).fold(On::new().method_calls(&["reduce"]), |on, name| {
+            on.method_call(name.as_bytes()).function_call(name.as_bytes())
+        });
+        PreferObjectFromEntries { functions, on }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        let reduce = file.find_name("reduce");
-        let last_names = self.functions.iter().filter_map(|it| it.last());
-        let last_names: SmallVec<_> = last_names.filter_map(|it| file.find_name(it)).collect();
-        (reduce.is_some() || !last_names.is_empty()).then_some((reduce, last_names))
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let is_mentioned = |function: &Vec<String>| function.last().is_some_and(|it| file.mentions(it));
+        if file.mentions("reduce") || self.functions.iter().any(is_mentioned) { self.on } else { On::new() }
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -65,9 +67,7 @@ impl Rule for PreferObjectFromEntries {
             return;
         };
         let Some(second) = second else {
-            let name = callee.member_name().map(Ident::name).or_else(|| callee.as_ident());
-            if name.is_some_and(|it| cx.state.1.contains(&it))
-                && first.tag() != ExprTag::Spread
+            if first.tag() != ExprTag::Spread
                 && !as_member_expression(callee).is_some_and(Expr::is_optional)
                 && does_expr_match_any_path(callee, &self.functions)
             {
@@ -75,8 +75,7 @@ impl Rule for PreferObjectFromEntries {
             }
             return;
         };
-        if callee.member_name().is_some_and(|it| Some(it.name()) != cx.state.0)
-            || !as_member_expression(callee).is_some_and(|it| !it.is_optional())
+        if !as_member_expression(callee).is_some_and(|it| !it.is_optional())
             || !is_method_call(call, None, Some(&["reduce"]), Some(2), Some(2))
             || !is_empty_object(get_inner_expression(second))
         {

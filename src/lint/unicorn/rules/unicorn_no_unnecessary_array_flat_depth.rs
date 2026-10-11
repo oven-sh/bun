@@ -11,22 +11,22 @@ const REMOVE_ARGUMENT: Message = Message::new("", "Remove the argument");
 impl Rule for NoUnnecessaryArrayFlatDepth {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "no-unnecessary-array-flat-depth", Kind::Suggestion).has_suggestions();
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    const ON: On = On::new().method_calls(&["flat"]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoUnnecessaryArrayFlatDepth
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("flat").then_some(())
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        if file.mentions("flat") { Self::ON } else { On::new() }
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(call) = e.as_call().filter(|it| !it.is_optional()) else {
             return;
         };
-        let Some(depth) = call.args().first().filter(|_| call.args().len() == 1).map(get_inner_expression) else {
+        let Some(depth) = call.args().first().map(get_inner_expression) else {
             return;
         };
         if !matches!(depth.kind(), ExprKind::Number(n) if (n - 1.0).abs() < f64::EPSILON)

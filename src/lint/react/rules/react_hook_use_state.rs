@@ -56,6 +56,11 @@ impl Rule for HookUseState {
         HookUseState { allow_destructured_state: options.object(0).bool_or("allowDestructuredState", false) }
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        // For upstream it has the name that it is imported under.
+        if file.language().is_oxlint { On::new().calls_named(&["useState"]) } else { Self::ON }
+    }
+
     fn start<'a>(&self, file: &'a File<'a>) -> Option<ReactImports<'a>> {
         if !file.mentions("useState") {
             return None;

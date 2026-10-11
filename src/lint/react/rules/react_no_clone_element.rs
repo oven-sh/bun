@@ -9,7 +9,7 @@ const NO_CLONE_ELEMENT: Message = Message::new("", "`React.cloneElement` should 
 
 impl Rule for NoCloneElement {
     const META: Meta = Meta::oxlint(Plugin::React, "no-clone-element", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().calls_named(&["cloneElement"]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {

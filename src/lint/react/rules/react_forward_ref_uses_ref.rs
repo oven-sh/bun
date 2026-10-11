@@ -17,7 +17,7 @@ const OXLINT_ADD_REF_PARAMETER: Message = Message::new("", "add `ref` parameter"
 
 impl Rule for ForwardRefUsesRef {
     const META: Meta = Meta::plugin(Plugin::React, "forward-ref-uses-ref", Kind::Suggestion).has_suggestions();
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().calls_named(&["forwardRef"]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {

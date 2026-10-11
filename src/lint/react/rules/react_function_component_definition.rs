@@ -80,7 +80,9 @@ impl Rule for FunctionComponentDefinition {
         let component_wrapper_functions = component_wrapper_functions(file);
         is_candidate.then(|| State {
             component_wrapper_functions,
-            may_have_hoc_calls: !component_wrapper_functions.is_empty() || file.mentions_any(&["memo", "forwardRef"]),
+            may_have_hoc_calls: !component_wrapper_functions.is_empty()
+                || file.find_name("memo").is_some()
+                || file.find_name("forwardRef").is_some(),
             returns: Returns::default(),
             components: Components::new(file),
             has_es6_or_jsx: OnceCell::new(),

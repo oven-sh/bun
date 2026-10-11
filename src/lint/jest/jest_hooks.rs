@@ -102,12 +102,13 @@ pub(crate) mod prefer_hooks_in_order {
 
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
         // What a hook starts with.
-        let names: SmallVec<[Name<'a>; 4]> = (HOOKS.iter().filter(|it| ctx.file.mentions(it)))
-            .map(|it| ctx.file.name_of(it))
+        let names: SmallVec<[Name<'a>; 4]> = (HOOKS.iter())
+            .filter_map(|it| ctx.file.find_name(it))
             .collect();
         let is_name = |it: &Name<'a>| names.contains(it);
-        if !(ctx.file.exprs_of_kind(ExprTag::Ident))
-            .any(|it| it.as_ident().is_some_and(|it| is_name(&it)))
+        if names.is_empty()
+            || !(ctx.file.exprs_of_kind(ExprTag::Ident))
+                .any(|it| it.as_ident().is_some_and(|it| is_name(&it)))
         {
             return;
         }

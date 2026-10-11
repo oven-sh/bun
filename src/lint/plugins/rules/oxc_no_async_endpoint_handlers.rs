@@ -12,7 +12,7 @@ const NO_ASYNC_HANDLERS_FOR: Message = Message::new("", "Express endpoint handle
 
 impl Rule for NoAsyncEndpointHandlers {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "no-async-endpoint-handlers", Kind::Problem);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&ROUTER_HANDLER_METHOD_NAMES);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
@@ -90,15 +90,15 @@ impl NoAsyncEndpointHandlers {
     }
 }
 
+const ROUTER_HANDLER_METHOD_NAMES: [&str; 9] = ["all", "delete", "get", "head", "options", "patch", "post", "put", "use"];
+
 /// Whether the call registers an endpoint handler or middleware to a route or an Express application object: the path, if it is
 /// written there, and the arguments after it.
 fn as_endpoint_registration(call: Call<'_>) -> Option<(Option<Name<'_>>, ListIter<'_, Expr<'_>>)> {
     let first = call.args().first().filter(|it| it.tag() != ExprTag::Spread)?;
     let callee = call.callee();
     let method_name = static_property_name(callee)?;
-    if !matches!(method_name.bytes(), b"all" | b"delete" | b"get" | b"head" | b"options" | b"patch" | b"post" | b"put" | b"use")
-        || callee.is_parenthesized()
-    {
+    if !method_name.is_any(&ROUTER_HANDLER_METHOD_NAMES) || callee.is_parenthesized() {
         return None;
     }
     let mut args = call.args().iter();

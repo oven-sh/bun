@@ -52,7 +52,7 @@ impl NoVarRequires {
 
 impl Rule for NoVarRequires {
     const META: Meta = Meta::typescript("no-var-requires", Kind::Problem).deprecated();
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().function_calls(&["require"]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {

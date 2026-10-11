@@ -32,7 +32,7 @@ impl Rule for NoNamespace {
         if !file.mentions("createElement") && (file.language().is_oxlint || !file.mentions("#createElement")) {
             return on;
         }
-        on.exprs(&[ExprTag::Call])
+        on.calls_named(&["createElement"])
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {

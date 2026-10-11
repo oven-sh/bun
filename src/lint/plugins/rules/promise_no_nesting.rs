@@ -21,7 +21,7 @@ pub struct State<'a> {
 
 impl Rule for NoNesting {
     const META: Meta = Meta::oxlint(Plugin::Promise, "no-nesting", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["then", "catch"]);
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {

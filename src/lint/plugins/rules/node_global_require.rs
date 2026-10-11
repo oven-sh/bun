@@ -9,7 +9,7 @@ const GLOBAL_REQUIRE: Message = Message::new("", "Unexpected require().");
 
 impl Rule for GlobalRequire {
     const META: Meta = Meta::oxlint(Plugin::Node, "global-require", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().function_calls(&["require"]);
     /// That something is in what a `require()` must not be in.
     type State<'a> = AncestorMemo<'a, ()>;
 

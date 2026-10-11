@@ -352,7 +352,7 @@ impl PerFile {
             // `test` is also the name of a method.
             let names: SmallVec<[Name; 19]> = (JEST_METHOD_NAMES.iter().zip(JEST_METHOD_BITS))
                 .filter(|it| file.mentions_bit(it.1))
-                .map(|it| file.name_of(it.0))
+                .filter_map(|it| file.find_name(it.0))
                 .collect();
             let identifiers = file
                 .exprs_of_kind(ExprTag::Ident)

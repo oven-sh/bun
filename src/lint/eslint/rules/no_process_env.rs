@@ -8,7 +8,7 @@ const UNEXPECTED_PROCESS_ENV: Message =
 
 impl Rule for NoProcessEnv {
     const META: Meta = Meta::eslint("no-process-env", Kind::Suggestion).deprecated();
-    const ON: On = On::new().exprs(&[ExprTag::Dot]);
+    const ON: On = On::new().members_named(&["env"]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {

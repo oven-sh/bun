@@ -14,7 +14,7 @@ const OXLINT: Message = Message::new("", "Unexpected call to `findDOMNode`.");
 
 impl Rule for NoFindDomNode {
     const META: Meta = Meta::plugin(Plugin::React, "no-find-dom-node", Kind::None).recommended();
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().calls_named(&["findDOMNode"]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {

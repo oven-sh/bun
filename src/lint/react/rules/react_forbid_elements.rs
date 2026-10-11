@@ -44,7 +44,7 @@ impl Rule for ForbidElements {
         if !mentions_create_element(file) {
             return on;
         }
-        on.exprs(&[ExprTag::Call])
+        on.calls_named(&["createElement"])
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<&'a [u8]> {

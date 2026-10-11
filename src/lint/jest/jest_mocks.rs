@@ -11,6 +11,7 @@ use bun_lint::prelude::*;
 use bun_lint_oxlint::ast_util::{as_member_expression, static_property_info};
 use bun_lint_oxlint::import::{import_declarations, import_entries_of};
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 
 /// Not in parentheses, and not the whole of an optional chain.
 fn is_plain(e: Expr) -> bool {
@@ -21,6 +22,11 @@ fn is_plain(e: Expr) -> bool {
 fn statements_of(func: Func<'_>) -> Option<impl Iterator<Item = Stmt<'_>>> {
     func.body_statements()
         .map(|it| it.iter().filter(|it| it.directive().is_none()))
+}
+
+/// Those of `names` that the file has.
+fn find_names<'a>(file: &'a File<'a>, names: &[&str]) -> SmallVec<[Name<'a>; 4]> {
+    names.iter().filter_map(|it| file.find_name(it)).collect()
 }
 
 /// `a.mockImplementation(..)`: where the name of the method is written, the name, which is one of `names`, and the first argument,
@@ -169,8 +175,8 @@ pub(crate) mod prefer_mock_promise_shorthand {
     }
 
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
-        let methods = METHODS.map(|it| ctx.file.name_of(it));
-        for node in ctx.file.exprs_of_kind(ExprTag::Call) {
+        let methods = find_names(ctx.file, &METHODS);
+        for node in (ctx.file.exprs_of_kind(ExprTag::Call)).take_while(|_| !methods.is_empty()) {
             let Some((property_span, property_name, expr)) =
                 method_call_with_argument(node, &methods)
             else {
@@ -300,10 +306,11 @@ pub(crate) mod prefer_mock_return_shorthand {
     }
 
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
-        let methods = METHODS.map(|it| ctx.file.name_of(it));
+        let methods = find_names(ctx.file, &METHODS);
         let mut mocks: Vec<Mock<'a>> = ctx
             .file
             .exprs_of_kind(ExprTag::Call)
+            .take_while(|_| !methods.is_empty())
             .filter_map(|it| as_mock(it, &methods))
             .collect();
         // What is returned by one can have others in it. These come first, and are not looked at again.

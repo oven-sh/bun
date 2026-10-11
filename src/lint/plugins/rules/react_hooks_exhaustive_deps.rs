@@ -467,6 +467,9 @@ fn collect_recommendations(dependencies: &[Dependency], declared: &[DeclaredDepe
 
 // ───────────────────────────── the rule ─────────────────────────────
 
+/// The hooks that take dependencies, whatever the options say.
+const HOOKS: [&str; 5] = ["useEffect", "useLayoutEffect", "useCallback", "useMemo", "useImperativeHandle"];
+
 impl Rule for ExhaustiveDeps {
     const META: Meta = Meta::plugin(Plugin::ReactHooks, "exhaustive-deps", Kind::Suggestion)
         .fixable(Fixable::Code)
@@ -489,11 +492,13 @@ impl Rule for ExhaustiveDeps {
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
-        let on = On::new().exprs(&[ExprTag::Call]);
-        if oxlint::is_followed(file) {
-            return on;
-        }
-        on.finish()
+        let follows_oxlint = oxlint::is_followed(file);
+        // A pattern can match any name.
+        let has_pattern = self.additional_hooks.is_some()
+            || !follows_oxlint
+                && file.settings().get(b"react-hooks").is_some_and(|it| it.get(b"additionalEffectHooks").is_some());
+        let on = if has_pattern { On::new().exprs(&[ExprTag::Call]) } else { On::new().calls_named(&HOOKS) };
+        if follows_oxlint { on } else { on.finish() }
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
@@ -505,7 +510,7 @@ impl Rule for ExhaustiveDeps {
         let additional_hooks = if self.additional_hooks.is_none() && !follows_oxlint { from_settings() } else { None };
         if self.additional_hooks.is_none()
             && additional_hooks.is_none()
-            && !file.mentions_any(&["useEffect", "useLayoutEffect", "useCallback", "useMemo", "useImperativeHandle"])
+            && !file.mentions_any(&HOOKS)
         {
             return None;
         }

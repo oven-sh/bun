@@ -13,7 +13,7 @@ const PREFER_MATH_LOG_N: Message = Message::new("", "Prefer `Math.{{good_method}
 
 impl Rule for PreferModernMathApis {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-modern-math-apis", Kind::Suggestion);
-    const ON: On = On::new().binaries(&[BinOp::Mul, BinOp::Div]).exprs(&[ExprTag::Call]);
+    const ON: On = On::new().binaries(&[BinOp::Mul, BinOp::Div]).method_calls(&["sqrt"]);
     /// `sqrt`
     type State<'a> = Name<'a>;
 

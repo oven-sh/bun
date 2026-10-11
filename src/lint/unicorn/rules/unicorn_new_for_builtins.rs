@@ -10,39 +10,15 @@ const ENFORCE: Message = Message::new("", "Use `new {{fn_name}}()` instead of `{
 const DISALLOW: Message = Message::new("", "Use `{{fn_name}}()` instead of `new {{fn_name}}()`");
 const ERROR_DATE: Message = Message::new("", "Use `String(new Date())` instead of `Date()`");
 
+const ENFORCED: [&str; 29] = [
+    "Array", "ArrayBuffer", "BigInt64Array", "BigUint64Array", "DataView", "Date", "Error", "FinalizationRegistry",
+    "Float16Array", "Float32Array", "Float64Array", "Function", "Int16Array", "Int32Array", "Int8Array", "Map",
+    "Object", "Promise", "Proxy", "RegExp", "Set", "SharedArrayBuffer", "Uint16Array", "Uint32Array", "Uint8Array",
+    "Uint8ClampedArray", "WeakMap", "WeakRef", "WeakSet",
+];
+
 fn is_enforced(name: &[u8]) -> bool {
-    matches!(
-        name,
-        b"Array"
-            | b"ArrayBuffer"
-            | b"BigInt64Array"
-            | b"BigUint64Array"
-            | b"DataView"
-            | b"Date"
-            | b"Error"
-            | b"FinalizationRegistry"
-            | b"Float16Array"
-            | b"Float32Array"
-            | b"Float64Array"
-            | b"Function"
-            | b"Int16Array"
-            | b"Int32Array"
-            | b"Int8Array"
-            | b"Map"
-            | b"Object"
-            | b"Promise"
-            | b"Proxy"
-            | b"RegExp"
-            | b"Set"
-            | b"SharedArrayBuffer"
-            | b"Uint16Array"
-            | b"Uint32Array"
-            | b"Uint8Array"
-            | b"Uint8ClampedArray"
-            | b"WeakMap"
-            | b"WeakRef"
-            | b"WeakSet"
-    )
+    ENFORCED.iter().any(|it| it.as_bytes() == name)
 }
 
 fn is_disallowed(name: &[u8]) -> bool {
@@ -65,7 +41,7 @@ fn global_builtin<'a>(callee: Expr<'a>, is_builtin: fn(&[u8]) -> bool) -> Option
 
 impl Rule for NewForBuiltins {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "new-for-builtins", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::New, ExprTag::Call]);
+    const ON: On = On::new().exprs(&[ExprTag::New]).calls_named(&ENFORCED);
     no_state!();
 
     fn new(_: &Options) -> Self {

@@ -95,15 +95,15 @@ impl Rule for NoUselessIteratorToArray {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-useless-iterator-to-array", Kind::Problem)
         .fixable(Fixable::Code)
         .has_suggestions();
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    const ON: On = On::new().method_calls(&["toArray"]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoUselessIteratorToArray
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("toArray").then_some(())
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        if file.mentions("toArray") { Self::ON } else { On::new() }
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

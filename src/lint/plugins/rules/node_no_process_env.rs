@@ -12,7 +12,7 @@ const NO_PROCESS_ENV: Message = Message::new("", "Disallowed usage of `process.e
 
 impl Rule for NoProcessEnv {
     const META: Meta = Meta::oxlint(Plugin::Node, "no-process-env", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]);
+    const ON: On = On::new().members_named(&["env"]).exprs(&[ExprTag::Index]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {

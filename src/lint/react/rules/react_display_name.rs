@@ -75,6 +75,14 @@ impl Rule for DisplayName {
         }
         // Without JSX it takes a call to make a component or a context.
         let names = ["createClass", "createReactClass", "memo", "forwardRef"];
+        const CALLS: On = On::new().calls_named(&[
+            "createClass",
+            "createReactClass",
+            "memo",
+            "forwardRef",
+            "createElement",
+            "createContext",
+        ]);
         let makes_one = |call: Call| {
             callee_name(call).is_some_and(|name| {
                 name.is_any(&names)
@@ -83,7 +91,7 @@ impl Rule for DisplayName {
             })
         };
         ((file.mentions("createElement") || file.mentions_any(&names) || may_have_context_objects)
-            && file.exprs_of_kind(ExprTag::Call).filter_map(Expr::as_call).any(makes_one))
+            && file.calls_on(&CALLS).filter_map(Expr::as_call).any(makes_one))
         .then_some(())
     }
 

@@ -29,7 +29,7 @@ pub struct State<'a> {
 
 impl Rule for NoMapSpread {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "no-map-spread", Kind::Suggestion).has_suggestions();
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&MAP_FN_NAMES);
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {

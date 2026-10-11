@@ -1,5 +1,5 @@
 use bun_lint_oxlint::ast_util::static_property_name;
-use crate::oxlint::promise::is_promise;
+use crate::oxlint::promise::{PROMISE_CALLS, is_promise};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
@@ -13,7 +13,7 @@ const NO_PROMISE_IN_CALLBACK: Message = Message::new("", "Avoid using promises i
 
 impl Rule for NoPromiseInCallback {
     const META: Meta = Meta::oxlint(Plugin::Promise, "no-promise-in-callback", Kind::Problem);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = PROMISE_CALLS;
     /// Whether something is in an error-first callback.
     type State<'a> = AncestorMemo<'a, ()>;
 

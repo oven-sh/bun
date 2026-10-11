@@ -23,8 +23,11 @@ impl Rule for ComponentDefinitionNameCasing {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let mut on = On::new();
-        if file.mentions("component") || is_vue_setup(file) && file.mentions("defineOptions") {
-            on = on.exprs(&[ExprTag::Call]);
+        if file.mentions("component") {
+            on = on.method_calls(&["component"]);
+        }
+        if is_vue_setup(file) && file.mentions("defineOptions") {
+            on = on.function_calls(&["defineOptions"]);
         }
         if file.mentions("name") && may_have_component_options(file) {
             on = on.exprs(&[ExprTag::Object]);

@@ -46,7 +46,7 @@ impl Rule for StateInConstructor {
             return None;
         }
         // What oxlint takes for a component extends one of these.
-        if file.language().is_oxlint && !file.mentions_any(&["Component", "PureComponent"]) {
+        if file.language().is_oxlint && file.find_name("Component").or_else(|| file.find_name("PureComponent")).is_none() {
             return None;
         }
         Some(State::default())

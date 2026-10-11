@@ -129,15 +129,16 @@ fn vue_component_options_kind(object: Expr) -> Option<VueComponentObjectKind> {
 }
 
 /// Whether an object literal of `file` can be the options of a component.
-pub(crate) fn may_have_component_options(file: &File) -> bool {
-    file.mentions_any(&[
+pub(crate) fn may_have_component_options<'a>(file: &'a File<'a>) -> bool {
+    let names = [
         "createApp",
         "defineComponent",
         "defineNuxtComponent",
         "component",
         "mixin",
         "Vue",
-    ]) || is_vue_file(file)
+    ];
+    names.iter().any(|it| file.find_name(it).is_some()) || is_vue_file(file)
 }
 
 pub(crate) fn is_vue_component_options_object(object: Expr) -> bool {
@@ -473,9 +474,13 @@ pub(crate) enum ComputedContext<'a> {
 }
 
 /// Whether a function of `file` can be such a getter.
-pub(crate) fn may_have_computed_context(file: &File) -> bool {
-    file.mentions("computed")
-        && (file.mentions_any(&MODULES_WITH_COMPUTED) || may_have_component_options(file))
+pub(crate) fn may_have_computed_context<'a>(file: &'a File<'a>) -> bool {
+    let is_imported = || {
+        MODULES_WITH_COMPUTED
+            .iter()
+            .any(|it| file.find_name(it).is_some())
+    };
+    file.mentions("computed") && (is_imported() || may_have_component_options(file))
 }
 
 /// That of the innermost function around `node`. `memo`: for [`Enclosing::FunctionOrArrow`].

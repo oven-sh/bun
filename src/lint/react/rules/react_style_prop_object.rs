@@ -42,7 +42,7 @@ impl Rule for StylePropObject {
         let on = On::new().exprs(&[ExprTag::Jsx]);
         // For upstream `React.#createElement()` is a call of `createElement`.
         match file.mentions("createElement") || (!file.language().is_oxlint && file.mentions("#createElement")) {
-            true => on.exprs(&[ExprTag::Call]),
+            true => on.calls_named(&["createElement"]),
             false => on,
         }
     }

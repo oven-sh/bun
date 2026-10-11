@@ -40,7 +40,7 @@ impl Rule for NoDangerWithChildren {
         if !file.mentions("createElement") && (file.language().is_oxlint || !file.mentions("#createElement")) {
             return on;
         }
-        on.exprs(&[ExprTag::Call])
+        on.method_calls(&["createElement"])
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {

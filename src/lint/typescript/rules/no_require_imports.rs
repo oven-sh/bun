@@ -55,7 +55,7 @@ impl NoRequireImports {
 impl Rule for NoRequireImports {
     const META: Meta = Meta::typescript("no-require-imports", Kind::Problem).recommended();
     const ON: On = On::new()
-        .exprs(&[ExprTag::Call])
+        .function_calls(&["require"])
         .stmts(&[StmtTag::ImportEquals]);
     no_state!();
 
@@ -72,7 +72,7 @@ impl Rule for NoRequireImports {
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let mut on = On::new();
         if file.mentions("require") {
-            on = on.exprs(&[ExprTag::Call]);
+            on = on.function_calls(&["require"]);
         }
         if !self.allow_as_import {
             on = on.stmts(&[StmtTag::ImportEquals]);

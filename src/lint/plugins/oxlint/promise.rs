@@ -14,6 +14,9 @@ pub(crate) const PROMISE_STATIC_METHODS: [&str; 8] = [
     "withResolvers",
 ];
 
+/// The calls for which [`is_promise`] can hold.
+pub(crate) const PROMISE_CALLS: On = On::new().method_calls(&["then", "catch", "finally"]).method_calls(&PROMISE_STATIC_METHODS);
+
 /// The name of the method, if `hello.then()`, `hello.catch()`, `hello.finally()` or a static method of `Promise` is called.
 pub(crate) fn is_promise(call_expr: Call<'_>) -> Option<Name<'_>> {
     let member_expr = get_member_expr(call_expr.callee())?;

@@ -32,19 +32,13 @@ fn check_argument<'a>(e: Option<Expr<'a>>, cx: &Cx<'a, PreferNodeProtocol>) {
 impl Rule for PreferNodeProtocol {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-node-protocol", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new()
-        .exprs(&[ExprTag::ImportCall, ExprTag::Call])
+        .exprs(&[ExprTag::ImportCall])
+        .function_calls(&["require"])
         .stmts(&[StmtTag::Import, StmtTag::ExportNamed, StmtTag::ImportEquals]);
     no_state!();
 
     fn new(_: &Options) -> Self {
         PreferNodeProtocol
-    }
-
-    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
-        let on = On::new()
-            .stmts(&[StmtTag::Import, StmtTag::ExportNamed, StmtTag::ImportEquals])
-            .exprs(&[ExprTag::ImportCall]);
-        if file.find_name("require").is_some() { on.exprs(&[ExprTag::Call]) } else { on }
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {

@@ -1437,7 +1437,7 @@ pub(crate) mod padding_around_blocks {
         };
         // The last statement that ends before it, which is the one before that which it is in.
         let Some(prev_statement) = statements
-            .and_then(|it| it.before(it.around(node_start)?.span().start))
+            .and_then(|it| it.around_with_previous(node_start)?.1)
             .filter(|it| it.directive().is_none() && it.span().end <= node_start)
         else {
             return;

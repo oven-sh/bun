@@ -43,6 +43,17 @@ fn get_report_node_name(callee: Expr<'_>) -> Cow<'_, [u8]> {
 /// The objects that oxlint knows.
 const OXLINT_GLOBAL_OBJECTS: [&str; 5] = ["Atomics", "Intl", "JSON", "Math", "Reflect"];
 
+/// Whether a variable of another name may stand for one of the objects: `resolve_global_binding` gets to them through a
+/// variable whose value is the name of one, or a member of `globalThis`.
+fn may_have_other_names<'a>(file: &'a File<'a>) -> bool {
+    let mentions_global_this = file.mentions("globalThis");
+    let declarators = file.stmts_of_kind(StmtTag::Var).filter_map(Stmt::as_var).flatten();
+    declarators.filter_map(VarDecl::init).any(|init| match init.as_ident() {
+        Some(name) => name.is_any(&OXLINT_GLOBAL_OBJECTS),
+        None => mentions_global_this && init.object().is_some(),
+    })
+}
+
 /// What is asked of every call with a configuration of oxlint.
 pub struct Oxlint<'a> {
     /// `OXLINT_GLOBAL_OBJECTS`
@@ -134,10 +145,13 @@ impl Rule for NoObjCalls {
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
-        if file.language().is_oxlint {
-            return On::new().exprs(&[ExprTag::Call, ExprTag::New]);
+        if !file.language().is_oxlint {
+            return On::new().finish();
         }
-        On::new().finish()
+        if file.mentions_any(&OXLINT_GLOBAL_OBJECTS) && !may_have_other_names(file) {
+            return On::new().calls_named(&OXLINT_GLOBAL_OBJECTS).exprs(&[ExprTag::New]);
+        }
+        On::new().exprs(&[ExprTag::Call, ExprTag::New])
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {

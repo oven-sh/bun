@@ -11,7 +11,7 @@ const REQUIRE_TYPED_REF: Message =
 
 impl Rule for RequireTypedRef {
     const META: Meta = Meta::oxlint(Plugin::Vue, "require-typed-ref", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().function_calls(&["ref", "shallowRef"]);
     type State<'a> = EnclosingDeclarators<'a>;
 
     fn new(_: &Options) -> Self {

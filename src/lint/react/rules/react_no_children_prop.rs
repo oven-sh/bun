@@ -44,7 +44,7 @@ impl Rule for NoChildrenProp {
         let on = On::new().exprs(&[ExprTag::Jsx]);
         // Upstream takes `React.#createElement` for `React.createElement`.
         let is_private = || !file.language().is_oxlint && file.mentions("#createElement");
-        if file.mentions("createElement") || is_private() { on.exprs(&[ExprTag::Call]) } else { on }
+        if file.mentions("createElement") || is_private() { on.calls_named(&["createElement"]) } else { on }
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {

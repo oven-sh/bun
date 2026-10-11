@@ -12,7 +12,7 @@ const NOT_STRING: Message = Message::new("", "Error message should be a string."
 
 impl Rule for ErrorMessage {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "error-message", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::New, ExprTag::Call]);
+    const ON: On = On::new().exprs(&[ExprTag::New]).function_calls(&BUILT_IN_ERRORS);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {

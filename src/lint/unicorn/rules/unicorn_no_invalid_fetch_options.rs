@@ -49,7 +49,7 @@ type Known<'a> = FxHashMap<(Symbol<'a>, bool), Option<Method>>;
 
 impl Rule for NoInvalidFetchOptions {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-invalid-fetch-options", Kind::Problem);
-    const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::New]);
+    const ON: On = On::new().function_calls(&["fetch"]).exprs(&[ExprTag::New]);
     type State<'a> = Known<'a>;
 
     fn new(_: &Options) -> Self {
@@ -58,8 +58,11 @@ impl Rule for NoInvalidFetchOptions {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let mut on = On::new();
+        if !file.mentions("body") {
+            return on;
+        }
         if file.mentions("fetch") {
-            on = on.exprs(&[ExprTag::Call]);
+            on = on.function_calls(&["fetch"]);
         }
         if file.mentions("Request") {
             on = on.exprs(&[ExprTag::New]);
@@ -67,10 +70,7 @@ impl Rule for NoInvalidFetchOptions {
         on
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<Known<'a>> {
-        if !file.mentions("body") {
-            return None;
-        }
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Known<'a>> {
         Some(Known::default())
     }
 

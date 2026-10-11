@@ -58,7 +58,7 @@ impl Rule for IframeMissingSandbox {
         if !file.mentions("createElement") {
             return on;
         }
-        on.exprs(&[ExprTag::Call])
+        on.calls_named(&["createElement"])
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<&'a [u8]> {

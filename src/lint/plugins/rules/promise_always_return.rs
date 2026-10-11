@@ -13,7 +13,7 @@ const ALWAYS_RETURN: Message = Message::new("", "Each then() should return a val
 
 impl Rule for AlwaysReturn {
     const META: Meta = Meta::oxlint(Plugin::Promise, "always-return", Kind::Problem);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["then"]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {

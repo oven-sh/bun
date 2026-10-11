@@ -64,7 +64,7 @@ impl Rule for ButtonHasType {
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let mut on = On::new().exprs(&[ExprTag::Jsx]);
         if file.mentions("createElement") {
-            on = on.exprs(&[ExprTag::Call]);
+            on = on.calls_named(&["createElement"]);
         }
         // oxlint has no two reports at one place.
         if !file.language().is_oxlint {

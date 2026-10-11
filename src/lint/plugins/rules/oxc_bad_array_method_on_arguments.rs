@@ -9,7 +9,7 @@ const BAD_ARRAY_METHOD_ON_ARGUMENTS: Message = Message::new("", "Bad array metho
 
 impl Rule for BadArrayMethodOnArguments {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "bad-array-method-on-arguments", Kind::Problem);
-    const ON: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]);
+    const ON: On = On::new().members_named(&ARRAY_METHODS).exprs(&[ExprTag::Index]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
@@ -34,7 +34,7 @@ impl Rule for BadArrayMethodOnArguments {
         {
             return;
         }
-        let is_array_method = |name: &Name| ARRAY_METHODS.binary_search(&name.bytes()).is_ok();
+        let is_array_method = |name: &Name| ARRAY_METHODS.binary_search_by(|it| it.as_bytes().cmp(name.bytes())).is_ok();
         if let Some(method_name) = static_property_name(member).filter(is_array_method) {
             cx.report(member, BAD_ARRAY_METHOD_ON_ARGUMENTS).data("method_name", method_name);
         }
@@ -42,23 +42,23 @@ impl Rule for BadArrayMethodOnArguments {
 }
 
 /// Sorted.
-const ARRAY_METHODS: [&[u8]; 38] = [
-    b"@@iterator",
-    b"at",
-    b"concat", b"copyWithin",
-    b"entries", b"every",
-    b"fill", b"filter", b"find", b"findIndex", b"findLast", b"findLastIndex", b"flat", b"flatMap", b"forEach",
-    b"groupBy",
-    b"includes", b"indexOf",
-    b"join",
-    b"keys",
-    b"lastIndexOf",
-    b"map",
-    b"pop", b"push",
-    b"reduce", b"reduceRight", b"reverse",
-    b"shift", b"slice", b"some", b"sort", b"splice",
-    b"toReversed", b"toSorted", b"toSpliced",
-    b"unshift",
-    b"values",
-    b"with",
+const ARRAY_METHODS: [&str; 38] = [
+    "@@iterator",
+    "at",
+    "concat", "copyWithin",
+    "entries", "every",
+    "fill", "filter", "find", "findIndex", "findLast", "findLastIndex", "flat", "flatMap", "forEach",
+    "groupBy",
+    "includes", "indexOf",
+    "join",
+    "keys",
+    "lastIndexOf",
+    "map",
+    "pop", "push",
+    "reduce", "reduceRight", "reverse",
+    "shift", "slice", "some", "sort", "splice",
+    "toReversed", "toSorted", "toSpliced",
+    "unshift",
+    "values",
+    "with",
 ];

@@ -12,7 +12,8 @@ const PREFER_SINGLE_CALL: Message = Message::new("", "Do not call `{{description
 
 impl Rule for PreferSingleCall {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-single-call", Kind::Suggestion).fixable(Fixable::Code);
-    const ON: On = On::new().stmts(&[StmtTag::Expr]);
+    const ON: On =
+        On::new().method_calls(&["push", "unshift", "add", "remove"]).function_calls(&["importScripts"]);
     /// What is called.
     type State<'a> = [Name<'a>; 5];
 
@@ -27,12 +28,14 @@ impl Rule for PreferSingleCall {
             .then(|| ["push", "unshift", "add", "remove", "importScripts"].map(|it| file.name_of(it)))
     }
 
-    fn stmt<'a>(&self, curr_es: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        let callee = curr_es.as_expr().and_then(Expr::callee);
-        let name = callee.and_then(|it| it.member_name().map(Ident::name).or_else(|| it.as_ident()));
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let name = e.callee().and_then(|it| it.member_name().map(Ident::name).or_else(|| it.as_ident()));
         if !name.is_some_and(|it| cx.state.contains(&it)) {
             return;
         }
+        let Node::Stmt(curr_es) = e.parent() else {
+            return;
+        };
         let Some((curr_call, curr_info)) = self.classify_statement(curr_es) else {
             return;
         };

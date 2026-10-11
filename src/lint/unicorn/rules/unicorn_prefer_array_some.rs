@@ -15,7 +15,7 @@ const REPLACE_FILTER_LENGTH: Message = Message::new("", "Replace `.filter(…).l
 
 impl Rule for PreferArraySome {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-array-some", Kind::Suggestion).has_suggestions();
-    const ON: On = On::new().exprs(&[ExprTag::Call]).binaries(&[
+    const ON: On = On::new().method_calls(&["find", "findLast"]).binaries(&[
         BinOp::NotEqEq,
         BinOp::NotEq,
         BinOp::Gt,

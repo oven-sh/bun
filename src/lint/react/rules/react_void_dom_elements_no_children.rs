@@ -35,7 +35,7 @@ impl Rule for VoidDomElementsNoChildren {
         // For upstream `React.#createElement()` is a call of `createElement`.
         let has_private_call = || !file.language().is_oxlint && file.mentions("#createElement");
         let on = On::new().exprs(&[ExprTag::Jsx]);
-        if file.mentions("createElement") || has_private_call() { on.exprs(&[ExprTag::Call]) } else { on }
+        if file.mentions("createElement") || has_private_call() { on.calls_named(&["createElement"]) } else { on }
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {

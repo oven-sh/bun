@@ -9,7 +9,7 @@ const NO_RETURN_IN_FINALLY: Message = Message::new("", "Don't return in a finall
 
 impl Rule for NoReturnInFinally {
     const META: Meta = Meta::oxlint(Plugin::Promise, "no-return-in-finally", Kind::Problem);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["finally"]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {

@@ -31,15 +31,15 @@ fn is_non_dom_node(e: Expr) -> bool {
 
 impl Rule for PreferDomNodeRemove {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-dom-node-remove", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    const ON: On = On::new().method_calls(&["removeChild"]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         PreferDomNodeRemove
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("removeChild").then_some(())
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        if file.mentions("removeChild") { Self::ON } else { On::new() }
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

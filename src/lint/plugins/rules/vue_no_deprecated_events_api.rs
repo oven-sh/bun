@@ -12,7 +12,7 @@ const NO_DEPRECATED_EVENTS_API: Message = Message::new("", "The Events api `$on`
 
 impl Rule for NoDeprecatedEventsApi {
     const META: Meta = Meta::oxlint(Plugin::Vue, "no-deprecated-events-api", Kind::Problem);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["$on", "$off", "$once"]);
     type State<'a> = EnclosingFunctions<'a>;
 
     fn new(_: &Options) -> Self {

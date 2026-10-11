@@ -31,7 +31,7 @@ fn is_shadowed(callee: Expr<'_>) -> bool {
 
 impl Rule for GlobalRequire {
     const META: Meta = Meta::eslint("global-require", Kind::Suggestion).deprecated();
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().function_calls(&["require"]);
     /// What has an ancestor that is not acceptable.
     type State<'a> = AncestorMemo<'a, ()>;
 

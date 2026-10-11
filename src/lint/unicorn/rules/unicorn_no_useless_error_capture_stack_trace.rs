@@ -19,7 +19,7 @@ const ALREADY_CALLED: Message = Message::new(
 impl Rule for NoUselessErrorCaptureStackTrace {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "no-useless-error-capture-stack-trace", Kind::Suggestion).has_suggestions();
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["captureStackTrace"]);
     /// The class in the constructor of which something is.
     type State<'a> = AncestorMemo<'a, Option<Class<'a>>>;
 
@@ -27,8 +27,12 @@ impl Rule for NoUselessErrorCaptureStackTrace {
         NoUselessErrorCaptureStackTrace
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        file.mentions("captureStackTrace").then(AncestorMemo::default)
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        if file.mentions("captureStackTrace") { Self::ON } else { On::new() }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(AncestorMemo::default())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

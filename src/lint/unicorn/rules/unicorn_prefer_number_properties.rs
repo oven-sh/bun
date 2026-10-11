@@ -25,7 +25,8 @@ pub struct State<'a> {
 impl Rule for PreferNumberProperties {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "prefer-number-properties", Kind::Suggestion).fixable(Fixable::Code);
-    const ON: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index, ExprTag::Call]).finish();
+    const ON: On =
+        On::new().members_named(&["NaN", "Infinity"]).exprs(&[ExprTag::Index]).calls_named(&FUNCTIONS).finish();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {

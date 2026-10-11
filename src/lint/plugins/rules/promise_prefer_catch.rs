@@ -9,7 +9,7 @@ const PREFER_CATCH: Message = Message::new("", "Prefer `catch` to `then(a, b)` o
 
 impl Rule for PreferCatch {
     const META: Meta = Meta::oxlint(Plugin::Promise, "prefer-catch", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["then"]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {

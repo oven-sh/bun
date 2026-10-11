@@ -817,7 +817,7 @@ impl Parents {
 
 impl File<'_> {
     /// Whether it shows from the kind of its parent that the expression statement `id` is not a [wrapper](Stmt::is_wrapper).
-    #[inline]
+    #[inline(always)]
     fn is_plainly_no_wrapper(&self, id: hir::StmtId) -> bool {
         let Some(&Parent::Stmt(parent)) = self.bound.stmt_parent.get(id.idx()) else {
             return true;

@@ -314,11 +314,6 @@ impl<T> Default for Fixed<'_, T> {
 }
 
 impl<'s, T: Copy> Fixed<'s, T> {
-    pub(crate) fn filled_in(arena: &'s Arena, len: usize, value: T) -> Self {
-        let values = std::iter::repeat_n(value, len);
-        Fixed(FixedIn::Arena(ArenaBox::from_iter_in(values, arena)))
-    }
-
     pub(crate) fn copied_in(arena: &'s Arena, list: &[T]) -> Self {
         Fixed(FixedIn::Arena(ArenaBox::copy_from_slice_in(list, arena)))
     }
@@ -387,6 +382,8 @@ pub struct Lazy<'s> {
 pub struct LazyCells {
     /// `node.Parent`, by `Node`: `File::parent`.
     pub(crate) parents: OnceLock<crate::node::Parents>,
+    /// `FnId::to_node`, `ClassId::to_node`
+    pub(crate) owners: OnceLock<crate::node::Owners>,
     /// `File::is_in_ambient_or_type_node`
     pub(crate) ambient_or_type_places: OnceLock<Places<Box<[TextRange]>>>,
     /// `File::is_in_type_query`
@@ -400,6 +397,7 @@ pub struct LazyCells {
 /// Those of every file without nodes: what is computed from one is the same for all.
 static CELLS_OF_NO_NODES: LazyCells = LazyCells {
     parents: OnceLock::new(),
+    owners: OnceLock::new(),
     ambient_or_type_places: OnceLock::new(),
     type_query_places: OnceLock::new(),
     class_extends_places: OnceLock::new(),
@@ -2039,8 +2037,6 @@ pub struct FileIn<S: Storage> {
     pub names: S::Nodes<Name>,
     /// See node.rs. Set by `finish_nodes`.
     pub bases: NodeBases,
-    pub fn_nodes: S::Nodes<Node>,
-    pub class_nodes: S::Nodes<Node>,
     pub lazy: S::Lazy,
     /// The position of each `Identifier` whose text is one of `Atom::is_keyword_identifier`, or the
     /// start of its parent node.
@@ -2507,8 +2503,6 @@ macro_rules! file_in_arena {
             modifiers: $long!($this.modifiers),
             names: $long!($this.names),
             bases: $this.bases,
-            fn_nodes: $long!($this.fn_nodes),
-            class_nodes: $long!($this.class_nodes),
             lazy: Lazy {
                 session: $session,
                 arena: $arena,
@@ -2580,11 +2574,6 @@ impl FileBuilder {
     /// The file for as long as `self` is not touched: the long lists stay where they are. What else
     /// a `File` has is in `arena`, which is one of `session`.
     pub fn lend<'s>(&'s mut self, arena: &'s Arena, session: &'s Session) -> File<'s> {
-        // Room for what `File::finish_nodes` computes.
-        self.fn_nodes.clear();
-        self.fn_nodes.resize(self.fns.len(), Node::NONE);
-        self.class_nodes.clear();
-        self.class_nodes.resize(self.classes.len(), Node::NONE);
         self.lazy = LazyCells::default();
         macro_rules! lent {
             ($list:expr) => {

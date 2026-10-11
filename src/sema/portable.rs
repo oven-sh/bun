@@ -37,7 +37,7 @@ macro_rules! file_fields {
                 jsx_expressions ids numbers exprs stmts types pats pat_props
                 pat_elems fns params type_params classes interfaces aliases members
                 props var_decls calls cases imports import_specs exports
-                export_specs modifiers names fn_nodes class_nodes
+                export_specs modifiers names
             ]
             few: [
                 decorators references comment_directives with_bodies after_skipped

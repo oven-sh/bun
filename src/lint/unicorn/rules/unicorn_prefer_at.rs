@@ -4,7 +4,6 @@ use bun_lint_oxlint::same_expression::{is_same_expression, is_same_inner_express
 use bun_lint_oxlint::ast_util::{PRECEDENCE_MEMBER, get_precedence};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
-use smallvec::SmallVec;
 
 /// Prefer the `Array#at()` and `String#at()` methods for index access.
 pub struct PreferAt {
@@ -20,9 +19,9 @@ const USE_AT: Message = Message::new("", "Use `.at()` for index access.");
 impl Rule for PreferAt {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "prefer-at", Kind::Suggestion).fixable(Fixable::Code).has_suggestions();
-    const ON: On = On::new().exprs(&[ExprTag::Index, ExprTag::Call]);
-    /// The methods that it is about, those that the file mentions.
-    type State<'a> = SmallVec<[Name<'a>; 6]>;
+    const ON: On =
+        On::new().exprs(&[ExprTag::Index]).method_calls(&["charAt", "substring", "pop", "shift", "last", "slice"]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -47,11 +46,6 @@ impl Rule for PreferAt {
         on
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        let methods = ["charAt", "substring", "pop", "shift", "last", "slice"].into_iter();
-        Some(methods.filter_map(|it| file.find_name(it)).collect())
-    }
-
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.tag() {
             ExprTag::Index => {
@@ -66,9 +60,7 @@ impl Rule for PreferAt {
             }
             ExprTag::Call => {
                 if let Some(call_expr) = e.as_call()
-                    && call_expr.callee().tag() != ExprTag::Ident
                     && let Some(static_member) = as_static_member(call_expr.callee())
-                    && static_member.member_name().is_some_and(|it| cx.state.contains(&it.name()))
                     && !is_assignment_target(e)
                 {
                     self.check_call_expression(e, call_expr, static_member, cx);
@@ -80,7 +72,6 @@ impl Rule for PreferAt {
 }
 
 type Context<'a> = Cx<'a, PreferAt>;
-
 
 /// `callee.get_member_expr()`, if it is `a.b`.
 fn as_static_member(callee: Expr<'_>) -> Option<Expr<'_>> {

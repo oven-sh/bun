@@ -21,11 +21,15 @@ impl Rule for NoFindDomNode {
         NoFindDomNode
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         // oxlint passes over `a.#findDOMNode()`.
         let is_mentioned =
-            file.mentions("findDOMNode") || (!file.language().is_oxlint && file.mentions("#findDOMNode"));
-        is_mentioned.then_some(())
+            file.find_name("findDOMNode").is_some() || (!file.language().is_oxlint && file.mentions("#findDOMNode"));
+        if is_mentioned { Self::ON } else { On::new() }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<()> {
+        Some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

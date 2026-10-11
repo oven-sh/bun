@@ -1,5 +1,5 @@
 use bun_lint_oxlint::ast_util::{get_member_expr, is_method_call, static_property_name};
-use crate::oxlint::promise::is_promise;
+use crate::oxlint::promise::{PROMISE_CALLS, is_promise};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -50,7 +50,8 @@ impl Rule for CatchOrReturn {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions_any(&["then", "catch", "finally", "Promise"]).then_some(())
+        let is_promise_call = |it: Expr| it.as_call().is_some_and(|it| is_promise(it).is_some());
+        (file.mentions_any(&["then", "catch", "finally", "Promise"]) && file.calls_on(&PROMISE_CALLS).any(is_promise_call)).then_some(())
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {

@@ -116,8 +116,10 @@ fn sort_by_pos(found: &mut [RawReference]) {
 struct Collector<'f, 'a> {
     file: &'f File<'a>,
     is_javascript: bool,
-    /// All but the identifiers that are expressions.
+    /// All but the identifiers that are expressions and `type_names`.
     found: Vec<RawReference>,
+    /// The type references: where the first name is, then the `TypeNodeId`.
+    type_names: Vec<u64>,
 }
 
 /// What each name stands for at a position that goes through the file.
@@ -317,6 +319,32 @@ impl<'t> Resolver<'t> {
         });
     }
 
+    /// `add` for the first name of the type reference `id`.
+    fn add_type_name(&mut self, id: hir::TypeNodeId, pos: u32, name: Atom) {
+        if !self.unvisited.is_empty()
+            && self
+                .unvisited
+                .iter()
+                .any(|range| (range.0..range.1).contains(&pos))
+        {
+            return;
+        }
+        self.is_visiting_order &= pos >= self.last_moved_to;
+        let from = self.go_to(pos);
+        let variable = self.visible.resolve(name, pos, TYPE);
+        let count = &mut self.counts[(variable as usize).min(self.variables.list.len()) + 1];
+        *count = (*count + 1) | HAS_READ;
+        self.all.push(RawReference {
+            site: ReferenceSite::TypeName(id),
+            pos,
+            name,
+            variable,
+            from,
+            write: ExprId::NONE,
+            flags: ReferenceFlags::READ | ReferenceFlags::TYPE,
+        });
+    }
+
     #[inline(always)]
     fn count(&mut self, it: &RawReference) {
         let is_modifying =
@@ -379,8 +407,9 @@ impl<'t> Resolver<'t> {
 /// What `Collector::identifier` keeps from one identifier to the next.
 struct Merge<'t> {
     into: Resolver<'t>,
-    /// How many of `Collector::found` have been passed on.
+    /// How many of `Collector::found` and of `Collector::type_names` have been passed on.
     passed: usize,
+    passed_type_names: usize,
     /// Where the next of them is.
     next_found: u32,
     /// Where the last identifier is.
@@ -647,16 +676,45 @@ impl<'f> Collector<'f, '_> {
         }
     }
 
-    /// Passes on those of `found` that are before `pos`.
+    /// Where the first of `found` and `type_names` is that has not been passed on.
+    #[inline]
+    fn next_found(&self, merge: &Merge) -> (u32, u32) {
+        let (found, type_name) = (
+            self.found.get(merge.passed),
+            self.type_names.get(merge.passed_type_names),
+        );
+        (
+            found.map_or(u32::MAX, |it| it.pos),
+            type_name.map_or(u32::MAX, |it| (it >> 32) as u32),
+        )
+    }
+
+    /// Passes on those of `found` and of `type_names` that are before `pos`, in the order of the source.
     #[inline(never)]
     fn pass_on_before(&self, pos: u32, merge: &mut Merge) {
-        while let Some(before) = self.found.get(merge.passed)
-            && before.pos < pos
-        {
-            merge.into.add(*before);
-            merge.passed += 1;
+        let hir = &self.file.hir;
+        loop {
+            let (found, type_name) = self.next_found(merge);
+            merge.next_found = found.min(type_name);
+            if merge.next_found >= pos {
+                return;
+            }
+            if found <= type_name {
+                if let Some(before) = self.found.get(merge.passed) {
+                    merge.into.add(*before);
+                }
+                merge.passed += 1;
+                continue;
+            }
+            let id = (self.type_names.get(merge.passed_type_names))
+                .map_or(hir::TypeNodeId::NONE, |&it| hir::TypeNodeId(it as u32));
+            if let Some(TypeNodeKind::Ref { name, .. }) = hir.types.get(id.idx()).map(|it| it.kind)
+                && let Some(first) = hir.names.get(name.start as usize)
+            {
+                merge.into.add_type_name(id, type_name, first.text);
+            }
+            merge.passed_type_names += 1;
         }
-        merge.next_found = self.found.get(merge.passed).map_or(u32::MAX, |it| it.pos);
     }
 
     /// Whether what is around an identifier is enough to tell that it is a reference that reads a
@@ -837,10 +895,12 @@ impl<'f> Collector<'f, '_> {
                 self.file,
                 tree,
                 variables,
-                exprs.len() / 3 + self.found.len(),
+                exprs.len() / 3 + self.found.len() + self.type_names.len(),
             ),
             passed: 0,
-            next_found: self.found.first().map_or(u32::MAX, |it| it.pos),
+            passed_type_names: 0,
+            // Before the first of them.
+            next_found: 0,
             last: 0,
             next_jsdoc: self
                 .file
@@ -921,9 +981,7 @@ impl<'f> Collector<'f, '_> {
                 }
             }
         }
-        for after in self.found.get(merge.passed..).unwrap_or_default() {
-            merge.into.add(*after);
-        }
+        self.pass_on_before(u32::MAX, &mut merge);
         merge.into
     }
 
@@ -1047,14 +1105,8 @@ impl<'f> Collector<'f, '_> {
                         .get(name.start as usize)
                         .filter(|_| !name.is_empty())
                     {
-                        let flags = ReferenceFlags::READ | ReferenceFlags::TYPE;
-                        self.push(
-                            ReferenceSite::TypeName(id),
-                            first.pos(),
-                            first.text,
-                            flags,
-                            ExprId::NONE,
-                        );
+                        self.type_names
+                            .push(u64::from(first.pos()) << 32 | i as u64);
                     }
                 }
                 TypeNodeKind::Predicate { param, asserts, .. }
@@ -1074,6 +1126,7 @@ impl<'f> Collector<'f, '_> {
         }
         // A type is stored after its parts.
         sort_by_pos(&mut self.found[start..]);
+        self.type_names.sort();
         for &id in &tree.namespace_exports {
             if let Some(stmt) = hir.stmts.get(id.idx())
                 && let StmtKind::ExportAsNamespace(name) = stmt.kind
@@ -1344,7 +1397,8 @@ impl References {
         let mut collector = Collector {
             file,
             is_javascript,
-            found: Vec::with_capacity(hir.pats.len() / 2 + hir.types.len() / 2),
+            found: Vec::with_capacity(hir.pats.len() / 2),
+            type_names: Vec::with_capacity(hir.types.len() / 2),
         };
         collector.patterns(tree, &variables.deep_patterns);
         collector.type_query_operands();
@@ -1361,8 +1415,10 @@ impl References {
         // Each part is nearly in order already. References at the same place keep their order.
         sort_by_pos(&mut collector.found);
         // More would not fit beside the marks in `Resolver::counts`.
-        if hir.exprs.len() + collector.found.len() >= COUNT as usize {
+        let found = collector.found.len() + collector.type_names.len();
+        if hir.exprs.len() + found >= COUNT as usize {
             collector.found.clear();
+            collector.type_names.clear();
         }
         let Resolver {
             all,

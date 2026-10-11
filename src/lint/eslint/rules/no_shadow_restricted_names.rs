@@ -127,7 +127,7 @@ impl Rule for NoShadowRestrictedNames {
         let last = if report_global_this { "globalThis" } else { "eval" };
         let names = ["undefined", "NaN", "Infinity", "arguments", "eval", last];
         let restricted: SmallVec<[Name<'a>; 6]> =
-            names.into_iter().filter(|name| file.mentions(name)).map(|name| file.name_of(name)).collect();
+            names.into_iter().filter_map(|name| file.find_name(name)).collect();
         let state = State {
             numbers: restricted.iter().fold(0, |numbers, name| numbers | 1 << (name.atom().0 % 64)),
             restricted,

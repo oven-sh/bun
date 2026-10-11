@@ -428,6 +428,12 @@ pub struct Parents {
     around: Box<[(Node, Node)]>,
 }
 
+/// The node of every function and of every class of a file.
+pub struct Owners {
+    fns: Box<[Node]>,
+    classes: Box<[Node]>,
+}
+
 /// A typed id that is, or belongs to, a node.
 pub trait ToNode: Copy {
     fn to_node(self, file: &File) -> Node;
@@ -507,14 +513,15 @@ impl ToNode for ExprId {
 impl ToNode for FnId {
     #[inline]
     fn to_node(self, file: &File) -> Node {
-        file.fn_nodes.get(self.idx()).copied().unwrap_or(Node::NONE)
+        let function = file.owners().fns.get(self.idx());
+        function.copied().unwrap_or(Node::NONE)
     }
 }
 
 impl ToNode for ClassId {
     #[inline]
     fn to_node(self, file: &File) -> Node {
-        let class = file.class_nodes.get(self.idx());
+        let class = file.owners().classes.get(self.idx());
         class.copied().unwrap_or(Node::NONE)
     }
 }
@@ -1768,14 +1775,18 @@ impl<'s> File<'s> {
     /// Computes the data that `node` and `data` read. No HIR node is added afterwards.
     pub fn finish_nodes(&mut self) {
         self.bases = self.node_bases();
-        // They have their lengths already if they are lent.
-        let arena = self.arena();
-        let room = |list: &mut Fixed<'s, Node>, len: usize| match list.len() == len {
-            true => std::mem::take(list),
-            false => Fixed::filled_in(arena, len, Node::NONE),
-        };
-        let mut fn_nodes = room(&mut self.fn_nodes, self.fns.len());
-        let mut class_nodes = room(&mut self.class_nodes, self.classes.len());
+    }
+
+    #[inline]
+    fn owners(&self) -> &Owners {
+        (self.lazy.cells.owners).get_or_init(|| self.owners_of_all())
+    }
+
+    /// Computed when the first is requested: a linter without types requests none.
+    #[cold]
+    fn owners_of_all(&self) -> Owners {
+        let mut fn_nodes = vec![Node::NONE; self.fns.len()];
+        let mut class_nodes = vec![Node::NONE; self.classes.len()];
         for (i, statement) in self.stmts.iter().enumerate() {
             match statement.kind {
                 StmtKind::Fn(f) => fn_nodes[f.idx()] = StmtId(i as u32).row(self),
@@ -1808,8 +1819,10 @@ impl<'s> File<'s> {
                 _ => {}
             }
         }
-        self.fn_nodes = fn_nodes;
-        self.class_nodes = class_nodes;
+        Owners {
+            fns: fn_nodes.into(),
+            classes: class_nodes.into(),
+        }
     }
 
     /// `node.Kind`

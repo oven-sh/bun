@@ -19,8 +19,13 @@ impl Rule for NoDeprecatedEventsApi {
         NoDeprecatedEventsApi
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        (file.mentions_any(&["$on", "$off", "$once"]) && may_have_component_options(file)).then(EnclosingFunctions::default)
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let is_candidate = file.mentions_any(&["$on", "$off", "$once"]) && may_have_component_options(file);
+        if is_candidate { Self::ON } else { On::new() }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(EnclosingFunctions::default())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

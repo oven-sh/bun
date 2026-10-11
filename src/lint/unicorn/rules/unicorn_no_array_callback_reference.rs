@@ -25,17 +25,15 @@ const METHODS: [&str; 12] = [
 
 impl Rule for NoArrayCallbackReference {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-array-callback-reference", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
-    /// Those of `METHODS` that the file mentions.
-    type State<'a> = SmallVec<[Name<'a>; 12]>;
+    const ON: On = On::new().method_calls(&METHODS);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoArrayCallbackReference
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        let methods: Self::State<'a> = METHODS.iter().filter_map(|it| file.find_name(it)).collect();
-        (!methods.is_empty()).then_some(methods)
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        if file.mentions_any(&METHODS) { Self::ON } else { On::new() }
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -43,7 +41,7 @@ impl Rule for NoArrayCallbackReference {
             return;
         };
         let member = get_inner_expression(call_expr.callee());
-        if !member.member_name().is_some_and(|it| cx.state.contains(&it.name())) {
+        if !member.member_name().is_some_and(|it| it.name().is_any(&METHODS)) {
             return;
         }
         let args = call_expr.args();

@@ -2,8 +2,6 @@ use bun_lint_oxlint::ast_util::{get_inner_expression, is_method_call};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
-use rustc_hash::FxHashSet;
-use smallvec::SmallVec;
 
 /// Prefer top-level await over top-level promises and async function calls.
 pub struct PreferTopLevelAwait;
@@ -12,26 +10,31 @@ const OVER_PROMISE_CHAIN: Message = Message::new("", "Prefer top-level await ove
 const OVER_ASYNC_IIFE: Message = Message::new("", "Prefer top-level await over using an async IIFE.");
 const OVER_ASYNC_FUNCTION_CALL: Message = Message::new("", "Prefer top-level await over an async function call.");
 
+const PROMISE_METHODS: [&str; 3] = ["then", "catch", "finally"];
+
 #[derive(Default)]
 pub struct State<'a> {
     /// What is in the body of a function or of a class, or anywhere in an arrow function.
     bodies: AncestorMemo<'a, ()>,
-    /// Those of `then`, `catch` and `finally` that the file mentions.
-    promise_methods: SmallVec<[Name<'a>; 3]>,
-    has_async_function: bool,
-    /// The names that are declared with an `async` function.
-    async_functions: FxHashSet<Name<'a>>,
-    /// A pattern is declared with one.
-    destructures_async_function: bool,
 }
 
-impl<'a> State<'a> {
-    fn new(file: &'a File<'a>) -> Self {
-        let mut state = State::default();
-        state.promise_methods.extend(["then", "catch", "finally"].into_iter().filter_map(|it| file.find_name(it)));
+impl Rule for PreferTopLevelAwait {
+    const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-top-level-await", Kind::Suggestion);
+    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    type State<'a> = State<'a>;
+
+    fn new(_: &Options) -> Self {
+        PreferTopLevelAwait
+    }
+
+    /// The calls of `then`, `catch` and `finally`, and of the names that are declared with an `async` function.
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let (mut on, mut has_async_function) = (On::new(), false);
         for func in file.funcs().filter(|it| it.is_async() && !it.is_generator()) {
-            state.has_async_function = true;
-            state.async_functions.extend(func.name().map(Ident::name));
+            has_async_function = true;
+            if let Some(name) = func.name() {
+                on = on.function_call(name.bytes());
+            }
             let Node::Expr(mut at) = func.owner() else {
                 continue;
             };
@@ -45,46 +48,33 @@ impl<'a> State<'a> {
             }
             if let Node::VarDecl(var_decl) = at.parent() {
                 match var_decl.pat().as_ident() {
-                    Some(name) => _ = state.async_functions.insert(name),
-                    None => state.destructures_async_function = true,
+                    Some(name) => on = on.function_call(name.bytes()),
+                    // Whatever the pattern declares.
+                    None => return Self::ON,
                 }
             }
         }
-        state
-    }
-}
-
-impl Rule for PreferTopLevelAwait {
-    const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-top-level-await", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = State<'a>;
-
-    fn new(_: &Options) -> Self {
-        PreferTopLevelAwait
+        match has_async_function || file.mentions_any(&PROMISE_METHODS) {
+            true => on.method_calls(&PROMISE_METHODS),
+            false => On::new(),
+        }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some(State::new(file)).filter(|it| it.has_async_function || !it.promise_methods.is_empty())
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(State::default())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(call_expr) = e.as_call() else {
             return;
         };
-        let (callee, state) = (call_expr.callee(), &cx.state);
-        let message = if let Some(method) = callee.member_name() {
-            if !state.promise_methods.contains(&method.name()) || !is_promise_method(callee) {
-                return;
-            }
+        let callee = call_expr.callee();
+        let message = if is_promise_method(callee) {
             OVER_PROMISE_CHAIN
-        } else if let Some(name) = callee.as_ident() {
-            let is_declared = state.destructures_async_function || state.async_functions.contains(&name);
-            if !is_declared || callee.is_parenthesized() {
-                return;
-            }
-            OVER_ASYNC_FUNCTION_CALL
-        } else if state.has_async_function && is_async_function(callee) {
+        } else if is_async_function(callee) {
             OVER_ASYNC_IIFE
+        } else if callee.tag() == ExprTag::Ident && !callee.is_parenthesized() {
+            OVER_ASYNC_FUNCTION_CALL
         } else {
             return;
         };
@@ -99,7 +89,7 @@ impl Rule for PreferTopLevelAwait {
 
 /// `a.then`, `a.catch`, `a.finally`, not in parentheses.
 fn is_promise_method(e: Expr) -> bool {
-    !e.is_parenthesized() && !e.is_private_member() && e.member_name().is_some_and(|it| it.name().is_any(&["then", "catch", "finally"]))
+    !e.is_parenthesized() && !e.is_private_member() && e.member_name().is_some_and(|it| it.name().is_any(&PROMISE_METHODS))
 }
 
 /// A function expression that is `async` and not a generator.

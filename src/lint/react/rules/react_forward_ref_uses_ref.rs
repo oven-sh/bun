@@ -24,8 +24,12 @@ impl Rule for ForwardRefUsesRef {
         ForwardRefUsesRef
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("forwardRef").then_some(())
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        if file.find_name("forwardRef").is_some() { Self::ON } else { On::new() }
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<()> {
+        Some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

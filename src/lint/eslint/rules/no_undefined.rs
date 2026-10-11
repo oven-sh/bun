@@ -57,7 +57,7 @@ impl Rule for NoUndefined {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Name<'a>> {
-        file.mentions("undefined").then(|| file.name_of("undefined"))
+        file.find_name("undefined")
     }
 
     fn symbol<'a>(&self, symbol: Symbol<'a>, cx: &mut Cx<'a, Self>) {

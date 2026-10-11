@@ -10,6 +10,7 @@ use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::linter::{LintMessage, RuleId};
 use bun_lint::rule::Plugin;
+use bun_lint::source::LineStarts;
 use bun_sema::util::FxHashMap;
 use std::io::Write;
 
@@ -62,17 +63,31 @@ fn display_path(path: &[u8], cwd: &[u8]) -> Vec<u8> {
     }
 }
 
-/// Where [`lines`] has been, for the next problem, which is in the same file further down as a rule.
+/// What is kept for the next problem, which is in the same file as a rule.
 #[derive(Default)]
 struct Place<'r> {
-    text: &'r [u8],
-    /// A line, counted from 1, and where it starts.
-    line: u32,
-    start: usize,
-    /// What was asked for last, and the answer.
-    last: (u32, u32, Vec<&'r [u8]>),
+    /// The file that was asked about last, where its lines start, and [`display_path`] of it.
+    file: Option<(&'r FileResult, LineStarts, Vec<u8>)>,
     /// The file that [`with_help`] has asked about last, and the answer.
     helped: Option<(&'r FileResult, Vec<LintMessage>)>,
+}
+
+impl<'r> Place<'r> {
+    fn of(
+        &mut self,
+        result: &'r FileResult,
+        meta: &Meta,
+    ) -> &(&'r FileResult, LineStarts, Vec<u8>) {
+        let is_known = (self.file.as_ref()).is_some_and(|it| std::ptr::eq(it.0, result));
+        let known = self.file.take().filter(|_| is_known);
+        self.file.insert(known.unwrap_or_else(|| {
+            let starts = match &result.line_starts {
+                Some(starts) => LineStarts::at(starts.clone()),
+                None => LineStarts::new(result.text.as_deref().unwrap_or_default()),
+            };
+            (result, starts, display_path(&result.path, meta.cwd))
+        }))
+    }
 }
 
 /// The message of `problem` with what oxlint says besides it, if that was not made when the file was linted: [`Meta::help`]. It is
@@ -96,50 +111,60 @@ fn with_help<'r>(problem: Problem<'r>, meta: &Meta, place: &mut Place<'r>) -> Op
     })
 }
 
-/// The lines `from..=to` of `text`, counted from 1 as ESLint counts them, without their ends.
-fn lines<'r>(text: &'r [u8], from: u32, to: u32, place: &mut Place<'r>) -> Vec<&'r [u8]> {
-    let text = strings::without_utf8_bom(text);
-    let is_same_text = std::ptr::eq(place.text, text);
-    if is_same_text && (place.last.0, place.last.1) == (from, to) {
-        return place.last.2.clone();
-    }
-    let (mut found, mut line, mut at) = match is_same_text && place.line <= from {
-        true => (Vec::new(), place.line, place.start),
-        false => (Vec::new(), 1, 0),
+/// The lines `from..=to` of the text of `result`, counted from 1 as ESLint counts them, without their ends.
+fn lines<'r>(
+    result: &'r FileResult,
+    (from, to): (u32, u32),
+    meta: &Meta,
+    place: &mut Place<'r>,
+) -> Vec<&'r [u8]> {
+    let Some(text) = result.text.as_deref() else {
+        return Vec::new();
     };
-    while line <= to && at <= text.len() {
-        if line == from {
-            (place.text, place.line, place.start) = (text, line, at);
-        }
-        let rest = &text[at..];
-        let mut end = rest.len();
-        let mut next = rest.len() + 1;
-        let mut from_here = 0;
-        // U+2028 and U+2029 start with 0xE2.
-        while let Some(found) = strings::index_of_any(&rest[from_here..], b"\n\r\xE2") {
-            let candidate = from_here + found;
-            let len = match &rest[candidate..] {
-                [b'\r', b'\n', ..] => 2,
-                [b'\r' | b'\n', ..] => 1,
-                [0xE2, 0x80, 0xA8 | 0xA9, ..] => 3,
-                _ => 0,
-            };
-            if len > 0 {
-                (end, next) = (candidate, candidate + len);
-                break;
-            }
-            from_here = candidate + 1;
-        }
-        if line >= from {
-            found.push(&rest[..end]);
-        }
-        line += 1;
-        at += next;
-    }
-    if std::ptr::eq(place.text, text) {
-        place.last = (from, to, found.clone());
+    let starts = &place.of(result, meta).1;
+    let mut found = Vec::new();
+    for line in from.max(1)..=to {
+        let Some(start) = starts.start_of(line) else {
+            break;
+        };
+        let whole = match starts.start_of(line + 1) {
+            Some(next) => match &text[start as usize..next as usize] {
+                [line @ .., b'\r', b'\n'] | [line @ .., 0xE2, 0x80, 0xA8 | 0xA9] => line,
+                [line @ .., _] | line => line,
+            },
+            None => &text[start as usize..],
+        };
+        found.push(match line {
+            1 => strings::without_utf8_bom(whole),
+            _ => whole,
+        });
     }
     found
+}
+
+/// `lines`, one after the other, with a space for each tab.
+fn without_tabs(lines: &[&[u8]]) -> Vec<u8> {
+    let mut text = Vec::with_capacity(lines.iter().map(|it| it.len() + 1).sum());
+    for (i, line) in lines.iter().enumerate() {
+        if i > 0 {
+            text.push(b'\n');
+        }
+        text.extend(line.iter().map(|&byte| match byte {
+            b'\t' => b' ',
+            byte => byte,
+        }));
+    }
+    text
+}
+
+/// As `{}` prints a `BStr`.
+fn push_lossy(out: &mut Vec<u8>, text: &[u8]) {
+    match text.is_ascii() {
+        true => out.extend_from_slice(text),
+        false => {
+            let _ = write!(out, "{}", BStr::new(text));
+        }
+    }
 }
 
 fn all<'r>(results: &'r [FileResult]) -> Vec<Problem<'r>> {
@@ -218,11 +243,15 @@ fn write_pretty_problem<'r>(
     let mut text = message.message.clone();
     let rule = problem.rule();
     if !rule.is_empty() {
-        pretty!(&mut text, meta.color, "<r>  <d>{}", BStr::new(&rule));
+        text.extend_from_slice(match meta.color {
+            true => bun_core::pretty_fmt!("<r>  <d>", true).as_bytes(),
+            false => bun_core::pretty_fmt!("<r>  <d>", false).as_bytes(),
+        });
+        push_lossy(&mut text, &rule);
     }
-    let shown = match (&result.text, message.line) {
-        (Some(text), line @ 1..) => lines(text, line.saturating_sub(2).max(1), line, place),
-        _ => Vec::new(),
+    let shown = match message.line {
+        line @ 1.. => lines(result, (line.saturating_sub(2).max(1), line), meta, place),
+        0 => Vec::new(),
     };
     // Not lines that nobody has written, which fill the screen.
     let is_hidden = shown.last().is_none_or(|line| line.trim_ascii().is_empty())
@@ -235,12 +264,10 @@ fn write_pretty_problem<'r>(
     let data = bun_ast::Data {
         text: text.into(),
         location: Some(bun_ast::Location {
-            file: display_path(&result.path, meta.cwd).into(),
+            file: place.of(result, meta).2.clone().into(),
             line: message.line as i32,
             column: message.column as i32,
-            line_text: Some(
-                strings::replace_owned(&shown[blank..].join(&b'\n'), b"\t", b" ").into(),
-            ),
+            line_text: Some(without_tabs(&shown[blank..]).into()),
             ..Default::default()
         }),
     };
@@ -254,19 +281,14 @@ fn write_pretty_problem<'r>(
     notes.extend(texts.iter().filter(|it| !it.is_empty()).map(|it| said(it)));
     if let Some(details) = details {
         for ((line, column), _, text) in details.labels.iter().filter(|it| !it.2.is_empty()) {
-            let shown = result
-                .text
-                .as_deref()
-                .map(|it| lines(it, *line, *line, place));
-            let shown = shown
-                .and_then(|it| it.first().copied())
-                .filter(|it| it.len() <= 1000);
+            let shown = lines(result, (*line, *line), meta, place);
+            let shown = shown.first().filter(|it| it.len() <= 1000);
             notes.push(bun_ast::Data {
                 location: Some(bun_ast::Location {
-                    file: display_path(&result.path, meta.cwd).into(),
+                    file: place.of(result, meta).2.clone().into(),
                     line: *line as i32,
                     column: *column as i32,
-                    line_text: shown.map(|it| strings::replace_owned(it, b"\t", b" ").into()),
+                    line_text: shown.map(|it| without_tabs(&[it]).into()),
                     ..Default::default()
                 }),
                 ..said(text)
@@ -419,9 +441,9 @@ fn write_agent_problem<'r>(
     out.extend_from_slice(b">\n");
     out.extend_from_slice(&message.message);
     out.push(b'\n');
-    if let (Some(text), line @ 1..) = (&result.text, message.line) {
+    if let (Some(_), line @ 1..) = (&result.text, message.line) {
         let first = line.saturating_sub(2).max(1);
-        let mut shown = lines(text, first, line + 1, place);
+        let mut shown = lines(result, (first, line + 1), meta, place);
         // A blank line after it says nothing.
         if shown.len() as u32 > line - first + 1
             && shown.last().is_some_and(|it| it.trim_ascii().is_empty())

@@ -479,8 +479,7 @@
       "collation_key": 1
     },
     "src/lint/driver/format/excerpt.rs": {
-      "display_path": 1,
-      "lines": 1
+      "display_path": 1
     },
     "src/lint/driver/format/github.rs": {
       "write_escaped": 1

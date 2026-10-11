@@ -27,21 +27,15 @@ enum InitType {
 
 impl Rule for NoImmediateMutation {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-immediate-mutation", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::Assign]);
-    /// The methods that it is about, those that the file mentions.
-    type State<'a> = SmallVec<[Name<'a>; 5]>;
+    const ON: On = On::new().method_calls(&METHODS).exprs(&[ExprTag::Assign]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoImmediateMutation
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
-        let on = On::new().exprs(&[ExprTag::Assign]);
-        if file.mentions_any(&METHODS) { on.exprs(&[ExprTag::Call]) } else { on }
-    }
-
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some(METHODS.iter().filter_map(|it| file.find_name(it)).collect())
+        if file.mentions_any(&METHODS) { Self::ON } else { On::new().exprs(&[ExprTag::Assign]) }
     }
 
     fn expr<'a>(&self, expr: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -58,7 +52,7 @@ impl Rule for NoImmediateMutation {
             prev_stmt.and_then(get_prev_declaration) == Some((variable, init_type))
         };
         let mutation = match expr.as_call() {
-            Some(call) => call_mutation(call, &cx.state, is_initialized),
+            Some(call) => call_mutation(call, is_initialized),
             None => match (expr.assign_op(), expr.left(), expr.right()) {
                 (Some(None), Some(target), Some(value)) => property_assignment(target, value, is_initialized),
                 _ => None,
@@ -83,23 +77,9 @@ fn is_spread(e: Expr) -> bool {
     e.tag() == ExprTag::Spread
 }
 
-fn call_mutation<'a>(
-    call: Call<'a>,
-    methods: &[Name<'a>],
-    is_initialized: impl Fn(Name<'a>, InitType) -> bool,
-) -> Option<Mutation<'a>> {
-    let callee = call.callee();
-    if callee.tag() == ExprTag::Ident {
-        return None;
-    }
-    let member = get_member_expr(callee).filter(|it| !it.is_optional())?;
-    let method_name = match member.member_name() {
-        Some(name) => name.name(),
-        None => static_property_name(member)?,
-    };
-    if !methods.contains(&method_name) {
-        return None;
-    }
+fn call_mutation<'a>(call: Call<'a>, is_initialized: impl Fn(Name<'a>, InitType) -> bool) -> Option<Mutation<'a>> {
+    let member = get_member_expr(call.callee()).filter(|it| !it.is_optional())?;
+    let method_name = static_property_name(member).filter(|it| it.is_any(&METHODS))?;
     let method = method_name.bytes();
     let object = get_inner_expression(member.object()?);
     let args = call.args();

@@ -146,8 +146,6 @@ pub fn dump_and_orphans(file: &File, atoms: &Interner) -> (String, Vec<String>) 
         bases: _,
         lazy: _,
         keyword_identifier_positions: _,
-        fn_nodes: _,
-        class_nodes: _,
     } = file;
     let mut d = Dump {
         file,

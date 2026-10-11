@@ -13,7 +13,9 @@ use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::source::mention_bit;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
-use bun_lint_oxlint::ast_util::{scope_made_by, static_property_info};
+use bun_lint_oxlint::ast_util::{
+    scope_made_by, static_property_info, static_property_name, static_string,
+};
 use bun_lint_oxlint::codegen::Codegen;
 use bun_lint_oxlint::hash_order::HashOrder;
 use bun_lint_oxlint::import::import_entries;
@@ -1049,27 +1051,19 @@ pub(crate) fn get_first_node_name(expr: Expr<'_>) -> Option<Name<'_>> {
 }
 
 fn for_each_node_name_from_the_last<'a>(expr: Expr<'a>, mut visit: impl FnMut(Name<'a>)) {
-    let mut at = expr;
-    while !at.is_parenthesized() && !at.is_chain_root() {
-        at = match at.kind() {
-            ExprKind::Ident(name) | ExprKind::String(name) => return visit(name),
-            ExprKind::Template(template) => {
-                return template.as_static().into_iter().for_each(visit);
+    let mut at = Some(expr);
+    while let Some(link) = at.filter(|it| !it.is_parenthesized() && !it.is_chain_root()) {
+        at = match link.tag() {
+            ExprTag::Ident => return link.as_ident().into_iter().for_each(visit),
+            ExprTag::String | ExprTag::Template => {
+                return static_string(link).into_iter().for_each(visit);
             }
-            ExprKind::TaggedTemplate(call) | ExprKind::Call(call) | ExprKind::New(call) => {
-                call.callee()
+            ExprTag::TaggedTemplate | ExprTag::Call | ExprTag::New => {
+                link.as_call_like().map(Call::callee)
             }
-            ExprKind::Dot { obj, name, .. } => {
-                if !at.is_private_member() {
-                    visit(name.name());
-                }
-                obj
-            }
-            ExprKind::Index { obj, .. } => {
-                if let Some((_, name)) = static_property_info(at) {
-                    visit(name);
-                }
-                obj
+            ExprTag::Dot | ExprTag::Index => {
+                static_property_name(link).into_iter().for_each(&mut visit);
+                link.object()
             }
             _ => return,
         };

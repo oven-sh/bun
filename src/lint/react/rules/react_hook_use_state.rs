@@ -58,7 +58,11 @@ impl Rule for HookUseState {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         // For upstream it has the name that it is imported under.
-        if file.language().is_oxlint { On::new().calls_named(&["useState"]) } else { Self::ON }
+        match file.language().is_oxlint {
+            true if file.find_name("useState").is_none() => On::new(),
+            true => On::new().calls_named(&["useState"]),
+            false => Self::ON,
+        }
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<ReactImports<'a>> {

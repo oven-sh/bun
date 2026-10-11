@@ -1154,6 +1154,7 @@ impl File<'_> {
                 .is_err()
     }
 
+    #[inline(never)]
     fn is_jsx_text(&self, id: hir::ExprId) -> bool {
         if self.hir.jsx.is_empty()
             || !matches!(

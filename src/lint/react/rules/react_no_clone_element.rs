@@ -16,10 +16,14 @@ impl Rule for NoCloneElement {
         NoCloneElement
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions("cloneElement") || !file.mentions("react") || !file.has_stmts([StmtTag::Import]) {
-            return None;
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        if file.find_name("cloneElement").is_none() || !file.mentions("react") || !file.has_stmts([StmtTag::Import]) {
+            return On::new();
         }
+        Self::ON
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<()> {
         Some(())
     }
 

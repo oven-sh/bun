@@ -497,7 +497,11 @@ impl Rule for ExhaustiveDeps {
         let has_pattern = self.additional_hooks.is_some()
             || !follows_oxlint
                 && file.settings().get(b"react-hooks").is_some_and(|it| it.get(b"additionalEffectHooks").is_some());
-        let on = if has_pattern { On::new().exprs(&[ExprTag::Call]) } else { On::new().calls_named(&HOOKS) };
+        let on = match has_pattern {
+            true => On::new().exprs(&[ExprTag::Call]),
+            false if HOOKS.iter().any(|it| file.find_name(it).is_some()) => On::new().calls_named(&HOOKS),
+            false => return On::new(),
+        };
         if follows_oxlint { on } else { on.finish() }
     }
 

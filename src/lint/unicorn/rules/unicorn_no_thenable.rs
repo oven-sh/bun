@@ -20,7 +20,8 @@ pub struct State<'a> {
 impl Rule for NoThenable {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-thenable", Kind::Problem);
     const ON: On = On::new()
-        .exprs(&[ExprTag::Call, ExprTag::Assign])
+        .exprs(&[ExprTag::Assign])
+        .method_calls(&["defineProperty", "fromEntries"])
         .stmts(&[StmtTag::Var, StmtTag::Fn, StmtTag::Class])
         .members()
         .props()

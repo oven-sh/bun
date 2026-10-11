@@ -112,8 +112,14 @@ impl NoUseBeforeDefine {
         let Some(definition) = variable.declarations().next() else {
             return;
         };
-        let end = end_of_definition(definition);
-        let is_defined = |it: Reference<'a>| starts_after(it, end) || it.is_init() || it.is_jsx_pragma();
+        // Only of a value is it asked whether it is in an initializer.
+        let (end, is_type) = match definition {
+            Declaration::TypeParam(it) => (Some(it.name().start()), true),
+            _ => (end_of_definition(definition), false),
+        };
+        let is_defined = |it: Reference<'a>| {
+            starts_after(it, end) && !(is_type && it.is_value()) || it.is_init() || it.is_jsx_pragma()
+        };
         if variable.references().all(is_defined) {
             return;
         }

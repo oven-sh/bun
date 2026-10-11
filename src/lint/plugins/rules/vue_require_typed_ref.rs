@@ -18,10 +18,14 @@ impl Rule for RequireTypedRef {
         RequireTypedRef
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        if file.is_javascript() || !file.mentions_any(&["ref", "shallowRef"]) {
-            return None;
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        if file.is_javascript() || file.find_name("ref").or_else(|| file.find_name("shallowRef")).is_none() {
+            return On::new();
         }
+        Self::ON
+    }
+
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
         Some(EnclosingDeclarators::default())
     }
 

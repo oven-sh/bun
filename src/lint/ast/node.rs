@@ -477,6 +477,24 @@ impl<'a> Stmt<'a> {
     }
 
     fn parent_in_general(self, parent: Option<&Parent>) -> Node<'a> {
+        let file = self.file;
+        match parent {
+            Some(Parent::File) => return Node::File(file),
+            Some(&Parent::Stmt(parent))
+                if !matches!(
+                    file.hir.stmts.get(parent.idx()).map(|it| it.kind),
+                    None | Some(hir::StmtKind::Expr(_) | hir::StmtKind::Switch { .. })
+                ) =>
+            {
+                return Node::Stmt(Stmt::new(file, parent));
+            }
+            _ => {}
+        }
+        self.parent_in_rare_cases(parent)
+    }
+
+    #[inline(never)]
+    fn parent_in_rare_cases(self, parent: Option<&Parent>) -> Node<'a> {
         match Node::of_parent(self.file, parent) {
             // The binder records the `switch` for what is in a clause.
             Node::Stmt(parent) if parent.tag() == StmtTag::Switch => match parent.kind() {

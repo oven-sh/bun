@@ -22,6 +22,9 @@ impl Rule for NumberLiteralCase {
 
     fn number_literal<'a>(&self, number: Literal<'a>, cx: &mut Cx<'a, Self>) {
         let (number_literal, raw_span) = (number.text(), number.span());
+        if number_literal.len() < 2 {
+            return;
+        }
         let prefix = Span::new(raw_span.start + 1, raw_span.start + 2);
         let (message, span, fixed_literal) = match number_literal {
             [b'0', b'B' | b'O', ..] => (UPPERCASE_PREFIX, prefix, number_literal.to_ascii_lowercase()),

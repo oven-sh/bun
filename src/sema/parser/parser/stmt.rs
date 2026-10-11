@@ -232,6 +232,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     pub(crate) fn is_start_of_declaration(&mut self) -> bool {
         // The scan steps over one modifier at a time and remembers nothing, so it ends the same way
         // from each of them. Without this `declare declare ..` is scanned once from each word.
+        // The commonest, for which the text says what the scan would.
+        if self.token() == T::Import && self.is_before(b" {") {
+            return true;
+        }
         let from = self.pos();
         let context = self.context & (ctx::YIELD | ctx::AWAIT);
         let known = self.declaration_scan;

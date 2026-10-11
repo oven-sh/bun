@@ -3,6 +3,7 @@ use crate::jest::{self, JestFnKind, JestGeneralFnKind, PossibleJestNode};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use rustc_hash::FxHashMap;
+use std::cell::OnceCell;
 
 /// When testing a specific function, this rule aims to enforce passing a named function to `describe()` instead of an equivalent
 /// hardcoded string.
@@ -25,18 +26,23 @@ impl Rule for PreferDescribeFunctionTitle {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        // What is imported, and whether as more than a type.
-        let mut imported_names: FxHashMap<Name, bool> = FxHashMap::default();
-        for entry in import_entries(cx.file()) {
-            *imported_names.entry(entry.local_name().name()).or_default() |= !entry.is_type();
-        }
+        let imported_names = OnceCell::new();
         jest::iter_possible_jest_call_node(cx.file()).for_each(|node| run(node, &imported_names, cx));
     }
 }
 
+/// What is imported, and whether as more than a type.
+fn imported_names<'a>(file: &'a File<'a>) -> FxHashMap<Name<'a>, bool> {
+    let mut imported_names: FxHashMap<Name, bool> = FxHashMap::default();
+    for entry in import_entries(file) {
+        *imported_names.entry(entry.local_name().name()).or_default() |= !entry.is_type();
+    }
+    imported_names
+}
+
 fn run<'a>(
     possible_jest_node: PossibleJestNode<'a>,
-    imported_names: &FxHashMap<Name<'a>, bool>,
+    imported: &OnceCell<FxHashMap<Name<'a>, bool>>,
     cx: &Cx<'a, PreferDescribeFunctionTitle>,
 ) {
     let file = cx.file();
@@ -55,14 +61,14 @@ fn run<'a>(
         ExprKind::String(value) => (value, file.slice(title_arg.span().shrink(1, 1))),
         _ => return,
     };
-    let Some(&is_value) = imported_names.get(&name) else {
-        return;
-    };
     if !jest::parse_general_jest_fn_call(file, possible_jest_node)
         .is_some_and(|it| it.kind == JestFnKind::General(JestGeneralFnKind::Describe))
     {
         return;
     }
+    let Some(&is_value) = imported.get_or_init(|| imported_names(file)).get(&name) else {
+        return;
+    };
     let typecheck = file.settings().get(b"vitest").and_then(|it| it.get(b"typecheck")).and_then(Json::as_bool);
     if title_arg.tag() == ExprTag::String && typecheck == Some(true) {
         return;

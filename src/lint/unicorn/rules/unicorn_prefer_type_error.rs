@@ -19,12 +19,12 @@ impl Rule for PreferTypeError {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("Error").then_some(())
+        file.find_name("Error").map(|_| ())
     }
 
     fn stmt<'a>(&self, throw_stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         if let StmtKind::Throw(argument) = throw_stmt.kind()
-            && let ExprKind::New(new_expr) = argument.kind()
+            && let Some(new_expr) = argument.as_new()
             && get_inner_expression(new_expr.callee()).is_ident("Error")
             && let Node::Stmt(block_stmt) = throw_stmt.parent()
             && matches!(block_stmt.kind(), StmtKind::Block(body) if body.len() == 1)

@@ -6,11 +6,12 @@ use crate::ast::{
     StmtTag, TupleElem, TypeNode, TypeParam, TypeTag, UnOp, VarDecl,
 };
 use crate::context::{Cx, CxBase, Diagnostic, Severity};
-use crate::rule::{Meta, NodeTags, On, Rule, When};
+use crate::rule::{Meta, NAME_CLASSES, NodeTags, On, Rule, When, name_class};
 use crate::rule_set::{RuleBits, RuleSet};
 use crate::span::Span;
+use bun_sema::atom::Atom;
 use bun_sema::hir;
-use std::cell::OnceCell;
+use std::cell::{Cell, OnceCell};
 
 // ───────────────────────────── the nodes of a file, by kind ─────────────────────────────
 
@@ -214,6 +215,146 @@ impl Exprs {
     }
 }
 
+/// The `Call`s or the `Dot`s of a file by a name: each is in exactly one group.
+/// - `0..NAME_CLASSES`: by the [`name_class`] of the name of a `Dot` that is not private, which is the expression or what it calls.
+/// - `FUNCTIONS..OTHERS`: a `Call` of an identifier, by the class of that, two classes to a group.
+/// - `OTHERS`: everything else.
+pub(crate) struct ByName {
+    /// Places in the list of all of them (`File::exprs_of`), group by group, ascending in each.
+    places: Vec<u32>,
+    /// Where each group starts in `places`, and where the last ends.
+    starts: [u32; ByName::GROUPS + 1],
+    /// A bit for each group that is not empty.
+    present: [u64; 4],
+}
+
+/// The classes of the names that were asked for last, each at the place that the number of the name tells: the number, then 8
+/// bits for the class.
+struct Classes<'a> {
+    file: &'a File<'a>,
+    known: [u64; 256],
+}
+
+impl<'a> Classes<'a> {
+    fn new(file: &'a File<'a>) -> Self {
+        Classes {
+            file,
+            known: [u64::MAX; 256],
+        }
+    }
+
+    #[inline]
+    fn of(&mut self, name: Atom) -> u8 {
+        let known = &mut self.known[name.0 as usize % 256];
+        if *known >> 8 != u64::from(name.0) {
+            let class = name_class(self.file.name(name).bytes());
+            *known = u64::from(name.0) << 8 | class as u64;
+        }
+        *known as u8
+    }
+
+    /// The group of the `Dot` with this name, which is written at `pos`.
+    #[inline]
+    fn of_member(&mut self, name: Atom, pos: u32) -> u8 {
+        match self.file.text().get(pos as usize) {
+            Some(b'#') => ByName::OTHERS as u8,
+            _ => self.of(name),
+        }
+    }
+}
+
+impl ByName {
+    const FUNCTIONS: usize = NAME_CLASSES;
+    const OTHERS: usize = ByName::FUNCTIONS + NAME_CLASSES / 2;
+    const GROUPS: usize = ByName::OTHERS + 1;
+
+    /// `group_of`: the group of each of `all`.
+    fn new(all: &[u32], mut group_of: impl FnMut(u32) -> u8) -> ByName {
+        const { assert!(ByName::GROUPS <= 4 * 64) };
+        let mut counts = [0u32; u8::MAX as usize + 2];
+        let groups: Vec<u8> = (all.iter())
+            .map(|&id| {
+                let group = group_of(id);
+                counts[group as usize + 1] += 1;
+                group
+            })
+            .collect();
+        let (mut starts, mut present) = ([0u32; ByName::GROUPS + 1], [0u64; 4]);
+        for group in 0..ByName::GROUPS {
+            present[group / 64] |= u64::from(counts[group + 1] != 0) << (group % 64);
+            starts[group + 1] = starts[group] + counts[group + 1];
+        }
+        let mut next = [u32::MAX; u8::MAX as usize + 1];
+        next[..ByName::GROUPS].copy_from_slice(&starts[..ByName::GROUPS]);
+        let mut places = vec![0u32; starts[ByName::GROUPS] as usize];
+        for (place, &group) in (0u32..).zip(&groups) {
+            let at = &mut next[group as usize];
+            if let Some(slot) = places.get_mut(*at as usize) {
+                *slot = place;
+                *at += 1;
+            }
+        }
+        ByName {
+            places,
+            starts,
+            present,
+        }
+    }
+
+    fn of_calls<'a>(file: &'a File<'a>) -> ByName {
+        let mut classes = Classes::new(file);
+        ByName::new(file.exprs_of(ExprTag::Call), |id| {
+            let callee = grouped_expr(file, id).callee();
+            match callee.and_then(Expr::try_raw).map(|it| it.kind) {
+                Some(hir::ExprKind::Dot { name, name_pos, .. }) => {
+                    classes.of_member(name, name_pos)
+                }
+                Some(hir::ExprKind::Ident(name)) => {
+                    (ByName::FUNCTIONS + classes.of(name) as usize % (NAME_CLASSES / 2)) as u8
+                }
+                _ => ByName::OTHERS as u8,
+            }
+        })
+    }
+
+    fn of_members<'a>(file: &'a File<'a>) -> ByName {
+        let mut classes = Classes::new(file);
+        ByName::new(file.exprs_of(ExprTag::Dot), |id| {
+            match file.hir.exprs.get(id as usize).map(|it| it.kind) {
+                Some(hir::ExprKind::Dot { name, name_pos, .. }) => {
+                    classes.of_member(name, name_pos)
+                }
+                _ => ByName::OTHERS as u8,
+            }
+        })
+    }
+
+    fn has_any_of(&self, groups: [u64; 4]) -> bool {
+        let both = groups.iter().zip(&self.present);
+        both.fold(0, |any, (wanted, present)| any | (wanted & present)) != 0
+    }
+
+    /// Replaces `found` by those of `all`, which is what has been grouped, that are in one of `groups`, in the order of `all`.
+    fn find(&self, groups: [u64; 4], all: &[u32], found: &mut Vec<u32>) {
+        found.clear();
+        let mut count = 0;
+        for (word, (wanted, present)) in groups.iter().zip(&self.present).enumerate() {
+            each_bit(wanted & present, |bit| {
+                let group = 64 * word + bit;
+                let places = self.starts[group] as usize..self.starts[group + 1] as usize;
+                found.extend_from_slice(&self.places[places]);
+                count += 1;
+            });
+        }
+        if count > 1 {
+            found.sort_unstable();
+        }
+        for place in found {
+            *place = all.get(*place as usize).map_or(u32::MAX, |&id| id);
+        }
+    }
+}
+
 /// The expressions, statements, types and patterns of a file by kind, each grouped the first time a rule listens for one. Left
 /// out are the nodes that are not part of the tree, which the parser leaves behind where it has backtracked, and those that are
 /// synthesized from JSDoc comments.
@@ -226,6 +367,10 @@ pub(crate) struct ByKind {
     /// The `ExprTag::Binary` and the `ExprTag::Unary` by operator.
     binaries: OnceCell<Grouped<{ BinOp::Comma as usize + 1 }>>,
     unaries: OnceCell<Grouped<{ UnOp::PostDec as usize + 1 }>>,
+    calls_by_name: OnceCell<Box<ByName>>,
+    members_by_name: OnceCell<Box<ByName>>,
+    /// A list that `File::named` has filled and that is not in use any more.
+    spare: Cell<Vec<u32>>,
     fns: OnceCell<Vec<u32>>,
     classes: OnceCell<Vec<u32>>,
     members: OnceCell<Vec<u32>>,
@@ -435,6 +580,58 @@ impl<'a> File<'a> {
         self.exprs_of(tag).iter().map(|&id| grouped_expr(self, id))
     }
 
+    /// `kind`: `Call` or `Dot`.
+    fn by_name(&'a self, kind: ExprTag) -> &'a ByName {
+        match kind {
+            ExprTag::Call => {
+                (self.by_kind().calls_by_name).get_or_init(|| Box::new(ByName::of_calls(self)))
+            }
+            _ => {
+                (self.by_kind().members_by_name).get_or_init(|| Box::new(ByName::of_members(self)))
+            }
+        }
+    }
+
+    /// Whether one of these groups of the `Call`s or the `Dot`s has something.
+    #[inline(never)]
+    fn has_named(&'a self, kind: ExprTag, groups: [u64; 4]) -> bool {
+        self.by_name(kind).has_any_of(groups)
+    }
+
+    /// The `Call`s or the `Dot`s of these groups, in the order of `exprs_of`. The list is for `spare` afterwards.
+    #[inline(never)]
+    fn named(&'a self, kind: ExprTag, groups: [u64; 4]) -> Vec<u32> {
+        let mut found = self.by_kind().spare.take();
+        self.by_name(kind)
+            .find(groups, self.exprs_of(kind), &mut found);
+        found
+    }
+
+    /// The `Call`s that a rule with this `on` is called with: see [`On::method_calls`] and [`On::function_calls`]. For a rule that
+    /// looks at the calls from [`Rule::start`] or [`Rule::finish`]: `file.calls_on(&On::new().method_calls(&["then"]))`.
+    pub fn calls_on(&'a self, on: &On) -> impl Iterator<Item = Expr<'a>> + use<'a> {
+        self.exprs_on(ExprTag::Call, on.exprs, on.groups_of_calls())
+    }
+
+    /// The `Dot`s that a rule with this `on` is called with: see [`On::members_named`].
+    pub fn members_on(&'a self, on: &On) -> impl Iterator<Item = Expr<'a>> + use<'a> {
+        self.exprs_on(ExprTag::Dot, on.exprs, on.groups_of_members())
+    }
+
+    fn exprs_on(
+        &'a self,
+        kind: ExprTag,
+        kinds: u64,
+        groups: [u64; 4],
+    ) -> impl Iterator<Item = Expr<'a>> {
+        let found = match (groups[3] != 0, kinds & (1 << kind as u32) != 0) {
+            (true, _) => self.named(kind, groups),
+            (false, true) => self.exprs_of(kind).to_vec(),
+            (false, false) => Vec::new(),
+        };
+        found.into_iter().map(|id| grouped_expr(self, id))
+    }
+
     /// The same for statements.
     pub fn stmts_of_kind(&'a self, tag: StmtTag) -> impl Iterator<Item = Stmt<'a>> {
         self.stmts_of(tag)
@@ -622,7 +819,15 @@ pub fn start<'r, 'a: 'r, R: Rule>(rule: &'r R, start: Start<'a>) -> Option<Box<L
         },
     };
     call_unordered(rule, file, &on, &mut cx);
-    on.has_later().then(|| Box::new(Later { rule, on, cx }))
+    on.has_later().then(|| {
+        Box::new(Later {
+            rule,
+            enter: on.enter,
+            exit: on.exit,
+            finishes: on.has(On::FINISH),
+            cx,
+        })
+    })
 }
 
 /// Calls `visit` with the number of each bit that is set, from the lowest.
@@ -652,6 +857,9 @@ fn has_any_of<'a>(file: &'a File<'a>, on: On) -> bool {
         types present_types;
         pats present_pats;
     }
+    let (calls, members) = (on.groups_of_calls(), on.groups_of_members());
+    has_any = has_any || calls[3] != 0 && file.has_named(ExprTag::Call, calls);
+    has_any = has_any || members[3] != 0 && file.has_named(ExprTag::Dot, members);
     has_any = has_any || on.has(On::OPTIONAL_CHAINS) && file.present_chained() != 0;
     macro_rules! sorts {
         ($($sort:ident $field:ident;)*) => {
@@ -680,9 +888,20 @@ const CHAINED: [ExprTag; 3] = [ExprTag::Dot, ExprTag::Index, ExprTag::Call];
 /// Calls what takes the nodes in no particular order, in the order in which [`Rule`] has the methods.
 #[inline]
 fn call_unordered<'a, R: Rule>(rule: &R, file: &'a File<'a>, on: &On, cx: &mut Cx<'a, R>) {
-    each_bit(on.exprs, |kind| {
-        for &id in file.exprs_of(EXPR_TAGS[kind]) {
+    // Those by name where all of the kind would be.
+    let (calls, members) = (on.groups_of_calls(), on.groups_of_members());
+    let named = (calls[3] << ExprTag::Call as u32) | (members[3] << ExprTag::Dot as u32);
+    each_bit(on.exprs | named, |kind| {
+        let found = match named & (1 << kind) != 0 {
+            true if kind == ExprTag::Call as usize => Some(file.named(ExprTag::Call, calls)),
+            true => Some(file.named(ExprTag::Dot, members)),
+            false => None,
+        };
+        for &id in (found.as_deref()).unwrap_or_else(|| file.exprs_of(EXPR_TAGS[kind])) {
             rule.expr(grouped_expr(file, id), cx);
+        }
+        if let Some(found) = found {
+            file.by_kind().spare.set(found);
         }
     });
     if on.has(On::OPTIONAL_CHAINS) {
@@ -759,15 +978,17 @@ fn call_unordered<'a, R: Rule>(rule: &R, file: &'a File<'a>, on: &On, cx: &mut C
 #[doc(hidden)]
 pub struct Later<'r, 'a, R: Rule> {
     rule: &'r R,
-    /// A part of `R::ON`.
-    on: On,
+    /// What is left to call of `R::ON`.
+    enter: NodeTags,
+    exit: NodeTags,
+    finishes: bool,
     cx: Cx<'a, R>,
 }
 
 impl<'a, R: Rule> Running<'a> for Later<'_, 'a, R> {
     #[inline]
     fn walks(&self) -> (NodeTags, NodeTags) {
-        (self.on.enter, self.on.exit)
+        (self.enter, self.exit)
     }
 
     #[inline]
@@ -781,7 +1002,7 @@ impl<'a, R: Rule> Running<'a> for Later<'_, 'a, R> {
     }
 
     fn finish(&mut self) {
-        if self.on.has(On::FINISH) {
+        if self.finishes {
             self.rule.finish(&mut self.cx);
         }
     }

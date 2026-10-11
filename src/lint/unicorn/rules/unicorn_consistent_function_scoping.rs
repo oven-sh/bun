@@ -265,7 +265,7 @@ impl<'a> Captures<'a> {
         // The scopes of the functions that are looked at and are in no other of them, and the scopes that these are
         // directly in.
         let mut outermost: Vec<Scope<'a>> = Vec::new();
-        let mut around: FxHashSet<Scope<'a>> = FxHashSet::default();
+        let mut is_around = vec![false; file.scopes().len()];
         // A scope comes before the scopes that are in it.
         for scope in file.scopes() {
             if outermost.last().is_some_and(|it| it.contains(scope)) {
@@ -280,7 +280,9 @@ impl<'a> Captures<'a> {
             }
             outermost.push(scope);
             for &it in path.iter().rev() {
-                around.insert(it);
+                if let Some(is_around) = is_around.get_mut(it.id().idx()) {
+                    *is_around = true;
+                }
                 if is_scope_of_oxlint(it) {
                     break;
                 }
@@ -307,7 +309,7 @@ impl<'a> Captures<'a> {
                 }
             } else if outermost.peek().is_none() {
                 break;
-            } else if !around.contains(&scope) {
+            } else if is_around.get(scope.id().idx()) != Some(&true) {
                 continue;
             }
             for reference in scope.references() {
@@ -400,10 +402,9 @@ fn scope_in<'a>(path: &[Scope<'a>], outer: Scope<'a>) -> Option<Scope<'a>> {
 /// The scopes with an `eval(..)` in them.
 fn scopes_with_eval<'a>(file: &'a File<'a>) -> FxHashSet<Scope<'a>> {
     let mut found = FxHashSet::default();
-    if !file.mentions("eval") {
+    let Some(eval) = file.find_name("eval") else {
         return found;
-    }
-    let eval = file.name_of("eval");
+    };
     let mut path: Vec<Scope<'a>> = Vec::new();
     for scope in file.scopes() {
         while path.last().is_some_and(|it| !it.contains(scope)) {

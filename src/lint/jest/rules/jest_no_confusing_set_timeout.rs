@@ -1,6 +1,7 @@
 use crate::jest::{self, OxlintOrder, Scopes, parent_expression};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use bun_lint::source::mention_bit;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 
 /// Disallow confusing usages of `jest.setTimeout`.
@@ -20,13 +21,30 @@ impl Rule for NoConfusingSetTimeout {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("setTimeout").then_some(())
+        (file.mentions("setTimeout") && jest::mentions_any(file, &JEST_BITS)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         run_once(cx);
     }
 }
+
+/// Of `jest`, `Jest`, `jEst` and so on.
+const JEST_BITS: [u32; 16] = {
+    let (mut bits, mut i) = ([0; 16], 0);
+    while i < 16 {
+        let (mut name, mut at) = (*b"jest", 0);
+        while at < 4 {
+            if i >> at & 1 != 0 {
+                name[at] = name[at].to_ascii_uppercase();
+            }
+            at += 1;
+        }
+        bits[i] = mention_bit(&name);
+        i += 1;
+    }
+    bits
+};
 
 /// `jest`, and `Jest` for `import { jest as Jest } from "@jest/globals"`.
 fn is_jest_call(reference: Expr) -> bool {
@@ -36,11 +54,11 @@ fn is_jest_call(reference: Expr) -> bool {
 fn run_once<'a>(cx: &Cx<'a, NoConfusingSetTimeout>) {
     let file = cx.file();
     // The `jest.setTimeout`s, those of a global `jest` first.
-    let is_set_timeout = |it: &Expr| match it.kind() {
-        ExprKind::Dot { obj, name, .. } => {
-            name.bytes() == b"setTimeout" && is_jest_call(obj) && !obj.is_parenthesized() && !it.is_jsx_tag_name()
-        }
-        _ => false,
+    let set_timeout = file.name_of("setTimeout");
+    let is_set_timeout = |it: &Expr<'a>| {
+        it.member_name().is_some_and(|name| name.name() == set_timeout)
+            && it.object().is_some_and(|obj| is_jest_call(obj) && !obj.is_parenthesized())
+            && !it.is_jsx_tag_name()
     };
     let mut jest_reference_list: Vec<(bool, Expr<'a>)> = (file.exprs_of_kind(ExprTag::Dot))
         .filter(is_set_timeout)

@@ -704,6 +704,9 @@ pub(crate) mod no_commented_out_tests {
     }
 
     fn is_commented_out_test(text: &[u8]) -> bool {
+        if !strings::contains_char(text, b'(') {
+            return false;
+        }
         let mut rest = text;
         loop {
             let line = skip(rest, |it| matches!(it, b' ' | b'\t' | b'\r'));

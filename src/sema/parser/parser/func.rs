@@ -665,7 +665,12 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// `tryParseParenthesizedArrowFunctionExpression` and
     /// `tryParseAsyncSimpleArrowFunctionExpression`, at a `(`, a `<` or `async`.
     pub(crate) fn try_arrow_function(&mut self, allow_return_type: bool) -> Option<ExprId> {
-        match self.look_ahead(Self::is_parenthesized_arrow_function) {
+        // Of `() =>` the text says what the tokens would.
+        let is_one = match self.token() == T::OpenParen && self.is_before(b") =>") {
+            true => Tristate::True,
+            false => self.look_ahead(Self::is_parenthesized_arrow_function),
+        };
+        match is_one {
             Tristate::True => {
                 return self.parenthesized_arrow_function(Tristate::True, true);
             }

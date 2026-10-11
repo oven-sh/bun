@@ -590,6 +590,10 @@ pub struct On {
     pub(crate) stmts: u64,
     pub(crate) types: u64,
     pub(crate) pats: u64,
+    /// [`On::method_calls`]: a bit for each [`name_class`]. Then [`On::function_calls`]: a bit for each two classes.
+    calls: [u64; 3],
+    /// [`On::members_named`]: a bit for each [`name_class`].
+    members: [u64; 2],
     /// The constants below.
     sorts: u32,
     pub(crate) nodes: NodeTags,
@@ -598,6 +602,25 @@ pub struct On {
 }
 
 const _: () = assert!(ExprTag::COUNT <= 64 && StmtTag::COUNT <= 64 && TypeTag::COUNT <= 64);
+
+/// How many classes [`name_class`] tells apart.
+pub(crate) const NAME_CLASSES: usize = 128;
+
+/// The class of a name. The calls and the members of a file are grouped by it. It depends on nothing but the text, so for a
+/// name in [`Rule::ON`] it is a constant of the program, and a file is asked for no name. Names that differ can be of one class.
+#[inline]
+pub(crate) const fn name_class(text: &[u8]) -> usize {
+    let len = text.len();
+    if len == 0 {
+        return 0;
+    }
+    let mixed = (text[0] as u32)
+        .wrapping_mul(0x9E37_79B1)
+        .wrapping_add((text[len / 2] as u32).wrapping_mul(0x85EB_CA77))
+        .wrapping_add((text[len - 1] as u32).wrapping_mul(0xC2B2_AE3D))
+        .wrapping_add((len as u32).wrapping_mul(0x27D4_EB2F));
+    (mixed >> (u32::BITS - NAME_CLASSES.trailing_zeros())) as usize
+}
 
 macro_rules! on_kinds {
     ($($method:ident $called:ident $kind:ident;)*) => {
@@ -638,6 +661,8 @@ impl On {
             stmts: 0,
             types: 0,
             pats: 0,
+            calls: [0; 3],
+            members: [0; 2],
             sorts: 0,
             nodes: NodeTags::EMPTY,
             enter: NodeTags::EMPTY,
@@ -671,6 +696,106 @@ impl On {
         string_literals string_literal STRING_LITERALS 13;
         number_literals number_literal NUMBER_LITERALS 14;
         finish finish FINISH 15;
+    }
+
+    /// [`Rule::expr`], with fewer `Call`s than `.exprs(&[ExprTag::Call])`: for a rule that does nothing with a call unless what
+    /// is called has one of a few names. What counts is [`Call::callee`](crate::ast::Call::callee), for which parentheses
+    /// and JSDoc casts are nothing. Every `Call` of a file is one of three:
+    /// - The callee is a `Dot` whose name is not private: `a.b()`, `a?.b()`, `a.b?.()`, `(a.b)()`, `super.b()`,
+    ///   `a.\u0062()`. The rule is called with it if the name, as [`Expr::member_name`] has it, is one of `names`.
+    /// - The callee is an identifier: `b()`, `b?.()`, `(b)()`. See [`On::function_calls`].
+    /// - All others: ``a["b"]()``, ``a[`b`]()``, `a.#b()`, `a.b!()`, `(a.b as T)()`, `(<T>a.b)()`, `a()()`, `super()`,
+    ///   `(a || b)()`, `(function () {})()`. The rule is called with all of them, and looks at them as it does today.
+    ///
+    /// `new a.b()`, ``a.b`c` `` and `import()` are no `Call`s.
+    ///
+    /// **The rule still has to compare the name**: the calls are grouped by a class of names, so it is also called with
+    /// a few calls of other names. The calls that it is called with come in the order in which it would be called with
+    /// all, and where it would be. In a file that has none of them it is not started.
+    ///
+    /// With `.exprs(&[ExprTag::Call])` as well, the rule is called with every call. [`Rule::narrow`] of a rule with that in
+    /// its `ON` can name methods and functions that its options tell.
+    pub const fn method_calls(mut self, names: &[&str]) -> On {
+        let mut at = 0;
+        while at < names.len() {
+            self = self.method_call(names[at].as_bytes());
+            at += 1;
+        }
+        self
+    }
+
+    /// [`On::method_calls`] with one name.
+    pub const fn method_call(mut self, name: &[u8]) -> On {
+        let class = name_class(name);
+        self.calls[class / 64] |= 1 << (class % 64);
+        self
+    }
+
+    /// As [`On::method_calls`], and together with it: the `Call`s whose callee is an identifier that is one of `names`.
+    /// With only one of the two, the rule is called with no call of the other sort.
+    pub const fn function_calls(mut self, names: &[&str]) -> On {
+        let mut at = 0;
+        while at < names.len() {
+            self = self.function_call(names[at].as_bytes());
+            at += 1;
+        }
+        self
+    }
+
+    /// [`On::function_calls`] with one name.
+    pub const fn function_call(mut self, name: &[u8]) -> On {
+        self.calls[2] |= 1 << (name_class(name) % 64);
+        self
+    }
+
+    /// [`On::method_calls`] and [`On::function_calls`] with the same names: `a.b()` and `b()`.
+    pub const fn calls_named(self, names: &[&str]) -> On {
+        self.method_calls(names).function_calls(names)
+    }
+
+    /// [`Rule::expr`], with fewer `Dot`s than `.exprs(&[ExprTag::Dot])`: those whose name, as [`Expr::member_name`] has it, is
+    /// one of `names`, and all whose name is private (`a.#b`). As with [`On::method_calls`], the rule still has to compare
+    /// the name, the order is that in which it would be called with all, and `.exprs(&[ExprTag::Dot])` as well means all.
+    pub const fn members_named(mut self, names: &[&str]) -> On {
+        let mut at = 0;
+        while at < names.len() {
+            self = self.member_named(names[at].as_bytes());
+            at += 1;
+        }
+        self
+    }
+
+    /// [`On::members_named`] with one name.
+    pub const fn member_named(mut self, name: &[u8]) -> On {
+        let class = name_class(name);
+        self.members[class / 64] |= 1 << (class % 64);
+        self
+    }
+
+    /// The groups of the `Call`s by name that it is called with: see `runner::ByName`. None: it is called with all `Call`s or
+    /// with no `Call`.
+    #[inline]
+    pub(crate) const fn groups_of_calls(self) -> [u64; 4] {
+        let [low, high, functions] = self.calls;
+        match !self.has_expr(ExprTag::Call) && low | high | functions != 0 {
+            true => [low, high, functions, 1],
+            false => [0; 4],
+        }
+    }
+
+    /// The same for the `Dot`s.
+    #[inline]
+    pub(crate) const fn groups_of_members(self) -> [u64; 4] {
+        let [low, high] = self.members;
+        match !self.has_expr(ExprTag::Dot) && low | high != 0 {
+            true => [low, high, 0, 1],
+            false => [0; 4],
+        }
+    }
+
+    #[inline]
+    const fn has_expr(self, kind: ExprTag) -> bool {
+        self.exprs & (1 << kind as u32) != 0
     }
 
     /// [`Rule::node`]
@@ -716,8 +841,10 @@ impl On {
     pub(crate) const fn rows(self) -> [(usize, u64); 8] {
         let in_every_file = On::SYMBOLS | On::STRING_LITERALS | On::NUMBER_LITERALS;
         let is_always = self.has_later() || self.has(in_every_file) || !self.nodes.is_empty();
+        let named = ((self.groups_of_calls()[3]) << ExprTag::Call as u32)
+            | ((self.groups_of_members()[3]) << ExprTag::Dot as u32);
         [
-            (0, self.exprs),
+            (0, self.exprs | named),
             (On::BINARIES, self.binaries),
             (On::UNARIES, self.unaries),
             (On::STMTS, self.stmts),
@@ -731,6 +858,27 @@ impl On {
     /// What is in both.
     #[inline]
     pub(crate) const fn and(self, other: &On) -> On {
+        // All of a kind are those of every name.
+        let (calls, other_calls) = (
+            match self.has_expr(ExprTag::Call) {
+                true => [u64::MAX; 3],
+                false => self.calls,
+            },
+            match other.has_expr(ExprTag::Call) {
+                true => [u64::MAX; 3],
+                false => other.calls,
+            },
+        );
+        let (members, other_members) = (
+            match self.has_expr(ExprTag::Dot) {
+                true => [u64::MAX; 2],
+                false => self.members,
+            },
+            match other.has_expr(ExprTag::Dot) {
+                true => [u64::MAX; 2],
+                false => other.members,
+            },
+        );
         On {
             exprs: self.exprs & other.exprs,
             binaries: self.binaries & other.binaries,
@@ -738,6 +886,12 @@ impl On {
             stmts: self.stmts & other.stmts,
             types: self.types & other.types,
             pats: self.pats & other.pats,
+            calls: [
+                calls[0] & other_calls[0],
+                calls[1] & other_calls[1],
+                calls[2] & other_calls[2],
+            ],
+            members: [members[0] & other_members[0], members[1] & other_members[1]],
             sorts: self.sorts & other.sorts,
             nodes: self.nodes.and(other.nodes),
             enter: self.enter.and(other.enter),

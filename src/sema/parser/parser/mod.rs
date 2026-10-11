@@ -792,6 +792,13 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
         result
     }
 
+    /// Whether `text` is written right after the token.
+    #[inline]
+    pub(crate) fn is_before(&self, text: &[u8]) -> bool {
+        let rest = self.lx.src.get(self.lx.end as usize..);
+        rest.is_some_and(|rest| rest.starts_with(text))
+    }
+
     /// The kind of the token after this one.
     #[inline]
     pub(crate) fn peek(&mut self) -> T {

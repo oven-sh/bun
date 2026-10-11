@@ -147,7 +147,8 @@ function stringify(value) {
     return it > 0 ? "\0+Infinity" : "\0-Infinity";
   });
   return hasInfinity
-    ? json.replace(/"\\u0000([+-])Infinity"/g, (_, sign) => (sign === "+" ? "1e999" : "-1e999"))
+    ? // A quote inside a string has a backslash before it.
+      json.replace(/(?<=^|[[,:])"\\u0000([+-])Infinity"/g, (_, sign) => (sign === "+" ? "1e999" : "-1e999"))
     : json;
 }
 

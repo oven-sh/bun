@@ -98,7 +98,10 @@ impl Rule for MaxNestedCallbacks {
         if !self.is_callback(e) {
             return;
         }
-        let around = cx.state.ancestors.count(Node::Expr(e), |ancestor| match ancestor {
+        // From function to function.
+        let file = cx.file();
+        let up = |node: Node<'a>| node.as_func().and_then(Func::enclosing).map_or(Node::File(file), Node::Func);
+        let around = cx.state.ancestors.count(Node::Func(func), up, |ancestor| match ancestor.as_written() {
             Node::Expr(outer) if outer.tag() == ExprTag::Fn && self.is_callback(outer) => Ancestor::Counted,
             _ => Ancestor::Passed,
         });

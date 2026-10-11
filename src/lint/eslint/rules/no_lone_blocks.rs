@@ -34,10 +34,7 @@ fn has_block_level_binding<'a>(body: List<'a, Stmt<'a>>) -> bool {
 fn check_as_oxlint<'a>(block: Stmt<'a>, body: List<'a, Stmt<'a>>, cx: &mut Cx<'a, NoLoneBlocks>) {
     let parent = block.parent();
     let siblings = match parent {
-        Node::Stmt(parent) => match parent.kind() {
-            StmtKind::Block(siblings) => Some(siblings),
-            _ => None,
-        },
+        Node::Stmt(parent) => parent.as_block(),
         Node::Func(func) if func.kind() == FnKind::StaticBlock => func.body_statements(),
         _ => None,
     };
@@ -85,7 +82,7 @@ impl Rule for NoLoneBlocks {
 
     fn stmt<'a>(&self, block: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         // A `with` statement has the same tag.
-        let StmtKind::Block(body) = block.kind() else {
+        let Some(body) = block.as_block() else {
             return;
         };
         if cx.language().is_oxlint {
@@ -93,9 +90,9 @@ impl Rule for NoLoneBlocks {
         }
         // Whether it is in a block, which the body of a function is too, and alone in it.
         let (is_nested, is_only_child) = match block.parent() {
-            Node::Stmt(parent) => match parent.kind() {
-                StmtKind::Block(siblings) => (true, has_one(siblings)),
-                _ => return,
+            Node::Stmt(parent) => match parent.as_block() {
+                Some(siblings) => (true, has_one(siblings)),
+                None => return,
             },
             Node::Func(func) => (true, func.body_statements().is_some_and(has_one)),
             Node::File(_) => (false, false),

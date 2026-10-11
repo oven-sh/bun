@@ -98,6 +98,9 @@ pub struct LintOptions<'o> {
     /// Whether anything reads [`LintMessage::message`] of what the rules here report, and [`Suggestion::message`]. If not, they are
     /// empty.
     pub wants_messages: bool,
+    /// Whether anything reads where the messages are, and in which order. If not, those of the rules here have no place, unless
+    /// something else needs it: a fix, or a comment of the file that disables rules.
+    pub wants_places: bool,
     /// Whether anything reads what is in [`LintMessage::suppressions`]. If not, a message that comments suppress has one of
     /// them, not one for each comment that is in effect: n comments that disable and n messages make n² of them.
     pub wants_suppressions: bool,
@@ -133,6 +136,7 @@ impl Default for LintOptions<'_> {
             wants_texts_of_fixes: true,
             wants_help: true,
             wants_messages: true,
+            wants_places: true,
             wants_suppressions: true,
             rule_filter: None,
             js_plugins: None,
@@ -146,7 +150,7 @@ impl Default for LintOptions<'_> {
 /// What [`Linter::lint`] returns.
 #[derive(Default, Debug)]
 pub struct LintResult {
-    /// Sorted by position.
+    /// Sorted by position: see [`LintOptions::wants_places`].
     pub messages: Vec<LintMessage>,
     /// ESLint's `suppressedMessages`: what `eslint-disable` comments hide.
     pub suppressed: Vec<LintMessage>,
@@ -452,7 +456,11 @@ impl<S: RuleSet> Linter<S> {
                 || !configures_in_comments
                 || !(comments.iter().filter(is_understood)).any(|it| it.label == Label::Rules));
         let listening = is_plain.then(|| crate::runner::listening::<S>(file, &prepared.on));
-        let mut running: Vec<Running<S>> = Vec::new();
+        let count = match &listening {
+            Some(listening) => listening.0.iter().map(|it| it.count_ones() as usize).sum(),
+            None => prepared.order.len(),
+        };
+        let mut running: Vec<Running<S>> = Vec::with_capacity(count);
         for slot in &prepared.order {
             if listening.as_ref().is_some_and(|it| !it.has(slot.number)) {
                 continue;
@@ -672,16 +680,24 @@ impl<S: RuleSet> Linter<S> {
                 }
             }
         }
+        let understands_oxlint_comments =
+            config.understands_oxlint_comments && !config.linter.no_inline_config;
+        let is_directive = |it: &&ConfigComment| {
+            matches!(
+                it.label,
+                Label::Disable | Label::Enable | Label::DisableLine | Label::DisableNextLine
+            )
+        };
+        let has_directives = match understands_oxlint_comments {
+            true => comments.iter().any(|it| is_directive(&it)),
+            false => !disable_directives.is_empty(),
+        };
+        let wants_places = options.wants_places || options.wants_fixes || has_directives;
         let of_js = problems.len() - before_js;
         file.sink.wants_help.set(options.wants_help);
         file.sink.drops_messages.set(!options.wants_messages);
         (file.sink.drops_texts_of_fixes).set(!options.wants_texts_of_fixes);
-        let when: Vec<When> = match file.language().is_oxlint {
-            true => running.iter().map(|it| it.when).collect(),
-            false => Vec::new(),
-        };
-        let (mut diagnostics, order) =
-            crate::runner::run_in_order(file, &enabled, options.wants_fixes, &when);
+        let mut diagnostics = crate::runner::run(file, &enabled, options.wants_fixes);
         if let Some(thrown) = file.sink.thrown.take() {
             let said = [&thrown.error[..], b"\nOccurred while linting ", file.path()];
             let mut said = said.concat();
@@ -700,6 +716,15 @@ impl<S: RuleSet> Linter<S> {
             };
         }
         problems.reserve(diagnostics.len());
+        let order: Vec<u32> = match (wants_places, file.language().is_oxlint) {
+            (true, true) => {
+                let when: Vec<When> = running.iter().map(|it| it.when).collect();
+                crate::runner::sorted(&diagnostics, &when)
+            }
+            (true, false) => crate::runner::sorted(&diagnostics, &[]),
+            (false, _) => (0..diagnostics.len() as u32).collect(),
+        };
+        let places = wants_places.then_some(&locator);
         // What becomes of what the last rule and `messageId` change that change something.
         let mut changes = (None, config::OxlintChanges::default());
         for at in order {
@@ -718,7 +743,7 @@ impl<S: RuleSet> Linter<S> {
                     config::oxlint_changes(rule.reported_as, diagnostic.message_id),
                 );
             }
-            let mut message = to_message(diagnostic, rule.reported_as, &locator);
+            let mut message = to_message(diagnostic, rule.reported_as, places);
             if rule.name.is_some() {
                 message.rule_id = Some(rule.id());
             }
@@ -796,22 +821,12 @@ impl<S: RuleSet> Linter<S> {
         if file.language().is_oxlint {
             problems[before_js..].rotate_left(of_js);
         }
-        LintMessage::sort(&mut problems);
+        if wants_places {
+            LintMessage::sort(&mut problems);
+        }
 
         let report_unused = (options.report_unused_disable_directives)
             .unwrap_or(config.linter.report_unused_disable_directives);
-        let understands_oxlint_comments =
-            config.understands_oxlint_comments && !config.linter.no_inline_config;
-        let is_directive = |it: &&ConfigComment| {
-            matches!(
-                it.label,
-                Label::Disable | Label::Enable | Label::DisableLine | Label::DisableNextLine
-            )
-        };
-        let has_directives = match understands_oxlint_comments {
-            true => comments.iter().any(|it| is_directive(&it)),
-            false => !disable_directives.is_empty(),
-        };
         let can_tell = |name: &[u8]| {
             let slash = bun_core::strings::last_index_of_char(name, b'/');
             match config.find_js_rule(name) {
@@ -856,12 +871,14 @@ impl<S: RuleSet> Linter<S> {
                     );
                 }
             };
-        apply_comments(
-            report_unused,
-            options.wants_fixes,
-            options.wants_suppressions,
-            &mut problems,
-        );
+        if has_directives {
+            apply_comments(
+                report_unused,
+                options.wants_fixes,
+                options.wants_suppressions,
+                &mut problems,
+            );
+        }
 
         if !has_directives {
             result.messages = problems;
@@ -903,12 +920,17 @@ fn change_as_oxlint(message: &mut LintMessage, changes: config::OxlintChanges) {
     }
 }
 
-/// Takes out of `diagnostic` what is on the heap.
-fn to_message(diagnostic: &mut Diagnostic, rule: &'static Meta, locator: &Locator) -> LintMessage {
+/// Takes out of `diagnostic` what is on the heap. `locator`: `None` if nothing reads where it is.
+fn to_message(
+    diagnostic: &mut Diagnostic,
+    rule: &'static Meta,
+    locator: Option<&Locator>,
+) -> LintMessage {
+    let position = |offset: u32| locator.map_or((0, 0), |it| it.position(offset));
     let details = diagnostic.details.take();
     let (line, column) = match details.as_deref().and_then(|it| it.start_position) {
         Some(start) => (start.line, start.column.wrapping_add(1)),
-        None => locator.position(diagnostic.span.start),
+        None => position(diagnostic.span.start),
     };
     let end_position = details.as_deref().and_then(|it| it.end_position);
     LintMessage {
@@ -921,7 +943,7 @@ fn to_message(diagnostic: &mut Diagnostic, rule: &'static Meta, locator: &Locato
         end: (!diagnostic.has_no_end).then(|| match end_position {
             // A column of -1, which ESLint has, is `u32::MAX`.
             Some(end) => (end.line, end.column.wrapping_add(1)),
-            None => locator.position(diagnostic.span.end),
+            None => position(diagnostic.span.end),
         }),
         is_fatal: false,
         fix: diagnostic.fix.take(),
@@ -931,11 +953,10 @@ fn to_message(diagnostic: &mut Diagnostic, rule: &'static Meta, locator: &Locato
         },
         suppressions: Vec::new(),
         comments_apply_at: (details.as_deref().and_then(|it| it.comments_apply_at))
-            .map(|it| (locator.position(it.start), locator.position(it.end))),
+            .map(|it| (position(it.start), position(it.end))),
         details: details.map(|it| {
             let place = |(span, text): (Span, Cow<'static, str>)| {
-                let (start, end) = (locator.position(span.start), locator.position(span.end));
-                (start, end, text)
+                (position(span.start), position(span.end), text)
             };
             Box::new(Details {
                 first_label: it.first_label,

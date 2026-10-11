@@ -219,7 +219,43 @@ fn add(context: &mut Option<u64>, routes: u64) {
 impl<'a> Quick<'_> {
     fn statements(&mut self, statements: List<'a, Stmt<'a>>) {
         for stmt in statements {
-            self.statement(stmt);
+            // Most have no statement in them and lead nowhere else, and whether they may throw matters in a `try` statement only.
+            let is_plain = self.tries.is_empty()
+                && !matches!(
+                    stmt.tag(),
+                    StmtTag::Block
+                        | StmtTag::Module
+                        | StmtTag::Return
+                        | StmtTag::Throw
+                        | StmtTag::Break
+                        | StmtTag::Continue
+                        | StmtTag::If
+                        | StmtTag::Labeled
+                        | StmtTag::While
+                        | StmtTag::DoWhile
+                        | StmtTag::For
+                        | StmtTag::ForIn
+                        | StmtTag::ForOf
+                        | StmtTag::Switch
+                        | StmtTag::Try
+                );
+            match is_plain {
+                true => self.plain_statement(stmt),
+                false => self.statement(stmt),
+            }
+        }
+    }
+
+    /// What `statement` does with one that changes nothing.
+    #[inline]
+    fn plain_statement(&mut self, stmt: Stmt<'a>) {
+        if let Some(reach) = &mut self.reach
+            && !self.has_given_up
+        {
+            match self.head {
+                0 => reach.unreachable.add(stmt.id().idx()),
+                _ => reach.ends.add(stmt.id().idx()),
+            };
         }
     }
 

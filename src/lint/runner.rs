@@ -1009,26 +1009,25 @@ impl<S: Starts> Clone for Enabled<'_, S> {
 
 impl<S: Starts> Copy for Enabled<'_, S> {}
 
-/// Runs `rules` on `file`. Returns what they report, and the places in that list in the order of the positions.
-/// `Diagnostic::rule` is an index into `rules`.
+/// Runs `rules` on `file`. Returns what they report, in no order: see [`sorted`]. `Diagnostic::rule` is an index into `rules`.
 ///
-/// `wants_fixes`: whether the fixes and suggestions are going to be read. `when`: for a tool that runs its rules in another way
-/// than ESLint, for each of `rules`, in place of what the rule and its reports say. Empty: as they say.
-pub fn run_in_order<'a, S: Starts>(
+/// `wants_fixes`: whether the fixes and suggestions are going to be read.
+pub(crate) fn run<'a, S: Starts>(
     file: &'a File<'a>,
     rules: &[Enabled<'_, S>],
     wants_fixes: bool,
-    when: &[When],
-) -> (Vec<Diagnostic>, Vec<u32>) {
+) -> Vec<Diagnostic> {
     file.sink.wants_fixes.set(wants_fixes);
     file.sink.thrown.take();
     run_rules(file, rules);
-    let diagnostics = file.sink.diagnostics.take();
-    let order = sorted(&diagnostics, when);
-    (diagnostics, order)
+    file.sink.diagnostics.take()
 }
 
-fn sorted(diagnostics: &[Diagnostic], when: &[When]) -> Vec<u32> {
+/// The places in `diagnostics` in the order of the positions.
+///
+/// `when`: for a tool that runs its rules in another way than ESLint, for each of the rules, in place of what the rule and its
+/// reports say. Empty: as they say.
+pub(crate) fn sorted(diagnostics: &[Diagnostic], when: &[When]) -> Vec<u32> {
     // ESLint sorts by line and column alone, which leaves what starts at the same place in the order it was reported: for a
     // listener that is called on entering a node, the outer node first; then, for one that is called on leaving, the inner;
     // then what is reported when the program ends, rule by rule. 51 bits.

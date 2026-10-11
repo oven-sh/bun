@@ -702,10 +702,17 @@ fn is_all_part_of_something(
     type_scope: &[ScopeId],
     type_param_scope: &[ScopeId],
 ) -> bool {
-    !expr_parent.iter().any(|it| matches!(it, Parent::None))
-        && !stmt_parent.iter().any(|it| matches!(it, Parent::None))
+    // Nearly always there is none, so a list is not left at the first: that way several entries are compared at once.
+    let has_orphan = |list: &[Parent]| {
+        let is_orphan = |found, it: &Parent| found | matches!(it, Parent::None);
+        list.iter().fold(false, is_orphan)
+    };
+    let has_unreached =
+        |list: &[ScopeId]| list.iter().fold(false, |found, it| found | it.is_none());
+    !has_orphan(expr_parent)
+        && !has_orphan(stmt_parent)
         && fns.iter().all(|it| it.owner != FnOwner::None)
         && !class_owner.contains(&ClassOwner::Stmt(StmtId::NONE))
-        && !type_scope.contains(&ScopeId::NONE)
-        && !type_param_scope.contains(&ScopeId::NONE)
+        && !has_unreached(type_scope)
+        && !has_unreached(type_param_scope)
 }

@@ -28,9 +28,21 @@ fn index_of(op: BinOp) -> Option<usize> {
     })
 }
 
+impl NoBitwise {
+    /// `index`: of the operator of `e` in `BITWISE_OPERATORS`.
+    fn check<'a>(&self, e: Expr<'a>, index: usize, cx: &Cx<'a, Self>) {
+        if self.allowed & (1 << index) == 0 {
+            cx.report(e, UNEXPECTED).data("operator", BITWISE_OPERATORS[index]);
+        }
+    }
+}
+
 impl Rule for NoBitwise {
     const META: Meta = Meta::eslint("no-bitwise", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Binary, ExprTag::Assign, ExprTag::Unary]);
+    const ON: On = On::new()
+        .exprs(&[ExprTag::Assign])
+        .binaries(&[BinOp::BitXor, BinOp::BitOr, BinOp::BitAnd, BinOp::Shl, BinOp::Shr, BinOp::UShr])
+        .unaries(&[UnOp::BitNot]);
     no_state!();
 
     fn new(options: &Options) -> Self {
@@ -48,28 +60,23 @@ impl Rule for NoBitwise {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let index = match e.kind() {
-            ExprKind::Binary { op, right, .. } => {
-                let Some(index) = index_of(op) else {
-                    return;
-                };
-                if self.int32_hint
-                    && op == BinOp::BitOr
-                    && matches!(right.kind(), ExprKind::Number(value) if value == 0.0)
-                {
-                    return;
-                }
-                index
-            }
-            ExprKind::Assign { op: Some(op), .. } => match index_of(op) {
-                Some(index) => index + ASSIGNMENTS,
-                None => return,
-            },
-            ExprKind::Unary { op: UnOp::BitNot, .. } => BIT_NOT,
-            _ => return,
-        };
-        if self.allowed & (1 << index) == 0 {
-            cx.report(e, UNEXPECTED).data("operator", BITWISE_OPERATORS[index]);
+        if let Some(Some(op)) = e.assign_op()
+            && let Some(index) = index_of(op)
+        {
+            self.check(e, index + ASSIGNMENTS, cx);
         }
+    }
+
+    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some((op, _, right)) = e.as_binary()
+            && let Some(index) = index_of(op)
+            && !(self.int32_hint && op == BinOp::BitOr && right.as_number() == Some(0.0))
+        {
+            self.check(e, index, cx);
+        }
+    }
+
+    fn unary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check(e, BIT_NOT, cx);
     }
 }

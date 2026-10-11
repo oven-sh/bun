@@ -15,23 +15,23 @@ const TOO_DEEPLY: Message = Message::new(
 /// The keyword that `stmt` starts with, if it is a statement that counts: not the `if` of an
 /// `else if`.
 fn keyword_of(stmt: Stmt) -> Option<&'static str> {
-    Some(match stmt.kind() {
-        StmtKind::If { .. } => {
+    Some(match stmt.tag() {
+        StmtTag::If => {
             // For oxlint neither that of `if (a) if (b) ..`.
             let is_oxlint = stmt.file().language().is_oxlint;
-            let is_else_if = matches!(stmt.parent(), Node::Stmt(parent)
-                if matches!(parent.kind(), StmtKind::If { no, .. } if no == Some(stmt) || is_oxlint));
+            let is_else_if = matches!(stmt.parent(), Node::Stmt(parent) if parent.tag() == StmtTag::If
+                && (is_oxlint || matches!(parent.kind(), StmtKind::If { no, .. } if no == Some(stmt))));
             if is_else_if {
                 return None;
             }
             "if"
         }
-        StmtKind::Switch { .. } => "switch",
-        StmtKind::Try { .. } => "try",
-        StmtKind::DoWhile { .. } => "do",
-        StmtKind::While { .. } => "while",
-        StmtKind::With { .. } => "with",
-        StmtKind::For { .. } | StmtKind::ForIn { .. } | StmtKind::ForOf { .. } => "for",
+        StmtTag::Switch => "switch",
+        StmtTag::Try => "try",
+        StmtTag::DoWhile => "do",
+        StmtTag::While => "while",
+        StmtTag::Block if stmt.text().starts_with(b"w") && matches!(stmt.kind(), StmtKind::With { .. }) => "with",
+        StmtTag::For | StmtTag::ForIn | StmtTag::ForOf => "for",
         _ => return None,
     })
 }
@@ -58,8 +58,14 @@ pub(crate) enum Ancestor {
 impl<'a> AncestorCounter<'a> {
     const STRIDE: u32 = 32;
 
-    /// How many of the ancestors of `start` count. `classify` depends on nothing but the ancestor.
-    pub(crate) fn count(&mut self, start: Node<'a>, classify: impl Fn(Node<'a>) -> Ancestor) -> usize {
+    /// How many of the ancestors of `start` count. `up` leads from each to the next, in the end to the file. `classify` depends
+    /// on nothing but the ancestor.
+    pub(crate) fn count(
+        &mut self,
+        start: Node<'a>,
+        up: impl Fn(Node<'a>) -> Node<'a>,
+        classify: impl Fn(Node<'a>) -> Ancestor,
+    ) -> usize {
         let (mut at, mut steps, mut count) = (start, 0u32, 0u32);
         loop {
             if !self.known.is_empty()
@@ -71,7 +77,7 @@ impl<'a> AncestorCounter<'a> {
             if matches!(at, Node::File(_)) {
                 break;
             }
-            at = at.parent();
+            at = up(at);
             match classify(at) {
                 Ancestor::End => break,
                 Ancestor::Counted => count += 1,
@@ -85,7 +91,7 @@ impl<'a> AncestorCounter<'a> {
                 if i % Self::STRIDE == 0 {
                     self.known.insert(at, above);
                 }
-                at = at.parent();
+                at = up(at);
                 if matches!(classify(at), Ancestor::Counted) {
                     above = above.saturating_sub(1);
                 }
@@ -174,7 +180,7 @@ impl Rule for MaxDepth {
         let (Some(max), Some(keyword)) = (self.max, keyword_of(stmt)) else {
             return;
         };
-        let around = cx.state.ancestors.count(Node::Stmt(stmt), |ancestor| match ancestor {
+        let around = cx.state.ancestors.count(Node::Stmt(stmt), Node::parent, |ancestor| match ancestor {
             Node::Func(_) => Ancestor::End,
             Node::Stmt(outer) if keyword_of(outer).is_some() => Ancestor::Counted,
             _ => Ancestor::Passed,

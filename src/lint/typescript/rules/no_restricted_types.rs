@@ -158,8 +158,12 @@ impl Rule for NoRestrictedTypes {
         }
     }
 
+    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+        if self.banned.is_empty() { On::new() } else { Self::ON }
+    }
+
     fn start<'a>(&self, _: &'a File<'a>) -> Option<()> {
-        (!self.banned.is_empty()).then_some(())
+        Some(())
     }
 
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {

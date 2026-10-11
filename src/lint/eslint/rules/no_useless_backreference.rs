@@ -86,9 +86,21 @@ fn problem_of<'r>(bref: regex::Node<'r>, group: regex::Node<'r>) -> Option<Messa
     is_in_negative_lookaround.then_some(INTO_NEGATIVE_LOOKAROUND)
 }
 
+/// Whether some `\` in `pattern` is before what a backreference goes on with.
+fn may_have_backreference(pattern: &[u8]) -> bool {
+    let mut rest = pattern;
+    while let Some(at) = strings::index_of_char_usize(rest, b'\\') {
+        if matches!(rest.get(at + 1), Some(b'1'..=b'9' | b'k')) {
+            return true;
+        }
+        rest = rest.get(at + 1..).unwrap_or_default();
+    }
+    false
+}
+
 /// `node` is the regular expression: a literal, or a call of `RegExp`.
 fn check_regex<'a>(node: Expr<'a>, pattern: &[u8], flags: &[u8], cx: &Cx<'a, NoUselessBackreference>) {
-    if !strings::contains_char(pattern, b'\\') {
+    if !may_have_backreference(pattern) {
         return;
     }
     let Ok(ast) = parse_pattern(pattern, Mode::of_flags(flags), regex::Options::default()) else {
@@ -152,7 +164,7 @@ impl Rule for NoUselessBackreference {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let ExprKind::Regex(literal) = e.kind() {
+        if let Some(literal) = e.as_regex() {
             check_regex(e, literal.pattern(), literal.flags(), cx);
         }
     }

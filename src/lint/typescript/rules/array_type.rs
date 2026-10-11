@@ -226,12 +226,14 @@ impl Rule for ArrayType {
         }
     }
 
-    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let mut on = On::new();
         if self.default != Style::Array || self.readonly != Style::Array {
             on = on.types(&[TypeTag::Array]);
         }
-        if self.default != Style::Generic || self.readonly != Style::Generic {
+        if (self.default != Style::Generic || self.readonly != Style::Generic)
+            && file.mentions_any(&["Array", "ReadonlyArray", "Readonly"])
+        {
             on = on.types(&[TypeTag::Ref]);
         }
         on

@@ -233,6 +233,7 @@ impl Rule for PreferFunctionType {
         };
         if let Some(member) = members.first()
             && members.len() == 1
+            && matches!(member.kind(), MemberKind::CallSignature | MemberKind::ConstructSignature)
             && (!cx.language().is_oxlint || oxlint_looks_at(literal))
         {
             check_member(member, Owner::TypeLiteral(literal), cx);

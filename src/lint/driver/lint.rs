@@ -163,6 +163,7 @@ impl Context<'_, '_> {
             wants_texts_of_fixes: self.fixes() || self.reads_texts_of_fixes,
             wants_help: self.reads_help,
             wants_messages: !self.options.silent,
+            wants_places: !self.options.silent,
             wants_suppressions: self.reads_suppressions,
             // Warnings have to be counted for `--max-warnings`, and for oxlint, from whose report `--quiet` only hides them.
             rule_filter: match self.options.quiet
@@ -469,6 +470,7 @@ impl Context<'_, '_> {
                         || as_what.physical_path_len.is_some(),
                     wants_help: options.wants_help && !waits_for_demand,
                     wants_messages: options.wants_messages || as_what.physical_path_len.is_some(),
+                    wants_places: options.wants_places || as_what.physical_path_len.is_some(),
                     // Its rules have no such thing.
                     js_plugins: options.js_plugins.filter(|_| !as_what.with_help),
                     physical_path_len: as_what.physical_path_len,

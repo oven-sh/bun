@@ -408,7 +408,7 @@ impl Recent {
 
 /// Up to eight bytes of `text`, starting at `from`, as an integer. Missing bytes are zero.
 #[inline]
-fn word(text: &[u8], from: usize) -> u64 {
+pub fn word(text: &[u8], from: usize) -> u64 {
     let Some(rest) = text.get(from..) else {
         return 0;
     };

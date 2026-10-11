@@ -173,15 +173,28 @@ fn is_in_field_initializer<'a>(e: Expr<'a>, function: Option<Func<'a>>, memo: &m
     }
 }
 
+#[derive(Default)]
+pub struct State<'a> {
+    /// There is a `this.x = x` for an `x` that is a parameter property.
+    has_copy: bool,
+    /// The names of all parameter properties. Listed at the first `this.x = x`.
+    parameter_properties: Option<FxHashSet<Name<'a>>>,
+}
+
 impl NoUnnecessaryParameterPropertyAssignment {
     /// Notes whether `e` is a `this.x = x`. Without one there is nothing to report.
     fn look_for_copy<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if !cx.state
+        if !cx.state.has_copy
             && let ExprKind::Assign { target, value, .. } = e.kind()
             && let Some((_, right_name)) = get_identifier(value)
             && get_property_name(target).is_some_and(|left_name| right_name.bytes() == &*left_name)
         {
-            cx.state = true;
+            let file = cx.file();
+            let parameter_properties = cx.state.parameter_properties.get_or_insert_with(|| {
+                let parameters = file.funcs().filter(|it| it.kind() == FnKind::Constructor).flat_map(Func::params);
+                parameters.filter(|it| it.is_parameter_property()).filter_map(|it| it.pat().as_ident()).collect()
+            });
+            cx.state.has_copy = parameter_properties.contains(&right_name);
         }
     }
 }
@@ -191,15 +204,14 @@ impl Rule for NoUnnecessaryParameterPropertyAssignment {
         Meta::typescript("no-unnecessary-parameter-property-assignment", Kind::Suggestion)
         .reports_on_exit();
     const ON: On = On::new().exprs(&[ExprTag::Assign]).finish();
-    /// Whether there is a `this.x = x`.
-    type State<'a> = bool;
+    type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         NoUnnecessaryParameterPropertyAssignment
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<bool> {
-        (file.has_classes() && file.has_exprs([ExprTag::Assign])).then_some(false)
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
+        (file.has_classes() && file.has_exprs([ExprTag::Assign])).then(State::default)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -207,7 +219,7 @@ impl Rule for NoUnnecessaryParameterPropertyAssignment {
     }
 
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
-        if !cx.state {
+        if !cx.state.has_copy {
             return;
         }
         // The assignments to a variable or to a property of `this`.

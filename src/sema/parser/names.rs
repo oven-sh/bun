@@ -11,7 +11,7 @@
 //!   [`FileAtoms`].
 
 use crate::token::{KEYWORDS, T, keyword};
-use bun_sema::atom::{Atom, Intern, KNOWN_TEXTS, NOT_IN_THE_FILE, OwnTexts};
+use bun_sema::atom::{Atom, Intern, KNOWN_TEXTS, NOT_IN_THE_FILE, OwnTexts, word};
 use bun_sema::hir::mention_bit_of;
 use bun_threading::Guarded;
 use std::sync::OnceLock;
@@ -41,8 +41,9 @@ const MENTIONED_WORDS: usize = bun_sema::hir::MENTIONED_BITS / 64;
 const SHORT_BITS: u32 = 14;
 const LONG_BITS: u32 = 12;
 const KNOWN_BITS: u32 = 10;
-/// How many places after its first a text can be at.
-const WINDOW: usize = 7;
+const KNOWN_LONG_BITS: u32 = 6;
+/// How many places a text can be at, from its first on.
+const WINDOW: usize = 8;
 /// In `Names::spans`: the text is in `Names::cooked`, not in the source.
 const COOKED: u32 = OwnTexts::ELSEWHERE;
 /// The length of `KNOWN_TEXTS` one after the other.
@@ -53,6 +54,18 @@ const KNOWN_BYTES: usize = {
         at += 1;
     }
     bytes
+};
+
+// A search in `Names::known_long` ends at a free entry.
+const _: () = {
+    let (mut at, mut long) = (0, 0);
+    while at < KNOWN_TEXTS.len() {
+        if matches!(KNOWN_TEXTS[at].len(), 16..=32) {
+            long += 1;
+        }
+        at += 1;
+    }
+    assert!(long * 2 <= 1 << KNOWN_LONG_BITS);
 };
 
 /// The tables of one thread.
@@ -81,6 +94,8 @@ pub(crate) struct Names {
     /// The keywords, and the short ones of `KNOWN_TEXTS`: the padded bytes, the atom if its number
     /// is fixed, and the token kind. An entry without bytes is free.
     known: Box<[([u64; 2], u32, T); 1 << KNOWN_BITS]>,
+    /// Those of 16 to 32 bytes. An entry without a length is free.
+    known_long: Box<[Long; 1 << KNOWN_LONG_BITS]>,
     /// The others.
     known_others: Vec<(&'static [u8], u32)>,
     late: Late,
@@ -110,6 +125,7 @@ fn boxed<E: Copy, const N: usize>(entry: E) -> Box<[E; N]> {
 impl Default for Names {
     fn default() -> Self {
         let mut known = boxed(([0; 2], u32::MAX, T::Identifier));
+        let mut known_long = boxed(NO_LONG);
         let mut known_others = Vec::new();
         let mut spans = Vec::with_capacity(KNOWN_TEXTS.len());
         let mut cooked = Vec::with_capacity(KNOWN_BYTES);
@@ -123,6 +139,19 @@ impl Default for Names {
             .map(|(&text, atom)| (text, atom));
         let keywords = KEYWORDS.iter().map(|&(text, _)| (text, u32::MAX));
         for (text, atom) in with_numbers.chain(keywords) {
+            if let (16..=32, Some(words)) = (text.len(), long_words(text)) {
+                let mut at = long_place(words) >> (LONG_BITS - KNOWN_LONG_BITS);
+                while known_long[at].len != 0 {
+                    at = (at + 1) % known_long.len();
+                }
+                known_long[at] = Long {
+                    words,
+                    atom,
+                    generation: 0,
+                    len: text.len() as u8,
+                };
+                continue;
+            }
             if !is_short(text) {
                 known_others.push((text, atom));
                 continue;
@@ -150,6 +179,7 @@ impl Default for Names {
             mentioned: [0; MENTIONED_WORDS],
             known_in_file: Default::default(),
             known,
+            known_long,
             known_others,
             late: Late::default(),
         }
@@ -205,11 +235,7 @@ fn is_short(text: &[u8]) -> bool {
 /// `text`, which is short, padded with zeros.
 #[inline]
 fn padded(text: &[u8]) -> [u64; 2] {
-    let mut bytes = [0u8; 16];
-    for (to, from) in bytes.iter_mut().zip(text) {
-        *to = *from;
-    }
-    short_words(&bytes, 15)
+    [word(text, 0), word(text, 8)]
 }
 
 /// The first and the last 16 bytes of `text`, which has at least 16.
@@ -370,15 +396,35 @@ impl Names {
 
     /// The number of `text` if it is fixed.
     fn known(&self, text: &[u8]) -> Option<u32> {
-        match is_short(text) {
-            true => self.known_short(padded(text)).0,
-            false => self.known_other(text),
+        if is_short(text) {
+            return self.known_short(padded(text)).0;
         }
+        if let (16..=32, Some(words)) = (text.len(), long_words(text)) {
+            return self.known_long(words, long_place(words), text.len());
+        }
+        self.known_other(text)
     }
 
     fn known_other(&self, text: &[u8]) -> Option<u32> {
         let found = self.known_others.iter().find(|it| it.0 == text);
         found.map(|it| it.1).filter(|&atom| atom != u32::MAX)
+    }
+
+    /// The number of the text of `len` bytes, 16 to 32, with the words `words` if it is fixed.
+    /// `place`: their `long_place`.
+    #[inline]
+    fn known_long(&self, words: [u64; 4], place: usize, len: usize) -> Option<u32> {
+        let mut at = place >> (LONG_BITS - KNOWN_LONG_BITS);
+        loop {
+            let entry = &self.known_long[at];
+            if entry.len == 0 {
+                return None;
+            }
+            if entry.words == words && usize::from(entry.len) == len {
+                return (entry.atom != u32::MAX).then_some(entry.atom);
+            }
+            at = (at + 1) % self.known_long.len();
+        }
     }
 
     /// The number of the text with the padded bytes `words` if it is fixed, and its token kind.
@@ -413,12 +459,10 @@ impl Names {
         atoms: &dyn Intern,
     ) -> (Atom, T) {
         let bit = short_place(words);
-        let (first, len) = (
-            bit >> self.unused_bits,
-            self.short.len() >> self.unused_bits,
-        );
+        let first = bit >> self.unused_bits;
+        let mask = (self.short.len() >> self.unused_bits) - 1;
         let mut free = None;
-        for at in (first..=first + WINDOW).map(|at| at % len) {
+        for at in (first..first + WINDOW).map(|at| at & mask) {
             let entry = &self.short[at];
             if entry.generation != self.generation {
                 free = Some(at);
@@ -465,10 +509,30 @@ impl Names {
         let Some(words) = long_words(text.text) else {
             return self.other(text, atoms);
         };
-        let first = long_place(words) >> self.unused_bits;
-        let len = self.long.len() >> self.unused_bits;
+        let place = long_place(words);
+        let entry = &self.long[place >> self.unused_bits];
+        if entry.words == words
+            && usize::from(entry.len) == text.text.len()
+            && entry.generation == self.generation
+        {
+            return Atom(entry.atom);
+        }
+        self.long_elsewhere(words, place, text, atoms)
+    }
+
+    /// The same if it is not at its first place.
+    #[inline(never)]
+    fn long_elsewhere(
+        &mut self,
+        words: [u64; 4],
+        place: usize,
+        text: Text<'_>,
+        atoms: &dyn Intern,
+    ) -> Atom {
+        let first = place >> self.unused_bits;
+        let mask = (self.long.len() >> self.unused_bits) - 1;
         let mut free = None;
-        for at in (first..=first + WINDOW).map(|at| at % len) {
+        for at in (first..first + WINDOW).map(|at| at & mask) {
             let entry = &self.long[at];
             if entry.generation != self.generation {
                 free = Some(at);
@@ -478,18 +542,14 @@ impl Names {
                 return Atom(entry.atom);
             }
         }
-        let bit = mention_bit_of([words[0], words[1]], text.text.len()) as usize;
-        let (atom, at) = match free {
-            Some(at) => (
-                self.new_atom(text, bit, self.known_other(text.text), atoms),
-                at,
-            ),
+        let at = match free {
+            Some(at) => at,
             None if self.is_own => return self.other(text, atoms),
-            None => (
-                self.new_atom(text, bit, self.known_other(text.text), atoms),
-                first,
-            ),
+            None => first,
         };
+        let bit = mention_bit_of([words[0], words[1]], text.text.len()) as usize;
+        let known = self.known_long(words, place, text.text.len());
+        let atom = self.new_atom(text, bit, known, atoms);
         self.long[at] = Long {
             words,
             atom: atom.0,
@@ -536,40 +596,56 @@ impl Names {
     }
 
     /// The atom of `text` if it is in the file with the text `source`, whose atoms are its own.
-    fn find(&self, text: &[u8], source: &[u8]) -> Option<Atom> {
-        if let Some(known) = self.known(text) {
-            let word = self.known_in_file[known as usize / 64];
-            return (word >> (known % 64) & 1 != 0).then_some(Atom(known));
-        }
-        if is_short(text) {
+    /// `Err`: it is not, with its number if that is fixed.
+    fn find(&self, text: &[u8], source: &[u8]) -> Result<Atom, Option<u32>> {
+        let known = if is_short(text) {
             let words = padded(text);
-            let first = short_place(words) >> self.unused_bits;
-            let len = self.short.len() >> self.unused_bits;
-            for at in (first..=first + WINDOW).map(|at| at % len) {
-                let entry = &self.short[at];
-                if entry.generation != self.generation {
-                    return None;
-                }
-                if entry.words == words {
-                    return Some(Atom(entry.atom));
+            let known = self.known_short(words).0;
+            if known.is_none() {
+                let first = short_place(words) >> self.unused_bits;
+                let mask = (self.short.len() >> self.unused_bits) - 1;
+                for at in (first..first + WINDOW).map(|at| at & mask) {
+                    let entry = &self.short[at];
+                    if entry.generation != self.generation {
+                        return Err(None);
+                    }
+                    if entry.words == words {
+                        return Ok(Atom(entry.atom));
+                    }
                 }
             }
+            known
         } else if let (16..=32, Some(words)) = (text.len(), long_words(text)) {
-            let first = long_place(words) >> self.unused_bits;
-            let len = self.long.len() >> self.unused_bits;
-            for at in (first..=first + WINDOW).map(|at| at % len) {
-                let entry = &self.long[at];
-                if entry.generation != self.generation {
-                    return None;
-                }
-                if entry.words == words && usize::from(entry.len) == text.len() {
-                    return Some(Atom(entry.atom));
+            let place = long_place(words);
+            let known = self.known_long(words, place, text.len());
+            if known.is_none() {
+                let first = place >> self.unused_bits;
+                let mask = (self.long.len() >> self.unused_bits) - 1;
+                for at in (first..first + WINDOW).map(|at| at & mask) {
+                    let entry = &self.long[at];
+                    if entry.generation != self.generation {
+                        return Err(None);
+                    }
+                    if entry.words == words && usize::from(entry.len) == text.len() {
+                        return Ok(Atom(entry.atom));
+                    }
                 }
             }
+            known
+        } else {
+            self.known_other(text)
+        };
+        if let Some(known) = known {
+            let word = self.known_in_file[known as usize / 64];
+            return match word >> (known % 64) & 1 != 0 {
+                true => Ok(Atom(known)),
+                false => Err(Some(known)),
+            };
         }
         (self.other)
             .find(hash_of(text), |atom| self.bytes(Atom(atom), source) == text)
             .map(Atom)
+            .ok_or(None)
     }
 
     /// The atoms of the file with the text `source`, which was parsed last and has its own.
@@ -736,16 +812,14 @@ pub struct FileAtoms<'a> {
 impl Intern for FileAtoms<'_> {
     fn intern(&self, text: &[u8]) -> Atom {
         match self.names.find(text, self.source) {
-            Some(atom) => atom,
-            None => match self.names.known(text) {
-                Some(known) => Atom(known),
-                None => Atom(NOT_IN_THE_FILE + self.names.late.intern(text)),
-            },
+            Ok(atom) => atom,
+            Err(Some(known)) => Atom(known),
+            Err(None) => Atom(NOT_IN_THE_FILE + self.names.late.intern(text)),
         }
     }
 
     fn find(&self, text: &[u8]) -> Option<Atom> {
-        self.names.find(text, self.source)
+        self.names.find(text, self.source).ok()
     }
 
     fn bytes(&self, atom: Atom) -> &[u8] {

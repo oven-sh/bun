@@ -124,18 +124,25 @@ fn line_around(text: &[u8], options: &FormatOptions) -> Option<LineMode> {
 }
 
 /// How many `indent`s are around the line that `e` starts on, if the file is indented the way it is going to be.
-fn indent_level_in_source(e: Expr<'_>, options: &FormatOptions) -> u32 {
-    let before = e
-        .file()
-        .text()
-        .get(..e.span().start as usize)
-        .unwrap_or_default();
-    // A line that is longer than this has not been formatted.
-    let before = &before[before.len().saturating_sub(1024)..];
-    let line_start = strings::last_index_of_any(before, b"\n\r").map_or(0, |at| at + 1);
+fn indent_level_in_source<'a>(e: Expr<'a>, options: &FormatOptions, f: &Formatter<'a>) -> u32 {
+    let start = e.span().start;
+    // The templates of a file that is one long line come one after the other: nothing of it is searched twice.
+    let (known_at, known) = f.context().line_start.get();
+    let from = if known_at <= start { known_at } else { 0 };
+    let text = e.file().text();
+    let searched = text.get(from as usize..start as usize).unwrap_or_default();
+    let line_start = match strings::last_index_of_any(searched, b"\n\r") {
+        Some(at) => from + at as u32 + 1,
+        None if from == 0 => 0,
+        None => known,
+    };
+    f.context().line_start.set((start, line_start));
     let indent_width = u32::from(options.indent_width.value()).max(1);
     let mut columns = 0;
-    for byte in &before[line_start..] {
+    for byte in text
+        .get(line_start as usize..start as usize)
+        .unwrap_or_default()
+    {
         match byte {
             b' ' => columns += 1,
             b'\t' => columns += indent_width,
@@ -344,7 +351,7 @@ pub(crate) fn write_template<'a>(
     let line = line_around(&text, &options);
     // Where the lines start is up to the printer. What is printed by itself (JSON, YAML, ..) has to be told how much room
     // there is: as much as there is if the file has been formatted before.
-    let indent_level = indent_level_in_source(e, &options) + u32::from(line.is_some());
+    let indent_level = indent_level_in_source(e, &options, f) + u32::from(line.is_some());
     let slot = f.start_capture();
     // The code in the text is written with the options of the formatter.
     let context = JsFormatContext::without_file(&text, options.clone(), &[]);

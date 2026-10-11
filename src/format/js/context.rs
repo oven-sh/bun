@@ -36,6 +36,8 @@ pub(crate) struct JsFormatContext<'a> {
     /// The last member access with many member accesses around it, and whether it stays on the line
     /// of its object. The one around it has the same answer.
     pub(crate) long_member_chain: Cell<Option<(Expr<'a>, bool)>>,
+    /// An offset, and where its line starts.
+    pub(crate) line_start: Cell<(u32, u32)>,
     /// Whether the `a | b` that is being written is a value and a filter of Vue.
     pub(crate) is_vue_filter_sequence: Cell<bool>,
     /// What parses the code in HTML, in the place of `FormatOptions::parse_javascript`.
@@ -72,6 +74,7 @@ impl<'a> JsFormatContext<'a> {
             cursor: CursorRegion::NONE,
             stack_check: bun_core::StackCheck::init(),
             ran_out_of_stack: false,
+            line_start: Cell::new((0, 0)),
             long_member_chain: Cell::new(None),
             is_vue_filter_sequence: Cell::new(false),
             parse_javascript: None,

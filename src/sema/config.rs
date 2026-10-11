@@ -441,15 +441,79 @@ pub fn merge_compiler_options(
     }
 }
 
-/// `parseConfig`, and `ParseExtendedConfig` before it. `stack`: `resolutionStack`. The syntax trees
-/// of the files are left in `session`.
+/// `parseConfig`, and `ParseExtendedConfig` before it. The syntax trees of the files are left in `session`.
 fn parse_config(
     host: &dyn Host,
     session: &Session,
     path: &[u8],
-    stack: &mut Vec<Vec<u8>>,
     errors: &mut Vec<ConfigError>,
 ) -> Option<Raw> {
+    // The files that wait for what they extend, the outermost first, and `resolutionStack`, which has the path of each. Not by
+    // recursion: a chain of `extends` is as long as somebody makes it.
+    let (mut waiting, mut stack): (Vec<Open>, Vec<Vec<u8>>) = (Vec::new(), Vec::new());
+    let mut to_read = Some(path.to_vec());
+    // A file that is read, with all that it extends. `Some(None)`: it cannot be used.
+    let mut read: Option<Option<Raw>> = None;
+    loop {
+        if let Some(path) = to_read.take() {
+            match open_config(host, session, &path, &stack, errors) {
+                Some(open) if open.extended.is_some() => {
+                    stack.push(open.resolved_path.clone());
+                    waiting.push(open);
+                }
+                open => read = Some(open.map(|it| it.own)),
+            }
+        }
+        let Some(innermost) = waiting.last_mut() else {
+            return read.flatten();
+        };
+        if let (Some(Some(extended)), Some((path, reported))) =
+            (read.take(), innermost.asked.take())
+        {
+            // What is wrong with it is said to each that extends it.
+            if errors.len() == reported {
+                host.keep_extended_config(&path, &|| std::sync::Arc::new(extended.clone()));
+            }
+            innermost.inherit(&path, extended, host.is_case_sensitive());
+        }
+        while let Some(path) = innermost.extended.as_mut().and_then(Iterator::next) {
+            let kept = host.extended_config(&path);
+            match kept.as_ref().and_then(|it| it.downcast_ref::<Raw>()) {
+                Some(kept) => innermost.inherit(&path, kept.clone(), host.is_case_sensitive()),
+                None => {
+                    innermost.asked = Some((path.clone(), errors.len()));
+                    to_read = Some(path);
+                    break;
+                }
+            }
+        }
+        if to_read.is_none() {
+            stack.pop();
+            read = Some(waiting.pop().map(Open::merged));
+        }
+    }
+}
+
+/// A configuration file, and what it has inherited so far.
+struct Open {
+    path: Vec<u8>,
+    resolved_path: Vec<u8>,
+    own: Raw,
+    inherited: Raw,
+    /// `extendedConfigPath`, what is still to come of it. `None`: it has no `extends`.
+    extended: Option<std::vec::IntoIter<Vec<u8>>>,
+    /// The one that is being read, and how many errors there were before.
+    asked: Option<(Vec<u8>, usize)>,
+}
+
+/// What [`parse_config`] does with the file itself. `stack`: `resolutionStack`.
+fn open_config(
+    host: &dyn Host,
+    session: &Session,
+    path: &[u8],
+    stack: &[Vec<u8>],
+    errors: &mut Vec<ConfigError>,
+) -> Option<Open> {
     let text = host.read(path);
     let Some(file) = text.and_then(|text| TsConfigSourceFile::parse(host, session, text)) else {
         errors.push(ConfigError::new(5083, &[&displayed_path(path)]));
@@ -616,34 +680,27 @@ fn parse_config(
         extended_config_path = Some(found);
     }
     // Without `extends` nothing is merged, and a `null` of the file itself unsets nothing in it.
-    let Some(extended_config_path) = extended_config_path else {
-        return Some(own);
-    };
-    stack.push(resolved_path);
-    let mut inherited = Raw::default();
-    for extended_path in &extended_config_path {
-        let kept = host.extended_config(extended_path);
-        let reported = errors.len();
-        let extended = match kept.as_ref().and_then(|it| it.downcast_ref::<Raw>()) {
-            Some(kept) => kept.clone(),
-            None => {
-                let parsed = parse_config(host, session, extended_path, stack, errors);
-                let Some(extended) = parsed else {
-                    continue;
-                };
-                // What is wrong with it is said to each that extends it.
-                if errors.len() == reported {
-                    host.keep_extended_config(extended_path, &|| {
-                        std::sync::Arc::new(extended.clone())
-                    });
-                }
-                extended
-            }
-        };
+    Some(Open {
+        path: path.to_vec(),
+        resolved_path,
+        own,
+        inherited: Raw::default(),
+        extended: extended_config_path.map(Vec::into_iter),
+        asked: None,
+    })
+}
+
+impl Open {
+    /// `extended`: the file at `extended_path`, which is the next of those that this one extends.
+    fn inherit(&mut self, extended_path: &[u8], extended: Raw, is_case_sensitive: bool) {
+        let (own, inherited) = (&self.own, &mut self.inherited);
         // A property the extending file does not specify itself takes the value from the last of
         // the extended files, relative to that file's directory.
         // `relativeDifference`: from the directory of the extending file. 18003 prints the result.
-        let extended_dir = dirname::<Posix>(extended_path);
+        let (base, extended_dir) = (
+            dirname::<Posix>(&self.path),
+            dirname::<Posix>(extended_path),
+        );
         let relative_difference =
             get_relative_path_from_directory(base, extended_dir, is_case_sensitive);
         let rebase = |specs: Vec<Json>| -> Vec<Json> {
@@ -684,24 +741,28 @@ fn parse_config(
             explicit_null_fields,
         );
     }
-    stack.pop();
-    if inherited.include.is_specified {
-        own.include = inherited.include;
+
+    /// The file with all that it has inherited.
+    fn merged(self) -> Raw {
+        let (mut own, mut inherited) = (self.own, self.inherited);
+        if inherited.include.is_specified {
+            own.include = inherited.include;
+        }
+        if inherited.exclude.is_specified {
+            own.exclude = inherited.exclude;
+        }
+        if inherited.files.is_specified {
+            own.files = inherited.files;
+        }
+        let specified = std::mem::take(&mut own.compiler);
+        merge_compiler_options(
+            &mut inherited.compiler,
+            specified,
+            &own.explicit_null_fields,
+        );
+        own.compiler = inherited.compiler;
+        own
     }
-    if inherited.exclude.is_specified {
-        own.exclude = inherited.exclude;
-    }
-    if inherited.files.is_specified {
-        own.files = inherited.files;
-    }
-    let specified = std::mem::take(&mut own.compiler);
-    merge_compiler_options(
-        &mut inherited.compiler,
-        specified,
-        &own.explicit_null_fields,
-    );
-    own.compiler = inherited.compiler;
-    Some(own)
 }
 
 /// `getExtendsConfigPath`
@@ -800,7 +861,7 @@ pub fn load_overriding(
     over: &dyn Fn(bool) -> Vec<(Vec<u8>, Json)>,
 ) -> Result<Project, Vec<ConfigError>> {
     let mut errors = Vec::new();
-    let raw = parse_config(host, session, path, &mut Vec::new(), &mut errors);
+    let raw = parse_config(host, session, path, &mut errors);
     let Some(mut raw) = raw.or_else(|| host.read(path).map(|_| Raw::default())) else {
         return Err(errors);
     };

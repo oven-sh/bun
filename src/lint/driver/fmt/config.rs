@@ -1404,6 +1404,11 @@ impl<'c> Configs<'c> {
             Precedence::PreferFile if has_files => from_files,
             Precedence::PreferFile => from_flags.collect(),
         };
+        // Prettier looks at the flags first, also at one that a file takes the place of.
+        let mut flags = self.options.format.iter();
+        if !is_oxfmt && let Some(refusal) = flags.find_map(|it| not_an_integer(it.0, &it.1, true)) {
+            return Err(Fatal(refusal));
+        }
         if is_oxfmt {
             check_widths(|name| all.iter().rfind(|it| it.0 == name).map(|it| it.1))?;
         }
@@ -1490,11 +1495,7 @@ impl<'c> Configs<'c> {
                     }
                 }
                 name if OPTIONS.contains(&name) && resolved.options.set(name, value).is_err() => {
-                    let flags = &self.options.format;
-                    let is_flag = flags
-                        .iter()
-                        .any(|it| std::ptr::eq(it.1.as_ptr(), value.as_ptr()));
-                    return Err(Fatal(match not_an_integer(name, value, is_flag) {
+                    return Err(Fatal(match not_an_integer(name, value, false) {
                         Some(refusal) if !is_oxfmt => refusal,
                         _ => [b"Invalid ", name, b" value: ", value, b"."].concat(),
                     }));

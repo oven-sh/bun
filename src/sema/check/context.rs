@@ -346,6 +346,9 @@ impl<'p, 's> Checker<'p, 's> {
         for_context: IncludePatternInType,
         report_errors: ReportErrors,
     ) -> Option<TypeId> {
+        if self.is_stack_low() {
+            return None;
+        }
         let hir = self.hir(file);
         match hir[pat].kind {
             PatKind::Missing | PatKind::Ident(_) => None,

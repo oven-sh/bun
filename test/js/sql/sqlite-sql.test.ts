@@ -1258,8 +1258,8 @@ describe("Transactions", () => {
       expect(await outcome(begun)).toBe("item 3 is invalid");
       expect(await Promise.all(tasks.map(outcome))).toEqual([
         "item 3 is invalid",
-        "ERR_SQLITE_CONNECTION_CLOSED",
-        "ERR_SQLITE_CONNECTION_CLOSED",
+        "ERR_SQLITE_INVALID_TRANSACTION_STATE",
+        "ERR_SQLITE_INVALID_TRANSACTION_STATE",
       ]);
       expect(await ids()).toEqual([1, 2]);
     });
@@ -1279,8 +1279,8 @@ describe("Transactions", () => {
         expect(await outcome(savepoint)).toBe("item 4 is invalid");
         expect(await Promise.all(tasks.map(outcome))).toEqual([
           "item 4 is invalid",
-          "ERR_SQLITE_CONNECTION_CLOSED",
-          "ERR_SQLITE_CONNECTION_CLOSED",
+          "ERR_SQLITE_INVALID_TRANSACTION_STATE",
+          "ERR_SQLITE_INVALID_TRANSACTION_STATE",
         ]);
         await tx`INSERT INTO accounts VALUES (7, 0)`;
       });
@@ -1300,7 +1300,7 @@ describe("Transactions", () => {
         return Promise.race([job, timeout.promise]);
       });
       expect(await outcome(begun)).toBe("timed out");
-      expect(await outcome(job)).toBe("ERR_SQLITE_CONNECTION_CLOSED");
+      expect(await outcome(job)).toBe("ERR_SQLITE_INVALID_TRANSACTION_STATE");
       expect(await ids()).toEqual([1, 2]);
     });
 
@@ -1322,7 +1322,9 @@ describe("Transactions", () => {
         );
         // A savepoint that completed is a part of the transaction, and so is its client.
         expect(await outcome(released`INSERT INTO accounts VALUES (3, 0)`)).toBe("resolved");
-        expect(await outcome(rolledBack`INSERT INTO accounts VALUES (4, 0)`)).toBe("ERR_SQLITE_CONNECTION_CLOSED");
+        expect(await outcome(rolledBack`INSERT INTO accounts VALUES (4, 0)`)).toBe(
+          "ERR_SQLITE_INVALID_TRANSACTION_STATE",
+        );
         ended = tx;
         // A query is lazy. This one is made inside the transaction and first awaited after it.
         early = tx`INSERT INTO accounts VALUES (5, 0)`;
@@ -1331,8 +1333,33 @@ describe("Transactions", () => {
         await outcome(early),
         await outcome(ended.unsafe("INSERT INTO accounts VALUES (6, 0)")),
         await outcome(ended.file(join(String(dir), "insert.sql"))),
-      ]).toEqual(["ERR_SQLITE_CONNECTION_CLOSED", "ERR_SQLITE_CONNECTION_CLOSED", "ERR_SQLITE_CONNECTION_CLOSED"]);
+      ]).toEqual([
+        "ERR_SQLITE_INVALID_TRANSACTION_STATE",
+        "ERR_SQLITE_INVALID_TRANSACTION_STATE",
+        "ERR_SQLITE_INVALID_TRANSACTION_STATE",
+      ]);
       expect(await ids()).toEqual([1, 2, 3]);
+    });
+
+    // The callback releases the savepoint itself, so SQLite refuses the ROLLBACK TO SAVEPOINT of the
+    // runner. The client ends all the same: the statement that ends it was given to the database.
+    test("a savepoint whose ROLLBACK TO SAVEPOINT fails rejects with that error, and its client ends", async () => {
+      await sql.begin(async tx => {
+        let sp!: Bun.SavepointSQL;
+        const savepoint = await outcome(
+          tx.savepoint(async handle => {
+            sp = handle;
+            await handle.unsafe("RELEASE SAVEPOINT s0");
+            throw new Error("savepoint failed");
+          }),
+        );
+        const late = await outcome(sp`INSERT INTO accounts VALUES (3, 0)`);
+        expect({ savepoint, late }).toEqual({
+          savepoint: "SQLITE_ERROR",
+          late: "ERR_SQLITE_INVALID_TRANSACTION_STATE",
+        });
+      });
+      expect(await ids()).toEqual([1, 2]);
     });
 
     // The client of a savepoint is built member by member from the client of its transaction.

@@ -133,9 +133,23 @@ sql1.begin(async txn => {
   });
 });
 
-// An array of queries that a savepoint callback returns resolves to the results of the queries.
+// The client of a savepoint callback opens nested savepoints.
 sql1.begin(async txn => {
-  expectType(await txn.savepoint(sp => [sp<[11]>`SELECT 11`, sp<[12]>`SELECT 12`])).is<([11] | [12])[]>();
+  await txn.savepoint(async sp => {
+    expectType(sp).extends<Bun.SavepointSQL>();
+    expectType(
+      sp.savepoint("nested", async nested => {
+        expectType(nested).extends<Bun.SavepointSQL>();
+        return 11 as const;
+      }),
+    ).is<Promise<11>>();
+  });
+  // An array of queries that the callback returns resolves to the results of the queries.
+  expectType(await txn.savepoint(sp => [sp<[12]>`SELECT 12`, sp<[13]>`SELECT 13`])).is<([12] | [13])[]>();
+  // A plain client is still a valid argument where a savepoint client is expected.
+  const takesSavepointClient = (client: Bun.SavepointSQL) => client;
+  takesSavepointClient(sql1);
+  takesSavepointClient(txn);
 });
 
 // @ts-expect-error

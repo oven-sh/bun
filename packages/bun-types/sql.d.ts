@@ -92,9 +92,9 @@ declare module "bun" {
    *
    * The client belongs to its transaction. A query of it that runs after
    * `COMMIT` or `ROLLBACK` was sent never reaches the database: it rejects
-   * with `ERR_POSTGRES_CONNECTION_CLOSED` (or the `MYSQL` / `SQLITE` code),
-   * also when the query was created inside the callback. Await every query
-   * inside the callback, or return the queries in an array.
+   * with `ERR_POSTGRES_INVALID_TRANSACTION_STATE` (or the `MYSQL` / `SQLITE`
+   * code), also when the query was created inside the callback. Await every
+   * query inside the callback, or return the queries in an array.
    */
   interface TransactionSQL extends SQL {
     /**
@@ -103,9 +103,17 @@ declare module "bun" {
      * callback's return value. When the callback returns an array of queries,
      * they run inside the savepoint and `savepoint` resolves with their
      * results.
+     *
+     * For a savepoint inside a savepoint, call `savepoint` on the client of
+     * the outer savepoint callback.
      */
-    savepoint<T>(name: string, fn: SQL.SavepointContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
-    savepoint<T>(fn: SQL.SavepointContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
+    savepoint<T>(
+      name: string,
+      fn: SQL.ContextCallback<T, SavepointSQL & Pick<TransactionSQL, "savepoint">>,
+    ): Promise<SQL.ContextCallbackResult<T>>;
+    savepoint<T>(
+      fn: SQL.ContextCallback<T, SavepointSQL & Pick<TransactionSQL, "savepoint">>,
+    ): Promise<SQL.ContextCallbackResult<T>>;
 
     /**
      * Reserves a connection from the pool and returns a client that wraps
@@ -1083,12 +1091,14 @@ declare module "bun" {
    *
    * When the savepoint rolls back, a query of this client that runs after
    * `ROLLBACK TO SAVEPOINT` was sent never reaches the database: it rejects
-   * with `ERR_POSTGRES_CONNECTION_CLOSED` (or the `MYSQL` / `SQLITE` code),
-   * also when the query was created inside the callback. After a savepoint
-   * that completed, the client works like the client of the transaction.
+   * with `ERR_POSTGRES_INVALID_TRANSACTION_STATE` (or the `MYSQL` / `SQLITE`
+   * code), also when the query was created inside the callback. After a
+   * savepoint that completed, the client works like the client of the
+   * transaction.
    *
-   * Run one savepoint of a client at a time: the database nests savepoints in
-   * the order it receives them.
+   * Start a savepoint after the one before it ended. The database nests
+   * savepoints in the order it receives them, so a savepoint that starts
+   * while another one is open is inside that one, and ends with it.
    */
   interface SavepointSQL extends SQL {}
 }

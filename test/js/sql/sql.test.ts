@@ -1195,6 +1195,106 @@ if (isDockerEnabled()) {
       }
     });
 
+    // A statement that reaches the server behind ROLLBACK runs in autocommit mode, or inside the
+    // next transaction on the connection. The client has one connection, and a temporary table on it.
+    describe("a statement behind the end of its transaction", () => {
+      const ended = "ERR_POSTGRES_INVALID_TRANSACTION_STATE";
+      const emptyTable = async (sql: SQL) => {
+        const table = "t_" + randomUUIDv7("hex").replaceAll("-", "");
+        await sql.unsafe(`CREATE TEMPORARY TABLE ${table} (a int)`);
+        return table;
+      };
+      const rowsOf = async (sql: SQL, table: string) =>
+        (await sql.unsafe(`SELECT a FROM ${table} ORDER BY a`)).map((row: { a: number }) => row.a);
+      const outcome = (work: PromiseLike<unknown>) =>
+        work.then(
+          () => "resolved",
+          err => err.code ?? err.message,
+        );
+      // Three awaited inserts. An invalid item fails behind its first insert.
+      const insertThree = async (handle: Bun.SQL, table: string, item: number, invalid: boolean) => {
+        await handle`INSERT INTO ${handle(table)} VALUES (${item * 10 + 1})`;
+        if (invalid) throw new Error(`item ${item} is invalid`);
+        await handle`INSERT INTO ${handle(table)} VALUES (${item * 10 + 2})`;
+        await handle`INSERT INTO ${handle(table)} VALUES (${item * 10 + 3})`;
+      };
+
+      test("a rejected transaction keeps no row of the tasks that go on after one failed", async () => {
+        await using sql = postgres({ ...options, max: 1 });
+        const table = await emptyTable(sql);
+        const tasks: Promise<void>[] = [];
+        const begun = sql.begin(tx =>
+          Promise.all(
+            [3, 4, 5].map(item => {
+              tasks.push(insertThree(tx, table, item, item === 3));
+              return tasks.at(-1);
+            }),
+          ),
+        );
+        expect({
+          transaction: await outcome(begun),
+          tasks: await Promise.all(tasks.map(outcome)),
+          rows: await rowsOf(sql, table),
+        }).toEqual({ transaction: "item 3 is invalid", tasks: ["item 3 is invalid", ended, ended], rows: [] });
+      });
+
+      test("a rolled-back savepoint keeps no row of the tasks that go on after one failed", async () => {
+        await using sql = postgres({ ...options, max: 1 });
+        const table = await emptyTable(sql);
+        const tasks: Promise<void>[] = [];
+        const outcomes = await sql.begin(async tx => {
+          await tx`INSERT INTO ${tx(table)} VALUES (1)`;
+          const savepoint = tx.savepoint(sp =>
+            Promise.all(
+              [3, 4, 5].map(item => {
+                tasks.push(insertThree(sp, table, item, item === 3));
+                return tasks.at(-1);
+              }),
+            ),
+          );
+          const outcomes = { savepoint: await outcome(savepoint), tasks: await Promise.all(tasks.map(outcome)) };
+          await tx`INSERT INTO ${tx(table)} VALUES (2)`;
+          return outcomes;
+        });
+        expect({ ...outcomes, rows: await rowsOf(sql, table) }).toEqual({
+          savepoint: "item 3 is invalid",
+          tasks: ["item 3 is invalid", ended, ended],
+          rows: [1, 2],
+        });
+      });
+
+      // A timeout wrapper rejects the transaction and does not stop the job. The job goes on with the
+      // client of the transaction that rolled back, while the next transaction has the connection.
+      test("a job that outlives its transaction writes nothing inside the next transaction", async () => {
+        await using sql = postgres({ ...options, max: 1 });
+        const table = await emptyTable(sql);
+        const timeout = Promise.withResolvers<never>();
+        const nextHasTheConnection = Promise.withResolvers<void>();
+        let job!: Promise<void>;
+        const timedOut = sql.begin(tx => {
+          job = (async () => {
+            await tx.unsafe(`INSERT INTO ${table} VALUES (1)`);
+            timeout.reject(new Error("timed out"));
+            await nextHasTheConnection.promise;
+            await tx.unsafe(`INSERT INTO ${table} VALUES (2)`);
+          })();
+          return Promise.race([job, timeout.promise]);
+        });
+        const next = sql.begin(async tx => {
+          await tx.unsafe(`INSERT INTO ${table} VALUES (10)`);
+          nextHasTheConnection.resolve();
+          const late = await outcome(job);
+          await tx.unsafe(`INSERT INTO ${table} VALUES (11)`);
+          return late;
+        });
+        expect({
+          transaction: await outcome(timedOut),
+          job: await next,
+          rows: await rowsOf(sql, table),
+        }).toEqual({ transaction: "timed out", job: ended, rows: [10, 11] });
+      });
+    });
+
     test("Transaction throws on uncaught savepoint", async () => {
       await sql`create table test (a int)`;
       try {

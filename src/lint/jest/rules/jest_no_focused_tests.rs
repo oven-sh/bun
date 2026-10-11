@@ -1,14 +1,13 @@
 use crate::jest::{self, Ctx};
 use crate::jest_tests::no_focused_tests;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// This rule reminds you to remove `.only` from your tests by raising a warning whenever you are using the exclusivity
 /// feature.
-pub struct NoFocusedTests;
+pub struct NoFocusedTests<const VITEST: bool = false>;
 
-impl Rule for NoFocusedTests {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "no-focused-tests", Kind::Problem).has_suggestions();
+impl<const VITEST: bool> Rule for NoFocusedTests<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "no-focused-tests", Kind::Problem).has_suggestions();
     const ON: On = On::new().finish();
     type State<'a> = ();
 

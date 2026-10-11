@@ -1,13 +1,12 @@
 use crate::jest::{self, Ctx};
 use crate::jest_tests::require_top_level_describe;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Requires test cases and hooks to be inside a top-level `describe` block.
-pub struct RequireTopLevelDescribe(u32);
+pub struct RequireTopLevelDescribe<const VITEST: bool = false>(u32);
 
-impl Rule for RequireTopLevelDescribe {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "require-top-level-describe", Kind::Suggestion);
+impl<const VITEST: bool> Rule for RequireTopLevelDescribe<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "require-top-level-describe", Kind::Suggestion);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

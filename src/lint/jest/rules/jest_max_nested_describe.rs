@@ -1,13 +1,12 @@
 use crate::jest::{self, Ctx};
 use crate::jest_tests::max_nested_describe;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// This rule enforces a maximum depth to nested `describe()` calls.
-pub struct MaxNestedDescribe(u32);
+pub struct MaxNestedDescribe<const VITEST: bool = false>(u32);
 
-impl Rule for MaxNestedDescribe {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "max-nested-describe", Kind::Suggestion);
+impl<const VITEST: bool> Rule for MaxNestedDescribe<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "max-nested-describe", Kind::Suggestion);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

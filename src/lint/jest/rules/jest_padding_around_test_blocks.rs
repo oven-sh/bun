@@ -1,13 +1,13 @@
 use crate::jest::{self, Ctx};
 use crate::jest_tests::padding_around_blocks;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// This rule enforces a line of padding before and after 1 or more `test`/`it` statements.
-pub struct PaddingAroundTestBlocks;
+pub struct PaddingAroundTestBlocks<const VITEST: bool = false>;
 
-impl Rule for PaddingAroundTestBlocks {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "padding-around-test-blocks", Kind::Suggestion).fixable(Fixable::Code);
+impl<const VITEST: bool> Rule for PaddingAroundTestBlocks<VITEST> {
+    const META: Meta =
+        Meta::oxlint(jest::plugin(VITEST), "padding-around-test-blocks", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

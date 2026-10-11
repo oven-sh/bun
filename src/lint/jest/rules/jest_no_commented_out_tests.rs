@@ -1,13 +1,12 @@
-use crate::jest::Ctx;
+use crate::jest::{self, Ctx};
 use crate::jest_tests::no_commented_out_tests;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// This rule raises a warning about commented-out tests.
-pub struct NoCommentedOutTests;
+pub struct NoCommentedOutTests<const VITEST: bool = false>;
 
-impl Rule for NoCommentedOutTests {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "no-commented-out-tests", Kind::Problem);
+impl<const VITEST: bool> Rule for NoCommentedOutTests<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "no-commented-out-tests", Kind::Problem);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

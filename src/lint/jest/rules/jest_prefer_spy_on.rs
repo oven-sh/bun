@@ -1,14 +1,13 @@
-use crate::jest::Ctx;
+use crate::jest::{self, Ctx};
 use crate::jest_mocks::prefer_spy_on;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// When mocking a function by overwriting a property you have to manually restore the original implementation when cleaning
 /// up.
-pub struct PreferSpyOn;
+pub struct PreferSpyOn<const VITEST: bool = false>;
 
-impl Rule for PreferSpyOn {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "prefer-spy-on", Kind::Suggestion).has_suggestions();
+impl<const VITEST: bool> Rule for PreferSpyOn<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "prefer-spy-on", Kind::Suggestion).has_suggestions();
     const ON: On = On::new().finish();
     type State<'a> = ();
 

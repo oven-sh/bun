@@ -1,6 +1,6 @@
 //! A line of an ignore file becomes a tree: three grammars for five flavours. It never sees a path.
 
-use crate::class::{self, Class, Escape, Read};
+use crate::class::{self, Class, Escape, Read, has_at};
 use crate::ignore::{IgnoreOptions, IgnoreSyntax};
 use crate::node::{Assertion, MAX_NESTING, Node, Program, lower, simplify};
 use crate::unit::{Subject, Text, Unit, push_utf8, well_formed};
@@ -36,10 +36,6 @@ pub(crate) fn line(bytes: &[u8], options: IgnoreOptions) -> Result<Option<Line>,
         IgnoreSyntax::Npm7012 => Ok(wildmatch_line(&well_formed(bytes), options)),
         IgnoreSyntax::Npm5 | IgnoreSyntax::Npm705 => Ok(legacy_line(&well_formed(bytes), options)),
     }
-}
-
-fn has_at(bytes: &[u8], at: usize, text: &[u8]) -> bool {
-    bytes.get(at..).is_some_and(|rest| rest.starts_with(text))
 }
 
 fn slash() -> Node {

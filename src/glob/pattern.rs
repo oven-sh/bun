@@ -174,7 +174,7 @@ pub struct Pattern {
 }
 
 /// minimatch and picomatch throw beyond it. They count UTF-16 units.
-const MAX_PATTERN_LENGTH: usize = 65_536;
+pub(crate) const MAX_PATTERN_LENGTH: usize = 65_536;
 
 fn bun(pattern: &[u8]) -> Pattern {
     let bangs = pattern.iter().take_while(|b| **b == b'!').count();

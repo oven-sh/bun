@@ -1,13 +1,13 @@
 use crate::jest::{self, Ctx};
 use crate::jest_tests::padding_around_blocks;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// This rule enforces a line of padding before and after 1 or more `afterAll` statements.
-pub struct PaddingAroundAfterAllBlocks;
+pub struct PaddingAroundAfterAllBlocks<const VITEST: bool = false>;
 
-impl Rule for PaddingAroundAfterAllBlocks {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "padding-around-after-all-blocks", Kind::Suggestion).fixable(Fixable::Code);
+impl<const VITEST: bool> Rule for PaddingAroundAfterAllBlocks<VITEST> {
+    const META: Meta =
+        Meta::oxlint(jest::plugin(VITEST), "padding-around-after-all-blocks", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

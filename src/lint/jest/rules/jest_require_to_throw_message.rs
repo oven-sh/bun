@@ -1,13 +1,12 @@
 use crate::jest::{self, Ctx};
 use crate::jest_matchers::require_to_throw_message;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// This rule triggers a warning if `toThrow()` or `toThrowError()` is used without an error message.
-pub struct RequireToThrowMessage;
+pub struct RequireToThrowMessage<const VITEST: bool = false>;
 
-impl Rule for RequireToThrowMessage {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "require-to-throw-message", Kind::Problem);
+impl<const VITEST: bool> Rule for RequireToThrowMessage<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "require-to-throw-message", Kind::Problem);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

@@ -2,7 +2,7 @@
 
 use crate::class::{self, Read};
 use crate::node::{Assertion, Node, Open, Piece, lower, nest};
-use crate::segments::Part;
+use crate::segments::{Part, is_dots};
 use crate::unit::{Text, Unit, push_utf8};
 use bun_core::strings;
 use std::rc::Rc;
@@ -98,10 +98,6 @@ fn usurped(parent: u8, child: u8) -> Option<u8> {
         (b'@', child) if is_extglob_type(child) => Some(child),
         _ => None,
     }
-}
-
-fn is_dots(name: &[u8]) -> bool {
-    matches!(name, b"." | b"..")
 }
 
 #[derive(Clone)]

@@ -1,13 +1,12 @@
 use crate::jest::{self, Ctx};
 use crate::jest_tests::prefer_todo;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// When test cases are empty then it is better to mark them as `test.todo` as it will be highlighted in the summary output.
-pub struct PreferTodo;
+pub struct PreferTodo<const VITEST: bool = false>;
 
-impl Rule for PreferTodo {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "prefer-todo", Kind::Suggestion).fixable(Fixable::Code);
+impl<const VITEST: bool> Rule for PreferTodo<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "prefer-todo", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

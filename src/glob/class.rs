@@ -12,7 +12,7 @@ const CARET: u32 = b'^' as u32;
 
 type Ranges = Vec<(u32, u32)>;
 
-fn has_at(bytes: &[u8], at: usize, text: &[u8]) -> bool {
+pub(crate) fn has_at(bytes: &[u8], at: usize, text: &[u8]) -> bool {
     bytes.get(at..).is_some_and(|rest| rest.starts_with(text))
 }
 

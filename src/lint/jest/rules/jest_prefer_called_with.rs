@@ -1,13 +1,13 @@
 use crate::jest::{self, Ctx};
 use crate::jest_matchers::prefer_called_with;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Suggest using `toBeCalledWith()` or `toHaveBeenCalledWith()`
-pub struct PreferCalledWith;
+pub struct PreferCalledWith<const VITEST: bool = false>;
 
-impl Rule for PreferCalledWith {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "prefer-called-with", Kind::Suggestion).fixable(Fixable::Code);
+impl<const VITEST: bool> Rule for PreferCalledWith<VITEST> {
+    const META: Meta =
+        Meta::oxlint(jest::plugin(VITEST), "prefer-called-with", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

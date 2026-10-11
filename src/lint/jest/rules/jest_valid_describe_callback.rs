@@ -1,13 +1,12 @@
 use crate::jest::{self, Ctx};
 use crate::jest_tests::valid_describe_callback;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Enforce that the second argument to `describe()` is a valid callback function.
-pub struct ValidDescribeCallback;
+pub struct ValidDescribeCallback<const VITEST: bool = false>;
 
-impl Rule for ValidDescribeCallback {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "valid-describe-callback", Kind::Problem);
+impl<const VITEST: bool> Rule for ValidDescribeCallback<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "valid-describe-callback", Kind::Problem);
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -21,6 +20,6 @@ impl Rule for ValidDescribeCallback {
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
-        jest::run_on_jest_nodes(&ctx, &|node, ctx| valid_describe_callback::run(node, ctx, false));
+        jest::run_on_jest_nodes(&ctx, &|node, ctx| valid_describe_callback::run(node, ctx, VITEST));
     }
 }

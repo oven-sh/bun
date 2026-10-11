@@ -217,9 +217,7 @@ fn package_of(plugin: &[u8]) -> &[u8] {
 /// What the plugins that sort imports do is built in, and what the one does that sorts the classes of Tailwind CSS.
 pub(super) fn is_built_in_plugin(name: &[u8]) -> bool {
     let name = package_of(name);
-    name.ends_with(b"/prettier-plugin-sort-imports")
-        || name == b"prettier-plugin-organize-imports"
-        || is_tailwind_plugin(name)
+    name.ends_with(b"/prettier-plugin-sort-imports") || is_tailwind_plugin(name)
 }
 
 /// `prettier-plugin-tailwindcss`, by its name or by a path to it.
@@ -656,77 +654,6 @@ pub(crate) struct Resolved {
     pub(crate) omits_final_newline: bool,
 }
 
-/// Adds what the `tsconfig.json` at `path` says about JSX, after what the files that it extends say.
-fn read_tsconfig(path: &[u8], settings: &mut Settings) {
-    struct Open {
-        path: Vec<u8>,
-        json: Json,
-        /// How many of the files that it extends have been looked at.
-        extended: usize,
-    }
-    let open = |path: Vec<u8>| {
-        let json = bun_lint::json::parse(&fs::read(&path).ok()?)?;
-        Some(Open {
-            path,
-            json,
-            extended: 0,
-        })
-    };
-    // Each extends the next.
-    let mut chain = Vec::from_iter(open(path.to_vec()));
-    while let Some(last) = chain.last_mut() {
-        let extended = match last.json.get(b"extends") {
-            Some(one @ Json::String(_)) => std::slice::from_ref(one),
-            Some(Json::Array(all)) => &all[..],
-            _ => &[],
-        };
-        let Some(name) = extended.get(last.extended) else {
-            for name in [
-                &b"jsx"[..],
-                b"jsxFactory",
-                b"jsxFragmentFactory",
-                b"reactNamespace",
-            ] {
-                if let Some(value) = (last.json)
-                    .get(b"compilerOptions")
-                    .and_then(|it| it.get(name))
-                    .and_then(Json::as_str)
-                {
-                    let name = [b"tsconfig.", name].concat();
-                    settings.retain(|it| it.0 != name);
-                    settings.push((name, value.to_vec()));
-                }
-            }
-            chain.pop();
-            continue;
-        };
-        last.extended += 1;
-        let Some(name) = name.as_str() else {
-            continue;
-        };
-        let directory = paths::dirname(&last.path);
-        let candidates = |base: Vec<u8>| {
-            [
-                base.clone(),
-                [&base[..], b".json"].concat(),
-                paths::join(&base, b"tsconfig.json"),
-            ]
-        };
-        let found = match name.starts_with(b".") || paths::is_absolute(name) {
-            true => candidates(paths::resolve(directory, name))
-                .into_iter()
-                .find(|it| fs::is_file(it)),
-            // A package.
-            false => paths::ancestors(directory)
-                .flat_map(|it| candidates(paths::join(&paths::join(it, b"node_modules"), name)))
-                .find(|it| fs::is_file(it)),
-        };
-        // Not one that extends itself.
-        let found = found.filter(|found| chain.iter().all(|it| it.path != *found));
-        chain.extend(found.and_then(open));
-    }
-}
-
 pub(crate) type Found = Result<Arc<Scope>, Fatal>;
 
 /// What is in a directory, of what matters for its [`Scope`].
@@ -745,8 +672,6 @@ pub(crate) struct Configs<'c> {
     /// `--config`
     named: Option<Result<Arc<Config>, Fatal>>,
     pub(crate) flavor: Flavor,
-    /// By directory: see [`Configs::tsconfig_of`].
-    tsconfigs: Guarded<FxHashMap<Vec<u8>, Arc<Settings>>>,
     /// How to sort imports, by the options that say so: they are read once, not for every file.
     sort_imports: Guarded<Vec<(SortSettings, Option<Arc<SortImports>>)>>,
     /// With oxfmt, the one `.editorconfig` that counts: the nearest to the working directory.
@@ -778,7 +703,6 @@ impl<'c> Configs<'c> {
             by_directory: Guarded::new(FxHashMap::default()),
             named: None,
             flavor: Flavor::Prettier,
-            tsconfigs: Guarded::new(FxHashMap::default()),
             sort_imports: Guarded::new(Vec::new()),
             editorconfig_of_oxfmt: None,
             warnings: Guarded::new(Vec::new()),
@@ -1487,11 +1411,6 @@ impl<'c> Configs<'c> {
             );
             self.warn(&[b"Ignored unknown option { ", name, b": ", &shown, b" }."]);
         }
-        if sort.organizes_imports() {
-            for (name, value) in self.tsconfig_of(paths::dirname(path)).iter() {
-                sort.set(name, value);
-            }
-        }
         resolved.options.sort_imports = self.sort_imports(sort)?;
         if let Some(value) = sort_tailwindcss.filter(|it| it != b"false") {
             let of_config = config.map(|it| paths::dirname(&it.path));
@@ -1500,26 +1419,6 @@ impl<'c> Configs<'c> {
             resolved.options.tailwind = Some(Arc::new(tailwind));
         }
         Ok(resolved)
-    }
-
-    /// What the `tsconfig.json` nearest to `directory` says about JSX, as settings for the sorting
-    /// of imports.
-    fn tsconfig_of(&self, directory: &[u8]) -> Arc<Settings> {
-        if let Some(known) = self.tsconfigs.lock().get(directory) {
-            return Arc::clone(known);
-        }
-        let nearest = paths::ancestors(directory)
-            .map(|it| paths::join(it, b"tsconfig.json"))
-            .find(|it| fs::is_file(it));
-        let mut settings = Settings::new();
-        if let Some(path) = nearest {
-            read_tsconfig(&path, &mut settings);
-        }
-        let settings = Arc::new(settings);
-        self.tsconfigs
-            .lock()
-            .insert(directory.to_vec(), Arc::clone(&settings));
-        settings
     }
 
     fn sort_imports(&self, settings: SortSettings) -> Result<Option<Arc<SortImports>>, Fatal> {

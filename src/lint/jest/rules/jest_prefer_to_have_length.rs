@@ -1,14 +1,14 @@
 use crate::jest::{self, Ctx};
 use crate::jest_matchers::prefer_to_have_length;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// In order to have a better failure message, `toHaveLength()` should be used upon asserting expectations on objects length
 /// property.
-pub struct PreferToHaveLength;
+pub struct PreferToHaveLength<const VITEST: bool = false>;
 
-impl Rule for PreferToHaveLength {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "prefer-to-have-length", Kind::Suggestion).fixable(Fixable::Code);
+impl<const VITEST: bool> Rule for PreferToHaveLength<VITEST> {
+    const META: Meta =
+        Meta::oxlint(jest::plugin(VITEST), "prefer-to-have-length", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

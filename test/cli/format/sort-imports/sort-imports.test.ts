@@ -1,7 +1,6 @@
 // The fixtures are the inputs of the tests of @trivago/prettier-plugin-sort-imports, of
 // @ianvs/prettier-plugin-sort-imports (both Apache-2.0) and of oxc's formatter (MIT), and generated ones with comments
-// and empty lines in odd places. What is expected is what Prettier 3.9.9 with the plugin (for
-// prettier-plugin-organize-imports, with TypeScript 5.9), and oxfmt 0.72, print.
+// and empty lines in odd places. What is expected is what Prettier 3.9.9 with the plugin, and oxfmt 0.72, print.
 // They are made by test/cli/format/oracle/sort-imports/make-fixtures.mjs.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
@@ -19,7 +18,6 @@ const tools = {
     { plugins: ["@trivago/prettier-plugin-sort-imports"], ...options },
   ],
   ianvs: (options: object) => [".prettierrc.json", { plugins: ["@ianvs/prettier-plugin-sort-imports"], ...options }],
-  organize: (options: object) => [".prettierrc.json", { plugins: ["prettier-plugin-organize-imports"], ...options }],
   oxfmt: (options: object) => [".oxfmtrc.json", options],
 } as const;
 
@@ -137,13 +135,6 @@ describe.concurrent("when imports are sorted", () => {
       sorted,
     ],
     ["oxfmt", ".oxfmtrc.json", `{ "sortImports": {} }`, sorted],
-    // It asks TypeScript about the file, which is the Markdown. In a.ts it removes both: nothing uses them.
-    [
-      "prettier-plugin-organize-imports",
-      ".prettierrc.json",
-      `{ "plugins": ["prettier-plugin-organize-imports"] }`,
-      unsorted,
-    ],
   ])("in a block of code in Markdown: %s", async (_, name, config, expected) => {
     const result = await format({ [name]: config, "a.md": "```ts\n" + unsorted + "```\n" }, ["a.md"]);
     expect(result.files).toEqual(["```ts\n" + expected + "```\n"]);

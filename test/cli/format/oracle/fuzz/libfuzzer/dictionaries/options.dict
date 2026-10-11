@@ -376,7 +376,6 @@
 # The options
 "\"plugins\":[\"@trivago/prettier-plugin-sort-imports\"]"
 "\"plugins\":[\"@ianvs/prettier-plugin-sort-imports\"]"
-"\"plugins\":[\"prettier-plugin-organize-imports\"]"
 "\"flavor\":\"oxfmt\""
 "\"importOrder\":["
 "\"importOrderSeparation\":true"
@@ -394,10 +393,6 @@
 "\"importOrderTypeScriptVersion\":\"4.4.0-beta\""
 "\"importOrderCaseSensitive\":true"
 "\"importOrderSafeSideEffects\":["
-"\"organizeImportsSkipDestructiveCodeActions\":true"
-"\"organizeImportsTypeOrder\":\"first\""
-"\"organizeImportsTypeOrder\":\"last\""
-"\"organizeImportsTypeOrder\":\"inline\""
 "\"tsconfig.jsx\":\"react\""
 "\"tsconfig.jsxFactory\":\"a.b\""
 "\"tsconfig.jsxFragmentFactory\":\"c\""

@@ -1,13 +1,12 @@
 use crate::jest::{self, Ctx};
 use crate::jest_matchers::no_restricted_matchers::NoRestrictedMatchersConfig;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Ban specific matchers & modifiers from being used, and can suggest alternatives.
-pub struct NoRestrictedMatchers(NoRestrictedMatchersConfig);
+pub struct NoRestrictedMatchers<const VITEST: bool = false>(NoRestrictedMatchersConfig);
 
-impl Rule for NoRestrictedMatchers {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "no-restricted-matchers", Kind::Suggestion);
+impl<const VITEST: bool> Rule for NoRestrictedMatchers<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "no-restricted-matchers", Kind::Suggestion);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

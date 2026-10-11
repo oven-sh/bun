@@ -1,13 +1,12 @@
 use crate::jest::{self, Ctx};
 use crate::jest_tests::no_conditional_in_test;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Disallow conditional statements in tests.
-pub struct NoConditionalInTest;
+pub struct NoConditionalInTest<const VITEST: bool = false>;
 
-impl Rule for NoConditionalInTest {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "no-conditional-in-test", Kind::Suggestion);
+impl<const VITEST: bool> Rule for NoConditionalInTest<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "no-conditional-in-test", Kind::Suggestion);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

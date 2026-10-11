@@ -1,14 +1,13 @@
 use crate::jest::{self, Ctx};
 use crate::jest_matchers::prefer_to_contain;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// In order to have a better failure message, `toContain()` should be used upon asserting expectations on an array containing
 /// an object.
-pub struct PreferToContain;
+pub struct PreferToContain<const VITEST: bool = false>;
 
-impl Rule for PreferToContain {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "prefer-to-contain", Kind::Suggestion).fixable(Fixable::Code);
+impl<const VITEST: bool> Rule for PreferToContain<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "prefer-to-contain", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

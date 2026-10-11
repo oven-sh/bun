@@ -9,8 +9,6 @@ import { pathToFileURL } from "node:url";
 export const PACKAGES = {
   trivago: "@trivago/prettier-plugin-sort-imports",
   ianvs: "@ianvs/prettier-plugin-sort-imports",
-  // Needs a `typescript` with a language service next to it: 5.9.
-  organize: "prettier-plugin-organize-imports",
 };
 
 /// A few sets of options for each plugin.

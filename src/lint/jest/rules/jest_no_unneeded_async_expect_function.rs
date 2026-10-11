@@ -1,13 +1,13 @@
 use crate::jest::{self, Ctx};
 use crate::jest_matchers::no_unneeded_async_expect_function;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Disallows unnecessary async function wrapper for expected promises.
-pub struct NoUnneededAsyncExpectFunction;
+pub struct NoUnneededAsyncExpectFunction<const VITEST: bool = false>;
 
-impl Rule for NoUnneededAsyncExpectFunction {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "no-unneeded-async-expect-function", Kind::Suggestion).fixable(Fixable::Code);
+impl<const VITEST: bool> Rule for NoUnneededAsyncExpectFunction<VITEST> {
+    const META: Meta =
+        Meta::oxlint(jest::plugin(VITEST), "no-unneeded-async-expect-function", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

@@ -1,13 +1,12 @@
-use crate::jest::Ctx;
+use crate::jest::{self, Ctx};
 use crate::jest_tests::prefer_each;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// This rule enforces using `each` rather than manual loops.
-pub struct PreferEach;
+pub struct PreferEach<const VITEST: bool = false>;
 
-impl Rule for PreferEach {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "prefer-each", Kind::Suggestion);
+impl<const VITEST: bool> Rule for PreferEach<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "prefer-each", Kind::Suggestion);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

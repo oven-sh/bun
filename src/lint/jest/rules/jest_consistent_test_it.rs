@@ -1,13 +1,13 @@
 use crate::jest::{self, Ctx};
 use crate::jest_tests::consistent_test_it::ConsistentTestItConfig;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Enforce consistent use of either the `it` or `test` keyword for defining tests.
-pub struct ConsistentTestIt(ConsistentTestItConfig);
+pub struct ConsistentTestIt<const VITEST: bool = false>(ConsistentTestItConfig);
 
-impl Rule for ConsistentTestIt {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "consistent-test-it", Kind::Suggestion).fixable(Fixable::Code);
+impl<const VITEST: bool> Rule for ConsistentTestIt<VITEST> {
+    const META: Meta =
+        Meta::oxlint(jest::plugin(VITEST), "consistent-test-it", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

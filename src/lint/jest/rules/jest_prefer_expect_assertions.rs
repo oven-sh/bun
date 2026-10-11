@@ -1,13 +1,13 @@
 use crate::jest::{self, Ctx};
 use crate::jest_expect::prefer_expect_assertions::PreferExpectAssertionsConfig;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Enforces that every test has either `expect.assertions(<number>)` or `expect.hasAssertions()` as its first expression.
-pub struct PreferExpectAssertions(PreferExpectAssertionsConfig);
+pub struct PreferExpectAssertions<const VITEST: bool = false>(PreferExpectAssertionsConfig);
 
-impl Rule for PreferExpectAssertions {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "prefer-expect-assertions", Kind::Suggestion).has_suggestions();
+impl<const VITEST: bool> Rule for PreferExpectAssertions<VITEST> {
+    const META: Meta =
+        Meta::oxlint(jest::plugin(VITEST), "prefer-expect-assertions", Kind::Suggestion).has_suggestions();
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -21,6 +21,6 @@ impl Rule for PreferExpectAssertions {
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
-        self.0.run_once(&ctx, false);
+        self.0.run_once(&ctx, VITEST);
     }
 }

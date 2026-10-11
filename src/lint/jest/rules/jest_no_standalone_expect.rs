@@ -1,13 +1,12 @@
 use crate::jest::{self, Ctx};
 use crate::jest_expect::no_standalone_expect::NoStandaloneExpectConfig;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Prevents `expect` statements outside of a `test` or `it` block.
-pub struct NoStandaloneExpect(NoStandaloneExpectConfig);
+pub struct NoStandaloneExpect<const VITEST: bool = false>(NoStandaloneExpectConfig);
 
-impl Rule for NoStandaloneExpect {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "no-standalone-expect", Kind::Problem);
+impl<const VITEST: bool> Rule for NoStandaloneExpect<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "no-standalone-expect", Kind::Problem);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

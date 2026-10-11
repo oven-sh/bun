@@ -1,13 +1,12 @@
-use crate::jest::Ctx;
+use crate::jest::{self, Ctx};
 use crate::jest_matchers::prefer_snapshot_hint::{SNAPSHOT_MATCHERS, SnapshotHintMode};
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Enforces including a hint string with snapshot matchers (toMatchSnapshot and toThrowErrorMatchingSnapshot).
-pub struct PreferSnapshotHint(SnapshotHintMode);
+pub struct PreferSnapshotHint<const VITEST: bool = false>(SnapshotHintMode);
 
-impl Rule for PreferSnapshotHint {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "prefer-snapshot-hint", Kind::Problem);
+impl<const VITEST: bool> Rule for PreferSnapshotHint<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "prefer-snapshot-hint", Kind::Problem);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

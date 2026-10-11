@@ -1,13 +1,12 @@
 use crate::jest::{self, Ctx};
 use crate::jest_tests::valid_title::ValidTitleConfig;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Checks that the titles of Jest and Vitest blocks are valid.
-pub struct ValidTitle(ValidTitleConfig);
+pub struct ValidTitle<const VITEST: bool = false>(ValidTitleConfig);
 
-impl Rule for ValidTitle {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "valid-title", Kind::Problem).fixable(Fixable::Code);
+impl<const VITEST: bool> Rule for ValidTitle<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "valid-title", Kind::Problem).fixable(Fixable::Code);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

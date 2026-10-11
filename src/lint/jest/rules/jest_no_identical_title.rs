@@ -1,13 +1,12 @@
 use crate::jest::{self, Ctx};
 use crate::jest_tests::no_identical_title;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// This rule looks at the title of every test and test suite.
-pub struct NoIdenticalTitle;
+pub struct NoIdenticalTitle<const VITEST: bool = false>;
 
-impl Rule for NoIdenticalTitle {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "no-identical-title", Kind::Suggestion);
+impl<const VITEST: bool> Rule for NoIdenticalTitle<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "no-identical-title", Kind::Suggestion);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

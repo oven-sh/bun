@@ -1,13 +1,12 @@
 use crate::jest::{self, Ctx};
 use crate::jest_expect::no_conditional_expect;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// This rule prevents the use of `expect` in conditional blocks, such as `if` and `catch`.
-pub struct NoConditionalExpect;
+pub struct NoConditionalExpect<const VITEST: bool = false>;
 
-impl Rule for NoConditionalExpect {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "no-conditional-expect", Kind::Problem);
+impl<const VITEST: bool> Rule for NoConditionalExpect<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "no-conditional-expect", Kind::Problem);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

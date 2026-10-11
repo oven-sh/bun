@@ -1,14 +1,14 @@
 use crate::jest::{self, Ctx};
 use crate::jest_matchers::prefer_equality_matcher;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Jest has built-in matchers for expecting equality, which allow for more readable tests and error messages if an
 /// expectation fails.
-pub struct PreferEqualityMatcher;
+pub struct PreferEqualityMatcher<const VITEST: bool = false>;
 
-impl Rule for PreferEqualityMatcher {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "prefer-equality-matcher", Kind::Suggestion).has_suggestions();
+impl<const VITEST: bool> Rule for PreferEqualityMatcher<VITEST> {
+    const META: Meta =
+        Meta::oxlint(jest::plugin(VITEST), "prefer-equality-matcher", Kind::Suggestion).has_suggestions();
     const ON: On = On::new().finish();
     type State<'a> = ();
 

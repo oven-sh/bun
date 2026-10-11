@@ -1,13 +1,13 @@
 use crate::jest::{self, Ctx};
 use crate::jest_matchers::prefer_expect_resolves;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Prefer `await expect(...).resolves` over `expect(await ...)` when testing promises.
-pub struct PreferExpectResolves;
+pub struct PreferExpectResolves<const VITEST: bool = false>;
 
-impl Rule for PreferExpectResolves {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "prefer-expect-resolves", Kind::Suggestion).fixable(Fixable::Code);
+impl<const VITEST: bool> Rule for PreferExpectResolves<VITEST> {
+    const META: Meta =
+        Meta::oxlint(jest::plugin(VITEST), "prefer-expect-resolves", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

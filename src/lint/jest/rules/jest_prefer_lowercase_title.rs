@@ -1,13 +1,13 @@
 use crate::jest::{self, Ctx};
 use crate::jest_tests::prefer_lowercase_title::PreferLowercaseTitleConfig;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Enforce `it`, `test`, `describe`, and `bench` to have descriptions that begin with a lowercase letter.
-pub struct PreferLowercaseTitle(PreferLowercaseTitleConfig);
+pub struct PreferLowercaseTitle<const VITEST: bool = false>(PreferLowercaseTitleConfig);
 
-impl Rule for PreferLowercaseTitle {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "prefer-lowercase-title", Kind::Suggestion).fixable(Fixable::Code);
+impl<const VITEST: bool> Rule for PreferLowercaseTitle<VITEST> {
+    const META: Meta =
+        Meta::oxlint(jest::plugin(VITEST), "prefer-lowercase-title", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

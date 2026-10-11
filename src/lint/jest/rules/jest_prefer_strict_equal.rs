@@ -1,13 +1,12 @@
 use crate::jest::{self, Ctx};
 use crate::jest_matchers::prefer_strict_equal;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// This rule triggers a warning if `toEqual()` is used to assert equality.
-pub struct PreferStrictEqual;
+pub struct PreferStrictEqual<const VITEST: bool = false>;
 
-impl Rule for PreferStrictEqual {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "prefer-strict-equal", Kind::Suggestion).has_suggestions();
+impl<const VITEST: bool> Rule for PreferStrictEqual<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "prefer-strict-equal", Kind::Suggestion).has_suggestions();
     const ON: On = On::new().finish();
     type State<'a> = ();
 

@@ -1,14 +1,13 @@
 use crate::jest::{self, Ctx};
 use crate::jest_expect::valid_expect_in_promise;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Ensures that `expect` calls inside promise chains (`.then()`, `.catch()`, `.finally()`) are properly awaited or returned
 /// from the test.
-pub struct ValidExpectInPromise;
+pub struct ValidExpectInPromise<const VITEST: bool = false>;
 
-impl Rule for ValidExpectInPromise {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "valid-expect-in-promise", Kind::Problem);
+impl<const VITEST: bool> Rule for ValidExpectInPromise<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "valid-expect-in-promise", Kind::Problem);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

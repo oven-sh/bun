@@ -1,13 +1,13 @@
 use crate::jest::{self, Ctx};
 use crate::jest_matchers::prefer_comparison_matcher;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// This rule checks for comparisons in tests that could be replaced with one of the following built-in comparison matchers
-pub struct PreferComparisonMatcher;
+pub struct PreferComparisonMatcher<const VITEST: bool = false>;
 
-impl Rule for PreferComparisonMatcher {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "prefer-comparison-matcher", Kind::Suggestion).fixable(Fixable::Code);
+impl<const VITEST: bool> Rule for PreferComparisonMatcher<VITEST> {
+    const META: Meta =
+        Meta::oxlint(jest::plugin(VITEST), "prefer-comparison-matcher", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

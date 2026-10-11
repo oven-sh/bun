@@ -1,13 +1,12 @@
 use crate::jest::{self, Ctx};
 use crate::jest_hooks::no_duplicate_hooks;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Disallows duplicate hooks in describe blocks.
-pub struct NoDuplicateHooks;
+pub struct NoDuplicateHooks<const VITEST: bool = false>;
 
-impl Rule for NoDuplicateHooks {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "no-duplicate-hooks", Kind::Suggestion);
+impl<const VITEST: bool> Rule for NoDuplicateHooks<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "no-duplicate-hooks", Kind::Suggestion);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

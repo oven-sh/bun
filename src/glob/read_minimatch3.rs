@@ -2,7 +2,7 @@
 
 use crate::braces;
 use crate::node::{Node, Piece, Program, lower, nest};
-use crate::pattern::Options;
+use crate::pattern::{MAX_PATTERN_LENGTH, Options};
 use crate::read_picomatch::{Unread, read_written};
 use crate::segments::{Part, has_braces};
 use crate::unit::Text;
@@ -12,7 +12,6 @@ const QMARK: &[u8] = b"[^/]";
 const STAR: &[u8] = b"[^/]*?";
 const TWO_STAR_DOT: &[u8] = br"(?:(?!(?:\/|^)(?:\.{1,2})($|\/)).)*?";
 const TWO_STAR_NO_DOT: &[u8] = br"(?:(?!(?:\/|^)\.).)*?";
-const MAX_PATTERN_LENGTH: usize = 65_536;
 /// Ours: each of these cuts and writes the text again. Beyond them the pattern matches nothing.
 const MAX_DEPTH: usize = 64;
 const MAX_OPEN_LISTS: usize = 100;

@@ -1,13 +1,12 @@
 use crate::jest::{self, Ctx};
 use crate::jest_tests::no_test_prefixes;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Require using `.only` and `.skip` over `f` and `x`.
-pub struct NoTestPrefixes;
+pub struct NoTestPrefixes<const VITEST: bool = false>;
 
-impl Rule for NoTestPrefixes {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "no-test-prefixes", Kind::Suggestion).fixable(Fixable::Code);
+impl<const VITEST: bool> Rule for NoTestPrefixes<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "no-test-prefixes", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

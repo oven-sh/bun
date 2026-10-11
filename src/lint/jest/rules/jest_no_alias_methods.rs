@@ -1,13 +1,12 @@
 use crate::jest::{self, Ctx};
 use crate::jest_matchers::no_alias_methods;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Enforces Jest's canonical matcher names instead of aliases.
-pub struct NoAliasMethods;
+pub struct NoAliasMethods<const VITEST: bool = false>;
 
-impl Rule for NoAliasMethods {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "no-alias-methods", Kind::Suggestion).fixable(Fixable::Code);
+impl<const VITEST: bool> Rule for NoAliasMethods<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "no-alias-methods", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

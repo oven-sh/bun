@@ -1,13 +1,12 @@
 use crate::jest::{self, Ctx};
 use crate::jest_matchers::no_interpolation_in_snapshots;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Prevents the use of string interpolations in snapshots.
-pub struct NoInterpolationInSnapshots;
+pub struct NoInterpolationInSnapshots<const VITEST: bool = false>;
 
-impl Rule for NoInterpolationInSnapshots {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "no-interpolation-in-snapshots", Kind::Suggestion);
+impl<const VITEST: bool> Rule for NoInterpolationInSnapshots<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "no-interpolation-in-snapshots", Kind::Suggestion);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

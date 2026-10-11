@@ -42,7 +42,7 @@ fn ends_name(byte: Option<u8>) -> bool {
 }
 
 fn is_word(byte: Option<u8>) -> bool {
-    byte.is_some_and(|it| it.is_ascii_alphanumeric() || it == b'_')
+    byte.is_some_and(strings::is_regexp_word_byte)
 }
 
 /// `.` or `..` and then a `/` or the end, from `at`.

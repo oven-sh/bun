@@ -32,7 +32,7 @@ pub(crate) enum Part {
     Never,
 }
 
-fn is_dots(name: &[u8]) -> bool {
+pub(crate) fn is_dots(name: &[u8]) -> bool {
     matches!(name, b"." | b"..")
 }
 

@@ -1,13 +1,12 @@
-use crate::jest::Ctx;
+use crate::jest::{self, Ctx};
 use crate::jest_tests::no_test_return_statement;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Disallow explicitly returning from tests.
-pub struct NoTestReturnStatement;
+pub struct NoTestReturnStatement<const VITEST: bool = false>;
 
-impl Rule for NoTestReturnStatement {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "no-test-return-statement", Kind::Suggestion);
+impl<const VITEST: bool> Rule for NoTestReturnStatement<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "no-test-return-statement", Kind::Suggestion);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

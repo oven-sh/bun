@@ -1,14 +1,14 @@
-use crate::jest::Ctx;
+use crate::jest::{self, Ctx};
 use crate::jest_mocks::prefer_mock_return_shorthand;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// When working with mocks of functions that return simple values, Jest provides some API sugar functions to reduce the
 /// amount of boilerplate you have to write.
-pub struct PreferMockReturnShorthand;
+pub struct PreferMockReturnShorthand<const VITEST: bool = false>;
 
-impl Rule for PreferMockReturnShorthand {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "prefer-mock-return-shorthand", Kind::Suggestion).fixable(Fixable::Code);
+impl<const VITEST: bool> Rule for PreferMockReturnShorthand<VITEST> {
+    const META: Meta =
+        Meta::oxlint(jest::plugin(VITEST), "prefer-mock-return-shorthand", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

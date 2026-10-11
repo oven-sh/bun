@@ -1,13 +1,12 @@
-use crate::jest::Ctx;
+use crate::jest::{self, Ctx};
 use crate::jest_hooks::{HOOKS, prefer_hooks_in_order};
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Ensures that hooks are in the order that they are called in.
-pub struct PreferHooksInOrder;
+pub struct PreferHooksInOrder<const VITEST: bool = false>;
 
-impl Rule for PreferHooksInOrder {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "prefer-hooks-in-order", Kind::Suggestion);
+impl<const VITEST: bool> Rule for PreferHooksInOrder<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "prefer-hooks-in-order", Kind::Suggestion);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

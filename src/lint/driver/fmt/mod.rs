@@ -29,7 +29,7 @@ use bun_lint::linter::TypesInJavaScript;
 use bun_lint::utils::code_frame::{self, Frame, Lines, Place, Version};
 use bun_lint::utils::text::ends_with_ignore_ascii_case as ends_in;
 use bun_sema::atom::{Intern, Interner, InternerPerThread};
-use bun_sema::bind::{BindOptions, Recycled, bind, bind_for_format_in, try_bind_for_format_in};
+use bun_sema::bind::{BindOptions, Recycled, bind_for_format_in, try_bind_for_format_in};
 use bun_sema::hir::Diagnostic;
 use bun_sema::resolve::Dialect;
 use bun_sema::session::Session;
@@ -159,17 +159,9 @@ fn with_file<R>(
     let (path, session) = (how.path, how.memory);
     let arena = session.arena();
     with_tree(how, text, |mut summary, atoms, language| {
-        // To tell which imports are used takes symbols.
-        let needs_symbols = how
-            .resolved
-            .options
-            .sort_imports
-            .as_deref()
-            .is_some_and(|it| it.needs_symbols());
         let mut recycled = Recycled::of_this_thread();
         // Where the parser has left it, if that will do.
-        if !needs_symbols
-            && let Summary::InPlace(hir) = &mut summary
+        if let Summary::InPlace(hir) = &mut summary
             && let Some(bound) = try_bind_for_format_in(&**hir, &mut recycled)
         {
             let file = File::new(path, &**hir, bound, atoms, language, None).with_text(text);
@@ -189,17 +181,6 @@ fn with_file<R>(
             before_es2020: false,
             before_es2017: false,
         };
-        if needs_symbols {
-            let bound = bind(&hir, bind_options, atoms, arena);
-            return then(
-                &File::new(path, &hir, &bound, atoms, language, None),
-                &Program::new(&hir, text, atoms),
-                Refused {
-                    first_error: hir.diagnostics.first(),
-                    is_nested_too_deeply: hir.ran_out_of_stack || bound.ran_out_of_stack,
-                },
-            );
-        }
         let bound = bind_for_format_in(&hir, bind_options, atoms, &mut recycled);
         then(
             &File::new(path, &hir, bound, atoms, language, None),
@@ -356,12 +337,8 @@ fn format_block_in(
     names: (&dyn Intern, &Session),
     scratch: &mut Scratches,
 ) -> bool {
-    let sort_imports = options.sort_imports.clone();
     let resolved = Resolved {
-        options: FormatOptions {
-            sort_imports: sort_imports.filter(|it| it.applies_to_embedded_code()),
-            ..options.clone()
-        },
+        options: options.clone(),
         omits_final_newline: false,
     };
     let formatted = format(

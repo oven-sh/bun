@@ -5,7 +5,7 @@ use crate::class::{self, Class, Escape, Read};
 use crate::node::{Assertion, MAX_NESTING, Node, Open, Piece, Program, lower, nest};
 use crate::unit::Text;
 use bun_collections::StringHashMap;
-use bun_core::strings;
+use bun_core::strings::{self, is_regexp_word_byte as is_word};
 
 // ───────────────────────────── what is written ─────────────────────────────
 
@@ -87,10 +87,6 @@ fn constant_text(constant: u16, dot: bool) -> Option<&'static [u8]> {
         OPEN_NOT => b"(?!",
         _ => return None,
     })
-}
-
-fn is_word(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
 /// `/[-*+?.^${}(|)[\]]/`

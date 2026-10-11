@@ -182,19 +182,6 @@ const EXTRAS: [&[(&str, &str)]; 16] = [
         ("importOrder", r#"["^[./]", "<THIRD_PARTY_MODULES>"]"#),
         ("importOrderTypeScriptVersion", "4.0.0"),
     ],
-    &[("plugins", r#"["prettier-plugin-organize-imports"]"#)],
-    &[
-        ("plugins", r#"["prettier-plugin-organize-imports"]"#),
-        ("organizeImportsSkipDestructiveCodeActions", "true"),
-        ("organizeImportsTypeOrder", "first"),
-        ("tsconfig.jsx", "react"),
-    ],
-    &[
-        ("plugins", r#"["prettier-plugin-organize-imports"]"#),
-        ("organizeImportsTypeOrder", "inline"),
-        ("tsconfig.jsx", "react"),
-        ("tsconfig.jsxFactory", "a.b"),
-    ],
     &[("flavor", "oxfmt"), ("sortImports", "{}")],
     &[
         ("flavor", "oxfmt"),
@@ -566,21 +553,12 @@ fn check_what_is_kept(run: &Run, variant: &str, path: &str, (plain, stepped): (&
             less_often.retain(|it| !kept::is_part_of_an_import(it));
             report("word-less-often", less_often);
         }
-        let applies = options.sort_imports.as_deref().is_none_or(|it| it.applies_to_embedded_code());
-        if !applies && !is_code && options.jsdoc.is_none() && plain != stepped {
-            run.report("changed-by-a-step-that-does-not-apply", variant, "");
-        }
         if options.sort_package_json.is_some() {
             report("word-more-often", kept::fewer(&b, &a));
         }
         return;
     };
-    // `prettier-plugin-organize-imports` removes what nothing uses. A name that is nowhere else is not used.
-    let removes_unused = options.sort_imports.as_deref().is_some_and(|it| it.needs_symbols());
-    let is_named = |import: &&[u8]| a.locals.get(*import).is_none_or(|local| a.words.contains_key(local));
-    let (lost, removed): (Vec<&[u8]>, Vec<&[u8]>) =
-        kept::missing(&a.names, &b.names).into_iter().partition(|it| !removes_unused || is_named(it));
-    report(if removes_unused { "import-removed-though-named" } else { "import-lost" }, lost);
+    report("import-lost", kept::missing(&a.names, &b.names));
     report("import-added", kept::missing(&b.names, &a.names));
     report("import-less-often", kept::fewer(&a.names, &b.names));
     report("import-more-often", kept::fewer(&b.names, &a.names));
@@ -596,11 +574,8 @@ fn check_what_is_kept(run: &Run, variant: &str, path: &str, (plain, stepped): (&
     };
     report("jsdoc-word-lost", kept::missing(&words, &words_after));
     report("jsdoc-word-added", kept::missing(&words_after, &words));
-    // The comments of an import go with it.
-    if removed.is_empty() {
-        report("comment-lost", kept::missing(&others, &others_after));
-        report("comment-less-often", kept::fewer(&others, &others_after));
-    }
+    report("comment-lost", kept::missing(&others, &others_after));
+    report("comment-less-often", kept::fewer(&others, &others_after));
     report("comment-added", kept::missing(&others_after, &others));
     report("comment-more-often", kept::fewer(&others_after, &others));
 }

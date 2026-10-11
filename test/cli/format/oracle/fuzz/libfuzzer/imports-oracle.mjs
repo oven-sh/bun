@@ -1,16 +1,14 @@
-// imports-oracle.mjs <records> --prettier=<dir> [--organize=<dir>] [--oxfmt=<dir>] [--out=<file>] [--shard=0/4]
+// imports-oracle.mjs <records> --prettier=<dir> [--oxfmt=<dir>] [--out=<file>] [--shard=0/4]
 // Asks the real tools about what the target `imports` has formatted.
 //   <records>   what FUZZ_RECORD=<records> fuzz_imports -runs=0 <corpus> has written
 //   --prettier  a directory with node_modules/prettier, @trivago/prettier-plugin-sort-imports, @ianvs/prettier-plugin-sort-imports
 //               and @vue/compiler-sfc, without which the two leave Vue alone
-//   --organize  one with prettier, prettier-plugin-organize-imports and a typescript that has a language service: 5.9
 //   --oxfmt     one with oxfmt
 //   --out       the differences are written there, one JSON object on a line, the shortest text first
 // Run with Node.js: `<BUILTIN_MODULES>` is `require("module").builtinModules` of what runs Prettier.
 // A record whose options one of the tools does not have is left out.
 import fs from "node:fs";
 import { createRequire } from "node:module";
-import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -35,23 +33,6 @@ if (named.prettier) {
     const plugin = await load(named.prettier, name);
     tools[name] = (text, options, isPlain) => prettier.format(text, { ...options, plugins: isPlain ? [] : [plugin] });
   }
-}
-const temporary = fs.mkdtempSync(path.join(process.env.TMPDIR ?? os.tmpdir(), "imports-oracle-"));
-if (named.organize) {
-  const prettier = await load(named.organize, "prettier");
-  const plugin = await load(named.organize, "prettier-plugin-organize-imports");
-  // It reads the tsconfig.json of the file.
-  const directories = new Map();
-  tools["prettier-plugin-organize-imports"] = (text, { tsconfig, filepath, ...options }, isPlain) => {
-    const key = JSON.stringify(tsconfig);
-    if (!directories.has(key)) {
-      const directory = path.join(temporary, String(directories.size));
-      fs.mkdirSync(directory);
-      fs.writeFileSync(path.join(directory, "tsconfig.json"), JSON.stringify({ compilerOptions: tsconfig }));
-      directories.set(key, directory);
-    }
-    return prettier.format(text, { ...options, filepath: path.join(directories.get(key), filepath), plugins: isPlain ? [] : [plugin] });
-  };
 }
 if (named.oxfmt) {
   const { format } = await load(named.oxfmt, "oxfmt");
@@ -81,7 +62,6 @@ function parse(how) {
     }
     if (name == "plugins") tool = Array.isArray(value) ? value[0] : value;
     else if (name == "flavor") isOxfmt = true;
-    else if (name.startsWith("tsconfig.")) (options.tsconfig ??= {})[name.slice(9)] = value;
     else if (name.startsWith("jsdoc.")) (options.jsdoc = options.jsdoc === true || !options.jsdoc ? {} : options.jsdoc)[name.slice(6)] = value;
     else if (name == "sortPackageJson" || name == "checkIgnorePragma") return;
     else options[name] = value;
@@ -93,8 +73,6 @@ function parse(how) {
     for (const name in options) if (!OF_OXFMT.has(name) && !["filepath", "sortImports", "jsdoc"].includes(name)) return;
     if (options.endOfLine == "auto" || options.tabWidth === 0) return;
   }
-  options.tsconfig ??= {};
-  if (tool != "prettier-plugin-organize-imports") delete options.tsconfig;
   return tools[tool] && { tool, options };
 }
 
@@ -152,7 +130,6 @@ for (let at = 0; at < bytes.length; index++) {
   counts.set(key, (counts.get(key) ?? 0) + 1);
   if (/different$|different:|only we refuse:|only they refuse|only we refuse/i.test(verdict)) differences.push({ verdict, tool, how, text, ours: status == "formatted" ? ours : status, theirs: theirs.out ?? `throws: ${theirs.error}` });
 }
-fs.rmSync(temporary, { recursive: true, force: true });
 for (const key of [...counts.keys()].sort()) console.log(String(counts.get(key)).padStart(7), key);
 if (named.out) {
   differences.sort((a, b) => a.text.length - b.text.length);

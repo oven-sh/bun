@@ -1,13 +1,12 @@
-use crate::jest::Ctx;
+use crate::jest::{self, Ctx};
 use crate::jest_matchers::no_large_snapshots::{NoLargeSnapshotsConfig, may_have_snapshot};
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Disallow large snapshots.
-pub struct NoLargeSnapshots(NoLargeSnapshotsConfig);
+pub struct NoLargeSnapshots<const VITEST: bool = false>(NoLargeSnapshotsConfig);
 
-impl Rule for NoLargeSnapshots {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "no-large-snapshots", Kind::Suggestion);
+impl<const VITEST: bool> Rule for NoLargeSnapshots<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "no-large-snapshots", Kind::Suggestion);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

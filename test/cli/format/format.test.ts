@@ -2553,6 +2553,26 @@ try {
     expect(odd.cpu / plain.cpu).toBeLessThan(6);
   }, 120_000);
 
+  // The same for what is repeated in something. Prettier takes the square of the number of parameters.
+  test("the parameters of @include, @mixin and @function take time in proportion to their number", async () => {
+    const count = isDebug || isASAN ? 2_000 : 40_000;
+    const shapes: [string, string, string][] = [
+      ["@include a(", "$b,", "$b);"],
+      ["@include a(", "$b, ", "$b...);"],
+      ["@mixin a(", "$b,", "$b){}"],
+      ["@mixin a(", "$b:1,", "$b:1){}"],
+      ["@function a(", "$b,", "$b){@return 1}"],
+    ];
+    const texts = shapes.map(([before, unit, after]) => before + unit.repeat(count) + after);
+    const ordinary =
+      ".button {\n  $size: 12px;\n  &:hover {\n    color: darken($color, 10%);\n    @include shadow(1px, 2px);\n  }\n}\n\n";
+    const length = Math.ceil(texts.reduce((sum, text) => sum + Buffer.byteLength(text), 0) / texts.length);
+    const run = (text: (index: number) => string) =>
+      format(Object.fromEntries(shapes.map((_, index) => [`${index}.scss`, text(index)])), ["--check"]);
+    const [odd, plain] = [await run(index => texts[index]), await run(() => ordinary.repeat(length / ordinary.length))];
+    expect(odd.cpu / plain.cpu).toBeLessThan(6);
+  }, 120_000);
+
   // What some part of reading or printing Markdown once walked again for each repetition, or took a thousand times too
   // long for, and what is like it. All of it is weighed against as many bytes of prose, by the time of the processor: that
   // holds on a busy machine and in a debug build.

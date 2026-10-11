@@ -3790,6 +3790,14 @@ describe.concurrent("bun lint", () => {
       expect(result.exitCode).toBe(1);
     });
 
+    // As ESLint 10.12.0. To `stat` it is a file, and nobody can read it from its start.
+    test.skipIf(!isLinux)("a file that cannot be read ends the run, as one that cannot be parsed", async () => {
+      const result = await lint(files, ["--suppressions-location", "/proc/self/mem"]);
+      expect(result.stderr).toContain("Failed to parse suppressions file at /proc/self/mem");
+      expect(result.raw).toBe("");
+      expect(result.exitCode).toBe(2);
+    });
+
     test("fewer errors than it has fail with 2, until --prune-suppressions", async () => {
       const stale = { ...files, "eslint-suppressions.json": suppressions(2, 3) };
       const [plain, passed, pruned] = await Promise.all([

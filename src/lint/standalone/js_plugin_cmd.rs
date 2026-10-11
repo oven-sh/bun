@@ -57,6 +57,7 @@ fn spawn() -> Result<Box<dyn Channel>, Vec<u8>> {
         "--no-orphans",
         // As in an engine of `bun lint`: what is not installed is missing.
         "--no-install",
+        "--no-env-file",
         "-e",
         BOOTSTRAP,
     ]);

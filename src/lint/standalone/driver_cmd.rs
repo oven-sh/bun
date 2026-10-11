@@ -14,6 +14,7 @@ fn run_script(script: &Script) -> Result<Vec<u8>, Vec<u8>> {
     command
         .arg("--no-install")
         .arg("--no-orphans")
+        .arg("--no-env-file")
         .arg("-e")
         .arg(script.source.concat())
         .args(script.arguments.iter().map(|it| os_text(it)))

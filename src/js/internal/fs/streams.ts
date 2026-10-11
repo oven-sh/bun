@@ -18,7 +18,7 @@ type FSStream = Omit<import("node:fs").ReadStream & import("node:fs").WriteStrea
   path: string | null | undefined;
   _write: import("node:fs").WriteStream["_write"] | null;
   _writev: import("node:fs").WriteStream["_writev"] | null;
-  _writableState?: { ending: boolean; destroyed: boolean };
+  _writableState?: { ending: boolean; destroyed: boolean; errored: Error | null };
   flags: string;
   mode: number;
   start: number;
@@ -31,8 +31,9 @@ type FSStream = Omit<import("node:fs").ReadStream & import("node:fs").WriteStrea
   /**
    * true = path must be opened
    * sink = FileSink
+   * false = finalEndSink ended the sink
    */
-  [kWriteStreamFastPath]?: undefined | true | FileSink;
+  [kWriteStreamFastPath]?: undefined | boolean | FileSink;
 };
 type FD = number;
 
@@ -343,7 +344,7 @@ Object.defineProperty(readStreamPrototype, "pending", {
 });
 
 function close(stream, err, cb) {
-  const fastPath: FileSink | true = stream[kWriteStreamFastPath];
+  const fastPath: FileSink | boolean | undefined = stream[kWriteStreamFastPath];
   if (fastPath && fastPath !== true) {
     stream.fd = null;
     const maybePromise = fastPath.end(err);
@@ -354,7 +355,9 @@ function close(stream, err, cb) {
   }
 
   if (!stream.fd) {
-    cb(err);
+    // finalEndSink ended the sink: 'close' comes a loop turn after 'finish', as from node's handle.close() https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L346-L350
+    if (fastPath === false) setImmediate(cb, err);
+    else cb(err);
   } else if (stream.flush) {
     stream[kFs].fsync(stream.fd, flushErr => {
       closeAfterSync(stream, err || flushErr, cb);
@@ -659,6 +662,45 @@ function finalFast(this: FSStream, cb: (err?: any) => void) {
   cb(null);
 }
 
+// child.stdin's _final ends the sink as node's shuts the pipe down: before 'prefinish', the end() callback and 'finish' https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L536-L558
+function finalEndSink(this: FSStream, cb: (err?: any) => void) {
+  // Not inside end(): libuv waits for the event loop too. A write() that failed in the caller's block has errored the stream before this microtask runs.
+  queueMicrotask(() => {
+    const errored = this._writableState!.errored;
+    if (errored) {
+      process.nextTick(cb, errored);
+      return;
+    }
+    const sink = this[kWriteStreamFastPath];
+    finalFast.$call(this, err => {
+      if (err) failFinal(this, err, cb);
+      else if (!sink || sink === true) process.nextTick(cb, null);
+      else endSink(this, sink, cb);
+    });
+  });
+}
+
+function endSink(stream: FSStream, sink: FileSink, cb: (err?: any) => void) {
+  // The ended sink still reports its fd number: _destroy, close() and streamFdOf() must see no sink.
+  stream[kWriteStreamFastPath] = false;
+  const ended = sink.end();
+  if ($isPromise(ended)) {
+    // The sink still has bytes to push and settles this promise just before it closes the pipe: setImmediate runs after that close.
+    ended.then(
+      () => setImmediate(cb, null),
+      err => failFinal(stream, err, cb),
+    );
+  } else {
+    process.nextTick(cb, null);
+  }
+}
+
+// A flush that fails is a write that failed: node destroys the stream before the end() callback runs.
+function failFinal(stream: FSStream, err: any, cb: (err?: any) => void) {
+  require("internal/streams/destroy").errorOrDestroy(stream, err);
+  process.nextTick(cb, err);
+}
+
 // This function implementation is not correct.
 const writablePrototypeWrite = Writable.prototype.write;
 const kWriteMonkeyPatchDefense = Symbol("!");
@@ -834,6 +876,7 @@ function writableFromFileSink(fileSink: any) {
   const w = new WriteStream("", { $fastPath: true });
   $assert(w[kWriteStreamFastPath] === true, "fast path not enabled");
   w[kWriteStreamFastPath] = fileSink;
+  w._final = finalEndSink;
   w.path = undefined;
   return w;
 }

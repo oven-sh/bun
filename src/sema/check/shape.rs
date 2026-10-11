@@ -1265,10 +1265,7 @@ impl<'p, 's> Checker<'p, 's> {
                     },
                 ))
             }
-            TypeData::Synth(shape) => {
-                let resolved = self.shape_memo(ty, |_| (**shape).clone_in(self.arena));
-                Some((resolved, MapperId::IDENTITY))
-            }
+            TypeData::Synth(_) => Some((self.shape_of_synth(ty), MapperId::IDENTITY)),
             TypeData::ReverseMapped { source, mapped, of } => {
                 let (source, mapped, of) = (*source, *mapped, *of);
                 let resolved =
@@ -1277,14 +1274,10 @@ impl<'p, 's> Checker<'p, 's> {
             }
             TypeData::Tuple { .. } => self.tuple_members(ty, ty),
             // Its properties. See `structured_members`.
-            TypeData::Intersection(parts) => {
-                let object = self.intersection_as_object(ty, parts);
-                let TypeData::Synth(shape) = self.data(object) else {
-                    return None;
-                };
-                let resolved = self.shape_memo(object, |_| (**shape).clone_in(self.arena));
-                Some((resolved, MapperId::IDENTITY))
-            }
+            TypeData::Intersection(parts) => Some((
+                self.properties_of_intersection(ty, parts),
+                MapperId::IDENTITY,
+            )),
             _ => None,
         }
     }
@@ -4202,26 +4195,40 @@ impl<'p, 's> Checker<'p, 's> {
         })
     }
 
-    /// An object type with the properties of the intersection `ty`.
-    fn intersection_as_object(&mut self, ty: TypeId, parts: &[TypeId]) -> TypeId {
+    /// The properties of the intersection `ty`. They are kept as the members of an object type:
+    /// the shape with the key `ty` has its signatures.
+    fn properties_of_intersection(&mut self, ty: TypeId, parts: &[TypeId]) -> Built<'p> {
         if let Some(known) = self.p.intersection_objects.get(&self.task, &ty) {
-            return known;
+            return self.shape_of_synth(known);
         }
         // The members of a constituent can depend on the properties of the whole.
         if self.intersections_in_resolution.contains(&ty) {
             self.note_members_in_place();
-            return self.synth(Shape::new_in(self.arena));
+            return self.provisional_shape(Shape::new_in(self.arena));
         }
         self.intersections_in_resolution.push(ty);
         let scope = self.begin_scope();
         let shape = self.build_intersection_shape(ty, parts);
-        let object = self.synth(shape);
-        let object = match self.end_scope_by_counters(scope) {
-            Ok(stored) => (self.p.intersection_objects).insert(&self.task, ty, object, stored),
-            Err(_) => object,
+        // A constituent whose members are being resolved does not have all of them yet.
+        let is_open = self.lowest_taint <= scope.frames as usize
+            || self.non_cacheable_mark() != scope.counters;
+        let built = match self.end_scope_as(scope, is_open) {
+            Ok(stored) => {
+                let object = self.synth(shape);
+                let object = (self.p.intersection_objects).insert(&self.task, ty, object, stored);
+                self.shape_of_synth(object)
+            }
+            Err(_) => self.provisional_shape(shape),
         };
         self.intersections_in_resolution.pop();
-        object
+        built
+    }
+
+    fn shape_of_synth(&mut self, object: TypeId) -> Built<'p> {
+        let TypeData::Synth(shape) = self.data(object) else {
+            unreachable!()
+        };
+        self.shape_memo(object, |_| (**shape).clone_in(self.arena))
     }
 
     /// Where the index signatures of `ty` are. `members`: those of `ty`.

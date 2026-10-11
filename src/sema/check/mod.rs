@@ -1467,7 +1467,7 @@ pub struct Checker<'p, 's> {
     /// file that a query gets to in the meantime, whose `errorType` then stays in what the query
     /// stores.
     flow_analysis_disabled: Vec<FileId>,
-    /// The intersections whose properties are being collected: see `intersection_as_object`.
+    /// The intersections whose properties are being collected: see `properties_of_intersection`.
     intersections_in_resolution: Vec<TypeId>,
     /// Nesting depth of the `const ok = test` conditions being inlined.
     inline_level: u32,

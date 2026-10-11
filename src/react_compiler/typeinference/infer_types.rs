@@ -194,6 +194,22 @@ fn is_primitive_binary_op(op: &BinaryOperator) -> bool {
     )
 }
 
+/// `PropertyNameKind`, borrowed, without the type of a computed name.
+#[derive(Clone, Copy)]
+enum PropertyName<'a> {
+    Literal(&'a PropertyLiteral),
+    Computed,
+}
+
+impl<'a> From<&'a PropertyNameKind> for PropertyName<'a> {
+    fn from(name: &'a PropertyNameKind) -> Self {
+        match name {
+            PropertyNameKind::Literal { value } => PropertyName::Literal(value),
+            PropertyNameKind::Computed { .. } => PropertyName::Computed,
+        }
+    }
+}
+
 /// Resolve a property type from the shapes registry.
 /// If `custom_hook_type` is provided and the property name looks like a hook,
 /// it will be used as a fallback when no matching property is found (matching
@@ -201,7 +217,7 @@ fn is_primitive_binary_op(op: &BinaryOperator) -> bool {
 fn resolve_property_type(
     shapes: &ShapeRegistry,
     resolved_object: &Type,
-    property_name: &PropertyNameKind,
+    property_name: PropertyName,
     custom_hook_type: Option<&Type>,
 ) -> Option<Type> {
     let shape_id = match resolved_object {
@@ -209,10 +225,7 @@ fn resolve_property_type(
         _ => {
             // No shape, but if property name is hook-like, return hook type
             if let Some(hook_type) = custom_hook_type {
-                if let PropertyNameKind::Literal {
-                    value: PropertyLiteral::String(s),
-                } = property_name
-                {
+                if let PropertyName::Literal(PropertyLiteral::String(s)) = property_name {
                     if is_hook_name(s.slice()) {
                         return Some(hook_type.clone());
                     }
@@ -226,10 +239,7 @@ fn resolve_property_type(
         None => {
             // Object/Function with no shapeId: TS getPropertyType falls through
             // to hook-name check, TS getFallthroughPropertyType returns null
-            if let PropertyNameKind::Literal {
-                value: PropertyLiteral::String(s),
-            } = property_name
-            {
+            if let PropertyName::Literal(PropertyLiteral::String(s)) = property_name {
                 if is_hook_name(s.slice()) {
                     return custom_hook_type.cloned();
                 }
@@ -240,7 +250,7 @@ fn resolve_property_type(
     let shape = shapes.get(shape_id)?;
 
     match property_name {
-        PropertyNameKind::Literal { value } => match value {
+        PropertyName::Literal(value) => match value {
             // Shape registry keys are `&'static str` (all ASCII); a property
             // name that is not valid UTF-8 cannot match any registry key, so
             // fall through to the `"*"` / hook-name fallback in that case.
@@ -260,17 +270,15 @@ fn resolve_property_type(
                 }),
             PropertyLiteral::Number(_) => shape.properties.get("*").cloned(),
         },
-        PropertyNameKind::Computed { .. } => shape.properties.get("*").cloned(),
+        PropertyName::Computed => shape.properties.get("*").cloned(),
     }
 }
 
 /// Check if a property access looks like a ref pattern (e.g. `ref.current`, `fooRef.current`).
 /// Matches TS `isRefLikeName` in InferTypes.ts.
-fn is_ref_like_name(object_name: &[u8], property_name: &PropertyNameKind) -> bool {
+fn is_ref_like_name(object_name: &[u8], property_name: PropertyName) -> bool {
     let is_current = match property_name {
-        PropertyNameKind::Literal {
-            value: PropertyLiteral::String(s),
-        } => s.slice() == b"current",
+        PropertyName::Literal(PropertyLiteral::String(s)) => s.slice() == b"current",
         _ => false,
     };
     if !is_current {
@@ -742,34 +750,23 @@ fn generate_instruction_types(
         } => {
             let object_type = get_type(object.identifier, identifiers);
             let object_name = get_name(names, object.identifier);
-            unifier.unify(
+            unifier.unify_property(
                 left,
-                Type::Property {
-                    object_type: Box::new(object_type),
-                    object_name,
-                    property_name: PropertyNameKind::Literal {
-                        value: property.clone(),
-                    },
-                },
+                &object_type,
+                object_name,
+                PropertyName::Literal(property),
                 shapes,
             )?;
         }
 
-        InstructionValue::ComputedLoad {
-            object, property, ..
-        } => {
+        InstructionValue::ComputedLoad { object, .. } => {
             let object_type = get_type(object.identifier, identifiers);
             let object_name = get_name(names, object.identifier);
-            let prop_type = get_type(property.identifier, identifiers);
-            unifier.unify(
+            unifier.unify_property(
                 left,
-                Type::Property {
-                    object_type: Box::new(object_type),
-                    object_name,
-                    property_name: PropertyNameKind::Computed {
-                        value: Box::new(prop_type),
-                    },
-                },
+                &object_type,
+                object_name,
+                PropertyName::Computed,
                 shapes,
             )?;
         }
@@ -797,15 +794,11 @@ fn generate_instruction_types(
                             let item_type = get_type(place.identifier, identifiers);
                             let value_type = get_type(value.identifier, identifiers);
                             let object_name = get_name(names, value.identifier);
-                            unifier.unify(
+                            unifier.unify_property(
                                 item_type,
-                                Type::Property {
-                                    object_type: Box::new(value_type),
-                                    object_name,
-                                    property_name: PropertyNameKind::Literal {
-                                        value: index_property_literal(i),
-                                    },
-                                },
+                                &value_type,
+                                object_name,
+                                PropertyName::Literal(&index_property_literal(i)),
                                 shapes,
                             )?;
                         }
@@ -835,15 +828,11 @@ fn generate_instruction_types(
                                     get_type(obj_prop.place.identifier, identifiers);
                                 let value_type = get_type(value.identifier, identifiers);
                                 let object_name = get_name(names, value.identifier);
-                                unifier.unify(
+                                unifier.unify_property(
                                     prop_place_type,
-                                    Type::Property {
-                                        object_type: Box::new(value_type),
-                                        object_name,
-                                        property_name: PropertyNameKind::Literal {
-                                            value: PropertyLiteral::String(*name),
-                                        },
-                                    },
+                                    &value_type,
+                                    object_name,
+                                    PropertyName::Literal(&PropertyLiteral::String(*name)),
                                     shapes,
                                 )?;
                             }
@@ -968,15 +957,11 @@ fn generate_instruction_types(
             let dummy = make_type(types);
             let object_type = get_type(object.identifier, identifiers);
             let object_name = get_name(names, object.identifier);
-            unifier.unify(
+            unifier.unify_property(
                 dummy,
-                Type::Property {
-                    object_type: Box::new(object_type),
-                    object_name,
-                    property_name: PropertyNameKind::Literal {
-                        value: property.clone(),
-                    },
-                },
+                &object_type,
+                object_name,
+                PropertyName::Literal(property),
                 shapes,
             )?;
         }
@@ -1142,6 +1127,49 @@ impl Unifier {
         self.unify_impl(t_a, t_b, shapes)
     }
 
+    /// `unify` with a `Type::Property`.
+    fn unify_property(
+        &mut self,
+        t_a: Type,
+        object_type: &Type,
+        object_name: StoreStr,
+        property_name: PropertyName,
+        shapes: &ShapeRegistry,
+    ) -> Result<(), CompilerDiagnostic> {
+        // Check enableTreatRefLikeIdentifiersAsRefs
+        if self.enable_treat_ref_like_identifiers_as_refs
+            && is_ref_like_name(object_name.slice(), property_name)
+        {
+            self.unify_impl(
+                object_type.clone(),
+                Type::Object {
+                    shape_id: Some(BUILT_IN_USE_REF_ID),
+                },
+                shapes,
+            )?;
+            self.unify_impl(
+                t_a,
+                Type::Object {
+                    shape_id: Some(BUILT_IN_REF_VALUE_ID),
+                },
+                shapes,
+            )?;
+            return Ok(());
+        }
+
+        // Resolve property type via the shapes registry
+        let property_type = resolve_property_type(
+            shapes,
+            self.get_outermost(object_type),
+            property_name,
+            self.custom_hook_type.as_ref(),
+        );
+        if let Some(property_type) = property_type {
+            self.unify_impl(t_a, property_type, shapes)?;
+        }
+        Ok(())
+    }
+
     fn unify_impl(
         &mut self,
         t_a: Type,
@@ -1151,42 +1179,17 @@ impl Unifier {
         // Handle Property in the RHS position
         if let Type::Property {
             ref object_type,
-            ref object_name,
+            object_name,
             ref property_name,
         } = t_b
         {
-            // Check enableTreatRefLikeIdentifiersAsRefs
-            if self.enable_treat_ref_like_identifiers_as_refs
-                && is_ref_like_name(object_name.slice(), property_name)
-            {
-                self.unify_impl(
-                    *object_type.clone(),
-                    Type::Object {
-                        shape_id: Some(BUILT_IN_USE_REF_ID),
-                    },
-                    shapes,
-                )?;
-                self.unify_impl(
-                    t_a,
-                    Type::Object {
-                        shape_id: Some(BUILT_IN_REF_VALUE_ID),
-                    },
-                    shapes,
-                )?;
-                return Ok(());
-            }
-
-            // Resolve property type via the shapes registry
-            let property_type = resolve_property_type(
+            return self.unify_property(
+                t_a,
+                object_type,
+                object_name,
+                property_name.into(),
                 shapes,
-                self.get_outermost(object_type),
-                property_name,
-                self.custom_hook_type.as_ref(),
             );
-            if let Some(property_type) = property_type {
-                self.unify_impl(t_a, property_type, shapes)?;
-            }
-            return Ok(());
         }
 
         if type_equals(&t_a, &t_b) {

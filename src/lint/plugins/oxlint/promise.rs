@@ -15,7 +15,9 @@ pub(crate) const PROMISE_STATIC_METHODS: [&str; 8] = [
 ];
 
 /// The calls for which [`is_promise`] can hold.
-pub(crate) const PROMISE_CALLS: On = On::new().method_calls(&["then", "catch", "finally"]).method_calls(&PROMISE_STATIC_METHODS);
+pub(crate) const PROMISE_CALLS: On = On::new()
+    .method_calls(&["then", "catch", "finally"])
+    .method_calls(&PROMISE_STATIC_METHODS);
 
 /// The name of the method, if `hello.then()`, `hello.catch()`, `hello.finally()` or a static method of `Promise` is called.
 pub(crate) fn is_promise(call_expr: Call<'_>) -> Option<Name<'_>> {
@@ -23,7 +25,9 @@ pub(crate) fn is_promise(call_expr: Call<'_>) -> Option<Name<'_>> {
     let prop_name = static_property_name(member_expr)?;
     let name = prop_name.bytes();
     let is_promise = matches!(name, b"then" | b"catch" | b"finally")
-        || PROMISE_STATIC_METHODS.iter().any(|it| it.as_bytes() == name)
+        || PROMISE_STATIC_METHODS
+            .iter()
+            .any(|it| it.as_bytes() == name)
             && get_inner_expression(member_expr.object()?).is_ident("Promise");
     is_promise.then_some(prop_name)
 }

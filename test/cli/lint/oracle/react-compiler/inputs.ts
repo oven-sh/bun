@@ -226,6 +226,20 @@ const order = `export default function Component(props) {
 }
 `;
 
+/** oxc's compiler leaves each effect where it is. Upstream's puts the first write to a captured variable for the later ones. */
+const writes = `export default function Component(props) {
+  let a = props.a;
+  const read = () => a;
+  const element = <div onClick={read}>{props.b}</div>;
+  a = 1;
+  if (props.c) {
+    a = [a, 2];
+  }
+  a = 3;
+  return element;
+}
+`;
+
 /** A ref is read in render at the top, and then there are `n` of one thing. */
 export const long = (n: number, unit: (k: number) => string, result: (units: string) => [body: string, returns: string]) => {
   const [body, returns] = result(Array.from({ length: n }, (_, k) => unit(k)).join("\n"));
@@ -437,6 +451,7 @@ function Component(props) {
     ),
   },
   order: { ".oxlintrc.json": rc(), "order.jsx": order },
+  writes: { ".oxlintrc.json": rc(), "writes.jsx": writes },
   lowering: { ".oxlintrc.json": rc(), "forever.tsx": forever, "defaults.tsx": defaults },
   node_modules: {
     ".oxlintrc.json": rc(),
@@ -518,6 +533,7 @@ ${["a", "b", "c", "d", "e", "f", "g", "h", "i"].map(name => `    value += props.
 `,
   "casts.tsx": casts,
   "defaults.tsx": defaults,
+  "writes.jsx": writes,
   "disabled.jsx": readsRef("// eslint-disable-next-line react-hooks/refs"),
   "flow-hook.jsx": readsRef("// $FlowFixMe[react-rule-hook]"),
   "flow-ref.jsx": readsRef("// $FlowFixMe[react-rule-unsafe-ref]"),

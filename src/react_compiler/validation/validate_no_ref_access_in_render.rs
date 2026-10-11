@@ -1,6 +1,9 @@
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use crate::collections::{FxHashSet as HashSet, IdMap};
+use smallvec::SmallVec;
+
+use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet, IdMap};
 
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, ErrorCategory, SourceLocation,
@@ -60,26 +63,11 @@ enum RefAccessType {
 }
 
 impl PartialEq for RefAccessType {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (RefAccessType::None, RefAccessType::None) => true,
-            (RefAccessType::Nullable, RefAccessType::Nullable) => true,
-            (RefAccessType::Guard { ref_id: a }, RefAccessType::Guard { ref_id: b }) => a == b,
-            (RefAccessType::Ref { .. }, RefAccessType::Ref { .. }) => true,
-            (RefAccessType::RefValue { loc: a, .. }, RefAccessType::RefValue { loc: b, .. }) => {
-                a == b
-            }
-            (
-                RefAccessType::Structure {
-                    value: a_val,
-                    fn_type: a_fn,
-                },
-                RefAccessType::Structure {
-                    value: b_val,
-                    fn_type: b_fn,
-                },
-            ) => a_val == b_val && a_fn == b_fn,
-            _ => false,
+        match (self.view(), other.view()) {
+            (a @ View::Structure(..), b @ View::Structure(..)) => are_equal(a, b),
+            (a, b) => are_equal_leaves(a, b),
         }
     }
 }
@@ -107,34 +95,202 @@ enum RefAccessRefType {
 }
 
 impl PartialEq for RefAccessRefType {
+    #[inline]
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (RefAccessRefType::Ref { .. }, RefAccessRefType::Ref { .. }) => true,
-            (
-                RefAccessRefType::RefValue { loc: a, .. },
-                RefAccessRefType::RefValue { loc: b, .. },
-            ) => a == b,
-            (
-                RefAccessRefType::Structure {
-                    value: a_val,
-                    fn_type: a_fn,
-                },
-                RefAccessRefType::Structure {
-                    value: b_val,
-                    fn_type: b_fn,
-                },
-            ) => a_val == b_val && a_fn == b_fn,
-            _ => false,
+        match (self.view(), other.view()) {
+            (a @ View::Structure(..), b @ View::Structure(..)) => are_equal(a, b),
+            (a, b) => are_equal_leaves(a, b),
         }
     }
 }
 
 impl Eq for RefAccessRefType {}
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 struct RefFnType {
     read_ref_effect: bool,
     return_type: Rc<RefAccessType>,
+}
+
+/// Either of the two types.
+#[derive(Clone, Copy)]
+enum View<'a> {
+    None,
+    Nullable,
+    Guard(RefId),
+    Ref(RefId),
+    RefValue(&'a Option<SourceLocation>, Option<RefId>),
+    Structure(&'a Option<Rc<RefAccessRefType>>, &'a Option<RefFnType>),
+}
+
+trait Viewed {
+    fn view(&self) -> View<'_>;
+}
+
+impl Viewed for RefAccessType {
+    #[inline]
+    fn view(&self) -> View<'_> {
+        match self {
+            RefAccessType::None => View::None,
+            RefAccessType::Nullable => View::Nullable,
+            RefAccessType::Guard { ref_id } => View::Guard(*ref_id),
+            RefAccessType::Ref { ref_id } => View::Ref(*ref_id),
+            RefAccessType::RefValue { loc, ref_id } => View::RefValue(loc, *ref_id),
+            RefAccessType::Structure { value, fn_type } => View::Structure(value, fn_type),
+        }
+    }
+}
+
+impl Viewed for RefAccessRefType {
+    #[inline]
+    fn view(&self) -> View<'_> {
+        match self {
+            RefAccessRefType::Ref { ref_id } => View::Ref(*ref_id),
+            RefAccessRefType::RefValue { loc, ref_id } => View::RefValue(loc, *ref_id),
+            RefAccessRefType::Structure { value, fn_type } => View::Structure(value, fn_type),
+        }
+    }
+}
+
+// Statements in a row nest these types, a level a statement (`o1 = {a: o0}`), and nothing asks the stack
+// meanwhile. So what goes through one goes level by level, and does not call itself.
+
+/// TS `tyEqual`, where not both are a `Structure`.
+#[inline]
+fn are_equal_leaves(a: View<'_>, b: View<'_>) -> bool {
+    match (a, b) {
+        (View::None, View::None)
+        | (View::Nullable, View::Nullable)
+        | (View::Ref(_), View::Ref(_)) => true,
+        (View::Guard(a), View::Guard(b)) => a == b,
+        (View::RefValue(a, _), View::RefValue(b, _)) => a == b,
+        _ => false,
+    }
+}
+
+/// TS `tyEqual`
+fn are_equal<'a>(mut a: View<'a>, mut b: View<'a>) -> bool {
+    let mut others: SmallVec<[(View<'a>, View<'a>); 2]> = SmallVec::new();
+    loop {
+        match (a, b) {
+            (View::Structure(a_value, a_fn), View::Structure(b_value, b_fn)) => {
+                match (a_value, b_value) {
+                    (None, None) => {}
+                    (Some(a), Some(b)) if Rc::ptr_eq(a, b) => {}
+                    (Some(a), Some(b)) => others.push((a.view(), b.view())),
+                    _ => return false,
+                }
+                match (a_fn, b_fn) {
+                    (None, None) => {}
+                    (Some(a), Some(b)) if a.read_ref_effect != b.read_ref_effect => return false,
+                    (Some(a), Some(b)) if Rc::ptr_eq(&a.return_type, &b.return_type) => {}
+                    (Some(a), Some(b)) => others.push((a.return_type.view(), b.return_type.view())),
+                    _ => return false,
+                }
+            }
+            _ if are_equal_leaves(a, b) => {}
+            _ => return false,
+        }
+        match others.pop() {
+            Some(next) => (a, b) = next,
+            None => return true,
+        }
+    }
+}
+
+/// The one can stand for the other: the ids are the same too, and what they hold is shared.
+fn is_the_same(a: View<'_>, b: View<'_>) -> bool {
+    match (a, b) {
+        (View::None, View::None) | (View::Nullable, View::Nullable) => true,
+        (View::Guard(a), View::Guard(b)) | (View::Ref(a), View::Ref(b)) => a == b,
+        (View::RefValue(a_loc, a), View::RefValue(b_loc, b)) => a_loc == b_loc && a == b,
+        (View::Structure(a_value, a_fn), View::Structure(b_value, b_fn)) => {
+            let is_same_value = match (a_value, b_value) {
+                (None, None) => true,
+                (Some(a), Some(b)) => Rc::ptr_eq(a, b),
+                _ => false,
+            };
+            is_same_value
+                && match (a_fn, b_fn) {
+                    (None, None) => true,
+                    (Some(a), Some(b)) => {
+                        a.read_ref_effect == b.read_ref_effect
+                            && Rc::ptr_eq(&a.return_type, &b.return_type)
+                    }
+                    _ => false,
+                }
+        }
+        _ => false,
+    }
+}
+
+/// `joined`, which comes from `a` and `b`, behind a pointer: theirs, if it came out as one of them. Then the next
+/// join with it, and `==`, see that by the pointer and do not go down.
+fn kept<T: Viewed>(joined: T, a: &Rc<T>, b: &Rc<T>) -> Rc<T> {
+    if is_the_same(joined.view(), b.view()) {
+        Rc::clone(b)
+    } else if is_the_same(joined.view(), a.view()) {
+        Rc::clone(a)
+    } else {
+        Rc::new(joined)
+    }
+}
+
+enum Held {
+    Value(Rc<RefAccessRefType>),
+    Returned(Rc<RefAccessType>),
+}
+
+/// Whether to drop it is to drop something that holds something in its turn.
+fn is_last_of_more<T: Viewed>(it: &Rc<T>) -> bool {
+    Rc::strong_count(it) == 1
+        && matches!(it.view(), View::Structure(value, fn_type) if value.is_some() || fn_type.is_some())
+}
+
+/// Drops what a `Structure` holds.
+fn dismantle(value: &mut Option<Rc<RefAccessRefType>>, fn_type: &mut Option<RefFnType>) {
+    let is_deep = value.as_ref().is_some_and(is_last_of_more)
+        || (fn_type.as_ref()).is_some_and(|it| is_last_of_more(&it.return_type));
+    if !is_deep {
+        return;
+    }
+    let mut held: SmallVec<[Held; 4]> = SmallVec::new();
+    let mut take = |value: &mut Option<Rc<RefAccessRefType>>, fn_type: &mut Option<RefFnType>| {
+        held.extend(value.take().map(Held::Value));
+        held.extend(fn_type.take().map(|it| Held::Returned(it.return_type)));
+        held.pop()
+    };
+    let mut next = take(value, fn_type);
+    while let Some(it) = next {
+        next = match it {
+            Held::Value(it) => match Rc::into_inner(it).as_mut() {
+                Some(RefAccessRefType::Structure { value, fn_type }) => take(value, fn_type),
+                _ => take(&mut None, &mut None),
+            },
+            Held::Returned(it) => match Rc::into_inner(it).as_mut() {
+                Some(RefAccessType::Structure { value, fn_type }) => take(value, fn_type),
+                _ => take(&mut None, &mut None),
+            },
+        };
+    }
+}
+
+impl Drop for RefAccessType {
+    #[inline]
+    fn drop(&mut self) {
+        if let RefAccessType::Structure { value, fn_type } = self {
+            dismantle(value, fn_type);
+        }
+    }
+}
+
+impl Drop for RefAccessRefType {
+    #[inline]
+    fn drop(&mut self) {
+        if let RefAccessRefType::Structure { value, fn_type } = self {
+            dismantle(value, fn_type);
+        }
+    }
 }
 
 impl RefAccessType {
@@ -172,11 +328,18 @@ impl RefAccessType {
 
 // --- Join operations ---
 
+/// What was joined, by the addresses of the two, which are held so that the addresses stay theirs.
+type Joined<T> = RefCell<HashMap<[*const T; 2], ([Rc<T>; 2], Rc<T>)>>;
+
 struct Joins {
     /// `EnvironmentConfig::joined_ref_values_keep_their_place`
     keeps_place: bool,
     stack: bun_core::StackCheck,
-    is_out_of_stack: std::cell::Cell<bool>,
+    is_out_of_stack: Cell<bool>,
+    /// How many ids the joins have made.
+    new_ids: Cell<u32>,
+    values: Joined<RefAccessRefType>,
+    returned: Joined<RefAccessType>,
 }
 
 impl Joins {
@@ -186,6 +349,33 @@ impl Joins {
             self.is_out_of_stack.set(true);
         }
         !self.is_out_of_stack.get()
+    }
+
+    fn next_ref_id(&self) -> RefId {
+        self.new_ids.set(self.new_ids.get().wrapping_add(1));
+        next_ref_id()
+    }
+
+    /// `join(a, b)` behind a pointer. What types hold is shared, so that the same two meet again and again on the way
+    /// down: they are joined once. Not where that makes an id: each time it is another.
+    fn once<T: Viewed>(
+        &self,
+        joined: &Joined<T>,
+        a: &Rc<T>,
+        b: &Rc<T>,
+        join: impl FnOnce() -> T,
+    ) -> Rc<T> {
+        let key = [Rc::as_ptr(a), Rc::as_ptr(b)];
+        if let Some((_, known)) = joined.borrow().get(&key) {
+            return Rc::clone(known);
+        }
+        let new_ids = self.new_ids.get();
+        let it = kept(join(), a, b);
+        if new_ids == self.new_ids.get() && self.has_stack() {
+            let of = [Rc::clone(a), Rc::clone(b)];
+            joined.borrow_mut().insert(key, (of, Rc::clone(&it)));
+        }
+        it
     }
 }
 
@@ -227,13 +417,13 @@ fn join_ref_access_ref_types(
                 a.clone()
             } else {
                 RefAccessRefType::Ref {
-                    ref_id: next_ref_id(),
+                    ref_id: joins.next_ref_id(),
                 }
             }
         }
         (RefAccessRefType::Ref { .. }, _) | (_, RefAccessRefType::Ref { .. }) => {
             RefAccessRefType::Ref {
-                ref_id: next_ref_id(),
+                ref_id: joins.next_ref_id(),
             }
         }
         (
@@ -253,20 +443,17 @@ fn join_ref_access_ref_types(
                     return_type: if Rc::ptr_eq(&a_fn.return_type, &b_fn.return_type) {
                         Rc::clone(&a_fn.return_type)
                     } else {
-                        Rc::new(join_ref_access_types(
-                            &a_fn.return_type,
-                            &b_fn.return_type,
-                            joins,
-                        ))
+                        let (a, b) = (&a_fn.return_type, &b_fn.return_type);
+                        joins.once(&joins.returned, a, b, || join_ref_access_types(a, b, joins))
                     },
                 }),
             };
             let value = match (a_value, b_value) {
                 (None, other) | (other, None) => other.clone(),
                 (Some(a_val), Some(b_val)) if Rc::ptr_eq(a_val, b_val) => Some(Rc::clone(a_val)),
-                (Some(a_val), Some(b_val)) => {
-                    Some(Rc::new(join_ref_access_ref_types(a_val, b_val, joins)))
-                }
+                (Some(a), Some(b)) => Some(joins.once(&joins.values, a, b, || {
+                    join_ref_access_ref_types(a, b, joins)
+                })),
             };
             RefAccessRefType::Structure { value, fn_type }
         }
@@ -322,7 +509,10 @@ impl Env {
             joins: Joins {
                 keeps_place,
                 stack,
-                is_out_of_stack: std::cell::Cell::new(false),
+                is_out_of_stack: Cell::new(false),
+                new_ids: Cell::new(0),
+                values: Joined::default(),
+                returned: Joined::default(),
             },
             looks_into_functions,
             changed: false,
@@ -400,14 +590,20 @@ fn is_ref_value_type(id: IdentifierId, identifiers: &[Identifier], types: &[Type
 }
 
 fn destructure(ty: &RefAccessType) -> RefAccessType {
-    let mut ty = ty.clone();
-    while let RefAccessType::Structure {
+    let RefAccessType::Structure {
         value: Some(inner), ..
-    } = &ty
+    } = ty
+    else {
+        return ty.clone();
+    };
+    let mut inner: &RefAccessRefType = inner;
+    while let RefAccessRefType::Structure {
+        value: Some(next), ..
+    } = inner
     {
-        ty = RefAccessType::from_ref_type(inner);
+        inner = next;
     }
-    ty
+    RefAccessType::from_ref_type(inner)
 }
 
 // --- Validation helpers ---

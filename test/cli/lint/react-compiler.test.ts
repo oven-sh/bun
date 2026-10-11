@@ -46,6 +46,7 @@ async function lint(files: Files, args: string[], more: Record<string, string> =
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return {
     raw: stdout,
+    peak: proc.resourceUsage()!.maxRSS,
     stdout: normalizeBunSnapshot(stdout, String(dir)),
     stderr,
     exitCode,
@@ -55,16 +56,20 @@ async function lint(files: Files, args: string[], more: Record<string, string> =
 
 /** What expected.json has for a directory. The order in a file is left out: oxlint's is by rule, ours is by position. */
 async function report(files: Files) {
-  const { raw, stderr, exitCode } = await lint(files, ["-f", "json"]);
+  const { raw, stderr, exitCode, peak } = await lint(files, ["-f", "json"]);
   if (!raw.startsWith("{")) throw new Error(`No report (exit ${exitCode}): ${stderr}`);
   const { diagnostics, number_of_files } = JSON.parse(raw);
-  return { diagnostics: byFile({ diagnostics }), files: number_of_files, exit: exitCode };
+  return { diagnostics: byFile({ diagnostics }), files: number_of_files, exit: exitCode, peak };
 }
 
 const rulesIn = (diagnostics: Record<string, unknown[]>) =>
   [...new Set(Object.values(diagnostics).flatMap(found => found.map(it => (it as { code: string }).code)))].sort();
 
 const slow = isDebug || isASAN ? 120_000 : undefined;
+
+type Found = { code: string; labels: { span: { line: number; column: number } }[] };
+const placesOf = (found: unknown[]) =>
+  (found as Found[]).map(it => [it.code, it.labels[0].span.line, it.labels[0].span.column]).sort();
 
 describe.concurrent(`bun lint: the rules of the React Compiler report what oxlint ${expected.oxlint} reports`, () => {
   test(
@@ -188,6 +193,17 @@ describe.concurrent(`bun lint: the rules of the React Compiler report what oxlin
     expect(exit).toBe(1);
   });
 
+  test("each write to a captured variable is reported where it is", async () => {
+    const { diagnostics, exit } = await report(small.writes);
+    expect(diagnostics).toEqual(expected.reports.writes.diagnostics);
+    expect(placesOf(diagnostics["writes.jsx"])).toEqual([
+      ["react(immutability)", 5, 3],
+      ["react(immutability)", 7, 5],
+      ["react(immutability)", 9, 3],
+    ]);
+    expect(exit).toBe(1);
+  });
+
   test(
     "a long component is compiled",
     async () => {
@@ -239,6 +255,61 @@ describe.concurrent(`bun lint: the rules of the React Compiler report what oxlin
     },
     slow,
   );
+
+  // oxlint does not end in a minute on this one.
+  test(
+    "a small function whose refs' types are made of each other takes no time and no memory to speak of",
+    async () => {
+      const { diagnostics, exit, peak } = await report({
+        ".oxlintrc.json": rc(),
+        "refs.jsx": `function Component(props) { let a, b, c, d, e; a += (([props.x, c] || props.x) ? ({k: props.x} ?? \`\${props.x}-\${props.x}\`) : d.p?.q); e = ((() => (d.p?.q)) ? [<b x={b}>{c}</b>, f(b)] : ((e ? a : c) < e)); if (([(null || props.x), {k: c, [props.x]: d}] || c)) { for (let i7 = 0; i7 < f(null); i7++) { while (c.m(d)) { const n8 = {}; n8.p = ((null ?? 2) || d); f(n8); for (let i9 = 0; i9 < (props.x === c); i9++) { if (2) { b = [a, f(0)]; b -= ((() => ((b ? props.x : d))) ? null : \`\${(a - d)}-\${d}\`); b = [props.x, ([props.x, props.y] ? \`\${null}-\${props.y}\` : (null || props.x))]; } } f(d, a); a = [a, c]; c = [a, c]; c = {k: c, j: a}; { const s = (props.y ? (null + b) : {k: 1}); f(s); { const s = a; f(() => s); } } } } } else { if ((props.x ? [(props.x + e), c] : ({k: c} && (c ? c : props.y)))) { for (const z2 of props.l) { switch (3) { case 0: {  } case 1: { if ((e?.p.q && props.x)) { f(b, d); e = (() => ((c?.p === (c < null)))); } else {  } e = null; l1: { b = (f((props.x ? c : a)) === (c - c.p.q)); f(e, props.x); b = b + 1; f(d, props.x); } } break; default: {  } } f(e); e = \`\${\`\${null}-\${a}\`}-\${c}\`; } f(e); [d = 6, a = 4] = props.l; } a = c?.p?.[0]; if (1) { for (let z6 = 0; z6 < 3; z6++) { if (((d < 4) ? (props.y - props.x) : [e, props.y])) { do { e = ((() => ((null === a))) === f(a)); } while (props.x); try { f(e); a = a; const t3 = [([props.y, null] || a), ((props.y || null) ? {k: c} : {k: null})]; f(t3); f(e, 2); f(e); } catch (err) { d = e; d = f(a); f(c, props.x); e = (((a - null) + props.x) < ([d, props.y] ?? (props.y - props.y))); } a = {k: b}; f(d, a); if (null) { a = []; } d = {k: d, j: a}; } else if ((props.x ? {k: a} : null)) { if (c) { d = d; d = (() => (b)); } } else { while ({k: {k: f(d)}}) {  } } f(c); c = (() => ({k: c})); } f(c); e = d + 1; } e = props.y; } if (props.o.m((() => (props.o.m(e))))) { const o12 = { m() { return ((() => (d)) + null); }, n: () => (a.p?.q), k: props.x }; f(o12.m(), o12.n()); } c = (<b x={(b ? e : null)}>{[props.y, b]}</b> ? f((c === a)) : props.x); return <C a={a} b={b} {...e}>{c}{d}</C>; }`,
+      });
+      // Upstream's own, after ten rounds: "Ref type environment did not converge".
+      expect(rulesIn(diagnostics)).toEqual(["react(invariant)"]);
+      expect(peak).toBeLessThan((isDebug || isASAN ? 1500 : 300) * 1024 * 1024);
+      expect(exit).toBe(1);
+    },
+    slow,
+  );
+
+  // oxlint 1.87.0 finds nothing either up to 1,000 of them, in 16 s, and does not end in a minute at 3,000.
+  test(
+    "objects that each hold the one before, and the first a ref, take memory in proportion",
+    async () => {
+      const n = isDebug || isASAN ? 2000 : 10000;
+      const chain = Array.from({ length: n }, (_, k) => `  const o${k + 1} = { a: o${k} };`).join("\n");
+      const { diagnostics, exit, peak } = await report({
+        ".oxlintrc.json": rc(),
+        "chain.jsx": `import { useRef } from "react";
+
+export function Chain(props) {
+  const ref = useRef(0);
+  const o0 = { a: ref };
+${chain}
+  return <div data-x={o${n}}>{props.a}</div>;
+}
+`,
+      });
+      expect(diagnostics).toEqual({});
+      expect(peak).toBeLessThan((isDebug || isASAN ? 1500 : 600) * 1024 * 1024);
+      expect(exit).toBe(0);
+    },
+    slow,
+  );
+
+  // The threads of `bun lint` have more stack than a thread usually has. That is for what cannot ask how much is left.
+  test.skipIf(isDebug || isASAN)("what is nested 2,000 deep is left alone", async () => {
+    const { diagnostics, exit } = await report({
+      ".oxlintrc.json": rc(),
+      "deep.tsx": long(
+        1,
+        () => "if (props.a) {".repeat(2000) + "f(bad);" + "}".repeat(2000),
+        units => [units, "<div>{bad}</div>"],
+      ),
+    });
+    expect(placesOf(diagnostics["deep.tsx"])).toEqual([["react(todo)", 3, 17]]);
+    expect(exit).toBe(1);
+  });
 
   test("a try in which nothing but a read that nobody uses can throw does not end the process", async () => {
     const { files, exit } = await report({
@@ -376,6 +447,8 @@ describe.concurrent(
             `react-hooks/hooks ${place} Error: Hooks may not be referenced as normal values, they must be called. See https://react.dev/reference/rules/react-calls-components-and-hooks#never-pass-around-hooks-as-regular-values`,
         ),
         "disabled.jsx": [],
+        // All at the first.
+        "writes.jsx": Array(3).fill("react-hooks/immutability 5:3-5:4 Error: This value cannot be modified"),
         "flow-other.jsx": ["react-hooks/refs 4:17-4:28 Error: Cannot access refs during render"],
         "javascript.jsx": ["react-hooks/memo-dependencies 2:40-2:41 Error: Found extra memoization dependencies"],
         "long.jsx": [

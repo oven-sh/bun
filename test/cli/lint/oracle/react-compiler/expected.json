@@ -3425,6 +3425,95 @@
     ]
    }
   },
+  "writes": {
+   "exit": 1,
+   "files": 1,
+   "diagnostics": {
+    "writes.jsx": [
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value used previously in JSX is not allowed. Consider moving the modification before the JSX",
+      "labels": [
+       {
+        "label": "`a` cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 1,
+         "line": 5,
+         "offset": 143
+        }
+       },
+       {
+        "label": "`a` originates here",
+        "span": {
+         "column": 7,
+         "length": 1,
+         "line": 2,
+         "offset": 49
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value used previously in JSX is not allowed. Consider moving the modification before the JSX",
+      "labels": [
+       {
+        "label": "`a` cannot be modified",
+        "span": {
+         "column": 3,
+         "length": 1,
+         "line": 9,
+         "offset": 189
+        }
+       },
+       {
+        "label": "`a` originates here",
+        "span": {
+         "column": 7,
+         "length": 1,
+         "line": 2,
+         "offset": 49
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     },
+     {
+      "code": "react(immutability)",
+      "help": "Modifying a value used previously in JSX is not allowed. Consider moving the modification before the JSX",
+      "labels": [
+       {
+        "label": "`a` cannot be modified",
+        "span": {
+         "column": 5,
+         "length": 1,
+         "line": 7,
+         "offset": 171
+        }
+       },
+       {
+        "label": "`a` originates here",
+        "span": {
+         "column": 7,
+         "length": 1,
+         "line": 2,
+         "offset": 49
+        }
+       }
+      ],
+      "message": "This value cannot be modified",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/immutability",
+      "severity": "error"
+     }
+    ]
+   }
+  },
   "lowering": {
    "exit": 1,
    "files": 2,
@@ -4235,6 +4324,41 @@
         "text": "[a]"
        }
       ]
+     }
+    ],
+    "suppressed": []
+   },
+   "writes.jsx": {
+    "messages": [
+     {
+      "ruleId": "react-hooks/immutability",
+      "severity": 2,
+      "message": "Error: This value cannot be modified\n\nModifying a value used previously in JSX is not allowed. Consider moving the modification before the JSX.\n\n  3 |   const read = () => a;\n  4 |   const element = <div onClick={read}>{props.b}</div>;\n> 5 |   a = 1;\n    |   ^ `a` cannot be modified\n  6 |   if (props.c) {\n  7 |     a = [a, 2];\n  8 |   }",
+      "line": 5,
+      "column": 3,
+      "endLine": 5,
+      "endColumn": 4,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/immutability",
+      "severity": 2,
+      "message": "Error: This value cannot be modified\n\nModifying a value used previously in JSX is not allowed. Consider moving the modification before the JSX.\n\n  3 |   const read = () => a;\n  4 |   const element = <div onClick={read}>{props.b}</div>;\n> 5 |   a = 1;\n    |   ^ `a` cannot be modified\n  6 |   if (props.c) {\n  7 |     a = [a, 2];\n  8 |   }",
+      "line": 5,
+      "column": 3,
+      "endLine": 5,
+      "endColumn": 4,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/immutability",
+      "severity": 2,
+      "message": "Error: This value cannot be modified\n\nModifying a value used previously in JSX is not allowed. Consider moving the modification before the JSX.\n\n  3 |   const read = () => a;\n  4 |   const element = <div onClick={read}>{props.b}</div>;\n> 5 |   a = 1;\n    |   ^ `a` cannot be modified\n  6 |   if (props.c) {\n  7 |     a = [a, 2];\n  8 |   }",
+      "line": 5,
+      "column": 3,
+      "endLine": 5,
+      "endColumn": 4,
+      "suggestions": []
      }
     ],
     "suppressed": []

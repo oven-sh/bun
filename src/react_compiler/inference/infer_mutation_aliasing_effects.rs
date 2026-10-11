@@ -161,7 +161,7 @@ pub(crate) fn infer_mutation_aliasing_effects(
     let non_mutating_spreads = find_non_mutated_destructure_spreads(func, env);
 
     let mut context = Context {
-        interned_effects: HashMap::default(),
+        interned_effects: (!env.config.effects_keep_their_place).then(HashMap::default),
         instruction_signature_cache: HashMap::default(),
         catch_handlers: HashMap::default(),
         is_function_expression,
@@ -864,7 +864,8 @@ enum MutationResult {
 // =============================================================================
 
 struct Context {
-    interned_effects: HashMap<u64, AliasingEffect>,
+    /// `None`: `EnvironmentConfig::effects_keep_their_place`
+    interned_effects: Option<HashMap<u64, AliasingEffect>>,
     instruction_signature_cache: HashMap<u32, InstructionSignature>,
     catch_handlers: HashMap<BlockId, Place>,
     is_function_expression: bool,
@@ -891,8 +892,11 @@ struct Context {
 
 impl Context {
     fn intern_effect(&mut self, effect: AliasingEffect) -> AliasingEffect {
+        let Some(interned_effects) = &mut self.interned_effects else {
+            return effect;
+        };
         let hash = hash_effect(&effect);
-        self.interned_effects.entry(hash).or_insert(effect).clone()
+        interned_effects.entry(hash).or_insert(effect).clone()
     }
 
     fn new_value_id(&mut self) -> ValueId {

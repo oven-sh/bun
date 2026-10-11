@@ -19,20 +19,18 @@ enum TypeOptions {
 
 impl Rule for PreferNegativeIndex {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-negative-index", Kind::Suggestion).fixable(Fixable::Code);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
-    /// What can be called, of what the file mentions.
-    type State<'a> = SmallVec<[Name<'a>; 7]>;
+    const ON: On = On::new().method_calls(&["slice", "at", "splice", "subarray", "toSpliced", "call", "apply"]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         PreferNegativeIndex
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        if !file.mentions("length") || !file.mentions_any(&["slice", "at", "splice", "subarray", "toSpliced"]) {
-            return None;
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        match file.mentions("length") && file.mentions_any(&["slice", "at", "splice", "subarray", "toSpliced"]) {
+            true => Self::ON,
+            false => On::new(),
         }
-        let methods = ["slice", "at", "splice", "subarray", "toSpliced", "call", "apply"].into_iter();
-        Some(methods.filter_map(|it| file.find_name(it)).collect())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -44,13 +42,6 @@ fn check<'a>(_: &PreferNegativeIndex, e: Expr<'a>, cx: &mut Cx<'a, PreferNegativ
     let Some(call_expr) = e.as_call().filter(|it| !it.args().is_empty()) else {
         return;
     };
-    let is_candidate = match call_expr.callee().member_name() {
-        Some(method) => cx.state.contains(&method.name()),
-        None => call_expr.callee().tag() == ExprTag::Index,
-    };
-    if !is_candidate {
-        return;
-    }
     let Some((callee, callee_object_expr)) =
         as_member_expression(call_expr.callee()).and_then(|it| Some((it, it.object()?)))
     else {

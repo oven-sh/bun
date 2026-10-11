@@ -35,7 +35,7 @@ fn is_length_member_for<'a>(index: Expr<'a>, object: Expr<'a>) -> bool {
 
 impl Rule for NoConfusingArrayWith {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-confusing-array-with", Kind::Problem);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["with"]);
     /// `with`
     type State<'a> = Name<'a>;
 

@@ -1036,38 +1036,44 @@ pub(crate) fn parse_expect_and_typeof_vitest_fn_call<'a>(
 /// The names of a chain: `expect` and `toBe` of `expect(foo).toBe(bar)`, `Foo` and `bar` of `new Foo().bar`.
 pub(crate) fn get_node_name_vec(expr: Expr<'_>) -> SmallVec<[&[u8]; 4]> {
     let mut chain = SmallVec::new();
+    for_each_node_name_from_the_last(expr, |name| chain.push(name.bytes()));
+    chain.reverse();
+    chain
+}
+
+/// The first of [`get_node_name_vec`].
+pub(crate) fn get_first_node_name(expr: Expr<'_>) -> Option<Name<'_>> {
+    let mut first = None;
+    for_each_node_name_from_the_last(expr, |name| first = Some(name));
+    first
+}
+
+fn for_each_node_name_from_the_last<'a>(expr: Expr<'a>, mut visit: impl FnMut(Name<'a>)) {
     let mut at = expr;
-    loop {
-        if at.is_parenthesized() || at.is_chain_root() {
-            break;
-        }
+    while !at.is_parenthesized() && !at.is_chain_root() {
         at = match at.kind() {
-            ExprKind::Ident(name) | ExprKind::String(name) => {
-                chain.push(name.bytes());
-                break;
-            }
+            ExprKind::Ident(name) | ExprKind::String(name) => return visit(name),
             ExprKind::Template(template) => {
-                chain.extend(template.as_static().map(Name::bytes));
-                break;
+                return template.as_static().into_iter().for_each(visit);
             }
             ExprKind::TaggedTemplate(call) | ExprKind::Call(call) | ExprKind::New(call) => {
                 call.callee()
             }
             ExprKind::Dot { obj, name, .. } => {
                 if !at.is_private_member() {
-                    chain.push(name.bytes());
+                    visit(name.name());
                 }
                 obj
             }
             ExprKind::Index { obj, .. } => {
-                chain.extend(static_property_info(at).map(|it| it.1.bytes()));
+                if let Some((_, name)) = static_property_info(at) {
+                    visit(name);
+                }
                 obj
             }
-            _ => break,
+            _ => return,
         };
     }
-    chain.reverse();
-    chain
 }
 
 /// [`get_node_name_vec`] with dots.

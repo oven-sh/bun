@@ -23,7 +23,7 @@ pub struct State<'a> {
 impl Rule for NoUselessPromiseResolveReject {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "no-useless-promise-resolve-reject", Kind::Suggestion).fixable(Fixable::Code);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["resolve", "reject"]);
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {

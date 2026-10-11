@@ -44,7 +44,7 @@ fn is_simple_operation(callback: Expr) -> bool {
 
 impl Rule for NoArrayReduce {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-array-reduce", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["reduce", "reduceRight", "call", "apply"]);
     /// `reduce`, `reduceRight`, `call`, `apply`
     type State<'a> = [Name<'a>; 4];
 

@@ -3,7 +3,6 @@ use bun_lint_oxlint::ast_util::{
 };
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
-use smallvec::SmallVec;
 
 /// Disallow passing single-element arrays to `Promise` methods.
 pub struct NoSinglePromiseInPromiseMethods;
@@ -16,34 +15,22 @@ const METHODS: [&str; 3] = ["all", "any", "race"];
 impl Rule for NoSinglePromiseInPromiseMethods {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "no-single-promise-in-promise-methods", Kind::Problem).fixable(Fixable::Code);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
-    /// Those of `METHODS` that the file mentions.
-    type State<'a> = SmallVec<[Name<'a>; 3]>;
+    const ON: On = On::new().method_calls(&METHODS);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoSinglePromiseInPromiseMethods
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        if !file.mentions("Promise") {
-            return None;
-        }
-        let methods: Self::State<'a> = METHODS.iter().filter_map(|it| file.find_name(it)).collect();
-        (!methods.is_empty()).then_some(methods)
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        if file.mentions("Promise") && file.mentions_any(&METHODS) { Self::ON } else { On::new() }
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(call) = e.as_call() else {
             return;
         };
-        let is_candidate = match call.callee().member_name() {
-            Some(method) => cx.state.contains(&method.name()),
-            None => call.callee().tag() != ExprTag::Ident,
-        };
-        if !is_candidate
-            || call.is_optional()
-            || !is_method_call(call, Some(&["Promise"]), Some(&METHODS), Some(1), Some(1))
-        {
+        if call.is_optional() || !is_method_call(call, Some(&["Promise"]), Some(&METHODS), Some(1), Some(1)) {
             return;
         }
         let Some(member) = get_member_expr(call.callee()).filter(|it| !it.is_optional() && !is_computed(*it)) else {

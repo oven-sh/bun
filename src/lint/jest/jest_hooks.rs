@@ -3,8 +3,8 @@
 
 use crate::jest::{
     Ctx, JestFnKind, JestGeneralFnKind, PossibleJestNode, Scopes, first_identifier_of_chain,
-    get_node_name_vec, is_type_of_jest_fn_call, iter_possible_jest_call_node, mention_bits,
-    mentions_any, parse_general_jest_fn_call,
+    for_each_call_named_like, get_node_name_vec, is_type_of_jest_fn_call,
+    iter_possible_jest_call_node, mention_bits, mentions_any, parse_general_jest_fn_call,
 };
 use bun_core::strings;
 use bun_lint::prelude::*;
@@ -209,12 +209,7 @@ pub(crate) mod require_hook {
         pub(crate) fn run_once<'a>(&self, ctx: &Ctx<'a, '_>) {
             let file = ctx.file;
             self.check_block_body(file.body(), ctx);
-            const DESCRIBE: [u32; 4] =
-                mention_bits(["describe", "fdescribe", "xdescribe", "suite"]);
-            if !mentions_any(file, &DESCRIBE) {
-                return;
-            }
-            for node in file.exprs_of_kind(ExprTag::Call) {
+            for_each_call_named_like(file, &[JestGeneralFnKind::Describe], &mut |node| {
                 if let Some(callback) = node.as_call().and_then(|it| it.args().get(1))
                     && !callback.is_parenthesized()
                     && let Some(statements) = callback.as_fn().and_then(Func::body_statements)
@@ -226,7 +221,7 @@ pub(crate) mod require_hook {
                 {
                     self.check_block_body(statements, ctx);
                 }
-            }
+            });
         }
 
         fn check_block_body<'a>(&self, statements: List<'a, Stmt<'a>>, ctx: &Ctx<'a, '_>) {

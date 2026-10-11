@@ -14,7 +14,7 @@ const METHODS: [&str; 10] =
 
 impl Rule for NoArrayMethodThisArgument {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-array-method-this-argument", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&METHODS).method_calls(&["from", "fromAsync"]);
     no_state!();
 
     fn new(_: &Options) -> Self {

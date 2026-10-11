@@ -152,7 +152,7 @@ impl Rule for PreferArrayFlatMap {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-array-flat-map", Kind::Suggestion)
         .fixable(Fixable::Code)
         .has_suggestions();
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["flat", "flatMap"]);
     /// `flat`, `flatMap`
     type State<'a> = [Name<'a>; 2];
 

@@ -34,7 +34,11 @@ pub struct Checker {
 pub struct State<'a> {
     /// The functions that have to use `this`.
     methods: Vec<Func<'a>>,
-    /// The functions of class members with a `this` or a `super` of their own.
+    /// Whether each of them has a `this` or a `super` of its own.
+    is_using_this: Vec<bool>,
+    /// The other methods, accessors and constructors.
+    others: Vec<Func<'a>>,
+    /// The functions of class members with a `this` or a `super` of their own that is written elsewhere.
     uses_this: FxHashSet<Func<'a>>,
     /// The function of a class member that a `this` in a node belongs to. `None`: it belongs to
     /// something else.
@@ -43,7 +47,8 @@ pub struct State<'a> {
 
 impl<'a> State<'a> {
     pub fn methods_without_this(&self) -> impl Iterator<Item = Func<'a>> {
-        self.methods.iter().copied().filter(|func| !self.uses_this.contains(func))
+        let unused = self.methods.iter().zip(&self.is_using_this).filter(|it| !it.1);
+        unused.map(|it| *it.0).filter(|func| !self.uses_this.contains(func))
     }
 }
 
@@ -90,7 +95,8 @@ impl Checker {
         if state.methods.is_empty() {
             return;
         }
-        // For each: where a `this` belongs to it or to what is in it, and whether one of its own has been found.
+        state.is_using_this = vec![false; state.methods.len()];
+        // For each: where a `this` belongs to it or to what is in it, its index, and whether no more is to be found out.
         let inside = |func: Func<'a>| {
             let whole = func.span();
             let start = match func.open_paren() {
@@ -99,7 +105,9 @@ impl Checker {
             };
             Span::new(start, whole.end)
         };
-        let mut methods: Vec<_> = state.methods.iter().map(|&func| (inside(func), func, false)).collect();
+        let methods = state.methods.iter().enumerate().map(|(index, &func)| (inside(func), func, index, false));
+        let others = state.others.iter().map(|&func| (inside(func), func, usize::MAX, true));
+        let mut methods: Vec<_> = methods.chain(others).collect();
         methods.sort_unstable_by_key(|it| it.0.start);
         // The last that starts before the `this`.
         let mut at = 0;
@@ -111,14 +119,20 @@ impl Checker {
                 at = methods.partition_point(|it| it.0.start <= start).wrapping_sub(1);
             }
             let around = methods.get_mut(at).filter(|it| start < it.0.end);
-            if around.as_ref().is_some_and(|it| it.2) {
+            if around.as_ref().is_some_and(|it| it.3) {
                 continue;
             }
-            if let Some(owner) = self.owner_of_this(e, state) {
-                state.uses_this.insert(owner);
-                if let Some(around) = around {
-                    around.2 = around.1 == owner;
+            match (self.owner_of_this(e, state), around) {
+                (Some(owner), Some(around)) if around.1 == owner => {
+                    around.3 = true;
+                    if let Some(is_using_this) = state.is_using_this.get_mut(around.2) {
+                        *is_using_this = true;
+                    }
                 }
+                (Some(owner), _) => {
+                    state.uses_this.insert(owner);
+                }
+                _ => {}
             }
         }
     }
@@ -165,7 +179,17 @@ impl Checker {
     }
 
     /// Notes the functions of `member` that have to use `this`.
-    pub fn check_member<'a>(&self, member: Member<'a>, state: &mut State<'a>) {
+    pub fn check_class<'a>(&self, class: Class<'a>, state: &mut State<'a>) {
+        for member in class.members() {
+            let before = state.methods.len();
+            self.check_member(member, class, state);
+            if state.methods.len() == before {
+                state.others.extend(member.func().filter(|it| it.has_body()));
+            }
+        }
+    }
+
+    fn check_member<'a>(&self, member: Member<'a>, class: Class<'a>, state: &mut State<'a>) {
         let is_field = match member.kind() {
             MemberKind::Method if member.is_constructor() => return,
             MemberKind::Method | MemberKind::Getter | MemberKind::Setter => false,
@@ -192,9 +216,6 @@ impl Checker {
         if value.is_none() && function_in_key.is_none() {
             return;
         }
-        let Node::Class(class) = member.parent() else {
-            return;
-        };
         if self.ignore_override_methods && flags.contains(Flags::OVERRIDE) {
             return;
         }
@@ -221,7 +242,7 @@ impl Checker {
 
 impl Rule for ClassMethodsUseThis {
     const META: Meta = Meta::eslint("class-methods-use-this", Kind::Suggestion).reports_on_exit();
-    const ON: On = On::new().members().finish();
+    const ON: On = On::new().classes().finish();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -240,8 +261,8 @@ impl Rule for ClassMethodsUseThis {
         file.has_classes().then(State::default)
     }
 
-    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
-        self.checker.check_member(member, &mut cx.state);
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        self.checker.check_class(class, &mut cx.state);
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

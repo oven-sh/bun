@@ -12,7 +12,7 @@ const PREFER_SPREAD: Message = Message::new("", "Prefer the spread operator (`..
 
 impl Rule for PreferSpread {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-spread", Kind::Suggestion).fixable(Fixable::Code);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["from", "concat", "slice", "toSpliced"]);
     /// The names of the methods.
     type State<'a> = [Name<'a>; 4];
 

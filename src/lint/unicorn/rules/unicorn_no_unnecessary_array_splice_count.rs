@@ -20,7 +20,7 @@ impl<const SLICE: bool> Rule for NoUnnecessaryArraySpliceCount<SLICE> {
         Kind::Suggestion,
     )
     .fixable(Fixable::Code);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(Self::METHODS);
     /// The first and the last of the methods.
     type State<'a> = [Name<'a>; 2];
 

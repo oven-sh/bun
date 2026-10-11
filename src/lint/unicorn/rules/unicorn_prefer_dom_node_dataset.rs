@@ -3,7 +3,6 @@ use bun_lint_oxlint::codegen::print_string;
 use crate::unicorn::{call_uses_optional_chain, concat, is_expression_statement};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
-use smallvec::SmallVec;
 
 /// Use `.dataset` on DOM elements over `getAttribute(…)`, `.setAttribute(…)`, `.removeAttribute(…)` and `.hasAttribute(…)`.
 pub struct PreferDomNodeDataset;
@@ -14,30 +13,21 @@ const METHODS: [&str; 4] = ["setAttribute", "getAttribute", "removeAttribute", "
 
 impl Rule for PreferDomNodeDataset {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-dom-node-dataset", Kind::Suggestion).fixable(Fixable::Code);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
-    /// Those of `METHODS` that the file mentions.
-    type State<'a> = SmallVec<[Name<'a>; 4]>;
+    const ON: On = On::new().method_calls(&METHODS);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         PreferDomNodeDataset
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        let methods: Self::State<'a> = METHODS.iter().filter_map(|it| file.find_name(it)).collect();
-        (!methods.is_empty()).then_some(methods)
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        if file.mentions_any(&METHODS) { Self::ON } else { On::new() }
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(call_expr) = e.as_call() else {
             return;
         };
-        let is_candidate = match call_expr.callee().member_name() {
-            Some(method) => cx.state.contains(&method.name()),
-            None => call_expr.callee().tag() != ExprTag::Ident,
-        };
-        if !is_candidate {
-            return;
-        }
         let Some(member_expr) = get_member_expr(call_expr.callee()).filter(|it| !it.is_private_member()) else {
             return;
         };

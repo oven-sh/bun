@@ -11,7 +11,7 @@ const UNKNOWN_METHOD: Message = Message::new("", "Prefer using method from `{{ob
 
 impl Rule for PreferPrototypeMethods {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-prototype-methods", Kind::Suggestion).fixable(Fixable::Code);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["apply", "bind", "call"]);
     /// `apply`, `bind`, `call`
     type State<'a> = [Name<'a>; 3];
 

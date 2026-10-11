@@ -257,8 +257,22 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         ty
     }
 
+    /// The first byte of the next token, if it is written right after the token or after one space.
+    /// 0: there is more between the two, or the byte does not say what the token is.
+    #[inline]
+    fn first_byte_of_next(&self) -> u8 {
+        let rest = self.lx.src.get(self.lx.end as usize..).unwrap_or_default();
+        match *rest {
+            // `<!--` starts a comment.
+            _ if self.lx.is_script => 0,
+            [b' ', b'/' | b'\\', ..] | [b'/' | b'\\', ..] => 0,
+            [b' ', first @ b'!'..=b'~', ..] | [first @ b'!'..=b'~', ..] => first,
+            _ => 0,
+        }
+    }
+
     fn type_or_type_predicate_in_context(&mut self) -> TypeNodeId {
-        if self.is_identifier() {
+        if self.is_identifier() && matches!(self.first_byte_of_next(), 0 | b'i') {
             // `parseTypePredicatePrefix`
             let is_predicate = self.look_ahead(|p| {
                 p.next();
@@ -641,7 +655,9 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
                 };
             }
             T::OpenBrace => {
-                return match self.look_ahead(Self::is_start_of_mapped_type) {
+                let first = self.first_byte_of_next();
+                let can_be_mapped = matches!(first, 0 | b'+' | b'-' | b'r' | b'[');
+                return match can_be_mapped && self.look_ahead(Self::is_start_of_mapped_type) {
                     true => self.mapped_type(),
                     false => self.type_literal(),
                 };
@@ -679,7 +695,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
             _ => return self.type_reference(),
         };
         // `parseKeywordAndNoDot`
-        if self.peek() == T::Dot {
+        if matches!(self.first_byte_of_next(), 0 | b'.') && self.peek() == T::Dot {
             return self.type_reference();
         }
         self.token_type(TypeNodeKind::Keyword(keyword))

@@ -13,7 +13,7 @@ const REQUIRE_ARRAY_JOIN_SEPARATOR: Message =
 impl Rule for RequireArrayJoinSeparator {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "require-array-join-separator", Kind::Suggestion).fixable(Fixable::Code);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["join", "call"]);
     /// `join`, `call`
     type State<'a> = [Name<'a>; 2];
 

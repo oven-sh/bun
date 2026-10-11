@@ -9,7 +9,7 @@ const PREFER_BLOB_READING_METHODS: Message =
 
 impl Rule for PreferBlobReadingMethods {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-blob-reading-methods", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["readAsText", "readAsArrayBuffer"]);
     /// `readAsText`, `readAsArrayBuffer`
     type State<'a> = [Name<'a>; 2];
 

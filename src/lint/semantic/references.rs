@@ -135,8 +135,18 @@ struct Visible<'t> {
 }
 
 impl Visible<'_> {
-    #[inline(never)]
+    #[inline]
     fn take(&mut self, step: Step) {
+        match step {
+            // Half of the scopes declare nothing.
+            Step::Enter(scope) | Step::Leave(scope)
+                if self.variables.range_of_scope(scope).is_empty() => {}
+            _ => self.take_what_changes_something(step),
+        }
+    }
+
+    #[inline(never)]
+    fn take_what_changes_something(&mut self, step: Step) {
         match step {
             // `WithScope#__close` leaves every reference to the scope around it.
             Step::Enter(scope) | Step::Leave(scope)

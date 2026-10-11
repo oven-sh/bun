@@ -639,6 +639,13 @@ impl<'a> File<'a> {
             .map(|&id| Stmt::from_raw(self, id))
     }
 
+    /// The same for types.
+    pub fn types_of_kind(&'a self, tag: TypeTag) -> impl Iterator<Item = TypeNode<'a>> {
+        self.types_of(tag)
+            .iter()
+            .map(|&id| TypeNode::from_raw(self, id))
+    }
+
     /// The same for functions: what [`Rule::func`] is called with.
     pub fn funcs(&'a self) -> impl Iterator<Item = Func<'a>> {
         (0..self.hir.fns.len())

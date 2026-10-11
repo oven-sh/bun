@@ -4,9 +4,9 @@
 use crate::jest::{
     AstKind, Ctx, EnclosingFunctions, ExpectError, JestFnKind, JestGeneralFnKind,
     KnownMemberExpressionParentKind, PossibleJestNode, Scopes, convert_pattern, enclosing_function,
-    get_node_name, get_node_name_vec, is_type_of_jest_fn_call, is_vitest, is_vitest_import_source,
-    iter_possible_jest_call_node, parse_expect_jest_fn_call, parse_general_jest_fn_call,
-    possible_jest_node_of,
+    get_first_node_name, get_node_name, get_node_name_vec, is_type_of_jest_fn_call, is_vitest,
+    is_vitest_import_source, iter_possible_jest_call_node, parse_expect_jest_fn_call,
+    parse_general_jest_fn_call, possible_jest_node_of,
 };
 use bun_core::strings;
 use bun_lint::ast::walk::{Visitor, walk_node};
@@ -673,9 +673,11 @@ pub(crate) mod expect_expect {
         }
     }
 
-    fn is_assertion(matchers: &[AssertFunctionMatcher], call_expr: Call) -> bool {
-        let names = get_node_name_vec(call_expr.callee());
-        matchers.iter().any(|matcher| matcher.is_match(&names))
+    /// Whether what follows the first name of a chain makes no difference to any of `matchers`.
+    fn look_at_first_name_only(matchers: &[AssertFunctionMatcher]) -> bool {
+        matchers.iter().all(|it| {
+            matches!(it, AssertFunctionMatcher::Exact(expected) if !strings::contains_char(expected.as_bytes(), b'.'))
+        })
     }
 
     pub(crate) struct ExpectExpectConfig {
@@ -785,6 +787,8 @@ pub(crate) mod expect_expect {
     /// is how the strongly connected components of a graph are found.
     struct AssertionVisitor<'a, 'm> {
         assert_function_matchers: &'m [AssertFunctionMatcher],
+        /// [`look_at_first_name_only`]
+        first_name_only: bool,
         /// Whether the file has an assertion at all, once that is asked.
         has_assertion: Option<bool>,
         pending: Vec<Task<'a>>,
@@ -802,6 +806,7 @@ pub(crate) mod expect_expect {
         fn new(assert_function_matchers: &'m [AssertFunctionMatcher]) -> Self {
             AssertionVisitor {
                 assert_function_matchers,
+                first_name_only: look_at_first_name_only(assert_function_matchers),
                 has_assertion: None,
                 pending: Vec::new(),
                 known: FxHashMap::default(),
@@ -816,13 +821,11 @@ pub(crate) mod expect_expect {
             file: &'a File<'a>,
             tasks: impl Iterator<Item = Task<'a>>,
         ) -> bool {
-            let matchers = self.assert_function_matchers;
-            let has_assertion = *self.has_assertion.get_or_insert_with(|| {
-                file.exprs_of_kind(ExprTag::Call)
-                    .filter_map(Expr::as_call)
-                    .any(|it| is_assertion(matchers, it))
-            });
-            if !has_assertion {
+            if self.has_assertion.is_none() {
+                let mut calls = file.exprs_of_kind(ExprTag::Call).filter_map(Expr::as_call);
+                self.has_assertion = Some(calls.any(|it| self.is_assertion(it)));
+            }
+            if self.has_assertion == Some(false) {
                 return false;
             }
             self.pending.extend(tasks);
@@ -845,6 +848,22 @@ pub(crate) mod expect_expect {
             self.positions.clear();
             self.open.clear();
             is_found
+        }
+
+        fn is_assertion(&self, call_expr: Call) -> bool {
+            let is_match = |names: &[&[u8]]| {
+                self.assert_function_matchers
+                    .iter()
+                    .any(|matcher| matcher.is_match(names))
+            };
+            match self.first_name_only {
+                true => is_match(
+                    get_first_node_name(call_expr.callee())
+                        .map(Name::bytes)
+                        .as_slice(),
+                ),
+                false => is_match(&get_node_name_vec(call_expr.callee())),
+            }
         }
 
         /// Whether an assertion is found from `place`, as far as that is known. `None`: it is to be looked at now.
@@ -935,7 +954,7 @@ pub(crate) mod expect_expect {
             match node {
                 Node::Expr(e) => match e.kind() {
                     ExprKind::Call(call_expr) => {
-                        if is_assertion(self.assert_function_matchers, call_expr) {
+                        if self.is_assertion(call_expr) {
                             return true;
                         }
                         if let Some(known) = self.enter((false, node)) {

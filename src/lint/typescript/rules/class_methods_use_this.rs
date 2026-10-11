@@ -12,7 +12,7 @@ impl Rule for ClassMethodsUseThis {
     const META: Meta = Meta::typescript("class-methods-use-this", Kind::Suggestion)
         .extends_base_rule("class-methods-use-this")
         .reports_on_exit();
-    const ON: On = On::new().members().finish();
+    const ON: On = On::new().classes().finish();
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
@@ -35,8 +35,8 @@ impl Rule for ClassMethodsUseThis {
         file.has_classes().then(State::default)
     }
 
-    fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
-        self.checker.check_member(member, &mut cx.state);
+    fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
+        self.checker.check_class(class, &mut cx.state);
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

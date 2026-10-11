@@ -26,7 +26,7 @@ fn leftmost_identifier_reference(e: Expr<'_>) -> Option<Expr<'_>> {
 
 impl Rule for NoArrayForEach {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-array-for-each", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["forEach"]);
     /// `forEach`
     type State<'a> = Name<'a>;
 

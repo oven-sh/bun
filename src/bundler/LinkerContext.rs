@@ -3331,6 +3331,12 @@ impl<'a> LinkerContext<'a> {
         if self.options.output_format != Format::Esm {
             return None;
         }
+        // A browser file in a server build (HTML import) would get the server's `__require`.
+        if self.options.target.is_server_side()
+            && self.graph.ast.items_target()[source_index as usize] == Target::Browser
+        {
+            return None;
+        }
         let scope = &self.graph.ast.items_module_scope()[source_index as usize];
         if !scope.contains_direct_eval {
             return None;

@@ -1,5 +1,6 @@
-import { describe } from "bun:test";
-import { itBundled } from "./expectBundled";
+import { describe, expect } from "bun:test";
+import { readdirSync } from "node:fs";
+import { type BundlerTestBundleAPI, itBundled } from "./expectBundled";
 
 // Tests for CommonJS <> ESM interop, specifically the __toESM helper behavior.
 //
@@ -1414,5 +1415,91 @@ describe("bundler", () => {
       api.expectFile("/out.js").not.toContain("__require");
     },
     run: { stdout: "function" },
+  });
+
+  // The browser runtime has no real require, so the eval sees the __require
+  // shim. Node runs the output: Bun would define `require` for the module.
+  itBundled("cjs/DirectEvalSeesRequireShimBrowser", {
+    files: {
+      "/entry.js": /* js */ `
+        const probe = require("./probe.cjs");
+        console.log(JSON.stringify(probe));
+      `,
+      "/probe.cjs": /* js */ `
+        let message;
+        try {
+          eval("req" + "uire")("fs");
+        } catch (e) {
+          message = e.message;
+        }
+        module.exports = { type: eval("typeof require"), message };
+      `,
+    },
+    target: "browser",
+    format: "esm",
+    outfile: "/out.mjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.mjs").toMatch(requireDecl);
+      api.expectFile("/out.mjs").toContain("Dynamic require of");
+    },
+    run: { runtime: "node", stdout: '{"type":"function","message":"Dynamic require of \\"fs\\" is not supported"}' },
+  });
+
+  // A server build bundles the scripts of an imported HTML file for the
+  // browser, but its runtime __require is the server's. The browser copy of a
+  // file gets no declaration.
+  const htmlImportFiles = {
+    "/index.html": /* html */ `<!DOCTYPE html><html><head><script type="module" src="./client.js"></script></head></html>`,
+    "/client.js": /* js */ `
+      import probe from "./probe.cjs";
+      console.log(probe);
+    `,
+    "/probe.cjs": /* js */ `
+      module.exports = eval("typeof require");
+    `,
+  };
+  const jsChunks = (api: BundlerTestBundleAPI) => readdirSync(api.outdir).filter(name => name.endsWith(".js"));
+  const declaresRequire = (api: BundlerTestBundleAPI, name: string) => requireDecl.test(api.readFile("/out/" + name));
+
+  itBundled("cjs/DirectEvalInServerAndBrowserChunk", {
+    files: {
+      ...htmlImportFiles,
+      "/server.js": /* js */ `
+        import page from "./index.html";
+        import probe from "./probe.cjs";
+        console.log(probe, typeof page.index);
+      `,
+    },
+    entryPoints: ["/server.js"],
+    outdir: "/out",
+    target: "bun",
+    onAfterBundle(api) {
+      expect(jsChunks(api).filter(name => declaresRequire(api, name))).toEqual(["server.js"]);
+    },
+    run: { stdout: "function string" },
+  });
+
+  // Only the browser side has the eval. Node's __require imports node:module,
+  // which a browser cannot load.
+  itBundled("cjs/DirectEvalOnlyInBrowserChunkOfNodeBuild", {
+    files: {
+      ...htmlImportFiles,
+      "/server.js": /* js */ `
+        import page from "./index.html";
+        console.log(typeof page.index);
+      `,
+    },
+    entryPoints: ["/server.js"],
+    outdir: "/out",
+    target: "node",
+    format: "esm",
+    onAfterBundle(api) {
+      const chunks = jsChunks(api);
+      expect(chunks).toHaveLength(2);
+      for (const name of chunks) {
+        api.expectFile("/out/" + name).not.toContain("__require");
+        api.expectFile("/out/" + name).not.toContain("node:module");
+      }
+    },
   });
 });

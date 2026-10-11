@@ -13,7 +13,7 @@
 //! [`JobContext::Js`] is the completion's JS-thread state (promise, callback,
 //! wrapper refs, pins, protected buffers) and is only ever touched on the JS
 //! thread. JS-backed memory the body reads in place is reachable through
-//! [`JsPtr`], dereferenceable only with the job's ticket or a [`JsThread`].
+//! [`JsPtr`], dereferenceable only with the job's ticket.
 //!
 //! Node's equivalent is `ThreadPoolWork` + `req_wrap`; WebCore's is
 //! `WorkerRunLoop::postTask` with `ActiveDOMObject`-owned completions.
@@ -32,12 +32,12 @@ use crate::{JSGlobalObject, JsResult};
 
 // ── tokens ────────────────────────────────────────────────────────────────
 
-/// Proof that the holder is on `global`'s JS thread with its heap alive: what
-/// it takes to dereference a [`JsPtr`] outside a pool body. Host functions and
-/// event-loop dispatch have one by construction ([`JSGlobalObject::js_thread`]).
-/// Not `Send`.
+/// Proof that the holder is on `global`'s JS thread with its heap alive, and whose script it is
+/// running for. Host functions and event-loop dispatch have one by construction
+/// ([`JSGlobalObject::js_thread`]). Not `Send`.
 pub struct JsThread<'a> {
     global: &'a JSGlobalObject,
+    context: &'a crate::ScriptExecutionContext,
     _not_send: PhantomData<*mut ()>,
 }
 
@@ -50,19 +50,39 @@ impl<'a> JsThread<'a> {
     pub fn vm(&self) -> &'a VirtualMachine {
         self.global.bun_vm()
     }
+    /// The context of the script this thread is running for: the host function's caller, or the
+    /// one a completion entered.
+    #[inline]
+    pub fn context(&self) -> &'a crate::ScriptExecutionContext {
+        self.context
+    }
 }
 
 impl JSGlobalObject {
     /// A live `&JSGlobalObject` is only ever formed on its own thread (it is an
     /// opaque engine handle); debug builds check.
     #[inline]
-    pub fn js_thread(&self) -> JsThread<'_> {
+    pub fn js_thread<'a>(&'a self, context: &'a crate::ScriptExecutionContext) -> JsThread<'a> {
         #[cfg(debug_assertions)]
         self.bun_vm().handle_ref().assert_js_thread();
         JsThread {
             global: self,
+            context,
             _not_send: PhantomData,
         }
+    }
+
+    /// What a host function starts with: this global, and the context of the script that called it.
+    #[inline]
+    pub fn js_thread_of_caller<'a>(&'a self, frame: &crate::CallFrame) -> JsThread<'a> {
+        self.js_thread(self.bun_vm().context_of_caller(frame))
+    }
+
+    /// As [`js_thread_of_caller`](Self::js_thread_of_caller) where no `CallFrame` reaches Rust
+    /// (see [`VirtualMachine::context_of_caller_no_frame`]).
+    #[inline]
+    pub fn js_thread_of_caller_no_frame(&self) -> JsThread<'_> {
+        self.js_thread(self.bun_vm().context_of_caller_no_frame())
     }
 }
 
@@ -141,10 +161,10 @@ impl Drop for Protected {
 /// A pointer into JS-owned memory (an ArrayBuffer's bytes, a pinned cell, the
 /// creating global) that a job carries off-thread. It can be *passed around*
 /// anywhere but dereferenced only with proof the VM is alive: the job's
-/// [`Ticket`] or a [`JsThread`].
+/// [`Ticket`].
 #[repr(transparent)]
 pub struct JsPtr<T: ?Sized>(NonNull<T>);
-// SAFETY: dereferenceable only under a Ticket/JsThread (see type doc).
+// SAFETY: dereferenceable only under a Ticket (see type doc).
 unsafe impl<T: ?Sized> Send for JsPtr<T> {}
 impl<T: ?Sized> Clone for JsPtr<T> {
     fn clone(&self) -> Self {
@@ -173,14 +193,6 @@ impl<T: ?Sized> JsPtr<T> {
         // SAFETY: ticket held ⇒ VM alive ⇒ pointee alive (type contract); aliasing per fn contract.
         unsafe { &mut *self.0.as_ptr() }
     }
-    /// # Safety
-    /// No other live reference aliases the pointee for `'b`.
-    #[inline]
-    #[allow(clippy::mut_from_ref)] // the `&JsThread` is a thread witness, not the pointee
-    pub unsafe fn on_js_thread<'b>(self, _: &'b JsThread<'_>) -> &'b mut T {
-        // SAFETY: JS thread with heap alive; aliasing per fn contract.
-        unsafe { &mut *self.0.as_ptr() }
-    }
 }
 
 // ── Job ───────────────────────────────────────────────────────────────────
@@ -202,9 +214,7 @@ pub trait JobContext: Sized + 'static {
     /// job's ticket: proof the VM is alive (for [`JsPtr::under_ticket`]), and
     /// `script_allowed()` on it says whether the result still has a consumer.
     /// `off` borrows the job, which the JS thread may free the moment
-    /// [`Completion::finish`] queues it: do not touch it after finishing (work
-    /// that continues past `run` reaches its state through
-    /// [`Completion::off_thread`]).
+    /// [`Completion::finish`] queues it: do not touch it after finishing.
     fn run(off: &mut Self::OffThread, done: Completion<Self>) -> Option<Completion<Self>>;
 
     /// JS thread, VM still running script: the completion. Both halves are
@@ -234,6 +244,11 @@ pub struct JobHeader {
     cancel: unsafe fn(*mut JobHeader),
     prev: *mut JobHeader,
     next: *mut JobHeader,
+    /// The context whose script scheduled the job: once it stops, the
+    /// completion is released without running.
+    context: crate::ContextId,
+    /// `VirtualMachine::test_isolation_generation` when scheduled.
+    generation: u32,
 }
 
 /// A VM's live [cancellable](JobContext::CANCELLABLE) jobs (JS thread only;
@@ -269,6 +284,20 @@ impl JobList {
             }
         }
     }
+    /// A `Bun.ModuleGraph`'s context stopped (JS thread): ask its live jobs to finish soon.
+    pub fn cancel_of_context(&self, context: crate::ContextId) {
+        let mut job = self.head;
+        while !job.is_null() {
+            // SAFETY: as `cancel_all`.
+            unsafe {
+                if (*job).context == context {
+                    ((*job).cancel)(job);
+                }
+                job = (*job).next;
+            }
+        }
+    }
+
     /// The VM's stop phase (JS thread): ask every live job to finish soon.
     pub fn cancel_all(&self) {
         let mut job = self.head;
@@ -306,6 +335,11 @@ impl<C: JobContext> bun_event_loop::Taskable for Job<C> {
         // SAFETY: fn contract; JS thread with the heap alive.
         drop(unsafe { Self::take(this, VirtualMachine::get()) })
     }
+    /// The context whose script scheduled the job.
+    unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
+        // SAFETY: fn contract.
+        unsafe { (*this).header.context }
+    }
 }
 
 impl<C: JobContext> Job<C> {
@@ -327,6 +361,8 @@ impl<C: JobContext> Job<C> {
                 cancel: |p| unsafe { C::cancel(&raw mut (*p.cast::<Self>()).off) },
                 prev: core::ptr::null_mut(),
                 next: core::ptr::null_mut(),
+                context: cx.context().id(),
+                generation: cx.vm().test_isolation_generation,
             },
             ticket: Some(cx.vm().ticket()),
             task: WorkPoolTask {
@@ -426,14 +462,6 @@ impl<C: JobContext> Completion<C> {
     pub fn ticket(&self) -> &Ticket {
         &self.ticket
     }
-    /// The job's off-thread part, for work that continues after `run` returned.
-    ///
-    /// # Safety
-    /// No other reference to it is live (the pool callback has returned).
-    pub unsafe fn off_thread(&self) -> *mut C::OffThread {
-        // SAFETY: live job.
-        unsafe { &raw mut (*self.job.as_ptr()).off }
-    }
 }
 impl<C: JobContext> Drop for Completion<C> {
     fn drop(&mut self) {
@@ -445,20 +473,23 @@ impl<C: JobContext> Drop for Completion<C> {
 ///
 /// # Safety
 /// `ptr` is a `Job<C>` posted by its `Completion` (for some `C`).
-pub unsafe fn complete_erased(ptr: *mut (), cx: &JsThread<'_>) -> JsResult<()> {
+pub unsafe fn complete_erased(ptr: *mut (), global: &JSGlobalObject) -> JsResult<()> {
     let header = ptr.cast::<JobHeader>();
-    // A completion dispatched after the VM was asked to stop (a parent's
-    // terminate() lands while the worker still ticks): its `then` would only
-    // build script-facing values under a pending termination. Release it as
-    // teardown would — Node's threadpool `after` callbacks bail the same way
-    // on `!can_call_into_js()`.
-    if !cx.vm().script_allowed() {
+    let vm = global.bun_vm();
+    // One scheduled by a file `bun test --isolate` has since retired: the swap was that file's
+    // exit, and a `then` that calls back directly (node:crypto's callback forms) would run its
+    // script under the next file.
+    // SAFETY: `Job<C>` is `#[repr(C)]` with the header first.
+    if unsafe { (*header).generation } != vm.test_isolation_generation {
         // SAFETY: as below; released exactly once, here.
         unsafe { ((*header).release_unrun)(header) };
         return Ok(());
     }
-    // SAFETY: `Job<C>` is `#[repr(C)]` with the header first.
-    unsafe { ((*header).complete)(header, cx) }
+    // The completion continues the script that scheduled the job.
+    // SAFETY: as above.
+    let context = vm.context_of(unsafe { (*header).context });
+    // SAFETY: as above.
+    unsafe { ((*header).complete)(header, &global.js_thread(context)) }
 }
 
 /// Teardown's release for a queued, never-dispatched `Job<C>` completion

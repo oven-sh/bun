@@ -156,14 +156,7 @@ _ZN2v88NewClass3NewEPNS_7IsolateE...
 _ZNK2v88NewClass10SomeMethodEv
 ```
 
-Add to `src/symbols.dyn` (with leading underscore and semicolons):
-
-```
-{
-    __ZN2v88NewClass3NewEPNS_7IsolateE...;
-    __ZNK2v88NewClass10SomeMethodEv;
-}
-```
+Linux and FreeBSD need no entry: `src/linker.lds` exports `v8::*` and `node::*` by pattern.
 
 **Note:** `src/symbols.def` is Windows-only and typically doesn't contain V8 symbols.
 

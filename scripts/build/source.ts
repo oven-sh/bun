@@ -30,6 +30,7 @@ import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs, slash } from "./shell.ts";
 import { streamPath } from "./stream.ts";
+import { toolIdentityFile } from "./tools.ts";
 
 /**
  * If the source dir exists with a stale (or missing) identity stamp,
@@ -87,9 +88,8 @@ export type Source =
       /**
        * Commit sha or tag. Both work for github archive URLs
        * (`/archive/<ref>.tar.gz`). Prefer commit shas — tags can move,
-       * breaking the identity hash. If upstream only publishes tags
-       * (e.g. brotli `v1.1.0`), fine, but be aware a retag will silently
-       * change what we fetch.
+       * breaking the identity hash. A tag works, but be aware a retag
+       * will silently change what we fetch.
        */
       commit: string;
     }
@@ -212,8 +212,9 @@ export interface DirectBuild {
   lang?: "c" | "cxx";
   /**
    * Same semantics as NestedCmakeBuild.pic. true → -fPIC; false (default)
-   * → on darwin add -fno-pic -fno-pie to undo apple-clang's PIC default,
-   * elsewhere nothing. Windows is a no-op either way.
+   * → on unix add -fno-pic -fno-pie so the building clang's PIC/PIE default
+   * doesn't decide (Android always gets -fPIC: PIE-only platform). Windows
+   * is a no-op either way.
    */
   pic?: boolean;
   /**
@@ -252,7 +253,40 @@ export interface DirectBuild {
    * Linux ASLR/shadow-map collision).
    */
   codegen?: DirectCodegen;
+  /**
+   * Fail the build if any object of this dep still has an undefined
+   * reference to one of `symbols` (llvm-nm over the objects, once they
+   * exist). `except` lists sources, as spelled in `sources`, that may
+   * reference them. Names are matched with and without the Mach-O leading
+   * underscore. The use so far: deps whose allocations bun routes to
+   * mimalloc must not reach the C library's allocator behind its back, see
+   * LIBC_ALLOCATION_SYMBOLS. Skipped when llvm-nm was not found (cfg.nm).
+   */
+  forbidUndefined?: ForbidUndefined;
 }
+
+export interface ForbidUndefined {
+  symbols: readonly string[];
+  except?: readonly string[];
+}
+
+/**
+ * The C library's heap entry points, for `DirectBuild.forbidUndefined`. Only
+ * Linux redirects these to mimalloc globally (deps/mimalloc.ts); on Windows
+ * and macOS a dep reaches mimalloc only through its own allocator hooks, and
+ * a stray malloc() lands on the C runtime heap without anything failing, so
+ * the objects are the one place this is checkable.
+ */
+export const LIBC_ALLOCATION_SYMBOLS: readonly string[] = [
+  "malloc",
+  "calloc",
+  "realloc",
+  "free",
+  "strdup",
+  "_strdup",
+  "wcsdup",
+  "_wcsdup",
+];
 
 export interface DirectCodegen {
   /** Tool source relative to srcDir. Compiled+linked to a host executable. */
@@ -305,7 +339,7 @@ export interface NestedCmakeBuild {
   sourceSubdir?: string;
   /**
    * If true, add -fPIC to C/CXX flags (non-windows). This also SUPPRESSES
-   * the default apple -fno-pic -fno-pie — you can't have both.
+   * the default unix -fno-pic -fno-pie — you can't have both.
    *
    * Most deps don't need this (we link statically into a non-PIE executable),
    * but some build intermediate tools or have internal shared libs that
@@ -403,10 +437,41 @@ export interface Provides {
 }
 
 /**
+ * Every vendored dependency (scripts/build/deps/<name>.ts). A dependency refers to another by name (`fetchDeps`),
+ * and its ninja targets are built from its name (`<name>`, `clone-<name>`, `configure-<name>`), so a misspelled
+ * one is a type error here rather than a missing target later.
+ */
+export type DepName =
+  | "WebKit"
+  | "boringssl"
+  | "brotli"
+  | "cares"
+  | "hdrhistogram"
+  | "highway"
+  | "libarchive"
+  | "libdeflate"
+  | "libjpeg-turbo"
+  | "libspng"
+  | "libuv"
+  | "libwebp"
+  | "lolhtml"
+  | "lshpack"
+  | "lsqpack"
+  | "lsquic"
+  | "mimalloc"
+  | "nodejs"
+  | "picohttpparser"
+  | "rust-argon2"
+  | "sqlite"
+  | "tinycc"
+  | "zlib"
+  | "zstd";
+
+/**
  * A vendored dependency definition. Lives in scripts/build/deps/<name>.ts.
  */
 export interface Dependency {
-  name: string;
+  name: DepName;
 
   /** Where source comes from. Evaluated per-config so local mode can be dynamic. */
   source: (cfg: Config) => Source;
@@ -436,7 +501,7 @@ export interface Dependency {
    * source stamp for header-only). Order-only on configure, implicit on
    * build. Does NOT link the other dep's libs (that's `provides.libs`).
    */
-  fetchDeps?: string[];
+  fetchDeps?: DepName[];
 
   /** How to build. */
   build: (cfg: Config) => BuildSpec;
@@ -452,7 +517,7 @@ export interface Dependency {
 
   /**
    * Macro name suffix for `bun_dependency_versions.h` — becomes
-   * `BUN_DEP_<macro>` / `BUN_VERSION_<macro>`. The value is derived from
+   * `BUN_VERSION_<macro>`. The value is derived from
    * `source(cfg)`: `github-archive.commit`, `prebuilt.identity`, etc.
    *
    * Omit for deps that shouldn't appear in `process.versions` (e.g.
@@ -467,7 +532,7 @@ export interface Dependency {
  * Resolved dependency — absolute paths ready for link()/cxx() calls.
  */
 export interface ResolvedDep {
-  name: string;
+  name: DepName;
   /**
    * Absolute paths to .a/.lib files for link(). Populated by nested-cmake/
    * cargo/prebuilt deps, and by `direct` deps when `cfg.archiveDeps` is on.
@@ -477,7 +542,7 @@ export interface ResolvedDep {
    * Absolute paths to .o/.obj files for link(). Populated by `direct` deps
    * when `cfg.archiveDeps` is off (the default) — the dep's sources are
    * compiled in our graph and the resulting objects go straight into bun's
-   * link line / cpp-only archive instead of an intermediate `.a`.
+   * link line (or CI's object archive) instead of an intermediate `.a`.
    */
   objects: string[];
   /** Absolute include paths for -I flags. */
@@ -495,6 +560,13 @@ export interface ResolvedDep {
    * the source stamp (.ref).
    */
   outputs: string[];
+  /**
+   * Stamps of this dep's `forbidUndefined` checks (static `nm` scans of its
+   * objects). Ninja validations of whatever the objects go into next — the
+   * per-dep archive here when cfg.archiveDeps, otherwise bun.ts's archive or
+   * link — so they run with every build of it and gate nothing.
+   */
+  checks: string[];
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -507,9 +579,7 @@ export interface ResolvedDep {
 export function registerDepRules(n: Ninja, cfg: Config): void {
   // Shell quoting: tool/script paths may contain spaces (e.g. cargo
   // in "C:\Program Files\Rust\..."). quote() passes through safe paths
-  // unchanged so there's no cost on the common case. Host shell syntax
-  // (dep rules don't run in rust-only cross-compile, so host == target,
-  // but use host.os for consistency with other modules).
+  // unchanged so there's no cost on the common case. Host shell syntax.
   const hostWin = cfg.host.os === "windows";
   const q = (p: string) => quote(p, hostWin);
   const cmake = q(cfg.cmake);
@@ -656,6 +726,18 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
     restat: true,
   });
 
+  // DirectBuild.forbidUndefined: llvm-nm over the dep's objects, listed in a
+  // response file like the ar rule's (boringssl alone has ~330 of them).
+  // The stamp is only written when nothing is referenced, and (restat) left
+  // alone when it already exists.
+  n.rule("dep_check_undefined", {
+    command: `${cfg.jsRuntime} ${fetchCli} check-undefined $name $nm $out.rsp $out $symbols`,
+    description: "check $name undefined symbols",
+    rspfile: "$out.rsp",
+    rspfile_content: "$in_newline",
+    restat: true,
+  });
+
   // The `dep` pool: depth-4 balances two concerns. Each nested cmake/cargo
   // build spawns its own -j parallelism; running all 15 at once would
   // oversubscribe cores badly (15 × nproc jobs). Four-at-a-time keeps CPU
@@ -675,7 +757,7 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
  * NOT handle in-tree sources or WebKit's $BUN_WEBKIT_PATH — use the per-dep
  * `srcDir` computed in resolveDep() for those.
  */
-export function depSourceDir(cfg: Config, name: string): string {
+export function depSourceDir(cfg: Config, name: DepName): string {
   return cfg.localDeps[name] ?? resolve(cfg.vendorDir, name);
 }
 
@@ -683,7 +765,7 @@ export function depSourceDir(cfg: Config, name: string): string {
  * Path to a dep's cmake build output. Separate from source so multiple
  * profiles (debug/release) don't clash.
  */
-export function depBuildDir(cfg: Config, name: string): string {
+export function depBuildDir(cfg: Config, name: DepName): string {
   return resolve(cfg.buildDir, "deps", name);
 }
 
@@ -720,7 +802,7 @@ export function resolveDep(
   n: Ninja,
   cfg: Config,
   dep: Dependency,
-  resolved: ReadonlyMap<string, ResolvedDep>,
+  resolved: ReadonlyMap<DepName, ResolvedDep>,
 ): ResolvedDep | null {
   if (dep.enabled && !dep.enabled(cfg)) {
     return null;
@@ -840,6 +922,7 @@ export function resolveDep(
   let libs: string[];
   let objects: string[] = [];
   let outputs: string[];
+  let checks: string[] = [];
 
   if (buildSpec.kind === "nested-cmake") {
     const result = emitNestedCmake(n, cfg, dep.name, buildSpec, {
@@ -862,6 +945,7 @@ export function resolveDep(
     const result = emitDirect(n, cfg, dep.name, buildSpec, { srcDir, sourceStamp, fetchDepStamps });
     libs = result.libs;
     objects = result.objects;
+    checks = result.checks;
     // outputs is the "downstream needs me built" signal — for direct deps
     // that's the generated headers + source stamp, NOT the .o files (those
     // are link inputs, not include-order dependencies).
@@ -895,71 +979,8 @@ export function resolveDep(
     defines: provides.defines ?? [],
     sources: resolvedSources,
     outputs,
+    checks,
   };
-}
-
-/**
- * Compute the lib paths a dep produces WITHOUT emitting ninja rules.
- *
- * Used by link-only mode: artifacts (the .a/.lib files) are downloaded
- * from cpp-only's buildkite upload into the SAME paths this returns.
- * Ninja sees them as source files (no build rule) — errors cleanly if
- * download failed.
- *
- * Must stay in sync with the path computation inside emitNestedCmake /
- * emitCargo / emitPrebuilt — that's the contract between cpp-only
- * (producer) and link-only (consumer). If those emit-side paths change,
- * change this too.
- */
-export function computeDepLibs(cfg: Config, dep: Dependency): string[] {
-  if (dep.enabled && !dep.enabled(cfg)) {
-    return [];
-  }
-
-  const source = dep.source(cfg);
-  const buildSpec = dep.build(cfg);
-  const provides = dep.provides(cfg);
-
-  // Prebuilt: provides.libs are paths relative to destDir.
-  if (source.kind === "prebuilt") {
-    const destDir = source.destDir ?? depSourceDir(cfg, dep.name);
-    return provides.libs.map(lib => resolve(destDir, lib));
-  }
-
-  // nested-cmake: provides.libs are bare names (prefix/suffix added) or
-  // paths with "." (used as-is), relative to buildDir/libSubdir.
-  // preBuild outputs (ICU) are absolute paths already — appended.
-  if (buildSpec.kind === "nested-cmake") {
-    const buildDir = depBuildDir(cfg, dep.name);
-    const libDir = buildSpec.libSubdir ? resolve(buildDir, buildSpec.libSubdir) : buildDir;
-    const libs = provides.libs.map(lib =>
-      lib.includes(".") ? resolve(libDir, lib) : resolve(libDir, `${cfg.libPrefix}${lib}${cfg.libSuffix}`),
-    );
-    if (buildSpec.preBuild !== undefined) {
-      libs.push(...buildSpec.preBuild.outputs);
-    }
-    return libs;
-  }
-
-  // cargo: single lib in targetDir/<triple?>/<profile>/.
-  if (buildSpec.kind === "cargo") {
-    const targetDir = depBuildDir(cfg, dep.name);
-    const profile = cfg.release ? "release" : "debug";
-    const outSubdir = buildSpec.rustTarget ? join(buildSpec.rustTarget, profile) : profile;
-    return [resolve(targetDir, outSubdir, `${cfg.libPrefix}${buildSpec.libName}${cfg.libSuffix}`)];
-  }
-
-  // direct: single lib<name>.a when archiveDeps; otherwise the dep's .o
-  // files are folded into libbun.a in cpp-only and there's no separate
-  // artifact for link-only to fetch.
-  if (buildSpec.kind === "direct") {
-    if (!cfg.archiveDeps) return [];
-    const buildDir = depBuildDir(cfg, dep.name);
-    return [resolve(buildDir, `${cfg.libPrefix}${dep.name}${cfg.libSuffix}`)];
-  }
-
-  // none: no libs (header-only or directly-compiled sources).
-  return [];
 }
 
 /**
@@ -972,7 +993,7 @@ export function computeDepLibs(cfg: Config, dep: Dependency): string[] {
 function emitFetch(
   n: Ninja,
   cfg: Config,
-  name: string,
+  name: DepName,
   source: Extract<Source, { kind: "github-archive" }>,
   patches: string[],
   compiledSources: string[],
@@ -1036,7 +1057,7 @@ function emitFetch(
 function emitPrebuilt(
   n: Ninja,
   cfg: Config,
-  name: string,
+  name: DepName,
   source: Extract<Source, { kind: "prebuilt" }>,
   provides: Provides,
 ): ResolvedDep {
@@ -1085,6 +1106,7 @@ function emitPrebuilt(
     name,
     libs,
     objects: [],
+    checks: [],
     includes,
     defines: provides.defines ?? [],
     sources: [],
@@ -1119,7 +1141,7 @@ interface EmitNestedCmakeInput {
 function emitNestedCmake(
   n: Ninja,
   cfg: Config,
-  name: string,
+  name: DepName,
   spec: NestedCmakeBuild,
   input: EmitNestedCmakeInput,
 ): { libs: string[] } {
@@ -1179,9 +1201,7 @@ function emitNestedCmake(
     args.push(`-DCMAKE_C_COMPILER_LAUNCHER=${slash(cfg.ccache)}`);
     args.push(`-DCMAKE_CXX_COMPILER_LAUNCHER=${slash(cfg.ccache)}`);
   }
-  // Both may be undefined in rust-only cross-compile (no xcode on the linux
-  // CI box); that's fine — the cmake rules are emitted but never pulled.
-  // If pulled without an SDK, cmake fails with its own clear error.
+  // Both may be undefined; if the rules are pulled without an SDK, cmake fails with its own clear error.
   if (cfg.darwin && cfg.osxDeploymentTarget !== undefined && cfg.osxSysroot !== undefined) {
     args.push(`-DCMAKE_OSX_DEPLOYMENT_TARGET=${cfg.osxDeploymentTarget}`);
     args.push(`-DCMAKE_OSX_SYSROOT=${cfg.osxSysroot}`);
@@ -1213,20 +1233,27 @@ function emitNestedCmake(
   let cflags = depFlags.cflags.join(" ");
   let cxxflags = depFlags.cxxflags.join(" ");
 
-  // PIC handling:
+  // PIC handling — the same policy bun's own objects get in flags.ts
+  // (-fno-pic -fno-pie on unix, -fPIC on Android), stated here so the
+  // building clang's default doesn't decide:
   //   spec.pic=true  → add -fPIC (non-windows), also tell cmake
-  //   spec.pic=false → on apple, add -fno-pic -fno-pie (apple clang defaults
-  //     to PIC; the resulting .o can't link into our non-PIE executable)
+  //   android        → add -fPIC regardless (bionic's loader is PIE-only)
+  //   spec.pic=false → on unix, add -fno-pic -fno-pie. Apple clang defaults
+  //     to PIC, and distro clangs (Arch, Fedora, Alpine, Homebrew) default to
+  //     PIE, which compiles every dep as PIC: .data.rel.ro grows from 109 KB
+  //     to 541 KB and startup touches 4-7% more pages. apt.llvm.org's clang
+  //     (CI) defaults to neither, so without this the result depends on who
+  //     built it.
   //
-  // Windows has no PIC concept (all code is relocatable), so both branches
-  // are guarded — no-op there.
-  if (spec.pic) {
+  // Windows has no PIC concept (all code is relocatable), so every branch
+  // is guarded — no-op there.
+  if (spec.pic || cfg.abi === "android") {
     if (!cfg.windows) {
       cflags += " -fPIC";
       cxxflags += " -fPIC";
     }
-    args.push(`-DCMAKE_POSITION_INDEPENDENT_CODE=ON`);
-  } else if (cfg.darwin) {
+    if (spec.pic) args.push(`-DCMAKE_POSITION_INDEPENDENT_CODE=ON`);
+  } else if (cfg.unix) {
     cflags += " -fno-pic -fno-pie";
     cxxflags += " -fno-pic -fno-pie";
   }
@@ -1350,7 +1377,7 @@ interface EmitCargoInput {
  * everything. Its own incremental build is reliable, so restat=1 on the
  * rule keeps our downstream no-ops fast.
  */
-function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input: EmitCargoInput): { libs: string[] } {
+function emitCargo(n: Ninja, cfg: Config, name: DepName, spec: CargoBuild, input: EmitCargoInput): { libs: string[] } {
   const hostWin = cfg.host.os === "windows";
   assert(cfg.cargo !== undefined, `dep "${name}" requires cargo but no rust toolchain was found`, {
     hint: "Install rust: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh",
@@ -1439,9 +1466,8 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
   // Tier 3 targets (buildStd=true) have no prebuilt std, so target-add would
   // fail — they use plain dep_cargo with -Zbuild-std instead.
   const cross = cfg.crossTarget !== undefined && spec.rustTarget !== undefined && !spec.buildStd;
-  n.build({
+  const node = {
     outputs: [lib],
-    rule: cross ? "dep_cargo_cross" : "dep_cargo",
     inputs: [],
     // Rebuild if source changed, cargo binary changed, or the pinned
     // toolchain changed. Cargo's own dependency tracking handles file-level
@@ -1451,19 +1477,20 @@ function emitCargo(n: Ninja, cfg: Config, name: string, spec: CargoBuild, input:
     // mismatched std hashes and both get pulled into the link, colliding on
     // unmangled symbols like `rust_eh_personality`.
     implicitInputs: [sourceStamp, cfg.cargo, resolve(cfg.cwd, "rust-toolchain.toml")],
-    vars: {
-      name,
-      manifestdir: manifestDir,
-      args: quoteArgs(args, hostWin),
-      ...(cross ? { rust_target: spec.rustTarget! } : {}),
-      // stream.ts's --env=K=V format. Values platform-quoted since ninja
-      // passes the command line through the host's argv parser; stream.ts
-      // receives them as proper argv entries.
-      env: Object.entries(env)
-        .map(([k, v]) => `--env=${k}=${quote(v, hostWin)}`)
-        .join(" "),
-    },
-  });
+  };
+  const vars = {
+    name,
+    manifestdir: manifestDir,
+    args: quoteArgs(args, hostWin),
+    // stream.ts's --env=K=V format. Values platform-quoted since ninja
+    // passes the command line through the host's argv parser; stream.ts
+    // receives them as proper argv entries.
+    env: Object.entries(env)
+      .map(([k, v]) => `--env=${k}=${quote(v, hostWin)}`)
+      .join(" "),
+  };
+  if (cross) n.build({ ...node, rule: "dep_cargo_cross", vars: { ...vars, rust_target: spec.rustTarget! } });
+  else n.build({ ...node, rule: "dep_cargo", vars });
   n.phony(name, [lib]);
 
   return { libs: [lib] };
@@ -1496,10 +1523,10 @@ interface EmitDirectInput {
 function emitDirect(
   n: Ninja,
   cfg: Config,
-  name: string,
+  name: DepName,
   spec: DirectBuild,
   input: EmitDirectInput,
-): { libs: string[]; objects: string[]; headerOutputs: string[] } {
+): { libs: string[]; objects: string[]; headerOutputs: string[]; checks: string[] } {
   const { srcDir, sourceStamp, fetchDepStamps } = input;
   const buildDir = depBuildDir(cfg, name);
   const hostWin = cfg.host.os === "windows";
@@ -1516,12 +1543,17 @@ function emitDirect(
   const baseFlags = isCxx ? depFlags.cxxflags : depFlags.cflags;
 
   // PIC: mirror emitNestedCmake's handling so direct deps get the same
-  // codegen as cmake deps would. spec.pic → -fPIC; otherwise on darwin
-  // undo apple-clang's PIC default to match the non-PIE final binary.
+  // codegen as cmake deps would, and the same as bun's own objects
+  // (flags.ts). spec.pic → -fPIC, and Android always (PIE-only platform);
+  // otherwise on unix undo the building clang's PIC/PIE default to match the
+  // non-PIE final binary. Not only apple-clang has one: distro clangs (Arch,
+  // Fedora, Alpine, Homebrew) default to PIE, which made every dep PIC when
+  // built there (.data.rel.ro 541 KB instead of 109 KB, 4-7% more pages
+  // touched at startup) while CI's apt.llvm.org clang did not.
   const picFlags: string[] = [];
-  if (spec.pic) {
+  if (spec.pic || cfg.abi === "android") {
     if (!cfg.windows) picFlags.push("-fPIC");
-  } else if (cfg.darwin) {
+  } else if (cfg.unix) {
     picFlags.push("-fno-pic", "-fno-pie");
   }
 
@@ -1584,6 +1616,7 @@ function emitDirect(
       outputs: [toolOut],
       rule: "dep_host_cc",
       inputs: [toolSrc],
+      implicitInputs: [toolIdentityFile(cfg, "hostCc")],
       orderOnlyInputs: orderOnly,
       vars: { flags: ["-w", ...toolDefs].join(" ") },
     });
@@ -1620,7 +1653,7 @@ function emitDirect(
     const path = typeof s === "string" ? s : s.path;
     const extra = typeof s === "string" ? [] : s.cflags;
     const abs = resolve(srcDir, path);
-    // .asm → nasm() (NASM syntax, Windows-x64). .c/.S → cc() (clang's
+    // .asm → nasm() (NASM syntax, x64). .c/.S → cc() (clang's
     // integrated assembler handles .S), prepending `-x c++` when lang:"cxx"
     // forces a C source through the C++ frontend (mimalloc). Everything
     // else (.cc/.cpp/.cxx) → cxx().
@@ -1637,6 +1670,8 @@ function emitDirect(
     return isC || isAsm ? cc(n, cfg, abs, opts) : cxx(n, cfg, abs, opts);
   });
 
+  const checks = spec.forbidUndefined === undefined ? [] : emitForbidUndefined(n, cfg, name, spec, objects, buildDir);
+
   // Default: hand the objects straight to bun's link line — no intermediate
   // archive. With cfg.archiveDeps the old per-dep .a is produced instead
   // (useful for bisecting duplicate-symbol issues, since a .a only
@@ -1647,15 +1682,59 @@ function emitDirect(
     // in this branch.
     mkdirSync(buildDir, { recursive: true });
     for (const o of objects) mkdirSync(resolve(o, ".."), { recursive: true });
-    const lib = ar(n, cfg, join("deps", name, `${cfg.libPrefix}${name}${cfg.libSuffix}`), objects);
+    const lib = ar(n, cfg, join("deps", name, `${cfg.libPrefix}${name}${cfg.libSuffix}`), objects, checks);
     n.phony(name, [lib]);
-    return { libs: [lib], objects: [], headerOutputs: [lib] };
+    return { libs: [lib], objects: [], headerOutputs: [lib], checks };
   }
-  n.phony(name, objects);
+  n.phony(name, [...objects, ...checks]);
   // headerOutputs: what downstream needs to wait on for HEADERS to be
   // ready. For no-archive direct deps that's the generated header set
   // (subst/literal/codegen) plus the fetch stamp — not the .o files.
-  return { libs: [], objects, headerOutputs: sourceStamp === undefined ? generated : [...generated, sourceStamp] };
+  return {
+    libs: [],
+    objects,
+    headerOutputs: sourceStamp === undefined ? generated : [...generated, sourceStamp],
+    checks,
+  };
+}
+
+/**
+ * The `forbidUndefined` edge: every object except the `except` sources' goes
+ * in, the stamp comes out. Returns the stamp, or nothing when llvm-nm is
+ * unavailable. The objects are in `spec.sources` order, which is how the
+ * exceptions are mapped onto them.
+ */
+function emitForbidUndefined(
+  n: Ninja,
+  cfg: Config,
+  name: DepName,
+  spec: DirectBuild,
+  objects: string[],
+  buildDir: string,
+): string[] {
+  const { symbols, except = [] } = spec.forbidUndefined!;
+  assert(symbols.length > 0, `${name}: forbidUndefined.symbols is empty`);
+  const sourcePaths = spec.sources.map(src => (typeof src === "string" ? src : src.path));
+  for (const exception of except) {
+    assert(
+      sourcePaths.includes(exception),
+      `${name}: forbidUndefined.except lists ${exception}, which is not one of its sources`,
+    );
+  }
+  const checked = objects.filter((_, i) => !except.includes(sourcePaths[i]!));
+  assert(checked.length > 0, `${name}: forbidUndefined excepts every source`);
+  if (cfg.nm === undefined) return [];
+
+  mkdirSync(buildDir, { recursive: true });
+  const stamp = resolve(buildDir, ".undefined-symbols-checked");
+  n.build({
+    outputs: [stamp],
+    rule: "dep_check_undefined",
+    inputs: checked,
+    implicitInputs: [fetchCliPath],
+    vars: { name, nm: quote(cfg.nm, cfg.host.os === "windows"), symbols: symbols.join(",") },
+  });
+  return [stamp];
 }
 
 /**

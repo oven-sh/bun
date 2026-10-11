@@ -15,8 +15,8 @@ use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::{self as install, Lockfile, Npm, PackageManager, Subcommand};
 use bun_libarchive::lib::{Archive, ArchiveIterator, IteratorResult as ArchiveIterResult};
 use bun_parsers::json as json_mod;
+use bun_paths as path;
 use bun_paths::resolve_path::{join_abs_string_buf_z, normalize_buf, normalize_buf_z};
-use bun_paths::{self as path, PathBuffer};
 use bun_resolver::fs::FileSystem;
 use bun_sha_hmac as sha;
 use bun_simdutf_sys::simdutf;
@@ -88,10 +88,10 @@ type SHA512Digest = [u8; sha::SHA512::DIGEST];
 
 pub(crate) struct PublishCommand;
 
-// Const generics cannot vary field types; the script fields and script_env are
-// kept as Option<> in both instantiations and we rely on
-// invariants (always None / never used when DIRECTORY_PUBLISH == false).
-pub(crate) struct Context<'a, const DIRECTORY_PUBLISH: bool> {
+/// What `bun publish` sends, built by [`Context::from_tarball_path`] or
+/// [`Context::from_workspace`]. The script fields and `script_env` are `None`
+/// for a tarball publish, which runs no lifecycle scripts.
+pub(crate) struct Context<'a> {
     pub(crate) manager: &'a mut PackageManager,
     pub(crate) command_ctx: Command::Context<'a>,
 
@@ -133,14 +133,14 @@ bun_core::oom_from_alloc!(FromTarballError);
 
 pub(crate) type FromWorkspaceError = pack::PackError<true>;
 
-impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
+impl<'a> Context<'a> {
     /// Retrieve information for publishing from a tarball path, `bun publish path/to/tarball.tgz`
     pub(crate) fn from_tarball_path(
         ctx: Command::Context<'a>,
         manager: &'a mut PackageManager,
         tarball_path: &[u8],
-    ) -> Result<Context<'a, DIRECTORY_PUBLISH>, FromTarballError> {
-        let mut abs_buf = PathBuffer::uninit();
+    ) -> Result<Context<'a>, FromTarballError> {
+        let mut abs_buf = bun_paths::path_buffer_pool::get();
         let abs_tarball_path = join_abs_string_buf_z::<path::platform::Auto>(
             FileSystem::instance().top_level_dir,
             &mut abs_buf,
@@ -450,14 +450,13 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
 
     /// `bun publish` without a tarball path. Automatically pack the current workspace and get
     /// information required for publishing
-    // Note: the return type is pinned to `Context<'static, true>`, the only
-    // valid shape. `'static` matches `pack::pack`'s return —
-    // the embedded `&mut PackageManager` / `Command::Context` are process-
-    // lifetime singletons reborrowed through raw pointers there.
+    // Note: `'static` matches `pack::pack`'s return. The embedded
+    // `&mut PackageManager` / `Command::Context` are process-lifetime
+    // singletons reborrowed through raw pointers there.
     pub(crate) fn from_workspace(
         ctx: Command::Context<'a>,
         manager: &'a mut PackageManager,
-    ) -> Result<Context<'static, true>, FromWorkspaceError> {
+    ) -> Result<Context<'static>, FromWorkspaceError> {
         let mut lockfile = Lockfile::default();
         let manager_ptr: *mut PackageManager = manager;
         let log: &mut bun_ast::Log = manager.log_mut();
@@ -520,7 +519,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             stats: pack::Stats::default(),
         };
 
-        // `pack::<true>` returns `Some(Context<true>)` on success.
+        // `pack::<true>` returns `Some(Context)` on success.
         Ok(pack::pack::<true>(&mut pack_ctx, &abs_pkg_json)?
             .expect("pack::<true> always yields a publish context"))
     }
@@ -553,11 +552,7 @@ impl PublishCommand {
         let manager_ptr: *mut PackageManager = manager;
 
         if cli.positionals.len() > 1 {
-            let context = match Context::<false>::from_tarball_path(
-                ctx,
-                manager,
-                cli.positionals[1],
-            ) {
+            let context = match Context::from_tarball_path(ctx, manager, cli.positionals[1]) {
                 Ok(c) => c,
                 Err(err) => {
                     match err {
@@ -601,17 +596,8 @@ impl PublishCommand {
                 }
             };
 
-            if let Err(err) = Self::publish::<false>(&context) {
-                match err {
-                    PublishError::OutOfMemory => bun_core::out_of_memory(),
-                    PublishError::NeedAuth => {
-                        Output::err_generic(
-                            "missing authentication (run <cyan>`bunx npm login`<r>)",
-                            (),
-                        );
-                        Global::crash();
-                    }
-                }
+            if let Err(err) = Self::publish(&context) {
+                err.report_and_crash();
             }
 
             bun_core::prettyln!(
@@ -628,7 +614,7 @@ impl PublishCommand {
             return Ok(());
         }
 
-        let context = match Context::<true>::from_workspace(ctx, manager) {
+        let context = match Context::from_workspace(ctx, manager) {
             Ok(c) => c,
             Err(err) => {
                 use pack::PackError;
@@ -660,17 +646,8 @@ impl PublishCommand {
         // TODO: read this into memory
         let _ = bun_sys::unlink(&context.abs_tarball_path);
 
-        if let Err(err) = Self::publish::<true>(&context) {
-            match err {
-                PublishError::OutOfMemory => bun_core::out_of_memory(),
-                PublishError::NeedAuth => {
-                    Output::err_generic(
-                        "missing authentication (run <cyan>`bunx npm login`<r>)",
-                        (),
-                    );
-                    Global::crash();
-                }
-            }
+        if let Err(err) = Self::publish(&context) {
+            err.report_and_crash();
         }
 
         bun_core::prettyln!(
@@ -695,9 +672,7 @@ impl PublishCommand {
                     b"package.json",
                 ))
                 .into();
-            let script_env = context
-                .script_env
-                .expect("DIRECTORY_PUBLISH=true sets script_env");
+            let script_env = context.script_env.expect("from_workspace sets script_env");
             script_env
                 .map
                 .put(b"npm_command", b"publish")
@@ -832,7 +807,6 @@ impl PublishCommand {
             headers.content.written_slice(),
             b"",
             None,
-            None,
             http::FetchRedirect::Follow,
         );
 
@@ -861,13 +835,12 @@ impl PublishCommand {
         false
     }
 
-    fn publish<const DIRECTORY_PUBLISH: bool>(
-        ctx: &Context<'_, DIRECTORY_PUBLISH>,
-    ) -> Result<(), PublishError> {
+    fn publish(ctx: &Context<'_>) -> Result<(), PublishError> {
         let registry = ctx.manager.scope_for_package_name(&ctx.package_name);
         let registry_url = registry.url.url();
 
         if registry.token.is_empty()
+            && registry.auth.is_empty()
             && (registry_url.password.is_empty() || registry_url.username.is_empty())
         {
             return Err(PublishError::NeedAuth);
@@ -917,9 +890,8 @@ impl PublishCommand {
         // request body. Single-shot CLI path — adopt the
         // already-owned `Box<[u8]>` (base64-encoded tarball; can be multi-MB)
         // into the process-lifetime side-table. Zero-copy.
-        let publish_req_body: &'static [u8] = crate::cli::cli_adopt(
-            Self::construct_publish_request_body::<DIRECTORY_PUBLISH>(ctx)?,
-        );
+        let publish_req_body: &'static [u8] =
+            crate::cli::cli_adopt(Self::construct_publish_request_body(ctx)?);
 
         let mut print_buf: Vec<u8> = Vec::new();
 
@@ -956,7 +928,6 @@ impl PublishCommand {
             publish_headers.entries,
             publish_headers.content.written_slice(),
             publish_req_body,
-            None,
             None,
             http::FetchRedirect::Follow,
         );
@@ -1026,12 +997,7 @@ impl PublishCommand {
                     Output::flush();
                 }
 
-                let otp = Self::get_otp::<DIRECTORY_PUBLISH>(
-                    ctx,
-                    registry,
-                    &mut response_buf,
-                    &mut print_buf,
-                )?;
+                let otp = Self::get_otp(ctx, registry, &mut response_buf, &mut print_buf)?;
 
                 let otp_headers = Self::construct_publish_headers(
                     &mut print_buf,
@@ -1050,7 +1016,6 @@ impl PublishCommand {
                     otp_headers.entries,
                     otp_headers.content.written_slice(),
                     publish_req_body,
-                    None,
                     None,
                     http::FetchRedirect::Follow,
                 );
@@ -1117,8 +1082,8 @@ impl PublishCommand {
         let _ = bun_core::spawn_sync_inherit(&[open::OPENER, auth_url.as_bytes()]);
     }
 
-    fn get_otp<const DIRECTORY_PUBLISH: bool>(
-        ctx: &Context<'_, DIRECTORY_PUBLISH>,
+    fn get_otp(
+        ctx: &Context<'_>,
         registry: &Npm::Registry::Scope,
         response_buf: &mut MutableString,
         print_buf: &mut Vec<u8>,
@@ -1280,7 +1245,6 @@ impl PublishCommand {
                         auth_headers.entries.clone()?,
                         auth_headers.content.written_slice(),
                         b"",
-                        None,
                         None,
                         http::FetchRedirect::Follow,
                     );
@@ -1624,7 +1588,7 @@ impl PublishCommand {
                 crate::cli::cli_dupe($v) as &'static [u8]
             };
         }
-        let mut path_buf = PathBuffer::uninit();
+        let mut path_buf = bun_paths::path_buffer_pool::get();
         if let Some(bin_query) = json.as_property(b"bin") {
             match &bin_query.expr.data {
                 ExprData::EString(bin_str) => {
@@ -2012,9 +1976,7 @@ impl PublishCommand {
         Ok(headers)
     }
 
-    fn construct_publish_request_body<const DIRECTORY_PUBLISH: bool>(
-        ctx: &Context<'_, DIRECTORY_PUBLISH>,
-    ) -> Result<Box<[u8]>, AllocError> {
+    fn construct_publish_request_body(ctx: &Context<'_>) -> Result<Box<[u8]>, AllocError> {
         let tag: &[u8] = if !ctx.manager.options.publish_config.tag.is_empty() {
             ctx.manager.options.publish_config.tag
         } else {
@@ -2102,6 +2064,18 @@ pub(crate) enum PublishError {
     NeedAuth,
 }
 bun_core::oom_from_alloc!(PublishError);
+
+impl PublishError {
+    fn report_and_crash(self) -> ! {
+        match self {
+            PublishError::OutOfMemory => bun_core::out_of_memory(),
+            PublishError::NeedAuth => {
+                Output::err_generic("missing authentication (run <cyan>`bunx npm login`<r>)", ());
+                Global::crash();
+            }
+        }
+    }
+}
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub(crate) enum GetOTPError {

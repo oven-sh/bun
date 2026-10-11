@@ -653,7 +653,7 @@ impl<'p> Checker<'p, '_> {
     ) -> Option<SymbolAtLocation<'p>> {
         let ty = self.reduced(ty);
         let ty = self.apparent_type(ty);
-        let members = self.members(ty)?;
+        let members = self.structured_members(ty)?;
         let info = self.applicable_index_info_for_name(&members, name)?;
         if let Some(declaration) = info.declaration {
             return Some(SymbolAtLocation::Index(ty, declaration));

@@ -538,7 +538,6 @@ impl Checker<'_, '_> {
         let hir = self.hir(file);
         // `getPropertiesOfType`
         let apparent_base = self.apparent_type(base_type);
-        let apparent_base = self.object_with_properties_of(apparent_base);
         let (Some(base_members), Some(own_members)) =
             (self.members(apparent_base), self.members(class_type))
         else {
@@ -911,10 +910,10 @@ impl Checker<'_, '_> {
         let Some(members) = self.members(ty) else {
             return;
         };
-        if members.shape().index.is_empty() {
+        if self.index_infos_among(ty, members).shape().index.is_empty() {
             return;
         }
-        let infos: Vec<IndexInfo> = (members.shape().index.iter())
+        let infos: Vec<IndexInfo> = (self.index_infos_among(ty, members).shape().index.iter())
             .map(|i| IndexInfo {
                 value: self.instantiate(i.value, members.mapper),
                 ..*i
@@ -1026,7 +1025,7 @@ impl Checker<'_, '_> {
                 && let Some((interface, sym)) = cx.interface
                 && !self.base_types(sym).iter().any(|&base| {
                     self.prop_ref(base, prop.name).is_some()
-                        && (self.members(base))
+                        && (self.structured_members(base))
                             .is_some_and(|m| m.shape().index.iter().any(|i| i.key == info.key))
                 })
             {
@@ -1084,7 +1083,7 @@ impl Checker<'_, '_> {
             if error_node.is_none()
                 && let Some((interface, sym)) = cx.interface
                 && !self.base_types(sym).iter().any(|&base| {
-                    self.members(base).is_some_and(|m| {
+                    self.structured_members(base).is_some_and(|m| {
                         let index = &m.shape().index;
                         index.iter().any(|i| i.key == check.key)
                             && index.iter().any(|i| i.key == info.key)

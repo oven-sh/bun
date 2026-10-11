@@ -367,7 +367,7 @@ impl<'p, 's> Checker<'p, 's> {
                 ..
             }
         ) {
-            for info in &members.shape().index {
+            for info in &self.index_infos_among(apparent, members).shape().index {
                 if self.is_key_type_included(info.key, include) {
                     // `stringOrNumberType`, one type
                     keys.push(if info.key == TypeId::STRING {
@@ -1249,7 +1249,7 @@ impl<'p, 's> Checker<'p, 's> {
             let infos = self.union_index_infos(parts);
             return Some(infos.iter().find(|info| info.key == key_type)?.value);
         }
-        let members = self.members(ty)?;
+        let members = self.structured_members(ty)?;
         let info = members
             .shape()
             .index
@@ -1264,7 +1264,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut all = Vec::with_capacity(parts.len());
         for &part in parts {
             let apparent = self.apparent_type(part);
-            let Some(members) = self.members(apparent) else {
+            let Some(members) = self.structured_members(apparent) else {
                 return SmallVec::new();
             };
             all.push(members);
@@ -2562,7 +2562,12 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // A property common to all members is declared by name in the first member that has no
             // index signature to cover names.
-            if members.shape().index.is_empty() {
+            if self
+                .index_infos_among(apparent, members)
+                .shape()
+                .index
+                .is_empty()
+            {
                 break;
             }
         }
@@ -2616,7 +2621,9 @@ impl<'p, 's> Checker<'p, 's> {
             // has absorbed the names.
             Some((owner, m)) if over_keyof => {
                 let renames = self.mapped_decl(file, node).name_ty.is_some();
-                let mut keys = Vec::with_capacity(m.shape().props.len() + m.shape().index.len());
+                let mut keys = Vec::with_capacity(
+                    m.shape().props.len() + self.index_infos_among(owner, m).shape().index.len(),
+                );
                 for prop in &m.shape().props {
                     let is_public = !prop
                         .flags
@@ -2634,7 +2641,13 @@ impl<'p, 's> Checker<'p, 's> {
                         None => {}
                     }
                 }
-                keys.extend(m.shape().index.iter().map(|i| i.key));
+                keys.extend(
+                    self.index_infos_among(owner, m)
+                        .shape()
+                        .index
+                        .iter()
+                        .map(|i| i.key),
+                );
                 List::Own(keys)
             }
             // A type that can be anything is iterated as if every string were a property name.

@@ -767,6 +767,7 @@ impl<'s> Program<'s> {
             symbol_ids: None,
             parsed_again_for_await: None,
             flow_analysis_disabled: Vec::new(),
+            intersections_in_resolution: Vec::new(),
             inline_level: 0,
             walk_declared: TypeId::NEVER,
             constants_in_evaluation: Vec::new(),
@@ -1466,6 +1467,8 @@ pub struct Checker<'p, 's> {
     /// file that a query gets to in the meantime, whose `errorType` then stays in what the query
     /// stores.
     flow_analysis_disabled: Vec<FileId>,
+    /// The intersections whose properties are being collected: see `intersection_as_object`.
+    intersections_in_resolution: Vec<TypeId>,
     /// Nesting depth of the `const ok = test` conditions being inlined.
     inline_level: u32,
     /// The declared type of the reference that the flow walk in progress narrows.

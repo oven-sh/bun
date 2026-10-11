@@ -1862,10 +1862,8 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `inferFromIndexTypes`
     fn infer_from_index_types(&mut self, n: &mut Inference, source: TypeId, target: TypeId) {
-        let (Some(sm), Some(tm)) = (
-            self.members(source),
-            self.members_of_reduced_apparent_type(target),
-        ) else {
+        let apparent = self.reduced_apparent_type_as_object(target);
+        let (Some(sm), Some(tm)) = (self.members(source), self.structured_members(apparent)) else {
             return;
         };
         if tm.shape().index.is_empty() {
@@ -1908,7 +1906,7 @@ impl<'p, 's> Checker<'p, 's> {
                         });
                     }
                 }
-                for other in &sm.shape().index {
+                for other in &self.index_infos_among(source, sm).shape().index {
                     if other.key == info.key || self.is_applicable_index_type(other.key, info.key) {
                         types.push(self.instantiate(other.value, sm.mapper));
                     }
@@ -1920,7 +1918,8 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         for info in &tm.shape().index {
-            if let Some(source_info) = self.applicable_index_info(&sm, info.key) {
+            let indexed = self.index_infos_among(source, sm);
+            if let Some(source_info) = self.applicable_index_info(&indexed, info.key) {
                 let expected = self.instantiate(info.value, tm.mapper);
                 self.infer_with_priority(n, source_info.value, expected, priority);
             }

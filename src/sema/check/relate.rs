@@ -2078,7 +2078,13 @@ impl<'p, 's> Checker<'p, 's> {
                     TypeId::NEVER
                 });
             }
-            key_types.extend(members.shape().index.iter().map(|i| i.key));
+            key_types.extend(
+                self.index_infos_among(owner, members)
+                    .shape()
+                    .index
+                    .iter()
+                    .map(|i| i.key),
+            );
         }
         let mut keys = Vec::with_capacity(key_types.len());
         for key in key_types {
@@ -3104,7 +3110,6 @@ impl<'p, 's> Checker<'p, 's> {
     /// `hasCommonProperties`
     pub(super) fn has_common_properties(&mut self, source: TypeId, target: TypeId) -> bool {
         let apparent = self.reduced_apparent_type_as_object(source);
-        let apparent = self.object_with_properties_of(apparent);
         let Some(sm) = self.members(apparent) else {
             return false;
         };
@@ -4337,7 +4342,6 @@ impl<'p, 's> Checker<'p, 's> {
         members.retain(|member| !self.is_error_type(*member) && !member.is_never());
         if members.len() < 2 {
             let apparent = members.first().copied().unwrap_or(source);
-            let apparent = self.object_with_properties_of(apparent);
             // `getPropertyOfType` finds nothing in a type that is not an object type: `any`, which
             // `T & U` resolves to where `U` extends `any`.
             let properties = match self.members(apparent) {
@@ -4371,7 +4375,12 @@ impl<'p, 's> Checker<'p, 's> {
                     props.push(combined);
                 }
             }
-            if of_current.shape().index.is_empty() {
+            if self
+                .index_infos_among(current, of_current)
+                .shape()
+                .index
+                .is_empty()
+            {
                 break;
             }
         }
@@ -5866,8 +5875,12 @@ impl<'p, 's> Checker<'p, 's> {
         let (Some(sm), Some(tm)) = (self.members(has_properties), self.members(target)) else {
             return Ternary::FALSE;
         };
-        // A cached shape does not change.
-        if self.provisional_shapes.len() == provisional {
+        // A cached shape does not change. An intersection has its signatures elsewhere.
+        let is_intersection = |c: &Self, ty| matches!(c.data(ty), TypeData::Intersection(_));
+        if self.provisional_shapes.len() == provisional
+            && !is_intersection(self, has_properties)
+            && !is_intersection(self, target)
+        {
             *both = Some((sm, tm));
         }
         // `getPropertyOfType(source, name)`
@@ -6287,7 +6300,10 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let (sm, tm) = match both {
             Some(both) => both,
-            None => match (self.members(source), self.members(target)) {
+            None => match (
+                self.structured_members(source),
+                self.structured_members(target),
+            ) {
                 (Some(sm), Some(tm)) => (sm, tm),
                 _ => return Ternary::FALSE,
             },
@@ -7159,14 +7175,14 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> Ternary {
         let tm = match both {
             Some((_, tm)) => tm,
-            None => match self.members(target) {
+            None => match self.structured_members(target) {
                 Some(tm) => tm,
                 None => return Ternary::FALSE,
             },
         };
         if r.relation == Relation::Identity {
             // `indexSignaturesIdenticalTo`
-            let Some(sm) = self.members(source) else {
+            let Some(sm) = self.structured_members(source) else {
                 return Ternary::FALSE;
             };
             if sm.shape().index.len() != tm.shape().index.len() {
@@ -7226,7 +7242,8 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(sm) = self.members(source) else {
             return Ternary::FALSE;
         };
-        if let Some(info) = self.applicable_index_info(&sm, key) {
+        let indexed = self.index_infos_among(source, sm);
+        if let Some(info) = self.applicable_index_info(&indexed, key) {
             let (source, target) = ((info.key, info.value), (key, expected));
             return self.index_info_related_to::<REPORT>(r, source, target, state);
         }
@@ -7387,7 +7404,7 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         r: &mut Relater,
         source: TypeId,
-        sm: &Members,
+        sm: &Members<'p>,
         key: TypeId,
         expected: TypeId,
         state: u8,
@@ -7422,7 +7439,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             result &= related;
         }
-        for info in &sm.shape().index {
+        for info in &self.index_infos_among(source, *sm).shape().index {
             if info.key == key || self.is_applicable_index_type(info.key, key) {
                 let actual = self.instantiate(info.value, sm.mapper);
                 let (source, target) = ((info.key, actual), (key, expected));

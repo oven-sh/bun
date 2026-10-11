@@ -8,19 +8,23 @@
 
 use crate::rule::{Message, Meta, Plugin};
 
-/// `message` of the rule `meta`, as oxlint says it.
-pub(crate) fn of(meta: &Meta, message: Message) -> Message {
-    let plugins: &[&str] = match meta.plugin {
-        Plugin::Eslint => &["eslint"],
+/// What oxlint says in place of messages of the rule `meta`.
+pub(crate) fn of_rule(meta: &Meta) -> [&'static [Message]; 2] {
+    let of = |plugin: &str| {
+        let found = MESSAGES.binary_search_by(|it| (it.0, it.1).cmp(&(plugin, meta.name)));
+        found.ok().and_then(|at| MESSAGES.get(at)).map_or(&[][..], |it| it.2)
+    };
+    match meta.plugin {
+        Plugin::Eslint => [of("eslint"), &[]],
         // oxlint has the rules that extend one of ESLint under the name of that one.
-        Plugin::TypeScript => &["typescript", "eslint"],
-        _ => return message,
-    };
-    let of_rule = |plugin: &&str| {
-        let found = MESSAGES.binary_search_by(|it| (it.0, it.1).cmp(&(*plugin, meta.name)));
-        Some(MESSAGES.get(found.ok()?)?.2)
-    };
-    let mut all = plugins.iter().filter_map(of_rule).flatten();
+        Plugin::TypeScript => [of("typescript"), of("eslint")],
+        _ => [&[], &[]],
+    }
+}
+
+/// `message` as oxlint says it. `said`: [`of_rule`].
+pub(crate) fn of(said: &[&'static [Message]; 2], message: Message) -> Message {
+    let mut all = said.iter().flat_map(|it| it.iter());
     all.find(|it| it.id == message.id)
         .copied()
         .unwrap_or(message)

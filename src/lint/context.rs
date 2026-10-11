@@ -4,11 +4,12 @@
 use crate::ast::{File, Ident, Name};
 use crate::fix::{Fix, Fixer, IntoFix, SuggestionKind};
 use crate::oxlint_help::{self, Edits, Found, Help, Part};
+use crate::oxlint_messages;
 use crate::rule::{Message, Meta, Rule, When};
 use crate::span::{Position, Span, Spanned};
 use smallvec::SmallVec;
 use std::borrow::Cow;
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum Severity {
@@ -117,6 +118,8 @@ pub(crate) struct CxBase<'a> {
     pub(crate) meta: &'static Meta,
     pub(crate) rule: u16,
     pub(crate) severity: Severity,
+    /// [`oxlint_messages::of_rule`], from the first report on.
+    pub(crate) said_by_oxlint: OnceCell<[&'static [Message]; 2]>,
 }
 
 impl<'a, R: Rule> std::ops::Deref for Cx<'a, R> {
@@ -196,7 +199,10 @@ impl<'a> CxBase<'a> {
     fn report(&self, span: Span, message: Message) -> Report<'a> {
         let language = self.file.language();
         let message = match language.is_oxlint {
-            true => crate::oxlint_messages::of(self.meta, message),
+            true => {
+                let said = (self.said_by_oxlint).get_or_init(|| oxlint_messages::of_rule(self.meta));
+                oxlint_messages::of(said, message)
+            }
             false if language.eslint_8.is_some() => {
                 crate::linter::config::eslint8::message_of(self.meta, message)
             }

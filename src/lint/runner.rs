@@ -582,6 +582,7 @@ impl<'a> Start<'a> {
             meta: self.meta,
             rule: self.rule,
             severity: self.severity,
+            said_by_oxlint: OnceCell::new(),
         }
     }
 }

@@ -109,7 +109,11 @@ impl<'a> Visitor<'a> for Functions {
 }
 
 fn write_string(out: &mut String, text: &[u8]) {
-    let _ = write!(out, "{}", bstr::BStr::new(&bun_core::printer::json_stringify_alloc(text)));
+    let _ = write!(
+        out,
+        "{}",
+        bstr::BStr::new(&bun_core::printer::json_stringify_alloc(text))
+    );
 }
 
 fn write_rows(out: &mut String, mut rows: Vec<String>) {

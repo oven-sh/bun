@@ -2,7 +2,7 @@
 // eslint-plugin-react-hooks. What oxlint and ESLint report for the same inputs is in oracle/react-compiler/expected.json;
 // expected.ts there writes it.
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { realpathSync } from "node:fs";
 import { endChildren, spawn } from "../children";
 import expected from "./oracle/react-compiler/expected.json";
@@ -298,12 +298,14 @@ ${chain}
   );
 
   // The threads of `bun lint` have more stack than a thread usually has. That is for what cannot ask how much is left.
-  test.skipIf(isDebug || isASAN)("what is nested 2,000 deep is left alone", async () => {
+  // A thread usually has 4 MB, which hold some 700 levels, and 18 MB on Windows. With all of the stack it would be eight times as deep.
+  test.skipIf(isDebug || isASAN)("what is nested deeper than the stack of a usual thread holds is left alone", async () => {
+    const depth = isWindows ? 10_000 : 2_000;
     const { diagnostics, exit } = await report({
       ".oxlintrc.json": rc(),
       "deep.tsx": long(
         1,
-        () => "if (props.a) {".repeat(2000) + "f(bad);" + "}".repeat(2000),
+        () => "if (props.a) {".repeat(depth) + "f(bad);" + "}".repeat(depth),
         units => [units, "<div>{bad}</div>"],
       ),
     });

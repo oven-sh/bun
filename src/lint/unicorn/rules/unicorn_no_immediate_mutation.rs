@@ -1,7 +1,7 @@
 use bun_lint_oxlint::ast_util::{
     get_inner_expression, get_inner_expression_unless_chain, get_member_expr, is_global_reference, static_property_name,
 };
-use crate::unicorn::statements_around;
+use crate::unicorn::{outermost_wrapper_and_parent, statements_around};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use smallvec::{SmallVec, smallvec};
@@ -42,24 +42,12 @@ impl Rule for NoImmediateMutation {
         // Whether it is all of a statement, but for `as T` and the like, and the statement before gives the variable
         // that is changed a new value of that kind.
         let is_initialized = |variable: Name<'a>, init_type: InitType| {
-            let mut at = expr;
-            let statement = loop {
-                if at.is_chain_root() {
-                    return false;
-                }
-                match at.parent() {
-                    Node::Expr(parent)
-                        if matches!(
-                            parent.tag(),
-                            ExprTag::As | ExprTag::AsConst | ExprTag::Satisfies | ExprTag::NonNull | ExprTag::Instantiation
-                        ) =>
-                    {
-                        at = parent;
-                    }
-                    Node::Stmt(statement) if statement.tag() == StmtTag::Expr => break statement,
-                    _ => return false,
-                }
+            let Some((_, Node::Stmt(statement))) = outermost_wrapper_and_parent(expr) else {
+                return false;
             };
+            if statement.tag() != StmtTag::Expr {
+                return false;
+            }
             let prev_stmt = statements_around(statement).and_then(|it| it.before(statement.span().start));
             prev_stmt.and_then(get_prev_declaration) == Some((variable, init_type))
         };

@@ -38,6 +38,11 @@ pub(crate) fn is_expression_statement(e: Expr) -> bool {
 /// What `get_inner_expression()` leads to `e` from, the outermost: `(e as T)!`. `None`: `e` is the whole of an optional
 /// chain, which it does not look into.
 pub(crate) fn outermost_wrapper(e: Expr<'_>) -> Option<Expr<'_>> {
+    outermost_wrapper_and_parent(e).map(|it| it.0)
+}
+
+/// [`outermost_wrapper`], and what that is directly part of.
+pub(crate) fn outermost_wrapper_and_parent(e: Expr<'_>) -> Option<(Expr<'_>, Node<'_>)> {
     let mut at = e;
     loop {
         if at.is_chain_root() {
@@ -56,7 +61,7 @@ pub(crate) fn outermost_wrapper(e: Expr<'_>) -> Option<Expr<'_>> {
             {
                 at = parent;
             }
-            _ => return Some(at),
+            parent => return Some((at, parent)),
         }
     }
 }

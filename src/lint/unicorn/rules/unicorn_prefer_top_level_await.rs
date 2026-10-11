@@ -1,4 +1,5 @@
 use bun_lint_oxlint::ast_util::{get_inner_expression, is_method_call};
+use crate::unicorn::outermost_wrapper_and_parent;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
@@ -35,18 +36,10 @@ impl Rule for PreferTopLevelAwait {
             if let Some(name) = func.name() {
                 on = on.function_call(name.bytes());
             }
-            let Node::Expr(mut at) = func.owner() else {
+            let Node::Expr(function) = func.owner() else {
                 continue;
             };
-            while let Node::Expr(parent) = at.parent()
-                && matches!(
-                    parent.tag(),
-                    ExprTag::As | ExprTag::AsConst | ExprTag::Satisfies | ExprTag::NonNull | ExprTag::Instantiation
-                )
-            {
-                at = parent;
-            }
-            if let Node::VarDecl(var_decl) = at.parent() {
+            if let Some((_, Node::VarDecl(var_decl))) = outermost_wrapper_and_parent(function) {
                 match var_decl.pat().as_ident() {
                     Some(name) => on = on.function_call(name.bytes()),
                     // Whatever the pattern declares.

@@ -279,6 +279,10 @@ static int32_t JSVALUE_TO_INT32(EncodedJSValue val) {
   return (int32_t)result;
 }
 
+// TinyCC does not inline calls, so the trampoline tests the int32 tag itself.
+#define JSVALUE_TO_INT32_ARG(val) \
+  (((val).asInt64 & NumberTag) == NumberTag ? (int32_t)(val).asInt64 : JSVALUE_TO_INT32(val))
+
 static EncodedJSValue INT32_TO_JSVALUE(int32_t val) {
    EncodedJSValue res;
    res.asInt64 = NumberTag | (uint32_t)val;

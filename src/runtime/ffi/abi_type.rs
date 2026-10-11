@@ -122,13 +122,13 @@ static ABI_TABLE: [AbiRow; 22] = {
         AbiRow { c_type, to_c_macro, to_js }
     }
     [
-    /* Char      */ r(b"char",       Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Int8T     */ r(b"int8_t",     Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Uint8T    */ r(b"uint8_t",    Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Int16T    */ r(b"int16_t",    Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Uint16T   */ r(b"uint16_t",   Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Int32T    */ r(b"int32_t",    Some("JSVALUE_TO_INT32("),               Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
-    /* Uint32T   */ r(b"uint32_t",   Some("JSVALUE_TO_INT32("),               Some(("UINT32_TO_JSVALUE(", ")"))),
+    /* Char      */ r(b"char",       Some("JSVALUE_TO_INT32_ARG("),           Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Int8T     */ r(b"int8_t",     Some("JSVALUE_TO_INT32_ARG("),           Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Uint8T    */ r(b"uint8_t",    Some("JSVALUE_TO_INT32_ARG("),           Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Int16T    */ r(b"int16_t",    Some("JSVALUE_TO_INT32_ARG("),           Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Uint16T   */ r(b"uint16_t",   Some("JSVALUE_TO_INT32_ARG("),           Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Int32T    */ r(b"int32_t",    Some("JSVALUE_TO_INT32_ARG("),           Some(("INT32_TO_JSVALUE((int32_t)", ")"))),
+    /* Uint32T   */ r(b"uint32_t",   Some("JSVALUE_TO_INT32_ARG("),           Some(("UINT32_TO_JSVALUE(", ")"))),
     /* Int64T    */ r(b"int64_t",    Some("JSVALUE_TO_INT64("),               Some(("INT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, ", ")"))),
     /* Uint64T   */ r(b"uint64_t",   Some("JSVALUE_TO_UINT64("),              Some(("UINT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, ", ")"))),
     /* Double    */ r(b"double",     Some("JSVALUE_TO_DOUBLE("),              Some(("DOUBLE_TO_JSVALUE(", ")"))),

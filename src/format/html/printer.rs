@@ -619,7 +619,7 @@ impl<'t, 'a, 'o> Printer<'t, 'a, 'o, '_, '_> {
         } else if (last_node.kind == Kind::Comment || is_sensitive_text(last_node.kind)) && {
             // `\n[\t ]{n}$`, where `n` is the indentation of the element.
             let width =
-                usize::from(options.format.indent_width.value()) * self.ancestors.saturating_sub(1);
+                options.format.indent_width.value() as usize * self.ancestors.saturating_sub(1);
             let value = &last_node.value[..];
             value.len() > width
                 && value[value.len() - width..]

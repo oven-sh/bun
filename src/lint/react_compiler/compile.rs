@@ -126,6 +126,11 @@ impl<'a> Compiler<'a> {
         );
         logged.extend(findings(&converted, linted.logged));
         let recorded = converted.recorded.iter().map(|it| match *it {
+            Recorded::DuplicateFbtTags {
+                tag,
+                name,
+                ref places,
+            } => duplicate_fbt_tags(tag, name, places),
             Recorded::ImplicitArguments(span) => implicit_arguments(span),
             Recorded::DynamicImport(span) => todo(
                 "(BuildHIR::lowerExpression) Handle Import expressions".to_owned(),
@@ -229,6 +234,24 @@ fn todo(reason: String, span: Span) -> Finding {
         }],
         suggestions: Vec::new(),
         is_error_detail: true,
+        function_span: None,
+    }
+}
+
+fn duplicate_fbt_tags(tag: &str, name: &str, places: &[Span]) -> Finding {
+    let detail = |&span: &Span| Detail::Error {
+        span: Some(span),
+        message: Some(format!("Multiple `<{tag}:{name}>` tags found")),
+    };
+    Finding {
+        category: ErrorCategory::Todo,
+        reason: "Support duplicate fbt tags".to_owned(),
+        description: Some(format!(
+            "Support `<{tag}>` tags with multiple `<{tag}:{name}>` values"
+        )),
+        details: places.iter().map(detail).collect(),
+        suggestions: Vec::new(),
+        is_error_detail: false,
         function_span: None,
     }
 }

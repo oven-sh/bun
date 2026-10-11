@@ -159,7 +159,7 @@ impl Config {
             parser,
             flavor: options.flavor,
             print_width: options.line_width.value(),
-            indent_width: u32::from(options.indent_width.value()),
+            indent_width: options.indent_width.value(),
             indent_style: options.indent_style,
             line_ending: options.line_ending.resolve(text).as_bytes(),
             bracket_spacing: options.bracket_spacing.value(),

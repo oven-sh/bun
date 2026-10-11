@@ -236,7 +236,7 @@ impl TextWidth {
 
     /// `text` can have tabs, `\n` and anything else. A tab counts as nothing, like any control
     /// character: that is what Prettier's `getStringWidth` does.
-    pub(crate) fn from_text(text: &[u8], _indent_width: u8) -> TextWidth {
+    pub(crate) fn from_text(text: &[u8], _indent_width: u32) -> TextWidth {
         Self::from_text_as(text, Flavor::Prettier)
     }
 
@@ -246,9 +246,9 @@ impl TextWidth {
     }
 
     /// The same, in JavaScript: for oxfmt a tab is as wide as the indentation.
-    pub(crate) fn from_javascript(text: &[u8], flavor: Flavor, indent_width: u8) -> TextWidth {
+    pub(crate) fn from_javascript(text: &[u8], flavor: Flavor, indent_width: u32) -> TextWidth {
         let tab_width = if flavor.is_oxfmt() { indent_width } else { 0 };
-        Self::from_text_with_tabs(text, flavor, u32::from(tab_width))
+        Self::from_text_with_tabs(text, flavor, tab_width)
     }
 
     fn from_text_with_tabs(text: &[u8], flavor: Flavor, tab_width: u32) -> TextWidth {
@@ -536,10 +536,10 @@ impl Condition {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub(crate) struct Align(pub(crate) u8);
+pub(crate) struct Align(pub(crate) u32);
 
 impl Align {
-    pub(crate) fn count(self) -> u8 {
+    pub(crate) fn count(self) -> u32 {
         self.0
     }
 }

@@ -236,6 +236,10 @@ impl Writer<'_, '_> {
             }
         };
         let len = line_ending.len() + count as usize;
+        if crate::is_too_long(self.out.len() + len) {
+            self.is_too_long = true;
+            return;
+        }
         if self.line_start.len() < len {
             self.line_start.resize(len, byte);
         }

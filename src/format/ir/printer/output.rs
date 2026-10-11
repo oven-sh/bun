@@ -133,7 +133,8 @@ impl<'o> Out<'o> {
             return self.block(&[byte; 2 * BLOCK], count);
         }
         // It is the indentation that makes a text too long. Without it, what is left to print is soon printed.
-        if self.is_too_long {
+        if self.is_too_long || crate::is_too_long(self.len + count) {
+            self.is_too_long = true;
             return;
         }
         self.next(count).fill(byte);

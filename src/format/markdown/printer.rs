@@ -2020,7 +2020,7 @@ impl<'a> Printer<'a, '_> {
             }
             None => 0,
         };
-        let tab_width = usize::from(self.options.indent_width.value()).max(1);
+        let tab_width = (self.options.indent_width.value() as usize).max(1);
         let mut index = 0u64;
         self.print_children_with(id, |printer, item| {
             let mut prefix: Vec<u8> = match list.ordered {
@@ -2091,7 +2091,7 @@ impl<'a> Printer<'a, '_> {
             _ => "[x] ",
         };
         let first = item.first_child;
-        let tab_width = usize::from(self.options.indent_width.value());
+        let tab_width = self.options.indent_width.value() as usize;
         let children = self.print_children_with(id, |printer, child| {
             let kind = printer.kind(child)?;
             // oxfmt: HTML is in the column of what is in the item, as indented code is.

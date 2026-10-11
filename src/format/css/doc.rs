@@ -1257,6 +1257,15 @@ impl<'o> Printer<'o> {
             _ => (indent, parent.root),
         };
         let same = &self.indents[same_queue as usize];
+        let blanks = match command {
+            IndentCommand::Indent if !self.use_tabs => self.tab_width,
+            IndentCommand::Align(Alignment::Spaces(width)) => width as usize,
+            _ => 0,
+        };
+        if crate::is_too_long(same.value.len() + blanks) {
+            self.failure = Some(FormatError::TooLong);
+            return indent;
+        }
         let (mut before_last, mut value, mut length) =
             (same.before_last, same.value.clone(), same.length);
         match command {

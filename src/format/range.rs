@@ -193,12 +193,12 @@ fn offset_of_utf16_index(text: &[u8], index: u32) -> Option<usize> {
 }
 
 /// Prettier's `getAlignmentSize` of the white space that the last line of `before` starts with.
-pub(crate) fn alignment_size(before: &[u8], tab_width: u8) -> usize {
+pub(crate) fn alignment_size(before: &[u8], tab_width: u32) -> usize {
     let last = |line_break| {
         bun_core::strings::last_index_of_char(before, line_break).map_or(0, |at| at + 1)
     };
     let line_start = last(b'\n').max(last(b'\r'));
-    let (mut rest, mut size, tab_width) = (&before[line_start..], 0, usize::from(tab_width.max(1)));
+    let (mut rest, mut size, tab_width) = (&before[line_start..], 0, tab_width.max(1) as usize);
     loop {
         match bun_core::strings::js_whitespace_len(rest) {
             0 => return size,
@@ -241,8 +241,8 @@ fn comments_of<'a>(file: &'a File<'a>, flavor: Flavor) -> &'a [Comment] {
 /// Writes the document of `file` so that every line is indented by `alignment` columns more.
 /// Prettier's `addAlignmentToDoc`.
 fn write_aligned<'a>(file: &'a File<'a>, alignment: usize, f: &mut Formatter<'a>) {
-    let tab_width = usize::from(f.options().indent_width.value().max(1));
-    let (levels, spaces) = (alignment / tab_width, (alignment % tab_width) as u8);
+    let tab_width = f.options().indent_width.value().max(1) as usize;
+    let (levels, spaces) = (alignment / tab_width, (alignment % tab_width) as u32);
     if spaces > 0 {
         f.write_element(FormatElement::Tag(Tag::StartAlign(Align(spaces))));
     }

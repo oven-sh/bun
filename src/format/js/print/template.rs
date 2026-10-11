@@ -154,13 +154,11 @@ struct TemplateElementIndention(u32);
 
 impl TemplateElementIndention {
     fn level(self, indent_width: IndentWidth) -> u32 {
-        self.0 / u32::from(indent_width.value()).max(1)
+        self.0 / indent_width.value().max(1)
     }
 
-    fn align(self, indent_width: IndentWidth) -> u8 {
-        (self.0 % u32::from(indent_width.value()).max(1))
-            .try_into()
-            .unwrap_or(u8::MAX)
+    fn align(self, indent_width: IndentWidth) -> u32 {
+        self.0 % indent_width.value().max(1)
     }
 
     /// That of the last line of `text`. If it is all on one line, `previous_indention`.
@@ -233,7 +231,7 @@ impl<'a> TemplateLike<'a> {
         is_in_jest_each: bool,
         f: &Formatter<'a>,
     ) -> impl Iterator<Item = FormatTemplateExpression<'a>> + use<'a> {
-        let tab_width = u32::from(f.options().indent_width.value());
+        let tab_width = f.options().indent_width.value();
         let mut indention = TemplateElementIndention::default();
         (0..self.quasi_count()).map_while(move |i| {
             let quasi_text = self.raw(i);

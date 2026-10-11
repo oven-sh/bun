@@ -52,7 +52,7 @@ pub(crate) type PrintResult<T> = Result<T, PrintError>;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PrinterOptions {
-    pub(crate) indent_width: u8,
+    pub(crate) indent_width: u32,
     pub(crate) print_width: usize,
     pub(crate) line_ending: LineEnding,
     pub(crate) indent_style: IndentStyle,
@@ -1151,11 +1151,11 @@ impl Indention {
     }
 
     /// `count` more spaces.
-    fn set_align(self, count: u8) -> Self {
+    fn set_align(self, count: u32) -> Self {
         match self {
             Indention::Level(level) => Indention::Align {
                 level,
-                align: u32::from(count),
+                align: count,
                 align_count: 1,
             },
             Indention::Align {
@@ -1164,7 +1164,7 @@ impl Indention {
                 align_count,
             } => Indention::Align {
                 level,
-                align: align.saturating_add(u32::from(count)),
+                align: align.saturating_add(count),
                 align_count: align_count.saturating_add(1),
             },
         }

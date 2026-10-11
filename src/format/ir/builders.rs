@@ -305,12 +305,12 @@ impl<'a, Content: Format<'a> + ?Sized> Format<'a> for FormatLabelled<'_, Content
 /// Line breaks in the content are followed by `count` more spaces. Nothing special happens if
 /// `count` is 0.
 #[inline]
-pub(crate) fn align<Content: ?Sized>(count: u8, content: &Content) -> Align<'_, Content> {
+pub(crate) fn align<Content: ?Sized>(count: u32, content: &Content) -> Align<'_, Content> {
     Align { count, content }
 }
 
 pub(crate) struct Align<'fmt, Content: ?Sized> {
-    count: u8,
+    count: u32,
     content: &'fmt Content,
 }
 

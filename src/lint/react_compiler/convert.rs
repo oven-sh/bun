@@ -19,6 +19,7 @@ use bun_ast::{
     OptionalChain, Range, Ref, S, Stmt as JsStmt, StoreSlice, StoreStr, Symbol as JsSymbol,
     SymbolKind, flags,
 };
+use bun_lint::ast::walk::{Visitor, walk_node};
 use bun_lint::ast::{
     BinOp, Call, Chain, Class, Expr, ExprKind, File, FnBody, FnKind, Func, Ident, Jsx, Key,
     KeyKind, List, Member, MemberKind, Name, Node, Param, Pat, PatKind, Prop, PropKind, Stmt,
@@ -78,7 +79,6 @@ pub(crate) struct WrappedDefault {
 }
 
 /// What the lowering that the flavor has records, and Bun's does not.
-#[derive(Copy, Clone)]
 pub(crate) enum Recorded {
     /// The `arguments` of a function is read.
     ImplicitArguments(Span),
@@ -87,6 +87,55 @@ pub(crate) enum Recorded {
     /// JSX that is the default of a parameter or in a pattern. Bun's lowering sees a call, which can be evaluated earlier
     /// if its operands can.
     DefaultIsJsx { span: Span, is_fragment: bool },
+    /// An `<fbt>` with more than one `<fbt:plural>` in it, however deep. To Bun's lowering JSX is a call, and it knows
+    /// nothing of fbt.
+    DuplicateFbtTags {
+        /// `fbt` or `fbs`
+        tag: &'static str,
+        /// The `plural`
+        name: &'static str,
+        places: Vec<Span>,
+    },
+}
+
+const FBT_TAGS: [&str; 3] = ["enum", "plural", "pronoun"];
+
+/// The `<fbt:enum>`, `<fbt:plural>` and `<fbt:pronoun>` in an `<fbt>`.
+struct FbtTags<'a> {
+    file: &'a File<'a>,
+    tag: &'static str,
+    /// Upstream looks for the name, which can also be that of an attribute. oxc's fork looks at tags.
+    also_attributes: bool,
+    places: [Vec<Span>; 3],
+}
+
+impl FbtTags<'_> {
+    fn name_at(&mut self, start: u32) {
+        if let Some((namespace, name)) = self.file.jsx_namespace_and_name(start)
+            && self.file.slice(namespace) == self.tag.as_bytes()
+            && let Some(at) =
+                (FBT_TAGS.iter()).position(|it| it.as_bytes() == self.file.slice(name))
+        {
+            self.places[at].push(Span::new(namespace.start, name.end));
+        }
+    }
+}
+
+impl<'a> Visitor<'a> for FbtTags<'a> {
+    fn enter(&mut self, node: Node<'a>) {
+        let Some(ExprKind::Jsx(jsx)) = node.as_expr().map(Expr::kind) else {
+            return;
+        };
+        if let Some(tag) = jsx.tag() {
+            self.name_at(tag.span().start);
+        }
+        if self.also_attributes {
+            for attr in jsx.attrs() {
+                self.name_at(attr.span().start);
+            }
+        }
+    }
+    fn exit(&mut self, _: Node<'a>) {}
 }
 
 impl Converted {
@@ -1030,7 +1079,7 @@ impl<'a> Converter<'a, '_> {
                 },
                 loc,
             ),
-            ExprKind::Jsx(jsx) => self.jsx(jsx, loc)?,
+            ExprKind::Jsx(jsx) => self.jsx(jsx, expr, loc)?,
             ExprKind::ImportCall { args } => {
                 let keyword = Span::new(span.start, span.start + "import".len() as u32);
                 self.recorded.push(Recorded::DynamicImport(keyword));
@@ -1125,7 +1174,25 @@ impl<'a> Converter<'a, '_> {
         }
     }
 
-    fn jsx(&mut self, jsx: Jsx<'a>, loc: Loc) -> Converts<JsExpr> {
+    fn jsx(&mut self, jsx: Jsx<'a>, whole: Expr<'a>, loc: Loc) -> Converts<JsExpr> {
+        let name = jsx.tag().map(|tag| self.file.slice(tag.span()));
+        let tag = ["fbt", "fbs"]
+            .into_iter()
+            .find(|it| Some(it.as_bytes()) == name);
+        if let Some(tag) = tag {
+            let mut found = FbtTags {
+                file: self.file,
+                tag,
+                also_attributes: self.flavor == Flavor::Eslint,
+                places: Default::default(),
+            };
+            walk_node(Node::Expr(whole), &mut found);
+            let duplicate = (FBT_TAGS.into_iter().zip(found.places)).find(|it| it.1.len() > 1);
+            if let Some((name, places)) = duplicate {
+                self.recorded
+                    .push(Recorded::DuplicateFbtTags { tag, name, places });
+            }
+        }
         let children = jsx.children();
         let mut args: bun_ast::ExprNodeList = AstAlloc::vec_with_capacity(children.len() + 2);
         args.push(match jsx.tag() {

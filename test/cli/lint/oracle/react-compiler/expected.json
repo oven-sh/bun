@@ -3806,7 +3806,7 @@
   },
   "names": {
    "exit": 1,
-   "files": 3,
+   "files": 4,
    "diagnostics": {
     "defaults-with-jsx.jsx": [
      {
@@ -3927,6 +3927,52 @@
       "severity": "error"
      }
     ],
+    "fbt.jsx": [
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 3,
+         "length": 10,
+         "line": 2,
+         "offset": 25
+        }
+       }
+      ],
+      "message": "(BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Support `<fbt>` tags with multiple `<fbt:plural>` values",
+      "labels": [
+       {
+        "label": "Multiple `<fbt:plural>` tags found",
+        "span": {
+         "column": 8,
+         "length": 10,
+         "line": 5,
+         "offset": 73
+        }
+       },
+       {
+        "label": "Multiple `<fbt:plural>` tags found",
+        "span": {
+         "column": 46,
+         "length": 10,
+         "line": 6,
+         "offset": 176
+        }
+       }
+      ],
+      "message": "Support duplicate fbt tags",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
     "react-by-its-name.jsx": [
      {
       "code": "react(memo-dependencies)",
@@ -3935,24 +3981,42 @@
        {
         "label": "This dependency list is missing values used by the callback",
         "span": {
-         "column": 44,
-         "length": 2,
+         "column": 46,
+         "length": 11,
          "line": 5,
-         "offset": 134
+         "offset": 136
         }
        },
        {
         "label": "Missing dependency `props.a`",
         "span": {
-         "column": 34,
+         "column": 47,
          "length": 7,
          "line": 5,
-         "offset": 124
+         "offset": 137
         }
        }
       ],
       "message": "Found missing memoization dependencies",
       "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
+      "severity": "error"
+     },
+     {
+      "code": "react(use-memo)",
+      "help": "Use an array literal containing identifiers or property access expressions",
+      "labels": [
+       {
+        "label": "Expected the dependency list to be an array of simple expressions (e.g. `x`, `x.y.z`, `x?.y?.z`)",
+        "span": {
+         "column": 47,
+         "length": 9,
+         "line": 5,
+         "offset": 137
+        }
+       }
+      ],
+      "message": "Expected the dependency list to be an array of simple expressions (e.g. `x`, `x.y.z`, `x?.y?.z`)",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/use-memo",
       "severity": "error"
      }
     ]
@@ -4768,6 +4832,41 @@
      }
     ]
    },
+   "fbt.jsx": {
+    "messages": [
+     {
+      "ruleId": "react-hooks/todo",
+      "severity": 2,
+      "message": "Todo: (BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration\n\n  1 | function Both(props) {\n> 2 |   var x = 1;\n    |   ^^^^^^^^^^ (BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration\n  3 |   return (\n  4 |     <fbt desc=\"d\">\n  5 |       <fbt:plural count={props.a} many=\"items\">item</fbt:plural>\n\n",
+      "line": 2,
+      "column": 3,
+      "endLine": 2,
+      "endColumn": 13,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/todo",
+      "severity": 2,
+      "message": "Todo: Support duplicate fbt tags\n\nSupport `<fbt>` tags with multiple `<fbt:plural>` values.\n\n  3 |   return (\n  4 |     <fbt desc=\"d\">\n> 5 |       <fbt:plural count={props.a} many=\"items\">item</fbt:plural>\n    |        ^^^^^^^^^^ Multiple `<fbt:plural>` tags found\n  6 |       <fbt:param name=\"n\">{props.l.map(i => <fbt:plural count={i} many=\"things\">thing</fbt:plural>)}</fbt:param>\n  7 |       {x}\n  8 |     </fbt>\n\n  4 |     <fbt desc=\"d\">\n  5 |       <fbt:plural count={props.a} many=\"items\">item</fbt:plural>\n> 6 |       <fbt:param name=\"n\">{props.l.map(i => <fbt:plural count={i} many=\"things\">thing</fbt:plural>)}</fbt:param>\n    |                                              ^^^^^^^^^^ Multiple `<fbt:plural>` tags found\n  7 |       {x}\n  8 |     </fbt>\n  9 |   );",
+      "line": 5,
+      "column": 8,
+      "endLine": 5,
+      "endColumn": 18,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/todo",
+      "severity": 2,
+      "message": "Todo: Support duplicate fbt tags\n\nSupport `<fbt>` tags with multiple `<fbt:plural>` values.\n\n  23 |   return (\n  24 |     <fbt desc=\"d\">\n> 25 |       <fbt:plural count={props.a} many=\"items\">item</fbt:plural>\n     |        ^^^^^^^^^^ Multiple `<fbt:plural>` tags found\n  26 |       <div fbt:plural=\"x\" />\n  27 |     </fbt>\n  28 |   );\n\n  24 |     <fbt desc=\"d\">\n  25 |       <fbt:plural count={props.a} many=\"items\">item</fbt:plural>\n> 26 |       <div fbt:plural=\"x\" />\n     |            ^^^^^^^^^^ Multiple `<fbt:plural>` tags found\n  27 |     </fbt>\n  28 |   );\n  29 | }",
+      "line": 25,
+      "column": 8,
+      "endLine": 25,
+      "endColumn": 18,
+      "suggestions": []
+     }
+    ],
+    "suppressed": []
+   },
    "flow-other.jsx": {
     "messages": [
      {
@@ -4818,11 +4917,21 @@
      {
       "ruleId": "react-hooks/memo-dependencies",
       "severity": 2,
-      "message": "Error: Found missing memoization dependencies\n\nMissing dependencies can cause a value to update less often than it should, resulting in stale UI.\n\n  3 |\n  4 | export function ByItsName(props) {\n> 5 |   const m = React.useMemo(() => [props.a], []);\n    |                                  ^^^^^^^ Missing dependency `props.a`\n  6 |   return <p>{m}</p>;\n  7 | }\n  8 |",
+      "message": "Error: Found missing memoization dependencies\n\nMissing dependencies can cause a value to update less often than it should, resulting in stale UI.\n\n  3 |\n  4 | export function ByItsName(props) {\n> 5 |   const m = React.useMemo(() => [props.a()], [props.a()]);\n    |                                               ^^^^^^^ Missing dependency `props.a`\n  6 |   return <p>{m}</p>;\n  7 | }\n  8 |",
       "line": 5,
-      "column": 34,
+      "column": 47,
       "endLine": 5,
-      "endColumn": 41,
+      "endColumn": 54,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/use-memo",
+      "severity": 2,
+      "message": "Error: Expected the dependency list to be an array of simple expressions (e.g. `x`, `x.y.z`, `x?.y?.z`)\n\nExpected the dependency list to be an array of simple expressions (e.g. `x`, `x.y.z`, `x?.y?.z`).\n\n  3 |\n  4 | export function ByItsName(props) {\n> 5 |   const m = React.useMemo(() => [props.a()], [props.a()]);\n    |                                               ^^^^^^^^^ Expected the dependency list to be an array of simple expressions (e.g. `x`, `x.y.z`, `x?.y?.z`)\n  6 |   return <p>{m}</p>;\n  7 | }\n  8 |",
+      "line": 5,
+      "column": 47,
+      "endLine": 5,
+      "endColumn": 56,
       "suggestions": []
      }
     ],

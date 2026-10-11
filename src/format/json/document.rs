@@ -85,7 +85,7 @@ pub(super) fn build(
         config.alignment % config.indent_width.max(1),
     );
     if spaces > 0 {
-        builder.tag(Tag::StartAlign(Align(spaces as u8)));
+        builder.tag(Tag::StartAlign(Align(spaces)));
     }
     for _ in 0..levels {
         builder.tag(Tag::StartIndent);
@@ -156,7 +156,7 @@ impl Builder<'_> {
 
     /// A part of the source. Its line breaks are written as they are, without indentation.
     fn source(&mut self, start: u32, end: u32) {
-        let width = TextWidth::from_text(self.slice(start, end), self.config.indent_width as u8);
+        let width = TextWidth::from_text(self.slice(start, end), self.config.indent_width);
         self.push(FormatElement::SourceText(Text {
             start,
             len: end.saturating_sub(start),
@@ -435,7 +435,7 @@ impl Builder<'_> {
                 let written = self.storage.text.get(start..).unwrap_or_default();
                 let (len, width) = (
                     written.len() as u32,
-                    TextWidth::from_text(written, self.config.indent_width as u8),
+                    TextWidth::from_text(written, self.config.indent_width),
                 );
                 self.push(FormatElement::OwnedText(Text {
                     start: start as u32,

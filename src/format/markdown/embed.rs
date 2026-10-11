@@ -66,10 +66,9 @@ fn flatten<'d>(doc: &'d Doc<'_>, ops: &mut Vec<Op<'d>>, stack_check: bun_core::S
         Doc::Align(Alignment::Spaces(0), contents) | Doc::MarkAsRoot(contents) => {
             flatten(contents, ops, stack_check)
         }
-        Doc::Align(Alignment::Spaces(width), contents) => match u8::try_from(*width) {
-            Ok(width) => between(Tag::StartAlign(Align(width)), contents, Tag::EndAlign, ops),
-            Err(_) => false,
-        },
+        Doc::Align(Alignment::Spaces(width), contents) => {
+            between(Tag::StartAlign(Align(*width)), contents, Tag::EndAlign, ops)
+        }
         Doc::Group {
             contents,
             should_break,

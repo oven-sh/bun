@@ -363,8 +363,11 @@ impl<'a> AssignmentLike<'a> {
             return None;
         }
         let span = key.span(f.file());
-        let text_width_for_break =
-            u32::from(f.options().indent_width.value()) + MIN_OVERLAP_FOR_BREAK;
+        let text_width_for_break = f
+            .options()
+            .indent_width
+            .value()
+            .saturating_add(MIN_OVERLAP_FOR_BREAK);
         // No text is wider than it is long.
         let is_short = span.len() < text_width_for_break
             || f.string_width(f.source_text().text_for(&span)) < text_width_for_break;
@@ -374,7 +377,7 @@ impl<'a> AssignmentLike<'a> {
     /// Returns whether the left side is a short name.
     fn write_left(&self, f: &mut Formatter<'a>) -> bool {
         let text_width_for_break =
-            (u32::from(f.options().indent_width.value()) + MIN_OVERLAP_FOR_BREAK) as usize;
+            f.options().indent_width.value() as usize + MIN_OVERLAP_FOR_BREAK as usize;
         match *self {
             AssignmentLike::VariableDeclarator(declarator) => {
                 let (id, ty) = (declarator.pat(), declarator.ty());

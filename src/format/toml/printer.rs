@@ -62,7 +62,7 @@ pub(super) fn print(
         column_width: options.line_width.value() as usize,
         indent: match options.indent_style.is_tab() {
             true => b"\t".to_vec(),
-            false => b" ".repeat(usize::from(options.indent_width.value())),
+            false => b" ".repeat(options.indent_width.value() as usize),
         },
         newline: match options.line_ending {
             LineEnding::Crlf => b"\r\n",

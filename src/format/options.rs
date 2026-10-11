@@ -301,10 +301,7 @@ impl FormatOptions {
         match name {
             b"printWidth" if value == b"Infinity" => self.line_width = LineWidth(u32::MAX),
             b"printWidth" => self.line_width = LineWidth(number(u32::MAX)?),
-            // Markdown asks whether something is a multiple of it. Nothing is as wide as 255 columns.
-            b"tabWidth" => {
-                self.indent_width = IndentWidth(number(u32::MAX)?.min(u32::from(u8::MAX)) as u8)
-            }
+            b"tabWidth" => self.indent_width = IndentWidth(number(u32::MAX)?),
             b"useTabs" => {
                 self.indent_style = if boolean()? {
                     IndentStyle::Tab
@@ -638,11 +635,11 @@ impl LineEnding {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct IndentWidth(pub u8);
+pub struct IndentWidth(pub u32);
 
 impl IndentWidth {
     #[inline]
-    pub const fn value(self) -> u8 {
+    pub const fn value(self) -> u32 {
         self.0
     }
 }

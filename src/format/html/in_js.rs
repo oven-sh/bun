@@ -137,7 +137,7 @@ fn indent_level_in_source<'a>(e: Expr<'a>, options: &FormatOptions, f: &Formatte
         None => known,
     };
     f.context().line_start.set((start, line_start));
-    let indent_width = u32::from(options.indent_width.value()).max(1);
+    let indent_width = options.indent_width.value().max(1);
     let mut columns = 0;
     for byte in text
         .get(line_start as usize..start as usize)

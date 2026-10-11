@@ -16,8 +16,6 @@ use crate::js::print::binary_like_expression::is_angular_pipe;
 use crate::prelude::*;
 use crate::{format_args, write};
 
-static SPACES: [u8; u8::MAX as usize] = [b' '; u8::MAX as usize];
-
 /// An operand of either.
 #[derive(Copy, Clone)]
 enum Operand<'a> {
@@ -412,13 +410,11 @@ pub(crate) fn write_ternary<'a>(conditional: ConditionalLike<'a>, f: &mut Format
     // What lines the alternate up with the consequent, which is indented.
     let fill_tab = format_with(|f| match use_tabs {
         true => write!(f, text(b"\t")),
+        // What is too long for a text is too long for the indentation of the consequent, which the printer refuses.
+        false if crate::is_too_long(indent_width as usize) => {}
         false => write!(
             f,
-            text(
-                SPACES
-                    .get(..usize::from(indent_width).saturating_sub(1))
-                    .unwrap_or_default()
-            )
+            text(&b" ".repeat((indent_width as usize).saturating_sub(1)))
         ),
     });
 

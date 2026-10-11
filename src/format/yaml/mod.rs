@@ -91,8 +91,7 @@ fn write_document(
         bracket_spacing: options.bracket_spacing.value(),
         trailing_comma: !matches!(options.trailing_commas, TrailingCommas::None),
         // Without indentation there is no structure, so for oxfmt there is some.
-        tab_width: u32::from(options.indent_width.value())
-            .max(u32::from(options.flavor.is_oxfmt())),
+        tab_width: (options.indent_width.value()).max(u32::from(options.flavor.is_oxfmt())),
         is_oxfmt: options.flavor.is_oxfmt(),
         is_last_document: true,
         is_first_item_ignored: false,

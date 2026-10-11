@@ -215,7 +215,11 @@ describe.concurrent(`bun lint: the rules of the React Compiler report what oxlin
     const { diagnostics, exit } = await report(small.names);
     expect(diagnostics).toEqual(expected.reports.names.diagnostics);
     expect(diagnostics["own-hooks.tsx"]).toBeUndefined();
-    expect(placesOf(diagnostics["react-by-its-name.jsx"]).map(it => it[1])).toEqual([5]);
+    expect(placesOf(diagnostics["react-by-its-name.jsx"]).map(it => it[1])).toEqual([5, 5]);
+    expect(placesOf(diagnostics["fbt.jsx"])).toEqual([
+      ["react(todo)", 2, 3],
+      ["react(todo)", 5, 8],
+    ]);
     // Not for D, whose default has no JSX in it.
     expect(placesOf(diagnostics["defaults-with-jsx.jsx"])).toEqual([
       ["react(static-components)", 6, 11],
@@ -487,8 +491,15 @@ describe.concurrent(
             ? `react-hooks/${start}`
             : `react-hooks/${start}: (BuildHIR::node.lowerReorderableExpression) Expression type \`${kind}\` cannot be safely reordered`,
         ),
+        // Two rules at one place: in the order of the configuration, whatever their ends.
         "react-by-its-name.jsx": [
-          "react-hooks/memo-dependencies 5:34-5:41 Error: Found missing memoization dependencies",
+          "react-hooks/memo-dependencies 5:47-5:54 Error: Found missing memoization dependencies",
+          "react-hooks/use-memo 5:47-5:56 Error: Expected the dependency list to be an array of simple expressions (e.g. `x`, `x.y.z`, `x?.y?.z`)",
+        ],
+        "fbt.jsx": [
+          "react-hooks/todo 2:3-2:13 Todo: (BuildHIR::lowerStatement) Handle var kinds in VariableDeclaration",
+          "react-hooks/todo 5:8-5:18 Todo: Support duplicate fbt tags",
+          "react-hooks/todo 25:8-25:18 Todo: Support duplicate fbt tags",
         ],
         "disabled.jsx": [],
         // All at the first.

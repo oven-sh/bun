@@ -496,7 +496,7 @@ fn with_document<R>(
         is_mdx: mode.is_mdx,
         is_for_oxfmt: options.flavor.is_oxfmt(),
         tree,
-        tab_width: usize::from(options.indent_width.value()),
+        tab_width: options.indent_width.value() as usize,
         stack_check: crate::stack::check_for_tree(),
         is_nested_too_deeply: false,
     };

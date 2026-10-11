@@ -148,8 +148,8 @@ fn format_normalized(
     comments::attach(text, tree, attached);
 
     // Prettier's `addAlignmentToDoc`. The line break makes the indentation take effect.
-    let tab_width = usize::from(options.indent_width.value().max(1));
-    let (levels, spaces) = (alignment / tab_width, (alignment % tab_width) as u8);
+    let tab_width = options.indent_width.value().max(1) as usize;
+    let (levels, spaces) = (alignment / tab_width, (alignment % tab_width) as u32);
     let context = JsFormatContext::without_file(text, options.clone(), &[]);
     let root = crate::ir::run::write_with(context, text, document, |f| {
         if spaces > 0 {

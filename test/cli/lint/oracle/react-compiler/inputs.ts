@@ -259,13 +259,45 @@ const reactByItsName = `import React from "other";
 import * as R from "react";
 
 export function ByItsName(props) {
-  const m = React.useMemo(() => [props.a], []);
+  const m = React.useMemo(() => [props.a()], [props.a()]);
   return <p>{m}</p>;
 }
 
 export function ByAnotherName(props) {
-  const m = R.useMemo(() => [props.a], []);
+  const m = R.useMemo(() => [props.a()], [props.a()]);
   return <p>{m}</p>;
+}
+`;
+
+/** Two of one kind in an `<fbt>`, however deep. It is said beside what else there is. To the plugin the name of an attribute counts. */
+const duplicateFbtTags = `function Both(props) {
+  var x = 1;
+  return (
+    <fbt desc="d">
+      <fbt:plural count={props.a} many="items">item</fbt:plural>
+      <fbt:param name="n">{props.l.map(i => <fbt:plural count={i} many="things">thing</fbt:plural>)}</fbt:param>
+      {x}
+    </fbt>
+  );
+}
+
+function OfAnotherTag(props) {
+  return (
+    <fbs desc="d">
+      <fbs:pronoun type="subject" gender={props.a} />
+      <fbs:enum enum-range={["a"]} value={props.c} />
+      <fbt:enum enum-range={["a"]} value={props.c} />
+    </fbs>
+  );
+}
+
+function AnAttribute(props) {
+  return (
+    <fbt desc="d">
+      <fbt:plural count={props.a} many="items">item</fbt:plural>
+      <div fbt:plural="x" />
+    </fbt>
+  );
 }
 `;
 
@@ -576,7 +608,7 @@ function Component(props) {
   },
   order: { ".oxlintrc.json": rc(), "order.jsx": order },
   writes: { ".oxlintrc.json": rc(), "writes.jsx": writes },
-  names: { ".oxlintrc.json": rc(), "own-hooks.tsx": ownHooks, "defaults-with-jsx.jsx": defaultsWithJsx, "react-by-its-name.jsx": reactByItsName },
+  names: { ".oxlintrc.json": rc(), "own-hooks.tsx": ownHooks, "defaults-with-jsx.jsx": defaultsWithJsx, "react-by-its-name.jsx": reactByItsName, "fbt.jsx": duplicateFbtTags },
   lowering: { ".oxlintrc.json": rc(), "forever.tsx": forever, "defaults.tsx": defaults },
   node_modules: {
     ".oxlintrc.json": rc(),
@@ -662,6 +694,7 @@ ${["a", "b", "c", "d", "e", "f", "g", "h", "i"].map(name => `    value += props.
   "own-hooks.tsx": ownHooks,
   "defaults-with-jsx.jsx": defaultsWithJsx,
   "react-by-its-name.jsx": reactByItsName,
+  "fbt.jsx": duplicateFbtTags,
   "disabled.jsx": readsRef("// eslint-disable-next-line react-hooks/refs"),
   "flow-hook.jsx": readsRef("// $FlowFixMe[react-rule-hook]"),
   "flow-ref.jsx": readsRef("// $FlowFixMe[react-rule-unsafe-ref]"),

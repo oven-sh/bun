@@ -66,7 +66,7 @@ impl<'w, 'f> Writer<'w, 'f> {
 
     /// The column that the lines of what is written start in, if that does not depend on how the document is printed.
     pub(crate) fn indentation_width(&self) -> Option<usize> {
-        Some(self.indent_level? as usize * usize::from(self.f.options().indent_width.value()))
+        Some(self.indent_level? as usize * self.f.options().indent_width.value() as usize)
     }
 
     // ───────────────────────────── line breaks ─────────────────────────────

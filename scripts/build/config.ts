@@ -60,6 +60,14 @@ const versionDefaults = {
 };
 
 /**
+ * What `process.versions.webkit` says for `webkitVersion`, and what the builtins section hashes into its engineStamp:
+ * a release tag without its `autobuild-`, so a commit is its sha and a preview is `preview-pr-<N>-<sha8>`.
+ */
+export function webkitVersionName(webkitVersion: string): string {
+  return webkitVersion.startsWith("autobuild-") ? webkitVersion.slice("autobuild-".length) : webkitVersion;
+}
+
+/**
  * The full resolved build configuration. Every field is concrete — no
  * undefined-because-it-depends-on-something-else. This is the single source
  * of truth passed to every build function.
@@ -843,6 +851,9 @@ function resolveBase(partial: PartialConfig, host: Host, os: OS, arch: Arch, js:
   const revision = getGitRevision(cwd, debug && !ci ? buildDir : undefined);
   // Default from versions.ts. Override via --nodejs-version=<v> to test a bump.
   const nodejsVersion = partial.nodejsVersion ?? versionDefaults.nodejsVersion;
+  // Default from deps/webkit.ts. Override via --webkit-version=<hash> to test a branch before bumping the pin.
+  // A code generator reads it too: bundle-modules.ts hashes it into the builtins section (engineStamp).
+  const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
 
   return {
     bun: js.bun,
@@ -855,6 +866,7 @@ function resolveBase(partial: PartialConfig, host: Host, os: OS, arch: Arch, js:
     version,
     revision,
     nodejsVersion,
+    webkitVersion,
     abi,
     linux,
     darwin,
@@ -901,6 +913,7 @@ export type CodegenFields = Pick<
   | "version"
   | "revision"
   | "nodejsVersion"
+  | "webkitVersion"
   | keyof JsToolchain
 >;
 
@@ -955,6 +968,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     version,
     revision,
     nodejsVersion,
+    webkitVersion,
     bun,
     npm,
     jsRuntime,
@@ -1214,11 +1228,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   }
 
   // ─── Versioning ───
-  // Defaults from versions.ts. Override via --webkit-version=<hash> etc.
-  // to test a branch before bumping the pinned default.
+  // Defaults from versions.ts. Each can be overridden to test a bump before
+  // changing the pinned default. (webkitVersion: resolveBase.)
   const nodejsAbiVersion = partial.nodejsAbiVersion ?? versionDefaults.nodejsAbiVersion;
   const nodejsV8Version = partial.nodejsV8Version ?? versionDefaults.nodejsV8Version;
-  const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
 
   // ─── macOS SDK ───
   // Must be passed to nested cmake builds or they'll pick the wrong SDK.

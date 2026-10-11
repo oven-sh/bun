@@ -1373,11 +1373,35 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
 
     // The internal modules the executable will carry bytecode for, as its builtins section has them.
     let target_builtins = c.options.target_builtins.clone();
-    let internal_modules = (c.options.generate_internal_module_bytecode
-        && c.options.compile_mode.is_executable())
-    .then(|| builtins_of(target_builtins.as_deref()))
-    .flatten()
-    .map(|builtins| (wanted_internal_modules(c, &builtins), builtins));
+    let internal_modules = if c.options.generate_internal_module_bytecode
+        && c.options.compile_mode.is_executable()
+    {
+        use bun_exe_format::builtins::{BuiltinsError, FORMAT_VERSION};
+        match builtins_of(target_builtins.as_deref()) {
+            Ok(builtins) => Some((wanted_internal_modules(c, &builtins), builtins)),
+            // Quiet by default, like bytecode that is rejected at load: the internal modules then load from source.
+            Err(reason) => {
+                let why = match reason {
+                    BuiltinsError::UnsupportedVersion(version) => format!(
+                        "the target executable has builtins format {version}, and this bun compiles format {FORMAT_VERSION}"
+                    ),
+                    BuiltinsError::OtherEngine => {
+                        "the target executable has another JavaScriptCore or other private names than this bun"
+                            .to_owned()
+                    }
+                    reason => <&'static str>::from(&reason).to_owned(),
+                };
+                c.log_mut().add_debug_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!("No bytecode for builtin modules: {why}"),
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
     let mut linked_bytecode: Option<LinkedBytecode> = None;
     if let Some(order) = &bytecode_order {
         let table = external_string_table
@@ -1708,18 +1732,15 @@ struct LinkedBytecode {
     names_out: Option<(&'static [u8], Vec<u8>)>,
 }
 
-/// The builtins section of the executable being built: the target's, or this one's.
-fn builtins_of(target_section: Option<&[u8]>) -> Option<bun_exe_format::builtins::Builtins<'_>> {
-    let section = target_section.unwrap_or_else(|| crate::bundle_v2::dispatch::host_builtins());
-    match bun_exe_format::builtins::Builtins::parse(section) {
-        Ok(builtins) => Some(builtins),
-        Err(e) => {
-            debug!(
-                "Internal module bytecode: builtins section unreadable ({})",
-                <&'static str>::from(&e)
-            );
-            None
-        }
+/// The builtins section of the executable being built, the target's or this one's, if this bun compiles its modules.
+fn builtins_of(
+    target_section: Option<&[u8]>,
+) -> Result<bun_exe_format::builtins::Builtins<'_>, bun_exe_format::builtins::BuiltinsError> {
+    use bun_exe_format::builtins::Builtins;
+    let host = Builtins::parse(crate::bundle_v2::dispatch::host_builtins())?;
+    match target_section {
+        Some(section) => Builtins::parse(section)?.for_engine_of(&host),
+        None => Ok(host),
     }
 }
 

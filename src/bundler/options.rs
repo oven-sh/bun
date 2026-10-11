@@ -1121,6 +1121,7 @@ bun_core::comptime_string_map! {
 /// sources differ per platform, so for another platform they are read out of that bun executable's builtins section
 /// (`bun_exe_format::builtins`); `None` is a target executable without one (an older bun), which then gets no builtin
 /// bytecode.
+/// A `Target` of another format version or another engine gets none either: the linker refuses it (`builtins_of`).
 #[derive(Clone, Default)]
 pub enum CompileTargetBuiltins {
     #[default]

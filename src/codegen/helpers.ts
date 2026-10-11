@@ -51,6 +51,25 @@ export function sourceStamp(sources: Iterable<string>): number {
   return hash.digest().readUInt32BE(0);
 }
 
+/** The private names (`@name` in builtin source) that src/js/builtins/BunBuiltinNames.h lists, in its order. */
+export function readBunBuiltinNames(): string[] {
+  const header = fs.readFileSync(path.join(import.meta.dir, "../js/builtins/BunBuiltinNames.h"), "utf8");
+  return header
+    .slice(
+      header.indexOf("#define BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME"),
+      header.indexOf("--- END of BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME ---"),
+    )
+    .split("\n")
+    .map(x => x.trim())
+    .filter(x => x.startsWith("macro("))
+    .map(x => x.slice(x.indexOf("(") + 1, x.indexOf(")")).trim());
+}
+
+/** engineStamp of the builtins section: a build's process.versions.webkit and private names. Never 0 (no stamp). */
+export function engineStamp(webkitVersion: string, privateNames: Iterable<string>): number {
+  return sourceStamp([webkitVersion, ...[...privateNames].sort()].map(part => part + "\n")) || 1;
+}
+
 export function writeIfNotChanged(file: string, contents: string) {
   if (Array.isArray(contents)) contents = contents.join("");
   contents = contents.replaceAll("\r\n", "\n").trim() + "\n";

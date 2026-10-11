@@ -48,7 +48,7 @@ import path from "path";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeDTS } from "./generate-js2native";
-import { cap, checkAscii, low, writeIfNotChanged } from "./helpers";
+import { cap, checkAscii, low, readBunBuiltinNames, writeIfNotChanged } from "./helpers";
 import { applyGlobalReplacements, define } from "./replacements";
 
 const PARALLEL = false;
@@ -786,24 +786,9 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
     } // namespace WebCore
     `;
   // Handle builtin names
+  let privateNames: string[];
   {
-    const BunBuiltinNamesHeader = require("fs").readFileSync(
-      path.join(import.meta.dir, "../js/builtins/BunBuiltinNames.h"),
-      "utf8",
-    );
-    let definedBuiltinNamesStartI = BunBuiltinNamesHeader.indexOf(
-      "#define BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME",
-    );
-    let definedBuiltinNamesMacroEndI = BunBuiltinNamesHeader.indexOf(
-      "--- END of BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME ---",
-    );
-    const definedBuiltinNames = BunBuiltinNamesHeader.slice(definedBuiltinNamesStartI, definedBuiltinNamesMacroEndI)
-      .split("\n")
-      .map(x => x.trim())
-      .filter(x => x.startsWith("macro("))
-      .map(x => x.slice(x.indexOf("(") + 1, x.indexOf(")")))
-      .map(x => x.trim())
-      .sort();
+    const definedBuiltinNames = readBunBuiltinNames().sort();
 
     const uniqueDefinedBuiltinNames = new Set();
     for (let name of definedBuiltinNames) {
@@ -831,6 +816,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
 `;
 
     writeIfNotChanged(path.join(CODEGEN_DIR, "BunBuiltinNames+extras.h"), additionalPrivateNamesHeader);
+    privateNames = [...definedBuiltinNames, ...(additionalPrivateNames as Set<string>)];
   }
   writeIfNotChanged(path.join(CODEGEN_DIR, "WebCoreJSBuiltins.h"), bundledHeader);
   writeIfNotChanged(path.join(CODEGEN_DIR, "WebCoreJSBuiltins.cpp"), bundledCPP);
@@ -872,6 +858,6 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
 
   // bundle-modules.ts prepends this to InternalModuleRegistryConstants.bin so the
   // same linked blob carries both the builtin function sources and the internal
-  // module sources.
-  return { combinedSourceCode };
+  // module sources. `privateNames` is every private name that BunBuiltinNames registers.
+  return { combinedSourceCode, privateNames };
 }

@@ -2808,7 +2808,7 @@ pub fn target_executable(
 
 /// `--compile --bytecode` for another platform: that executable's builtins section (`bun_exe_format::builtins`), so
 /// the bundler can generate bytecode for *its* internal modules. `Ok(None)` when the executable has no section this bun
-/// can read; builtin bytecode is skipped then.
+/// can find; builtin bytecode is skipped then. The linker decides whether this bun compiles the section.
 pub fn target_builtins(
     target: &CompileTarget,
     env: &mut bun_dotenv::Loader,
@@ -2825,15 +2825,14 @@ pub fn target_builtins(
             )));
         }
     };
-    match find_section(&file).and_then(|section| Builtins::parse(section).map(|_| section)) {
+    match find_section(&file).and_then(|section| match Builtins::parse(section) {
+        // A section of another format version (an older or a newer bun) goes to the linker, which refuses it.
+        Ok(_) | Err(BuiltinsError::UnsupportedVersion(_)) => Ok(section),
+        Err(e) => Err(e),
+    }) {
         Ok(section) => Ok(Some(std::sync::Arc::from(section))),
-        // No section (a bun from before there was one), a newer layout than this bun reads, or a container this reader
-        // doesn't handle: its internal modules load from source. A section that is there but malformed is an error.
-        Err(
-            BuiltinsError::MissingSection
-            | BuiltinsError::UnsupportedVersion
-            | BuiltinsError::UnrecognizedExecutable,
-        ) => Ok(None),
+        // No section (an older bun) or an unknown container: its internal modules load from source. The rest is fatal.
+        Err(BuiltinsError::MissingSection | BuiltinsError::UnrecognizedExecutable) => Ok(None),
         Err(e) => Err(CompileError::fmt(format_args!(
             "failed to read the builtin modules of the executable for '{}': {}",
             target, e

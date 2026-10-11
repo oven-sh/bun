@@ -904,6 +904,13 @@ export const internalModulesLoadedFromBytecode: () => number = $newCppFunction(
   0,
 );
 
+// Every private name (`@name`) that BunBuiltinNames registers. The engine stamp of the builtins section hashes them.
+export const builtinPrivateNames: () => string[] = $newCppFunction(
+  "InternalModuleRegistry.cpp",
+  "jsBuiltinPrivateNames",
+  0,
+);
+
 // Whether the source of `fn` knows where its lines start. Before anything asked for a position in it, that means they
 // came with its code: from the parse, or out of the bytecode.
 export const sourceHasLineStarts: (fn: Function) => boolean = $newCppFunction(

@@ -59,7 +59,7 @@ pub(super) fn print(
     let printer = Printer {
         text,
         elements,
-        column_width: usize::from(options.line_width.value()),
+        column_width: options.line_width.value() as usize,
         indent: match options.indent_style.is_tab() {
             true => b"\t".to_vec(),
             false => b" ".repeat(usize::from(options.indent_width.value())),

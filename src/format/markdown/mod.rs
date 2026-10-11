@@ -229,7 +229,7 @@ fn format_embedded(
         return None;
     }
     let options = FormatOptions {
-        line_width: LineWidth(width.clamp(1, usize::from(u16::MAX)) as u16),
+        line_width: LineWidth(width.clamp(1, u32::MAX as usize) as u32),
         line_ending: LineEnding::Lf,
         parser: None,
         filepath: None,

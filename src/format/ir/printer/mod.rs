@@ -216,8 +216,6 @@ struct Printer<'d> {
     is_mark_pending: [bool; 2],
     /// The length of `out` before anything is printed.
     start: usize,
-    /// From here on no line has been indented.
-    is_too_long: bool,
     stack_check: bun_core::StackCheck,
     buffers: &'d mut PrinterBuffers,
 }
@@ -265,14 +263,13 @@ pub(crate) fn print(
         mode: PrintMode::Expanded,
         is_mark_pending: [false; 2],
         start,
-        is_too_long: false,
         stack_check: bun_core::StackCheck::init(),
         buffers,
     };
     let result = printer.print_all();
     printer.pull_marks_back();
     printer.out.finish();
-    match printer.is_too_long {
+    match printer.out.is_too_long() {
         true => Err(PrintError::TooLong),
         false => result,
     }
@@ -635,10 +632,6 @@ impl<'d> Printer<'d> {
         }
         self.pending_space = false;
         self.pending_indent = self.indention();
-        if crate::is_too_long(self.out.len()) {
-            self.is_too_long = true;
-            self.pending_indent = Indention::default();
-        }
     }
 
     /// Prints everything from the [`Tag::StartEntry`] that is next in the queue to its

@@ -11,11 +11,12 @@ const MAX_LINE_WIDTH: usize = 320;
 
 /// The options for something in a comment of a file that is formatted with `options`.
 pub(super) fn embedded_options(options: &FormatOptions, print_width: usize) -> FormatOptions {
+    // oxfmt has 16 bits for it.
     let width = u16::try_from(print_width)
         .map_or(80, usize::from)
         .clamp(1, MAX_LINE_WIDTH);
     FormatOptions {
-        line_width: LineWidth(width as u16),
+        line_width: LineWidth(width as u32),
         // The lines are written to the document of the file, one by one.
         line_ending: LineEnding::Lf,
         jsdoc: None,
@@ -75,7 +76,7 @@ pub(super) fn format_embedded_language(
         return None;
     }
     let options = FormatOptions {
-        line_width: LineWidth(u16::try_from(print_width).unwrap_or(u16::MAX)),
+        line_width: LineWidth(u32::try_from(print_width).unwrap_or(u32::MAX)),
         ..embedded_options(options, print_width)
     };
     let mut out = Vec::new();

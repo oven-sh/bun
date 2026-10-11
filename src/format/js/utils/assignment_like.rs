@@ -116,7 +116,7 @@ pub(crate) fn operator_line_run<'a>(operator_end: u32, f: &Formatter<'a>) -> &'a
 
 /// A name is short if it is less than this much wider than the indentation: breaking after the
 /// operator would gain next to nothing.
-const MIN_OVERLAP_FOR_BREAK: u8 = 3;
+const MIN_OVERLAP_FOR_BREAK: u32 = 3;
 
 /// The width of what is written for the computed `key`, with its brackets, if that is one piece of
 /// text: there is no group in it and nothing that can break. Only such a key can be short. Prettier
@@ -364,7 +364,7 @@ impl<'a> AssignmentLike<'a> {
         }
         let span = key.span(f.file());
         let text_width_for_break =
-            u32::from(f.options().indent_width.value() + MIN_OVERLAP_FOR_BREAK);
+            u32::from(f.options().indent_width.value()) + MIN_OVERLAP_FOR_BREAK;
         // No text is wider than it is long.
         let is_short = span.len() < text_width_for_break
             || f.string_width(f.source_text().text_for(&span)) < text_width_for_break;
@@ -374,7 +374,7 @@ impl<'a> AssignmentLike<'a> {
     /// Returns whether the left side is a short name.
     fn write_left(&self, f: &mut Formatter<'a>) -> bool {
         let text_width_for_break =
-            (f.options().indent_width.value() + MIN_OVERLAP_FOR_BREAK) as usize;
+            (u32::from(f.options().indent_width.value()) + MIN_OVERLAP_FOR_BREAK) as usize;
         match *self {
             AssignmentLike::VariableDeclarator(declarator) => {
                 let (id, ty) = (declarator.pat(), declarator.ty());
@@ -1206,13 +1206,14 @@ fn comment_in_call_chain_makes_it_breakable(f: &Formatter<'_>) -> bool {
 /// Prettier's `isShortCallArgument`/`isLoneShortArgument`.
 pub(crate) fn is_short_argument<'a>(
     mut argument: Expr<'a>,
-    threshold: u16,
+    threshold: u32,
     f: &Formatter<'a>,
 ) -> bool {
     let threshold = threshold as usize;
-    while let AstNodes::UnaryExpression(_) = argument.as_ast_nodes() {
+    let mut node = argument.as_ast_nodes();
+    while let AstNodes::UnaryExpression(_) = node {
         match argument.argument() {
-            Some(operand) => argument = operand,
+            Some(operand) => (argument, node) = (operand, operand.as_ast_nodes()),
             None => return false,
         }
     }
@@ -1222,7 +1223,7 @@ pub(crate) fn is_short_argument<'a>(
         true => text.len(),
         false => bun_core::strings::wtf8_len_utf16(text) as usize,
     };
-    match argument.as_ast_nodes() {
+    match node {
         AstNodes::IdentifierReference(_) => len(argument.text()) <= threshold,
         AstNodes::RegExpLiteral(_) => {
             matches!(argument.kind(), ExprKind::Regex(regex) if len(regex.pattern()) <= threshold)

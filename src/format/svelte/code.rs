@@ -160,13 +160,13 @@ fn write_printed_text(
     let Some(indentation) = out.indentation_width() else {
         return false;
     };
-    let width = usize::from(options.line_width.value()).saturating_sub(indentation);
+    let width = (options.line_width.value() as usize).saturating_sub(indentation);
     let in_html = InHtml {
         root: HtmlRoot::Program,
         ..InHtml::default()
     };
     let options = FormatOptions {
-        line_width: LineWidth(width.clamp(1, usize::from(u16::MAX)) as u16),
+        line_width: LineWidth(width.clamp(1, u32::MAX as usize) as u32),
         line_ending: LineEnding::Lf,
         is_in_markdown: true,
         ..js::options_in_html(options, in_html)

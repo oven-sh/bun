@@ -1820,12 +1820,24 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     // The frames of a debug build are larger, so its stack ends sooner.
     const tooDeep = isDebug || isASAN ? 100_000 : 1_000_000;
     test.each([
+      ["a.toml", nested("a = ", "[", "1", "]", "", tooDeep)],
       ["a.css", nested("", "a{", "b:c", "}", "", tooDeep)],
       ["b.css", nested("a{b:", "(", "1", ")", "}", tooDeep)],
       ["c.css", nested("a{b:", "f(", "1", ")", "}", tooDeep)],
       ["d.css", nested("a", ":not(", "b", ")", "{}", tooDeep)],
+      ["a.yaml", nested("", "[", "1", "]", "", tooDeep)],
+      ["b.yaml", nested("", "- ", "1", "", "", tooDeep)],
+      ["a.hbs", nested("", "{{#if a}}", "b", "{{/if}}", "", tooDeep)],
+      ["b.hbs", nested("", "<div>", "b", "</div>", "", tooDeep)],
+      ["c.hbs", nested("{{a ", "(b ", "c", ")", "}}", tooDeep)],
+      ["a.html", nested("", "<div>", "a", "</div>", "", tooDeep)],
+      ["a.vue", nested("<template>", "<div>", "a", "</div>", "</template>", tooDeep)],
+      ["a.component.html", nested("", "@if (a) {", "b", "}", "", tooDeep)],
+      ["a.svelte", nested("", "<div>", "a", "</div>", "", tooDeep)],
+      // In a JSDoc comment, with `jsdoc` of oxfmt.
+      ["a.js", nested("/**\n * ", "> ", "a", "", "\n */ let a;", tooDeep)],
     ])("what there is no stack for, or no string, is an error, and the file stays as it is: %s", async (name, text) => {
-      const files = { ".oxfmtrc.json": `{ "svelte": {} }`, [name]: text };
+      const files = { ".oxfmtrc.json": `{ "svelte": {}, "jsdoc": {} }`, [name]: text };
       const result = await format(files, [name], { reads: [name] });
       expect(result.files[name]).toBe(text);
       expect(result.stderr).toMatch(
@@ -2952,6 +2964,28 @@ try {
         "namespace/a.tsx": `import Preact from "preact";\nexport const a = <div />;\n`,
         "classic/b.ts": "export const a = 1;\n",
       });
+    });
+
+    // TypeScript 6.0.3 follows them all. Of two that extend each other it reports that, and has the options of both.
+    test("prettier-plugin-organize-imports: a tsconfig.json extends one that extends one, however many there are", async () => {
+      const jsx = `import React from "react";\nexport const a = <div />;\n`;
+      const { files } = await format(
+        {
+          ".prettierrc": `{ "plugins": ["prettier-plugin-organize-imports"] }`,
+          "chain/a.tsx": jsx,
+          "chain/tsconfig.json": `{ "extends": "./1.json" }`,
+          ...Object.fromEntries(
+            Array.from({ length: 19 }, (_, i) => [`chain/${i + 1}.json`, `{ "extends": "./${i + 2}.json" }`]),
+          ),
+          "chain/20.json": `{ "compilerOptions": { "jsx": "react" } }`,
+          "circle/a.tsx": jsx,
+          "circle/tsconfig.json": `{ "extends": "./other.json" }`,
+          "circle/other.json": `{ "extends": "./tsconfig.json", "compilerOptions": { "jsx": "react" } }`,
+        },
+        [],
+        { reads: ["chain/a.tsx", "circle/a.tsx"] },
+      );
+      expect(files).toEqual({ "chain/a.tsx": jsx, "circle/a.tsx": jsx });
     });
 
     test(".editorconfig", async () => {

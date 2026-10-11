@@ -184,10 +184,10 @@ impl<'t, 'a> Printer<'t, 'a, '_, '_, '_> {
     /// The options for a formatter whose text is written with `Writer::printed_text`. `None`: where the lines start is
     /// not known.
     fn options_for_printed_text(&self) -> Option<FormatOptions> {
-        let width = usize::from(self.options.format.line_width.value())
+        let width = (self.options.format.line_width.value() as usize)
             .saturating_sub(self.out.indentation_width()?);
         Some(FormatOptions {
-            line_width: LineWidth(width.clamp(1, usize::from(u16::MAX)) as u16),
+            line_width: LineWidth(width.clamp(1, u32::MAX as usize) as u32),
             line_ending: LineEnding::Lf,
             is_in_markdown: true,
             // For the blocks of code in Markdown.

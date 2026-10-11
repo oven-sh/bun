@@ -351,8 +351,10 @@ pub(crate) fn options_for<'f>(files: impl Iterator<Item = &'f File>, path: &[u8]
         false => (is(indent_style, b"tab") || is(indent_size, b"tab")).then_some(true),
     };
     options.extend(use_tabs.map(|it| (&b"useTabs"[..], text_of(it))));
-    // More than that is as good as that.
-    let shown = |number: u64| number.min(65535).to_string().into_bytes();
+    let shown = |number: u64| match u32::try_from(number) {
+        Ok(number) => number.to_string().into_bytes(),
+        Err(_) => super::config::NO_END.to_vec(),
+    };
     let size = indent_size.filter(|_| use_tabs == Some(false));
     let width = (size.and_then(Value::positive_integer))
         .or_else(|| tab_width.and_then(Value::positive_integer));

@@ -7,6 +7,10 @@ use crate::ir::element::Token;
 pub(super) struct Out<'o> {
     buffer: &'o mut Vec<u8>,
     len: usize,
+    /// `len` at first.
+    start: usize,
+    /// See [`crate::is_too_long`]. What is written from there on is written over what has been written.
+    is_too_long: bool,
 }
 
 /// A text of up to so many bytes is copied as a block.
@@ -17,7 +21,16 @@ impl<'o> Out<'o> {
     pub(super) fn new(buffer: &'o mut Vec<u8>, expected: usize) -> Self {
         let len = buffer.len();
         buffer.resize(len + expected, 0);
-        Out { buffer, len }
+        Out {
+            buffer,
+            len,
+            start: len,
+            is_too_long: false,
+        }
+    }
+
+    pub(super) fn is_too_long(&self) -> bool {
+        self.is_too_long || crate::is_too_long(self.len)
     }
 
     #[inline]
@@ -38,6 +51,12 @@ impl<'o> Out<'o> {
     #[cold]
     #[inline(never)]
     fn grow(&mut self, additional: usize) {
+        if crate::is_too_long(self.len + additional) {
+            (self.is_too_long, self.len) = (true, self.start);
+            if self.buffer.len() - self.len >= additional {
+                return;
+            }
+        }
         let len = (self.buffer.len() * 2).max(self.len + additional + 4096);
         self.buffer.resize(len, 0);
     }
@@ -112,6 +131,10 @@ impl<'o> Out<'o> {
     pub(super) fn repeat(&mut self, byte: u8, count: usize) {
         if count <= 2 * BLOCK {
             return self.block(&[byte; 2 * BLOCK], count);
+        }
+        // It is the indentation that makes a text too long. Without it, what is left to print is soon printed.
+        if self.is_too_long {
+            return;
         }
         self.next(count).fill(byte);
         self.len += count;

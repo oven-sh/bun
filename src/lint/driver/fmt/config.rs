@@ -112,6 +112,9 @@ const OPTIONS_WITH_STRINGS: [&[u8]; 10] = [
 /// What else there is at the top of a configuration file of Prettier.
 const OTHER_KEYS: [&[u8]; 4] = [b"$schema", b"overrides", b"plugins", b"filepath"];
 
+/// The largest number that is read. It stands for `Infinity` and for `max_line_length = off`.
+pub(super) const NO_END: &[u8] = b"4294967295";
+
 /// Options by name, with their values as they are written in JSON, a string without its quotes. The string of an option
 /// that takes none has them, so that `"80"` is not 80.
 type Settings = Vec<(Vec<u8>, Vec<u8>)>;
@@ -354,8 +357,8 @@ fn settings(json: &Json, is_oxfmt: bool) -> Settings {
             // For oxfmt it is as good as not there.
             Json::Null if is_option && !is_oxfmt => b"null".to_vec(),
             Json::Bool(value) => if *value { &b"true"[..] } else { b"false" }.to_vec(),
-            // `Infinity` is not JSON. A YAML file can have it.
-            Json::Number(number) if *number >= 65535.0 => b"65535".to_vec(),
+            // `Infinity` is not JSON. A YAML file can have it. No number is read that has more than 32 bits.
+            Json::Number(number) if *number >= f64::from(u32::MAX) => NO_END.to_vec(),
             Json::Number(number) => {
                 bun_core::fmt::FormatDouble::dtoa(&mut [0; 124], *number).to_vec()
             }
@@ -1344,7 +1347,7 @@ impl<'c> Configs<'c> {
         };
         // oxfmt does not know `max_line_length = off`, Prettier does not know `insert_final_newline`.
         let counts = |it: &&(&[u8], Vec<u8>)| match is_oxfmt {
-            true => (it.0, &it.1[..]) != (b"printWidth", b"65535"),
+            true => (it.0, &it.1[..]) != (b"printWidth", NO_END),
             false => it.0 != b"insertFinalNewline",
         };
         from_files.extend(

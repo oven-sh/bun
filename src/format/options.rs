@@ -299,10 +299,8 @@ impl FormatOptions {
             }
         };
         match name {
-            b"printWidth" if value == b"Infinity" => self.line_width = LineWidth(u16::MAX),
-            b"printWidth" => {
-                self.line_width = LineWidth(number(u32::MAX)?.min(u32::from(u16::MAX)) as u16)
-            }
+            b"printWidth" if value == b"Infinity" => self.line_width = LineWidth(u32::MAX),
+            b"printWidth" => self.line_width = LineWidth(number(u32::MAX)?),
             // Markdown asks whether something is a multiple of it. Nothing is as wide as 255 columns.
             b"tabWidth" => {
                 self.indent_width = IndentWidth(number(u32::MAX)?.min(u32::from(u8::MAX)) as u8)
@@ -656,11 +654,11 @@ impl Default for IndentWidth {
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct LineWidth(pub u16);
+pub struct LineWidth(pub u32);
 
 impl LineWidth {
     #[inline]
-    pub const fn value(self) -> u16 {
+    pub const fn value(self) -> u32 {
         self.0
     }
 }

@@ -170,9 +170,9 @@ struct AsyncSocketData {
      * same paths that balance +1. A filter that must account for every socket
      * that can still reach a handler counts these. */
     bool filteredAccept = false;
-    /* Whether it has fired the filter with -3 (HttpResponse::setNodeHttpTunnelIdle).
-     * +3 undoes it, and an idle socket fires -4 in place of -2. */
-    bool filteredIdleTunnel = false;
+    /* Whether it has fired the filter with -3 (HttpResponse::setNodeHttpAtRest).
+     * +3 undoes it, and a socket at rest fires -4 in place of -2. */
+    bool filteredAtRest = false;
 };
 
 }

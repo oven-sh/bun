@@ -38,6 +38,7 @@
 
 extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, struct us_socket_t *s);
 extern "C" void Bun__NodeHTTP__onTunnelStarted(int ssl, struct us_socket_t *s);
+extern "C" void Bun__NodeHTTP__onWritableWhilePaused(int ssl, struct us_socket_t *s);
 extern "C" void Bun__NodeHTTP__onReadParsed(int ssl, struct us_socket_t *s);
 
 namespace uWS {
@@ -278,7 +279,7 @@ private:
         }
         if (httpResponseData->filteredAccept) {
             for (auto &f : httpContextData->filterHandlers) {
-                f((HttpResponse<SSL> *) s, httpResponseData->filteredIdleTunnel ? -4 : -2);
+                f((HttpResponse<SSL> *) s, httpResponseData->filteredAtRest ? -4 : -2);
             }
         }
 
@@ -493,8 +494,7 @@ private:
                  * the writable event tells that response so (kqueue reports read
                  * and write readiness separately); onWritable stays armed until then. */
                 queueBehindEarlierResponse = httpResponseData->nodeHttpQueuedPipelinedCount > 0
-                    || !((AsyncSocket<SSL> *) s)->hasFullyDrained()
-                    || httpResponseData->onWritable != nullptr;
+                    || ((HttpResponse<SSL> *) s)->hasUnfinishedOutgoing();
             }
             if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || queueBehindEarlierResponse) {
                 if constexpr (!IsNodeHttp) {
@@ -971,10 +971,11 @@ private:
         /* node:http compat: reads were paused while pipelined responses were
          * queued and stayed paused because the socket still had outgoing
          * backpressure when the queue drained; now that it has flushed, read
-         * new requests again. */
+         * new requests again. Reads that a request stopped stay stopped: with
+         * nothing left to send, the connection is at rest. */
         if constexpr (IsNodeHttp) {
-            if (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED) {
-                Bun__NodeHTTP__onReadsResumable(SSL, s);
+            if (s->flags.is_paused || (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED)) {
+                Bun__NodeHTTP__onWritableWhilePaused(SSL, s);
             }
         }
 
@@ -1093,8 +1094,7 @@ private:
              * callback is still draining) must not be discarded by the close()
              * below; the connection shuts down from the shouldCloseConnection()
              * gates once they have flushed. */
-            bool hasQueuedOutgoing = !asyncSocket->hasFullyDrained()
-                || httpResponseData->onWritable != nullptr;
+            bool hasQueuedOutgoing = ((HttpResponse<SSL> *) s)->hasUnfinishedOutgoing();
             bool responseInFlight = httpResponseData->nodeHttpQueuedPipelinedCount > 0
                 || (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING);
             if (hasQueuedOutgoing || (httpContextData->flags.httpAllowHalfOpen && responseInFlight)) {

@@ -183,19 +183,26 @@ public:
         return true;
     }
 
-    /* node:http: an idle tunnel has reads that do not hold the event loop (they are stopped, at EOF, or the socket is unref'd) and
-     * has nothing left to send. Like a libuv stream handle in that state, it does not hold the event loop:
-     * https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1473-L1485. The filter hears -3 when a tunnel
-     * becomes idle and +3 when its reads hold the event loop again or it has bytes to send again. */
-    void setNodeHttpTunnelIdle(bool idle) {
+    /* node:http: a response that has ended still has bytes in the outgoing buffer (or the TLS spill slot), or its drain
+     * callback has not run. A write or an uncork can empty the buffer before the writable event runs that callback. */
+    bool hasUnfinishedOutgoing() {
+        return !Super::hasFullyDrained() || getHttpResponseData()->onWritable != nullptr;
+    }
+
+    /* node:http: a connection at rest has reads that do not hold the event loop (they are stopped, at EOF, or the socket
+     * is unref'd), owes no response and has nothing left to send. Like a libuv stream handle in that state, it does not
+     * hold the event loop: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1473-L1485. The filter
+     * hears -3 when a connection comes to rest and +3 when it leaves it. Returns whether the state changed. */
+    bool setNodeHttpAtRest(bool atRest) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-        if (!httpResponseData->filteredAccept || httpResponseData->filteredIdleTunnel == idle) {
-            return;
+        if (!httpResponseData->filteredAccept || httpResponseData->filteredAtRest == atRest) {
+            return false;
         }
-        httpResponseData->filteredIdleTunnel = idle;
+        httpResponseData->filteredAtRest = atRest;
         for (auto &f : HttpContext<SSL>::getSocketContextDataS((us_socket_t *) this)->filterHandlers) {
-            f(this, idle ? -3 : 3);
+            f(this, atRest ? -3 : 3);
         }
+        return true;
     }
 
     /* Marks the response in flight as one that user JavaScript produces. See
@@ -475,7 +482,7 @@ public:
         }
         if (((AsyncSocketData<SSL> *) responseData)->filteredAccept) {
             for (auto &f : httpContextData->filterHandlers) {
-                f((HttpResponse<SSL> *) this, ((AsyncSocketData<SSL> *) responseData)->filteredIdleTunnel ? -4 : -2);
+                f((HttpResponse<SSL> *) this, ((AsyncSocketData<SSL> *) responseData)->filteredAtRest ? -4 : -2);
             }
         }
 

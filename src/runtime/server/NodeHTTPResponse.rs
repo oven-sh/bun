@@ -132,6 +132,8 @@ bitflags! {
         /// The server socket granted the connection to this response. A queued pipelined response waits for it.
         const CURRENT                             = 1 << 4;
         const IS_REQUEST_PENDING                  = 1 << 5;
+        /// The end of this response can leave the connection at rest: it stopped the reads (`pause_socket`), or it waited behind another response.
+        const MAY_END_AT_REST                     = 1 << 6;
         /// node:http handed this connection to a raw 'upgrade'/'connect'
         /// tunnel (JSNodeHTTPServerSocket::upgradeToTunnelMode).
         const TUNNELED                            = 1 << 8;
@@ -247,6 +249,8 @@ unsafe extern "C" {
     // node:http flood prevention (JSNodeHTTPServerSocket.cpp): unsent response bytes and queued responses hold a paused socket.
     safe fn Bun__NodeHTTP__onReadsPaused(ssl: core::ffi::c_int, socket: *mut c_void);
     safe fn Bun__NodeHTTP__onReadsResumable(ssl: core::ffi::c_int, socket: *mut c_void);
+    // Tells the server whether the connection is at rest (`HttpResponse::setNodeHttpAtRest`).
+    safe fn Bun__NodeHTTP__refreshAtRest(ssl: core::ffi::c_int, socket: *mut c_void);
     // False when no read of this socket is being parsed.
     safe fn Bun__NodeHTTP__notifyWhenReadParsed(ssl: core::ffi::c_int, socket: *mut c_void)
     -> bool;
@@ -561,6 +565,11 @@ impl NodeHTTPResponse {
             return;
         }
         raw.pause();
+        self.update_flags(|f| f.insert(Flags::MAY_END_AT_REST));
+        Bun__NodeHTTP__refreshAtRest(
+            any_response_is_ssl(&raw) as core::ffi::c_int,
+            raw.socket().cast(),
+        );
     }
 
     /* Pipelined flood prevention pauses READS on the connection, legal after the in-flight
@@ -1204,7 +1213,6 @@ impl NodeHTTPResponse {
                     auto_header_bits,
                     keep_alive_timeout_secs,
                 )?;
-                this.resume_socket();
                 this.write_or_end::<true>(global_object, &end_args, this_value)
             };
             if let Some(raw_response) = raw_response {
@@ -1463,7 +1471,7 @@ impl NodeHTTPResponse {
         if self.reader().is_none() {
             return;
         }
-        self.update_flags(|f| f.insert(Flags::CURRENT));
+        self.update_flags(|f| f.insert(Flags::CURRENT | Flags::MAY_END_AT_REST));
     }
 
     /// `js_this` is this response's wrapper. `adopted`: a WebSocket has the socket, so nothing of it is touched.
@@ -1581,7 +1589,32 @@ impl NodeHTTPResponse {
         self.update_flags(|f| f.insert(Flags::REQUEST_HAS_COMPLETED));
         self.poll_ref.with_mut(|r| r.unref(vm_get()));
 
+        if self.flags.get().contains(Flags::MAY_END_AT_REST)
+            && let Some(raw) = self.reader()
+        {
+            Bun__NodeHTTP__refreshAtRest(
+                any_response_is_ssl(&raw) as core::ffi::c_int,
+                raw.socket().cast(),
+            );
+        }
         self.mark_request_as_done_if_necessary();
+    }
+
+    /// A raw 'upgrade'/'connect' tunnel took the connection: no response goes through this handle, so what is left of the request is the rest of its body.
+    pub(crate) fn on_tunnel_handoff(&self) {
+        self.poll_ref.with_mut(|r| r.unref(vm_get()));
+        self.mark_request_as_done_if_necessary();
+    }
+
+    /// The connection of this request came to rest, or left it. The body of a request holds the event loop only while its connection is not at rest.
+    #[uws::uws_callback(export = "Bun__NodeHTTPResponse_onConnectionAtRest", no_catch)]
+    pub(crate) fn on_connection_at_rest(&self, at_rest: bool) {
+        let held = self.body_read_ref.get().has;
+        if at_rest && held {
+            self.body_read_ref.with_mut(|r| r.unref(vm_get()));
+        } else if !at_rest && !held && self.body_still_arriving() {
+            self.body_read_ref.with_mut(|r| r.r#ref(vm_get()));
+        }
     }
 }
 
@@ -2403,9 +2436,6 @@ impl NodeHTTPResponse {
         if let Some(raw_response) = self.reader() {
             raw_response.on_data(on_data_shim, self.as_ctx_ptr());
         }
-
-        // `body_read_ref` is still held from create(): every unref also leaves `.pending`.
-        debug_assert!(self.body_read_ref.get().has);
     }
 
     pub(crate) fn write(
@@ -2488,8 +2518,6 @@ impl NodeHTTPResponse {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
-        // We dont wanna a paused socket when we call end, so is important to resume the socket
-        self.resume_socket();
         self.write_or_end::<true>(global_object, arguments, callframe.this())
     }
 

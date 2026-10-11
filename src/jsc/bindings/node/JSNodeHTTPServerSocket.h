@@ -150,10 +150,10 @@ public:
     void readStop();
     void readStart();
     bool tunnelReadsPaused() const { return tunnelReadsStopped || tunnelReadsQueuedFull; }
-    /* Tells uWS whether this tunnel is idle: its reads do not hold the event loop (readStop(), read EOF, or socket.unref()) and it has nothing left to send. See HttpResponse::setNodeHttpTunnelIdle. */
-    void refreshTunnelIdle();
+    /* Tells uWS whether this connection is at rest. See HttpResponse::setNodeHttpAtRest. */
+    void refreshAtRest();
     /* The same for a caller that did not change what the reads hold: a write, a drain, the end of the stream. */
-    void updateTunnelIdle();
+    void updateAtRest();
     /* socket.ref() and socket.unref(), like those of a libuv handle: they change whether the reads of a tunnel hold the event loop. Bytes left to send hold it in both states. Before the tunnel starts, the state is only kept for it. */
     void setRef(bool ref);
     /* uWS still holds bytes of an HTTP response on this connection. A raw write has to go through the same buffer, or it reaches the wire first. */

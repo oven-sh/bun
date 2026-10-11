@@ -23,6 +23,7 @@ use crate::hir::*;
 use bun_ast::{self as ast, E, G, Loc, Ref, Symbol, symbol};
 
 use crate::program::Host;
+use std::rc::Rc;
 
 // ---------------------------------------------------------------------------
 // Reserved word check (matches TS isReservedWord)
@@ -304,13 +305,13 @@ pub(crate) struct HirBuilder<'h> {
     /// Set of `Ref`s for variables declared in scopes between component_scope
     /// and any inner function scope, that are referenced from an inner function scope.
     /// These need StoreContext/LoadContext instead of StoreLocal/LoadLocal.
-    context_identifiers: RefSet,
+    context_identifiers: Rc<RefSet>,
     /// ES-module import bindings keyed by clause-item `Ref`. Populated from the
     /// module's `SImport` statements before lowering so `resolve_identifier`
     /// can return `ImportSpecifier`/`ImportDefault`/`ImportNamespace` (and thus
     /// reach `Environment::resolve_module_type`) when `Symbol::namespace_alias`
     /// is absent — which it is for plain `import {x} from 'm'` outside HMR.
-    import_bindings: IndexMap<Ref, VariableBinding>,
+    import_bindings: &'h IndexMap<Ref, VariableBinding>,
 }
 
 impl<'h> HirBuilder<'h> {
@@ -324,9 +325,9 @@ impl<'h> HirBuilder<'h> {
         host: &'h dyn Host,
         function_scope: &'h ast::Scope,
         component_scope: &'h ast::Scope,
-        context_identifiers: RefSet,
+        context_identifiers: Rc<RefSet>,
         bindings: Option<IndexMap<Ref, IdentifierId>>,
-        context: Option<IndexMap<Ref, Option<SourceLocation>>>,
+        import_bindings: &'h IndexMap<Ref, VariableBinding>,
         entry_block_kind: Option<BlockKind>,
     ) -> Self {
         let entry = env.next_block_id();
@@ -336,7 +337,7 @@ impl<'h> HirBuilder<'h> {
             current: new_block(entry, kind),
             entry,
             scopes: Vec::new(),
-            context: context.unwrap_or_default(),
+            context: IndexMap::new(),
             bindings: bindings.unwrap_or_default(),
             env,
             host,
@@ -349,7 +350,7 @@ impl<'h> HirBuilder<'h> {
             component_scope,
             scope_stack: vec![function_scope],
             context_identifiers,
-            import_bindings: IndexMap::new(),
+            import_bindings,
         }
     }
 
@@ -384,12 +385,8 @@ impl<'h> HirBuilder<'h> {
         at.ok().and_then(|at| all.get(at)).map_or(target, |it| it.1)
     }
 
-    pub(crate) fn set_import_bindings(&mut self, bindings: IndexMap<Ref, VariableBinding>) {
-        self.import_bindings = bindings;
-    }
-
-    pub(crate) fn import_bindings(&self) -> &IndexMap<Ref, VariableBinding> {
-        &self.import_bindings
+    pub(crate) fn import_bindings(&self) -> &'h IndexMap<Ref, VariableBinding> {
+        self.import_bindings
     }
 
     pub(crate) fn function_scope(&self) -> &'h ast::Scope {
@@ -449,12 +446,18 @@ impl<'h> HirBuilder<'h> {
         &self.context
     }
 
-    pub(crate) fn context_identifiers(&self) -> &RefSet {
+    pub(crate) fn set_context(&mut self, context: IndexMap<Ref, Option<SourceLocation>>) {
+        self.context = context;
+    }
+
+    /// Shared with the builders of nested functions until one of them adds to it.
+    pub(crate) fn context_identifiers(&self) -> &Rc<RefSet> {
         &self.context_identifiers
     }
 
     pub(crate) fn add_context_identifier(&mut self, ref_: Ref) {
-        self.context_identifiers.insert(self.resolve_ref(ref_));
+        let ref_ = self.resolve_ref(ref_);
+        Rc::make_mut(&mut self.context_identifiers).insert(ref_);
     }
 
     pub(crate) fn host_and_env_mut(&mut self) -> (&'h dyn Host, &mut Environment) {
@@ -857,9 +860,10 @@ impl<'h> HirBuilder<'h> {
         loc: Option<SourceLocation>,
     ) -> Result<IdentifierId, CompilerError> {
         let ref_ = self.resolve_ref(ref_);
-        let name = self.ref_name(ref_)?;
+        let host = self.host;
+        let name = host.ref_name(ref_);
 
-        if name == "fbt" {
+        if name == b"fbt" {
             let should_record_fbt_error = if let Some(&identifier_id) = self.bindings.get(&ref_) {
                 match &self.env.identifiers[identifier_id.0 as usize].name {
                     Some(IdentifierName::Named(resolved_name)) => resolved_name == b"fbt",
@@ -885,13 +889,16 @@ impl<'h> HirBuilder<'h> {
             return Ok(identifier_id);
         }
 
-        if is_always_reserved_word(&name) {
-            return Err(CompilerError::from(reserved_identifier_diagnostic(&name)));
+        let stored_name = StoreStr::new(name);
+        let name = core::str::from_utf8(name)
+            .map_err(|_| crate::diagnostics::cold_todo("non-utf8 identifier", None))?;
+
+        if is_always_reserved_word(name) {
+            return Err(CompilerError::from(reserved_identifier_diagnostic(name)));
         }
 
         // The first of `name`, `name_0`, `name_1`, .. that no binding has.
-        let stored_name = StoreStr::new(self.host.ref_name(ref_));
-        let mut candidate = name.clone();
+        let mut candidate = name.to_owned();
         if let Some(&first_untried) = self.env.binding_names.get(&stored_name) {
             let mut index = first_untried;
             loop {

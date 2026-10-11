@@ -60,11 +60,14 @@ enum Incoming {
     MaybeAliases,
 }
 
+/// Where a node is in `AliasingState::nodes`.
+type NodeAt = u32;
+
 /// An item of a [`List`].
 #[derive(Debug, Clone, Copy)]
 struct Link {
     index: u32,
-    node: IdentifierId,
+    node: NodeAt,
     kind: EdgeKind,
     next: u32,
 }
@@ -93,7 +96,7 @@ impl List {
         })
     }
 
-    fn push(&mut self, links: &mut Vec<Link>, index: u32, node: IdentifierId, kind: EdgeKind) {
+    fn push(&mut self, links: &mut Vec<Link>, index: u32, node: NodeAt, kind: EdgeKind) {
         let at = links.len() as u32;
         links.push(Link {
             index,
@@ -109,6 +112,48 @@ impl List {
     }
 }
 
+/// A table by identifier. A function expression has a few stretches of the identifiers of its
+/// component, so there are only the pages that were written to.
+struct ByIdentifier<T> {
+    /// Which of the pages in `entries` it is, counted from one. Zero: none.
+    pages: Vec<u32>,
+    entries: Vec<T>,
+    empty: T,
+}
+
+impl<T: Copy> ByIdentifier<T> {
+    const PAGE: usize = 32;
+
+    fn new(identifiers: usize, empty: T) -> Self {
+        ByIdentifier {
+            pages: vec![0; identifiers.div_ceil(Self::PAGE)],
+            entries: Vec::new(),
+            empty,
+        }
+    }
+
+    #[inline]
+    fn get(&self, id: IdentifierId) -> T {
+        let id = id.0 as usize;
+        match self.pages[id / Self::PAGE] {
+            0 => self.empty,
+            page => self.entries[(page as usize - 1) * Self::PAGE + id % Self::PAGE],
+        }
+    }
+
+    #[inline]
+    fn entry(&mut self, id: IdentifierId) -> &mut T {
+        let id = id.0 as usize;
+        let page = &mut self.pages[id / Self::PAGE];
+        if *page == 0 {
+            let len = self.entries.len() + Self::PAGE;
+            self.entries.resize(len, self.empty);
+            *page = (len / Self::PAGE) as u32;
+        }
+        &mut self.entries[(*page as usize - 1) * Self::PAGE + id % Self::PAGE]
+    }
+}
+
 #[derive(Debug, Clone)]
 struct MutationInfo {
     kind: MutationKind,
@@ -117,9 +162,13 @@ struct MutationInfo {
 
 #[derive(Debug, Clone)]
 enum NodeValue {
+    /// Something was created from the identifier, which has no node, or none yet.
+    Missing,
     Object,
     Phi,
-    Function { function_id: FunctionId },
+    Function {
+        function_id: FunctionId,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -137,9 +186,8 @@ struct Node {
     last_mutated: u32,
     mutation_reason: Option<MutationReason>,
     value: NodeValue,
-    /// The last walk that came here, and the kind that it came with.
-    walk: u32,
-    walk_kind: MutationKind,
+    /// The last walk that came here and the kind that it came with: see [`AliasingState::arrival`].
+    arrival: u32,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -150,26 +198,29 @@ enum Direction {
 
 #[derive(Clone, Copy)]
 struct QueueEntry {
-    place: IdentifierId,
+    place: NodeAt,
     transitive: bool,
     direction: Direction,
     kind: MutationKind,
 }
 
 struct AliasingState {
-    nodes: IdMap<IdentifierId, Node>,
+    nodes: Vec<Node>,
+    /// Where the node of an identifier is, counted from one. Zero: nowhere.
+    node_of: ByIdentifier<u32>,
     links: Vec<Link>,
     /// What is in the incoming lists that are too long to look through.
-    long_lists: HashSet<(u32, Incoming, IdentifierId)>,
+    long_lists: HashSet<(u32, Incoming, NodeAt)>,
     serials: u32,
     walks: u32,
     queue: Vec<QueueEntry>,
 }
 
 impl AliasingState {
-    fn new() -> Self {
+    fn new(identifiers: usize) -> Self {
         AliasingState {
-            nodes: IdMap::new(),
+            nodes: Vec::new(),
+            node_of: ByIdentifier::new(identifiers, 0),
             links: Vec::new(),
             long_lists: HashSet::default(),
             serials: 0,
@@ -178,41 +229,47 @@ impl AliasingState {
         }
     }
 
-    fn create(&mut self, id: IdentifierId, value: NodeValue) {
+    fn create(&mut self, id: IdentifierId, value: NodeValue) -> NodeAt {
         self.serials += 1;
-        self.nodes.insert(
+        let node = Node {
             id,
-            Node {
-                id,
-                serial: self.serials,
-                created_from: List::EMPTY,
-                captures: List::EMPTY,
-                aliases: List::EMPTY,
-                maybe_aliases: List::EMPTY,
-                edges: List::EMPTY,
-                transitive: None,
-                local: None,
-                last_mutated: 0,
-                mutation_reason: None,
-                value,
-                walk: 0,
-                walk_kind: MutationKind::Conditional,
-            },
-        );
+            serial: self.serials,
+            created_from: List::EMPTY,
+            captures: List::EMPTY,
+            aliases: List::EMPTY,
+            maybe_aliases: List::EMPTY,
+            edges: List::EMPTY,
+            transitive: None,
+            local: None,
+            last_mutated: 0,
+            mutation_reason: None,
+            value,
+            arrival: 0,
+        };
+        let node_of = self.node_of.entry(id);
+        if *node_of == 0 {
+            self.nodes.push(node);
+            *node_of = self.nodes.len() as u32;
+        } else {
+            self.nodes[*node_of as usize - 1] = node;
+        }
+        *node_of - 1
     }
 
-    /// `from` goes into a list of the node of `into`, if there is such a node and `from` is not in the list.
-    fn add_incoming(
-        &mut self,
-        which: Incoming,
-        index: u32,
-        from: IdentifierId,
-        into: IdentifierId,
-    ) {
+    fn at(&self, id: IdentifierId) -> Option<NodeAt> {
+        let at = self.node_of.get(id).checked_sub(1)?;
+        let is_missing = matches!(self.nodes[at as usize].value, NodeValue::Missing);
+        (!is_missing).then_some(at)
+    }
+
+    fn node(&self, id: IdentifierId) -> Option<&Node> {
+        Some(&self.nodes[self.at(id)? as usize])
+    }
+
+    /// `from` goes into a list of `into`, if it is not in the list.
+    fn add_incoming(&mut self, which: Incoming, index: u32, from: NodeAt, into: NodeAt) {
         const SHORT: usize = 8;
-        let Some(node) = self.nodes.get_mut(into) else {
-            return;
-        };
+        let node = &mut self.nodes[into as usize];
         let list = match which {
             Incoming::CreatedFrom => &mut node.created_from,
             Incoming::Captures => &mut node.captures,
@@ -240,12 +297,18 @@ impl AliasingState {
     }
 
     fn create_from(&mut self, index: u32, from: IdentifierId, into: IdentifierId) {
-        self.create(into, NodeValue::Object);
-        if let Some(from_node) = self.nodes.get_mut(from) {
-            from_node
-                .edges
-                .push(&mut self.links, index, into, EdgeKind::Alias);
-        }
+        let into = self.create(into, NodeValue::Object);
+        let from = match self.at(from) {
+            Some(from) => {
+                let edges = &mut self.nodes[from as usize].edges;
+                edges.push(&mut self.links, index, into, EdgeKind::Alias);
+                from
+            }
+            None => match self.node_of.get(from).checked_sub(1) {
+                Some(missing) => missing,
+                None => self.create(from, NodeValue::Missing),
+            },
+        };
         self.add_incoming(Incoming::CreatedFrom, index, from, into);
     }
 
@@ -257,13 +320,11 @@ impl AliasingState {
         from: IdentifierId,
         into: IdentifierId,
     ) {
-        if !self.nodes.contains_key(into) {
-            return;
-        }
-        let Some(from_node) = self.nodes.get_mut(from) else {
+        let (Some(from), Some(into)) = (self.at(from), self.at(into)) else {
             return;
         };
-        from_node.edges.push(&mut self.links, index, into, kind);
+        let edges = &mut self.nodes[from as usize].edges;
+        edges.push(&mut self.links, index, into, kind);
         self.add_incoming(which, index, from, into);
     }
 
@@ -286,28 +347,37 @@ impl AliasingState {
     }
 
     fn is_mutated(&self, id: IdentifierId) -> bool {
-        self.nodes
-            .get(id)
+        self.node(id)
             .is_some_and(|node| node.local.is_some() || node.transitive.is_some())
     }
 
+    /// What `Node::arrival` is not less than if the walk at hand has come to the node with this kind
+    /// or a stronger one.
+    #[inline]
+    fn arrival(&self, kind: MutationKind) -> u32 {
+        self.walks << 2 | kind as u32
+    }
+
     fn render(&mut self, index: u32, start: IdentifierId, env: &mut Environment) {
+        let Some(start) = self.at(start) else {
+            return;
+        };
         self.walks += 1;
-        let mut queue: Vec<IdentifierId> = vec![start];
+        let arrival = self.arrival(MutationKind::Definite);
+        let mut queue: Vec<NodeAt> = vec![start];
         while let Some(current) = queue.pop() {
-            let node = match self.nodes.get_mut(current) {
-                Some(n) => n,
-                None => continue,
-            };
-            if node.walk == self.walks {
+            let node = &mut self.nodes[current as usize];
+            if node.arrival >= arrival {
                 continue;
             }
-            node.walk = self.walks;
+            node.arrival = arrival;
             if node.transitive.is_some() || node.local.is_some() {
                 continue;
             }
-            if let NodeValue::Function { function_id } = &node.value {
-                append_function_errors(env, *function_id);
+            match node.value {
+                NodeValue::Missing => continue,
+                NodeValue::Function { function_id } => append_function_errors(env, function_id),
+                NodeValue::Object | NodeValue::Phi => {}
             }
             for list in [node.created_from, node.aliases, node.captures] {
                 for link in list.iter(&self.links) {
@@ -332,6 +402,9 @@ impl AliasingState {
         env: &mut Environment,
         should_record_errors: bool,
     ) {
+        let Some(start) = self.at(start) else {
+            return;
+        };
         self.walks += 1;
         let mut queue = std::mem::take(&mut self.queue);
         queue.push(QueueEntry {
@@ -342,15 +415,13 @@ impl AliasingState {
         });
 
         while let Some(entry) = queue.pop() {
-            let node = match self.nodes.get_mut(entry.place) {
-                Some(n) => n,
-                None => continue,
-            };
-            if node.walk == self.walks && node.walk_kind >= entry.kind {
+            let arrival = self.arrival(entry.kind);
+            let conditional_arrival = self.arrival(MutationKind::Conditional);
+            let node = &mut self.nodes[entry.place as usize];
+            if node.arrival >= arrival || matches!(node.value, NodeValue::Missing) {
                 continue;
             }
-            node.walk = self.walks;
-            node.walk_kind = entry.kind;
+            node.arrival = arrival;
 
             if node.mutation_reason.is_none() {
                 node.mutation_reason = reason.clone();
@@ -385,77 +456,108 @@ impl AliasingState {
                 });
             }
 
-            // Forward edges: Capture a -> b, Alias a -> b: mutate(a) => mutate(b)
             let node_is_phi = matches!(node.value, NodeValue::Phi);
+            let Node {
+                edges,
+                created_from,
+                aliases,
+                maybe_aliases,
+                captures,
+                ..
+            } = *node;
+            // A node that the walk has come to with the kind is passed over when its turn comes.
+            let nodes = &self.nodes;
+            let mut push = |entry: QueueEntry, arrival: u32| {
+                if nodes[entry.place as usize].arrival < arrival {
+                    queue.push(entry);
+                }
+            };
 
-            for edge in node.edges.iter(&self.links) {
+            // Forward edges: Capture a -> b, Alias a -> b: mutate(a) => mutate(b)
+            for edge in edges.iter(&self.links) {
                 if edge.index >= index {
                     break;
                 }
-                queue.push(QueueEntry {
-                    place: edge.node,
-                    transitive: entry.transitive,
-                    direction: Direction::Forwards,
-                    // MaybeAlias edges downgrade to conditional mutation
-                    kind: if edge.kind == EdgeKind::MaybeAlias {
-                        MutationKind::Conditional
-                    } else {
-                        entry.kind
+                // MaybeAlias edges downgrade to conditional mutation
+                let (kind, arrival) = if edge.kind == EdgeKind::MaybeAlias {
+                    (MutationKind::Conditional, conditional_arrival)
+                } else {
+                    (entry.kind, arrival)
+                };
+                push(
+                    QueueEntry {
+                        place: edge.node,
+                        transitive: entry.transitive,
+                        direction: Direction::Forwards,
+                        kind,
                     },
-                });
+                    arrival,
+                );
             }
 
-            for alias in node.created_from.iter(&self.links) {
+            for alias in created_from.iter(&self.links) {
                 if alias.index >= index {
                     continue;
                 }
-                queue.push(QueueEntry {
-                    place: alias.node,
-                    transitive: true,
-                    direction: Direction::Backwards,
-                    kind: entry.kind,
-                });
+                push(
+                    QueueEntry {
+                        place: alias.node,
+                        transitive: true,
+                        direction: Direction::Backwards,
+                        kind: entry.kind,
+                    },
+                    arrival,
+                );
             }
 
             if entry.direction == Direction::Backwards || !node_is_phi {
                 // Backward alias edges
-                for alias in node.aliases.iter(&self.links) {
+                for alias in aliases.iter(&self.links) {
                     if alias.index >= index {
                         continue;
                     }
-                    queue.push(QueueEntry {
-                        place: alias.node,
-                        transitive: entry.transitive,
-                        direction: Direction::Backwards,
-                        kind: entry.kind,
-                    });
+                    push(
+                        QueueEntry {
+                            place: alias.node,
+                            transitive: entry.transitive,
+                            direction: Direction::Backwards,
+                            kind: entry.kind,
+                        },
+                        arrival,
+                    );
                 }
                 // MaybeAlias backward edges (downgrade to conditional)
-                for alias in node.maybe_aliases.iter(&self.links) {
+                for alias in maybe_aliases.iter(&self.links) {
                     if alias.index >= index {
                         continue;
                     }
-                    queue.push(QueueEntry {
-                        place: alias.node,
-                        transitive: entry.transitive,
-                        direction: Direction::Backwards,
-                        kind: MutationKind::Conditional,
-                    });
+                    push(
+                        QueueEntry {
+                            place: alias.node,
+                            transitive: entry.transitive,
+                            direction: Direction::Backwards,
+                            kind: MutationKind::Conditional,
+                        },
+                        conditional_arrival,
+                    );
                 }
             }
 
             // Only transitive mutations affect captures backward
             if entry.transitive {
-                for capture in node.captures.iter(&self.links) {
+                for capture in captures.iter(&self.links) {
                     if capture.index >= index {
                         continue;
                     }
-                    queue.push(QueueEntry {
-                        place: capture.node,
-                        transitive: entry.transitive,
-                        direction: Direction::Backwards,
-                        kind: entry.kind,
-                    });
+                    push(
+                        QueueEntry {
+                            place: capture.node,
+                            transitive: entry.transitive,
+                            direction: Direction::Backwards,
+                            kind: entry.kind,
+                        },
+                        arrival,
+                    );
                 }
             }
         }
@@ -466,15 +568,15 @@ impl AliasingState {
 /// The legacy effect of each place of the instruction at hand.
 struct OperandEffects {
     instruction: u32,
-    /// By identifier: the instruction that the effect is of, and the effect.
-    effects: Vec<(u32, Effect)>,
+    /// The instruction that the effect is of, and the effect.
+    effects: ByIdentifier<(u32, Effect)>,
 }
 
 impl OperandEffects {
     fn new(identifiers: usize) -> Self {
         OperandEffects {
             instruction: 0,
-            effects: vec![(0, Effect::Unknown); identifiers],
+            effects: ByIdentifier::new(identifiers, (0, Effect::Unknown)),
         }
     }
 
@@ -483,11 +585,11 @@ impl OperandEffects {
     }
 
     fn insert(&mut self, id: IdentifierId, effect: Effect) {
-        self.effects[id.0 as usize] = (self.instruction, effect);
+        *self.effects.entry(id) = (self.instruction, effect);
     }
 
     fn get(&self, id: IdentifierId) -> Option<Effect> {
-        let (instruction, effect) = self.effects[id.0 as usize];
+        let (instruction, effect) = self.effects.get(id);
         (instruction == self.instruction).then_some(effect)
     }
 }
@@ -548,7 +650,7 @@ pub(crate) fn infer_mutation_aliasing_ranges(
     // =========================================================================
     // Part 1: Build data flow graph and infer mutable ranges
     // =========================================================================
-    let mut state = AliasingState::new();
+    let mut state = AliasingState::new(env.identifiers.len());
 
     struct PendingPhiOperand {
         from: IdentifierId,
@@ -639,7 +741,7 @@ pub(crate) fn infer_mutation_aliasing_ranges(
                         index += 1;
                     }
                     AliasingEffect::Assign { from, into } => {
-                        if !state.nodes.contains_key(into.identifier) {
+                        if state.at(into.identifier).is_none() {
                             state.create(into.identifier, NodeValue::Object);
                         }
                         state.assign(index, from.identifier, into.identifier);
@@ -1045,7 +1147,7 @@ pub(crate) fn infer_mutation_aliasing_ranges(
                 continue;
             }
 
-            let Some(from_node) = state.nodes.get(from.identifier) else {
+            let Some(from_node) = state.node(from.identifier) else {
                 return Err(cold_invariant(
                     "Expected a node to exist for all parameters and context variables",
                     None,
@@ -1082,7 +1184,7 @@ fn collect_param_effects(
     place: &Place,
     function_effects: &mut Vec<AliasingEffect>,
 ) {
-    let node = match state.nodes.get(place.identifier) {
+    let node = match state.node(place.identifier) {
         Some(n) => n,
         None => return,
     };

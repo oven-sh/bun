@@ -557,11 +557,8 @@ impl Env {
         self.round
     }
 
-    /// Whether to go through the function once more, as in the round that began as `round`, would change nothing.
-    ///
-    /// A round is a function of what it reads. If nothing was changed after it was read, each read gave
-    /// what is there now, so that another round reads the same, and sets the same: joined with what is there, which
-    /// already has it, that gives what is there. Not so with refs: a join of two makes a new id.
+    /// Whether another round after the one that began as `round` would change nothing: nothing was changed after
+    /// it was read, so it would read the same, and join it with what already has it. A join of refs makes a new id.
     fn is_settled_since(&self, round: u32) -> bool {
         !self.has_refs && self.read_before_change_in < round
     }

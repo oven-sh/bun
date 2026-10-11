@@ -34,6 +34,7 @@ use super::hir_builder::{
     reserved_identifier_diagnostic,
 };
 use crate::program::Host;
+use std::rc::Rc;
 
 mod expr;
 mod function;
@@ -84,7 +85,7 @@ pub(crate) fn lower(
     // read `Ref` + `Loc` straight off the AST node via `convert_loc`.
 
     // Pre-compute context identifiers: variables captured across function boundaries
-    let context_identifiers = find_context_identifiers(func, host, env)?;
+    let context_identifiers = Rc::new(find_context_identifiers(func, host, env)?);
 
     // For top-level functions, context is empty (no captured refs)
     let context_map: IndexMap<Ref, Option<SourceLocation>> = IndexMap::new();
@@ -96,10 +97,10 @@ pub(crate) fn lower(
         host,
         env,
         None, // no pre-existing bindings for top-level
-        &context_map,
+        context_map,
         scope,
         scope, // component_scope = function_scope for top-level
-        &context_identifiers,
+        context_identifiers,
         import_bindings,
         true, // is_top_level
     )?;
@@ -119,11 +120,11 @@ pub(super) fn lower_inner<'h>(
     host: &'h dyn Host,
     env: &'h mut Environment,
     parent_bindings: Option<IndexMap<Ref, IdentifierId>>,
-    context_map: &IndexMap<Ref, Option<SourceLocation>>,
+    context_map: IndexMap<Ref, Option<SourceLocation>>,
     function_scope: &'h ast::Scope,
     component_scope: &'h ast::Scope,
-    context_identifiers: &RefSet,
-    import_bindings: &IndexMap<Ref, VariableBinding>,
+    context_identifiers: Rc<RefSet>,
+    import_bindings: &'h IndexMap<Ref, VariableBinding>,
     is_top_level: bool,
 ) -> Result<(HirFunction, IndexMap<Ref, IdentifierId>), CompilerError> {
     // `validate_ts_this_parameter`: Bun's parser strips `this` parameters
@@ -140,12 +141,11 @@ pub(super) fn lower_inner<'h>(
         host,
         function_scope,
         component_scope,
-        context_identifiers.clone(),
+        context_identifiers,
         parent_bindings,
-        Some(context_map.clone()),
+        import_bindings,
         None,
     );
-    builder.set_import_bindings(import_bindings.clone());
 
     // Enter the function's own lexical scopes so `resolve_ref` walks from the
     // right starting point (parser keys `FunctionArgs` at the open-paren loc
@@ -155,7 +155,7 @@ pub(super) fn lower_inner<'h>(
 
     // Build context places from the captured refs
     let mut context: HirVec<Place> = AstAlloc::vec();
-    for (&ref_, ctx_loc) in context_map {
+    for (&ref_, ctx_loc) in &context_map {
         let identifier = builder.resolve_binding(ref_)?;
         context.push(Place {
             identifier,
@@ -164,6 +164,7 @@ pub(super) fn lower_inner<'h>(
             loc: *ctx_loc,
         });
     }
+    builder.set_context(context_map);
 
     // Process parameters
     let mut hir_params: HirVec<ParamPattern> = AstAlloc::vec();

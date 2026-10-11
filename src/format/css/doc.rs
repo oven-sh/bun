@@ -1103,11 +1103,23 @@ struct Indent {
     /// An indentation that has its `queue`, in which there are only `Indent` and `Align`, without the last. `None`: there
     /// is nothing in the queue.
     before_last: Option<u32>,
-    value: Vec<u8>,
+    /// Its `value` is that of `after`, and then `last`: a text for each would take the square of the depth.
+    after: u32,
+    last: Written,
+    /// How long the `value` is.
+    bytes: usize,
     length: usize,
     root: u32,
     /// What has been made of it.
     derived: Vec<(IndentCommand, u32)>,
+}
+
+#[derive(Copy, Clone)]
+enum Written {
+    Nothing,
+    Tab,
+    Blanks(usize),
+    Text(&'static str),
 }
 
 /// What is set back at the end of something that is being printed.
@@ -1188,7 +1200,9 @@ impl<'o> Printer<'o> {
             start,
             indents: vec![Indent {
                 before_last: None,
-                value: Vec::new(),
+                after: 0,
+                last: Written::Nothing,
+                bytes: 0,
                 length: 0,
                 root: 0,
                 derived: Vec::new(),
@@ -1257,47 +1271,40 @@ impl<'o> Printer<'o> {
             _ => (indent, parent.root),
         };
         let same = &self.indents[same_queue as usize];
-        let blanks = match command {
-            IndentCommand::Indent if !self.use_tabs => self.tab_width,
-            IndentCommand::Align(Alignment::Spaces(width)) => width as usize,
-            _ => 0,
-        };
-        if crate::is_too_long(same.value.len() + blanks) {
-            self.failure = Some(FormatError::TooLong);
-            return indent;
-        }
-        let (mut before_last, mut value, mut length) =
-            (same.before_last, same.value.clone(), same.length);
-        match command {
-            IndentCommand::Indent if self.use_tabs => {
-                value.push(b'\t');
-                length += self.tab_width;
-            }
+        let (after, last, bytes, width) = match command {
+            IndentCommand::Indent if self.use_tabs => (same_queue, Written::Tab, 1, self.tab_width),
             IndentCommand::Indent => {
-                value.resize(value.len() + self.tab_width, b' ');
-                length += self.tab_width;
+                let width = self.tab_width;
+                (same_queue, Written::Blanks(width), width, width)
             }
             IndentCommand::Align(Alignment::Spaces(width)) => {
-                value.resize(value.len() + width as usize, b' ');
-                length += width as usize;
+                let width = width as usize;
+                (same_queue, Written::Blanks(width), width, width)
             }
             IndentCommand::Align(Alignment::Text(text)) => {
-                value.extend_from_slice(text.as_bytes());
-                length += text.len();
+                (same_queue, Written::Text(text), text.len(), text.len())
             }
             // The printer has made spaces of the first.
             IndentCommand::Align(Alignment::IfBreak { .. })
             | IndentCommand::Dedent
             | IndentCommand::DedentToRoot
-            | IndentCommand::MarkAsRoot => {}
+            | IndentCommand::MarkAsRoot => (same.after, same.last, 0, 0),
+        };
+        let (bytes, length) = (same.bytes + bytes, same.length + width);
+        if crate::is_too_long(bytes) {
+            self.failure = Some(FormatError::TooLong);
+            return indent;
         }
-        if matches!(command, IndentCommand::Indent | IndentCommand::Align(_)) {
-            before_last = Some(indent);
-        }
+        let before_last = match command {
+            IndentCommand::Indent | IndentCommand::Align(_) => Some(indent),
+            _ => same.before_last,
+        };
         let id = self.indents.len() as u32;
         self.indents.push(Indent {
             before_last,
-            value,
+            after,
+            last,
+            bytes,
             length,
             root,
             derived: Vec::new(),
@@ -1314,9 +1321,27 @@ impl<'o> Printer<'o> {
         if self.failure.is_some() {
             return 0;
         }
-        let indent = &self.indents[indent as usize];
-        self.out.extend_from_slice(&indent.value);
-        indent.length
+        let Indent { bytes, length, .. } = self.indents[indent as usize];
+        let mut end = self.out.len() + bytes;
+        self.out.resize(end, b' ');
+        let mut at = indent;
+        while at != 0 {
+            let Indent { after, last, .. } = self.indents[at as usize];
+            match last {
+                Written::Nothing => {}
+                Written::Blanks(count) => end -= count,
+                Written::Tab => {
+                    end -= 1;
+                    self.out[end] = b'\t';
+                }
+                Written::Text(text) => {
+                    end -= text.len();
+                    self.out[end..][..text.len()].copy_from_slice(text.as_bytes());
+                }
+            }
+            at = after;
+        }
+        length
     }
 
     #[inline]

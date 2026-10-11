@@ -102,6 +102,11 @@ try {
 // first n of them through. FAIL_EPOLL_CTL=pidfd-and-writer-add fails those and
 // what no mode fails, which is nearer to what running out of watches does.
 //
+// FAIL_EPOLL_CTL=pidfd-add-after-exit waits for the child to exit and then fails
+// the EPOLL_CTL_ADD of its pidfd, so that bun reaps the child and reports its
+// exit before Bun.spawn returns. Each one it fails appends a byte to the file
+// that FAIL_EPOLL_CTL_LOG names.
+//
 // FAIL_SIGKILL=1 refuses every kill(pid, SIGKILL) with EPERM, which is what the
 // kernel answers for a child that runs as another user by now (sudo, su).
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
@@ -110,6 +115,8 @@ const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -137,6 +144,18 @@ static int should_fail(long op, int fd, struct epoll_event *event) {
   if (!event) return 0;
   const char *mode = getenv("FAIL_EPOLL_CTL");
   if (!mode) return op == EPOLL_CTL_ADD && (event->events & EPOLLOUT);
+  if (strcmp(mode, "pidfd-add-after-exit") == 0) {
+    if (op != EPOLL_CTL_ADD || !is_pidfd(fd)) return 0;
+    struct pollfd exited = { .fd = fd, .events = POLLIN };
+    poll(&exited, 1, -1);
+    const char *log = getenv("FAIL_EPOLL_CTL_LOG");
+    int log_fd = log ? open(log, O_WRONLY | O_APPEND | O_CREAT, 0644) : -1;
+    if (log_fd >= 0) {
+      if (write(log_fd, "x", 1) != 1) abort();
+      close(log_fd);
+    }
+    return 1;
+  }
   int writers_too = strcmp(mode, "pidfd-and-writer-add") == 0;
   if (writers_too && op == EPOLL_CTL_ADD && (event->events & EPOLLOUT)) return 1;
   if (writers_too || strcmp(mode, "pidfd-add") == 0) {
@@ -631,3 +650,56 @@ describe.skipIf(!isLinux || !cc)("a Bun.Terminal whose writer fails to re-arm it
     });
   });
 });
+
+// The exit of a child that cannot be watched and is already gone is reported before Bun.spawn returns. For a child on
+// a terminal that its caller created, nothing had read the pty by then: onExit and `exited` came before the output.
+test.skipIf(!isLinux || !cc)(
+  "a child on an existing Bun.Terminal whose pidfd fails to register has its output before onExit and exited",
+  async () => {
+    const children = 20;
+    const log = join(String(dir), "refused-watches");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          let output = "";
+          const terminal = new Bun.Terminal({
+            data(_t, chunk) { output += Buffer.from(chunk).toString(); },
+          });
+          const late = { atExited: [], inOnExit: [] };
+          for (let i = 0; i < ${children}; i++) {
+            const marker = "line-" + i + "-end";
+            const proc = Bun.spawn(["echo", marker], {
+              terminal,
+              onExit() { if (!output.includes(marker)) late.inOnExit.push(marker); },
+            });
+            await proc.exited;
+            if (!output.includes(marker)) late.atExited.push(marker);
+          }
+          terminal.close();
+          console.log(JSON.stringify(late));
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        FAIL_EPOLL_CTL: "pidfd-add-after-exit",
+        FAIL_EPOLL_CTL_LOG: log,
+        LD_PRELOAD: join(String(dir), "shim.so"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    let report: unknown = stdout;
+    try {
+      report = JSON.parse(stdout);
+    } catch {}
+    expect({ report, refusedWatches: readFileSync(log).length, stderr, exitCode }).toEqual({
+      report: { atExited: [], inOnExit: [] },
+      refusedWatches: children,
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);

@@ -8108,7 +8108,10 @@ declare module "bun" {
        * - Access the terminal via `subprocess.terminal`
        * - `subprocess.stdin`, `subprocess.stdout`, `subprocess.stderr` return `null`
        *
-       * Only available on POSIX systems (Linux, macOS).
+       * On Linux, Bun reads the terminal when the subprocess exits: the `data`
+       * callback has the output of the subprocess before `subprocess.exited`
+       * resolves. Output that other processes still write to the terminal can
+       * arrive later.
        *
        * @example
        * ```ts
@@ -8894,6 +8897,14 @@ declare module "bun" {
     name?: string;
     /**
      * Callback invoked when data is received from the terminal.
+     *
+     * On Linux, Bun also reads the terminal when a subprocess attached to it
+     * exits. That call comes before `onExit` and before `subprocess.exited`
+     * resolves, and `subprocess.exitCode` is already set.
+     *
+     * Warning: this may run before the `Bun.spawn` function returns. Use the
+     * `terminal` argument, not the value that `Bun.spawn` returns.
+     *
      * @param terminal The terminal instance
      * @param data The data received as a Uint8Array
      */

@@ -642,13 +642,8 @@ impl Terminal {
         // Both reader callbacks below re-enter user JS and may deref; hold a
         // +1 so `self` stays live for the trailing field accesses.
         let guard = self.ref_guard();
-        if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
-            // SAFETY: single JS thread; re-entrant user JS (data callback may
-            // call `terminal.close()`) is handled by `read`'s raw dispatch.
-            unsafe { IOReader::read(self.reader.as_ptr()) };
-            if self.flags.get().contains(Flags::CLOSED) {
-                return;
-            }
+        if !self.read_pending_held() {
+            return;
         }
         self.close_slave_fd();
         // Read again so the exit callback fires now (EOF on macOS, EIO on
@@ -656,7 +651,7 @@ impl Terminal {
         // A grandchild holding the slave keeps this at EAGAIN and re-arms.
         let flags = self.flags.get();
         if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
-            // SAFETY: same as the `read()` call above.
+            // SAFETY: same as the read in `read_pending_held`.
             unsafe { IOReader::read(self.reader.as_ptr()) };
         }
         // An inline terminal whose child has exited no longer keeps the event
@@ -666,6 +661,45 @@ impl Terminal {
             self.update_ref(false);
         }
         drop(guard);
+    }
+
+    /// Caller holds a ref. `false` once the terminal is closed, before the read or by its `data` callback.
+    #[cfg(unix)]
+    fn read_pending_held(&self) -> bool {
+        let flags = self.flags.get();
+        if flags.contains(Flags::CLOSED) {
+            return false;
+        }
+        if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
+            // SAFETY: single JS thread; re-entrant user JS (data callback may
+            // call `terminal.close()`) is handled by `read`'s raw dispatch.
+            unsafe { IOReader::read(self.reader.as_ptr()) };
+            if self.flags.get().contains(Flags::CLOSED) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// At the exit of a child on a terminal its subprocess does not own: `data` gets the child's output before `exited` settles.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) fn read_pending(&self) {
+        let flags = self.flags.get();
+        if flags.contains(Flags::CLOSED)
+            || !flags.contains(Flags::READER_STARTED)
+            || flags.contains(Flags::READER_DONE)
+        {
+            return;
+        }
+        // One poll(2) when nothing is pending: `read` would poll and then re-arm a poll that never fired.
+        if matches!(
+            bun_core::is_readable(self.read_fd.get()),
+            bun_core::Pollable::NotReady
+        ) {
+            return;
+        }
+        let _guard = self.ref_guard();
+        self.read_pending_held();
     }
 
     /// Windows analogue of `drain_and_close_slave_fd`'s tail: once the direct

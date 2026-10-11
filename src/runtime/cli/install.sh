@@ -306,7 +306,7 @@ bash)
     done
 
     if [[ $set_manually = true ]]; then
-        echo "Manually add the directory to $tilde_bash_config (or similar):"
+        echo 'Manually add the directory to ~/.bashrc (or similar):'
 
         for command in "${commands[@]}"; do
             info_bold "  $command"

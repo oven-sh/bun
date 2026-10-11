@@ -1,4 +1,4 @@
-use crate::oxlint::jsdoc::{JSDoc, JSDocFinder, JSDocPluginSettings, is_function_declaration_or_expression};
+use crate::oxlint::jsdoc::{JSDoc, JSDocFinder, is_function_declaration_or_expression};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -19,7 +19,7 @@ impl Rule for NoDefaults {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<JSDocFinder<'a>> {
-        JSDocFinder::new(file)
+        JSDocFinder::with_tag(file, &["param"])
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
@@ -29,9 +29,8 @@ impl Rule for NoDefaults {
         let Some(node) = cx.state.get_function_nearest_jsdoc_node(func) else {
             return;
         };
-        let settings = JSDocPluginSettings::new(cx.file());
-        let resolved_param_tag_name = settings.resolve_tag_name("param");
-        for tag in cx.state.get_checked_by_node(node, &settings).flat_map(JSDoc::tags) {
+        let resolved_param_tag_name = cx.state.settings().resolve_tag_name("param");
+        for tag in cx.state.get_checked_by_node(node).flat_map(JSDoc::tags) {
             if tag.kind.parsed() == resolved_param_tag_name
                 && let Some(name_part) = tag.type_name_comment().1
                 && name_part.optional

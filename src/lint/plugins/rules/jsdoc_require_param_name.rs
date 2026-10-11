@@ -94,7 +94,10 @@ impl<const RULE: usize> Rule for RequireTagPart<RULE> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<JSDocFinder<'a>> {
-        JSDocFinder::new(file)
+        match RULES[RULE].tags {
+            [_] => JSDocFinder::with_tag(file, RULES[RULE].tags),
+            tags => JSDocFinder::with_tags(file).filter(|it| tags.iter().any(|tag| it.mentions_tag(&[tag.as_bytes()]))),
+        }
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
@@ -104,13 +107,11 @@ impl<const RULE: usize> Rule for RequireTagPart<RULE> {
         let Some(node) = cx.state.get_function_nearest_jsdoc_node(func) else {
             return;
         };
-        let settings = JSDocPluginSettings::new(cx.file());
-        check(&RULES[RULE], cx.state.get_checked_by_node(node, &settings), &settings, cx);
+        check(&RULES[RULE], cx.state.get_checked_by_node(node), cx.state.settings(), cx);
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let settings = JSDocPluginSettings::new(cx.file());
-        check(&RULES[RULE], cx.state.iter_checked(&settings), &settings, cx);
+        check(&RULES[RULE], cx.state.iter_checked(), cx.state.settings(), cx);
     }
 }
 

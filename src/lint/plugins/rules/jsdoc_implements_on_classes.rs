@@ -1,4 +1,4 @@
-use crate::oxlint::jsdoc::{JSDoc, JSDocFinder, JSDocPluginSettings, is_function_declaration_or_expression};
+use crate::oxlint::jsdoc::{JSDoc, JSDocFinder, is_function_declaration_or_expression};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -26,7 +26,7 @@ impl Rule for ImplementsOnClasses {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<JSDocFinder<'a>> {
-        JSDocFinder::new(file)
+        JSDocFinder::with_tag(file, &["implements"])
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
@@ -36,12 +36,12 @@ impl Rule for ImplementsOnClasses {
         let Some(node) = cx.state.get_function_nearest_jsdoc_node(func) else {
             return;
         };
-        let settings = JSDocPluginSettings::new(cx.file());
+        let settings = cx.state.settings();
         let resolved_implements_tag_name = settings.resolve_tag_name("implements");
         let resolved_class_tag_name = settings.resolve_tag_name("class");
         let resolved_constructor_tag_name = settings.resolve_tag_name("constructor");
         let (mut implements_found, mut class_or_ctor_found) = (None, false);
-        for tag in cx.state.get_checked_by_node(node, &settings).flat_map(JSDoc::tags) {
+        for tag in cx.state.get_checked_by_node(node).flat_map(JSDoc::tags) {
             let tag_name = tag.kind.parsed();
             if tag_name == resolved_implements_tag_name {
                 implements_found = Some(tag.kind.span);

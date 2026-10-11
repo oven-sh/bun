@@ -1,4 +1,4 @@
-use crate::oxlint::jsdoc::{JSDoc, JSDocFinder, JSDocPluginSettings};
+use crate::oxlint::jsdoc::{JSDoc, JSDocFinder};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use bun_lint_oxlint::text::contains_name;
@@ -53,13 +53,13 @@ impl Rule for CheckTagNames {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<JSDocFinder<'a>> {
-        JSDocFinder::new(file)
+        JSDocFinder::with_tags(file)
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let settings = JSDocPluginSettings::new(cx.file());
+        let settings = cx.state.settings();
         let is_ambient = cx.file().path().ends_with(b".d.ts");
-        for tag in cx.state.iter_checked(&settings).flat_map(JSDoc::tags) {
+        for tag in cx.state.iter_checked().flat_map(JSDoc::tags) {
             let tag_name = tag.kind.parsed();
             let is_redundant_if_typed = || {
                 contains_name(&ALWAYS_INVALID_TAGS_IF_TYPED, tag_name)

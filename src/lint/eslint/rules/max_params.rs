@@ -55,6 +55,10 @@ impl Config {
         let Some(max) = self.max else {
             return;
         };
+        // `this` is one more at most.
+        if func.params().len() < max {
+            return;
+        }
         let is_oxlint = cx.language().is_oxlint;
         let is_checked = match func.kind() {
             FnKind::Decl | FnKind::Expr | FnKind::Arrow | FnKind::FunctionType => true,
@@ -84,6 +88,11 @@ impl Config {
                 (true, Some(name)) => [&b"Function '"[..], name.bytes(), b"'"].concat(),
                 (true, None) => b"Function".to_vec(),
             };
+            // oxlint points at the parameters.
+            if is_oxlint && let Some(params) = func.params_span() {
+                cx.report(params, EXCEED).data("name", name).data("count", count).data("max", max);
+                return;
+            }
             let mut head = ast_utils::get_function_head_loc(func);
             // In the copy, the parameter that is left looks like the one of `a => {}`.
             if self.removes_void_this
@@ -102,12 +111,7 @@ impl Config {
             {
                 head = Span::new(func.estree_span().start, paren);
             }
-            // oxlint points at the parameters.
-            let params = func.params_span().filter(|_| is_oxlint);
-            cx.report(params.unwrap_or(head), EXCEED)
-                .data("name", name)
-                .data("count", count)
-                .data("max", max);
+            cx.report(head, EXCEED).data("name", name).data("count", count).data("max", max);
         }
     }
 }

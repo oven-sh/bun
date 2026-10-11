@@ -75,44 +75,67 @@ fn should_stay_leading(comment: Token) -> bool {
         || contains_license_or_preserve_comment(content)
 }
 
-/// The comments that come before a token, each with where that token starts (`Comment::attached_to`), as oxc's lexer decides it.
-/// The others come after the previous token.
-pub(crate) fn leading_comments<'a>(file: &'a File<'a>) -> Vec<(Token<'a>, u32)> {
-    let text = file.text();
+/// Those of the comments that come before a token that are wanted, each with where that token starts (`Comment::attached_to`),
+/// as oxc's lexer decides it. The others come after the previous token.
+pub(crate) fn leading_comments<'a>(
+    file: &'a File<'a>,
+    is_wanted: impl Fn(Token<'a>) -> bool,
+) -> Vec<(Token<'a>, u32)> {
     let mut all: Vec<(Token<'a>, u32)> = Vec::new();
-    // `all[pending..]` are after the last token.
-    let mut pending = 0;
-    // Whether there was a line break since the last token, and whether that token is `=` or `(`.
-    let (mut saw_newline, mut follows_eq_or_paren) = (true, false);
-    // Where the white space after the previous comment ends.
-    let mut next = 0;
-    for comment in file.comments().filter(|it| it.kind() != TokenKind::Shebang) {
-        let Span { start, end } = comment.span();
-        if next != start || start == 0 {
-            all.iter_mut().skip(pending).for_each(|it| it.1 = next);
-            pending = all.len();
-            let before = text.get(..start as usize).unwrap_or_default();
-            let token = strings::trim_js_whitespace_end(before);
-            saw_newline = token.is_empty()
-                || strings::contains_js_line_break(before.get(token.len()..).unwrap_or_default());
-            follows_eq_or_paren = ends_with_eq_or_paren(token);
-        }
-        let after = text.get(end as usize..).unwrap_or_default();
-        let white_space = after
-            .get(..after.len() - strings::trim_js_whitespace_start(after).len())
-            .unwrap_or_default();
-        next = end + white_space.len() as u32;
-        all.push((comment, 0));
-        let is_trailing = if comment.kind() == TokenKind::Line {
-            !std::mem::replace(&mut saw_newline, true) && !follows_eq_or_paren
-        } else {
-            strings::contains_js_line_break(white_space)
-                && !std::mem::replace(&mut saw_newline, true)
-        };
-        if is_trailing && !should_stay_leading(comment) {
-            all.truncate(pending);
-        }
+    if !file.comments().any(&is_wanted) {
+        return all;
     }
-    all.iter_mut().skip(pending).for_each(|it| it.1 = next);
+    let text = file.text();
+    let comments: Vec<Token<'a>> = file
+        .comments()
+        .filter(|it| it.kind() != TokenKind::Shebang)
+        .collect();
+    // What decides about a comment is between the same two tokens as it is.
+    let mut rest = &comments[..];
+    while let Some(found) = rest.iter().position(|it| is_wanted(*it)) {
+        let mut first = found;
+        while let Some(before) = first.checked_sub(1)
+            && let (Some(previous), Some(comment)) = (rest.get(before), rest.get(first))
+            && strings::is_all_js_whitespace(file.slice(Span::new(previous.end(), comment.start())))
+        {
+            first = before;
+        }
+        rest = rest.get(first..).unwrap_or_default();
+        let start = rest.first().map_or(0, |it| it.start());
+        let before = text.get(..start as usize).unwrap_or_default();
+        let token = strings::trim_js_whitespace_end(before);
+        // Whether there was a line break since the last token, and whether that token is `=` or `(`.
+        let mut saw_newline = token.is_empty()
+            || strings::contains_js_line_break(before.get(token.len()..).unwrap_or_default());
+        let follows_eq_or_paren = ends_with_eq_or_paren(token);
+        // `all[pending..]` are after the last token.
+        let pending = all.len();
+        // Where the white space after the previous comment ends.
+        let mut next = start;
+        while let Some((&comment, others)) = rest.split_first()
+            && comment.start() == next
+        {
+            rest = others;
+            let end = comment.end();
+            let after = text.get(end as usize..).unwrap_or_default();
+            let white_space = after
+                .get(..after.len() - strings::trim_js_whitespace_start(after).len())
+                .unwrap_or_default();
+            next = end + white_space.len() as u32;
+            if is_wanted(comment) {
+                all.push((comment, 0));
+            }
+            let is_trailing = if comment.kind() == TokenKind::Line {
+                !std::mem::replace(&mut saw_newline, true) && !follows_eq_or_paren
+            } else {
+                strings::contains_js_line_break(white_space)
+                    && !std::mem::replace(&mut saw_newline, true)
+            };
+            if is_trailing && !should_stay_leading(comment) {
+                all.truncate(pending);
+            }
+        }
+        all.iter_mut().skip(pending).for_each(|it| it.1 = next);
+    }
     all
 }

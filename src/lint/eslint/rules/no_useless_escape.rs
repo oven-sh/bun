@@ -1,6 +1,7 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::regex::{self, ast::Kind as RegexKind, ast::NodeType};
+use std::cell::Cell;
 
 /// Disallow unnecessary escape characters.
 pub struct NoUselessEscape {
@@ -126,11 +127,26 @@ fn may_have_useless_escape(pattern: &[u8]) -> bool {
     false
 }
 
+/// Where the `\` of a file are.
+pub struct Backslashes {
+    /// In order.
+    at: Vec<u32>,
+    /// How many are before the start of the span that was asked about last.
+    before_last: Cell<usize>,
+}
+
 /// Whether there is a `\` in `span`.
 #[inline]
 fn has_backslash(span: Span, cx: &Cx<'_, NoUselessEscape>) -> bool {
-    let next = cx.state.partition_point(|&at| at < span.start);
-    cx.state.get(next).is_some_and(|&at| at < span.end)
+    let all = &cx.state.at;
+    // Mostly there is none between one span and the next.
+    let mut next = cx.state.before_last.get();
+    let before = next.checked_sub(1).and_then(|it| all.get(it));
+    if before.is_some_and(|&at| at >= span.start) || all.get(next).is_some_and(|&at| at < span.start) {
+        next = all.partition_point(|&at| at < span.start);
+        cx.state.before_last.set(next);
+    }
+    all.get(next).is_some_and(|&at| at < span.end)
 }
 
 /// `` [`a`] ``, which is a `TemplateLiteral` for ESLint and not an expression here. `owner`: what has the key.
@@ -274,8 +290,7 @@ impl Rule for NoUselessEscape {
         .props()
         .members()
         .pats(&[PatTag::Object]);
-    /// Where the `\` of the file are, in order.
-    type State<'a> = Vec<u32>;
+    type State<'a> = Backslashes;
 
     fn new(options: &Options) -> Self {
         let allowed = options.object(0).strings("allowRegexCharacters");
@@ -302,13 +317,13 @@ impl Rule for NoUselessEscape {
             .pats(&[PatTag::Object])
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<Vec<u32>> {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Backslashes> {
         let (text, mut backslashes, mut at) = (file.text(), Vec::new(), 0);
         while let Some(found) = text.get(at..).and_then(|rest| strings::index_of_char_usize(rest, b'\\')) {
             backslashes.push((at + found) as u32);
             at += found + 1;
         }
-        Some(backslashes)
+        Some(Backslashes { at: backslashes, before_last: Cell::new(0) })
     }
 
     fn string_literal<'a>(&self, literal: Literal<'a>, cx: &mut Cx<'a, Self>) {
@@ -353,7 +368,9 @@ impl Rule for NoUselessEscape {
     }
 
     fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
-        check_template_key(member.span(), || member.key(), cx);
+        if member.flags().contains(Flags::COMPUTED_NAME | Flags::STRING_NAME) {
+            check_template_key(member.span(), || member.key(), cx);
+        }
     }
 
     fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {

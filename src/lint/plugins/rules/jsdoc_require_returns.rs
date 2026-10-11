@@ -1,6 +1,6 @@
 use crate::oxlint::jsdoc::{
-    JSDocFinder, JSDocPluginSettings, function_type, is_duplicated_special_tag, is_missing_special_tag,
-    should_ignore_as_avoid, should_ignore_as_custom_skip, should_ignore_as_internal, should_ignore_as_private,
+    JSDocFinder, function_type, is_duplicated_special_tag, is_missing_special_tag, should_ignore_as_avoid,
+    should_ignore_as_custom_skip, should_ignore_as_internal, should_ignore_as_private,
 };
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -92,7 +92,7 @@ impl RequireReturns {
         let Some(jsdoc) = cx.state.get_all_by_node(func_def_node).next_back() else {
             return;
         };
-        let settings = JSDocPluginSettings::new(cx.file());
+        let settings = cx.state.settings();
         let is_checked_kind = func_def_node.method_definition.is_none_or(|it| match it.kind() {
             MemberKind::Getter => self.check_getters,
             _ if it.is_constructor() => self.check_constructors,
@@ -100,9 +100,9 @@ impl RequireReturns {
         });
         if !is_checked_kind
             || should_ignore_as_custom_skip(jsdoc)
-            || should_ignore_as_avoid(jsdoc, &settings, &self.exempted_by)
-            || should_ignore_as_private(jsdoc, &settings)
-            || should_ignore_as_internal(jsdoc, &settings)
+            || should_ignore_as_avoid(jsdoc, settings, &self.exempted_by)
+            || should_ignore_as_private(jsdoc, settings)
+            || should_ignore_as_internal(jsdoc, settings)
         {
             return;
         }

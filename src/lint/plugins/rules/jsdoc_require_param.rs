@@ -1,6 +1,6 @@
 use crate::oxlint::jsdoc::{
-    JSDoc, JSDocFinder, JSDocPluginSettings, ParamInfo, ParamKind, collect_params, is_function_with_body,
-    should_ignore_as_avoid, should_ignore_as_internal, should_ignore_as_private,
+    JSDoc, JSDocFinder, ParamInfo, ParamKind, collect_params, is_function_with_body, should_ignore_as_avoid,
+    should_ignore_as_internal, should_ignore_as_private,
 };
 use bun_core::strings;
 use bun_lint::prelude::*;
@@ -151,11 +151,11 @@ impl RequireParam {
             _ => true,
         });
         let jsdocs = cx.state.get_all_by_node(func_def_node);
-        let settings = JSDocPluginSettings::new(cx.file());
+        let settings = cx.state.settings();
         let is_ignored = |jsdoc: JSDoc| {
-            should_ignore_as_avoid(jsdoc, &settings, &self.exempted_by)
-                || should_ignore_as_private(jsdoc, &settings)
-                || should_ignore_as_internal(jsdoc, &settings)
+            should_ignore_as_avoid(jsdoc, settings, &self.exempted_by)
+                || should_ignore_as_private(jsdoc, settings)
+                || should_ignore_as_internal(jsdoc, settings)
         };
         // With a `@type` for the function no `@param` is needed.
         let has_type_tag = || jsdocs.clone().flat_map(JSDoc::tags).any(|tag| tag.kind.parsed() == b"type");

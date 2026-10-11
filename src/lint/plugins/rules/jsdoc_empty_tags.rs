@@ -26,11 +26,11 @@ impl Rule for EmptyTags {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<JSDocFinder<'a>> {
-        JSDocFinder::new(file)
+        JSDocFinder::with_tags(file)
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        for tag in cx.state.iter_all().flat_map(JSDoc::tags) {
+        for tag in cx.state.iter_tagged().flat_map(JSDoc::tags) {
             let tag_name = tag.kind.parsed();
             let comment = tag.comment();
             if (contains_name(&EMPTY_TAGS, tag_name)

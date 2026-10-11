@@ -22,10 +22,15 @@ pub fn is_variable_declarator_definition(declaration: Declaration) -> bool {
 
 /// typescript-eslint's `isTypeOnlyReference`: a use of `variable` that does not need its value at
 /// run time.
+#[inline]
 pub fn is_type_only_reference(variable: Symbol, reference: Reference) -> bool {
-    let is_in_type = match reference.expr().is_some() {
-        true => reference_contains_type_query(reference),
-        false => reference_contains_type_predicate(reference),
+    let is_in_type = match reference.expr() {
+        Some(name) => {
+            !name.file().bound.type_query_operands.is_empty()
+                && reference_contains_type_query(reference)
+        }
+        // The `x` of `x is T` is read.
+        None => !reference.is_write() && reference_contains_type_predicate(reference),
     };
     is_in_type
         || !reference.is_value()

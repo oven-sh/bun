@@ -275,7 +275,23 @@ impl ObjectShorthand {
         if prop.is_jsx_attribute() {
             return;
         }
-        let (Some(key), Some(value)) = (prop.key(), prop.value()) else {
+        let Some(value) = prop.value() else {
+            return;
+        };
+        let may_find = match prop.kind() {
+            PropKind::Method => self.is_never || self.avoids_quotes,
+            PropKind::Shorthand => self.is_never,
+            PropKind::Init => match value.tag() {
+                ExprTag::Fn => self.applies_to_methods,
+                ExprTag::Ident => self.applies_to_props,
+                _ => false,
+            },
+            _ => false,
+        };
+        if !may_find {
+            return;
+        }
+        let Some(key) = prop.key() else {
             return;
         };
         let Some(finding) = self.find(prop, key, value, cx.file()) else {

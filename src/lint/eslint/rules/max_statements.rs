@@ -42,6 +42,14 @@ fn may_contain_blocks(statement: &Stmt) -> bool {
     )
 }
 
+fn push_what_may_contain_blocks<'a>(pending: &mut SmallVec<[Stmt<'a>; 16]>, statements: List<'a, Stmt<'a>>) {
+    for statement in statements {
+        if may_contain_blocks(&statement) {
+            pending.push(statement);
+        }
+    }
+}
+
 /// The sum of the lengths of the `BlockStatement`s of `func`, without those of the functions and
 /// the static blocks in it.
 fn count_statements(func: Func) -> usize {
@@ -49,14 +57,18 @@ fn count_statements(func: Func) -> usize {
         return 0;
     };
     let mut count = body.len();
-    let mut pending: SmallVec<[Stmt; 16]> = body.iter().filter(may_contain_blocks).collect();
+    let mut pending: SmallVec<[Stmt; 16]> = SmallVec::new();
+    push_what_may_contain_blocks(&mut pending, body);
     while let Some(statement) = pending.pop() {
         match statement.kind() {
             StmtKind::Block(statements) => {
                 count += statements.len();
-                pending.extend(statements.iter().filter(may_contain_blocks));
+                push_what_may_contain_blocks(&mut pending, statements);
             }
-            StmtKind::If { yes, no, .. } => pending.extend([Some(yes), no].into_iter().flatten()),
+            StmtKind::If { yes, no, .. } => {
+                pending.push(yes);
+                pending.extend(no);
+            }
             StmtKind::For { body, .. }
             | StmtKind::ForIn { body, .. }
             | StmtKind::ForOf { body, .. }
@@ -66,7 +78,7 @@ fn count_statements(func: Func) -> usize {
             | StmtKind::Labeled { body, .. } => pending.push(body),
             StmtKind::Switch { cases, .. } => {
                 for case in cases {
-                    pending.extend(case.body().iter().filter(may_contain_blocks));
+                    push_what_may_contain_blocks(&mut pending, case.body());
                 }
             }
             StmtKind::Try {
@@ -74,10 +86,12 @@ fn count_statements(func: Func) -> usize {
                 handler,
                 finalizer,
                 ..
-            } => pending.extend([Some(block), handler, finalizer].into_iter().flatten()),
-            StmtKind::Module(module) => {
-                pending.extend(module.innermost().body().iter().filter(may_contain_blocks));
+            } => {
+                pending.push(block);
+                pending.extend(handler);
+                pending.extend(finalizer);
             }
+            StmtKind::Module(module) => push_what_may_contain_blocks(&mut pending, module.innermost().body()),
             _ => {}
         }
     }

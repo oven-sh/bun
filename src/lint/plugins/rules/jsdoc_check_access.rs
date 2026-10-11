@@ -1,4 +1,4 @@
-use crate::oxlint::jsdoc::{JSDocFinder, JSDocPluginSettings, should_ignore_as_internal};
+use crate::oxlint::jsdoc::{JSDocFinder, should_ignore_as_internal};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -21,14 +21,14 @@ impl Rule for CheckAccess {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<JSDocFinder<'a>> {
-        JSDocFinder::new(file)
+        JSDocFinder::with_tag(file, &["access", "package", "private", "protected", "public"])
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let settings = JSDocPluginSettings::new(cx.file());
+        let settings = cx.state.settings();
         let resolved_access_tag_name = settings.resolve_tag_name("access");
         let resolved_access_levels = ACCESS_LEVELS.map(|level| settings.resolve_tag_name(level));
-        for jsdoc in cx.state.iter_all().filter(|it| !should_ignore_as_internal(*it, &settings)) {
+        for jsdoc in cx.state.iter_tagged().filter(|it| !should_ignore_as_internal(*it, settings)) {
             let mut access_related_tags_count = 0;
             for tag in jsdoc.tags() {
                 let tag_name = tag.kind.parsed();

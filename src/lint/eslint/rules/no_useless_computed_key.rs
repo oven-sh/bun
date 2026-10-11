@@ -127,6 +127,9 @@ impl Rule for NoUselessComputedKey {
     }
 
     fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
+        if !member.flags().contains(Flags::COMPUTED_NAME) {
+            return;
+        }
         let Some((key, literal)) = computed_literal(member.key(), cx.file()) else {
             return;
         };

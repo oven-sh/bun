@@ -1,4 +1,4 @@
-use crate::oxlint::jsdoc::{JSDocFinder, JSDocPluginSettings};
+use crate::oxlint::jsdoc::JSDocFinder;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -18,15 +18,15 @@ impl Rule for RequireProperty {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<JSDocFinder<'a>> {
-        JSDocFinder::new(file)
+        JSDocFinder::with_tag(file, &["typedef", "namespace"])
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let settings = JSDocPluginSettings::new(cx.file());
+        let settings = cx.state.settings();
         let resolved_property_tag_name = settings.resolve_tag_name("property");
         let resolved_typedef_tag_name = settings.resolve_tag_name("typedef");
         let resolved_namespace_tag_name = settings.resolve_tag_name("namespace");
-        for jsdoc in cx.state.iter_checked(&settings) {
+        for jsdoc in cx.state.iter_checked() {
             // The last `@typedef {Object}` or `@namespace {Object}`, if no `@property` came after it.
             let mut should_report: Option<Span> = None;
             for tag in jsdoc.tags() {

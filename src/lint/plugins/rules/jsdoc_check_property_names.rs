@@ -1,4 +1,4 @@
-use crate::oxlint::jsdoc::{JSDocFinder, JSDocPluginSettings};
+use crate::oxlint::jsdoc::JSDocFinder;
 use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
@@ -23,14 +23,13 @@ impl Rule for CheckPropertyNames {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<JSDocFinder<'a>> {
-        JSDocFinder::new(file)
+        JSDocFinder::with_tag(file, &["property"])
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let settings = JSDocPluginSettings::new(cx.file());
-        let resolved_property_tag_name = settings.resolve_tag_name("property");
+        let resolved_property_tag_name = cx.state.settings().resolve_tag_name("property");
         let mut seen: FxHashMap<&[u8], SmallVec<[Span; 1]>> = FxHashMap::default();
-        for jsdoc in cx.state.iter_checked(&settings) {
+        for jsdoc in cx.state.iter_checked() {
             // To clear a table takes time in proportion to what it once had.
             match seen.capacity() > 64 {
                 true => seen = FxHashMap::default(),

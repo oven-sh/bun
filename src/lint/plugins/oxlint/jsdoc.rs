@@ -4,53 +4,81 @@
 use super::comments::{is_jsdoc_content, leading_comments};
 use bun_core::strings;
 use bun_lint::ast::jsdoc::{
-    JSDocCommentPart, JSDocTagKindPart, JSDocTagTypeNamePart, JSDocTagTypePart, JSDocs,
+    JSDocCommentPart, JSDocTagKindPart, JSDocTagTypeNamePart, JSDocTagTypePart,
 };
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
+use std::cell::{OnceCell, RefCell};
 
 pub(crate) use bun_lint::ast::jsdoc::{JSDoc, JSDocTag};
 
 struct Comment {
     /// Where the `/**` is.
     start: u32,
+    /// Behind the `*/`.
+    end: u32,
     /// Where the token after the comment starts.
     attached_to: u32,
+    /// Without an `@` it has no tags.
+    has_at: bool,
 }
 
-/// The JSDoc comments of a file, in source order. It has positions only, so that it can be kept with the file.
-struct Comments(Vec<Comment>);
+/// What `get_function_nearest_jsdoc_node` finds for a function.
+#[derive(Copy, Clone)]
+enum Nearest {
+    NotAsked,
+    Nothing,
+    Node {
+        at: u32,
+        /// The index of `Attached::method_definition`.
+        method_definition: Option<u32>,
+    },
+}
+
+/// The JSDoc comments of a file. It has positions only, so that it can be kept with the file.
+struct Comments {
+    /// In source order.
+    all: Vec<Comment>,
+    /// By the index of the function.
+    nearest: RefCell<Vec<Nearest>>,
+}
 
 impl Comments {
     fn new<'a>(file: &'a File<'a>) -> Comments {
-        let is_jsdoc = |it: &(Token, u32)| {
-            it.0.kind() == TokenKind::Block && is_jsdoc_content(it.0.comment_value())
-        };
-        let jsdoc = leading_comments(file).into_iter().filter(is_jsdoc);
-        Comments(
-            jsdoc
-                .map(|it| Comment {
-                    start: it.0.span().start,
-                    attached_to: it.1,
+        let is_jsdoc =
+            |it: Token| it.kind() == TokenKind::Block && is_jsdoc_content(it.comment_value());
+        let jsdoc = leading_comments(file, is_jsdoc).into_iter();
+        Comments {
+            all: jsdoc
+                .map(|(comment, attached_to)| Comment {
+                    start: comment.start(),
+                    end: comment.end(),
+                    attached_to,
+                    has_at: strings::contains_char(comment.text(), b'@'),
                 })
                 .collect(),
-        )
+            nearest: RefCell::default(),
+        }
+    }
+
+    /// From the first that is before the token that starts at `at`, or before a later one.
+    fn from(&self, at: u32) -> &[Comment] {
+        self.all
+            .get(self.all.partition_point(|it| it.attached_to < at)..)
+            .unwrap_or_default()
     }
 
     /// Those before the token that starts at `at`.
     fn attached_to(&self, at: u32) -> &[Comment] {
-        let rest = self
-            .0
-            .get(self.0.partition_point(|it| it.attached_to < at)..)
-            .unwrap_or_default();
+        let rest = self.from(at);
         rest.get(..rest.partition_point(|it| it.attached_to == at))
             .unwrap_or_default()
     }
 
     fn has(&self, at: u32) -> bool {
-        !self.attached_to(at).is_empty()
+        self.from(at).first().is_some_and(|it| it.attached_to == at)
     }
 }
 
@@ -79,8 +107,9 @@ impl Kept<'_> {
 
 /// `ctx.jsdoc()`. The state of a rule.
 pub struct JSDocFinder<'a> {
-    docs: JSDocs<'a>,
+    file: &'a File<'a>,
     comments: Kept<'a>,
+    settings: OnceCell<JSDocPluginSettings<'a>>,
     nearest: AncestorMemo<'a, Option<Attached<'a>>>,
 }
 
@@ -95,11 +124,52 @@ impl<'a> JSDocFinder<'a> {
             Some(kept) => Kept::WithTheFile(kept),
             None => Kept::Here(Comments::new(file)),
         };
-        (!comments.get().0.is_empty()).then(|| JSDocFinder {
-            docs: file.jsdoc(),
+        (!comments.get().all.is_empty()).then(|| JSDocFinder {
+            file,
             comments,
+            settings: OnceCell::new(),
             nearest: AncestorMemo::default(),
         })
+    }
+
+    /// `None`: no comment of the file can have a tag that `settings.jsdoc.tagNamePreference` makes of one of `original_names`.
+    pub(crate) fn with_tag(file: &'a File<'a>, original_names: &[&'static str]) -> Option<Self> {
+        let finder = JSDocFinder::with_tags(file)?;
+        let is_mentioned = {
+            let settings = finder.settings();
+            let names = original_names
+                .iter()
+                .map(|it| settings.resolve_tag_name(it));
+            finder.mentions_tag(&names.collect::<SmallVec<[&[u8]; 8]>>())
+        };
+        is_mentioned.then_some(finder)
+    }
+
+    /// `None`: no comment of the file can have a tag.
+    pub(crate) fn with_tags(file: &'a File<'a>) -> Option<Self> {
+        JSDocFinder::new(file).filter(|it| it.comments().all.iter().any(|it| it.has_at))
+    }
+
+    /// Whether `@` and one of `names` is in a comment. A tag of that name is such a place.
+    pub(crate) fn mentions_tag(&self, names: &[&[u8]]) -> bool {
+        self.comments().all.iter().any(|it| {
+            let mut rest = match it.has_at {
+                true => self.file.slice(Span::new(it.start, it.end)),
+                false => &[],
+            };
+            while let Some(at) = strings::index_of_char_usize(rest, b'@') {
+                rest = rest.get(at + 1..).unwrap_or_default();
+                if names.iter().any(|name| rest.starts_with(name)) {
+                    return true;
+                }
+            }
+            false
+        })
+    }
+
+    pub(crate) fn settings(&self) -> &JSDocPluginSettings<'a> {
+        self.settings
+            .get_or_init(|| JSDocPluginSettings::new(self.file))
     }
 
     fn comments(&self) -> &Comments {
@@ -110,12 +180,19 @@ impl<'a> JSDocFinder<'a> {
         &'s self,
         comments: &'s [Comment],
     ) -> impl DoubleEndedIterator<Item = JSDoc<'a>> + Clone {
-        let docs = self.docs;
+        let docs = self.file.jsdoc();
         comments.iter().filter_map(move |it| docs.at(it.start))
     }
 
     pub(crate) fn iter_all(&self) -> impl Iterator<Item = JSDoc<'a>> {
-        self.handles(&self.comments().0)
+        self.handles(&self.comments().all)
+    }
+
+    /// [`JSDocFinder::iter_all`] without those that have no tags.
+    pub(crate) fn iter_tagged(&self) -> impl Iterator<Item = JSDoc<'a>> {
+        let docs = self.file.jsdoc();
+        let tagged = self.comments().all.iter().filter(|it| it.has_at);
+        tagged.filter_map(move |it| docs.at(it.start))
     }
 
     pub(crate) fn get_all_by_node(
@@ -125,20 +202,16 @@ impl<'a> JSDocFinder<'a> {
         self.handles(self.comments().attached_to(node.at))
     }
 
-    /// [`JSDocFinder::iter_all`] without what `ignoreInternal` and `ignorePrivate` take out.
-    pub(crate) fn iter_checked<'s>(
-        &'s self,
-        settings: &'s JSDocPluginSettings,
-    ) -> impl Iterator<Item = JSDoc<'a>> {
-        self.iter_all().filter(move |it| is_checked(*it, settings))
+    /// [`JSDocFinder::iter_tagged`] without what `ignoreInternal` and `ignorePrivate` take out.
+    pub(crate) fn iter_checked(&self) -> impl Iterator<Item = JSDoc<'a>> {
+        let settings = self.settings();
+        self.iter_tagged()
+            .filter(move |it| is_checked(*it, settings))
     }
 
     /// [`JSDocFinder::get_all_by_node`] without them.
-    pub(crate) fn get_checked_by_node<'s>(
-        &'s self,
-        node: Attached,
-        settings: &'s JSDocPluginSettings,
-    ) -> impl Iterator<Item = JSDoc<'a>> {
+    pub(crate) fn get_checked_by_node(&self, node: Attached) -> impl Iterator<Item = JSDoc<'a>> {
+        let settings = self.settings();
         self.get_all_by_node(node)
             .filter(move |it| is_checked(*it, settings))
     }
@@ -148,9 +221,22 @@ impl<'a> JSDocFinder<'a> {
         &mut self,
         func: Func<'a>,
     ) -> Option<Attached<'a>> {
-        let comments = self.comments.get();
+        let (file, comments, index) = (self.file, self.comments.get(), func.id().idx());
+        match comments.nearest.borrow().get(index) {
+            None | Some(Nearest::NotAsked) => {}
+            Some(Nearest::Nothing) => return None,
+            Some(&Nearest::Node {
+                at,
+                method_definition,
+            }) => {
+                return Some(Attached {
+                    at,
+                    method_definition: method_definition.map(|id| Member::from_raw(file, id)),
+                });
+            }
+        }
         let at = func.estree_span().start;
-        match comments.has(at) {
+        let found = match comments.has(at) {
             true => Some(Attached {
                 at,
                 method_definition: None,
@@ -161,7 +247,18 @@ impl<'a> JSDocFinder<'a> {
                     nearest_in(comments, child, parent)
                 })
                 .flatten(),
+        };
+        let mut nearest = comments.nearest.borrow_mut();
+        if nearest.len() <= index {
+            nearest.resize(index + 1, Nearest::NotAsked);
         }
+        if let Some(place) = nearest.get_mut(index) {
+            *place = found.map_or(Nearest::Nothing, |it| Nearest::Node {
+                at: it.at,
+                method_definition: it.method_definition.map(|it| it.id().idx() as u32),
+            });
+        }
+        found
     }
 }
 
@@ -333,7 +430,7 @@ pub(crate) struct JSDocPluginSettings<'a> {
 }
 
 impl<'a> JSDocPluginSettings<'a> {
-    pub(crate) fn new(file: &File<'a>) -> Self {
+    fn new(file: &File<'a>) -> Self {
         let settings = Object::of(file.settings().get(b"jsdoc"));
         JSDocPluginSettings {
             ignore_private: settings.bool_or("ignorePrivate", false),

@@ -14,8 +14,8 @@ const SET: u8 = 1 << 2;
 const STATIC: u8 = 3;
 
 /// The names that the members of one class have defined so far, each with how, and with a configuration of oxlint with
-/// the key of the last member that has the name. It is kept between classes only for its allocation.
-pub type Seen<'a> = FxHashMap<Cow<'a, [u8]>, (u8, Span)>;
+/// the last member that has the name. It is kept between classes only for its allocation.
+pub type Seen<'a> = FxHashMap<Cow<'a, [u8]>, (u8, Option<Member<'a>>)>;
 
 /// The range of ESLint's `key`.
 fn key_span(member: Member<'_>) -> Option<Span> {
@@ -37,6 +37,7 @@ pub fn check<'a, R: Rule>(
         return;
     }
     seen.clear();
+    seen.reserve(members.len());
     let is_oxlint = cx.language().is_oxlint;
     for member in members {
         // Neither a `MethodDefinition` nor a `PropertyDefinition`, or an overload.
@@ -45,8 +46,12 @@ pub fn check<'a, R: Rule>(
         {
             continue;
         }
+        let mut has_key = true;
         let name = match member.kind() {
-            MemberKind::Constructor if member.is_static() => Cow::Borrowed(&b"constructor"[..]),
+            MemberKind::Constructor if member.is_static() => {
+                has_key = member.constructor_keyword().is_some();
+                Cow::Borrowed(&b"constructor"[..])
+            }
             MemberKind::Method if member.is_constructor() => continue,
             MemberKind::Property | MemberKind::Method | MemberKind::Getter | MemberKind::Setter => {
                 let Some(key) = member.key() else {
@@ -68,21 +73,21 @@ pub fn check<'a, R: Rule>(
             _ => (INIT, INIT | GET | SET),
         };
         let shift = if member.is_static() { STATIC } else { 0 };
-        let (state, last_key) = seen.entry(name.clone()).or_insert((0, Span::empty(0)));
+        let (state, last) = seen.entry(name.clone()).or_insert((0, None));
         let is_duplicate = *state & (conflicting << shift) != 0;
         *state |= own << shift;
-        if (is_duplicate || is_oxlint)
-            && let Some(key) = key_span(member)
-        {
+        if !has_key {
+            continue;
+        }
+        let before = if is_oxlint { last.replace(member) } else { None };
+        if is_duplicate && let Some(key) = key_span(member) {
             // oxlint points at the member before.
-            let before = std::mem::replace(last_key, key);
-            if is_duplicate {
-                cx.report(if is_oxlint { before } else { key }, UNEXPECTED)
-                    .labels_with(|labels| {
-                        labels.push(key, format!("\"{}\" is re-declared here", bstr::BStr::new(&name[..])));
-                    })
-                    .data("name", name);
-            }
+            let place = if is_oxlint { before.and_then(key_span).unwrap_or_default() } else { key };
+            cx.report(place, UNEXPECTED)
+                .labels_with(|labels| {
+                    labels.push(key, format!("\"{}\" is re-declared here", bstr::BStr::new(&name[..])));
+                })
+                .data("name", name);
         }
     }
 }

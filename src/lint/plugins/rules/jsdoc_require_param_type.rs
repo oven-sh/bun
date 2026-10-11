@@ -1,4 +1,4 @@
-use crate::oxlint::jsdoc::{JSDocFinder, JSDocPluginSettings, is_function_with_body, param_tags};
+use crate::oxlint::jsdoc::{JSDocFinder, is_function_with_body, param_tags};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
@@ -25,7 +25,7 @@ impl Rule for RequireParamType {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<JSDocFinder<'a>> {
-        JSDocFinder::new(file)
+        JSDocFinder::with_tag(file, &["param"])
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
@@ -35,8 +35,8 @@ impl Rule for RequireParamType {
         let Some(node) = cx.state.get_function_nearest_jsdoc_node(func) else {
             return;
         };
-        let settings = JSDocPluginSettings::new(cx.file());
-        let jsdocs = cx.state.get_checked_by_node(node, &settings);
+        let settings = cx.state.settings();
+        let jsdocs = cx.state.get_checked_by_node(node);
         for tag in param_tags(jsdocs, func, settings.resolve_tag_name("param")) {
             if settings.exempt_destructured_roots_from_checks && tag.is_about_nested_param || tag.type_part.is_some() {
                 continue;

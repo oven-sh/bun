@@ -59,8 +59,8 @@ impl RequireYields {
         let Some(node) = cx.state.get_function_nearest_jsdoc_node(func) else {
             return;
         };
-        let settings = JSDocPluginSettings::new(cx.file());
-        if self.is_ignored(&cx.state, node, &settings) {
+        let settings = cx.state.settings();
+        if self.is_ignored(&cx.state, node, settings) {
             return;
         }
         let jsdoc_tags = cx.state.get_all_by_node(node).flat_map(JSDoc::tags);

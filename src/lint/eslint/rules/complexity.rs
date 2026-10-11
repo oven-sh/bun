@@ -27,8 +27,10 @@ fn is_field_initializer<'a>(member: Member<'a>, node: Node<'a>) -> bool {
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// The complexity of each code path that has more than one route.
-    complexities: FxHashMap<Node<'a>, usize>,
+    /// By the index of a function: the complexity of its code path. 0: it is not known to have more than one route.
+    of_functions: Vec<usize>,
+    /// The same for the initializers of fields, of which few have more than one.
+    of_fields: FxHashMap<Member<'a>, usize>,
     owners: AncestorMemo<'a, Node<'a>>,
 }
 
@@ -41,23 +43,70 @@ impl Complexity {
             Node::Member(member) if is_field_initializer(member, inner) => Some(ancestor),
             _ => None,
         });
-        if let Some(owner) = owner {
-            *cx.state.complexities.entry(owner).or_insert(1) += by;
+        match owner {
+            Some(Node::Func(func)) => Self::increase_function(func, by, cx),
+            Some(Node::Member(member)) => *cx.state.of_fields.entry(member).or_insert(1) += by,
+            _ => {}
         }
+    }
+
+    fn increase_function<'a>(func: Func<'a>, by: usize, cx: &mut Cx<'a, Self>) {
+        let (at, known) = (func.id().idx(), &mut cx.state.of_functions);
+        if at >= known.len() {
+            known.resize(at + 1, 0);
+        }
+        if let Some(complexity) = known.get_mut(at) {
+            *complexity = (*complexity).max(1) + by;
+        }
+    }
+
+    fn report<'a>(&self, owner: Node<'a>, complexity: usize, cx: &Cx<'a, Self>) {
+        let Some(threshold) = self.threshold.filter(|it| complexity > *it) else {
+            return;
+        };
+        let is_oxlint = cx.language().is_oxlint;
+        let (name, loc) = match owner {
+            // oxlint points at the parentheses too.
+            Node::Member(member) if is_oxlint => (
+                b"class field initializer".to_vec(),
+                member.init().map_or_else(|| member.span(), Expr::outer_span),
+            ),
+            Node::Member(member) => (
+                b"Class field initializer".to_vec(),
+                member.init().map_or_else(|| member.span(), Expr::span),
+            ),
+            Node::Func(func) if func.kind() == FnKind::StaticBlock => {
+                let whole = func.span();
+                // oxlint points at the whole block.
+                match is_oxlint {
+                    true => (b"class static block".to_vec(), whole),
+                    false => {
+                        let keyword = Span::new(whole.start, whole.start + "static".len() as u32);
+                        (b"Class static block".to_vec(), keyword)
+                    }
+                }
+            }
+            // oxlint points at the function.
+            Node::Func(func) if is_oxlint => (oxlint::get_function_name_with_kind(func), func.estree_span()),
+            Node::Func(func) => (
+                upper_case_first(&ast_utils::get_function_name_with_kind(func)).into_owned(),
+                ast_utils::get_function_head_loc(func),
+            ),
+            _ => return,
+        };
+        cx.report(loc, COMPLEX)
+            .data("name", name)
+            .data("complexity", complexity)
+            .data("max", threshold);
     }
 }
 
 impl Rule for Complexity {
     const META: Meta = Meta::eslint("complexity", Kind::Suggestion).reports_on_code_path_end();
     const ON: On = On::new()
-        .exprs(&[
-            ExprTag::Cond,
-            ExprTag::Binary,
-            ExprTag::Assign,
-            ExprTag::Dot,
-            ExprTag::Index,
-            ExprTag::Call,
-        ])
+        .exprs(&[ExprTag::Cond, ExprTag::Assign])
+        .optional_chains()
+        .binaries(&[BinOp::And, BinOp::Or, BinOp::Nullish])
         .stmts(&[
             StmtTag::If,
             StmtTag::For,
@@ -92,14 +141,9 @@ impl Rule for Complexity {
 
     fn narrow<'a>(&self, _: &'a File<'a>) -> On {
         let mut on = On::new()
-            .exprs(&[
-                ExprTag::Cond,
-                ExprTag::Binary,
-                ExprTag::Assign,
-                ExprTag::Dot,
-                ExprTag::Index,
-                ExprTag::Call,
-            ])
+            .exprs(&[ExprTag::Cond, ExprTag::Assign])
+            .optional_chains()
+            .binaries(&[BinOp::And, BinOp::Or, BinOp::Nullish])
             .stmts(&[
                 StmtTag::If,
                 StmtTag::For,
@@ -126,22 +170,31 @@ impl Rule for Complexity {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let counts = match e.kind() {
-            ExprKind::Cond { .. } => true,
-            ExprKind::Binary { op, .. } => matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish),
+        let counts = match e.assign_op() {
+            // A `Cond`.
+            None => true,
             // A default value in the target of a destructuring assignment.
             // oxlint does not count it.
-            ExprKind::Assign { op: None, .. } => {
+            Some(None) => {
                 !cx.language().is_oxlint
                     && matches!(e.parent(), Node::Expr(_) | Node::Prop(_))
                     && is_assignment_target(e)
             }
-            ExprKind::Assign { op, .. } => ast_utils::is_logical_assignment_operator(op),
-            _ => e.is_optional(),
+            Some(op) => ast_utils::is_logical_assignment_operator(op),
         };
         if counts {
             Self::increase(e, 1, cx);
         }
+    }
+
+    fn optional_chain<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if e.is_optional() {
+            Self::increase(e, 1, cx);
+        }
+    }
+
+    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        Self::increase(e, 1, cx);
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -172,7 +225,7 @@ impl Rule for Complexity {
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         if func.has_body() {
-            cx.state.complexities.entry(Node::Func(func)).or_insert(1);
+            Self::increase_function(func, 0, cx);
         }
     }
 
@@ -180,7 +233,7 @@ impl Rule for Complexity {
         if let Some(init) = member.init()
             && is_field_initializer(member, Node::Expr(init))
         {
-            cx.state.complexities.entry(Node::Member(member)).or_insert(1);
+            cx.state.of_fields.entry(member).or_insert(1);
         }
     }
 
@@ -201,46 +254,16 @@ impl Rule for Complexity {
             return;
         };
         // oxlint reports an initializer that is a function and the function at one place: the initializer first.
-        let is_member = |it: &(&Node<'_>, &usize)| matches!(it.0, Node::Member(_));
-        let all = cx.state.complexities.iter();
-        for (&owner, &complexity) in all.clone().filter(is_member).chain(all.filter(|it| !is_member(it))) {
-            if complexity <= threshold {
-                continue;
-            }
-            let is_oxlint = cx.language().is_oxlint;
-            let (name, loc) = match owner {
-                // oxlint points at the parentheses too.
-                Node::Member(member) if is_oxlint => (
-                    b"class field initializer".to_vec(),
-                    member.init().map_or_else(|| member.span(), Expr::outer_span),
-                ),
-                Node::Member(member) => (
-                    b"Class field initializer".to_vec(),
-                    member.init().map_or_else(|| member.span(), Expr::span),
-                ),
-                Node::Func(func) if func.kind() == FnKind::StaticBlock => {
-                    let whole = func.span();
-                    // oxlint points at the whole block.
-                    match is_oxlint {
-                        true => (b"class static block".to_vec(), whole),
-                        false => {
-                            let keyword = Span::new(whole.start, whole.start + "static".len() as u32);
-                            (b"Class static block".to_vec(), keyword)
-                        }
-                    }
-                }
-                // oxlint points at the function.
-                Node::Func(func) if is_oxlint => (oxlint::get_function_name_with_kind(func), func.estree_span()),
-                Node::Func(func) => (
-                    upper_case_first(&ast_utils::get_function_name_with_kind(func)).into_owned(),
-                    ast_utils::get_function_head_loc(func),
-                ),
-                _ => continue,
-            };
-            cx.report(loc, COMPLEX)
-                .data("name", name)
-                .data("complexity", complexity)
-                .data("max", threshold);
+        for (&member, &complexity) in &cx.state.of_fields {
+            self.report(Node::Member(member), complexity, cx);
+        }
+        let of_functions = &cx.state.of_functions;
+        if of_functions.iter().all(|it| *it <= threshold) {
+            return;
+        }
+        for func in cx.file().funcs() {
+            let complexity = of_functions.get(func.id().idx());
+            self.report(Node::Func(func), complexity.copied().unwrap_or(0), cx);
         }
     }
 }

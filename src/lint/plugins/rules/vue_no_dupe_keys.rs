@@ -117,11 +117,8 @@ fn outermost_target<'a>(node: Node<'a>, known: &mut FxHashMap<Node<'a>, Option<u
 fn has_vue_component_annotation<'a>(node: Expr<'a>, cx: &mut Cx<'a, NoDupeKeys>) -> bool {
     let file = cx.file();
     let annotated = cx.state.annotated.get_or_init(|| {
-        let is_annotation = |it: &Token| strings::trim_js_whitespace(it.comment_value()) == b"@vue/component";
-        match file.comments().any(|it| is_annotation(&it)) {
-            true => leading_comments(file).iter().filter(|it| is_annotation(&it.0)).map(|it| it.1).collect(),
-            false => Vec::new(),
-        }
+        let is_annotation = |it: Token| strings::trim_js_whitespace(it.comment_value()) == b"@vue/component";
+        leading_comments(file, is_annotation).iter().map(|it| it.1).collect()
     });
     if annotated.is_empty() {
         return false;

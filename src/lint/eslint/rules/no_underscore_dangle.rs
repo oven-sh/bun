@@ -1,6 +1,5 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
-use bun_lint::utils::ancestor_memo::AncestorMemo;
 use rustc_hash::FxHashSet;
 
 /// Disallow dangling underscores in identifiers.
@@ -34,23 +33,6 @@ fn object_and_property_name(e: Expr<'_>) -> Option<(Expr<'_>, &[u8])> {
         ExprKind::Index { obj, index, .. } => Some((obj, index.as_ident()?.bytes())),
         _ => None,
     }
-}
-
-/// Whether ESTree has a `MemberExpression` for the member access `e`, and not a
-/// `JSXMemberExpression` or a `TSQualifiedName`.
-fn is_member_expression<'a>(e: Expr<'a>, known: &mut AncestorMemo<'a, bool>) -> bool {
-    let found = known.find(Node::Expr(e), |at, parent| match parent {
-        Node::Expr(parent) => match parent.kind() {
-            ExprKind::Dot { obj, .. } if Node::Expr(obj) == at => None,
-            ExprKind::Jsx(jsx) => {
-                Some(jsx.tag().map(Node::Expr) != Some(at) && jsx.close_tag().map(Node::Expr) != Some(at))
-            }
-            _ => Some(true),
-        },
-        Node::Type(_) => Some(false),
-        _ => Some(true),
-    });
-    found != Some(false)
 }
 
 fn is_this_constructor_reference(object: Expr<'_>) -> bool {
@@ -139,7 +121,7 @@ impl NoUnderscoreDangle {
             || self.allow_after_this_constructor && is_this_constructor_reference(object)
             || identifier == b"__proto__"
             || self.is_allowed(identifier)
-            || !is_member_expression(e, &mut cx.state)
+            || !ast_utils::is_member_expression(e)
         {
             return;
         }
@@ -233,8 +215,7 @@ impl Rule for NoUnderscoreDangle {
         .params()
         .members()
         .props();
-    /// `is_member_expression`
-    type State<'a> = AncestorMemo<'a, bool>;
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -270,10 +251,6 @@ impl Rule for NoUnderscoreDangle {
             on = on.props();
         }
         on
-    }
-
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some(AncestorMemo::default())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

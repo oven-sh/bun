@@ -1,5 +1,4 @@
 use bun_core::strings;
-use super::function_paren_newline::is_on_one_line;
 use bun_lint::prelude::*;
 
 /// Enforce line breaks after each array element.
@@ -112,7 +111,7 @@ fn check(
 ) {
     let has_line_break = |span: &Span| strings::contains_js_line_break(cx.slice(*span));
     let needs_line_breaks = len >= config.min_items
-        || config.multiline && elements.clone().flatten().any(|it| !is_on_one_line(cx.file(), it.span))
+        || config.multiline && elements.clone().flatten().any(|it| !ast_utils::is_on_one_line(cx.file(), it.span))
         || config.consistent && {
             let count = gaps(elements.clone()).filter(has_line_break).count();
             count > 0 && count < len

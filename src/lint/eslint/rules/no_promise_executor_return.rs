@@ -1,3 +1,4 @@
+use super::array_callback_return::{is_expression_void, void_prepend_fixer};
 use bun_lint::prelude::*;
 
 /// Disallow returning values from Promise executor functions.
@@ -11,32 +12,6 @@ const RETURNS_VALUE: Message = Message::new(
 );
 const PREPEND_VOID: Message = Message::new("prependVoid", "Prepend `void` to the expression.");
 const WRAP_BRACES: Message = Message::new("wrapBraces", "Wrap the expression in `{}`.");
-
-/// `astUtils.getPrecedence({ type: "UnaryExpression", operator: "void" })`
-const PRECEDENCE_OF_VOID: i32 = 16;
-
-/// ESLint's `expressionIsVoid`.
-fn expression_is_void(e: Expr) -> bool {
-    matches!(e.kind(), ExprKind::Unary { op: UnOp::Void, .. })
-}
-
-/// ESLint's `voidPrependFixer`. `return_or_arrow` is the `return` or the `=>` before `node`.
-fn void_prepend_fixer<'a>(fixer: Fixer<'a>, node: Expr<'a>, return_or_arrow: Span, is_return: bool) -> [Fix; 2] {
-    let requires_parens =
-        ast_utils::get_precedence(node) < PRECEDENCE_OF_VOID && !ast_utils::is_parenthesised(node);
-    let first_token = skip_trivia(fixer.file().text(), return_or_arrow.end);
-    // `=>` allows `void` to be adjacent.
-    let prepend_space = is_return && return_or_arrow.end == first_token;
-    let text = format!(
-        "{}void {}",
-        if prepend_space { " " } else { "" },
-        if requires_parens { "(" } else { "" },
-    );
-    [
-        fixer.insert_before(Span::empty(first_token), text),
-        fixer.insert_after(node, if requires_parens { ")" } else { "" }),
-    ]
-}
 
 /// ESLint's `curlyWrapFixer`. `arrow` is the `=>` of `function`.
 fn curly_wrap_fixer<'a>(fixer: Fixer<'a>, function: Expr<'a>, arrow: Span) -> [Fix; 2] {
@@ -79,7 +54,7 @@ impl Rule for NoPromiseExecutorReturn {
         let allow_void = self.allow_void;
 
         if let (FnBody::Expr(body), Some(arrow)) = (func.body(), func.arrow_span()) {
-            if allow_void && expression_is_void(body) {
+            if allow_void && is_expression_void(body) {
                 return;
             }
             // In braces, a function or a class without a name would be invalid syntax.
@@ -99,7 +74,7 @@ impl Rule for NoPromiseExecutorReturn {
             let StmtKind::Return(Some(argument)) = statement.kind() else {
                 continue;
             };
-            if allow_void && expression_is_void(argument) {
+            if allow_void && is_expression_void(argument) {
                 continue;
             }
             let start = statement.span().start;

@@ -5,8 +5,8 @@ use smallvec::SmallVec;
 use std::cell::OnceCell;
 use std::cmp::Ordering;
 
-/// Ensure all imports appear before other statements.
-pub struct First {
+/// Ensure all imports appear before other statements. `OLD_NAME`: as `imports-first`.
+pub struct First<const OLD_NAME: bool = false> {
     absolute_first: bool,
 }
 
@@ -26,8 +26,11 @@ struct ErrorInfo<'a> {
     range: Span,
 }
 
-impl Rule for First {
-    const META: Meta = Meta::plugin(Plugin::Import, "first", Kind::Suggestion).fixable(Fixable::Code);
+impl<const OLD_NAME: bool> Rule for First<OLD_NAME> {
+    const META: Meta = match OLD_NAME {
+        true => Meta::plugin(Plugin::Import, "imports-first", Kind::Suggestion).fixable(Fixable::Code).deprecated(),
+        false => Meta::plugin(Plugin::Import, "first", Kind::Suggestion).fixable(Fixable::Code),
+    };
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -44,9 +47,8 @@ impl Rule for First {
     }
 }
 
-impl First {
-    /// Also for `imports-first`, the name that the rule had before.
-    pub(super) fn check<'a>(&self, file: &'a File<'a>, report: &dyn Fn(Span, Message) -> Report<'a>) {
+impl<const OLD_NAME: bool> First<OLD_NAME> {
+    fn check<'a>(&self, file: &'a File<'a>, report: &dyn Fn(Span, Message) -> Report<'a>) {
         let is_oxlint = file.language().is_oxlint;
         let (mut any_expressions, mut has_non_import, mut any_relative) = (false, false, false);
         let (mut last_legal_imp, mut previous) = (None, Span::default());

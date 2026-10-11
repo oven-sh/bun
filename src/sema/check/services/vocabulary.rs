@@ -262,7 +262,6 @@ bitflags::bitflags! {
         const DECORATOR = 1 << 15;
         const DEPRECATED = 1 << 16;
 
-        const ACCESSIBILITY_MODIFIER = Self::PUBLIC.bits() | Self::PRIVATE.bits() | Self::PROTECTED.bits();
         const EXPORT_DEFAULT = Self::EXPORT.bits() | Self::DEFAULT.bits();
     }
 }
@@ -639,9 +638,6 @@ pub struct SignatureInfo<'a> {
     pub type_parameters: &'a [TypeId],
     pub this_parameter: Option<SymbolRef>,
     pub declaration: Option<NodeRef>,
-    pub min_argument_count: u32,
-    /// `signatureHasRestParameter`
-    pub has_rest_parameter: bool,
 }
 
 /// What a `ts.SourceFile` and the `ts.Program` know about a file.
@@ -655,8 +651,6 @@ pub struct FileInfo<'a> {
     pub is_from_external_library: bool,
     pub is_declaration_file: bool,
     pub is_javascript: bool,
-    /// `isExternalModule`
-    pub is_external_module: bool,
     /// `program.sourceFileToPackageName`: the name of the package in `node_modules` that it is
     /// part of.
     pub package_name: Option<&'a [u8]>,

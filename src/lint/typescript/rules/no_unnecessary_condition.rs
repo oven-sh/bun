@@ -216,20 +216,6 @@ fn is_only_used_for_truthiness<'a>(node: Expr<'a>, known: &mut AncestorMemo<'a, 
     known.find(Node::Expr(node), decide).unwrap_or(false)
 }
 
-/// ESLint's `Literal`.
-fn is_literal(node: Expr) -> bool {
-    matches!(
-        node.kind(),
-        ExprKind::String(_)
-            | ExprKind::Number(_)
-            | ExprKind::BigInt(_)
-            | ExprKind::True
-            | ExprKind::False
-            | ExprKind::Null
-            | ExprKind::Regex(_)
-    )
-}
-
 /// `node` is any expression as ESLint has it: the whole of an optional chain is a
 /// `ChainExpression` there, which is no `MemberExpression`.
 fn is_array_index_expression(node: Expr) -> bool {
@@ -243,7 +229,7 @@ fn is_array_index_expression(node: Expr) -> bool {
     let parts = union_constituents(get_constrained_type_at_location(obj));
     parts.iter().any(|part| part.is_array_type())
         // A literal index into a tuple has a sound type.
-        || !is_literal(index) && parts.iter().any(|part| part.is_tuple_type())
+        || !ast_utils::is_literal(index) && parts.iter().any(|part| part.is_tuple_type())
 }
 
 /// A conditional is always necessary if it involves `any`, `unknown` or a naked type variable.

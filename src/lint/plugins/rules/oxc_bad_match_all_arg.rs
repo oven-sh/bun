@@ -2,30 +2,42 @@ use bun_lint_oxlint::regex_flags::method_called_without_global_flag;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
-/// Warn when `matchAll` is called with a non-global regular expression.
-pub struct BadMatchAllArg;
+/// Warn when `matchAll`, or `replaceAll`, is called with a non-global regular expression.
+pub struct BadAllArg<const REPLACE: bool = false>;
 
-const BAD_MATCH_ALL_ARG: Message =
-    Message::new("", "Global flag (g) is missing in the regular expression supplied to the `matchAll` method.");
+/// The rule, the method, the message, the label.
+const TEXTS: [[&str; 4]; 2] = [
+    [
+        "bad-match-all-arg",
+        "matchAll",
+        "Global flag (g) is missing in the regular expression supplied to the `matchAll` method.",
+        "`matchAll` called here",
+    ],
+    [
+        "bad-replace-all-arg",
+        "replaceAll",
+        "Global flag (g) is missing in the regular expression supplied to the `replaceAll` method.",
+        "`replaceAll` called here",
+    ],
+];
 
-impl Rule for BadMatchAllArg {
-    const META: Meta = Meta::oxlint(Plugin::Oxc, "bad-match-all-arg", Kind::Problem);
+impl<const REPLACE: bool> Rule for BadAllArg<REPLACE> {
+    const META: Meta = Meta::oxlint(Plugin::Oxc, TEXTS[REPLACE as usize][0], Kind::Problem);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
-        BadMatchAllArg
+        Self
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("matchAll").then_some(())
+        file.mentions(TEXTS[REPLACE as usize][1]).then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let Some((match_all, regex)) = method_called_without_global_flag(e, "matchAll") {
-            cx.report(match_all, BAD_MATCH_ALL_ARG)
-                .first_label("`matchAll` called here")
-                .label(regex, "RegExp supplied here");
+        let [_, method, message, called_here] = TEXTS[REPLACE as usize];
+        if let Some((called, regex)) = method_called_without_global_flag(e, method) {
+            cx.report(called, Message::new("", message)).first_label(called_here).label(regex, "RegExp supplied here");
         }
     }
 }

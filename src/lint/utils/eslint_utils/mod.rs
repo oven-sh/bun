@@ -1,25 +1,6 @@
 //! `@eslint-community/eslint-utils`, which typescript-eslint re-exports as `ASTUtils` and from
 //! `@typescript-eslint/utils/ast-utils`.
 //!
-//! | upstream | here |
-//! | --- | --- |
-//! | `findVariable(scope, "name")` | [`find_variable`] |
-//! | `findVariable(scope, identifierNode)` | [`find_variable_of`] |
-//! | `getFunctionHeadLocation` | [`get_function_head_location`] |
-//! | `getFunctionNameWithKind` | [`get_function_name_with_kind`] |
-//! | `getPropertyName` | [`get_property_name`], for a [`Key`](crate::ast::Key) [`property_name_of_key`] |
-//! | `getStaticValue` | [`get_static_value`], [`StaticValue`] |
-//! | `getStringIfConstant` | [`get_string_if_constant`] |
-//! | `hasSideEffect` | [`has_side_effect`], [`HasSideEffectOptions`] |
-//! | `isParenthesized(node, sourceCode)` | [`is_parenthesized`] |
-//! | `isParenthesized(times, node, sourceCode)` | [`is_parenthesized_times`] |
-//! | `PatternMatcher` | [`PatternMatcher`] |
-//! | `ReferenceTracker` | [`ReferenceTracker`], [`TraceMap`] or another [`Trace`], [`TrackedReference`] |
-//! | `READ`, `CALL`, `CONSTRUCT` as keys | [`TraceMap::read`], [`TraceMap::call`], [`TraceMap::construct`] |
-//! | `READ`, `CALL`, `CONSTRUCT` as `type` | [`ReferenceKind`] |
-//! | `ESM` | [`TraceMap::esm`] |
-//! | `isArrowToken`, `isCommaToken`, `isNotSemicolonToken`, .. | the same in snake case |
-//!
 //! What `getStaticValue` needs of JavaScript's numbers is of use on its own: [`js_number`].
 //!
 //! | JavaScript | [`js_number`] |

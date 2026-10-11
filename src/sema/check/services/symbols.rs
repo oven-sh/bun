@@ -851,8 +851,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             type_parameters: self.list(&type_parameters),
             this_parameter,
             declaration,
-            min_argument_count: Checker::min_args(&parameters) as u32,
-            has_rest_parameter: parameters.last().is_some_and(|it| it.rest),
         }
     }
 

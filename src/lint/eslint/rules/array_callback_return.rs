@@ -156,12 +156,12 @@ fn get_array_method_name<'a>(func: Func<'a>, state: &mut State<'a>) -> Option<(&
     }
 }
 
-fn is_expression_void(e: Expr) -> bool {
+pub(crate) fn is_expression_void(e: Expr) -> bool {
     matches!(e.kind(), ExprKind::Unary { op: UnOp::Void, .. })
 }
 
-/// Puts `void ` before `node`, which follows the `return` or the `=>` at `return_or_arrow`.
-fn void_prepend_fixer<'a>(fixer: Fixer<'a>, node: Expr<'a>, return_or_arrow: Span, is_return: bool) -> [Fix; 2] {
+/// ESLint's `voidPrependFixer`. `return_or_arrow` is the `return` or the `=>` before `node`.
+pub(crate) fn void_prepend_fixer<'a>(fixer: Fixer<'a>, node: Expr<'a>, return_or_arrow: Span, is_return: bool) -> [Fix; 2] {
     let requires_parens =
         ast_utils::get_precedence(node) < PRECEDENCE_OF_VOID && !ast_utils::is_parenthesised(node);
     let first_token = skip_trivia(fixer.file().text(), return_or_arrow.end);

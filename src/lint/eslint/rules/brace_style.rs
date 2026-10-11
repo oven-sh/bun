@@ -1,5 +1,4 @@
 use bun_core::strings;
-use super::function_paren_newline::is_on_one_line;
 use bun_lint::prelude::*;
 
 /// Enforce consistent brace style for blocks.
@@ -69,7 +68,7 @@ impl BraceStyle {
         let (opening, closing) = (Span::new(open, open + 1), Span::new(close, close + 1));
         let after_opening = skip_trivia(source, opening.end);
         let is_empty = after_opening == close;
-        let is_single_line_exception = self.allow_single_line && is_on_one_line(file, Span::after(opening, close));
+        let is_single_line_exception = self.allow_single_line && ast_utils::is_on_one_line(file, Span::after(opening, close));
         let is_opening_on_same_line = is_token_before_on_same_line(file, open);
 
         if self.style != Style::Allman && !is_opening_on_same_line {

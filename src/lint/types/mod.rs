@@ -179,8 +179,6 @@ absent! {
         type_parameters: &[],
         this_parameter: None,
         declaration: None,
-        min_argument_count: 0,
-        has_rest_parameter: false,
     },
     FileInfo<'_> => FileInfo {
         file_name: b"",
@@ -188,7 +186,6 @@ absent! {
         is_from_external_library: false,
         is_declaration_file: false,
         is_javascript: false,
-        is_external_module: false,
         package_name: None,
     },
 }

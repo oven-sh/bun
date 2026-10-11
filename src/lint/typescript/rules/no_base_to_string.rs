@@ -67,20 +67,6 @@ fn has_type_name_string(ty: Type) -> bool {
         || flags.intersects(TypeFlags::TYPE_PARAMETER | TypeFlags::UNION_OR_INTERSECTION) && get_type_name(ty) == b"string"
 }
 
-/// ESTree's `Literal`
-fn is_literal(node: Expr) -> bool {
-    matches!(
-        node.tag(),
-        ExprTag::String
-            | ExprTag::Number
-            | ExprTag::BigInt
-            | ExprTag::Regex
-            | ExprTag::True
-            | ExprTag::False
-            | ExprTag::Null
-    )
-}
-
 fn collect_union_type_certainty<'a>(
     ty: Type<'a>,
     mut collect_sub_type_certainty: impl FnMut(Type<'a>) -> Usefulness,
@@ -388,7 +374,7 @@ impl NoBaseToString {
     }
 
     fn check_expression<'a>(&self, node: Expr<'a>, ty: Option<Type<'a>>, cx: &mut Cx<'a, Self>) {
-        if is_literal(node) {
+        if ast_utils::is_literal(node) {
             return;
         }
         let ty = ty.unwrap_or_else(|| node.ty());
@@ -425,7 +411,7 @@ impl NoBaseToString {
                 if name.is("String")
                     && let Some(argument) = call.args().first()
                     && argument.tag() != ExprTag::Spread
-                    && !is_literal(argument)
+                    && !ast_utils::is_literal(argument)
                     && callee.symbol().is_none()
                     && Node::Expr(node).scope().resolve_name(name).is_none()
                 {

@@ -6,12 +6,12 @@ use bun_lint::rule::Plugin;
 use std::borrow::Cow;
 use std::cmp::Ordering;
 
-/// Enforce defaultProps declarations alphabetical sorting
-pub struct SortDefaultProps {
+/// Enforce defaultProps declarations alphabetical sorting. `OLD_NAME`: as `jsx-sort-default-props`.
+pub struct SortDefaultProps<const OLD_NAME: bool = false> {
     ignore_case: bool,
 }
 
-pub(super) const PROPS_NOT_SORTED: Message =
+const PROPS_NOT_SORTED: Message =
     Message::new("propsNotSorted", "Default prop types declarations should be sorted alphabetically");
 
 /// `"right" in node.parent && node.parent.right`
@@ -44,18 +44,21 @@ fn check_node(node: Expr<'_>) -> Option<Expr<'_>> {
 }
 
 /// The listener for `MemberExpression`: as [`check_node`].
-pub(super) fn member_expression(e: Expr<'_>) -> Option<Expr<'_>> {
+fn member_expression(e: Expr<'_>) -> Option<Expr<'_>> {
     if is_default_props_declaration(e.into()) { check_node(right_of_parent(e)?) } else { None }
 }
 
 /// The listener for `PropertyDefinition`: as [`check_node`].
-pub(super) fn property_definition(member: Member<'_>) -> Option<Expr<'_>> {
+fn property_definition(member: Member<'_>) -> Option<Expr<'_>> {
     let is_declaration = ast_utils::is_property_definition(member) && is_default_props_declaration(member.into());
     if is_declaration { check_node(member.init()?) } else { None }
 }
 
-impl Rule for SortDefaultProps {
-    const META: Meta = Meta::plugin(Plugin::React, "sort-default-props", Kind::None);
+impl<const OLD_NAME: bool> Rule for SortDefaultProps<OLD_NAME> {
+    const META: Meta = match OLD_NAME {
+        true => Meta::plugin(Plugin::React, "jsx-sort-default-props", Kind::None).deprecated(),
+        false => Meta::plugin(Plugin::React, "sort-default-props", Kind::None),
+    };
     const ON: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]).members().finish();
     /// What `checkSorted` is called with, once for each call.
     type State<'a> = Vec<Expr<'a>>;
@@ -89,9 +92,9 @@ impl Rule for SortDefaultProps {
     }
 }
 
-impl SortDefaultProps {
+impl<const OLD_NAME: bool> SortDefaultProps<OLD_NAME> {
     /// `checkSorted`, for each of `objects`. One that many variables lead to is looked at once, and reported as often.
-    pub(super) fn check_sorted<'a>(&self, objects: &mut [Expr<'a>], report: &mut dyn FnMut(Prop<'a>)) {
+    fn check_sorted<'a>(&self, objects: &mut [Expr<'a>], report: &mut dyn FnMut(Prop<'a>)) {
         objects.sort_unstable_by_key(|it| it.span().start);
         for same in objects.chunk_by(|a, b| a == b) {
             let unsorted = same.first().map_or_else(Vec::new, |&object| self.unsorted(object));

@@ -302,17 +302,6 @@ fn is_branded_boolean(ty: Type) -> bool {
             .any(|it| it.has_flags(TypeFlags::BOOLEAN.union(TypeFlags::BOOLEAN_LITERAL)))
 }
 
-/// `&&` or `||`
-fn is_logical_expression(node: Expr) -> bool {
-    matches!(
-        node.kind(),
-        ExprKind::Binary {
-            op: BinOp::And | BinOp::Or,
-            ..
-        }
-    )
-}
-
 /// Its type is `boolean`, `true` or `false`, whatever its operands are.
 fn is_always_boolean(node: Expr) -> bool {
     match node.kind() {
@@ -737,7 +726,7 @@ impl StrictBooleanExpressions {
         for argument in call.args() {
             if Some(argument) == asserted_argument {
                 self.traverse_node(argument, true, cx);
-            } else if is_logical_expression(argument) {
+            } else if ast_utils::is_logical_expression(argument) {
                 self.traverse_node(argument, false, cx);
             }
         }
@@ -799,7 +788,7 @@ impl Rule for StrictBooleanExpressions {
             } => self.traverse_node(operand, true, cx),
             // On its own a logical expression is control flow, and no condition itself.
             ExprKind::Binary { .. } => {
-                if is_logical_expression(node) && !is_traversed_from_parent(node) {
+                if ast_utils::is_logical_expression(node) && !is_traversed_from_parent(node) {
                     self.traverse_node(node, false, cx);
                 }
             }

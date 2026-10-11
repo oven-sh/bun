@@ -17,11 +17,6 @@ const CUSTOM_MESSAGE: Message = Message::new(
     "Unexpected use of '{{name}}'. {{customMessage}}",
 );
 
-/// `node.type === "MemberExpression"`
-fn is_member_expression(e: Expr<'_>) -> bool {
-    matches!(e.tag(), ExprTag::Dot | ExprTag::Index) && !e.is_jsx_tag_name() && !e.is_in_type_query()
-}
-
 /// Whether the parent of the identifier is a `TSTypeReference`, a `TSInterfaceHeritage`, a
 /// `TSClassImplements`, a `TSTypeQuery` or a `TSQualifiedName`.
 fn is_in_type_context(reference: Reference<'_>, is_oxlint: bool) -> bool {
@@ -76,7 +71,7 @@ impl NoRestrictedGlobals {
             let Node::Expr(access) = parent else {
                 return;
             };
-            if !is_member_expression(access) {
+            if !ast_utils::is_member_expression(access) {
                 return;
             }
             let Some(name) = get_static_property_name(access) else {

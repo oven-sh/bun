@@ -2,48 +2,69 @@ use crate::oxlint::vue::{DefineMacroProblem, calls_of, check_define_macro_call_e
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 
-/// Enforce valid usage of the `defineEmits` compiler macro in Vue.
-pub struct ValidDefineEmits;
+/// Enforce valid usage of the `defineEmits`, or the `defineProps`, compiler macro in Vue.
+pub struct ValidDefine<const PROPS: bool = false>;
 
-const HAS_TYPE_AND_ARGUMENTS: Message = Message::new("", "`defineEmits` has both a type-only emit and an argument.");
-const CALLED_MULTIPLE_TIMES: Message = Message::new("", "`defineEmits` has been called multiple times.");
-const EVENTS_NOT_DEFINED: Message = Message::new("", "Custom events are not defined.");
-const REFERENCING_LOCALLY: Message = Message::new("", "`defineEmits` is referencing locally declared variables.");
-const DEFINE_IN_BOTH: Message = Message::new("", "Custom events are defined in both `defineEmits` and `export default {}`.");
+/// The rule, the macro, two labels, and what is said of each problem.
+const TEXTS: [[&str; 9]; 2] = [
+    [
+        "valid-define-emits",
+        "defineEmits",
+        "`defineEmits` is called here",
+        "`defineEmits` is called here too",
+        "`defineEmits` has been called multiple times.",
+        "Custom events are defined in both `defineEmits` and `export default {}`.",
+        "`defineEmits` has both a type-only emit and an argument.",
+        "Custom events are not defined.",
+        "`defineEmits` is referencing locally declared variables.",
+    ],
+    [
+        "valid-define-props",
+        "defineProps",
+        "`defineProps` is called here",
+        "`defineProps` is called here too",
+        "`defineProps` has been called multiple times.",
+        "Props are defined in both `defineProps` and `export default {}`.",
+        "`defineProps` has both a type-only emit and an argument.",
+        "Props are not defined.",
+        "`defineProps` is referencing locally declared variables.",
+    ],
+];
 
-impl Rule for ValidDefineEmits {
-    const META: Meta = Meta::oxlint(Plugin::Vue, "valid-define-emits", Kind::Problem);
+impl<const PROPS: bool> Rule for ValidDefine<PROPS> {
+    const META: Meta = Meta::oxlint(Plugin::Vue, TEXTS[PROPS as usize][0], Kind::Problem);
     const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
-        ValidDefineEmits
+        Self
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !is_vue_setup(file) || !file.mentions("defineEmits") {
-            return None;
-        }
-        Some(())
+        (is_vue_setup(file) && file.mentions(TEXTS[PROPS as usize][1])).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let calls = calls_of(cx.file(), "defineEmits");
+        let [_, name, here, here_too, multiple_times, in_both, type_and_arguments, not_defined, locally] =
+            TEXTS[PROPS as usize];
+        let calls = calls_of(cx.file(), name);
         for (call_expr, _) in calls.iter().skip(1) {
-            cx.report(call_expr, CALLED_MULTIPLE_TIMES)
-                .first_label("`defineEmits` is called here")
-                .label(calls.first().map(|it| it.0.span()).unwrap_or_default(), "`defineEmits` is called here too");
+            cx.report(call_expr, Message::new("", multiple_times))
+                .first_label(here)
+                .label(calls.first().map(|it| it.0.span()).unwrap_or_default(), here_too);
         }
         let Some((call_expr, call)) = calls.first() else {
             return;
         };
-        let message = match check_define_macro_call_expression(*call, cx.file().vue_script().other_exports_emits) {
-            Some(DefineMacroProblem::DefineInBoth) => DEFINE_IN_BOTH,
-            Some(DefineMacroProblem::HasTypeAndArguments) => HAS_TYPE_AND_ARGUMENTS,
-            Some(DefineMacroProblem::EventsNotDefined) => EVENTS_NOT_DEFINED,
-            Some(DefineMacroProblem::ReferencingLocally) => REFERENCING_LOCALLY,
+        let script = cx.file().vue_script();
+        let other_exports = if PROPS { script.other_exports_props } else { script.other_exports_emits };
+        let message = match check_define_macro_call_expression(*call, other_exports) {
+            Some(DefineMacroProblem::DefineInBoth) => in_both,
+            Some(DefineMacroProblem::HasTypeAndArguments) => type_and_arguments,
+            Some(DefineMacroProblem::EventsNotDefined) => not_defined,
+            Some(DefineMacroProblem::ReferencingLocally) => locally,
             None => return,
         };
-        cx.report(call_expr, message);
+        cx.report(call_expr, Message::new("", message));
     }
 }

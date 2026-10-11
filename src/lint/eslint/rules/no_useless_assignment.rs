@@ -1291,20 +1291,6 @@ fn code_path_scope<'a>(scope: Scope<'a>, nearest: &mut Nearest<'a>) -> Option<Sc
     })
 }
 
-/// A loop whose test is a literal may have no way out but `break`.
-fn is_literal(e: Expr<'_>) -> bool {
-    matches!(
-        e.tag(),
-        ExprTag::String
-            | ExprTag::Number
-            | ExprTag::BigInt
-            | ExprTag::True
-            | ExprTag::False
-            | ExprTag::Null
-            | ExprTag::Regex
-    )
-}
-
 /// The statements that `node` has as a list.
 fn statement_list<'a>(node: Node<'a>) -> Option<List<'a, Stmt<'a>>> {
     match node {
@@ -1505,7 +1491,7 @@ impl<'a> Uses<'a> {
             }
             StmtKind::While { test, body } => {
                 through!(self.expression(test));
-                let out = if is_literal(test) {
+                let out = if ast_utils::is_literal(test) {
                     Flow::Unknown
                 } else {
                     Flow::Through
@@ -1515,7 +1501,7 @@ impl<'a> Uses<'a> {
             StmtKind::DoWhile { body, test } => {
                 through!(self.statement(body).or(Flow::Unknown));
                 through!(self.expression(test));
-                if is_literal(test) {
+                if ast_utils::is_literal(test) {
                     Flow::Unknown
                 } else {
                     Flow::Through
@@ -1529,7 +1515,7 @@ impl<'a> Uses<'a> {
             } => {
                 through!(init.map_or(Flow::Through, |init| self.head(init)));
                 through!(self.optional_expression(test));
-                let out = if test.is_some_and(|test| !is_literal(test)) {
+                let out = if test.is_some_and(|test| !ast_utils::is_literal(test)) {
                     Flow::Through
                 } else {
                     Flow::Unknown
@@ -1667,7 +1653,7 @@ impl<'a> Uses<'a> {
                 return true;
             }
         }
-        test.is_some_and(|test| !is_literal(test)) && self.is_read_after(a_loop)
+        test.is_some_and(|test| !ast_utils::is_literal(test)) && self.is_read_after(a_loop)
     }
 
     fn is_read_from_test(

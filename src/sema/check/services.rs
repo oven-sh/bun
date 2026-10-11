@@ -282,7 +282,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 is_from_external_library: false,
                 is_declaration_file: false,
                 is_javascript: false,
-                is_external_module: false,
                 package_name: None,
             };
         }
@@ -293,7 +292,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             is_from_external_library: module.is_from_external_library,
             is_declaration_file: module.hir.kind == FileKind::Declaration,
             is_javascript: module.hir.is_js,
-            is_external_module: module.is_module(),
             package_name: match path_in_node_modules(module.file_name()) {
                 Some(path) => Some(path),
                 None if module.is_from_external_library => self

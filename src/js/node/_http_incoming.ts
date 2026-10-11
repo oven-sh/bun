@@ -313,6 +313,24 @@ IncomingMessage.prototype._read = function _read(_n) {
   }
 
   // Native server path.
+  const socket = this.socket;
+  const complete = this[eofInProgress] || this[noBodySymbol];
+  const bodyReadState = complete ? NodeHTTPBodyReadState.none : handle.hasBody;
+  // Node does not reach _read() for a complete message, so only a body that still arrives asks the socket for reads.
+  if (socket && socket.readable && bodyReadState === NodeHTTPBodyReadState.pending) {
+    if (this.upgrade || socket[kHandoffResponse] !== undefined) {
+      // Upgrade request with a body (Node 26 semantics): reading the request
+      // must not flip the raw socket into flowing mode - tunnel bytes pushed
+      // to the socket before the 'upgrade' listener attaches its own 'data'
+      // handler would be discarded by a flowing stream with no readers.
+      // Resume the native body source directly instead.
+      // Same for a request ahead of a pipelined CONNECT: res.end() dumps it after the handoff.
+      onIncomingMessageResumeNodeHTTPResponse.$call(this);
+    } else {
+      readStart(socket);
+    }
+  }
+
   if (this[eofInProgress]) {
     // There is a nextTick pending that will emit EOF
     return;
@@ -323,27 +341,9 @@ IncomingMessage.prototype._read = function _read(_n) {
     return;
   }
 
-  const bodyReadState = handle.hasBody;
-
   // A dumped or aborted request is not complete: it ends only at its real last chunk, like Node.
   if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0 || bodyReadState === NodeHTTPBodyReadState.none) {
     emitEOFIncomingMessage(this);
-  } else {
-    // Node does not reach _read() for a complete message, so only a body that still arrives asks the socket for reads.
-    const socket = this.socket;
-    if (socket && socket.readable) {
-      if (this.upgrade || socket[kHandoffResponse] !== undefined) {
-        // Upgrade request with a body (Node 26 semantics): reading the request
-        // must not flip the raw socket into flowing mode - tunnel bytes pushed
-        // to the socket before the 'upgrade' listener attaches its own 'data'
-        // handler would be discarded by a flowing stream with no readers.
-        // Resume the native body source directly instead.
-        // Same for a request ahead of a pipelined CONNECT: res.end() dumps it after the handoff.
-        onIncomingMessageResumeNodeHTTPResponse.$call(this);
-      } else {
-        readStart(socket);
-      }
-    }
   }
 
   if (!handle.ondata) {

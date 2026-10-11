@@ -3140,6 +3140,20 @@ const wrong: number = "";
       expect(exitCode).toBe(1);
     });
 
+    // Whether a function is sensitive to its context was asked of each from every one around it, each time down to the last:
+    // the cube of their number: 25 s.
+    test.skipIf(isDebug || isASAN).each([
+      ["arrows", "(a: number) => ", ""],
+      ["functions", "function (a: number) { return ", " }"],
+    ])("2,000 %s in each other", async (_, open, close) => {
+      using dir = project({
+        "a.ts": `export const g = ${repeat(open, 2_000)}0${repeat(close, 2_000)};\nexport const wrong: number = "";\n`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toContain(`a.ts(2,14): error TS2322: Type 'string' is not assignable to type 'number'.`);
+      expect(exitCode).toBe(1);
+    });
+
     // What reads a tsconfig.json called itself for each file that is extended, on the main thread.
     test("a chain of 5,000 configuration files that extend each other", async () => {
       const files: Record<string, string> = { "tsconfig.json": '{ "extends": "./t0.json" }', "t5000.json": tsconfig };

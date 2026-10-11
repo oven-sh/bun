@@ -773,7 +773,7 @@ impl Restrictions {
             };
             let mut add = |local: Ident<'a>, imported: Option<Ident<'a>>, is_type_only: bool| {
                 let specifier = |it: Ident<'a>| Specifier { name: it.bytes(), span: it.span(), is_type_only };
-                entries.entry(local.bytes()).or_insert(imported.map(|it| (statement, specifier(it))));
+                entries.entry(local.bytes()).or_insert_with(|| imported.map(|it| (statement, specifier(it))));
             };
             // It takes the name here for the name there.
             if let Some(default) = import.default() {

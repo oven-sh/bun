@@ -55,11 +55,25 @@ fn words_in_range(words: &[[u8; 2]]) -> crate::Result<()> {
     Ok(())
 }
 
+/// NaN or an infinity. `numeric_recv` range-checks the words of such a datum
+/// and then ignores them.
+#[inline(always)]
+fn special<'a>(words: &[[u8; 2]], value: BinaryNumeric<'a>) -> crate::Result<BinaryNumeric<'a>> {
+    if !words.is_empty() {
+        words_in_range(words)?;
+    }
+    Ok(value)
+}
+
 /// Port of `numeric_recv` (:1076) with the `trunc_var` (:11911) and
 /// `make_result` (:7836) it runs on a finite value.
 ///
 /// A word that stays in the result is range-checked by
 /// [`NumericVar::print`], in the loop that formats it.
+///
+/// It has one caller and is inlined there, so that the returns for NaN,
+/// Infinity and a zero do not pay for a call.
+#[inline(always)]
 pub(crate) fn recv(cell: &[u8]) -> crate::Result<BinaryNumeric<'_>> {
     let Some((header, body)) = cell.split_first_chunk::<8>() else {
         return Err(crate::Error::InvalidBuffer);
@@ -89,16 +103,9 @@ pub(crate) fn recv(cell: &[u8]) -> crate::Result<BinaryNumeric<'_>> {
     let negative = match sign {
         NUMERIC_POS => false,
         NUMERIC_NEG => true,
-        NUMERIC_NAN | NUMERIC_PINF | NUMERIC_NINF => {
-            if ndigits != 0 {
-                words_in_range(words)?;
-            }
-            return Ok(match sign {
-                NUMERIC_NAN => BinaryNumeric::NaN,
-                NUMERIC_PINF => BinaryNumeric::Infinity,
-                _ => BinaryNumeric::NegInfinity,
-            });
-        }
+        NUMERIC_NAN => return special(words, BinaryNumeric::NaN),
+        NUMERIC_PINF => return special(words, BinaryNumeric::Infinity),
+        NUMERIC_NINF => return special(words, BinaryNumeric::NegInfinity),
         _ => return Err(crate::Error::InvalidSign),
     };
     if ndigits == 0 {
@@ -202,6 +209,7 @@ impl NumericVar<'_> {
     }
 
     /// The number of characters [`Self::print`] writes.
+    #[inline(always)]
     pub(crate) fn printed_len(&self) -> usize {
         let integer_chars = if self.weight < 0 {
             1

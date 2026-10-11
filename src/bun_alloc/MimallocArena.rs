@@ -379,14 +379,12 @@ impl MimallocArena {
 
     /// `bumpalo::Bump::alloc_slice_fill_default` parity.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub fn alloc_slice_fill_default<T: Default>(&self, len: usize) -> &mut [T] {
         self.alloc_slice_fill_with(len, |_| T::default())
     }
 
     /// `bumpalo::Bump::alloc_slice_fill_copy` parity.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub fn alloc_slice_fill_copy<T: Copy>(&self, len: usize, value: T) -> &mut [T] {
         self.alloc_slice_fill_with(len, |_| value)
     }
@@ -414,7 +412,6 @@ impl MimallocArena {
 
     /// `bumpalo::Bump::alloc_slice_fill_iter` parity.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub fn alloc_slice_fill_iter<T, I>(&self, iter: I) -> &mut [T]
     where
         I: IntoIterator<Item = T>,
@@ -548,6 +545,12 @@ unsafe impl Allocator for &MimallocArena {
     }
 }
 
+// SAFETY: a copy of `&MimallocArena` names the same heap, so a block that was allocated through one
+// is freed through the other. Copying a reference does not unwind, and moving or dropping one does
+// not touch the heap. `core` has this only for `&A` where `A: Allocator`. `Rc` and `Arc` need it to
+// be `Clone`.
+unsafe impl core::alloc::AllocatorClone for &MimallocArena {}
+
 /// Pick `mi_heap_malloc_aligned` only
 /// when `align > MI_MAX_ALIGN_SIZE`, otherwise the cheaper `mi_heap_malloc`,
 /// then debug-assert the returned block's usable size covers `len`.
@@ -589,12 +592,6 @@ impl<'a> ArenaString<'a> {
     pub fn new_in(arena: &'a MimallocArena) -> Self {
         Self {
             buf: Vec::new_in(arena),
-        }
-    }
-    #[inline]
-    pub fn with_capacity_in(cap: usize, arena: &'a MimallocArena) -> Self {
-        Self {
-            buf: Vec::with_capacity_in(cap, arena),
         }
     }
     #[inline]

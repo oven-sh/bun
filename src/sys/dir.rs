@@ -44,6 +44,7 @@ impl Dir {
     pub fn fd(&self) -> Fd {
         self.fd
     }
+    /// Wraps the `Fd::cwd()` sentinel, which `Drop` skips.
     #[inline]
     pub fn cwd() -> Self {
         Self { fd: Fd::cwd() }
@@ -141,6 +142,8 @@ impl Dir {
         'process_stack: while let Some(top) = stack.last_mut() {
             while let Some(entry) = top.iter.next()? {
                 let mut treat_as_dir = matches!(entry.kind, EntryKind::Directory);
+                // Set on EPERM, returned on ENOTDIR: the entry is a file that cannot be deleted.
+                let mut unlink_err: Option<Error> = None;
                 'handle_entry: loop {
                     if treat_as_dir {
                         let new_dir = match openat_a(
@@ -151,10 +154,13 @@ impl Dir {
                         ) {
                             Ok(fd) => fd,
                             Err(e) => match e.get_errno() {
-                                E::ENOTDIR => {
-                                    treat_as_dir = false;
-                                    continue 'handle_entry;
-                                }
+                                E::ENOTDIR => match unlink_err.take() {
+                                    Some(unlink_err) => return Err(unlink_err),
+                                    None => {
+                                        treat_as_dir = false;
+                                        continue 'handle_entry;
+                                    }
+                                },
                                 // That's fine, we were trying to remove this directory anyway.
                                 E::ENOENT => break 'handle_entry,
                                 _ => return Err(e),
@@ -174,7 +180,12 @@ impl Dir {
                             Err(e) => match e.get_errno() {
                                 E::ENOENT => break 'handle_entry,
                                 // EISDIR (Linux) / EPERM (POSIX rmdir-required)
-                                E::EISDIR | E::EPERM => {
+                                E::EISDIR => {
+                                    treat_as_dir = true;
+                                    continue 'handle_entry;
+                                }
+                                E::EPERM => {
+                                    unlink_err = Some(e);
                                     treat_as_dir = true;
                                     continue 'handle_entry;
                                 }
@@ -247,35 +258,34 @@ impl Dir {
     /// directory and return the fd. Returns `None` when removal succeeded or
     /// the path doesn't exist.
     fn delete_tree_open_initial_subpath(&self, sub_path: &[u8]) -> Maybe<Option<Fd>> {
-        let mut treat_as_dir = false;
+        let mut unlink_err: Option<Error> = None;
         loop {
-            if !treat_as_dir {
-                match unlinkat_a(self.fd, sub_path, 0) {
-                    Ok(()) => return Ok(None),
-                    Err(e) => match e.get_errno() {
-                        E::ENOENT => return Ok(None),
-                        // Linux: EISDIR. POSIX: EPERM when target is a directory.
-                        E::EISDIR | E::EPERM => treat_as_dir = true,
-                        _ => return Err(e),
+            match unlinkat_a(self.fd, sub_path, 0) {
+                Ok(()) => return Ok(None),
+                Err(e) => match e.get_errno() {
+                    E::ENOENT => return Ok(None),
+                    // Linux: EISDIR. POSIX: EPERM when target is a directory.
+                    E::EISDIR => {}
+                    // Returned on ENOTDIR: the path is a file that cannot be deleted.
+                    E::EPERM => unlink_err = Some(e),
+                    _ => return Err(e),
+                },
+            }
+            match openat_a(
+                self.fd,
+                sub_path,
+                O::DIRECTORY | O::RDONLY | O::CLOEXEC | O::NOFOLLOW,
+                0,
+            ) {
+                Ok(fd) => return Ok(Some(fd)),
+                Err(e) => match e.get_errno() {
+                    E::ENOENT => return Ok(None),
+                    E::ENOTDIR => match unlink_err.take() {
+                        Some(unlink_err) => return Err(unlink_err),
+                        None => continue,
                     },
-                }
-            } else {
-                return match openat_a(
-                    self.fd,
-                    sub_path,
-                    O::DIRECTORY | O::RDONLY | O::CLOEXEC | O::NOFOLLOW,
-                    0,
-                ) {
-                    Ok(fd) => Ok(Some(fd)),
-                    Err(e) => match e.get_errno() {
-                        E::ENOENT => Ok(None),
-                        E::ENOTDIR => {
-                            treat_as_dir = false;
-                            continue;
-                        }
-                        _ => Err(e),
-                    },
-                };
+                    _ => return Err(e),
+                },
             }
         }
     }
@@ -295,7 +305,7 @@ pub fn rmdirat(dirfd: impl AsFd, path: &ZStr) -> Maybe<()> {
 
 /// `unlinkat` taking a non-sentinel slice (NUL-terminates into a path buffer).
 fn unlinkat_a(dirfd: Fd, path: &[u8], flags: i32) -> Maybe<()> {
-    let mut buf = bun_paths::PathBuffer::default();
+    let mut buf = bun_paths::path_buffer_pool::get();
     let len = path.len().min(buf.0.len() - 1);
     buf.0[..len].copy_from_slice(&path[..len]);
     buf.0[len] = 0;
@@ -318,7 +328,7 @@ impl Dir {
     /// this dir. Unlike `make_path`, does NOT create intermediate directories
     /// and surfaces `EEXIST` for callers to branch on.
     pub fn make_dir(&self, sub_path: &[u8]) -> core::result::Result<(), bun_errno::SystemErrno> {
-        let mut buf = bun_paths::PathBuffer::default();
+        let mut buf = bun_paths::path_buffer_pool::get();
         let len = sub_path.len().min(buf.0.len() - 1);
         buf.0[..len].copy_from_slice(&sub_path[..len]);
         buf.0[len] = 0;
@@ -336,14 +346,14 @@ impl Dir {
     /// on Windows it selects junction vs. file-symlink and
     /// callers route through `sys_uv::symlink_uv` instead.
     pub fn sym_link(&self, target: &[u8], link_name: &[u8], _is_directory: bool) -> Maybe<()> {
-        let mut tbuf = bun_paths::PathBuffer::default();
+        let mut tbuf = bun_paths::path_buffer_pool::get();
         let tlen = target.len().min(tbuf.0.len() - 1);
         tbuf.0[..tlen].copy_from_slice(&target[..tlen]);
         tbuf.0[tlen] = 0;
         // SAFETY: NUL-terminated above.
         let tz = ZStr::from_buf(&tbuf.0[..], tlen);
 
-        let mut lbuf = bun_paths::PathBuffer::default();
+        let mut lbuf = bun_paths::path_buffer_pool::get();
         let llen = link_name.len().min(lbuf.0.len() - 1);
         lbuf.0[..llen].copy_from_slice(&link_name[..llen]);
         lbuf.0[llen] = 0;

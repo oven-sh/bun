@@ -1,6 +1,7 @@
 use core::ffi::c_void;
 
 use bun_core::strings;
+use bun_jsc::HostReturn as _;
 use bun_jsc::js_string::Iterator as JSStringIterator;
 use bun_jsc::{ArrayBuffer, JSGlobalObject, JSString, JSType, JSValue, JsResult};
 
@@ -105,7 +106,7 @@ fn encode16_impl(global_this: &JSGlobalObject, slice: &[u16]) -> JSValue {
     let bytes = strings::to_utf8_alloc_with_type(slice);
     ArrayBuffer::from_bytes(bytes.leak(), JSType::Uint8Array)
         .to_js_unchecked(global_this)
-        .unwrap_or(JSValue::ZERO)
+        .or_pending_exception()
 }
 
 /// # Safety

@@ -32,12 +32,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<GlobalInternals, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForV8GlobalInternals.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForV8GlobalInternals = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForV8GlobalInternals.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForV8GlobalInternals = std::forward<decltype(space)>(space); });
+        return WebCore::subspaceForImpl<GlobalInternals, WebCore::UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForV8GlobalInternals, m_subspaceForV8GlobalInternals));
     }
 
     JSC::Structure* objectTemplateStructure(JSC::JSGlobalObject* globalObject) const
@@ -81,6 +76,35 @@ public:
         m_escapeReservations.removeIf([buffer](auto& entry) { return entry.value.buffer == buffer; });
     }
 
+    // Return-value slots of the callback frames currently on the native stack
+    // (innermost last). V8's inline ReturnValue::Set stores a Local's Address
+    // — for heap values a pointer into some HandleScopeBuffer's storage —
+    // into the frame, and V8 guarantees the returned value outlives any inner
+    // handle scope (the scope owns only the slot, never the object). Scope
+    // teardown consults this list to rescue handles a frame still points at
+    // (HandleScopeBuffer::deleteGrantsBack / evacuateActiveReturnValues).
+    WTF::Vector<TaggedPointer*>& activeReturnValueSlots() { return m_activeReturnValueSlots; }
+
+    // RAII registration of a callback frame's return-value slot for the
+    // duration of the native callback.
+    class ActiveReturnValueSlotScope {
+        WTF_MAKE_NONCOPYABLE(ActiveReturnValueSlotScope);
+
+    public:
+        ActiveReturnValueSlotScope(GlobalInternals* internals, TaggedPointer* slot)
+            : m_internals(internals)
+        {
+            m_internals->activeReturnValueSlots().append(slot);
+        }
+        ~ActiveReturnValueSlotScope()
+        {
+            m_internals->activeReturnValueSlots().removeLast();
+        }
+
+    private:
+        GlobalInternals* m_internals;
+    };
+
     void setCurrentHandleScope(HandleScope* handleScope) { m_currentHandleScope = handleScope; }
 
     WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>>& gcPrologueCallbacks() { return m_gcPrologueCallbacks; }
@@ -107,6 +131,9 @@ private:
     JSC::LazyClassStructure m_v8FunctionStructure;
     HandleScope* m_currentHandleScope;
     WTF::HashMap<void*, EscapeReservation> m_escapeReservations;
+    // No inline capacity for the same ASAN reason as
+    // HandleScopeBuffer::m_rawGrants (cells are swept without destructors).
+    WTF::Vector<TaggedPointer*> m_activeReturnValueSlots;
     JSC::LazyProperty<GlobalInternals, HandleScopeBuffer> m_globalHandles;
 
     WTF::Vector<std::pair<Isolate::GCCallbackWithData, void*>> m_gcPrologueCallbacks;

@@ -372,14 +372,14 @@ describe("css tests", () => {
         ["opacity", "transition-property"],
         ["linear", "transition-timing-function"],
       ];
-      // These parse `inherit` as a custom identifier, so it is not an unparsed value for them.
-      const inheritIsIdent = ["color-scheme", "font-family", "transition", "transition-property"];
+      // Their typed parsers accept `inherit` as an identifier, so it is not an unparsed value for them.
+      const acceptInherit = ["color-scheme", "font-family", "transition", "transition-property"];
       const sources = parsed.flatMap(([value, properties]) =>
         properties
           .split(/\s+/)
           .flatMap(property =>
             ["var(--x)", "banana(1)", "inherit"]
-              .filter(unparsed => unparsed !== "inherit" || !inheritIsIdent.includes(property))
+              .filter(unparsed => unparsed !== "inherit" || !acceptInherit.includes(property))
               .map(unparsed => `a{${property}:${value};${property}:${unparsed}}`),
           ),
       );

@@ -7,19 +7,49 @@
 //! the text of the original.
 
 use crate::rule::{Message, Meta, Plugin};
+use bun_wyhash::hash_const;
+use std::sync::OnceLock;
 
 /// What oxlint says in place of messages of the rule `meta`.
 pub(crate) fn of_rule(meta: &Meta) -> [&'static [Message]; 2] {
-    let of = |plugin: &str| {
-        let found = MESSAGES.binary_search_by(|it| (it.0, it.1).cmp(&(plugin, meta.name)));
-        found.ok().and_then(|at| MESSAGES.get(at)).map_or(&[][..], |it| it.2)
-    };
-    match meta.plugin {
-        Plugin::Eslint => [of("eslint"), &[]],
-        // oxlint has the rules that extend one of ESLint under the name of that one.
-        Plugin::TypeScript => [of("typescript"), of("eslint")],
-        _ => [&[], &[]],
+    if !matches!(meta.plugin, Plugin::Eslint | Plugin::TypeScript) {
+        return [&[], &[]];
     }
+    let [eslint, typescript] = of_name(meta);
+    match meta.plugin {
+        Plugin::Eslint => [eslint, &[]],
+        // oxlint has the rules that extend one of ESLint under the name of that one.
+        _ => [typescript, eslint],
+    }
+}
+
+/// What `MESSAGES` has for the name of `meta`, under `eslint` and under `typescript`.
+fn of_name(meta: &Meta) -> [&'static [Message]; 2] {
+    type Named = (u32, &'static str, [&'static [Message]; 2]);
+    /// By the hash of the name, which is [`Meta::key`].
+    static BY_KEY: OnceLock<Box<[Named]>> = OnceLock::new();
+    let by_key = BY_KEY.get_or_init(|| {
+        let mut all: Vec<Named> = Vec::new();
+        for &(plugin, name, messages) in MESSAGES {
+            let at = match all.iter().position(|it| it.1 == name) {
+                Some(at) => at,
+                None => {
+                    all.push((hash_const(0, name.as_bytes()) as u32, name, [&[], &[]]));
+                    all.len() - 1
+                }
+            };
+            all[at].2[usize::from(plugin == "typescript")] = messages;
+        }
+        crate::utils::sort::sort_unstable_by_key(&mut all, |it| it.0);
+        all.into()
+    });
+    let first = by_key.partition_point(|it| it.0 < meta.key);
+    let same_key = by_key[first..].iter().take_while(|it| it.0 == meta.key);
+    same_key
+        .filter(|it| it.1 == meta.name)
+        .map(|it| it.2)
+        .next()
+        .unwrap_or([&[], &[]])
 }
 
 /// `message` as oxlint says it. `said`: [`of_rule`].

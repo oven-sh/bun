@@ -84,9 +84,10 @@ pub(crate) struct Names {
     long: Box<[Long; 1 << LONG_BITS]>,
     /// The file's own atoms of all other texts, and of those that found no place above.
     other: Table,
-    /// By how many bits the places in `short` and in `long` are shifted: only the start of a table
-    /// is in use for a file that is small, so that little memory is touched.
-    unused_bits: u32,
+    /// The bits of a place in `short` and in `long` that count: only the start of a table is in use
+    /// for a file that is small, so that little memory is touched.
+    short_mask: usize,
+    long_mask: usize,
     /// `Intern::number` of the interner that the atoms are of.
     of: u64,
     is_own: bool,
@@ -168,7 +169,8 @@ impl Default for Names {
             short: boxed(NO_SHORT),
             long: boxed(NO_LONG),
             other: Table::default(),
-            unused_bits: 0,
+            short_mask: (1 << SHORT_BITS) - 1,
+            long_mask: (1 << LONG_BITS) - 1,
             of: 0,
             is_own: false,
             spans: KNOWN_SPANS.0.to_vec(),
@@ -261,9 +263,7 @@ fn hash_of(text: &[u8]) -> u32 {
     for bytes in whole {
         hash = (hash.rotate_left(5) ^ u64::from_le_bytes(*bytes)).wrapping_mul(MULTIPLIER);
     }
-    for &byte in rest {
-        hash = (hash.rotate_left(5) ^ u64::from(byte)).wrapping_mul(MULTIPLIER);
-    }
+    hash = (hash.rotate_left(5) ^ word(rest, 0)).wrapping_mul(MULTIPLIER);
     (hash >> 32) as u32
 }
 
@@ -304,7 +304,8 @@ impl Names {
             self.long.fill(NO_LONG);
             self.of = atoms.number();
             self.is_own = false;
-            self.unused_bits = 0;
+            self.short_mask = self.short.len() - 1;
+            self.long_mask = self.long.len() - 1;
         }
     }
 
@@ -315,9 +316,10 @@ impl Names {
             .next_power_of_two()
             .trailing_zeros()
             .clamp(8, SHORT_BITS);
-        self.unused_bits = SHORT_BITS - bits;
-        self.short[..1 << bits].fill(NO_SHORT);
-        self.long[..1 << (LONG_BITS - self.unused_bits)].fill(NO_LONG);
+        self.short_mask = (1 << bits) - 1;
+        self.long_mask = self.short_mask >> (SHORT_BITS - LONG_BITS);
+        self.short[..=self.short_mask].fill(NO_SHORT);
+        self.long[..=self.long_mask].fill(NO_LONG);
         self.of = bun_sema::atom::next_interner_number();
         self.is_own = true;
         self.spans.clear();
@@ -343,7 +345,26 @@ impl Names {
 
     /// The atom of a text that is in no table yet. `bit`: its `hir::mention_bit`. `known`: its
     /// number if that is fixed.
+    #[inline]
     fn new_atom(
+        &mut self,
+        text: Text<'_>,
+        bit: usize,
+        known: Option<u32>,
+        atoms: &dyn Intern,
+    ) -> Atom {
+        match (self.is_own, known, text.start) {
+            (true, None, Some(start)) => {
+                self.mention(text.text, bit);
+                self.spans.push((start, text.text.len() as u32));
+                Atom(self.spans.len() as u32 - 1)
+            }
+            _ => self.new_atom_in_general(text, bit, known, atoms),
+        }
+    }
+
+    #[inline(never)]
+    fn new_atom_in_general(
         &mut self,
         text: Text<'_>,
         bit: usize,
@@ -353,33 +374,33 @@ impl Names {
         if !self.is_own {
             return atoms.intern(text.text);
         }
+        self.mention(text.text, bit);
+        if let Some(known) = known {
+            self.known_in_file[known as usize / 64] |= 1 << (known % 64);
+            if let (Some(start), Some(span)) = (text.start, self.spans.get_mut(known as usize)) {
+                span.0 = start;
+            }
+            return Atom(known);
+        }
+        let start = text.start.unwrap_or_else(|| {
+            let start = self.cooked.len() as u32;
+            self.cooked.extend_from_slice(text.text);
+            start | COOKED
+        });
+        self.spans.push((start, text.text.len() as u32));
+        Atom(self.spans.len() as u32 - 1)
+    }
+
+    /// Enters `text` in `mentioned`. `bit`: its `hir::mention_bit`.
+    #[inline]
+    fn mention(&mut self, text: &[u8], bit: usize) {
         self.mentioned[bit / 64 % MENTIONED_WORDS] |= 1 << (bit % 64);
-        if let [b'u', b's', b'e', rest @ ..] = text.text
+        if let [b'u', b's', b'e', rest @ ..] = text
             && matches!(rest.first(), None | Some(b'A'..=b'Z' | b'0'..=b'9'))
         {
             const BIT: usize = bun_sema::hir::MENTION_OF_A_HOOK as usize;
             self.mentioned[BIT / 64] |= 1 << (BIT % 64);
         }
-        let atom = match known {
-            Some(known) => {
-                self.known_in_file[known as usize / 64] |= 1 << (known % 64);
-                if let (Some(start), Some(span)) = (text.start, self.spans.get_mut(known as usize))
-                {
-                    span.0 = start;
-                }
-                known
-            }
-            None => {
-                let start = text.start.unwrap_or_else(|| {
-                    let start = self.cooked.len() as u32;
-                    self.cooked.extend_from_slice(text.text);
-                    start | COOKED
-                });
-                self.spans.push((start, text.text.len() as u32));
-                self.spans.len() as u32 - 1
-            }
-        };
-        Atom(atom)
     }
 
     /// The number of `text` if it is fixed.
@@ -434,7 +455,7 @@ impl Names {
     /// place.
     #[inline(always)]
     pub(crate) fn find_short(&self, words: [u64; 2]) -> Option<(Atom, T)> {
-        let entry = &self.short[short_place(words) >> self.unused_bits];
+        let entry = &self.short[short_place(words) & self.short_mask];
         (entry.words == words).then_some((Atom(entry.atom), entry.kind))
     }
 
@@ -446,8 +467,7 @@ impl Names {
         atoms: &dyn Intern,
     ) -> (Atom, T) {
         let bit = short_place(words);
-        let first = bit >> self.unused_bits;
-        let mask = (self.short.len() >> self.unused_bits) - 1;
+        let (first, mask) = (bit & self.short_mask, self.short_mask);
         let mut free = None;
         for at in (first..first + WINDOW).map(|at| at & mask) {
             let entry = &self.short[at];
@@ -460,12 +480,13 @@ impl Names {
             }
         }
         let (known, kind) = self.known_short(words);
-        // `short_place` is `hir::mention_bit_of`.
-        let (atom, at) = match free {
-            Some(at) => (self.new_atom(text, bit, known, atoms), at),
+        let at = match free {
+            Some(at) => at,
             None if self.is_own => return (self.other(text, atoms), kind),
-            None => (self.new_atom(text, bit, known, atoms), first),
+            None => first,
         };
+        // `short_place` is `hir::mention_bit_of`.
+        let atom = self.new_atom(text, bit, known, atoms);
         self.short[at] = Short {
             words,
             atom: atom.0,
@@ -493,7 +514,7 @@ impl Names {
     /// The atom of a text of 16 to 32 bytes.
     pub(crate) fn long(&mut self, text: Text<'_>, atoms: &dyn Intern) -> Atom {
         if let Some(words) = long_words(text.text) {
-            let entry = &self.long[long_place(words) >> self.unused_bits];
+            let entry = &self.long[long_place(words) & self.long_mask];
             if entry.is(words, text.text.len()) {
                 return Atom(entry.atom);
             }
@@ -508,8 +529,7 @@ impl Names {
             return self.other(text, atoms);
         };
         let place = long_place(words);
-        let first = place >> self.unused_bits;
-        let mask = (self.long.len() >> self.unused_bits) - 1;
+        let (first, mask) = (place & self.long_mask, self.long_mask);
         let mut free = None;
         for at in (first..first + WINDOW).map(|at| at & mask) {
             let entry = &self.long[at];
@@ -580,8 +600,7 @@ impl Names {
             let words = padded(text);
             let known = self.known_short(words).0;
             if known.is_none() {
-                let first = short_place(words) >> self.unused_bits;
-                let mask = (self.short.len() >> self.unused_bits) - 1;
+                let (first, mask) = (short_place(words) & self.short_mask, self.short_mask);
                 for at in (first..first + WINDOW).map(|at| at & mask) {
                     let entry = &self.short[at];
                     if entry.words == [0; 2] {
@@ -597,8 +616,7 @@ impl Names {
             let place = long_place(words);
             let known = self.known_long(words, place, text.len());
             if known.is_none() {
-                let first = place >> self.unused_bits;
-                let mask = (self.long.len() >> self.unused_bits) - 1;
+                let (first, mask) = (place & self.long_mask, self.long_mask);
                 for at in (first..first + WINDOW).map(|at| at & mask) {
                     let entry = &self.long[at];
                     if entry.len == 0 {

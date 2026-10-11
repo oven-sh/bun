@@ -25,6 +25,7 @@ impl Literal<'_> {
 }
 
 /// What is in the brackets of `key`, if that is a string or a number literal.
+#[inline(never)]
 fn computed_literal<'a>(key: Option<Key<'a>>, file: &File<'a>) -> Option<(Key<'a>, Literal<'a>)> {
     let key = key?;
     let literal = match key.kind() {
@@ -48,6 +49,8 @@ fn computed_literal<'a>(key: Option<Key<'a>>, file: &File<'a>) -> Option<(Key<'a
 }
 
 impl NoUselessComputedKey {
+    #[cold]
+    #[inline(never)]
     fn report<'a>(node: Node<'a>, key: Key<'a>, cx: &Cx<'a, Self>) {
         let file = cx.file();
         let (brackets, literal) = (key.span(file), key.inner_span(file));

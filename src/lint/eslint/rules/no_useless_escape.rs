@@ -81,6 +81,7 @@ fn oxlint_passes_over(raw: &[u8], index: usize, quoted: Quoted) -> bool {
 }
 
 /// ESLint's `validateString`, for each `/\\\D/gu` in the text of `span`.
+#[inline(never)]
 fn validate_string(span: Span, quoted: Quoted, cx: &Cx<'_, NoUselessEscape>) {
     let raw = cx.slice(span);
     let mut at = 0;
@@ -150,6 +151,7 @@ fn has_backslash(span: Span, cx: &Cx<'_, NoUselessEscape>) -> bool {
 }
 
 /// `` [`a`] ``, which is a `TemplateLiteral` for ESLint and not an expression here. `owner`: what has the key.
+#[inline(never)]
 fn check_template_key<'a>(owner: Span, key: impl FnOnce() -> Option<Key<'a>>, cx: &Cx<'a, NoUselessEscape>) {
     if has_backslash(owner, cx)
         && let Some(key) = key()

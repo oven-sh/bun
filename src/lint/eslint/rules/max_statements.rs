@@ -99,6 +99,8 @@ fn count_statements(func: Func) -> usize {
 }
 
 impl MaxStatements {
+    #[cold]
+    #[inline(never)]
     fn report<'a>(func: Func<'a>, count: usize, max: usize, cx: &Cx<'a, Self>) {
         // oxlint points at the function, and knows the name that the function itself has.
         let (name, place) = match (cx.language().is_oxlint, func.name()) {

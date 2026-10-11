@@ -166,6 +166,7 @@ impl IdLength {
         }
     }
 
+    #[inline]
     fn check_binding<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
         let Some(name) = pat.as_ident() else {
             return;
@@ -186,6 +187,7 @@ impl IdLength {
         });
     }
 
+    #[inline]
     fn check_reference<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(name) = e.as_ident() else {
             return;
@@ -237,6 +239,7 @@ impl IdLength {
     }
 
     /// The key of a property of an object literal.
+    #[inline]
     fn check_property<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
         let Some(key) = prop.key() else {
             return;
@@ -260,6 +263,7 @@ impl IdLength {
 
     /// The keys of `{ with: { key: "" } }` in `import("m", { with: { key: "" } })`, which ESLint has
     /// as an object literal.
+    #[inline(never)]
     fn check_import_type<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         let Some(attributes) = ty.import_attributes() else {
             return;
@@ -274,6 +278,7 @@ impl IdLength {
         }
     }
 
+    #[inline]
     fn check_member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
         if let Some(key) = member.key() {
             if let KeyKind::Ident(name) | KeyKind::Private(name) = key.kind() {
@@ -291,12 +296,14 @@ impl IdLength {
 /// The rule of oxlint 1.87 is another one. It looks at every name that is declared, in types too, at every private name
 /// wherever it is written, and at the names of properties and members, but at no reference to a variable.
 impl IdLength {
+    #[inline]
     fn check_ident<'a>(&self, name: Ident<'a>, cx: &mut Cx<'a, Self>) {
         if !self.is_right_at(cx.file(), name.start()) && !name.is_string() {
             self.check(cx, name.name(), || Some(name.span()));
         }
     }
 
+    #[inline]
     fn check_key<'a>(&self, key: Option<Key<'a>>, cx: &mut Cx<'a, Self>) {
         if let Some(key) = key
             && let KeyKind::Ident(name) | KeyKind::Private(name) = key.kind()
@@ -306,6 +313,7 @@ impl IdLength {
         }
     }
 
+    #[inline]
     fn check_binding_as_oxlint<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
         let Some(name) = pat.as_ident() else {
             return;
@@ -320,6 +328,7 @@ impl IdLength {
     }
 
     /// The keys of an object pattern, but for `{ a: b }` and `{ a: { b } }`. `{ a = 1 }` is reported twice.
+    #[inline(never)]
     fn check_keys_of_pattern<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
         let PatKind::Object(props) = pat.kind() else {
             return;
@@ -331,6 +340,7 @@ impl IdLength {
         }
     }
 
+    #[inline]
     fn check_member_as_oxlint<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
         if !self.properties && !matches!(member.parent(), Node::Class(_)) {
             return;
@@ -345,6 +355,7 @@ impl IdLength {
         }
     }
 
+    #[inline(never)]
     fn check_statement_as_oxlint<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let names = match statement.kind() {
             StmtKind::Interface(it) => [Some(it.name()), None],
@@ -527,6 +538,7 @@ impl Rule for IdLength {
         Some(ByName::default())
     }
 
+    #[inline]
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let Some(start) = e.member_name_start() {
             if !self.is_right_at(cx.file(), start) {
@@ -557,6 +569,7 @@ impl Rule for IdLength {
         }
     }
 
+    #[inline]
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
         // As nearly all are that oxlint's rule is called with.
         if ty.as_ref().is_some_and(|(name, _)| name.len() == 1) {
@@ -571,6 +584,7 @@ impl Rule for IdLength {
         }
     }
 
+    #[inline]
     fn pat<'a>(&self, pat: Pat<'a>, cx: &mut Cx<'a, Self>) {
         match (pat.tag(), cx.language().is_oxlint) {
             (PatTag::Ident, false) => self.check_binding(pat, cx),
@@ -580,6 +594,7 @@ impl Rule for IdLength {
         }
     }
 
+    #[inline]
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         if cx.language().is_oxlint {
             if let Some(name) = func.name() {
@@ -592,6 +607,7 @@ impl Rule for IdLength {
         }
     }
 
+    #[inline]
     fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {
         if cx.language().is_oxlint {
             if let Some(name) = class.name() {
@@ -606,6 +622,7 @@ impl Rule for IdLength {
         }
     }
 
+    #[inline]
     fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
         if cx.language().is_oxlint {
             return self.check_member_as_oxlint(member, cx);
@@ -613,18 +630,22 @@ impl Rule for IdLength {
         self.check_member(member, cx);
     }
 
+    #[inline]
     fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
         self.check_property(prop, cx);
     }
 
+    #[inline]
     fn type_param<'a>(&self, it: TypeParam<'a>, cx: &mut Cx<'a, Self>) {
         self.check_ident(it.name(), cx);
     }
 
+    #[inline]
     fn enum_member<'a>(&self, member: EnumMember<'a>, cx: &mut Cx<'a, Self>) {
         self.check_key(member.key(), cx);
     }
 
+    #[inline]
     fn import_spec<'a>(&self, specifier: ImportSpec<'a>, cx: &mut Cx<'a, Self>) {
         if cx.language().is_oxlint {
             if specifier.imported().name() != specifier.local().name() {

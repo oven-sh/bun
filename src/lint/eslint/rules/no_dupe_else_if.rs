@@ -74,16 +74,16 @@ fn is_subset<'a>(a: &[Expr<'a>], b: &[Expr<'a>]) -> bool {
 }
 
 /// The `if` whose `else` is `statement`.
+#[inline]
 fn previous_if(statement: Stmt<'_>) -> Option<Stmt<'_>> {
     let parent = statement.parent().as_stmt()?;
     matches!(parent.as_if(), Some((_, _, Some(no))) if no == statement).then_some(parent)
 }
 
 impl NoDupeElseIf {
-    fn check<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(mut current) = previous_if(statement) else {
-            return;
-        };
+    /// `current`: the `if` whose `else` is `statement`.
+    #[inline(never)]
+    fn check<'a>(&self, statement: Stmt<'a>, mut current: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         let Some((test, ..)) = statement.as_if() else {
             return;
         };
@@ -124,6 +124,8 @@ impl Rule for NoDupeElseIf {
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        self.check(statement, cx);
+        if let Some(previous) = previous_if(statement) {
+            self.check(statement, previous, cx);
+        }
     }
 }

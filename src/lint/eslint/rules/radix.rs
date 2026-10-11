@@ -99,9 +99,9 @@ impl Rule for Radix {
             }
             (Some(_), None) => {
                 cx.report(e, MISSING_RADIX).suggest(ADD_RADIX_PARAMETER_10, |fixer| {
-                    let last_token = fixer.file().last_token(e)?;
-                    let has_trailing_comma =
-                        fixer.file().token_before(last_token).is_some_and(|it| ast_utils::is_comma_token(&it));
+                    let (text, last_token) = (fixer.file().text(), Span::empty(call.close_paren()?));
+                    let after_argument = skip_trivia(text, args.first()?.outer_span().end);
+                    let has_trailing_comma = text.get(after_argument as usize) == Some(&b',');
                     Some(fixer.insert_before(last_token, if has_trailing_comma { " 10," } else { ", 10" }))
                 });
             }

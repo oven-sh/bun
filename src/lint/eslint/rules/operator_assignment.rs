@@ -71,6 +71,7 @@ fn is_same_reference_for_oxlint<'a>(target: Expr<'a>, e: Expr<'a>) -> bool {
 
 impl OperatorAssignment {
     /// `"always"`: an assignment uses the shorthand where it can.
+    #[inline(never)]
     fn verify<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some((None, target, value)) = e.as_assign() else {
             return;
@@ -116,6 +117,7 @@ impl OperatorAssignment {
     }
 
     /// `"never"`: no assignment uses the shorthand.
+    #[inline(never)]
     fn prohibit<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some((Some(op), target, value)) = e.as_assign() else {
             return;
@@ -169,7 +171,7 @@ impl Rule for OperatorAssignment {
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if self.never {
             self.prohibit(e, cx);
-        } else {
+        } else if e.right().is_some_and(|value| value.tag() == ExprTag::Binary) {
             self.verify(e, cx);
         }
     }

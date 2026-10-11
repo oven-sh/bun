@@ -124,6 +124,15 @@ fn starts_with_checked_concatenation(top: Expr<'_>) -> bool {
 
 /// The text between `a` and `b` that is not in a token: whitespace and comments.
 fn get_text_between<'a>(file: &'a File<'a>, a: Span, b: Span) -> Cow<'a, [u8]> {
+    // Nearly always there is nothing but spaces, line breaks and parentheses.
+    let between = file.slice(a.between(b));
+    let is_parenthesis = |it: &u8| matches!(it, b'(' | b')');
+    if between.iter().all(|it| matches!(it, b' ' | b'\t' | b'\n' | b'\r') || is_parenthesis(it)) {
+        return match between.iter().any(is_parenthesis) {
+            true => Cow::Owned(between.iter().copied().filter(|it| !is_parenthesis(it)).collect()),
+            false => Cow::Borrowed(between),
+        };
+    }
     let mut tokens = file.tokens_between(a, b);
     let Some(first) = tokens.next() else {
         return Cow::Borrowed(file.slice(a.between(b)));

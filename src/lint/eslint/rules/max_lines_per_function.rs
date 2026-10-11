@@ -121,7 +121,32 @@ impl Rule for MaxLinesPerFunction {
         (file.text().len() >= self.max as usize).then(Counts::default)
     }
 
+    #[inline]
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        let is_method = || matches!(func.kind(), FnKind::Method | FnKind::Getter | FnKind::Setter | FnKind::Constructor);
+        if func.has_body() || cx.language().is_oxlint && is_method() {
+            self.add_candidate(func, cx);
+        }
+    }
+
+    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
+        // The last of them that has few lines. So has what is in it, which comes before it.
+        let mut short = Span::default();
+        for (func, span) in std::mem::take(&mut cx.state.candidates).into_iter().rev() {
+            if short.contains(span) {
+                continue;
+            }
+            match Self::count_line_breaks(span, cx) {
+                Some(line_breaks) if line_breaks < self.max => short = span,
+                line_breaks => self.check(func, span, line_breaks, cx),
+            }
+        }
+    }
+}
+
+impl MaxLinesPerFunction {
+    #[inline(never)]
+    fn add_candidate<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         // For oxlint a method of a class is a function also if it has no body.
         let is_method_without_body = || {
             cx.language().is_oxlint
@@ -146,22 +171,6 @@ impl Rule for MaxLinesPerFunction {
         }
     }
 
-    fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
-        // The last of them that has few lines. So has what is in it, which comes before it.
-        let mut short = Span::default();
-        for (func, span) in std::mem::take(&mut cx.state.candidates).into_iter().rev() {
-            if short.contains(span) {
-                continue;
-            }
-            match Self::count_line_breaks(span, cx) {
-                Some(line_breaks) if line_breaks < self.max => short = span,
-                line_breaks => self.check(func, span, line_breaks, cx),
-            }
-        }
-    }
-}
-
-impl MaxLinesPerFunction {
     /// `span`: what of `func` is counted. `line_breaks`: how many are in it, if that is known.
     fn check<'a>(&self, func: Func<'a>, span: Span, line_breaks: Option<u32>, cx: &mut Cx<'a, Self>) {
         let (file, is_oxlint) = (cx.file(), cx.language().is_oxlint);

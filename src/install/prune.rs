@@ -16,7 +16,7 @@ use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _, entry 
 use crate::isolated_install::{Store, Timings, build_store};
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::tree::is_filtered_dependency_or_workspace;
-use crate::lockfile::{LoadResult, Lockfile, reachable, tree};
+use crate::lockfile::{LoadResult, Lockfile, print_log_errors, reachable, tree};
 use crate::lockfile_real::package::{Diff, DiffSummary, Package};
 use crate::package_install::{StagingLock, StagingPath};
 use crate::package_manager::Options::{Enable, LogLevel};
@@ -648,12 +648,6 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
         Global::exit(1);
     }
     Ok(summary)
-}
-
-fn print_log_errors(log: &bun_ast::Log) {
-    if log.has_errors() {
-        let _ = log.print(core::ptr::from_mut(Output::error_writer()));
-    }
 }
 
 struct Selection {

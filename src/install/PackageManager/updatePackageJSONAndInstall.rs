@@ -188,32 +188,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         && (manager.options.do_.recursive() || !manager.options.filter_patterns.is_empty())
         && manager.options.do_.load_lockfile()
     {
-        match manager.load_lockfile_from_cwd::<true>() {
-            crate::lockfile::LoadResult::Ok(_) => {}
-            crate::lockfile::LoadResult::NotFound => {
-                if log_level != LogLevel::Silent {
-                    Output::err_generic("missing lockfile, nothing to update", ());
-                    bun_core::note!("run 'bun install' first");
-                }
-                Global::crash();
-            }
-            crate::lockfile::LoadResult::Err(cause) => {
-                if log_level != LogLevel::Silent
-                    && !crate::migration::reported_unsupported_lockfile_version(&cause)
-                {
-                    Output::err_generic(
-                        "failed to {s} lockfile: {s}",
-                        (cause.step.verb(), cause.value.name()),
-                    );
-                    if manager.log_mut().has_errors() {
-                        let _ = manager
-                            .log_mut()
-                            .print(std::ptr::from_mut(Output::error_writer()));
-                    }
-                }
-                Global::crash();
-            }
-        }
+        manager.load_lockfile_from_cwd_or_exit("nothing to update");
         let filter_patterns = manager.options.filter_patterns;
         let workspace_selection::LockfileSelection {
             ids: selected,

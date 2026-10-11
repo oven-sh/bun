@@ -579,128 +579,13 @@ fn iterate_included_project_tree(
 
     // for each included dir, traverse its entries, exclude any with `negate_no_match`.
     for included_dir_info in included_dirs {
-        add_entire_tree(bins, excludes, included_dir_info, pack_queue, log_level)?;
-    }
-
-    Ok(())
-}
-
-/// Adds all files in a directory tree to `pack_list` (default ignores still apply)
-fn add_entire_tree(
-    bins: &[BinInfo],
-    excludes: &[Pattern],
-    root_dir_info: DirInfo,
-    pack_queue: &mut PackQueue,
-    log_level: LogLevel,
-) -> Result<(), AllocError> {
-    let root_depth = root_dir_info.2;
-
-    let mut dirs: Vec<(DirInfo, InheritedIgnore)> = Vec::new();
-    dirs.push((root_dir_info, None));
-
-    let mut ignores: Vec<IgnorePatterns> = Vec::new();
-
-    let mut negated_excludes: Vec<Pattern> = Vec::new();
-
-    if !excludes.is_empty() {
-        negated_excludes.reserve_exact(excludes.len());
-        for exclude in excludes {
-            negated_excludes.push(exclude.as_positive());
-        }
-        ignores.push(IgnorePatterns {
-            list: negated_excludes.into_boxed_slice(),
-            // Note: `negated_excludes` is moved here since it isn't reused below.
-            kind: IgnorePatternsKind::PackageJson,
-            depth: 1,
-            // always assume no relative path b/c matching is done from the
-            // root directory
-            has_rel_path: false,
-        });
-    }
-
-    while let Some((dir_info, inherited)) = dirs.pop() {
-        let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
-
-        while let Some(last) = ignores.last() {
-            if last.depth < dir_depth {
-                break;
-            }
-            ignores.pop();
-        }
-
-        if let Some(patterns) = IgnorePatterns::read_from_disk(&dir, dir_depth)? {
-            ignores.push(patterns);
-        }
-
-        if cfg!(debug_assertions) {
-            // make sure depths are in order
-            if !ignores.is_empty() {
-                for i in 1..ignores.len() {
-                    debug_assert!(ignores[i - 1].depth < ignores[i].depth);
-                }
-            }
-        }
-
-        let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
-        'next_entry: while let Some(entry) = next_dir_entry(&mut iter, &dir_subpath) {
-            if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
-                continue;
-            }
-
-            // `slice_u8()` is the platform-unifying accessor — on Windows the
-            // iterator's native u16 name is transcoded once at construction so
-            // pack-tree logic stays byte-based on every target.
-            let entry_name = entry.name.slice_u8();
-            let entry_subpath = entry_subpath(&dir_subpath, entry_name)?;
-
-            if dir_depth == root_depth {
-                if entry.kind == bun_sys::FileKind::Directory && entry_name == b"node_modules" {
-                    continue;
-                }
-            }
-
-            let entries_inherit: InheritedIgnore =
-                match is_excluded(&entry, &entry_subpath, dir_depth, &ignores, &inherited) {
-                    Exclusion::Included => None,
-                    Exclusion::WalkOnly(pattern, kind) => Some((pattern.into(), kind)),
-                    Exclusion::Excluded(pattern, kind) => {
-                        print_ignored(log_level, kind, pattern, &entry_subpath, entry.kind);
-                        continue;
-                    }
-                };
-
-            match entry.kind {
-                bun_sys::FileKind::File => {
-                    for bin in bins {
-                        if bin.ty == BinType::File
-                            && strings::eql_long(&bin.path, entry_subpath.as_bytes(), true)
-                        {
-                            continue 'next_entry;
-                        }
-                    }
-                    pack_queue.add(PackQueueItem {
-                        path: entry_subpath,
-                    })?;
-                }
-                bun_sys::FileKind::Directory => {
-                    for bin in bins {
-                        if bin.ty == BinType::Dir
-                            && strings::eql_long(&bin.path, entry_subpath.as_bytes(), true)
-                        {
-                            continue 'next_entry;
-                        }
-                    }
-
-                    let subdir = open_subdir(&dir, entry_name, &entry_subpath);
-
-                    dirs.push((
-                        DirInfo(subdir, entry_subpath.as_bytes().into(), dir_depth + 1),
-                        entries_inherit,
-                    ));
-                }
-                _ => unreachable!(),
-            }
-        }
+        iterate_project_tree(
+            pack_queue,
+            bins,
+            Some(excludes),
+            included_dir_info,
+            log_level,
+        )?;
     }
 
     Ok(())
@@ -1227,14 +1112,32 @@ fn add_bundled_dep(
     Ok(())
 }
 
-/// Returns a list of files to pack and another list of files from bundled dependencies
+/// Adds the files below `root_dir` to `pack_queue` (ignore files and default ignores apply).
+/// `files_excludes`: `root_dir` is a directory that `"files"` includes, and these are its negated entries.
 fn iterate_project_tree(
     pack_queue: &mut PackQueue,
     bins: &[BinInfo],
+    files_excludes: Option<&[Pattern]>,
     root_dir: DirInfo,
     log_level: LogLevel,
 ) -> Result<(), AllocError> {
+    let root_depth = root_dir.2;
     let mut ignores: Vec<IgnorePatterns> = Vec::new();
+
+    if let Some(excludes) = files_excludes.filter(|excludes| !excludes.is_empty()) {
+        let mut negated_excludes: Vec<Pattern> = Vec::with_capacity(excludes.len());
+        for exclude in excludes {
+            negated_excludes.push(exclude.as_positive());
+        }
+        ignores.push(IgnorePatterns {
+            list: negated_excludes.into_boxed_slice(),
+            kind: IgnorePatternsKind::PackageJson,
+            depth: 1,
+            // always assume no relative path b/c matching is done from the
+            // root directory
+            has_rel_path: false,
+        });
+    }
 
     // Stacks and depth-first traversal. Doing so means we can push and pop from
     // ignore patterns without needing to clone the entire list for future use.
@@ -1289,6 +1192,12 @@ fn iterate_project_tree(
                 if entry_name == b"node_modules" {
                     continue;
                 }
+            } else if files_excludes.is_some()
+                && dir_depth == root_depth
+                && entry.kind == bun_sys::FileKind::Directory
+                && entry_name == b"node_modules"
+            {
+                continue;
             }
 
             let entries_inherit: InheritedIgnore =
@@ -1958,6 +1867,7 @@ pub(crate) fn published_files(
                 iterate_project_tree(
                     &mut pack_queue,
                     &[],
+                    None,
                     DirInfo(bin_dir, bin.path.as_bytes().into(), 2),
                     log_level,
                 )?;
@@ -2024,6 +1934,7 @@ pub(crate) fn published_files(
             iterate_project_tree(
                 &mut pack_queue,
                 &bins,
+                None,
                 DirInfo(Dir::from_fd(root_dir.fd), Box::from(&b""[..]), 1),
                 log_level,
             )?;

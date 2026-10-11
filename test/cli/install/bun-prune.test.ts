@@ -19,7 +19,7 @@ import {
 } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { TestRegistry } from "registry";
+import { installEnv, TestRegistry } from "registry";
 
 const registry = new TestRegistry();
 
@@ -30,9 +30,6 @@ beforeAll(async () => {
 afterAll(() => {
   registry.stop();
 });
-
-// CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`; concurrent cases sharing one cache race on Windows.
-const installEnv = (dir: string) => ({ ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") });
 
 const WARN = (expected: string, kept: string) =>
   `warn: ${expected} is not the version bun.lock expects; keeping ${kept}`;

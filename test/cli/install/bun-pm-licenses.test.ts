@@ -1,9 +1,9 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "fs";
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, libcFamily, normalizeBunSnapshot, tempDir } from "harness";
 import { isAbsolute, join, sep } from "path";
-import { TestRegistry } from "registry";
+import { installEnv, TestRegistry } from "registry";
 import { pathToFileURL } from "url";
 
 type Linker = "hoisted" | "isolated";
@@ -28,9 +28,6 @@ beforeAll(async () => {
 afterAll(() => {
   registry.stop();
 });
-
-// CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`; concurrent cases sharing one cache race on Windows and share hardlinked manifests on Linux.
-const installEnv = (dir: string) => ({ ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") });
 
 const gitEnv = {
   ...bunEnv,

@@ -309,16 +309,8 @@ fn exit_on_lockfile_load_failure(manager: &mut PackageManager, subject: &[u8]) -
         crate::lockfile::LoadResult::Ok(_) => lockfile_name,
         crate::lockfile::LoadResult::NotFound => missing(silent, subject),
         crate::lockfile::LoadResult::Err(cause) => {
-            if !silent && !crate::migration::reported_unsupported_lockfile_version(&cause) {
-                Output::err_generic(
-                    "failed to {s} lockfile: {s}",
-                    (cause.step.verb(), cause.value.name()),
-                );
-                if manager.log_mut().has_errors() {
-                    let _ = manager
-                        .log_mut()
-                        .print(std::ptr::from_mut(Output::error_writer()));
-                }
+            if !silent {
+                cause.report(manager.log_mut());
             }
             Global::exit(1);
         }

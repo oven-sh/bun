@@ -4,8 +4,8 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   readlinkSync,
   realpathSync,
   rmSync,
@@ -14,7 +14,7 @@ import {
 import { exists, rm } from "fs/promises";
 import { bunEnv, bunExe, isASAN, pack, readdirSorted, runBunInstall, tempDir } from "harness";
 import { join } from "path";
-import { TestRegistry } from "registry";
+import { installEnv, TestRegistry } from "registry";
 
 const registry = new TestRegistry();
 
@@ -561,8 +561,6 @@ describe.concurrent("a self-contained workspace", () => {
 // says (Tree.hoist_dependency). The install doing that has to say so, even if
 // a copy inside the range is somewhere else in the tree.
 const peerWarnings = (stderr: string) => stderr.match(/^warn: incorrect peer dependency [^\r\n]*/gm) ?? [];
-// CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`; concurrent cases sharing one cache race on Windows.
-const installEnv = (dir: string) => ({ ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") });
 const installedVersion = async (packageDir: string, ...path: string[]) =>
   (await file(join(packageDir, "node_modules", ...path, "package.json")).json()).version;
 const hasOwnNodeModules = (packageDir: string, name: string) =>

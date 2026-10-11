@@ -11,7 +11,7 @@ use std::io::Write as _;
 use bun_ast::Loader;
 use bun_bundler::Transpiler;
 use bun_collections::{ArrayHashMap, StringHashMap};
-use bun_core::{self as core, Environment, Global, Output, ZStr};
+use bun_core::{self as core, Global, Output, ZStr};
 use bun_core::{pretty, pretty_errorln, prettyln};
 use bun_dotenv as DotEnv;
 use bun_jsc::js_promise::Status as PromiseStatus;
@@ -687,50 +687,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             .put(b"npm_config_local_prefix", top_level_dir)
             .expect("unreachable");
 
-        // Propagate --no-orphans / [run] noOrphans to the script's env so any
-        // Bun process the script spawns enables its own watchdog. The env
-        // loader snapshots `environ` before flag parsing runs, so the
-        // `setenv()` in `enable()` isn't reflected here.
-        if bun_io::ParentDeathWatchdog::is_enabled() {
-            env_loader
-                .map
-                .put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1")
-                .expect("unreachable");
-        }
-
-        // we have no way of knowing what version they're expecting without running the node executable
-        // running the node executable is too slow
-        // so we will just hardcode it to LTS
-        env_loader
-            .map
-            .put_default(
-                b"npm_config_user_agent",
-                // the use of npm/? is copying yarn
-                // e.g.
-                // > "yarn/1.22.4 npm/? node/v12.16.3 darwin x64",
-                const_format::concatcp!(
-                    "bun/",
-                    Global::package_json_version,
-                    " npm/? node/v",
-                    Environment::REPORTED_NODEJS_VERSION,
-                    " ",
-                    Global::os_name,
-                    " ",
-                    Global::arch_name
-                )
-                .as_bytes(),
-            )
-            .expect("unreachable");
-
-        if env_loader.get(b"npm_execpath").is_none() {
-            // we don't care if this fails
-            if let Ok(self_exe_path) = bun_core::self_exe_path() {
-                env_loader
-                    .map
-                    .put_default(b"npm_execpath", self_exe_path.as_bytes())
-                    .expect("unreachable");
-            }
-        }
+        bun_install::RunCommand::seed_script_env(env_loader);
 
         if let Some(package_json) = root_dir_info.enclosing_package_json {
             if !package_json.name.is_empty() {

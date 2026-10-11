@@ -9,7 +9,6 @@ use bun_alloc::Arena as Bump;
 use bun_collections::{StringHashMap, index_sort};
 use bun_core::{Global, Output};
 use bun_install::dependency::{self, Behavior};
-use bun_install::lockfile::LoadResult;
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::package_manager::options::Do;
 use bun_install::package_manager::workspace_manifests::{BrokenMember, DeclaredDependencies};
@@ -326,6 +325,38 @@ impl UpdateInteractiveCommand {
         Self::update_interactive(ctx, &original_cwd, manager, groups)
     }
 
+    /// `None`: it cannot be read or parsed, which was reported.
+    fn load_package_json<'a>(
+        manager: &'a mut PackageManager,
+        package_json_path: &[u8],
+    ) -> Option<&'a mut WorkspacePackageJsonCacheEntry> {
+        let log = manager.log_mut();
+        match manager.workspace_package_json_cache.get_with_path(
+            log,
+            package_json_path,
+            GetJsonOptions {
+                guess_indentation: true,
+                ..Default::default()
+            },
+        ) {
+            GetJsonResult::ParseErr(err) => {
+                Output::err_generic(
+                    "Failed to parse package.json at {s}: {s}",
+                    (BStr::new(package_json_path), err.name()),
+                );
+                None
+            }
+            GetJsonResult::ReadErr(err) => {
+                Output::err_generic(
+                    "Failed to read package.json at {s}: {s}",
+                    (BStr::new(package_json_path), err.name()),
+                );
+                None
+            }
+            GetJsonResult::Entry(entry) => Some(entry),
+        }
+    }
+
     fn update_package_json_files_from_updates(
         manager: &mut PackageManager,
         updates: &[PackageUpdate],
@@ -356,36 +387,9 @@ impl UpdateInteractiveCommand {
             let package_json_path =
                 Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
 
-            // Load and parse the package.json
-            // Reshaped for borrowck — `log_mut()` returns a borrow
-            // decoupled from `&self`, so it can overlap the disjoint
-            // `workspace_package_json_cache` field borrow below.
-            let log = manager.log_mut();
-            let package_json: &mut WorkspacePackageJsonCacheEntry =
-                match manager.workspace_package_json_cache.get_with_path(
-                    log,
-                    package_json_path,
-                    GetJsonOptions {
-                        guess_indentation: true,
-                        ..Default::default()
-                    },
-                ) {
-                    GetJsonResult::ParseErr(err) => {
-                        Output::err_generic(
-                            "Failed to parse package.json at {s}: {s}",
-                            (BStr::new(package_json_path), err.name()),
-                        );
-                        continue;
-                    }
-                    GetJsonResult::ReadErr(err) => {
-                        Output::err_generic(
-                            "Failed to read package.json at {s}: {s}",
-                            (BStr::new(package_json_path), err.name()),
-                        );
-                        continue;
-                    }
-                    GetJsonResult::Entry(entry) => entry,
-                };
+            let Some(package_json) = Self::load_package_json(manager, package_json_path) else {
+                continue;
+            };
 
             let mut modified = false;
 
@@ -480,33 +484,9 @@ impl UpdateInteractiveCommand {
             let package_json_path =
                 Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
 
-            // Load and parse the package.json properly
-            let log = manager.log_mut();
-            let package_json: &mut WorkspacePackageJsonCacheEntry =
-                match manager.workspace_package_json_cache.get_with_path(
-                    log,
-                    package_json_path,
-                    GetJsonOptions {
-                        guess_indentation: true,
-                        ..Default::default()
-                    },
-                ) {
-                    GetJsonResult::ParseErr(err) => {
-                        Output::err_generic(
-                            "Failed to parse package.json at {s}: {s}",
-                            (BStr::new(package_json_path), err.name()),
-                        );
-                        continue;
-                    }
-                    GetJsonResult::ReadErr(err) => {
-                        Output::err_generic(
-                            "Failed to read package.json at {s}: {s}",
-                            (BStr::new(package_json_path), err.name()),
-                        );
-                        continue;
-                    }
-                    GetJsonResult::Entry(entry) => entry,
-                };
+            let Some(package_json) = Self::load_package_json(manager, package_json_path) else {
+                continue;
+            };
 
             edit_catalog_definitions(
                 &mut updates_for_workspace[..],
@@ -526,43 +506,8 @@ impl UpdateInteractiveCommand {
         manager: &mut PackageManager,
         groups: UpdateGroups,
     ) -> crate::Result<()> {
-        // Reshaped for borrowck — capture `log_level` / `ctx.log`
-        // before borrowing `&mut manager.lockfile`.
         let not_silent = manager.options.log_level != LogLevel::Silent;
-        let ctx_log_ptr: *mut bun_ast::Log = ctx.log;
-
-        match manager.load_lockfile_from_cwd::<true>() {
-            LoadResult::NotFound => {
-                if not_silent {
-                    Output::err_generic("missing lockfile, nothing to update", ());
-                    bun_core::note!("run 'bun install' first");
-                }
-                Global::crash();
-            }
-            LoadResult::Err(cause) => {
-                if not_silent
-                    && !bun_install::migration::reported_unsupported_lockfile_version(&cause)
-                {
-                    Output::err_generic(
-                        "failed to {s} lockfile: {s}",
-                        (cause.step.verb(), cause.value.name()),
-                    );
-                    // SAFETY: `ctx.log` is set by `Command::create_context_data`
-                    // for every subcommand and is non-null for the command's
-                    // lifetime.
-                    if unsafe { (*ctx_log_ptr).has_errors() } {
-                        manager
-                            .log_mut()
-                            .print(std::ptr::from_mut(Output::error_writer()))?;
-                    }
-                }
-                Global::crash();
-            }
-            LoadResult::Ok(_) => {
-                // `load_lockfile_from_cwd` populates `manager.lockfile` (Box)
-                // in place, so no reassignment is needed.
-            }
-        }
+        manager.load_lockfile_from_cwd_or_exit("nothing to update");
 
         let workspace_pkg_ids: Vec<PackageID> =
             if !manager.options.filter_patterns.is_empty() || manager.options.do_.recursive() {

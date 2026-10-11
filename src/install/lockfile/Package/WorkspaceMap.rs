@@ -345,6 +345,29 @@ fn relative_workspace_path<'b>(
 }
 
 impl WorkspaceMap {
+    /// `"workspaces"` of `manifest`: an array, or an object with a `"packages"` array. Any other shape lists nothing.
+    pub(crate) fn process_manifest(
+        &mut self,
+        json_cache: &mut WorkspacePackageJSONCache,
+        log: &mut bun_ast::Log,
+        manifest: &js_ast::Expr,
+        source: &bun_ast::Source,
+        missing_workspace: MissingWorkspace<'_>,
+    ) -> crate::Result<u32> {
+        let names = manifest.as_property(b"workspaces").and_then(|q| {
+            if q.expr.is_array() {
+                Some(q)
+            } else {
+                q.expr.as_property(b"packages")
+            }
+        });
+        let Some(q) = names else { return Ok(0) };
+        let Some(arr) = NamesArray::from_expr(&q.expr, super::value_loc_of(source, q.loc)) else {
+            return Ok(0);
+        };
+        self.process_names_array(json_cache, log, arr, source, q.loc, None, missing_workspace)
+    }
+
     pub(crate) fn process_names_array(
         &mut self,
         json_cache: &mut WorkspacePackageJSONCache,

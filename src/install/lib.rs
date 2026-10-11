@@ -816,8 +816,6 @@ impl RunCommand {
         _log_errors: bool,
         store_root_fd: bool,
     ) -> Result<*mut (), crate::Error> {
-        use bun_core::Global;
-
         let args = ctx.args.clone();
         this_transpiler.write(bun_transpiler::Transpiler::init(
             install_runner_arena(),
@@ -836,6 +834,21 @@ impl RunCommand {
         // Re-derive per-use rather than holding a long-lived `&mut` (avoids
         // Stacked-Borrows overlap with `run_env_loader`).
         let env_loader = this_transpiler.env_mut();
+        Self::seed_script_env(env_loader);
+
+        // Overwrite like npm: an outer `bun run` in another project may have left a stale value.
+        env_loader.map.put(
+            b"npm_config_local_prefix",
+            bun_fs::FileSystem::instance().top_level_dir(),
+        )?;
+
+        // `npm_package_*` is per package; see `spawn_package_lifecycle_scripts`.
+        Ok(core::ptr::null_mut())
+    }
+
+    /// What `bun run` and lifecycle scripts both find in their environment.
+    pub fn seed_script_env(env_loader: &mut bun_dotenv::Loader) {
+        use bun_core::Global;
 
         // Propagate --no-orphans / [run] noOrphans to the script's env so any
         // Bun process the script spawns enables its own watchdog. The env
@@ -874,15 +887,6 @@ impl RunCommand {
                     .put_default(b"npm_execpath", self_exe.as_bytes());
             }
         }
-
-        // Overwrite like npm: an outer `bun run` in another project may have left a stale value.
-        env_loader.map.put(
-            b"npm_config_local_prefix",
-            bun_fs::FileSystem::instance().top_level_dir(),
-        )?;
-
-        // `npm_package_*` is per package; see `spawn_package_lifecycle_scripts`.
-        Ok(core::ptr::null_mut())
     }
 }
 

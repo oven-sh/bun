@@ -2,8 +2,7 @@ use bstr::BStr;
 
 use crate::bun_fs::FileSystem;
 use crate::lockfile::package::PackageColumns as _;
-use crate::lockfile_real::package::value_loc_of;
-use crate::lockfile_real::package::workspace_map::{MissingWorkspace, NamesArray, WorkspaceMap};
+use crate::lockfile_real::package::workspace_map::{MissingWorkspace, WorkspaceMap};
 use crate::{Error, ResolutionTag};
 use bun_collections::{StringArrayHashMap, index_sort};
 use bun_core::time::nano_timestamp;
@@ -138,45 +137,23 @@ pub(crate) fn load_workspace_members(manager: &mut PackageManager) -> WorkspaceM
     };
 
     let mut members = WorkspaceMap::init();
-    let workspaces = root_expr.as_property(b"workspaces");
-    let packages = workspaces
-        .as_ref()
-        .filter(|q| !q.expr.is_array())
-        .and_then(|q| q.expr.as_property(b"packages"));
-    let names: Option<(NamesArray<'_>, bun_ast::Loc)> = match (&workspaces, &packages) {
-        (Some(q), _) if q.expr.is_array() => Some((
-            NamesArray::from_expr(&q.expr, value_loc_of(&root_source, q.loc))
-                .expect("is_array was checked above"),
-            q.loc,
-        )),
-        (Some(_), Some(p)) if p.expr.is_array() => Some((
-            NamesArray::from_expr(&p.expr, value_loc_of(&root_source, p.loc))
-                .expect("is_array was checked above"),
-            p.loc,
-        )),
-        _ => None,
-    };
-    if let Some((arr, loc)) = names {
-        let log = manager.log_mut();
-        if let Err(err) = members.process_names_array(
-            &mut manager.workspace_package_json_cache,
-            log,
-            arr,
-            &root_source,
-            loc,
-            None,
-            MissingWorkspace::Error,
-        ) {
-            if log.has_errors() {
-                let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-            } else {
-                Output::err_generic(
-                    "failed to load workspaces from package.json \"{}\": {}",
-                    (BStr::new(&root_path), err.name()),
-                );
-            }
-            Global::crash();
+    let log = manager.log_mut();
+    if let Err(err) = members.process_manifest(
+        &mut manager.workspace_package_json_cache,
+        log,
+        &root_expr,
+        &root_source,
+        MissingWorkspace::Error,
+    ) {
+        if log.has_errors() {
+            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+        } else {
+            Output::err_generic(
+                "failed to load workspaces from package.json \"{}\": {}",
+                (BStr::new(&root_path), err.name()),
+            );
         }
+        Global::crash();
     }
 
     WorkspaceMembers {

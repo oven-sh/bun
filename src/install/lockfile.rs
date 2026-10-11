@@ -364,6 +364,27 @@ pub struct LoadResultErr {
     pub(crate) format: LockfileFormat,
 }
 
+impl LoadResultErr {
+    /// For the commands that stop here; `bun install` goes on without the lockfile and words it differently.
+    #[cold]
+    pub(crate) fn report(&self, log: &bun_ast::Log) {
+        if crate::migration::reported_unsupported_lockfile_version(self) {
+            return;
+        }
+        Output::err_generic(
+            "failed to {s} lockfile: {s}",
+            (self.step.verb(), self.value.name()),
+        );
+        print_log_errors(log);
+    }
+}
+
+pub(crate) fn print_log_errors(log: &bun_ast::Log) {
+    if log.has_errors() {
+        let _ = log.print(core::ptr::from_mut(Output::error_writer()));
+    }
+}
+
 pub struct LoadResultOk<'a> {
     pub lockfile: &'a mut Lockfile,
     pub(crate) migrated: Migrated,

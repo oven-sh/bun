@@ -895,6 +895,21 @@ impl PackageManager {
         }
     }
 
+    /// `nothing`: what a missing lockfile leaves undone, e.g. "nothing to update".
+    pub fn load_lockfile_from_cwd_or_exit(&mut self, nothing: &str) {
+        let silent = self.options.log_level == package_manager_options::LogLevel::Silent;
+        match self.load_lockfile_from_cwd::<true>() {
+            lockfile::LoadResult::Ok(_) => return,
+            lockfile::LoadResult::NotFound if !silent => {
+                Output::err_generic("missing lockfile, {s}", (nothing,));
+                bun_core::note!("run 'bun install' first");
+            }
+            lockfile::LoadResult::Err(cause) if !silent => cause.report(self.log_mut()),
+            _ => {}
+        }
+        Global::exit(1);
+    }
+
     pub(crate) fn crash(&mut self) -> ! {
         if self.options.log_level != package_manager_options::LogLevel::Silent {
             // SAFETY: `self.log` points to a separate `bun_ast::Log` allocation (borrowed from

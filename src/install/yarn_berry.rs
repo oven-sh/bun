@@ -53,8 +53,7 @@ use crate::dependency::{self, Behavior, Dependency, DependencyExt as _};
 use crate::external_slice::ExternalSlice;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile};
-use crate::lockfile_real::package::value_loc_of;
-use crate::lockfile_real::package::workspace_map::{MissingWorkspace, NamesArray, WorkspaceMap};
+use crate::lockfile_real::package::workspace_map::{MissingWorkspace, WorkspaceMap};
 use crate::lockfile_real::package_extensions::Kind as ExtensionKind;
 use crate::npm;
 use crate::package_manager_real::add_remove_with_filter::WorkspaceTarget;
@@ -909,31 +908,13 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
         let source: bun_ast::Source = root_json.source.clone();
 
         let mut workspace_map = WorkspaceMap::init();
-        let workspaces = manifest.as_property(b"workspaces");
-        let packages = workspaces
-            .as_ref()
-            .filter(|q| !q.expr.is_array())
-            .and_then(|q| q.expr.as_property(b"packages"));
-        let names = match (&workspaces, &packages) {
-            (Some(q), _) if q.expr.is_array() => {
-                NamesArray::from_expr(&q.expr, value_loc_of(&source, q.loc)).map(|a| (a, q.loc))
-            }
-            (Some(_), Some(p)) if p.expr.is_array() => {
-                NamesArray::from_expr(&p.expr, value_loc_of(&source, p.loc)).map(|a| (a, p.loc))
-            }
-            _ => None,
-        };
-        if let Some((arr, loc)) = names {
-            workspace_map.process_names_array(
-                &mut manager.workspace_package_json_cache,
-                log,
-                arr,
-                &source,
-                loc,
-                None,
-                MissingWorkspace::Skip,
-            )?;
-        }
+        workspace_map.process_manifest(
+            &mut manager.workspace_package_json_cache,
+            log,
+            &manifest,
+            &source,
+            MissingWorkspace::Skip,
+        )?;
         (manifest, workspace_map)
     };
 

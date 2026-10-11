@@ -2,9 +2,9 @@ import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { exists, readlink } from "fs/promises";
 import {
-  DirectoryTree,
   bunEnv,
   bunExe,
+  DirectoryTree,
   gunzipJsonRequest,
   normalizeBunSnapshot,
   runBunInstall,
@@ -12,7 +12,7 @@ import {
   tls,
 } from "harness";
 import { join } from "node:path";
-import { TestRegistry } from "registry";
+import { installEnv, TestRegistry } from "registry";
 import { resolveBulkAdvisoryFixture } from "./registry/fixtures/audit/audit-fixtures";
 
 function fixture(
@@ -221,11 +221,6 @@ async function deadRegistryHref() {
   const href = server.url.href;
   await server.stop(true);
   return href;
-}
-
-// The CI runner exports one BUN_INSTALL_CACHE_DIR per file, which overrides the bunfig cache the concurrent cases rely on.
-function installEnv(dir: string) {
-  return { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") };
 }
 
 async function setup(

@@ -8,7 +8,7 @@ use bun_core::{Global, Output, UnwrapOrOom as _, strings};
 
 use crate::lockfile::override_map::OverrideRule;
 use crate::lockfile::package::PackageColumns as _;
-use crate::lockfile::{LoadResult, Lockfile, Package, PackageIndexEntry};
+use crate::lockfile::{LoadResult, Lockfile, Package, PackageIndexEntry, print_log_errors};
 use crate::package_manager::Options::{Enable, LogLevel};
 use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
 use crate::{
@@ -741,17 +741,10 @@ pub fn dedupe_before_install(
             Global::exit(1);
         }
         LoadResult::Err(cause) => {
-            if crate::migration::reported_unsupported_lockfile_version(cause) {
-                Global::exit(1);
-            }
             if !quiet {
-                Output::err_generic(
-                    "failed to {s} lockfile: {s}",
-                    (cause.step.verb(), cause.value.name()),
-                );
-                print_log_errors(manager.log_mut());
+                cause.report(manager.log_mut());
             }
-            Global::crash();
+            Global::exit(1);
         }
         LoadResult::Ok(_) => {}
     }
@@ -773,12 +766,6 @@ pub fn dedupe_before_install(
         );
     }
     Ok(())
-}
-
-fn print_log_errors(log: &bun_ast::Log) {
-    if log.has_errors() {
-        let _ = log.print(core::ptr::from_mut(Output::error_writer()));
-    }
 }
 
 fn package_json_declares_dependencies(manager: &mut PackageManager) -> crate::Result<bool> {

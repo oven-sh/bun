@@ -2859,6 +2859,40 @@ pub(crate) fn install_isolated_packages(
 
                     let dep = &lockfile_ro.buffers.dependencies[dep_id as usize];
 
+                    let fail_enqueue = |installer: &mut store::Installer<'_>,
+                                        err: crate::network_task::ForTarballError,
+                                        what: &str| {
+                        if matches!(
+                            err,
+                            crate::network_task::ForTarballError::AlreadyFailed
+                                | crate::network_task::ForTarballError::Offline
+                        ) {
+                            installer.on_download_not_queued(entry_id);
+                            return;
+                        }
+                        // error.InvalidURL
+                        Output::err(
+                            err,
+                            "failed to enqueue {} for download: {}@{}",
+                            (
+                                what,
+                                BStr::new(pkg_name.slice(string_buf)),
+                                bun_fmt::for_terminal(
+                                    pkg_res.fmt(string_buf, bun_fmt::PathSep::Auto),
+                                ),
+                            ),
+                        );
+                        Output::flush();
+                        if installer.manager().options.enable.fail_early() {
+                            Global::exit(1);
+                        }
+                        // .monotonic is okay because an error means the task isn't
+                        // running on another thread.
+                        entry_steps[entry_id.get() as usize]
+                            .store(installer::Step::Done as u32, Ordering::Relaxed);
+                        installer.on_task_complete(entry_id, installer::CompleteState::Fail);
+                    };
+
                     match pkg_res_tag {
                         ResolutionTag::Npm => {
                             match installer.manager_mut().enqueue_package_for_download(
@@ -2873,37 +2907,7 @@ pub(crate) fn install_isolated_packages(
                                 Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {
                                     return Err(AllocError);
                                 }
-                                Err(
-                                    crate::network_task::ForTarballError::AlreadyFailed
-                                    | crate::network_task::ForTarballError::Offline,
-                                ) => {
-                                    installer.on_download_not_queued(entry_id);
-                                    continue;
-                                }
-                                Err(err) => {
-                                    // error.InvalidURL
-                                    Output::err(
-                                        err,
-                                        "failed to enqueue package for download: {}@{}",
-                                        (
-                                            BStr::new(pkg_name.slice(string_buf)),
-                                            bun_fmt::for_terminal(
-                                                pkg_res.fmt(string_buf, bun_fmt::PathSep::Auto),
-                                            ),
-                                        ),
-                                    );
-                                    Output::flush();
-                                    if installer.manager().options.enable.fail_early() {
-                                        Global::exit(1);
-                                    }
-                                    // .monotonic is okay because an error means the task isn't
-                                    // running on another thread.
-                                    entry_steps[entry_id.get() as usize]
-                                        .store(installer::Step::Done as u32, Ordering::Relaxed);
-                                    installer
-                                        .on_task_complete(entry_id, installer::CompleteState::Fail);
-                                    continue;
-                                }
+                                Err(err) => fail_enqueue(&mut installer, err, "package"),
                             }
                         }
                         ResolutionTag::Git => {
@@ -2933,36 +2937,7 @@ pub(crate) fn install_isolated_packages(
                                 Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {
                                     bun_core::out_of_memory()
                                 }
-                                Err(
-                                    crate::network_task::ForTarballError::AlreadyFailed
-                                    | crate::network_task::ForTarballError::Offline,
-                                ) => {
-                                    installer.on_download_not_queued(entry_id);
-                                    continue;
-                                }
-                                Err(err) => {
-                                    Output::err(
-                                        err,
-                                        "failed to enqueue github package for download: {}@{}",
-                                        (
-                                            BStr::new(pkg_name.slice(string_buf)),
-                                            bun_fmt::for_terminal(
-                                                pkg_res.fmt(string_buf, bun_fmt::PathSep::Auto),
-                                            ),
-                                        ),
-                                    );
-                                    Output::flush();
-                                    if installer.manager().options.enable.fail_early() {
-                                        Global::exit(1);
-                                    }
-                                    // .monotonic is okay because an error means the task isn't
-                                    // running on another thread.
-                                    entry_steps[entry_id.get() as usize]
-                                        .store(installer::Step::Done as u32, Ordering::Relaxed);
-                                    installer
-                                        .on_task_complete(entry_id, installer::CompleteState::Fail);
-                                    continue;
-                                }
+                                Err(err) => fail_enqueue(&mut installer, err, "github package"),
                             }
                         }
                         ResolutionTag::LocalTarball => {
@@ -2985,36 +2960,7 @@ pub(crate) fn install_isolated_packages(
                                 Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {
                                     bun_core::out_of_memory()
                                 }
-                                Err(
-                                    crate::network_task::ForTarballError::AlreadyFailed
-                                    | crate::network_task::ForTarballError::Offline,
-                                ) => {
-                                    installer.on_download_not_queued(entry_id);
-                                    continue;
-                                }
-                                Err(err) => {
-                                    Output::err(
-                                        err,
-                                        "failed to enqueue tarball for download: {}@{}",
-                                        (
-                                            BStr::new(pkg_name.slice(string_buf)),
-                                            bun_core::fmt::for_terminal(
-                                                pkg_res.fmt(string_buf, bun_fmt::PathSep::Auto),
-                                            ),
-                                        ),
-                                    );
-                                    Output::flush();
-                                    if installer.manager().options.enable.fail_early() {
-                                        Global::exit(1);
-                                    }
-                                    // .monotonic is okay because an error means the task isn't
-                                    // running on another thread.
-                                    entry_steps[entry_id.get() as usize]
-                                        .store(installer::Step::Done as u32, Ordering::Relaxed);
-                                    installer
-                                        .on_task_complete(entry_id, installer::CompleteState::Fail);
-                                    continue;
-                                }
+                                Err(err) => fail_enqueue(&mut installer, err, "tarball"),
                             }
                         }
                         _ => unreachable!(),

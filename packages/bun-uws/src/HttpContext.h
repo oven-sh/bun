@@ -494,7 +494,8 @@ private:
                  * the writable event tells that response so (kqueue reports read
                  * and write readiness separately); onWritable stays armed until then. */
                 queueBehindEarlierResponse = httpResponseData->nodeHttpQueuedPipelinedCount > 0
-                    || ((HttpResponse<SSL> *) s)->hasUnfinishedOutgoing();
+                    || !((AsyncSocket<SSL> *) s)->hasFullyDrained()
+                    || httpResponseData->onWritable != nullptr;
             }
             if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || queueBehindEarlierResponse) {
                 if constexpr (!IsNodeHttp) {
@@ -708,13 +709,6 @@ private:
                 if (switchToTunnelAfterThisChunk) {
                     /* The response cannot resume reads in tunnel mode: this lifts the pause the body left. */
                     Bun__NodeHTTP__onTunnelStarted(SSL, (struct us_socket_t *) user);
-                    if (us_socket_is_closed((struct us_socket_t *) user)) {
-                        return nullptr;
-                    }
-                } else if (fin && ((struct us_socket_t *) user)->flags.is_paused && !httpResponseData->isConnectRequest
-                    && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED)) {
-                    /* Like Node's parserOnMessageComplete, which starts the reads again behind a complete message. Flood prevention keeps its own pause. */
-                    Bun__NodeHTTP__onReadsResumable(SSL, (struct us_socket_t *) user);
                     if (us_socket_is_closed((struct us_socket_t *) user)) {
                         return nullptr;
                     }
@@ -1101,7 +1095,8 @@ private:
              * callback is still draining) must not be discarded by the close()
              * below; the connection shuts down from the shouldCloseConnection()
              * gates once they have flushed. */
-            bool hasQueuedOutgoing = ((HttpResponse<SSL> *) s)->hasUnfinishedOutgoing();
+            bool hasQueuedOutgoing = !asyncSocket->hasFullyDrained()
+                || httpResponseData->onWritable != nullptr;
             bool responseInFlight = httpResponseData->nodeHttpQueuedPipelinedCount > 0
                 || (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING);
             if (hasQueuedOutgoing || (httpContextData->flags.httpAllowHalfOpen && responseInFlight)) {

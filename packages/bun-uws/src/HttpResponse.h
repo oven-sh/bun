@@ -183,12 +183,6 @@ public:
         return true;
     }
 
-    /* node:http: a response that has ended still has bytes in the outgoing buffer (or the TLS spill slot), or its drain
-     * callback has not run. A write or an uncork can empty the buffer before the writable event runs that callback. */
-    bool hasUnfinishedOutgoing() {
-        return !Super::hasFullyDrained() || getHttpResponseData()->onWritable != nullptr;
-    }
-
     /* node:http: a connection at rest has reads that do not hold the event loop (they are stopped, at EOF, or the socket
      * is unref'd), owes no response and has nothing left to send. Like a libuv stream handle in that state, it does not
      * hold the event loop: https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1473-L1485. The filter

@@ -232,9 +232,10 @@ static void refreshAtRestOf(us_socket_t* socket)
         atRest = socket->flags.is_paused && !(state & uWS::HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED) && !owesResponse;
     }
     if (atRest) {
-        /* hasUnfinishedOutgoing() does not count the cork buffer. */
-        reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket)->sendCorked();
-        atRest = (!cell || cell->streamBuffer.bufferedSize() == 0) && !reinterpret_cast<uWS::HttpResponse<SSL>*>(socket)->hasUnfinishedOutgoing();
+        auto* asyncSocket = reinterpret_cast<uWS::AsyncSocket<SSL>*>(socket);
+        /* hasFullyDrained() does not count the cork buffer. */
+        asyncSocket->sendCorked();
+        atRest = (!cell || cell->streamBuffer.bufferedSize() == 0) && asyncSocket->hasFullyDrained();
     }
     setAtRest<SSL>(socket, httpResponseData, atRest);
 }
@@ -453,9 +454,9 @@ JSC::EncodedJSValue JSNodeHTTPServerSocket::halfClose(JSC::JSGlobalObject* globa
     // onNodeHTTPRequest no longer pauses at dispatch; pause here so the
     // shutdown+resume below still cycles kqueue's EVFILT_READ (delete then
     // re-add), without which macOS 26 does not deliver the peer's close.
-    // Not for a tunnel that paused its reads: the resume that ends that pause is the re-add.
-    const bool cycleReads = !upgraded && !tunnelReadsPaused();
-    if (socket && cycleReads) {
+    // Not for reads that a tunnel or a request stopped: the resume that ends that stop is the re-add.
+    const bool cycleReads = socket && !upgraded && !socket->flags.is_paused;
+    if (cycleReads) {
         us_socket_pause(socket);
     }
     auto result = us_socket_buffered_js_write(socket, is_ssl, ended, hasUnsentResponseBytes(), flushesStreamBufferOnDrain(), &streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));

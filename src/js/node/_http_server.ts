@@ -1104,7 +1104,11 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         }
 
         // Node's parserOnMessageComplete: a message without a body is complete once the listener returns. EOF stays lazy (_read).
-        if (!hasBody) http_req.complete = true;
+        if (!hasBody) {
+          http_req.complete = true;
+          // It also starts the reads again: a pause in the listener does not hold the next message.
+          if (socket.isPaused()) socket.resume();
+        }
 
         if (isPipelined) {
           // Completion of a queued response is tracked through the pipeline

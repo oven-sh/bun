@@ -154,6 +154,52 @@ const rows = {
     },
     stopped: () => row.socket.end(),
   },
+  "socket.end() and socket.unref() when the reads have stopped": {
+    start() {
+      row.client.on("end", () => result.events.push("the peer got the FIN"));
+      endThenStop();
+    },
+    stopped() {
+      row.socket.end();
+      row.socket.unref();
+    },
+  },
+  // Node's parser starts the reads again behind a complete message, and the request emits 'end' after that: the pause stays.
+  "socket.pause() in the 'end' listener of a request": {
+    own: true,
+    length: first.length,
+    start() {
+      row.req.on("data", count);
+      row.req.on("end", () => {
+        row.socket.pause();
+        row.res.end("done");
+        rest();
+      });
+    },
+  },
+  "socket.pause() in the 'end' listener of a request without a body": {
+    own: true,
+    head: get("/"),
+    start() {
+      row.req.resume();
+      row.req.on("end", () => {
+        row.socket.pause();
+        row.res.end("done");
+        rest();
+      });
+    },
+  },
+  "socket.pause() one tick behind the listener of a request without a body": {
+    own: true,
+    head: get("/"),
+    start() {
+      process.nextTick(() => {
+        row.socket.pause();
+        row.res.end("done");
+        rest();
+      });
+    },
+  },
   // The second request waits behind the first response. Its body stops the reads, and then both responses end.
   "two pipelined requests, the second one stops the reads": {
     head: get("/first") + post(endless) + first,
@@ -357,6 +403,30 @@ const rows = {
       }
     },
   },
+  // The tunnel is at the end of its reads when the response ahead of it still has bytes to send.
+  "a CONNECT request behind a response that sends with backpressure": {
+    own: true,
+    head: get("/first") + "CONNECT a:443 HTTP/1.1\r\nHost: a:443\r\n\r\n",
+    request(req, res) {
+      if (req.method === "CONNECT") return true;
+      row.first = res;
+      res.on("finish", () => result.events.push("finish"));
+      res.write("part");
+    },
+    start() {
+      row.socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      row.socket.on("end", () => {
+        result.events.push("socket end");
+        after(4, () => {
+          row.first.write(large);
+          row.first.end(large);
+          rest();
+        });
+      });
+      row.client.resume();
+      row.client.end();
+    },
+  },
   // Like Node's parser, which starts the reads again behind a complete message: the pause does not hold the next request.
   "socket.pause() in the listener of a request without a body": {
     own: true,
@@ -365,6 +435,7 @@ const rows = {
       result.events.push(req.url);
       if (req.url === "/first") {
         if (CLOSE !== "after") close();
+        req.socket.on("pause", () => result.events.push("pause")).on("resume", () => result.events.push("resume"));
         req.socket.pause();
         res.end("first");
         row.client.once("data", () => row.client.write(get("/second")));
@@ -578,7 +649,10 @@ function onRequest(req, res, socket = req.socket) {
   kind.start();
   if (!kind.own) untilReadsStop();
 }
-server.on("request", onRequest).on("upgrade", (req, socket) => onRequest(req, undefined, socket));
+server
+  .on("request", onRequest)
+  .on("upgrade", (req, socket) => onRequest(req, undefined, socket))
+  .on("connect", (req, socket) => onRequest(req, undefined, socket));
 
 const listen = () => server.listen(0, "127.0.0.1", onListening);
 function onListening() {

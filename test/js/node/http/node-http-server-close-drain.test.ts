@@ -1108,6 +1108,10 @@ describe.concurrent("what keeps the process alive: a request that stops the read
     "req.pause() and socket.pause()": atRest,
     "socket.pause() between two reads of a request that has a reader": { events: [], received: 1000 },
     "socket.end() when the reads have stopped": { events: ["the peer got the FIN"], received: 0 },
+    "socket.end() and socket.unref() when the reads have stopped": { events: ["the peer got the FIN"], received: 0 },
+    "socket.pause() in the 'end' listener of a request": { events: ["end"], received: 1000 },
+    "socket.pause() in the 'end' listener of a request without a body": { events: ["end"], received: 0 },
+    "socket.pause() one tick behind the listener of a request without a body": { events: ["end"], received: 0 },
     "two pipelined requests, the second one stops the reads": atRest,
     // The 'end' of the second request, which nobody read.
     "two pipelined requests, socket.pause() one turn later and then both responses end": {
@@ -1129,9 +1133,13 @@ describe.concurrent("what keeps the process alive: a request that stops the read
       ...closed,
     },
     "socket.pause() in the listener of a request without a body": {
-      events: ["/first", "/second"],
+      events: ["/first", "pause", "resume", "/second"],
       received: 0,
       ...closed,
+    },
+    "a CONNECT request behind a response that sends with backpressure": {
+      events: ["socket end", "finish"],
+      received: 0,
     },
     "a reader all along": { events: ["end", "close"], received: 1004, ...closed },
     "a request that nobody reads": { events: ["still alive", "end", "close"], received: 0, ...closed },

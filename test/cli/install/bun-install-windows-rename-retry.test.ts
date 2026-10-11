@@ -219,7 +219,8 @@ describe.skipIf(!isWindows).concurrent("bun install renames into the cache while
   // Nothing stalls these two installs before the rename: one the fixture comes too late for must succeed, and another is made.
   test.each(modes)("patched package: $mode", async ({ budget, holdMs }) => {
     await using server = serveRegistry();
-    for (let held = false; !held; ) {
+    let held = false;
+    for (let attempt = 0; attempt < 10 && !held; attempt++) {
       using s = scaffold("rename-retry-patch", registryBunfig(server.port), {
         patchedDependencies: { [`${PKG}@1.0.0`]: `patches/${PKG}.patch` },
       });
@@ -244,11 +245,13 @@ describe.skipIf(!isWindows).concurrent("bun install renames into the cache while
         expect(result.exitCode).not.toBe(0);
       }
     }
+    expect(held, "the fixture never held the staging directory").toBe(true);
   });
 
   test.each(modes)("global virtual store entry: $mode", async ({ budget, holdMs }) => {
     await using server = serveRegistry();
-    for (let held = false; !held; ) {
+    let held = false;
+    for (let attempt = 0; attempt < 10 && !held; attempt++) {
       using s = scaffold("rename-retry-global-store", registryBunfig(server.port) + `linker = "isolated"\n`, {});
 
       // Entries are assembled in `<cache>/links/<entry>.tmp-<suffix>` and
@@ -271,5 +274,6 @@ describe.skipIf(!isWindows).concurrent("bun install renames into the cache while
         expect(result.exitCode).not.toBe(0);
       }
     }
+    expect(held, "the fixture never held the staging directory").toBe(true);
   });
 });

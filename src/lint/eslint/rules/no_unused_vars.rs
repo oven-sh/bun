@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::semantic::DeclarationKinds;
 use bun_lint::utils::ts_scope::{
     Walks, get_rhs_node, has_rest_sibling, is_defined_in_array_pattern, is_read_for_itself,
     is_referenced_in_array_pattern,
@@ -226,6 +227,21 @@ fn is_used_variable(variable: Variable) -> bool {
             rhs = get_rhs_node(reference, rhs, walks);
         }
         reference.is_read() && !is_for_itself && !is_self_reference(variable, reference)
+    })
+}
+
+/// Whether a look at the first reference that reads `symbol` tells that [`is_used_variable`] holds. Nearly every variable
+/// is such.
+fn is_plainly_used(symbol: Symbol) -> bool {
+    let kinds = symbol.declaration_kinds();
+    // What nothing modifies is on the left of no assignment, and is not read for itself.
+    if kinds.contains(DeclarationKinds::CLASS_NAME) || symbol.has_modifying_references() {
+        return false;
+    }
+    // In the function that declares it, it is in no function that it is the name of.
+    let names_functions = kinds.intersects(DeclarationKinds::VARIABLE | DeclarationKinds::FUNCTION_NAME);
+    symbol.references().find(|it| it.is_read()).is_some_and(|read| {
+        !names_functions || read.scope().variable_scope() == symbol.scope().variable_scope()
     })
 }
 
@@ -930,6 +946,10 @@ impl NoUnusedVars {
     }
 
     fn check<'a>(&self, symbol: Symbol<'a>, cx: &Cx<'a, Self>) {
+        // Nothing else is said about what is used.
+        if !self.report_used_ignore_pattern && is_plainly_used(symbol) {
+            return;
+        }
         let Some(def) = symbol.declarations().find(|it| !matches!(it, Declaration::Other)) else {
             return;
         };

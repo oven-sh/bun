@@ -154,6 +154,7 @@ slices! {
         type_query_operands: hir::ExprId,
         expr_kinds: u8,
         expr_kind_counts: u32,
+        kind_counts: u32,
     }
 }
 

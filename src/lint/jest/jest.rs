@@ -149,6 +149,17 @@ struct PossibleJestNodes {
     /// The names under which something is imported from Jest or Vitest.
     originals: Vec<Box<[u8]>>,
     calls: Vec<PossibleCall>,
+    /// [`Scopes::of`] each of `calls`, once a rule asks.
+    scopes: OnceCell<Vec<ScopeMaker>>,
+}
+
+/// What makes a scope, by its number.
+#[derive(Copy, Clone)]
+enum ScopeMaker {
+    File,
+    Func(u32),
+    Stmt(u32),
+    Class(u32),
 }
 
 struct PossibleCall {
@@ -288,6 +299,34 @@ pub(crate) fn iter_possible_jest_call_node<'a>(
     calls
         .iter()
         .map(move |call| PossibleJestNode::of(file, originals, call))
+}
+
+/// [`iter_possible_jest_call_node`], each with [`Scopes::of`] it.
+pub(crate) fn iter_possible_jest_call_node_with_scope<'a>(
+    file: &'a File<'a>,
+) -> impl Iterator<Item = (PossibleJestNode<'a>, Option<Node<'a>>)> {
+    let scopes = possible_jest_nodes(file).map_or(&[][..], |found| {
+        found.scopes.get_or_init(|| {
+            let mut scopes = Scopes::default();
+            let calls = found.calls.iter().map(|it| Expr::from_raw(file, it.id));
+            calls
+                .map(|it| match scopes.of(Node::Expr(it)) {
+                    Some(Node::Func(func)) => ScopeMaker::Func(func.id().0),
+                    Some(Node::Stmt(statement)) => ScopeMaker::Stmt(statement.id().0),
+                    Some(Node::Class(class)) => ScopeMaker::Class(class.id().0),
+                    // Nothing else makes one.
+                    _ => ScopeMaker::File,
+                })
+                .collect()
+        })
+    });
+    let scope = move |it: &ScopeMaker| match *it {
+        ScopeMaker::File => None,
+        ScopeMaker::Func(id) => Some(Node::Func(Func::from_raw(file, id))),
+        ScopeMaker::Stmt(id) => Some(Node::Stmt(Stmt::from_raw(file, id))),
+        ScopeMaker::Class(id) => Some(Node::Class(Class::from_raw(file, id))),
+    };
+    iter_possible_jest_call_node(file).zip(scopes.iter().map(scope))
 }
 
 /// The one of [`iter_possible_jest_call_node`] that is the call `node`.

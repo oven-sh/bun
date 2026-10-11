@@ -175,7 +175,7 @@ fn has_arg_count(call: Call, min_arg_count: Option<usize>, max_arg_count: Option
 }
 
 /// `objects`: the identifiers that the method is called on. `None`: whatever.
-#[inline]
+#[inline(always)]
 pub fn is_method_call(
     call: Call,
     objects: Option<&[&str]>,
@@ -183,11 +183,16 @@ pub fn is_method_call(
     min_arg_count: Option<usize>,
     max_arg_count: Option<usize>,
 ) -> bool {
-    has_arg_count(call, min_arg_count, max_arg_count)
-        && get_member_expr(call.callee()).is_some_and(|it| is_method_of(it, objects, methods))
+    has_arg_count(call, min_arg_count, max_arg_count) && calls_method_of(call, objects, methods)
+}
+
+#[inline(never)]
+fn calls_method_of(call: Call, objects: Option<&[&str]>, methods: Option<&[&str]>) -> bool {
+    get_member_expr(call.callee()).is_some_and(|it| is_method_of(it, objects, methods))
 }
 
 /// Whether the `Dot` or the `Index` `member` is one of `methods` of one of `objects`.
+#[inline]
 fn is_method_of(member: Expr, objects: Option<&[&str]>, methods: Option<&[&str]>) -> bool {
     let is_on = |objects: &[&str]| {
         (member

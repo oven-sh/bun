@@ -10,6 +10,7 @@ use crate::rule::{Meta, NAME_CLASSES, NodeTags, On, Rule, When, name_class};
 use crate::rule_set::{RuleBits, RuleSet};
 use crate::span::Span;
 use bun_sema::atom::Atom;
+use bun_sema::bind::kind_counts;
 use bun_sema::hir;
 use std::cell::{Cell, OnceCell};
 
@@ -61,28 +62,33 @@ impl<const KINDS: usize> Grouped<KINDS> {
 
     /// `kinds`: the kind of each of `all`, `NOT_IN_TREE` to leave it out.
     fn of_kinds(all: impl Iterator<Item = u32>, kinds: &[u8]) -> Self {
-        Grouped::of_counted_kinds(all, kinds, &count_kinds(kinds))
+        Grouped::of_counted_kinds(all, kinds.iter().copied(), &count_kinds(kinds))
+    }
+
+    /// A bit for each kind of which there is one, if there are no more than 64 kinds. `counts`: as below.
+    fn present(counts: &[u32; MOST_KINDS + 2]) -> u64 {
+        let kinds = 0..KINDS.min(64);
+        kinds.fold(0, |present, kind| {
+            present | u64::from(counts[kind + 1] != 0) << kind
+        })
     }
 
     /// `counts`: at `kind + 1`, how many of `kinds` are `kind`.
     fn of_counted_kinds(
         all: impl Iterator<Item = u32>,
-        kinds: &[u8],
+        kinds: impl Iterator<Item = u8>,
         counts: &[u32; MOST_KINDS + 2],
     ) -> Self {
         const { assert!(KINDS <= MOST_KINDS) };
-        let (mut starts, mut present) = (*counts, 0u64);
+        let (mut starts, present) = (*counts, Self::present(counts));
         for kind in 0..KINDS {
-            if KINDS <= 64 {
-                present |= u64::from(starts[kind + 1] != 0) << kind;
-            }
             starts[kind + 1] += starts[kind];
         }
         // Where the next of each kind goes. What is left out has no place.
         let mut next = [u32::MAX; u8::MAX as usize + 1];
         next[..KINDS].copy_from_slice(&starts[..KINDS]);
         let mut ids = vec![0u32; starts[KINDS] as usize];
-        for (id, &kind) in all.zip(kinds) {
+        for (id, kind) in all.zip(kinds) {
             let at = &mut next[kind as usize];
             if let Some(place) = ids.get_mut(*at as usize) {
                 *place = id;
@@ -147,7 +153,7 @@ impl Exprs {
         let mut counts = [0u32; MOST_KINDS + 2];
         counts.get_mut(1..=counted.len())?.copy_from_slice(counted);
         let mut grouped: Grouped<{ 2 * ExprTag::COUNT }> =
-            Grouped::of_counted_kinds(0..kinds.len() as u32, kinds, &counts);
+            Grouped::of_counted_kinds(0..kinds.len() as u32, kinds.iter().copied(), &counts);
         if bun_core::strings::contains_char(file.text(), b'`') {
             let (strings, templates) =
                 (2 * ExprTag::String as usize, 2 * ExprTag::Template as usize);
@@ -215,7 +221,11 @@ impl Exprs {
             kind
         });
         Exprs {
-            grouped: Grouped::of_counted_kinds(0..kinds.len() as u32, &kinds, &counts),
+            grouped: Grouped::of_counted_kinds(
+                0..kinds.len() as u32,
+                kinds.iter().copied(),
+                &counts,
+            ),
             present: 0,
             chained: 0,
         }
@@ -371,6 +381,10 @@ pub(crate) struct ByKind {
     stmts: OnceCell<Grouped<{ StmtTag::COUNT }>>,
     types: OnceCell<Grouped<{ TypeTag::COUNT }>>,
     pats: OnceCell<Grouped<{ PatTag::COUNT }>>,
+    /// `Grouped::present` of these three, which can be known before they are grouped.
+    present_stmts: OnceCell<u64>,
+    present_types: OnceCell<u64>,
+    present_pats: OnceCell<u64>,
     /// The `ExprTag::Binary` and the `ExprTag::Unary` by operator.
     binaries: OnceCell<Grouped<{ BinOp::Comma as usize + 1 }>>,
     unaries: OnceCell<Grouped<{ UnOp::PostDec as usize + 1 }>>,
@@ -421,9 +435,52 @@ impl File<'_> {
         self.exprs().grouped.of(2 * tag as usize + 1)
     }
 
+    /// What the binder has counted from `first` on, at `kind + 1` for each of `kinds` kinds. `None`: it has not counted, or the
+    /// file has nodes that are synthesized, which are counted and are no nodes here.
+    fn counted(&self, first: usize, kinds: usize) -> Option<[u32; MOST_KINDS + 2]> {
+        let counted = self.bound.kind_counts.get(first..first + kinds)?;
+        let mut counts = [0u32; MOST_KINDS + 2];
+        counts.get_mut(1..=kinds)?.copy_from_slice(counted);
+        (!self.has_synthetic_nodes()).then_some(counts)
+    }
+
+    /// How many statements there are of each kind, if the binder has counted them and all of them are nodes: none is the head
+    /// of a `for` that is an expression, the object of a `with`, or the `B` of `namespace A.B`.
+    fn counted_stmts(&self) -> Option<[u32; MOST_KINDS + 2]> {
+        let counts = self.counted(kind_counts::STMTS, StmtTag::COUNT)?;
+        let heads = *(self.bound.kind_counts).get(kind_counts::HEADS_THAT_ARE_EXPRESSIONS)?;
+        (heads == 0 && self.hir.with_bodies.is_empty() && counts[StmtTag::Module as usize + 1] < 2)
+            .then_some(counts)
+    }
+
+    /// The same for the types: none is an error with an operand that is no node.
+    fn counted_types(&self) -> Option<[u32; MOST_KINDS + 2]> {
+        let counts = self.counted(kind_counts::TYPES, TypeTag::COUNT)?;
+        (counts[TypeTag::JSDoc as usize + 1] == 0).then_some(counts)
+    }
+
+    /// The same for the patterns, of which those that are missing are no nodes: each is part of something.
+    fn counted_pats(&self) -> Option<[u32; MOST_KINDS + 2]> {
+        let mut counts = self.counted(kind_counts::PATS, PatTag::COUNT)?;
+        counts[PatTag::Missing as usize + 1] = 0;
+        let orphans = *(self.bound.kind_counts).get(kind_counts::PATS_WITHOUT_PARENT)?;
+        (orphans == 0).then_some(counts)
+    }
+
     #[inline]
     fn stmts(&self) -> &Grouped<{ StmtTag::COUNT }> {
-        (self.by_kind().stmts).get_or_init(|| Grouped::new(|kinds| self.stmt_tags_in_tree(kinds)))
+        self.by_kind()
+            .stmts
+            .get_or_init(|| match self.counted_stmts() {
+                Some(counts) => {
+                    let kinds = self.hir.stmts.iter().map(|it| {
+                        debug_assert_eq!(StmtTag::of(&it.kind) as u8, it.kind.tag() as u8);
+                        StmtTag::of(&it.kind) as u8
+                    });
+                    Grouped::of_counted_kinds(0.., kinds, &counts)
+                }
+                None => Grouped::new(|kinds| self.stmt_tags_in_tree(kinds)),
+            })
     }
 
     #[inline(never)]
@@ -433,7 +490,18 @@ impl File<'_> {
 
     #[inline]
     fn type_nodes(&self) -> &Grouped<{ TypeTag::COUNT }> {
-        (self.by_kind().types).get_or_init(|| Grouped::new(|kinds| self.type_tags_in_tree(kinds)))
+        self.by_kind()
+            .types
+            .get_or_init(|| match self.counted_types() {
+                Some(counts) => {
+                    let kinds = self.hir.types.iter().map(|it| {
+                        debug_assert_eq!(TypeTag::of(&it.kind) as u8, it.kind.tag() as u8);
+                        TypeTag::of(&it.kind) as u8
+                    });
+                    Grouped::of_counted_kinds(0.., kinds, &counts)
+                }
+                None => Grouped::new(|kinds| self.type_tags_in_tree(kinds)),
+            })
     }
 
     #[inline(never)]
@@ -497,7 +565,21 @@ impl File<'_> {
 
     #[inline]
     fn pats(&self) -> &Grouped<{ PatTag::COUNT }> {
-        (self.by_kind().pats).get_or_init(|| Grouped::new(|kinds| self.pat_tags_in_tree(kinds)))
+        self.by_kind()
+            .pats
+            .get_or_init(|| match self.counted_pats() {
+                Some(counts) => {
+                    let kinds = self.hir.pats.iter().map(|it| {
+                        debug_assert_eq!(PatTag::of(&it.kind) as u8, it.kind.tag() as u8);
+                        match PatTag::of(&it.kind) {
+                            PatTag::Missing => NOT_IN_TREE,
+                            tag => tag as u8,
+                        }
+                    });
+                    Grouped::of_counted_kinds(0.., kinds, &counts)
+                }
+                None => Grouped::new(|kinds| self.pat_tags_in_tree(kinds)),
+            })
     }
 
     #[inline(never)]
@@ -528,17 +610,26 @@ impl File<'_> {
 
     #[inline(never)]
     fn present_stmts(&self) -> u64 {
-        self.stmts().present
+        *(self.by_kind().present_stmts).get_or_init(|| match self.counted_stmts() {
+            Some(counts) => Grouped::<{ StmtTag::COUNT }>::present(&counts),
+            None => self.stmts().present,
+        })
     }
 
     #[inline(never)]
     fn present_types(&self) -> u64 {
-        self.type_nodes().present
+        *(self.by_kind().present_types).get_or_init(|| match self.counted_types() {
+            Some(counts) => Grouped::<{ TypeTag::COUNT }>::present(&counts),
+            None => self.type_nodes().present,
+        })
     }
 
     #[inline(never)]
     fn present_pats(&self) -> u64 {
-        self.pats().present
+        *(self.by_kind().present_pats).get_or_init(|| match self.counted_pats() {
+            Some(counts) => Grouped::<{ PatTag::COUNT }>::present(&counts),
+            None => self.pats().present,
+        })
     }
 }
 

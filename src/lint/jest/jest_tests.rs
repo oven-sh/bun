@@ -5,8 +5,8 @@ use crate::jest::{
     Ctx, JestFnKind, JestGeneralFnKind, MemberExpressionElement, OxlintOrder,
     ParsedGeneralJestFnCall, PossibleJestNode, Scopes, for_each_call_named_like,
     is_in_call_or_member, is_type_of_jest_fn_call, is_vitest, iter_possible_jest_call_node,
-    mention_bits, mentions_any, mentions_jest_method, parent_expression,
-    parse_general_jest_fn_call, parse_jest_fn_call,
+    iter_possible_jest_call_node_with_scope, mention_bits, mentions_any, mentions_jest_method,
+    parent_expression, parse_general_jest_fn_call, parse_jest_fn_call,
 };
 use bun_core::strings;
 use bun_lint::prelude::*;
@@ -1348,8 +1348,8 @@ pub(crate) mod require_top_level_describe {
     }
 
     pub(crate) fn run_once<'a>(max_number_of_top_level_describes: u32, ctx: &Ctx<'a, '_>) {
-        let (mut scopes, mut count) = (Scopes::default(), 0);
-        for possible_jest_node in iter_possible_jest_call_node(ctx.file) {
+        let mut count = 0;
+        for (possible_jest_node, scope) in iter_possible_jest_call_node_with_scope(ctx.file) {
             let node = possible_jest_node.node;
             let Some(ParsedGeneralJestFnCall {
                 kind: JestFnKind::General(kind),
@@ -1361,7 +1361,7 @@ pub(crate) mod require_top_level_describe {
             if !matches!(
                 kind,
                 JestGeneralFnKind::Test | JestGeneralFnKind::Hook | JestGeneralFnKind::Describe
-            ) || scopes.of(Node::Expr(node)).is_some()
+            ) || scope.is_some()
             {
                 continue;
             }
@@ -1401,8 +1401,7 @@ pub(crate) mod padding_around_blocks {
 
     /// `is_for_tests`: for `it` and `test`. Otherwise for `afterAll`.
     pub(crate) fn run<'a>(ctx: &Ctx<'a, '_>, is_for_tests: bool) {
-        let mut scopes = Scopes::default();
-        for possible_jest_node in iter_possible_jest_call_node(ctx.file) {
+        for (possible_jest_node, scope) in iter_possible_jest_call_node_with_scope(ctx.file) {
             let Some(ParsedGeneralJestFnCall { kind, name, .. }) =
                 parse_general_jest_fn_call(ctx.file, possible_jest_node)
             else {
@@ -1415,12 +1414,7 @@ pub(crate) mod padding_around_blocks {
                 }
             };
             if is_wanted {
-                report_missing_padding_before_jest_block(
-                    possible_jest_node.node,
-                    &mut scopes,
-                    ctx,
-                    name,
-                );
+                report_missing_padding_before_jest_block(possible_jest_node.node, scope, ctx, name);
             }
         }
     }
@@ -1431,13 +1425,13 @@ pub(crate) mod padding_around_blocks {
 
     fn report_missing_padding_before_jest_block<'a>(
         node: Expr<'a>,
-        scopes: &mut Scopes<'a>,
+        scope: Option<Node<'a>>,
         ctx: &Ctx<'a, '_>,
         name: &'a [u8],
     ) {
         let (file, node_start) = (ctx.file, node.span().start);
         // Not in a block.
-        let statements = match scopes.of(Node::Expr(node)) {
+        let statements = match scope {
             None => Some(file.body()),
             Some(Node::Func(func)) if func.kind() != FnKind::StaticBlock => func.body_statements(),
             Some(_) => None,

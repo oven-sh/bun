@@ -2,15 +2,16 @@ import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { chmodSync, existsSync, readFileSync, realpathSync, statSync, symlinkSync } from "fs";
 import { rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isWindows, tempDir, VerdaccioRegistry } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join, sep } from "path";
+import { TestRegistry } from "registry";
 
-let verdaccio: VerdaccioRegistry;
+let verdaccio: TestRegistry;
 
 setDefaultTimeout(1000 * 60 * 5);
 
 beforeAll(async () => {
-  verdaccio = new VerdaccioRegistry();
+  verdaccio = new TestRegistry();
   await verdaccio.start();
 });
 

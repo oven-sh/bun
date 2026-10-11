@@ -1,14 +1,15 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { VerdaccioRegistry, bunEnv, bunExe, nodeModulesPackages, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, nodeModulesPackages, normalizeBunSnapshot } from "harness";
 import { join } from "path";
+import { TestRegistry } from "registry";
 
 // Fixtures from ./registry/packages used below:
 //   no-deps        1.0.0, 1.0.1, 1.1.0 and 2.0.0 (latest), the package the overrides target
 //   one-dep        1.0.0, depends on no-deps@1.0.1
 //   one-range-dep  1.0.0, depends on no-deps@^1.0.0
 //   a-dep          1.0.1 to 1.0.10 (latest), no dependencies
-const registry = new VerdaccioRegistry();
+const registry = new TestRegistry();
 
 beforeAll(async () => {
   await registry.start();

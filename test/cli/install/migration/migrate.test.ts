@@ -930,7 +930,7 @@ describe("package-lock.json migration fixes", () => {
     return dir;
   }
 
-  // Serves the verdaccio fixture packages from disk and records every path requested.
+  // Serves the registry fixture packages from disk and records every path requested.
   function localRegistry() {
     const requests: string[] = [];
     let url = "";

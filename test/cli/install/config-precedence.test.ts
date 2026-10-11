@@ -1,21 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, readdirSync } from "fs";
-import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, tempDir } from "harness";
+import { bunEnv, bunExe, readdirSorted, tempDir } from "harness";
 import { join } from "path";
+import { TestRegistry } from "registry";
 
-// Own config dir: other install files' VerdaccioRegistry start()/stop() delete the shared htpasswd, invalidating our token.
-const sharedRegistryDir = join(import.meta.dir, "registry");
-const sharedVerdaccioConfig = readFileSync(join(sharedRegistryDir, "verdaccio.yaml"), "utf8");
-if (!sharedVerdaccioConfig.includes("storage: ./packages")) {
-  throw new Error("registry/verdaccio.yaml no longer has a 'storage: ./packages' line to redirect");
-}
-const registryDir = tempDir("config-precedence-registry", {
-  "verdaccio.yaml": sharedVerdaccioConfig.replace(
-    "storage: ./packages",
-    `storage: ${JSON.stringify(join(sharedRegistryDir, "packages"))}`,
-  ),
-});
-const registry = new VerdaccioRegistry({ configPath: join(String(registryDir), "verdaccio.yaml") });
+const registry = new TestRegistry();
 let authToken: string;
 
 beforeAll(async () => {
@@ -25,7 +14,6 @@ beforeAll(async () => {
 
 afterAll(() => {
   registry.stop();
-  registryDir[Symbol.dispose]();
 });
 
 const authLine = () => `//localhost:${registry.port}/:_authToken=${authToken}\n`;
@@ -56,7 +44,7 @@ function deadRegistry() {
   };
 }
 
-/** Forwards to verdaccio while recording every Authorization header it receives. */
+/** Forwards to the registry while recording every Authorization header it receives. */
 function capturingRegistry() {
   const authorizations: (string | null)[] = [];
   const upstream = registry.registryUrl();
@@ -717,7 +705,7 @@ describe.concurrent("bun install config precedence", () => {
   // what npm sends for `http://user@host/`; bun used to leave the userinfo in the URL and send nothing.
   // The URL is spelled `user:@host:port` because `user@host:port` does not get through bun's URL parser
   // yet (#16181); both spellings reach the registry config as a username with an empty password. The
-  // verdaccio behind the capturing registry accepts any credentials for packages readable by everyone.
+  // registry behind the capturing one accepts any credentials for packages readable by everyone.
   const emptyPasswordAuth = `Basic ${Buffer.from("config-precedence:").toString("base64")}`;
   const userOnlyRegistrySources: [
     source: string,

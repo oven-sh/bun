@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isDebug, nodeModulesPackages, tempDir, VerdaccioRegistry } from "harness";
+import { bunEnv, bunExe, isDebug, nodeModulesPackages, tempDir } from "harness";
 import { join } from "path";
+import { TestRegistry } from "registry";
 
 // After migrating, bun fetches the manifest of every migrated package by the name it recorded,
 // so the registry sees which package each alias was resolved to.
@@ -2053,7 +2054,7 @@ uses-foo15@1.0.0:
 });
 
 describe("installing from a migrated yarn.lock", () => {
-  const verdaccio = new VerdaccioRegistry();
+  const verdaccio = new TestRegistry();
   const REGISTRY_PACKAGES = join(import.meta.dir, "..", "registry", "packages");
 
   beforeAll(async () => {
@@ -2464,7 +2465,7 @@ describe.concurrent("yarn.lock migration of workspace dependencies", () => {
 });
 
 describe("bun install migrating a yarn.lock with workspaces", () => {
-  const verdaccio = new VerdaccioRegistry();
+  const verdaccio = new TestRegistry();
 
   beforeAll(async () => {
     await verdaccio.start();
@@ -2566,7 +2567,7 @@ describe("bun install migrating a yarn.lock with workspaces", () => {
 describe.concurrent("yarn.lock entries without a resolved field", () => {
   const REGISTRY_PACKAGES = join(import.meta.dir, "..", "registry", "packages");
 
-  // Serves the verdaccio fixture packages from disk (404 for anything else) and records every path requested.
+  // Serves the fixture packages from disk (404 for anything else) and records every path requested.
   function localRegistry() {
     const requests: string[] = [];
     let url = "";

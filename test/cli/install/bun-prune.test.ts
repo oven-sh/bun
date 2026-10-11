@@ -1,15 +1,6 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import {
-  bunEnv,
-  bunExe,
-  isRoot,
-  isWindows,
-  normalizeBunSnapshot,
-  runBunInstall,
-  tempDir,
-  VerdaccioRegistry,
-} from "harness";
+import { bunEnv, bunExe, isRoot, isWindows, normalizeBunSnapshot, runBunInstall, tempDir } from "harness";
 import {
   chmodSync,
   closeSync,
@@ -27,8 +18,9 @@ import {
 } from "node:fs";
 import { basename, join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { TestRegistry } from "registry";
 
-const registry = new VerdaccioRegistry();
+const registry = new TestRegistry();
 
 beforeAll(async () => {
   await registry.start();
@@ -134,7 +126,7 @@ function expectBinRemoved(nm: string, name: string) {
   }
 }
 
-type BunfigOpts = NonNullable<Parameters<VerdaccioRegistry["createTestDir"]>[0]>["bunfigOpts"];
+type BunfigOpts = NonNullable<Parameters<TestRegistry["createTestDir"]>[0]>["bunfigOpts"];
 
 async function setup(pkgJson: Record<string, unknown>, bunfigOpts?: BunfigOpts) {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts });
@@ -906,6 +898,45 @@ test.concurrent("hoisted: dot entries and files are never touched even when the 
   expect(existsSync(emptyStore)).toBeTrue();
   expect(existsSync(cache)).toBeTrue();
   expect(existsSync(integrity)).toBeTrue();
+});
+
+// `bun install` links a package in a `.bun-tmp-<hash>` directory next to it. One that is there
+// while no install is running is what a killed install left.
+test.concurrent("hoisted: what a killed install left in its staging directories is removed", async () => {
+  using tmp = tempDir("prune-staging-leftovers", {
+    "package.json": JSON.stringify({ name: "empty" }),
+    "bun.lock": `{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "empty",
+    },
+  },
+  "packages": {}
+}
+`,
+  });
+  const dir = String(tmp);
+  const left = plant(dir, "node_modules/.bun-tmp-0123456789abcdef");
+  const leftInScope = plant(dir, "node_modules/@scope/.bun-tmp-fedcba9876543210");
+  const cache = plant(dir, "node_modules/.cache/whatever@1.0.0");
+  const rows = ["- .bun-tmp-0123456789abcdef", "- @scope/.bun-tmp-fedcba9876543210"];
+
+  const dry = await prune(dir, "--dry-run");
+  expect(dry.stderr).toBe("");
+  expect(lines(dry.stdout)).toEqual([BANNER, "", ...rows, CAN_BE_REMOVED(2, 0), APPLY_HINT()]);
+  expect(dry.exitCode).toBe(0);
+  expect([left, leftInScope].map(path => existsSync(path))).toEqual([true, true]);
+
+  const { stdout, stderr, exitCode } = await prune(dir);
+  expect(stderr).toBe("");
+  expect(lines(stdout)).toEqual([BANNER, "", ...rows, REMOVED(2, 0)]);
+  expect(exitCode).toBe(0);
+  expect({
+    left: existsSync(left),
+    scope: existsSync(join(dir, "node_modules", "@scope")),
+    cache: existsSync(cache),
+  }).toEqual({ left: false, scope: false, cache: true });
 });
 
 // The links into node_modules/.bun say how the tree was installed; a contradicting --linker does not make

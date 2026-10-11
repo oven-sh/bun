@@ -1,12 +1,13 @@
 import { Archive, file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { appendFile, exists } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, normalizeBunSnapshot, runBunInstall } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, runBunInstall } from "harness";
 import { join } from "path";
+import { TestRegistry } from "registry";
 
 // Registry: no-deps 1.0.0/1.0.1/1.1.0/2.0.0, @types/no-deps 1.0.0/2.0.0, a-dep 1.0.1..1.0.10, one-range-dep@1.0.0 -> no-deps ^1.0.0, dep-with-tags 1.0.0..3.0.1 (latest=3.0.0, pre-2=2.0.1).
 
-const verdaccio = new VerdaccioRegistry();
+const verdaccio = new TestRegistry();
 
 beforeAll(async () => {
   await verdaccio.start();

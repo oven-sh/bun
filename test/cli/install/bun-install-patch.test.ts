@@ -8,9 +8,9 @@ import {
   normalizeBunSnapshot as normalizeBunSnapshot_,
   runBunInstall,
   tempDir,
-  VerdaccioRegistry,
 } from "harness";
 import { join } from "path";
+import { TestRegistry } from "registry";
 import { pathToFileURL } from "url";
 
 const normalizeBunSnapshot = (str: string) => {
@@ -1137,7 +1137,7 @@ describe("patchedDependencies contents_hash", () => {
 // install failed with "Couldn't find patch file" because the dependency's patch
 // path was resolved against the consumer's root (#13531).
 describe("patchedDependencies declared by a dependency", () => {
-  const registry = new VerdaccioRegistry();
+  const registry = new TestRegistry();
 
   beforeAll(async () => {
     await registry.start();

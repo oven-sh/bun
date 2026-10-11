@@ -12,15 +12,15 @@ import {
   runBunInstall,
   tempDir,
   toBeValidBin,
-  VerdaccioRegistry,
 } from "harness";
 import { join } from "path";
+import { TestRegistry } from "registry";
 
 expect.extend({
   toBeValidBin,
 });
 
-var registry = new VerdaccioRegistry();
+var registry = new TestRegistry();
 
 beforeAll(async () => {
   await registry.start();
@@ -2577,7 +2577,7 @@ describe("loading bun.lock binds the edges of a package printed at several paths
 // can only be made once the other parent's row is resolved (the tarball of the
 // version it resolved to) has come in; every order has to write the same
 // bun.lock. `z`, the package the rows disagree on, has 1.0.0, 1.0.5, 1.1.0 and 2.0.0.
-type OrderedManifests = Record<string, Record<string, Record<string, Record<string, string>>>>;
+type OrderedManifests = Record<string, Record<string, Record<string, Record<string, string> | string[]>>>;
 type Hold = { manifest: string; until: string };
 type OrderedShape = {
   shape: string;
@@ -2911,6 +2911,61 @@ it.each<OrderedShape>([
       "b's manifest last": [{ manifest: "b", until: "/a-1.0.0.tgz" }],
     },
     z: { "z": "z@1.1.0" },
+  },
+  // The project's own peer ranges come before those of its dependencies, whatever the names.
+  {
+    shape: "the root peers z@^1.0.0, a peers z@>=1.0.0",
+    manifests: { a: { "1.0.0": { peerDependencies: { z: ">=1.0.0" } } }, z: zVersions },
+    files: { "package.json": { name: "foo", dependencies: { a: "1.0.0" }, peerDependencies: { z: "^1.0.0" } } },
+    orders: { "as they come": [] },
+    z: { "z": "z@1.1.0" },
+  },
+  {
+    shape: "workspace w peers z@^1.0.0, a peers z@>=1.0.0",
+    manifests: { a: { "1.0.0": { peerDependencies: { z: ">=1.0.0" } } }, z: zVersions },
+    files: {
+      "package.json": { name: "foo", workspaces: ["w"], dependencies: { a: "1.0.0" } },
+      "w/package.json": { name: "w", peerDependencies: { z: "^1.0.0" } },
+    },
+    orders: { "as they come": [] },
+    z: { "z": "z@1.1.0" },
+  },
+  {
+    // Nothing satisfies a's peer. It is bound to the highest z there is, which includes the one w asks for.
+    shape: "workspace w peers z@latest, a peers z@1.0.0, o -> z@1.0.5",
+    manifests: {
+      a: { "1.0.0": { peerDependencies: { z: "1.0.0" } } },
+      o: { "1.0.0": { dependencies: { z: "1.0.5" } } },
+      z: zVersions,
+    },
+    files: {
+      "package.json": { name: "foo", workspaces: ["w"], dependencies: { a: "1.0.0", o: "1.0.0" } },
+      "w/package.json": { name: "w", peerDependencies: { z: "latest" } },
+    },
+    orders: {
+      "a's manifest last": [{ manifest: "a", until: "/z-1.0.5.tgz" }],
+      "o's manifest last": [{ manifest: "o", until: "/a-1.0.0.tgz" }],
+    },
+    z: { "z": "z@2.0.0", "o/z": "z@1.0.5" },
+  },
+  {
+    // h ships z@1.0.0, y and y's z@1.0.5 in its own tarball. Sharing one of those versions saves no copy, so r
+    // and p get what they would get without h, whether or not h's rows are resolved first.
+    shape: "h bundles z@1.0.0 and y -> z@1.0.5, r -> z@^1.0.0, p peers z@*",
+    manifests: {
+      h: { "1.0.0": { dependencies: { y: "1.0.0", z: "1.0.0" }, bundleDependencies: ["y", "z"] } },
+      p: { "1.0.0": { peerDependencies: { z: "*" } } },
+      r: { "1.0.0": { dependencies: { z: "^1.0.0" } } },
+      y: { "1.0.0": { dependencies: { z: "1.0.5" } } },
+      z: zVersions,
+    },
+    files: { "package.json": { name: "foo", dependencies: { h: "1.0.0", p: "1.0.0", r: "1.0.0" } } },
+    orders: {
+      "h's manifest last": [{ manifest: "h", until: "/z-1.1.0.tgz" }],
+      // r's row waits for z's manifest behind h's.
+      "r's manifest last": [{ manifest: "r", until: "/y" }],
+    },
+    z: { "z": "z@1.1.0", "h/z": "z@1.0.0", "h/y/z": "z@1.0.5" },
   },
 ])("a fresh install writes the same bun.lock whichever manifest arrives last: $shape", writesTheSameLockInEveryOrder);
 

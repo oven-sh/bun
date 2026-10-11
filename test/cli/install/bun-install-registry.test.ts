@@ -5,7 +5,6 @@ import { once } from "events";
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from "fs";
 import { cp, exists, lstat, mkdir, readlink, rename, rm, writeFile } from "fs/promises";
 import {
-  VerdaccioRegistry,
   assertManifestsPopulated,
   bunEnv,
   bunExe,
@@ -28,6 +27,7 @@ import {
 } from "harness";
 import { createServer as createTcpServer, connect as tcpConnect, type Socket } from "net";
 import { delimiter, join, resolve } from "path";
+import { TestRegistry } from "registry";
 import { createServer as createTlsServer } from "tls";
 const { parseLockfile } = install_test_helpers;
 
@@ -37,12 +37,11 @@ expect.extend({
   toMatchNodeModulesAt,
 });
 
-var registry: VerdaccioRegistry;
+var registry: TestRegistry;
 var port: number;
 
 setDefaultTimeout(1000 * 60 * 5);
-registry = new VerdaccioRegistry();
-await registry.start();
+registry = new TestRegistry().start();
 port = registry.port;
 
 afterAll(() => {
@@ -54,21 +53,12 @@ afterAll(() => {
  * `bunfig.toml` points at the registry) and an `env` whose install cache and temp directory live
  * inside it. Tests run concurrently (`describe.concurrent` / `test.concurrent`) unless marked
  * `serial`, so nothing else may be shared between tests. The serial ones use `toMatchSnapshot()`
- * (not available in concurrent tests), register registry users, or need the registry to be idle.
+ * (not available in concurrent tests) or need the registry to be idle.
  */
-let previousSetup: Promise<void> = Promise.resolve();
 async function setupTest() {
-  // `createTestDir()` also deletes the registry's htpasswd file. When a concurrent group starts,
-  // every test in it calls this at once, and concurrent deletions of the same file fail on Windows
-  // (EFAULT), so the calls are chained. The directory creation itself takes a few milliseconds.
-  const created = previousSetup.then(() =>
-    registry.createTestDir({ bunfigOpts: { saveTextLockfile: false, linker: "hoisted" } }),
-  );
-  previousSetup = created.then(
-    () => {},
-    () => {},
-  );
-  const { packageDir, packageJson } = await created;
+  const { packageDir, packageJson } = await registry.createTestDir({
+    bunfigOpts: { saveTextLockfile: false, linker: "hoisted" },
+  });
   const tmpDir = join(packageDir, ".bun-tmp");
   const env: NodeJS.Dict<string> = {
     ...bunEnv,
@@ -82,13 +72,6 @@ async function setupTest() {
 
 function registryUrl() {
   return registry.registryUrl();
-}
-
-/**
- * Returns auth token
- */
-function generateRegistryUser(username: string, password: string): Promise<string> {
-  return registry.generateUser(username, password);
 }
 
 describe.concurrent("auto-install", () => {
@@ -559,9 +542,7 @@ ljelkjwelkgjw;lekj;lkejflkj
   });
 });
 
-// Registering a user writes to the registry's htpasswd file, which `setupTest()` resets, so these
-// cannot overlap with each other.
-describe.serial("whoami", async () => {
+describe.concurrent("whoami", async () => {
   test("can get username", async () => {
     const { packageDir, packageJson, env } = await setupTest();
     const bunfig = await registry.authBunfig("whoami");
@@ -625,7 +606,7 @@ describe.serial("whoami", async () => {
   });
   test("only .npmrc", async () => {
     const { packageDir, packageJson, env } = await setupTest();
-    const token = await generateRegistryUser("whoami-npmrc", "whoami-npmrc");
+    const token = await registry.generateUser("whoami-npmrc", "whoami-npmrc");
     const npmrc = `
     //localhost:${port}/:_authToken=${token}
     registry=http://localhost:${port}`;
@@ -648,7 +629,7 @@ describe.serial("whoami", async () => {
   });
   test("two .npmrc", async () => {
     const { packageDir, packageJson, env } = await setupTest();
-    const token = await generateRegistryUser("whoami-two-npmrc", "whoami-two-npmrc");
+    const token = await registry.generateUser("whoami-two-npmrc", "whoami-two-npmrc");
     const packageNpmrc = `registry=http://localhost:${port}/`;
     const homeNpmrc = `//localhost:${port}/:_authToken=${token}`;
     const homeDir = `${packageDir}/home_dir`;
@@ -693,7 +674,7 @@ describe.serial("whoami", async () => {
   test("invalid token", async () => {
     const { packageDir, packageJson, env } = await setupTest();
     // create the user and provide an invalid token
-    const token = await generateRegistryUser("invalid-token", "invalid-token");
+    await registry.generateUser("invalid-token", "invalid-token");
     const bunfig = Bun.TOML.stringify({
       install: {
         cache: false,
@@ -715,7 +696,34 @@ describe.serial("whoami", async () => {
     const out = await stdout.text();
     expect(out).toBeEmpty();
     const err = await stderr.text();
-    expect(err).toBe(`error: failed to authenticate with registry 'http://localhost:${port}/'\n`);
+    expect(err).toBe(`\n401 Unauthorized: http://localhost:${port}/-/whoami\n`);
+    expect(await exited).toBe(1);
+  });
+  test("a registry that answers 200 without a username", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
+    // Some registries do not reject a token they do not know. They answer with an empty object.
+    using anonymous = Bun.serve({ port: 0, fetch: () => Response.json({}) });
+    const bunfig = Bun.TOML.stringify({
+      install: {
+        cache: false,
+        registry: { url: `http://localhost:${anonymous.port}/`, token: "1234567" },
+      },
+    });
+    await Promise.all([
+      write(packageJson, JSON.stringify({ name: "whoami-pkg", version: "1.1.1" })),
+      write(join(packageDir, "bunfig.toml"), bunfig),
+    ]);
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "pm", "whoami"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const out = await stdout.text();
+    expect(out).toBeEmpty();
+    const err = await stderr.text();
+    expect(err).toBe(`error: failed to authenticate with registry 'http://localhost:${anonymous.port}/'\n`);
     expect(await exited).toBe(1);
   });
 });
@@ -5599,7 +5607,7 @@ describe.concurrent("hoisting", async () => {
 
     test("peer * hoists the same version no matter which manifest the registry answers first", async () => {
       const { packageDir, packageJson, env } = await setupTest();
-      // Proxy in front of verdaccio that forces the arrival order seen on slow
+      // Proxy in front of the registry that forces the arrival order seen on slow
       // CI machines: the a-dep manifest gets processed (so a-dep@1.0.1..1.0.9
       // exist in the lockfile) before peer-a-dep-star's manifest arrives, and
       // uses-a-dep-10's manifest (the one pinning a-dep@1.0.10) arrives after
@@ -5623,7 +5631,7 @@ describe.concurrent("hoisting", async () => {
 
           const res = await fetch(upstream + pathname, { headers: { accept: req.headers.get("accept") ?? "*/*" } });
           if (isTarball) return new Response(await res.arrayBuffer(), { status: res.status });
-          // Tarball urls inside the manifests point at verdaccio; keep every request on the proxy.
+          // Tarball urls inside the manifests point at the registry; keep every request on the proxy.
           return new Response((await res.text()).replaceAll(upstream, proxy.url.origin), {
             status: res.status,
             headers: { "content-type": "application/json" },

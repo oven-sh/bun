@@ -3,14 +3,15 @@ import { readTarball } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readlinkSync } from "fs";
 import { exists, readdir, realpath, rm } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, normalizeBunSnapshot, pack, runBunInstall, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, pack, runBunInstall, tempDir } from "harness";
 import { join } from "path";
+import { TestRegistry } from "registry";
 
-var registry = new VerdaccioRegistry();
+var registry = new TestRegistry();
 
 type Manifests = Record<string, Record<string, Record<string, Record<string, string>>>>;
 
-// Registry packages that ship a raw `catalog:` specifier; verdaccio has none.
+// Registry packages that ship a raw `catalog:` specifier; the fixture registry has none.
 const catalogManifests: Manifests = {
   "leaf": { "1.0.0": {}, "2.0.0": {} },
   "wants-leaf-peer": { "1.0.0": { peerDependencies: { leaf: "catalog:" } } },

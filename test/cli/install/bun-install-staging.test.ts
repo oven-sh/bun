@@ -98,9 +98,9 @@ function serveRegistry(packages: Record<string, RegistryPackage>) {
 // Each test's bunfig names its own cache, which an inherited BUN_INSTALL_CACHE_DIR would override.
 const installEnv: Record<string, string | undefined> = { ...bunEnv, BUN_INSTALL_CACHE_DIR: undefined };
 
-async function install(cwd: string, args: string[] = [], env = installEnv) {
+async function bun(cwd: string, args: string[], env = installEnv) {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "install", ...args],
+    cmd: [bunExe(), ...args],
     cwd,
     env,
     stdout: "pipe",
@@ -109,6 +109,7 @@ async function install(cwd: string, args: string[] = [], env = installEnv) {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
+const install = (cwd: string, args: string[] = [], env = installEnv) => bun(cwd, ["install", ...args], env);
 
 const isStagingDir = (name: string) => name.startsWith(".bun-tmp-");
 const stagingDirs = (dir: string) =>
@@ -117,9 +118,10 @@ const stagingDirs = (dir: string) =>
         .filter(isStagingDir)
         .map(name => join(dir, name))
     : [];
-// The staging directory of an install that was killed stays behind: its name is
-// unique to that process, so that two installs at once never share one.
-const withoutStagingDirs = (dir: string) => readdirSync(dir).filter(name => !isStagingDir(name));
+// The install that links a package again removes what a killed one left in its staging
+// directory. Not on Windows: a directory cannot be locked there, so the names are unique to
+// each process (two installs at once must never share one) and nothing finds them again.
+const entriesOf = (dir: string) => readdirSync(dir).filter(name => !(isWindows && isStagingDir(name)));
 
 // Where bun can be made to stop at an exact system call, it is: an LD_PRELOAD
 // shim lets the first `after` calls of one system call through, and the next one
@@ -163,20 +165,45 @@ int unlinkat(int dirfd, const char *path, int flags) {
 }
 `;
 
+// Stands in for an install that is linking: holds the lock an install takes on the
+// project's node_modules until its stdin is closed.
+const lockHolderSource = /* c */ `
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
+
+int main(int argc, char **argv) {
+  char byte;
+  int fd = open(argv[1], O_RDONLY | O_DIRECTORY);
+  if (fd < 0 || flock(fd, LOCK_EX | LOCK_NB) != 0) return 1;
+  if (write(1, "locked", 6) != 6) return 1;
+  while (read(0, &byte, 1) > 0) {}
+  return 0;
+}
+`;
+
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
-const shimDir = isLinux && !isMusl && cc ? tempDir("staging-shim", { "shim.c": shimSource }) : undefined;
+const shimDir =
+  isLinux && !isMusl && cc
+    ? tempDir("staging-shim", { "shim.c": shimSource, "lock-holder.c": lockHolderSource })
+    : undefined;
 
 beforeAll(async () => {
   if (!shimDir) return;
-  await using compile = Bun.spawn({
-    cmd: [cc!, "-shared", "-fPIC", "-o", "shim.so", "shim.c", "-ldl"],
-    cwd: String(shimDir),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [out, err, exitCode] = await Promise.all([compile.stdout.text(), compile.stderr.text(), compile.exited]);
-  if (exitCode !== 0) throw new Error(`shim compile failed: ${out}${err}`);
+  for (const args of [
+    ["-shared", "-fPIC", "-o", "shim.so", "shim.c", "-ldl"],
+    ["-o", "lock-holder", "lock-holder.c"],
+  ]) {
+    await using compile = Bun.spawn({
+      cmd: [cc!, ...args],
+      cwd: String(shimDir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([compile.stdout.text(), compile.stderr.text(), compile.exited]);
+    if (exitCode !== 0) throw new Error(`compile failed: ${out}${err}`);
+  }
 });
 afterAll(() => shimDir?.[Symbol.dispose]());
 
@@ -269,7 +296,7 @@ for (const [linker, packageDir] of Object.entries(packageDirs)) {
     expect(repaired.stderr).not.toContain("error");
     expect(repaired.exitCode).toBe(0);
     expect(compareWithExpectedTree(installed)).toEqual(completeTree);
-    expect(withoutStagingDirs(installedParent).sort()).toEqual(finishedParentListing);
+    expect(entriesOf(installedParent).sort()).toEqual(finishedParentListing);
   });
 }
 
@@ -312,8 +339,162 @@ test("isolated linker: a package whose replacement was interrupted is installed 
   expect(repaired.stderr).not.toContain("error");
   expect(repaired.exitCode).toBe(0);
   expect(compareWithExpectedTree(installed)).toEqual(completeTree);
-  expect(withoutStagingDirs(installedParent)).toEqual(["many-files"]);
+  expect(entriesOf(installedParent)).toEqual(["many-files"]);
 });
+
+// Only the install that holds the lock on the project's node_modules uses the names that
+// the next one finds again. Any other uses names of its own and leaves the rest alone.
+describe.skipIf(!shimDir)("what a killed install left in a staging directory", () => {
+  for (const [linker, packageDir] of Object.entries(packageDirs)) {
+    test.concurrent(
+      `${linker} linker: is left alone while another install is linking, removed afterwards`,
+      async () => {
+        const tgz = await new Bun.Archive(archiveEntries, { compress: "gzip" }).bytes();
+        using registry = serveRegistry({ "many-files": { tgz } });
+        using dir = tempDir(`staging-lock-${linker}`, {
+          "package.json": JSON.stringify({ name: "app", dependencies: { "many-files": "1.0.0" } }),
+          "bunfig.toml": ({ root }) =>
+            Bun.TOML.stringify({ install: { registry: registry.url.href, cache: join(root, ".bun-cache"), linker } }),
+        });
+        const root = String(dir);
+        const installed = packageDir(root);
+        const installedParent = join(installed, "..");
+
+        const warm = await install(root);
+        expect(warm.stderr).not.toContain("error");
+        expect(warm.exitCode).toBe(0);
+        const finishedParentListing = readdirSync(installedParent).sort();
+
+        rmSync(join(root, "node_modules"), { recursive: true });
+        expect(await installAndKill(root, [], { syscall: "linkat", after: FILE_COUNT - 10 }, () => false)).toBe(true);
+        const left = stagingDirs(installedParent);
+        expect(left).toHaveLength(1);
+        const leftEntries = readdirSync(left[0], { recursive: true }).length;
+
+        {
+          await using holder = Bun.spawn({
+            cmd: [join(String(shimDir), "lock-holder"), join(root, "node_modules")],
+            stdin: "pipe",
+            stdout: "pipe",
+            stderr: "inherit",
+          });
+          const reader = holder.stdout.getReader();
+          expect(new TextDecoder().decode((await reader.read()).value)).toBe("locked");
+          reader.releaseLock();
+
+          const beside = await install(root);
+          expect(beside.stderr).not.toContain("error");
+          expect(beside.exitCode).toBe(0);
+          expect(compareWithExpectedTree(installed)).toEqual(completeTree);
+          const prune = await bun(root, ["prune"]);
+          expect(prune.stderr).not.toContain("error");
+          expect(prune.exitCode).toBe(0);
+          expect({
+            left: stagingDirs(installedParent),
+            leftEntries: readdirSync(left[0], { recursive: true }).length,
+          }).toEqual({ left, leftEntries });
+
+          holder.stdin.end();
+          expect(await holder.exited).toBe(0);
+        }
+
+        rmSync(installed, { recursive: true });
+        const alone = await install(root);
+        expect(alone.stderr).not.toContain("error");
+        expect(alone.exitCode).toBe(0);
+        expect(compareWithExpectedTree(installed)).toEqual(completeTree);
+        expect(readdirSync(installedParent).sort()).toEqual(finishedParentListing);
+      },
+    );
+
+    test.concurrent(`${linker} linker: a symlink in its place is removed, not followed`, async () => {
+      const tgz = await new Bun.Archive(archiveEntries, { compress: "gzip" }).bytes();
+      using registry = serveRegistry({ "many-files": { tgz } });
+      using dir = tempDir(`staging-symlink-${linker}`, {
+        "package.json": JSON.stringify({ name: "app", dependencies: { "many-files": "1.0.0" } }),
+        "outside/keep.js": "",
+        "bunfig.toml": ({ root }) =>
+          Bun.TOML.stringify({ install: { registry: registry.url.href, cache: join(root, ".bun-cache"), linker } }),
+      });
+      const root = String(dir);
+      const installed = packageDir(root);
+      const installedParent = join(installed, "..");
+
+      // The kill is only there to learn the name.
+      expect(await installAndKill(root, [], { syscall: "linkat", after: FILE_COUNT - 10 }, () => false)).toBe(true);
+      const left = stagingDirs(installedParent);
+      expect(left).toHaveLength(1);
+      rmSync(left[0], { recursive: true });
+      symlinkSync(join(root, "outside"), left[0]);
+
+      const { stderr, exitCode } = await install(root);
+      expect(stderr).not.toContain("error");
+      expect(exitCode).toBe(0);
+      expect(compareWithExpectedTree(installed)).toEqual(completeTree);
+      expect({ outside: readdirSync(join(root, "outside")), left: stagingDirs(installedParent) }).toEqual({
+        outside: ["keep.js"],
+        left: [],
+      });
+    });
+  }
+});
+
+// The lock is never waited for, or a lifecycle script that runs `bun install` in the
+// project being installed would wait for the install that waits for it. The script
+// removes a package that is installed already, so that its install has one to link.
+const installsInTheSameProject = [
+  `until [ -e "$STAGING_TEST_OTHER/package.json" ]; do :; done`,
+  `rm -rf "$STAGING_TEST_OTHER"`,
+  `cd "$STAGING_TEST_ROOT"`,
+  `"$STAGING_TEST_BUN" install --ignore-scripts`,
+  `: > script-is-done`,
+].join(" && ");
+
+const otherPackageDirs = {
+  hoisted: "node_modules/other",
+  isolated: "node_modules/.bun/other@1.0.0/node_modules/other",
+};
+
+// The script is POSIX sh; on Windows lifecycle scripts run in bun's own shell.
+for (const [linker, otherPackageDir] of Object.entries(otherPackageDirs)) {
+  test.concurrent.skipIf(isWindows)(
+    `${linker} linker: a lifecycle script can run bun install in the project being installed`,
+    async () => {
+      const scripts = { install: installsInTheSameProject };
+      const pack = (packageJson: object) =>
+        new Bun.Archive({ "package/package.json": JSON.stringify(packageJson) }, { compress: "gzip" }).bytes();
+      using registry = serveRegistry({
+        other: { tgz: await pack({ name: "other", version: "1.0.0" }) },
+        nested: { tgz: await pack({ name: "nested", version: "1.0.0", scripts }), scripts },
+      });
+      using dir = tempDir(`staging-nested-install-${linker}`, {
+        "package.json": JSON.stringify({
+          name: "app",
+          dependencies: { other: "1.0.0", nested: "1.0.0" },
+          trustedDependencies: ["nested"],
+        }),
+        "bunfig.toml": ({ root }) =>
+          Bun.TOML.stringify({ install: { registry: registry.url.href, cache: join(root, ".bun-cache"), linker } }),
+      });
+      const root = String(dir);
+      const other = join(root, otherPackageDir);
+
+      const { stderr, exitCode } = await install(root, [], {
+        ...installEnv,
+        STAGING_TEST_BUN: bunExe(),
+        STAGING_TEST_ROOT: root,
+        STAGING_TEST_OTHER: other,
+      });
+      expect(stderr).not.toContain("error");
+      expect(exitCode).toBe(0);
+      expect({
+        scriptIsDone: existsSync(join(root, "script-is-done")),
+        other: readdirSync(other),
+        besideIt: readdirSync(join(other, "..")).filter(isStagingDir),
+      }).toEqual({ scriptIsDone: true, other: ["package.json"], besideIt: [] });
+    },
+  );
+}
 
 // https://github.com/oven-sh/bun/issues/43256: bun exits as soon as a lifecycle
 // script fails, while the isolated linker's tasks for other packages are still
@@ -403,7 +584,7 @@ test.skipIf(isWindows)(
     expect(second.stderr).not.toContain("error");
     expect(second.exitCode).toBe(0);
     expect(compareWithExpectedTree(installed)).toEqual(completeTree);
-    expect(withoutStagingDirs(installedParent)).toEqual(["many-files"]);
+    expect(entriesOf(installedParent)).toEqual(["many-files"]);
   },
 );
 

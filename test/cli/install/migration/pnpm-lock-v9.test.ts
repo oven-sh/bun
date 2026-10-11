@@ -1,17 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { appendFileSync, chmodSync, existsSync, readdirSync, realpathSync, rmSync, writeFileSync } from "fs";
-import {
-  VerdaccioRegistry,
-  bunEnv,
-  bunExe,
-  isWindows,
-  nodeModulesPackages,
-  tempDir,
-  unprivilegedSpawnOptions,
-} from "harness";
+import { bunEnv, bunExe, isWindows, nodeModulesPackages, tempDir, unprivilegedSpawnOptions } from "harness";
 import { dirname, join } from "path";
+import { TestRegistry } from "registry";
 
-const verdaccio = new VerdaccioRegistry();
+const verdaccio = new TestRegistry();
 
 beforeAll(async () => {
   await verdaccio.start();

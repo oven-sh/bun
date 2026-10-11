@@ -3,7 +3,6 @@ import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "
 import { chmodSync, mkdtempSync, rmSync, statSync } from "fs";
 import { exists, mkdir, rm, writeFile } from "fs/promises";
 import {
-  VerdaccioRegistry,
   assertManifestsPopulated,
   bunEnv as baseEnv,
   bunExe,
@@ -15,8 +14,9 @@ import {
 } from "harness";
 import { constants as osConstants, tmpdir } from "os";
 import { join, sep } from "path";
+import { TestRegistry } from "registry";
 
-var verdaccio = new VerdaccioRegistry();
+var verdaccio = new TestRegistry();
 
 // `owner/repo#commit` dependencies are downloaded from `${GITHUB_API_URL}/repos/...`, so
 // the repository below is served by this local server instead of api.github.com.

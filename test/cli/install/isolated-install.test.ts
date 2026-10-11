@@ -2,23 +2,14 @@ import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readFileSync, readlinkSync, statSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
-import {
-  VerdaccioRegistry,
-  bunEnv,
-  bunExe,
-  githubTarball,
-  isLinux,
-  isWindows,
-  readdirSorted,
-  runBunInstall,
-  tempDir,
-} from "harness";
+import { bunEnv, bunExe, githubTarball, isLinux, isWindows, readdirSorted, runBunInstall, tempDir } from "harness";
 import { createRequire } from "module";
 import { basename, dirname, join } from "path";
+import { TestRegistry } from "registry";
 import { pathToFileURL } from "url";
 import { SimpleRegistry } from "./simple-dummy-registry";
 
-const registry = new VerdaccioRegistry();
+const registry = new TestRegistry();
 
 // With the global virtual store enabled, dependency symlinks inside a store
 // entry point at sibling global-store directories whose names carry a 16-hex
@@ -3270,7 +3261,7 @@ describe("blocked lifecycle scripts", () => {
 });
 
 // Self-contained HTTP server that serves package manifests & tarballs
-// directly from the Verdaccio fixtures, with Cache-Control: max-age=300
+// directly from the registry fixtures, with Cache-Control: max-age=300
 // to replicate npmjs.org behavior (fully synchronous on warm cache).
 function serveFixtures() {
   const packagesDir = join(import.meta.dir, "registry", "packages");

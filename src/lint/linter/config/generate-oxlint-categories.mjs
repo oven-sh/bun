@@ -73,7 +73,8 @@ for (const { scope: plugin, value: name, category, fix, type_aware: needsTypes }
     : /^(fixable|conditional)_suggestion$/.test(fix)
       ? "ONLY_SUGGESTIONS"
       : undefined;
-  if (fixes && !needsTypes && ["eslint", "typescript"].includes(plugin)) ((runsOn[fixes] ??= {})[plugin] ??= []).push(name);
+  if (fixes && !needsTypes && ["eslint", "typescript"].includes(plugin))
+    ((runsOn[fixes] ??= {})[plugin] ??= []).push(name);
 }
 const commit = execFileSync("git", ["-C", oxc, "rev-parse", "--short", "HEAD"]).toString().trim();
 const wrap = names => {

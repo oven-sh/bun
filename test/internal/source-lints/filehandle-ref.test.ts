@@ -7,7 +7,8 @@ import path from "node:path";
 // iterator) can close the handle, and the operation then runs on a number that the handle no longer owns. This lint
 // keeps the two steps next to each other in src/js/node/fs.promises.ts:
 //
-//   A. after `throwEBADFIfNecessary(name, fd);` the next statements are `try {` and `this[kRef]();`
+//   A. `throwEBADFIfNecessary(name, fd);` directly follows `const fd = this[kFd];`, and the next statements are
+//      `try {` and `this[kRef]();`
 //   B. every other `[kRef]();` directly follows `if (handle[kFd] === -1) throw`, or is the first statement of an
 //      `...OfHandle(handle, fd, ...)` helper
 //   C. a `?.[kFd]` gives its number only to the `...OfHandle` helper, in the next statement, with the handle
@@ -42,7 +43,8 @@ test("a FileHandle operation takes its ref before any code of the caller can run
 
     if (isCheck(line.s)) {
       counts.checks++;
-      if (!(at(i + 1) === "try {" && isRef(at(i + 2))) && !(line.s in checkWithoutRef)) report("A");
+      if (at(i - 1) !== "const fd = this[kFd];") report("A");
+      else if (!(at(i + 1) === "try {" && isRef(at(i + 2))) && !(line.s in checkWithoutRef)) report("A");
     }
 
     if (isRef(line.s)) {

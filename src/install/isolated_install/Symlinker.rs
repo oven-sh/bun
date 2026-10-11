@@ -49,24 +49,22 @@ impl Symlinker {
         match strategy {
             Strategy::ExpectMissing => {
                 self.remove_planted_parents()?;
-                return match self.symlink() {
-                    Ok(()) => Ok(true),
-                    Err(symlink_err1) => match symlink_err1.get_errno() {
-                        Errno::ENOENT => {
-                            let Some(dest_parent) = self.dest.dirname() else {
-                                return Err(symlink_err1);
-                            };
-
-                            let _ = Fd::cwd().make_path(dest_parent);
-                            return self.symlink().map(|()| true);
-                        }
-                        Errno::EEXIST => {
-                            let _ = Fd::cwd().delete_tree(self.dest.slice_z());
-                            return self.symlink().map(|()| true);
-                        }
-                        _ => Err(symlink_err1),
-                    },
+                let Err(symlink_err1) = self.symlink() else {
+                    return Ok(true);
                 };
+                match symlink_err1.get_errno() {
+                    Errno::ENOENT => {
+                        let Some(dest_parent) = self.dest.dirname() else {
+                            return Err(symlink_err1);
+                        };
+                        let _ = Fd::cwd().make_path(dest_parent);
+                    }
+                    Errno::EEXIST => {
+                        let _ = Fd::cwd().delete_tree(self.dest.slice_z());
+                    }
+                    _ => return Err(symlink_err1),
+                }
+                self.symlink().map(|()| true)
             }
             Strategy::ExpectExisting => {
                 let mut current_link_buf = bun_paths::path_buffer_pool::get();
@@ -97,14 +95,18 @@ impl Symlinker {
                                     }
                                 }
                                 // Not a link. A directory with a package.json is the copy
-                                // `bun patch <pkg>` made for the user to edit: keep it.
+                                // `bun patch <pkg>` made for the user to edit: keep it. A mount
+                                // point (EBUSY) is the user's as well.
                                 _ => {
                                     let has_package_json = {
                                         let mut dest = self.dest.save();
                                         let _ = dest.append(b"package.json");
                                         bun_sys::exists_z(dest.slice_z())
                                     };
-                                    if has_package_json {
+                                    if has_package_json
+                                        || bun_sys::rmdir(self.dest.slice_z())
+                                            .is_err_and(|err| err.get_errno() == Errno::EBUSY)
+                                    {
                                         return Ok(false);
                                     }
                                     let _ = Fd::cwd().delete_tree(self.dest.slice_z());

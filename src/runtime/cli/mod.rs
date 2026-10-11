@@ -165,7 +165,6 @@ pub(crate) mod pm_diff_normalize;
 pub(crate) mod pm_diff_profile;
 pub(crate) mod pm_diff_relayout;
 pub(crate) mod pm_diff_semantic;
-#[path = "pm_fetch_command.rs"]
 pub(crate) mod pm_fetch_command;
 #[path = "pm_licenses_command.rs"]
 pub(crate) mod pm_licenses_command;
@@ -178,8 +177,6 @@ pub(crate) mod pm_update_package_json;
 pub(crate) mod pm_version_command;
 #[path = "pm_view_command.rs"]
 pub(crate) mod pm_view_command;
-#[path = "pm_why_command.rs"]
-pub(crate) mod pm_why_command;
 #[path = "prune_command.rs"]
 pub(crate) mod prune_command;
 #[path = "publish_command.rs"]
@@ -1695,7 +1692,7 @@ To create a project with the official Next.js scaffolding tool, run
             Global::exit(1);
         }
 
-        let create_command_info = CreateCommand::extract_info(&ctx)?;
+        let create_command_info = CreateCommand::extract_info()?;
         let template = create_command_info.template;
         let example_tag = create_command_info.example_tag;
 

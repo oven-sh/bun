@@ -27,7 +27,7 @@ import {
   readdirSorted,
   runBunInstall,
 } from "harness";
-import { constants as osConstants, type as osType, tmpdir } from "os";
+import { constants as osConstants, tmpdir } from "os";
 import { join, sep } from "path";
 import { TestRegistry } from "registry";
 
@@ -1791,60 +1791,36 @@ describe("the trusted set", () => {
     });
   });
 
-  // `payload` is trusted by nobody and has no script. Its `bin` names a command that `native`, which is trusted, runs.
-  describe.skipIf(isWindows)("a bin of another package does not replace a command inside a trusted script", () => {
-    const files = (script: "preinstall" | "postinstall", trusted: boolean) => ({
+  // As with npm, pnpm and yarn: the build tool that the project pins wins over the one installed on the machine.
+  describe.skipIf(isWindows)("a script finds the project's bins before the inherited PATH", () => {
+    const files = {
       "package.json": {
         name: "foo",
-        scripts: { setup: `${bunExe()} install` },
-        dependencies: { native: "file:./native", payload: "file:./payload" },
-        trustedDependencies: trusted ? ["native"] : [],
+        dependencies: { native: "file:./native", pinned: "file:./pinned" },
+        trustedDependencies: [],
       },
-      "native/package.json": { name: "native", version: "1.0.0", scripts: { [script]: "uname > built.txt" } },
-      "payload/package.json": { name: "payload", version: "1.0.0", bin: { uname: "run.sh" } },
-      "payload/run.sh": "#!/bin/sh\necho planted\n",
-    });
-    const built = (ctx: TestCtx) => textOf(ctx.packageDir, "node_modules", "native", "built.txt");
+      "native/package.json": { name: "native", version: "1.0.0", scripts: { postinstall: "uname > built.txt" } },
+      "pinned/package.json": { name: "pinned", version: "1.0.0", bin: { uname: "run.sh" } },
+      "pinned/run.sh": "#!/bin/sh\necho pinned\n",
+    };
 
-    test.concurrent.each(["preinstall", "postinstall"] as const)("bun install, %s", async script => {
-      using ctx = await project("hoisted", files(script, true));
-      const { err, exitCode } = await bun(ctx, ["install"]);
-      expect(err).not.toContain("error:");
-      expect(await exists(join(ctx.packageDir, "node_modules", ".bin", "uname"))).toBeTrue();
-      expect(await built(ctx)).toBe(`${osType()}\n`);
-      expect(exitCode).toBe(0);
-    });
-
-    // `bun run` puts the project's `node_modules/.bin` in front of the PATH that the install inherits.
-    test.concurrent("bun install started by bun run", async () => {
-      using ctx = await project("hoisted", files("postinstall", true));
+    test.concurrent.each(linkers)("a dependency's script (%s)", async linker => {
+      using ctx = await project(linker, files);
       // The link exists before the script runs.
-      expect((await bun(ctx, ["install", "--ignore-scripts"])).exitCode).toBe(0);
-      await rm(join(ctx.packageDir, "node_modules", "native"), { recursive: true, force: true });
-      const { err, exitCode } = await bun(ctx, ["run", "setup"]);
-      expect(err).not.toContain("error:");
-      expect(await built(ctx)).toBe(`${osType()}\n`);
-      expect(exitCode).toBe(0);
-    });
-
-    test.concurrent("bun pm trust", async () => {
-      using ctx = await project("hoisted", files("postinstall", false));
-      expect((await bun(ctx, ["install"])).out).toContain("Blocked 1 postinstall");
+      expect((await bun(ctx, ["install"])).exitCode).toBe(0);
       const { err, exitCode } = await bun(ctx, ["pm", "trust", "native"]);
       expect(err).not.toContain("error:");
-      expect(await built(ctx)).toBe(`${osType()}\n`);
+      expect(await textOf(ctx.packageDir, "node_modules", "native", "built.txt")).toBe("pinned\n");
       expect(exitCode).toBe(0);
     });
 
-    // The project chose its direct dependencies' bins for its own scripts.
-    test.concurrent("the project's own scripts still find the project's bins first", async () => {
-      const { "package.json": manifest, ...rest } = files("postinstall", false);
-      using ctx = await project("hoisted", {
-        ...rest,
-        "package.json": { ...manifest, scripts: { postinstall: "uname > built.txt" } },
+    test.concurrent.each(linkers)("the project's own script (%s)", async linker => {
+      using ctx = await project(linker, {
+        ...files,
+        "package.json": { ...files["package.json"], scripts: { postinstall: "uname > built.txt" } },
       });
       expect((await bun(ctx, ["install"])).exitCode).toBe(0);
-      expect(await textOf(ctx.packageDir, "built.txt")).toBe("planted\n");
+      expect(await textOf(ctx.packageDir, "built.txt")).toBe("pinned\n");
     });
   });
 });

@@ -36,12 +36,11 @@ fn pretty_help(text: &str) {
 /// (`Negatable::apply` skips names this build does not know), an unknown name is a typo and fatal.
 fn parse_platform_flag<T: Npm::NegatableEnum>(
     values: &[&[u8]],
-    unset: T,
     what: &str,
     valid_names: &str,
-) -> T {
+) -> Option<T> {
     if values.is_empty() {
-        return unset;
+        return None;
     }
     let mut negatable = Npm::Negatable::<T>::default();
     for &value in values {
@@ -61,20 +60,16 @@ fn parse_platform_flag<T: Npm::NegatableEnum>(
             }
         }
     }
-    negatable.combine()
+    Some(negatable.combine())
 }
 
 type ParamType = clap::Param<clap::Help>;
 /// A command's params as the slices they are made of: 96 bytes per param, and most are shared by
-/// 17 commands. `parse` and `simple_help` join the one table they need.
+/// 17 commands. `parse` and `print_help` join the one table they need.
 type ParamTable = &'static [&'static [ParamType]];
 
 // `bun_clap::concat_params!` is a const-fn slice concat over `Param<Help>`.
 use bun_clap::concat_params;
-
-fn simple_help(table: ParamTable) {
-    clap::simple_help(&table.concat());
-}
 
 // `clap::param!` is a proc-macro that requires a
 // *literal* token (it parses the spec at compile time), so `const_format::concatcp!`
@@ -627,9 +622,9 @@ const PRUNE_HELP_PARAMS: &[ParamType] = &[
 // `Clone` is needed because `updatePackageJSONAndInstall`
 // passes `cli` by value into `PackageManager.init` while retaining its own
 // copy.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct CommandLineArguments {
-    pub(crate) cache_dir: Option<&'static [u8]>,
+    pub cache_dir: Option<&'static [u8]>,
     pub lockfile: &'static [u8],
     pub(crate) global: bool,
     pub(crate) config: Option<&'static [u8]>,
@@ -699,7 +694,7 @@ pub struct CommandLineArguments {
     pub(crate) minimum_release_age_excludes: &'static [&'static [u8]],
 
     // `bun pm version` options
-    pub(crate) git_tag_version: bool,
+    pub(crate) no_git_tag_version: bool,
     pub(crate) allow_same_version: bool,
     pub(crate) preid: &'static [u8],
     pub(crate) message: Option<&'static [u8]>,
@@ -733,117 +728,12 @@ pub struct CommandLineArguments {
     pub audit_ignore_list: &'static [&'static [u8]],
 
     // CPU, OS and libc overrides for optional dependencies
-    pub(crate) cpu: Npm::Architecture,
-    pub(crate) os: Npm::OperatingSystem,
-    pub(crate) libc: Npm::Libc,
+    pub(crate) cpu: Option<Npm::Architecture>,
+    pub(crate) os: Option<Npm::OperatingSystem>,
+    pub(crate) libc: Option<Npm::Libc>,
 
     pub(crate) env_files: &'static [&'static [u8]],
     pub(crate) no_env_file: bool,
-}
-
-impl Default for CommandLineArguments {
-    fn default() -> Self {
-        Self {
-            cache_dir: None,
-            lockfile: b"",
-            global: false,
-            config: None,
-            network_concurrency: None,
-            backend: None,
-            analyze: false,
-            only_missing: false,
-            add_catalog: None,
-            positionals: &[],
-
-            yarn: false,
-            production: false,
-            frozen_lockfile: false,
-            no_save: false,
-            dry_run: false,
-            check: false,
-            force: false,
-            no_cache: false,
-            log_level: Options::LogLevel::default(),
-            no_progress: false,
-            no_verify: false,
-            offline: false,
-            prefer_offline: false,
-            ignore_scripts: false,
-            trusted: false,
-            no_summary: false,
-            latest: false,
-            interactive: false,
-            json_output: false,
-            recursive: false,
-            filters: &[],
-            update_groups: UpdateGroups::default(),
-
-            pack_destination: b"",
-            pack_filename: b"",
-            pack_gzip_level: None,
-
-            dependency_group: Options::DependencyGroup::default(),
-            names_group: false,
-
-            omit: None,
-
-            exact: false,
-
-            concurrent_scripts: None,
-
-            patch: PatchOpts::Nothing,
-
-            registry: b"",
-
-            publish_config: Options::PublishConfig::default(),
-
-            tolerate_republish: false,
-
-            ca: &[],
-            ca_file_name: b"",
-
-            save_text_lockfile: None,
-
-            lockfile_only: false,
-
-            node_linker: None,
-
-            minimum_release_age_ms: None,
-            minimum_release_age_excludes: &[],
-
-            git_tag_version: true,
-            allow_same_version: false,
-            preid: b"",
-            message: None,
-
-            top_only: false,
-            depth: None,
-
-            dev_only: false,
-            long: false,
-            diff_args: Vec::new(),
-            diff_name_only: false,
-            diff_raw: false,
-            no_project_ok: false,
-            diff_unminify: false,
-            diff_minify: false,
-            diff_ignore_space: false,
-            diff_stat: false,
-            diff_context: None,
-
-            cache_max_age_days: None,
-
-            audit_level: None,
-            audit_ignore_list: &[],
-
-            cpu: Npm::Architecture::CURRENT,
-            os: Npm::OperatingSystem::CURRENT,
-            libc: Npm::Libc::CURRENT,
-
-            env_files: &[],
-            no_env_file: false,
-        }
-    }
 }
 
 #[repr(u8)]
@@ -912,17 +802,17 @@ impl CommandLineArguments {
         // use [foo] for multiple arguments or flags for foo.
         // use <bar> to emphasize 'bar'
 
-        match subcommand {
-            // fall back to HelpCommand.printWithReason
-            Subcommand::Install => {
-                let intro_text = r"
+        let (intro_text, params, outro_text): (&str, ParamTable, &str) = match subcommand {
+            Subcommand::Install => (
+                r"
 <b>Usage<r>: <b><green>bun install<r> <cyan>[flags]<r> <blue>\<name\><r><d>@\<version\><r>
 <b>Alias<r>: <b><green>bun i<r>
 
   Install the dependencies listed in package.json.
 
-<b>Flags:<r>";
-                let outro_text = r"
+<b>Flags:<r>",
+                INSTALL_PARAMS,
+                r"
 
 <b>Examples:<r>
   <d>Install the dependencies for the current project<r>
@@ -932,21 +822,18 @@ impl CommandLineArguments {
   <b><green>bun install<r> <cyan>--production<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/install<r>.
-";
-                pretty_help(intro_text);
-                simple_help(INSTALL_PARAMS);
-                pretty_help(outro_text);
-                Output::flush();
-            }
-            Subcommand::Update => {
-                let intro_text = r"
+",
+            ),
+            Subcommand::Update => (
+                r"
 <b>Usage<r>: <b><green>bun update<r> <cyan>[flags]<r> <blue>\<name\><r><d>@\<version\><r>
 <b>Alias<r>: <b><green>bun up<r>
 
   Update dependencies to their most recent versions within the version range in package.json.
 
-<b>Flags:<r>";
-                let outro_text = r"
+<b>Flags:<r>",
+                UPDATE_PARAMS,
+                r"
 
 <b>Examples:<r>
   <d>Update all dependencies:<r>
@@ -975,21 +862,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/install<r>.
   <b><green>bun update<r> <cyan>--depth 0<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/update<r>.
-";
-                pretty_help(intro_text);
-                simple_help(UPDATE_PARAMS);
-                pretty_help(outro_text);
-                Output::flush();
-            }
-            Subcommand::Patch => {
-                let intro_text = r"
+",
+            ),
+            Subcommand::Patch => (
+                r"
 <b>Usage<r>: <b><green>bun patch<r> <cyan>[flags or options]<r> <blue>\<package\><r><d>@\<version\><r>
 
   Prepare a package for patching, or generate and save a patch.
 
-<b>Flags:<r>";
-
-                let outro_text = r"
+<b>Flags:<r>",
+                PATCH_PARAMS,
+                r"
 
 <b>Examples:<r>
   <d>Prepare jquery for patching<r>
@@ -1002,21 +885,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/update<r>.
   <b><green>bun patch --patches-dir 'my-patches' 'node_modules/jquery'<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/install/patch<r>.
-";
-
-                pretty_help(intro_text);
-                simple_help(PATCH_PARAMS);
-                pretty_help(outro_text);
-                Output::flush();
-            }
-            Subcommand::PatchCommit => {
-                let intro_text = r"
+",
+            ),
+            Subcommand::PatchCommit => (
+                r"
 <b>Usage<r>: <b><green>bun patch-commit<r> <cyan>[flags or options]<r> <blue>\<directory\><r>
 
   Generate a patch out of a directory and save it. This is equivalent to <b><green>bun patch --commit<r>.
 
-<b>Flags:<r>";
-                let outro_text = r#"
+<b>Flags:<r>",
+                PATCH_COMMIT_PARAMS,
+                r#"
 
 <b>Examples:<r>
   <d>Generate a patch in the default "./patches" directory for changes in "./node_modules/jquery"<r>
@@ -1026,24 +905,19 @@ Full documentation is available at <magenta>https://bun.com/docs/install/patch<r
   <b><green>bun patch-commit --patches-dir 'my-patches' 'node_modules/jquery'<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/install/patch<r>.
-"#;
-                pretty_help(intro_text);
-                simple_help(PATCH_COMMIT_PARAMS);
-                pretty_help(outro_text);
-                Output::flush();
-            }
-            Subcommand::Pm => {
-                PackageManagerCommand::print_help();
-            }
-            Subcommand::Add => {
-                let intro_text = r"
+"#,
+            ),
+            Subcommand::Pm => return PackageManagerCommand::print_help(),
+            Subcommand::Add => (
+                r"
 <b>Usage<r>: <b><green>bun add<r> <cyan>[flags]<r> <blue>\<package\><r><d>\<@version\><r>
 <b>Alias<r>: <b><green>bun a<r>
 
   Add a new dependency to package.json and install it.
 
-<b>Flags:<r>";
-                let outro_text = r"
+<b>Flags:<r>",
+                ADD_PARAMS,
+                r"
 
 <b>Examples:<r>
   <d>Add a dependency from the npm registry<r>
@@ -1064,21 +938,18 @@ Full documentation is available at <magenta>https://bun.com/docs/install/patch<r
   <b><green>bun add<r> <cyan>--catalog=testing<r> <blue>vitest<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/add<r>.
-";
-                pretty_help(intro_text);
-                simple_help(ADD_PARAMS);
-                pretty_help(outro_text);
-                Output::flush();
-            }
-            Subcommand::Remove => {
-                let intro_text = r"
+",
+            ),
+            Subcommand::Remove => (
+                r"
 <b>Usage<r>: <b><green>bun remove<r> <cyan>[flags]<r> <blue>[\<packages\>]<r>
 <b>Alias<r>: <b><green>bun r<r>
 
   Remove a package from package.json and uninstall from node_modules.
 
-<b>Flags:<r>";
-                let outro_text = r"
+<b>Flags:<r>",
+                REMOVE_PARAMS,
+                r"
 
 <b>Examples:<r>
   <d>Remove a dependency<r>
@@ -1088,20 +959,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/add<r>.
   <b><green>bun remove<r> <blue>zod<r> <cyan>--filter<r> <blue>api<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/remove<r>.
-";
-                pretty_help(intro_text);
-                simple_help(REMOVE_PARAMS);
-                pretty_help(outro_text);
-                Output::flush();
-            }
-            Subcommand::Link => {
-                let intro_text = r#"
+",
+            ),
+            Subcommand::Link => (
+                r#"
 <b>Usage<r>: <b><green>bun link<r> <cyan>[flags]<r> <blue>[\<packages\>]<r>
 
   Register a local directory as a "linkable" package, or link a "linkable" package to the current project.
 
-<b>Flags:<r>"#;
-                let outro_text = r"
+<b>Flags:<r>"#,
+                LINK_PARAMS,
+                r"
 
 <b>Examples:<r>
   <d>Register the current directory as a linkable package.<r>
@@ -1115,43 +983,34 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/remove<r>.
   <b><green>bun link<r> <cyan>--save<r> <blue>\<package\><r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/link<r>.
-";
-                pretty_help(intro_text);
-                simple_help(LINK_PARAMS);
-                pretty_help(outro_text);
-                Output::flush();
-            }
-            Subcommand::Unlink => {
-                let intro_text = r#"
+",
+            ),
+            Subcommand::Unlink => (
+                r#"
 <b>Usage<r>: <b><green>bun unlink<r> <cyan>[flags]<r>
 
   Unregister the current directory as a "linkable" package.
 
-<b>Flags:<r>"#;
-
-                let outro_text = r"
+<b>Flags:<r>"#,
+                UNLINK_PARAMS,
+                r"
 
 <b>Examples:<r>
   <d>Unregister the current directory as a linkable package.<r>
   <b><green>bun unlink<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/unlink<r>.
-";
-
-                pretty_help(intro_text);
-                simple_help(UNLINK_PARAMS);
-                pretty_help(outro_text);
-                Output::flush();
-            }
-            Subcommand::Outdated => {
-                let intro_text = r"
+",
+            ),
+            Subcommand::Outdated => (
+                r"
 <b>Usage<r>: <b><green>bun outdated<r> <cyan>[flags]<r> <blue>[filter]<r>
 
   Display outdated dependencies for each matching workspace.
 
-<b>Flags:<r>";
-
-                let outro_text = r#"
+<b>Flags:<r>",
+                OUTDATED_PARAMS,
+                r#"
 
 <b>Examples:<r>
   <d>Display outdated dependencies in the current workspace.<r>
@@ -1168,43 +1027,33 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/unlink<r>.
   <b><green>bun outdated<r> <blue>"!is-even"<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/outdated<r>.
-"#;
-
-                pretty_help(intro_text);
-                simple_help(OUTDATED_PARAMS);
-                pretty_help(outro_text);
-                Output::flush();
-            }
-            Subcommand::Pack => {
-                let intro_text = r"
+"#,
+            ),
+            Subcommand::Pack => (
+                r"
 <b>Usage<r>: <b><green>bun pm pack<r> <cyan>[flags]<r>
 
   Create a tarball for the current project.
 
-<b>Flags:<r>";
-
-                let outro_text = r"
+<b>Flags:<r>",
+                PACK_PARAMS,
+                r"
 
 <b>Examples:<r>
   <b><green>bun pm pack<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/pm#pack<r>.
-";
-
-                pretty_help(intro_text);
-                simple_help(PACK_PARAMS);
-                pretty_help(outro_text);
-                Output::flush();
-            }
-            Subcommand::Publish => {
-                let intro_text = r"
+",
+            ),
+            Subcommand::Publish => (
+                r"
 <b>Usage<r>: <b><green>bun publish<r> <cyan>[flags]<r> <blue>[dist]<r>
 
   Publish a package to the npm registry.
 
-<b>Flags:<r>";
-
-                let outro_text = r"
+<b>Flags:<r>",
+                PUBLISH_PARAMS,
+                r"
 
 <b>Examples:<r>
   <d>Display files that would be published, without publishing to the registry.<r>
@@ -1226,23 +1075,18 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#pack<r>.
   <b><green>bun publish<r> <cyan>--filter '@scope/*'<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/publish<r>.
-";
-
-                pretty_help(intro_text);
-                simple_help(PUBLISH_PARAMS);
-                pretty_help(outro_text);
-                Output::flush();
-            }
-            Subcommand::Audit => {
-                let intro_text = r"
+",
+            ),
+            Subcommand::Audit => (
+                r"
 <b>Usage<r>: <b><green>bun audit<r> <cyan>[flags]<r>
 
   Check installed packages for vulnerabilities.
   <b><green>bun audit fix<r> upgrades vulnerable packages to the lowest safe version that still satisfies every dependent's range.
 
-<b>Flags:<r>";
-
-                let outro_text = r"
+<b>Flags:<r>",
+                &[AUDIT_HELP_PARAMS],
+                r"
 
 <b>Examples:<r>
   <d>Check the current project's packages for vulnerabilities.<r>
@@ -1261,22 +1105,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/publish<r>.
   <b><green>bun audit fix --latest<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/install/audit<r>.
-";
-
-                pretty_help(intro_text);
-                clap::simple_help(AUDIT_HELP_PARAMS);
-                pretty_help(outro_text);
-                Output::flush();
-            }
-            Subcommand::Info => {
-                let intro_text = r"
+",
+            ),
+            Subcommand::Info => (
+                r"
 <b>Usage<r>: <b><green>bun info<r> <cyan>[flags]<r> <blue>\<package\><r><d>[@\<version\>]<r> <d>[\<property\>...]<r>
 
   View package metadata from the registry.
 
-<b>Flags:<r>";
-
-                let outro_text = r"
+<b>Flags:<r>",
+                INFO_PARAMS,
+                r"
 
 <b>Examples:<r>
   <d>Display metadata for the 'react' package<r>
@@ -1293,22 +1132,17 @@ Full documentation is available at <magenta>https://bun.com/docs/install/audit<r
   <b><green>bun info<r> <blue>react<r> version <cyan>--json<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>.
-";
-
-                pretty_help(intro_text);
-                simple_help(INFO_PARAMS);
-                pretty_help(outro_text);
-                Output::flush();
-            }
-            Subcommand::Why => {
-                let intro_text = r"
+",
+            ),
+            Subcommand::Why => (
+                r"
 <b>Usage<r>: <b><green>bun why<r> <cyan>[flags]<r> <blue>\<package\><r>
 
   Explain why a package is installed.
 
-<b>Flags:<r>";
-
-                let outro_text = r#"
+<b>Flags:<r>",
+                WHY_PARAMS,
+                r#"
 
 <b>Examples:<r>
   <d>$<r> <b><green>bun why<r> <blue>react<r>
@@ -1316,22 +1150,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>.
   <d>$<r> <b><green>bun why<r> <blue>"*-lodash"<r> <cyan>--top<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>.
-"#;
-
-                pretty_help(intro_text);
-                simple_help(WHY_PARAMS);
-                pretty_help(outro_text);
-                Output::flush();
-            }
-            Subcommand::Dedupe => {
-                let intro_text = r"
+"#,
+            ),
+            Subcommand::Dedupe => (
+                r"
 <b>Usage<r>: <b><green>bun dedupe<r> <cyan>[flags]<r>
 
   Remove duplicate versions from bun.lock by re-resolving dependency ranges onto versions that are already in the lockfile, then install.
 
-<b>Flags:<r>";
-
-                let outro_text = r"
+<b>Flags:<r>",
+                &[DEDUPE_HELP_PARAMS],
+                r"
 
 <b>Examples:<r>
   <d>Remove duplicate versions and install<r>
@@ -1347,22 +1176,17 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>.
   <b><green>bun dedupe<r> <cyan>--lockfile-only<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/pm/cli/dedupe<r>.
-";
-
-                pretty_help(intro_text);
-                clap::simple_help(DEDUPE_HELP_PARAMS);
-                pretty_help(outro_text);
-                Output::flush();
-            }
-            Subcommand::Prune => {
-                let intro_text = r"
+",
+            ),
+            Subcommand::Prune => (
+                r"
 <b>Usage<r>: <b><green>bun prune<r> <cyan>[flags]<r>
 
   Remove packages from node_modules that are not in bun.lock. With <cyan>--production<r>, also remove packages that are only needed by devDependencies.
 
-<b>Flags:<r>";
-
-                let outro_text = r"
+<b>Flags:<r>",
+                &[PRUNE_HELP_PARAMS],
+                r"
 
 <b>Examples:<r>
   <d>Remove packages that are not in bun.lock from node_modules<r>
@@ -1381,14 +1205,13 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/dedupe<r
   <b><green>bun prune<r> <cyan>--production --filter app<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>.
-";
-
-                pretty_help(intro_text);
-                clap::simple_help(PRUNE_HELP_PARAMS);
-                pretty_help(outro_text);
-                Output::flush();
-            }
-        }
+",
+            ),
+        };
+        pretty_help(intro_text);
+        clap::simple_help(&params.concat());
+        pretty_help(outro_text);
+        Output::flush();
     }
 
     pub fn parse(subcommand: Subcommand) -> Result<CommandLineArguments, crate::Error> {
@@ -1511,13 +1334,8 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             });
         }
 
-        if let Some(cache_dir) = args.option(b"--cache-dir") {
-            cli.cache_dir = Some(cache_dir);
-        }
-
-        if let Some(ca_file_name) = args.option(b"--cafile") {
-            cli.ca_file_name = ca_file_name;
-        }
+        cli.cache_dir = args.option(b"--cache-dir");
+        cli.ca_file_name = args.option(b"--cafile").unwrap_or_default();
 
         if let Some(network_concurrency) = args.option(b"--network-concurrency") {
             cli.network_concurrency =
@@ -1533,9 +1351,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
                 });
         }
 
-        if args.flag(b"--save-text-lockfile") {
-            cli.save_text_lockfile = Some(true);
-        }
+        cli.save_text_lockfile = args.flag(b"--save-text-lockfile").then_some(true);
 
         if let Some(min_age_secs) = args.option(b"--minimum-release-age") {
             let Some(secs) = bun_core::fmt::parse_seconds(min_age_secs) else {
@@ -1598,23 +1414,15 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             Subcommand::Pack | Subcommand::Pm | Subcommand::Publish
         ) {
             if subcommand != Subcommand::Publish {
-                if let Some(dest) = args.option(b"--destination") {
-                    cli.pack_destination = dest;
-                }
-                if let Some(file) = args.option(b"--filename") {
-                    cli.pack_filename = file;
-                }
+                cli.pack_destination = args.option(b"--destination").unwrap_or_default();
+                cli.pack_filename = args.option(b"--filename").unwrap_or_default();
             }
 
-            if let Some(level) = args.option(b"--gzip-level") {
-                cli.pack_gzip_level = Some(level);
-            }
+            cli.pack_gzip_level = args.option(b"--gzip-level");
         }
 
         if subcommand == Subcommand::Publish {
-            if let Some(tag) = args.option(b"--tag") {
-                cli.publish_config.tag = tag;
-            }
+            cli.publish_config.tag = args.option(b"--tag").unwrap_or_default();
 
             if let Some(access) = args.option(b"--access") {
                 cli.publish_config.access = Some(match Options::Access::from_str(access) {
@@ -1665,20 +1473,14 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             cli.no_save = args.flag(b"--no-save");
         }
 
-        if subcommand == Subcommand::Patch {
-            let patch_commit = args.flag(b"--commit");
-            if patch_commit {
-                cli.patch = PatchOpts::Commit {
-                    patches_dir: args.option(b"--patches-dir").unwrap_or(b"patches"),
-                };
-            } else {
-                cli.patch = PatchOpts::Patch;
-            }
-        }
-        if subcommand == Subcommand::PatchCommit {
+        if subcommand == Subcommand::PatchCommit
+            || (subcommand == Subcommand::Patch && args.flag(b"--commit"))
+        {
             cli.patch = PatchOpts::Commit {
                 patches_dir: args.option(b"--patches-dir").unwrap_or(b"patches"),
             };
+        } else if subcommand == Subcommand::Patch {
+            cli.patch = PatchOpts::Patch;
         }
 
         if subcommand == Subcommand::Audit {
@@ -1703,23 +1505,19 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             }
         }
 
-        if let Some(opt) = args.option(b"--config") {
-            cli.config = Some(opt);
-        }
+        cli.config = args.option(b"--config");
 
         cli.cpu = parse_platform_flag(
             args.options(b"--cpu"),
-            cli.cpu,
             "CPU architecture",
             "arm, arm64, ia32, mips, mipsel, ppc, ppc64, s390, s390x, x32, x64",
         );
         cli.os = parse_platform_flag(
             args.options(b"--os"),
-            cli.os,
             "operating system",
             "aix, darwin, freebsd, linux, openbsd, sunos, win32, android",
         );
-        cli.libc = parse_platform_flag(args.options(b"--libc"), cli.libc, "libc", "glibc, musl");
+        cli.libc = parse_platform_flag(args.options(b"--libc"), "libc", "glibc, musl");
 
         if matches!(subcommand, Subcommand::Add | Subcommand::Install) {
             cli.dependency_group = if args.flag(b"--development") || args.flag(b"--dev") {
@@ -1805,18 +1603,10 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             }
         }
 
-        let specified_backend: Option<package_install::Method> = 'brk: {
-            if let Some(backend_) = args.option(b"--backend") {
-                break 'brk package_install::METHOD_MAP.get(backend_).copied();
-            }
-            break 'brk None;
-        };
-
-        if let Some(backend) = specified_backend {
-            if backend.is_supported() {
-                cli.backend = Some(backend);
-            }
-        }
+        cli.backend = args
+            .option(b"--backend")
+            .and_then(|backend| package_install::METHOD_MAP.get(backend).copied())
+            .filter(|backend| backend.is_supported());
 
         if let Some(registry) = args.option(b"--registry") {
             if !strings::has_prefix(registry, b"https://")
@@ -1928,22 +1718,13 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
 
         if subcommand == Subcommand::Pm {
             // `bun pm version` command options
-            if let Some(git_tag_version) = args.option(b"--git-tag-version") {
-                if git_tag_version == b"true" {
-                    cli.git_tag_version = true;
-                } else if git_tag_version == b"false" {
-                    cli.git_tag_version = false;
-                }
-            } else {
-                cli.git_tag_version = !args.flag(b"--no-git-tag-version");
-            }
+            cli.no_git_tag_version = match args.option(b"--git-tag-version") {
+                Some(git_tag_version) => git_tag_version == b"false",
+                None => args.flag(b"--no-git-tag-version"),
+            };
             cli.allow_same_version = args.flag(b"--allow-same-version");
-            if let Some(preid) = args.option(b"--preid") {
-                cli.preid = preid;
-            }
-            if let Some(message) = args.option(b"--message") {
-                cli.message = Some(message);
-            }
+            cli.preid = args.option(b"--preid").unwrap_or_default();
+            cli.message = args.option(b"--message");
             cli.dev_only = args.flag(b"--dev");
             cli.long = args.flag(b"--long");
             cli.diff_args = args.options(b"--diff").to_vec();

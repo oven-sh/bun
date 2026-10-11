@@ -16,7 +16,7 @@ use bun_install::{Dependency, INVALID_PACKAGE_ID, Lockfile, resolution};
 use bun_install_types::{DependencyGroup, PackageNameHash};
 
 use super::package_manager_options::{Do, Enable};
-use super::workspace_package_json_cache::{GetJSONOptions, GetResult, WorkspacePackageJSONCache};
+use super::workspace_package_json_cache::{GetJSONOptions, GetResult};
 use super::{CatalogUpdateInfo, PackageManager, PackageUpdateInfo, Subcommand, UpdateRequest};
 
 type ExprDisabler = bun_ast::expr::Disabler;
@@ -34,10 +34,6 @@ pub(crate) struct EditOptions {
     pub before_install: bool,
 }
 
-#[inline]
-fn arena_str<'a>(arena: &'a bun_alloc::Arena, bytes: &[u8]) -> &'a [u8] {
-    arena.alloc_slice_copy(bytes)
-}
 #[inline]
 fn arena_dup<'a>(arena: &'a bun_alloc::Arena, bytes: &[u8]) -> &'a [u8] {
     arena.alloc_slice_copy(bytes)
@@ -68,7 +64,7 @@ fn with_alias_of<'a>(arena: &'a bun_alloc::Arena, from: &[u8], version: &'a [u8]
                 bstr::BStr::new(version)
             )
             .expect("infallible: in-memory write");
-            arena_str(arena, &v)
+            arena_dup(arena, &v)
         }
         _ => version,
     }
@@ -259,41 +255,14 @@ pub fn edit_trusted_dependencies(
     }
 
     let trusted_dependencies_to_add = len;
-    let new_trusted_deps: js_ast::ExprNodeList = {
-        let mut deps = vec![Expr::EMPTY; trusted_dependencies.len() + trusted_dependencies_to_add]
-            .into_boxed_slice();
-        deps[0..trusted_dependencies.len()].copy_from_slice(trusted_dependencies);
-        // tail already initialized to Expr::EMPTY by vec!
-
-        for name in &names_to_add[0..len] {
-            #[cfg(debug_assertions)]
-            {
-                let mut has_missing = false;
-                for dep in deps.iter() {
-                    if matches!(dep.data, bun_ast::ExprData::EMissing(_)) {
-                        has_missing = true;
-                    }
-                }
-                debug_assert!(has_missing);
-            }
-
-            let mut i = deps.len();
-            while i > 0 {
-                i -= 1;
-                if matches!(deps[i].data, bun_ast::ExprData::EMissing(_)) {
-                    deps[i] = Expr::init(E::EString::init(name), bun_ast::Loc::EMPTY);
-                    break;
-                }
-            }
-        }
-
-        #[cfg(debug_assertions)]
-        for dep in deps.iter() {
-            debug_assert!(!matches!(dep.data, bun_ast::ExprData::EMissing(_)));
-        }
-
-        js_ast::ExprNodeList::from_owned_slice(deps)
-    };
+    let new_trusted_deps = js_ast::ExprNodeList::from_owned_slice(
+        (trusted_dependencies.iter().copied())
+            .chain(
+                (names_to_add[..len].iter().rev())
+                    .map(|name| Expr::init(E::EString::init(name), bun_ast::Loc::EMPTY)),
+            )
+            .collect(),
+    );
 
     let mut needs_new_trusted_dependencies_list = true;
     let mut trusted_dependencies_array: Expr = 'brk: {
@@ -322,41 +291,11 @@ pub fn edit_trusted_dependencies(
         arr.alphabetize_strings();
     }
 
-    if !matches!(package_json.data, bun_ast::ExprData::EObject(_))
-        || package_json
-            .data
-            .e_object()
-            .expect("infallible: variant checked")
-            .properties
-            .len_u32()
-            == 0
-    {
-        let root_properties: Vec<G::Property> = vec![G::Property {
-            key: Some(Expr::init(
-                E::EString::init(TRUSTED_DEPENDENCIES_STRING),
-                bun_ast::Loc::EMPTY,
-            )),
-            value: Some(trusted_dependencies_array),
-            ..Default::default()
-        }];
-
-        *package_json = Expr::init(
-            E::Object {
-                properties: G::PropertyList::move_from_list(root_properties),
-                ..Default::default()
-            },
-            bun_ast::Loc::EMPTY,
-        );
-    } else if needs_new_trusted_dependencies_list {
-        let obj = package_json
-            .data
-            .e_object()
-            .expect("infallible: variant checked");
-        let old_props = obj.properties.slice();
-        let mut root_properties: Vec<G::Property> = Vec::with_capacity(old_props.len() + 1);
-        for p in old_props {
-            root_properties.push(copy_property(p));
-        }
+    if needs_new_trusted_dependencies_list {
+        let mut root_properties: Vec<G::Property> = match package_json.data.e_object() {
+            Some(obj) => obj.properties.slice().iter().map(copy_property).collect(),
+            None => Vec::new(),
+        };
         root_properties.push(G::Property {
             key: Some(Expr::init(
                 E::EString::init(TRUSTED_DEPENDENCIES_STRING),
@@ -384,33 +323,12 @@ pub(crate) fn edit_update_no_args(
     current_package_json: &mut Expr,
     options: EditOptions,
 ) -> Result<bool, bun_alloc::AllocError> {
-    edit_update_no_args_in(
+    edit_update_entries(
         &manager.lockfile,
         &manager.ast_arena,
         &mut manager.updating_packages,
         manager.workspace_name_hash,
         manager.options.do_.contains(Do::UPDATE_TO_LATEST),
-        current_package_json,
-        options,
-    )
-}
-
-/// Split-borrow variant: callers holding a `&mut` to another `PackageManager` field can use this.
-pub(crate) fn edit_update_no_args_in(
-    lockfile: &crate::Lockfile,
-    arena: &bun_alloc::Arena,
-    updating_packages: &mut StringArrayHashMap<PackageUpdateInfo>,
-    workspace_name_hash: Option<PackageNameHash>,
-    update_to_latest: bool,
-    current_package_json: &mut Expr,
-    options: EditOptions,
-) -> Result<bool, bun_alloc::AllocError> {
-    edit_update_entries(
-        lockfile,
-        arena,
-        updating_packages,
-        workspace_name_hash,
-        update_to_latest,
         current_package_json,
         options,
         &|_, _| true,
@@ -446,7 +364,22 @@ fn literal_tag(literal: &[u8]) -> dependency::Tag {
     dependency::Tag::infer(dependency::trim_literal(literal))
 }
 
-fn edit_update_entries(
+/// The key and the value of an entry whose both are strings.
+pub(crate) fn string_pair(property: &G::Property) -> Option<(&[u8], &[u8])> {
+    property
+        .key
+        .as_ref()
+        .and_then(Expr::as_utf8_string_literal)
+        .zip(
+            property
+                .value
+                .as_ref()
+                .and_then(Expr::as_utf8_string_literal),
+        )
+}
+
+/// Split borrows, for callers holding a `&mut` to another `PackageManager` field. `selected(key, literal)` picks the entries.
+pub(crate) fn edit_update_entries(
     lockfile: &crate::Lockfile,
     arena: &bun_alloc::Arena,
     updating_packages: &mut StringArrayHashMap<PackageUpdateInfo>,
@@ -463,171 +396,112 @@ fn edit_update_entries(
     let mut changed = false;
 
     for group in DEPENDENCY_GROUPS {
-        let group_str = group.prop;
+        let Some(mut entries) = current_package_json
+            .as_property(group.prop)
+            .and_then(|root| root.expr.data.e_object())
+        else {
+            continue;
+        };
+        if options.before_install {
+            // Record each npm dependency's declared literal; --latest steers the row at resolve time (`picks_latest_tag`).
+            for dep in entries.properties.slice() {
+                let Some((key_str, version_literal)) = string_pair(dep) else {
+                    continue;
+                };
+                let tag = literal_tag(version_literal);
 
-        if let Some(mut root) = current_package_json.as_property(group_str) {
-            if matches!(root.expr.data, bun_ast::ExprData::EObject(_)) {
-                if options.before_install {
-                    // Record each npm dependency's declared literal; --latest steers the row at resolve time (`picks_latest_tag`).
-                    for dep in root
-                        .expr
-                        .data
-                        .e_object()
-                        .expect("infallible: variant checked")
-                        .properties
-                        .slice()
-                    {
-                        let Some(key) = &dep.key else { continue };
-                        if !matches!(key.data, bun_ast::ExprData::EString(_)) {
-                            continue;
-                        }
-                        let Some(value) = &dep.value else { continue };
-                        if !matches!(value.data, bun_ast::ExprData::EString(_)) {
-                            continue;
-                        }
-
-                        let version_literal = value
-                            .as_utf8_string_literal()
-                            .unwrap_or_else(|| bun_core::out_of_memory());
-                        let tag = literal_tag(version_literal);
-
-                        // npm ranges only (and dist-tags with --latest); `catalog:` is handled by record_catalog_entries and edit_catalogs_after_update.
-                        if tag != dependency::Tag::Npm
-                            && (tag != dependency::Tag::DistTag || !update_to_latest)
-                        {
-                            continue;
-                        }
-
-                        let key_str = key.as_utf8_string_literal().expect("unreachable");
-                        if !selected(key_str, version_literal) {
-                            continue;
-                        }
-                        // Capture the literal as an owned
-                        // copy before borrowing `updating_packages` mutably.
-                        let version_literal_owned = Box::<[u8]>::from(version_literal);
-                        let entry = updating_packages.get_or_put(key_str)?;
-
-                        // If a dependency is present in more than one dependency group, only one of it's versions
-                        // will be updated. The group is determined by the order of `dependency_groups`, the same
-                        // order used to choose which version to install.
-                        if entry.found_existing {
-                            continue;
-                        }
-
-                        *entry.value_ptr = PackageUpdateInfo {
-                            original_version_literal: version_literal_owned,
-                            ..Default::default()
-                        };
-                    }
-                } else {
-                    let string_buf = lockfile.buffers.string_bytes.as_slice();
-                    let workspace_package_id =
-                        lockfile.get_workspace_package_id(workspace_name_hash);
-                    let packages = lockfile.packages.slice();
-                    let resolutions = packages.items_resolution();
-                    let deps = packages.items_dependencies()[workspace_package_id as usize];
-                    let resolution_ids =
-                        packages.items_resolutions()[workspace_package_id as usize];
-                    let workspace_deps: &[Dependency] =
-                        deps.get(lockfile.buffers.dependencies.as_slice());
-                    let workspace_resolution_ids =
-                        resolution_ids.get(lockfile.buffers.resolutions.as_slice());
-
-                    for dep in root
-                        .expr
-                        .data
-                        .e_object_mut()
-                        .expect("infallible: variant checked")
-                        .properties
-                        .slice_mut()
-                    {
-                        let Some(key) = &dep.key else { continue };
-                        if !matches!(key.data, bun_ast::ExprData::EString(_)) {
-                            continue;
-                        }
-                        let Some(value) = &dep.value else { continue };
-                        if !matches!(value.data, bun_ast::ExprData::EString(_)) {
-                            continue;
-                        }
-
-                        // `catalog:` references are never rewritten; the root catalog entry is updated instead.
-                        let value_literal = value
-                            .as_utf8_string_literal()
-                            .unwrap_or_else(|| bun_core::out_of_memory());
-                        if literal_tag(value_literal) == dependency::Tag::Catalog {
-                            continue;
-                        }
-
-                        let key_str = key
-                            .as_utf8_string_literal()
-                            .unwrap_or_else(|| bun_core::out_of_memory());
-                        if !selected(key_str, value_literal) {
-                            continue;
-                        }
-
-                        'updated: {
-                            // Only the first dependency group naming the package is rewritten.
-                            if let Some(entry) = updating_packages.get_mut(key_str) {
-                                if entry.written_back {
-                                    break 'updated;
-                                }
-                                entry.written_back = true;
-                                debug_assert_eq!(
-                                    workspace_deps.len(),
-                                    workspace_resolution_ids.len()
-                                );
-                                for (workspace_dep, &package_id) in
-                                    workspace_deps.iter().zip(workspace_resolution_ids)
-                                {
-                                    if package_id == INVALID_PACKAGE_ID {
-                                        continue;
-                                    }
-
-                                    let resolution = &resolutions[package_id as usize];
-                                    if resolution.tag != resolution::Tag::Npm {
-                                        continue;
-                                    }
-
-                                    let workspace_dep_name = workspace_dep.name.slice(string_buf);
-                                    if !strings::eql_long(workspace_dep_name, key_str, true) {
-                                        continue;
-                                    }
-
-                                    let resolved_version = lockfile
-                                        .resolve_catalog_dependency(workspace_dep)
-                                        .unwrap_or_else(|| workspace_dep.version.clone());
-                                    if let Some(npm_version) = resolved_version.try_npm() {
-                                        // an exact pin is not moved by a plain `bun update`
-                                        if !update_to_latest && npm_version.version.is_exact() {
-                                            break 'updated;
-                                        }
-                                    }
-
-                                    let Some(new_version) = updated_version_literal(
-                                        &entry.original_version_literal,
-                                        resolution.npm().version,
-                                        string_buf,
-                                        options.exact_versions,
-                                        update_to_latest,
-                                    ) else {
-                                        break 'updated;
-                                    };
-                                    if new_version.as_slice() == value_literal {
-                                        break 'updated;
-                                    }
-                                    changed = true;
-                                    dep.value = Some(Expr::allocate(
-                                        arena,
-                                        E::EString::init(arena_str(arena, &new_version)),
-                                        bun_ast::Loc::EMPTY,
-                                    ));
-                                    break 'updated;
-                                }
-                            }
-                        }
-                    }
+                // npm ranges only (and dist-tags with --latest); `catalog:` is handled by record_catalog_entries and edit_catalogs_after_update.
+                if (tag != dependency::Tag::Npm
+                    && (tag != dependency::Tag::DistTag || !update_to_latest))
+                    || !selected(key_str, version_literal)
+                {
+                    continue;
                 }
+                let entry = updating_packages.get_or_put(key_str)?;
+
+                // If a dependency is present in more than one dependency group, only one of it's versions
+                // will be updated. The group is determined by the order of `dependency_groups`, the same
+                // order used to choose which version to install.
+                if entry.found_existing {
+                    continue;
+                }
+
+                *entry.value_ptr = PackageUpdateInfo {
+                    original_version_literal: Box::from(version_literal),
+                    ..Default::default()
+                };
             }
+            continue;
+        }
+
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        let workspace = lockfile.get_workspace_package_id(workspace_name_hash) as usize;
+        let packages = lockfile.packages.slice();
+        let resolutions = packages.items_resolution();
+        let workspace_deps: &[Dependency] =
+            packages.items_dependencies()[workspace].get(lockfile.buffers.dependencies.as_slice());
+        let workspace_resolution_ids =
+            packages.items_resolutions()[workspace].get(lockfile.buffers.resolutions.as_slice());
+        debug_assert_eq!(workspace_deps.len(), workspace_resolution_ids.len());
+
+        for dep in entries.properties.slice_mut() {
+            let Some((key_str, value_literal)) = string_pair(dep) else {
+                continue;
+            };
+            // `catalog:` references are never rewritten; the root catalog entry is updated instead.
+            if literal_tag(value_literal) == dependency::Tag::Catalog
+                || !selected(key_str, value_literal)
+            {
+                continue;
+            }
+
+            // Only the first dependency group naming the package is rewritten.
+            let Some(entry) = updating_packages.get_mut(key_str) else {
+                continue;
+            };
+            if entry.written_back {
+                continue;
+            }
+            entry.written_back = true;
+            let Some((workspace_dep, resolution)) = (workspace_deps.iter())
+                .zip(workspace_resolution_ids)
+                .filter(|&(_, &package_id)| package_id != INVALID_PACKAGE_ID)
+                .map(|(row, &package_id)| (row, &resolutions[package_id as usize]))
+                .find(|(workspace_dep, resolution)| {
+                    resolution.tag == resolution::Tag::Npm
+                        && strings::eql_long(workspace_dep.name.slice(string_buf), key_str, true)
+                })
+            else {
+                continue;
+            };
+
+            // an exact pin is not moved by a plain `bun update`
+            if !update_to_latest
+                && lockfile
+                    .resolve_catalog_dependency(workspace_dep)
+                    .unwrap_or_else(|| workspace_dep.version.clone())
+                    .try_npm()
+                    .is_some_and(|npm_version| npm_version.version.is_exact())
+            {
+                continue;
+            }
+
+            let Some(new_version) = updated_version_literal(
+                &entry.original_version_literal,
+                resolution.npm().version,
+                string_buf,
+                options.exact_versions,
+                update_to_latest,
+            )
+            .filter(|new_version| new_version.as_slice() != value_literal) else {
+                continue;
+            };
+            changed = true;
+            dep.value = Some(Expr::allocate(
+                arena,
+                E::EString::init(arena_dup(arena, &new_version)),
+                bun_ast::Loc::EMPTY,
+            ));
         }
     }
     Ok(changed)
@@ -687,29 +561,11 @@ pub(crate) fn record_catalog_entries(
     let updating_catalogs = &mut manager.updating_catalogs;
 
     for_each_catalog_object(root_package_json, |catalog_name, catalog_expr| {
-        if !matches!(catalog_expr.data, bun_ast::ExprData::EObject(_)) {
+        let Some(entries) = catalog_expr.data.e_object() else {
             return Ok(());
-        }
-        for dep in catalog_expr
-            .data
-            .e_object()
-            .expect("infallible: variant checked")
-            .properties
-            .slice()
-        {
-            let Some(key) = &dep.key else { continue };
-            if !matches!(key.data, bun_ast::ExprData::EString(_)) {
-                continue;
-            }
-            let Some(value) = &dep.value else { continue };
-            if !matches!(value.data, bun_ast::ExprData::EString(_)) {
-                continue;
-            }
-
-            let version_literal = value
-                .as_utf8_string_literal()
-                .unwrap_or_else(|| bun_core::out_of_memory());
-            let tag = literal_tag(version_literal);
+        };
+        for (dep_name, literal) in entries.properties.slice().iter().filter_map(string_pair) {
+            let tag = literal_tag(literal);
 
             // same tag rule as direct dependencies
             if tag != dependency::Tag::Npm && (tag != dependency::Tag::DistTag || !update_to_latest)
@@ -717,14 +573,10 @@ pub(crate) fn record_catalog_entries(
                 continue;
             }
 
-            let key_str = key
-                .as_utf8_string_literal()
-                .unwrap_or_else(|| bun_core::out_of_memory());
-
             updating_catalogs.push(CatalogUpdateInfo {
                 catalog_name: Box::from(catalog_name),
-                dep_name: Box::from(key_str),
-                original_version_literal: Box::from(version_literal),
+                dep_name: Box::from(dep_name),
+                original_version_literal: Box::from(literal),
                 new_version_literal: None,
             });
         }
@@ -742,12 +594,14 @@ pub(crate) fn steers_catalogs_to_latest(manager: &PackageManager) -> bool {
 #[cold]
 #[inline(never)]
 pub(crate) fn steer_used_catalogs_to_latest(
-    package_json_cache: &mut WorkspacePackageJSONCache,
-    log: &mut bun_ast::Log,
-    lockfile: &mut Lockfile,
+    manager: &mut PackageManager,
+    parsed: Option<&mut Lockfile>,
 ) -> Result<(), bun_alloc::AllocError> {
     // see note in `edit_update_no_args` — always avoid the store
     let _guard = ExprDisabler::scope();
+    let log = manager.log_mut();
+    let package_json_cache = &mut manager.workspace_package_json_cache;
+    let lockfile = parsed.unwrap_or(&mut *manager.lockfile);
 
     let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
     let mut path_buf = path_buffer_pool::get();
@@ -824,8 +678,7 @@ pub(crate) fn record_catalog_originals(
         let dep_name = dep.name.slice(string_buf);
         let catalog_name = dep.version.catalog().slice(string_buf);
         let Some(info) = by_name
-            .candidates(dep_name)
-            .and_then(|candidates| CatalogInfoIndex::pick(candidates, infos, catalog_name))
+            .pick(infos, dep_name, catalog_name)
             .map(|i| &infos[i])
         else {
             continue;
@@ -869,28 +722,14 @@ pub(crate) fn edit_catalogs_after_update(
 
     let arena = &manager.ast_arena;
     let mut changed = false;
-    for_each_catalog_object(root_package_json, |catalog_name, mut catalog_expr| {
-        if !matches!(catalog_expr.data, bun_ast::ExprData::EObject(_)) {
+    for_each_catalog_object(root_package_json, |catalog_name, catalog_expr| {
+        let Some(mut entries) = catalog_expr.data.e_object() else {
             return Ok(());
-        }
-        for dep in catalog_expr
-            .data
-            .e_object_mut()
-            .expect("infallible: variant checked")
-            .properties
-            .slice_mut()
-        {
-            let Some(key) = &dep.key else { continue };
-            if !matches!(key.data, bun_ast::ExprData::EString(_)) {
-                continue;
-            }
-            let key_str = key
-                .as_utf8_string_literal()
-                .unwrap_or_else(|| bun_core::out_of_memory());
-
-            let Some(new_literal) = index
-                .candidates(key_str)
-                .and_then(|candidates| CatalogInfoIndex::pick(candidates, &infos, catalog_name))
+        };
+        for dep in entries.properties.slice_mut() {
+            let Some(new_literal) = (dep.key.as_ref())
+                .and_then(Expr::as_utf8_string_literal)
+                .and_then(|key_str| index.pick(&infos, key_str, catalog_name))
                 .and_then(|i| {
                     let info = &infos[i];
                     info.new_version_literal.as_deref().filter(|new_literal| {
@@ -904,7 +743,7 @@ pub(crate) fn edit_catalogs_after_update(
             changed = true;
             dep.value = Some(Expr::allocate(
                 arena,
-                E::EString::init(arena_str(arena, new_literal)),
+                E::EString::init(arena_dup(arena, new_literal)),
                 bun_ast::Loc::EMPTY,
             ));
         }
@@ -926,16 +765,14 @@ impl CatalogInfoIndex {
         Ok(CatalogInfoIndex(map))
     }
 
-    fn candidates(&self, dep_name: &[u8]) -> Option<&[usize]> {
-        self.0.get(dep_name).map(Vec::as_slice)
-    }
-
     /// An entry spelled exactly like `catalog_name` wins over the `catalog:` / `catalog:default` equivalence.
     fn pick(
-        candidates: &[usize],
+        &self,
         infos: &[CatalogUpdateInfo],
+        dep_name: &[u8],
         catalog_name: &[u8],
     ) -> Option<usize> {
+        let candidates = self.0.get(dep_name)?;
         candidates
             .iter()
             .copied()
@@ -969,29 +806,17 @@ fn resolve_catalog_literals(
         .iter()
         .zip(lockfile.buffers.resolutions.iter())
     {
-        if dep.version.tag != dependency::Tag::Catalog {
-            continue;
-        }
-        if package_id == INVALID_PACKAGE_ID {
+        if dep.version.tag != dependency::Tag::Catalog || package_id == INVALID_PACKAGE_ID {
             continue;
         }
 
-        let Some(candidates) = by_name.candidates(dep.name.slice(string_buf)) else {
-            continue;
-        };
-        if candidates
-            .iter()
-            .all(|&i| infos[i].new_version_literal.is_some())
-        {
-            continue;
-        }
         let catalog_name = dep.version.catalog().slice(string_buf);
-        let Some(index) = CatalogInfoIndex::pick(candidates, infos, catalog_name) else {
+        let Some(index) = by_name
+            .pick(infos, dep.name.slice(string_buf), catalog_name)
+            .filter(|&index| infos[index].new_version_literal.is_none())
+        else {
             continue;
         };
-        if infos[index].new_version_literal.is_some() {
-            continue;
-        }
 
         let resolution = &package_resolutions[package_id as usize];
         if resolution.tag != resolution::Tag::Npm {
@@ -1522,43 +1347,11 @@ pub(crate) fn edit(
             }
         }
 
-        if !matches!(current_package_json.data, bun_ast::ExprData::EObject(_))
-            || current_package_json
-                .data
-                .e_object()
-                .expect("infallible: variant checked")
-                .properties
-                .len_u32()
-                == 0
-        {
-            let root_properties: Vec<G::Property> = vec![G::Property {
-                key: Some(Expr::allocate(
-                    arena,
-                    E::EString::init(arena_dup(arena, dependency_list)),
-                    bun_ast::Loc::EMPTY,
-                )),
-                value: Some(dependencies_object),
-                ..Default::default()
-            }];
-
-            *current_package_json = Expr::allocate(
-                arena,
-                E::Object {
-                    properties: G::PropertyList::move_from_list(root_properties),
-                    ..Default::default()
-                },
-                bun_ast::Loc::EMPTY,
-            );
-        } else if needs_new_dependency_list {
-            let obj = current_package_json
-                .data
-                .e_object()
-                .expect("infallible: variant checked");
-            let old_props = obj.properties.slice();
-            let mut root_properties: Vec<G::Property> = Vec::with_capacity(old_props.len() + 1);
-            for p in old_props {
-                root_properties.push(copy_property(p));
-            }
+        if needs_new_dependency_list {
+            let mut root_properties: Vec<G::Property> = match current_package_json.data.e_object() {
+                Some(obj) => obj.properties.slice().iter().map(copy_property).collect(),
+                None => Vec::new(),
+            };
             root_properties.push(G::Property {
                 key: Some(Expr::allocate(
                     arena,
@@ -1684,7 +1477,7 @@ pub(crate) fn edit(
                                 options.exact_versions,
                                 update_to_latest,
                             ) {
-                                Some(new_version) => break 'npm arena_str(arena, &new_version),
+                                Some(new_version) => break 'npm arena_dup(arena, &new_version),
                                 // no explicit `@range`: the row still spells the declared literal, which stays as written
                                 None => {
                                     if strings::eql_long(
@@ -1715,7 +1508,7 @@ pub(crate) fn edit(
                             resolved.fmt(string_buf)
                         )
                         .expect("infallible: in-memory write");
-                        break 'npm with_alias_of(arena, installed, arena_str(arena, &new_version));
+                        break 'npm with_alias_of(arena, installed, arena_dup(arena, &new_version));
                     }
 
                     arena_dup(arena, installed)

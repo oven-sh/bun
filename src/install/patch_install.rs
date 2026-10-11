@@ -1,6 +1,7 @@
 use crate::lockfile::package::PackageColumns as _;
 
 use bstr::BStr;
+use std::io::Write as _;
 
 use bun_ast::{Loc, Log};
 use bun_core::ZBox;
@@ -16,17 +17,9 @@ use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode, Task as ThreadPo
 use crate::cache_publish::StagedEntry;
 use crate::package_install::PackageInstall;
 use crate::package_manager;
-use crate::{
-    DependencyID, PackageID, PackageManager, bun_hash_tag, lockfile::Package,
-    resolution::Resolution,
-};
+use crate::{DependencyID, PackageID, PackageManager, lockfile::Package, resolution::Resolution};
 
 bun_output::declare_scope!(InstallPatch, visible);
-
-/// Length of the hex representation of `u64::MAX` (i.e. 16).
-const MAX_HEX_HASH_LEN: usize = const_format::formatcp!("{:x}", u64::MAX).len();
-const MAX_BUNTAG_HASH_BUF_LEN: usize = MAX_HEX_HASH_LEN + bun_hash_tag.len() + 1;
-type BuntagHashBuf = [u8; MAX_BUNTAG_HASH_BUF_LEN];
 
 // The directory handles on `PatchTask`/`ApplyPatch` are *borrowed views* of the
 // `PackageManager`-owned cache/temp directory descriptors. Store the raw `Fd`
@@ -74,14 +67,6 @@ impl Callback {
     #[inline]
     pub(crate) fn tag_name(&self) -> &'static str {
         <&'static str>::from(self)
-    }
-    #[inline]
-    pub(crate) fn is_calc_hash(&self) -> bool {
-        matches!(self, Callback::CalcHash(_))
-    }
-    #[inline]
-    pub(crate) fn is_apply(&self) -> bool {
-        matches!(self, Callback::Apply(_))
     }
     /// Panics if the active variant is not `Apply`.
     #[inline]
@@ -193,31 +178,21 @@ impl PatchTask {
             "runFromThreadMainThread {}",
             <&'static str>::from(&self.callback)
         );
-        let pre = self.pre;
-        match &mut self.callback {
-            Callback::CalcHash(_) => {
-                let r = self.run_from_main_thread_calc_hash(manager, log_level);
-                if pre {
-                    let _ = manager
-                        .pending_pre_calc_hashes
-                        .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
-                }
-                r?;
-            }
-            Callback::Apply(_) => {
-                self.run_from_main_thread_apply(manager);
-                if pre {
-                    let _ = manager
-                        .pending_pre_calc_hashes
-                        .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
-                }
-            }
+        let result = if matches!(self.callback, Callback::CalcHash(_)) {
+            self.run_from_main_thread_calc_hash(manager, log_level)
+        } else {
+            self.run_from_main_thread_apply();
+            Ok(())
+        };
+        if self.pre {
+            let _ = manager
+                .pending_pre_calc_hashes
+                .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
         }
-        Ok(())
+        result
     }
 
-    pub(crate) fn run_from_main_thread_apply(&mut self, manager: &mut PackageManager) {
-        let _ = manager; // autofix
+    fn run_from_main_thread_apply(&mut self) {
         let Callback::Apply(apply) = &mut self.callback else {
             unreachable!()
         };
@@ -450,7 +425,6 @@ impl PatchTask {
             let resolution: &Resolution =
                 &manager.lockfile.packages.items_resolution()[patch.pkg_id as usize];
             let mut label = Vec::<u8>::new();
-            use std::io::Write as _;
             write!(
                 &mut label,
                 "{}",
@@ -532,18 +506,9 @@ impl PatchTask {
             }
 
             // 5. Add bun tag
-            let bun_tag_prefix = bun_hash_tag;
-            let mut buntagbuf: BuntagHashBuf = [0; MAX_BUNTAG_HASH_BUF_LEN];
-            buntagbuf[..bun_tag_prefix.len()].copy_from_slice(bun_tag_prefix);
-            let hashlen = {
-                use std::io::Write as _;
-                let mut cursor = &mut buntagbuf[bun_tag_prefix.len()..];
-                let before = cursor.len();
-                write!(&mut cursor, "{:x}", patch.patch_hash).expect("unreachable");
-                before - cursor.len()
-            };
-            buntagbuf[bun_tag_prefix.len() + hashlen] = 0;
-            let buntag_zstr = ZStr::from_buf(&buntagbuf, bun_tag_prefix.len() + hashlen);
+            let mut buntagbuf = crate::BuntagHashBuf::default();
+            let len = crate::buntaghashbuf_make(&mut buntagbuf, patch.patch_hash).len();
+            let buntag_zstr = ZStr::from_buf(&buntagbuf, len);
             if let Err(e) = sys::File::write_file(patch_pkg_dir, buntag_zstr, b"") {
                 log.add_error_fmt_opts(
                     format_args!(

@@ -559,7 +559,9 @@ describe.concurrent.each([
 
     const { stderr, exitCode } = await runInstall(project.member);
 
-    expect(stderr).toContain('error: ParserError reading package.json for workspace package "packages/pkg2"');
+    expect(stderr.replaceAll("\\", "/")).toContain(
+      'error: ParserError reading package.json for workspace package "packages/pkg2"',
+    );
     expect(stderr).not.toContain('Workspace dependency "pkg1" not found');
     expect(existsSync(join(project.member, "bun.lock"))).toBe(false);
     expect(exitCode).toBe(1);

@@ -9,12 +9,8 @@
 //! [WSTR:program][u16:0][WSTR:args][u32:bin_path_byte_len][u32:arg_byte_len]
 //! - args always ends with a trailing space
 //!
-//! `bin_path` is normally relative to the parent of the directory containing
-//! the shim (`node_modules` for `node_modules/.bin/foo.exe`), which is what
-//! keeps a `node_modules` tree relocatable. When no such relative path exists
-//! (a global install whose bin directory is on a different drive than the
-//! package directory, or whose package directory is inside the bin directory)
-//! `Flags::is_absolute_target` is set and `bin_path` is the absolute path.
+//! `bin_path` is relative to the parent of the directory containing the shim, or, where a global
+//! install has no such path (another drive), absolute with `Flags::is_absolute_target` set.
 //!
 //! See `bun_shim_impl.rs` for more details on how this file is consumed.
 //!
@@ -39,10 +35,7 @@ impl VersionFlag {
     const CURRENT: VersionFlag = VersionFlag::V5;
 
     /// Fixed bugs where passing arguments did not always work.
-    ///
-    /// Was the 13-bit value 5478 at bit 3 of `Flags` before
-    /// `Flags::is_absolute_target` took that bit; `2739 << 4` is the same bit
-    /// pattern. The assertions below `Flags` explain and pin this.
+    /// `2739 << 4` == `5478 << 3`: see the assertions below `Flags`.
     const V5: VersionFlag = VersionFlag(2739);
 
     /// Maximum 12-bit value.
@@ -103,8 +96,6 @@ impl Flags {
     pub(crate) const fn has_shebang(self) -> bool {
         (self.0 & 0b100) != 0
     }
-    // indicates that bin_path is an absolute path instead of being relative to
-    // the parent of the directory containing the shim
     #[inline]
     pub(crate) const fn is_absolute_target(self) -> bool {
         (self.0 & 0b1000) != 0
@@ -371,8 +362,7 @@ mod host {
     }
 
     pub(crate) struct BinLinkingShim<'a> {
-        /// Relative to the parent of the directory containing the shim (do not
-        /// include a leading slash), or absolute when `is_absolute_target` is set.
+        /// Relative to the parent of the shim's directory (no leading slash), or absolute.
         pub(crate) bin_path: &'a [u16],
         pub(crate) is_absolute_target: bool,
         /// Information found within the target file's shebang

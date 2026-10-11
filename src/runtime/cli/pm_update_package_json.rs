@@ -1,13 +1,4 @@
-//! MOVE_UP from `bun_install::package_manager::update_package_json_and_install`.
-//!
-//! `update_package_json_and_install`'s `cli.analyze` branch constructs a
-//! `DependenciesScanner` and calls
-//! `BuildCommand::exec` — both of which are higher-tier than
-//! `bun_install` in the crate graph (`bun_runtime` → `bun_install`;
-//! `bun_runtime` → `bun_bundler`; `bun_install` ↛ `bun_bundler`). The analyze
-//! branch and the catch wrapper are therefore hosted here, and the crate-local
-//! body re-enters `bun_install` via the public
-//! `update_package_json_and_install_and_cli`.
+//! `--analyze` runs the bundler, which `bun_install` cannot depend on, so that branch lives here.
 
 use crate::Error;
 use bun_bundler::bundle_v2::{DependenciesScanner, DependenciesScannerResult};
@@ -26,12 +17,7 @@ pub(crate) fn update_package_json_and_install_catch_error(
     update_package_json_and_install(ctx, subcommand).or_else(InstallCommand::handle_error)
 }
 
-pub(crate) fn update_package_json_and_install(
-    ctx: Context,
-    subcommand: Subcommand,
-) -> Result<(), Error> {
-    // Calling with runtime `subcommand` here; if
-    // `parse` requires `<const CMD: Subcommand>`, expand to a `match`.
+fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> Result<(), Error> {
     let mut cli = CommandLineArguments::parse(subcommand)?;
 
     if cli.analyze {
@@ -54,11 +40,7 @@ pub(crate) fn analyze_dependencies_and_install(
     verb: &'static [u8],
     install: &mut dyn FnMut(&mut ContextData, CommandLineArguments) -> Result<(), Error>,
 ) -> Result<(), Error> {
-    // `ctx`/`cli` are stored as raw `*mut` because `BuildCommand::exec` holds
-    // the same `ContextData` across the `on_fetch` callback, and
-    // `DependenciesScanner.entry_points` owns a copy of `cli.positionals[1..]`
-    // for the duration of the scan; storing `&mut` here would assert
-    // exclusivity we don't have.
+    // Raw pointers: `BuildCommand::exec` holds the same `ContextData` across the callback.
     struct Analyzer<'a> {
         ctx: *mut ContextData,
         cli: *mut CommandLineArguments,
@@ -70,12 +52,7 @@ pub(crate) fn analyze_dependencies_and_install(
             &mut self,
             result: &mut DependenciesScannerResult<'_, '_>,
         ) -> Result<(), bun_bundler::Error> {
-            let this = self;
             // TODO: add separate argument that makes it so positionals[1..] is not done and instead the positionals are passed
-            //
-            // Process-lifetime storage for the rewritten positionals —
-            // `Global::exit(0)` follows immediately. `OnceLock` (not
-            // leaked).
             static OWNED_KEYS: std::sync::OnceLock<Vec<Box<[u8]>>> = std::sync::OnceLock::new();
             static POSITIONALS: std::sync::OnceLock<Vec<&'static [u8]>> =
                 std::sync::OnceLock::new();
@@ -89,35 +66,22 @@ pub(crate) fn analyze_dependencies_and_install(
                     .collect()
             });
             let positionals = POSITIONALS.get_or_init(|| {
-                let mut v: Vec<&'static [u8]> = Vec::with_capacity(owned.len() + 1);
-                v.push(this.verb);
-                for k in owned {
-                    v.push(&**k);
-                }
-                v
+                core::iter::once(self.verb)
+                    .chain(owned.iter().map(|k| &**k))
+                    .collect()
             });
 
-            // SAFETY: `this.cli` / `this.ctx` were set from the caller's live
-            // `&mut` borrows, whose scope encloses the entire
-            // `BuildCommand::exec` call (and hence this callback). The bundler
-            // has finished reading `entry_points` and does not touch the
-            // `ContextData` before invoking `on_fetch`, and this callback never
-            // returns `Ok` (`Global::exit` below), so forming fresh `&mut` here
-            // is exclusive for the duration of `install`.
-            let cli = unsafe { &mut *this.cli };
+            // SAFETY: both come from the caller's `&mut` borrows, which outlive `BuildCommand::exec`; the
+            // bundler is done with them when it calls this, and this never returns `Ok`.
+            let (cli, ctx) = unsafe { (&mut *self.cli, &mut *self.ctx) };
             cli.positionals = positionals.as_slice();
-            // SAFETY: see above — same invariant covers `this.ctx`.
-            let ctx = unsafe { &mut *this.ctx };
 
-            (this.install)(ctx, cli.clone()).map_err(bun_bundler::Error::from)?;
+            (self.install)(ctx, cli.clone()).map_err(bun_bundler::Error::from)?;
 
             Global::exit(0);
         }
     }
 
-    // `DependenciesScanner.entry_points` is `Box<[Box<[u8]>]>`. Clone the
-    // argv slices into an owned buffer (small one-shot list — no perf
-    // concern), before `cli` is aliased by the raw pointer below.
     let entry_points: Box<[Box<[u8]>]> = cli.positionals[1..]
         .iter()
         .map(|s| Box::<[u8]>::from(*s))
@@ -133,8 +97,6 @@ pub(crate) fn analyze_dependencies_and_install(
 
     let fetcher = DependenciesScanner::new(&mut analyzer, entry_points);
 
-    // This runs the bundler.
-    // SAFETY: `ctx_ptr` was just derived from the live `ctx: &mut ContextData`
-    // parameter; `ctx` is not accessed again in this function.
+    // SAFETY: `ctx_ptr` comes from the `ctx` parameter, which is not used again.
     BuildCommand::exec(unsafe { &mut *ctx_ptr }, Some(&fetcher))
 }

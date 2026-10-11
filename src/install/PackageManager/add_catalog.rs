@@ -315,21 +315,12 @@ fn collect_root_entries(root: &Expr, group: &[u8], out: &mut Vec<RootEntry>) {
         let Some(obj) = object.data.e_object() else {
             continue;
         };
-        for property in obj.properties.slice() {
-            let (Some(key), Some(value)) = (
-                property
-                    .key
-                    .as_ref()
-                    .and_then(|k| k.as_utf8_string_literal()),
-                property
-                    .value
-                    .as_ref()
-                    .and_then(|v| v.as_utf8_string_literal()),
-            ) else {
-                continue;
-            };
-            out.push((key.into(), value.into()));
-        }
+        let entries = obj.properties.slice().iter();
+        out.extend(
+            entries
+                .filter_map(PackageJSONEditor::string_pair)
+                .map(|(key, value)| (Box::from(key), Box::from(value))),
+        );
     }
 }
 

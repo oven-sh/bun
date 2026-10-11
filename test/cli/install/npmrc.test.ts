@@ -5219,14 +5219,17 @@ describe.skipIf(isWindows)("unreadable config files", () => {
       "cache/.keep": "",
     });
     const locked: string[] = [];
+    // Only root can start a process in a directory it cannot search, so the child locks its cwd from the inside.
+    let lockCwd = false;
     prepare(String(dir), path => {
-      chmodSync(join(String(dir), path), 0o000);
+      if (path === "project") lockCwd = true;
+      else chmodSync(join(String(dir), path), 0o000);
       locked.push(join(String(dir), path));
     });
     using unprivileged = unprivilegedSpawnOptions(String(dir));
     try {
       await using proc = Bun.spawn({
-        cmd: [bunExe(), ...cmd],
+        cmd: lockCwd ? ["sh", "-c", 'chmod 000 . && exec "$@"', "sh", bunExe(), ...cmd] : [bunExe(), ...cmd],
         cwd: join(String(dir), "project"),
         env: {
           ...env,
@@ -5295,7 +5298,8 @@ describe.skipIf(isWindows)("unreadable config files", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("nothing is said about ./bunfig.toml in a directory that cannot be searched", async () => {
+  // Linux only: macOS has no getcwd system call, and its libc cannot find the path of such a directory.
+  test.skipIf(!isLinux)("nothing is said about ./bunfig.toml in a directory that cannot be searched", async () => {
     const result = await run(["-e", "console.log(1)"], (dir, lock) => {
       writeFileSync(join(dir, "project/bunfig.toml"), "");
       lock("project");
@@ -5304,7 +5308,7 @@ describe.skipIf(isWindows)("unreadable config files", () => {
   });
 
   // The package.json beside it is refused first, so this is the one message.
-  test("nothing is said about ./.npmrc in a directory that cannot be searched", async () => {
+  test.skipIf(!isLinux)("nothing is said about ./.npmrc in a directory that cannot be searched", async () => {
     const { stderr, exitCode } = await run(["install"], (dir, lock) => {
       writeFileSync(join(dir, "project/.npmrc"), "");
       lock("project");

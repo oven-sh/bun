@@ -114,20 +114,10 @@ impl Expr {
 impl Expr {
     /// Deep-clone this subtree into `bump`.
     ///
-    /// Nodes go into `bump`; embedded `AstVec`s (`items`/`properties`/…)
-    /// allocate via `AstAlloc`, which reads the thread's active allocation
-    /// state. If a per-parse `ASTMemoryAllocator` scope is active that state
-    /// is bulk-freed while the cloned tree (e.g. `WorkspacePackageJSONCache`)
-    /// still references the buffers — UAF. This entry point installs a
-    /// [`DetachAstHeap`] guard so
-    /// those vecs land on global mimalloc. The guard is installed once here;
-    /// the recursive body goes through
-    /// `*_no_detach` so we don't pay 3 TLS ops per node.
-    ///
-    /// [`crate::Error::StackOverflow`] when the tree is nested deeper than
-    /// the stack has room for.
-    ///
-    /// [`DetachAstHeap`]: bun_alloc::ast_alloc::DetachAstHeap
+    /// Nodes go into `bump`; embedded `AstVec`s (`items`/`properties`/…) allocate via `AstAlloc`.
+    /// An active per-parse `ASTMemoryAllocator` scope would bulk-free those while the clone (e.g.
+    /// `WorkspacePackageJSONCache`) still references them, so the guard sends them to global
+    /// mimalloc. It is installed once here, not per node (3 TLS ops).
     pub fn deep_clone(&self, bump: &Bump) -> Result<Expr, crate::Error> {
         let _g = bun_alloc::ast_alloc::DetachAstHeap::new();
         self.deep_clone_no_detach(bump, bun_core::StackCheck::init())

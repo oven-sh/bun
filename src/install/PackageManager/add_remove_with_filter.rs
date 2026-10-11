@@ -19,8 +19,8 @@ use super::options::LogLevel;
 use super::package_json_editor::EditOptions;
 use super::package_json_write_back;
 use super::update_package_json_and_install::{
-    print_package_json_into_cache_entry, remove_dependencies_from_package_json,
-    remove_leftover_node_modules,
+    package_json_entry_or_crash, print_package_json_into_cache_entry,
+    remove_dependencies_from_package_json, remove_leftover_node_modules,
 };
 use super::workspace_package_json_cache::{GetJSONOptions, GetResult, MapEntry};
 use super::workspace_selection::{self, Candidate, LinkTargets, RootSelection, WorkspaceGraph};
@@ -81,18 +81,6 @@ pub(crate) fn root_package_json_path() -> Box<[u8]> {
     path
 }
 
-fn print_log_and_crash(
-    manager: &PackageManager,
-    fmt: &str,
-    args: impl bun_core::output::FmtTuple,
-) -> ! {
-    let _ = manager
-        .log_mut()
-        .print(std::ptr::from_mut(Output::error_writer()));
-    Output::err_generic(fmt, args);
-    Global::crash();
-}
-
 pub(crate) struct WorkspaceMembers {
     pub(crate) root_path: Box<[u8]>,
     pub(crate) root_name: Box<[u8]>,
@@ -102,39 +90,14 @@ pub(crate) struct WorkspaceMembers {
 pub(crate) fn load_workspace_members(manager: &mut PackageManager) -> WorkspaceMembers {
     let root_path = root_package_json_path();
 
-    let (root_expr, root_source, root_name): (bun_ast::Expr, bun_ast::Source, Box<[u8]>) = {
-        let log = manager.log_mut();
-        match manager.workspace_package_json_cache.get_with_path(
-            log,
-            &root_path,
-            GetJSONOptions {
-                guess_indentation: true,
-                ..Default::default()
-            },
-        ) {
-            GetResult::Entry(entry) => {
-                let name_expr = entry.root.get(b"name");
-                let name: Box<[u8]> = name_expr
-                    .as_ref()
-                    .and_then(|e| e.as_utf8_string_literal())
-                    .unwrap_or(b"")
-                    .into();
-                (entry.root, entry.source.clone(), name)
-            }
-            GetResult::ParseErr(err) => print_log_and_crash(
-                manager,
-                "failed to parse package.json \"{}\": {}",
-                (BStr::new(&root_path), err.name()),
-            ),
-            GetResult::ReadErr(err) => {
-                Output::err_generic(
-                    "failed to read package.json \"{}\": {}",
-                    (BStr::new(&root_path), err.name()),
-                );
-                Global::crash();
-            }
-        }
-    };
+    let entry = package_json_entry_or_crash(manager, &root_path);
+    let (root_expr, root_source) = (entry.root, entry.source.clone());
+    let name_expr = root_expr.get(b"name");
+    let root_name: Box<[u8]> = name_expr
+        .as_ref()
+        .and_then(|e| e.as_utf8_string_literal())
+        .unwrap_or(b"")
+        .into();
 
     let mut members = WorkspaceMap::init();
     let log = manager.log_mut();
@@ -610,7 +573,6 @@ struct PendingTarget {
 pub(crate) struct PendingWrite {
     targets: Vec<PendingTarget>,
     catalog_mode: bool,
-    root_target: WorkspaceTarget,
 }
 
 impl PendingWrite {
@@ -673,9 +635,10 @@ impl PendingWrite {
         restore_order(updates, &summary_order);
 
         if self.catalog_mode {
-            let root = fetch_entry_root(manager, &self.root_target);
+            let root_target = WorkspaceTarget::root();
+            let root = fetch_entry_root(manager, &root_target);
             if add_catalog::edit_root_after_install(manager, &root)? {
-                store_entry(manager, &self.root_target, root);
+                store_entry(manager, &root_target, root);
             }
         }
         Ok(())
@@ -723,12 +686,7 @@ pub(super) fn update_filtered_workspaces_and_install(
     let catalog_mode = subcommand == Subcommand::Add && manager.options.add_catalog.is_some();
     debug_assert!(manager.root_package_id.id.is_none());
 
-    let root_package_json_path = root_package_json_path();
-    let root_target = WorkspaceTarget {
-        name: Box::default(),
-        name_hash: None,
-        package_json_path: root_package_json_path.clone(),
-    };
+    let root_target = WorkspaceTarget::root();
 
     let (mut updates, assigned) = if subcommand == Subcommand::Remove {
         (updates, vec![Vec::new(); targets.len()])
@@ -837,13 +795,12 @@ pub(super) fn update_filtered_workspaces_and_install(
         manager.pending_filtered_write = Some(Box::new(PendingWrite {
             targets: changed,
             catalog_mode,
-            root_target,
         }));
     }
 
     {
         let mut zbuf = path_buffer_pool::get();
-        let root_package_json_path = resolve_path::z(&root_package_json_path, &mut zbuf);
+        let root_package_json_path = resolve_path::z(&root_target.package_json_path, &mut zbuf);
         install_with_manager(manager, ctx, root_package_json_path, original_cwd)?;
     }
     package_json_write_back::flush(manager)?;

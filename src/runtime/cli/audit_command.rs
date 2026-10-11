@@ -13,7 +13,9 @@ use bun_install::lockfile::reachable;
 use bun_install::package_manager_real::command_line_arguments::AuditLevel;
 use bun_install::package_manager_real::{ROOT_PACKAGE_JSON_PATH, install_with_manager};
 use bun_install::resolution::Tag as ResolutionTag;
-use bun_install::{CommandLineArguments, LogLevel, PackageManager, PackageNameHash, Subcommand};
+use bun_install::{
+    CommandLineArguments, Dependency, LogLevel, PackageManager, PackageNameHash, Subcommand,
+};
 use bun_libdeflate_sys::libdeflate;
 use bun_parsers::json as bun_json;
 use bun_url::URL;
@@ -22,8 +24,6 @@ use crate::cli::Command;
 use crate::cli::install_command::InstallCommand;
 use crate::cli::package_manager_command::PackageManagerCommand;
 
-// Boxed to avoid a struct lifetime param; the
-// clones are per-vulnerability, terminal-UI-bound, and not perf-relevant.
 struct VulnerabilityInfo {
     severity: Box<[u8]>,
     title: Box<[u8]>,
@@ -33,9 +33,8 @@ struct VulnerabilityInfo {
     package_name: Box<[u8]>,
 }
 
-struct DependencyPath {
-    path: Vec<Box<[u8]>>,
-}
+/// Root-most first, ending at the vulnerable package.
+type DependencyPath = Vec<Box<[u8]>>;
 
 #[derive(Default)]
 struct AuditStats {
@@ -85,15 +84,6 @@ fn print_no_vulnerabilities(stats: &AuditStats, audit_level: Option<AuditLevel>)
     Output::flush();
 }
 
-fn print_command_name(fix: bool) {
-    bun_core::pretty!(
-        "<r><b>bun audit{} <r><d>v{}<r>\n\n",
-        if fix { " fix" } else { "" },
-        Global::package_json_version_with_sha
-    );
-    Output::flush();
-}
-
 fn default_registry_href(pm: &PackageManager) -> &[u8] {
     strings::without_trailing_slash(pm.options.scope.url.href())
 }
@@ -112,10 +102,8 @@ fn report_bad_response(registry: &[u8], reason: &SkipReason) {
 pub(crate) struct AuditCommand;
 
 impl AuditCommand {
-    // `!noreturn` → `Result<Infallible, _>` so callers can `?`; all Ok paths Global::exit.
     pub(crate) fn exec(ctx: Command::Context) -> crate::Result<core::convert::Infallible> {
         let cli = CommandLineArguments::parse(Subcommand::Audit)?;
-        // Note: `init` consumes `cli`; capture the fields read after it.
         let audit_level = cli.audit_level;
         let audit_ignore_list = cli.audit_ignore_list;
         let fix = cli.positionals.len() > 1 && cli.positionals[1] == b"fix";
@@ -158,6 +146,25 @@ impl AuditCommand {
             }
         };
         let json_output = manager.options.json_output;
+        if !json_output && manager.options.should_print_command_name() {
+            bun_core::pretty!(
+                "<r><b>bun audit{} <r><d>v{}<r>\n\n",
+                if fix { " fix" } else { "" },
+                Global::package_json_version_with_sha
+            );
+            Output::flush();
+        }
+
+        {
+            let log_level = manager.options.log_level;
+            let load_lockfile = manager.load_lockfile_from_cwd::<true>();
+            PackageManagerCommand::handle_load_lockfile_errors_for(
+                &load_lockfile,
+                log_level,
+                "audit",
+            );
+        }
+
         if fix {
             return Self::audit_fix(
                 ctx,
@@ -169,33 +176,16 @@ impl AuditCommand {
             );
         }
 
-        let code = Self::audit(ctx, manager, json_output, audit_level, audit_ignore_list)?;
+        let code = Self::audit(manager, json_output, audit_level, audit_ignore_list)?;
         Global::exit(code);
     }
 
     fn audit(
-        _ctx: Command::Context,
         pm: &mut PackageManager,
         json_output: bool,
         audit_level: Option<AuditLevel>,
         ignore_list: &[&[u8]],
     ) -> Result<u32, bun_alloc::AllocError> {
-        if !json_output && pm.options.should_print_command_name() {
-            print_command_name(false);
-        }
-
-        // Note: a self-referential split borrow; encapsulated upstream as
-        // `PackageManager::load_lockfile_from_cwd`.
-        {
-            let log_level = pm.options.log_level;
-            let load_lockfile = pm.load_lockfile_from_cwd::<true>();
-            PackageManagerCommand::handle_load_lockfile_errors_for(
-                &load_lockfile,
-                log_level,
-                "audit",
-            );
-        }
-
         let dependency_tree = build_dependency_tree(pm)?;
 
         let collected = collect_packages_for_audit(pm, true)?;
@@ -243,20 +233,6 @@ impl AuditCommand {
         ignore_list: &[&[u8]],
         original_cwd: &[u8],
     ) -> crate::Result<core::convert::Infallible> {
-        if !json_output && pm.options.should_print_command_name() {
-            print_command_name(true);
-        }
-
-        {
-            let log_level = pm.options.log_level;
-            let load_lockfile = pm.load_lockfile_from_cwd::<true>();
-            PackageManagerCommand::handle_load_lockfile_errors_for(
-                &load_lockfile,
-                log_level,
-                "audit",
-            );
-        }
-
         audit_fix::exit_unless_lockfile_matches_package_json(pm)?;
         audit_fix::exit_unless_lockfile_writable(pm);
 
@@ -419,8 +395,6 @@ impl core::fmt::Display for SkipReason {
 }
 
 fn unaudited(request: &AuditRequest, reason: &SkipReason) -> audit_fix::UnauditedRegistry {
-    let mut reason_text: Vec<u8> = Vec::new();
-    write!(&mut reason_text, "{reason}").expect("unreachable");
     let registry = URL::parse(&request.registry.href).href_without_auth();
     audit_fix::UnauditedRegistry {
         registry: Box::from(strings::without_trailing_slash(&registry)),
@@ -429,7 +403,7 @@ fn unaudited(request: &AuditRequest, reason: &SkipReason) -> audit_fix::Unaudite
             .iter()
             .map(|package| package.name.clone())
             .collect(),
-        reason: reason_text.into_boxed_slice(),
+        reason: reason.to_string().into_bytes().into_boxed_slice(),
     }
 }
 
@@ -477,16 +451,9 @@ fn collect_packages_for_audit(
     let mut ver_scratch: Vec<u8> = Vec::new();
 
     for (idx, (name, res)) in pkg_names.iter().zip(pkg_resolutions.iter()).enumerate() {
-        if idx as u32 == root_id {
-            continue;
-        }
-        if res.tag != ResolutionTag::Npm {
-            continue;
-        }
-
-        if wanted_packages
-            .as_ref()
-            .is_some_and(|wanted| !wanted.is_set(idx))
+        if idx as u32 == root_id
+            || res.tag != ResolutionTag::Npm
+            || (wanted_packages.as_ref()).is_some_and(|wanted| !wanted.is_set(idx))
         {
             continue;
         }
@@ -519,19 +486,11 @@ fn collect_packages_for_audit(
         let found_package = &mut groups[group_idx].1[list_idx];
 
         ver_scratch.clear();
-        // `res.tag == ResolutionTag::Npm` checked above.
-        let npm = *res.npm();
-        write!(&mut ver_scratch, "{}", npm.version.fmt(buf)).expect("unreachable");
+        write!(&mut ver_scratch, "{}", res.npm().version.fmt(buf)).expect("unreachable");
 
-        let version_exists = found_package
-            .versions
-            .iter()
-            .any(|existing| existing.as_ref() == ver_scratch.as_slice());
-
-        if !version_exists {
-            found_package
-                .versions
-                .push(Box::<[u8]>::from(ver_scratch.as_slice()));
+        let versions = &mut found_package.versions;
+        if !versions.iter().any(|existing| **existing == *ver_scratch) {
+            versions.push(Box::<[u8]>::from(ver_scratch.as_slice()));
         }
     }
 
@@ -702,7 +661,6 @@ fn send_audit_request(
     let mut compressed_body = Vec::new();
     let _ = compressor.compress_to_vec(body, &mut compressed_body, libdeflate::Encoding::Gzip)?;
     drop(compressor);
-    let final_compressed_body = compressed_body;
 
     let mut headers = HeaderBuilder::default();
     headers.count(b"accept", b"application/json");
@@ -719,24 +677,19 @@ fn send_audit_request(
         headers.append(b"authorization", authorization);
     }
 
-    let mut url_str: Vec<u8> = Vec::new();
-    write!(
-        &mut url_str,
+    let url_str = format!(
         "{}/-/npm/v1/security/advisories/bulk",
         BStr::new(&registry.href)
     )
-    .expect("unreachable");
-    let url = URL::parse(&url_str);
-
-    let headers_buf: &[u8] = headers.content.written_slice();
+    .into_bytes();
 
     let mut response_buf = MutableString::init(1024)?;
     let mut req = pm.registry_request(
         http::Method::POST,
-        url,
+        URL::parse(&url_str),
         headers.entries,
-        headers_buf,
-        &final_compressed_body,
+        headers.content.written_slice(),
+        &compressed_body,
     );
     // A registry URL that is not http(s) is a configuration error, not a registry without an audit endpoint.
     let mut is_fatal = registry.is_default;
@@ -782,10 +735,7 @@ fn send_audit_request(
     Global::exit(1);
 }
 
-fn parse_vulnerability(
-    package_name: &[u8],
-    vuln: &E::ObjectJSON,
-) -> Result<VulnerabilityInfo, bun_alloc::AllocError> {
+fn parse_vulnerability(package_name: &[u8], vuln: &E::ObjectJSON) -> VulnerabilityInfo {
     let mut vulnerability = VulnerabilityInfo {
         severity: Box::<[u8]>::from(b"moderate" as &[u8]),
         title: Box::<[u8]>::from(b"Vulnerability found" as &[u8]),
@@ -799,31 +749,24 @@ fn parse_vulnerability(
         let field_name: &[u8] = prop.key.slice();
         match &prop.value {
             E::JsonValue::String(val_str) => {
-                let field_value: &[u8] = val_str.slice();
-                if field_name == b"severity" {
-                    vulnerability.severity = Box::<[u8]>::from(field_value);
-                } else if field_name == b"title" {
-                    vulnerability.title = Box::<[u8]>::from(field_value);
-                } else if field_name == b"url" {
-                    vulnerability.url = Box::<[u8]>::from(field_value);
-                } else if field_name == b"vulnerable_versions" {
-                    vulnerability.vulnerable_versions = Box::<[u8]>::from(field_value);
-                } else if field_name == b"id" {
-                    vulnerability.id = Box::<[u8]>::from(field_value);
-                }
+                let field = match field_name {
+                    b"severity" => &mut vulnerability.severity,
+                    b"title" => &mut vulnerability.title,
+                    b"url" => &mut vulnerability.url,
+                    b"vulnerable_versions" => &mut vulnerability.vulnerable_versions,
+                    b"id" => &mut vulnerability.id,
+                    _ => continue,
+                };
+                *field = Box::<[u8]>::from(val_str.slice());
             }
-            E::JsonValue::Number(num) => {
-                if field_name == b"id" {
-                    let mut s: Vec<u8> = Vec::new();
-                    write!(&mut s, "{}", num.value() as u64).expect("unreachable");
-                    vulnerability.id = s.into_boxed_slice();
-                }
+            E::JsonValue::Number(num) if field_name == b"id" => {
+                vulnerability.id = (num.value() as u64).to_string().into_bytes().into();
             }
             _ => {}
         }
     }
 
-    Ok(vulnerability)
+    vulnerability
 }
 
 fn find_dependency_paths(
@@ -842,49 +785,32 @@ fn find_dependency_paths(
     let pkg_resolutions = packages.items_resolution();
     let pkg_deps = packages.items_dependencies();
 
-    let root_deps = pkg_deps[root_id as usize];
-    let dep_slice = root_deps.get(dependencies);
-
-    for dependency in dep_slice {
-        let dep_name = dependency.name.slice(buf);
-        if dep_name == target_package {
-            paths.push(DependencyPath {
-                path: vec![Box::<[u8]>::from(target_package)],
-            });
-            break;
-        }
-    }
-
-    for ((resolution, workspace_deps), pkg_name) in pkg_resolutions
-        .iter()
+    let dep_slice = pkg_deps[root_id as usize].get(dependencies);
+    let workspaces: Vec<(&[u8], &[Dependency])> = (pkg_resolutions.iter())
         .zip(pkg_deps.iter())
         .zip(pkg_names.iter())
-    {
-        if resolution.tag != ResolutionTag::Workspace {
-            continue;
-        }
+        .filter(|((resolution, _), _)| resolution.tag == ResolutionTag::Workspace)
+        .map(|((_, deps), pkg_name)| (pkg_name.slice(buf), deps.get(dependencies)))
+        .collect();
+    let depends_on = |deps: &[Dependency], name: &[u8]| {
+        (deps.iter()).any(|dependency| dependency.name.slice(buf) == name)
+    };
+    let workspace_prefix = |workspace_name: &[u8]| -> Box<[u8]> {
+        format!("workspace:{}", BStr::new(workspace_name))
+            .into_bytes()
+            .into()
+    };
 
-        let workspace_name = pkg_name.slice(buf);
-        let workspace_dep_slice = workspace_deps.get(dependencies);
+    if depends_on(dep_slice, target_package) {
+        paths.push(vec![Box::<[u8]>::from(target_package)]);
+    }
 
-        for dependency in workspace_dep_slice {
-            let dep_name = dependency.name.slice(buf);
-            if dep_name == target_package {
-                let mut workspace_prefix: Vec<u8> = Vec::new();
-                write!(
-                    &mut workspace_prefix,
-                    "workspace:{}",
-                    BStr::new(workspace_name)
-                )
-                .expect("unreachable");
-                paths.push(DependencyPath {
-                    path: vec![
-                        workspace_prefix.into_boxed_slice(),
-                        Box::<[u8]>::from(target_package),
-                    ],
-                });
-                break;
-            }
+    for &(workspace_name, workspace_deps) in &workspaces {
+        if depends_on(workspace_deps, target_package) {
+            paths.push(vec![
+                workspace_prefix(workspace_name),
+                Box::<[u8]>::from(target_package),
+            ]);
         }
     }
 
@@ -905,51 +831,23 @@ fn find_dependency_paths(
         }
         visited.put(&current, ())?;
 
-        let mut is_root_dep = false;
-        for dependency in dep_slice {
-            let dep_name = dependency.name.slice(buf);
-            if dep_name == &*current {
-                is_root_dep = true;
-                break;
-            }
-        }
+        let workspace_name_for_dep: Option<&[u8]> = (workspaces.iter())
+            .find(|(_, workspace_deps)| depends_on(workspace_deps, &current))
+            .map(|&(workspace_name, _)| workspace_name);
 
-        let mut workspace_name_for_dep: Option<&[u8]> = None;
-        for ((resolution, workspace_deps), pkg_name) in pkg_resolutions
-            .iter()
-            .zip(pkg_deps.iter())
-            .zip(pkg_names.iter())
-        {
-            if resolution.tag != ResolutionTag::Workspace {
-                continue;
-            }
-
-            let workspace_dep_slice = workspace_deps.get(dependencies);
-            for dependency in workspace_dep_slice {
-                let dep_name = dependency.name.slice(buf);
-                if dep_name == &*current {
-                    workspace_name_for_dep = Some(pkg_name.slice(buf));
-                    break;
-                }
-            }
-            if workspace_name_for_dep.is_some() {
-                break;
-            }
-        }
-
-        if is_root_dep || workspace_name_for_dep.is_some() {
-            let mut path = DependencyPath { path: Vec::new() };
+        if depends_on(dep_slice, &current) || workspace_name_for_dep.is_some() {
+            let mut path = DependencyPath::new();
 
             let mut trace: Box<[u8]> = current;
             let mut seen_in_trace: StringHashMap<()> = StringHashMap::default();
 
-            // Walks dependent → dependency, so the path reads root-most first and ends at the vulnerable package.
+            // Walks dependent → dependency.
             loop {
                 if seen_in_trace.contains_key(&*trace) {
                     break;
                 }
 
-                path.path.push(trace.clone());
+                path.push(trace.clone());
                 seen_in_trace.put(&trace, ())?;
 
                 if let Some(parent) = parent_map.get(&*trace) {
@@ -960,14 +858,7 @@ fn find_dependency_paths(
             }
 
             if let Some(workspace_name) = workspace_name_for_dep {
-                let mut workspace_prefix: Vec<u8> = Vec::new();
-                write!(
-                    &mut workspace_prefix,
-                    "workspace:{}",
-                    BStr::new(workspace_name)
-                )
-                .expect("unreachable");
-                path.path.insert(0, workspace_prefix.into_boxed_slice());
+                path.insert(0, workspace_prefix(workspace_name));
             }
 
             paths.push(path);
@@ -1007,19 +898,14 @@ fn keep_vulnerability(
     !ignored
 }
 
-fn ignore_token(vulnerability: &VulnerabilityInfo) -> Box<[u8]> {
-    match strings::index_of(&vulnerability.url, b"GHSA-") {
-        Some(i) => Box::from(&vulnerability.url[i..]),
-        None => vulnerability.id.clone(),
-    }
-}
-
 fn to_advisory(vulnerability: VulnerabilityInfo) -> Advisory {
-    let ignore_token = ignore_token(&vulnerability);
     Advisory {
+        ignore_token: match strings::index_of(&vulnerability.url, b"GHSA-") {
+            Some(i) => Box::from(&vulnerability.url[i..]),
+            None => vulnerability.id,
+        },
         package_name: vulnerability.package_name,
         vulnerable_versions: vulnerability.vulnerable_versions,
-        ignore_token,
     }
 }
 
@@ -1053,7 +939,7 @@ fn collect_vulnerabilities(
             let Some(vuln_obj) = vuln.as_object() else {
                 return Ok(Err(SkipReason::NotAdvisories));
             };
-            let vulnerability = parse_vulnerability(package_name, vuln_obj)?;
+            let vulnerability = parse_vulnerability(package_name, vuln_obj);
             if keep_vulnerability(&vulnerability, audit_level, ignore_list, stats) {
                 vulnerabilities.push(vulnerability);
             }
@@ -1089,8 +975,8 @@ fn print_package_heading(name: &[u8], installed: &[Box<[u8]>]) {
     prettyln!("");
 }
 
-fn print_dependency_path(path: &DependencyPath, separator: &str) {
-    let Some((vulnerable_pkg, dependents)) = path.path.split_last() else {
+fn print_dependency_path(path: &[Box<[u8]>], separator: &str) {
+    let Some((vulnerable_pkg, dependents)) = path.split_last() else {
         return;
     };
     if dependents.is_empty() {
@@ -1158,15 +1044,8 @@ fn print_enhanced_audit_report(
         ">"
     };
 
-    let mut rest: &[VulnerabilityInfo] = &vulnerabilities;
-    while let Some(first) = rest.first() {
-        let package_name: &[u8] = &first.package_name;
-        let run_len = rest
-            .iter()
-            .take_while(|vulnerability| *vulnerability.package_name == *package_name)
-            .count();
-        let (group, tail) = rest.split_at(run_len);
-        rest = tail;
+    for group in vulnerabilities.chunk_by(|a, b| a.package_name == b.package_name) {
+        let package_name: &[u8] = &group[0].package_name;
 
         print_package_heading(package_name, collected.installed_versions(package_name));
 

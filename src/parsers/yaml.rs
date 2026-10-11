@@ -2123,7 +2123,8 @@ pub struct Parser<'i, Enc: Encoding> {
 
     pub(crate) explicit_document_start_line: Option<Line>,
 
-    pub(crate) anchors: StringHashMap<Anchored>,
+    /// The node of each anchor and the stack it took to parse it; see `parse_node`.
+    pub(crate) anchors: StringHashMap<(Expr, usize)>,
     /// Anchored collections enclosing the current position, innermost last.
     /// Pushed/popped only by `parse_collection`.
     pub(crate) open_collections: Vec<OpenCollection>,
@@ -2139,7 +2140,7 @@ pub struct Parser<'i, Enc: Encoding> {
     pub(crate) stack_check: StackCheck,
     /// The least `stack_check.remaining()` a `parse_node` began with since the
     /// innermost `PendingAnchor` was scanned, an alias counting as the stack
-    /// its target took (`Anchored::stack`).
+    /// its target took.
     least_stack_left: usize,
 
     pub(crate) merge_props_budget: usize,
@@ -2484,12 +2485,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         loop {
             match self.token.data {
                 TokenData::Anchor(name) if scanned_anchor.is_none() => {
-                    scanned_anchor = Some(PendingAnchor::new(
-                        &self.token,
-                        name,
-                        self.stack_check.remaining(),
-                        &mut self.least_stack_left,
-                    ));
+                    scanned_anchor = Some(self.pending_anchor(name, self.stack_check.remaining()));
                 }
                 TokenData::Tag(_) if scanned_tag.is_none() => {
                     scanned_tag = Some(self.token.clone());
@@ -3259,23 +3255,6 @@ pub(crate) struct PendingAnchor {
     outer_least_stack_left: usize,
 }
 
-impl PendingAnchor {
-    fn new<Enc: Encoding>(
-        token: &Token<Enc>,
-        name: StringRange,
-        stack_left: usize,
-        least_stack_left: &mut usize,
-    ) -> Self {
-        Self {
-            name,
-            start: token.start,
-            line: token.line,
-            stack_left,
-            outer_least_stack_left: core::mem::replace(least_stack_left, stack_left),
-        }
-    }
-}
-
 /// An anchored collection whose entries are being parsed: `node` is allocated
 /// but still empty (see `parse_collection`). The anchor is not in
 /// `Parser::anchors` until the node completes, so it is only found here by
@@ -3284,14 +3263,6 @@ impl PendingAnchor {
 pub(crate) struct OpenCollection {
     anchor: StringRange,
     node: Expr,
-}
-
-/// What an alias resolves to.
-#[derive(Clone, Copy)]
-pub(crate) struct Anchored {
-    node: Expr,
-    /// The stack it took to parse `node`; see `Parser::parse_node`.
-    stack: usize,
 }
 
 /// A collection node's identity, for pointer comparison.
@@ -3338,6 +3309,17 @@ impl CollectionData for E::Object {
 }
 
 impl<'i, Enc: Encoding> Parser<'i, Enc> {
+    /// The `&name` at `self.token`.
+    fn pending_anchor(&mut self, name: StringRange, stack_left: usize) -> PendingAnchor {
+        PendingAnchor {
+            name,
+            start: self.token.start,
+            line: self.token.line,
+            stack_left,
+            outer_least_stack_left: core::mem::replace(&mut self.least_stack_left, stack_left),
+        }
+    }
+
     /// The stack used since `anchor` was scanned. That also counts for the
     /// anchor scanned before it, so every anchor comes through here unless the
     /// parse fails.
@@ -3362,10 +3344,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     #[allow(clippy::needless_pass_by_value)]
     fn bind_anchor(&mut self, anchor: PendingAnchor, node: Expr) -> Result<(), AllocError> {
         let stack = self.close_anchor(&anchor);
-        self.anchors.put(
-            Enc::key_bytes(anchor.name.slice(self.input)),
-            Anchored { node, stack },
-        )
+        self.anchors
+            .put(Enc::key_bytes(anchor.name.slice(self.input)), (node, stack))
     }
 
     /// Parses a collection node: it is allocated (empty) before `body` parses
@@ -3406,7 +3386,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     /// resolves exactly as it would without cycle support. Only a name that
     /// would otherwise be unresolved is looked up among the enclosing
     /// collections still being parsed (innermost first): a cyclic alias.
-    fn resolve_alias(&mut self, name: StringRange) -> Result<Anchored, ParseError> {
+    fn resolve_alias(&mut self, name: StringRange) -> Result<(Expr, usize), ParseError> {
         let name = name.slice(self.input);
         if let Some(anchored) = self.anchors.get(Enc::key_bytes(name)) {
             return Ok(*anchored);
@@ -3424,7 +3404,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             CyclicAliases::Reject => Err(ParseError::CyclicAlias),
             CyclicAliases::Allow => {
                 self.has_cyclic_alias = true;
-                Ok(Anchored { node, stack: 0 })
+                Ok((node, 0))
             }
         }
     }
@@ -3747,12 +3727,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
             match self.token.data {
                 TokenData::Anchor(name) if value_anchor.is_none() => {
-                    value_anchor = Some(PendingAnchor::new(
-                        &self.token,
-                        name,
-                        self.stack_check.remaining(),
-                        &mut self.least_stack_left,
-                    ));
+                    value_anchor = Some(self.pending_anchor(name, self.stack_check.remaining()));
                 }
                 TokenData::Tag(_) if value_tag.is_none() => {
                     value_tag = Some(self.token.clone());
@@ -3929,12 +3904,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
 
                 TokenData::Anchor(name) => {
-                    node_props.set_anchor(PendingAnchor::new(
-                        &self.token,
-                        *name,
-                        stack_left,
-                        &mut self.least_stack_left,
-                    ))?;
+                    let name = *name;
+                    node_props.set_anchor(self.pending_anchor(name, stack_left))?;
                     self.scan(ScanOptions {
                         tag: node_props.tag(),
                         ..Default::default()
@@ -3970,10 +3941,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         }
                     }
 
-                    let Anchored {
-                        node: mut copy,
-                        stack,
-                    } = self.resolve_alias(alias)?;
+                    let (mut copy, stack) = self.resolve_alias(alias)?;
 
                     self.least_stack_left = stack_left
                         .checked_sub(stack)

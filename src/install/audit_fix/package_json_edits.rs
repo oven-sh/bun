@@ -16,13 +16,6 @@ use crate::package_manager_real::package_json_editor::for_each_catalog_object;
 use crate::package_manager_real::package_json_write_back;
 use crate::{PackageID, PackageManager};
 
-const DEPENDENCY_GROUPS: [&[u8]; 4] = [
-    b"dependencies",
-    b"devDependencies",
-    b"optionalDependencies",
-    b"peerDependencies",
-];
-
 #[derive(Clone)]
 pub struct PackageJsonEdit {
     pub owner: PackageID,
@@ -185,11 +178,10 @@ fn apply_to_target(
         for edit in edits {
             match &edit.site {
                 EditSite::Dependencies => {
-                    for group in DEPENDENCY_GROUPS {
-                        let Some(mut query) = root.as_property(group) else {
-                            continue;
-                        };
-                        rewrite_property(arena, &mut query.expr, edit);
+                    for group in bun_install_types::DependencyGroup::FOUR {
+                        if let Some(mut query) = root.as_property(group.prop) {
+                            rewrite_property(arena, &mut query.expr, edit);
+                        }
                     }
                 }
                 EditSite::Catalog(catalog) => {

@@ -31,7 +31,6 @@ use crate::dependency::{self, DependencyExt as _};
 use crate::lockfile::{self, Package};
 use crate::package_manager::package_manager_directories as directories;
 use crate::package_manager::package_manager_enqueue as enqueue;
-use crate::package_manager::package_manager_lifecycle as lifecycle;
 use crate::resolution;
 use crate::{DependencyID, Features, PackageID, PackageManager, PreinstallState};
 
@@ -132,16 +131,10 @@ fn resolution_from_hooks(r: &hooks::Resolution) -> resolution::Resolution {
 
 /// Bumped by every `PackageManager::wake_raw` of the auto-install manager.
 static WAKES: AtomicU32 = AtomicU32::new(0);
-/// Threads blocked on `WAKES` (the manager is one per process, Workers share it).
-/// At zero a wake skips the futex syscall.
+/// Threads blocked on `WAKES` (Workers share the one manager). At zero a wake skips the futex syscall.
 static PARKED: AtomicU32 = AtomicU32::new(0);
 
-/// A JS thread that waits in `enqueue_dependency_to_root` for the registry. It blocks
-/// instead of running its event loop: `require()`, `import()` and `Bun.resolveSync()`
-/// would run timers and other requests' handlers inside the call. So nothing pending
-/// on this manager may need the event loop (a git child does).
-///
-/// SeqCst throughout: each side writes its word, then reads the other's.
+/// A JS thread that waits in `enqueue_dependency_to_root`. It blocks instead of running its event loop, which would run timers and other handlers inside `require()`. SeqCst: each side writes its word, then reads the other's.
 pub(crate) struct Parked(());
 
 impl Parked {
@@ -150,8 +143,7 @@ impl Parked {
         Parked(())
     }
 
-    /// Read this before draining the finished tasks and pass it to [`Parked::wait`]:
-    /// a task that finishes after the drain then ends the wait at once.
+    /// Read before draining the finished tasks and passed to [`Parked::wait`]: a task that finishes after the drain ends the wait at once.
     pub(crate) fn wakes(&self) -> u32 {
         WAKES.load(Ordering::SeqCst)
     }
@@ -381,7 +373,7 @@ impl hooks::AutoInstaller for PackageManager {
     }
 
     fn get_preinstall_state(&self, package_id: PackageID) -> PreinstallState {
-        lifecycle::get_preinstall_state(self, package_id)
+        PackageManager::get_preinstall_state(self, package_id)
     }
 
     fn enqueue_package_for_download(
@@ -426,7 +418,6 @@ impl hooks::AutoInstaller for PackageManager {
                 package_id,
                 resolution: resolution_to_hooks(&resolution),
             },
-            enqueue::DependencyToEnqueue::Pending(id) => hooks::EnqueueResult::Pending(id),
             enqueue::DependencyToEnqueue::NotFound => hooks::EnqueueResult::NotFound,
             enqueue::DependencyToEnqueue::Failure(e) => hooks::EnqueueResult::Failure(e.into()),
         }
@@ -464,13 +455,7 @@ impl hooks::AutoInstaller for PackageManager {
     }
 }
 
-// ─── Dependency parsing without a manager (resolver → install link-time hook) ──
-//
-// `bun_resolver::PackageJSON::parse` reads the project's package.json before the
-// first bare import creates the `PackageManager` (see `Resolver::parse_dependency`).
-// `parse` only uses the manager to record `npm:` aliases, and
-// `lockfile_append_from_package_json` records them when these dependencies are
-// cloned into the lockfile, so nothing is lost by parsing without one.
+// `bun_resolver::PackageJSON::parse` runs before the first bare import creates the manager; `lockfile_append_from_package_json` records the `npm:` aliases later.
 #[unsafe(no_mangle)]
 fn __bun_resolver_parse_dependency(
     name: SemverString,

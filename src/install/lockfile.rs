@@ -134,29 +134,6 @@ const ZERO_HASH: MetaHash = [0u8; 32];
 // which avoids threading a `&mut [u8]` lifetime through the load call graph.
 pub(crate) type Stream = bun_io::FixedBufferStream<Vec<u8>>;
 
-/// Duck-typed surface that `Buffers::write_array`/`save` and
-/// `Package::Serializer::save` expect of their `stream` parameter. Expressed
-/// as a trait to stay generic over the borrowck-reshaped `StreamType` in
-/// `bun.lockb.rs` (which collapses stream + writer into one `&mut`).
-pub(crate) trait PositionalStream {
-    /// Current write position.
-    fn get_pos(&self) -> Result<usize, BunError>;
-    /// Positional write — returns bytes written (always `data.len()` for
-    /// in-memory buffers).
-    fn pwrite(&mut self, data: &[u8], index: usize) -> usize;
-}
-
-impl<'a> PositionalStream for Serializer::StreamType<'a> {
-    #[inline]
-    fn get_pos(&self) -> Result<usize, BunError> {
-        Serializer::StreamType::get_pos(self)
-    }
-    #[inline]
-    fn pwrite(&mut self, data: &[u8], index: usize) -> usize {
-        Serializer::StreamType::pwrite(self, data, index)
-    }
-}
-
 // ────────────────────────────────────────────────────────────────────────────
 // Lockfile struct
 // ────────────────────────────────────────────────────────────────────────────
@@ -308,8 +285,6 @@ impl Scripts {
     }
 }
 
-// `deinit` becomes `Drop` — body only frees owned fields → delete entirely; Vec<Box<[u8]>> drops automatically.
-
 // ────────────────────────────────────────────────────────────────────────────
 // LoadResult
 // ────────────────────────────────────────────────────────────────────────────
@@ -365,6 +340,15 @@ pub struct LoadResultErr {
 }
 
 impl LoadResultErr {
+    fn of<'a>(step: LoadStep, value: BunError, format: LockfileFormat) -> LoadResult<'a> {
+        LoadResult::Err(LoadResultErr {
+            step,
+            value,
+            lockfile_path: format.filename(),
+            format,
+        })
+    }
+
     /// For the commands that stop here; `bun install` goes on without the lockfile and words it differently.
     #[cold]
     pub(crate) fn report(&self, log: &bun_ast::Log) {
@@ -416,17 +400,11 @@ impl<'a> LoadResult<'a> {
     }
 
     pub(crate) fn migrated_from_npm(&self) -> bool {
-        match self {
-            LoadResult::Ok(ok) => ok.migrated == Migrated::Npm,
-            _ => false,
-        }
+        matches!(self, LoadResult::Ok(ok) if ok.migrated == Migrated::Npm)
     }
 
     pub(crate) fn migrated_from_pnpm(&self) -> bool {
-        match self {
-            LoadResult::Ok(ok) => ok.migrated == Migrated::Pnpm,
-            _ => false,
-        }
+        matches!(self, LoadResult::Ok(ok) if ok.migrated == Migrated::Pnpm)
     }
 
     /// The foreign lockfile this load migrated from, if any.
@@ -443,44 +421,17 @@ impl<'a> LoadResult<'a> {
     }
 
     pub fn save_format(&self, options: &PackageManagerOptions) -> LockfileFormat {
-        match self {
-            LoadResult::NotFound => {
-                // saving a lockfile for a new project. default to text lockfile
-                // unless saveTextLockfile is false in bunfig
-                let save_text_lockfile = options.save_text_lockfile.unwrap_or(true);
-                if save_text_lockfile {
-                    LockfileFormat::Text
-                } else {
-                    LockfileFormat::Binary
-                }
-            }
-            LoadResult::Err(err) => {
-                // an error occurred, but we still loaded from an existing lockfile
-                if let Some(save_text_lockfile) = options.save_text_lockfile {
-                    if save_text_lockfile {
-                        return LockfileFormat::Text;
-                    }
-                }
-                err.format
-            }
-            LoadResult::Ok(ok) => {
-                // loaded from an existing lockfile
-                if let Some(save_text_lockfile) = options.save_text_lockfile {
-                    if save_text_lockfile {
-                        return LockfileFormat::Text;
-                    }
-
-                    if ok.migrated != Migrated::None {
-                        return LockfileFormat::Binary;
-                    }
-                }
-
-                if ok.migrated != Migrated::None {
-                    return LockfileFormat::Text;
-                }
-
-                ok.format
-            }
+        match (self, options.save_text_lockfile) {
+            (_, Some(true)) => LockfileFormat::Text,
+            // saving a lockfile for a new project. default to text lockfile
+            // unless saveTextLockfile is false in bunfig
+            (LoadResult::NotFound, None) => LockfileFormat::Text,
+            (LoadResult::NotFound, Some(false)) => LockfileFormat::Binary,
+            // an error occurred, but we still loaded from an existing lockfile
+            (LoadResult::Err(err), _) => err.format,
+            (LoadResult::Ok(ok), _) if ok.migrated == Migrated::None => ok.format,
+            (LoadResult::Ok(_), Some(false)) => LockfileFormat::Binary,
+            (LoadResult::Ok(_), None) => LockfileFormat::Text,
         }
     }
 
@@ -499,18 +450,11 @@ impl<'a> LoadResult<'a> {
     ) -> (ConfigVersion, bool) {
         match self {
             LoadResult::NotFound | LoadResult::Err(_) => (ConfigVersion::CURRENT, true),
-            LoadResult::Ok(ok) => match ok.migrated {
-                Migrated::None => {
-                    if let Some(config_version) = saved_config_version {
-                        return (config_version, false);
-                    }
-
-                    // existing bun project without configVersion
-                    (ConfigVersion::V0, true)
-                }
-                Migrated::Pnpm => (ConfigVersion::V1, true),
-                Migrated::Npm => (ConfigVersion::V0, true),
-                Migrated::Yarn => (ConfigVersion::V0, true),
+            LoadResult::Ok(ok) => match (ok.migrated, saved_config_version) {
+                (Migrated::None, Some(config_version)) => (config_version, false),
+                (Migrated::Pnpm, _) => (ConfigVersion::V1, true),
+                // npm, yarn, or an existing bun project without configVersion
+                _ => (ConfigVersion::V0, true),
             },
         }
     }
@@ -549,10 +493,6 @@ pub(crate) fn resolve_node_linker(
         NodeLinker::Hoisted
     }
 }
-
-// ────────────────────────────────────────────────────────────────────────────
-// InstallResult
-// ────────────────────────────────────────────────────────────────────────────
 
 // ────────────────────────────────────────────────────────────────────────────
 // Lockfile impl — load / clone / hoist / etc.
@@ -595,66 +535,29 @@ impl Lockfile {
     ) -> LoadResult<'a> {
         debug_assert!(Fs::INSTANCE_LOADED.load(core::sync::atomic::Ordering::Relaxed));
 
-        let mut lockfile_format = LockfileFormat::Text;
-        let file: File = 'file: {
-            match File::openat(dir, zstr!("bun.lock"), sys::O::RDONLY, 0) {
-                sys::Result::Ok(f) => break 'file f,
-                sys::Result::Err(text_open_err) => {
-                    if text_open_err.errno != sys::SystemErrno::ENOENT as u16 {
-                        return LoadResult::Err(LoadResultErr {
-                            step: LoadStep::OpenFile,
-                            value: BunError::from(text_open_err),
-                            lockfile_path: zstr!("bun.lock"),
-                            format: LockfileFormat::Text,
-                        });
-                    }
-
-                    lockfile_format = LockfileFormat::Binary;
-
-                    match File::openat(dir, zstr!("bun.lockb"), sys::O::RDONLY, 0) {
-                        sys::Result::Ok(f) => break 'file f,
-                        sys::Result::Err(binary_open_err) => {
-                            if binary_open_err.errno != sys::SystemErrno::ENOENT as u16 {
-                                return LoadResult::Err(LoadResultErr {
-                                    step: LoadStep::OpenFile,
-                                    value: BunError::from(binary_open_err),
-                                    lockfile_path: zstr!("bun.lockb"),
-                                    format: LockfileFormat::Binary,
-                                });
-                            }
-
-                            if attempt_loading_from_other_lockfile {
-                                if let Some(pm) = manager {
-                                    // The format is carried inside the `LoadResult` itself.
-                                    return migration::detect_and_load_other_lockfile(
-                                        self, dir, pm, log,
-                                    );
-                                }
-                            }
-
-                            return LoadResult::NotFound;
-                        }
-                    }
+        let mut opened = None;
+        for format in [LockfileFormat::Text, LockfileFormat::Binary] {
+            match File::openat(dir, format.filename(), sys::O::RDONLY, 0) {
+                Ok(file) => {
+                    opened = Some((file, format));
+                    break;
                 }
+                Err(err) if err.errno != sys::SystemErrno::ENOENT as u16 => {
+                    return LoadResultErr::of(LoadStep::OpenFile, err.into(), format);
+                }
+                Err(_) => {}
             }
+        }
+        let Some((file, lockfile_format)) = opened else {
+            if attempt_loading_from_other_lockfile && let Some(pm) = manager {
+                return migration::detect_and_load_other_lockfile(self, dir, pm, log);
+            }
+            return LoadResult::NotFound;
         };
 
-        // `bun_sys::File::read_to_end` returns `Maybe<Vec<u8>>`
-        // (fstat-presized, pread-from-0); map the error arm to `.read_file`.
         let buf = match file.read_to_end() {
             Ok(bytes) => bytes,
-            Err(e) => {
-                return LoadResult::Err(LoadResultErr {
-                    step: LoadStep::ReadFile,
-                    value: BunError::from(e),
-                    lockfile_path: if lockfile_format == LockfileFormat::Text {
-                        zstr!("bun.lock")
-                    } else {
-                        zstr!("bun.lockb")
-                    },
-                    format: lockfile_format,
-                });
-            }
+            Err(e) => return LoadResultErr::of(LoadStep::ReadFile, e.into(), lockfile_format),
         };
 
         if lockfile_format == LockfileFormat::Text {
@@ -662,14 +565,7 @@ impl Lockfile {
             initialize_store();
             let parsed = match JSON::ParsedJson::parse_package_json(&source, log) {
                 Ok(j) => j,
-                Err(e) => {
-                    return LoadResult::Err(LoadResultErr {
-                        step: LoadStep::ParseFile,
-                        value: e.into(),
-                        lockfile_path: zstr!("bun.lock"),
-                        format: lockfile_format,
-                    });
-                }
+                Err(e) => return LoadResultErr::of(LoadStep::ParseFile, e.into(), lockfile_format),
             };
 
             if let Err(e) = TextLockfile::parse_into_binary_lockfile(
@@ -682,12 +578,7 @@ impl Lockfile {
                 if matches!(e, TextLockfile::ParseError::OutOfMemory) {
                     bun_core::out_of_memory();
                 }
-                return LoadResult::Err(LoadResultErr {
-                    step: LoadStep::ParseFile,
-                    value: BunError::from(e),
-                    lockfile_path: zstr!("bun.lock"),
-                    format: lockfile_format,
-                });
+                return LoadResultErr::of(LoadStep::ParseFile, e.into(), lockfile_format);
             }
 
             bun_core::analytics::Features::text_lockfile_inc();
@@ -717,12 +608,11 @@ impl Lockfile {
                 // passed while `ok.lockfile` is mutably borrowed, so hand it
                 // a stand-in that answers
                 // `format == Binary` the same way the real `Ok` result does.
-                let binary_origin = LoadResult::Err(LoadResultErr {
-                    step: LoadStep::ParseFile,
-                    value: crate::Error::DebugTextLockfileRoundTrip,
-                    lockfile_path: zstr!("bun.lockb"),
-                    format: LockfileFormat::Binary,
-                });
+                let binary_origin = LoadResultErr::of(
+                    LoadStep::ParseFile,
+                    crate::Error::DebugTextLockfileRoundTrip,
+                    LockfileFormat::Binary,
+                );
                 let config_version =
                     (ok.lockfile.saved_config_version).unwrap_or(ConfigVersion::V0);
                 if let Err(e) = TextLockfile::Stringifier::save_from_binary(
@@ -789,14 +679,7 @@ impl Lockfile {
         let link_workspace_packages = pm.is_none_or(|pm| pm.options.link_workspace_packages);
         let load_result = match Serializer::load(self, &mut stream, log, pm) {
             Ok(r) => r,
-            Err(e) => {
-                return LoadResult::Err(LoadResultErr {
-                    step: LoadStep::ParseFile,
-                    value: e,
-                    lockfile_path: zstr!("bun.lockb"),
-                    format: LockfileFormat::Binary,
-                });
-            }
+            Err(e) => return LoadResultErr::of(LoadStep::ParseFile, e, LockfileFormat::Binary),
         };
 
         if cfg!(debug_assertions) {
@@ -972,14 +855,12 @@ impl Lockfile {
         version: &DependencyVersion,
         accept: impl Fn(PackageID) -> bool,
     ) -> Option<PackageID> {
-        let buf = self.buffers.string_bytes.as_slice();
-        let pkg_res = self.packages.items_resolution();
         TextLockfile::resolve_peer_dep_by_range(
             version,
             name_hash,
             &self.package_index,
-            pkg_res,
-            buf,
+            self.packages.items_resolution(),
+            self.buffers.string_bytes.as_slice(),
             accept,
         )
     }
@@ -1002,12 +883,9 @@ impl Lockfile {
 
     /// `None` for the edges `enqueue_dependency_to_root` appends outside of any package.
     pub(crate) fn get_parent_pkg_of_dependency(&self, id: DependencyID) -> Option<PackageID> {
-        for (pkg_id, dependencies) in self.packages.items_dependencies().iter().enumerate() {
-            if dependencies.contains(id) {
-                return Some(PackageID::try_from(pkg_id).expect("int cast"));
-            }
-        }
-        None
+        (self.packages.items_dependencies().iter())
+            .position(|dependencies| dependencies.contains(id))
+            .map(|pkg_id| pkg_id as PackageID)
     }
 
     /// Does the root package.json declare the same dependency (name and specifier) itself?
@@ -1021,22 +899,15 @@ impl Lockfile {
 
     pub(crate) fn get_workspace_pkg_if_workspace_dep(&self, id: DependencyID) -> PackageID {
         let packages = self.packages.slice();
-        let resolutions = packages.items_resolution();
-        let dependencies_lists = packages.items_dependencies();
-        for (pkg_id, (resolution, dependencies)) in resolutions
-            .iter()
-            .zip(dependencies_lists.iter())
-            .enumerate()
-        {
-            if resolution.tag != ResolutionTag::Workspace && resolution.tag != ResolutionTag::Root {
-                continue;
-            }
-            if dependencies.contains(id) {
-                return PackageID::try_from(pkg_id).expect("int cast");
-            }
-        }
-
-        invalid_package_id
+        (packages.items_resolution().iter())
+            .zip(packages.items_dependencies())
+            .position(|(resolution, dependencies)| {
+                matches!(
+                    resolution.tag,
+                    ResolutionTag::Workspace | ResolutionTag::Root
+                ) && dependencies.contains(id)
+            })
+            .map_or(invalid_package_id, |pkg_id| pkg_id as PackageID)
     }
 
     /// Workspace packages whose node_modules must be self-contained: listed in the
@@ -1084,16 +955,14 @@ impl Lockfile {
     pub(crate) fn is_workspace_declared_package(&self, id: PackageID) -> bool {
         let packages = self.packages.slice();
         let resolutions = self.buffers.resolutions.as_slice();
-        for (pkg_id, res_list) in packages.items_resolutions().iter().enumerate() {
-            let tag = packages.items_resolution()[pkg_id].tag;
-            if tag != ResolutionTag::Workspace && tag != ResolutionTag::Root {
-                continue;
-            }
-            if res_list.get(resolutions).contains(&id) {
-                return true;
-            }
-        }
-        false
+        (packages.items_resolution().iter())
+            .zip(packages.items_resolutions())
+            .any(|(resolution, res_list)| {
+                matches!(
+                    resolution.tag,
+                    ResolutionTag::Workspace | ResolutionTag::Root
+                ) && res_list.get(resolutions).contains(&id)
+            })
     }
 
     /// Is folder package `id` the folder that a `file:` rule of the root's `overrides` / `resolutions`
@@ -1213,21 +1082,17 @@ impl Lockfile {
         &self,
         workspace_name_hash: Option<PackageNameHash>,
     ) -> PackageID {
-        if let Some(workspace_name_hash_) = workspace_name_hash {
-            let packages = self.packages.slice();
-            let name_hashes = packages.items_name_hash();
-            let resolutions = packages.items_resolution();
-            for (i, (res, name_hash)) in resolutions.iter().zip(name_hashes.iter()).enumerate() {
-                if res.tag == ResolutionTag::Workspace && *name_hash == workspace_name_hash_ {
-                    return PackageID::try_from(i).expect("int cast");
-                }
-            }
-
+        let Some(workspace_name_hash) = workspace_name_hash else {
+            return 0;
+        };
+        let packages = self.packages.slice();
+        (packages.items_resolution().iter())
+            .zip(packages.items_name_hash())
+            .position(|(res, name_hash)| {
+                res.tag == ResolutionTag::Workspace && *name_hash == workspace_name_hash
+            })
             // should not hit this, default to root just in case
-            0
-        } else {
-            0
-        }
+            .map_or(0, |i| i as PackageID)
     }
 
     /// The workspaces whose dependency lists `request` names: the ones that received it under `--filter` / `-r`, else the cwd's.
@@ -1305,8 +1170,6 @@ impl Lockfile {
         log_level: LogLevel,
     ) -> Result<Box<Lockfile>, BunError> {
         let old: &mut Lockfile = self;
-        // Outlined cold: the verbose arm is debug-only and drags in
-        // `Timer`/clock-syscall error formatting.
         let timer: Option<Timer> = if log_level.is_verbose() {
             Some(clean_verbose_timer_start()?)
         } else {
@@ -1327,8 +1190,6 @@ impl Lockfile {
         let old_preinstall_state = preinstall_state.clone();
         preinstall_state.fill(Install::PreinstallState::Unknown);
 
-        // Caller owns the new lockfile; return `Box<Lockfile>` so Drop reclaims
-        // it (never `Box::leak` to satisfy a lifetime).
         let mut new: Box<Lockfile> = Box::default();
         new.string_pool
             .ensure_total_capacity(old.string_pool.capacity())?;
@@ -1340,16 +1201,10 @@ impl Lockfile {
             .ensure_total_capacity(old.patched_dependencies.count())?;
 
         // Reset the FIFO read cursor without discarding capacity.
-        // `LinearFifo::head` is private; the queue is always drained to empty
-        // before reuse here, so a `discard(count)` resets `head` to 0.
         let queued = old.scratch.dependency_list_queue.readable_length();
         old.scratch.dependency_list_queue.discard(queued);
 
         {
-            // The signatures take `&Lockfile` for `old` and read `new`
-            // through `builder.lockfile`, so the only conflict left is the
-            // field-assign on `new.*` while `builder` borrows `new` — store
-            // the results in temps and assign after `builder` drops.
             let old_buf = old.buffers.string_bytes.as_slice();
             let (mut builder, lf) = new.string_builder_split();
             old.overrides.count(old_buf, &mut builder);
@@ -1363,26 +1218,19 @@ impl Lockfile {
         let root = old.root_package().ok_or(crate::Error::NoPackage)?;
 
         let mut package_id_mapping = vec![invalid_package_id; old.packages.len()];
-        let clone_queue_ = PendingResolutions::new();
-        // Explicit `&mut *` reborrows so `old`/`manager`/`new` are
-        // released back to this scope once `cloner` is dropped.
         let mut cloner = Cloner {
             old: &mut *old,
             lockfile: &mut *new,
             mapping: &mut package_id_mapping,
-            clone_queue: clone_queue_,
+            clone_queue: PendingResolutions::new(),
             weak_peers: PendingResolutions::new(),
             log,
             old_preinstall_state,
             manager: &mut *manager,
         };
 
-        // try clone_queue.ensureUnusedCapacity(root.dependencies.len);
         let _ = root.clone(&mut cloner)?;
 
-        // Between here and `cloner.flush()`, `old`/`new`/`manager`
-        // are live inside `cloner`. Reach them via `cloner.old` /
-        // `cloner.lockfile` so borrowck sees disjoint field paths.
         {
             let old = &mut *cloner.old;
             let new = &mut *cloner.lockfile;
@@ -1394,19 +1242,13 @@ impl Lockfile {
                 new.workspace_versions
                     .ensure_total_capacity(old.workspace_versions.count())?;
 
-                // Field-level split borrow of `new` (string_bytes + string_pool).
                 let mut workspace_paths_builder = string_builder!(new);
 
                 // Sort by name for determinism
                 {
                     let string_buf = old.buffers.string_bytes.as_slice();
-                    // `ArrayHashMap::sort` comparator is
-                    // `(keys, values, a, b) -> bool` (less-than).
                     old.workspace_paths.sort(|_keys, values, a, b| {
-                        let left = values[a];
-                        let right = values[b];
-                        strings::order(left.slice(string_buf), right.slice(string_buf))
-                            == Ordering::Less
+                        values[a].order(values[b], string_buf, string_buf) == Ordering::Less
                     });
                 }
 
@@ -1478,7 +1320,6 @@ impl Lockfile {
         // When you run `"bun add react"
         // This is where we update it in the lockfile from "latest" to "^17.0.2"
         cloner.flush()?;
-        // `cloner` no longer needed — release the reborrows of `old`/`new`/`manager`.
         drop(cloner);
 
         new.trusted_dependencies = old_trusted_dependencies;
@@ -1640,7 +1481,6 @@ impl<'a> Cloner<'a> {
 
             let old_package = *self.old.packages.get(to_clone.old_resolution as usize);
 
-            // `Package::clone` reads/writes through `cloner` exclusively.
             let new_id = old_package.clone(self)?;
             self.lockfile.buffers.resolutions[to_clone.resolve_id as usize] = new_id;
         }
@@ -1710,8 +1550,6 @@ impl Lockfile {
     pub(crate) fn hoist<const METHOD: tree::BuilderMethod>(
         &mut self,
         log: &mut bun_ast::Log,
-        // `tree::Builder` stores these unconditionally (Option/slice), so
-        // accept the concrete shapes for all `METHOD`s.
         manager: Option<&PackageManager>,
         install_root_dependencies: bool,
         workspace_filters: &[WorkspaceFilter],
@@ -1726,12 +1564,8 @@ impl Lockfile {
             Vec::new()
         };
 
-        // `tree::Builder` stores `lockfile: ParentRef<Lockfile>` so
-        // the `&mut buffers.resolutions` split-borrow below can coexist with
-        // the read-only lockfile view inside the builder (see Tree.rs note).
-        // `ParentRef::new` captures `SharedReadOnly` provenance from `&*self`,
-        // which is exactly what `Builder` needs (it only ever `Deref`s); the
-        // `Builder` does not outlive this `&mut self` borrow.
+        // So that the `&mut buffers.resolutions` split-borrow below can coexist with the
+        // read-only lockfile view inside the builder (see `Builder::lockfile`).
         let lockfile_ref = bun_ptr::ParentRef::<Lockfile>::new(&*self);
         let mut builder = tree::Builder::<METHOD> {
             self_contained,
@@ -1761,10 +1595,6 @@ impl Lockfile {
         // This goes breadth-first
         while let Some(item) = builder.queue.read_item() {
             use tree::BuilderEntryColumns as _;
-            // Copy the element out of `builder.list` rather than indexing
-            // in-place: `process_subtree` only reads `this.id`
-            // (before appending to `builder.list`, which may reallocate), so the
-            // copy is equivalent — and avoids the dangling-element hazard.
             let tree = builder.list.items_tree()[item.tree_id as usize];
             tree.process_subtree(item.dependency_id, item.hoist_root_id, &mut builder)?;
         }
@@ -1819,14 +1649,9 @@ impl Lockfile {
         manager.network_dedupe_map.clear();
 
         let cache_ctx = manager.manifest_disk_cache_ctx();
-        // `manifests` is a field of `manager`, and a `string_builder` is
-        // opened on `manager.lockfile` while `&manifest` is still held.
-        // Route the `manifests` projection
-        // through a raw root so it can coexist with the lockfile borrows;
-        // lockfile fields are taken from `self` (== `manager.lockfile`), never
-        // re-derived via `manager_ptr`. BACKREF `mgr_ref` wraps the same root
-        // for the read-only `options` projection so it goes through safe
-        // `ParentRef::Deref`.
+        // `manifests` is projected through a raw root so that it can coexist with the lockfile
+        // borrows; lockfile fields are taken from `self` (== `manager.lockfile`), never
+        // re-derived via `manager_ptr`. `mgr_ref` wraps the same root for the read-only `options`.
         let manager_ptr: *mut PackageManager = manager;
         let mgr_ref = bun_ptr::ParentRef::<PackageManager>::from(
             core::ptr::NonNull::new(manager_ptr).expect("derived from &mut, non-null"),
@@ -1834,8 +1659,6 @@ impl Lockfile {
         let mut pkgs = self.packages.slice();
         let len = pkgs.len();
 
-        // `split_mut()` yields disjoint `&mut [_]` per column from one
-        // `&mut Slice` borrow.
         let self::package::PackageColumnsMut {
             name: pkg_names,
             name_hash: pkg_name_hashes,
@@ -1851,114 +1674,88 @@ impl Lockfile {
             let pkg_res = pkg_resolutions[i];
             let pkg_bin = &mut pkg_bins[i];
 
-            match pkg_res.tag {
-                ResolutionTag::Npm => {
-                    // `options` read via BACKREF `mgr_ref` (see hoisted note
-                    // above); `manifests` and `lockfile` are non-overlapping
-                    // fields and nothing below resizes/relocates `manifests`
-                    // while `manifest` is held.
-                    let pkg_name_str = pkg_name.slice(self.buffers.string_bytes.as_slice());
-                    let scope = mgr_ref.options.scope_for_package_name(pkg_name_str);
-                    // SAFETY: `manifests` projected from `manager_ptr`; the
-                    // call holds only that disjoint field.
-                    let Some(manifest) = unsafe { &mut (*manager_ptr).manifests }.by_name_hash(
-                        cache_ctx,
-                        scope,
-                        pkg_name_str,
-                        pkg_name_hash,
-                        false,
-                    ) else {
-                        continue;
-                    };
+            if pkg_res.tag != ResolutionTag::Npm {
+                continue;
+            }
+            let pkg_name_str = pkg_name.slice(self.buffers.string_bytes.as_slice());
+            let scope = mgr_ref.options.scope_for_package_name(pkg_name_str);
+            // SAFETY: the call holds only that field, which nothing below resizes or relocates
+            // while `manifest` is held.
+            let Some(manifest) = unsafe { &mut (*manager_ptr).manifests }.by_name_hash(
+                cache_ctx,
+                scope,
+                pkg_name_str,
+                pkg_name_hash,
+                false,
+            ) else {
+                continue;
+            };
 
-                    let npm_ver = pkg_res.npm().version;
-                    let Some(pkg) = manifest.find_by_version(npm_ver) else {
-                        continue;
-                    };
+            let npm_ver = pkg_res.npm().version;
+            let Some(pkg) = manifest.find_by_version(npm_ver) else {
+                continue;
+            };
 
-                    // `manager.lockfile` is the same `Lockfile` as `self`. Re-deriving a
-                    // whole `&mut Lockfile` from `manager_ptr` here would create a
-                    // second mutable reference aliasing `self` (UB) — go through
-                    // `self` so the field-level borrows below stay disjoint from the
-                    // live `pkg_*` column views (those point into the columnar heap
-                    // allocation, not the `Lockfile` struct).
-                    let mut builder = string_builder!(self);
+            let mut builder = string_builder!(self);
 
-                    let mut bin_extern_strings_count: u32 = 0;
+            let bin_extern_strings_count = pkg.package.bin.count(
+                &manifest.string_buf,
+                &manifest.extern_strings_bin_entries,
+                &mut builder,
+            );
 
-                    bin_extern_strings_count += pkg.package.bin.count(
-                        &manifest.string_buf,
-                        &manifest.extern_strings_bin_entries,
-                        &mut builder,
-                    );
+            builder.allocate()?;
 
-                    builder.allocate()?;
-                    // `builder.clamp()` is called explicitly at end of block (no `?`
-                    // exits between here and the clamp below).
+            let extern_strings_list = &mut self.buffers.extern_strings;
+            let start = extern_strings_list.len();
+            let extern_strings_slice =
+                bun_core::vec::grow_default(extern_strings_list, bin_extern_strings_count as usize);
 
-                    let extern_strings_list = &mut self.buffers.extern_strings;
-                    let start = extern_strings_list.len();
-                    // Default-fill the tail so it is valid before `bin.clone`
-                    // overwrites it (replaces `reserve` + raw `set_len`).
-                    bun_core::vec::grow_default(
-                        extern_strings_list,
-                        bin_extern_strings_count as usize,
-                    );
-                    let new_len = extern_strings_list.len();
+            *pkg_bin = pkg.package.bin.clone_with_buffers(
+                &manifest.string_buf,
+                &manifest.extern_strings_bin_entries,
+                start as u32,
+                extern_strings_slice,
+                &mut builder,
+            );
 
-                    // A full slice and a tail subslice would alias, so
-                    // `Bin::clone_with_buffers` takes the tail's offset for
-                    // `ExternalStringList::init` directly.
-                    let extern_strings_slice = &mut extern_strings_list[start..new_len];
+            builder.clamp();
 
-                    *pkg_bin = pkg.package.bin.clone_with_buffers(
-                        &manifest.string_buf,
-                        &manifest.extern_strings_bin_entries,
-                        start as u32,
-                        extern_strings_slice,
-                        &mut builder,
-                    );
+            let pkg_meta = &mut pkg_metas[i];
+            // Neither yarn.lock nor pnpm-lock.yaml records this.
+            pkg_meta.set_has_install_script(pkg.package.has_install_script);
 
-                    builder.clamp();
-
-                    let pkg_meta = &mut pkg_metas[i];
-                    // Neither yarn.lock nor pnpm-lock.yaml records this.
-                    pkg_meta.set_has_install_script(pkg.package.has_install_script);
-
-                    if update_os_cpu {
-                        // Update os/cpu metadata if not already set
-                        if pkg_meta.os == Npm::OperatingSystem::ALL {
-                            pkg_meta.os = pkg.package.os;
-                        }
-                        if pkg_meta.arch == Npm::Architecture::ALL {
-                            pkg_meta.arch = pkg.package.cpu;
-                        }
-                        if pkg_meta.libc == Npm::Libc::NONE {
-                            pkg_meta.libc = pkg.package.libc;
-                        }
-                    }
-                    // Only when the tarball is the one the manifest describes: under the registry it was
-                    // fetched from, or its recorded `dist.tarball`. A fresh resolve records the same value.
-                    if fill_integrity
-                        && !pkg_meta.integrity.tag.is_supported()
-                        && pkg.package.integrity.tag.is_supported()
-                    {
-                        let url = pkg_res
-                            .npm()
-                            .url
-                            .slice(self.buffers.string_bytes.as_slice());
-                        if url.is_empty()
-                            || bun_lock::url_is_under_registry(
-                                url,
-                                &crate::yarn_berry::registry_without_auth(scope.url.href()),
-                            )
-                            || url == pkg.package.tarball_url.slice(&manifest.string_buf)
-                        {
-                            pkg_meta.integrity = pkg.package.integrity;
-                        }
-                    }
+            if update_os_cpu {
+                // Update os/cpu metadata if not already set
+                if pkg_meta.os == Npm::OperatingSystem::ALL {
+                    pkg_meta.os = pkg.package.os;
                 }
-                _ => {}
+                if pkg_meta.arch == Npm::Architecture::ALL {
+                    pkg_meta.arch = pkg.package.cpu;
+                }
+                if pkg_meta.libc == Npm::Libc::NONE {
+                    pkg_meta.libc = pkg.package.libc;
+                }
+            }
+            // Only when the tarball is the one the manifest describes: under the registry it was
+            // fetched from, or its recorded `dist.tarball`. A fresh resolve records the same value.
+            if fill_integrity
+                && !pkg_meta.integrity.tag.is_supported()
+                && pkg.package.integrity.tag.is_supported()
+            {
+                let url = pkg_res
+                    .npm()
+                    .url
+                    .slice(self.buffers.string_bytes.as_slice());
+                if url.is_empty()
+                    || bun_lock::url_is_under_registry(
+                        url,
+                        &crate::yarn_berry::registry_without_auth(scope.url.href()),
+                    )
+                    || url == pkg.package.tarball_url.slice(&manifest.string_buf)
+                {
+                    pkg_meta.integrity = pkg.package.integrity;
+                }
             }
         }
         Ok(())
@@ -1987,104 +1784,58 @@ impl<'a> Printer<'a> {
         // We truncate longer than allowed paths. We should probably throw an error instead.
         let path = &input_lockfile_path[..input_lockfile_path.len().min(MAX_PATH_BYTES)];
 
-        let mut lockfile_path_buf1 = bun_paths::path_buffer_pool::get();
-        let mut lockfile_path_buf2 = bun_paths::path_buffer_pool::get();
-
-        let mut lockfile_path: &ZStr = ZStr::EMPTY;
-        // Track which buffer backs `lockfile_path` so the chdir NUL-terminate
-        // step below can write into the *other* buffer. `resolve_path::z` does
-        // `output[..n].copy_from_slice(input)` (→ `ptr::copy_nonoverlapping`);
-        // passing a slice of `bufN` as `input` while taking `&mut bufN` as
-        // `output` is UB on overlapping ranges and would also corrupt
-        // `lockfile_path` (printed in the NotFound arm).
-        let mut path_in_buf2 = false;
-
-        if !bun_paths::is_absolute(path) {
-            // `bun_sys::getcwd` returns the length written into the
-            // caller-owned buffer.
-            let cwd_len = bun_sys::getcwd(&mut lockfile_path_buf1[..])?;
-            let parts = [path];
-            // Copy `cwd` out of `buf1` so the
-            // join can write into `buf2` while `cwd` borrows `buf1` only.
-            let cwd = &lockfile_path_buf1[..cwd_len];
-            let lockfile_path__len = resolve_path::join_abs_string_buf::<platform::Auto>(
-                cwd,
-                &mut lockfile_path_buf2.0,
-                &parts,
+        let mut cwd_buf = bun_paths::path_buffer_pool::get();
+        let mut joined_buf = bun_paths::path_buffer_pool::get();
+        let lockfile_path: &[u8] = if bun_paths::is_absolute(path) {
+            path
+        } else {
+            let cwd_len = bun_sys::getcwd(&mut cwd_buf[..])?;
+            resolve_path::join_abs_string_buf::<platform::Auto>(
+                &cwd_buf[..cwd_len],
+                &mut joined_buf.0,
+                &[path],
             )
-            .len();
-            lockfile_path_buf2[lockfile_path__len] = 0;
-            // SAFETY: NUL written at [len] above. Not `from_buf`: borrowck
-            // can't see that the `path_in_buf2` flag picks the *other* buffer
-            // for the chdir scratch write below, so the borrow must be detached.
-            lockfile_path =
-                unsafe { ZStr::from_raw(lockfile_path_buf2.as_ptr(), lockfile_path__len) };
-            path_in_buf2 = true;
-        } else if !path.is_empty() {
-            lockfile_path_buf1[..path.len()].copy_from_slice(path);
-            lockfile_path_buf1[path.len()] = 0;
-            // SAFETY: NUL written at [len] above. See note above re. borrowck.
-            lockfile_path = unsafe { ZStr::from_raw(lockfile_path_buf1.as_ptr(), path.len()) };
+        };
+
+        if lockfile_path.first() == Some(&SEP) {
+            let dir = bun_paths::dirname(lockfile_path).unwrap_or(SEP_STR.as_bytes());
+            let mut dir_buf = bun_paths::path_buffer_pool::get();
+            let _ = sys::chdir(resolve_path::z(dir, &mut dir_buf));
         }
 
-        if !lockfile_path.as_bytes().is_empty() && lockfile_path.as_bytes()[0] == SEP {
-            let dir = bun_paths::dirname(lockfile_path.as_bytes()).unwrap_or(SEP_STR.as_bytes());
-            // NUL-terminate into the buffer that does NOT back `lockfile_path`
-            // (see `path_in_buf2` note above). `buf1`'s cwd contents are dead
-            // after the join, so it is free for reuse here.
-            let dir_z = if path_in_buf2 {
-                resolve_path::z(dir, &mut lockfile_path_buf1)
-            } else {
-                resolve_path::z(dir, &mut lockfile_path_buf2)
-            };
-            let _ = sys::chdir(dir_z);
-        }
-
-        // Bootstrap the resolver FS singleton. `Printer::print` is an entry
-        // point (`bun bun.lockb`), so
-        // the singleton may not exist yet.
+        // `Printer::print` is an entry point (`bun bun.lockb`), so the resolver FS singleton
+        // may not exist yet.
         let _ = FileSystem::init(None)?;
 
         let mut lockfile = Box::<Lockfile>::default();
 
         // git's textconv hands over `<random>_bun.lockb`. `bun bun.lockb` also prints a bun.lock.
-        let load_from_disk = match File::read_from(Fd::cwd(), lockfile_path.as_bytes()) {
+        let load_from_disk = match File::read_from(Fd::cwd(), lockfile_path) {
             Ok(bytes) => lockfile.load_from_bytes(None, bytes, log),
             Err(_) => lockfile.load_from_cwd::<false>(None, log),
         };
         match load_from_disk {
             crate::lockfile::LoadResult::Err(cause) => {
-                match cause.step {
-                    crate::lockfile::LoadStep::OpenFile => bun_core::pretty_errorln!(
-                        "<r><red>error<r> opening lockfile:<r> {}.",
-                        cause.value.name()
-                    ),
-                    crate::lockfile::LoadStep::ParseFile => bun_core::pretty_errorln!(
-                        "<r><red>error<r> parsing lockfile:<r> {}",
-                        cause.value.name()
-                    ),
-                    crate::lockfile::LoadStep::ReadFile => bun_core::pretty_errorln!(
-                        "<r><red>error<r> reading lockfile:<r> {}",
-                        cause.value.name()
-                    ),
-                    crate::lockfile::LoadStep::Migrating => bun_core::pretty_errorln!(
-                        "<r><red>error<r> while migrating lockfile:<r> {}",
-                        cause.value.name()
-                    ),
-                }
-                if log.errors > 0 {
-                    // `IntoLogWrite` is implemented for `*mut bun_core::io::Writer`,
-                    // not `&mut &mut Writer` — pass the raw vtable pointer.
-                    let ew: *mut bun_core::io::Writer = Output::error_writer();
-                    log.print(ew)?;
-                }
+                let (doing, end) = match cause.step {
+                    LoadStep::OpenFile => ("opening", "."),
+                    LoadStep::ParseFile => ("parsing", ""),
+                    LoadStep::ReadFile => ("reading", ""),
+                    LoadStep::Migrating => ("while migrating", ""),
+                };
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r> {} lockfile:<r> {}{}",
+                    doing,
+                    cause.value.name(),
+                    end
+                );
+                print_log_errors(log);
                 Global::crash();
             }
             crate::lockfile::LoadResult::NotFound => {
                 bun_core::pretty_errorln!(
                     "<r><red>lockfile not found:<r> {}",
                     bun_core::fmt::QuotedFormatter {
-                        text: lockfile_path.as_bytes()
+                        text: lockfile_path
                     },
                 );
                 Global::crash();
@@ -2110,8 +1861,7 @@ impl<'a> Printer<'a> {
 impl Lockfile {
     pub(crate) fn verify_data(&self) -> Result<(), BunError> {
         debug_assert!(self.format == FormatVersion::current());
-        let mut i: usize = 0;
-        while i < self.packages.len() {
+        for i in 0..self.packages.len() {
             let package: Package = *self.packages.get(i);
             debug_assert!(self.str(&package.name).len() == package.name.len());
             debug_assert!(
@@ -2124,30 +1874,11 @@ impl Lockfile {
                 "package {} is not in package_index under its own name",
                 i
             );
-            debug_assert!(
-                package
-                    .dependencies
-                    .get(self.buffers.dependencies.as_slice())
-                    .len()
-                    == package.dependencies.len as usize
-            );
-            debug_assert!(
-                package
-                    .resolutions
-                    .get(self.buffers.resolutions.as_slice())
-                    .len()
-                    == package.resolutions.len as usize
-            );
-            debug_assert!(
-                package
-                    .resolutions
-                    .get(self.buffers.resolutions.as_slice())
-                    .len()
-                    == package.dependencies.len as usize
-            );
             let dependencies = package
                 .dependencies
                 .get(self.buffers.dependencies.as_slice());
+            let resolutions = package.resolutions.get(self.buffers.resolutions.as_slice());
+            debug_assert!(resolutions.len() == dependencies.len());
             for dependency in dependencies {
                 debug_assert!(self.str(&dependency.name).len() == dependency.name.len());
                 debug_assert!(
@@ -2155,7 +1886,6 @@ impl Lockfile {
                         == dependency.name_hash
                 );
             }
-            i += 1;
         }
         Ok(())
     }
@@ -2197,9 +1927,6 @@ impl Lockfile {
                     // The only write failure on an allocating writer is OOM.
                     bun_core::out_of_memory();
                 }
-
-                // writer.flush() catch error.WriteFailed -> OOM
-                // (Vec<u8> writer needs no flush)
 
                 break 'bytes writer_buf;
             }
@@ -2305,26 +2032,20 @@ pub(crate) fn replace_in_cwd(filename: &ZStr, bytes: &[u8], mode: sys::Mode) -> 
     };
 
     let flags = sys::O::CREAT | sys::O::EXCL | sys::O::WRONLY;
-    let file = match File::openat(Fd::cwd(), tmpname, flags, mode) {
-        sys::Result::Err(e) => {
-            Output::err(
-                e,
-                "failed to create temporary file to save lockfile",
-                format_args!(""),
-            );
-            Global::crash();
-        }
-        sys::Result::Ok(f) => f,
-    };
+    let file = File::openat(Fd::cwd(), tmpname, flags, mode).unwrap_or_else(|e| {
+        Output::err(
+            e,
+            "failed to create temporary file to save lockfile",
+            format_args!(""),
+        );
+        Global::crash();
+    });
 
-    match file.write_all(bytes) {
-        sys::Result::Err(e) => {
-            let _ = file.close(); // close error is non-actionable
-            let _ = sys::unlink(tmpname);
-            Output::err(e, "failed to write lockfile", format_args!(""));
-            Global::crash();
-        }
-        sys::Result::Ok(()) => {}
+    if let Err(e) = file.write_all(bytes) {
+        let _ = file.close(); // close error is non-actionable
+        let _ = sys::unlink(tmpname);
+        Output::err(e, "failed to write lockfile", format_args!(""));
+        Global::crash();
     }
 
     if let Err(e) = file.close_and_move_to(tmpname, filename) {
@@ -2621,13 +2342,7 @@ impl Lockfile {
     ) -> Option<PackageID> {
         let entry = self.package_index.get(&name_hash)?;
         let resolutions: &[Resolution] = self.packages.items_resolution();
-        // Borrow the `npm` arm's `Semver::Group` (not `Copy` — owns a linked
-        // list head). `version` is held by-value for the whole fn body so the
-        // borrow is sound.
-        let npm_version = match version {
-            Some(v) if v.tag == dependency::Tag::Npm => Some(&v.npm().version),
-            _ => None,
-        };
+        let npm_version = version.and_then(|v| v.try_npm()).map(|npm| &npm.version);
         // Order-independence guard for the `satisfies` fallback below: when the
         // caller already knows the manifest's best-match version (the npm
         // `resolution` it passes), only dedupe to an existing entry whose
@@ -2639,11 +2354,8 @@ impl Lockfile {
         // satisfies-preserves-mapping rule (which keeps the resolution slot
         // populated so the early return in `get_or_put_resolved_package` fires
         // before we get here).
-        let resolved_npm_floor = if resolution.tag == ResolutionTag::Npm {
-            Some(resolution.npm().version)
-        } else {
-            None
-        };
+        let resolved_npm_floor =
+            (resolution.tag == ResolutionTag::Npm).then(|| resolution.npm().version);
         let buf = self.buffers.string_bytes.as_slice();
 
         let loaded_watermark = self.loaded_package_count;
@@ -2694,133 +2406,40 @@ impl Lockfile {
                     .is_set_allow_out_of_bound(id as usize, false)
         };
 
-        match entry {
-            PackageIndexEntry::Id(id) => {
-                debug_assert!((*id as usize) < resolutions.len());
-
-                if skipped(*id) {
-                    return None;
-                }
-
-                if resolutions[*id as usize].eql(resolution, buf, buf) {
-                    return Some(*id);
-                }
-
-                if try_satisfies_dedupe(*id) {
-                    return Some(*id);
-                }
-            }
-            PackageIndexEntry::Ids(ids) => {
-                for &id in ids.iter() {
-                    debug_assert!((id as usize) < resolutions.len());
-
-                    if skipped(id) {
-                        continue;
-                    }
-
-                    if resolutions[id as usize].eql(resolution, buf, buf) {
-                        return Some(id);
-                    }
-
-                    if try_satisfies_dedupe(id) {
-                        return Some(id);
-                    }
-                }
-            }
-        }
-
-        None
+        entry.as_slice().iter().copied().find(|&id| {
+            debug_assert!((id as usize) < resolutions.len());
+            !skipped(id)
+                && (resolutions[id as usize].eql(resolution, buf, buf) || try_satisfies_dedupe(id))
+        })
     }
 
     /// Appends `pkg` to `this.packages`, and adds to `this.package_index`.
-    ///
-    /// The string buffer is read from `self`, splitting borrows at the field
-    /// level (`package_index` / `packages` / `buffers.string_bytes` are
-    /// disjoint).
     pub(crate) fn append_package_dedupe(
         &mut self,
         pkg: &mut Package,
     ) -> Result<PackageID, AllocError> {
         let entry = self.package_index.get_or_put(pkg.name_hash)?;
-
-        if !entry.found_existing {
-            let new_id: PackageID = PackageID::try_from(self.packages.len()).expect("int cast");
-            pkg.meta.id = new_id;
-            self.packages.append(*pkg)?;
-            *entry.value_ptr = PackageIndexEntry::Id(new_id);
-            return Ok(new_id);
-        }
-
         let buf = self.buffers.string_bytes.as_slice();
-        let mut resolutions = self.packages.items_resolution();
 
-        match entry.value_ptr {
-            PackageIndexEntry::Id(existing_id) => {
-                let existing_id = *existing_id;
-                if pkg
-                    .resolution
-                    .eql(&resolutions[existing_id as usize], buf, buf)
-                {
-                    pkg.meta.id = existing_id;
-                    return Ok(existing_id);
-                }
-
-                let new_id: PackageID = PackageID::try_from(self.packages.len()).expect("int cast");
-                pkg.meta.id = new_id;
-                self.packages.append(*pkg)?;
-
-                resolutions = self.packages.items_resolution();
-
-                let pair = if pkg
-                    .resolution
-                    .order(&resolutions[existing_id as usize], buf, buf)
-                    == Ordering::Greater
-                {
-                    [new_id, existing_id]
-                } else {
-                    [existing_id, new_id]
-                };
-                let mut ids = PackageIDList::with_capacity(8);
-                ids.extend_from_slice(&pair);
-
-                *entry.value_ptr = PackageIndexEntry::Ids(ids);
-
-                Ok(new_id)
-            }
-            PackageIndexEntry::Ids(existing_ids) => {
-                for &existing_id in existing_ids.iter() {
-                    if pkg
-                        .resolution
-                        .eql(&resolutions[existing_id as usize], buf, buf)
-                    {
-                        pkg.meta.id = existing_id;
-                        return Ok(existing_id);
-                    }
-                }
-
-                let new_id: PackageID = PackageID::try_from(self.packages.len()).expect("int cast");
-                pkg.meta.id = new_id;
-                self.packages.append(*pkg)?;
-
-                resolutions = self.packages.items_resolution();
-
-                for i in 0..existing_ids.len() {
-                    let existing_id = existing_ids[i];
-                    if pkg
-                        .resolution
-                        .order(&resolutions[existing_id as usize], buf, buf)
-                        == Ordering::Greater
-                    {
-                        existing_ids.insert(i, new_id);
-                        return Ok(new_id);
-                    }
-                }
-
-                existing_ids.push(new_id);
-
-                Ok(new_id)
+        if entry.found_existing {
+            let resolutions = self.packages.items_resolution();
+            if let Some(&existing_id) = (entry.value_ptr.as_slice().iter())
+                .find(|&&id| pkg.resolution.eql(&resolutions[id as usize], buf, buf))
+            {
+                pkg.meta.id = existing_id;
+                return Ok(existing_id);
             }
         }
+
+        let new_id: PackageID = PackageID::try_from(self.packages.len()).expect("int cast");
+        pkg.meta.id = new_id;
+        self.packages.append(*pkg)?;
+        if entry.found_existing {
+            (entry.value_ptr).insert(new_id, self.packages.items_resolution(), buf);
+        } else {
+            *entry.value_ptr = PackageIndexEntry::Id(new_id);
+        }
+        Ok(new_id)
     }
 
     pub(crate) fn get_or_put_id(
@@ -2829,52 +2448,12 @@ impl Lockfile {
         name_hash: PackageNameHash,
     ) -> Result<(), AllocError> {
         let gpe = self.package_index.get_or_put(name_hash)?;
-
         if gpe.found_existing {
-            let index: &mut PackageIndexEntry = gpe.value_ptr;
-
-            match index {
-                PackageIndexEntry::Id(existing_id) => {
-                    let existing_id = *existing_id;
-                    let resolutions = self.packages.items_resolution();
-                    let buf = self.buffers.string_bytes.as_slice();
-
-                    let pair = if resolutions[id as usize].order(
-                        &resolutions[existing_id as usize],
-                        buf,
-                        buf,
-                    ) == Ordering::Greater
-                    {
-                        [id, existing_id]
-                    } else {
-                        [existing_id, id]
-                    };
-                    let mut ids = PackageIDList::with_capacity(8);
-                    ids.extend_from_slice(&pair);
-
-                    *index = PackageIndexEntry::Ids(ids);
-                }
-                PackageIndexEntry::Ids(existing_ids) => {
-                    let resolutions = self.packages.items_resolution();
-                    let buf = self.buffers.string_bytes.as_slice();
-
-                    for i in 0..existing_ids.len() {
-                        let existing_id = existing_ids[i];
-                        if resolutions[id as usize].order(
-                            &resolutions[existing_id as usize],
-                            buf,
-                            buf,
-                        ) == Ordering::Greater
-                        {
-                            existing_ids.insert(i, id);
-                            return Ok(());
-                        }
-                    }
-
-                    // append to end because it's the smallest or equal to the smallest
-                    existing_ids.push(id);
-                }
-            }
+            gpe.value_ptr.insert(
+                id,
+                self.packages.items_resolution(),
+                self.buffers.string_bytes.as_slice(),
+            );
         } else {
             *gpe.value_ptr = PackageIndexEntry::Id(id);
         }
@@ -3041,10 +2620,6 @@ macro_rules! string_builder {
     };
 }
 
-/// Trait implemented by `String` and `ExternalString` to support generic `append*`.
-/// Canonical def lives in
-/// `bun_semver::semver_string`; imported under the local name so generic
-/// bounds in this module (`append<T: StringBuilderType>`) are unchanged.
 use bun_semver::semver_string::BuilderStringType as StringBuilderType;
 
 impl<'a> StringBuilder<'a> {
@@ -3097,10 +2672,7 @@ impl<'a> StringBuilder<'a> {
     pub(crate) fn allocate(&mut self) -> Result<(), AllocError> {
         let string_bytes = &mut *self.string_bytes;
         let prev_len = string_bytes.len();
-        // Zero-extend rather than `set_len` over uninit: `as_slice()` callers
-        // (lockfile.rs:2624/2644/2649/2668, dependency.rs:327, CatalogMap.rs:173)
-        // read the full slice including the not-yet-appended tail. Matches the
-        // `grow_default` precedent at :1578.
+        // Zeroed: `as_slice()` callers read the full slice including the not-yet-appended tail.
         string_bytes.resize(prev_len + self.cap, 0);
         self.off = prev_len;
         // SAFETY: `string_bytes` was just resized to `prev_len + self.cap`, so
@@ -3147,14 +2719,6 @@ impl<'a> StringBuilder<'a> {
     }
 }
 
-// ─── StringBuilder trait wiring ─────────────────────────────────────────────
-//
-// Several callees (`Version::count`/`append`, `Dependency::count`/`clone`,
-// `Bin::count`/`clone`, `Scripts::clone`/`count`) accept the builder via a
-// duck-typed trait. Wire
-// `lockfile::StringBuilder` into each so `Package` can pass `&mut builder`
-// straight through.
-
 impl<'a> bun_semver::StringBuilder for StringBuilder<'a> {
     #[inline]
     fn count(&mut self, slice_: &[u8]) {
@@ -3165,13 +2729,6 @@ impl<'a> bun_semver::StringBuilder for StringBuilder<'a> {
         StringBuilder::append::<T>(self, slice_)
     }
 }
-
-// `crate::dependency::StringBuilderLike` impl lives in `dependency.rs` next to
-// the trait definition (it needs `string_bytes()` access to the lockfile
-// buffers). `bin_real::StringBuilder` is now a re-export of
-// `bun_semver::StringBuilder`, so the impl above covers it; `package::scripts`
-// takes `&mut StringBuilder<'_>` concretely, so no adapter trait is needed
-// there either.
 
 // ────────────────────────────────────────────────────────────────────────────
 // PackageIndex
@@ -3193,6 +2750,25 @@ pub mod package_index {
             match self {
                 Entry::Id(id) => core::slice::from_ref(id),
                 Entry::Ids(ids) => ids.as_slice(),
+            }
+        }
+
+        /// Keeps the ids ordered by descending resolution; after the ones `id` is equal to.
+        pub(super) fn insert(&mut self, id: PackageID, resolutions: &[Resolution], buf: &[u8]) {
+            let at = (self.as_slice().iter())
+                .position(|&existing_id| {
+                    resolutions[id as usize].order(&resolutions[existing_id as usize], buf, buf)
+                        == Ordering::Greater
+                })
+                .unwrap_or(self.as_slice().len());
+            match self {
+                Entry::Id(existing_id) => {
+                    let mut ids = PackageIDList::with_capacity(8);
+                    ids.push(*existing_id);
+                    ids.insert(at, id);
+                    *self = Entry::Ids(ids);
+                }
+                Entry::Ids(ids) => ids.insert(at, id),
             }
         }
     }
@@ -3241,13 +2817,6 @@ impl FormatVersion {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Drop (deinit)
-// ────────────────────────────────────────────────────────────────────────────
-
-// `deinit` only frees owned fields → handled by Drop on each field type.
-// No explicit Drop impl needed.
-
-// ────────────────────────────────────────────────────────────────────────────
 // EqlSorter
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -3294,13 +2863,11 @@ impl Lockfile {
         r_loaded_package_count: usize,
     ) -> Result<bool, AllocError> {
         let l: &Lockfile = self;
-        let l_hoisted_deps = l.buffers.hoisted_dependencies.as_slice();
-        let r_hoisted_deps = r.buffers.hoisted_dependencies.as_slice();
         let l_string_buf = l.buffers.string_bytes.as_slice();
         let r_string_buf = r.buffers.string_bytes.as_slice();
 
-        let l_len = l_hoisted_deps.len();
-        let r_len = r_hoisted_deps.len();
+        let l_len = l.buffers.hoisted_dependencies.len();
+        let r_len = r.buffers.hoisted_dependencies.len();
 
         if l_len != r_len {
             return Ok(false);
@@ -3314,64 +2881,45 @@ impl Lockfile {
         // Track owned tree-path allocations so they outlive the sort and are freed at scope end.
         let mut tree_paths: Vec<Box<[u8]>> = Vec::new();
 
-        for l_tree in l.buffers.trees.iter() {
-            let (rel_path, _) = tree::relative_path_and_depth::<{ tree::IteratorPathStyle::PkgPath }>(
-                l.buffers.trees.as_slice(),
-                l.buffers.dependencies.as_slice(),
-                l.buffers.string_bytes.as_slice(),
-                l_tree.id,
-                &mut path_buf,
-                &mut depth_buf,
-            );
-            let tree_path: Box<[u8]> = Box::<[u8]>::from(rel_path.as_bytes());
-            let tree_path_ptr = bun_ptr::RawSlice::new(&tree_path[..]);
-            tree_paths.push(tree_path);
-            for &l_dep_id in l_tree.dependencies.get(l_hoisted_deps) {
-                if l_dep_id == invalid_dependency_id {
-                    continue;
+        let mut side_starts = [0usize; 2];
+        for (i, (side, loaded_package_count)) in [(l, usize::MAX), (r, r_loaded_package_count)]
+            .into_iter()
+            .enumerate()
+        {
+            side_starts[i] = sort_buf.len();
+            for node in side.buffers.trees.iter() {
+                const STYLE: tree::IteratorPathStyle = tree::IteratorPathStyle::PkgPath;
+                let (rel_path, _) = tree::relative_path_and_depth::<STYLE>(
+                    side.buffers.trees.as_slice(),
+                    side.buffers.dependencies.as_slice(),
+                    side.buffers.string_bytes.as_slice(),
+                    node.id,
+                    &mut path_buf,
+                    &mut depth_buf,
+                );
+                let tree_path: Box<[u8]> = Box::<[u8]>::from(rel_path.as_bytes());
+                let tree_path_ptr = bun_ptr::RawSlice::new(&tree_path[..]);
+                tree_paths.push(tree_path);
+                for &dep_id in (node.dependencies).get(side.buffers.hoisted_dependencies.as_slice())
+                {
+                    if dep_id == invalid_dependency_id {
+                        continue;
+                    }
+                    let pkg_id = side.buffers.resolutions[dep_id as usize];
+                    if pkg_id == invalid_package_id {
+                        continue;
+                    }
+                    if pkg_id as usize >= loaded_package_count {
+                        return Ok(false);
+                    }
+                    sort_buf.push(PathToId {
+                        pkg_id,
+                        tree_path: tree_path_ptr,
+                    });
                 }
-                let l_pkg_id = l.buffers.resolutions[l_dep_id as usize];
-                if l_pkg_id == invalid_package_id {
-                    continue;
-                }
-                sort_buf.push(PathToId {
-                    pkg_id: l_pkg_id,
-                    tree_path: tree_path_ptr,
-                });
             }
         }
-        let l_count = sort_buf.len();
-
-        for r_tree in r.buffers.trees.iter() {
-            let (rel_path, _) = tree::relative_path_and_depth::<{ tree::IteratorPathStyle::PkgPath }>(
-                r.buffers.trees.as_slice(),
-                r.buffers.dependencies.as_slice(),
-                r.buffers.string_bytes.as_slice(),
-                r_tree.id,
-                &mut path_buf,
-                &mut depth_buf,
-            );
-            let tree_path: Box<[u8]> = Box::<[u8]>::from(rel_path.as_bytes());
-            let tree_path_ptr = bun_ptr::RawSlice::new(&tree_path[..]);
-            tree_paths.push(tree_path);
-            for &r_dep_id in r_tree.dependencies.get(r_hoisted_deps) {
-                if r_dep_id == invalid_dependency_id {
-                    continue;
-                }
-                let r_pkg_id = r.buffers.resolutions[r_dep_id as usize];
-                if r_pkg_id == invalid_package_id {
-                    continue;
-                }
-                if r_pkg_id as usize >= r_loaded_package_count {
-                    return Ok(false);
-                }
-                sort_buf.push(PathToId {
-                    pkg_id: r_pkg_id,
-                    tree_path: tree_path_ptr,
-                });
-            }
-        }
-        let (l_buf, r_buf) = sort_buf.split_at_mut(l_count);
+        let (l_buf, r_buf) = sort_buf.split_at_mut(side_starts[1]);
 
         if l_buf.len() != r_buf.len() {
             return Ok(false);
@@ -3488,32 +3036,14 @@ impl Lockfile {
             b"\n-- BEGIN SHA512/256(`${alphabetize(name)}@${order(version)}`) --\n";
         const HASH_SUFFIX: &[u8] = b"-- END HASH--\n";
         string_builder.cap += HASH_PREFIX.len() + HASH_SUFFIX.len();
-        {
-            let mut i: usize = 1;
-
-            while i + 16 < packages_len {
-                for j in 0..16usize {
-                    alphabetized_names[(i + j) - 1] = (i + j) as PackageID;
-                    // posix path separators because we only use posix in the lockfile
-                    string_builder.fmt_count(format_args!(
-                        "{}@{}\n",
-                        bstr::BStr::new(names[i + j].slice(bytes)),
-                        resolutions[i + j].fmt(bytes, PathSep::Posix)
-                    ));
-                }
-                i += 16;
-            }
-
-            while i < packages_len {
-                alphabetized_names[i - 1] = i as PackageID;
-                // posix path separators because we only use posix in the lockfile
-                string_builder.fmt_count(format_args!(
-                    "{}@{}\n",
-                    bstr::BStr::new(names[i].slice(bytes)),
-                    resolutions[i].fmt(bytes, PathSep::Posix)
-                ));
-                i += 1;
-            }
+        for i in 1..packages_len {
+            alphabetized_names[i - 1] = i as PackageID;
+            // posix path separators because we only use posix in the lockfile
+            string_builder.fmt_count(format_args!(
+                "{}@{}\n",
+                bstr::BStr::new(names[i].slice(bytes)),
+                resolutions[i].fmt(bytes, PathSep::Posix)
+            ));
         }
 
         const SCRIPTS_BEGIN: &[u8] = b"\n-- BEGIN SCRIPTS --\n";
@@ -3619,47 +3149,18 @@ impl Lockfile {
         version: &DependencyVersion,
         dependency_buf: &[u8],
     ) -> Option<PackageID> {
-        let name_hash = SemverStringBuilder::string_hash(package_name);
-        let entry = self.package_index.get(&name_hash)?;
+        let candidates = self.packages_named(SemverStringBuilder::string_hash(package_name));
+        let npm_group = &version.try_npm()?.version;
         let buf = self.buffers.string_bytes.as_slice();
-
-        match version.tag {
-            dependency::Tag::Npm => {
-                // SAFETY: tag checked == .npm above; `npm` is the active
-                // `dependency::Value` union field.
-                let npm_group = &version.npm().version;
-                // Only a resolution whose own tag is npm may be read through
-                // `Resolution::npm()`: the root package, workspace members, and
-                // folder/symlink deps share the name index with other variants.
-                let satisfies = |resolution: &Resolution| -> bool {
-                    resolution.tag == ResolutionTag::Npm
-                        && npm_group.satisfies(resolution.npm().version, dependency_buf, buf)
-                };
-                match entry {
-                    PackageIndexEntry::Id(id) => {
-                        let resolutions = self.packages.items_resolution();
-
-                        debug_assert!((*id as usize) < resolutions.len());
-                        if satisfies(&resolutions[*id as usize]) {
-                            return Some(*id);
-                        }
-                    }
-                    PackageIndexEntry::Ids(ids) => {
-                        let resolutions = self.packages.items_resolution();
-
-                        for &id in ids.iter() {
-                            debug_assert!((id as usize) < resolutions.len());
-                            if satisfies(&resolutions[id as usize]) {
-                                return Some(id);
-                            }
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-
-        None
+        let resolutions = self.packages.items_resolution();
+        // Only a resolution whose own tag is npm may be read through
+        // `Resolution::npm()`: the root package, workspace members, and
+        // folder/symlink deps share the name index with other variants.
+        candidates.iter().copied().find(|&id| {
+            let resolution = &resolutions[id as usize];
+            resolution.tag == ResolutionTag::Npm
+                && npm_group.satisfies(resolution.npm().version, dependency_buf, buf)
+        })
     }
 }
 

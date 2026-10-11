@@ -1,6 +1,4 @@
-use core::fmt::Write as _;
-
-use bun_core::fmt::{Table, TableSymbols, escape_control_chars};
+use bun_core::fmt::{Table, TableSymbols, count, escape_control_chars};
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_glob as glob;
@@ -34,35 +32,33 @@ pub(crate) fn visible_width(printed: &str) -> usize {
     strings::visible::width::exclude_ansi_colors::utf8(printed.as_bytes())
 }
 
+fn behavior_label(behavior: Behavior) -> &'static str {
+    if behavior.is_dev() {
+        " (dev)"
+    } else if behavior.is_peer() {
+        " (peer)"
+    } else if behavior.is_optional() {
+        " (optional)"
+    } else {
+        ""
+    }
+}
+
+static COLUMN_NAMES: [&[u8]; 5] = [b"Package", b"Current", b"Update", b"Latest", b"Workspace"];
+
 /// The rows of the `bun outdated` table and the column widths that fit them.
 struct OutdatedTable {
     declared: DeclaredDependencies,
     rows: Vec<GroupedOutdatedInfo>,
-    package_column_inside_length: usize,
-    current_column_inside_length: usize,
-    update_column_inside_length: usize,
-    latest_column_inside_length: usize,
-    workspace_column_inside_length: usize,
+    /// One per `COLUMN_NAMES`.
+    column_inside_lengths: [usize; 5],
     show_workspace_column: bool,
     has_filtered_versions: bool,
 }
 
-// TODO: use in `bun pack, publish, run, ...`
 enum FilterType<'a> {
     All,
     Name(&'a [u8]),
-    Path,
-}
-
-impl<'a> FilterType<'a> {
-    fn init(pattern: &'a [u8], is_path: bool) -> Self {
-        if is_path {
-            FilterType::Path
-        } else {
-            FilterType::Name(pattern)
-        }
-    }
-    // *NOTE*: name and path are not allocated → no Drop impl needed.
 }
 
 /// Combines the patterns like `--filter` values (`workspace_selection::select`). Each pattern is tried on both
@@ -76,15 +72,11 @@ fn package_patterns_select(
     let mut selected = false;
     for pattern in patterns {
         match pattern {
-            FilterType::Path => unreachable!(),
             FilterType::All => {
                 has_positive = true;
                 selected = true;
             }
             FilterType::Name(name_pattern) => {
-                if name_pattern.is_empty() {
-                    continue;
-                }
                 for name in [Some(package_name), alias].into_iter().flatten() {
                     let result = glob::r#match(name_pattern, name);
                     if result.is_negated() {
@@ -126,8 +118,6 @@ impl OutdatedCommand {
                     Global::crash();
                 }
             };
-        // `original_cwd: Box<[u8]>` — `defer ctx.allocator.free(original_cwd)` is
-        // implicit via Drop at scope exit.
 
         manager.load_lockfile_from_cwd_or_exit("nothing outdated");
         Self::outdated_dispatch(&original_cwd, manager)
@@ -177,35 +167,24 @@ impl OutdatedCommand {
         let pkg_names = manager.lockfile.packages.items_name();
         let pkg_names_buf = manager.lockfile.buffers.string_bytes.as_slice();
         let string_buf = declared.string_bytes();
-        let is_catalog = |item: &DeclaredDependency| {
-            declared.dependency(item).version.tag == dependency::Tag::Catalog
+        // (name hash, catalog name hash, behavior)
+        let catalog_key = |item: &DeclaredDependency| {
+            let dep = declared.dependency(item);
+            (
+                hash(dep.name.slice(string_buf)),
+                hash(dep.version.catalog().slice(string_buf)),
+                dep.behavior,
+            )
         };
 
         let mut result: Vec<GroupedOutdatedInfo> = Vec::new();
-
-        #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-        struct CatalogKey {
-            name_hash: u64,
-            catalog_name_hash: u64,
-            behavior: Behavior,
-        }
-        let mut catalog_map: bun_collections::HashMap<CatalogKey, Vec<PackageID>> =
+        let mut catalog_map: bun_collections::HashMap<(u64, u64, Behavior), Vec<PackageID>> =
             bun_collections::HashMap::new();
 
         for item in outdated_items {
-            if is_catalog(item) {
-                let dep = declared.dependency(item);
-                let name_hash = hash(dep.name.slice(string_buf));
-                let catalog = *dep.version.catalog();
-                let catalog_name = catalog.slice(string_buf);
-                let catalog_name_hash = hash(catalog_name);
-                let key = CatalogKey {
-                    name_hash,
-                    catalog_name_hash,
-                    behavior: dep.behavior,
-                };
+            if declared.dependency(item).version.tag == dependency::Tag::Catalog {
                 catalog_map
-                    .entry(key)
+                    .entry(catalog_key(item))
                     .or_default()
                     .push(item.workspace_pkg_id);
             } else {
@@ -216,33 +195,21 @@ impl OutdatedCommand {
             }
         }
 
-        // Second pass: add grouped catalog dependencies
+        // One row per catalog entry, at the first workspace that uses it.
         for item in outdated_items {
-            if !is_catalog(item) {
+            let version = &declared.dependency(item).version;
+            if version.tag != dependency::Tag::Catalog {
                 continue;
             }
-
-            let dep = declared.dependency(item);
-            let name_hash = hash(dep.name.slice(string_buf));
-            let catalog = *dep.version.catalog();
-            let catalog_name = catalog.slice(string_buf);
-            let catalog_name_hash = hash(catalog_name);
-            let key = CatalogKey {
-                name_hash,
-                catalog_name_hash,
-                behavior: dep.behavior,
-            };
-
-            let Some(workspace_list) = catalog_map.get(&key) else {
+            let Some(workspace_list) = catalog_map.get(&catalog_key(item)) else {
                 continue;
             };
-
             if workspace_list[0] != item.workspace_pkg_id {
                 continue;
             }
             let mut workspace_names: Vec<u8> = Vec::new();
 
-            let cat_name = catalog_name;
+            let cat_name = version.catalog().slice(string_buf);
             if !cat_name.is_empty() {
                 workspace_names.extend_from_slice(b"catalog:");
                 workspace_names.extend_from_slice(cat_name);
@@ -275,60 +242,36 @@ impl OutdatedCommand {
         workspace_pkg_ids: &[PackageID],
         was_filtered: bool,
     ) -> Option<OutdatedTable> {
-        let package_patterns: Option<Vec<FilterType<'_>>> = 'package_patterns: {
-            let args = manager.options.positionals.get(1..).unwrap_or(&[]);
-            if args.is_empty() {
-                break 'package_patterns None;
-            }
-
-            let mut at_least_one_greater_than_zero = false;
-            let mut patterns_buf: Vec<FilterType<'_>> = Vec::with_capacity(args.len());
-            for arg in args {
-                if arg.is_empty() {
-                    patterns_buf.push(FilterType::init(b"", false));
-                    continue;
-                }
-                if (arg.len() == 1 && arg[0] == b'*') || strings::eql_comptime(arg, b"**") {
-                    patterns_buf.push(FilterType::All);
-                    at_least_one_greater_than_zero = true;
-                    continue;
-                }
+        let args = manager.options.positionals.get(1..).unwrap_or(&[]);
+        let mut package_patterns: Vec<FilterType<'_>> = Vec::with_capacity(args.len());
+        for &arg in args {
+            match arg {
+                b"" => {}
+                b"*" | b"**" => package_patterns.push(FilterType::All),
                 // As a glob, `*` stops at the `/` of a scoped name.
-                if strings::eql_comptime(arg, b"!*") || strings::eql_comptime(arg, b"!**") {
-                    return None;
-                }
-                patterns_buf.push(FilterType::init(arg, false));
-                at_least_one_greater_than_zero = at_least_one_greater_than_zero || !arg.is_empty();
+                b"!*" | b"!**" => return None,
+                _ => package_patterns.push(FilterType::Name(arg)),
             }
+        }
+        // nothing will match
+        if package_patterns.is_empty() && !args.is_empty() {
+            return None;
+        }
 
-            // nothing will match
-            if !at_least_one_greater_than_zero {
-                return None;
-            }
-
-            Some(patterns_buf)
-        };
-        // `defer { pattern.deinit(); allocator.free(patterns) }` — Drop on Vec.
-
-        let mut max_name: usize = 0;
-        let mut max_current: usize = 0;
-        let mut max_update: usize = 0;
-        let mut max_latest: usize = 0;
-        let mut max_workspace: usize = 0;
+        let mut column_inside_lengths = [
+            "Packages".len(),
+            "Current".len(),
+            "Update".len(),
+            "Latest".len(),
+            "Workspace".len(),
+        ];
         let mut has_filtered_versions: bool = false;
 
-        // Reshaped for borrowck — `manifests.byNameAllowExpired` would
-        // otherwise alias the receiver.
-        // Hoist the four scalars that path reads into a by-value
-        // `DiskCacheCtx` so the loop body holds only disjoint field borrows
-        // (`&mut manager.manifests` against `&manager.lockfile` /
-        // `&manager.options`).
+        // By value, so that the loop body holds only disjoint borrows of `manager`.
         let cache_ctx = manager.manifest_disk_cache_ctx();
         let min_age_ms = manager.options.minimum_release_age_ms;
         let needs_extended = min_age_ms.is_some();
         let excludes = manager.options.minimum_release_age_excludes;
-
-        let mut version_buf: String = String::new();
 
         let declared =
             DeclaredDependencies::load(manager, workspace_pkg_ids, BrokenMember::LeftOut);
@@ -344,9 +287,7 @@ impl OutdatedCommand {
             let dep_name = dep.name.slice(declared.string_bytes());
             let alias = (dep_name != package_name).then_some(dep_name);
 
-            if let Some(patterns) = &package_patterns
-                && !package_patterns_select(patterns, package_name, alias)
-            {
+            if !package_patterns_select(&package_patterns, package_name, alias) {
                 continue;
             }
 
@@ -377,69 +318,36 @@ impl OutdatedCommand {
                 continue;
             }
 
-            let has_filtered_update = update_version.latest_is_filtered();
-            let has_filtered_latest = latest.latest_is_filtered();
-            if has_filtered_update || has_filtered_latest {
-                has_filtered_versions = true;
-            }
+            let mut fit = |column: usize, length: usize| {
+                column_inside_lengths[column] = column_inside_lengths[column].max(length);
+            };
 
-            let package_name_len = visible_width(&printed(package_name))
-                + alias.map_or(0, |alias| {
-                    visible_width(&printed(alias)) + ALIAS_SEPARATOR.len()
-                })
-                + if dep.behavior.is_dev() {
-                    " (dev)".len()
-                } else if dep.behavior.is_peer() {
-                    " (peer)".len()
-                } else if dep.behavior.is_optional() {
-                    " (optional)".len()
-                } else {
-                    0
-                };
-            if package_name_len > max_name {
-                max_name = package_name_len;
-            }
+            let alias_len = alias.map_or(0, |alias| {
+                visible_width(&printed(alias)) + ALIAS_SEPARATOR.len()
+            });
+            fit(
+                0,
+                visible_width(&printed(package_name))
+                    + alias_len
+                    + behavior_label(dep.behavior).len(),
+            );
 
-            version_buf.clear();
-            write!(version_buf, "{}", current_version.fmt(string_buf))
-                .expect("OOM writing version");
-            if version_buf.len() > max_current {
-                max_current = version_buf.len();
-            }
+            let current_len = count(format_args!("{}", current_version.fmt(string_buf)));
+            fit(1, current_len);
 
-            version_buf.clear();
-            if let Some(uv) = update_version.unwrap() {
-                write!(version_buf, "{}", uv.version.fmt(&manifest.string_buf))
-                    .expect("OOM writing version");
-            } else {
-                write!(version_buf, "{}", current_version.fmt(string_buf))
-                    .expect("OOM writing version");
+            for (column, found) in [(2, update_version), (3, latest)] {
+                let filtered = found.latest_is_filtered();
+                has_filtered_versions |= filtered;
+                let version_len = found.unwrap().map_or(current_len, |found| {
+                    count(format_args!("{}", found.version.fmt(&manifest.string_buf)))
+                });
+                fit(column, version_len + if filtered { " *".len() } else { 0 });
             }
-            let update_version_len =
-                version_buf.len() + if has_filtered_update { " *".len() } else { 0 };
-            if update_version_len > max_update {
-                max_update = update_version_len;
-            }
-
-            version_buf.clear();
-            if let Some(lv) = latest.unwrap() {
-                write!(version_buf, "{}", lv.version.fmt(&manifest.string_buf))
-                    .expect("OOM writing version");
-            } else {
-                write!(version_buf, "{}", current_version.fmt(string_buf))
-                    .expect("OOM writing version");
-            }
-            let latest_version_len =
-                version_buf.len() + if has_filtered_latest { " *".len() } else { 0 };
-            if latest_version_len > max_latest {
-                max_latest = latest_version_len;
-            }
-            version_buf.clear();
 
             let workspace_name = manager.lockfile.packages.items_name()
                 [row.workspace_pkg_id as usize]
                 .slice(string_buf);
-            max_workspace = max_workspace.max(visible_width(&printed(workspace_name)));
+            fit(4, visible_width(&printed(workspace_name)));
 
             outdated_ids.push(*row);
         }
@@ -448,15 +356,13 @@ impl OutdatedCommand {
             return None;
         }
 
-        // Group catalog dependencies
         let rows = Self::group_catalog_dependencies(manager, &declared, &outdated_ids);
 
-        // Recalculate max workspace length after grouping
-        let mut new_max_workspace: usize = max_workspace;
         let mut has_catalog_deps = false;
         for item in &rows {
             if let Some(names) = &item.grouped_workspace_names {
-                new_max_workspace = new_max_workspace.max(visible_width(&printed(names)));
+                column_inside_lengths[4] =
+                    column_inside_lengths[4].max(visible_width(&printed(names)));
                 has_catalog_deps = true;
             }
         }
@@ -464,12 +370,7 @@ impl OutdatedCommand {
         Some(OutdatedTable {
             declared,
             rows,
-            package_column_inside_length: "Packages".len().max(max_name),
-            current_column_inside_length: "Current".len().max(max_current),
-            update_column_inside_length: "Update".len().max(max_update),
-            latest_column_inside_length: "Latest".len().max(max_latest),
-            workspace_column_inside_length: "Workspace".len().max(new_max_workspace),
-            // Show workspace column if filtered OR if there are catalog dependencies
+            column_inside_lengths,
             show_workspace_column: was_filtered || has_catalog_deps,
             has_filtered_versions,
         })
@@ -479,64 +380,46 @@ impl OutdatedCommand {
         manager: &mut PackageManager,
         outdated: &OutdatedTable,
     ) {
-        let &OutdatedTable {
-            ref declared,
-            ref rows,
-            package_column_inside_length,
-            current_column_inside_length,
-            update_column_inside_length,
-            latest_column_inside_length,
-            workspace_column_inside_length,
+        let OutdatedTable {
+            declared,
+            rows,
+            column_inside_lengths,
             show_workspace_column,
             has_filtered_versions,
         } = outdated;
 
-        // `by_name_allow_expired` takes these by value so the loop body holds
-        // only disjoint borrows of `manager`.
         let cache_ctx = manager.manifest_disk_cache_ctx();
         let min_age_ms = manager.options.minimum_release_age_ms;
         let needs_extended = min_age_ms.is_some();
         let excludes = manager.options.minimum_release_age_excludes;
 
-        let mut version_buf: String = String::new();
-
         const COLUMN_LEFT_PAD: usize = 1;
         const COLUMN_RIGHT_PAD: usize = 1;
 
-        let names_5: [&[u8]; 5] = [b"Package", b"Current", b"Update", b"Latest", b"Workspace"];
-        let names_4: [&[u8]; 4] = [b"Package", b"Current", b"Update", b"Latest"];
-        let lengths_5 = [
-            package_column_inside_length,
-            current_column_inside_length,
-            update_column_inside_length,
-            latest_column_inside_length,
-            workspace_column_inside_length,
-        ];
-        let lengths_4 = [
-            package_column_inside_length,
-            current_column_inside_length,
-            update_column_inside_length,
-            latest_column_inside_length,
-        ];
-        let (column_names, column_lengths): (&[&[u8]], &[usize]) = if show_workspace_column {
-            (&names_5, &lengths_5)
-        } else {
-            (&names_4, &lengths_4)
-        };
-
+        let columns = if *show_workspace_column { 5 } else { 4 };
         let table = Table::<COLUMN_LEFT_PAD, COLUMN_RIGHT_PAD, ENABLE_ANSI_COLORS>::init(
-            column_names,
-            column_lengths,
+            &COLUMN_NAMES[..columns],
+            &column_inside_lengths[..columns],
             "blue",
         );
         let symbols = TableSymbols {
             enable_ansi_colors: ENABLE_ANSI_COLORS,
         };
+        let start_cell = || {
+            bun_core::pretty!("{}", symbols.vertical_edge());
+            for _ in 0..COLUMN_LEFT_PAD {
+                bun_core::pretty!(" ");
+            }
+        };
+        let end_cell = |column: usize, printed_length: usize| {
+            for _ in printed_length..column_inside_lengths[column] + COLUMN_RIGHT_PAD {
+                bun_core::pretty!(" ");
+            }
+        };
 
         table.print_top_line_separator();
         table.print_column_names();
 
-        // Print grouped items sorted by behavior type
         for group_behavior in [
             Behavior::PROD,
             Behavior::DEV,
@@ -576,120 +459,50 @@ impl OutdatedCommand {
 
                 table.print_line_separator();
 
-                {
-                    // package name
-                    let behavior_str: &str = if dep.behavior.is_dev() {
-                        " (dev)"
-                    } else if dep.behavior.is_peer() {
-                        " (peer)"
-                    } else if dep.behavior.is_optional() {
-                        " (optional)"
+                start_cell();
+                let behavior_str = behavior_label(dep.behavior);
+                let name = printed(package_name);
+                let mut name_len = visible_width(&name) + behavior_str.len();
+                let dep_name = dep.name.slice(declared.string_bytes());
+                if dep_name != package_name {
+                    let alias = printed(dep_name);
+                    bun_core::pretty!("{}<d>{}<r>", alias, ALIAS_SEPARATOR);
+                    name_len += visible_width(&alias) + ALIAS_SEPARATOR.len();
+                }
+                bun_core::pretty!("{}<d>{}<r>", name, behavior_str);
+                end_cell(0, name_len);
+
+                start_cell();
+                let current = current_version.fmt(string_buf).to_string();
+                bun_core::pretty!("{}", current);
+                end_cell(1, current.len());
+
+                for (column, found) in [(2, update), (3, latest)] {
+                    start_cell();
+                    let filtered = found.latest_is_filtered();
+                    let mut version_len = if let Some(found) = found.unwrap() {
+                        bun_core::pretty!(
+                            "{}",
+                            found.version.diff_fmt(
+                                current_version,
+                                &manifest.string_buf,
+                                string_buf
+                            )
+                        );
+                        count(format_args!("{}", found.version.fmt(&manifest.string_buf)))
                     } else {
-                        ""
+                        bun_core::pretty!("<d>{}<r>", current);
+                        current.len()
                     };
-
-                    bun_core::pretty!("{}", symbols.vertical_edge());
-                    for _ in 0..COLUMN_LEFT_PAD {
-                        bun_core::pretty!(" ");
-                    }
-                    let name = printed(package_name);
-                    let mut name_len = visible_width(&name) + behavior_str.len();
-                    let dep_name = dep.name.slice(declared.string_bytes());
-                    if dep_name != package_name {
-                        let alias = printed(dep_name);
-                        bun_core::pretty!("{}<d>{}<r>", alias, ALIAS_SEPARATOR);
-                        name_len += visible_width(&alias) + ALIAS_SEPARATOR.len();
-                    }
-                    bun_core::pretty!("{}<d>{}<r>", name, behavior_str);
-                    for _ in name_len..package_column_inside_length + COLUMN_RIGHT_PAD {
-                        bun_core::pretty!(" ");
-                    }
-                }
-
-                {
-                    // current version
-                    bun_core::pretty!("{}", symbols.vertical_edge());
-                    for _ in 0..COLUMN_LEFT_PAD {
-                        bun_core::pretty!(" ");
-                    }
-                    version_buf.clear();
-                    write!(version_buf, "{}", current_version.fmt(string_buf))
-                        .expect("OOM writing version");
-                    bun_core::pretty!("{}", version_buf);
-                    for _ in version_buf.len()..current_column_inside_length + COLUMN_RIGHT_PAD {
-                        bun_core::pretty!(" ");
-                    }
-                    version_buf.clear();
-                }
-
-                {
-                    // update version
-                    bun_core::pretty!("{}", symbols.vertical_edge());
-                    for _ in 0..COLUMN_LEFT_PAD {
-                        bun_core::pretty!(" ");
-                    }
-                    let update_filtered = update.latest_is_filtered();
-                    if let Some(uv) = update.unwrap() {
-                        write!(version_buf, "{}", uv.version.fmt(&manifest.string_buf))
-                            .expect("OOM writing version");
-                        bun_core::pretty!(
-                            "{}",
-                            uv.version
-                                .diff_fmt(current_version, &manifest.string_buf, string_buf)
-                        );
-                    } else {
-                        write!(version_buf, "{}", current_version.fmt(string_buf))
-                            .expect("OOM writing version");
-                        bun_core::pretty!("<d>{}<r>", version_buf);
-                    }
-                    let mut update_version_len = version_buf.len();
-                    if update_filtered {
+                    if filtered {
                         bun_core::pretty!(" <blue>*<r>");
-                        update_version_len += " *".len();
+                        version_len += " *".len();
                     }
-                    for _ in update_version_len..update_column_inside_length + COLUMN_RIGHT_PAD {
-                        bun_core::pretty!(" ");
-                    }
-                    version_buf.clear();
+                    end_cell(column, version_len);
                 }
 
-                {
-                    // latest version
-                    bun_core::pretty!("{}", symbols.vertical_edge());
-                    for _ in 0..COLUMN_LEFT_PAD {
-                        bun_core::pretty!(" ");
-                    }
-                    let latest_filtered = latest.latest_is_filtered();
-                    if let Some(lv) = latest.unwrap() {
-                        write!(version_buf, "{}", lv.version.fmt(&manifest.string_buf))
-                            .expect("OOM writing version");
-                        bun_core::pretty!(
-                            "{}",
-                            lv.version
-                                .diff_fmt(current_version, &manifest.string_buf, string_buf)
-                        );
-                    } else {
-                        write!(version_buf, "{}", current_version.fmt(string_buf))
-                            .expect("OOM writing version");
-                        bun_core::pretty!("<d>{}<r>", version_buf);
-                    }
-                    let mut latest_version_len = version_buf.len();
-                    if latest_filtered {
-                        bun_core::pretty!(" <blue>*<r>");
-                        latest_version_len += " *".len();
-                    }
-                    for _ in latest_version_len..latest_column_inside_length + COLUMN_RIGHT_PAD {
-                        bun_core::pretty!(" ");
-                    }
-                    version_buf.clear();
-                }
-
-                if show_workspace_column {
-                    bun_core::pretty!("{}", symbols.vertical_edge());
-                    for _ in 0..COLUMN_LEFT_PAD {
-                        bun_core::pretty!(" ");
-                    }
-
+                if *show_workspace_column {
+                    start_cell();
                     let workspace_name: &[u8] = if let Some(names) = &item.grouped_workspace_names {
                         names
                     } else {
@@ -698,12 +511,7 @@ impl OutdatedCommand {
                     };
                     let workspace_name = printed(workspace_name);
                     bun_core::pretty!("{}", workspace_name);
-
-                    for _ in visible_width(&workspace_name)
-                        ..workspace_column_inside_length + COLUMN_RIGHT_PAD
-                    {
-                        bun_core::pretty!(" ");
-                    }
+                    end_cell(4, visible_width(&workspace_name));
                 }
 
                 bun_core::pretty!("{}\n", symbols.vertical_edge());
@@ -712,7 +520,7 @@ impl OutdatedCommand {
 
         table.print_bottom_line_separator();
 
-        if has_filtered_versions {
+        if *has_filtered_versions {
             bun_core::prettyln!(
                 "<d><b>Note:<r> <d>The <r><blue>*<r><d> indicates that version isn't true latest due to minimum release age<r>"
             );

@@ -6,7 +6,7 @@
 // the buffered extractor would produce.
 
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, readdirSorted, runCommandMaxRSS, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, readdirSorted, runCommandMaxRSS, tempDir } from "harness";
 import { createHash, randomBytes } from "node:crypto";
 import {
   createWriteStream,
@@ -1532,9 +1532,18 @@ test.skipIf(isWindows)("streaming extract fails the install when the file system
 
   {
     await using proc = Bun.spawn({
-      // 8192 blocks of 512 bytes. A write past the limit raises SIGXFSZ, which
-      // must not end the child. Without the limit the child must not run.
-      cmd: ["sh", "-c", `trap '' XFSZ; ulimit -f 8192 && exec "$@"`, "sh", bunExe(), "install", "--linker=hoisted"],
+      // 8192 blocks of 512 bytes; the sh of macOS (bash 3.2) counts blocks of 1024.
+      // A write past the limit raises SIGXFSZ, which must not end the child.
+      // Without the limit the child must not run.
+      cmd: [
+        "sh",
+        "-c",
+        `trap '' XFSZ; ulimit -f ${isMacOS ? 4096 : 8192} && exec "$@"`,
+        "sh",
+        bunExe(),
+        "install",
+        "--linker=hoisted",
+      ],
       cwd: String(dir),
       env,
       stdout: "ignore",

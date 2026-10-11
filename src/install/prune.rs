@@ -13,7 +13,7 @@ use bun_sys::{self as sys, Dir, E, EntryKind, O};
 use bun_threading::{WaitGroup, WorkPool};
 
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _, entry as store_entry};
-use crate::isolated_install::{Store, Timings, build_store};
+use crate::isolated_install::{Store, build_store};
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::tree::is_filtered_dependency_or_workspace;
 use crate::lockfile::{LoadResult, Lockfile, print_log_errors, reachable, tree};
@@ -591,7 +591,7 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
     let pm: *mut PackageManager = manager;
     // SAFETY: same split as `hoist_install_tree`; neither call reaches `lockfile` through `pm`.
     let summary = unsafe {
-        let parsed = to_root.parse_with_json::<()>(
+        let parsed = to_root.parse_with_json(
             &mut to_lockfile,
             &mut *pm,
             log,
@@ -830,15 +830,13 @@ pub(crate) fn top_level_names(manager: &mut PackageManager) -> Option<Vec<Box<[u
     let buffers = &manager.lockfile.buffers;
     let deps = buffers.dependencies.as_slice();
     let buf = buffers.string_bytes.as_slice();
-    let mut names: Vec<Box<[u8]>> = match buffers.trees.as_slice().first() {
-        Some(root) => root
-            .dependencies
-            .get(buffers.hoisted_dependencies.as_slice())
-            .iter()
-            .map(|&id| deps[id as usize].name.slice(buf).into())
-            .collect(),
-        None => Vec::new(),
-    };
+    let mut names: Vec<Box<[u8]>> = (buffers.trees.first().into_iter())
+        .flat_map(|root| {
+            root.dependencies
+                .get(buffers.hoisted_dependencies.as_slice())
+        })
+        .map(|&id| deps[id as usize].name.slice(buf).into())
+        .collect();
     sort_names(&mut names);
     restore_tree(&mut manager.lockfile, saved);
     Some(names)
@@ -1352,10 +1350,8 @@ fn has_bundled_deps(lockfile: &Lockfile, pkg_id: PackageID) -> bool {
 /// Hoisted post-install pass of every command that changed what bun.lock holds (install_with_manager.rs):
 /// removes what `before` placed at the root and the install no longer does, and the copies `before` placed
 /// in a nested or workspace `node_modules` that the install now provides from an ancestor.
-/// The folders are compared with the install tree, not the lockfile's: only the install tree applies the
-/// self-contained barrier, so only it says what a self-contained workspace keeps. The tree carries every
-/// dependency type, so a copy under a dependency that `--production` / `--omit` skipped this run stays.
-/// It carries every platform too: bun.lock still holds what `--os` / `--cpu` / `--libc` installed.
+/// The folders are compared with the install tree (only it applies the self-contained barrier), hoisted with
+/// every dependency type and platform: what `--production` / `--omit` / `--os` / `--cpu` skipped this run stays.
 pub(crate) fn remove_collapsed_copies(manager: &mut PackageManager, before: &Lockfile) {
     let options = &mut manager.options;
     let platform = (options.cpu, options.os, options.libc);
@@ -1620,8 +1616,7 @@ fn workspace_node_modules(lockfile: &Lockfile, pkg_id: PackageID) -> Option<Box<
     Some(join(path, b"node_modules"))
 }
 
-/// The one way to open a workspace's `node_modules`, and the store. A link is not followed, it
-/// can lead to the root's `node_modules`: `linked_folders` gets its path.
+/// The one way to open a workspace's `node_modules`, and the store. A link is not followed: `linked_folders` gets it.
 fn open_workspace_folder(folder: &[u8], linked_folders: &mut Vec<Box<[u8]>>) -> Option<Dir> {
     let st = sys::lstat(ZStr::from_slice_with_nul(&zname(folder))).ok()?;
     match sys::kind_from_mode(st.st_mode as sys::Mode) {
@@ -1831,7 +1826,7 @@ fn build_store_with(manager: &mut PackageManager, features: InstallFeatures) -> 
             true,
             &[],
             None,
-            Timings::Quiet,
+            false,
         ))
     })
 }
@@ -2054,10 +2049,8 @@ fn remove_link(dir: &Dir, name: &[u8]) -> sys::Maybe<()> {
     result
 }
 
-/// `path` is a directory the installer makes for itself below the project's `node_modules`: an
-/// `@scope`, `.bin`, the `node_modules` of a package or a member, a package's own folder. A link
-/// there came with the project, and what is written and deleted below it would be somewhere
-/// else. The link goes, what it leads to stays.
+/// `path` is a directory the installer makes for itself below the project's `node_modules` (an `@scope`, `.bin`,
+/// a nested `node_modules`, a package's folder). A link there came with the project and leads elsewhere: it goes.
 pub(crate) fn remove_planted_link(dir: &Dir, path: &ZStr) -> sys::Maybe<()> {
     #[cfg(not(windows))]
     let (stat, remove) = (sys::lstatat(dir, path), || sys::unlinkat(dir, path));
@@ -2306,49 +2299,36 @@ fn remove_dangling_bins(bin: &Dir, parent: &Dir, _global: Option<(&[u8], &[u8])>
 /// Removes from `dest`, a copy of the folder `src`, what `src` no longer has. `node_modules` is
 /// no part of the copy. A folder that cannot be listed, or whose source cannot, stays as it is.
 pub(crate) fn remove_entries_missing_from(src: &Dir, dest: &Dir) {
-    let mut names: Vec<Box<[u8]>> = Vec::new();
-    let mut iter = sys::iterate_dir(src.fd());
-    loop {
-        match iter.next() {
-            Ok(Some(entry)) => names.push(entry.name.slice_u8().into()),
-            Ok(None) => break,
-            Err(_) => return,
+    fn list(dir: &Dir) -> Option<Vec<(Box<[u8]>, EntryKind)>> {
+        let mut entries = Vec::new();
+        let mut iter = sys::iterate_dir(dir.fd());
+        while let Some(entry) = iter.next().ok()? {
+            entries.push((entry.name.slice_u8().into(), entry.kind));
         }
+        Some(entries)
     }
-    drop(iter);
+    let Some(src_entries) = list(src) else {
+        return;
+    };
+    let Some(dest_entries) = list(dest) else {
+        return;
+    };
+    let mut names: Vec<Box<[u8]>> = src_entries.into_iter().map(|(name, _)| name).collect();
     sort_names(&mut names);
 
-    let mut stale: Vec<Box<[u8]>> = Vec::new();
-    let mut folders: Vec<Box<[u8]>> = Vec::new();
-    let mut iter = sys::iterate_dir(dest.fd());
-    loop {
-        match iter.next() {
-            Ok(Some(entry)) => {
-                let name = entry.name.slice_u8();
-                if name == b"node_modules" {
-                    continue;
-                }
-                if !contains(&names, name) {
-                    stale.push(name.into());
-                } else if entry_kind(dest, name, entry.kind) == EntryKind::Directory {
-                    folders.push(name.into());
-                }
-            }
-            Ok(None) => break,
-            Err(_) => return,
-        }
-    }
-    drop(iter);
-
-    for name in &stale {
-        let _ = dest.delete_tree(name);
-    }
     let flags = O::RDONLY | O::CLOEXEC | O::NOFOLLOW;
-    for name in &folders {
-        if let (Ok(src), Ok(dest)) = (
-            src.open_at_with(name, flags),
-            dest.open_at_with(name, flags),
-        ) {
+    for (name, kind) in &dest_entries {
+        if &**name == b"node_modules" {
+            continue;
+        }
+        if !contains(&names, name) {
+            let _ = dest.delete_tree(name);
+        } else if entry_kind(dest, name, *kind) == EntryKind::Directory
+            && let (Ok(src), Ok(dest)) = (
+                src.open_at_with(name, flags),
+                dest.open_at_with(name, flags),
+            )
+        {
             remove_entries_missing_from(&src, &dest);
         }
     }
@@ -2393,8 +2373,7 @@ fn housekeeping(plan: &Plan, layout: Layout, manager: &PackageManager) {
     }
 }
 
-/// The name of the `node_modules/.old_modules-<hex>` that holds the tree of the other linker,
-/// which `isolated_install::move_node_modules_aside` moved out of the way of this install.
+/// The name of the `node_modules/.old_modules-<hex>` that `move_node_modules_aside` moved the other linker's tree to.
 pub(crate) struct OldModules(pub(crate) Box<[u8]>);
 
 /// Dropping it waits for the deletion to end.
@@ -2407,7 +2386,7 @@ impl OldModules {
     pub(crate) fn remove(&self) -> OldModulesRemoval {
         let done = Arc::new(WaitGroup::init_with_count(1));
         handle_oom(WorkPool::go(
-            (self.0.clone(), done.clone()),
+            (self.0.clone(), Arc::clone(&done)),
             |(name, done): (Box<[u8]>, Arc<WaitGroup>)| {
                 if let Ok(node_modules) = Dir::open(ROOT_DIR) {
                     let _ = node_modules.delete_tree(&name);

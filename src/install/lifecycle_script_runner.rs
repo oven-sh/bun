@@ -254,11 +254,9 @@ pub fn replace_package_manager_run(
     Ok(())
 }
 
-/// `args` follows `npm run `, `out` ends in `bun run`. npm takes `-w <workspace>` / `--workspaces`
-/// anywhere; behind the script name `bun run` hands them to the script, which then runs itself
-/// again. Appends the command with them in front, as `--filter=<workspace>` / `--workspaces`, and
-/// returns how much of `args` that was. 0, and nothing appended, when the command selects no
-/// workspace or is more than plain words.
+/// `args` follows `npm run `, `out` ends in `bun run`. npm takes `-w <workspace>` / `--workspaces` anywhere; `bun run` hands
+/// them to the script when behind its name. Appends the command with them in front, as `--filter=<workspace>` / `--workspaces`,
+/// and returns how much of `args` that was: 0 when the command selects no workspace or is more than plain words.
 fn append_npm_run_in_workspaces(out: &mut Vec<u8>, args: &[u8]) -> usize {
     use bun_core::strings;
 
@@ -697,16 +695,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             // passed to libuv) and take SOLE ownership from
             // `spawned.stdout/stderr` after spawn — see the `#[cfg(windows)]`
             // block below and `filter_run.rs` for the canonical pattern.
-            let spawn_options = SpawnOptions {
-                stdin: if (*this).foreground {
-                    bun_spawn::Stdio::Inherit
-                } else {
+            let (log_level, foreground) = ((*manager).options.log_level, (*this).foreground);
+            let output = || {
+                if log_level == crate::LogLevel::Silent {
                     bun_spawn::Stdio::Ignore
-                },
-
-                stdout: if (*manager).options.log_level == crate::LogLevel::Silent {
-                    bun_spawn::Stdio::Ignore
-                } else if (*manager).options.log_level.is_verbose() || (*this).foreground {
+                } else if log_level.is_verbose() || foreground {
                     bun_spawn::Stdio::Inherit
                 } else {
                     #[cfg(unix)]
@@ -717,31 +710,22 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     {
                         // Ownership of this raw heap allocation transfers to
                         // `spawn_process_windows`, which `heap::take`s it into
-                        // `spawned.stdout`.
+                        // `spawned.{stdout,stderr}`.
                         bun_spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
                             bun_core::ffi::zeroed::<uv::Pipe>(),
                         ))
                             as bun_spawn::windows::UvPipePtr)
                     }
-                },
-                stderr: if (*manager).options.log_level == crate::LogLevel::Silent {
-                    bun_spawn::Stdio::Ignore
-                } else if (*manager).options.log_level.is_verbose() || (*this).foreground {
+                }
+            };
+            let spawn_options = SpawnOptions {
+                stdin: if foreground {
                     bun_spawn::Stdio::Inherit
                 } else {
-                    #[cfg(unix)]
-                    {
-                        bun_spawn::Stdio::Buffer
-                    }
-                    #[cfg(not(unix))]
-                    {
-                        // Ownership transfers to `spawned.stderr`.
-                        bun_spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                            bun_core::ffi::zeroed::<uv::Pipe>(),
-                        ))
-                            as bun_spawn::windows::UvPipePtr)
-                    }
+                    bun_spawn::Stdio::Ignore
                 },
+                stdout: output(),
+                stderr: output(),
                 cwd: Box::<[u8]>::from(cwd),
 
                 #[cfg(windows)]
@@ -1000,20 +984,17 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 if let Some((entry_id, installer)) =
                     self.ctx.as_ref().and_then(InstallCtx::isolated)
                 {
-                    match self.current_script_index {
-                        // preinstall
-                        0 => {
-                            let previous_step = installer.store.entries.items_step()
-                                [entry_id.get() as usize]
-                                .swap(Step::Binaries as u32, Ordering::Release);
-                            debug_assert!(previous_step == Step::RunPreinstall as u32);
-                            installer.start_task(entry_id);
-                            self.decrement_pending_script_tasks();
-                            // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
-                            unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
-                            return;
-                        }
-                        _ => {}
+                    // preinstall
+                    if self.current_script_index == 0 {
+                        let previous_step = installer.store.entries.items_step()
+                            [entry_id.get() as usize]
+                            .swap(Step::Binaries as u32, Ordering::Release);
+                        debug_assert!(previous_step == Step::RunPreinstall as u32);
+                        installer.start_task(entry_id);
+                        self.decrement_pending_script_tasks();
+                        // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
+                        unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
+                        return;
                     }
                 }
 
@@ -1166,27 +1147,21 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         }
     }
 
-    /// A script failed and ends the install. Both linkers take a package that is in place for
-    /// installed, so what they placed for the packages whose scripts have not all run goes: the
-    /// next install places them again and runs the scripts.
+    /// A script failed and ends the install. Both linkers take a package that is in place for installed, so
+    /// those whose scripts have not all run are removed: the next install places them again and runs the scripts.
     fn discard_packages_with_unfinished_scripts(&self) {
         Output::flush();
-        match &self.ctx {
-            Some(InstallCtx::Hoisted { unfinished, .. }) => {
-                for (tree_id, folder_name) in unfinished.borrow().iter() {
-                    crate::package_installer::remove_placed_package(
-                        &self.manager().lockfile,
-                        *tree_id,
-                        folder_name,
-                    );
-                }
+        if let Some(InstallCtx::Hoisted { unfinished, .. }) = &self.ctx {
+            for (tree_id, folder_name) in unfinished.borrow().iter() {
+                crate::package_installer::remove_placed_package(
+                    &self.manager().lockfile,
+                    *tree_id,
+                    folder_name,
+                );
             }
-            Some(ctx) => {
-                if let Some((entry_id, installer)) = ctx.isolated() {
-                    installer.discard_entries_with_unfinished_scripts(entry_id);
-                }
-            }
-            None => {}
+        } else if let Some((entry_id, installer)) = self.ctx.as_ref().and_then(InstallCtx::isolated)
+        {
+            installer.discard_entries_with_unfinished_scripts(entry_id);
         }
     }
 

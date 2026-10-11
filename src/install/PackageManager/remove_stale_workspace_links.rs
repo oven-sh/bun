@@ -1,11 +1,9 @@
-use bstr::BStr;
 use bun_paths::AutoAbsPathChecked;
 
 use crate::isolated_install::installer::remove_link;
 use crate::lockfile::Lockfile;
 use crate::lockfile::package::PackageColumns as _;
 use crate::package_installer::alias_is_safe_install_target;
-use crate::package_manager_real::PackageManager;
 use crate::resolution::Tag as ResolutionTag;
 
 /// Linkers only visit names in the new lockfile; a workspace name that left it is unlinked here.
@@ -41,14 +39,7 @@ fn remove_link_in(package_dir: &[u8], name: &[u8]) {
     }
 
     let mut link_target = bun_paths::path_buffer_pool::get();
-    if bun_sys::readlink(path.slice_z(), &mut link_target).is_err() {
-        return;
+    if bun_sys::readlink(path.slice_z(), &mut link_target).is_ok() {
+        let _ = remove_link(path.slice_z());
     }
-
-    bun_output::scoped_log!(
-        PackageManager,
-        "removing stale workspace link {}",
-        BStr::new(path.slice())
-    );
-    let _ = remove_link(path.slice_z());
 }

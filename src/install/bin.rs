@@ -153,29 +153,22 @@ impl Bin {
         // SAFETY: tag determines the active union field
         unsafe {
             match self.tag {
-                Tag::None => Bin {
-                    tag: Tag::None,
-                    _padding_tag: [0; 3],
-                    value: Value::init_none(),
-                },
-                Tag::File => Bin {
-                    tag: Tag::File,
-                    _padding_tag: [0; 3],
-                    value: Value::init_file(builder.append_string(self.value.file.slice(buf))),
-                },
-                Tag::NamedFile => Bin {
-                    tag: Tag::NamedFile,
-                    _padding_tag: [0; 3],
-                    value: Value::init_named_file([
+                Tag::None => Bin::init(),
+                Tag::File => Bin::new(
+                    Tag::File,
+                    Value::init_file(builder.append_string(self.value.file.slice(buf))),
+                ),
+                Tag::NamedFile => Bin::new(
+                    Tag::NamedFile,
+                    Value::init_named_file([
                         builder.append_string(self.value.named_file[0].slice(buf)),
                         builder.append_string(self.value.named_file[1].slice(buf)),
                     ]),
-                },
-                Tag::Dir => Bin {
-                    tag: Tag::Dir,
-                    _padding_tag: [0; 3],
-                    value: Value::init_dir(builder.append_string(self.value.dir.slice(buf))),
-                },
+                ),
+                Tag::Dir => Bin::new(
+                    Tag::Dir,
+                    Value::init_dir(builder.append_string(self.value.dir.slice(buf))),
+                ),
                 Tag::Map => {
                     for (i, extern_string) in
                         self.value.map.get(prev_external_strings).iter().enumerate()
@@ -184,14 +177,13 @@ impl Bin {
                             builder.append_external_string(extern_string.slice(buf));
                     }
 
-                    Bin {
-                        tag: Tag::Map,
-                        _padding_tag: [0; 3],
-                        value: Value::init_map(ExternalStringList::new(
+                    Bin::new(
+                        Tag::Map,
+                        Value::init_map(ExternalStringList::new(
                             extern_strings_slice_off,
                             extern_strings_slice.len() as u32,
                         )),
-                    }
+                    )
                 }
             }
         }
@@ -230,11 +222,7 @@ impl Bin {
         }
         if let Some(str_) = bin_expr.as_utf8_string_literal() {
             if !str_.is_empty() {
-                return Ok(Bin {
-                    tag: Tag::File,
-                    _padding_tag: [0; 3],
-                    value: Value::init_file(buf.append(str_)?),
-                });
+                return Ok(Bin::new(Tag::File, Value::init_file(buf.append(str_)?)));
             }
         }
         Ok(Bin::default())
@@ -251,11 +239,10 @@ impl Bin {
             0 => {}
             1 => {
                 if let Some((bin_name, value)) = entries.next() {
-                    return Ok(Bin {
-                        tag: Tag::NamedFile,
-                        _padding_tag: [0; 3],
-                        value: Value::init_named_file([buf.append(bin_name)?, buf.append(value)?]),
-                    });
+                    return Ok(Bin::new(
+                        Tag::NamedFile,
+                        Value::init_named_file([buf.append(bin_name)?, buf.append(value)?]),
+                    ));
                 }
             }
             len => {
@@ -270,14 +257,10 @@ impl Bin {
                 }
                 debug_assert!(extern_strings.len() == current_len + num_props);
                 let new = &extern_strings[current_len..current_len + num_props];
-                return Ok(Bin {
-                    tag: Tag::Map,
-                    _padding_tag: [0; 3],
-                    value: Value::init_map(ExternalStringList::init(
-                        extern_strings.as_slice(),
-                        new,
-                    )),
-                });
+                return Ok(Bin::new(
+                    Tag::Map,
+                    Value::init_map(ExternalStringList::init(extern_strings.as_slice(), new)),
+                ));
             }
         }
         Ok(Bin::default())
@@ -288,11 +271,7 @@ impl Bin {
         buf: &mut bun_semver::string::Buf,
     ) -> Result<Bin, AllocError> {
         if let Some(bin_str) = bin_expr.as_utf8_string_literal() {
-            return Ok(Bin {
-                tag: Tag::Dir,
-                _padding_tag: [0; 3],
-                value: Value::init_dir(buf.append(bin_str)?),
-            });
+            return Ok(Bin::new(Tag::Dir, Value::init_dir(buf.append(bin_str)?)));
         }
         Ok(Bin::default())
     }
@@ -429,10 +408,14 @@ impl Bin {
     }
 
     pub(crate) fn init() -> Bin {
+        Bin::new(Tag::None, Value::init_none())
+    }
+
+    fn new(tag: Tag, value: Value) -> Bin {
         Bin {
-            tag: Tag::None,
+            tag,
             _padding_tag: [0; 3],
-            value: Value::init_none(),
+            value,
         }
     }
 
@@ -625,35 +608,20 @@ impl<'a> NamesIterator<'a> {
 
     /// next filename, e.g. "babel" instead of "cli.js"
     pub(crate) fn next(&mut self) -> Result<Option<&[u8]>, Error> {
-        match self.bin.tag {
-            Tag::File => {
+        let name: String = match self.bin.tag {
+            Tag::File | Tag::NamedFile => {
                 if self.i > 0 {
                     return Ok(None);
                 }
                 self.i += 1;
                 self.done = true;
-                let base = path::basename(self.package_name.slice(self.string_buffer));
-                if strings::has_prefix(base, b"./") || strings::has_prefix(base, b".\\") {
-                    return Ok(Some(strings::copy(&mut self.buf[..], &base[2..])));
+                if self.bin.tag == Tag::File {
+                    self.package_name
+                } else {
+                    self.bin.named_file()[0]
                 }
-
-                Ok(Some(strings::copy(&mut self.buf[..], base)))
             }
-            Tag::NamedFile => {
-                if self.i > 0 {
-                    return Ok(None);
-                }
-                self.i += 1;
-                self.done = true;
-                let named = *self.bin.named_file();
-                let base = path::basename(named[0].slice(self.string_buffer));
-                if strings::has_prefix(base, b"./") || strings::has_prefix(base, b".\\") {
-                    return Ok(Some(strings::copy(&mut self.buf[..], &base[2..])));
-                }
-                Ok(Some(strings::copy(&mut self.buf[..], base)))
-            }
-
-            Tag::Dir => self.next_in_dir(),
+            Tag::Dir => return self.next_in_dir(),
             Tag::Map => {
                 let map = *self.bin.map();
                 if self.i >= map.len as usize {
@@ -662,16 +630,16 @@ impl<'a> NamesIterator<'a> {
                 let index = self.i;
                 self.i += 2;
                 self.done = self.i >= map.len as usize;
-                let current_string = map.get(self.extern_string_buf)[index];
-
-                let base = path::basename(current_string.slice(self.string_buffer));
-                if strings::has_prefix(base, b"./") || strings::has_prefix(base, b".\\") {
-                    return Ok(Some(strings::copy(&mut self.buf[..], &base[2..])));
-                }
-                Ok(Some(strings::copy(&mut self.buf[..], base)))
+                map.get(self.extern_string_buf)[index].value
             }
-            _ => Ok(None),
+            _ => return Ok(None),
+        };
+
+        let mut base = path::basename(name.slice(self.string_buffer));
+        if strings::has_prefix(base, b"./") || strings::has_prefix(base, b".\\") {
+            base = &base[2..];
         }
+        Ok(Some(strings::copy(&mut self.buf[..], base)))
     }
 }
 
@@ -1112,22 +1080,17 @@ impl<'a> Linker<'a> {
             return;
         }
 
-        // reshaped for borrowck — bind the owned buffer first, then
-        // borrow `content` from it (or fall back to the stack `chunk`).
-        let content_to_free: Box<[u8]>;
+        let original_contents;
         let content: &[u8] = if chunk.len() >= shebang_buf.len() {
             // Partial read. Need to read the rest of the file.
-            let original_contents = match sys::File::read_from(Fd::cwd(), abs_target) {
-                sys::Result::Ok(contents) => contents,
-                sys::Result::Err(_) => return,
+            let Ok(contents) = sys::File::read_from(Fd::cwd(), abs_target) else {
+                return;
             };
-            content_to_free = original_contents.into_boxed_slice();
-            &content_to_free[..]
+            original_contents = contents;
+            &original_contents
         } else {
-            content_to_free = Box::default();
             chunk
         };
-        let _ = &content_to_free;
 
         // Get original file permissions to preserve them (including setuid/setgid/sticky bits)
         let Ok(original_stat) = sys::fstatat(Fd::cwd(), abs_target) else {
@@ -1245,36 +1208,28 @@ impl<'a> Linker<'a> {
             return Err(crate::Error::Sys(bun_errno::SystemErrno::EEXIST));
         }
 
-        let bunx_file = 'bunx_file: {
-            match sys::File::openat_os_path(
+        let open_bunx_file = || {
+            sys::File::openat_os_path(
                 Fd::invalid(),
                 abs_bunx_file,
                 sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
                 0o664,
-            ) {
-                Ok(f) => break 'bunx_file f,
-                Err(err) => {
-                    let err: crate::Error = err.into();
-                    if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) || global {
-                        return Err(err);
-                    }
-
-                    // Snapshot the length and restore via `set_length` after.
-                    let node_modules_path_save = self.node_modules_path.len();
-                    let _ = self.node_modules_path.append(b".bin");
-                    let _ = sys::Dir::cwd().make_path(self.node_modules_path.slice());
-                    self.node_modules_path.set_length(node_modules_path_save);
-
-                    match sys::File::openat_os_path(
-                        Fd::invalid(),
-                        abs_bunx_file,
-                        sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC,
-                        0o664,
-                    ) {
-                        Ok(f) => break 'bunx_file f,
-                        Err(real_err) => return Err(real_err.into()),
-                    }
+            )
+        };
+        let bunx_file = match open_bunx_file() {
+            Ok(f) => f,
+            Err(err) => {
+                let err: crate::Error = err.into();
+                if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) || global {
+                    return Err(err);
                 }
+
+                let node_modules_path_save = self.node_modules_path.len();
+                let _ = self.node_modules_path.append(b".bin");
+                let _ = sys::Dir::cwd().make_path(self.node_modules_path.slice());
+                self.node_modules_path.set_length(node_modules_path_save);
+
+                open_bunx_file()?
             }
         };
 
@@ -1294,28 +1249,11 @@ impl<'a> Linker<'a> {
 
         let bin_path_w = strings::to_w_path_normalized(target_buf.as_mut_slice(), bin_path);
 
-        let shebang = 'shebang: {
-            let first_content_chunk: Option<&[u8]> = 'contents: {
-                // Loop-fill via `read_all` so a short read can't truncate the
-                // shebang sniff.
-                let read = match target.read_all(&mut read_in_buf) {
-                    sys::Result::Ok(n) => n,
-                    sys::Result::Err(_) => break 'contents None,
-                };
-                if read == 0 {
-                    break 'contents None;
-                }
-                break 'contents Some(&read_in_buf[0..read]);
-            };
-
-            if let Some(chunk) = first_content_chunk {
-                match WinShimShebang::parse(chunk, bin_path_w) {
-                    Ok(s) => break 'shebang s,
-                    Err(_) => return Err(crate::Error::InvalidBinCount),
-                }
-            } else {
-                break 'shebang WinShimShebang::parse_from_bin_path(bin_path_w);
-            }
+        // Loop-fill via `read_all` so a short read can't truncate the shebang sniff.
+        let shebang = match target.read_all(&mut read_in_buf) {
+            Ok(read) if read > 0 => WinShimShebang::parse(&read_in_buf[0..read], bin_path_w)
+                .map_err(|_| crate::Error::InvalidBinCount)?,
+            _ => WinShimShebang::parse_from_bin_path(bin_path_w),
         };
 
         let shim = WinBinLinkingShim {
@@ -1374,8 +1312,6 @@ impl<'a> Linker<'a> {
 
         // `.bin` hasn't been created yet. The global bin dir is not created here.
         if !global && matches!(&result, Err(err) if err.get_errno() == sys::Errno::ENOENT) {
-            // Capture `len()` and restore via `set_length()` so the path
-            // can be re-borrowed for `append`/`slice` in between.
             let node_modules_path_save = self.node_modules_path.len();
             let _ = self.node_modules_path.append(b".bin");
             let _ = sys::Dir::cwd().make_path(self.node_modules_path.slice());
@@ -1685,10 +1621,25 @@ impl<'a> Linker<'a> {
         Some(off)
     }
 
+    /// `<bin dir>/<name>` in `abs_dest_buf`, which starts with the `dir_len` bytes of the bin dir.
+    /// `None`, and `err` is set: it does not fit.
+    fn append_dest<'b>(&mut self, dir_len: usize, name: &[u8]) -> Option<&'b ZStr> {
+        let len = dir_len + name.len();
+        if len >= self.abs_dest_buf.len() {
+            self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+            return None;
+        }
+        self.abs_dest_buf[dir_len..len].copy_from_slice(name);
+        self.abs_dest_buf[len] = 0;
+        // SAFETY: the NUL was written above. Detached from `self` for `link_bin_or_create_shim`,
+        // which never touches `abs_dest_buf`; callers are done with it before the next call.
+        Some(unsafe { ZStr::from_raw(self.abs_dest_buf.as_ptr(), len) })
+    }
+
     // target: what the symlink points to
     // destination: where the symlink exists on disk
     pub fn link(&mut self, global: bool) {
-        let (Some(package_dir_len), Some(mut dest_off)) = (
+        let (Some(package_dir_len), Some(dest_dir_len)) = (
             self.build_target_package_dir(),
             self.build_destination_dir(global),
         ) else {
@@ -1696,396 +1647,211 @@ impl<'a> Linker<'a> {
             return;
         };
         let is_redirect = self.is_native_binlink_redirect();
+        let (bin, string_buf, extern_string_buf) =
+            (self.bin, self.string_buf, self.extern_string_buf);
 
-        debug_assert!(self.bin.tag != Tag::None);
-
-        // SAFETY (`from_raw` below): `link_bin_or_create_shim` never touches `abs_dest_buf`.
-        let abs_dest_buf_ptr: *mut u8 = self.abs_dest_buf.as_mut_ptr();
+        debug_assert!(bin.tag != Tag::None);
 
         // `abs_target_buf` holds `package_dir`, the join input, so the output needs its own buffer.
         let mut resolved_target_pool_buf = path::path_buffer_pool::get();
         let resolved_target_buf = resolved_target_pool_buf.as_mut_slice();
 
-        // SAFETY: tag determines the active union field
-        unsafe {
-            match self.bin.tag {
-                Tag::None => {}
-                Tag::File => {
-                    let file = self.bin.value.file;
-                    let target = file.slice(self.string_buf);
-                    if target.is_empty() || bin_target_escapes_package_dir(target) {
+        // `false`: the name does not fit.
+        let mut link_named = |this: &mut Self, name: &[u8], target: &[u8]| -> bool {
+            let name = normalized_bin_name(name);
+            if name.is_empty() || target.is_empty() || bin_target_escapes_package_dir(target) {
+                return true;
+            }
+            let Some(abs_dest) = this.append_dest(dest_dir_len, name) else {
+                return false;
+            };
+            let Some(abs_target) = Self::resolve_bin_target(
+                is_redirect,
+                &this.abs_target_buf[0..package_dir_len],
+                target,
+                name,
+                resolved_target_buf,
+            ) else {
+                this.skipped_due_to_missing_bin = true;
+                return true;
+            };
+            this.link_bin_or_create_shim(
+                abs_target,
+                abs_dest,
+                global,
+                bin_target_needs_resolved_containment_check(target),
+            );
+            true
+        };
+
+        match bin.tag {
+            Tag::None => {}
+            Tag::File => {
+                let target = bin.file().slice(string_buf);
+                if target.is_empty() || bin_target_escapes_package_dir(target) {
+                    return;
+                }
+                let package_name = self.package_name;
+                let unscoped_package_name = Dependency::unscoped_package_name(package_name.slice());
+
+                let Some(abs_target) = Self::resolve_bin_target(
+                    is_redirect,
+                    &self.abs_target_buf[0..package_dir_len],
+                    target,
+                    unscoped_package_name,
+                    resolved_target_buf,
+                ) else {
+                    self.skipped_due_to_missing_bin = true;
+                    return;
+                };
+                let Some(abs_dest) = self.append_dest(dest_dir_len, unscoped_package_name) else {
+                    return;
+                };
+                self.link_bin_or_create_shim(
+                    abs_target,
+                    abs_dest,
+                    global,
+                    bin_target_needs_resolved_containment_check(target),
+                );
+            }
+            Tag::NamedFile => {
+                let [name, target] = bin.named_file();
+                link_named(self, name.slice(string_buf), target.slice(string_buf));
+            }
+            Tag::Map => {
+                for i in (bin.map().begin()..bin.map().end()).step_by(2) {
+                    let name = extern_string_buf[i as usize].slice(string_buf);
+                    let target = extern_string_buf[(i + 1) as usize].slice(string_buf);
+                    if !link_named(self, name, target) {
                         return;
                     }
-                    let target_needs_resolved_containment_check =
-                        bin_target_needs_resolved_containment_check(target);
+                }
+            }
+            Tag::Dir => {
+                let target = bin.dir().slice(string_buf);
+                if target.is_empty() || bin_target_escapes_package_dir(target) {
+                    return;
+                }
+                let Some(abs_target_dir) = join_z_checked::<PlatformAuto>(
+                    &self.abs_target_buf[0..package_dir_len],
+                    resolved_target_buf,
+                    &[target],
+                ) else {
+                    self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+                    return;
+                };
 
-                    let unscoped_package_name =
-                        Dependency::unscoped_package_name(self.package_name.slice());
+                let target_dir = match sys::open_dir_absolute(abs_target_dir.as_bytes()) {
+                    Ok(d) => sys::Dir::from_fd(d),
+                    // https://github.com/npm/cli/blob/366c07e2f3cb9d1c6ddbd03e624a4d73fbd2676e/node_modules/bin-links/lib/link-gently.js#L43
+                    // avoid erroring when the directory does not exist
+                    Err(err) if err.get_errno() == sys::Errno::ENOENT => return,
+                    Err(err) => {
+                        self.err = Some(err.into());
+                        return;
+                    }
+                };
 
-                    // for normalizing `target`
-                    let Some(abs_target) = Self::resolve_bin_target(
-                        is_redirect,
-                        &self.abs_target_buf[0..package_dir_len],
-                        target,
-                        unscoped_package_name,
-                        resolved_target_buf,
+                let mut abs_target_buf = path::path_buffer_pool::get();
+                let mut iter = sys::iterate_dir(target_dir.fd());
+                while let Some(entry) = iter.next().unwrap_or(None) {
+                    if !matches!(entry.kind, sys::EntryKind::SymLink | sys::EntryKind::File) {
+                        continue;
+                    }
+                    let entry_name = entry.name.slice_u8();
+                    let Some(abs_target) = join_z_checked::<PlatformAuto>(
+                        abs_target_dir.as_bytes(),
+                        abs_target_buf.as_mut_slice(),
+                        &[entry_name],
                     ) else {
                         self.skipped_due_to_missing_bin = true;
+                        continue;
+                    };
+                    let Some(abs_dest) = self.append_dest(dest_dir_len, entry_name) else {
                         return;
                     };
-
-                    if unscoped_package_name.len()
-                        >= self.abs_dest_buf.len().saturating_sub(dest_off)
-                    {
-                        self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
-                        return;
-                    }
-                    self.abs_dest_buf[dest_off..dest_off + unscoped_package_name.len()]
-                        .copy_from_slice(unscoped_package_name);
-                    dest_off += unscoped_package_name.len();
-                    self.abs_dest_buf[dest_off] = 0;
-                    let abs_dest_len = dest_off;
-                    // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above; see note above.
-                    let abs_dest = ZStr::from_raw(abs_dest_buf_ptr, abs_dest_len);
-
-                    self.link_bin_or_create_shim(
-                        abs_target,
-                        abs_dest,
-                        global,
-                        target_needs_resolved_containment_check,
-                    );
-                }
-                Tag::NamedFile => {
-                    let named = self.bin.value.named_file;
-                    let name = named[0].slice(self.string_buf);
-                    let normalized_name = normalized_bin_name(name);
-                    let target = named[1].slice(self.string_buf);
-                    if normalized_name.is_empty()
-                        || target.is_empty()
-                        || bin_target_escapes_package_dir(target)
-                    {
-                        return;
-                    }
-                    let target_needs_resolved_containment_check =
-                        bin_target_needs_resolved_containment_check(target);
-                    if normalized_name.len() >= self.abs_dest_buf.len().saturating_sub(dest_off) {
-                        self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
-                        return;
-                    }
-
-                    // for normalizing `target`
-                    let Some(abs_target) = Self::resolve_bin_target(
-                        is_redirect,
-                        &self.abs_target_buf[0..package_dir_len],
-                        target,
-                        normalized_name,
-                        resolved_target_buf,
-                    ) else {
-                        self.skipped_due_to_missing_bin = true;
-                        return;
-                    };
-
-                    self.abs_dest_buf[dest_off..dest_off + normalized_name.len()]
-                        .copy_from_slice(normalized_name);
-                    dest_off += normalized_name.len();
-                    self.abs_dest_buf[dest_off] = 0;
-                    let abs_dest_len = dest_off;
-                    // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above; see note above.
-                    let abs_dest = ZStr::from_raw(abs_dest_buf_ptr, abs_dest_len);
-
-                    self.link_bin_or_create_shim(
-                        abs_target,
-                        abs_dest,
-                        global,
-                        target_needs_resolved_containment_check,
-                    );
-                }
-                Tag::Map => {
-                    let map = self.bin.value.map;
-                    let mut i = map.begin();
-                    let end = map.end();
-
-                    let abs_dest_dir_end = dest_off;
-
-                    while i < end {
-                        let bin_dest = self.extern_string_buf[i as usize].slice(self.string_buf);
-                        let normalized_bin_dest = normalized_bin_name(bin_dest);
-                        let bin_target =
-                            self.extern_string_buf[(i + 1) as usize].slice(self.string_buf);
-                        if bin_target.is_empty()
-                            || normalized_bin_dest.is_empty()
-                            || bin_target_escapes_package_dir(bin_target)
-                        {
-                            i += 2;
-                            continue;
-                        }
-                        let target_needs_resolved_containment_check =
-                            bin_target_needs_resolved_containment_check(bin_target);
-                        if normalized_bin_dest.len()
-                            >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
-                        {
-                            self.err =
-                                Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
-                            return;
-                        }
-
-                        let Some(abs_target) = Self::resolve_bin_target(
-                            is_redirect,
-                            &self.abs_target_buf[0..package_dir_len],
-                            bin_target,
-                            normalized_bin_dest,
-                            resolved_target_buf,
-                        ) else {
-                            self.skipped_due_to_missing_bin = true;
-                            i += 2;
-                            continue;
-                        };
-
-                        dest_off = abs_dest_dir_end;
-                        self.abs_dest_buf[dest_off..dest_off + normalized_bin_dest.len()]
-                            .copy_from_slice(normalized_bin_dest);
-                        dest_off += normalized_bin_dest.len();
-                        self.abs_dest_buf[dest_off] = 0;
-                        let abs_dest_len = dest_off;
-                        // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above; see note above.
-                        let abs_dest = ZStr::from_raw(abs_dest_buf_ptr, abs_dest_len);
-
-                        self.link_bin_or_create_shim(
-                            abs_target,
-                            abs_dest,
-                            global,
-                            target_needs_resolved_containment_check,
-                        );
-
-                        i += 2;
-                    }
-                }
-                Tag::Dir => {
-                    let dir = self.bin.value.dir;
-                    let target = dir.slice(self.string_buf);
-                    if target.is_empty() || bin_target_escapes_package_dir(target) {
-                        return;
-                    }
-                    // for normalizing `target`
-                    let Some(abs_target_dir) = join_z_checked::<PlatformAuto>(
-                        &self.abs_target_buf[0..package_dir_len],
-                        resolved_target_buf,
-                        &[target],
-                    ) else {
-                        self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
-                        return;
-                    };
-
-                    let target_dir = match sys::open_dir_absolute(abs_target_dir.as_bytes()) {
-                        Ok(d) => sys::Dir::from_fd(d),
-                        Err(err) => {
-                            if err.get_errno() == sys::Errno::ENOENT {
-                                // https://github.com/npm/cli/blob/366c07e2f3cb9d1c6ddbd03e624a4d73fbd2676e/node_modules/bin-links/lib/link-gently.js#L43
-                                // avoid erroring when the directory does not exist
-                                return;
-                            }
-                            self.err = Some(err.into());
-                            return;
-                        }
-                    };
-
-                    let abs_dest_dir_end = dest_off;
-
-                    let mut iter = sys::iterate_dir(target_dir.fd());
-                    while let Some(entry) = iter.next().unwrap_or(None) {
-                        match entry.kind {
-                            sys::EntryKind::SymLink | sys::EntryKind::File => {
-                                let entry_name = entry.name.slice_u8();
-                                // `package_dir` is no longer needed, so `abs_target_buf` is free.
-                                let abs_target: &ZStr = {
-                                    let Some(r) = join_z_checked::<PlatformAuto>(
-                                        abs_target_dir.as_bytes(),
-                                        self.abs_target_buf,
-                                        &[entry_name],
-                                    ) else {
-                                        self.skipped_due_to_missing_bin = true;
-                                        continue;
-                                    };
-                                    // SAFETY: result lives in `self.abs_target_buf`, which
-                                    // `link_bin_or_create_shim` does not write to (only
-                                    // `rel_buf`/`node_modules_path`/`seen`/`err`/
-                                    // `skipped_due_to_missing_bin` are touched).
-                                    ZStr::from_raw(r.as_bytes().as_ptr(), r.len())
-                                };
-
-                                if entry_name.len()
-                                    >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
-                                {
-                                    self.err = Some(crate::Error::Sys(
-                                        bun_errno::SystemErrno::ENAMETOOLONG,
-                                    ));
-                                    return;
-                                }
-                                dest_off = abs_dest_dir_end;
-                                self.abs_dest_buf[dest_off..dest_off + entry_name.len()]
-                                    .copy_from_slice(entry_name);
-                                dest_off += entry_name.len();
-                                self.abs_dest_buf[dest_off] = 0;
-                                let abs_dest_len = dest_off;
-                                // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above; see note above.
-                                let abs_dest = ZStr::from_raw(abs_dest_buf_ptr, abs_dest_len);
-
-                                self.link_bin_or_create_shim(abs_target, abs_dest, global, true);
-                            }
-                            _ => {}
-                        }
-                    }
+                    self.link_bin_or_create_shim(abs_target, abs_dest, global, true);
                 }
             }
         }
     }
 
     pub fn unlink(&mut self, global: bool) {
-        let (Some(package_dir_len), Some(mut dest_off)) = (
+        let (Some(package_dir_len), Some(dest_dir_len)) = (
             self.build_target_package_dir(),
             self.build_destination_dir(global),
         ) else {
             self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
             return;
         };
+        let (bin, string_buf, extern_string_buf) =
+            (self.bin, self.string_buf, self.extern_string_buf);
 
-        debug_assert!(self.bin.tag != Tag::None);
+        debug_assert!(bin.tag != Tag::None);
 
-        let global_owner: Option<&[u8]> = if global {
-            Some(&self.abs_target_buf[0..package_dir_len])
-        } else {
-            None
+        // `false`: the name does not fit.
+        let unlink_name = |this: &mut Self, name: &[u8]| -> bool {
+            let Some(abs_dest) = this.append_dest(dest_dir_len, name) else {
+                return false;
+            };
+            let package_dir = &this.abs_target_buf[0..package_dir_len];
+            Self::unlink_bin_or_shim(abs_dest, global.then_some(package_dir));
+            true
         };
 
-        // SAFETY: tag determines the active union field
-        unsafe {
-            match self.bin.tag {
-                Tag::None => {}
-                Tag::File => {
-                    let unscoped_package_name =
-                        Dependency::unscoped_package_name(self.package_name.slice());
-                    if unscoped_package_name.len()
-                        >= self.abs_dest_buf.len().saturating_sub(dest_off)
+        match bin.tag {
+            Tag::None => {}
+            Tag::File => {
+                let package_name = self.package_name;
+                unlink_name(
+                    self,
+                    Dependency::unscoped_package_name(package_name.slice()),
+                );
+            }
+            Tag::NamedFile => {
+                let name = normalized_bin_name(bin.named_file()[0].slice(string_buf));
+                if !name.is_empty() {
+                    unlink_name(self, name);
+                }
+            }
+            Tag::Map => {
+                for i in (bin.map().begin()..bin.map().end()).step_by(2) {
+                    let name = normalized_bin_name(extern_string_buf[i as usize].slice(string_buf));
+                    if !name.is_empty() && !unlink_name(self, name) {
+                        return;
+                    }
+                }
+            }
+            Tag::Dir => {
+                let target = bin.dir().slice(string_buf);
+                if target.is_empty() {
+                    return;
+                }
+
+                let mut abs_target_dir_buf = path::path_buffer_pool::get();
+                let Some(abs_target_dir) = join_z_checked::<PlatformAuto>(
+                    &self.abs_target_buf[0..package_dir_len],
+                    abs_target_dir_buf.as_mut_slice(),
+                    &[target],
+                ) else {
+                    self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+                    return;
+                };
+
+                let target_dir = match sys::open_dir_absolute(abs_target_dir.as_bytes()) {
+                    Ok(d) => sys::Dir::from_fd(d),
+                    Err(err) => {
+                        self.err = Some(err.into());
+                        return;
+                    }
+                };
+
+                let mut iter = sys::iterate_dir(target_dir.fd());
+                while let Some(entry) = iter.next().unwrap_or(None) {
+                    if matches!(entry.kind, sys::EntryKind::SymLink | sys::EntryKind::File)
+                        && !unlink_name(self, entry.name.slice_u8())
                     {
-                        self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                         return;
-                    }
-                    self.abs_dest_buf[dest_off..dest_off + unscoped_package_name.len()]
-                        .copy_from_slice(unscoped_package_name);
-                    dest_off += unscoped_package_name.len();
-                    self.abs_dest_buf[dest_off] = 0;
-                    let abs_dest_len = dest_off;
-                    let abs_dest = ZStr::from_buf(self.abs_dest_buf, abs_dest_len);
-
-                    Self::unlink_bin_or_shim(abs_dest, global_owner);
-                }
-                Tag::NamedFile => {
-                    let named = self.bin.value.named_file;
-                    let name = named[0].slice(self.string_buf);
-                    let normalized_name = normalized_bin_name(name);
-                    if normalized_name.is_empty() {
-                        return;
-                    }
-                    if normalized_name.len() >= self.abs_dest_buf.len().saturating_sub(dest_off) {
-                        self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
-                        return;
-                    }
-
-                    self.abs_dest_buf[dest_off..dest_off + normalized_name.len()]
-                        .copy_from_slice(normalized_name);
-                    dest_off += normalized_name.len();
-                    self.abs_dest_buf[dest_off] = 0;
-                    let abs_dest_len = dest_off;
-                    let abs_dest = ZStr::from_buf(self.abs_dest_buf, abs_dest_len);
-
-                    Self::unlink_bin_or_shim(abs_dest, global_owner);
-                }
-                Tag::Map => {
-                    let mut i = self.bin.value.map.begin();
-                    let end = self.bin.value.map.end();
-
-                    let abs_dest_dir_end = dest_off;
-
-                    while i < end {
-                        let bin_dest = self.extern_string_buf[i as usize].slice(self.string_buf);
-                        let normalized_bin_dest = normalized_bin_name(bin_dest);
-                        if normalized_bin_dest.is_empty() {
-                            i += 2;
-                            continue;
-                        }
-                        if normalized_bin_dest.len()
-                            >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
-                        {
-                            self.err =
-                                Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
-                            return;
-                        }
-
-                        dest_off = abs_dest_dir_end;
-                        self.abs_dest_buf[dest_off..dest_off + normalized_bin_dest.len()]
-                            .copy_from_slice(normalized_bin_dest);
-                        dest_off += normalized_bin_dest.len();
-                        self.abs_dest_buf[dest_off] = 0;
-                        let abs_dest_len = dest_off;
-                        let abs_dest = ZStr::from_buf(self.abs_dest_buf, abs_dest_len);
-
-                        Self::unlink_bin_or_shim(abs_dest, global_owner);
-
-                        i += 2;
-                    }
-                }
-                Tag::Dir => {
-                    let dir = self.bin.value.dir;
-                    let target = dir.slice(self.string_buf);
-                    if target.is_empty() {
-                        return;
-                    }
-
-                    let mut abs_target_dir_buf = path::path_buffer_pool::get();
-                    let Some(abs_target_dir) = join_z_checked::<PlatformAuto>(
-                        &self.abs_target_buf[0..package_dir_len],
-                        abs_target_dir_buf.as_mut_slice(),
-                        &[target],
-                    ) else {
-                        self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
-                        return;
-                    };
-
-                    let target_dir = match sys::open_dir_absolute(abs_target_dir.as_bytes()) {
-                        Ok(d) => sys::Dir::from_fd(d),
-                        Err(err) => {
-                            self.err = Some(err.into());
-                            return;
-                        }
-                    };
-
-                    let abs_dest_dir_end = dest_off;
-
-                    let mut iter = sys::iterate_dir(target_dir.fd());
-                    while let Some(entry) = iter.next().unwrap_or(None) {
-                        match entry.kind {
-                            sys::EntryKind::SymLink | sys::EntryKind::File => {
-                                let entry_name = entry.name.slice_u8();
-                                if entry_name.len()
-                                    >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
-                                {
-                                    self.err = Some(crate::Error::Sys(
-                                        bun_errno::SystemErrno::ENAMETOOLONG,
-                                    ));
-                                    return;
-                                }
-                                dest_off = abs_dest_dir_end;
-                                self.abs_dest_buf[dest_off..dest_off + entry_name.len()]
-                                    .copy_from_slice(entry_name);
-                                dest_off += entry_name.len();
-                                self.abs_dest_buf[dest_off] = 0;
-                                let abs_dest_len = dest_off;
-                                let abs_dest = ZStr::from_buf(self.abs_dest_buf, abs_dest_len);
-
-                                Self::unlink_bin_or_shim(abs_dest, global_owner);
-                            }
-                            _ => {}
-                        }
                     }
                 }
             }

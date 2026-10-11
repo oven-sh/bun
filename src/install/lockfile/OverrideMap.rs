@@ -24,10 +24,6 @@ use super::package::PackageColumns as _;
 use super::package::workspace_map::{WorkspaceMap, package_json_dir};
 use super::package::{DependencyGroup, value_loc_of};
 use super::{Lockfile, StringBuilder, package::Package};
-// LAYERING NOTE: package.json is parsed by `bun_parsers::json` which
-// produces the T2 value-shaped `bun_ast::Expr` (aliased as
-// `crate::bun_json::Expr`), NOT the full T4 `bun_ast::Expr`. JSON parse
-// is always UTF-8, so `as_utf8_string_literal()` needs no allocator.
 use crate::bun_json::Expr;
 
 declare_scope!(OverrideMap, visible);
@@ -446,9 +442,6 @@ impl OverrideMap {
             })
     }
 
-    // Every caller already holds `&mut self` on `lockfile.overrides`, so
-    // accept just the string buffer (the only lockfile field `sort` reads)
-    // rather than the whole `Lockfile`.
     pub(crate) fn sort(&mut self, string_bytes: &[u8]) {
         self.map.sort(|_, deps: &[Dependency], l, r| {
             deps[l].name.order(deps[r].name, string_bytes, string_bytes) == Ordering::Less
@@ -477,9 +470,6 @@ impl OverrideMap {
         });
     }
 
-    /// Accepts `lockfile.buffers.string_bytes` directly (rather than the whole
-    /// `Lockfile`) so callers can split-borrow the lockfile alongside a live
-    /// `StringBuilder`.
     pub(crate) fn count(&self, string_bytes: &[u8], builder: &mut StringBuilder) {
         for dep in self.map.values() {
             dep.count(string_bytes, builder);
@@ -495,11 +485,6 @@ impl OverrideMap {
         }
     }
 
-    /// The new-side buffer lives inside `new_builder`, so no separate
-    /// `new: &mut Lockfile` param is taken — that would alias the borrow.
-    /// `pm` is generic over `NpmAliasRegistry` (not `&mut PackageManager`) so a
-    /// caller already holding `&mut manager.lockfile` can pass
-    /// `&mut manager.known_npm_aliases` instead of the whole manager.
     pub(crate) fn clone<PM: NpmAliasRegistry>(
         &self,
         pm: &mut PM,

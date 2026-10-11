@@ -89,15 +89,7 @@ impl FileCopier {
         #[cfg(not(windows))]
         let mut copy_file_state = bun_sys::copy_file::CopyFileState::default();
 
-        loop {
-            let entry = {
-                let res = self.walker.next()?;
-                match res {
-                    Some(entry) => entry,
-                    None => break,
-                }
-            };
-
+        while let Some(entry) = self.walker.next()? {
             #[cfg(windows)]
             {
                 match entry.kind {
@@ -181,12 +173,8 @@ impl FileCopier {
                     continue;
                 }
 
-                let src = match bun_sys::openat(entry.dir, entry.basename, bun_sys::O::RDONLY, 0) {
-                    sys::Result::Ok(fd) => bun_sys::File::from_fd(fd),
-                    sys::Result::Err(err) => {
-                        return sys::Result::Err(err);
-                    }
-                };
+                let src = bun_sys::openat(entry.dir, entry.basename, bun_sys::O::RDONLY, 0)?;
+                let src = bun_sys::File::from_fd(src);
 
                 let dest = match dest_dir.create_file_z(entry.path, Default::default()) {
                     Ok(f) => f,
@@ -213,16 +201,11 @@ impl FileCopier {
                     }
                 }
 
-                match bun_sys::copy_file::copy_file_with_state(
+                bun_sys::copy_file::copy_file_with_state(
                     src.handle(),
                     dest.handle(),
                     &mut copy_file_state,
-                ) {
-                    sys::Result::Ok(()) => {}
-                    sys::Result::Err(err) => {
-                        return sys::Result::Err(err);
-                    }
-                }
+                )?;
             }
         }
 

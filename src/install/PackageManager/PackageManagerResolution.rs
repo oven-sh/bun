@@ -16,21 +16,6 @@ use super::PackageManager;
 use super::add_remove_with_filter::root_package_json_path;
 use super::options::LogLevel;
 
-// ──────────────────────────────────────────────────────────────────────────
-// Free-function re-export surface. Thin shims over the
-// `impl PackageManager` bodies below so `pub use resolution::{...}` in
-// `PackageManager.rs` resolves (matching the directories/enqueue pattern).
-// ──────────────────────────────────────────────────────────────────────────
-
-#[inline]
-pub fn assign_root_resolution(
-    this: &mut PackageManager,
-    dependency_id: DependencyID,
-    package_id: PackageID,
-) {
-    this.assign_root_resolution(dependency_id, package_id)
-}
-
 impl PackageManager {
     pub(crate) fn format_later_version_in_cache(
         &mut self,

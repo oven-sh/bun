@@ -726,6 +726,40 @@ describe.concurrent.each(
     expect(await box.installed("app")).toBe('module.exports = "mine";\n');
   });
 
+  it.each(["--frozen-lockfile", "--no-save"])(
+    "reads the tarball once when the lockfile does not record its integrity and bun install %s cannot record it",
+    async flag => {
+      const v1 = await tarball("v1");
+      using box = sandbox("tarball-unpinned-not-saved", { app: {} });
+      const lockfile = JSON.stringify({
+        lockfileVersion: 1,
+        configVersion: 1,
+        workspaces: { "": { name: "app", dependencies: { pkg: box.spec } } },
+        packages: { pkg: [`pkg@${box.resolution}`, {}] },
+      });
+      await writeFile(join(box.root, "app", "bun.lock"), lockfile);
+      await box.put("app", v1);
+      await box.ok("app", "install", flag);
+      expect(await box.installed("app")).toBe('module.exports = "v1";\n');
+      expect(box.requests.length).toBe(kind === "URL" ? 1 : 0);
+
+      // From here on neither the path nor the URL has it.
+      box.served.clear();
+      await rm(join(box.root, "app", "pkg.tgz"), { force: true });
+
+      const { stdout } = await box.ok("app", "install", flag);
+      expect(stdout).toContain("(no changes)");
+      expect(stdout).not.toContain("pkg@");
+
+      for (const args of [[flag], [flag, "--offline"]]) {
+        await box.reinstall("app", ...args);
+        expect(await box.installed("app")).toBe('module.exports = "v1";\n');
+      }
+      expect(box.requests.length).toBe(kind === "URL" ? 1 : 0);
+      expect(await box.lockfile("app")).toBe(lockfile);
+    },
+  );
+
   // https://github.com/oven-sh/bun/issues/8260
   it("an install that changes nothing installs nothing", async () => {
     const v1 = await tarball("v1");
@@ -1121,17 +1155,17 @@ describe.concurrent("tarball integrity metadata forms", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("BUN_CONFIG_NO_VERIFY=1 skips the integrity check like --no-verify", async () => {
+  it.each(["1", "true"])("BUN_CONFIG_NO_VERIFY=%s skips the integrity check like --no-verify", async value => {
     const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
     const other = buildTarball(Buffer.from('{"name":"other","version":"9.9.9"}\n'));
 
     await using server = serveManifest({ integrity: other.sha512 }, real.tgz);
-    using dir = projectDir("integrity-no-verify-env-1", server.port);
+    using dir = projectDir("integrity-no-verify-env-on", server.port);
 
     await using proc = spawn({
       cmd: [bunExe(), "install"],
       cwd: String(dir),
-      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"), BUN_CONFIG_NO_VERIFY: "1" },
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"), BUN_CONFIG_NO_VERIFY: value },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -1145,17 +1179,17 @@ describe.concurrent("tarball integrity metadata forms", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("BUN_CONFIG_NO_VERIFY=0 keeps the integrity check enabled", async () => {
+  it.each(["0", "false", "", "no", "off"])("BUN_CONFIG_NO_VERIFY=%j keeps the integrity check enabled", async value => {
     const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
     const other = buildTarball(Buffer.from('{"name":"other","version":"9.9.9"}\n'));
 
     await using server = serveManifest({ integrity: other.sha512 }, real.tgz);
-    using dir = projectDir("integrity-no-verify-env-0", server.port);
+    using dir = projectDir("integrity-no-verify-env-off", server.port);
 
     await using proc = spawn({
       cmd: [bunExe(), "install"],
       cwd: String(dir),
-      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"), BUN_CONFIG_NO_VERIFY: "0" },
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"), BUN_CONFIG_NO_VERIFY: value },
       stdout: "pipe",
       stderr: "pipe",
     });

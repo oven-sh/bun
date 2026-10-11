@@ -1828,7 +1828,6 @@ impl RunCommand {
     /// `.bin` dirs + the bun-node shim dir to `PATH` and writes the original
     /// PATH back through `original_path`.
     pub(crate) fn configure_path_for_run(
-        ctx: &mut ContextData,
         root_dir_info: bun_resolver::DirInfoRef,
         this_transpiler: &mut Transpiler<'static>,
         original_path: Option<&mut Vec<u8>>,
@@ -1845,10 +1844,9 @@ impl RunCommand {
             }
         }
 
-        let new_path = Self::configure_path_for_run_with_package_json_dir(
-            ctx,
+        let new_path = Self::path_for_run(
+            this_transpiler.env_mut(),
             package_json_dir,
-            this_transpiler,
             original_path,
             cwd,
             force_using_bun,
@@ -1865,24 +1863,6 @@ impl RunCommand {
     /// (plus `package_json_dir` and the bun-node shim dir) prepended, returns
     /// it as an owned buffer, and writes the original PATH out via
     /// `original_path`.
-    pub(crate) fn configure_path_for_run_with_package_json_dir(
-        _ctx: &mut ContextData,
-        package_json_dir: &[u8],
-        this_transpiler: &mut Transpiler<'static>,
-        original_path: Option<&mut Vec<u8>>,
-        cwd: &[u8],
-        force_using_bun: bool,
-    ) -> crate::Result<Vec<u8>> {
-        Self::path_for_run(
-            this_transpiler.env_mut(),
-            package_json_dir,
-            original_path,
-            cwd,
-            force_using_bun,
-        )
-    }
-
-    /// [`Self::configure_path_for_run_with_package_json_dir`] for a caller without a `Transpiler`.
     pub(crate) fn path_for_run(
         env_loader: &mut DotEnv::Loader,
         package_json_dir: &[u8],
@@ -2381,7 +2361,6 @@ impl RunCommand {
         let force_using_bun = ctx.debug.run_in_bun;
         let mut original_path: Vec<u8> = Vec::new();
         Self::configure_path_for_run(
-            ctx,
             root_dir_info,
             this_transpiler,
             Some(&mut original_path),

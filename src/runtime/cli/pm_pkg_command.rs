@@ -1,8 +1,9 @@
 use std::io::Write as _;
 
 use crate::Error;
+use crate::cli::cli_arena;
 use crate::cli::command::Context;
-use bun_ast::{E, Expr, ExprData, G};
+use bun_ast::{E, Expr, ExprData};
 use bun_ast::{Loc, Log, Source};
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::fmt::quote;
@@ -15,15 +16,6 @@ use bun_paths as path;
 
 pub(crate) struct PmPkgCommand;
 
-/// Process-lifetime arena for `E::Object::put()` / `json::parse` calls.
-/// Route through the shared CLI arena (`MimallocArena` is `Sync`, so this is
-/// just a `LazyLock` borrow).
-#[inline]
-fn dummy_bump() -> &'static bun_alloc::Arena {
-    crate::cli::cli_arena()
-}
-
-// `bun_ast::Indentation` and `bun_js_printer::Indentation` are now the same
 #[derive(Copy, Clone, PartialEq, Eq, strum::EnumString, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
 enum SubCommand {
@@ -34,14 +26,8 @@ enum SubCommand {
     Help,
 }
 
-impl SubCommand {
-    fn from_string(str: &[u8]) -> Option<SubCommand> {
-        // strum's `FromStr` needs `&str`; CLI sub-command names are pure-ASCII.
-        bun_core::fmt::parse_ascii(str)
-    }
-}
-
 struct PackageJson {
+    path: Box<[u8]>,
     root: Expr,
     contents: Box<[u8]>,
     source: Source,
@@ -85,7 +71,7 @@ impl PmPkgCommand {
             return Ok(());
         }
 
-        let Some(subcommand) = SubCommand::from_string(positionals[1]) else {
+        let Some(subcommand) = bun_core::fmt::parse_ascii::<SubCommand>(positionals[1]) else {
             Output::err_generic(
                 "Unknown subcommand: {s}",
                 (bstr::BStr::new(positionals[1]),),
@@ -95,7 +81,7 @@ impl PmPkgCommand {
         };
 
         match subcommand {
-            SubCommand::Get => Self::exec_get(ctx, pm, &positionals[2..], cwd)?,
+            SubCommand::Get => Self::exec_get(ctx, &positionals[2..], cwd)?,
             SubCommand::Set => Self::exec_set(ctx, pm, &positionals[2..], cwd)?,
             SubCommand::Delete => Self::exec_delete(ctx, pm, &positionals[2..], cwd)?,
             SubCommand::Fix => Self::exec_fix(ctx, pm, cwd)?,
@@ -144,7 +130,7 @@ impl PmPkgCommand {
         Output::flush();
     }
 
-    fn find_package_json(cwd: &[u8]) -> Result<Box<[u8]>, Error> {
+    fn find_package_json(cwd: &[u8]) -> Box<[u8]> {
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let mut current_dir = cwd;
 
@@ -155,7 +141,7 @@ impl PmPkgCommand {
                 &[b"package.json"],
             );
             if bun_sys::exists_z(pkg_path) {
-                return Ok(Box::<[u8]>::from(pkg_path.as_bytes()));
+                return Box::<[u8]>::from(pkg_path.as_bytes());
             }
 
             let parent = path::resolve_path::dirname::<path::platform::Auto>(current_dir);
@@ -169,8 +155,10 @@ impl PmPkgCommand {
         Global::exit(1);
     }
 
-    fn load_package_json(ctx: &Context, path: &[u8]) -> Result<PackageJson, Error> {
-        let contents: Box<[u8]> = match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
+    /// The nearest package.json at or above `cwd`. Its root is an object.
+    fn load_package_json(ctx: &Context, cwd: &[u8]) -> PackageJson {
+        let path = Self::find_package_json(cwd);
+        let contents: Box<[u8]> = match bun_sys::File::read_from(bun_sys::Fd::cwd(), &path) {
             Ok(b) => b.into(),
             Err(e) => {
                 Output::err_generic(
@@ -181,13 +169,8 @@ impl PmPkgCommand {
             }
         };
 
-        let source = Source::init_path_string(path, &contents[..]);
-        // Use the process-lifetime CLI arena
-        // so the returned `Expr` (which may reference arena-owned nodes)
-        // outlives this frame. CLI is one-shot.
-        let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
-        // SAFETY: CLI dispatch is single-threaded; no other borrow of
-        // `ctx.log` is live while `log` is passed to the JSON parser below.
+        let source = Source::init_path_string(&path[..], &contents[..]);
+        // SAFETY: CLI dispatch is single-threaded; no other borrow of `ctx.log` is live.
         let log: &mut Log = unsafe { ctx.log_mut() };
         let result = match json::parse_package_json_utf8_with_opts(
             json::JSONOptions {
@@ -197,7 +180,7 @@ impl PmPkgCommand {
             },
             &source,
             log,
-            bump,
+            cli_arena(),
         ) {
             Ok(r) => r,
             Err(e) => {
@@ -206,28 +189,22 @@ impl PmPkgCommand {
             }
         };
 
-        Ok(PackageJson {
+        if !matches!(result.root.data, ExprData::EObject(_)) {
+            Output::err_generic("package.json root must be an object", ());
+            Global::exit(1);
+        }
+
+        PackageJson {
+            path,
             root: result.root,
             contents,
             source,
             indentation: result.indentation,
-        })
+        }
     }
 
-    fn exec_get(
-        ctx: &Context,
-        _pm: &mut PackageManager,
-        args: &[&[u8]],
-        cwd: &[u8],
-    ) -> Result<(), Error> {
-        let path = Self::find_package_json(cwd)?;
-
-        let pkg = Self::load_package_json(ctx, &path)?;
-
-        if !matches!(pkg.root.data, ExprData::EObject(_)) {
-            Output::err_generic("package.json root must be an object", ());
-            Global::exit(1);
-        }
+    fn exec_get(ctx: &Context, args: &[&[u8]], cwd: &[u8]) -> Result<(), Error> {
+        let pkg = Self::load_package_json(ctx, cwd);
 
         if args.is_empty() {
             let formatted = Self::format_json(pkg.root, None)?;
@@ -304,17 +281,9 @@ impl PmPkgCommand {
 
         let parse_json = pm.options.json_output;
 
-        let path = Self::find_package_json(cwd)?;
-
-        let pkg = Self::load_package_json(ctx, &path)?;
-
+        let pkg = Self::load_package_json(ctx, cwd);
         let mut root = pkg.root;
-        if !matches!(root.data, ExprData::EObject(_)) {
-            Output::err_generic("package.json root must be an object", ());
-            Global::exit(1);
-        }
 
-        let mut modified = false;
         for &arg in args {
             let Some(eq_pos) = strings::index_of(arg, b"=") else {
                 Output::err_generic(
@@ -338,12 +307,9 @@ impl PmPkgCommand {
             }
 
             Self::set_value(&mut root, key, value, parse_json)?;
-            modified = true;
         }
 
-        if modified {
-            Self::save_package_json(&path, root, &pkg, pm.options.dry_run)?;
-        }
+        Self::save_package_json(root, &pkg, pm.options.dry_run);
         Ok(())
     }
 
@@ -358,91 +324,66 @@ impl PmPkgCommand {
             Global::exit(1);
         }
 
-        let path = Self::find_package_json(cwd)?;
-
-        let pkg = Self::load_package_json(ctx, &path)?;
-
+        let pkg = Self::load_package_json(ctx, cwd);
         let mut root = pkg.root;
-        if !matches!(root.data, ExprData::EObject(_)) {
-            Output::err_generic("package.json root must be an object", ());
-            Global::exit(1);
-        }
 
         let mut modified = false;
         for &key in args {
-            match Self::delete_value(&mut root, key) {
-                Ok(deleted) => {
-                    if deleted {
-                        modified = true;
-                    }
-                }
-                Err(e) => {
-                    if !matches!(e, crate::Error::NotFound) {
-                        return Err(e);
-                    }
-                }
-            }
+            modified |= Self::delete_in_container(&mut root, &Self::parse_key_path(key)?);
         }
 
         if modified {
-            Self::save_package_json(&path, root, &pkg, pm.options.dry_run)?;
+            Self::save_package_json(root, &pkg, pm.options.dry_run);
         }
         Ok(())
     }
 
     fn exec_fix(ctx: &Context, pm: &mut PackageManager, cwd: &[u8]) -> Result<(), Error> {
-        let path = Self::find_package_json(cwd)?;
-
-        let pkg = Self::load_package_json(ctx, &path)?;
-
+        let pkg = Self::load_package_json(ctx, cwd);
         let mut root = pkg.root;
-        if !matches!(root.data, ExprData::EObject(_)) {
-            Output::err_generic("package.json root must be an object", ());
-            Global::exit(1);
-        }
 
         let mut modified = false;
 
-        if let Some(name_prop) = root.get(b"name") {
-            if let ExprData::EString(str) = &name_prop.data {
-                let name_str = str.slice8();
-                let lowercase: Vec<u8> = name_str.iter().map(|b| b.to_ascii_lowercase()).collect();
+        if let Some(name_prop) = root.get(b"name")
+            && let ExprData::EString(str) = &name_prop.data
+        {
+            let name_str = str.slice8();
+            let lowercase: Vec<u8> = name_str.iter().map(|b| b.to_ascii_lowercase()).collect();
 
-                if !strings::eql(name_str, &lowercase) {
-                    Self::set_value(&mut root, b"name", &lowercase, false)?;
-                    modified = true;
-                }
+            if !strings::eql(name_str, &lowercase) {
+                Self::set_value(&mut root, b"name", &lowercase, false)?;
+                modified = true;
             }
         }
 
-        if let Some(bin_prop) = root.get(b"bin") {
-            if let ExprData::EObject(obj) = &bin_prop.data {
-                let props = obj.properties.slice();
-                for prop in props {
-                    let Some(value) = &prop.value else { continue };
+        if let Some(bin_prop) = root.get(b"bin")
+            && let ExprData::EObject(obj) = &bin_prop.data
+        {
+            for prop in obj.properties.slice() {
+                let Some(value) = &prop.value else { continue };
+                let ExprData::EString(str) = &value.data else {
+                    continue;
+                };
+                let bin_path = str.slice8();
+                let mut pkg_dir = path::resolve_path::dirname::<path::platform::Auto>(&pkg.path);
+                if pkg_dir.is_empty() {
+                    pkg_dir = cwd;
+                }
+                let mut buf = bun_paths::path_buffer_pool::get();
+                let full_path = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
+                    pkg_dir,
+                    &mut buf,
+                    &[bin_path],
+                );
 
-                    if let ExprData::EString(str) = &value.data {
-                        let bin_path = str.slice8();
-                        let mut pkg_dir =
-                            path::resolve_path::dirname::<path::platform::Auto>(&path);
-                        if pkg_dir.is_empty() {
-                            pkg_dir = cwd;
-                        }
-                        let mut buf = bun_paths::path_buffer_pool::get();
-                        let full_path = path::resolve_path::join_abs_string_buf_z::<
-                            path::platform::Auto,
-                        >(pkg_dir, &mut buf, &[bin_path]);
-
-                        if !bun_sys::exists_z(full_path) {
-                            bun_core::warn!("No bin file found at {}", bstr::BStr::new(bin_path));
-                        }
-                    }
+                if !bun_sys::exists_z(full_path) {
+                    bun_core::warn!("No bin file found at {}", bstr::BStr::new(bin_path));
                 }
             }
         }
 
         if modified {
-            Self::save_package_json(&path, root, &pkg, pm.options.dry_run)?;
+            Self::save_package_json(root, &pkg, pm.options.dry_run);
         }
         Ok(())
     }
@@ -621,7 +562,7 @@ impl PmPkgCommand {
                 }
             };
             if index == len {
-                array.push(dummy_bump(), Expr::init(E::Null {}, Loc::EMPTY))?;
+                array.push(cli_arena(), Expr::init(E::Null {}, Loc::EMPTY))?;
             }
             let Some(next) = rest.first() else {
                 array.items[index] = value;
@@ -645,11 +586,11 @@ impl PmPkgCommand {
             .e_object_mut()
             .expect("set_value checks the root and child_container only returns arrays or objects");
         let Some(next) = rest.first() else {
-            object.put(dummy_bump(), name, value)?;
+            object.put(cli_arena(), name, value)?;
             return Ok(());
         };
         let mut child = Self::child_container(object.get(name), *next, key, slot_name);
-        object.put(dummy_bump(), name, child)?;
+        object.put(cli_arena(), name, child)?;
         Self::set_in_container(&mut child, slot_name, key, rest, value)
     }
 
@@ -676,14 +617,14 @@ impl PmPkgCommand {
 
     /// With `--json` a value that is not JSON is an error, as in `npm pkg set --json`.
     fn parse_value(key: &[u8], value: &[u8], parse_json: bool) -> Expr {
-        let data: &[u8] = dummy_bump().alloc_slice_copy(value);
+        let data: &[u8] = cli_arena().alloc_slice_copy(value);
         if !parse_json {
             return Expr::init(E::String::init(data), Loc::EMPTY);
         }
 
         let source = Source::init_path_string(key, data);
         let mut log = Log::init();
-        match json::parse_utf8_impl::<true>(&source, &mut log, dummy_bump()) {
+        match json::parse_utf8_impl::<true>(&source, &mut log, cli_arena()) {
             Ok(expr) => expr,
             Err(_) => {
                 let reason: &[u8] = log
@@ -703,18 +644,10 @@ impl PmPkgCommand {
         }
     }
 
-    fn delete_value(root: &mut Expr, key: &[u8]) -> Result<bool, Error> {
-        if !matches!(root.data, ExprData::EObject(_)) {
-            return Ok(false);
-        }
-
-        Self::delete_in_container(root, &Self::parse_key_path(key)?)
-    }
-
     /// Splices out an array element or removes a property; returns whether anything was removed.
-    fn delete_in_container(container: &mut Expr, path: &[Segment<'_>]) -> Result<bool, Error> {
+    fn delete_in_container(container: &mut Expr, path: &[Segment<'_>]) -> bool {
         let [segment, rest @ ..] = path else {
-            return Ok(false);
+            return false;
         };
         let name = segment.name;
         if segment.is_append() {
@@ -727,11 +660,11 @@ impl PmPkgCommand {
 
         let mut child = if let Some(array) = container.data.e_array_mut() {
             let Some(index) = array_index(name).filter(|&index| index < array.items.len()) else {
-                return Ok(false);
+                return false;
             };
             if rest.is_empty() {
                 array.items.remove(index);
-                return Ok(true);
+                return true;
             }
             array.items[index]
         } else {
@@ -739,72 +672,31 @@ impl PmPkgCommand {
                 return Self::remove_property(container, name);
             }
             let Some(child) = container.get(name) else {
-                return Ok(false);
+                return false;
             };
             child
         };
         Self::delete_in_container(&mut child, rest)
     }
 
-    fn remove_property(obj: &mut Expr, key: &[u8]) -> Result<bool, Error> {
+    fn remove_property(obj: &mut Expr, key: &[u8]) -> bool {
         let ExprData::EObject(e_obj) = &mut obj.data else {
-            return Ok(false);
+            return false;
         };
-
-        let old_props = e_obj.properties.slice();
-        let mut found = false;
-        for prop in old_props {
-            if let Some(k) = &prop.key {
-                if let ExprData::EString(s) = &k.data {
-                    if strings::eql(&s.data, key) {
-                        found = true;
-                        break;
-                    }
-                }
-            }
-        }
-
-        if !found {
-            return Ok(false);
-        }
-        let old_len = old_props.len();
-        // G::Property is !Copy/!Clone: take the
-        // old list, ptr::read kept entries into the new list, then forget the
-        // old buffer (CLI is one-shot — leak is intentional, see
-        // load_package_json).
-        let old = core::mem::ManuallyDrop::new(bun_alloc::AstAlloc::take(&mut e_obj.properties));
-        let mut new_props: G::PropertyList = G::PropertyList::init_capacity(old_len - 1);
-        for prop in old.slice() {
-            if let Some(k) = &prop.key {
-                if let ExprData::EString(s) = &k.data {
-                    if strings::eql(&s.data, key) {
-                        continue;
-                    }
-                }
-            }
-            // SAFETY: `old` is wrapped in `ManuallyDrop` so each Property is
-            // moved (not duplicated) into `new_props`.
-            new_props.append_assume_capacity(unsafe { core::ptr::read(prop) });
-        }
-        e_obj.properties = new_props;
-
-        Ok(true)
+        let old_len = e_obj.properties.len();
+        e_obj.properties.retain(|prop| {
+            !prop.key.as_ref().is_some_and(
+                |k| matches!(&k.data, ExprData::EString(s) if strings::eql(&s.data, key)),
+            )
+        });
+        e_obj.properties.len() != old_len
     }
 
-    fn save_package_json(
-        path: &[u8],
-        root: Expr,
-        pkg: &PackageJson,
-        dry_run: bool,
-    ) -> Result<(), Error> {
-        let preserve_newline =
-            !pkg.contents.is_empty() && pkg.contents[pkg.contents.len() - 1] == b'\n';
+    fn save_package_json(root: Expr, pkg: &PackageJson, dry_run: bool) {
+        let preserve_newline = pkg.contents.last() == Some(&b'\n');
 
         let mut buffer_writer = js_printer::BufferWriter::init();
-        buffer_writer
-            .buffer
-            .list
-            .reserve((pkg.contents.len() + 1).saturating_sub(buffer_writer.buffer.list.len()));
+        buffer_writer.buffer.list.reserve(pkg.contents.len() + 1);
         buffer_writer.append_newline = preserve_newline;
 
         let mut writer = js_printer::BufferPrinter::init(buffer_writer);
@@ -830,9 +722,9 @@ impl PmPkgCommand {
                 let _ = Output::writer().write_all(b"\n");
             }
             Output::flush();
-            return Ok(());
+            return;
         }
-        let path_z = bun_core::ZBox::from_bytes(path);
+        let path_z = bun_core::ZBox::from_bytes(&pkg.path);
         if let Err(e) = bun_sys::File::write_file(bun_sys::Fd::cwd(), path_z.as_zstr(), content) {
             Output::err_generic(
                 "Failed to write package.json: {s}",
@@ -840,6 +732,5 @@ impl PmPkgCommand {
             );
             Global::exit(1);
         }
-        Ok(())
     }
 }

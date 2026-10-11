@@ -903,18 +903,14 @@ impl PackageJSON {
                                     let Some(version_str) = prop.value.as_str() else {
                                         continue;
                                     };
-                                    // Like the key above: a value with JSON escapes is
-                                    // decoded outside the source buffer and cannot be
-                                    // stored as an offset into it.
+                                    // A value with JSON escapes is decoded outside the buffer that
+                                    // the strings of the parsed version are offsets into.
                                     if !bun_alloc::is_slice_in_buffer(
                                         version_str,
                                         package_json.dependencies.source_buf,
                                     ) {
                                         continue;
                                     }
-                                    // The strings inside the parsed version are offsets
-                                    // into this buffer; every reader of the map slices
-                                    // them with `dependencies.source_buf`.
                                     let sliced_str = Semver::SlicedString::init(
                                         package_json.dependencies.source_buf,
                                         version_str,

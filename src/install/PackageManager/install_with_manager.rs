@@ -199,12 +199,7 @@ pub fn install_with_manager(
                     )?;
                 }
                 if PackageJSONEditor::steers_catalogs_to_latest(manager) {
-                    let log = manager.log_mut();
-                    PackageJSONEditor::steer_used_catalogs_to_latest(
-                        &mut manager.workspace_package_json_cache,
-                        log,
-                        &mut lockfile,
-                    )?;
+                    PackageJSONEditor::steer_used_catalogs_to_latest(manager, Some(&mut lockfile))?;
                 }
                 let mut mapping = vec![invalid_package_id; maybe_root.dependencies.len as usize]
                     .into_boxed_slice();
@@ -487,24 +482,12 @@ pub fn install_with_manager(
                             }
                         }
 
-                        let mut count: usize = 0;
-                        for (key, _) in lf.patched_dependencies.iter() {
-                            if !lockfile.patched_dependencies.contains_key(key) {
-                                count += 1;
-                            }
-                        }
-                        if count > 0 {
-                            patched_dependencies_to_remove.reserve(count);
-                            for (key, _) in lf.patched_dependencies.iter() {
-                                if !lockfile.patched_dependencies.contains_key(key) {
-                                    patched_dependencies_to_remove.insert(*key, ());
-                                }
-                            }
-                            let to_remove: Vec<u64> =
-                                patched_dependencies_to_remove.keys().to_vec();
-                            for hash in to_remove {
-                                let _ = lf.patched_dependencies.ordered_remove(&hash);
-                            }
+                        let to_remove: Vec<u64> = (lf.patched_dependencies.keys().iter().copied())
+                            .filter(|key| !lockfile.patched_dependencies.contains_key(key))
+                            .collect();
+                        for hash in to_remove {
+                            patched_dependencies_to_remove.insert(hash, ());
+                            let _ = lf.patched_dependencies.ordered_remove(&hash);
                         }
                     }
 
@@ -516,7 +499,7 @@ pub fn install_with_manager(
                     let mut pinned_rows = DynamicBitSet::default();
                     if bare_update {
                         transitive = TransitiveUpdate::plan(manager, &direct_deps_before)?;
-                        pinned_rows = enqueue_transitive(manager, &transitive, invalidates_rows)?;
+                        pinned_rows = transitive.enqueue(manager)?;
                     }
 
                     if invalidates_rows {
@@ -545,46 +528,20 @@ pub fn install_with_manager(
 
                     // Split this into two passes because the below may allocate memory or invalidate pointers
                     if manager.summary.add > 0 || manager.summary.update > 0 {
-                        let changes = mapping.len() as PackageID;
-                        let mut counter_i: PackageID = 0;
-
                         let _ = manager.get_cache_directory();
                         let _ = manager.get_temporary_directory();
 
-                        while counter_i < changes {
-                            if mapping[counter_i as usize] == invalid_package_id {
-                                let dependency_i = counter_i + off;
-                                let dependency = manager.lockfile.buffers.dependencies
-                                    [dependency_i as usize]
-                                    .clone();
-                                let resolution =
-                                    manager.lockfile.buffers.resolutions[dependency_i as usize];
-                                if let Err(err) = enqueue_dependency_with_main(
-                                    manager,
-                                    dependency_i,
-                                    &dependency,
-                                    resolution,
-                                    false,
-                                ) {
-                                    add_dependency_error(manager, &dependency, err);
-                                }
-                            }
-                            counter_i += 1;
+                        for (i, _) in (mapping.iter().enumerate())
+                            .filter(|&(_, &mapped)| mapped == invalid_package_id)
+                        {
+                            let row = off + i as DependencyID;
+                            let resolution = manager.lockfile.buffers.resolutions[row as usize];
+                            enqueue_row(manager, row, resolution);
                         }
                     }
 
-                    for dependency_i in extension_rows {
-                        let dependency =
-                            manager.lockfile.buffers.dependencies[dependency_i as usize].clone();
-                        if let Err(err) = enqueue_dependency_with_main(
-                            manager,
-                            dependency_i,
-                            &dependency,
-                            invalid_package_id,
-                            false,
-                        ) {
-                            add_dependency_error(manager, &dependency, err);
-                        }
+                    for row in extension_rows {
+                        enqueue_row(manager, row, invalid_package_id);
                     }
 
                     if manager.summary.update > 0 {
@@ -699,14 +656,10 @@ pub fn install_with_manager(
 
     if manager.lockfile.packages.len() > 0 {
         root = *manager.lockfile.packages.get(0);
-    }
 
-    if manager.lockfile.packages.len() > 0 {
-        for request in &manager.update_requests {
-            // prevent redundant errors
-            if request.failed {
-                return Err(crate::package_manager_real::run_tasks::failed_request_error());
-            }
+        // prevent redundant errors
+        if manager.update_requests.iter().any(|request| request.failed) {
+            return Err(crate::package_manager_real::run_tasks::failed_request_error());
         }
 
         manager.verify_resolutions(log_level);
@@ -731,10 +684,6 @@ pub fn install_with_manager(
 
     // append scripts to lockfile before generating new metahash
     manager.load_root_lifecycle_scripts(&root);
-    // `List.package_name` is `Box<[u8]>`, so dropping the whole `Option<List>`
-    // at scope exit frees it. Route through a raw provenance root because
-    // `manager: &mut` is reborrowed many times below; the guard fires once on
-    // the way out and is the only access at that point.
     struct ClearRootLifecycleScripts(*mut PackageManager);
     impl Drop for ClearRootLifecycleScripts {
         fn drop(&mut self) {
@@ -744,8 +693,7 @@ pub fn install_with_manager(
             unsafe { (*self.0).root_lifecycle_scripts = None };
         }
     }
-    let manager_ptr: *mut PackageManager = manager;
-    let _clear_root_lifecycle_scripts = ClearRootLifecycleScripts(manager_ptr);
+    let _clear_root_lifecycle_scripts = ClearRootLifecycleScripts(&raw mut *manager);
 
     if let Some(root_scripts) = &manager.root_lifecycle_scripts {
         root_scripts.append_to_lockfile(&mut manager.lockfile);
@@ -862,7 +810,6 @@ pub fn install_with_manager(
     let save_format = load_result.save_format(&manager.options);
 
     if manager.options.lockfile_only {
-        // The same errors fail a full install below, after the packages are linked.
         if log_level != Options::LogLevel::Silent {
             manager
                 .log_mut()
@@ -898,73 +845,58 @@ pub fn install_with_manager(
             remove_stale_workspace_links(&lockfile_before_clean, &manager.lockfile);
         }
 
-        // Not by a run that had nothing to resolve.
         let warn_incorrect_peers = manager.options.local_package_features.peer_dependencies
             && (had_any_diffs
                 || manager.to_update
                 || !manager.update_requests.is_empty()
                 || !matches!(load_result, lockfile::LoadResult::Ok { .. }));
 
-        let mut linker = manager.options.node_linker;
-        loop {
-            match linker {
-                NodeLinker::Auto => {
-                    linker = crate::lockfile_real::resolve_node_linker(
-                        linker,
-                        config_version,
-                        !load_result.migrated_from_npm()
-                            && manager.lockfile.workspace_paths.len() > 0,
-                    );
-                    continue;
-                }
-
-                NodeLinker::Hoisted => {
-                    let mut summary = install_hoisted_packages(
-                        manager,
-                        ctx,
-                        &workspace_filters,
-                        install_root_dependencies,
-                        log_level,
-                        None,
-                    )?;
-                    summary.fail +=
-                        manager.report_offline_misses(&summary.offline_misses, &[0], false)?;
-                    if warn_incorrect_peers {
-                        let served = lockfile::tree::served_peers(&manager.lockfile);
-                        manager.warn_incorrect_peers(&served);
-                    }
-                    // `bun install --filter` lays out another tree than the one the pass compares with.
-                    if summary.fail == 0
-                        && (workspace_filters.is_empty() || manager.filtered_link_targets.is_some())
-                        && (had_any_diffs
-                            || matches!(
-                                manager.subcommand,
-                                Subcommand::Dedupe | Subcommand::Audit | Subcommand::Update
-                            ))
-                    {
-                        crate::prune::remove_collapsed_copies(manager, &lockfile_before_clean);
-                    }
-                    break 'install_summary summary;
-                }
-
-                NodeLinker::Isolated => {
-                    let mut summary = install_isolated_packages(
-                        manager,
-                        ctx,
-                        install_root_dependencies,
-                        &workspace_filters,
-                        None,
-                        warn_incorrect_peers,
-                    )?;
-                    summary.fail +=
-                        manager.report_offline_misses(&summary.offline_misses, &[0], true)?;
-                    break 'install_summary summary;
-                }
+        let isolated = NodeLinker::Isolated
+            == crate::lockfile_real::resolve_node_linker(
+                manager.options.node_linker,
+                config_version,
+                !load_result.migrated_from_npm() && manager.lockfile.workspace_paths.len() > 0,
+            );
+        let mut summary = if isolated {
+            install_isolated_packages(
+                manager,
+                ctx,
+                install_root_dependencies,
+                &workspace_filters,
+                None,
+                warn_incorrect_peers,
+            )?
+        } else {
+            install_hoisted_packages(
+                manager,
+                ctx,
+                &workspace_filters,
+                install_root_dependencies,
+                log_level,
+                None,
+            )?
+        };
+        summary.fail += manager.report_offline_misses(&summary.offline_misses, &[0], isolated)?;
+        if !isolated {
+            if warn_incorrect_peers {
+                let served = lockfile::tree::served_peers(&manager.lockfile);
+                manager.warn_incorrect_peers(&served);
+            }
+            // `bun install --filter` lays out another tree than the one the pass compares with.
+            if summary.fail == 0
+                && (workspace_filters.is_empty() || manager.filtered_link_targets.is_some())
+                && (had_any_diffs
+                    || matches!(
+                        manager.subcommand,
+                        Subcommand::Dedupe | Subcommand::Audit | Subcommand::Update
+                    ))
+            {
+                crate::prune::remove_collapsed_copies(manager, &lockfile_before_clean);
             }
         }
+        summary
     };
 
-    // Not by a run that had nothing to resolve and nothing to link.
     if manager.options.do_.install_packages()
         && (install_summary.success > 0
             || had_any_diffs
@@ -1251,7 +1183,6 @@ fn print_install_summary(
         {
             // Hot no-op path (install/fastify bench): kept inline.
             let count = this.lockfile.packages.len() as PackageID;
-            // "(no changes)" would misreport an update that rewrote package.json.
             let note = if this.subcommand == Subcommand::Update && this.wrote_package_json {
                 "up to date, package.json synced"
             } else {
@@ -1270,9 +1201,6 @@ fn print_install_summary(
                     if count == 1 { "" } else { "s" },
                     note,
                 );
-                Output::print_start_end_stdout(ctx.start_time, nano_timestamp());
-                printed_timestamp = true;
-                print_blocked_packages_info(install_summary, this.options.global);
             } else {
                 bun_core::pretty!(
                     "<r><green>Done<r>! Checked {} package{}<r> <d>({})<r> ",
@@ -1284,10 +1212,10 @@ fn print_install_summary(
                     },
                     note,
                 );
-                Output::print_start_end_stdout(ctx.start_time, nano_timestamp());
-                printed_timestamp = true;
-                print_blocked_packages_info(install_summary, this.options.global);
             }
+            Output::print_start_end_stdout(ctx.start_time, nano_timestamp());
+            printed_timestamp = true;
+            print_blocked_packages_info(install_summary, this.options.global);
         }
 
         if install_summary.fail > 0 {
@@ -1455,8 +1383,7 @@ fn print_blocked_packages_info(summary: &PackageInstallSummary, global: bool) {
     }
 }
 
-/// Both linkers leave out a package that cannot run on the target, whatever kind of dependency names
-/// it. For one the project itself requires that is worth a word; `--verbose` lists the others.
+/// Both linkers leave out a package that cannot run on the target; warns for the ones the project itself requires.
 #[cold]
 #[inline(never)]
 fn warn_unsupported_platform(
@@ -1654,19 +1581,6 @@ fn report_lockfile_load_error(
     Ok(())
 }
 
-/// Returns the rows the plan re-resolved so the overrides/catalogs invalidation pass that follows leaves them pinned; only tracked when that pass will run.
-fn enqueue_transitive(
-    manager: &mut PackageManager,
-    transitive: &TransitiveUpdate,
-    track_rows: bool,
-) -> crate::Result<DynamicBitSet> {
-    if !track_rows {
-        transitive.enqueue(manager)?;
-        return Ok(DynamicBitSet::default());
-    }
-    transitive.enqueue_tracked(manager)
-}
-
 /// Re-resolves the rows `selects` in package order (root first, so later rows dedupe onto what its rows append),
 /// skipping rows in no list (the root's loaded rows the differ replaced) and `pinned_rows` (the update plan's).
 fn reresolve_owned_rows(
@@ -1679,31 +1593,26 @@ fn reresolve_owned_rows(
         manager.lockfile.packages.items_dependencies().to_vec();
     for list in lists {
         for dep_id in list.begin()..list.end() {
-            if pinned_rows.is_set_allow_out_of_bound(dep_id as usize, false) {
-                continue;
-            }
-            let dependency = manager.lockfile.buffers.dependencies[dep_id as usize].clone();
-            if !selects(&dependency) {
+            if pinned_rows.is_set_allow_out_of_bound(dep_id as usize, false)
+                || !selects(&manager.lockfile.buffers.dependencies[dep_id as usize])
+            {
                 continue;
             }
             manager.lockfile.buffers.resolutions[dep_id as usize] = invalid_package_id;
-            if let Err(err) = enqueue_dependency_with_main(
-                manager,
-                dep_id,
-                &dependency,
-                invalid_package_id,
-                false,
-            ) {
-                add_dependency_error(manager, &dependency, err);
-            }
+            enqueue_row(manager, dep_id, invalid_package_id);
         }
     }
 }
 
-/// A range of a registry package links a workspace only through the root's edge to it
-/// (`root_workspace_package_id`), and bun.lock cannot record the link without that edge. Once the
-/// root has dropped the edge the range resolves again, as it does with no lockfile. Runs when all
-/// else is resolved: a row of a package that `clean` discards must not ask the registry.
+fn enqueue_row(manager: &mut PackageManager, row: DependencyID, resolution: PackageID) {
+    let dependency = manager.lockfile.buffers.dependencies[row as usize].clone();
+    if let Err(err) = enqueue_dependency_with_main(manager, row, &dependency, resolution, false) {
+        add_dependency_error(manager, &dependency, err);
+    }
+}
+
+/// A range of a registry package links a workspace only through the root's edge to it; once the root has dropped
+/// the edge the range resolves again. Runs when all else is resolved: a row that `clean` discards must not ask the registry.
 #[cold]
 #[inline(never)]
 fn reresolve_links_to_dropped_workspaces(manager: &mut PackageManager) -> bool {
@@ -1747,12 +1656,7 @@ fn reresolve_links_to_dropped_workspaces(manager: &mut PackageManager) -> bool {
         }
         any = true;
         manager.lockfile.buffers.resolutions[row as usize] = invalid_package_id;
-        let dependency = manager.lockfile.buffers.dependencies[row as usize].clone();
-        if let Err(err) =
-            enqueue_dependency_with_main(manager, row, &dependency, invalid_package_id, false)
-        {
-            add_dependency_error(manager, &dependency, err);
-        }
+        enqueue_row(manager, row, invalid_package_id);
     }
     if any {
         manager.drain_dependency_list();
@@ -1778,7 +1682,6 @@ fn enqueue_named_updates(
 ) -> crate::Result<NamedUpdates> {
     let walkable = crate::update_scope::UpdateScope::of(&*manager).walkable_rows(&manager.lockfile);
     let plannable_peers = plannable_peer_rows(&manager.lockfile, direct);
-    // `--depth 0` keeps the children of a moved package at their locked versions: nothing to refresh.
     let collect_latest_rows =
         manager.options.do_.update_to_latest() && !manager.options.do_.update_direct_only();
     let requests = manager.update_requests.len();
@@ -1812,15 +1715,7 @@ fn enqueue_named_updates(
         }
         manager.lockfile.buffers.resolutions[dependency_i] = invalid_package_id;
         named.moved.push((dependency_i as DependencyID, package_id));
-        if let Err(err) = enqueue_dependency_with_main(
-            manager,
-            dependency_i as DependencyID,
-            &dependency,
-            invalid_package_id,
-            false,
-        ) {
-            add_dependency_error(manager, &dependency, err);
-        }
+        enqueue_row(manager, dependency_i as DependencyID, invalid_package_id);
     }
 
     reject_unknown_update_requests(
@@ -2170,12 +2065,7 @@ fn create_new_lockfile_and_enqueue(
         )?;
     }
     if PackageJSONEditor::steers_catalogs_to_latest(manager) {
-        let log = manager.log_mut();
-        PackageJSONEditor::steer_used_catalogs_to_latest(
-            &mut manager.workspace_package_json_cache,
-            log,
-            &mut manager.lockfile,
-        )?;
+        PackageJSONEditor::steer_used_catalogs_to_latest(manager, None)?;
     }
 
     root = manager.lockfile.append_package(&root)?;
@@ -2294,8 +2184,7 @@ fn wait_for_resolution(manager: &mut PackageManager) -> crate::Result<()> {
     Ok(())
 }
 
-/// Replaces `manager.lockfile` by a copy that has only the packages still reached and returns the old one, which
-/// the later `eql(lockfile_before_clean, ..)` checks compare with. No I/O, so it should be relatively cheap.
+/// Replaces `manager.lockfile` by a copy that has only the packages still reached and returns the old one.
 fn clean_lockfile(
     manager: &mut PackageManager,
     log_level: Options::LogLevel,
@@ -2328,10 +2217,8 @@ fn clean_lockfile(
     Ok(before_clean)
 }
 
-/// The write-back gave `overrides` other values (`edit_after_resolve`). A row whose package its rule no longer accepts
-/// resolves again, as the next `bun install` does when the value is edited by hand, and the lockfile is cleaned a
-/// second time. A value that is not a range (a dist-tag, a folder, a tarball) is not judged. Returns the packages
-/// those rows moved to, for the security scan.
+/// The write-back gave `overrides` other values (`edit_after_resolve`): a row whose package its rule's range no longer
+/// accepts resolves again and the lockfile is cleaned a second time. Returns the packages those rows moved to.
 #[cold]
 #[inline(never)]
 fn reresolve_rows_outside_overrides(
@@ -2378,8 +2265,10 @@ fn reresolve_rows_outside_overrides(
     let mut moved: Vec<(DependencyID, PackageID)> = Vec::new();
     let mut peer_rows: Vec<DependencyID> = Vec::new();
     for (row, package_id) in outside {
-        let dependency = manager.lockfile.buffers.dependencies[row as usize].clone();
-        if dependency.behavior.is_peer() {
+        if manager.lockfile.buffers.dependencies[row as usize]
+            .behavior
+            .is_peer()
+        {
             if plannable_peers.is_set(row as usize) {
                 peer_rows.push(row);
             }
@@ -2387,11 +2276,7 @@ fn reresolve_rows_outside_overrides(
         }
         manager.lockfile.buffers.resolutions[row as usize] = invalid_package_id;
         moved.push((row, package_id));
-        if let Err(err) =
-            enqueue_dependency_with_main(manager, row, &dependency, invalid_package_id, false)
-        {
-            add_dependency_error(manager, &dependency, err);
-        }
+        enqueue_row(manager, row, invalid_package_id);
     }
     enqueue_peer_rows(manager, &peer_rows, &mut moved)?;
     if moved.is_empty() {
@@ -2451,48 +2336,25 @@ fn run_security_scanner(
         &seeds,
     ) {
         Err(err) => {
-            match err {
+            let message = match err {
                 crate::Error::SecurityScannerInWorkspace => {
-                    Output::err_generic(
-                        "security scanner cannot be a dependency of a workspace package. It must be a direct dependency of the root package.",
-                        (),
-                    );
+                    "security scanner cannot be a dependency of a workspace package. It must be a direct dependency of the root package."
                 }
                 crate::Error::SecurityScannerRetryFailed => {
-                    Output::err_generic(
-                        "security scanner failed after partial install. This is probably a bug in Bun. Please report it at https://github.com/oven-sh/bun/issues",
-                        (),
-                    );
+                    "security scanner failed after partial install. This is probably a bug in Bun. Please report it at https://github.com/oven-sh/bun/issues"
                 }
                 crate::Error::InvalidPackageID => {
-                    Output::err_generic(
-                        "cannot perform partial install: security scanner package ID is invalid",
-                        (),
-                    );
+                    "cannot perform partial install: security scanner package ID is invalid"
                 }
-                crate::Error::PartialInstallFailed => {
-                    Output::err_generic("failed to install security scanner package", ());
-                }
+                crate::Error::PartialInstallFailed => "failed to install security scanner package",
                 crate::Error::NoPackagesInstalled => {
-                    Output::err_generic(
-                        "no packages were installed during security scanner installation",
-                        (),
-                    );
+                    "no packages were installed during security scanner installation"
                 }
-                crate::Error::IPCPipeFailed => {
-                    Output::err_generic("failed to create IPC pipe for security scanner", ());
-                }
-                crate::Error::ProcessWatchFailed => {
-                    Output::err_generic("failed to watch security scanner process", ());
-                }
-                e => {
-                    Output::err_generic(
-                        "security scanner failed: {}",
-                        format_args!("{}", e.name()),
-                    );
-                }
-            }
-
+                crate::Error::IPCPipeFailed => "failed to create IPC pipe for security scanner",
+                crate::Error::ProcessWatchFailed => "failed to watch security scanner process",
+                _ => "security scanner failed: {}",
+            };
+            Output::err_generic(message, format_args!("{}", err.name()));
             Global::exit(1);
         }
         Ok(Some(results)) => {

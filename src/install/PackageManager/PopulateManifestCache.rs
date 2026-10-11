@@ -53,7 +53,7 @@ fn start_manifest_task(
         return Ok(());
     }
     let task_id = Task::Id::for_manifest(pkg_name);
-    if run_tasks::has_created_network_task(manager, task_id, is_required) {
+    if manager.has_created_network_task(task_id, is_required) {
         return Ok(());
     }
     if manager.options.log_level.show_progress() {
@@ -307,7 +307,7 @@ pub fn populate_manifest_cache(
     run_tasks::flush_network_queue(manager);
     let _ = run_tasks::schedule_tasks(manager);
 
-    if run_tasks::pending_task_count(manager) > 0 {
+    if manager.pending_task_count() > 0 {
         struct RunClosure {
             // `sleep_until` also receives this raw pointer, so storing
             // `&mut PackageManager` here would alias under Stacked Borrows.
@@ -334,7 +334,7 @@ pub fn populate_manifest_cache(
                     return true;
                 }
 
-                run_tasks::pending_task_count(manager) == 0
+                manager.pending_task_count() == 0
             }
         }
 

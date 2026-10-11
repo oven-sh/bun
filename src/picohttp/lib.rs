@@ -159,13 +159,9 @@ impl Header {
     }
 }
 
-// The `Display` impls in this file (except `Headers`, which is wire format)
-// render the `fetch(..., { verbose: true })` / `bun install --verbose` trace.
-// Names, values, status text and URLs are peer-supplied, so they go through
-// `escape_control_chars`: HTTP/1.1 admits HT and any byte >= 0x80 (so UTF-8
-// encoded C1 controls such as U+009B, CSI) in a field value or reason phrase,
-// and HPACK/QPACK only reject NUL, CR and LF. A value can be a URL with
-// credentials (`Location`), hence `for_terminal`.
+// The `Display` impls in this file (except `Headers`, which is wire format) render the verbose
+// trace of peer-supplied text: HTTP/1.1 admits UTF-8 encoded C1 controls (U+009B, CSI), HPACK/QPACK
+// only reject NUL, CR and LF. A value can be a URL with credentials (`Location`): `for_terminal`.
 impl fmt::Display for Header {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // NOTE: pretty_fmt! is the compile-time ANSI-tag expander (`<r><cyan>` → escape

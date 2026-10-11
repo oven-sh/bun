@@ -29,10 +29,13 @@ impl strings::Appender for FilenameStoreAppender<'_> {
     }
 }
 
-/// Convenience: returns an `Appender` over the global filename store.
-#[inline]
-pub(crate) fn filename_store_appender() -> FilenameStoreAppender<'static> {
-    FilenameStoreAppender(FileSystem::instance().filename_store())
+/// `bytes`, copied into the global filename store unless they fit inline.
+pub(crate) fn stored_string(bytes: &[u8]) -> strings::StringOrTinyString {
+    strings::StringOrTinyString::init_append_if_needed(
+        bytes,
+        &mut FilenameStoreAppender(FileSystem::instance().filename_store()),
+    )
+    .expect("unreachable")
 }
 
 pub struct NetworkTask {
@@ -466,6 +469,18 @@ impl bun_core::output::ErrName for ForManifestError {
     }
 }
 
+pub(crate) fn add_error_or_warning(
+    log: &mut bun_ast::Log,
+    is_error: bool,
+    message: core::fmt::Arguments<'_>,
+) {
+    if is_error {
+        log.add_error_fmt(None, bun_ast::Loc::EMPTY, message);
+    } else {
+        log.add_warning_fmt(None, bun_ast::Loc::EMPTY, message);
+    }
+}
+
 /// Redacted before `quote()`: the password scan only recognizes an unquoted URL.
 fn redacted_url(url: &[u8]) -> Vec<u8> {
     let mut out: Vec<u8> = Vec::new();
@@ -490,9 +505,7 @@ impl NetworkTask {
             is_optional,
             needs_extended || npm::name_suggests_libc(name),
         )?;
-        // MaybeUninit overwrite — see field doc; old slot value is
-        // either uninitialized (fresh hive slot) or a stale bitwise copy from
-        // `notify`, neither of which is safe/meaningful to drop.
+        // Overwritten, not dropped: the old slot value is uninitialized or a stale bitwise copy from `notify`.
         self.unsafe_http_client = MaybeUninit::new(request);
         Ok(())
     }
@@ -553,8 +566,7 @@ impl NetworkTask {
                 name
             };
 
-            // The registry is a directory: with a "/"-terminated base the WHATWG join appends the name instead of
-            // replacing the last segment. It discards a query or fragment anyway, so they are cut first.
+            // The registry is a directory: a "/"-terminated base makes the WHATWG join append the name. It drops a query or fragment anyway.
             let registry_href = scope.url.href();
             let base_storage;
             let base: &[u8] = if scope.url.url().has_http_like_protocol() {
@@ -581,28 +593,15 @@ impl NetworkTask {
             };
 
             if tmp.tag() == bun_core::Tag::Dead {
-                let redacted_registry = redacted_url(scope.url.href());
-                if !is_optional {
-                    log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "Failed to join registry {} and package {} URLs",
-                            quote(&redacted_registry),
-                            quote(name),
-                        ),
-                    );
-                } else {
-                    log.add_warning_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "Failed to join registry {} and package {} URLs",
-                            quote(&redacted_registry),
-                            quote(name),
-                        ),
-                    );
-                }
+                add_error_or_warning(
+                    log,
+                    !is_optional,
+                    format_args!(
+                        "Failed to join registry {} and package {} URLs",
+                        quote(&redacted_url(scope.url.href())),
+                        quote(name),
+                    ),
+                );
                 return Err(ForManifestError::InvalidURL);
             }
 
@@ -610,26 +609,14 @@ impl NetworkTask {
             let url_bytes = tmp.to_owned_slice().into_boxed_slice();
 
             if !(tmp.starts_with_ascii(b"https://") || tmp.starts_with_ascii(b"http://")) {
-                let redacted_manifest_url = redacted_url(&url_bytes);
-                if !is_optional {
-                    log.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "Registry URL must be http:// or https://\nReceived: {}",
-                            quote(&redacted_manifest_url)
-                        ),
-                    );
-                } else {
-                    log.add_warning_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "Registry URL must be http:// or https://\nReceived: {}",
-                            quote(&redacted_manifest_url)
-                        ),
-                    );
-                }
+                add_error_or_warning(
+                    log,
+                    !is_optional,
+                    format_args!(
+                        "Registry URL must be http:// or https://\nReceived: {}",
+                        quote(&redacted_url(&url_bytes))
+                    ),
+                );
                 return Err(ForManifestError::InvalidURL);
             }
 
@@ -645,31 +632,16 @@ impl NetworkTask {
                     || joined.get_port_auto() != registry.get_port_auto()
                     || !joined.pathname.starts_with(registry_dir)
                 {
-                    let redacted_manifest_url = redacted_url(&url_bytes);
-                    let redacted_registry = redacted_url(scope.url.href());
-                    if !is_optional {
-                        log.add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "Invalid package name {}: manifest URL {} is not on registry {}",
-                                quote(name),
-                                quote(&redacted_manifest_url),
-                                quote(&redacted_registry),
-                            ),
-                        );
-                    } else {
-                        log.add_warning_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "Invalid package name {}: manifest URL {} is not on registry {}",
-                                quote(name),
-                                quote(&redacted_manifest_url),
-                                quote(&redacted_registry),
-                            ),
-                        );
-                    }
+                    add_error_or_warning(
+                        log,
+                        !is_optional,
+                        format_args!(
+                            "Invalid package name {}: manifest URL {} is not on registry {}",
+                            quote(name),
+                            quote(&redacted_url(&url_bytes)),
+                            quote(&redacted_url(scope.url.href())),
+                        ),
+                    );
                     return Err(ForManifestError::InvalidURL);
                 }
             }
@@ -782,10 +754,7 @@ impl NetworkTask {
         }
 
         self.callback = Callback::PackageManifest {
-            name: strings::StringOrTinyString::init_append_if_needed(
-                name,
-                &mut filename_store_appender(),
-            )?,
+            name: stored_string(name),
             loaded_manifest: loaded_manifest.cloned(),
             is_extended_manifest: needs_extended,
         };

@@ -298,25 +298,12 @@ impl TransitiveUpdate {
     }
 
     /// Runs after the differ's own enqueues (including its override/catalog invalidation loops) so the pins win; edges the differ moved off their package are left to it.
-    pub fn enqueue(&self, manager: &mut PackageManager) -> crate::Result<()> {
-        self.enqueue_inner(manager, None)
-    }
-
-    /// Like `enqueue`, also returning the rows it pinned so later invalidation passes leave them alone.
-    pub fn enqueue_tracked(&self, manager: &mut PackageManager) -> crate::Result<DynamicBitSet> {
-        let mut pinned = DynamicBitSet::init_empty(manager.lockfile.buffers.resolutions.len())?;
-        self.enqueue_inner(manager, Some(&mut pinned))?;
-        Ok(pinned)
-    }
-
-    fn enqueue_inner(
-        &self,
-        manager: &mut PackageManager,
-        mut pinned: Option<&mut DynamicBitSet>,
-    ) -> crate::Result<()> {
+    /// Returns the rows it pinned so later invalidation passes leave them alone.
+    pub fn enqueue(&self, manager: &mut PackageManager) -> crate::Result<DynamicBitSet> {
         if self.pins.is_empty() {
-            return Ok(());
+            return Ok(DynamicBitSet::default());
         }
+        let mut pinned = DynamicBitSet::init_empty(manager.lockfile.buffers.resolutions.len())?;
         let _ = manager.get_cache_directory();
         let _ = manager.get_temporary_directory();
         for pin in &self.pins {
@@ -327,12 +314,10 @@ impl TransitiveUpdate {
                 Some(to) => audit_fix::enqueue_pinned(manager, pin.dep_id, to)?,
                 None => reresolve(manager, pin.dep_id)?,
             }
-            if let Some(pinned) = pinned.as_deref_mut() {
-                pinned.set(pin.dep_id as usize);
-            }
+            pinned.set(pin.dep_id as usize);
             manager.summary.update += 1;
         }
-        Ok(())
+        Ok(pinned)
     }
 
     /// `--dry-run` / `--lockfile-only` have no install summary: once everything is resolved this prints the update rows (transitive plan, moved direct dependencies, `named` moves) and, for a dry run, the count line.

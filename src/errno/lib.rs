@@ -558,7 +558,7 @@ mod errno_name_tests {
     fn io_error_to_errno() {
         let of = |code| SystemErrno::from_io_error(&std::io::Error::from_raw_os_error(code));
         #[cfg(not(windows))]
-        assert_eq!(of(libc::ENOMEM), Some(SystemErrno::ENOMEM));
+        assert_eq!(of(SystemErrno::ENOMEM as i32), Some(SystemErrno::ENOMEM));
         // Win32 ERROR_NOT_ENOUGH_MEMORY / ERROR_ACCESS_DENIED; as errno values 8 and 5 are ENOEXEC and EIO.
         #[cfg(windows)]
         assert_eq!(

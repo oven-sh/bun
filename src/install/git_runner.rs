@@ -404,7 +404,7 @@ fn is_tagged_checkout(dir: &bun_sys::Dir) -> bool {
 }
 
 /// `<hex(clone task id)>.git`: the cache folder of a bare clone.
-fn bare_repo_folder_name(clone_id: Task::Id) -> Vec<u8> {
+pub(crate) fn bare_repo_folder_name(clone_id: Task::Id) -> Vec<u8> {
     format!("{}.git", bun_core::fmt::hex_int_lower::<16>(clone_id.get())).into_bytes()
 }
 

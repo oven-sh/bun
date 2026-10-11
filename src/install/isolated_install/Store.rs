@@ -112,6 +112,15 @@ impl Drop for Store {
 }
 
 impl Store {
+    /// The dependency that created the entry and the package it resolves to.
+    pub(crate) fn ids(&self, id: entry::Id) -> Ids {
+        let node_id = self.entries.items_node_id()[id.get() as usize].get() as usize;
+        Ids {
+            dep_id: self.nodes.items_dep_id()[node_id],
+            pkg_id: self.nodes.items_pkg_id()[node_id],
+        }
+    }
+
     /// Called from multiple threads. `parent_dedupe` should not be shared between threads.
     pub(crate) fn is_cycle(
         &self,
@@ -454,13 +463,8 @@ pub mod entry {
 
     impl<'a> fmt::Display for StorePathFormatter<'a> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            use super::node::NodeColumns as _;
-            let store = self.store;
-            let entries = store.entries.slice();
-
-            let peer_hash = entries.items_peer_hash()[self.entry_id.get() as usize];
-            let node_id = entries.items_node_id()[self.entry_id.get() as usize];
-            let pkg_id = store.nodes.items_pkg_id()[node_id.get() as usize];
+            let peer_hash = self.store.entries.items_peer_hash()[self.entry_id.get() as usize];
+            let pkg_id = self.store.ids(self.entry_id).pkg_id;
 
             let pkgs = self.lockfile.packages.slice();
             write!(

@@ -3,16 +3,14 @@ use core::mem::size_of;
 #[cfg(debug_assertions)]
 use bun_core::strings;
 
-// `use super::{self as lockfile, ...}` and bare `use super as lockfile;` are both
-// rejected by rustc (E0432: "no `super` in the root" — rust-lang/rust#48067), so the
-// parent-module alias is spelled via its crate path instead.
+use super::bun_lockb::StreamType;
 use super::{
     DependencyIDList, DependencyList, ExternalStringBuffer, Lockfile, PackageIDList, Stream,
     StringBuffer, Tree, assert_no_uninitialized_padding, tree,
 };
-use crate::lockfile_real as lockfile;
 use crate::package_manager_real::package_manager_options::Options as PackageManagerOptions;
 use crate::{Aligner, DependencyID, PackageID, PackageManager, dependency, invalid_package_id};
+use bun_io::Write as _;
 
 #[derive(Default)]
 pub struct Buffers {
@@ -29,32 +27,19 @@ pub struct Buffers {
     pub string_bytes: StringBuffer,
 }
 
-// The Vec-backed field types drop automatically; no explicit `Drop` impl is
-// needed.
-
 impl Buffers {
     pub(crate) fn preallocate(&mut self, that: &Buffers) -> Result<(), bun_alloc::AllocError> {
-        self.trees
-            .reserve(that.trees.len().saturating_sub(self.trees.len()));
-        self.resolutions.reserve(
-            that.resolutions
-                .len()
-                .saturating_sub(self.resolutions.len()),
-        );
-        self.dependencies.reserve(
-            that.dependencies
-                .len()
-                .saturating_sub(self.dependencies.len()),
-        );
-        self.extern_strings.reserve(
-            that.extern_strings
-                .len()
-                .saturating_sub(self.extern_strings.len()),
-        );
-        self.string_bytes.reserve(
-            that.string_bytes
-                .len()
-                .saturating_sub(self.string_bytes.len()),
+        macro_rules! reserve {
+            ($($field:ident),*) => {
+                $(self.$field.reserve(that.$field.len().saturating_sub(self.$field.len()));)*
+            };
+        }
+        reserve!(
+            trees,
+            resolutions,
+            dependencies,
+            extern_strings,
+            string_bytes
         );
         Ok(())
     }
@@ -82,42 +67,22 @@ mod sizes {
 pub(crate) fn read_array<T: Copy>(stream: &mut Stream) -> crate::Result<Vec<T>> {
     let start_pos = stream.read_int_le::<u64>()?;
 
-    // If its 0xDEADBEEF, then that means the value was never written in the lockfile.
-    if start_pos == 0xDEAD_BEEF {
-        return Err(crate::Error::CorruptLockfile);
-    }
-
-    // These are absolute numbers, it shouldn't be zero.
-    // There's a prefix before any of the arrays, so it can never be zero here.
-    if start_pos == 0 {
-        return Err(crate::Error::CorruptLockfile);
-    }
-
-    // We shouldn't be going backwards.
-    if start_pos < (stream.pos as u64).saturating_sub(size_of::<u64>() as u64) {
+    // 0xDEADBEEF: the value was never written. The positions are absolute and follow a prefix,
+    // so they are never zero, and they do not go backwards.
+    if start_pos == 0xDEAD_BEEF
+        || start_pos == 0
+        || start_pos < (stream.pos as u64).saturating_sub(size_of::<u64>() as u64)
+    {
         return Err(crate::Error::CorruptLockfile);
     }
 
     let end_pos = stream.read_int_le::<u64>()?;
 
-    // If its 0xDEADBEEF, then that means the value was never written in the lockfile.
-    // That shouldn't happen.
-    if end_pos == 0xDEAD_BEEF {
-        return Err(crate::Error::CorruptLockfile);
-    }
-
-    // These are absolute numbers, it shouldn't be zero.
-    if end_pos == 0 {
-        return Err(crate::Error::CorruptLockfile);
-    }
-
-    // Prevent integer overflow.
-    if start_pos > end_pos {
-        return Err(crate::Error::CorruptLockfile);
-    }
-
-    // Prevent buffer overflow.
-    if end_pos > stream.buffer.len() as u64 {
+    if end_pos == 0xDEAD_BEEF
+        || end_pos == 0
+        || start_pos > end_pos
+        || end_pos > stream.buffer.len() as u64
+    {
         return Err(crate::Error::CorruptLockfile);
     }
 
@@ -126,9 +91,7 @@ pub(crate) fn read_array<T: Copy>(stream: &mut Stream) -> crate::Result<Vec<T>> 
     stream.pos = end_pos as usize;
 
     if byte_len == 0 {
-        // Empty arrays are written by `write_array`'s else-branch without an
-        // `Aligner::write_with_align` pad, so their recorded start offset need not
-        // be aligned.
+        // `write_array` does not pad before an empty array, so its start offset need not be aligned.
         return Ok(Vec::new());
     }
 
@@ -150,17 +113,11 @@ pub(crate) fn read_array<T: Copy>(stream: &mut Stream) -> crate::Result<Vec<T>> 
     Ok(misaligned.to_vec())
 }
 
-pub(crate) fn write_array<S, T>(
-    stream: &mut S,
+pub(crate) fn write_array<T>(
+    stream: &mut StreamType<'_>,
     array: &[T],
     prefix: &'static str,
-) -> crate::Result<()>
-where
-    // One type plays both the positional-stream and append-writer roles —
-    // `StreamType` impls both `PositionalStream` (get_pos/pwrite) and
-    // `bun_io::Write` (append) — so there are never two `&mut` to one buffer.
-    S: lockfile::PositionalStream + bun_io::Write,
-{
+) -> crate::Result<()> {
     // This call is a zero-cost intent marker only — it carries no trait bound (see the
     // doc comment on `assert_no_uninitialized_padding`). The actual compile-time
     // enforcement is the per-type `const` field-offset asserts and the
@@ -183,48 +140,27 @@ where
     // type-name string (including its sizeof/alignof suffix) as a literal.
     stream.write_all(prefix.as_bytes())?;
 
+    let mut real_start_pos = stream.get_pos()? as u64;
     if !bytes.is_empty() {
-        let pos = stream.get_pos()? as u64;
-        let _ = Aligner::write_with_align(sizes::ALIGN_TYPE_0, &mut *stream, pos)?;
-
-        let real_start_pos = stream.get_pos()? as u64;
+        let _ = Aligner::write_with_align(sizes::ALIGN_TYPE_0, &mut *stream, real_start_pos)?;
+        real_start_pos = stream.get_pos()? as u64;
         stream.write_all(bytes)?;
-        let real_end_pos = stream.get_pos()? as u64;
-        let positioned: [u64; 2] = [real_start_pos, real_end_pos];
-        // `[u64; 2]` and `[u8; 16]` are both `Pod` of equal size — `bytemuck`
-        // gives the byte view without `unsafe`.
-        let positioned_bytes: &[u8; 16] = bytemuck::cast_ref(&positioned);
-        let mut written: usize = 0;
-        while written < 16 {
-            written += stream.pwrite(&positioned_bytes[written..], start_pos + written);
-        }
-    } else {
-        let real_end_pos = stream.get_pos()? as u64;
-        let positioned: [u64; 2] = [real_end_pos, real_end_pos];
-        // `[u64; 2]` and `[u8; 16]` are both `Pod` of equal size — `bytemuck`
-        // gives the byte view without `unsafe`.
-        let positioned_bytes: &[u8; 16] = bytemuck::cast_ref(&positioned);
-        let mut written: usize = 0;
-        while written < 16 {
-            written += stream.pwrite(&positioned_bytes[written..], start_pos + written);
-        }
+    }
+    let positioned: [u64; 2] = [real_start_pos, stream.get_pos()? as u64];
+    let positioned_bytes: &[u8; 16] = bytemuck::cast_ref(&positioned);
+    let mut written: usize = 0;
+    while written < 16 {
+        written += stream.pwrite(&positioned_bytes[written..], start_pos + written);
     }
     Ok(())
 }
 
-pub(crate) fn save<S>(
+pub(crate) fn save(
     lockfile: &Lockfile,
     options: &PackageManagerOptions,
-    stream: &mut S,
-) -> crate::Result<()>
-where
-    // See `write_array` — a single bound avoids two `&mut` to the same object.
-    S: lockfile::PositionalStream + bun_io::Write,
-{
+    stream: &mut StreamType<'_>,
+) -> crate::Result<()> {
     let buffers = &lockfile.buffers;
-
-    // The fields are saved unrolled in declaration order (see `sizes` module
-    // note).
 
     macro_rules! save_generic_field {
         ($field:ident, $name:literal, $elem:ty, $prefix:literal) => {{
@@ -290,41 +226,20 @@ where
         #[cfg(debug_assertions)]
         {
             use bun_install::dependency::version::Tag;
-            const SEP_WINDOWS: u8 = b'\\';
             for dep in remaining {
-                // SAFETY: `dep.version.value` is a tag-discriminated union; each
-                // arm reads only the field corresponding to `dep.version.tag`.
-                match dep.version.tag {
-                    Tag::Folder => {
-                        let folder = lockfile.str(dep.version.folder());
-                        if strings::contains_char(folder, SEP_WINDOWS) {
-                            panic!("workspace windows separator: {}\n", bstr::BStr::new(folder));
-                        }
-                    }
-                    Tag::Tarball => {
-                        if let crate::dependency::URI::Local(local) = dep.version.tarball().uri {
-                            let tarball = lockfile.str(&local);
-                            if strings::contains_char(tarball, SEP_WINDOWS) {
-                                panic!("tarball windows separator: {}", bstr::BStr::new(tarball));
-                            }
-                        }
-                    }
-                    Tag::Workspace => {
-                        let workspace = lockfile.str(dep.version.workspace());
-                        if strings::contains_char(workspace, SEP_WINDOWS) {
-                            panic!(
-                                "workspace windows separator: {}\n",
-                                bstr::BStr::new(workspace)
-                            );
-                        }
-                    }
-                    Tag::Symlink => {
-                        let symlink = lockfile.str(dep.version.symlink());
-                        if strings::contains_char(symlink, SEP_WINDOWS) {
-                            panic!("symlink windows separator: {}\n", bstr::BStr::new(symlink));
-                        }
-                    }
-                    _ => {}
+                let path = match dep.version.tag {
+                    Tag::Folder => dep.version.folder(),
+                    Tag::Workspace => dep.version.workspace(),
+                    Tag::Symlink => dep.version.symlink(),
+                    Tag::Tarball => match &dep.version.tarball().uri {
+                        crate::dependency::URI::Local(local) => local,
+                        _ => continue,
+                    },
+                    _ => continue,
+                };
+                let path = lockfile.str(path);
+                if strings::contains_char(path, b'\\') {
+                    panic!("windows separator in a path: {}", bstr::BStr::new(path));
                 }
             }
         }
@@ -386,9 +301,6 @@ pub(crate) fn load(
     let mut this = Buffers::default();
     let external_dependency_list_: Vec<dependency::External>;
 
-    // The fields are loaded unrolled in declaration order (see `sizes` module
-    // note).
-
     macro_rules! load_generic_field {
         ($field:ident, $name:literal, $elem:ty) => {{
             this.$field = read_array::<$elem>(stream)?;
@@ -403,8 +315,6 @@ pub(crate) fn load(
     // -- trees --
     {
         let tree_list: Vec<tree::External> = read_array(stream)?;
-        // `set_len` then `iter_mut()` would form `&mut Tree` to uninitialized
-        // memory (UB), so we push into the reserved capacity instead.
         this.trees = tree::List::with_capacity(tree_list.len());
         for from in &tree_list {
             this.trees.push(Tree::to_tree(*from));
@@ -445,12 +355,8 @@ pub(crate) fn load(
     let string_buf = this.string_bytes.as_slice();
     let mut extern_context = dependency::Context {
         log,
-        // allocator dropped — global mimalloc
         buffer: string_buf,
     };
-    // `set_len` then `as_mut_slice()` would form `&mut Dependency` to
-    // uninitialized memory (UB even when write-only), so we push into the
-    // reserved capacity instead.
     for ext in external_dependency_list {
         this.dependencies
             .push(dependency::to_dependency(*ext, &mut extern_context));

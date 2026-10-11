@@ -1201,24 +1201,13 @@ impl Bunfig {
 // ─────────────────────────────────────────────────────────────────────────────
 
 impl<'a> Parser<'a> {
-    fn parse_registry_url(&mut self, url: &[u8]) -> crate::Result<api::NpmRegistry> {
-        // Dedup D009: body is the canonical port in `bun_api::npm_registry`.
-        // The api `Parser` is generic over log/source and never reads them for
-        // this path, so we just hand it our reborrowed handles.
-        Ok(bun_api::npm_registry::Parser {
-            log: &mut *self.log,
-            source: self.source,
-        }
-        .parse_registry_url_string_impl(url)?)
-    }
-
     fn parse_registry_object(&mut self, obj: &E::Object) -> crate::Result<api::NpmRegistry> {
         // `user:pass@` / `:token@` in the URL are credentials, as in the string form.
         let mut registry = match obj.get(b"url") {
             Some(url) => {
                 self.expect_string(&url)?;
                 let url = url.as_string(self.bump).expect("infallible: type checked");
-                self.parse_registry_url(url)?
+                api::NpmRegistry::from_url(url)
             }
             None => api::NpmRegistry::default(),
         };
@@ -1235,26 +1224,18 @@ impl<'a> Parser<'a> {
             };
         }
 
-        if let Some(username) = username {
-            self.expect_string(&username)?;
-            registry.username = username
-                .as_string(self.bump)
-                .expect("infallible: type checked")
-                .into();
-        }
-        if let Some(password) = password {
-            self.expect_string(&password)?;
-            registry.password = password
-                .as_string(self.bump)
-                .expect("infallible: type checked")
-                .into();
-        }
-        if let Some(token) = token {
-            self.expect_string(&token)?;
-            registry.token = token
-                .as_string(self.bump)
-                .expect("infallible: type checked")
-                .into();
+        for (value, field) in [
+            (username, &mut registry.username),
+            (password, &mut registry.password),
+            (token, &mut registry.token),
+        ] {
+            if let Some(value) = value {
+                self.expect_string(&value)?;
+                *field = value
+                    .as_string(self.bump)
+                    .expect("infallible: type checked")
+                    .into();
+            }
         }
 
         Ok(registry)
@@ -1262,10 +1243,7 @@ impl<'a> Parser<'a> {
 
     fn parse_registry(&mut self, expr: &Expr) -> crate::Result<api::NpmRegistry> {
         match &expr.data {
-            ExprData::EString(s) => {
-                let url = s.string(self.bump)?;
-                self.parse_registry_url(url)
-            }
+            ExprData::EString(s) => Ok(api::NpmRegistry::from_url(s.string(self.bump)?)),
             ExprData::EObject(o) => self.parse_registry_object(o),
             _ => {
                 self.add_error(

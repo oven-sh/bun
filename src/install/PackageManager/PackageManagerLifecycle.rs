@@ -33,13 +33,10 @@ impl PackageManager {
             return;
         }
 
-        let offset = self.preinstall_state.len();
         self.preinstall_state
-            .reserve(count.saturating_sub(self.preinstall_state.len()));
-        // expandToCapacity + @memset(.., .unknown)
+            .reserve(count - self.preinstall_state.len());
         self.preinstall_state
             .resize(self.preinstall_state.capacity(), PreinstallState::Unknown);
-        let _ = offset; // resize already fills [offset..] with Unknown
     }
 
     /// A separate `lockfile` parameter would only feed `lockfile.packages.len` into
@@ -201,8 +198,6 @@ impl PackageManager {
                         return PreinstallState::ApplyPatch;
                     }
                     // we need to extract non-patched pkg into the cache
-                    self.set_preinstall_state(pkg.meta.id, PreinstallState::Extract);
-                    return PreinstallState::Extract;
                 }
 
                 self.set_preinstall_state(pkg.meta.id, PreinstallState::Extract);
@@ -285,19 +280,13 @@ impl PackageManager {
             self.last_reported_slow_lifecycle_script_at = current_time;
             let package_name: &[u8] = &longest_running.package_name;
 
-            if !(package_name.len() > 1 && package_name[package_name.len() - 1] == b's') {
-                bun_core::warn!(
-                    "{}'s postinstall cost you {}\n",
-                    BStr::new(package_name),
-                    bun_fmt::fmt_duration_one_decimal(time_running),
-                );
-            } else {
-                bun_core::warn!(
-                    "{}' postinstall cost you {}\n",
-                    BStr::new(package_name),
-                    bun_fmt::fmt_duration_one_decimal(time_running),
-                );
-            }
+            let ends_in_s = package_name.len() > 1 && package_name.ends_with(b"s");
+            bun_core::warn!(
+                "{}'{} postinstall cost you {}\n",
+                BStr::new(package_name),
+                if ends_in_s { "" } else { "s" },
+                bun_fmt::fmt_duration_one_decimal(time_running),
+            );
             Output::flush();
         }
     }
@@ -307,9 +296,7 @@ impl PackageManager {
         // need to clone because this is a copy before Lockfile.cleanWithLogger
         let name = root_package.name.slice(buf);
 
-        // `AutoAbsPath` is the SEP=auto alias.
         let mut top_level_dir = AutoAbsPath::init_top_level_dir();
-        // `defer top_level_dir.deinit()` — handled by Drop
 
         let add_node_gyp_rebuild_script = root_package
             .scripts
@@ -338,14 +325,7 @@ impl PackageManager {
         install_ctx: Option<InstallCtx<'_>>,
     ) -> Result<(), crate::Error> {
         let log_level = self.options.log_level;
-        let mut any_scripts = false;
-        for maybe_item in list.items.iter() {
-            if maybe_item.is_some() {
-                any_scripts = true;
-                break;
-            }
-        }
-        if !any_scripts {
+        if !list.items.iter().any(Option::is_some) {
             return Ok(());
         }
 
@@ -359,31 +339,18 @@ impl PackageManager {
 
         let env_loader = this_transpiler.env_mut();
         let mut script_env = env_loader.map.clone_with_allocator()?;
-        // `defer script_env.map.deinit()` — handled by Drop
 
         // `script_env.put` below needs `&mut`; copy PATH out so the
         // shared borrow does not span it.
         let original_path: Vec<u8> = script_env.get(b"PATH").unwrap_or(b"").to_vec();
 
-        // `EnvPathOptions` is currently fieldless.
         let mut path = EnvPath::init_capacity(
             original_path.len() + 1 + b"node_modules/.bin".len() + cwd.len() + 1,
         )?;
-        // `defer PATH.deinit()` — handled by Drop
 
         let mut parent: Option<&[u8]> = Some(cwd);
-        // Any installed package can link a `node` or `sh` into a `.bin` that packages share, so a
-        // dependency's script finds those only after its own `.bin`s and the inherited PATH.
-        let mut inherited_path = list.is_dependency.then_some(original_path.as_slice());
-        let store_entry = bun_paths::path_literal!("/node_modules/.bun/").as_bytes();
 
         while let Some(dir) = parent {
-            if dir.len() != cwd.len() && !strings::contains(dir, store_entry) {
-                if let Some(inherited) = inherited_path.take() {
-                    append_path_without_ancestor_bins(&mut path, inherited, cwd)?;
-                }
-            }
-
             let mut builder = path.path_component_builder();
             builder.append(dir);
             builder.append(b"node_modules/.bin");
@@ -392,11 +359,7 @@ impl PackageManager {
             parent = bun_paths::dirname(dir);
         }
 
-        match inherited_path {
-            Some(inherited) => append_path_without_ancestor_bins(&mut path, inherited, cwd)?,
-            None if list.is_dependency => {}
-            None => path.append(original_path.as_slice())?,
-        }
+        path.append(original_path.as_slice())?;
         script_env.put(b"PATH", path.slice())?;
 
         put_npm_package_env(&mut script_env, cwd, &list.package_name)?;
@@ -407,29 +370,13 @@ impl PackageManager {
         // this stack frame (freed by the subprocess's `Drop`).
         let envp = script_env.create_null_delimited_env_map()?;
 
-        let shell_bin: Option<&ZStr> = 'shell_bin: {
-            #[cfg(windows)]
-            {
-                break 'shell_bin None;
-            }
-
-            #[cfg(not(windows))]
-            {
-                if let Some(env_path) = self.env().get(b"PATH") {
-                    // `find_shell` stores its result NUL-terminated (see
-                    // `RunCommand::find_shell`); reinterpret as `&ZStr`.
-                    if let Some(found) = crate::RunCommand::find_shell(env_path, cwd) {
-                        debug_assert!(found.last() == Some(&0));
-                        // `find_shell` includes the trailing NUL in its
-                        // `'static` storage; slice off the sentinel for the
-                        // `ZStr` length.
-                        break 'shell_bin Some(ZStr::from_slice_with_nul(found));
-                    }
-                }
-
-                break 'shell_bin None;
-            }
-        };
+        #[cfg(windows)]
+        let shell_bin: Option<&ZStr> = None;
+        // `find_shell` includes the trailing NUL in its `'static` storage.
+        #[cfg(not(windows))]
+        let shell_bin: Option<&ZStr> = (self.env().get(b"PATH"))
+            .and_then(|env_path| crate::RunCommand::find_shell(env_path, cwd))
+            .map(ZStr::from_slice_with_nul);
 
         RealLifecycleScriptSubprocess::spawn_package_scripts(
             self,
@@ -454,9 +401,7 @@ impl PackageManager {
                 .root_package_id
                 .get(&self.lockfile, self.workspace_name_hash) as usize;
             let root_deps = self.lockfile.packages.items_dependencies()[root_id];
-            let mut dep_id = root_deps.off;
-            let end = dep_id.saturating_add(root_deps.len);
-            while dep_id < end {
+            for dep_id in root_deps.begin()..root_deps.end() {
                 let root_dep = &self.lockfile.buffers.dependencies[dep_id as usize];
                 for request in self.update_requests.iter() {
                     if request.matches(root_dep, self.lockfile.buffers.string_bytes.as_slice()) {
@@ -469,7 +414,6 @@ impl PackageManager {
                         break;
                     }
                 }
-                dep_id += 1;
             }
         }
 
@@ -477,10 +421,8 @@ impl PackageManager {
     }
 }
 
-/// `npm_package_json`, `npm_package_name`, `npm_package_version` and the `config` strings as
-/// `npm_package_config_<key>` (the subset `bun run` exports), all from the package.json of the
-/// package whose scripts run. What a `bun run` above this install set for its package and its
-/// script goes (`spawn_next_script` adds `npm_lifecycle_*` per script).
+/// `npm_package_{json,name,version}` and `npm_package_config_<key>` (the subset `bun run` exports) from the package.json of the package
+/// whose scripts run, in place of what a `bun run` above this install set (`spawn_next_script` adds `npm_lifecycle_*` per script).
 fn put_npm_package_env(
     script_env: &mut bun_dotenv::Map,
     package_dir: &[u8],
@@ -531,27 +473,6 @@ fn put_npm_package_env(
     Ok(())
 }
 
-/// `inherited` without the `node_modules/.bin` of `cwd` and its ancestors, which a `bun run` above this install put in front.
-fn append_path_without_ancestor_bins(
-    path: &mut EnvPath,
-    inherited: &[u8],
-    cwd: &[u8],
-) -> Result<(), bun_alloc::AllocError> {
-    let bin = bun_paths::path_literal!("/node_modules/.bin").as_bytes();
-    for entry in strings::split(inherited, &[bun_paths::DELIMITER]) {
-        let is_ancestor_bin = strings::without_trailing_slash(entry)
-            .strip_suffix(bin)
-            .is_some_and(|dir| {
-                cwd.strip_prefix(dir)
-                    .is_some_and(|rest| rest.first().is_none_or(|&c| c == bun_paths::SEP))
-            });
-        if !is_ancestor_bin {
-            path.append(entry)?;
-        }
-    }
-    Ok(())
-}
-
 fn add_package_to_set(
     set: &mut ArrayHashMap<PackageID, ()>,
     lockfile: &Lockfile,
@@ -562,57 +483,16 @@ fn add_package_to_set(
     }
     let mut stack: Vec<PackageID> = vec![package_id];
     while let Some(current) = stack.pop() {
-        let dependencies_slice = lockfile.packages.items_dependencies()[current as usize];
-        let begin = dependencies_slice.off;
-        let end = begin.saturating_add(dependencies_slice.len);
-        let mut dep_id = begin;
-        while dep_id < end {
+        let rows = lockfile.packages.items_dependencies()[current as usize];
+        for dep_id in rows.begin()..rows.end() {
             let dep_package_id = lockfile.buffers.resolutions[dep_id as usize];
             if dep_package_id != invalid_package_id
                 && !handle_oom(set.get_or_put(dep_package_id)).found_existing
             {
                 stack.push(dep_package_id);
             }
-            dep_id += 1;
         }
     }
 }
 
 use bun_install::LogLevel;
-
-// ──────────────────────────────────────────────────────────────────────────
-// Free-function re-export surface. The `impl PackageManager` bodies
-// above are canonical; these thin shims keep the
-// `pub use lifecycle::{...}` re-exports in `PackageManager.rs` resolving the
-// same way `PackageManagerDirectories.rs` / `PackageManagerEnqueue.rs` do.
-// ──────────────────────────────────────────────────────────────────────────
-
-#[inline]
-pub fn set_preinstall_state(
-    this: &mut PackageManager,
-    package_id: PackageID,
-    value: PreinstallState,
-) {
-    this.set_preinstall_state(package_id, value)
-}
-
-#[inline]
-pub fn get_preinstall_state(this: &PackageManager, package_id: PackageID) -> PreinstallState {
-    this.get_preinstall_state(package_id)
-}
-
-#[inline]
-pub fn determine_preinstall_state(
-    this: &mut PackageManager,
-    pkg: &Package,
-    dependency: Behavior,
-    out_name_and_version_hash: &mut Option<u64>,
-    out_patchfile_hash: &mut Option<u64>,
-) -> PreinstallState {
-    this.determine_preinstall_state(
-        pkg,
-        dependency,
-        out_name_and_version_hash,
-        out_patchfile_hash,
-    )
-}

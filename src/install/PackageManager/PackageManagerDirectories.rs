@@ -19,7 +19,7 @@ use bun_sys::{self as sys, Dir, Fd, File};
 use crate::bun_progress::Node as ProgressNode;
 
 use super::options::{self, Enable, LogLevel};
-use super::{Command, Options, PackageManager, ProgressStrings, Subcommand};
+use super::{Command, PackageManager, ProgressStrings, Subcommand};
 
 // ───────────────────────────── method wrappers ───────────────────────────────
 // Thin `&mut self` shims so call sites can use method-style spelling
@@ -53,11 +53,6 @@ impl PackageManager {
             timestamp_for_manifest_cache_control: self.timestamp_for_manifest_cache_control,
             accept_expired: self.options.offline != super::options::OfflineMode::Online,
         }
-    }
-
-    #[inline]
-    pub(crate) fn get_cache_directory_and_abs_path(&mut self) -> (Fd, AbsPath) {
-        get_cache_directory_and_abs_path(self)
     }
 
     #[inline]
@@ -344,12 +339,12 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
             // encapsulates the BackRef deref + singleton-liveness invariant.
             let env = unsafe { &*this }.env_mut();
             // SAFETY: shared read of `options`; disjoint from `cache_directory_path`.
-            let opened = fetch_cache_directory_path(env, Some(unsafe { &(*this).options }))
-                .and_then(|cache_dir| {
-                    // SAFETY: see fn safety contract.
-                    unsafe { (*this).cache_directory_path = ZBox::from_bytes(&cache_dir.path) };
-                    Dir::cwd().make_open_path(&cache_dir.path, Default::default())
-                });
+            let configured = unsafe { (*this).options.cache_directory };
+            let opened = fetch_cache_directory_path(env, Some(configured)).and_then(|cache_dir| {
+                // SAFETY: see fn safety contract.
+                unsafe { (*this).cache_directory_path = ZBox::from_bytes(&cache_dir.path) };
+                Dir::cwd().make_open_path(&cache_dir.path, Default::default())
+            });
 
             match opened {
                 Ok(d) => return d,
@@ -396,7 +391,7 @@ pub struct CacheDir {
 /// An empty variable counts as unset: `abs(&[b""])` is the project directory.
 pub fn fetch_cache_directory_path(
     env: &mut DotEnvLoader,
-    options: Option<&Options>,
+    configured: Option<&[u8]>,
 ) -> sys::Maybe<CacheDir> {
     const CWD_FALLBACK: &[u8] = b"node_modules/.bun-cache";
     let parts: &[&[u8]] = if let Some(dir) = env
@@ -404,10 +399,7 @@ pub fn fetch_cache_directory_path(
         .filter(|dir| !dir.is_empty())
     {
         &[dir]
-    } else if let Some(dir) = options
-        .map(|opts| opts.cache_directory)
-        .filter(|dir| !dir.is_empty())
-    {
+    } else if let Some(dir) = configured.filter(|dir| !dir.is_empty()) {
         &[dir]
     } else if let Some(dir) = env.get(b"BUN_INSTALL").filter(|dir| !dir.is_empty()) {
         &[dir, b"install/", b"cache/"]
@@ -795,31 +787,57 @@ pub fn cached_npm_package_folder_print_basename<'a>(
 
 /// `@T@sha512-<first 16 digest bytes as hex>@@@1`: a path or URL names different bytes over time
 /// and, for a path, in every project sharing the cache, so a `file:` / URL tarball is cached under
-/// the integrity bun.lock pins. Empty while that is unknown, which callers treat as a cache miss.
+/// the integrity bun.lock pins. A row that has none and gets none (`pins_tarballs`) has only its
+/// path or URL: `@T@<hash of it>@@@1`.
 pub fn cached_tarball_folder_name_print<'a>(
     buf: &'a mut [u8],
     integrity: &Integrity,
+    url: &[u8],
     patch_hash: Option<u64>,
 ) -> &'a ZStr {
-    let Some(algorithm) = integrity.tag.name() else {
-        return ZStr::EMPTY;
-    };
-    let digest = integrity.slice();
     let mut w = ByteCursor::new(buf);
     w.put(b"@T@");
-    w.put(algorithm.as_bytes());
-    w.put_byte(b'-');
-    w.put_hex_bytes(&digest[..digest.len().min(16)]);
+    if let Some(algorithm) = integrity.tag.name() {
+        let digest = integrity.slice();
+        w.put(algorithm.as_bytes());
+        w.put_byte(b'-');
+        w.put_hex_bytes(&digest[..digest.len().min(16)]);
+    } else {
+        w.put_u64_hex16::<true>(Semver::semver_string::Builder::string_hash(url));
+    }
     w.put_cache_version(Some(CacheVersion::CURRENT));
     w.put_patch_hash(patch_hash);
     w.finish_z()
 }
 
-pub fn cached_tarball_folder_name(integrity: &Integrity, patch_hash: Option<u64>) -> &'static ZStr {
-    cached_tarball_folder_name_print(cached_package_folder_name_buf(), integrity, patch_hash)
+/// Empty for a row without an integrity that this run gives one, which callers treat as a cache miss.
+pub fn cached_tarball_folder_name(
+    this: &PackageManager,
+    integrity: &Integrity,
+    resolution: &Resolution,
+    patch_hash: Option<u64>,
+) -> &'static ZStr {
+    if !integrity.tag.is_supported() && this.pins_tarballs() {
+        return ZStr::EMPTY;
+    }
+    let url = match resolution.tag {
+        ResolutionTag::LocalTarball => resolution.local_tarball(),
+        _ => resolution.remote_tarball(),
+    };
+    cached_tarball_folder_name_print(
+        cached_package_folder_name_buf(),
+        integrity,
+        this.lockfile.str(url),
+        patch_hash,
+    )
 }
 
 impl PackageManager {
+    /// Whether what this run reads from a `file:` path or URL can become the integrity in bun.lock.
+    pub(crate) fn pins_tarballs(&self) -> bool {
+        self.options.do_.save_lockfile() && self.options.offline != options::OfflineMode::Offline
+    }
+
     /// Only bun.lock's hash says which bytes a `file:` path or URL meant. `--force`, `bun update`
     /// and naming the dependency on the command line read it again and pin what is there now.
     /// `named_here`: the names on the command line are about the package.json `dependency` is in.
@@ -829,8 +847,7 @@ impl PackageManager {
         string_buf: &[u8],
         named_here: bool,
     ) -> bool {
-        self.options.do_.save_lockfile()
-            && self.options.offline != options::OfflineMode::Offline
+        self.pins_tarballs()
             && (self.options.enable.force_install()
                 || if self.update_requests.is_empty() {
                     self.to_update

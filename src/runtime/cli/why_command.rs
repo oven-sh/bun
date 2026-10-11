@@ -1,6 +1,4 @@
 use core::cmp::Ordering;
-use core::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
-use std::io::Write as _;
 
 use bstr::BStr;
 
@@ -31,9 +29,6 @@ const PREFIX_SPACE: &[u8] = b"     ";
 
 // The label of a root package.json with no "name". It has spaces, so it is never a package name.
 const UNNAMED_ROOT: &[u8] = b"the root package";
-
-// Using AtomicUsize for safe interior mutability on a single-threaded CLI path.
-static MAX_DEPTH: AtomicUsize = AtomicUsize::new(100);
 
 struct VersionInfo {
     version: Box<[u8]>,
@@ -99,39 +94,19 @@ fn get_dependency_type_priority(dep_type: DependencyType) -> u8 {
     }
 }
 
-// Bool-returning lessThan semantics; call sites wrap into a total Ordering
-// (Less if a<b, Greater if b<a, else Equal — required since Rust 1.81 sort_by
-// panics on non-total comparators).
-fn compare_dependents(a: &DependentInfo, b: &DependentInfo) -> bool {
-    let a_specificity = get_specifier_specificity(&a.spec);
-    let b_specificity = get_specifier_specificity(&b.spec);
-
-    if a_specificity != b_specificity {
-        return a_specificity > b_specificity;
-    }
-
-    let a_type_priority = get_dependency_type_priority(a.dep_type);
-    let b_type_priority = get_dependency_type_priority(b.dep_type);
-
-    if a_type_priority != b_type_priority {
-        return a_type_priority > b_type_priority;
-    }
-
-    a.name[..] < b.name[..]
-}
-
+/// Most specific range first, then by dependency type, then by name.
 fn cmp_dependents(a: &DependentInfo, b: &DependentInfo) -> Ordering {
-    if compare_dependents(a, b) {
-        Ordering::Less
-    } else if compare_dependents(b, a) {
-        Ordering::Greater
-    } else {
-        Ordering::Equal
-    }
+    get_specifier_specificity(&b.spec)
+        .cmp(&get_specifier_specificity(&a.spec))
+        .then_with(|| {
+            get_dependency_type_priority(b.dep_type).cmp(&get_dependency_type_priority(a.dep_type))
+        })
+        .then_with(|| a.name.cmp(&b.name))
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 enum PatternType {
+    #[default]
     Exact,
     Prefix,
     Suffix,
@@ -140,9 +115,7 @@ enum PatternType {
     Invalid,
 }
 
-// Fields borrow slices of the input `pattern`; lifetime added even though
-// PORTING.md prefers Box/&'static for []const u8 fields — these are pure views over
-// a caller-owned slice (BORROW_PARAM), never freed, never literal-only.
+#[derive(Default)]
 struct GlobPattern<'a> {
     pattern_type: PatternType,
     prefix: &'a [u8],
@@ -150,19 +123,6 @@ struct GlobPattern<'a> {
     substring: &'a [u8],
     version_pattern: &'a [u8],
     version_query: Option<semver::query::Group>,
-}
-
-impl<'a> Default for GlobPattern<'a> {
-    fn default() -> Self {
-        Self {
-            pattern_type: PatternType::Exact,
-            prefix: b"",
-            suffix: b"",
-            substring: b"",
-            version_pattern: b"",
-            version_query: None,
-        }
-    }
 }
 
 impl<'a> GlobPattern<'a> {
@@ -186,13 +146,13 @@ impl<'a> GlobPattern<'a> {
 
     /// `Exact` keeps the whole name in `prefix`.
     fn init_for_name(pattern: &'a [u8]) -> GlobPattern<'a> {
-        if !strings::contains_char(pattern, b'*') {
+        let Some(wildcard_pos) = strings::index_of_char_usize(pattern, b'*') else {
             return GlobPattern {
                 pattern_type: PatternType::Exact,
                 prefix: pattern,
                 ..Default::default()
             };
-        }
+        };
 
         if pattern.len() >= 3 && pattern[0] == b'*' && pattern[pattern.len() - 1] == b'*' {
             let substring = &pattern[1..pattern.len() - 1];
@@ -205,41 +165,33 @@ impl<'a> GlobPattern<'a> {
             }
         }
 
-        if let Some(wildcard_pos) = strings::index_of_char_usize(pattern, b'*') {
-            if wildcard_pos == pattern.len() - 1 {
-                return GlobPattern {
-                    pattern_type: PatternType::Prefix,
-                    prefix: &pattern[0..wildcard_pos],
-                    ..Default::default()
-                };
-            }
-
-            if wildcard_pos == 0 {
-                return GlobPattern {
-                    pattern_type: PatternType::Suffix,
-                    suffix: &pattern[1..],
-                    ..Default::default()
-                };
-            }
-
-            if strings::contains_char(&pattern[wildcard_pos + 1..], b'*') {
-                return GlobPattern {
-                    pattern_type: PatternType::Invalid,
-                    ..Default::default()
-                };
-            }
-
+        if wildcard_pos == pattern.len() - 1 {
             return GlobPattern {
-                pattern_type: PatternType::Middle,
+                pattern_type: PatternType::Prefix,
                 prefix: &pattern[0..wildcard_pos],
-                suffix: &pattern[wildcard_pos + 1..],
+                ..Default::default()
+            };
+        }
+
+        if wildcard_pos == 0 {
+            return GlobPattern {
+                pattern_type: PatternType::Suffix,
+                suffix: &pattern[1..],
+                ..Default::default()
+            };
+        }
+
+        if strings::contains_char(&pattern[wildcard_pos + 1..], b'*') {
+            return GlobPattern {
+                pattern_type: PatternType::Invalid,
                 ..Default::default()
             };
         }
 
         GlobPattern {
-            pattern_type: PatternType::Exact,
-            prefix: pattern,
+            pattern_type: PatternType::Middle,
+            prefix: &pattern[0..wildcard_pos],
+            suffix: &pattern[wildcard_pos + 1..],
             ..Default::default()
         }
     }
@@ -306,26 +258,19 @@ Explain why a package is installed
 
     pub(crate) fn exec(ctx: command::Context) -> Result<(), crate::Error> {
         let cli = CommandLineArguments::parse(Subcommand::Why)?;
-        // Capture the few `cli` fields we read after `init` consumes it.
-        let positionals = cli.positionals;
+        let positionals = match cli.positionals {
+            [b"why", rest @ ..] => rest,
+            all => all,
+        };
         let top_only = cli.top_only;
 
         let (pm, _cwd) = package_manager::init(&mut *ctx, cli, Subcommand::Why)?;
 
-        if positionals.is_empty() {
+        let Some(&package_pattern) = positionals.first() else {
             Self::print_usage();
             Global::exit(1);
-        }
-
-        if positionals[0] == b"why" {
-            if positionals.len() < 2 {
-                Self::print_usage();
-                Global::exit(1);
-            }
-            return Self::exec_with_manager(pm, positionals[1], top_only);
-        }
-
-        Self::exec_with_manager(pm, positionals[0], top_only)
+        };
+        Self::exec_with_manager(pm, package_pattern, top_only)
     }
 
     pub(crate) fn exec_from_pm(
@@ -345,22 +290,18 @@ Explain why a package is installed
         package_pattern: &[u8],
         top_only: bool,
     ) -> Result<(), crate::Error> {
-        let depth_opt = pm.options.depth;
+        let max_depth = if top_only {
+            1
+        } else {
+            pm.options.depth.unwrap_or(100)
+        };
         let log_level = pm.options.log_level;
         let configured_linker = pm.options.node_linker;
 
         // Into `pm.lockfile` itself: a migration fetches the manifests of the packages it finds there.
         let load_lockfile = pm.load_lockfile_from_cwd::<true>();
-        PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, log_level);
+        PackageManagerCommand::handle_load_lockfile_errors_for(&load_lockfile, log_level, "");
         let linker = load_lockfile.node_linker(configured_linker);
-
-        if top_only {
-            MAX_DEPTH.store(1, AtomicOrdering::Relaxed);
-        } else if let Some(depth) = depth_opt {
-            MAX_DEPTH.store(depth, AtomicOrdering::Relaxed);
-        } else {
-            MAX_DEPTH.store(100, AtomicOrdering::Relaxed);
-        }
 
         let lockfile: &Lockfile = &pm.lockfile;
         let string_bytes = lockfile.buffers.string_bytes.as_slice();
@@ -368,10 +309,8 @@ Explain why a package is installed
         let dependencies_items = lockfile.buffers.dependencies.as_slice();
         let resolutions_items = lockfile.buffers.resolutions.as_slice();
 
-        let _pkg_names = packages.items_name();
         let pkg_dep_slices = packages.items_dependencies();
         let pkg_res_slices = packages.items_resolutions();
-        let _pkg_resolution = packages.items_resolution();
 
         let mut target_versions: Vec<VersionInfo> = Vec::new();
 
@@ -390,13 +329,8 @@ Explain why a package is installed
 
         let glob = GlobPattern::init(package_pattern);
 
-        // The column-backed `PackageList` exposes
-        // `items_name()` / `items_dependencies()` / … directly, so we read
-        // columns by index instead of materialising a `Package` row.
         let pkg_names = packages.items_name();
         let pkg_name_hashes = packages.items_name_hash();
-        let _pkg_dependencies = packages.items_dependencies();
-        let _pkg_resolutions = packages.items_resolutions();
         let pkg_resolution = packages.items_resolution();
 
         // The pattern also selects a package through the name of a dependency that leads to it, so an alias finds the package behind it.
@@ -422,14 +356,11 @@ Explain why a package is installed
                     None => core::slice::from_ref(&resolutions[dep_idx]),
                 };
 
-                let mut dep_version_buf: Vec<u8> = Vec::new();
-                write!(
-                    &mut dep_version_buf,
-                    "{}",
-                    pkg_resolution[pkg_idx].fmt(string_bytes, PathSep::Auto)
-                )
-                .expect("unreachable");
-                let dep_pkg_version: Box<[u8]> = dep_version_buf.into_boxed_slice();
+                let dep_pkg_version: Box<[u8]> = pkg_resolution[pkg_idx]
+                    .fmt(string_bytes, PathSep::Auto)
+                    .to_string()
+                    .into_bytes()
+                    .into_boxed_slice();
 
                 let dep_name = dependency.name.slice(string_bytes);
                 let spec = dependency.version.literal.slice(string_bytes);
@@ -486,14 +417,11 @@ Explain why a package is installed
 
             let resolution = &pkg_resolution[pkg_idx];
 
-            let mut version_buf: Vec<u8> = Vec::new();
-            write!(
-                &mut version_buf,
-                "{}",
-                resolution.fmt(string_bytes, PathSep::Auto)
-            )
-            .expect("unreachable");
-            let version: Box<[u8]> = version_buf.into_boxed_slice();
+            let version: Box<[u8]> = resolution
+                .fmt(string_bytes, PathSep::Auto)
+                .to_string()
+                .into_bytes()
+                .into_boxed_slice();
 
             let semver_version = match resolution.tag {
                 ResolutionTag::Npm => Some(resolution.npm().version),
@@ -530,18 +458,21 @@ Explain why a package is installed
                 for_terminal(BStr::new(&target_version.version))
             );
 
-            if let Some(dependents) = all_dependents.get(&target_version.pkg_id) {
-                if dependents.is_empty() {
-                    bun_core::prettyln!("<d>  └─ No dependents found<r>");
-                } else if MAX_DEPTH.load(AtomicOrdering::Relaxed) == 0 {
+            match all_dependents.get(&target_version.pkg_id) {
+                None => bun_core::prettyln!("<d>  └─ No dependents found<r>"),
+                Some(_) if max_depth == 0 => {
                     bun_core::prettyln!("<d>  └─ (deeper dependencies hidden)<r>");
-                } else {
-                    // Clone the slice so it can be sorted while `ctx_data`
-                    // still borrows `all_dependents`.
+                }
+                Some(dependents) => {
                     let mut sorted: Vec<DependentInfo> = dependents.clone();
                     index_sort::sort_slice_by(&mut sorted, cmp_dependents);
 
-                    let mut ctx_data = TreeContext::init(&all_dependents);
+                    let mut ctx_data = TreeContext {
+                        all_dependents: &all_dependents,
+                        max_depth,
+                        path_tracker: HashMap::default(),
+                        expanded: HashMap::default(),
+                    };
                     ctx_data.path_tracker.insert(target_version.pkg_id, false);
 
                     let len = sorted.len();
@@ -566,8 +497,6 @@ Explain why a package is installed
                         }
                     }
                 }
-            } else {
-                bun_core::prettyln!("<d>  └─ No dependents found<r>");
             }
 
             bun_core::prettyln!("");
@@ -617,23 +546,14 @@ fn print_package_with_type(prefix: &[u8], package: &DependentInfo) {
     }
 }
 
-pub(crate) struct TreeContext<'a> {
+struct TreeContext<'a> {
     all_dependents: &'a HashMap<PackageID, Vec<DependentInfo>>,
+    max_depth: usize,
     /// Packages being expanded right now; the value records whether a `*circular` pointed at it.
     path_tracker: HashMap<PackageID, bool>,
     /// `(depth, cutoff)` of subtrees already printed; repeats print `*deduped` (there are
-    /// exponentially many paths) unless shallower than `cutoff`, where a branch cut at `MAX_DEPTH` shows more.
+    /// exponentially many paths) unless shallower than `cutoff`, where a branch cut at `max_depth` shows more.
     expanded: HashMap<PackageID, (usize, usize)>,
-}
-
-impl<'a> TreeContext<'a> {
-    fn init(all_dependents: &'a HashMap<PackageID, Vec<DependentInfo>>) -> TreeContext<'a> {
-        TreeContext {
-            all_dependents,
-            path_tracker: HashMap::default(),
-            expanded: HashMap::default(),
-        }
-    }
 }
 
 /// Returns `(lines printed, cutoff)`; see `TreeContext::expanded`.
@@ -657,8 +577,6 @@ fn print_dependency_tree(
     }
 
     ctx.path_tracker.insert(current_pkg_id, false);
-    // All post-insert exit paths below remove explicitly. Error paths are gone
-    // (alloc failures abort under global mimalloc).
 
     let (mut lines, mut cutoff) = (0usize, 0usize);
 
@@ -673,7 +591,7 @@ fn print_dependency_tree(
 
         let len = sorted_dependents.len();
         for (dep_idx, dep) in sorted_dependents.iter().enumerate() {
-            if depth >= MAX_DEPTH.load(AtomicOrdering::Relaxed) {
+            if depth >= ctx.max_depth {
                 bun_core::prettyln!("<d>{}└─ (deeper dependencies hidden)<r>", BStr::new(prefix));
                 lines += 1;
                 cutoff = depth;
@@ -681,26 +599,14 @@ fn print_dependency_tree(
             }
 
             let is_dep_last = dep_idx == len - 1;
-            let prefix_char: &[u8] = if is_dep_last {
-                "└─ ".as_bytes()
+            let (branch, next_suffix) = if is_dep_last {
+                ("└─ ", "   ")
             } else {
-                "├─ ".as_bytes()
+                ("├─ ", "│  ")
             };
-
-            let mut full_prefix: Vec<u8> = Vec::with_capacity(prefix.len() + prefix_char.len());
-            full_prefix.extend_from_slice(prefix);
-            full_prefix.extend_from_slice(prefix_char);
-            print_package_with_type(&full_prefix, dep);
+            print_package_with_type(&[prefix, branch.as_bytes()].concat(), dep);
             lines += 1;
-
-            let next_suffix: &[u8] = if is_dep_last {
-                b"   "
-            } else {
-                "│  ".as_bytes()
-            };
-            let mut next_prefix: Vec<u8> = Vec::with_capacity(prefix.len() + next_suffix.len());
-            next_prefix.extend_from_slice(prefix);
-            next_prefix.extend_from_slice(next_suffix);
+            let next_prefix = [prefix, next_suffix.as_bytes()].concat();
 
             let print_break_line = is_dep_last && len > 1 && !printed_break_line;
             let (subtree_lines, subtree_cutoff) = print_dependency_tree(

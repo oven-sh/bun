@@ -13,15 +13,10 @@ pub(crate) struct InstallCommand;
 
 impl InstallCommand {
     pub(crate) fn exec(ctx: &mut ContextData) -> Result<(), Error> {
-        match install(ctx) {
-            Ok(()) => Ok(()),
-            Err(e) => Self::handle_error(e),
-        }
+        install(ctx).or_else(Self::handle_error)
     }
 
-    /// Cold, out-of-line error path so the hot `bun install` dispatch in `exec`
-    /// stays small and contiguous in `.text` (the "no changes" fast path never
-    /// touches this code, and demand-paging it in pollutes the startup window).
+    /// Out of line, so that the hot `bun install` dispatch in `exec` stays small in `.text`.
     #[cold]
     #[inline(never)]
     pub(crate) fn handle_error(e: Error) -> Result<(), Error> {
@@ -31,9 +26,7 @@ impl InstallCommand {
                 bun_install::Error::InstallFailed | bun_install::Error::InvalidPackageJSON
             )
         ) {
-            // SAFETY: `Cli::LOG_` is initialised once during single-threaded
-            // startup in `Cli::start()` before any command (including this
-            // one) is dispatched; no other `&mut` to it is live here.
+            // SAFETY: `Cli::start()` initialised `Cli::LOG_`; no other `&mut` to it is live here.
             let log = unsafe { (*Cli::LOG_.get()).assume_init_mut() };
             let _ = log.print(std::ptr::from_mut(Output::error_writer()));
             Global::exit(1);
@@ -42,11 +35,7 @@ impl InstallCommand {
     }
 }
 
-// Kept out-of-line (not inlined into the `exec` dispatcher) so it survives as a
-// distinct symbol the release link's symbol-ordering file can cluster next to the
-// rest of the `bun install` startup path (PackageManager::init, lockfile diff,
-// resolver/transpiler setup) — otherwise these live on unrelated 4 KB pages of
-// the ~84 MB binary and get faulted in one page at a time.
+// A symbol of its own, which the link's symbol-ordering file puts next to the rest of the startup path.
 #[inline(never)]
 fn install(ctx: &mut ContextData) -> Result<(), Error> {
     let mut cli = CommandLineArguments::parse(Subcommand::Install)?;
@@ -92,8 +81,7 @@ fn install_with_cli(ctx: &mut ContextData, cli: CommandLineArguments) -> Result<
         Output::flush();
     }
 
-    // SAFETY: `ROOT_PACKAGE_JSON_PATH` is written exactly once inside
-    // `PackageManager::init` (above) on this thread; only read thereafter.
+    // SAFETY: written once, inside `PackageManager::init` (above) on this thread; only read thereafter.
     let root_package_json_path = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
     install_with_manager(manager, &mut *ctx, root_package_json_path, &original_cwd)?;
 

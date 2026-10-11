@@ -62,63 +62,35 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     };
     let ci_name = bun_core::ci_info::detect_ci_name();
 
-    let mut print_buf: Vec<u8> = Vec::new();
-
+    let user_agent = format!(
+        "{} {} {} workspaces/false{}{}",
+        Global::user_agent,
+        Global::os_name,
+        Global::arch_name,
+        if ci_name.is_some() { " ci/" } else { "" },
+        bstr::BStr::new(ci_name.unwrap_or(b"")),
+    );
+    // no otp needed, just use auth-type from options
+    let header_list: [(&str, &[u8]); 8] = [
+        ("accept", b"*/*"),
+        ("accept-encoding", b"gzip/deflate"),
+        ("authorization", &authorization),
+        ("npm-auth-type", auth_type),
+        ("npm-command", b"whoami"),
+        ("user-agent", user_agent.as_bytes()),
+        ("Connection", b"keep-alive"),
+        ("Host", registry_url.host),
+    ];
     let mut headers = HeaderBuilder::default();
-
-    {
-        headers.count("accept", "*/*");
-        headers.count("accept-encoding", "gzip,deflate");
-        headers.count("authorization", &authorization);
-
-        // no otp needed, just use auth-type from options
-        headers.count("npm-auth-type", auth_type);
-        headers.count("npm-command", "whoami");
-
-        write!(
-            &mut print_buf,
-            "{} {} {} workspaces/false{}{}",
-            Global::user_agent,
-            Global::os_name,
-            Global::arch_name,
-            if ci_name.is_some() { " ci/" } else { "" },
-            bstr::BStr::new(ci_name.unwrap_or(b"")),
-        )
-        .unwrap();
-        headers.count("user-agent", &print_buf);
-        print_buf.clear();
-
-        headers.count("Connection", "keep-alive");
-        headers.count("Host", registry_url.host);
+    for (name, value) in header_list {
+        headers.count(name, value);
     }
-
     headers.allocate()?;
-
-    {
-        headers.append("accept", "*/*");
-        headers.append("accept-encoding", "gzip/deflate");
-        headers.append("authorization", &authorization);
-
-        headers.append("npm-auth-type", auth_type);
-        headers.append("npm-command", "whoami");
-
-        write!(
-            &mut print_buf,
-            "{} {} {} workspaces/false{}{}",
-            Global::user_agent,
-            Global::os_name,
-            Global::arch_name,
-            if ci_name.is_some() { " ci/" } else { "" },
-            bstr::BStr::new(ci_name.unwrap_or(b"")),
-        )
-        .unwrap();
-        headers.append("user-agent", &print_buf);
-        print_buf.clear();
-
-        headers.append("Connection", "keep-alive");
-        headers.append("Host", registry_url.host);
+    for (name, value) in header_list {
+        headers.append(name, value);
     }
 
+    let mut print_buf: Vec<u8> = Vec::new();
     write!(
         &mut print_buf,
         "{}/-/whoami",
@@ -127,16 +99,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     .unwrap();
 
     let mut response_buf = MutableString::init(1024)?;
-
-    // `print_buf` stays live on this frame until after `req.send_sync()`
-    // returns. `init_sync` borrows the URL/header buffers for the duration of
-    // the synchronous request only.
     let url = URL::parse(&print_buf);
-
-    // `headers.allocate()` set `content.ptr` to a valid `content.len`-byte
-    // allocation; `headers` outlives `req`. `written_slice()` is the safe
-    // nonnull-asref accessor over the set-once `Option<NonNull<u8>>` (returns
-    // `&[]` when unallocated, matching the previous `None => b""` arm).
     let header_buf: &[u8] = headers.content.written_slice();
 
     let mut req =
@@ -281,9 +244,7 @@ pub mod registry {
         pub name: Box<[u8]>,
         // https://github.com/npm/npm-registry-fetch/blob/main/lib/auth.js#L96
         // Sent verbatim as `Basic <auth>`: usually base64("${username}:${password}"), but whatever `_auth` holds.
-        // Other crates get at it, and at `token`, through `authorization_parts` alone.
         pub(crate) auth: Box<[u8]>,
-        // `parse_embedded_auth` has stripped the `:_authToken` / `:username` / `:_password` / `:_auth` pathname suffixes.
         pub url: OwnedURL,
         pub url_hash: u64,
         pub(crate) token: Box<[u8]>,
@@ -298,57 +259,29 @@ pub mod registry {
         pub(crate) url_auth_key: Option<Box<[u8]>>,
     }
 
-    /// yarn-style credentials embedded in a registry URL's pathname, e.g. `https://host/api/:_authToken=TOKEN`.
+    /// After `:` in yarn's shape (`/api/:_authToken=T`), after `/` in the one Bun's JFrog guide shows (`/npm/_auth=<base64>`).
+    const EMBEDDED_OPTIONS: [&[u8]; 4] = [b"_authToken=", b"_auth=", b"username=", b"_password="];
+
+    /// Credentials embedded in a registry URL's pathname.
     #[derive(Default)]
     struct EmbeddedAuth<'a> {
-        token: Option<&'a [u8]>,
-        auth: Option<&'a [u8]>,
-        username: Option<&'a [u8]>,
-        password: Option<&'a [u8]>,
-        /// The scan hit a credential that ends it; nothing after it is read.
+        /// In the order of `EMBEDDED_OPTIONS`.
+        values: [Option<&'a [u8]>; 4],
+        /// The scan hit a token or an `_auth`, which ends it; nothing after it is read.
         terminal: bool,
     }
 
-    #[derive(Clone, Copy)]
-    enum EmbeddedOpt {
-        Token,
-        Auth,
-        Username,
-        Password,
-    }
-
-    impl<'a> EmbeddedAuth<'a> {
-        fn slot(&mut self, opt: EmbeddedOpt) -> &mut Option<&'a [u8]> {
-            match opt {
-                EmbeddedOpt::Token => &mut self.token,
-                EmbeddedOpt::Auth => &mut self.auth,
-                EmbeddedOpt::Username => &mut self.username,
-                EmbeddedOpt::Password => &mut self.password,
-            }
-        }
-    }
-
-    /// `:<name>=` is yarn's shape (`/api/:_authToken=T`); `/<name>=` the one Bun's JFrog guide shows (`/npm/_auth=<base64>`).
-    const EMBEDDED_MARKERS: [(&[u8], EmbeddedOpt); 8] = [
-        (b":_authToken=", EmbeddedOpt::Token),
-        (b":_auth=", EmbeddedOpt::Auth),
-        (b":username=", EmbeddedOpt::Username),
-        (b":_password=", EmbeddedOpt::Password),
-        (b"/_authToken=", EmbeddedOpt::Token),
-        (b"/_auth=", EmbeddedOpt::Auth),
-        (b"/username=", EmbeddedOpt::Username),
-        (b"/_password=", EmbeddedOpt::Password),
-    ];
-
-    /// The rightmost credential marker in `pathname`, as `(start, marker, opt)`. Anchored on the whole marker: a `:` or `/`
-    /// inside the value (base64 holds `/`) does not end the scan, and one that belongs to the path is left alone.
-    fn last_embedded_marker(pathname: &[u8]) -> Option<(usize, &'static [u8], EmbeddedOpt)> {
-        EMBEDDED_MARKERS
-            .iter()
-            .filter_map(|&(marker, opt)| {
-                bun_core::last_index_of(pathname, marker).map(|i| (i, marker, opt))
+    /// The rightmost credential marker in `pathname`, as `(start, index in EMBEDDED_OPTIONS)`. Anchored on the whole marker:
+    /// a `:` or `/` inside the value (base64 holds `/`) does not end the scan, and one that belongs to the path is left alone.
+    fn last_embedded_marker(pathname: &[u8]) -> Option<(usize, usize)> {
+        (0..pathname.len())
+            .rev()
+            .filter(|&start| matches!(pathname[start], b':' | b'/'))
+            .find_map(|start| {
+                let rest = &pathname[start + 1..];
+                let option = (EMBEDDED_OPTIONS.iter()).position(|name| rest.starts_with(name))?;
+                Some((start, option))
             })
-            .max_by_key(|&(i, _, _)| i)
     }
 
     /// A `:<word>=` run at the very end of the path whose word is no known option (`:_passwd=`, `:authtoken=`):
@@ -376,34 +309,28 @@ pub mod registry {
 
         // Right to left: the credentials are appended after the path.
         loop {
-            let Some((start, marker, opt)) = last_embedded_marker(pathname) else {
-                let Some(start) = trailing_misspelt_marker(pathname) else {
-                    break;
-                };
-                pathname = &pathname[..start];
-                if pathname.len() > 1 && pathname[pathname.len() - 1] == b'/' {
-                    pathname = &pathname[..pathname.len() - 1];
+            let start = if let Some((start, option)) = last_embedded_marker(pathname) {
+                let value = &pathname[start + 1 + EMBEDDED_OPTIONS[option].len()..];
+                // The slash that closes the URL (`/:_authToken=S/`) is not part of the value.
+                let value = value.strip_suffix(b"/").unwrap_or(value);
+                // An empty marker supplies no credential: it neither ends the scan nor shadows a `.npmrc` line.
+                if !out.terminal && !value.is_empty() {
+                    out.values[option] = Some(value);
+                    out.terminal = option < 2;
                 }
-                continue;
-            };
-            let mut value = &pathname[start + marker.len()..];
-            // The slash that closes the URL (`/:_authToken=S/`) is not part of the value.
-            if let Some(unslashed) = value.strip_suffix(b"/") {
-                value = unslashed;
-            }
-            // An empty marker supplies no credential: it neither ends the scan nor shadows a `.npmrc` line.
-            if !out.terminal && !value.is_empty() {
-                *out.slot(opt) = Some(value);
-                out.terminal = matches!(opt, EmbeddedOpt::Token | EmbeddedOpt::Auth);
-            }
-
-            // A `/<name>=` segment leaves the slash that closes the path; yarn's `:<name>=` is written after that slash.
-            pathname = if marker[0] == b'/' {
-                &pathname[..start + 1]
+                // A `/<name>=` segment leaves the slash that closes the path; yarn's `:<name>=` is written after that slash.
+                if pathname[start] == b'/' {
+                    pathname = &pathname[..start + 1];
+                    continue;
+                }
+                start
+            } else if let Some(start) = trailing_misspelt_marker(pathname) {
+                start
             } else {
-                &pathname[..start]
+                break;
             };
-            if marker[0] == b':' && pathname.len() > 1 && pathname[pathname.len() - 1] == b'/' {
+            pathname = &pathname[..start];
+            if pathname.len() > 1 && pathname[pathname.len() - 1] == b'/' {
                 pathname = &pathname[..pathname.len() - 1];
             }
         }
@@ -413,38 +340,14 @@ pub mod registry {
         out
     }
 
-    /// A credential that holds a CR, LF or NUL, by its name in `bunfig.toml` and in `.npmrc`.
-    #[derive(Clone, Copy)]
-    struct UnsafeCredential {
-        name: &'static str,
-        npmrc_option: &'static str,
-    }
+    /// A credential that holds a CR, LF or NUL: its name in `bunfig.toml`, then in `.npmrc`.
+    type UnsafeCredential = (&'static str, &'static str);
 
-    impl UnsafeCredential {
-        const TOKEN: Self = Self {
-            name: "token",
-            npmrc_option: "_authToken",
-        };
-        const AUTH: Self = Self {
-            name: "_auth",
-            npmrc_option: "_auth",
-        };
-        const USERNAME: Self = Self {
-            name: "username",
-            npmrc_option: "username",
-        };
-        const PASSWORD: Self = Self {
-            name: "password",
-            npmrc_option: "_password",
-        };
-
-        fn check(self, value: &[u8]) -> Result<(), Self> {
-            if http::async_http::breaks_header_line(value) {
-                Err(self)
-            } else {
-                Ok(())
-            }
+    fn check_credential(value: &[u8], names: UnsafeCredential) -> Result<(), UnsafeCredential> {
+        if http::async_http::breaks_header_line(value) {
+            return Err(names);
         }
+        Ok(())
     }
 
     /// `what` names the key the credential was configured under, never its value.
@@ -485,12 +388,10 @@ pub mod registry {
             self.url_hash = Self::hash(strings::without_trailing_slash(self.url.href()));
         }
 
-        /// Whether requests to this scope carry an `Authorization` header.
         pub(crate) fn has_credentials(&self) -> bool {
             !self.token.is_empty() || !self.auth.is_empty()
         }
 
-        /// Take `other`'s credentials, leaving this scope's registry URL as is.
         pub(crate) fn copy_credentials_from(&mut self, other: &Scope) {
             self.token.clone_from(&other.token);
             self.auth.clone_from(&other.auth);
@@ -520,16 +421,12 @@ pub mod registry {
                 Some(env) => Self::build(name, registry, env, true),
                 None => Self::build(name, registry, &mut DotEnv::init(), false),
             }
-            .map_err(|credential| {
+            .map_err(|(credential, _)| {
                 if name.is_empty() {
-                    refuse_credential(format_args!(
-                        "the {} of the default registry",
-                        credential.name
-                    ))
+                    refuse_credential(format_args!("the {credential} of the default registry"))
                 } else {
                     refuse_credential(format_args!(
-                        "the {} of the @{} registry",
-                        credential.name,
+                        "the {credential} of the @{} registry",
                         bun_fmt::escape_control_chars(name),
                     ))
                 }
@@ -540,13 +437,11 @@ pub mod registry {
         /// here `$VAR`, `${VAR}`, URL userinfo and `:_authToken=` URL suffixes have produced the final bytes.
         fn build(
             name: &[u8],
-            registry_: api::NpmRegistry,
+            mut registry: api::NpmRegistry,
             env: &mut DotEnv,
             // `false` for a `.npmrc` line, where a value that starts with `$` and names no variable is a literal.
             unset_variable_is_no_credential: bool,
         ) -> Result<Scope, UnsafeCredential> {
-            let mut registry = registry_;
-
             // Support $ENV_VAR for registry URLs
             if strings::starts_with_char(&registry.url, b'$') {
                 // If it became "$ENV_VAR/", then we need to remove the trailing slash
@@ -600,18 +495,10 @@ pub mod registry {
                 }
             }
 
-            // `url` borrows the owned `registry_url` buffer for the duration
-            // of parsing. The final href is moved into `Scope.url: OwnedURL`
-            // (owned `Box<[u8]>`).
             let registry_url: Box<[u8]> = core::mem::take(&mut registry.url);
-            let registry_auth: Box<[u8]> = core::mem::take(&mut registry.auth);
             let mut url = URL::parse(&registry_url);
-            let mut auth: &[u8] = b"";
-            let mut user: &mut [u8] = &mut [];
-
-            // Backing storage for `user`/`auth` when synthesized from
-            // username:password.
-            let mut output_buf_owned: Box<[u8]> = Box::default();
+            let mut auth: Box<[u8]> = Box::default();
+            let mut user: Box<[u8]> = Box::default();
 
             let original_pathname_len = url.pathname.len();
             let embedded = parse_embedded_auth(&mut url);
@@ -619,17 +506,18 @@ pub mod registry {
 
             if registry.token.is_empty() {
                 'outer: {
-                    if registry.password.is_empty() && registry_auth.is_empty() {
-                        if let Some(token) = embedded.token {
+                    if registry.password.is_empty() && registry.auth.is_empty() {
+                        let [token, embedded_auth, username, password] = embedded.values;
+                        if let Some(token) = token {
                             registry.token = env.get_auto(token).into();
                         }
-                        if let Some(embedded_auth) = embedded.auth {
-                            auth = embedded_auth;
+                        if let Some(embedded_auth) = embedded_auth {
+                            auth = embedded_auth.into();
                         }
-                        if let Some(username) = embedded.username {
+                        if let Some(username) = username {
                             registry.username = env.get_auto(username).into();
                         }
-                        if let Some(password) = embedded.password {
+                        if let Some(password) = password {
                             registry.password = env.get_auto(password).into();
                         }
                         if embedded.terminal {
@@ -638,55 +526,38 @@ pub mod registry {
                     }
 
                     // Sent verbatim; the decode only derives `user` for `bun pm whoami`.
-                    if !registry_auth.is_empty() {
-                        auth = &registry_auth;
-                        let decode_len = bun_base64::decode_len(&registry_auth);
-                        let mut decoded = vec![0u8; decode_len].into_boxed_slice();
-                        let result = bun_base64::decode(&mut decoded[..], &registry_auth);
-                        if result.is_successful() {
-                            let count = result.count;
-                            // A blank username or password is a real pattern: no identity then.
-                            if let Some(colon_idx) =
-                                strings::index_of_char_usize(&decoded[..count], b':')
-                            {
-                                if colon_idx > 0 && colon_idx + 1 < count {
-                                    output_buf_owned = decoded;
-                                    user = &mut output_buf_owned[..count];
-                                }
-                            }
+                    if !registry.auth.is_empty() {
+                        let mut decoded = vec![0u8; bun_base64::decode_len(&registry.auth)];
+                        let result = bun_base64::decode(&mut decoded, &registry.auth);
+                        decoded.truncate(result.count);
+                        // A blank username or password is a real pattern: no identity then.
+                        if result.is_successful()
+                            && strings::index_of_char_usize(&decoded, b':')
+                                .is_some_and(|colon| colon > 0 && colon + 1 < decoded.len())
+                        {
+                            user = decoded.into();
                         }
+                        auth = registry.auth;
                         break 'outer;
                     }
 
-                    UnsafeCredential::USERNAME.check(&registry.username)?;
-                    UnsafeCredential::PASSWORD.check(&registry.password)?;
+                    check_credential(&registry.username, ("username", "username"))?;
+                    check_credential(&registry.password, ("password", "_password"))?;
 
                     if !registry.username.is_empty() && !registry.password.is_empty() {
-                        let combo_len = registry.username.len() + registry.password.len() + 1;
-                        let total =
-                            combo_len + bun_core::base64::standard_encoder_calc_size(combo_len);
-                        output_buf_owned = vec![0u8; total].into_boxed_slice();
-                        let (user_slice, output_buf) = output_buf_owned.split_at_mut(combo_len);
-                        user_slice[..registry.username.len()].copy_from_slice(&registry.username);
-                        user_slice[registry.username.len()] = b':';
-                        user_slice[registry.username.len() + 1..][..registry.password.len()]
-                            .copy_from_slice(&registry.password);
-                        user = user_slice;
-                        auth = bun_core::base64::standard_encode(output_buf, user);
-                        break 'outer;
+                        user = [&*registry.username, b":", &*registry.password]
+                            .concat()
+                            .into();
+                        let encoded_len = bun_core::base64::standard_encoder_calc_size(user.len());
+                        auth =
+                            bun_core::base64::standard_encode(&mut vec![0u8; encoded_len], &user)
+                                .into();
                     }
                 }
             }
 
-            UnsafeCredential::TOKEN.check(&registry.token)?;
-            UnsafeCredential::AUTH.check(auth)?;
-
-            // Copy `auth`/`user` into owned buffers now so the borrows of
-            // `registry_url` / `output_buf_owned` are released before
-            // `registry_url` is moved into `final_href` below.
-            let auth: Box<[u8]> = Box::from(auth);
-            let user: Box<[u8]> = Box::from(&*user);
-            drop(output_buf_owned);
+            check_credential(&registry.token, ("token", "_authToken"))?;
+            check_credential(&auth, ("_auth", "_auth"))?;
 
             let final_href: Box<[u8]> = if needs_normalize {
                 api::NpmRegistry::href_without_auth(&url)
@@ -710,13 +581,12 @@ pub mod registry {
     // Keys are pre-hashed (`Scope::hash`), so don't re-hash them.
     pub type Map = HashMap<u64, Scope, bun_collections::IdentityContext<u64>>;
 
-    /// One `.npmrc` credential key with the credential it collapsed to, matched against URLs with npm's walk
-    /// (`bun_ini::RegistryKey::walk`). A key carries no scheme, so it applies to `http` and `https` alike.
+    /// One `.npmrc` credential key with the credential it collapsed to. A key carries no scheme, so it applies to `http` and `https` alike.
     pub(crate) struct UrlAuth {
         /// npm's config key, already normalized by `bun_ini` (`host/path/`).
-        key: Box<[u8]>,
+        pub(crate) key: Box<[u8]>,
         /// Only the credential fields are meaningful; `url` is empty.
-        credentials: Scope,
+        pub(crate) credentials: Scope,
     }
 
     impl UrlAuth {
@@ -724,52 +594,28 @@ pub mod registry {
             api: &api::NpmUrlAuth,
             env: &mut DotEnv,
         ) -> crate::Result<Option<UrlAuth>> {
-            let credentials =
-                Scope::build(b"", api.credentials.clone(), env, false).map_err(|credential| {
+            let credentials = Scope::build(b"", api.credentials.clone(), env, false).map_err(
+                |(_, npmrc_option)| {
                     refuse_credential(format_args!(
-                        "//{}:{} in .npmrc",
+                        "//{}:{npmrc_option} in .npmrc",
                         bun_fmt::escape_control_chars(&api.key),
-                        credential.npmrc_option,
                     ))
-                })?;
-            if !credentials.has_credentials() {
-                return Ok(None);
-            }
-            Ok(Some(UrlAuth {
+                },
+            )?;
+            Ok(credentials.has_credentials().then(|| UrlAuth {
                 key: api.key.clone(),
                 credentials,
             }))
         }
 
+        /// npm's walk. `url` is a WHATWG serialisation already: a `Scope::url`, or a tarball after `normalize_tarball_url`.
         pub(crate) fn find_entry<'a>(list: &'a [UrlAuth], url: &URL) -> Option<&'a UrlAuth> {
             if list.is_empty() || !url.has_http_like_protocol() {
                 return None;
             }
-            UrlAuth::find_key(list, &bun_ini::RegistryKey::from_url(url.href))
-        }
-
-        /// For a URL that is already a WHATWG serialisation (a tarball after `normalize_tarball_url`).
-        pub(crate) fn find_entry_serialized<'a>(
-            list: &'a [UrlAuth],
-            url: &URL,
-        ) -> Option<&'a UrlAuth> {
-            if list.is_empty() || !url.has_http_like_protocol() {
-                return None;
-            }
-            UrlAuth::find_key(list, &bun_ini::RegistryKey::from_parsed(url))
-        }
-
-        fn find_key<'a>(list: &'a [UrlAuth], key: &bun_ini::RegistryKey) -> Option<&'a UrlAuth> {
-            key.walk()
+            bun_ini::RegistryKey::from_parsed(url)
+                .walk()
                 .find_map(|key| list.iter().find(|entry| *entry.key == *key))
-        }
-
-        pub(crate) fn credentials(&self) -> &Scope {
-            &self.credentials
-        }
-
-        pub(crate) fn key(&self) -> &[u8] {
-            &self.key
         }
     }
 
@@ -837,9 +683,8 @@ pub mod registry {
         NotFound,
     }
 
-    /// The time until which the packument that a 200 or 304 delivered is used without asking again.
-    /// 300 seconds is what registry.npmjs.org sends, the most that is honoured, and what a response
-    /// that does not say gets (Verdaccio sends only an ETag).
+    /// Until when the packument that a 200 or 304 delivered is used without asking again. 300 seconds is what
+    /// registry.npmjs.org sends, the most that is honoured, and what a response that does not say gets.
     pub(crate) fn manifest_expiry(headers: &picohttp::HeaderList) -> u32 {
         let mut max_age: u64 = 300;
         for directive in strings::split(headers.get(b"cache-control").unwrap_or(b""), b",") {
@@ -1891,12 +1736,6 @@ impl MinimumReleaseAgeExcludes {
         MinimumReleaseAgeExcludes(list)
     }
 
-    fn excludes_package(&self, name: &[u8]) -> bool {
-        self.0
-            .iter()
-            .any(|&(package, v)| package == name && v.is_none())
-    }
-
     fn excludes_version(&self, name: &[u8], version: Semver::Version) -> bool {
         self.0
             .iter()
@@ -1974,20 +1813,8 @@ impl PackageManifest {
     }
 
     pub fn find_by_dist_tag(&self, tag: &[u8]) -> Option<FindResult<'_>> {
-        let versions = self.pkg.dist_tags.versions.get(&self.versions);
-        for (i, tag_str) in self
-            .pkg
-            .dist_tags
-            .tags
-            .get(&self.external_strings)
-            .iter()
-            .enumerate()
-        {
-            if tag_str.slice(&self.string_buf) == tag {
-                return self.find_by_version(versions[i]);
-            }
-        }
-        None
+        let (_, version) = self.dist_tags().find(|(name, _)| *name == tag)?;
+        self.find_by_version(version)
     }
 
     /// Whether every version of this package bypasses the minimum release age.
@@ -1995,7 +1822,7 @@ impl PackageManifest {
         &self,
         exclusions: Option<&MinimumReleaseAgeExcludes>,
     ) -> bool {
-        exclusions.is_some_and(|excludes| excludes.excludes_package(self.name()))
+        exclusions.is_some_and(|e| (e.0.iter()).any(|&(p, v)| p == self.name() && v.is_none()))
     }
 
     /// Too recent for the gate and not listed in `exclusions`.
@@ -2038,12 +1865,8 @@ impl PackageManifest {
         let seven_days_ms: f64 = 7.0 * bun_core::time::MS_PER_DAY as f64;
         let stability_window_ms: f64 = minimum_release_age_ms.min(seven_days_ms);
 
-        let mut i = versions.len();
-        while i > 0 {
-            i -= 1;
-            let version = versions[i];
+        for (&version, package) in versions.iter().zip(packages).rev() {
             if group.satisfies(version, group_buf, &self.string_buf) {
-                let package = &packages[i];
                 if !package.deprecated.is_empty() {
                     let found = FindResult { version, package };
                     if self.is_version_blocked_by_age_filter(
@@ -2063,9 +1886,7 @@ impl PackageManifest {
                     break;
                 }
                 if Self::is_package_version_too_recent(package, minimum_release_age_ms) {
-                    if newest_filtered.is_none() {
-                        *newest_filtered = Some(version);
-                    }
+                    newest_filtered.get_or_insert(version);
                     prev_package_blocked_from_age = Some(package);
                 }
                 // stability check - if the previous package is blocked from age, we need to check if the current package wasn't the cause
@@ -2074,9 +1895,7 @@ impl PackageManifest {
                     if package.publish_timestamp_ms
                         < current_timestamp_ms - (minimum_release_age_ms + seven_days_ms)
                     {
-                        if best_version.is_none() {
-                            best_version = Some(FindResult { version, package });
-                        }
+                        best_version.get_or_insert(FindResult { version, package });
                         break;
                     }
 
@@ -2086,30 +1905,22 @@ impl PackageManifest {
                     if is_stable {
                         best_version = Some(FindResult { version, package });
                         break;
-                    } else {
-                        if best_version.is_none() {
-                            best_version = Some(FindResult { version, package });
-                        }
-                        prev_package_blocked_from_age = Some(package);
-                        continue;
                     }
+                    best_version.get_or_insert(FindResult { version, package });
+                    prev_package_blocked_from_age = Some(package);
                 } else {
                     return Some(FindVersionResult::Found(FindResult { version, package }));
                 }
             }
         }
 
-        if let Some(result) = best_version {
-            if let Some(nf) = *newest_filtered {
-                return Some(FindVersionResult::FoundWithFilter {
-                    result,
-                    newest_filtered: Some(nf),
-                });
-            } else {
-                return Some(FindVersionResult::Found(result));
-            }
-        }
-        None
+        best_version.map(|result| match *newest_filtered {
+            Some(_) => FindVersionResult::FoundWithFilter {
+                result,
+                newest_filtered: *newest_filtered,
+            },
+            None => FindVersionResult::Found(result),
+        })
     }
 }
 
@@ -2222,13 +2033,9 @@ impl PackageManifest {
         let Some(dist_result) = self.find_by_dist_tag(tag) else {
             return FindVersionResult::Err(FindVersionError::NotFound);
         };
-        let min_age_gate_ms = match minimum_release_age_ms {
-            Some(min_age_ms) if !self.should_exclude_from_age_filter(exclusions) => {
-                Some(min_age_ms)
-            }
-            _ => None,
-        };
-        let Some(min_age_ms) = min_age_gate_ms else {
+        let Some(min_age_ms) =
+            minimum_release_age_ms.filter(|_| !self.should_exclude_from_age_filter(exclusions))
+        else {
             return FindVersionResult::Found(dist_result);
         };
         let current_timestamp_ms: f64 =
@@ -2242,18 +2049,10 @@ impl PackageManifest {
 
         let latest_version = dist_result.version;
         let is_prerelease = latest_version.tag.has_pre();
-        let latest_version_tag = if is_prerelease {
-            Some(latest_version.tag.pre.slice(&self.string_buf))
-        } else {
-            None
-        };
-        let latest_version_tag_before_dot = latest_version_tag.map(|v| {
-            if let Some(i) = strings::index_of_char(v, b'.') {
-                &v[..i as usize]
-            } else {
-                v
-            }
-        });
+        fn before_dot(tag: &[u8]) -> &[u8] {
+            &tag[..strings::index_of_char_usize(tag, b'.').unwrap_or(tag.len())]
+        }
+        let latest_tag = before_dot(latest_version.tag.pre.slice(&self.string_buf));
 
         let list = if is_prerelease {
             self.pkg.prereleases
@@ -2267,29 +2066,14 @@ impl PackageManifest {
         let mut deprecated: Option<FindResult<'_>> = None;
         let mut prev_package_blocked_from_age: Option<&PackageVersion> = Some(dist_result.package);
 
-        let mut i: usize = versions.len();
-        while i > 0 {
-            let idx = i - 1;
-            i -= 1;
-            let version = versions[idx];
-            let package = &packages[idx];
-
+        for (&version, package) in versions.iter().zip(packages).rev() {
             if version.order(latest_version, &self.string_buf, &self.string_buf)
                 == core::cmp::Ordering::Greater
             {
                 continue;
             }
-            if let Some(expected_tag) = latest_version_tag_before_dot {
-                let package_tag = version.tag.pre.slice(&self.string_buf);
-                let actual_tag = if let Some(dot_i) = strings::index_of_char(package_tag, b'.') {
-                    &package_tag[..dot_i as usize]
-                } else {
-                    package_tag
-                };
-
-                if actual_tag != expected_tag {
-                    continue;
-                }
+            if is_prerelease && before_dot(version.tag.pre.slice(&self.string_buf)) != latest_tag {
+                continue;
             }
 
             if !package.deprecated.is_empty() {
@@ -2330,13 +2114,10 @@ impl PackageManifest {
                         result: FindResult { version, package },
                         newest_filtered: Some(dist_result.version),
                     };
-                } else {
-                    if best_version.is_none() {
-                        best_version = Some(FindResult { version, package });
-                    }
-                    prev_package_blocked_from_age = Some(package);
-                    continue;
                 }
+                best_version.get_or_insert(FindResult { version, package });
+                prev_package_blocked_from_age = Some(package);
+                continue;
             }
 
             best_version = Some(FindResult { version, package });
@@ -2360,18 +2141,13 @@ impl PackageManifest {
         minimum_release_age_ms: Option<f64>,
         exclusions: Option<&MinimumReleaseAgeExcludes>,
     ) -> FindVersionResult<'_> {
-        let min_age_gate_ms = match minimum_release_age_ms {
-            Some(min_age_ms) if !self.should_exclude_from_age_filter(exclusions) => {
-                Some(min_age_ms)
-            }
-            _ => None,
-        };
-        let Some(min_age_ms) = min_age_gate_ms else {
-            let result = self.find_best_version(group, group_buf);
-            if let Some(r) = result {
-                return FindVersionResult::Found(r);
-            }
-            return FindVersionResult::Err(FindVersionError::NotFound);
+        const NOT_FOUND: FindVersionResult<'static> =
+            FindVersionResult::Err(FindVersionError::NotFound);
+        let Some(min_age_ms) =
+            minimum_release_age_ms.filter(|_| !self.should_exclude_from_age_filter(exclusions))
+        else {
+            return (self.find_best_version(group, group_buf))
+                .map_or(NOT_FOUND, FindVersionResult::Found);
         };
         debug_assert!(self.pkg.has_extended_manifest);
 
@@ -2379,14 +2155,13 @@ impl PackageManifest {
         let mut newest_filtered: Option<Semver::Version> = None;
 
         if let Some(exact) = group.get_exact_version() {
-            let result = self.find_by_version(exact);
-            if let Some(r) = result {
-                if self.is_version_blocked_by_age_filter(r, min_age_ms, exclusions) {
-                    return FindVersionResult::Err(FindVersionError::TooRecent);
+            return match self.find_by_version(exact) {
+                Some(r) if self.is_version_blocked_by_age_filter(r, min_age_ms, exclusions) => {
+                    FindVersionResult::Err(FindVersionError::TooRecent)
                 }
-                return FindVersionResult::Found(r);
-            }
-            return FindVersionResult::Err(FindVersionError::NotFound);
+                Some(r) => FindVersionResult::Found(r),
+                None => NOT_FOUND,
+            };
         }
 
         if let Some(result) = self.find_by_dist_tag(b"latest") {
@@ -2394,41 +2169,29 @@ impl PackageManifest {
                 if self.is_version_blocked_by_age_filter(result, min_age_ms, exclusions) {
                     newest_filtered = Some(result.version);
                 }
-                if newest_filtered.is_none() && result.package.deprecated.is_empty() {
-                    if group.flags.is_set(Semver::query::Flags::PRE) {
-                        if left
+                if newest_filtered.is_none()
+                    && result.package.deprecated.is_empty()
+                    && (!group.flags.is_set(Semver::query::Flags::PRE)
+                        || left
                             .version
                             .order(result.version, group_buf, &self.string_buf)
-                            == core::cmp::Ordering::Equal
-                        {
-                            return FindVersionResult::Found(result);
-                        }
-                    } else {
-                        return FindVersionResult::Found(result);
-                    }
+                            == core::cmp::Ordering::Equal)
+                {
+                    return FindVersionResult::Found(result);
                 }
             }
         }
 
         let mut deprecated: Option<FindResult<'_>> = None;
 
-        if let Some(result) = self.search_version_list(
-            self.pkg.releases.keys.get(&self.versions),
-            self.pkg.releases.values.get(&self.package_versions),
-            group,
-            group_buf,
-            min_age_ms,
-            exclusions,
-            &mut newest_filtered,
-            &mut deprecated,
-        ) {
-            return result;
-        }
-
-        if group.flags.is_set(Semver::query::Flags::PRE) {
+        let prereleases = group
+            .flags
+            .is_set(Semver::query::Flags::PRE)
+            .then_some(self.pkg.prereleases);
+        for list in [Some(self.pkg.releases), prereleases].into_iter().flatten() {
             if let Some(result) = self.search_version_list(
-                self.pkg.prereleases.keys.get(&self.versions),
-                self.pkg.prereleases.values.get(&self.package_versions),
+                list.keys.get(&self.versions),
+                list.values.get(&self.package_versions),
                 group,
                 group_buf,
                 min_age_ms,
@@ -2451,7 +2214,7 @@ impl PackageManifest {
             return FindVersionResult::Err(FindVersionError::AllVersionsTooRecent);
         }
 
-        FindVersionResult::Err(FindVersionError::NotFound)
+        NOT_FOUND
     }
 
     pub fn find_best_version(
@@ -2471,19 +2234,14 @@ impl PackageManifest {
             if result.package.deprecated.is_empty()
                 && (group.is_empty()
                     || group.satisfies(result.version, group_buf, &self.string_buf))
-            {
-                if group.flags.is_set(Semver::query::Flags::PRE) {
-                    if left
+                // if prerelease, use latest if semver+tag match range exactly
+                && (!group.flags.is_set(Semver::query::Flags::PRE)
+                    || left
                         .version
                         .order(result.version, group_buf, &self.string_buf)
-                        == core::cmp::Ordering::Equal
-                    {
-                        // if prerelease, use latest if semver+tag match range exactly
-                        return Some(result);
-                    }
-                } else {
-                    return Some(result);
-                }
+                        == core::cmp::Ordering::Equal)
+            {
+                return Some(result);
             }
         }
 

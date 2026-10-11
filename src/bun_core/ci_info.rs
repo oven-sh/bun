@@ -60,161 +60,67 @@ fn is_ci_uncached_generated() -> bool {
 }
 
 fn detect_uncached_generated() -> Option<&'static [u8]> {
-    if env_set!("AGOLA_GIT_REF") {
-        return Some(b"agola-ci");
+    // The first match names the CI.
+    macro_rules! vendors {
+        ($($name:literal: $detected:expr,)*) => {
+            $(if $detected {
+                return Some($name);
+            })*
+        };
     }
-    if env_set!("AC_APPCIRCLE") {
-        return Some(b"appcircle");
-    }
-    if env_set!("APPVEYOR") {
-        return Some(b"appveyor");
-    }
-    if env_set!("CODEBUILD_BUILD_ARN") {
-        return Some(b"aws-codebuild");
-    }
-    if env_set!("TF_BUILD") {
-        return Some(b"azure-pipelines");
-    }
-    if env_set!("bamboo_planKey") {
-        return Some(b"bamboo");
-    }
-    if env_set!("BITBUCKET_COMMIT") {
-        return Some(b"bitbucket-pipelines");
-    }
-    if env_set!("BITRISE_IO") {
-        return Some(b"bitrise");
-    }
-    if env_set!("BUDDY_WORKSPACE_ID") {
-        return Some(b"buddy");
-    }
-    if env_set!("BUILDKITE") {
-        return Some(b"buildkite");
-    }
-    if env_set!("CIRCLECI") {
-        return Some(b"circleci");
-    }
-    if env_set!("CIRRUS_CI") {
-        return Some(b"cirrus-ci");
-    }
-    if env_set!("CF_PAGES") {
-        return Some(b"cloudflare-pages");
-    }
-    if env_set!("WORKERS_CI") {
-        return Some(b"cloudflare-workers");
-    }
-    if env_set!("CF_BUILD_ID") {
-        return Some(b"codefresh");
-    }
-    if env_set!("CM_BUILD_ID") {
-        return Some(b"codemagic");
-    }
-    if env_eq!("CI_NAME", "codeship") {
-        return Some(b"codeship");
-    }
-    if env_set!("DRONE") {
-        return Some(b"drone");
-    }
-    if env_set!("DSARI") {
-        return Some(b"dsari");
-    }
-    if env_set!("EARTHLY_CI") {
-        return Some(b"earthly");
-    }
-    if env_set!("EAS_BUILD") {
-        return Some(b"expo-application-services");
-    }
-    if env_set!("GERRIT_PROJECT") {
-        return Some(b"gerrit");
-    }
-    if env_set!("GITEA_ACTIONS") {
-        return Some(b"gitea-actions");
-    }
-    if env_set!("GITHUB_ACTIONS") {
-        return Some(b"github-actions");
-    }
-    if env_set!("GITLAB_CI") {
-        return Some(b"gitlab-ci");
-    }
-    if env_set!("GO_PIPELINE_LABEL") {
-        return Some(b"gocd");
-    }
-    if env_set!("BUILDER_OUTPUT") {
-        return Some(b"google-cloud-build");
-    }
-    if env_set!("HARNESS_BUILD_ID") {
-        return Some(b"harness-ci");
-    }
-    if env_contains!("NODE", "/app/.heroku/node/bin/node") {
-        return Some(b"heroku");
-    }
-    if env_set!("HUDSON_URL") {
-        return Some(b"hudson");
-    }
-    if env_set!("JENKINS_URL") && env_set!("BUILD_ID") {
-        return Some(b"jenkins");
-    }
-    if env_set!("LAYERCI") {
-        return Some(b"layerci");
-    }
-    if env_set!("MAGNUM") {
-        return Some(b"magnum-ci");
-    }
-    if env_set!("NETLIFY") {
-        return Some(b"netlify-ci");
-    }
-    if env_set!("NEVERCODE") {
-        return Some(b"nevercode");
-    }
-    if env_set!("PROW_JOB_ID") {
-        return Some(b"prow");
-    }
-    if env_set!("RELEASE_BUILD_ID") {
-        return Some(b"releasehub");
-    }
-    if env_set!("RENDER") {
-        return Some(b"render");
-    }
-    if env_set!("SAILCI") {
-        return Some(b"sail-ci");
-    }
-    if env_set!("SCREWDRIVER") {
-        return Some(b"screwdriver");
-    }
-    if env_set!("SEMAPHORE") {
-        return Some(b"semaphore");
-    }
-    if env_eq!("CI_NAME", "sourcehut") {
-        return Some(b"sourcehut");
-    }
-    if env_set!("STRIDER") {
-        return Some(b"strider-cd");
-    }
-    if env_set!("TASK_ID") && env_set!("RUN_ID") {
-        return Some(b"taskcluster");
-    }
-    if env_set!("TEAMCITY_VERSION") {
-        return Some(b"teamcity");
-    }
-    if env_set!("TRAVIS") {
-        return Some(b"travis-ci");
-    }
-    if env_set!("VELA") {
-        return Some(b"vela");
-    }
-    if env_set!("NOW_BUILDER") || env_set!("VERCEL") {
-        return Some(b"vercel");
-    }
-    if env_set!("APPCENTER_BUILD_ID") {
-        return Some(b"visual-studio-app-center");
-    }
-    if env_eq!("CI", "woodpecker") {
-        return Some(b"woodpecker");
-    }
-    if env_set!("CI_XCODE_PROJECT") {
-        return Some(b"xcode-cloud");
-    }
-    if env_set!("XCS") {
-        return Some(b"xcode-server");
+    vendors! {
+        b"agola-ci": env_set!("AGOLA_GIT_REF"),
+        b"appcircle": env_set!("AC_APPCIRCLE"),
+        b"appveyor": env_set!("APPVEYOR"),
+        b"aws-codebuild": env_set!("CODEBUILD_BUILD_ARN"),
+        b"azure-pipelines": env_set!("TF_BUILD"),
+        b"bamboo": env_set!("bamboo_planKey"),
+        b"bitbucket-pipelines": env_set!("BITBUCKET_COMMIT"),
+        b"bitrise": env_set!("BITRISE_IO"),
+        b"buddy": env_set!("BUDDY_WORKSPACE_ID"),
+        b"buildkite": env_set!("BUILDKITE"),
+        b"circleci": env_set!("CIRCLECI"),
+        b"cirrus-ci": env_set!("CIRRUS_CI"),
+        b"cloudflare-pages": env_set!("CF_PAGES"),
+        b"cloudflare-workers": env_set!("WORKERS_CI"),
+        b"codefresh": env_set!("CF_BUILD_ID"),
+        b"codemagic": env_set!("CM_BUILD_ID"),
+        b"codeship": env_eq!("CI_NAME", "codeship"),
+        b"drone": env_set!("DRONE"),
+        b"dsari": env_set!("DSARI"),
+        b"earthly": env_set!("EARTHLY_CI"),
+        b"expo-application-services": env_set!("EAS_BUILD"),
+        b"gerrit": env_set!("GERRIT_PROJECT"),
+        b"gitea-actions": env_set!("GITEA_ACTIONS"),
+        b"github-actions": env_set!("GITHUB_ACTIONS"),
+        b"gitlab-ci": env_set!("GITLAB_CI"),
+        b"gocd": env_set!("GO_PIPELINE_LABEL"),
+        b"google-cloud-build": env_set!("BUILDER_OUTPUT"),
+        b"harness-ci": env_set!("HARNESS_BUILD_ID"),
+        b"heroku": env_contains!("NODE", "/app/.heroku/node/bin/node"),
+        b"hudson": env_set!("HUDSON_URL"),
+        b"jenkins": env_set!("JENKINS_URL") && env_set!("BUILD_ID"),
+        b"layerci": env_set!("LAYERCI"),
+        b"magnum-ci": env_set!("MAGNUM"),
+        b"netlify-ci": env_set!("NETLIFY"),
+        b"nevercode": env_set!("NEVERCODE"),
+        b"prow": env_set!("PROW_JOB_ID"),
+        b"releasehub": env_set!("RELEASE_BUILD_ID"),
+        b"render": env_set!("RENDER"),
+        b"sail-ci": env_set!("SAILCI"),
+        b"screwdriver": env_set!("SCREWDRIVER"),
+        b"semaphore": env_set!("SEMAPHORE"),
+        b"sourcehut": env_eq!("CI_NAME", "sourcehut"),
+        b"strider-cd": env_set!("STRIDER"),
+        b"taskcluster": env_set!("TASK_ID") && env_set!("RUN_ID"),
+        b"teamcity": env_set!("TEAMCITY_VERSION"),
+        b"travis-ci": env_set!("TRAVIS"),
+        b"vela": env_set!("VELA"),
+        b"vercel": env_set!("NOW_BUILDER") || env_set!("VERCEL"),
+        b"visual-studio-app-center": env_set!("APPCENTER_BUILD_ID"),
+        b"woodpecker": env_eq!("CI", "woodpecker"),
+        b"xcode-cloud": env_set!("CI_XCODE_PROJECT"),
+        b"xcode-server": env_set!("XCS"),
     }
     None
 }

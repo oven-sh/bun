@@ -228,13 +228,38 @@ describe.each(["hoisted", "isolated"])("link:<path> (%s)", linker => {
     const root = String(dir);
 
     const { err, exitCode } = await bun(root, ["install", "--frozen-lockfile"]);
-    expect(err).toContain(
+    // Messages print a path with the platform's separator.
+    expect(err.replaceAll("\\", "/")).toContain(
       linker === "hoisted"
         ? "failed linking dependency/workspace to node_modules for package dep"
         : "failed to link package: dep@link:./vendor/dep",
     );
     expect(existsSync(join(root, "project", "node_modules", "dep"))).toBe(false);
     expect(exitCode).toBe(1);
+  });
+
+  // bun records no dependencies for a linked directory. A lockfile written by hand can.
+  test.concurrent("installs from a bun.lock whose link: row has dependencies", async () => {
+    using dir = tempDir("link-path-row-with-dependencies", {
+      ...bunfig,
+      "project/package.json": JSON.stringify({ name: "root", dependencies: { dep: "link:./vendor/dep" } }),
+      "project/vendor/dep/package.json": pkg("dep"),
+      "project/vendor/other/package.json": pkg("other"),
+      "project/bun.lock": JSON.stringify({
+        lockfileVersion: 1,
+        workspaces: { "": { name: "root", dependencies: { dep: "link:./vendor/dep" } } },
+        packages: {
+          dep: ["dep@link:./vendor/dep", { dependencies: { other: "file:vendor/other" } }],
+          "dep/other": ["other@file:vendor/other", {}],
+        },
+      }),
+    });
+    const root = String(dir);
+
+    const { err, exitCode } = await bun(root, ["install", "--frozen-lockfile"]);
+    expect(errorLines(err)).toEqual([]);
+    expectLinkTo(join(root, "project", "node_modules", "dep"), join(root, "project", "vendor", "dep"));
+    expect(exitCode).toBe(0);
   });
 
   test.concurrent("round-trips through bun.lockb", async () => {

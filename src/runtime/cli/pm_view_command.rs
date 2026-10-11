@@ -14,10 +14,14 @@ use bun_js_parser as ast;
 use bun_js_printer as JSPrinter;
 use bun_parsers::json as JSON;
 use bun_semver as Semver;
-use bun_url::URL; // bumpalo::Bump re-export
+use bun_url::URL;
 
 use crate::cli::pm_pkg_command::PmPkgCommand;
 use bun_core::fmt::buf_print_infallible as buf_print;
+
+fn string_of<'b>(object: &ast::Expr, bump: &'b Bump, key: &[u8]) -> Option<&'b [u8]> {
+    object.get_string_cloned(bump, key).ok().flatten()
+}
 
 /// A `--json` failure is one flat object on stdout.
 fn print_json_error(error: &str, spec: &[u8], property: Option<&[u8]>) {
@@ -67,10 +71,7 @@ pub(crate) fn view(
 
             // Try our best to get the package.json name they meant
             'from_package_json: {
-                // `root_dir` is set once by `PackageManager::init()` and points
-                // into the resolver's directory cache for the process lifetime.
-                // `.data` probes must hold `entries_mutex` (uncontended on
-                // this single-threaded CLI path).
+                // `root_dir` is in the resolver's directory cache: probes must hold `entries_mutex`.
                 let has_package_json = {
                     let _entries_lock = bun_resolver::fs::FileSystem::instance()
                         .fs
@@ -91,22 +92,17 @@ pub(crate) fn view(
                 if !fd.is_valid() {
                     break 'from_package_json;
                 }
-                let str = match bun_sys::File::read_from(fd, b"package.json") {
-                    Ok(s) => s,
-                    Err(_) => break 'from_package_json,
+                let Ok(str) = bun_sys::File::read_from(fd, b"package.json") else {
+                    break 'from_package_json;
                 };
-                // Note: copy into the function-scope bump so the slice
-                // outlives this block.
                 let str: &[u8] = bump.alloc_slice_copy(&str);
                 let source = &bun_ast::Source::init_path_string(b"package.json", str);
                 let mut pkg_log = bun_ast::Log::init();
                 let Ok(pkg_json) = JSON::parse_utf8(source, &mut pkg_log, &bump) else {
                     break 'from_package_json;
                 };
-                if let Some(name) = pkg_json.get_string_cloned(&bump, b"name").ok().flatten() {
-                    if !name.is_empty() {
-                        break 'brk name;
-                    }
+                if let Some(name) = string_of(&pkg_json, &bump, b"name").filter(|n| !n.is_empty()) {
+                    break 'brk name;
                 }
             }
 
@@ -119,21 +115,15 @@ pub(crate) fn view(
     let scope = manager.scope_for_package_name(name);
 
     let mut url_buf = bun_paths::path_buffer_pool::get();
-    let encoded_name = buf_print(
-        url_buf.0.as_mut_slice(),
-        format_args!("{}", bun_fmt::dependency_url(name)),
-    );
-    let mut path_buf = bun_paths::path_buffer_pool::get();
     // Always fetch the full registry manifest, not a specific version
-    let url_slice = buf_print(
-        path_buf.0.as_mut_slice(),
+    let url = URL::parse(buf_print(
+        url_buf.0.as_mut_slice(),
         format_args!(
             "{}/{}",
             BStr::new(strings::without_trailing_slash(scope.url.href())),
-            BStr::new(encoded_name),
+            bun_fmt::dependency_url(name),
         ),
-    );
-    let url = URL::parse(url_slice);
+    ));
 
     let authorization = scope.authorization(&url);
     let mut headers = http::HeaderBuilder::default();
@@ -178,7 +168,6 @@ pub(crate) fn view(
         Global::crash();
     }
 
-    // Parse the existing JSON response into a PackageManifest using the now-public parse function
     let parsed_manifest = match PackageManifest::parse(
         scope,
         &mut log,
@@ -201,15 +190,12 @@ pub(crate) fn view(
     };
 
     let mut manifest;
-
     let versions_len: usize;
 
-    // Note: reshaped for borrowck.
     'brk: {
         let mut not_found = bun_install::Error::NoMatchingVersion;
         'from_versions: {
             if let Some(versions_obj) = json.get_object(b"versions") {
-                // Find the version string from JSON that matches the resolved version
                 let versions_e_obj = versions_obj
                     .data
                     .e_object()
@@ -230,10 +216,7 @@ pub(crate) fn view(
                 };
 
                 for prop in versions {
-                    let Some(key) = prop.key.as_ref() else {
-                        continue;
-                    };
-                    let Some(version_str) = key.as_string(&bump) else {
+                    let Some(version_str) = prop.key.and_then(|key| key.as_string(&bump)) else {
                         continue;
                     };
                     let sliced_version = Semver::SlicedString::init(version_str, version_str);
@@ -397,8 +380,7 @@ pub(crate) fn view(
             }
             ([_], [value]) => {
                 if let bun_ast::ExprData::EString(e_string) = &value.data {
-                    // JSON parse_utf8 always produces UTF-8 strings, so the raw
-                    // `data` slice is the literal value.
+                    // `parse_utf8` always produces UTF-8 strings.
                     let slice = e_string.data.slice();
                     if json_output {
                         Output::print(format_args!(
@@ -456,36 +438,25 @@ pub(crate) fn view(
         return Ok(());
     }
 
-    let pkg_name: &[u8] = manifest
-        .get_string_cloned(&bump, b"name")
-        .ok()
-        .flatten()
-        .unwrap_or(name);
-    let pkg_version: &[u8] = manifest
-        .get_string_cloned(&bump, b"version")
-        .ok()
-        .flatten()
-        .unwrap_or(version);
+    let string = |key: &[u8]| string_of(&manifest, &bump, key);
+    let pkg_name: &[u8] = string(b"name").unwrap_or(name);
+    let pkg_version: &[u8] = string(b"version").unwrap_or(version);
     // `license` is a string, or the legacy `{ "type": "MIT", "url": ... }`.
     let license: &[u8] = manifest
         .get(b"license")
         .and_then(|license| {
             license
                 .as_string(&bump)
-                .or_else(|| license.get_string_cloned(&bump, b"type").ok().flatten())
+                .or_else(|| string_of(&license, &bump, b"type"))
         })
         .filter(|license| !license.is_empty())
         .unwrap_or(b"Proprietary");
-    let mut dep_count: usize = 0;
-    let dependencies_object = manifest.get_object(b"dependencies");
-    if let Some(deps) = &dependencies_object {
-        dep_count = deps
-            .data
-            .e_object()
-            .expect("infallible: variant checked")
-            .properties
-            .len_u32() as usize;
-    }
+    let dependencies_object = manifest
+        .get_object(b"dependencies")
+        .map(|deps| deps.data.e_object().expect("infallible: variant checked"));
+    let dependencies = (dependencies_object.as_ref())
+        .map(|deps| deps.properties.slice())
+        .unwrap_or_default();
 
     // Every string printed below is registry-controlled: always `escape_control_chars` it.
     prettyln!(
@@ -493,11 +464,10 @@ pub(crate) fn view(
         escape_control_chars(pkg_name),
         escape_control_chars(pkg_version),
         escape_control_chars(license),
-        dep_count,
+        dependencies.len(),
         versions_len,
     );
 
-    let string = |key: &[u8]| manifest.get_string_cloned(&bump, key).ok().flatten();
     if let Some(desc) = string(b"description") {
         prettyln!("{}", escape_control_chars(desc));
     }
@@ -542,55 +512,36 @@ pub(crate) fn view(
         prettyln!("\n<red><b>DEPRECATED<r> ⚠️  - {}", deprecated);
     }
 
-    // Display dependencies if they exist
-    if let Some(deps) = &dependencies_object {
-        let deps_e_obj = deps.data.e_object().expect("infallible: variant checked");
-        let dependencies = deps_e_obj.properties.slice();
-        if !dependencies.is_empty() {
-            prettyln!("\n<b>dependencies<r><d> ({}):<r>", dependencies.len());
-        }
-
-        for prop in dependencies {
-            if prop.key.is_none() || prop.value.is_none() {
-                continue;
-            }
-            let Some(dep_name) = prop
-                .key
-                .as_ref()
-                .expect("infallible: prop has key")
-                .as_string(&bump)
-            else {
-                continue;
-            };
-            let Some(dep_version) = prop
-                .value
-                .as_ref()
-                .expect("infallible: prop has value")
-                .as_string(&bump)
-            else {
-                continue;
-            };
-            prettyln!(
-                "- <cyan>{}<r><d>:<r> {}",
-                escape_control_chars(dep_name),
-                bun_fmt::for_terminal(BStr::new(dep_version)),
-            );
-        }
+    if !dependencies.is_empty() {
+        prettyln!("\n<b>dependencies<r><d> ({}):<r>", dependencies.len());
+    }
+    for prop in dependencies {
+        let (Some(dep_name), Some(dep_version)) = (
+            prop.key.and_then(|key| key.as_string(&bump)),
+            prop.value.and_then(|value| value.as_string(&bump)),
+        ) else {
+            continue;
+        };
+        prettyln!(
+            "- <cyan>{}<r><d>:<r> {}",
+            escape_control_chars(dep_name),
+            bun_fmt::for_terminal(BStr::new(dep_version)),
+        );
     }
 
     if let Some(dist) = manifest.get_object(b"dist") {
         prettyln!("\n<d><r><b>dist<r>");
-        if let Some(t) = dist.get_string_cloned(&bump, b"tarball").ok().flatten() {
+        if let Some(t) = string_of(&dist, &bump, b"tarball") {
             prettyln!(
                 " <d>.<r>tarball<d>:<r> {}",
                 bun_fmt::for_terminal(BStr::new(t))
             );
         }
-        if let Some(s) = dist.get_string_cloned(&bump, b"shasum").ok().flatten() {
+        if let Some(s) = string_of(&dist, &bump, b"shasum") {
             let s = escape_control_chars(s);
             prettyln!(" <d>.<r>shasum<r><d>:<r> <green>{}<r>", s);
         }
-        if let Some(i) = dist.get_string_cloned(&bump, b"integrity").ok().flatten() {
+        if let Some(i) = string_of(&dist, &bump, b"integrity") {
             let i = escape_control_chars(i);
             prettyln!(" <d>.<r>integrity<r><d>:<r> <green>{}<r>", i);
         }
@@ -611,23 +562,20 @@ pub(crate) fn view(
             .properties
             .slice()
         {
-            if prop.key.is_none() || prop.value.is_none() {
+            let (Some(tag), Some(val)) = (
+                prop.key.and_then(|key| key.as_string(&bump)),
+                prop.value.and_then(|value| value.as_string(&bump)),
+            ) else {
                 continue;
-            }
-            let tagname_expr = prop.key.as_ref().expect("infallible: prop has key");
-            let val_expr = prop.value.as_ref().expect("infallible: prop has value");
-            if let Some(tag) = tagname_expr.as_string(&bump) {
-                if let Some(val) = val_expr.as_string(&bump) {
-                    let tag_fmt = escape_control_chars(tag);
-                    let val_fmt = escape_control_chars(val);
-                    if tag == b"latest" {
-                        prettyln!("<cyan>{}<r><d>:<r> {}", tag_fmt, val_fmt);
-                    } else if tag == b"beta" {
-                        prettyln!("<blue>{}<r><d>:<r> {}", tag_fmt, val_fmt);
-                    } else {
-                        prettyln!("<magenta>{}<r><d>:<r> {}", tag_fmt, val_fmt);
-                    }
-                }
+            };
+            let tag_fmt = escape_control_chars(tag);
+            let val_fmt = escape_control_chars(val);
+            if tag == b"latest" {
+                prettyln!("<cyan>{}<r><d>:<r> {}", tag_fmt, val_fmt);
+            } else if tag == b"beta" {
+                prettyln!("<blue>{}<r><d>:<r> {}", tag_fmt, val_fmt);
+            } else {
+                prettyln!("<magenta>{}<r><d>:<r> {}", tag_fmt, val_fmt);
             }
         }
     }
@@ -635,17 +583,8 @@ pub(crate) fn view(
     if let Some(mut iter) = json.get_array(b"maintainers") {
         prettyln!("\nmaintainers<r><d>:<r>");
         while let Some(m) = iter.next() {
-            let nm: &[u8] = m
-                .get_string_cloned(&bump, b"name")
-                .ok()
-                .flatten()
-                .unwrap_or(b"");
-            let em: &[u8] = m
-                .get_string_cloned(&bump, b"email")
-                .ok()
-                .flatten()
-                .unwrap_or(b"");
-            let (nm, em) = (escape_control_chars(nm), escape_control_chars(em));
+            let nm = escape_control_chars(string_of(&m, &bump, b"name").unwrap_or(b""));
+            let em = escape_control_chars(string_of(&m, &bump, b"email").unwrap_or(b""));
             if !em.0.is_empty() {
                 prettyln!("<d>-<r> {} <d>\\<{}\\><r>", nm, em);
             } else if !nm.0.is_empty() {
@@ -654,9 +593,8 @@ pub(crate) fn view(
         }
     }
 
-    // Add published date information
     if let Some(time_obj) = json.get_object(b"time") {
-        let time = |key: &[u8]| time_obj.get_string_cloned(&bump, key).ok().flatten();
+        let time = |key: &[u8]| string_of(&time_obj, &bump, key);
         // TODO: use a relative time formatter
         if let Some(published_time) = time(pkg_version).or_else(|| time(b"modified")) {
             let published_time = escape_control_chars(published_time);

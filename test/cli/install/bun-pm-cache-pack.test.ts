@@ -667,7 +667,8 @@ describe("bun pm cache unpack", () => {
             file("setuid", "", 0o6777),
             file("unreadable", "", 0),
             dir("odd"),
-            ...names.map(name => file(`odd/${name}`, name)),
+            // A directory each: `nul` is `NUL` where the file system folds case.
+            ...names.flatMap((name, i) => [dir(`odd/${i}`), file(`odd/${i}/${name}`, name)]),
           ]),
         ),
       );
@@ -682,7 +683,7 @@ describe("bun pm cache unpack", () => {
       expect(lstatSync(join(root, "setuid")).mode & 0o7022).toBe(0);
       expect(lstatSync(join(root, "setuid")).mode & 0o700).toBe(0o700);
       expect(lstatSync(join(root, "unreadable")).mode & 0o777).toBe(0o600);
-      expect(readdirSync(join(root, "odd")).sort()).toEqual([...names].sort());
+      expect(names.map((_, i) => readdirSync(join(root, "odd", `${i}`)))).toEqual(names.map(name => [name]));
       expect(code).toBe(0);
     },
   );

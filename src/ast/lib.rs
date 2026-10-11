@@ -1937,21 +1937,12 @@ impl Log {
         if !Kind::Warn.should_print(self.level) {
             return;
         }
-        self.warnings += 1;
-        let mut location = Location::init_or_null(Some(source), Range { loc, len: 1 });
-        if let Some(location) = location.as_mut() {
+        let range = Range { loc, len: 1 };
+        let text = alloc_print(args);
+        self.add_formatted_msg(Kind::Warn, Some(source), range, text, Box::default(), false);
+        if let Some(location) = self.msgs.last_mut().and_then(|m| m.data.location.as_mut()) {
             location.line_text = None;
         }
-        let data = Data {
-            text: alloc_print(args),
-            location,
-        }
-        .clone_line_text(self.clone_line_text);
-        self.add_msg(Msg {
-            kind: Kind::Warn,
-            data,
-            ..Default::default()
-        })
     }
 
     #[cold]

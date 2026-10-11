@@ -867,11 +867,8 @@ negatable_names! { OperatingSystem: u16, OPERATING_SYSTEM_NAMES => [
 
 /// https://docs.npmjs.com/cli/v10/configuring-npm/package-json#libc
 ///
-/// Unlike `os`/`cpu`, the zero value does not mean "matches nothing": it is
-/// what a package without a `libc` field gets, and what every manifest cache
-/// entry, `bun.lockb` and `bun.lock` written before this field was read
-/// contains. [`is_match`](Self::is_match) treats it as "not declared", so
-/// such packages install on every libc.
+/// Unlike `os`/`cpu`, zero is "not declared" (also what everything written before
+/// this field was read contains), and such a package installs on every libc.
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub struct Libc(pub u8);
@@ -885,11 +882,8 @@ impl Libc {
 
     pub(crate) const ALL_VALUE: u8 = Self::GLIBC | Self::MUSL;
 
-    /// The libc that packages are filtered against by default. Bun is
-    /// statically tied to one libc (the musl build is a separate binary, see
-    /// `bun_core::Environment::IS_MUSL`), so the build target is the host libc.
-    /// Other operating systems have no libc in the npm sense, so nothing is
-    /// filtered there.
+    /// The default filter. The musl build is a separate binary, so the build target is
+    /// the host libc; other operating systems have no libc in the npm sense.
     #[cfg(all(target_os = "linux", target_env = "musl"))]
     pub const CURRENT: Self = Self(Self::MUSL);
     #[cfg(all(target_os = "linux", not(target_env = "musl")))]
@@ -903,11 +897,8 @@ impl Libc {
         self.0 == 0 || (self.0 & target.0) != 0
     }
 
-    /// The libc to filter a package against when it is reached through a
-    /// dependency with `behavior`, `self` being the target libc (`--libc`).
-    ///
-    /// Only optional dependencies are filtered: through a regular dependency a
-    /// package installs on every libc, so a required package is never left out.
+    /// `self` is the target libc (`--libc`). Only optional dependencies are filtered,
+    /// so a required package is never left out.
     #[inline]
     pub fn for_dependency(self, behavior: Behavior) -> Self {
         if behavior.is_optional() {
@@ -920,8 +911,7 @@ impl Libc {
     pub(crate) fn has(self, other: u8) -> bool {
         (self.0 & other) != 0
     }
-    /// The declared libc when the package is restricted to exactly one
-    /// (`"glibc"` / `"musl"`); `None` when undeclared or unrestricted.
+    /// `"glibc"` / `"musl"` when the package is restricted to exactly one.
     pub fn single_name(self) -> Option<&'static [u8]> {
         Self::NAME_MAP_KVS
             .iter()

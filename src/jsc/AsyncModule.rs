@@ -296,10 +296,8 @@ impl Queue {
     pub fn on_poll(&mut self) {
         bun_core::scoped_log!(AsyncModule, "onPoll");
         if self.map.is_empty() {
-            // Wakes also fire for tasks a synchronous auto-install
-            // (`enqueue_dependency_to_root`) is blocked on. That waiter drains
-            // them itself; draining here would drop their failures (no module
-            // to deliver them to).
+            // The tasks of a synchronous auto-install (`enqueue_dependency_to_root`): it drains them
+            // itself, and draining them here would drop their failures.
             return;
         }
         self.run_tasks();
@@ -822,8 +820,7 @@ impl AsyncModule {
 
         // `string_bytes` borrows the per-VM lockfile arena which outlives this
         // stack frame; capture as `RawSlice` so `Resolution::fmt` doesn't
-        // extend the `&mut vm` borrow across the `match e` body (the `else`
-        // arm calls `vm.package_manager()` again).
+        // extend the `&mut vm` borrow across the `match e` body.
         let string_bytes = bun_ptr::RawSlice::new(
             vm.package_manager()
                 .lockfile
@@ -901,16 +898,7 @@ impl AsyncModule {
                 "{} downloading package '{}@{}'",
                 e,
                 bstr::BStr::new(result.name),
-                bun_core::fmt::redacted(
-                    result.resolution.fmt(
-                        vm.package_manager()
-                            .lockfile
-                            .buffers
-                            .string_bytes
-                            .as_slice(),
-                        bun_core::fmt::PathSep::Any,
-                    )
-                )
+                resolution_fmt
             );
         }
 

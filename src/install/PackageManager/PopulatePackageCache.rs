@@ -3,6 +3,10 @@
 use bun_core::{Output, ZBox};
 
 use super::add_remove_with_filter::root_package_json_path;
+use super::enqueue::{
+    enqueue_git_for_checkout, enqueue_package_for_download, enqueue_tarball_for_download,
+    enqueue_tarball_for_reading,
+};
 use super::install_with_manager::{install_with_manager, wait_for_everything_except_peers};
 use super::package_manager_options::{Do, LogLevel};
 use super::{Command, PackageManager};
@@ -37,7 +41,7 @@ pub fn fetch(
     manager.options.lockfile_only = false;
 
     // Resolving downloads whatever the lockfile did not pin yet.
-    let root_package_json_path = ZBox::from_bytes(&root_package_json_path());
+    let root_package_json_path = ZBox::from_bytes(root_package_json_path());
     install_with_manager(manager, ctx, &root_package_json_path, original_cwd)?;
     if manager.any_failed_to_install {
         return Ok(Summary::default());
@@ -106,89 +110,54 @@ fn download_pinned_packages(manager: &mut PackageManager) -> crate::Result<Summa
                 summary.already_cached += 1;
                 continue;
             }
-            PreinstallState::Unknown
-            | PreinstallState::Extracting
-            | PreinstallState::CalcPatchHash
-            | PreinstallState::CalcingPatchHash
-            | PreinstallState::ApplyingPatch => continue,
+            _ => continue,
         }
 
-        let task_context = TaskCallbackContext::Dependency(dep_id);
-        let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
-
+        let waiter = TaskCallbackContext::Dependency(dep_id);
+        // The callees copy these before `string_bytes` can grow.
+        let alias = manager.lockfile.buffers.dependencies[dep_id as usize].name;
+        let alias = manager.lockfile.str_detached(&alias);
         let enqueued = match resolution.tag {
             ResolutionTag::Npm => {
-                let name = pkg.name.slice(string_buf).to_vec();
-                let npm = *resolution.npm();
-                let url = npm.url.slice(string_buf).to_vec();
-                manager.enqueue_package_for_download(
-                    &name,
-                    dep_id,
-                    pkg_id,
-                    npm.version,
-                    &url,
-                    task_context,
-                )
+                let name = manager.lockfile.str_detached(&pkg.name);
+                let url = manager.lockfile.str_detached(&resolution.npm().url);
+                let version = resolution.npm().version;
+                enqueue_package_for_download(manager, name, dep_id, pkg_id, version, url, waiter)
             }
             ResolutionTag::Github => {
                 let url = manager.alloc_github_url(resolution.github());
-                manager.enqueue_tarball_for_download(dep_id, pkg_id, &url, task_context)
+                enqueue_tarball_for_download(manager, dep_id, pkg_id, &url, waiter)
             }
             ResolutionTag::RemoteTarball => {
-                let url = resolution.remote_tarball().slice(string_buf).to_vec();
-                manager.enqueue_tarball_for_download(dep_id, pkg_id, &url, task_context)
+                let url = manager.lockfile.str_detached(resolution.remote_tarball());
+                enqueue_tarball_for_download(manager, dep_id, pkg_id, url, waiter)
             }
             ResolutionTag::LocalTarball => {
-                let alias = manager.lockfile.buffers.dependencies[dep_id as usize]
-                    .name
-                    .slice(string_buf)
-                    .to_vec();
-                manager.enqueue_tarball_for_reading(
-                    dep_id,
-                    pkg_id,
-                    &alias,
-                    &resolution,
-                    task_context,
-                );
+                enqueue_tarball_for_reading(manager, dep_id, pkg_id, alias, &resolution, waiter);
                 Ok(())
             }
-            ResolutionTag::Git => {
-                let alias = manager.lockfile.buffers.dependencies[dep_id as usize]
-                    .name
-                    .slice(string_buf)
-                    .to_vec();
-                // An `--offline` miss is already in `manager.log`.
-                let _ = manager.enqueue_git_for_checkout(
-                    dep_id,
-                    pkg_id,
-                    &alias,
-                    task_context,
-                    name_and_version_hash,
-                );
-                Ok(())
-            }
+            ResolutionTag::Git => enqueue_git_for_checkout(
+                manager,
+                dep_id,
+                pkg_id,
+                alias,
+                waiter,
+                name_and_version_hash,
+            ),
             _ => continue,
         };
-
-        match enqueued {
-            Ok(()) => {}
-            Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
-            // Already in `manager.log`.
-            Err(
-                ForTarballError::InvalidURL
-                | ForTarballError::Offline
-                | ForTarballError::AlreadyFailed,
-            ) => {}
+        // Any other error is already in `manager.log`.
+        if let Err(ForTarballError::OutOfMemory) = enqueued {
+            bun_core::out_of_memory();
         }
     }
 
-    // Nothing waits for these downloads. A `Dependency` callback would resolve its row again, which downloads
-    // a `github:` dependency a second time, by the ref in package.json.
+    // Nothing waits for these downloads, and a `Dependency` callback would resolve its row again (a `github:` one downloads twice).
     for waiters in manager.task_queue.values_mut() {
         waiters.retain(|waiter| matches!(waiter, TaskCallbackContext::GitCheckout { .. }));
     }
 
-    let _ = manager.schedule_tasks();
+    let _ = super::run_tasks::schedule_tasks(manager);
 
     if manager.pending_task_count() > 0 {
         if log_level.show_progress() {

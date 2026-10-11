@@ -1224,10 +1224,8 @@ mod _event_loop_draft {
         }
     }
 
-    /// Nothing that needs the HTTP thread can go on without it, but a refused
-    /// `pthread_create`/`CreateThread` (`RLIMIT_NPROC`, a container pids limit,
-    /// no memory) is the environment's limit, not a bug: report it like any
-    /// other fatal CLI error rather than through the crash reporter.
+    /// A refused `pthread_create`/`CreateThread` (`RLIMIT_NPROC`, a container pids limit, no memory)
+    /// is the environment's limit, not a bug: a fatal CLI error, not the crash reporter.
     #[cold]
     #[inline(never)]
     fn exit_spawn_failed(err: &std::io::Error) -> ! {
@@ -1240,8 +1238,7 @@ mod _event_loop_draft {
                     );
                 }
             }
-            // No errno name for this OS code (most Windows thread-creation
-            // failures): show the OS's own description instead of guessing one.
+            // No errno name for this OS code (most Windows thread-creation failures).
             None => bun_core::err_generic!("Failed to start HTTP Client thread: {}", err),
         }
         bun_core::Global::crash()

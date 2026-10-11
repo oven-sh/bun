@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { randomBytes } from "node:crypto";
 import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync } from "node:fs";
 import { join } from "path";
@@ -1988,9 +1988,10 @@ describe("Bun.Archive", () => {
     });
 
     await using proc = Bun.spawn({
-      // 8192 blocks of 512 bytes. A write past the limit raises SIGXFSZ, which
-      // must not end the child. Without the limit the child must not run.
-      cmd: ["sh", "-c", `trap '' XFSZ; ulimit -f 8192 && exec "$@"`, "sh", bunExe(), "extract.mjs"],
+      // 8192 blocks of 512 bytes; the sh of macOS (bash 3.2) counts blocks of 1024.
+      // A write past the limit raises SIGXFSZ, which must not end the child.
+      // Without the limit the child must not run.
+      cmd: ["sh", "-c", `trap '' XFSZ; ulimit -f ${isMacOS ? 4096 : 8192} && exec "$@"`, "sh", bunExe(), "extract.mjs"],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",

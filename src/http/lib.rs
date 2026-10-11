@@ -1067,14 +1067,6 @@ impl RedirectHop {
                 && (from_port == to_port || (from_port == 80 && to_port == 443)),
         }
     }
-
-    fn keeps_credentials(self, policy: RedirectCredentialsPolicy) -> bool {
-        self.same_origin
-            || match policy {
-                RedirectCredentialsPolicy::SameOrigin => false,
-                RedirectCredentialsPolicy::HttpsUpgrade => self.https_upgrade,
-            }
-    }
 }
 
 // ── shared per-thread buffers ───────────────────────────────────────────
@@ -5339,7 +5331,8 @@ impl<'a> HTTPClient<'a> {
                 // request's header list.
                 // The credential headers (all but `host`) follow `Flags::redirect_credentials`.
                 if !hop.same_origin && self.header_entries.len() > 0 {
-                    let strip_credentials = !hop.keeps_credentials(self.flags.redirect_credentials);
+                    let strip_credentials = !hop.https_upgrade
+                        || self.flags.redirect_credentials == RedirectCredentialsPolicy::SameOrigin;
                     let mut i = 0;
                     while i < self.header_entries.len() {
                         let name = self.header_str(self.header_entries.items_name()[i]);

@@ -24,12 +24,9 @@ pub enum FolderResolution {
     NewPackageId(PackageID),
 }
 
-// The enum discriminant serves as the tag; expose an alias for it.
-
 pub(crate) struct PackageWorkspaceSearchPathFormatter<'a> {
     pub manager: &'a PackageManager,
     pub version: dependency::Version,
-    pub quoted: bool,
 }
 
 impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
@@ -69,21 +66,11 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
             None => search_path,
         };
 
-        if self.quoted {
-            let quoted = QuotedFormatter { text: rel };
-            fmt::Display::fmt(&quoted, f)
-        } else {
-            // `fmt::Formatter` only accepts `&str`, so non-UTF-8 path bytes are emitted lossily
-            // (U+FFFD) via `bstr::BStr`'s Display. Both current callers pass
-            // `quoted = true`, so this branch is unreached today; if a future
-            // caller needs byte-exact output it must use an `io::Write` sink.
-            write!(f, "{}", bstr::BStr::new(rel))
-        }
+        fmt::Display::fmt(&QuotedFormatter { text: rel }, f)
     }
 }
 
-/// One directory resolves to a different package (`Features`, `Resolution`) per kind, so
-/// the folder-resolution map is keyed by both.
+/// One directory resolves to a different package (`Features`, `Resolution`) per kind, so the map is keyed by both.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum Kind {
     /// `file:` dependencies and workspace members (and the root seeded by `PackageManager::init`).
@@ -117,18 +104,15 @@ pub struct Entry {
     pub(crate) resolution: FolderResolution,
 }
 
-// bun_collections::HashMap currently ignores the context/load-factor
-// type params (backed by std HashMap); identity hashing is a TODO(perf).
-
-// ── NewResolver ───────────────────────────────────────────────────────────
-// The const-generic tag requires `#[derive(ConstParamTy)]` (already on `Tag`).
-struct NewResolver<'a, const TAG: ResolutionTag> {
-    pub(crate) folder_path: &'a [u8],
+struct NewResolver<'a> {
+    /// `Folder`, `Symlink` or `Workspace`
+    tag: ResolutionTag,
+    folder_path: &'a [u8],
 }
 
-impl<'a, const TAG: ResolutionTag> ResolverContext for NewResolver<'a, TAG> {
-    fn check_bundled_dependencies() -> bool {
-        matches!(TAG, ResolutionTag::Folder | ResolutionTag::Symlink)
+impl ResolverContext for NewResolver<'_> {
+    fn check_bundled_dependencies(&self) -> bool {
+        matches!(self.tag, ResolutionTag::Folder | ResolutionTag::Symlink)
     }
 
     fn count(&mut self, builder: &mut StringBuilder<'_>, _json: &Expr) {
@@ -141,7 +125,7 @@ impl<'a, const TAG: ResolutionTag> ResolverContext for NewResolver<'a, TAG> {
         _json: &Expr,
     ) -> crate::Result<ResolutionType<u64>> {
         let appended = builder.append::<SemverString>(self.folder_path);
-        Ok(ResolutionType::<u64>::init(match TAG {
+        Ok(ResolutionType::<u64>::init(match self.tag {
             ResolutionTag::Folder => TaggedValue::Folder(appended),
             ResolutionTag::Symlink => TaggedValue::Symlink(appended),
             ResolutionTag::Workspace => TaggedValue::Workspace(appended),
@@ -150,32 +134,11 @@ impl<'a, const TAG: ResolutionTag> ResolverContext for NewResolver<'a, TAG> {
     }
 
     fn fallback_name(&self) -> Option<Vec<u8>> {
-        // Workspace members were already registered under their package.json
-        // name by `WorkspaceMap` and are found by that name again later.
-        if matches!(TAG, ResolutionTag::Workspace) {
+        // Workspace members were registered under their package.json name by `WorkspaceMap`.
+        if self.tag == ResolutionTag::Workspace {
             return None;
         }
         Some(dependency::fallback_package_name(self.folder_path).to_vec())
-    }
-}
-
-type Resolver<'a> = NewResolver<'a, { ResolutionTag::Folder }>;
-type SymlinkResolver<'a> = NewResolver<'a, { ResolutionTag::Symlink }>;
-type WorkspaceResolver<'a> = NewResolver<'a, { ResolutionTag::Workspace }>;
-
-/// The associated const `IS_WORKSPACE` distinguishes the workspace resolver
-/// for `read_package_json_from_disk`.
-trait FolderResolverImpl: ResolverContext {
-    const IS_WORKSPACE: bool;
-
-    /// As in yarn, the directory of a `link:<path>` needs no package.json.
-    fn manifest_is_optional(&self) -> bool;
-}
-impl<'a, const TAG: ResolutionTag> FolderResolverImpl for NewResolver<'a, TAG> {
-    const IS_WORKSPACE: bool = matches!(TAG, ResolutionTag::Workspace);
-
-    fn manifest_is_optional(&self) -> bool {
-        matches!(TAG, ResolutionTag::Symlink) && dependency::is_link_path(self.folder_path)
     }
 }
 
@@ -258,12 +221,12 @@ fn normalize_package_json_path<'a>(
     })
 }
 
-fn read_package_json_from_disk<R: FolderResolverImpl>(
+fn read_package_json_from_disk(
     manager: &mut PackageManager,
     abs: &ZStr,
     version: &dependency::Version,
     features: Features,
-    resolver: &mut R,
+    resolver: &mut NewResolver<'_>,
 ) -> crate::Result<LockfilePackage> {
     let mut body = npm::Registry::BodyPool::get();
 
@@ -284,7 +247,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
     let log: &mut bun_ast::Log = manager.log_mut();
     let manager_ptr: *mut PackageManager = manager;
 
-    if R::IS_WORKSPACE {
+    if resolver.tag == ResolutionTag::Workspace {
         let _tracer =
             bun_perf::trace(bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskWorkspace);
 
@@ -305,7 +268,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
         // SAFETY: see the borrow-splitting comment above.
         unsafe {
             let lockfile: *mut Lockfile = &raw mut *(*manager_ptr).lockfile;
-            package.parse_with_json::<R>(
+            package.parse_with_json(
                 &mut *lockfile,
                 &mut *manager_ptr,
                 log,
@@ -332,8 +295,10 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
                     let _ = file.close();
                     read_result?;
                 }
+                // As in yarn, the directory of a `link:<path>` needs no package.json.
                 Err(err)
-                    if resolver.manifest_is_optional()
+                    if resolver.tag == ResolutionTag::Symlink
+                        && dependency::is_link_path(resolver.folder_path)
                         && matches!(err.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) =>
                 {
                     let dir = bun_core::ZBox::from_bytes(bun_paths::dirname_simple(abs.as_bytes()));
@@ -351,7 +316,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
         // SAFETY: see the borrow-splitting comment above.
         unsafe {
             let lockfile: *mut Lockfile = &raw mut *(*manager_ptr).lockfile;
-            package.parse::<R>(
+            package.parse(
                 &mut *lockfile,
                 &mut *manager_ptr,
                 log,
@@ -448,88 +413,47 @@ pub(crate) fn get_or_put(
         None => false,
     };
 
-    let result: crate::Result<LockfilePackage> = match global_or_relative {
-        GlobalOrRelative::Global(_) => 'global: {
+    let link_path;
+    let (tag, folder_path, features): (_, &[u8], _) = match global_or_relative {
+        GlobalOrRelative::Global(_) => {
             // `non_normalized_path` may alias the lockfile string buffer, which grows below.
-            let folder_path: Box<[u8]> = Box::from(non_normalized_path);
-            let mut resolver: SymlinkResolver = NewResolver {
-                folder_path: &folder_path,
-            };
-            break 'global read_package_json_from_disk(
-                manager,
-                abs,
-                version,
-                Features::LINK,
-                &mut resolver,
-            );
+            link_path = std::borrow::Cow::Owned(non_normalized_path.to_vec());
+            (ResolutionTag::Symlink, &*link_path, Features::LINK)
         }
-        GlobalOrRelative::Relative(tag) => match tag {
-            dependency::version::Tag::Folder => 'folder: {
-                let mut resolver: Resolver = NewResolver { folder_path: rel };
-                break 'folder read_package_json_from_disk(
-                    manager,
-                    abs,
-                    version,
-                    Features::FOLDER,
-                    &mut resolver,
-                );
-            }
-            dependency::version::Tag::Workspace => 'workspace: {
-                let mut resolver: WorkspaceResolver = NewResolver { folder_path: rel };
-                break 'workspace read_package_json_from_disk(
-                    manager,
-                    abs,
-                    version,
-                    Features::WORKSPACE,
-                    &mut resolver,
-                );
-            }
-            dependency::version::Tag::Symlink => 'link: {
-                let folder_path = dependency::link_path_for_lockfile(rel);
-                let mut resolver: SymlinkResolver = NewResolver {
-                    folder_path: &folder_path,
-                };
-                break 'link read_package_json_from_disk(
-                    manager,
-                    abs,
-                    version,
-                    Features::LINK,
-                    &mut resolver,
-                );
-            }
-            _ => unreachable!(),
-        },
-    };
-
-    let package = match result {
-        Ok(p) => p,
-        Err(err) => {
-            let stored = if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
-                FolderResolution::Err(crate::Error::MissingPackageJSON)
-            } else {
-                FolderResolution::Err(err)
-            };
-            if !hash_collision {
-                manager.folders.insert(
-                    key,
-                    Entry {
-                        abs_path: abs.as_bytes().into(),
-                        resolution: stored,
-                    },
-                );
-            }
-            return stored;
+        GlobalOrRelative::Relative(dependency::version::Tag::Symlink) => {
+            link_path = dependency::link_path_for_lockfile(rel);
+            (ResolutionTag::Symlink, &*link_path, Features::LINK)
         }
+        GlobalOrRelative::Relative(dependency::version::Tag::Folder) => {
+            (ResolutionTag::Folder, rel, Features::FOLDER)
+        }
+        GlobalOrRelative::Relative(dependency::version::Tag::Workspace) => {
+            (ResolutionTag::Workspace, rel, Features::WORKSPACE)
+        }
+        GlobalOrRelative::Relative(_) => unreachable!(),
     };
+    let mut resolver = NewResolver { tag, folder_path };
 
+    let (stored, returned) =
+        match read_package_json_from_disk(manager, abs, version, features, &mut resolver) {
+            Ok(package) => (
+                FolderResolution::PackageId(package.meta.id),
+                FolderResolution::NewPackageId(package.meta.id),
+            ),
+            Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT)) => (
+                FolderResolution::Err(crate::Error::MissingPackageJSON),
+                FolderResolution::Err(crate::Error::MissingPackageJSON),
+            ),
+            Err(err) => (FolderResolution::Err(err), FolderResolution::Err(err)),
+        };
     if !hash_collision {
         manager.folders.insert(
             key,
             Entry {
                 abs_path: abs.as_bytes().into(),
-                resolution: FolderResolution::PackageId(package.meta.id),
+                resolution: stored,
             },
         );
     }
-    FolderResolution::NewPackageId(package.meta.id)
+    returned
 }

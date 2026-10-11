@@ -124,9 +124,6 @@ impl WorkspaceMap {
     }
 }
 
-// Drop: all fields are owned (Box<[u8]> keys, Entry { Box<[u8]>, Option<Box<[u8]>> })
-// — Rust drops them automatically; no explicit `deinit` body needed.
-
 #[derive(Clone, Copy)]
 pub(crate) enum NamesArray<'a> {
     Mutable(&'a js_ast::E::Array),
@@ -513,11 +510,7 @@ impl WorkspaceMap {
         if workspace_globs.len() > 0 {
             let mut arena = Arena::new();
             for user_pattern in &workspace_globs {
-                // walker/iter borrow `&arena` and Drop at scope exit,
-                // so resetting here (top of next iter) ensures they drop before invalidation.
-                // Last iter's allocs are freed when `arena` itself drops after the loop.
-                // Capacity is retained to keep the `mi_heap` warm
-                // across glob patterns × matched dirs.
+                // Capacity is retained to keep the `mi_heap` warm across glob patterns × matched dirs.
                 arena.reset_retain_with_limit(8 * 1024 * 1024);
                 let glob_pattern: &[u8] = if user_pattern.len() == 0 {
                     b"package.json"
@@ -529,9 +522,6 @@ impl WorkspaceMap {
                     ))
                 };
 
-                // GlobWalker::init_with_cwd is now an associated constructor
-                // returning `Result<Maybe<Self>>`; arena param dropped (heap-backed),
-                // ignore filter supplied as final arg.
                 let mut walker = match GlobWalker::init_with_cwd(
                     glob_pattern,
                     root_dir,
@@ -547,9 +537,6 @@ impl WorkspaceMap {
                         return Err(add_glob_error(log, source, loc, user_pattern, root_dir, &e));
                     }
                 };
-                // walker dropped at end of loop iter; GlobWalker is heap-backed with no
-                // arena, and its Drop only logs + frees owned Vec/Box fields.
-
                 let mut iter = glob::walk::Iterator::new(&mut walker);
                 if let Err(e) = iter.init()? {
                     return Err(add_glob_error(log, source, loc, user_pattern, root_dir, &e));
@@ -652,7 +639,6 @@ impl WorkspaceMap {
         }
 
         // Sort the names for determinism
-        // ArrayHashMap::sort provides values internally to the comparator.
         workspace_names
             .map
             .sort(|_keys, values: &[Entry], a: usize, b: usize| {
@@ -666,15 +652,7 @@ impl WorkspaceMap {
 const IGNORED_PATHS: &[&[u8]] = &[b"node_modules", b".git", b"CMakeFiles"];
 
 fn ignored_workspace_paths(path: &[u8]) -> bool {
-    for ignored in IGNORED_PATHS {
-        if path == *ignored {
-            return true;
-        }
-    }
-    false
+    IGNORED_PATHS.contains(&path)
 }
 
-// The ignore-filter is a runtime fn-pointer field on
-// `bun_glob::GlobWalker` (const-generic fn ptrs are unstable). Supplied via
-// `init_with_cwd(..., Some(ignored_workspace_paths))`.
 type GlobWalker = glob::GlobWalker<glob::walk::SyscallAccessor, false>;

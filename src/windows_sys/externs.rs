@@ -887,9 +887,7 @@ pub mod kernel32 {
         pub fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *mut DWORD) -> BOOL;
         /// `FlushFileBuffers` — fsync(2)-equivalent for HANDLE-backed files.
         pub fn FlushFileBuffers(hFile: HANDLE) -> BOOL;
-        /// `LockFileEx` (`fileapi.h`) — mandatory byte-range lock. The
-        /// `lpOverlapped` out-param is required even for synchronous handles
-        /// (its `Offset`/`OffsetHigh` select the range start).
+        /// `lpOverlapped` is required even for synchronous handles: its `Offset` is the range start.
         pub fn LockFileEx(
             hFile: HANDLE,
             dwFlags: DWORD,

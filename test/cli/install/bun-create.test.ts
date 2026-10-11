@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { chmodSync, lstatSync, mkdirSync, readdirSync, realpathSync, symlinkSync } from "fs";
+import { chmodSync, lstatSync, mkdirSync, readdirSync, statSync, symlinkSync } from "fs";
 import { exists, stat } from "fs/promises";
 import { bunExe, bunEnv as env, githubTarball, isPosix, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
@@ -141,26 +141,27 @@ it("handles a close-delimited GitHub tarball body split across packets", async (
   }
 });
 
+function tarEntry(name: string, body: Buffer) {
+  const buf = Buffer.alloc(512 + ((body.length + 511) & ~511));
+  const header = buf.subarray(0, 512);
+  header.write(name);
+  header.write("0000644", 100);
+  header.write("0000000", 108);
+  header.write("0000000", 116);
+  header.write(body.length.toString(8).padStart(11, "0"), 124);
+  header.write("00000000000", 136);
+  header.write("        ", 148);
+  header.write("0", 156);
+  header.write("ustar\0", 257);
+  header.write("00", 263);
+  let sum = 0;
+  for (const b of header) sum += b;
+  header.write(sum.toString(8).padStart(6, "0") + "\0 ", 148);
+  body.copy(buf, 512);
+  return buf;
+}
+
 it("keeps tarball entry paths within the destination when checking for conflicting files", async () => {
-  const tarEntry = (name: string, body: Buffer) => {
-    const buf = Buffer.alloc(512 + ((body.length + 511) & ~511));
-    const header = buf.subarray(0, 512);
-    header.write(name);
-    header.write("0000644", 100);
-    header.write("0000000", 108);
-    header.write("0000000", 116);
-    header.write(body.length.toString(8).padStart(11, "0"), 124);
-    header.write("00000000000", 136);
-    header.write("        ", 148);
-    header.write("0", 156);
-    header.write("ustar\0", 257);
-    header.write("00", 263);
-    let sum = 0;
-    for (const b of header) sum += b;
-    header.write(sum.toString(8).padStart(6, "0") + "\0 ", 148);
-    body.copy(buf, 512);
-    return buf;
-  };
   const pkg = Buffer.from(
     JSON.stringify({
       name: "conflict-check-template",
@@ -204,6 +205,32 @@ it("keeps tarball entry paths within the destination when checking for conflicti
   expect(out).toContain("Success! owner/conflict-check-template loaded into dest");
   expect(await Bun.file(join(x_dir, "outside.txt")).text()).toBe("keep me");
   expect(exitCode).toBe(0);
+});
+
+// `\` separates as well, so this entry is `nested.txt` in `sub`.
+it("sees a link in the destination behind a `\\` in the name of a tarball entry", async () => {
+  const gz = gzipSync(Buffer.concat([tarEntry("pkg/sub\\nested.txt", Buffer.from("template")), Buffer.alloc(1024)]));
+  mkdirSync(join(x_dir, "dest"));
+  mkdirSync(join(x_dir, "outside"));
+  symlinkSync(join(x_dir, "outside"), join(x_dir, "dest", "sub"), "junction");
+
+  using server = Bun.serve({
+    tls,
+    port: 0,
+    fetch() {
+      return new Response(gz, { headers: { "content-type": "application/x-gzip" } });
+    },
+  });
+
+  const { err, exitCode } = await create(
+    x_dir,
+    ["github.com/owner/backslash-template", "dest", "--no-install", "--no-git"],
+    { NODE_TLS_REJECT_UNAUTHORIZED: "0", GITHUB_API_DOMAIN: `${server.hostname}:${server.port}` },
+  );
+
+  expect(err).toContain("contains files that could conflict");
+  expect(readdirSync(join(x_dir, "outside"))).toEqual([]);
+  expect(exitCode).toBe(1);
 });
 
 it("reports an error and exits when the template's package.json entry body is truncated", async () => {
@@ -1019,9 +1046,11 @@ describe.concurrent.each(["local", "GitHub"])("a link in the destination of a %s
     using dir = tempDir("create-over-link", files);
     const { err, exitCode, isLink } = await createOverLink(String(dir), name, target);
 
+    // On Windows a local template's directories are copied as well as its files.
+    const underSub = kind === "GitHub" ? ["  sub/"] : [...(isPosix ? [] : ["  sub"]), "  sub/nested.txt"];
     expect(err.slice(err.indexOf("error:")).replaceAll("\\", "/").split("\n").filter(Boolean)).toEqual([
       "error: The directory proj/ contains files that could conflict:",
-      name !== "sub" ? `  ${name}` : kind === "local" ? "  sub/nested.txt" : "  sub/",
+      ...(name === "sub" ? underSub : [`  ${name}`]),
       "To overwrite them, use --force",
     ]);
     expect(await tree(join(String(dir), "outside"))).toEqual(outside);
@@ -1232,14 +1261,16 @@ describe.concurrent("bun-create tasks", () => {
       { ...dependencies, "bun-create": { preinstall: "bun marker.ts PRE", postinstall: "bun marker.ts POST" } },
       {
         ...files,
-        "marker.ts": `await Bun.write(process.argv[2], require("fs").realpathSync(process.execPath));`,
+        "marker.ts": `const { dev, ino } = require("fs").statSync(process.execPath, { bigint: true });\nawait Bun.write(process.argv[2], dev + ":" + ino);`,
         // Not this one either: a bare command is not looked up in the destination.
         ...(isPosix ? { "bun": stubs["bin/bun"] } : {}),
       },
     );
 
     expect(err).not.toContain("error:");
-    expect(written).toEqual({ PRE: realpathSync(bunExe()), POST: realpathSync(bunExe()) });
+    // The task's `bun` is a link to the running executable: a symlink, or a hard link on Windows.
+    const { dev, ino } = statSync(bunExe(), { bigint: true });
+    expect(written).toEqual({ PRE: `${dev}:${ino}`, POST: `${dev}:${ino}` });
     expect(exitCode).toBe(0);
   });
 

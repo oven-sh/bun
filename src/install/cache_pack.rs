@@ -293,6 +293,12 @@ fn lockfile_entries(pm: &mut PackageManager) -> Vec<LockfileEntry> {
     entries
 }
 
+fn tmpname(prefix: &[u8]) -> ZBox {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let name = FileSystem::tmpname(prefix, &mut buf[..], bun_core::fast_random());
+    ZBox::from_bytes(name.expect("unreachable").as_bytes())
+}
+
 /// Written next to the destination and renamed over it; removed unless that happened.
 struct TempOutput {
     dir: Dir,
@@ -307,12 +313,7 @@ impl TempOutput {
             bun_paths::dirname(destination).unwrap_or(b"."),
             Default::default(),
         )?;
-        let mut name_buf = bun_paths::path_buffer_pool::get();
-        let name = ZBox::from_bytes(
-            FileSystem::tmpname(b"pack", &mut name_buf[..], bun_core::fast_random())
-                .expect("unreachable")
-                .as_bytes(),
-        );
+        let name = tmpname(b"pack");
         let file = sys::openat(
             dir.fd(),
             &name,
@@ -693,12 +694,7 @@ struct Staging {
 
 impl Staging {
     fn create(parent: Fd) -> sys::Maybe<Self> {
-        let mut name_buf = bun_paths::path_buffer_pool::get();
-        let name = ZBox::from_bytes(
-            FileSystem::tmpname(b"unpack", &mut name_buf[..], bun_core::fast_random())
-                .expect("unreachable")
-                .as_bytes(),
-        );
+        let name = tmpname(b"unpack");
         sys::mkdirat(parent, &name, 0o700)?;
         let mut staging = Self {
             parent,

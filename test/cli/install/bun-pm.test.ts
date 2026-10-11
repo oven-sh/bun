@@ -1582,7 +1582,7 @@ function refused(cacheDir: string, what: string, bunx = "Cleared") {
     stdout: `${bunx} 0 cached 'bunx' packages\n`,
     stderr:
       `error: refusing to clear "${cacheDir}": it is or contains ${what}\n` +
-      "note: the cache directory comes from $BUN_INSTALL_CACHE_DIR or $BUN_INSTALL. " +
+      "note: the cache directory comes from $BUN_INSTALL_CACHE_DIR, --cache-dir or $BUN_INSTALL. " +
       "Point it at a directory that holds nothing but the bun install cache.\n",
     exitCode: 1,
   };
@@ -2091,6 +2091,53 @@ describe.concurrent("bun pm cache prune", () => {
       exitCode: 1,
     });
     expect(await readdirSorted(join(proj, "looks-like@1.0.0@@@1"))).toEqual(["index.js"]);
+  });
+});
+
+describe.concurrent.each(["rm", "prune"] as const)("the directory of bun pm cache %s", action => {
+  const done =
+    action === "rm" ? cleared : { stdout: "Removed 1 package older than 30 days (2 bytes)\n", stderr: "", exitCode: 0 };
+  const left = action === "rm" ? null : ["0123456789abcdef.npm"];
+  const entries = async (cache: string) => ((await exists(cache)) ? await readdirSorted(cache) : null);
+
+  /** The cache that the environment names, and `mine` with the same entries next to the project. */
+  function caches(name: string) {
+    const side = tempDir(`${name}-side`, sideFiles);
+    const root = tempDir(name, {
+      ...projectFiles,
+      "mine/bar@0.0.2@@@1/package.json": "{}",
+      "mine/0123456789abcdef.npm": "manifest",
+    });
+    const envCache = join(String(side), "bun-install", "install", "cache");
+    const mine = join(String(root), "mine");
+    for (const cache of [envCache, mine]) utimesSync(join(cache, "bar@0.0.2@@@1"), daysAgo(40), daysAgo(40));
+    return {
+      envCache,
+      mine,
+      proj: join(String(root), "proj"),
+      spawnEnv: cacheEnv(String(side)),
+      [Symbol.dispose]() {
+        side[Symbol.dispose]();
+        root[Symbol.dispose]();
+      },
+    };
+  }
+
+  test("--cache-dir names it", async () => {
+    using box = caches(`pm-cache-${action}-flag`);
+    expect(await pmCache([action, "--cache-dir", box.mine], box.proj, box.spawnEnv)).toEqual(done);
+    expect(await entries(box.mine)).toEqual(left);
+    expect(await entries(box.envCache)).toEqual(envCacheEntries);
+  });
+
+  test("the project's bunfig.toml does not", async () => {
+    using box = caches(`pm-cache-${action}-bunfig`);
+    await writeFile(join(box.proj, "bunfig.toml"), `[install.cache]\ndir = ${JSON.stringify(box.mine)}\n`);
+    expect(await pmCache([], box.proj, box.spawnEnv)).toEqual({ stdout: box.mine, stderr: "", exitCode: 0 });
+
+    expect(await pmCache([action], box.proj, box.spawnEnv)).toEqual(done);
+    expect(await entries(box.mine)).toEqual(envCacheEntries);
+    expect(await entries(box.envCache)).toEqual(left);
   });
 });
 

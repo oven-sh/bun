@@ -6991,7 +6991,9 @@ describe.concurrent("bun-install", () => {
               stderr: "pipe",
             });
             const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-            const reported = stderr.includes("error: JSON document is too deeply nested") && stderr.includes(failure);
+            const reported =
+              stderr.includes("error: JSON document is too deeply nested") &&
+              stderr.replaceAll("\\", "/").includes(failure);
             outcomes.push(
               exitCode === 0
                 ? "installed"

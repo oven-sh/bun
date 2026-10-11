@@ -80,7 +80,7 @@ impl<'a> Interval<'a> {
             return true;
         };
         // `0.0.0-0` is the lowest version, so a missing lower bound starts there and `<0.0.0-0` alone is empty.
-        let l = self.lower.unwrap_or(Bound {
+        let l = self.lower.unwrap_or_else(|| Bound {
             version: Comparator::null_set().version,
             buf: b"",
             inclusive: true,

@@ -307,32 +307,19 @@ impl Options {
         normalized: bool,
     ) -> Option<&'a Npm::registry::Scope> {
         // A manifest or a lockfile names this URL, and a key has no scheme: a line never follows it into cleartext.
-        let own = if normalized && tarball.is_https() {
-            Npm::registry::UrlAuth::find_entry_serialized(&self.url_auth, tarball)
-        } else {
-            None
-        };
+        let own = (normalized && tarball.is_https())
+            .then(|| Npm::registry::UrlAuth::find_entry(&self.url_auth, tarball))
+            .flatten();
         if scope.has_credentials() && same_origin(tarball, &scope.url.url()) {
             // The key the registry itself resolved to is already reflected in `scope`, behind any bunfig, env or CLI credential.
             return match own {
-                Some(entry) if scope.url_auth_key.as_deref() != Some(entry.key()) => {
-                    Some(entry.credentials())
+                Some(entry) if scope.url_auth_key.as_ref() != Some(&entry.key) => {
+                    Some(&entry.credentials)
                 }
                 _ => Some(scope),
             };
         }
-        own.map(|entry| entry.credentials())
-    }
-
-    /// After every source of a registry URL (bunfig, `.npmrc`, environment, command line) was applied.
-    fn fill_credentials_from_url_auth(&mut self) {
-        if self.url_auth.is_empty() {
-            return;
-        }
-        let url_auth = &self.url_auth;
-        for scope in core::iter::once(&mut self.scope).chain(self.registries.values_mut()) {
-            fill_scope_from_url_auth(url_auth, scope);
-        }
+        own.map(|entry| &entry.credentials)
     }
 }
 
@@ -340,12 +327,9 @@ impl Options {
 /// `bunfig.toml`, the environment or the command line. One written into a `.npmrc` `registry=` URL yields.
 fn fill_scope_from_url_auth(url_auth: &[Npm::registry::UrlAuth], scope: &mut Npm::registry::Scope) {
     let own = Npm::registry::UrlAuth::find_entry(url_auth, &scope.url.url());
-    scope.url_auth_key = own.map(|entry| Box::from(entry.key()));
-    if scope.has_credentials() && !scope.declared_in_npmrc {
-        return;
-    }
-    if let Some(entry) = own {
-        scope.copy_credentials_from(entry.credentials());
+    scope.url_auth_key = own.map(|entry| entry.key.clone());
+    if let Some(entry) = own.filter(|_| !scope.has_credentials() || scope.declared_in_npmrc) {
+        scope.copy_credentials_from(&entry.credentials);
     }
 }
 
@@ -355,23 +339,6 @@ fn same_origin(url: &bun_url::URL, base: &bun_url::URL) -> bool {
         && url.protocol.eq_ignore_ascii_case(base.protocol)
         && url.hostname.eq_ignore_ascii_case(base.hostname)
         && url.get_port_auto() == base.get_port_auto()
-}
-
-/// `url` names the registry `base` or one below it: same host and port text, no https-to-http downgrade, and `base`'s
-/// path is a segment-wise prefix of `url`'s. A sibling path inherits nothing; its own `.npmrc` line applies by the walk.
-fn registry_under(url: &bun_url::URL, base: &bun_url::URL) -> bool {
-    bun_core::without_trailing_slash(url.host) == bun_core::without_trailing_slash(base.host)
-        && (url.is_https() || !base.is_https())
-        && path_under(
-            Npm::registry::query_free_path(url),
-            Npm::registry::query_free_path(base),
-        )
-}
-
-/// Segment-wise, so `/npm/team-ab/x` is not under `/npm/team-a/`.
-fn path_under(path: &[u8], base: &[u8]) -> bool {
-    let mut segments = bun_core::strings::tokenize(path, b"/");
-    bun_core::strings::tokenize(base, b"/").all(|expected| segments.next() == Some(expected))
 }
 
 impl Options {
@@ -412,17 +379,22 @@ impl Options {
         Ok(scope)
     }
 
-    /// A registry at or under `old` keeps its credentials, unless `.npmrc` has a deeper line for it.
+    /// A registry at or under `old` keeps its credentials, unless `.npmrc` has a deeper line for it. Under: same host and port
+    /// text, no https-to-http downgrade, and `old`'s path is a segment-wise prefix (`/npm/team-ab/x` is not under `/npm/team-a/`).
     fn inherits_credentials(&self, old: &Npm::registry::Scope, new_url: &bun_url::URL) -> bool {
+        use Npm::registry::{UrlAuth, query_free_path};
+        use bun_core::strings::tokenize;
         let old_url = old.url.url();
-        if !registry_under(new_url, &old_url) {
-            return false;
-        }
-        match Npm::registry::UrlAuth::find_entry(&self.url_auth, new_url) {
-            Some(own) => Npm::registry::UrlAuth::find_entry(&self.url_auth, &old_url)
-                .is_some_and(|old| old.key() == own.key()),
-            None => true,
-        }
+        let mut segments = tokenize(query_free_path(new_url), b"/");
+        bun_core::without_trailing_slash(new_url.host)
+            == bun_core::without_trailing_slash(old_url.host)
+            && (new_url.is_https() || !old_url.is_https())
+            && tokenize(query_free_path(&old_url), b"/").all(|base| segments.next() == Some(base))
+            && match UrlAuth::find_entry(&self.url_auth, new_url) {
+                Some(own) => UrlAuth::find_entry(&self.url_auth, &old_url)
+                    .is_some_and(|old| old.key == own.key),
+                None => true,
+            }
     }
 
     /// `url` is package data, like a tarball URL: no variable of this process is expanded into it, and a `.npmrc` line
@@ -593,40 +565,32 @@ pub use crate::config_version::ConfigVersion;
 pub use bun_install_types::DependencyGroup;
 pub use bun_install_types::NodeLinker::NodeLinker;
 
-/// mkdir -p + open `<base>/<parts...>`; `base` is an environment value of any length.
+// mkdir -p + open the dir. Callers store the raw `Fd` (`options.global_bin_dir: Fd`).
+fn make_open_dir(path: &[u8]) -> crate::Result<bun_sys::Fd> {
+    bun_sys::Dir::cwd()
+        .make_open_path(path, Default::default())
+        .map(|d| d.into_raw())
+        .map_err(Into::into)
+}
+
+/// `<base>/<parts...>`; `base` is an environment value of any length.
 fn make_open_dir_under(base: &[u8], parts: &[&[u8]]) -> crate::Result<bun_sys::Fd> {
     use bun_paths::{platform, resolve_path::join_abs_string_buf_checked};
-    use bun_sys::{Dir, OpenDirOptions};
 
     let mut buf = bun_paths::path_buffer_pool::get();
     let Some(path) = join_abs_string_buf_checked::<platform::Auto>(base, &mut buf.0, parts) else {
         return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
     };
-    Dir::cwd()
-        .make_open_path(path, OpenDirOptions::default())
-        .map(|d| d.into_raw())
-        .map_err(Into::into)
+    make_open_dir(path)
 }
 
-// mkdir -p + open the dir. Callers store the raw `Fd` (`options.global_bin_dir: Fd`).
 pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd> {
-    use bun_sys::{Dir, OpenDirOptions};
-
     if let Some(home_dir) = env_var::BUN_INSTALL_GLOBAL_DIR.get() {
-        return Dir::cwd()
-            .make_open_path(home_dir, OpenDirOptions::default())
-            .map(|d| d.into_raw())
-            .map_err(Into::into);
+        return make_open_dir(home_dir);
     }
 
     if !explicit_global_dir.is_empty() {
-        return Dir::cwd()
-            .make_open_path(
-                &expand_home_tilde(explicit_global_dir),
-                OpenDirOptions::default(),
-            )
-            .map(|d| d.into_raw())
-            .map_err(Into::into);
+        return make_open_dir(&expand_home_tilde(explicit_global_dir));
     }
 
     if let Some(home_dir) = env_var::BUN_INSTALL.get() {
@@ -644,24 +608,15 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd>
 }
 
 pub(crate) fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> crate::Result<bun_sys::Fd> {
-    use bun_sys::{Dir, OpenDirOptions};
-
     if let Some(home_dir) = env_var::BUN_INSTALL_BIN.get() {
-        return Dir::cwd()
-            .make_open_path(home_dir, OpenDirOptions::default())
-            .map(|d| d.into_raw())
-            .map_err(Into::into);
+        return make_open_dir(home_dir);
     }
 
-    if let Some(opts) = opts_ {
-        if let Some(home_dir) = &opts.global_bin_dir {
-            if !home_dir.is_empty() {
-                return Dir::cwd()
-                    .make_open_path(&expand_home_tilde(home_dir), OpenDirOptions::default())
-                    .map(|d| d.into_raw())
-                    .map_err(Into::into);
-            }
-        }
+    if let Some(home_dir) = opts_
+        .and_then(|opts| opts.global_bin_dir.as_deref())
+        .filter(|home_dir| !home_dir.is_empty())
+    {
+        return make_open_dir(&expand_home_tilde(home_dir));
     }
 
     if let Some(home_dir) = env_var::BUN_INSTALL.get() {
@@ -709,14 +664,22 @@ impl Options {
         // Every access below is a read of `config.*`; no field is ever written.
         // Taking `&` (not `&mut`) keeps provenance coherent with the bundler/
         // resolver storage (`Option<NonNull<api::BunInstall>>`).
-        bun_install_: Option<&Api::BunInstall>,
-        // Runtime auto-install, which cannot merge it under a `bun_install_` it only borrows: what `.npmrc` configures,
+        bun_install_ref: Option<&Api::BunInstall>,
+        // Runtime auto-install, which cannot merge it under a `bun_install_ref` it only borrows: what `.npmrc` configures,
         // of which only the registries and their credentials are read.
         runtime_npmrc: Option<&Api::BunInstall>,
         subcommand: Subcommand,
     ) -> crate::Result<()> {
+        if let Some(manifest_cache) = env.get(b"BUN_MANIFEST_CACHE") {
+            self.enable.set(
+                Enable::MANIFEST_CACHE,
+                matches!(manifest_cache, b"1" | b"2"),
+            );
+            self.enable
+                .set(Enable::MANIFEST_CACHE_CONTROL, manifest_cache == b"2");
+        }
+
         let mut base = Api::NpmRegistry::default();
-        let bun_install_ref = bun_install_;
         if let Some(registry) = runtime_npmrc.and_then(|npmrc| npmrc.default_registry.as_ref()) {
             base = registry.clone();
         }
@@ -987,20 +950,26 @@ impl Options {
 
         bun_http::async_http::load_env(log, env);
 
-        if let Some(check_bool) = env.get(b"BUN_CONFIG_SKIP_SAVE_LOCKFILE") {
-            self.do_.set(Do::SAVE_LOCKFILE, check_bool == b"0");
+        for (key, flag) in [
+            (
+                b"BUN_CONFIG_SKIP_SAVE_LOCKFILE".as_slice(),
+                Do::SAVE_LOCKFILE,
+            ),
+            (
+                b"BUN_CONFIG_SKIP_LOAD_LOCKFILE".as_slice(),
+                Do::LOAD_LOCKFILE,
+            ),
+            (
+                b"BUN_CONFIG_SKIP_INSTALL_PACKAGES".as_slice(),
+                Do::INSTALL_PACKAGES,
+            ),
+        ] {
+            if let Some(check_bool) = env.get(key) {
+                self.do_.set(flag, check_bool == b"0");
+            }
         }
-
-        if let Some(check_bool) = env.get(b"BUN_CONFIG_SKIP_LOAD_LOCKFILE") {
-            self.do_.set(Do::LOAD_LOCKFILE, check_bool == b"0");
-        }
-
-        if let Some(check_bool) = env.get(b"BUN_CONFIG_SKIP_INSTALL_PACKAGES") {
-            self.do_.set(Do::INSTALL_PACKAGES, check_bool == b"0");
-        }
-
-        if let Some(check_bool) = env.get(b"BUN_CONFIG_NO_VERIFY") {
-            self.do_.set(Do::VERIFY_INTEGRITY, check_bool == b"0");
+        if matches!(env.get(b"BUN_CONFIG_NO_VERIFY"), Some(b"1" | b"true")) {
+            self.do_.set(Do::VERIFY_INTEGRITY, false);
         }
 
         // Update should never read from manifest cache
@@ -1145,10 +1114,9 @@ impl Options {
                     .store(backend as u8, core::sync::atomic::Ordering::Relaxed);
             }
 
-            // CPU, OS and libc are now parsed as enums in CommandLineArguments, just copy them
-            self.cpu = cli.cpu;
-            self.os = cli.os;
-            self.libc = cli.libc;
+            self.cpu = cli.cpu.unwrap_or(Npm::Architecture::CURRENT);
+            self.os = cli.os.unwrap_or(Npm::OperatingSystem::CURRENT);
+            self.libc = cli.libc.unwrap_or(Npm::Libc::CURRENT);
 
             self.do_.set(Do::UPDATE_TO_LATEST, cli.latest);
             self.do_.set(Do::RECURSIVE, cli.recursive);
@@ -1213,7 +1181,7 @@ impl Options {
             }
 
             // `bun pm version` command options
-            self.git_tag_version = cli.git_tag_version;
+            self.git_tag_version = !cli.no_git_tag_version;
             self.allow_same_version = cli.allow_same_version;
             self.preid = cli.preid;
             self.message = cli.message;
@@ -1247,7 +1215,12 @@ impl Options {
             );
         }
 
-        self.fill_credentials_from_url_auth();
+        // After every source of a registry URL (bunfig, `.npmrc`, environment, command line) was applied.
+        if !self.url_auth.is_empty() {
+            for scope in core::iter::once(&mut self.scope).chain(self.registries.values_mut()) {
+                fill_scope_from_url_auth(&self.url_auth, scope);
+            }
+        }
 
         // moved from `defer { ... }` after scope assignment (see note above).
         self.did_override_default_scope = self.scope.url_hash != *Npm::registry::DEFAULT_URL_HASH;
@@ -1390,25 +1363,14 @@ impl Do {
     }
 }
 
-// Field-style accessors (`options.enable.cache = false` /
-// `if options.enable.manifest_cache { ... }`). The bitflags struct is `Copy`,
-// so getters return by value and setters take `&mut self`.
 impl Enable {
     #[inline]
     pub(crate) fn manifest_cache(self) -> bool {
         self.contains(Enable::MANIFEST_CACHE)
     }
     #[inline]
-    pub(crate) fn set_manifest_cache(&mut self, v: bool) {
-        self.set(Enable::MANIFEST_CACHE, v);
-    }
-    #[inline]
     pub(crate) fn manifest_cache_control(self) -> bool {
         self.contains(Enable::MANIFEST_CACHE_CONTROL)
-    }
-    #[inline]
-    pub(crate) fn set_manifest_cache_control(&mut self, v: bool) {
-        self.set(Enable::MANIFEST_CACHE_CONTROL, v);
     }
     #[inline]
     pub(crate) fn fail_early(self) -> bool {

@@ -915,8 +915,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         // SAFETY: env_ptr is the process-lifetime DotEnv loader; the &mut borrow passed to
         // init_global above has been released, so this read does not alias a live &mut.
         let path_env = unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b"");
-        let shell = RunCommand::find_shell(path_env, cwd).ok_or(crate::Error::MissingShell)?;
-        Some(shell)
+        Some(RunCommand::find_shell(path_env, cwd).ok_or(crate::Error::MissingShell)?)
     } else {
         None
     };
@@ -952,10 +951,9 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             }
 
             let run_in_bun = ctx.debug.run_in_bun;
-            let pkg_path_env = RunCommand::configure_path_for_run_with_package_json_dir(
-                ctx,
+            let pkg_path_env = RunCommand::path_for_run(
+                this_transpiler.env_mut(),
                 &package.dir,
-                this_transpiler,
                 None,
                 &package.dir,
                 run_in_bun,
@@ -1035,14 +1033,8 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     } else {
         // Single-package mode: use the root package.json
         let run_in_bun = ctx.debug.run_in_bun;
-        let path_env = RunCommand::configure_path_for_run_with_package_json_dir(
-            ctx,
-            b"",
-            this_transpiler,
-            None,
-            cwd,
-            run_in_bun,
-        )?;
+        let path_env =
+            RunCommand::path_for_run(this_transpiler.env_mut(), b"", None, cwd, run_in_bun)?;
 
         // Load package.json scripts
         let root_dir_info = match this_transpiler.resolver.read_dir_info(cwd) {

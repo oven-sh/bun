@@ -94,12 +94,8 @@ pub struct InitOptions {
     /// reuses the caller's env loader.
     pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
-    /// Auto-install mode (`--install=...`). It must be on the
-    /// resolver BEFORE `configure_linker()` reads `top_level_dir`: that read
-    /// caches the project's package.json, and its dependency ranges are only
-    /// recorded (for auto-install to resolve against) when the resolver has
-    /// auto-install enabled at the time it is cached. Defaults to `disable`,
-    /// matching `BundleOptions::from_api`.
+    /// `--install=...`. On the resolver before `configure_linker()` caches the project's package.json:
+    /// only an auto-installing resolver records the dependency ranges auto-install resolves against.
     pub global_cache: bun_options_types::global_cache::GlobalCache,
     pub smol: bool,
     pub eval_mode: bool,
@@ -5499,11 +5495,8 @@ impl VirtualMachine {
                     }
                 }
             };
-            // The resolver and auto-install log why a resolution failed
-            // (`GET <url> - 404`, an unreadable directory, ...) in the scoped
-            // `log`, which dies with this frame; carry those lines as notes on
-            // the `ResolveMessage`. Dedup by text: `_resolve` retries once
-            // after busting the directory cache and can log a failure twice.
+            // Why it failed (`GET <url> - 404`, ...) is in `log`, which dies with this frame. Deduplicated:
+            // `_resolve` retries once after busting the directory cache and can log a failure twice.
             let mut notes = core::mem::take(&mut msg.notes).into_vec();
             for (i, logged) in log.msgs.iter().enumerate() {
                 if Some(i) == resolve_msg_index

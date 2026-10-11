@@ -3376,6 +3376,81 @@ describe.concurrent("existing node_modules, missing node_modules/.bun", () => {
       rmSync(volume, { recursive: true, force: true });
     }
   });
+
+  // Mounting needs a private user and mount namespace. Skipped where those are turned off, as in most containers.
+  const canMount =
+    isLinux &&
+    Bun.which("unshare") !== null &&
+    Bun.spawnSync({ cmd: ["unshare", "-Urm", "true"], stdout: "ignore", stderr: "ignore" }).exitCode === 0;
+
+  // docker-compose: a volume for each node_modules, and the source of a package mounted into one.
+  // Bind mounts of `vol/*`, so what the installs leave in them can be read after the namespace is gone.
+  test.skipIf(!canMount).concurrent.each([
+    { linkers: ["isolated"], root: [".bun", "dep", "mine"], web: ["lib"] },
+    { linkers: ["isolated", "hoisted"], root: ["dep", "lib", "mine", "web"], web: [] },
+  ])(
+    "a mount point stays, and what another linker put in a node_modules that is one goes: $linkers",
+    async expected => {
+      using dir = tempDir("isolated-mount-points", {
+        "package.json": JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          dependencies: { dep: "file:./dep" },
+        }),
+        "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+        "packages/web/package.json": JSON.stringify({
+          name: "web",
+          version: "1.0.0",
+          dependencies: { lib: "workspace:*" },
+        }),
+        "packages/lib/package.json": JSON.stringify({ name: "lib", version: "1.0.0" }),
+        "node_modules/.keep": "",
+        "packages/web/node_modules/.keep": "",
+        "vol/root/stale/package.json": JSON.stringify({ name: "stale", version: "1.0.0" }),
+        "vol/root/dep/.keep": "",
+        "vol/root/mine/.keep": "",
+        "vol/web/lib/package.json": JSON.stringify({ name: "lib", version: "0.0.1" }),
+        "vol/web/stale/package.json": JSON.stringify({ name: "stale", version: "1.0.0" }),
+        "vol/dep/source.js": "",
+        "vol/mine/source.js": "",
+      });
+      const vol = (...path: string[]) => join(String(dir), "vol", ...path);
+
+      await using proc = spawn({
+        cmd: [
+          "unshare",
+          "-Urm",
+          "/bin/sh",
+          "-c",
+          `set -e
+mount -o bind vol/root node_modules
+mount -o bind vol/web packages/web/node_modules
+mount -o bind vol/dep node_modules/dep
+mount -o bind vol/mine node_modules/mine
+for linker in "$@"; do "$BUN" install --linker="$linker"; done`,
+          "sh",
+          ...expected.linkers,
+        ],
+        cwd: String(dir),
+        env: { ...bunEnv, BUN: bunExe(), BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+      expect(stderr).not.toContain("error");
+      expect(stderr).not.toContain("EBUSY");
+      expect({
+        root: await readdirSorted(vol("root")),
+        web: await readdirSorted(vol("web")),
+        mine: await readdirSorted(vol("mine")),
+      }).toEqual({ root: expected.root, web: expected.web, mine: ["source.js"] });
+      expect(await readdirSorted(vol("dep"))).toContain("source.js");
+      if (expected.web.length > 0) expect(readlinkSync(vol("web", "lib"))).toBe(join("..", "..", "lib"));
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 describe.concurrent("--linker flag", () => {

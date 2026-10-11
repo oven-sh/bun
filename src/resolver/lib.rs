@@ -1310,7 +1310,6 @@ pub mod fs {
                 if handle == w::INVALID_HANDLE_VALUE {
                     if is_dangling_link_error(w::last_system_errno().to_e()) {
                         cache.kind = EntryKind::Dangling;
-                        return Ok(cache);
                     }
                     // anything else keeps the kind from the link's own directory bit
                     return Ok(cache);

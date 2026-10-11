@@ -10,9 +10,7 @@ use crate::bun_json::Expr;
 use crate::lockfile_real::StringBuilder;
 use crate::lockfile_real::package::{Package, PackageColumns, ResolverContext, Scripts};
 use crate::package_manager_real::options::LogLevel;
-use crate::package_manager_real::{
-    PackageManager, TaskCallbackList, enqueue, resolution as pm_resolution,
-};
+use crate::package_manager_real::{PackageManager, enqueue};
 use crate::repository_real::RepositoryExt as _;
 use crate::resolution::{ResolutionType, Tag as ResolutionTag, TaggedValue};
 use crate::{
@@ -27,13 +25,12 @@ use crate::{
 pub struct GitResolver<'a> {
     pub(crate) resolved: &'a [u8],
     pub(crate) resolution: &'a Resolution,
-    /// `Repository::fallback_package_name`, copied out before parsing starts
-    /// because it is sliced from the lockfile string buffer parsing appends to.
+    /// `Repository::fallback_package_name`, copied out of the lockfile string buffer, which parsing appends to.
     pub(crate) fallback_name: &'a [u8],
 }
 
 impl<'a> ResolverContext for GitResolver<'a> {
-    fn check_bundled_dependencies() -> bool {
+    fn check_bundled_dependencies(&self) -> bool {
         true
     }
 
@@ -76,7 +73,7 @@ struct TarballResolver<'a> {
 }
 
 impl<'a> ResolverContext for TarballResolver<'a> {
-    fn check_bundled_dependencies() -> bool {
+    fn check_bundled_dependencies(&self) -> bool {
         true
     }
 
@@ -350,29 +347,12 @@ impl PackageManager {
         install_peer: bool,
     ) -> Result<(), crate::Error> {
         match *item {
-            TaskCallbackContext::Dependency(dependency_id) => {
-                // Clone the dependency row out of the buffer before
-                // re-borrowing `self` for enqueue.
-                let dependency = Clone::clone(
-                    &self.lockfile.buffers.dependencies.as_slice()[dependency_id as usize],
-                );
-                let resolution =
-                    self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize];
-
-                enqueue::enqueue_dependency_with_main(
-                    self,
-                    dependency_id,
-                    &dependency,
-                    resolution,
-                    install_peer,
-                )?;
-            }
-            TaskCallbackContext::RootDependency(dependency_id) => {
-                let dependency = Clone::clone(
-                    &self.lockfile.buffers.dependencies.as_slice()[dependency_id as usize],
-                );
-                let resolution =
-                    self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize];
+            TaskCallbackContext::Dependency(dependency_id)
+            | TaskCallbackContext::RootDependency(dependency_id) => {
+                let is_root = matches!(item, TaskCallbackContext::RootDependency(_));
+                // Cloned out of the buffer, which the enqueue can grow.
+                let dependency = self.lockfile.buffers.dependencies[dependency_id as usize].clone();
+                let resolution = self.lockfile.buffers.resolutions[dependency_id as usize];
 
                 enqueue::enqueue_dependency_with_main_and_success_fn(
                     self,
@@ -380,15 +360,18 @@ impl PackageManager {
                     &dependency,
                     resolution,
                     install_peer,
-                    pm_resolution::assign_root_resolution,
-                    true,
+                    if is_root {
+                        PackageManager::assign_root_resolution
+                    } else {
+                        PackageManager::assign_resolution
+                    },
+                    is_root,
                 )?;
-                if let Some(ptr) = any_root {
-                    let new_resolution_id =
-                        self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize];
-                    if new_resolution_id != resolution {
-                        ptr.set(true);
-                    }
+                if is_root
+                    && let Some(any_root) = any_root
+                    && self.lockfile.buffers.resolutions[dependency_id as usize] != resolution
+                {
+                    any_root.set(true);
                 }
             }
             // A linker's `run_tasks` starts this checkout. Here it would be dropped.
@@ -400,9 +383,7 @@ impl PackageManager {
         Ok(())
     }
 
-    /// Deferred peers are queued as their owners' manifests arrive, and the first row of a name
-    /// to resolve decides what the other rows bind to, so each batch goes out in
-    /// `peer_batch_order`.
+    /// The first row of a name to resolve decides what the others bind to, so each batch of deferred peers goes out in `peer_batch_order`.
     pub(crate) fn process_peer_dependency_list(&mut self) -> Result<(), crate::Error> {
         while self.peer_dependencies.readable_length() > 0 {
             let mut batch: Vec<DependencyID> =
@@ -412,13 +393,9 @@ impl PackageManager {
             }
             for i in self.peer_batch_order(&mut batch) {
                 let peer_dependency_id = batch[i as usize];
-                // Clone the dependency row out of the buffer before re-borrowing
-                // `self` for enqueue.
-                let dependency = Clone::clone(
-                    &self.lockfile.buffers.dependencies.as_slice()[peer_dependency_id as usize],
-                );
-                let resolution =
-                    self.lockfile.buffers.resolutions.as_slice()[peer_dependency_id as usize];
+                let id = peer_dependency_id as usize;
+                let dependency = self.lockfile.buffers.dependencies[id].clone();
+                let resolution = self.lockfile.buffers.resolutions[id];
 
                 enqueue::enqueue_dependency_with_main(
                     self,
@@ -432,9 +409,7 @@ impl PackageManager {
         Ok(())
     }
 
-    /// Sorts `batch` by id and returns indices into it: the root's rows, the workspaces', then the
-    /// rest, each ordered by owner name, owner resolution, then dependency name. Ids are handed out
-    /// in arrival order; these do not depend on it.
+    /// Sorts `batch` by id and returns indices into it, in an order that does not depend on arrival: root, workspaces, the rest; then owner name, owner resolution, dependency name.
     fn peer_batch_order(&self, batch: &mut [DependencyID]) -> Vec<u32> {
         let mut order = index_sort::identity(batch.len());
         if batch.len() < 2 {
@@ -480,31 +455,5 @@ impl PackageManager {
                 .then(batch[a].cmp(&batch[b]))
         });
         order
-    }
-
-    pub(crate) fn process_dependency_list<C>(
-        &mut self,
-        dep_list: TaskCallbackList,
-        ctx: C,
-        on_resolve: Option<impl FnOnce(C)>,
-        install_peer: bool,
-    ) -> Result<(), crate::Error> {
-        if !dep_list.is_empty() {
-            let dependency_list = dep_list;
-            let any_root = Cell::new(false);
-            for item in dependency_list.iter() {
-                self.process_dependency_list_item(item, Some(&any_root), install_peer)?;
-            }
-
-            if let Some(on_resolve) = on_resolve {
-                if any_root.get() {
-                    on_resolve(ctx);
-                }
-            }
-
-            // `dependency_list.deinit(this.allocator)` — owned `Vec`; drops here.
-            drop(dependency_list);
-        }
-        Ok(())
     }
 }

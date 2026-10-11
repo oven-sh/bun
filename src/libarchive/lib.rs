@@ -169,17 +169,11 @@ pub mod lib {
         }
     }
 
-    /// Writes the data of one archive entry to its output file.
-    ///
-    /// The entry header says how long the file is, and a sparse map says where
-    /// each block goes, but nothing proves the archive holds that many bytes,
-    /// and for a sparse entry it never does. So no write and no allocation
-    /// here is sized from either. A block goes to the offset libarchive gives
-    /// it, with `pwrite` or a seek, which leaves a hole where the entry has
-    /// one. When neither reaches the offset, the entry fails: zeros are never
-    /// written to get there. The file gets its length in
-    /// [`EntryWriter::finish`], from the offset libarchive returns once the
-    /// entry's data has been read to the end.
+    /// Writes the data of one archive entry to its output file. Nothing proves
+    /// the archive holds as many bytes as the entry header or a sparse map say,
+    /// so no write and no allocation is sized from either: a block goes to its
+    /// offset with `pwrite` or a seek (never by writing zeros), and `finish`
+    /// gives the file its length.
     pub struct EntryWriter {
         fd: Fd,
         /// One past the last byte written.
@@ -1365,18 +1359,27 @@ impl Archiver {
                     // it will require us to pull in libiconv
                     // though we should probably validate the utf8 here nonetheless
                     // SAFETY: entry was just populated by read_next_header
-                    let pathname_full = lib::Entry::opaque_ref(entry).pathname();
-                    let pathname_bytes = pathname_full.as_bytes();
+                    #[cfg(not(windows))]
+                    let pathname_bytes = lib::Entry::opaque_ref(entry).pathname().as_bytes();
+                    // The name `extract_to_dir` writes to.
+                    #[cfg(windows)]
+                    let pathname_utf8 = strings::to_utf8_list_with_type(
+                        Vec::new(),
+                        lib::Entry::opaque_ref(entry).pathname_w().as_slice(),
+                    )?;
+                    #[cfg(windows)]
+                    let pathname_bytes: &[u8] = &pathname_utf8;
 
                     // Tokenizer semantics: `next()` skips leading
                     // separators and returns None only when no token remains;
                     // the rest-of-input slice also skips leading separators.
+                    // An entry's name has `/` on every platform, as in `extract_to_dir`.
                     let mut remaining = pathname_bytes;
                     let mut depth_i = 0usize;
                     while depth_i < DEPTH_TO_SKIP {
                         // skip leading separators
                         while let [first, rest @ ..] = remaining {
-                            if *first == SEP {
+                            if *first == b'/' {
                                 remaining = rest;
                             } else {
                                 break;
@@ -1385,7 +1388,7 @@ impl Archiver {
                         if remaining.is_empty() {
                             continue 'loop_;
                         }
-                        match strings::index_of_char_usize(remaining, SEP) {
+                        match strings::index_of_char_usize(remaining, b'/') {
                             Some(i) => remaining = &remaining[i..],
                             None => remaining = &remaining[remaining.len()..],
                         }
@@ -1393,7 +1396,7 @@ impl Archiver {
                     }
                     // skip leading separators (tokenizer.rest() does this)
                     while let [first, rest @ ..] = remaining {
-                        if *first == SEP {
+                        if *first == b'/' {
                             remaining = rest;
                         } else {
                             break;

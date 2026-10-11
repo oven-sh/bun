@@ -1,37 +1,27 @@
 use std::borrow::Cow;
 
-use crate::{Error, Features, GetJsonResult};
-use bun_collections::StringHashMap;
-use bun_install::bin::Bin;
-use bun_install::dependency::{self, Dependency, DependencyExt as _, Tag as DepTag, TagExt as _};
-use bun_install::install::{self, PackageID, PackageManager};
-use bun_install::integrity::Integrity;
-// `bun_install::lockfile` is the column-accessor stub used by the
-// audit/why CLI walkers; the yarn migrator needs the real Lockfile/Tree/
-// LoadResult enum, so import from `lockfile_real` and alias it back to
-// `lockfile` so the qualified `lockfile::DependencySlice` etc. paths below
-// resolve against the ported types.
 use crate::Origin;
 use crate::lockfile_real::package::meta::HasInstallScript;
 use crate::lockfile_real::package::{
     Meta as PackageMeta, Package as LockfilePackage, PackageColumns as _,
 };
 use crate::lockfile_real::{self as lockfile, LoadResult, Lockfile};
-use bun_install::npm;
-// `Package.resolution` is the file-backed `resolution_real::ResolutionType<u64>`
-// (tag + zero-padded `Value` union), constructed via `init(TaggedValue::*)`; the
-// `bun_install::resolution` stub keeps `Value` as a struct-of-fields and has no `init`.
+use crate::migration::{sbuf, string_hash};
 use crate::repository::Repository;
 use crate::resolution_real::{Resolution, TaggedValue as ResolutionValue};
 use crate::versioned_url::VersionedURL;
+use crate::{Error, Features, GetJsonResult};
+use bun_collections::StringHashMap;
 use bun_core::strings;
+use bun_install::bin::Bin;
+use bun_install::dependency::{self, Dependency, DependencyExt as _, Tag as DepTag, TagExt as _};
+use bun_install::install::{self, PackageID, PackageManager};
+use bun_install::integrity::Integrity;
+use bun_install::npm;
 use bun_paths::AutoAbsPath;
 use bun_semver::{self as Semver, SlicedString, String as SemverString};
 
-// Entry/YarnLock borrow from the input `data: &[u8]` passed to `migrate_yarn_lockfile`;
-// `resolved` may instead own a rewritten URL (see `Cow` below) and `git_repo_name` is
-// always owned.
-
+#[derive(Default)]
 pub(crate) struct YarnLock<'a> {
     pub(crate) entries: Vec<Entry<'a>>,
     /// `dedupe_name()`, `\n`, version -> index in `entries`.
@@ -55,7 +45,6 @@ pub struct Entry<'a> {
     pub(crate) file: Option<&'a [u8]>,
     pub(crate) os: npm::Negatable<npm::OperatingSystem>,
     pub(crate) cpu: npm::Negatable<npm::Architecture>,
-    // Owned heap allocation (unlike the borrowed fields above); created in parse()
     pub(crate) git_repo_name: Option<Box<[u8]>>,
 }
 
@@ -65,11 +54,6 @@ const DEPENDENCY_SECTIONS: [(&[u8], dependency::Behavior); 4] = [
     (b"peerDependencies:", dependency::Behavior::PEER),
     (b"devDependencies:", dependency::Behavior::DEV),
 ];
-
-pub(crate) struct ParsedNpmAlias<'a> {
-    pub(crate) name: &'a [u8],
-    pub(crate) version: &'a [u8],
-}
 
 impl<'a> Entry<'a> {
     /// The alias spec may follow plain specs of the same package on yarn's shared key line.
@@ -86,7 +70,7 @@ impl<'a> Entry<'a> {
     /// `alias@npm:<name>@<range>` -> `<name>`; `None` for every other kind of spec.
     pub(crate) fn npm_alias_target(spec: &[u8]) -> Option<&[u8]> {
         let alias_end = strings::index_of(spec, b"@npm:")?;
-        let name = Self::parse_npm_alias(&spec[alias_end + 1..]).name;
+        let (name, _) = Self::parse_npm_alias(&spec[alias_end + 1..]);
         (!name.is_empty()).then_some(name)
     }
 
@@ -147,18 +131,13 @@ impl<'a> Entry<'a> {
             || version.starts_with(b"github:")
     }
 
-    pub(crate) fn is_npm_alias(version: &[u8]) -> bool {
-        version.starts_with(b"npm:")
-    }
-
     /// A spec asked a registry for this entry (a semver range, a dist-tag, or an `npm:` alias of one).
     pub(crate) fn is_registry_entry(&self) -> bool {
         self.specs.iter().any(|spec| {
             let name = Entry::get_name_from_spec(spec);
             let range = spec.get(name.len() + 1..).unwrap_or(b"");
             let alias = range.strip_prefix(b"npm:");
-            DepTag::infer(alias.map_or(range, |alias| Entry::parse_npm_alias(alias).version))
-                .is_npm()
+            DepTag::infer(alias.map_or(range, |alias| Entry::parse_npm_alias(alias).1)).is_npm()
         })
     }
 
@@ -169,14 +148,6 @@ impl<'a> Entry<'a> {
     /// yarn v1 writes tarball `resolved` fields as `<url>#<sha1 of the tarball>`.
     pub(crate) fn url_without_hash(resolved: &[u8]) -> &[u8] {
         strings::split_once_char(resolved, b'#').map_or(resolved, |(url, _)| url)
-    }
-
-    pub(crate) fn is_workspace_dependency(version: &[u8]) -> bool {
-        version.starts_with(b"workspace:") || version == b"*"
-    }
-
-    pub(crate) fn is_file_dependency(version: &[u8]) -> bool {
-        version.starts_with(b"file:") || version.starts_with(b"./") || version.starts_with(b"../")
     }
 
     pub(crate) fn file_path_from_spec(spec: &[u8]) -> &[u8] {
@@ -236,33 +207,20 @@ impl<'a> Entry<'a> {
         self.resolved = Some(Cow::Borrowed(url));
     }
 
-    /// Splits `npm:<name>@<range>`; the `@` of a scoped `<name>` is not the separator.
-    pub(crate) fn parse_npm_alias(version: &[u8]) -> ParsedNpmAlias<'_> {
+    /// `npm:<name>@<range>` -> (name, range); the `@` of a scoped `<name>` is not the separator.
+    pub(crate) fn parse_npm_alias(version: &[u8]) -> (&[u8], &[u8]) {
         let target = version.strip_prefix(b"npm:").unwrap_or(version);
         let scope_len = usize::from(target.starts_with(b"@"));
         let Some(at_idx) = strings::index_of_char_usize(&target[scope_len..], b'@') else {
-            return ParsedNpmAlias {
-                name: target,
-                version: b"*",
-            };
+            return (target, b"*");
         };
         let (name, range) = target.split_at(scope_len + at_idx);
         let range = &range[b"@".len()..];
-        ParsedNpmAlias {
-            name,
-            version: if range.is_empty() { b"*" } else { range },
-        }
+        (name, if range.is_empty() { b"*" } else { range })
     }
 }
 
 impl<'a> YarnLock<'a> {
-    fn init() -> YarnLock<'a> {
-        YarnLock {
-            entries: Vec::new(),
-            entry_by_name_version: StringHashMap::new(),
-        }
-    }
-
     fn parse(&mut self, content: &'a [u8]) -> Result<(), Error> {
         let mut lines = strings::split(content, b"\n");
         let mut current_entry: Option<Entry<'a>> = None;
@@ -349,14 +307,17 @@ impl<'a> YarnLock<'a> {
                     if key == b"version" {
                         entry.version = value;
 
-                        if Entry::is_workspace_dependency(value) {
+                        if value.starts_with(b"workspace:") || value == b"*" {
                             entry.workspace = true;
-                        } else if Entry::is_file_dependency(value) {
+                        } else if value.starts_with(b"file:")
+                            || value.starts_with(b"./")
+                            || value.starts_with(b"../")
+                        {
                             entry.file = Some(Entry::file_path_from_spec(value));
                         } else if Entry::is_git_dependency(value) {
                             entry.set_git_source(value);
-                        } else if Entry::is_npm_alias(value) {
-                            entry.version = Entry::parse_npm_alias(value).version;
+                        } else if value.starts_with(b"npm:") {
+                            entry.version = Entry::parse_npm_alias(value).1;
                         } else if Entry::is_remote_tarball(value) {
                             entry.resolved = Some(Cow::Borrowed(value));
                         }
@@ -559,26 +520,12 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         return Err(crate::Error::UnsupportedYarnLockfileVersion);
     }
 
-    let mut yarn_lock = YarnLock::init();
+    let mut yarn_lock = YarnLock::default();
     yarn_lock.parse(data)?;
 
     this.init_empty();
     install::initialize_store();
     bun_core::analytics::Features::yarn_migration_inc(1);
-
-    // A single `Buf` for the whole function would hold
-    // `&mut this.buffers.string_bytes` + `&mut this.string_pool` for the
-    // function's lifetime and lock out every other `this.*` access. Instead,
-    // construct a fresh `Buf` per append via this macro so the mutable borrow
-    // ends immediately after each call.
-    macro_rules! sbuf {
-        () => {
-            Semver::string::Buf {
-                bytes: &mut this.buffers.string_bytes,
-                pool: &mut this.string_pool,
-            }
-        };
-    }
 
     let root = append_package_json(this, manager, log, None)?;
     debug_assert_eq!(root.meta.id, 0);
@@ -598,36 +545,14 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     }
     let importer_count = this.packages.len();
 
-    // One id per distinct (dedupe name, version), in order of first appearance.
-    let mut yarn_entry_to_package_id: Vec<PackageID> = Vec::with_capacity(yarn_lock.entries.len());
-    let mut package_id_by_name_version: StringHashMap<PackageID> = StringHashMap::new();
-    let mut next_package_id: PackageID = PackageID::try_from(importer_count).expect("int cast");
-    let mut key: Vec<u8> = Vec::new();
-    for entry in &yarn_lock.entries {
-        key.clear();
-        key.extend_from_slice(entry.dedupe_name());
-        key.push(b'\n');
-        key.extend_from_slice(entry.version);
-        let package_id = *package_id_by_name_version.get_or_put_value(&key, next_package_id)?;
-        if package_id == next_package_id {
-            next_package_id += 1;
-        }
-        yarn_entry_to_package_id.push(package_id);
-    }
-
-    // A package's id is its index in `this.packages`, and an entry whose resolution cannot be built is
-    // not appended; it stays `INVALID_PACKAGE_ID` here, an unresolved edge like a spec missing from yarn.lock.
-    let mut appended_package_ids: Vec<PackageID> =
-        vec![install::INVALID_PACKAGE_ID; next_package_id as usize];
-    let mut seen_package_ids = vec![false; next_package_id as usize];
+    // An entry whose resolution cannot be built is not appended; it stays `INVALID_PACKAGE_ID` here, an
+    // unresolved edge like a spec missing from yarn.lock.
+    let mut yarn_entry_to_package_id = vec![install::INVALID_PACKAGE_ID; yarn_lock.entries.len()];
     let silent = manager.options.log_level.is_silent();
 
-    for (entry, &package_id) in yarn_lock.entries.iter().zip(&yarn_entry_to_package_id) {
+    for (entry, package_id) in yarn_lock.entries.iter().zip(&mut yarn_entry_to_package_id) {
         let is_direct_url_dep = entry.has_direct_url_spec();
         let base_name: &[u8] = entry.name;
-        if core::mem::replace(&mut seen_package_ids[package_id as usize], true) {
-            continue;
-        }
 
         let resolved_url: Option<&[u8]> = entry.resolved.as_deref().map(Entry::url_without_hash);
         let name_to_use: &[u8] = match (entry.commit, entry.git_repo_name.as_deref()) {
@@ -640,23 +565,21 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
         let name_hash = string_hash(name_to_use);
 
-        // reshaped for borrowck — compute the resolution before the
-        // `this.packages.append(...)` call so the per-field `sbuf!()` borrows of
-        // `this.buffers.string_bytes` don't overlap the two-phase reservation
-        // on `this.packages`.
-        let pkg_name = sbuf!().append_with_hash(name_to_use, name_hash)?;
+        let pkg_name = sbuf!(this).append_with_hash(name_to_use, name_hash)?;
         let resolution = 'blk: {
             if entry.workspace {
                 break 'blk Resolution::init(ResolutionValue::Workspace(
-                    sbuf!().append(base_name)?,
+                    sbuf!(this).append(base_name)?,
                 ));
             } else if let Some(file) = entry.file {
                 if file.ends_with(b".tgz") || file.ends_with(b".tar.gz") {
                     break 'blk Resolution::init(ResolutionValue::LocalTarball(
-                        sbuf!().append(file)?,
+                        sbuf!(this).append(file)?,
                     ));
                 } else {
-                    break 'blk Resolution::init(ResolutionValue::Folder(sbuf!().append(file)?));
+                    break 'blk Resolution::init(ResolutionValue::Folder(
+                        sbuf!(this).append(file)?,
+                    ));
                 }
             } else if let Some(commit) = entry.commit {
                 let Some(resolved) = entry.resolved.as_deref() else {
@@ -679,11 +602,11 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 };
                 let package_name = entry.git_repo_name.as_deref().unwrap_or(repo_str);
                 let repository = Repository {
-                    owner: sbuf!().append(owner_str)?,
-                    repo: sbuf!().append(repo_str)?,
-                    committish: sbuf!().append(committish)?,
+                    owner: sbuf!(this).append(owner_str)?,
+                    repo: sbuf!(this).append(repo_str)?,
+                    committish: sbuf!(this).append(committish)?,
                     resolved: SemverString::default(),
-                    package_name: sbuf!().append(package_name)?,
+                    package_name: sbuf!(this).append(package_name)?,
                 };
                 let value = if is_github {
                     ResolutionValue::Github
@@ -695,14 +618,14 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 match resolved_url {
                     Some(resolved) if is_direct_url_dep => {
                         break 'blk Resolution::init(ResolutionValue::RemoteTarball(
-                            sbuf!().append(resolved)?,
+                            sbuf!(this).append(resolved)?,
                         ));
                     }
                     None if !entry.is_registry_entry() => break 'blk Resolution::default(),
                     _ => {}
                 }
 
-                let version = sbuf!().append(entry.version)?;
+                let version = sbuf!(this).append(entry.version)?;
                 let result =
                     Semver::Version::parse(version.sliced(this.buffers.string_bytes.as_slice()));
                 if !result.valid {
@@ -715,7 +638,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                         ))
                     {
                         break 'blk Resolution::init(ResolutionValue::RemoteTarball(
-                            sbuf!().append(resolved)?,
+                            sbuf!(this).append(resolved)?,
                         ));
                     }
                     break 'blk Resolution::default();
@@ -727,7 +650,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                         if !(resolved.starts_with(b"https://registry.yarnpkg.com/")
                             || resolved.starts_with(b"https://registry.npmjs.org/")) =>
                     {
-                        sbuf!().append(resolved)?
+                        sbuf!(this).append(resolved)?
                     }
                     _ => SemverString::default(),
                 };
@@ -758,7 +681,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         }
 
         let appended_id = PackageID::try_from(this.packages.len()).expect("int cast");
-        appended_package_ids[package_id as usize] = appended_id;
+        *package_id = appended_id;
 
         this.packages.append(LockfilePackage {
             name: pkg_name,
@@ -784,10 +707,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         this.get_or_put_id(appended_id, name_hash)?;
     }
 
-    for package_id in yarn_entry_to_package_id.iter_mut() {
-        *package_id = appended_package_ids[*package_id as usize];
-    }
-
     let mut spec_to_package_id: StringHashMap<PackageID> = StringHashMap::new();
     for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
         for spec in entry.specs.iter() {
@@ -802,6 +721,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         &workspace_id_by_path,
     );
 
+    let mut key: Vec<u8> = Vec::new();
     for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
         let package_id = yarn_entry_to_package_id[yarn_idx];
         if package_id == install::INVALID_PACKAGE_ID {
@@ -818,8 +738,8 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 let dep_version_literal: &[u8] = *dep_version_ref;
 
                 let name_hash = string_hash(dep_name);
-                let dep_name_string = sbuf!().append_with_hash(dep_name, name_hash)?;
-                let dep_version_string = sbuf!().append(dep_version_literal)?;
+                let dep_name_string = sbuf!(this).append_with_hash(dep_name, name_hash)?;
+                let dep_version_string = sbuf!(this).append(dep_version_literal)?;
                 let version_bytes = dep_version_string.slice(this.buffers.string_bytes.as_slice());
                 let sliced_string = SlicedString::init(version_bytes, version_bytes);
                 let mut parsed_version = Dependency::parse(
@@ -860,9 +780,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     }
 
     this.tag_workspace_links(manager.options.link_workspace_packages);
-    // `Lockfile::resolve` returns `Result<(), tree::SubtreeError>`; surface as
-    // a tagged error until `From<SubtreeError>` lands.
-    if let Err(_e) = this.resolve(log) {
+    if this.resolve(log).is_err() {
         return Err(crate::Error::LockfileResolveFailed);
     }
 
@@ -872,17 +790,10 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         this.verify_data()?;
     }
 
-    let result = LoadResult::Ok(lockfile::LoadResultOk {
+    Ok(LoadResult::Ok(lockfile::LoadResultOk {
         lockfile: this,
         migrated: lockfile::Migrated::Yarn,
         serializer_result: Default::default(),
         format: lockfile::LockfileFormat::Binary,
-    });
-
-    Ok(result)
-}
-
-#[inline]
-fn string_hash(s: &[u8]) -> u64 {
-    Semver::string::Builder::string_hash(s)
+    }))
 }

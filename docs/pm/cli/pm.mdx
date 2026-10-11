@@ -363,6 +363,8 @@ bun pm cache prune --dry-run     # list what would be removed
 - The [global store](/pm/global-store) in `<cache>/links/`, cached git clones and package manifests stay.
 - The size in the summary is the size of the removed files. A file that a `node_modules` tree hardlinks stays on disk until that tree is removed too.
 
+`rm` and `prune` take the cache directory from `$BUN_INSTALL_CACHE_DIR`, `--cache-dir` or `$BUN_INSTALL`. They ignore a directory named in `bunfig.toml`, `.npmrc` or `.env`, so the files of a project cannot choose what gets deleted. To clear or prune such a directory, pass it with `--cache-dir`.
+
 To move the cache entries a lockfile needs between machines as one file, for example through a CI cache:
 
 ```bash terminal icon="terminal"

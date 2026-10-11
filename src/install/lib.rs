@@ -895,17 +895,7 @@ impl RunCommand {
 const BUN_HASH_TAG: &[u8] = b".bun-tag-";
 
 /// Length of `u64::MAX` formatted as lowercase hex (`ffffffffffffffff`).
-const MAX_HEX_HASH_LEN: usize = {
-    // u64::MAX in hex is always 16 nibbles.
-    let mut n = u64::MAX;
-    let mut len = 0usize;
-    while n != 0 {
-        n >>= 4;
-        len += 1;
-    }
-    len
-};
-const _: () = assert!(MAX_HEX_HASH_LEN == 16);
+const MAX_HEX_HASH_LEN: usize = 16;
 
 const MAX_BUNTAG_HASH_BUF_LEN: usize = MAX_HEX_HASH_LEN + BUN_HASH_TAG.len() + 1;
 pub(crate) type BuntagHashBuf = [u8; MAX_BUNTAG_HASH_BUF_LEN];

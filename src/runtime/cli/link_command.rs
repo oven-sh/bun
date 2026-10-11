@@ -36,8 +36,7 @@ pub(crate) fn init_for_link(
         Ok(v) => v,
         Err(bun_install::Error::MissingPackageJSON) if !dry_run => {
             attempt_to_create_package_json()?;
-            // Re-parse argv: `CommandLineArguments` is not `Clone`, and `parse`
-            // is deterministic over process argv.
+            // `CommandLineArguments` is not `Clone`.
             let cli = CommandLineArguments::parse(subcommand)?;
             pm::init(&mut *ctx, cli, subcommand)?
         }
@@ -64,8 +63,7 @@ pub(crate) fn init_for_link(
     Ok((manager, original_cwd))
 }
 
-/// Parses the nearest package.json into an empty lockfile. Its name, `lockfile.str(&package.name)`,
-/// is a valid package name.
+/// Parses the nearest package.json into an empty lockfile. Exits unless its name is a valid package name.
 pub(crate) fn load_package_for_link(
     manager: &mut PackageManager,
     verb: &str,
@@ -92,16 +90,13 @@ pub(crate) fn load_package_for_link(
     };
     lockfile.init_empty();
 
-    let mut resolver: () = ();
-    // `log_mut()` returns a borrow decoupled from `&self`; disjoint
-    // storage from `&mut PackageManager` (owned by the CLI `Context`).
     let log = manager.log_mut();
     package.parse::<()>(
         &mut lockfile,
         manager,
         log,
         &package_json_source,
-        &mut resolver,
+        &mut (),
         Features::FOLDER,
     )?;
     let name = lockfile.str(&package.name);
@@ -189,9 +184,7 @@ pub(crate) fn link_global_bins(
     let mut link_dest_buf = bun_paths::path_buffer_pool::get();
     let mut link_rel_buf = bun_paths::path_buffer_pool::get();
 
-    // `target_node_modules_path` (`&`) and `node_modules_path` (`&mut`)
-    // cannot alias the same value, so resolve the fd path twice (cheap:
-    // one `getFdPath` syscall) into two independent `AbsPath` buffers.
+    // Twice: `target_node_modules_path` (`&`) and `node_modules_path` (`&mut`) cannot be one value.
     let node_modules_path = || match <AbsPath>::init_fd_path(Fd::from_std_dir(node_modules)) {
         Ok(p) => p,
         Err(e) => {
@@ -233,90 +226,74 @@ fn link(ctx: command::Context) -> crate::Result<()> {
 
     if manager.options.positionals.len() == 1 {
         // bun link
-
-        // Step 1. parse the nearest package.json file
         let (lockfile, package) = load_package_for_link(manager, "linking")?;
         let name = lockfile.str(&package.name);
 
         exit_if_dry_run(manager, "link", name);
 
-        // Step 2. Setup the global directory
         let node_modules: Dir = open_global_node_modules(manager, &mut *ctx)?;
 
-        // Step 3a. symlink to the node_modules folder
+        let _ = node_modules.delete_tree(name);
+
+        // create scope if specified
+        if name[0] == b'@'
+            && let Some(i) = strings::index_of_char(name, b'/')
+            && let Err(e) = node_modules.make_dir(&name[..i as usize])
+            && e != bun_sys::SystemErrno::EEXIST
         {
-            // delete it if it exists
-            let _ = node_modules.delete_tree(name);
-
-            // create scope if specified
-            if name[0] == b'@' {
-                if let Some(i) = strings::index_of_char(name, b'/') {
-                    if let Err(e) = node_modules.make_dir(&name[..i as usize]) {
-                        if e != bun_sys::SystemErrno::EEXIST {
-                            if manager.options.log_level != LogLevel::Silent {
-                                bun_core::pretty_errorln!(
-                                    "<r><red>error:<r> failed to create scope in global dir due to error {}",
-                                    e,
-                                );
-                            }
-                            Global::crash();
-                        }
-                    }
-                }
-            }
-
-            #[cfg(windows)]
-            {
-                use bun_core::ZStr;
-                use bun_paths::{platform, resolve_path};
-                // create the junction
-                let top_level = bun_paths::string_paths::without_trailing_slash_windows_path(
-                    FileSystem::instance().top_level_dir(),
+            if manager.options.log_level != LogLevel::Silent {
+                bun_core::pretty_errorln!(
+                    "<r><red>error:<r> failed to create scope in global dir due to error {}",
+                    e,
                 );
-                let mut link_path_buf = bun_paths::path_buffer_pool::get();
-                link_path_buf.0[..top_level.len()].copy_from_slice(top_level);
-                link_path_buf.0[top_level.len()] = 0;
-                // SAFETY: NUL written at link_path_buf[top_level.len()] above.
-                let link_path = ZStr::from_buf(&link_path_buf.0[..], top_level.len());
-                let global_path = pm::global_link_dir_path(manager);
-                let dest_path =
-                    resolve_path::join_abs_string_z::<platform::Windows>(global_path, &[name]);
-                match bun_sys::sys_uv::symlink_uv(
-                    link_path,
-                    dest_path,
-                    bun_sys::windows::libuv::UV_FS_SYMLINK_JUNCTION,
-                ) {
-                    Err(e) => {
-                        bun_core::pretty_errorln!(
-                            "<r><red>error:<r> failed to create junction to node_modules in global dir due to error {}",
-                            e,
-                        );
-                        Global::crash();
-                    }
-                    Ok(()) => {}
-                }
             }
-            #[cfg(not(windows))]
-            {
-                // create the symlink
-                if let Err(e) = node_modules.sym_link(
-                    FileSystem::instance().top_level_dir_without_trailing_slash(),
-                    name,
-                    // is_directory
-                    true,
-                ) {
-                    if manager.options.log_level != LogLevel::Silent {
-                        bun_core::pretty_errorln!(
-                            "<r><red>error:<r> failed to create symlink to node_modules in global dir due to error {}",
-                            BStr::new(e.name()),
-                        );
-                    }
-                    Global::crash();
+            Global::crash();
+        }
+
+        #[cfg(windows)]
+        {
+            use bun_core::ZStr;
+            use bun_paths::{platform, resolve_path};
+            let top_level = bun_paths::string_paths::without_trailing_slash_windows_path(
+                FileSystem::instance().top_level_dir(),
+            );
+            let mut link_path_buf = bun_paths::path_buffer_pool::get();
+            link_path_buf.0[..top_level.len()].copy_from_slice(top_level);
+            link_path_buf.0[top_level.len()] = 0;
+            let link_path = ZStr::from_buf(&link_path_buf.0[..], top_level.len());
+            let global_path = pm::global_link_dir_path(manager);
+            let dest_path =
+                resolve_path::join_abs_string_z::<platform::Windows>(global_path, &[name]);
+            if let Err(e) = bun_sys::sys_uv::symlink_uv(
+                link_path,
+                dest_path,
+                bun_sys::windows::libuv::UV_FS_SYMLINK_JUNCTION,
+            ) {
+                bun_core::pretty_errorln!(
+                    "<r><red>error:<r> failed to create junction to node_modules in global dir due to error {}",
+                    e,
+                );
+                Global::crash();
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            if let Err(e) = node_modules.sym_link(
+                FileSystem::instance().top_level_dir_without_trailing_slash(),
+                name,
+                // is_directory
+                true,
+            ) {
+                if manager.options.log_level != LogLevel::Silent {
+                    bun_core::pretty_errorln!(
+                        "<r><red>error:<r> failed to create symlink to node_modules in global dir due to error {}",
+                        BStr::new(e.name()),
+                    );
                 }
+                Global::crash();
             }
         }
 
-        // Step 3b. Link any global bins
         if let Some(e) = link_global_bins(manager, &node_modules, &lockfile, &package, false) {
             if manager.options.log_level != LogLevel::Silent {
                 bun_core::pretty_errorln!(
@@ -329,7 +306,6 @@ fn link(ctx: command::Context) -> crate::Result<()> {
 
         Output::flush();
 
-        // Done
         if manager.options.log_level != LogLevel::Silent {
             let name = BStr::new(name);
             bun_core::prettyln!(

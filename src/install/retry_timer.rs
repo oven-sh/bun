@@ -1,9 +1,4 @@
-//! Failed registry requests wait here between attempts.
-//!
-//! The install loop sleeps until some I/O completes. When the only work left is
-//! a request that is backing off nothing would wake it, so one helper thread
-//! sleeps until the deadline and calls `PackageManager::wake_raw`, as the HTTP
-//! thread does when a response arrives.
+//! Failed registry requests wait here between attempts. One helper thread wakes the install loop at the deadline, as the HTTP thread does for a response.
 
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -15,8 +10,7 @@ use bun_threading::{Condition, Guarded};
 use crate::package_manager_real::{self, enqueue, package_manager_options::LogLevel};
 use crate::{NetworkTask, PackageManager};
 
-/// Only the install thread touches it. A task in here is not in `pending_tasks`:
-/// `pending_task_count` adds `len()`.
+/// Only the install thread touches it. A task in here is not in `pending_tasks`: `pending_task_count` adds `len()`.
 #[derive(Default)]
 pub(crate) struct RetryQueue(Vec<(Instant, *mut NetworkTask)>);
 
@@ -35,8 +29,7 @@ impl RetryQueue {
     }
 }
 
-/// Sends `task` again as it is (same URL, same headers) once its backoff has
-/// passed, and returns that wait. `attempt` is 1 for the first retry.
+/// Sends `task` again as it is once its backoff has passed, and returns that wait. `attempt` is 1 for the first retry.
 pub(crate) fn retry(
     manager: &mut PackageManager,
     task: *mut NetworkTask,
@@ -76,8 +69,7 @@ pub(crate) fn retry(
     wait
 }
 
-/// `base`, doubling per attempt up to 40 x `base`, +-20% so that a fleet of
-/// installs does not retry in step.
+/// `base`, doubling per attempt up to 40 x `base`, +-20% so that a fleet of installs does not retry in step.
 fn backoff(base_ms: u32, attempt: u16) -> Duration {
     let base = u64::from(base_ms);
     let ms = (base << attempt.saturating_sub(1).min(6)).min(base * 40);

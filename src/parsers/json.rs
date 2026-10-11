@@ -367,13 +367,10 @@ pub fn clone_out_of_store(
         if let bun_ast::Error::Alloc(err) = err {
             return err.into();
         }
-        log.add_error_fmt_opts(
+        log.add_error_fmt(
+            source,
+            root.loc,
             format_args!("JSON document is too deeply nested"),
-            bun_ast::AddErrorOptions {
-                source: Some(source),
-                loc: root.loc,
-                ..Default::default()
-            },
         );
         crate::Error::StackOverflow
     })

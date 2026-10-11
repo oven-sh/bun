@@ -110,28 +110,14 @@ pub(crate) fn exec(
     {
         if name.is_empty() {
             let local = materialize(pm, &left_spec, as_published)?;
-            *name = package_name_in(&local).unwrap_or_else(|| {
-                Status::clear();
-                Output::err_generic(
-                    "{} has no package.json \"name\" to look up in the registry",
-                    (BStr::new(&local.label),),
-                );
-                Global::exit(1);
-            });
+            *name = package_name_in(&local);
             left_early = Some(local);
         }
     }
     let mut right = materialize(pm, &right_spec, as_published)?;
     if let Spec::Registry { name, .. } = &mut left_spec {
         if name.is_empty() {
-            *name = package_name_in(&right).unwrap_or_else(|| {
-                Status::clear();
-                Output::err_generic(
-                    "{} has no package.json \"name\" to look up in the registry",
-                    (BStr::new(&right.label),),
-                );
-                Global::exit(1);
-            });
+            *name = package_name_in(&right);
         }
     }
     let mut left = match left_early {
@@ -199,8 +185,6 @@ fn filter_matches(filter: &[u8], path: &[u8]) -> bool {
     }
     !strings::contains_char(filter, b'/') && bun_paths::basename(path) == filter
 }
-
-// ─── spec resolution ────────────────────────────────────────────────────────
 
 fn looks_like_path(spec: &[u8]) -> bool {
     spec.starts_with(b".")
@@ -313,8 +297,21 @@ fn resolve_sides(pm: &mut PackageManager, args: &[Vec<u8>], original_cwd: &[u8])
     }
 }
 
-fn package_name_in(tree: &Tree) -> Option<Vec<u8>> {
-    let bytes = tree.files.get(b"package.json".as_slice())?;
+fn package_name_in(tree: &Tree) -> Vec<u8> {
+    let package_json = tree.files.get(b"package.json".as_slice());
+    package_json
+        .and_then(|bytes| package_json_name(bytes))
+        .unwrap_or_else(|| {
+            Status::clear();
+            Output::err_generic(
+                "{} has no package.json \"name\" to look up in the registry",
+                (BStr::new(&tree.label),),
+            );
+            Global::exit(1);
+        })
+}
+
+fn package_json_name(bytes: &[u8]) -> Option<Vec<u8>> {
     let bump = Bump::new();
     let src: &[u8] = bump.alloc_slice_copy(bytes);
     let json = bun_parsers::json::parse_utf8(
@@ -357,20 +354,10 @@ fn root_package_name(pm: &PackageManager, original_cwd: &[u8]) -> Vec<u8> {
     let mut path = original_cwd.to_vec();
     path.extend_from_slice(b"/package.json");
     // The folder we are in, before the workspace root the manager walked up to.
-    if let Ok(bytes) = bun_sys::File::read_from(Fd::cwd(), &path) {
-        let bump = Bump::new();
-        let src: &[u8] = bump.alloc_slice_copy(&bytes);
-        if let Ok(json) = bun_parsers::json::parse_utf8(
-            &bun_ast::Source::init_path_string(b"package.json", src),
-            &mut bun_ast::Log::init(),
-            &bump,
-        ) {
-            if let Some(name) = json.get_string_cloned(&bump, b"name").ok().flatten() {
-                if is_npm_name(name) {
-                    return name.to_vec();
-                }
-            }
-        }
+    if let Ok(bytes) = bun_sys::File::read_from(Fd::cwd(), &path)
+        && let Some(name) = package_json_name(&bytes)
+    {
+        return name;
     }
     let name = &pm.root_package_json_name_at_time_of_init;
     if !is_npm_name(name) {
@@ -396,8 +383,8 @@ fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<Vec<u8>> {
         // A lockfile that exists but will not load is reported as that, not as "package not installed".
         broken @ LoadResult::Err(_) => {
             let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-            crate::cli::package_manager_command::PackageManagerCommand::handle_load_lockfile_errors(
-                &broken, log_level,
+            crate::cli::package_manager_command::PackageManagerCommand::handle_load_lockfile_errors_for(
+                &broken, log_level, "",
             );
             false
         }
@@ -410,21 +397,13 @@ fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<Vec<u8>> {
     let string_buf = lockfile.buffers.string_bytes.as_slice();
     let names = lockfile.packages.items_name();
     let resolutions = lockfile.packages.items_resolution();
-    let mut best: Option<Vec<u8>> = None;
-    for (i, pkg_name) in names.iter().enumerate() {
-        if pkg_name.slice(string_buf) != name || resolutions[i].tag != resolution::Tag::Npm {
-            continue;
-        }
-        let mut v = Vec::new();
-        let _ = write!(&mut v, "{}", resolutions[i].npm().version.fmt(string_buf));
-        // Several copies may be installed; the first listed is the hoisted/root one.
-        best.get_or_insert(v);
-        break;
-    }
-    best
+    // Several copies may be installed; the first listed is the hoisted/root one.
+    let first = (0..names.len()).find(|&i| {
+        names[i].slice(string_buf) == name && resolutions[i].tag == resolution::Tag::Npm
+    })?;
+    let version = resolutions[first].npm().version;
+    Some(version.fmt(string_buf).to_string().into_bytes())
 }
-
-// ─── materializing a side ───────────────────────────────────────────────────
 
 /// A one-line status on stderr while a side is fetched or read, erased before anything else prints — so a large
 /// package or a slow registry never looks like a hang. Only when stderr is an interactive terminal.
@@ -627,7 +606,7 @@ fn read_dir_tree(
                     }
                 }
                 let pkg = match &manifests {
-                    Some(manifests) => with_published_versions(pkg, json, manifests, root),
+                    Some(manifests) => with_published_versions(&pkg, json, manifests, root),
                     None => pkg,
                 };
                 tree.files.insert(b"package.json".to_vec(), pkg);
@@ -732,7 +711,7 @@ fn manifests_for(
 
 /// `manifest` (`dir`'s package.json, parsed as `json`) with its `workspace:` and `catalog:` versions as published.
 fn with_published_versions(
-    manifest: Vec<u8>,
+    manifest: &[u8],
     json: bun_ast::Expr,
     manifests: &WorkspaceManifests,
     dir: &[u8],
@@ -990,8 +969,6 @@ fn registry_get(
     }
     Ok(response_buf)
 }
-
-// ─── diffing & printing ─────────────────────────────────────────────────────
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 enum Semantic {

@@ -8,17 +8,12 @@ pub use error::{ApplyError, Error, Result};
 
 use core::mem;
 
-use bun_collections::bit_set::ArrayBitSet;
 use bun_core::strings;
 use bun_core::{ZBox, ZStr};
 use bun_paths as paths;
 use bun_sys::{self as sys, Fd, FdExt};
 
 bun_core::declare_scope!(Patch, visible);
-
-/// 256-bit set keyed by byte value. `IntegerBitSet<256>` overflows the single-
-/// `usize` mask; `ArrayBitSet<256, 4>` is the >64-bit form per bit_set.rs note.
-type ByteBitSet = ArrayBitSet<256, 4>;
 
 const WHITESPACE: &[u8] = b" \t\n\r";
 
@@ -100,7 +95,7 @@ fn create_file(patch_dir: Fd, creation: &FileCreation<'_>) -> sys::Result<()> {
     let Some(first_part) = creation.hunk.as_ref().and_then(|h| h.parts.first()) else {
         return Ok(());
     };
-    let mut contents = join_bytes(b"\n", &first_part.lines);
+    let mut contents = first_part.lines.join(&b'\n');
     if !first_part.no_newline_at_end_of_file {
         contents.push(b'\n');
     }
@@ -212,7 +207,7 @@ fn apply_patch(patch: &FilePatch<'_>, parent: Fd, base: &ZStr) -> Result<(), App
     sys::ftruncate(file_fd, 0)?;
     // `read_to_end` advanced the cursor on Windows (POSIX reads use `pread`).
     sys::set_file_offset(file_fd, 0)?;
-    sys::File::borrow(&file_fd).write_all(&join_bytes(b"\n", &lines))?;
+    sys::File::borrow(&file_fd).write_all(&lines.join(&b'\n'))?;
     Ok(())
 }
 
@@ -424,23 +419,6 @@ fn open_target_file(
     Ok((fd, stat))
 }
 
-/// Joins byte slices with a separator.
-fn join_bytes(sep: &[u8], slices: &[&[u8]]) -> Vec<u8> {
-    if slices.is_empty() {
-        return Vec::new();
-    }
-    let total: usize =
-        slices.iter().map(|s| s.len()).sum::<usize>() + sep.len() * (slices.len() - 1);
-    let mut out = Vec::with_capacity(total);
-    for (i, s) in slices.iter().enumerate() {
-        if i != 0 {
-            out.extend_from_slice(sep);
-        }
-        out.extend_from_slice(s);
-    }
-    out
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // FileDeets
 // ──────────────────────────────────────────────────────────────────────────
@@ -463,10 +441,6 @@ struct FileDeets<'a> {
 }
 
 impl<'a> FileDeets<'a> {
-    fn take_hunks(&mut self) -> Vec<Hunk<'a>> {
-        mem::take(&mut self.hunks)
-    }
-
     fn nullify_empty_strings(&mut self) {
         macro_rules! nullify {
             ($($f:ident),*) => {$(
@@ -504,13 +478,14 @@ struct PatchMutationPart<'a> {
     pub(crate) no_newline_at_end_of_file: bool,
 }
 
-/// Ensure context, insertion, deletion values are in sync with HunkLineType enum
-#[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
 pub enum PartType {
+    /// Additional context
     #[default]
-    Context = 0,
+    Context,
+    /// `+ sjfskdjfsdf`
     Insertion,
+    /// `- sjfskdjfsdf`
     Deletion,
 }
 
@@ -536,13 +511,6 @@ impl Default for HeaderRange {
 pub struct Header {
     pub(crate) original: HeaderRange,
     pub(crate) patched: HeaderRange,
-}
-
-impl Header {
-    pub(crate) const EMPTY: Header = Header {
-        original: HeaderRange { start: 1, len: 0 },
-        patched: HeaderRange { start: 1, len: 0 },
-    };
 }
 
 impl<'a> Hunk<'a> {
@@ -600,14 +568,12 @@ struct FileRename<'a> {
     pub(crate) from_path: &'a [u8],
     pub(crate) to_path: &'a [u8],
 }
-// Does not allocate — no Drop needed.
 
 struct FileModeChange<'a> {
     pub(crate) path: &'a [u8],
     pub(crate) old_mode: FileMode,
     pub(crate) new_mode: FileMode,
 }
-// Does not allocate — no Drop needed.
 
 struct FilePatch<'a> {
     pub(crate) path: &'a [u8],
@@ -758,23 +724,20 @@ mod json {
         w.write_char('}')
     }
 
-    fn write_file_deletion(w: &mut impl Write, fd: &FileDeletion<'_>) -> Result {
+    /// A `FileDeletion` or a `FileCreation`.
+    fn write_whole_file(
+        w: &mut impl Write,
+        path: &[u8],
+        mode: FileMode,
+        hunk: &Option<Box<Hunk<'_>>>,
+        hash: Option<&[u8]>,
+    ) -> Result {
         w.write_str("{\"path\":")?;
-        write_str(w, fd.path)?;
-        write!(w, ",\"mode\":\"{}\",\"hunk\":", file_mode_tag(fd.mode))?;
-        write_opt_hunk(w, &fd.hunk)?;
+        write_str(w, path)?;
+        write!(w, ",\"mode\":\"{}\",\"hunk\":", file_mode_tag(mode))?;
+        write_opt_hunk(w, hunk)?;
         w.write_str(",\"hash\":")?;
-        write_opt_str(w, fd.hash)?;
-        w.write_char('}')
-    }
-
-    fn write_file_creation(w: &mut impl Write, fc: &FileCreation<'_>) -> Result {
-        w.write_str("{\"path\":")?;
-        write_str(w, fc.path)?;
-        write!(w, ",\"mode\":\"{}\",\"hunk\":", file_mode_tag(fc.mode))?;
-        write_opt_hunk(w, &fc.hunk)?;
-        w.write_str(",\"hash\":")?;
-        write_opt_str(w, fc.hash)?;
+        write_opt_str(w, hash)?;
         w.write_char('}')
     }
 
@@ -805,11 +768,11 @@ mod json {
             }
             PatchFilePart::FileDeletion(p) => {
                 w.write_str("{\"file_deletion\":")?;
-                write_file_deletion(w, p)?;
+                write_whole_file(w, p.path, p.mode, &p.hunk, p.hash)?;
             }
             PatchFilePart::FileCreation(p) => {
                 w.write_str("{\"file_creation\":")?;
-                write_file_creation(w, p)?;
+                write_whole_file(w, p.path, p.mode, &p.hunk, p.hash)?;
             }
             PatchFilePart::FileRename(p) => {
                 w.write_str("{\"file_rename\":")?;
@@ -913,18 +876,7 @@ fn patch_file_second_pass<'a>(files: &mut [FileDeets<'a>]) -> Result<PatchFile<'
                 result
                     .parts
                     .push(PatchFilePart::FileDeletion(Box::new(FileDeletion {
-                        hunk: if !file.hunks.is_empty() {
-                            let value = mem::replace(
-                                &mut file.hunks[0],
-                                Hunk {
-                                    header: Header::EMPTY,
-                                    ..Default::default()
-                                },
-                            );
-                            Some(Box::new(value))
-                        } else {
-                            None
-                        },
+                        hunk: file.hunks.first_mut().map(mem::take).map(Box::new),
                         path,
                         mode: parse_file_mode(file.deleted_file_mode.unwrap())
                             .ok_or(ParseErr::bad_file_mode)?,
@@ -939,18 +891,7 @@ fn patch_file_second_pass<'a>(files: &mut [FileDeets<'a>]) -> Result<PatchFile<'
                 result
                     .parts
                     .push(PatchFilePart::FileCreation(Box::new(FileCreation {
-                        hunk: if !file.hunks.is_empty() {
-                            let value = mem::replace(
-                                &mut file.hunks[0],
-                                Hunk {
-                                    header: Header::EMPTY,
-                                    ..Default::default()
-                                },
-                            );
-                            Some(Box::new(value))
-                        } else {
-                            None
-                        },
+                        hunk: file.hunks.first_mut().map(mem::take).map(Box::new),
                         path,
                         mode: parse_file_mode(file.new_file_mode.unwrap())
                             .ok_or(ParseErr::bad_file_mode)?,
@@ -982,7 +923,7 @@ fn patch_file_second_pass<'a>(files: &mut [FileDeets<'a>]) -> Result<PatchFile<'
                 .parts
                 .push(PatchFilePart::FilePatch(Box::new(FilePatch {
                     path,
-                    hunks: file.take_hunks(),
+                    hunks: mem::take(&mut file.hunks),
                     before_hash: file.before_hash,
                     after_hash: file.after_hash,
                 })));
@@ -1089,50 +1030,12 @@ enum ParserState {
     ParsingHunks,
 }
 
-#[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum HunkLineType {
-    /// Additional context
-    Context = 0,
-    /// Example:
-    /// + sjfskdjfsdf
-    Insertion,
-    /// Example:
-    /// - sjfskdjfsdf
-    Deletion,
-    /// Example:
-    /// @@ -1,3 +1,3 @@
-    Header,
-    /// Example:
-    /// \ No newline at end of file
-    Pragma,
-}
-
 impl<'a> PatchLinesParser<'a> {
     fn parse(&mut self, file_: &'a [u8]) -> Result<(), ParseErr> {
-        if file_.is_empty() {
+        let file = file_.strip_suffix(b"\n").unwrap_or(file_);
+        if file.is_empty() {
             return Ok(());
         }
-        let end = 'brk: {
-            // Peek at the last segment after the final '\n'.
-            let mut prev: usize = file_.len();
-            let last_nl = strings::last_index_of_char(file_, b'\n');
-            let last_line = match last_nl {
-                Some(i) => &file_[i + 1..],
-                None => file_,
-            };
-            if last_line.is_empty() {
-                if let Some(i) = last_nl {
-                    // index points to the byte BEFORE the delimiter.
-                    prev = i;
-                }
-            }
-            break 'brk prev;
-        };
-        if end == 0 || end > file_.len() {
-            return Ok(());
-        }
-        let file = &file_[..end];
         let mut lines = LookbackIterator::from_inner(ScalarSplitIter::new(file, b'\n'));
 
         while let Some(line) = lines.next() {
@@ -1211,85 +1114,53 @@ impl<'a> PatchLinesParser<'a> {
                         lines.back();
                         continue;
                     }
-                    // parsing hunks
-                    let hunk_line_type: HunkLineType = if line.is_empty() {
+                    let ty = match line.first().copied() {
                         // treat blank lines as context
-                        HunkLineType::Context
-                    } else {
-                        let maybe = match line[0] {
-                            b'@' => Some(HunkLineType::Header),
-                            b'-' => Some(HunkLineType::Deletion),
-                            b'+' => Some(HunkLineType::Insertion),
-                            b' ' => Some(HunkLineType::Context),
-                            b'\\' => Some(HunkLineType::Pragma),
-                            b'\r' => Some(HunkLineType::Context),
-                            _ => None,
-                        };
-                        match maybe {
-                            Some(t) => t,
-                            None => {
-                                // unrecognized, bail out
-                                self.state = ParserState::ParsingHeader;
-                                self.commit_file_patch();
-                                lines.back();
-                                continue;
-                            }
-                        }
-                    };
-
-                    match hunk_line_type {
-                        HunkLineType::Header => {
+                        None | Some(b' ' | b'\r') => PartType::Context,
+                        Some(b'-') => PartType::Deletion,
+                        Some(b'+') => PartType::Insertion,
+                        // @@ -1,3 +1,3 @@
+                        Some(b'@') => {
                             self.commit_hunk();
                             self.current_hunk = Some(parse_hunk_header_line(line)?);
+                            continue;
                         }
-                        HunkLineType::Pragma => {
+                        Some(b'\\') => {
                             if !line.starts_with(b"\\ No newline at end of file") {
                                 // TODO: store line
                                 return Err(ParseErr::unrecognized_pragma);
                             }
-                            if self.current_hunk_mutation_part.is_none() {
-                                return Err(
+                            self.current_hunk_mutation_part
+                                .as_mut()
+                                .ok_or(
                                     ParseErr::no_newline_at_eof_pragma_encountered_without_context,
-                                );
-                            }
-                            self.current_hunk_mutation_part
-                                .as_mut()
-                                .unwrap()
+                                )?
                                 .no_newline_at_end_of_file = true;
+                            continue;
                         }
-                        HunkLineType::Insertion
-                        | HunkLineType::Deletion
-                        | HunkLineType::Context => {
-                            if self.current_hunk.is_none() {
-                                return Err(ParseErr::hunk_lines_encountered_before_hunk_header);
-                            }
-                            if self.current_hunk_mutation_part.is_some()
-                                && (self.current_hunk_mutation_part.as_ref().unwrap().ty as u8)
-                                    != (hunk_line_type as u8)
-                            {
-                                let part = self.current_hunk_mutation_part.take().unwrap();
-                                self.current_hunk.as_mut().unwrap().parts.push(part);
-                            }
-
-                            if self.current_hunk_mutation_part.is_none() {
-                                self.current_hunk_mutation_part = Some(PatchMutationPart {
-                                    ty: match hunk_line_type {
-                                        HunkLineType::Context => PartType::Context,
-                                        HunkLineType::Insertion => PartType::Insertion,
-                                        HunkLineType::Deletion => PartType::Deletion,
-                                        _ => unreachable!(),
-                                    },
-                                    ..Default::default()
-                                });
-                            }
-
-                            self.current_hunk_mutation_part
-                                .as_mut()
-                                .unwrap()
-                                .lines
-                                .push(&line[1.min(line.len())..]);
+                        Some(_) => {
+                            // unrecognized, bail out
+                            self.state = ParserState::ParsingHeader;
+                            self.commit_file_patch();
+                            lines.back();
+                            continue;
                         }
-                    }
+                    };
+                    let hunk = self
+                        .current_hunk
+                        .as_mut()
+                        .ok_or(ParseErr::hunk_lines_encountered_before_hunk_header)?;
+                    hunk.parts.extend(
+                        self.current_hunk_mutation_part
+                            .take_if(|part| part.ty != ty),
+                    );
+                    self.current_hunk_mutation_part
+                        .get_or_insert_with(|| PatchMutationPart {
+                            ty,
+                            ..Default::default()
+                        })
+                        .lines
+                        .push(&line[1.min(line.len())..]);
                 }
             }
         }
@@ -1324,147 +1195,46 @@ impl<'a> PatchLinesParser<'a> {
     }
 }
 
-struct HunkHeaderLineImpl<'a> {
-    line_nr: u32,
-    line_count: u32,
-    rest: &'a [u8],
+fn split_ascii_digits(text: &[u8]) -> (&[u8], &[u8]) {
+    text.split_at(text.iter().take_while(|c| c.is_ascii_digit()).count())
 }
 
-fn parse_hunk_header_line_impl(text_: &[u8]) -> Result<HunkHeaderLineImpl<'_>, ParseErr> {
-    let mut text = text_;
-    let digits: ByteBitSet = {
-        let mut set = ByteBitSet::init_empty();
-        let mut c = b'0';
-        while c <= b'9' {
-            set.set(c as usize);
-            c += 1;
-        }
-        set
+/// `100,32 ` or `100 `: the range, and the rest from the space on.
+fn parse_header_range(text: &[u8]) -> Result<(HeaderRange, &[u8]), ParseErr> {
+    let (start, mut rest) = split_ascii_digits(text);
+    let mut len: &[u8] = b"1";
+    if rest.len() < 2 {
+        return Err(ParseErr::bad_header_line);
+    }
+    if let Some(after_comma) = rest.strip_prefix(b",") {
+        (len, rest) = split_ascii_digits(after_comma);
+    }
+    if !rest.starts_with(b" ") {
+        return Err(ParseErr::bad_header_line);
+    }
+    let range = HeaderRange {
+        start: bun_core::parse_decimal::<u32>(start).ok_or(ParseErr::bad_header_line)?,
+        len: bun_core::parse_decimal::<u32>(len).ok_or(ParseErr::bad_header_line)?,
     };
-
-    // @@ -100,32 +100,32 @@
-    //     ^
-    let line_nr_start: usize = 0;
-    let mut line_nr_end: usize = 0;
-    let mut saw_comma = false;
-    let mut saw_whitespace = false;
-    while line_nr_end < text.len() {
-        if text[line_nr_end] == b',' {
-            saw_comma = true;
-            break;
-        } else if text[line_nr_end] == b' ' {
-            saw_whitespace = true;
-            break;
-        }
-        if !digits.is_set(text[line_nr_end] as usize) {
-            return Err(ParseErr::bad_header_line);
-        }
-        line_nr_end += 1;
-    }
-    if !saw_comma && !saw_whitespace {
-        return Err(ParseErr::bad_header_line);
-    }
-    let line_nr = &text[line_nr_start..line_nr_end];
-    let mut line_nr_count: &[u8] = b"1";
-    if line_nr_end + 1 >= text.len() {
-        return Err(ParseErr::bad_header_line);
-    }
-
-    text = &text[line_nr_end..];
-    if text.is_empty() {
-        return Err(ParseErr::bad_header_line);
-    }
-
-    // @@ -100,32 +100,32 @@
-    //        ^
-    //        but the comma can be optional
-    if saw_comma {
-        text = &text[1..];
-        saw_whitespace = false;
-        let first_col_start = 0;
-        let mut first_col_end: usize = 0;
-        while first_col_end < text.len() {
-            if text[first_col_end] == b' ' {
-                saw_whitespace = true;
-                break;
-            }
-            if !digits.is_set(text[first_col_end] as usize) {
-                return Err(ParseErr::bad_header_line);
-            }
-            first_col_end += 1;
-        }
-        if !saw_whitespace {
-            return Err(ParseErr::bad_header_line);
-        }
-        line_nr_count = &text[first_col_start..first_col_end];
-        text = &text[first_col_end..];
-    }
-
-    Ok(HunkHeaderLineImpl {
-        line_nr: bun_core::parse_decimal::<u32>(line_nr).ok_or(ParseErr::bad_header_line)?,
-        line_count: bun_core::parse_decimal::<u32>(line_nr_count)
-            .ok_or(ParseErr::bad_header_line)?,
-        rest: text,
-    })
+    Ok((range, rest))
 }
 
-fn parse_hunk_header_line<'a>(line_: &'a [u8]) -> Result<Hunk<'a>, ParseErr> {
+fn parse_hunk_header_line<'a>(line: &'a [u8]) -> Result<Hunk<'a>, ParseErr> {
     //  const match = headerLine.trim()
     //    .match(/^@@ -(\d+)(,(\d+))? \+(\d+)(,(\d+))? @@.*/)
-
-    let mut line = strings::trim(line_, WHITESPACE);
-    // @@ -100,32 +100,32 @@
-    // ^^^^
-    // this part
-    if !(line.len() >= 4
-        && line[0] == b'@'
-        && line[1] == b'@'
-        && line[2] == b' '
-        && line[3] == b'-')
-    {
-        // TODO: store line
+    let line = strings::trim(line, WHITESPACE)
+        .strip_prefix(b"@@ -")
+        .ok_or(ParseErr::bad_header_line)?;
+    let (original, line) = parse_header_range(line)?;
+    let line = line.strip_prefix(b" +").ok_or(ParseErr::bad_header_line)?;
+    let (patched, line) = parse_header_range(line)?;
+    if !line.starts_with(b" @@") {
         return Err(ParseErr::bad_header_line);
     }
-
-    if line.len() <= 4 {
-        return Err(ParseErr::bad_header_line);
-    }
-
-    // @@ -100,32 +100,32 @@
-    //     ^
-    line = &line[4..];
-
-    let first_result = parse_hunk_header_line_impl(line)?;
-    // @@ -100,32 +100,32 @@
-    //           ^
-    line = first_result.rest;
-    if line.len() < 2 || line[1] != b'+' {
-        return Err(ParseErr::bad_header_line);
-    }
-    line = &line[2..];
-
-    let second_result = parse_hunk_header_line_impl(line)?;
-    // @@ -100,32 +100,32 @@
-    //                   ^
-    line = second_result.rest;
-
-    if line.len() >= 3 && line[0] == b' ' && line[1] == b'@' && line[2] == b'@' {
-        return Ok(Hunk {
-            header: Header {
-                original: HeaderRange {
-                    start: first_result.line_nr,
-                    len: first_result.line_count,
-                },
-                patched: HeaderRange {
-                    start: second_result.line_nr,
-                    len: second_result.line_count,
-                },
-            },
-            parts: Vec::new(),
-        });
-    }
-
-    Err(ParseErr::bad_header_line)
+    Ok(Hunk {
+        header: Header { original, patched },
+        parts: Vec::new(),
+    })
 }
 
 fn parse_diff_hashes(line: &[u8]) -> Option<(&[u8], &[u8])> {
@@ -1477,34 +1247,12 @@ fn parse_diff_hashes(line: &[u8]) -> Option<(&[u8], &[u8])> {
 
     let delimiter_start = strings::index_of(line, b"..")? as usize;
 
-    // ArrayBitSet::set is non-const, so this builds at runtime.
-    let valid_chars: ByteBitSet = {
-        let mut bitset = ByteBitSet::init_empty();
-        // TODO: the regex uses \w which is [a-zA-Z0-9_]
-        let mut c = b'0';
-        while c <= b'9' {
-            bitset.set(c as usize);
-            c += 1;
-        }
-        c = b'a';
-        while c <= b'z' {
-            bitset.set(c as usize);
-            c += 1;
-        }
-        c = b'A';
-        while c <= b'Z' {
-            bitset.set(c as usize);
-            c += 1;
-        }
-        bitset.set(b'_' as usize);
-        bitset
-    };
+    // \w is [a-zA-Z0-9_]
+    let is_word = |part: &[u8]| part.iter().all(|c| c.is_ascii_alphanumeric() || *c == b'_');
 
     let a_part = &line[..delimiter_start];
-    for &c in a_part {
-        if !valid_chars.is_set(c as usize) {
-            return None;
-        }
+    if !is_word(a_part) {
+        return None;
     }
 
     let b_part_start = delimiter_start + 2;
@@ -1517,13 +1265,7 @@ fn parse_diff_hashes(line: &[u8]) -> Option<(&[u8], &[u8])> {
     };
 
     let b_part = &line[b_part_start..b_part_end];
-    for &c in b_part {
-        if !valid_chars.is_set(c as usize) {
-            return None;
-        }
-    }
-
-    Some((a_part, b_part))
+    is_word(b_part).then_some((a_part, b_part))
 }
 
 fn parse_diff_line_paths(line: &[u8]) -> Option<(&[u8], &[u8])> {
@@ -1589,8 +1331,7 @@ pub fn spawn_opts(
     loop_: &mut bun_event_loop::AnyEventLoop,
 ) -> (bun_spawn::sync::Options, GitDiffEnv) {
     let argv: Vec<Box<[u8]>> = {
-        const ARGV: &[&[u8]] = &[
-            b"git",
+        const ARGS: [&[u8]; 9] = [
             b"-c",
             b"core.safecrlf=false",
             b"diff",
@@ -1601,16 +1342,11 @@ pub fn spawn_opts(
             b"--full-index",
             b"--no-index",
         ];
-        // PERF: `Options.argv` is
-        // `Vec<Box<[u8]>>`, so we copy. Profile if it shows up on a hot path.
-        let mut argv_buf: Vec<Box<[u8]>> = Vec::with_capacity(ARGV.len() + 2);
-        argv_buf.push(Box::from(git.as_bytes()));
-        for i in 1..ARGV.len() {
-            argv_buf.push(Box::from(ARGV[i]));
-        }
-        argv_buf.push(Box::from(old_folder));
-        argv_buf.push(Box::from(new_folder));
-        argv_buf
+        core::iter::once(git.as_bytes())
+            .chain(ARGS)
+            .chain([old_folder, new_folder])
+            .map(Box::from)
+            .collect()
     };
 
     // The machine's and the user's git config must not shape the patch.
@@ -1669,14 +1405,8 @@ pub fn diff_post_process(
     old_folder: &[u8],
     new_folder: &[u8],
 ) -> crate::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
-    let mut stdout: Vec<u8> = Vec::new();
-    let mut stderr: Vec<u8> = Vec::new();
-
-    mem::swap(&mut stdout, &mut result.stdout);
-    mem::swap(&mut stderr, &mut result.stderr);
-
-    // errdefer-style flags replaced by Drop semantics; on early return
-    // the unreturned vec is dropped automatically.
+    let mut stdout = mem::take(&mut result.stdout);
+    let stderr = mem::take(&mut result.stderr);
 
     if !stderr.is_empty() {
         return Ok(Err(stderr));
@@ -1687,27 +1417,15 @@ pub fn diff_post_process(
     Ok(Ok(stdout))
 }
 
-pub fn git_diff_preprocess_paths(old_folder_: &[u8], new_folder_: &[u8]) -> [Vec<u8>; 2] {
+pub fn git_diff_preprocess_paths(old_folder: &[u8], new_folder: &[u8]) -> [Vec<u8>; 2] {
+    #[allow(unused_mut)]
+    let mut folders = [old_folder.to_vec(), new_folder.to_vec()];
+    // Normalize Windows separators before passing paths to `git diff`.
     #[cfg(windows)]
-    let old_folder: Vec<u8> = {
-        // Normalize Windows separators before passing paths to `git diff`.
-        let mut cpy = old_folder_.to_vec();
-        paths::slashes_to_posix_in_place(&mut cpy[..]);
-        cpy
-    };
-    #[cfg(not(windows))]
-    let old_folder: Vec<u8> = old_folder_.to_vec();
-
-    #[cfg(windows)]
-    let new_folder: Vec<u8> = {
-        let mut cpy = new_folder_.to_vec();
-        paths::slashes_to_posix_in_place(&mut cpy[..]);
-        cpy
-    };
-    #[cfg(not(windows))]
-    let new_folder: Vec<u8> = new_folder_.to_vec();
-
-    [old_folder, new_folder]
+    for folder in &mut folders {
+        paths::slashes_to_posix_in_place(&mut folder[..]);
+    }
+    folders
 }
 
 pub fn git_diff_internal(

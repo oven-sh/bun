@@ -58,8 +58,7 @@ pub(crate) struct MigratedPackageJson {
     edits: Vec<&'static str>,
 }
 
-/// Commands that load the lockfile twice (`bun update -r`, `bun audit fix`) migrate the already edited entries
-/// the second time, so an edit can be recorded again.
+/// Commands that load the lockfile twice (`bun update -r`, `bun audit fix`) record an edit twice.
 pub(crate) fn record_migrated(
     manager: &mut PackageManager,
     target: WorkspaceTarget,
@@ -80,9 +79,7 @@ pub(crate) fn record_migrated(
     }
 }
 
-/// Writes the package.json files a migration edited in memory, just before the migrated lockfile is saved:
-/// a package.json that cannot take the edits fails the command before a lockfile that depends on them exists.
-/// Only the places that save the lockfile call this, so a load that is never saved leaves the files alone.
+/// Writes the package.json files a migration edited in memory, just before the migrated lockfile that depends on them is saved.
 pub fn write_migrated(manager: &mut PackageManager) {
     if manager.migrated_package_json_moves.is_empty() {
         return;
@@ -330,7 +327,7 @@ fn edit_update_targets(
                 ..Default::default()
             },
         ] {
-            PackageJSONEditor::edit_update_no_args_in(
+            PackageJSONEditor::edit_update_entries(
                 &manager.lockfile,
                 &manager.ast_arena,
                 &mut updating,
@@ -338,6 +335,7 @@ fn edit_update_targets(
                 update_to_latest,
                 &mut ast,
                 options,
+                &|_, _| true,
             )?;
         }
         store_entry(manager, &target, ast);
@@ -409,25 +407,16 @@ fn edit_cwd(
 
 /// Package id of each edited file's row in `lockfile` (`invalid_package_id` when the workspace has none).
 fn target_package_ids(lockfile: &Lockfile, edited: &[EditedPackageJson]) -> Vec<PackageID> {
-    let mut ids = vec![invalid_package_id; edited.len()];
-    for (i, e) in edited.iter().enumerate() {
-        if e.target.name_hash.is_none() {
-            ids[i] = 0;
-        }
-    }
     let resolutions = lockfile.packages.items_resolution();
     let name_hashes = lockfile.packages.items_name_hash();
-    for pkg_id in 0..resolutions.len() {
-        if resolutions[pkg_id].tag != ResolutionTag::Workspace {
-            continue;
-        }
-        for (i, e) in edited.iter().enumerate() {
-            if ids[i] == invalid_package_id && e.target.name_hash == Some(name_hashes[pkg_id]) {
-                ids[i] = pkg_id as PackageID;
-            }
-        }
-    }
-    ids
+    let id_of = |hash: PackageNameHash| {
+        (0..resolutions.len())
+            .find(|&id| resolutions[id].tag == ResolutionTag::Workspace && name_hashes[id] == hash)
+            .map_or(invalid_package_id, |id| id as PackageID)
+    };
+    (edited.iter())
+        .map(|e| e.target.name_hash.map_or(0, &id_of))
+        .collect()
 }
 
 /// The root and every edited member, with its position in `edited`.
@@ -590,7 +579,6 @@ fn sync_lockfile(
     Ok(overrides_changed)
 }
 
-/// Compared against the file, not `stale_contents`: the before-install print in `update_package_json_and_install` replaces the cwd entry's contents without recording them.
 fn unchanged_on_disk(manager: &mut PackageManager, target: &WorkspaceTarget) -> bool {
     let printed: &[u8] = &fetch_entry(manager, target).source.contents;
     let mut file = WorkspacePackageJSONCache::default();

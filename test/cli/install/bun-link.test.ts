@@ -15,6 +15,7 @@ import {
 import {
   bunExe,
   bunEnv as env,
+  isMacOS,
   isWindows,
   readdirSorted,
   runBunInstall,
@@ -736,8 +737,9 @@ it("a link: dependency whose link is in place is not linked again", async () => 
   let { stdout, exitCode } = await bun(app, "install", "--linker=hoisted");
   expect(stdout).toContain("1 package installed");
   expect(exitCode).toBe(0);
-  // A hard link of the symlink keeps its inode number from being used for a new one.
-  if (!isWindows) await fsLink(link, join(String(dir), "pin"));
+  // A hard link of the symlink keeps its inode number from being used for a new one. On macOS
+  // link() follows the symlink, and APFS gives no number out twice.
+  if (!isWindows && !isMacOS) await fsLink(link, join(String(dir), "pin"));
   const before = (await lstat(link)).ino;
 
   ({ stdout, exitCode } = await bun(app, "install", "--linker=hoisted"));

@@ -1,4 +1,3 @@
-use core::fmt;
 use std::io::Write as _;
 
 use bun_collections::DynamicBitSet;
@@ -15,7 +14,7 @@ use crate::bun_fs::FileSystem;
 use crate::bun_json as JSON;
 use crate::dependency::{Dependency, DependencyExt as _, without_build_tag};
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _, entry as store_entry};
-use crate::isolated_install::{FileCopier, Timings, build_store};
+use crate::isolated_install::{FileCopier, build_store};
 use crate::lockfile_real::package::{Package, PackageColumns as _};
 use crate::lockfile_real::{self as lockfile, Lockfile, reachable, tree};
 use crate::package_install::{StagingPath, rename_staging_into_place};
@@ -32,10 +31,7 @@ fn string_hash(s: &[u8]) -> u64 {
     bun_semver::semver_string::Builder::string_hash(s)
 }
 
-/// Formats `resolution` as the version half of a `name@version` patch key into
-/// `label` (cleared first, so one allocation serves a whole candidate loop).
-/// Tarball, folder and git resolutions repeat a user-supplied path or URL, so
-/// the label has no length bound.
+/// Formats `resolution` as the version half of a `name@version` patch key into `label` (cleared first).
 fn print_resolution_label<'a>(
     label: &'a mut Vec<u8>,
     resolution: &Resolution,
@@ -97,35 +93,32 @@ fn resolve_target(
         },
     );
 
-    let (pkg, folder, other_folders) = match PatchArgKind::from_arg(argument) {
-        PatchArgKind::Path => {
-            let folder = path_argument_from_root(lockfile, workspace_package_id, argument);
-            let (name, version) = read_name_and_version(manager, &folder);
-            let pkg = match package_for_folder(lockfile, string_hash(&name), &version) {
-                Ok(pkg) => pkg,
-                Err(err) => folder_lookup_error(err, command, &folder, &name, &version),
-            };
-            if !installed.is_set(pkg.meta.id as usize) {
-                crash_bundled(&name);
-            }
-            (pkg, folder, Vec::new())
+    // The Windows-backslash arm intentionally uses `has_prefix`, the posix arm `contains`.
+    let is_path = strings::contains(argument, b"node_modules/")
+        || (cfg!(windows) && strings::has_prefix(argument, b"node_modules\\"));
+    let (pkg, folder, other_folders) = if is_path {
+        let folder = path_argument_from_root(lockfile, workspace_package_id, argument);
+        let (name, version) = read_name_and_version(manager, &folder);
+        let pkg = match package_for_folder(lockfile, string_hash(&name), &version) {
+            Ok(pkg) => pkg,
+            Err(err) => folder_lookup_error(err, command, &folder, &name, &version),
+        };
+        if !installed.is_set(pkg.meta.id as usize) {
+            crash_bundled(&name);
         }
-        PatchArgKind::NameAndVersion => {
-            let (pkg_id, hoisted_folder) =
-                pkg_info_for_name_and_version(lockfile, &installed, argument);
-            let (folder, other_folders) = installed_module_folder(
-                manager,
-                lockfile,
-                pkg_id,
-                workspace_package_id,
-                hoisted_folder,
-            );
-            (
-                *lockfile.packages.get(pkg_id as usize),
-                folder,
-                other_folders,
-            )
-        }
+        (pkg, folder, Vec::new())
+    } else {
+        let (pkg_id, hoisted_folder) =
+            pkg_info_for_name_and_version(lockfile, &installed, argument);
+        let (folder, other_folders) = installed_module_folder(
+            manager,
+            lockfile,
+            pkg_id,
+            workspace_package_id,
+            hoisted_folder,
+        );
+        let pkg = *lockfile.packages.get(pkg_id as usize);
+        (pkg, folder, other_folders)
     };
 
     if !pkg.resolution.tag.can_enqueue_install_task() {
@@ -329,24 +322,16 @@ pub fn do_patch_commit(
         }
         lockfile::LoadResult::Err(cause) => {
             if log_level != LogLevel::Silent {
-                match cause.step {
-                    lockfile::LoadStep::OpenFile => bun_core::pretty_error!(
-                        "<r><red>error<r> opening lockfile:<r> {}\n<r>",
-                        cause.value.name(),
-                    ),
-                    lockfile::LoadStep::ParseFile => bun_core::pretty_error!(
-                        "<r><red>error<r> parsing lockfile:<r> {}\n<r>",
-                        cause.value.name(),
-                    ),
-                    lockfile::LoadStep::ReadFile => bun_core::pretty_error!(
-                        "<r><red>error<r> reading lockfile:<r> {}\n<r>",
-                        cause.value.name(),
-                    ),
-                    lockfile::LoadStep::Migrating => bun_core::pretty_error!(
-                        "<r><red>error<r> migrating lockfile:<r> {}\n<r>",
-                        cause.value.name(),
-                    ),
-                }
+                bun_core::pretty_error!(
+                    "<r><red>error<r> {} lockfile:<r> {}\n<r>",
+                    match cause.step {
+                        lockfile::LoadStep::OpenFile => "opening",
+                        lockfile::LoadStep::ParseFile => "parsing",
+                        lockfile::LoadStep::ReadFile => "reading",
+                        lockfile::LoadStep::Migrating => "migrating",
+                    },
+                    cause.value.name(),
+                );
 
                 if manager.options.enable.fail_early() {
                     bun_core::pretty_error!("<b><red>failed to load lockfile<r>\n");
@@ -438,11 +423,7 @@ pub fn do_patch_commit(
         Global::crash();
     }
 
-    let unescaped_patch_filename = [patch_key.as_slice(), b".patch"].concat();
-    let escaped_patch_filename = escape_patch_filename(&unescaped_patch_filename);
-    let patch_filename: &[u8] = escaped_patch_filename
-        .as_deref()
-        .unwrap_or(&unescaped_patch_filename);
+    let patch_filename = escape_patch_filename(&[patch_key.as_slice(), b".patch"].concat());
 
     let patches_dir: &[u8] = match &manager.options.patch_features {
         PatchFeatures::Commit { patches_dir } => patches_dir,
@@ -454,11 +435,9 @@ pub fn do_patch_commit(
     // Owned: `join` hands out the thread's one buffer, and every later `join` writes to it.
     let path_in_patches_dir = ZBox::from_bytes(resolve_path::join::<platform::Posix>(&[
         patches_dir,
-        patch_filename,
+        &patch_filename,
     ]));
 
-    // mkdir-p syscall is used here, no JS surface; route directly through
-    // `bun_sys::mkdir_recursive` to avoid the `bun_runtime` dep cycle.
     if let Err(e) = sys::mkdir_recursive(patches_dir) {
         Output::err(
             e,
@@ -560,29 +539,16 @@ fn diff_against_cache(
             None
         }
         Ok(Ok(stdout)) => Some(stdout),
-        Ok(Err(stderr)) => {
-            struct Truncate<'a> {
-                stderr: &'a Vec<u8>,
-            }
-
-            impl fmt::Display for Truncate<'_> {
-                fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-                    let truncate_stderr = self.stderr.len() > 256;
-                    if truncate_stderr {
-                        write!(
-                            writer,
-                            "{}... ({} more bytes)",
-                            bstr::BStr::new(&self.stderr[0..256]),
-                            self.stderr.len() - 256
-                        )
-                    } else {
-                        write!(writer, "{}", bstr::BStr::new(&self.stderr[..]))
-                    }
-                }
+        Ok(Err(mut stderr)) => {
+            if stderr.len() > 256 {
+                let more = stderr.len() - 256;
+                stderr.truncate(256);
+                write!(stderr, "... ({} more bytes)", more)
+                    .expect("formatting into a Vec is infallible");
             }
             bun_core::pretty_error!(
                 "<r><red>error<r>: failed to make diff {}<r>\n",
-                Truncate { stderr: &stderr }
+                bstr::BStr::new(&stderr)
             );
             None
         }
@@ -711,88 +677,29 @@ fn move_entries_absent_from(
     Ok(())
 }
 
-fn escape_patch_filename(name: &[u8]) -> Option<Box<[u8]>> {
-    #[derive(Copy, Clone, PartialEq, Eq)]
-    #[repr(u8)]
-    enum EscapeVal {
-        Slash,
-        Backslash,
-        Space,
-        Newline,
-        CarriageReturn,
-        Tab,
-        // NTFS-reserved; escaped on every OS so a committed patches/ dir checks out on Windows.
-        Colon,
-        Question,
-        Asterisk,
-        Quote,
-        LessThan,
-        GreaterThan,
-        Pipe,
-        // Dot,
-        Other,
-    }
-
-    impl EscapeVal {
-        fn escaped(self) -> Option<&'static [u8]> {
-            match self {
-                EscapeVal::Slash => Some(b"%2F"),
-                EscapeVal::Backslash => Some(b"%5c"),
-                EscapeVal::Space => Some(b"%20"),
-                EscapeVal::Newline => Some(b"%0A"),
-                EscapeVal::CarriageReturn => Some(b"%0D"),
-                EscapeVal::Tab => Some(b"%09"),
-                EscapeVal::Colon => Some(b"%3A"),
-                EscapeVal::Question => Some(b"%3F"),
-                EscapeVal::Asterisk => Some(b"%2A"),
-                EscapeVal::Quote => Some(b"%22"),
-                EscapeVal::LessThan => Some(b"%3C"),
-                EscapeVal::GreaterThan => Some(b"%3E"),
-                EscapeVal::Pipe => Some(b"%7C"),
-                // EscapeVal::Dot => Some(b"%2E"),
-                EscapeVal::Other => None,
-            }
-        }
-    }
-
-    // The table is filled by hand.
-    const ESCAPE_TABLE: [EscapeVal; 256] = {
-        let mut table = [EscapeVal::Other; 256];
-        table[b'/' as usize] = EscapeVal::Slash;
-        table[b'\\' as usize] = EscapeVal::Backslash;
-        table[b' ' as usize] = EscapeVal::Space;
-        table[b'\n' as usize] = EscapeVal::Newline;
-        table[b'\r' as usize] = EscapeVal::CarriageReturn;
-        table[b'\t' as usize] = EscapeVal::Tab;
-        table[b':' as usize] = EscapeVal::Colon;
-        table[b'?' as usize] = EscapeVal::Question;
-        table[b'*' as usize] = EscapeVal::Asterisk;
-        table[b'"' as usize] = EscapeVal::Quote;
-        table[b'<' as usize] = EscapeVal::LessThan;
-        table[b'>' as usize] = EscapeVal::GreaterThan;
-        table[b'|' as usize] = EscapeVal::Pipe;
-        table
-    };
-    let mut count: usize = 0;
-    for &c in name {
-        count += if let Some(e) = ESCAPE_TABLE[c as usize].escaped() {
-            e.len()
-        } else {
-            1
+/// `:?*"<>|` are NTFS-reserved; escaped on every OS so a committed patches/ dir checks out on Windows.
+fn escape_patch_filename(name: &[u8]) -> Vec<u8> {
+    let mut escaped = Vec::with_capacity(name.len());
+    for c in name {
+        let replacement: &[u8] = match *c {
+            b'/' => b"%2F",
+            b'\\' => b"%5c",
+            b' ' => b"%20",
+            b'\n' => b"%0A",
+            b'\r' => b"%0D",
+            b'\t' => b"%09",
+            b':' => b"%3A",
+            b'?' => b"%3F",
+            b'*' => b"%2A",
+            b'"' => b"%22",
+            b'<' => b"%3C",
+            b'>' => b"%3E",
+            b'|' => b"%7C",
+            _ => core::slice::from_ref(c),
         };
+        escaped.extend_from_slice(replacement);
     }
-    if count == name.len() {
-        return None;
-    }
-    let mut buf = vec![0u8; count].into_boxed_slice();
-    let mut i: usize = 0;
-    for &c in name {
-        let single = [c];
-        let e: &[u8] = ESCAPE_TABLE[c as usize].escaped().unwrap_or(&single[..]);
-        buf[i..i + e.len()].copy_from_slice(e);
-        i += e.len();
-    }
-    Some(buf)
+    escaped
 }
 
 /// 1. Arg is either:
@@ -1182,14 +1089,7 @@ fn isolated_store_folders(
     pkg_id: PackageID,
     workspace_package_id: PackageID,
 ) -> Vec<Vec<u8>> {
-    let store = handle_oom(build_store(
-        manager,
-        lockfile,
-        true,
-        &[],
-        None,
-        Timings::Quiet,
-    ));
+    let store = handle_oom(build_store(manager, lockfile, true, &[], None, false));
     let name = lockfile.str(&lockfile.packages.items_name()[pkg_id as usize]);
     let resolutions = lockfile.packages.items_resolution();
     let entry_dependencies = store.entries.items_dependencies();
@@ -1266,26 +1166,6 @@ fn isolated_store_folders(
 type NodeModulesIterator<'a> = tree::Iterator<'a, { tree::IteratorPathStyle::NodeModules }>;
 
 type IdPair = (DependencyID, PackageID);
-
-// reshaped for borrowck — `tree::Iterator::next` returns an
-// `IteratorNext<'_>` borrowing the iterator's internal `path_buf`, so we
-// cannot return it from inside a `while let` (borrowck rejects the next
-// iteration's reborrow even though it's unreachable). Callers only need
-// `relative_path`, so copy it out into an owned `Vec<u8>`.
-fn node_modules_folder_for_dependency_ids(
-    iterator: &mut NodeModulesIterator<'_>,
-    ids: &[IdPair],
-) -> Option<(IdPair, Vec<u8>)> {
-    loop {
-        let node_modules = iterator.next(None)?;
-        if let Some(&id) = ids
-            .iter()
-            .find(|id| node_modules.dependencies.contains(&id.0))
-        {
-            return Some((id, node_modules.relative_path.as_bytes().to_vec()));
-        }
-    }
-}
 
 /// The package that `name` or `name@version` selects, and its folder in a hoisted node_modules.
 fn pkg_info_for_name_and_version(
@@ -1373,14 +1253,17 @@ fn pkg_info_for_name_and_version(
 
     // The package may be hoisted, so this takes the first dependent whose node_modules has it.
     let mut iterator = NodeModulesIterator::init(lockfile);
-    let Some(((dep_id, pkg_id), node_modules)) =
-        node_modules_folder_for_dependency_ids(&mut iterator, &pairs)
-    else {
-        bun_core::pretty_error!(
-            "<r><red>error<r>: could not find the folder for <b>{}<r> in node_modules<r>\n<r>",
-            bun_fmt::for_terminal(bstr::BStr::new(pkg_maybe_version_to_patch)),
-        );
-        Global::crash();
+    let ((dep_id, pkg_id), node_modules) = loop {
+        let Some(node_modules) = iterator.next(None) else {
+            bun_core::pretty_error!(
+                "<r><red>error<r>: could not find the folder for <b>{}<r> in node_modules<r>\n<r>",
+                bun_fmt::for_terminal(bstr::BStr::new(pkg_maybe_version_to_patch)),
+            );
+            Global::crash();
+        };
+        if let Some(&id) = (pairs.iter()).find(|id| node_modules.dependencies.contains(&id.0)) {
+            break (id, node_modules.relative_path.as_bytes().to_vec());
+        }
     };
 
     // An alias is installed under the dependency's name. It becomes a path that `bun patch`
@@ -1397,24 +1280,4 @@ fn pkg_info_for_name_and_version(
         pkg_id,
         resolve_path::join::<platform::Auto>(&[&node_modules, folder_name]).to_vec(),
     )
-}
-
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum PatchArgKind {
-    Path,
-    NameAndVersion,
-}
-
-impl PatchArgKind {
-    fn from_arg(argument: &[u8]) -> PatchArgKind {
-        if strings::contains(argument, b"node_modules/") {
-            return PatchArgKind::Path;
-        }
-        // Intentional asymmetry — the Windows-backslash arm uses `has_prefix`
-        // while the posix arm above uses `contains`.
-        if cfg!(windows) && strings::has_prefix(argument, b"node_modules\\") {
-            return PatchArgKind::Path;
-        }
-        PatchArgKind::NameAndVersion
-    }
 }

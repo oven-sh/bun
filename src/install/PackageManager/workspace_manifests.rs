@@ -49,7 +49,7 @@ impl ScratchManifests {
             (entry.source.clone(), entry.root)
         };
         let mut resolver: () = ();
-        self.root.parse_with_json::<()>(
+        self.root.parse_with_json(
             &mut self.lockfile,
             manager,
             &mut self.log,
@@ -146,7 +146,7 @@ impl ScratchManifests {
         let mut resolver: () = ();
         let mut pkg = Package::default();
         // Unlike the root's workspaces walk, a `Features::WORKSPACE` parse never grows the cache, so the entry stays put.
-        pkg.parse_with_json::<()>(
+        pkg.parse_with_json(
             &mut self.lockfile,
             manager,
             &mut self.log,

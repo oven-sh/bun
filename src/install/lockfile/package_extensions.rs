@@ -47,13 +47,9 @@ struct Edge {
     behavior: Behavior,
 }
 
+/// The hash of the package's `<name>@<version>` (like the keys of `patched_dependencies`), the row's name, what was done.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Applied {
-    /// Of `<name>@<version>`, like the keys of `patched_dependencies`.
-    pub(crate) package: u64,
-    pub(crate) name_hash: PackageNameHash,
-    pub(crate) kind: Kind,
-}
+pub(crate) struct Applied(u64, PackageNameHash, Kind);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kind {
@@ -315,11 +311,7 @@ impl PackageExtensions {
                 };
                 while let Some(name) = names.next() {
                     if let Some(name) = name.as_utf8_string_literal() {
-                        self.record(Applied {
-                            package: hash(label),
-                            name_hash: hash(name),
-                            kind,
-                        });
+                        self.record(Applied(hash(label), hash(name), kind));
                     }
                 }
             }
@@ -332,7 +324,7 @@ impl PackageExtensions {
     pub(crate) fn applied_words(&self) -> Vec<u64> {
         let mut words = Vec::with_capacity(self.applied.len() * 3);
         for applied in &self.applied {
-            words.extend_from_slice(&[applied.package, applied.name_hash, applied.kind as u64]);
+            words.extend_from_slice(&[applied.0, applied.1, applied.2 as u64]);
         }
         words
     }
@@ -340,13 +332,9 @@ impl PackageExtensions {
     #[cold]
     #[inline(never)]
     pub(crate) fn set_applied_words(&mut self, words: &[u64]) {
-        for word in words.chunks_exact(3) {
+        for word in words.as_chunks::<3>().0 {
             if let Some(&(kind, _)) = KINDS.iter().find(|(kind, _)| *kind as u64 == word[2]) {
-                self.record(Applied {
-                    package: word[0],
-                    name_hash: word[1],
-                    kind,
-                });
+                self.record(Applied(word[0], word[1], kind));
             }
         }
     }
@@ -412,15 +400,16 @@ impl Lockfile {
             return Ok(false);
         }
         let package = self.package_extension_key(id);
-        if wanted.is_empty() && !applied.iter().any(|applied| applied.package == package) {
+        if wanted.is_empty() && !applied.iter().any(|applied| applied.0 == package) {
             return Ok(false);
         }
-        let was = |name_hash: PackageNameHash, kind: Kind| {
-            applied.contains(&Applied {
-                package,
-                name_hash,
-                kind,
-            })
+        let was = |name_hash, kind| applied.contains(&Applied(package, name_hash, kind));
+        let kind_of = |row: &Dependency| {
+            if row.behavior.is_peer() {
+                Kind::Peer
+            } else {
+                Kind::Dependency
+            }
         };
 
         let slice = self.packages.items_dependencies()[id as usize];
@@ -438,11 +427,7 @@ impl Lockfile {
             if let Some(rule) = &mut rule {
                 rule.found = true;
             }
-            let kind = if is_peer {
-                Kind::Peer
-            } else {
-                Kind::Dependency
-            };
+            let kind = kind_of(&row);
             if was(name_hash, kind) {
                 let Some(rule) = rule else {
                     changed = true;
@@ -453,11 +438,7 @@ impl Lockfile {
                     resolved = invalid_package_id;
                     changed = true;
                 }
-                now.push(Applied {
-                    package,
-                    name_hash,
-                    kind,
-                });
+                now.push(Applied(package, name_hash, kind));
             } else if is_peer {
                 // The package's own row wins. All a rule can do to it is make the peer optional.
                 let is_optional = row.behavior.contains(Behavior::OPTIONAL);
@@ -466,11 +447,7 @@ impl Lockfile {
                     if made_optional || !is_optional {
                         row.behavior.insert(Behavior::OPTIONAL);
                         changed |= !is_optional;
-                        now.push(Applied {
-                            package,
-                            name_hash,
-                            kind: Kind::OptionalPeer,
-                        });
+                        now.push(Applied(package, name_hash, Kind::OptionalPeer));
                     }
                 } else if made_optional {
                     row.behavior.remove(Behavior::OPTIONAL);
@@ -488,15 +465,7 @@ impl Lockfile {
                 continue;
             }
             let row = self.package_extension_row(rule, &mut *aliases, &mut *log)?;
-            now.push(Applied {
-                package,
-                name_hash: row.name_hash,
-                kind: if row.behavior.is_peer() {
-                    Kind::Peer
-                } else {
-                    Kind::Dependency
-                },
-            });
+            now.push(Applied(package, row.name_hash, kind_of(&row)));
             rows.push((row, invalid_package_id));
             changed = true;
         }
@@ -541,11 +510,8 @@ impl Lockfile {
         }
         let package = self.package_extension_key(id);
         for &(name_hash, kind) in added {
-            self.package_extensions.record(Applied {
-                package,
-                name_hash,
-                kind,
-            });
+            self.package_extensions
+                .record(Applied(package, name_hash, kind));
         }
     }
 
@@ -614,8 +580,7 @@ impl Lockfile {
             }
             let package = self.package_extension_key(id);
             self.package_extensions.applied.extend(
-                (old.package_extensions.applied.iter())
-                    .filter(|applied| applied.package == package),
+                (old.package_extensions.applied.iter()).filter(|applied| applied.0 == package),
             );
         }
     }
@@ -633,7 +598,7 @@ impl Lockfile {
             }
             let label = crate::dedupe::label(self, id as PackageID);
             let package = hash(&label);
-            if !applied.iter().any(|applied| applied.package == package) {
+            if !applied.iter().any(|applied| applied.0 == package) {
                 continue;
             }
             let rows =
@@ -644,11 +609,7 @@ impl Lockfile {
                     .iter()
                     .filter(|row| {
                         row.behavior.is_peer() == (kind != Kind::Dependency)
-                            && applied.contains(&Applied {
-                                package,
-                                name_hash: row.name_hash,
-                                kind,
-                            })
+                            && applied.contains(&Applied(package, row.name_hash, kind))
                     })
                     .map(|row| row.name.slice(buf))
                     .collect();

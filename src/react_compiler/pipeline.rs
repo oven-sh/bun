@@ -799,11 +799,14 @@ pub(crate) fn run_reactive_scope_passes(
             env
         )
     )?;
-    pass!(
-        env,
-        "StabilizeBlockIds",
-        crate::reactive_scopes::stabilize_block_ids(&mut reactive_fn, env)
-    );
+    // Of the passes after it only codegen looks at a label.
+    if env.output_mode != OutputMode::Lint {
+        pass!(
+            env,
+            "StabilizeBlockIds",
+            crate::reactive_scopes::stabilize_block_ids(&mut reactive_fn, env)
+        );
+    }
 
     let unique_identifiers = pass!(
         env,

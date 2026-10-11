@@ -49,8 +49,6 @@ pub struct State<'a> {
     /// Only the reachable ones.
     current_segments: CurrentSegments<'a>,
     code_path_start_scopes: FxHashSet<Scope<'a>>,
-    /// For `written_by`.
-    writers: AncestorMemo<'a, Writer<'a>>,
     /// For `is_read_after_declaration`: the statement that an expression is evaluated in.
     evaluated_in: AncestorMemo<'a, Option<Stmt<'a>>>,
     /// Of the variable that is looked at.
@@ -583,6 +581,8 @@ struct Uses<'a> {
     all: Vec<Reference<'a>>,
     /// For every variable: the innermost `a ? b : c` in the statement of a node that has the node in its `b`.
     conditions: AncestorMemo<'a, Option<Expr<'a>>>,
+    /// For every variable: for `written_by`.
+    writers: AncestorMemo<'a, Writer<'a>>,
     /// The loops whose body has been looked at from its start.
     loops: SmallVec<[Stmt<'a>; 2]>,
     /// How many more statements to look at.
@@ -637,81 +637,132 @@ impl<'a> Uses<'a> {
         })
     }
 
-    fn expression(&self, e: Expr<'a>) -> Flow<'a> {
-        let read_or_unknown = |is_read| if is_read { Flow::Read } else { Flow::Unknown };
-        match self.within(e.span()) {
-            [] => Flow::Through,
-            [only] => read_or_unknown(only.is_read()),
-            // There is a way to everything in an expression, and nothing before it is on that way.
-            [first, ..] if !first.is_write() => Flow::Read,
-            [first, rest @ ..] => {
-                if rest.iter().any(|it| it.is_write()) {
-                    return Flow::Unknown;
-                }
-                // `x = f(x)`
-                read_or_unknown(matches!(
-                    e.kind(),
-                    ExprKind::Assign { target, value, .. }
-                        if target.span().start == start_of(first)
-                            && rest.iter().all(|it| value.span().contains_offset(start_of(it)))
-                ))
-            }
-        }
+    /// Whether one more step can be taken.
+    fn spends(&mut self) -> bool {
+        self.budget = self.budget.saturating_sub(1);
+        self.budget > 0
     }
 
-    /// From the end of `node`, an assignment, to the end of `part`: the expression or the declarators of a statement that it
-    /// is in. What follows in an expression is evaluated later, but for the `c` of `a ? b : c` after something in `b`.
-    fn rest_of_part(&mut self, node: Node<'a>, part: Span) -> Flow<'a> {
-        let (mut inner, mut offset) = (node, node.span().end);
+    /// From `start` to `end`, both in one expression or list of declarators. ESLint's code path follows the order of the
+    /// source there, but for what is not evaluated: the `c` of `a ? b : c` after something in `b`, which `after` is if it is
+    /// given, and what [`Uses::way_around`] leaves out.
+    fn part(&mut self, mut after: Option<Node<'a>>, start: u32, end: u32) -> Flow<'a> {
+        let condition_around = |child: Node<'a>, parent: Node<'a>| match parent {
+            Node::Expr(it) => it.as_cond().filter(|it| Node::Expr(it.1) == child).map(|_| Some(it)),
+            Node::Stmt(_) | Node::Func(_) | Node::Member(_) | Node::File(_) => Some(None),
+            _ => None,
+        };
+        // From where on uses are looked for, and from where on something can be left out.
+        let (mut offset, mut floor) = (start, start);
         'uses: loop {
-            let Some(next) = self.first_within(Span::new(offset, part.end)) else {
+            let Some(next) = self.first_within(Span::new(offset, end)) else {
                 return Flow::Through;
             };
-            let condition_around = |child: Node<'a>, parent: Node<'a>| match parent {
-                Node::Expr(it) => it.as_cond().filter(|it| Node::Expr(it.1) == child).map(|_| Some(it)),
-                Node::Stmt(_) | Node::Func(_) | Node::Member(_) | Node::File(_) => Some(None),
-                _ => None,
-            };
-            while let Some(condition) = self.conditions.find(inner, condition_around).flatten()
+            while let Some(inner) = after
+                && let Some(condition) = self.conditions.find(inner, condition_around).flatten()
                 && let Some((_, yes, _)) = condition.as_cond()
+                && start_of(&next) >= yes.span().end
             {
-                inner = Node::Expr(condition);
-                if start_of(&next) >= condition.span().end {
-                    continue;
+                after = Some(Node::Expr(condition));
+                if start_of(&next) < condition.span().end {
+                    offset = condition.span().end;
+                    continue 'uses;
                 }
-                if start_of(&next) < yes.span().end {
-                    break;
-                }
-                offset = condition.span().end;
-                continue 'uses;
             }
-            return if next.is_read() { Flow::Read } else { Flow::Unknown };
+            if next.is_read() {
+                return Flow::Read;
+            }
+            // `x = f(x)`
+            let evaluated_first = written_by(next, &mut self.writers).and_then(|it| it.expression);
+            if evaluated_first.and_then(|it| self.first_within(it)).is_some_and(|it| it.is_read()) {
+                return Flow::Read;
+            }
+            match self.way_around(next.node(), floor) {
+                Some(way) => (offset, floor) = way,
+                None => return Flow::Unknown,
+            }
         }
     }
 
-    fn optional_expression(&self, e: Option<Expr<'a>>) -> Flow<'a> {
+    /// `&&`, `||` or `??`, if `e` is `a && b` or `a &&= b`.
+    fn logical_operator(e: Expr<'a>) -> Option<BinOp> {
+        (e.binary_op().or_else(|| e.assign_op().flatten()))
+            .filter(|it| matches!(it, BinOp::And | BinOp::Or | BinOp::Nullish))
+    }
+
+    /// A way on which `node` is not evaluated: it is in the `b` of `a && b` or in a branch of `a ? b : c`, which starts at
+    /// `floor` or later. Returned is where the way goes on, and from where on something can be left out then: not what the
+    /// way has to lead through.
+    fn way_around(&mut self, node: Node<'a>, floor: u32) -> Option<(u32, u32)> {
+        let mut child = node;
+        while child.span().start >= floor && self.spends() {
+            let parent = child.parent();
+            match parent {
+                Node::Expr(e) => {
+                    if let Some((_, yes, no)) = e.as_cond() {
+                        if Node::Expr(yes) == child {
+                            return Some((yes.span().end, no.span().start + 1));
+                        }
+                        if Node::Expr(no) == child {
+                            return Some((no.span().end, floor));
+                        }
+                    } else if Self::logical_operator(e).is_some() && e.right().map(Node::Expr) == Some(child) {
+                        return self.way_after_left_operand(e, floor);
+                    }
+                }
+                Node::Prop(_) | Node::VarDecl(_) => {}
+                _ => return None,
+            }
+            child = parent;
+        }
+        None
+    }
+
+    /// [`Uses::way_around`] the right operand of `logical`. ESLint knows what that says about the operations around it: after
+    /// the `a` of `(a || b) || c` the `c` is not evaluated either, after that of `(a || b) && c` it is.
+    fn way_after_left_operand(&mut self, logical: Expr<'a>, floor: u32) -> Option<(u32, u32)> {
+        let is_and = |e: Expr<'a>| Self::logical_operator(e).map(|it| it == BinOp::And);
+        let (mut decided, is_false) = (logical, is_and(logical)?);
+        while self.spends() {
+            match decided.parent() {
+                Node::Expr(around) => match (is_and(around), around.right()) {
+                    (Some(skips_if_false), Some(right)) => {
+                        if right != decided && skips_if_false != is_false {
+                            return Some((decided.span().end, right.span().start + 1));
+                        }
+                        decided = around;
+                    }
+                    _ if around.as_cond().is_some_and(|it| it.0 == decided) => return None,
+                    _ => return Some((decided.span().end, floor)),
+                },
+                Node::Stmt(it)
+                    if matches!(it.tag(), StmtTag::If | StmtTag::While | StmtTag::DoWhile | StmtTag::For) =>
+                {
+                    return None;
+                }
+                _ => return Some((decided.span().end, floor)),
+            }
+        }
+        None
+    }
+
+    fn expression(&mut self, e: Expr<'a>) -> Flow<'a> {
+        self.part(None, e.span().start, e.span().end)
+    }
+
+    fn optional_expression(&mut self, e: Option<Expr<'a>>) -> Flow<'a> {
         e.map_or(Flow::Through, |e| self.expression(e))
     }
 
-    fn declarations(&self, declarators: List<'a, VarDecl<'a>>) -> Flow<'a> {
-        let (Some(first), Some(last)) = (declarators.first(), declarators.last()) else {
-            return Flow::Through;
-        };
-        let Some(next) = self.first_within(first.span().to(last.span())) else {
-            return Flow::Through;
-        };
-        // Those before it have nothing to do with the variable.
-        match declarators
-            .around(start_of(&next))
-            .map(|it| self.optional_expression(it.init()))
-        {
-            Some(Flow::Read) => Flow::Read,
-            _ => Flow::Unknown,
+    fn declarations(&mut self, declarators: List<'a, VarDecl<'a>>) -> Flow<'a> {
+        match (declarators.first(), declarators.last()) {
+            (Some(first), Some(last)) => self.part(None, first.span().start, last.span().end),
+            _ => Flow::Through,
         }
     }
 
     /// What is in the head of a `for`.
-    fn head(&self, statement: Stmt<'a>) -> Flow<'a> {
+    fn head(&mut self, statement: Stmt<'a>) -> Flow<'a> {
         match statement.kind() {
             StmtKind::Expr(e) => self.expression(e),
             StmtKind::Var(declarators) => self.declarations(declarators),
@@ -1197,7 +1248,7 @@ impl<'a> Uses<'a> {
         if !self.is_alone_in(written, written.node.span()) {
             return false;
         }
-        match self.rest_of_part(written.node, part) {
+        match self.part(Some(written.node), written.node.span().end, part.end) {
             Flow::Read => return true,
             Flow::Through => {}
             _ => return false,
@@ -1273,7 +1324,7 @@ impl NoUselessAssignment {
 
     /// Finds out whether the code path that `variable` is declared in has to be analyzed.
     fn check_binding<'a>(variable: Binding<'a>, cx: &mut Cx<'a, Self>) {
-        let State { uses, writers, evaluated_in, .. } = &mut cx.state;
+        let State { uses, evaluated_in, .. } = &mut cx.state;
         let home = variable.scope().variable_scope();
         // In another code path than that of the variable.
         let is_elsewhere = |it: Reference<'a>| {
@@ -1289,7 +1340,7 @@ impl NoUselessAssignment {
             }
         }
         if let (1, None, Some(written)) = (writes, variable.class, written)
-            && is_read_after_declaration(variable.symbol, written, (writers, evaluated_in))
+            && is_read_after_declaration(variable.symbol, written, (&mut uses.writers, evaluated_in))
         {
             return;
         }
@@ -1311,7 +1362,7 @@ impl NoUselessAssignment {
             };
             at += 1;
             if reference.is_write()
-                && written_by(reference, writers).is_some_and(|written| {
+                && written_by(reference, &mut uses.writers).is_some_and(|written| {
                     let is_in_another = written.node.span().end <= end;
                     end = end.max(written.node.span().end);
                     is_in_another || !uses.is_known_to_be_read(&written)

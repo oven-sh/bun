@@ -2447,6 +2447,21 @@ describe.concurrent("bun lint", () => {
     expect(exitCode).toBe(1);
   });
 
+  // What reads a tsconfig.json called itself for each file that is extended, on the main thread.
+  test("a tsconfig.json at the end of a chain of 5,000 that extend each other", async () => {
+    const rules = { "typescript/no-floating-promises": "error" };
+    const files: Record<string, string> = {
+      ".oxlintrc.json": JSON.stringify({ plugins: ["typescript"], categories: { correctness: "off" }, rules }),
+      "tsconfig.json": '{ "extends": "./t0.json" }',
+      "t5000.json": JSON.stringify({ compilerOptions: { strict: true, noEmit: true, types: [] } }),
+      "a.ts": "async function f() {}\nf();\nexport {};\n",
+    };
+    for (let i = 0; i < 5_000; i++) files[`t${i}.json`] = `{ "extends": "./t${i + 1}.json" }`;
+    const { raw, exitCode } = await lint(files, ["--type-aware", "-f", "unix", "a.ts"]);
+    expect(raw).toContain("a.ts:2:1: ");
+    expect(exitCode).toBe(1);
+  });
+
   // A file to which links give several names, and rules that look at several files. It must be the same in every run.
   describe("a file that has several names by links", () => {
     const project = (configuration: Record<string, string>) => {

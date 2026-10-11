@@ -12,7 +12,7 @@ use crate::resolve::{
     supported_extensions, to_lowercase_unicode_15, to_path, typescript_path,
 };
 use crate::session::Session;
-use crate::util::SharedSort;
+use crate::util::{FxHashSet, SharedSort};
 use crate::verify::{Place, Problem};
 use bstr::ByteSlice;
 use bun_core::strings;
@@ -450,7 +450,7 @@ fn parse_config(
 ) -> Option<Raw> {
     // The files that wait for what they extend, the outermost first, and `resolutionStack`, which has the path of each. Not by
     // recursion: a chain of `extends` is as long as somebody makes it.
-    let (mut waiting, mut stack): (Vec<Open>, Vec<Vec<u8>>) = (Vec::new(), Vec::new());
+    let (mut waiting, mut stack): (Vec<Open>, FxHashSet<Vec<u8>>) = Default::default();
     let mut to_read = Some(path.to_vec());
     // A file that is read, with all that it extends. `Some(None)`: it cannot be used.
     let mut read: Option<Option<Raw>> = None;
@@ -458,7 +458,7 @@ fn parse_config(
         if let Some(path) = to_read.take() {
             match open_config(host, session, &path, &stack, errors) {
                 Some(open) if open.extended.is_some() => {
-                    stack.push(open.resolved_path.clone());
+                    stack.insert(open.resolved_path.clone());
                     waiting.push(open);
                 }
                 open => read = Some(open.map(|it| it.own)),
@@ -488,7 +488,7 @@ fn parse_config(
             }
         }
         if to_read.is_none() {
-            stack.pop();
+            stack.remove(&innermost.resolved_path);
             read = Some(waiting.pop().map(Open::merged));
         }
     }
@@ -511,7 +511,7 @@ fn open_config(
     host: &dyn Host,
     session: &Session,
     path: &[u8],
-    stack: &[Vec<u8>],
+    stack: &FxHashSet<Vec<u8>>,
     errors: &mut Vec<ConfigError>,
 ) -> Option<Open> {
     let text = host.read(path);
@@ -1663,7 +1663,7 @@ fn match_files(
     struct Visitor<'a> {
         matchers: Matchers<'a>,
         case_sensitive: bool,
-        visited: crate::util::FxHashSet<Vec<u8>>,
+        visited: FxHashSet<Vec<u8>>,
         /// Listings computed ahead of the traversal.
         listed: crate::util::FxHashMap<Vec<u8>, Listed>,
         results: Vec<Vec<Vec<u8>>>,
@@ -1715,7 +1715,7 @@ fn match_files(
     // the files. The entries of each directory and which of them match have been computed by then,
     // for many directories at a time.
     let mut level: Vec<Vec<u8>> = bases.clone();
-    let mut requested: crate::util::FxHashSet<Vec<u8>> = Default::default();
+    let mut requested: FxHashSet<Vec<u8>> = Default::default();
     while !level.is_empty() {
         let found: Vec<bun_threading::Guarded<Option<Listed>>> =
             level.iter().map(|_| Default::default()).collect();

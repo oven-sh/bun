@@ -778,6 +778,14 @@ fn validate_no_ref_access_in_render_impl(
                             ref_env,
                             &mut inner_errors,
                         );
+                        // Not in upstream: the TypeScript original throws this invariant.
+                        if inner_errors
+                            .iter()
+                            .any(|error| error.category == ErrorCategory::Invariant)
+                        {
+                            errors.append(&mut inner_errors);
+                            return RefAccessType::None;
+                        }
                         let (return_type, read_ref_effect) = if inner_errors.is_empty() {
                             (result, false)
                         } else {

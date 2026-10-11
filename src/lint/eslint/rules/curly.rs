@@ -229,6 +229,16 @@ impl Curly {
 
     /// The whole chain of `if`, `else if` and `else` that starts with `first`.
     fn check_if<'a>(&self, first: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        // Each link of a chain stands for itself.
+        if !self.is_consistent {
+            if let Some((_, yes, no)) = first.as_if() {
+                Self::note(self.prepare_check(yes, "if", true), cx);
+                if let Some(last) = no.filter(|it| it.tag() != StmtTag::If) {
+                    Self::note(self.prepare_check(last, "else", false), cx);
+                }
+            }
+            return;
+        }
         if let Node::Stmt(parent) = first.parent()
             && parent.as_if().is_some_and(|it| it.2 == Some(first))
         {
@@ -243,10 +253,8 @@ impl Curly {
         if let Some(last) = current {
             checks.push(self.prepare_check(last, "else", false));
         }
-        if self.is_consistent {
-            let expected = checks.iter().any(|it| it.expected.unwrap_or(it.actual));
-            checks.iter_mut().for_each(|it| it.expected = Some(expected));
-        }
+        let expected = checks.iter().any(|it| it.expected.unwrap_or(it.actual));
+        checks.iter_mut().for_each(|it| it.expected = Some(expected));
         for check in checks {
             Self::note(check, cx);
         }

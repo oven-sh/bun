@@ -8,21 +8,28 @@ const CONST: Message = Message::new("const", "'{{name}}' is constant.");
 
 impl Rule for NoConstAssign {
     const META: Meta = Meta::eslint("no-const-assign", Kind::Problem).recommended();
-    const ON: On = On::new().var_decls();
-    no_state!();
+    const ON: On = On::new().symbols();
+    type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         NoConstAssign
     }
 
-    fn var_decl<'a>(&self, decl: VarDecl<'a>, cx: &mut Cx<'a, Self>) {
-        if !matches!(decl.var_kind(), VarKind::Const | VarKind::Using | VarKind::AwaitUsing) {
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.has_stmts([StmtTag::Var]).then_some(())
+    }
+
+    fn symbol<'a>(&self, symbol: Symbol<'a>, cx: &mut Cx<'a, Self>) {
+        if !symbol.has_modifying_references() {
             return;
         }
-        let mut check = |pat: Pat<'a>| {
-            let Some(symbol) = pat.symbol().filter(|it| it.has_modifying_references()) else {
-                return;
+        for declaration in symbol.declarations() {
+            let (Declaration::Var(pat), Some(Node::VarDecl(decl))) = (declaration, declaration.node()) else {
+                continue;
             };
+            if !matches!(decl.var_kind(), VarKind::Const | VarKind::Using | VarKind::AwaitUsing) {
+                continue;
+            }
             for reference in get_modifying_references(symbol.references()) {
                 // oxlint points at the declaration.
                 let place = if cx.language().is_oxlint { pat.span() } else { reference.span() };
@@ -31,10 +38,6 @@ impl Rule for NoConstAssign {
                     labels.push(reference.span(), format!("{name} is re-assigned here."));
                 });
             }
-        };
-        match decl.pat() {
-            name if name.tag() == PatTag::Ident => check(name),
-            pattern => pattern.for_each_binding(&mut check),
         }
     }
 }

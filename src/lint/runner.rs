@@ -12,6 +12,7 @@ use crate::span::Span;
 use bun_sema::atom::Atom;
 use bun_sema::bind::kind_counts;
 use bun_sema::hir;
+use rustc_hash::FxHashMap;
 use std::cell::{Cell, OnceCell};
 
 // ───────────────────────────── the nodes of a file, by kind ─────────────────────────────
@@ -237,37 +238,57 @@ impl Exprs {
 /// - `FUNCTIONS..OTHERS`: a `Call` of an identifier, by the class of that, two classes to a group.
 /// - `OTHERS`: everything else.
 pub(crate) struct ByName {
-    /// Places in the list of all of them (`File::exprs_of`), group by group, ascending in each.
+    /// The group of each, in the order of the list of all of them (`File::exprs_of`).
+    groups: Vec<u8>,
+    /// Places in that list, group by group, ascending in each.
     places: Vec<u32>,
-    /// Where each group starts in `places`, and where the last ends.
-    starts: [u32; ByName::GROUPS + 1],
+    /// Where each group that is not empty starts in `places`, and how many are in it.
+    starts: [u32; ByName::GROUPS],
+    counts: [u32; ByName::GROUPS],
     /// A bit for each group that is not empty.
     present: [u64; 4],
 }
 
-/// The classes of the names that were asked for last, each at the place that the number of the name tells: the number, then 8
-/// bits for the class.
+/// The classes of the names of a file.
 struct Classes<'a> {
     file: &'a File<'a>,
-    known: [u64; 256],
+    /// By the number of the name, for the names that the file numbers itself, from 0 on. `UNKNOWN`: not asked for yet.
+    known: Vec<u8>,
+    /// Of the other names.
+    others: FxHashMap<u32, u8>,
 }
 
 impl<'a> Classes<'a> {
-    fn new(file: &'a File<'a>) -> Self {
-        Classes {
-            file,
-            known: [u64::MAX; 256],
-        }
-    }
+    const UNKNOWN: u8 = u8::MAX;
 
     #[inline]
     fn of(&mut self, name: Atom) -> u8 {
-        let known = &mut self.known[name.0 as usize % 256];
-        if *known >> 8 != u64::from(name.0) {
-            let class = name_class(self.file.name(name).bytes());
-            *known = u64::from(name.0) << 8 | class as u64;
+        match self.known.get(name.0 as usize) {
+            Some(&class) if class != Classes::UNKNOWN => class,
+            _ => self.learn(name),
         }
-        *known as u8
+    }
+
+    fn new(file: &'a File<'a>) -> Self {
+        Classes {
+            file,
+            known: Vec::new(),
+            others: FxHashMap::default(),
+        }
+    }
+
+    #[inline(never)]
+    fn learn(&mut self, name: Atom) -> u8 {
+        let (file, at) = (self.file, name.0 as usize);
+        let class = || name_class(file.name(name).bytes()) as u8;
+        if file.texts.span_of(name).is_none() {
+            return *self.others.entry(name.0).or_insert_with(class);
+        }
+        if self.known.len() <= at {
+            self.known.resize(at + 1, Classes::UNKNOWN);
+        }
+        self.known[at] = class();
+        self.known[at]
     }
 
     /// The group of the `Dot` with this name, which is written at `pos`.
@@ -287,46 +308,56 @@ impl ByName {
 
     /// `group_of`: the group of each of `all`.
     fn new(all: &[u32], mut group_of: impl FnMut(u32) -> u8) -> ByName {
-        const { assert!(ByName::GROUPS <= 4 * 64) };
-        let mut counts = [0u32; u8::MAX as usize + 2];
+        const { assert!(ByName::GROUPS <= 4 * 64 && NAME_CLASSES < Classes::UNKNOWN as usize) };
+        let (mut counts, mut present) = ([0u32; ByName::GROUPS], [0u64; 4]);
         let groups: Vec<u8> = (all.iter())
             .map(|&id| {
-                let group = group_of(id);
-                counts[group as usize + 1] += 1;
-                group
+                let group = (group_of(id) as usize).min(ByName::OTHERS);
+                counts[group] += 1;
+                present[group / 64] |= 1 << (group % 64);
+                group as u8
             })
             .collect();
-        let (mut starts, mut present) = ([0u32; ByName::GROUPS + 1], [0u64; 4]);
-        for group in 0..ByName::GROUPS {
-            present[group / 64] |= u64::from(counts[group + 1] != 0) << (group % 64);
-            starts[group + 1] = starts[group] + counts[group + 1];
+        // A file has few of the groups: nothing is done for the others.
+        let (mut starts, mut end) = ([0u32; ByName::GROUPS], 0);
+        for (word, &present) in present.iter().enumerate() {
+            each_bit(present, |bit| {
+                starts[64 * word + bit] = end;
+                end += counts[64 * word + bit];
+            });
         }
-        let mut next = [u32::MAX; u8::MAX as usize + 1];
-        next[..ByName::GROUPS].copy_from_slice(&starts[..ByName::GROUPS]);
-        let mut places = vec![0u32; starts[ByName::GROUPS] as usize];
+        let mut next = starts;
+        let mut places = vec![0u32; groups.len()];
         for (place, &group) in (0u32..).zip(&groups) {
-            let at = &mut next[group as usize];
-            if let Some(slot) = places.get_mut(*at as usize) {
+            if let Some(at) = next.get_mut(group as usize)
+                && let Some(slot) = places.get_mut(*at as usize)
+            {
                 *slot = place;
                 *at += 1;
             }
         }
         ByName {
+            groups,
             places,
             starts,
+            counts,
             present,
         }
     }
 
     fn of_calls<'a>(file: &'a File<'a>) -> ByName {
-        let mut classes = Classes::new(file);
+        let (hir, mut classes) = (&file.hir, Classes::new(file));
         ByName::new(file.exprs_of(ExprTag::Call), |id| {
-            let callee = grouped_expr(file, id).callee();
-            match callee.and_then(Expr::try_raw).map(|it| it.kind) {
-                Some(hir::ExprKind::Dot { name, name_pos, .. }) => {
+            let callee = match hir.exprs.get(id as usize).map(|it| &it.kind) {
+                Some(&hir::ExprKind::Call(call)) => hir.calls.get(call.idx()),
+                _ => None,
+            };
+            let callee = callee.and_then(|it| hir.exprs.get(file.written_expr(it.callee).idx()));
+            match callee.map(|it| &it.kind) {
+                Some(&hir::ExprKind::Dot { name, name_pos, .. }) => {
                     classes.of_member(name, name_pos)
                 }
-                Some(hir::ExprKind::Ident(name)) => {
+                Some(&hir::ExprKind::Ident(name)) => {
                     (ByName::FUNCTIONS + classes.of(name) as usize % (NAME_CLASSES / 2)) as u8
                 }
                 _ => ByName::OTHERS as u8,
@@ -337,8 +368,8 @@ impl ByName {
     fn of_members<'a>(file: &'a File<'a>) -> ByName {
         let mut classes = Classes::new(file);
         ByName::new(file.exprs_of(ExprTag::Dot), |id| {
-            match file.hir.exprs.get(id as usize).map(|it| it.kind) {
-                Some(hir::ExprKind::Dot { name, name_pos, .. }) => {
+            match file.hir.exprs.get(id as usize).map(|it| &it.kind) {
+                Some(&hir::ExprKind::Dot { name, name_pos, .. }) => {
                     classes.of_member(name, name_pos)
                 }
                 _ => ByName::OTHERS as u8,
@@ -354,13 +385,27 @@ impl ByName {
     /// Replaces `found` by those of `all`, which is what has been grouped, that are in one of `groups`, in the order of `all`.
     fn find(&self, groups: [u64; 4], all: &[u32], found: &mut Vec<u32>) {
         found.clear();
-        let mut count = 0;
+        let (mut count, mut total) = (0, 0);
         for (word, (wanted, present)) in groups.iter().zip(&self.present).enumerate() {
             each_bit(wanted & present, |bit| {
-                let group = 64 * word + bit;
-                let places = self.starts[group] as usize..self.starts[group + 1] as usize;
-                found.extend_from_slice(&self.places[places]);
                 count += 1;
+                total += self.counts[64 * word + bit] as usize;
+            });
+        }
+        // Many of them: to go through all is less than to put those in order.
+        if count > 1 && 4 * total > all.len() {
+            let is_wanted = |group: u8| groups[group as usize / 64] >> (group % 64) & 1 != 0;
+            let wanted = all.iter().zip(&self.groups).filter(|it| is_wanted(*it.1));
+            found.extend(wanted.map(|it| *it.0));
+            return;
+        }
+        for (word, (wanted, present)) in groups.iter().zip(&self.present).enumerate() {
+            each_bit(wanted & present, |bit| {
+                let (start, count) = (self.starts[64 * word + bit], self.counts[64 * word + bit]);
+                let places = self.places.get(start as usize..(start + count) as usize);
+                for &place in places.unwrap_or_default() {
+                    found.push(place);
+                }
             });
         }
         if count > 1 {

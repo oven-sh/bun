@@ -2,6 +2,7 @@
 
 use crate::ast::{File, Name};
 use crate::span::{Position, Span};
+use bun_sema::atom::Atom;
 pub use bun_sema::hir::mention_bit;
 use rustc_hash::FxHashMap;
 use std::cell::{Cell, OnceCell};
@@ -470,6 +471,20 @@ impl<'a> File<'a> {
             true => Some(self.name_of(text)),
             false => self.atoms.find(text.as_bytes()).map(|it| self.name(it)),
         }
+    }
+
+    /// Every text that [`File::mentions`] is about, once, in no particular order. Among them are names that every file knows,
+    /// whether this one has them or not. `None` where the names are those of many files. For a rule that looks for a
+    /// prefix or a pattern, or without regard to case: a file has a tenth as many texts as nodes.
+    pub fn own_names(&'a self) -> Option<impl Iterator<Item = Name<'a>> + 'a> {
+        let texts = self.texts;
+        let is_own = move |atom: &Atom| texts.span_of(*atom).is_some();
+        (!self.hir.mentioned.is_empty() && is_own(&Atom(0))).then(|| {
+            (0..)
+                .map(Atom)
+                .take_while(is_own)
+                .map(|atom| self.name(atom))
+        })
     }
 
     /// Whether the file [mentions](File::mentions) one of `texts`.

@@ -70,6 +70,14 @@ impl File<'_> {
         }
     }
 
+    /// Whether the file may have an [`ExprKind::Missing`](super::ExprKind::Missing): a hole in an array, the empty `{}` of
+    /// JSX. `false` is certain.
+    pub fn may_have_missing_exprs(&self) -> bool {
+        let counts = self.bound.expr_kind_counts;
+        let reached: usize = counts.iter().map(|&count| count as usize).sum();
+        counts.is_empty() || reached != self.hir.exprs.len()
+    }
+
     /// The kind of the expression at `i` of the HIR. `None` if it is not a node.
     pub(crate) fn expr_in_tree(&self, i: usize) -> Option<ExprTag> {
         self.expr_tag_in_tree::<true>(i as u32)

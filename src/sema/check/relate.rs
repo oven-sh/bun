@@ -7307,6 +7307,18 @@ impl<'p, 's> Checker<'p, 's> {
         self.intersection(&looks)
     }
 
+    /// `apparent_type_of_intersection(ty).is_never()`. FOR SPEED: an intersection whose members are
+    /// their own apparent types is not made again.
+    pub(super) fn is_apparent_type_of_intersection_never(&mut self, ty: TypeId) -> bool {
+        let TypeData::Intersection(parts) = self.data(ty) else {
+            return false;
+        };
+        parts
+            .iter()
+            .any(|&p| self.intersection_member_has_other_apparent_type(p))
+            && self.apparent_type_of_intersection(ty).is_never()
+    }
+
     /// Whether `apparent_type_of_intersection` replaces the member `p` by another type.
     fn intersection_member_has_other_apparent_type(&self, p: TypeId) -> bool {
         p == TypeId::OBJECT || self.is_deferred(p) || self.has_primitive_flag(p)

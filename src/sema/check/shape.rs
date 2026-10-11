@@ -7221,7 +7221,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `CheckFlagsHasNonUniformType` and `CheckFlagsHasLiteralType` of the property that
     /// `createUnionOrIntersectionProperty` makes of `props`. That of a union has them among its
     /// flags. That of an intersection has not: its type is resolved lazily.
-    pub(super) fn non_uniform_and_literal(&mut self, props: &[Prop<'_>]) -> PropFlags {
+    fn non_uniform_and_literal(&mut self, props: &[Prop<'_>]) -> PropFlags {
         let mut flags = PropFlags::empty();
         let first_type = self.type_of_prop(&props[0], MapperId::IDENTITY);
         for prop in props {
@@ -7265,7 +7265,7 @@ impl<'p, 's> Checker<'p, 's> {
             // type with that constraint, has the apparent type `never`.
             if self.is_error_type(t)
                 || t.is_never()
-                || self.apparent_type_of_intersection(t).is_never()
+                || self.is_apparent_type_of_intersection_never(t)
             {
                 continue;
             }
@@ -7343,7 +7343,15 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         if prop_set.len() == 1 && !is_partial {
-            return prop_set.pop();
+            // The property of the only member that has one is that of the union. That of an
+            // intersection gets its two flags here: see `non_uniform_and_literal`.
+            let mut single = prop_set.pop()?;
+            if let PropSource::Intersected(of, props) = &single.source
+                && self.is_intersection(*of)
+            {
+                single.flags |= self.non_uniform_and_literal(props);
+            }
+            return Some(single);
         }
         flags |= self.non_uniform_and_literal(&prop_set);
         // `links.nameType`

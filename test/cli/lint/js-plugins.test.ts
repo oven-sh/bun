@@ -1224,7 +1224,8 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
             }
             const before = Atomics.load(state.flag, 0);
             state.worker.postMessage(text);
-            Atomics.wait(state.flag, 0, before);
+            // In a loop: the worker may be between its add and its notify of the last message, which then wakes this one.
+            while (Atomics.load(state.flag, 0) === before) Atomics.wait(state.flag, 0, before);
             return receiveMessageOnPort(state.port).message;
           }
           export default {
@@ -1289,7 +1290,8 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
             }
             const before = Atomics.load(state.flag, 0);
             state.worker.postMessage(text);
-            Atomics.wait(state.flag, 0, before);
+            // In a loop: the worker may be between its add and its notify of the last message, which then wakes this one.
+            while (Atomics.load(state.flag, 0) === before) Atomics.wait(state.flag, 0, before);
             return receiveMessageOnPort(state.port).message;
           }
           export default {
@@ -1334,7 +1336,7 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const reports = stdout.split("\n").filter(it => it.endsWith(": 5 [Error/demo/length]")).length;
-      // With what it says: on macOS there were none once, and nobody knows why.
+      // With what it says.
       expect({ reports, exitCode, stderr }).toEqual({ reports: 128, exitCode: 1, stderr: expect.any(String) });
     },
     timeout,

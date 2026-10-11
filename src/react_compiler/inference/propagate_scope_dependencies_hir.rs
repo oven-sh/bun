@@ -134,6 +134,7 @@ fn find_temporaries_used_outside_declaring_scope(
     let mut pruned_scopes: HashSet<ScopeId> = HashSet::default();
     let mut traversal = ScopeBlockTraversal::new();
     let mut used_outside_declaring_scope: HashSet<DeclarationId> = HashSet::default();
+    let mut reassigned_locals = LoadsOfReassignedLocals::default();
 
     let handle_place = |place_id: IdentifierId,
                         declarations: &IdMap<DeclarationId, ScopeId>,
@@ -182,6 +183,12 @@ fn find_temporaries_used_outside_declaring_scope(
                     env,
                 );
             }
+            reassigned_locals.visit_instruction(
+                instr,
+                func,
+                env,
+                &mut used_outside_declaring_scope,
+            );
             // Handle instruction (track declarations)
             let current_scope = traversal.current_scope();
             if let Some(scope) = current_scope {
@@ -215,9 +222,154 @@ fn find_temporaries_used_outside_declaring_scope(
                 env,
             );
         }
+        reassigned_locals.visit_terminal(&block.terminal, env, &mut used_outside_declaring_scope);
     }
 
     used_outside_declaring_scope
+}
+
+/// Not in upstream: finds a temporary that is read after the local it was loaded from is reassigned.
+#[derive(Default)]
+struct LoadsOfReassignedLocals {
+    /// A local that some instruction reassigns, with the id of its latest reassignment so far.
+    reassigned_at: IdMap<DeclarationId, EvaluationOrder>,
+    /// A temporary loaded from such a local or from a property path on it: the local and the id of the load.
+    loads: IdMap<DeclarationId, (DeclarationId, EvaluationOrder)>,
+}
+
+impl LoadsOfReassignedLocals {
+    fn visit_use(&self, place: &Place, stale: &mut HashSet<DeclarationId>, env: &Environment) {
+        let temporary = env.identifiers[place.identifier.0 as usize].declaration_id;
+        let Some(&(local, loaded_at)) = self.loads.get(temporary) else {
+            return;
+        };
+        if self
+            .reassigned_at
+            .get(local)
+            .is_some_and(|&reassigned_at| reassigned_at > loaded_at)
+        {
+            stale.insert(temporary);
+        }
+    }
+
+    fn visit_terminal(
+        &self,
+        terminal: &Terminal,
+        env: &Environment,
+        stale: &mut HashSet<DeclarationId>,
+    ) {
+        if self.loads.is_empty() {
+            return;
+        }
+        match terminal {
+            // A case test is lowered ahead of the discriminant and prints behind it, where it runs.
+            Terminal::Switch { test, .. } => self.visit_use(test, stale, env),
+            _ => {
+                for operand in visitors::each_terminal_operand(terminal) {
+                    self.visit_use(&operand, stale, env);
+                }
+            }
+        }
+    }
+
+    fn visit_instruction(
+        &mut self,
+        instr: &Instruction,
+        func: &HirFunction,
+        env: &Environment,
+        stale: &mut HashSet<DeclarationId>,
+    ) {
+        if !self.loads.is_empty() {
+            // Codegen prints the property of a method call through the receiver, which is checked.
+            let method = match &instr.value {
+                InstructionValue::MethodCall { property, .. } => Some(property.identifier),
+                _ => None,
+            };
+            for operand in visitors::each_instruction_operand(instr, env) {
+                if Some(operand.identifier) != method {
+                    self.visit_use(&operand, stale, env);
+                }
+            }
+        }
+        match &instr.value {
+            InstructionValue::DeclareLocal { lvalue, .. }
+            | InstructionValue::StoreLocal { lvalue, .. } => {
+                self.visit_store(lvalue.kind, &lvalue.place, instr.id, func, env);
+            }
+            InstructionValue::Destructure { lvalue, .. }
+                if matches!(
+                    lvalue.kind,
+                    InstructionKind::Let | InstructionKind::Reassign
+                ) =>
+            {
+                for place in visitors::each_pattern_operand(&lvalue.pattern) {
+                    self.visit_store(lvalue.kind, &place, instr.id, func, env);
+                }
+            }
+            InstructionValue::PrefixUpdate { lvalue, .. }
+            | InstructionValue::PostfixUpdate { lvalue, .. } => {
+                self.visit_store(InstructionKind::Reassign, lvalue, instr.id, func, env);
+            }
+            _ => self.visit_load(instr, env),
+        }
+    }
+
+    fn visit_store(
+        &mut self,
+        kind: InstructionKind,
+        place: &Place,
+        id: EvaluationOrder,
+        func: &HirFunction,
+        env: &Environment,
+    ) {
+        let local = env.identifiers[place.identifier.0 as usize].declaration_id;
+        match kind {
+            // rewrite_instruction_kinds_based_on_reassignment.rs keeps `Let` for a local that is reassigned.
+            InstructionKind::Let => {
+                self.reassigned_at
+                    .entry(local)
+                    .or_insert(EvaluationOrder(0));
+            }
+            InstructionKind::Reassign => {
+                // No `Let` declaration comes before this, as for a parameter: collect the loads so far.
+                if self.reassigned_at.insert(local, id).is_none() {
+                    self.visit_loads_before(id, func, env);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn visit_loads_before(&mut self, id: EvaluationOrder, func: &HirFunction, env: &Environment) {
+        for (_block_id, block) in &func.body.blocks {
+            for &instr_id in &block.instructions {
+                let instr = &func.instructions[instr_id.0 as usize];
+                if instr.id >= id {
+                    return;
+                }
+                self.visit_load(instr, env);
+            }
+        }
+    }
+
+    fn visit_load(&mut self, instr: &Instruction, env: &Environment) {
+        let declaration_id =
+            |place: &Place| env.identifiers[place.identifier.0 as usize].declaration_id;
+        let local = match &instr.value {
+            InstructionValue::LoadLocal { place, .. } => {
+                Some(declaration_id(place)).filter(|local| self.reassigned_at.contains_key(*local))
+            }
+            InstructionValue::PropertyLoad { object, .. } => self
+                .loads
+                .get(declaration_id(object))
+                .map(|&(local, _)| local),
+            _ => None,
+        };
+        if let Some(local) = local {
+            self.loads
+                .insert(declaration_id(&instr.lvalue), (local, instr.id));
+        }
+    }
 }
 
 // =============================================================================

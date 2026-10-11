@@ -1084,6 +1084,332 @@ describe("bundler", () => {
     run: { stdout: '[[5,-10,10],{"v":[5,-10],"x":10},[[5,-5],6]]' },
   });
 
+  // `[i, (i = i >> 1), i]` reads `i`, assigns it, and uses the first read after
+  // the assignment. The first read is a temporary (`const t0 = i`). The memo
+  // block that builds the array has to depend on that temporary. It depended
+  // on `i` by name, and at the block `i` already holds the new value: when
+  // `p.n` goes from 4 to 5, `i` is 2 both times, so the block returned the array
+  // of the render before. With a property path the dependency was `o.y.z`, read
+  // from the new `o`, which throws when the new `o` has no `y`.
+  //
+  // The assignment itself must not print inside that memo block. When the value
+  // it stores is not reactive (`i = G.v`), the assignment has no name, and codegen
+  // prints a temporary without a name at its use: inside the block. A cache hit
+  // then skips the assignment, and a later read of `i` gets the old value. The
+  // components from NonReactiveStore on read `i` in a second block for that.
+  //
+  // Every component renders several times against one memo cache and has to
+  // render what the uncompiled component renders. `*` marks a render that got
+  // the same `list` as the render before it, so each line also shows that the
+  // block still hits its cache when nothing changed.
+  const reassignedBetweenReadAndUseOutput = `
+    PlainAssignment [2,[4,2,2]] [2,[5,2,2]] [2,[5,2,2]]*
+    CompoundAssignment [5,[6,3,3,5,5]] [5,[7,3,3,5,5]] [5,[7,3,3,5,5]]*
+    JsxAttribute [2,{"title":8,"id":2}] [2,{"title":9,"id":2}] [2,{"title":9,"id":2}]*
+    MapEntries [2,[[8,2],["after",2]]] [2,[[9,2],["after",2]]] [2,[[9,2],["after",2]]]*
+    CallArguments [9,[1,9,9]] [9,[2,9,9]] [9,[2,9,9]]*
+    ObjectLiteral [9,{"1":"key","a":1,"b":9,"c":9}] [9,{"2":"key","a":2,"b":9,"c":9}] [9,{"2":"key","a":2,"b":9,"c":9}]*
+    PostfixUpdate [6,["5",5,6]] [6,[5,5,6]] [6,[5,5,6]]*
+    PrefixUpdate [4,["5",4,4]] [4,[5,4,4]] [4,[5,4,4]]*
+    Destructuring [7,[1,[7,8],7,8]] [7,[3,[7,8],7,8]] [7,[3,[7,8],7,8]]*
+    PropertyPath [false,[1,"a",{"x":"next"},"next"]] [false,[2,"b",{"x":"next"},"next"]] [false,[2,"b",{"x":"next"},"next"]]* [true,[1,"a",null,null]] [true,[2,"b",null,null]]
+    ReassignedParameter ["last",[1,{"n":"last"},"last"]] ["last",[2,{"n":"last"},"last"]] ["last",[2,{"n":"last"},"last"]]*
+    TwoLocals [9,[1,5,9,9,5]] [9,[2,5,9,9,5]] [9,[2,6,9,9,6]] [9,[2,6,9,9,6]]*
+    NestedBlocks [9,[[1,9,9],0]] [9,[[2,9,9],0]] [9,[[2,9,9],1]]
+    InTernaryBranch [9,[1,9,9]] [9,[2,9,9]] [9,[2,9,9]]* [3,[3,0,3]]
+    InLogicalOperand [9,[1,9,9]] [9,[2,9,9]] [9,[2,9,9]]* [3,[3,false,3]]
+    NonReactiveStore [[8,0],[1,8]] [[8,0],[2,8]] [[8,0],[2,8]]* [[8,1],[2,8]]* [[8,1],[3,8]]
+    NonReactiveStoreInTernary [[0,0],[1,0]] [[0,0],[2,0]] [[0,0],[2,0]]* [[0,1],[2,0]]* [[3,1],[3,1]]
+    NonReactiveStoreInJsxAttribute [[7,0],{"title":1,"id":7}] [[7,0],{"title":2,"id":7}] [[7,0],{"title":2,"id":7}]* [[7,1],{"title":2,"id":7}]* [[7,1],{"title":3,"id":7}]
+    NonReactiveDestructuring [[5,0],[1,[5]]] [[5,0],[2,[5]]] [[5,0],[2,[5]]]* [[5,1],[2,[5]]]* [[5,1],[3,[5]]]
+    StoreInBlockWithoutDependencies [[7,0],[7]] [[7,0],[7]]* [[7,0],[7]]* [[7,1],[7]]* [[7,1],[7]]*
+    StoreAfterExpressionOverTheLocal [[7,0],[2,7]] [[7,0],[3,7]] [[7,0],[3,7]]* [[7,1],[3,7]]* [[7,1],[4,7]]
+    StoreInSequence [9,[0]] [9,[0]]* [9,[0]]* [9,[0]]* [8,[0]]*
+    SwitchCaseTest [9,["same"]] [8,["same"]] [3,["same"]]
+    MethodOfReassignedReceiver [0,["1-9",[0]]] [0,["2-9",[0]]] [0,["2-9",[0]]]* [1,["2-9",[1]]] [1,["3-8",[1]]]
+    not compiled:
+  `;
+  const reassignedComponents = [...reassignedBetweenReadAndUseOutput.matchAll(/^ *(\w+) \[/gm)].map(match => match[1]);
+  for (const reactCompiler of [false, true]) {
+    itBundled(`react-compiler/LocalReassignedBetweenReadAndUse-${reactCompiler ? "compiled" : "plain"}`, {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          import { render, isCompiled } from "react";
+
+          const make = (...values) => values;
+
+          function PlainAssignment(p) {
+            let i = p.n;
+            const list = [i, (i = i >> 1), i];
+            return <div label={i} list={list} />;
+          }
+
+          function CompoundAssignment(p) {
+            let i = p.n;
+            const list = [i, (i >>= 1), i, (i += 2), i];
+            return <div label={i} list={list} />;
+          }
+
+          function JsxAttribute(p) {
+            let i = p.n;
+            const list = <b title={i} id={(i >>= 2)} />;
+            return <div label={i} list={list} />;
+          }
+
+          function MapEntries(p) {
+            let i = p.n;
+            const list = [...new Map([[i, (i >>= 2)], ["after", i]])];
+            return <div label={i} list={list} />;
+          }
+
+          function CallArguments(p) {
+            let i = p.n;
+            const list = make(i, (i = p.m), i);
+            return <div label={i} list={list} />;
+          }
+
+          function ObjectLiteral(p) {
+            let i = p.n;
+            const list = { [i]: "key", a: i, b: (i = p.m), c: i };
+            return <div label={i} list={list} />;
+          }
+
+          // "5" and 5 leave the same i and the same value of i++ behind.
+          function PostfixUpdate(p) {
+            let i = p.n;
+            const list = [i, i++, i];
+            return <div label={i} list={list} />;
+          }
+
+          function PrefixUpdate(p) {
+            let i = p.n;
+            const list = [i, --i, i];
+            return <div label={i} list={list} />;
+          }
+
+          function Destructuring(p) {
+            let a = p.a;
+            let b = p.b;
+            const list = [a, ([a, b] = p.pair), a, b];
+            return <div label={a} list={list} />;
+          }
+
+          // Read by name after the assignment, o.y.z throws: the new o has no y, or is null.
+          function PropertyPath(p) {
+            let o = p.o;
+            const list = [o.x, o.y.z, (o = p.next), o?.x];
+            return <div label={o === null} list={list} />;
+          }
+
+          // No instruction declares a parameter, so nothing says ahead of its reads that it is reassigned.
+          function ReassignedParameter(p) {
+            const list = [p.n, (p = p.next), p.n];
+            return <div label={p.n} list={list} />;
+          }
+
+          // Only i is reassigned. j stays a dependency by name.
+          function TwoLocals(p) {
+            let i = p.n;
+            let j = p.k;
+            const list = [i, j, (i = p.m), i, j];
+            return <div label={i} list={list} />;
+          }
+
+          // The read of i is inside the block of outer, which depends on i by name.
+          // The inner array has a block of its own, which depends on the temporary.
+          function NestedBlocks(p) {
+            let i = p.n;
+            const outer = [];
+            outer.push([i, (i = p.m), i]);
+            outer.push(p.k);
+            return <div label={i} list={outer} />;
+          }
+
+          // The assignment is in a branch, so it does not run on every render.
+          function InTernaryBranch(p) {
+            let i = p.n;
+            const list = [i, p.c ? (i = p.m) : 0, i];
+            return <div label={i} list={list} />;
+          }
+
+          function InLogicalOperand(p) {
+            let i = p.n;
+            const list = [i, p.c && (i = p.m), i];
+            return <div label={i} list={list} />;
+          }
+
+          const G = { v: 7, pair: [5] };
+
+          function NonReactiveStore(p) {
+            let i = p.n;
+            const list = [i, (i = G.v + 1)];
+            const other = [i, p.k];
+            return <div label={other} list={list} />;
+          }
+
+          function NonReactiveStoreInTernary(p) {
+            let i = p.n;
+            const list = [i, p.c ? (i = 0) : 1];
+            const other = [i, p.k];
+            return <div label={other} list={list} />;
+          }
+
+          function NonReactiveStoreInJsxAttribute(p) {
+            let i = p.n;
+            const list = <b title={i} id={(i = G.v)} />;
+            const other = [i, p.k];
+            return <div label={other} list={list} />;
+          }
+
+          function NonReactiveDestructuring(p) {
+            let a = p.n;
+            const list = [a, ([a] = G.pair)];
+            const other = [a, p.k];
+            return <div label={other} list={list} />;
+          }
+
+          // These three never depended on i by name. The block of the call has no dependency
+          // at all, so it runs once. The next one depends on the temporary of i + 1.
+          function StoreInBlockWithoutDependencies(p) {
+            let i = p.n;
+            const list = make((i = G.v));
+            const other = [i, p.k];
+            return <div label={other} list={list} />;
+          }
+
+          function StoreAfterExpressionOverTheLocal(p) {
+            let i = p.n;
+            const list = [i + 1, (i = G.v)];
+            const other = [i, p.k];
+            return <div label={other} list={list} />;
+          }
+
+          function StoreInSequence(p) {
+            let i = p.n;
+            const list = [((i = p.m), 0)];
+            return <div label={i} list={list} />;
+          }
+
+          // A case test is lowered ahead of the discriminant and runs after it. It reads the new
+          // i, by name, where it prints. As a temporary ahead of the switch it would read the old i.
+          function SwitchCaseTest(p) {
+            let i = p.n;
+            let list;
+            switch (((list = []), (i = p.m))) {
+              case i:
+                list.push("same");
+                break;
+              default:
+                list.push("other");
+            }
+            return <div label={i} list={list} />;
+          }
+
+          // Codegen prints the property of a method call through the receiver. With a name of its
+          // own for xs.join, codegen rejects the function and it stays uncompiled.
+          function MethodOfReassignedReceiver(p) {
+            let xs = [p.n, p.m];
+            let list;
+            const joined = xs.join(((list = []), (xs = [p.k]), "-"));
+            list.push(joined, xs);
+            return <div label={p.k} list={list} />;
+          }
+
+          const notCompiled = [];
+          function run(Component, ...renders) {
+            let previous;
+            const results = renders.map(props => {
+              try {
+                const { label, list } = render(Component, props);
+                const hit = list === previous ? "*" : "";
+                previous = list;
+                return JSON.stringify([label, list]) + hit;
+              } catch (error) {
+                return "THROW(" + error.message + ")";
+              }
+            });
+            if (!isCompiled(Component)) notCompiled.push(Component.name);
+            console.log(Component.name + " " + results.join(" "));
+          }
+
+          run(PlainAssignment, { n: 4 }, { n: 5 }, { n: 5 });
+          run(CompoundAssignment, { n: 6 }, { n: 7 }, { n: 7 });
+          run(JsxAttribute, { n: 8 }, { n: 9 }, { n: 9 });
+          run(MapEntries, { n: 8 }, { n: 9 }, { n: 9 });
+          run(CallArguments, { n: 1, m: 9 }, { n: 2, m: 9 }, { n: 2, m: 9 });
+          run(ObjectLiteral, { n: 1, m: 9 }, { n: 2, m: 9 }, { n: 2, m: 9 });
+          run(PostfixUpdate, { n: "5" }, { n: 5 }, { n: 5 });
+          run(PrefixUpdate, { n: "5" }, { n: 5 }, { n: 5 });
+          const pair = [7, 8];
+          run(Destructuring, { a: 1, b: 2, pair }, { a: 3, b: 2, pair }, { a: 3, b: 2, pair });
+          const o1 = { x: 1, y: { z: "a" } };
+          const o2 = { x: 2, y: { z: "b" } };
+          const next = { x: "next" };
+          run(
+            PropertyPath,
+            { o: o1, next },
+            { o: o2, next },
+            { o: o2, next },
+            { o: o1, next: null },
+            { o: o2, next: null },
+          );
+          const last = { n: "last" };
+          run(ReassignedParameter, { n: 1, next: last }, { n: 2, next: last }, { n: 2, next: last });
+          run(TwoLocals, { n: 1, k: 5, m: 9 }, { n: 2, k: 5, m: 9 }, { n: 2, k: 6, m: 9 }, { n: 2, k: 6, m: 9 });
+          run(NestedBlocks, { n: 1, m: 9, k: 0 }, { n: 2, m: 9, k: 0 }, { n: 2, m: 9, k: 1 });
+          const branch = { n: 2, m: 9, c: true };
+          run(InTernaryBranch, { n: 1, m: 9, c: true }, branch, branch, { n: 3, m: 9, c: false });
+          run(InLogicalOperand, { n: 1, m: 9, c: true }, branch, branch, { n: 3, m: 9, c: false });
+          // The fourth render changes only k: the first block hits its cache, and the second reads i.
+          const stores = [
+            { n: 1, m: 9, k: 0, c: true },
+            { n: 2, m: 9, k: 0, c: true },
+            { n: 2, m: 9, k: 0, c: true },
+            { n: 2, m: 9, k: 1, c: true },
+            { n: 3, m: 8, k: 1, c: false },
+          ];
+          run(NonReactiveStore, ...stores);
+          run(NonReactiveStoreInTernary, ...stores);
+          run(NonReactiveStoreInJsxAttribute, ...stores);
+          run(NonReactiveDestructuring, ...stores);
+          run(StoreInBlockWithoutDependencies, ...stores);
+          run(StoreAfterExpressionOverTheLocal, ...stores);
+          run(StoreInSequence, ...stores);
+          run(SwitchCaseTest, { n: 1, m: 9 }, { n: 2, m: 8 }, { n: 3, m: 3 });
+          run(MethodOfReassignedReceiver, ...stores);
+          console.log("not compiled: " + notCompiled.join(" "));
+        `,
+        // One memo cache per component, kept between renders, as a fiber keeps it.
+        "/node_modules/react/index.js": /* js */ `
+          const fibers = new Map();
+          let current;
+          exports.render = (Component, props) => {
+            current = fibers.get(Component);
+            if (!current) fibers.set(Component, (current = { cache: null }));
+            return Component(props);
+          };
+          exports.memoCache = size =>
+            (current.cache ??= new Array(size).fill(Symbol.for("react.memo_cache_sentinel")));
+          exports.isCompiled = Component => fibers.get(Component).cache !== null;
+        `,
+        "/node_modules/react/compiler-runtime.js": `exports.c = size => require("./index.js").memoCache(size);`,
+        "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => props;`,
+        "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => props;`,
+        "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      },
+      reactCompiler,
+      target: "browser",
+      backend: "cli",
+      run: {
+        stdout: reactCompiler
+          ? reassignedBetweenReadAndUseOutput
+          : reassignedBetweenReadAndUseOutput
+              .replaceAll("*", "")
+              .replace("not compiled:", `not compiled: ${reassignedComponents.join(" ")}`),
+      },
+    });
+  }
+
   itBundled("react-compiler/HoistsMemoCacheSentinel", {
     files: {
       "/entry.jsx": /* jsx */ `

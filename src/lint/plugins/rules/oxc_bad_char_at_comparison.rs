@@ -18,7 +18,7 @@ impl Rule for BadCharAtComparison {
     }
 
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Binary { left, right, .. } = e.kind() else {
+        let Some((_, left, right)) = e.as_binary() else {
             return;
         };
         let (character_access, compared_string) = if is_bad_char_at_comparison(left, right) {

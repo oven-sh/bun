@@ -22,7 +22,7 @@ impl Rule for NoExportsAssign {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Assign { target, value, .. } = e.kind() else {
+        let Some((_, target, value)) = e.as_assign() else {
             return;
         };
         if !is_global_exports_assignment_target(target) || is_assignment_target(e, &mut cx.state) {

@@ -16,7 +16,7 @@ pub struct State<'a> {
     functions: AncestorMemo<'a, Option<Func<'a>>>,
     /// The names of the accessors.
     keys: FxHashSet<Name<'a>>,
-    /// `get #a() {}`, which is compared without the `#`.
+    /// `get #a() {}`, `get "#a"() {}`, which are compared without the `#`.
     has_private_accessor: bool,
 }
 
@@ -44,7 +44,7 @@ impl Rule for NoAccessorRecursion {
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         let mut state = State::default();
         for key in file.funcs().filter(|it| matches!(it.kind(), FnKind::Getter | FnKind::Setter)).filter_map(key_of) {
-            state.has_private_accessor |= key.is_private();
+            state.has_private_accessor |= key.name().is_some_and(|it| it.bytes().starts_with(b"#"));
             state.keys.extend(key.name());
         }
         (!state.keys.is_empty()).then_some(state)

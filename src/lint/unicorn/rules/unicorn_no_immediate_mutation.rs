@@ -1,7 +1,7 @@
 use bun_lint_oxlint::ast_util::{
     get_inner_expression, get_inner_expression_unless_chain, get_member_expr, is_global_reference, static_property_name,
 };
-use crate::unicorn::statements_around;
+use crate::unicorn::{outermost_wrapper, statements_around};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
 use smallvec::{SmallVec, smallvec};
@@ -15,6 +15,8 @@ const OBJECT_PROPERTY: Message = Message::new("", "Do not assign a property imme
 const SET_ADD: Message = Message::new("", "Do not call `.add()` immediately after initializing a Set.");
 const MAP_SET: Message = Message::new("", "Do not call `.set()` immediately after initializing a Map.");
 
+const METHODS: [&str; 5] = ["assign", "push", "unshift", "add", "set"];
+
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum InitType {
     Array,
@@ -25,7 +27,7 @@ enum InitType {
 
 impl Rule for NoImmediateMutation {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-immediate-mutation", Kind::Suggestion);
-    const ON: On = On::new().stmts(&[StmtTag::Expr]);
+    const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::Assign]);
     /// The methods that it is about, those that the file mentions.
     type State<'a> = SmallVec<[Name<'a>; 5]>;
 
@@ -33,28 +35,33 @@ impl Rule for NoImmediateMutation {
         NoImmediateMutation
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        let methods = ["assign", "push", "unshift", "add", "set"].into_iter();
-        Some(methods.filter(|it| file.mentions(it)).map(|it| file.name_of(it)).collect())
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let on = On::new().exprs(&[ExprTag::Assign]);
+        if file.mentions_any(&METHODS) { on.exprs(&[ExprTag::Call]) } else { on }
     }
 
-    fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        let StmtKind::Expr(expr) = statement.kind() else {
-            return;
-        };
-        let Some(expr) = get_inner_expression_unless_chain(expr) else {
-            return;
-        };
-        // Whether the statement before gives the variable that is changed a new value of that kind.
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        Some(METHODS.iter().filter(|it| file.mentions(it)).map(|it| file.name_of(it)).collect())
+    }
+
+    fn expr<'a>(&self, expr: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        // Whether it is all of a statement, but for `as T` and the like, and the statement before gives the variable
+        // that is changed a new value of that kind.
         let is_initialized = |variable: Name<'a>, init_type: InitType| {
+            let Some(Node::Stmt(statement)) = outermost_wrapper(expr).map(Expr::parent) else {
+                return false;
+            };
             let prev_stmt = statements_around(statement).and_then(|it| it.before(statement.span().start));
-            prev_stmt.and_then(get_prev_declaration) == Some((variable, init_type))
+            statement.tag() == StmtTag::Expr && prev_stmt.and_then(get_prev_declaration) == Some((variable, init_type))
         };
-        let Some(mutation) = (match expr.kind() {
-            ExprKind::Call(call) => call_mutation(call, &cx.state, is_initialized),
-            ExprKind::Assign { op: None, target, value } => property_assignment(target, value, is_initialized),
-            _ => None,
-        }) else {
+        let mutation = match expr.as_call() {
+            Some(call) => call_mutation(call, &cx.state, is_initialized),
+            None => match (expr.assign_op(), expr.left(), expr.right()) {
+                (Some(None), Some(target), Some(value)) => property_assignment(target, value, is_initialized),
+                _ => None,
+            },
+        };
+        let Some(mutation) = mutation else {
             return;
         };
         let report = cx.report(expr, mutation.message);
@@ -126,7 +133,8 @@ fn property_assignment<'a>(
     if target.is_private_member() {
         return None;
     }
-    let variable = get_inner_expression(target.object()?).as_ident()?;
+    let object = target.object().filter(|it| it.tag() != ExprTag::This)?;
+    let variable = get_inner_expression(object).as_ident()?;
     if !is_initialized(variable, InitType::Object) {
         return None;
     }

@@ -20,20 +20,43 @@ fn is_directive_for_oxlint(comment: Token) -> bool {
     }
 }
 
+/// `text` up to the last thing on its last line. `None`: that line is blank.
+fn up_to_last_on_line(mut text: &[u8]) -> Option<&[u8]> {
+    while !text.is_empty() && strings::js_line_break_len_back(text) == 0 {
+        match strings::js_whitespace_len_back(text) {
+            0 => return Some(text),
+            len => text = text.get(..text.len() - len)?,
+        }
+    }
+    None
+}
+
+/// `text` from the first thing on its first line. `None`: that line is blank.
+fn from_first_on_line(mut text: &[u8]) -> Option<&[u8]> {
+    while !text.is_empty() && strings::js_line_break_len(text) == 0 {
+        match strings::js_whitespace_len(text) {
+            0 => return Some(text),
+            len => text = text.get(len..)?,
+        }
+    }
+    None
+}
+
 impl NoInlineComments {
     fn test_code_around_comment<'a>(&self, comment: Token<'a>, cx: &mut Cx<'a, Self>) {
-        let start_line = cx.line_span(cx.line_of(comment.start()));
-        let end_line = cx.line_span(cx.line_of(comment.end()));
-        let preamble = strings::trim_js_whitespace(cx.slice(Span::new(start_line.start, comment.start())));
-        let postamble = strings::trim_js_whitespace(cx.slice(Span::new(comment.end(), end_line.end)));
-        if preamble.is_empty() && postamble.is_empty() {
+        let text = cx.text();
+        let before = up_to_last_on_line(text.get(..comment.start() as usize).unwrap_or_default());
+        let after = from_first_on_line(text.get(comment.end() as usize..).unwrap_or_default());
+        if before.is_none() && after.is_none() {
             return;
         }
         if self.ignore_pattern.as_ref().is_some_and(|pattern| pattern.test(comment.comment_value())) {
             return;
         }
-        if (preamble.is_empty() || preamble == b"{")
-            && (postamble.is_empty() || postamble == b"}")
+        let is_only_brace_before = |it: &[u8]| it.strip_suffix(b"{").is_some_and(|it| up_to_last_on_line(it).is_none());
+        let is_only_brace_after = |it: &[u8]| it.strip_prefix(b"}").is_some_and(|it| from_first_on_line(it).is_none());
+        if before.is_none_or(is_only_brace_before)
+            && after.is_none_or(is_only_brace_after)
             && utils::estree_type_at(cx.file(), comment.start()) == "JSXEmptyExpression"
         {
             return;

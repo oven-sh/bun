@@ -22,9 +22,12 @@ impl Rule for NoCaller {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Dot { obj, name, .. } = e.kind() else {
+        let Some((obj, name, _)) = e.as_dot() else {
             return;
         };
+        if !matches!(cx.text().get(name.start() as usize), Some(b'c' | b'#' | b'\\')) {
+            return;
+        }
         // The `name` of ESLint's `PrivateIdentifier` is without the `#`.
         let prop = name.bytes();
         let prop = prop.strip_prefix(b"#").unwrap_or(prop);

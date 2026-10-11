@@ -21,7 +21,7 @@ impl Rule for UninvokedArrayCallback {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::New(new_expr) = e.kind() else {
+        let Some(new_expr) = e.as_new() else {
             return;
         };
         let is_plain = |it: Expr, tag: ExprTag| it.tag() == tag && !it.is_parenthesized();

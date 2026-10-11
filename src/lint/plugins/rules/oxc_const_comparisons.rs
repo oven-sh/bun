@@ -34,7 +34,7 @@ impl Rule for ConstComparisons {
     }
 
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let (Some(op), Some(left), Some(right)) = (e.binary_op(), e.left(), e.right()) else {
+        let Some((op, left, right)) = e.as_binary() else {
             return;
         };
         if !matches!(op, BinOp::And | BinOp::Or) {
@@ -55,7 +55,7 @@ impl Rule for ConstComparisons {
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         for &e in &cx.state {
-            if let ExprKind::Binary { op, left, .. } = e.kind() {
+            if let Some((op, left, _)) = e.as_binary() {
                 let is_const_truthy = matches!(op, BinOp::Le | BinOp::Ge);
                 cx.report(e, CONSTANT_COMPARISON)
                     .data("evaluates_to", if is_const_truthy { "true" } else { "false" })
@@ -106,8 +106,8 @@ fn check_logical_expressions<'a>(root: Expr<'a>, cx: &Cx<'a, ConstComparisons>) 
         match step {
             Step::Visit(e) => {
                 let e = get_inner_expression(e);
-                match e.kind() {
-                    ExprKind::Binary { op: BinOp::And, left, right } => {
+                match e.as_binary() {
+                    Some((BinOp::And, left, right)) => {
                         steps.push(Step::Visit(right));
                         steps.push(Step::EndOfLeft(ands.len()));
                         steps.push(Step::Visit(left));
@@ -240,13 +240,11 @@ fn comparison_to_const(e: Expr<'_>) -> Option<ComparisonToConst<'_>> {
     let op = CmpOp::of(e.binary_op()?)?;
     let (left, right) = (e.left()?, e.right()?);
     let (left_literal, right_literal) = (get_inner_expression(left), get_inner_expression(right));
-    if let ExprKind::Number(constant) = left_literal.kind() {
+    if let Some(constant) = left_literal.as_number() {
         return Some(ComparisonToConst { op: op.reverse(), expr: right, constant, literal: left_literal, whole: e });
     }
-    match right_literal.kind() {
-        ExprKind::Number(constant) => Some(ComparisonToConst { op, expr: left, constant, literal: right_literal, whole: e }),
-        _ => None,
-    }
+    let constant = right_literal.as_number()?;
+    Some(ComparisonToConst { op, expr: left, constant, literal: right_literal, whole: e })
 }
 
 enum EqualityRelation {

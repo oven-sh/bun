@@ -172,14 +172,23 @@ impl<'a> Ident<'a> {
     }
 
     pub fn span(self) -> Span {
+        let file = self.name.file;
+        let len = match file.texts.span_of(self.name.atom) {
+            // Here the file has the name for the first time.
+            Some((start, len)) if start == self.start && !self.is_string() => len as usize,
+            _ => self.written_len(),
+        };
+        Span::new(self.start, self.start + len as u32)
+    }
+
+    fn written_len(self) -> usize {
         let (text, name) = (self.name.file.text(), self.name.bytes());
         let written = text.get(self.start as usize..).unwrap_or_default();
-        let len = match !name.is_empty() && !self.is_string() && written.starts_with(name) {
+        match !name.is_empty() && !self.is_string() && written.starts_with(name) {
             true => name.len(),
             // It is written with escapes, or in quotes, where it can start with the name and go on: `"\""`.
             false => crate::tokens::token_len(written),
-        };
-        Span::new(self.start, self.start + len as u32)
+        }
     }
 }
 

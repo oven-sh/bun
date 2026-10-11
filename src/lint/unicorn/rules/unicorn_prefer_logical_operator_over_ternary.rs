@@ -84,7 +84,13 @@ fn is_update(op: UnOp) -> bool {
 /// `!!!..a`. Here it is asked at the bottom, and the answer for each level is made of the one below. It calls itself
 /// for the operands on the right, which are nested only by precedence and by parentheses.
 fn is_same_node<'a>(left: Expr<'a>, right: Expr<'a>) -> bool {
-    if !bun_core::StackCheck::init().is_safe_to_recurse() {
+    // `a.b` can be `a["b"]`, and `"a"` can be `` `a` ``.
+    let kind = |e: Expr| match e.tag() {
+        ExprTag::Index => ExprTag::Dot,
+        ExprTag::Template => ExprTag::String,
+        tag => tag,
+    };
+    if kind(left) != kind(right) || !bun_core::StackCheck::init().is_safe_to_recurse() {
         return false;
     }
     let mut levels: SmallVec<[Both<'a>; 8]> = SmallVec::new();

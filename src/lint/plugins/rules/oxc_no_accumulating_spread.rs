@@ -48,7 +48,7 @@ impl Rule for NoAccumulatingSpread {
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.tag() {
             ExprTag::Spread => {
-                if let ExprKind::Spread(argument) = e.kind()
+                if let Some(argument) = e.operand()
                     && e.jsx_container_span().is_none()
                 {
                     check(Node::Expr(e), argument, cx);
@@ -56,7 +56,7 @@ impl Rule for NoAccumulatingSpread {
             }
             // Objects are far fewer than properties.
             ExprTag::Object => {
-                let ExprKind::Object(properties) = e.kind() else {
+                let Some(properties) = e.as_object() else {
                     return;
                 };
                 for prop in properties {
@@ -116,7 +116,7 @@ fn is_call_of_reduce(node: Node) -> bool {
     let Node::Expr(e) = node else {
         return false;
     };
-    let ExprKind::Call(call) = e.kind() else {
+    let Some(call) = e.as_call() else {
         return false;
     };
     if !matches!(call.args().len(), 1 | 2) {
@@ -180,7 +180,7 @@ fn check_loop_usage<'a>(spread: Node<'a>, pat: Pat<'a>, symbol: Symbol<'a>, cx: 
     let Node::Expr(assignment) = target.parent() else {
         return;
     };
-    let ExprKind::Assign { target: left, value, .. } = assignment.kind() else {
+    let Some((_, left, value)) = assignment.as_assign() else {
         return;
     };
     let value = value.skip_type_wrappers();

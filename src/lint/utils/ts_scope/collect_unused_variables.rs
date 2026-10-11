@@ -184,6 +184,10 @@ fn is_class(symbol: Symbol) -> bool {
 
 /// The `VarDecl` that `pat`, which a `var`, `let`, `const`, `using` or `catch` binds, is part of.
 fn declarator_of(pat: Pat<'_>) -> Option<VarDecl<'_>> {
+    let file = pat.file();
+    if let Some(&PatParent::Var(declarator)) = file.bound.pat_parent.get(pat.id().idx()) {
+        return Some(VarDecl::new(file, declarator));
+    }
     match Declaration::Var(pat).node()? {
         Node::VarDecl(declarator) => Some(declarator),
         _ => None,
@@ -227,11 +231,24 @@ impl Facts {
     }
 
     /// 0 for a declaration that scope-manager has no definition for in the scope around it.
+    #[inline]
     fn of_declaration(declaration: Declaration) -> u16 {
+        match declaration {
+            Declaration::Var(_) => {
+                Self::DEFINED
+                    | Self::NOT_IMPORTED_AS_TYPE
+                    | Self::VALUE
+                    | Self::HAS_RANGES
+                    | Self::EXPORTABLE
+            }
+            _ => Self::of_what_is_no_variable(declaration),
+        }
+    }
+
+    fn of_what_is_no_variable(declaration: Declaration) -> u16 {
         let declared = Self::DEFINED | Self::NOT_IMPORTED_AS_TYPE;
         let both = Self::TYPE | Self::VALUE;
         match declaration {
-            Declaration::Var(_) => declared | Self::VALUE | Self::HAS_RANGES | Self::EXPORTABLE,
             Declaration::Param(pat) => {
                 let file = pat.file();
                 let param = match file.bound.pat_parent.get(pat.id().idx()) {
@@ -294,7 +311,7 @@ impl Facts {
                 true => Self::DEFINED | both | Self::EXPORTABLE,
                 false => declared | both | Self::EXPORTABLE,
             },
-            Declaration::Other => 0,
+            Declaration::Var(_) | Declaration::Other => 0,
         }
     }
 
@@ -844,15 +861,16 @@ pub fn is_read_for_itself<'a>(
 fn has_use<'a>(
     references: impl Iterator<Item = Reference<'a>>,
     counts: impl Fn(Reference<'a>) -> bool,
+    walks: &mut Walks<'a>,
 ) -> bool {
-    let (mut rhs_node, mut walks) = (None, Walks::default());
+    let mut rhs_node = None;
     for reference in references {
         let flags = reference.flags();
         // Only what is written to is on the left of an assignment or the operand of an update, and
         // without an assignment before there is no right side to be in.
         if flags.contains(ReferenceFlags::WRITE) || rhs_node.is_some() {
-            let is_for_itself = is_read_for_itself(reference, rhs_node, &mut walks);
-            rhs_node = get_rhs_node(reference, rhs_node, &mut walks);
+            let is_for_itself = is_read_for_itself(reference, rhs_node, walks);
+            rhs_node = get_rhs_node(reference, rhs_node, walks);
             if is_for_itself {
                 continue;
             }
@@ -874,7 +892,7 @@ fn self_reference_range(definition: Declaration) -> Option<Span> {
         // The parameter of a `catch` has no initializer.
         Declaration::Var(pat) => {
             let init = declarator_of(pat)?.init()?;
-            (init.tag() == ExprTag::Fn).then(|| init.span())
+            init.as_fn().map(|_| init.span())
         }
         Declaration::Interface(_)
         | Declaration::TypeAlias(_)
@@ -886,13 +904,13 @@ fn self_reference_range(definition: Declaration) -> Option<Span> {
 
 /// typescript-eslint's `isUsedVariable`: something reads the variable, other than to update it,
 /// from outside of its own declaration, and for more than its type unless it is a type.
-fn is_used_variable_with(variable: Variable, facts: Facts) -> bool {
+fn is_used_variable_with<'a>(variable: Variable<'a>, facts: Facts, walks: &mut Walks<'a>) -> bool {
     let is_split = facts.has(Facts::CLASS);
     let references = variable
         .symbol
         .references()
         .filter(|it| !is_split || variable.has_reference_at(it.ident().start()));
-    has_use(references, |reference| {
+    let counts = |reference: Reference<'a>| {
         let is_from_outside = || {
             let start = reference.ident().start();
             !variable.symbol.declarations().any(|it| {
@@ -905,7 +923,8 @@ fn is_used_variable_with(variable: Variable, facts: Facts) -> bool {
             && (!facts.has(Facts::HAS_RANGES) || is_from_outside())
             // It is written where the name is declared, and is in the scope around that.
             || reference.is_jsx_pragma()
-    })
+    };
+    has_use(references, counts, walks)
 }
 
 /// typescript-eslint's `isUsedVariable` for a variable of the global scope that the file does not
@@ -914,7 +933,11 @@ fn is_used_variable_with(variable: Variable, facts: Facts) -> bool {
 pub fn is_used_global_variable<'a>(file: &'a File<'a>, name: &[u8]) -> bool {
     file.unresolved_references_to(name)
         .any(is_assigned_by_loop_that_only_returns)
-        || has_use(file.unresolved_references_to(name), |_| true)
+        || has_use(
+            file.unresolved_references_to(name),
+            |_| true,
+            &mut Walks::default(),
+        )
 }
 
 // ───────────────────────────── the analysis ─────────────────────────────
@@ -978,6 +1001,7 @@ pub fn collect_variables<'a>(file: &'a File<'a>, eslint_used: UsedMarks) -> Vari
     mark_identifiers_in_parameters(file, &mut marks);
     let marked_by_loops = variables_of_loops_that_only_return(file);
     let declares_globals = file.scope().symbols().len() != 0;
+    let mut walks = Walks::default();
     for symbol in file.symbols() {
         let variable = Variable::new(symbol);
         let facts = Facts::of(variable);
@@ -1012,7 +1036,9 @@ pub fn collect_variables<'a>(file: &'a File<'a>, eslint_used: UsedMarks) -> Vari
             marks.mark(symbol);
             is_marked = true;
         }
-        if is_marked || is_used_variable_with(variable, facts) || is_exported_with(variable, facts)
+        if is_marked
+            || is_used_variable_with(variable, facts, &mut walks)
+            || is_exported_with(variable, facts)
         {
             analysis.used_variables.push(variable);
         } else {

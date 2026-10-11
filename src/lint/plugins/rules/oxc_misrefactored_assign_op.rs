@@ -20,14 +20,14 @@ impl Rule for MisrefactoredAssignOp {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Assign { op: Some(op), target, value } = e.kind() else {
+        let Some((Some(op), target, value)) = e.as_assign() else {
             return;
         };
         // `a &&= a && b` has no binary expression on the right for oxlint.
         if value.binary_op() != Some(op) || matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish) || value.is_parenthesized() {
             return;
         }
-        let ExprKind::Binary { left, right, .. } = value.kind() else {
+        let Some((_, left, right)) = value.as_binary() else {
             return;
         };
         let report = |operand: Expr<'a>| {

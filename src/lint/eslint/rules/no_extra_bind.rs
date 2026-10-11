@@ -122,19 +122,22 @@ impl Rule for NoExtraBind {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Call(call) = e.kind() else {
+        let Some(call) = e.as_call() else {
             return;
         };
         let member = call.callee();
-        let (function, property) = match member.kind() {
-            ExprKind::Dot { obj, name, .. } => (obj, name.span()),
-            ExprKind::Index { obj, index, .. } => (obj, index.span()),
-            _ => return,
+        let Some(function) = member.object() else {
+            return;
         };
         // oxlint sees through `as T` and the like.
         let is_oxlint = cx.language().is_oxlint;
-        let ExprKind::Fn(func) = (if is_oxlint { get_inner_expression(function) } else { function }).kind() else {
+        let Some(func) = (if is_oxlint { get_inner_expression(function) } else { function }).as_fn() else {
             return;
+        };
+        let property = match (member.member_name(), member.index()) {
+            (Some(name), _) => name.span(),
+            (None, Some(index)) => index.span(),
+            (None, None) => return,
         };
         let (Some(argument), 1) = (call.args().first(), call.args().len()) else {
             return;

@@ -25,7 +25,7 @@ impl Rule for NoPathConcat {
     }
 
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let ExprKind::Binary { left, right, .. } = e.kind()
+        if let Some((_, left, right)) = e.as_binary()
             && is_dirname_or_filename(left)
             && starts_with_path_separator(Start::Expr(right))
         {
@@ -34,7 +34,7 @@ impl Rule for NoPathConcat {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Template(template) = e.kind() else {
+        let Some(template) = e.as_template() else {
             return;
         };
         for (i, expr) in template.exprs().iter().enumerate() {

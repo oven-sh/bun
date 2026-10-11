@@ -32,7 +32,7 @@ impl Rule for ParamNames {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::New(new_expr) = e.kind() else {
+        let Some(new_expr) = e.as_new() else {
             return;
         };
         if new_expr.args().len() != 1 || !is_promise_constructor(new_expr) {

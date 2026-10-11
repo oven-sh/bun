@@ -206,19 +206,34 @@ fn end_of_indentation(src: &[u8], mut pos: usize) -> usize {
     pos
 }
 
+#[inline(always)]
+const fn is_name_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
+}
+
+/// By the upper and by the lower half of a byte, a set of bits. The two sets of a byte have a bit in
+/// common if it is a letter, a digit, `_` or `$`.
+const NAME_BYTES: [[u8; 16]; 2] = {
+    let (mut by_upper, mut by_lower) = ([0; 16], [0; 16]);
+    let mut byte = 0u8;
+    while byte < 0x80 {
+        if is_name_byte(byte) {
+            by_upper[(byte >> 4) as usize] |= 1 << (byte >> 4);
+            by_lower[(byte & 15) as usize] |= 1 << (byte >> 4);
+        }
+        byte += 1;
+    }
+    [by_upper, by_lower]
+};
+
 /// The number of leading bytes of `bytes` that are ASCII letters, digits, `_` or `$`.
 #[inline(always)]
 fn name_run(bytes: u8x16) -> u32 {
-    let letters = ((bytes | u8x16::splat(0x20)) - u8x16::splat(b'a')).simd_lt(u8x16::splat(26));
-    let digits = (bytes - u8x16::splat(b'0')).simd_lt(u8x16::splat(10));
-    let others = bytes.simd_eq(u8x16::splat(b'_')) | bytes.simd_eq(u8x16::splat(b'$'));
-    let mask = (letters | digits | others).to_bitmask() as u32;
-    (!mask).trailing_zeros()
-}
-
-#[inline(always)]
-fn is_name_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
+    let [by_upper, by_lower] = NAME_BYTES.map(u8x16::from_array);
+    let upper = by_upper.swizzle_dyn(bytes >> u8x16::splat(4));
+    let lower = by_lower.swizzle_dyn(bytes & u8x16::splat(15));
+    let others = (upper & lower).simd_eq(u8x16::splat(0)).to_bitmask() as u32;
+    (others | 1 << 16).trailing_zeros()
 }
 
 /// The code point at the start of `text`, and its length in bytes. `None`: it is not UTF-8.

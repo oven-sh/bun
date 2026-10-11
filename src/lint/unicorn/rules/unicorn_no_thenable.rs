@@ -1,6 +1,7 @@
 use bun_lint_oxlint::ast_util::{get_inner_expression, static_property_name};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use std::cell::OnceCell;
 
 /// Disallow defining a `then` property.
 pub struct NoThenable;
@@ -8,6 +9,13 @@ pub struct NoThenable;
 const OBJECT: Message = Message::new("", "Do not add `then` to an object.");
 const EXPORT: Message = Message::new("", "Do not export `then`.");
 const CLASS: Message = Message::new("", "Do not add `then` to a class.");
+
+pub struct State<'a> {
+    /// The name `then`.
+    then: Name<'a>,
+    /// Whether the file has the string `"then"`, which a variable can be initialized with.
+    has_string: OnceCell<bool>,
+}
 
 impl Rule for NoThenable {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-thenable", Kind::Problem);
@@ -17,8 +25,7 @@ impl Rule for NoThenable {
         .members()
         .props()
         .export_specs();
-    /// The name `then`.
-    type State<'a> = Option<Name<'a>>;
+    type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {
         NoThenable
@@ -34,18 +41,14 @@ impl Rule for NoThenable {
         if file.mentions_any(&["defineProperty", "fromEntries"]) { on.exprs(&[ExprTag::Call]) } else { on }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<Option<Name<'a>>> {
-        if !file.mentions("then") {
-            return None;
-        }
-        Some(Some(file.name_of("then")))
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
+        file.mentions("then").then(|| State { then: file.name_of("then"), has_string: OnceCell::new() })
     }
 
     fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
-        if let Some(then) = cx.state
-            && prop.kind() != PropKind::Spread
+        if prop.kind() != PropKind::Spread
             && !prop.is_jsx_attribute()
-            && let Some(span) = contains_then(prop.key(), then, cx.file())
+            && let Some(span) = contains_then(prop.key(), &cx.state, cx.file())
             && matches!(prop.parent(), Node::Expr(object) if !object.is_assignment_target())
         {
             cx.report(span, OBJECT);
@@ -53,9 +56,8 @@ impl Rule for NoThenable {
     }
 
     fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
-        if let Some(then) = cx.state
-            && !member.is_signature()
-            && let Some(span) = contains_then(member.key(), then, cx.file())
+        if !member.is_signature()
+            && let Some(span) = contains_then(member.key(), &cx.state, cx.file())
             && !member.flags().contains(Flags::ACCESSOR)
         {
             cx.report(span, CLASS);
@@ -63,12 +65,10 @@ impl Rule for NoThenable {
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(then) = cx.state.filter(|_| !stmt.modifiers().is_empty()) else {
-            return;
-        };
-        if !stmt.is_exported() || stmt.is_default_export() {
+        if stmt.modifiers().is_empty() || !stmt.is_exported() || stmt.is_default_export() {
             return;
         }
+        let then = cx.state.then;
         let name = match stmt.kind() {
             StmtKind::Var(declarations) => {
                 for declaration in declarations {
@@ -90,7 +90,7 @@ impl Rule for NoThenable {
     }
 
     fn export_spec<'a>(&self, spec: ExportSpec<'a>, cx: &mut Cx<'a, Self>) {
-        if Some(spec.exported().name()) == cx.state {
+        if spec.exported().name() == cx.state.then {
             cx.report(spec.exported(), EXPORT);
         }
     }
@@ -98,17 +98,17 @@ impl Rule for NoThenable {
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.tag() {
             ExprTag::Call => {
-                if let (Some(call), Some(then)) = (e.as_call(), cx.state) {
-                    check_call_expression(call, then, cx);
+                if let Some(call) = e.as_call() {
+                    check_call_expression(call, cx);
                 }
             }
             ExprTag::Assign => {
-                let (Some(target), Some(then)) = (e.left(), cx.state) else {
+                let Some(target) = e.left() else {
                     return;
                 };
                 let span = match target.kind() {
-                    ExprKind::Dot { name, .. } => (name.name() == then).then(|| target.span()),
-                    ExprKind::Index { index, .. } => check_expression(index, then),
+                    ExprKind::Dot { name, .. } => (name.name() == cx.state.then).then(|| target.span()),
+                    ExprKind::Index { index, .. } => check_expression(index, &cx.state),
                     _ => None,
                 };
                 // Not the default value in a pattern.
@@ -121,7 +121,7 @@ impl Rule for NoThenable {
     }
 }
 
-fn check_call_expression<'a>(call: Call<'a>, then: Name<'a>, cx: &Cx<'a, NoThenable>) {
+fn check_call_expression<'a>(call: Call<'a>, cx: &Cx<'a, NoThenable>) {
     let (callee, args) = (call.callee(), call.args());
     if call.is_optional() || callee.is_optional() || callee.is_parenthesized() {
         return;
@@ -134,7 +134,7 @@ fn check_call_expression<'a>(call: Call<'a>, then: Name<'a>, cx: &Cx<'a, NoThena
     if method.is("defineProperty") && object.is_any(&["Reflect", "Object"]) {
         if args.len() >= 3
             && first.tag() != ExprTag::Spread
-            && let Some(span) = args.get(1).and_then(|it| check_expression(it, then))
+            && let Some(span) = args.get(1).and_then(|it| check_expression(it, &cx.state))
         {
             cx.report(span, OBJECT);
         }
@@ -146,7 +146,7 @@ fn check_call_expression<'a>(call: Call<'a>, then: Name<'a>, cx: &Cx<'a, NoThena
     {
         for entry in entries.iter().filter(|it| !it.is_parenthesized()) {
             if let ExprKind::Array(entry) = entry.kind()
-                && let Some(span) = entry.first().and_then(|it| check_expression(it, then))
+                && let Some(span) = entry.first().and_then(|it| check_expression(it, &cx.state))
             {
                 cx.report(span, OBJECT);
             }
@@ -155,14 +155,19 @@ fn check_call_expression<'a>(call: Call<'a>, then: Name<'a>, cx: &Cx<'a, NoThena
 }
 
 /// Where the string `then` is written that `e` is, or that the variable `e` is initialized with.
-fn check_expression<'a>(e: Expr<'a>, then: Name<'a>) -> Option<Span> {
+fn check_expression<'a>(e: Expr<'a>, state: &State<'a>) -> Option<Span> {
     if e.is_parenthesized() {
         return None;
     }
+    let then = state.then;
     match e.kind() {
         ExprKind::String(value) => (value == then).then(|| e.span()),
         ExprKind::Template(template) => (template.as_static()? == then).then(|| e.span()),
         ExprKind::Ident(_) => {
+            let is_then = |it: Expr<'a>| it.as_string() == Some(then);
+            if !*state.has_string.get_or_init(|| e.file().exprs_of_kind(ExprTag::String).any(is_then)) {
+                return None;
+            }
             let declaration = e.symbol()?.declarations().next().filter(|it| !it.is_catch_parameter())?;
             let Node::VarDecl(declarator) = declaration.node()? else {
                 return None;
@@ -174,12 +179,12 @@ fn check_expression<'a>(e: Expr<'a>, then: Name<'a>) -> Option<Span> {
     }
 }
 
-fn contains_then<'a>(key: Option<Key<'a>>, then: Name<'a>, file: &File<'a>) -> Option<Span> {
-    let key = key?;
+fn contains_then<'a>(key: Option<Key<'a>>, state: &State<'a>, file: &File<'a>) -> Option<Span> {
+    let (key, then) = (key?, state.then);
     match key.kind() {
         KeyKind::Ident(name) | KeyKind::String(name) => (name == then).then(|| key.span(file)),
         KeyKind::ComputedString(name) => (name == then).then(|| key.inner_span(file)),
-        KeyKind::Computed(e) => check_expression(e, then),
+        KeyKind::Computed(e) => check_expression(e, state),
         _ => None,
     }
 }

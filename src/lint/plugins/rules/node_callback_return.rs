@@ -120,7 +120,7 @@ fn find_closest_block_parent<'a>(child: Node<'a>, parent: Node<'a>) -> Option<Cl
 
 /// `statement` is `call;`, `a + call;` or `a && call;`.
 fn is_callback_expression<'a>(call: Expr<'a>, statement: Stmt<'a>) -> bool {
-    let StmtKind::Expr(e) = statement.kind() else {
+    let Some(e) = statement.as_expr() else {
         return false;
     };
     e == call || matches!(e.kind(), ExprKind::Binary { op, right, .. } if op != BinOp::Comma && right == call)

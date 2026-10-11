@@ -1,5 +1,5 @@
 use crate::jest::{self, Ctx};
-use crate::jest_hooks::no_duplicate_hooks;
+use crate::jest_hooks::{mentions_hook, no_duplicate_hooks};
 use bun_lint::prelude::*;
 
 /// Disallows duplicate hooks in describe blocks.
@@ -15,7 +15,7 @@ impl<const VITEST: bool> Rule for NoDuplicateHooks<VITEST> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        jest::may_have_possible_jest_call_node(file).then_some(())
+        mentions_hook(file).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

@@ -31,8 +31,10 @@ const NOT_AN_EXPRESSION: Message = Message::new("", "Function component is not a
 const NOT_AN_ARROW: Message = Message::new("", "Function component is not an arrow function");
 
 pub struct State<'a> {
-    /// These two are for oxlint, which goes by where a function is and what it returns.
+    /// These three are for oxlint, which goes by where a function is and what it returns.
     component_wrapper_functions: &'a [Json],
+    /// A call can be one of [`is_hoc_call`].
+    may_have_hoc_calls: bool,
     returns: Returns<'a>,
     components: Components<'a>,
     /// upstream's `hasES6OrJsx`
@@ -70,8 +72,15 @@ impl Rule for FunctionComponentDefinition {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        (file.language().is_oxlint || Components::may_have_any(file)).then(|| State {
-            component_wrapper_functions: component_wrapper_functions(file),
+        let is_candidate = match file.language().is_oxlint {
+            // A component returns JSX or `null`.
+            true => file.has_exprs([ExprTag::Jsx, ExprTag::Null]) || file.mentions("createElement"),
+            false => Components::may_have_any(file),
+        };
+        let component_wrapper_functions = component_wrapper_functions(file);
+        is_candidate.then(|| State {
+            component_wrapper_functions,
+            may_have_hoc_calls: !component_wrapper_functions.is_empty() || file.mentions_any(&["memo", "forwardRef"]),
             returns: Returns::default(),
             components: Components::new(file),
             has_es6_or_jsx: OnceCell::new(),
@@ -118,6 +127,7 @@ fn check<'a>(rule: &FunctionComponentDefinition, func: Func<'a>, cx: &mut Cx<'a,
             cx.state.components.get(Node::Func(func)).is_some() && !is_property_of(func, parent)
         }
         (FunctionStyle::Declaration, _) => func.name().is_none_or(|id| is_react_component_name(id.bytes())),
+        (_, Some(Node::Expr(parent))) if parent.tag() == ExprTag::Call && !cx.state.may_have_hoc_calls => false,
         (_, Some(parent)) => is_component_expression_position(func, parent, cx.state.component_wrapper_functions),
         (_, None) => false,
     };

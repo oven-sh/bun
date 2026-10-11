@@ -10,34 +10,24 @@ pub struct NoAsyncEndpointHandlers {
 const NO_ASYNC_HANDLERS: Message = Message::new("", "Express endpoint handler should not be `async`.");
 const NO_ASYNC_HANDLERS_FOR: Message = Message::new("", "Express endpoint handler for `{{endpoint}}` should not be `async`.");
 
-#[derive(Default)]
-pub struct State {
-    /// Looked for at the first call that may register something.
-    has_async_functions: Option<bool>,
-}
-
 impl Rule for NoAsyncEndpointHandlers {
     const META: Meta = Meta::oxlint(Plugin::Oxc, "no-async-endpoint-handlers", Kind::Problem);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = State;
+    type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         let allowed_names = options.object(0).strings("allowedNames").into_iter().map(String::from).collect();
         NoAsyncEndpointHandlers { allowed_names }
     }
 
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<State> {
-        Some(State::default())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        file.funcs().any(Func::is_async).then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some((endpoint, args)) = e.as_call().and_then(as_endpoint_registration) else {
             return;
         };
-        let file = cx.file();
-        if !*cx.state.has_async_functions.get_or_insert_with(|| file.funcs().any(Func::is_async)) {
-            return;
-        }
         for arg in args.filter(|it| it.tag() != ExprTag::Spread) {
             self.check_endpoint_arg(endpoint, arg, cx);
         }
@@ -105,12 +95,7 @@ impl NoAsyncEndpointHandlers {
 fn as_endpoint_registration(call: Call<'_>) -> Option<(Option<Name<'_>>, ListIter<'_, Expr<'_>>)> {
     let first = call.args().first().filter(|it| it.tag() != ExprTag::Spread)?;
     let callee = call.callee();
-    // The name of `a.#b` starts with the `#`.
-    let method_name = match callee.member_name() {
-        Some(name) => name.name(),
-        None if callee.tag() == ExprTag::Index => static_property_name(callee)?,
-        None => return None,
-    };
+    let method_name = static_property_name(callee)?;
     if !matches!(method_name.bytes(), b"all" | b"delete" | b"get" | b"head" | b"options" | b"patch" | b"post" | b"put" | b"use")
         || callee.is_parenthesized()
     {

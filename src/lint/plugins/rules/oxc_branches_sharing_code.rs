@@ -70,15 +70,15 @@ impl Rule for BranchesSharingCode {
 /// The blocks, if `if_stmt` is not itself after an `else`, there is an `else` at the end, and nothing but blocks in between. In a
 /// statement that is not a block oxlint sees no statements, so that nothing is shared.
 fn extract_if_sequence(if_stmt: Stmt<'_>) -> Option<Bodies<'_>> {
-    let StmtKind::If { no: Some(_), .. } = if_stmt.kind() else {
+    let Some((.., Some(_))) = if_stmt.as_if() else {
         return None;
     };
-    if matches!(if_stmt.parent(), Node::Stmt(parent) if matches!(parent.kind(), StmtKind::If { no, .. } if no == Some(if_stmt))) {
+    if matches!(if_stmt.parent(), Node::Stmt(parent) if matches!(parent.as_if(), Some((.., no)) if no == Some(if_stmt))) {
         return None;
     }
     let mut bodies = Bodies::new();
     let mut current = if_stmt;
-    while let StmtKind::If { yes, no, .. } = current.kind() {
+    while let Some((_, yes, no)) = current.as_if() {
         bodies.push(yes.as_block()?);
         current = no?;
     }

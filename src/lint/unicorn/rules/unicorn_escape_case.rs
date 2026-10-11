@@ -10,10 +10,21 @@ const ESCAPE_CASE: Message = Message::new("", "Use uppercase characters for the 
 impl Rule for EscapeCase {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "escape-case", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().string_literals().exprs(&[ExprTag::Regex, ExprTag::Template]);
-    no_state!();
+    type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         EscapeCase
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        let mut rest = file.text();
+        while let Some(at) = bun_core::strings::index_of_char_usize(rest, b'\\') {
+            rest = rest.get(at + 1..)?;
+            if matches!(rest.first(), Some(b'x' | b'u' | b'c')) {
+                return Some(());
+            }
+        }
+        None
     }
 
     fn string_literal<'a>(&self, literal: Literal<'a>, cx: &mut Cx<'a, Self>) {

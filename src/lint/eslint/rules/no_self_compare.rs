@@ -26,41 +26,40 @@ fn can_have_equal_tokens(left: &[u8], right: &[u8]) -> bool {
 
 impl Rule for NoSelfCompare {
     const META: Meta = Meta::eslint("no-self-compare", Kind::Problem);
-    const ON: On = On::new().exprs(&[ExprTag::Binary]);
+    const ON: On = On::new().binaries(&[
+        BinOp::EqEqEq,
+        BinOp::EqEq,
+        BinOp::NotEqEq,
+        BinOp::NotEq,
+        BinOp::Gt,
+        BinOp::Lt,
+        BinOp::Ge,
+        BinOp::Le,
+    ]);
     no_state!();
 
     fn new(_: &Options) -> Self {
         NoSelfCompare
     }
 
-    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Binary { op, left, right } = e.kind() else {
+    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let Some((_, left, right)) = e.as_binary() else {
             return;
         };
-        let is_comparison = matches!(
-            op,
-            BinOp::EqEqEq
-                | BinOp::EqEq
-                | BinOp::NotEqEq
-                | BinOp::NotEq
-                | BinOp::Gt
-                | BinOp::Lt
-                | BinOp::Ge
-                | BinOp::Le
-        );
+        // The same tokens are the same kind of expression.
+        if left.tag() != right.tag() {
+            return;
+        }
         let is_oxlint = cx.language().is_oxlint;
-        let is_same = || match (left.kind(), right.kind()) {
+        let is_same = match left.tag() {
             // oxlint compares what literals stand for: `"a" === 'a'`, `1.0 === 1`.
-            (ExprKind::String(left), ExprKind::String(right)) if is_oxlint => left == right,
-            (ExprKind::Number(left), ExprKind::Number(right)) if is_oxlint => left == right,
-            // The same tokens are the same kind of expression.
+            ExprTag::String if is_oxlint => left.as_string() == right.as_string(),
+            ExprTag::Number if is_oxlint => left.as_number() == right.as_number(),
             _ => {
-                left.tag() == right.tag()
-                    && can_have_equal_tokens(left.text(), right.text())
-                    && ast_utils::equal_tokens(cx.file(), left, right)
+                can_have_equal_tokens(left.text(), right.text()) && ast_utils::equal_tokens(cx.file(), left, right)
             }
         };
-        if is_comparison && is_same() {
+        if is_same {
             // oxlint points at the left side.
             cx.report(if is_oxlint { left.outer_span() } else { e.span() }, COMPARING_TO_SELF)
                 .labels_with(|labels| labels.push(right.outer_span(), ""));

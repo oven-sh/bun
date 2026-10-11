@@ -19,7 +19,7 @@ impl Rule for BadBitwiseOperator {
     }
 
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Binary { op, left, right } = e.kind() else {
+        let Some((op, left, right)) = e.as_binary() else {
             return;
         };
         let Some(left_ident) = left.as_ident().filter(|_| !left.is_parenthesized()) else {
@@ -33,7 +33,7 @@ impl Rule for BadBitwiseOperator {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let ExprKind::Assign { op: Some(BinOp::BitOr), value, .. } = e.kind()
+        if let Some((Some(BinOp::BitOr), _, value)) = e.as_assign()
             && !is_numeric_expr(value)
         {
             report(e, "|=", "||=", cx);

@@ -59,18 +59,18 @@ fn oxlint_place(statement: Stmt) -> Span {
 
 /// What oxlint knows of the names that have been imported from a module.
 #[derive(Default)]
-struct Imported {
+struct Imported<'a> {
     by_import_type: bool,
     by_other_imports: bool,
-    /// Where the first statement is that counts.
-    first: Option<Span>,
-    /// Where the first statement is that imports a namespace, one that imports names, one that imports the default.
-    namespace: Option<Span>,
-    named: Option<Span>,
-    default: Option<Span>,
+    /// The first statement that counts.
+    first: Option<Stmt<'a>>,
+    /// The first statement that imports a namespace, one that imports names, one that imports the default.
+    namespace: Option<Stmt<'a>>,
+    named: Option<Stmt<'a>>,
+    default: Option<Stmt<'a>>,
 }
 
-impl Imported {
+impl Imported<'_> {
     /// oxlint's `can_merge_imports`. `first`: the sort of the first name of a statement, which is an `import type` if
     /// `is_type`.
     fn can_merge(&self, first: Type, is_type: bool, allow_separate_type_imports: bool) -> bool {
@@ -104,13 +104,20 @@ impl NoDuplicateImports {
     /// statement is reported. It looks at the imports without names only if the file has no others.
     fn check_imports_as_oxlint<'a>(&self, cx: &Cx<'a, Self>) {
         let imports = || {
-            cx.file().body().iter().filter_map(|it| match it.kind() {
-                StmtKind::Import(import) => Some((oxlint_place(it), import)),
+            let imports = cx.file().body().iter().filter(|it| it.tag() == StmtTag::Import);
+            imports.filter_map(|it| match it.kind() {
+                StmtKind::Import(import) => Some((it, import)),
                 _ => None,
             })
         };
-        let mut all: FxHashMap<Name<'a>, Imported> = FxHashMap::default();
-        for (place, import) in imports() {
+        // Nothing is said about a module that is imported from once.
+        let mut modules: SmallVec<[u32; 32]> = imports().map(|it| it.1.spec().atom().0).collect();
+        modules.sort_unstable();
+        if modules.iter().zip(modules.iter().skip(1)).all(|(a, b)| a != b) {
+            return;
+        }
+        let mut all: FxHashMap<Name<'a>, Imported<'a>> = FxHashMap::default();
+        for (statement, import) in imports() {
             let (mut default, mut namespace) = (import.default().is_some(), import.namespace().is_some());
             let mut named = import.named().len();
             let first = match (default, namespace, named) {
@@ -122,9 +129,9 @@ impl NoDuplicateImports {
             let (imported, is_type) = (all.entry(import.spec()).or_default(), import.is_type_only());
             let has_names = imported.by_import_type || imported.by_other_imports;
             if has_names && imported.can_merge(first, is_type, self.allow_separate_type_imports) {
-                cx.report(place, IMPORT)
-                    .data("module", import.spec())
-                    .labels_with(|labels| labels.push(imported.first.unwrap_or_default(), MERGED_WITH_IMPORT));
+                cx.report(oxlint_place(statement), IMPORT).data("module", import.spec()).labels_with(|labels| {
+                    labels.push(imported.first.map(oxlint_place).unwrap_or_default(), MERGED_WITH_IMPORT)
+                });
                 match first {
                     Type::ImportDefault => default = false,
                     Type::Namespace => namespace = false,
@@ -134,7 +141,7 @@ impl NoDuplicateImports {
             if default || namespace || named > 0 {
                 imported.by_import_type |= is_type;
                 imported.by_other_imports |= !is_type;
-                imported.first.get_or_insert(place);
+                imported.first.get_or_insert(statement);
             }
             for (slot, is_imported) in [
                 (&mut imported.default, default),
@@ -142,19 +149,19 @@ impl NoDuplicateImports {
                 (&mut imported.named, named > 0),
             ] {
                 if is_imported {
-                    slot.get_or_insert(place);
+                    slot.get_or_insert(statement);
                 }
             }
         }
         if !all.is_empty() {
             return;
         }
-        for (place, import) in imports() {
-            let first = *all.entry(import.spec()).or_default().first.get_or_insert(place);
-            if first != place {
-                cx.report(place, IMPORT)
+        for (statement, import) in imports() {
+            let first = *all.entry(import.spec()).or_default().first.get_or_insert(statement);
+            if first != statement {
+                cx.report(oxlint_place(statement), IMPORT)
                     .data("module", import.spec())
-                    .labels_with(|labels| labels.push(first, MERGED_WITH_IMPORT));
+                    .labels_with(|labels| labels.push(oxlint_place(first), MERGED_WITH_IMPORT));
             }
         }
     }
@@ -225,16 +232,18 @@ impl Rule for NoDuplicateImports {
         }
     }
 
-    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
-        let mut on = On::new().stmts(&[StmtTag::Import]);
-        if self.include_exports {
-            on = on.stmts(&[StmtTag::ExportNamed, StmtTag::ExportStar]);
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        match self.include_exports {
+            true => On::new().stmts(&[StmtTag::Import, StmtTag::ExportNamed, StmtTag::ExportStar]).finish(),
+            false if file.language().is_oxlint => On::new().finish(),
+            false => On::new().stmts(&[StmtTag::Import]).finish(),
         }
-        on.finish()
     }
 
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<Vec<Entry<'a>>> {
-        Some(Vec::new())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Vec<Entry<'a>>> {
+        let has_any = file.has_stmts([StmtTag::Import])
+            || self.include_exports && file.has_stmts([StmtTag::ExportNamed, StmtTag::ExportStar]);
+        has_any.then(Vec::new)
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
@@ -245,7 +254,10 @@ impl Rule for NoDuplicateImports {
         let mut entries = std::mem::take(&mut cx.state);
         let is_oxlint = cx.language().is_oxlint;
         if is_oxlint && !self.include_exports {
-            if !entries.is_empty() {
+            let names_module = |it: Stmt| {
+                matches!(it.kind(), StmtKind::Import(import) if !strings::trim_js_whitespace(import.spec().bytes()).is_empty())
+            };
+            if cx.file().stmts_of_kind(StmtTag::Import).any(names_module) {
                 self.check_imports_as_oxlint(cx);
             }
             return;

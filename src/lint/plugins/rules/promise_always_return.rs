@@ -50,7 +50,7 @@ impl Rule for AlwaysReturn {
 /// `a.name()`, where neither `a.name` is in parentheses nor `name` is private.
 fn is_member_call(call_expr: Call, member_names: &[&str]) -> bool {
     let callee = call_expr.callee();
-    !callee.is_parenthesized() && !callee.is_private_member() && callee.member_name().is_some_and(|it| it.name().is_any(member_names))
+    callee.member_name().is_some_and(|it| it.name().is_any(member_names)) && !callee.is_parenthesized() && !callee.is_private_member()
 }
 
 /// Whether nothing is done with what `call`, a call of `then`, returns.
@@ -83,7 +83,7 @@ fn is_last_callback(call: Expr) -> bool {
 
 /// `process.exit(0)`, `process.abort()`
 fn is_nodejs_terminal_statement(statement: Stmt) -> bool {
-    let StmtKind::Expr(e) = statement.kind() else {
+    let Some(e) = statement.as_expr() else {
         return false;
     };
     !e.is_parenthesized()

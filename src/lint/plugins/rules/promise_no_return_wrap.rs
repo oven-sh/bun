@@ -68,15 +68,12 @@ impl NoReturnWrap {
     /// The message, if the global `Promise.resolve` or `Promise.reject` is called.
     fn check_for_resolve_reject(&self, call_expr: Call) -> Option<Message> {
         let callee = call_expr.callee();
-        let ExprKind::Dot { obj, name, .. } = callee.kind() else {
-            return None;
-        };
-        let message = match name.bytes() {
+        let message = match callee.member_name()?.bytes() {
             b"resolve" => RESOLVE,
             b"reject" if !self.allow_reject => REJECT,
             _ => return None,
         };
-        let obj = get_inner_expression(obj);
+        let obj = get_inner_expression(callee.object()?);
         (obj.is_ident("Promise") && !callee.is_parenthesized() && is_global_reference(obj)).then_some(message)
     }
 }

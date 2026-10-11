@@ -30,7 +30,7 @@ impl Rule for NoMultipleResolved {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::New(new_expr) = e.kind() else {
+        let Some(new_expr) = e.as_new() else {
             return;
         };
         let Some(executor) = get_promise_constructor_inline_executor(new_expr) else {

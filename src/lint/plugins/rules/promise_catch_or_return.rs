@@ -54,7 +54,7 @@ impl Rule for CatchOrReturn {
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        let StmtKind::Expr(e) = statement.kind() else {
+        let Some(e) = statement.as_expr() else {
             return;
         };
         // What is in parentheses, and an optional chain, is not a call for oxlint.

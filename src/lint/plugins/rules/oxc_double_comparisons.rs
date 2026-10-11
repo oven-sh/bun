@@ -20,7 +20,7 @@ impl Rule for DoubleComparisons {
     }
 
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Binary { op, left, right } = e.kind() else {
+        let Some((op, left, right)) = e.as_binary() else {
             return;
         };
         let Some((rkind, rlhs, rrhs)) = as_comparison(right) else {
@@ -64,14 +64,9 @@ impl Rule for DoubleComparisons {
 
 /// The operator and the operands, if it is one of the comparisons that the rule is about and is not in parentheses.
 fn as_comparison(e: Expr<'_>) -> Option<(BinOp, Expr<'_>, Expr<'_>)> {
-    match e.kind() {
-        ExprKind::Binary { op: op @ (BinOp::EqEq | BinOp::EqEqEq | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge), left, right }
-            if !e.is_parenthesized() =>
-        {
-            Some((op, left, right))
-        }
-        _ => None,
-    }
+    e.as_binary().filter(|(op, ..)| {
+        matches!(op, BinOp::EqEq | BinOp::EqEqEq | BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge) && !e.is_parenthesized()
+    })
 }
 
 fn is_same<'a>(left: Expr<'a>, right: Expr<'a>) -> bool {

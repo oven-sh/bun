@@ -70,8 +70,8 @@ struct Variable<'a> {
 struct Known<'a> {
     /// The scopes of `declare global { }`.
     global_augmentations: SmallVec<[Scope<'a>; 1]>,
-    /// [`functions_without_body`], with a configuration of oxlint that ignores what is declared in them.
-    without_body: Vec<Span>,
+    /// [`functions_without_body`], once they are asked for.
+    without_body: Option<Vec<Span>>,
     /// Whether the file uses what it imports only as a type.
     only_types: FxHashMap<Symbol<'a>, bool>,
     /// [`Known::is_namespace_of_types`]
@@ -577,7 +577,12 @@ impl Checker {
             || self.is_declare_in_dts_file(file, &variable)
             || self.is_type_value_shadow(&variable, shadowed.as_ref())
             || self.is_function_type_parameter_name_value_shadow(&variable, shadowed.as_ref(), is_global_value)
-            || is_declared_in_function_without_body(&variable, &known.without_body)
+            || file.language().is_oxlint
+                && self.ignore_function_type_parameter_name_value_shadow
+                && is_declared_in_function_without_body(
+                    &variable,
+                    known.without_body.get_or_insert_with(|| functions_without_body(file)),
+                )
             || self.is_generic_of_a_static_method_shadow(&variable, shadowed.as_ref())
         {
             return;
@@ -617,16 +622,26 @@ impl Checker {
         if file.has_stmts([StmtTag::Module]) {
             global_augmentations.extend(file.scopes().filter(|it| is_scope_of_global_augmentation(*it)));
         }
-        let without_body = match file.language().is_oxlint && self.ignore_function_type_parameter_name_value_shadow {
-            true => functions_without_body(file),
-            false => Vec::new(),
-        };
         let mut known = Known {
             global_augmentations,
-            without_body,
+            without_body: None,
             only_types: FxHashMap::default(),
             namespaces_of_types: FxHashMap::default(),
         };
+        // How many variables have a name with the same last bits of its number. One that is alone has a name of its own, and
+        // shadows nothing that the file declares.
+        let places = (file.symbol_key_limit() * 8).next_power_of_two();
+        let place_of = |name: Name<'a>| name.atom().0 as usize & (places - 1);
+        let mut namesakes: SmallVec<[u8; 2048]> = SmallVec::from_elem(0, places);
+        for symbol in file.symbols() {
+            if let Some(count) = namesakes.get_mut(place_of(symbol.name())) {
+                *count = count.saturating_add(1);
+            }
+        }
+        // Those that nothing declares are not among the symbols of the file.
+        if let Some(count) = namesakes.get_mut(place_of(file.name_of("arguments"))) {
+            *count = u8::MAX;
+        }
         for scope in file.scopes() {
             let Some(upper) = scope.parent() else {
                 continue;
@@ -636,7 +651,10 @@ impl Checker {
                     continue;
                 }
                 let name = symbol.name();
-                let shadowed = upper.resolve_name(name);
+                let shadowed = match namesakes.get(place_of(name)) {
+                    Some(0 | 1) => None,
+                    _ => upper.resolve_name(name),
+                };
                 let global = match shadowed {
                     None if self.builtin_globals => file.global(name.bytes()),
                     _ => None,

@@ -17,7 +17,7 @@ fn estree_span(param: Param) -> Span {
 /// `reports_rest`: whether a rest parameter before a required one is reported too, which is an
 /// error that only TypeScript's parser lets through.
 pub fn check<'a, R: Rule>(func: Func<'a>, reports_rest: bool, cx: &Cx<'a, R>) {
-    if !ast_utils::is_function_with_body(func) {
+    if func.params().len() < 2 || !ast_utils::is_function_with_body(func) {
         return;
     }
     let mut has_seen_required_parameter = false;

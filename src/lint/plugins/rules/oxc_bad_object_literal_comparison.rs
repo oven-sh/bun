@@ -17,7 +17,7 @@ impl Rule for BadObjectLiteralComparison {
     }
 
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Binary { op, left, right } = e.kind() else {
+        let Some((op, left, right)) = e.as_binary() else {
             return;
         };
         let const_result = if matches!(op, BinOp::NotEq | BinOp::NotEqEq) { "true" } else { "false" };

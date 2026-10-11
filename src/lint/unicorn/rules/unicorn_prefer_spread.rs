@@ -13,14 +13,16 @@ const PREFER_SPREAD: Message = Message::new("", "Prefer the spread operator (`..
 impl Rule for PreferSpread {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-spread", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// The names of the methods.
+    type State<'a> = [Name<'a>; 4];
 
     fn new(_: &Options) -> Self {
         PreferSpread
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        file.mentions_any(&["from", "concat", "slice", "toSpliced"]).then_some(())
+        const METHODS: [&str; 4] = ["from", "concat", "slice", "toSpliced"];
+        file.mentions_any(&METHODS).then(|| METHODS.map(|it| file.name_of(it)))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -29,6 +31,9 @@ impl Rule for PreferSpread {
         };
         // The whole of an optional chain, which here is in parentheses, is not a member expression for oxlint.
         let member_expr = call_expr.callee();
+        if member_expr.member_name().is_some_and(|it| !cx.state.contains(&it.name())) {
+            return;
+        }
         let (Some(name), Some(object)) = (static_property_name(member_expr), member_expr.object()) else {
             return;
         };

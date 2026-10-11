@@ -51,13 +51,16 @@ fn is_disallowed(name: &[u8]) -> bool {
 
 /// The `Map` of `Map` and of `globalThis.Map`, if `is_builtin` says that it is one and nothing in the file declares it.
 fn global_builtin<'a>(callee: Expr<'a>, is_builtin: fn(&[u8]) -> bool) -> Option<Name<'a>> {
+    let is_builtin = |name: &[u8]| name.first().is_some_and(u8::is_ascii_uppercase) && is_builtin(name);
     if let Some(name) = callee.as_ident() {
         return (is_builtin(name.bytes()) && is_global_reference(callee)).then_some(name);
     }
+    if !callee.object()?.as_ident()?.is_any(&GLOBAL_OBJECT_NAMES) {
+        return None;
+    }
     let name = static_property_name(callee).filter(|it| is_builtin(it.bytes()))?;
-    let is_of_global_object = callee.object()?.as_ident()?.is_any(&GLOBAL_OBJECT_NAMES);
     // What has a `?.` cannot become a `new` expression.
-    (is_of_global_object && !callee.is_chain_root() && !callee.is_optional()).then_some(name)
+    (!callee.is_chain_root() && !callee.is_optional()).then_some(name)
 }
 
 impl Rule for NewForBuiltins {

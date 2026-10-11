@@ -1,5 +1,5 @@
 use crate::jest::{self, Ctx};
-use crate::jest_hooks::prefer_hooks_on_top;
+use crate::jest_hooks::{mentions_hook, prefer_hooks_on_top};
 use bun_lint::prelude::*;
 
 /// While hooks can be setup anywhere in a test file, they are always called in a specific order, which means it can be
@@ -16,7 +16,7 @@ impl<const VITEST: bool> Rule for PreferHooksOnTop<VITEST> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        jest::may_have_possible_jest_call_node(file).then_some(())
+        mentions_hook(file).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

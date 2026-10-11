@@ -2,8 +2,9 @@
 //! `rules/shared/jest_vitest`. See [`jest`](crate::jest).
 
 use crate::jest::{
-    Ctx, JestFnKind, JestGeneralFnKind, PossibleJestNode, Scopes, get_node_name,
-    is_type_of_jest_fn_call, iter_possible_jest_call_node, parse_general_jest_fn_call,
+    Ctx, JestFnKind, JestGeneralFnKind, PossibleJestNode, Scopes, first_identifier_of_chain,
+    get_node_name_vec, is_type_of_jest_fn_call, iter_possible_jest_call_node, mention_bits,
+    mentions_any, parse_general_jest_fn_call,
 };
 use bun_core::strings;
 use bun_lint::prelude::*;
@@ -12,6 +13,11 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
 pub(crate) const HOOKS: [&str; 4] = ["beforeAll", "beforeEach", "afterEach", "afterAll"];
+
+/// Whether the file can have a hook, under whatever name.
+pub(crate) fn mentions_hook(file: &File) -> bool {
+    mentions_any(file, &const { mention_bits(HOOKS) })
+}
 
 pub(crate) mod no_duplicate_hooks {
     use super::*;
@@ -95,6 +101,16 @@ pub(crate) mod prefer_hooks_in_order {
     const REORDER_HOOKS: Message = Message::new("", "Test hooks are not in a consistent order.");
 
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
+        // What a hook starts with.
+        let names: SmallVec<[Name<'a>; 4]> = (HOOKS.iter().filter(|it| ctx.file.mentions(it)))
+            .map(|it| ctx.file.name_of(it))
+            .collect();
+        let is_name = |it: &Name<'a>| names.contains(it);
+        if !(ctx.file.exprs_of_kind(ExprTag::Ident))
+            .any(|it| it.as_ident().is_some_and(|it| is_name(&it)))
+        {
+            return;
+        }
         // Every call counts: one that is no hook ends a run of hooks.
         let mut calls: Vec<Expr<'a>> = ctx.file.exprs_of_kind(ExprTag::Call).collect();
         utils::sort::sort_unstable_by_key(&mut calls, |it| {
@@ -104,7 +120,9 @@ pub(crate) mod prefer_hooks_in_order {
         let mut previous_hook_orders: FxHashMap<Option<Node<'a>>, (usize, Span)> =
             FxHashMap::default();
         for node in calls {
-            let hook_name = parse_general_jest_fn_call(ctx.file, PossibleJestNode::new(node))
+            let hook_name = (node.callee().and_then(first_identifier_of_chain))
+                .filter(is_name)
+                .and_then(|_| parse_general_jest_fn_call(ctx.file, PossibleJestNode::new(node)))
                 .filter(|it| it.kind == JestFnKind::General(JestGeneralFnKind::Hook))
                 .map(|it| it.name);
             // Most calls are not in a scope that has a hook.
@@ -191,7 +209,9 @@ pub(crate) mod require_hook {
         pub(crate) fn run_once<'a>(&self, ctx: &Ctx<'a, '_>) {
             let file = ctx.file;
             self.check_block_body(file.body(), ctx);
-            if !file.mentions_any(&["describe", "fdescribe", "xdescribe", "suite"]) {
+            const DESCRIBE: [u32; 4] =
+                mention_bits(["describe", "fdescribe", "xdescribe", "suite"]);
+            if !mentions_any(file, &DESCRIBE) {
                 return;
             }
             for node in file.exprs_of_kind(ExprTag::Call) {
@@ -214,7 +234,7 @@ pub(crate) mod require_hook {
                 match stmt.kind() {
                     StmtKind::Expr(expr) if !expr.is_parenthesized() && !expr.is_chain_root() => {
                         if let Some(call_expr) = expr.as_call()
-                            && !self.is_allowed(&get_node_name(call_expr.callee()))
+                            && !self.is_allowed(&get_node_name_vec(call_expr.callee()))
                         {
                             ctx.report(expr, USE_HOOK);
                         }
@@ -236,10 +256,15 @@ pub(crate) mod require_hook {
             }
         }
 
-        /// `name`: the names of what is called, with dots.
-        fn is_allowed(&self, name: &[u8]) -> bool {
+        /// `names`: the names of what is called, which are looked at with dots between them.
+        fn is_allowed(&self, names: &[&[u8]]) -> bool {
+            let first = names.first().copied().unwrap_or_default();
+            let is_member_of = |object: &[u8]| match first.strip_prefix(object) {
+                Some(rest) => rest.first().map_or(names.len() > 1, |it| *it == b'.'),
+                None => false,
+            };
             matches!(
-                strings::split(name, b".").next(),
+                strings::split(first, b".").next(),
                 Some(
                     b"afterAll"
                         | b"afterEach"
@@ -251,12 +276,14 @@ pub(crate) mod require_hook {
                         | b"it"
                         | b"test"
                 )
-            ) || name.starts_with(b"jest.")
-                || name.starts_with(b"vi.")
-                || self
-                    .allowed_function_calls
-                    .iter()
-                    .any(|it| it.as_bytes() == name)
+            ) || is_member_of(b"jest")
+                || is_member_of(b"vi")
+                || !self.allowed_function_calls.is_empty() && {
+                    let name = names.join(&b"."[..]);
+                    self.allowed_function_calls
+                        .iter()
+                        .any(|it| it.as_bytes() == name)
+                }
         }
     }
 }

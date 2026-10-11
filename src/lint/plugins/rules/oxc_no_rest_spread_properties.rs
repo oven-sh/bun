@@ -24,7 +24,7 @@ impl Rule for NoRestSpreadProperties {
 
     // Objects are far fewer than properties.
     fn expr<'a>(&self, object: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Object(properties) = object.kind() else {
+        let Some(properties) = object.as_object() else {
             return;
         };
         let mut is_target = None;

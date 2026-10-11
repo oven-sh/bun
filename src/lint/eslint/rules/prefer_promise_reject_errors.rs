@@ -34,11 +34,12 @@ impl PreferPromiseRejectErrors {
 
     /// `Promise.reject(..)`
     fn check_call<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Call(call) = e.kind() else {
+        let Some(call) = e.as_call() else {
             return;
         };
         let callee = call.callee();
-        if ast_utils::is_specific_member_access(callee, Some("Promise"), Some("reject"))
+        if callee.object().and_then(Expr::as_ident) == Some(cx.state)
+            && ast_utils::is_specific_member_access(callee, Some("Promise"), Some("reject"))
             && ast_utils::member_object(callee).is_some_and(is_promise)
         {
             self.check_reject_call(e, call, cx);
@@ -47,11 +48,11 @@ impl PreferPromiseRejectErrors {
 
     /// `new Promise((resolve, reject) => ..)`: the calls of `reject`.
     fn check_new<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::New(construction) = e.kind() else {
+        let Some(construction) = e.as_call_like() else {
             return;
         };
         let callee = construction.callee();
-        if !callee.is_ident("Promise") {
+        if callee.as_ident() != Some(cx.state) {
             return;
         }
         let Some(executor) = construction.args().first().and_then(ast_utils::as_function) else {
@@ -113,7 +114,8 @@ impl PreferPromiseRejectErrors {
 impl Rule for PreferPromiseRejectErrors {
     const META: Meta = Meta::eslint("prefer-promise-reject-errors", Kind::Suggestion);
     const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::New]);
-    type State<'a> = ();
+    /// `Promise`
+    type State<'a> = Name<'a>;
 
     fn new(options: &Options) -> Self {
         PreferPromiseRejectErrors {
@@ -121,8 +123,15 @@ impl Rule for PreferPromiseRejectErrors {
         }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("Promise").then_some(())
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        match file.mentions("reject") {
+            true => On::new().exprs(&[ExprTag::Call, ExprTag::New]),
+            false => On::new().exprs(&[ExprTag::New]),
+        }
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Name<'a>> {
+        file.mentions("Promise").then(|| file.name_of("Promise"))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

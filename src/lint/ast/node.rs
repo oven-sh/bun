@@ -253,6 +253,20 @@ impl<'a> Node<'a> {
     }
 
     pub(super) fn parent_of_neither_expr_nor_stmt(self) -> Node<'a> {
+        match self.file().hides_casts {
+            true => self.parent_where_casts_are_hidden(),
+            false => self.parent_of_any(),
+        }
+    }
+
+    #[inline(never)]
+    fn parent_where_casts_are_hidden(self) -> Node<'a> {
+        self.parent_of_any()
+    }
+
+    /// What few nodes need is in functions of its own, so that where no casts are hidden this one calls nothing.
+    #[inline(always)]
+    fn parent_of_any(self) -> Node<'a> {
         let file = self.file();
         let (hir, bound) = (&file.hir, &file.bound);
         let stmt = |s: Option<hir::StmtId>| match s {
@@ -265,8 +279,6 @@ impl<'a> Node<'a> {
             }
             _ => Node::File(file),
         };
-        let unpack =
-            |parent: Option<&Packed>| parent.map_or(Node::File(file), |it| it.unpack(file));
         match self {
             Node::File(_) => self,
             Node::Expr(e) => e.parent(),
@@ -276,11 +288,7 @@ impl<'a> Node<'a> {
                 Some(&PatParent::Param(p)) => Node::Param(Param::new(file, p)),
                 Some(&PatParent::Prop(_, prop)) => Node::PatProp(PatProp::new(file, prop)),
                 Some(&PatParent::Elem(_, elem)) => Node::PatElem(PatElem::new(file, elem)),
-                // The binder records none for the `this` of a `this` parameter.
-                Some(PatParent::None) | None => match file.parents().of_this(p.id()) {
-                    Some(param) => Node::Param(Param::new(file, param)),
-                    None => Node::File(file),
-                },
+                Some(PatParent::None) | None => self.parent_that_the_binder_has_not(),
             },
             Node::PatProp(p) => owner_of_pattern(p.value().id()),
             Node::PatElem(e) => owner_of_pattern(
@@ -302,8 +310,8 @@ impl<'a> Node<'a> {
                 Some(&MemberOwner::TypeLiteral(t)) => Node::Type(TypeNode::new(file, t)),
                 Some(MemberOwner::None) | None => Node::File(file),
             },
-            Node::Prop(p) if file.is_import_attribute(p.id()) => {
-                file.parents().of_import_attribute(file, p.id())
+            Node::Prop(_) if !hir.import_attributes.is_empty() => {
+                self.parent_that_the_binder_has_not()
             }
             Node::Prop(p) => match bound.prop_owner.get(p.id().idx()) {
                 Some(&owner) if owner.is_some() => Node::Expr(Expr::new(file, owner)),
@@ -317,9 +325,34 @@ impl<'a> Node<'a> {
             }
             Node::ImportSpec(s) => Node::Stmt(s.import().stmt()),
             Node::ExportSpec(s) => Node::Stmt(s.export().stmt()),
+            Node::Type(_) | Node::TypeParam(_) | Node::TupleElem(_) => {
+                self.parent_that_the_binder_has_not()
+            }
+        }
+    }
+
+    /// The parent of type syntax, of the `this` of a `this` parameter, and of a property in a file with import attributes.
+    #[inline(never)]
+    fn parent_that_the_binder_has_not(self) -> Node<'a> {
+        let file = self.file();
+        let unpack =
+            |parent: Option<&Packed>| parent.map_or(Node::File(file), |it| it.unpack(file));
+        match self {
             Node::Type(t) => unpack(file.parents().types.get(t.id().idx())),
             Node::TypeParam(p) => unpack(file.parents().type_params.get(p.id().idx())),
             Node::TupleElem(e) => unpack(file.parents().tuple_elems.get(e.id().idx())),
+            Node::Pat(p) => match file.parents().of_this(p.id()) {
+                Some(param) => Node::Param(Param::new(file, param)),
+                None => Node::File(file),
+            },
+            Node::Prop(p) if file.is_import_attribute(p.id()) => {
+                file.parents().of_import_attribute(file, p.id())
+            }
+            Node::Prop(p) => match file.bound.prop_owner.get(p.id().idx()) {
+                Some(&owner) if owner.is_some() => Node::Expr(Expr::new(file, owner)),
+                _ => Node::File(file),
+            },
+            _ => Node::File(file),
         }
     }
 
@@ -370,13 +403,14 @@ impl<'a> Expr<'a> {
                     return Node::Prop(Prop::new(file, p));
                 }
                 Some(&Parent::Stmt(s))
-                    if !matches!(
-                        file.hir.stmts.get(s.idx()),
-                        None | Some(hir::Stmt {
+                    if match file.hir.stmts.get(s.idx()) {
+                        None
+                        | Some(hir::Stmt {
                             kind: hir::StmtKind::Expr(_),
                             ..
-                        })
-                    ) =>
+                        }) => is_in_no_type && file.is_plainly_no_wrapper(s),
+                        Some(_) => true,
+                    } =>
                 {
                     return Node::Stmt(Stmt::new(file, s));
                 }
@@ -390,6 +424,7 @@ impl<'a> Expr<'a> {
         self.parent_in_rare_cases()
     }
 
+    #[inline(never)]
     fn parent_in_rare_cases(self) -> Node<'a> {
         let file = self.file;
         let (hir, bound) = (&file.hir, &file.bound);
@@ -763,6 +798,23 @@ impl Parents {
 }
 
 impl File<'_> {
+    /// Whether it shows from the kind of its parent that the expression statement `id` is not a [wrapper](Stmt::is_wrapper).
+    #[inline]
+    fn is_plainly_no_wrapper(&self, id: hir::StmtId) -> bool {
+        let Some(&Parent::Stmt(parent)) = self.bound.stmt_parent.get(id.idx()) else {
+            return true;
+        };
+        match self.hir.stmts.get(parent.idx()).map(|it| it.kind) {
+            Some(
+                hir::StmtKind::For { .. }
+                | hir::StmtKind::ForIn { .. }
+                | hir::StmtKind::ForOf { .. },
+            ) => false,
+            Some(hir::StmtKind::Block(_)) => self.hir.with_bodies.is_empty(),
+            _ => true,
+        }
+    }
+
     #[inline]
     pub(super) fn parents(&self) -> &Parents {
         self.lazy.parents.get_or_init(|| Parents::new(self))

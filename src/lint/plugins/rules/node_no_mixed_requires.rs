@@ -39,7 +39,7 @@ impl Rule for NoMixedRequires {
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        let StmtKind::Var(declarations) = stmt.kind() else {
+        let Some(declarations) = stmt.as_var() else {
             return;
         };
         if declarations.len() < 2 {

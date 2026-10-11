@@ -1,5 +1,5 @@
 use crate::jest::{self, Ctx};
-use crate::jest_hooks::{HOOKS, prefer_hooks_in_order};
+use crate::jest_hooks::{mentions_hook, prefer_hooks_in_order};
 use bun_lint::prelude::*;
 
 /// Ensures that hooks are in the order that they are called in.
@@ -15,7 +15,7 @@ impl<const VITEST: bool> Rule for PreferHooksInOrder<VITEST> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions_any(&HOOKS).then_some(())
+        mentions_hook(file).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

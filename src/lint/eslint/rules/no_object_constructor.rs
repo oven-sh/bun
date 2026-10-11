@@ -50,10 +50,10 @@ impl Rule for NoObjectConstructor {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let (ExprKind::Call(call) | ExprKind::New(call)) = e.kind() else {
+        let Some(call) = e.as_call().or_else(|| e.as_new()) else {
             return;
         };
-        if !call.callee().is_ident("Object") || !call.args().is_empty() {
+        if !call.args().is_empty() || !call.callee().is_ident("Object") {
             return;
         }
         if cx.file().global(b"Object").is_none() || Node::Expr(e).scope().resolve("Object").is_some() {

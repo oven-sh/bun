@@ -45,8 +45,8 @@ impl Rule for MaxNestedCalls {
 
 fn enclosing_call<'a>(child: Node<'a>, parent: Node<'a>) -> Option<Option<Expr<'a>>> {
     match parent {
-        // Calls inside a new scope are counted independently.
-        Node::Func(_) | Node::Class(_) => Some(None),
+        // Calls inside a new scope are counted independently. A statement is in one, or in none.
+        Node::Func(_) | Node::Class(_) | Node::Stmt(_) | Node::VarDecl(_) => Some(None),
         Node::Expr(e) => match e.tag() {
             ExprTag::Jsx => Some(None),
             ExprTag::Call | ExprTag::New if e.callee().map(Node::Expr) != Some(child) => Some(Some(e)),

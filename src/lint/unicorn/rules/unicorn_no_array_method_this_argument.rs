@@ -22,16 +22,23 @@ impl Rule for NoArrayMethodThisArgument {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(call_expr) = e.as_call().filter(|it| matches!(it.args().len(), 2 | 3) && !it.is_optional()) else {
+        let Some(call_expr) = e.as_call() else {
             return;
         };
         let arguments = call_expr.args();
+        let is_method = match arguments.len() {
+            2 => is_method_call(call_expr, None, Some(&METHODS), None, None),
+            3 => is_method_call(call_expr, Some(&["Array"]), Some(&["from", "fromAsync"]), None, None),
+            _ => false,
+        };
+        if !is_method || call_expr.is_optional() {
+            return;
+        }
         let is_spread = |it: Expr| it.tag() == ExprTag::Spread;
         match (arguments.first(), arguments.get(1), arguments.get(2)) {
             // `array.map(callback, thisArgument)`
             (Some(callback), Some(this_argument), None) => {
-                if is_method_call(call_expr, None, Some(&METHODS), None, None)
-                    && !is_node_not_function(callback)
+                if !is_node_not_function(callback)
                     && !is_spread(this_argument)
                     && !does_expr_match_any_path(call_expr.callee(), IGNORED)
                 {
@@ -40,8 +47,7 @@ impl Rule for NoArrayMethodThisArgument {
             }
             // `Array.from(iterable, callback, thisArgument)`
             (Some(iterable), Some(callback), Some(this_argument)) => {
-                if is_method_call(call_expr, Some(&["Array"]), Some(&["from", "fromAsync"]), None, None)
-                    && !as_member_expression(call_expr.callee()).is_some_and(Expr::is_optional)
+                if !as_member_expression(call_expr.callee()).is_some_and(Expr::is_optional)
                     && !is_spread(iterable)
                     && !is_spread(this_argument)
                     && !is_node_not_function(callback)

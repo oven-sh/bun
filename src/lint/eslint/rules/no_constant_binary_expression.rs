@@ -75,12 +75,13 @@ fn is_constant_boolean_call(call: Call<'_>) -> bool {
 
 /// ESLint's `isNullOrUndefined` of this rule, which knows that `undefined` can be redefined.
 fn is_null_or_undefined(e: Expr<'_>) -> bool {
-    match e.kind() {
-        _ if oxlint_is_hidden_by_parentheses(e) => false,
-        ExprKind::Null | ExprKind::Unary { op: UnOp::Void, .. } => true,
-        ExprKind::Ident(_) => is_undefined(e),
+    let is_one = match e.tag() {
+        ExprTag::Null => true,
+        ExprTag::Unary => e.unary_op() == Some(UnOp::Void),
+        ExprTag::Ident => is_undefined(e),
         _ => false,
-    }
+    };
+    is_one && !oxlint_is_hidden_by_parentheses(e)
 }
 
 /// ESLint's `hasConstantNullishness`: `e` is always nullish or never. With `non_nullish`, never.
@@ -123,6 +124,9 @@ fn has_constant_nullishness(mut e: Expr<'_>, mut non_nullish: bool) -> bool {
 
 /// ESLint's `isStaticBoolean`: `e` is a boolean that never changes.
 fn is_static_boolean(e: Expr<'_>) -> bool {
+    if !matches!(e.tag(), ExprTag::True | ExprTag::False | ExprTag::Call | ExprTag::Unary) {
+        return false;
+    }
     match e.kind() {
         _ if oxlint_is_hidden_by_parentheses(e) => false,
         ExprKind::True | ExprKind::False => true,
@@ -213,6 +217,21 @@ fn has_constant_strict_boolean_comparison(mut e: Expr<'_>) -> bool {
 
 /// ESLint's `isAlwaysNew`: `e` always results in a newly constructed object.
 fn is_always_new(e: Expr<'_>) -> bool {
+    if matches!(
+        e.tag(),
+        ExprTag::Ident
+            | ExprTag::Dot
+            | ExprTag::Index
+            | ExprTag::Call
+            | ExprTag::Unary
+            | ExprTag::String
+            | ExprTag::Number
+            | ExprTag::Null
+            | ExprTag::True
+            | ExprTag::False
+    ) {
+        return false;
+    }
     // All that it can be the value of.
     let mut open: SmallVec<[Expr<'_>; 4]> = SmallVec::new();
     open.push(e);
@@ -247,8 +266,60 @@ fn is_constant_operand(a: Expr<'_>, b: Expr<'_>, is_strict: bool) -> bool {
             })
 }
 
+/// Whether `is_constant` plainly does not hold for `e`, in whatever position: by what it is, if it is no `Binary`.
+fn is_variable_operand(mut e: Expr<'_>) -> bool {
+    while e.unary_op() == Some(UnOp::Not)
+        && let Some(operand) = e.operand()
+    {
+        e = operand;
+    }
+    match e.tag() {
+        ExprTag::Dot | ExprTag::Index | ExprTag::This => true,
+        ExprTag::Ident => !e.is_ident("undefined"),
+        ExprTag::Call => !e.callee().is_some_and(|it| it.is_ident("Boolean")),
+        _ => false,
+    }
+}
+
+/// The same, also by an operand of an operator that computes.
+fn is_variable_result(e: Expr<'_>) -> bool {
+    match e.binary_op() {
+        None => is_variable_operand(e),
+        Some(BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma) => false,
+        Some(_) => e.left().is_some_and(is_variable_operand) || e.right().is_some_and(is_variable_operand),
+    }
+}
+
+/// The same, also by both operands of a logical operator, down the left operands.
+pub(super) fn is_variable(mut e: Expr<'_>) -> bool {
+    while let (Some(op), Some(left), Some(right)) = (e.binary_op(), e.left(), e.right()) {
+        match op {
+            BinOp::Comma => return false,
+            BinOp::And | BinOp::Or | BinOp::Nullish if !is_variable_result(right) => return false,
+            BinOp::And | BinOp::Or | BinOp::Nullish => {}
+            _ if is_variable_operand(right) => return true,
+            _ => {}
+        }
+        e = left;
+    }
+    is_variable_operand(e)
+}
+
+/// The same for the left operand of each link of a chain, of which it does not go down the whole.
+fn is_variable_link(e: Expr<'_>) -> bool {
+    match e.binary_op() {
+        Some(BinOp::And | BinOp::Or | BinOp::Nullish) => {
+            e.left().is_some_and(is_variable_result) && e.right().is_some_and(is_variable_result)
+        }
+        _ => is_variable_result(e),
+    }
+}
+
 /// ESLint's `isStaticLiteral`.
 fn is_static_literal(e: Expr<'_>) -> bool {
+    if matches!(e.tag(), ExprTag::Dot | ExprTag::Index | ExprTag::Call) {
+        return false;
+    }
     let e = inner(e);
     match e.kind() {
         ExprKind::Unary {
@@ -263,7 +334,19 @@ fn is_static_literal(e: Expr<'_>) -> bool {
 
 impl Rule for NoConstantBinaryExpression {
     const META: Meta = Meta::eslint("no-constant-binary-expression", Kind::Problem).recommended();
-    const ON: On = On::new().exprs(&[ExprTag::Binary]);
+    const ON: On = On::new().binaries(&[
+        BinOp::And,
+        BinOp::Or,
+        BinOp::Nullish,
+        BinOp::EqEq,
+        BinOp::NotEq,
+        BinOp::EqEqEq,
+        BinOp::NotEqEq,
+        BinOp::Lt,
+        BinOp::Le,
+        BinOp::Gt,
+        BinOp::Ge,
+    ]);
     type State<'a> = Constants;
 
     fn new(options: &Options) -> Self {
@@ -276,37 +359,53 @@ impl Rule for NoConstantBinaryExpression {
         Some(Constants::default())
     }
 
-    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Binary { op, left, right } = e.kind() else {
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        let on = On::new().binaries(&[
+            BinOp::And,
+            BinOp::Or,
+            BinOp::Nullish,
+            BinOp::EqEq,
+            BinOp::NotEq,
+            BinOp::EqEqEq,
+            BinOp::NotEqEq,
+        ]);
+        // It is on in oxlint unless the option says otherwise.
+        match self.check_relational_comparisons.unwrap_or_else(|| file.language().is_oxlint) {
+            true => on.binaries(&[BinOp::Lt, BinOp::Le, BinOp::Gt, BinOp::Ge]),
+            false => on,
+        }
+    }
+
+    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let (Some(op), Some(left), Some(right)) = (e.binary_op(), e.left(), e.right()) else {
             return;
         };
-        let operator = bin_op_text(op);
         // oxlint points at the whole.
         let (left_place, right_place) = if cx.language().is_oxlint { (e, e) } else { (left, right) };
         match op {
             BinOp::And | BinOp::Or => {
-                if is_constant_in(left, true, &mut cx.state) {
+                if !is_variable_link(left) && is_constant_in(left, true, &mut cx.state) {
                     cx.report(left_place, CONSTANT_SHORT_CIRCUIT)
                         .data("property", "truthiness")
-                        .data("operator", operator);
+                        .data("operator", bin_op_text(op));
                 }
             }
             BinOp::Nullish => {
-                if has_constant_nullishness(left, false) {
+                if !matches!(left.tag(), ExprTag::Dot | ExprTag::Index) && has_constant_nullishness(left, false) {
                     cx.report(left_place, CONSTANT_SHORT_CIRCUIT)
                         .data("property", "nullishness")
-                        .data("operator", operator);
+                        .data("operator", bin_op_text(op));
                 }
             }
             BinOp::EqEq | BinOp::NotEq | BinOp::EqEqEq | BinOp::NotEqEq => {
                 let is_strict = matches!(op, BinOp::EqEqEq | BinOp::NotEqEq);
                 if is_constant_operand(left, right, is_strict) {
                     cx.report(right_place, CONSTANT_BINARY_OPERAND)
-                        .data("operator", operator)
+                        .data("operator", bin_op_text(op))
                         .data("otherSide", "left");
                 } else if is_constant_operand(right, left, is_strict) {
                     cx.report(left_place, CONSTANT_BINARY_OPERAND)
-                        .data("operator", operator)
+                        .data("operator", bin_op_text(op))
                         .data("otherSide", "right");
                 } else if is_strict {
                     if is_always_new(left) {
@@ -320,12 +419,8 @@ impl Rule for NoConstantBinaryExpression {
                 }
             }
             BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
-                // It is on in oxlint unless the option says otherwise.
-                if self.check_relational_comparisons.unwrap_or_else(|| cx.language().is_oxlint)
-                    && is_static_literal(left)
-                    && is_static_literal(right)
-                {
-                    cx.report(e, CONSTANT_RELATIONAL_COMPARISON).data("operator", operator);
+                if is_static_literal(left) && is_static_literal(right) {
+                    cx.report(e, CONSTANT_RELATIONAL_COMPARISON).data("operator", bin_op_text(op));
                 }
             }
             _ => {}

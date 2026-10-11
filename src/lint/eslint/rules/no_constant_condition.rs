@@ -1,3 +1,4 @@
+use super::no_constant_binary_expression::is_variable;
 use bun_lint::prelude::*;
 
 /// Disallow constant expressions in conditions.
@@ -24,6 +25,10 @@ fn has_yield_from(statement: Stmt, from: u32) -> bool {
         .is_some_and(|func| func.yields().any(|it| within.contains(it.span())))
 }
 
+fn is_constant(test: Expr) -> bool {
+    !is_variable(test) && ast_utils::is_constant(test, true)
+}
+
 /// For oxlint the parentheses around a test are part of it.
 fn place(test: Expr) -> Span {
     if test.file().language().is_oxlint { test.outer_span() } else { test.span() }
@@ -45,7 +50,7 @@ impl NoConstantCondition {
         };
         // oxlint looks for a `yield` only with the default option.
         let looks_for_yield = !cx.language().is_oxlint || self.check_loops == CheckLoops::AllExceptWhileTrue;
-        if ast_utils::is_constant(test, true) && !(looks_for_yield && has_yield_from(statement, from)) {
+        if is_constant(test) && !(looks_for_yield && has_yield_from(statement, from)) {
             cx.report(place(test), UNEXPECTED);
         }
     }
@@ -79,7 +84,7 @@ impl Rule for NoConstantCondition {
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let ExprKind::Cond { test, .. } = e.kind()
-            && ast_utils::is_constant(test, true)
+            && is_constant(test)
         {
             cx.report(place(test), UNEXPECTED);
         }
@@ -88,8 +93,8 @@ impl Rule for NoConstantCondition {
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
         match statement.tag() {
             StmtTag::If => {
-                if let StmtKind::If { test, .. } = statement.kind()
-                    && ast_utils::is_constant(test, true)
+                if let Some((test, ..)) = statement.as_if()
+                    && is_constant(test)
                 {
                     cx.report(place(test), UNEXPECTED);
                 }

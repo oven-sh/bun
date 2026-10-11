@@ -8,6 +8,8 @@ pub struct NoWarningComments {
     is_at_start: bool,
     /// What can be before them at the start beside whitespace, without capitals.
     decoration: Vec<u8>,
+    /// What each starts with, without capitals, if they are looked for at the start and none takes a regular expression.
+    first_bytes: Option<Vec<u8>>,
 }
 
 struct Term {
@@ -116,6 +118,25 @@ impl NoWarningComments {
         true
     }
 
+    /// Whether after `/^[\s<decoration>]*/iu` there can be a term in `value`, by its first byte.
+    fn may_start_with_a_term(&self, first_bytes: &[u8], value: &[u8]) -> bool {
+        let mut rest = value;
+        while let Some(first) = rest.first() {
+            if !first.is_ascii() || first_bytes.contains(&first.to_ascii_lowercase()) {
+                return true;
+            }
+            let after_decoration = |c| text::strip_prefix_ignoring_case(rest, std::slice::from_ref(c));
+            rest = match strings::js_whitespace_len(rest) {
+                0 => match self.decoration.iter().find_map(after_decoration) {
+                    Some(rest) => rest,
+                    None => return false,
+                },
+                len => rest.get(len..).unwrap_or_default(),
+            };
+        }
+        false
+    }
+
     fn has(&self, term: &Term, value: &[u8]) -> bool {
         match &term.matcher {
             Matcher::Ascii(term) if self.is_at_start => self.starts_with(term, value),
@@ -157,10 +178,16 @@ impl Rule for NoWarningComments {
             true => Some(Matcher::Ascii(term.to_ascii_lowercase())),
             false => Some(Matcher::Pattern(Box::new(convert_to_reg_exp(term)?))),
         };
+        let terms: Vec<Term> = (terms.iter().map(|term| term.as_bytes()))
+            .filter_map(|term| Some(Term { text: term.to_vec(), matcher: matcher(term)? }))
+            .collect();
+        let first_byte = |term: &Term| match &term.matcher {
+            Matcher::Ascii(term) if is_at_start => term.first().copied(),
+            _ => None,
+        };
         NoWarningComments {
-            terms: (terms.iter().map(|term| term.as_bytes()))
-                .filter_map(|term| Some(Term { text: term.to_vec(), matcher: matcher(term)? }))
-                .collect(),
+            first_bytes: terms.iter().map(first_byte).collect(),
+            terms,
             is_at_start,
             decoration: decoration.to_ascii_lowercase(),
         }
@@ -172,6 +199,9 @@ impl Rule for NoWarningComments {
                 continue;
             }
             let value = comment.comment_value();
+            if (self.first_bytes.as_ref()).is_some_and(|it| !self.may_start_with_a_term(it, value)) {
+                continue;
+            }
             let mut matches = self.terms.iter().filter(|term| self.has(term, value)).peekable();
             if matches.peek().is_none() || ast_utils::is_directive_comment(&comment) && is_self_config(value) {
                 continue;

@@ -22,8 +22,8 @@ pub struct State<'a> {
 
 impl Rule for NoUselessUndefined {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-useless-undefined", Kind::Suggestion).fixable(Fixable::Code);
-    const ON: On = On::new().exprs(&[ExprTag::Ident, ExprTag::Call]);
-    type State<'a> = Option<State<'a>>;
+    const ON: On = On::new().exprs(&[ExprTag::Ident]);
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -33,39 +33,27 @@ impl Rule for NoUselessUndefined {
         }
     }
 
-    fn narrow<'a>(&self, _: &'a File<'a>) -> On {
-        let on = On::new().exprs(&[ExprTag::Ident]);
-        if self.check_arguments { on.exprs(&[ExprTag::Call]) } else { on }
-    }
-
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         if !file.mentions("undefined") {
             return None;
         }
-        Some(Some(State {
+        Some(State {
             undefined: file.name_of("undefined"),
             return_types: AncestorMemo::default(),
             first_optional_parameters: FxHashMap::default(),
-        }))
+        })
     }
 
     fn expr<'a>(&self, expr: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        match expr.tag() {
-            ExprTag::Ident => self.check_identifier(expr, cx),
-            ExprTag::Call => check_call(self, expr, cx),
-            _ => {}
+        if expr.as_ident() == Some(cx.state.undefined) {
+            self.check_identifier(expr, cx);
         }
     }
 }
 
 impl NoUselessUndefined {
     fn check_identifier<'a>(&self, undefined_literal: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let Some(state) = &mut cx.state else {
-            return;
-        };
-        if undefined_literal.as_ident() != Some(state.undefined) {
-            return;
-        }
+        let state = &mut cx.state;
         let end = undefined_literal.span().end;
         let is_it = |e: Option<Expr<'a>>| e == Some(undefined_literal);
         // What is replaced, and by what.
@@ -75,6 +63,10 @@ impl NoUselessUndefined {
             // `yield undefined`
             Node::Expr(yield_expr) if matches!(yield_expr.kind(), ExprKind::Yield { star: false, .. }) => {
                 (Replaced::Span(yield_expr.span()), "yield")
+            }
+            // `foo(undefined)`
+            Node::Expr(call) if self.check_arguments && call.tag() == ExprTag::Call => {
+                return check_call(call, undefined_literal, cx);
             }
             // `() => undefined`
             Node::Func(arrow) if self.check_arrow_function_body && matches!(arrow.body(), FnBody::Expr(_)) => {
@@ -184,12 +176,16 @@ fn should_ignore(callee: Expr) -> bool {
     !callee.is_parenthesized() && (name.bytes().starts_with(b"set") || name.is_any(&FUNCTION_NAMES))
 }
 
-fn check_call<'a>(_: &NoUselessUndefined, e: Expr<'a>, cx: &mut Cx<'a, NoUselessUndefined>) {
-    let (Some(call_expr), Some(state)) = (e.as_call(), &cx.state) else {
+/// `e`: a call that an `undefined` is directly in. It is looked at for the last argument only.
+fn check_call<'a>(e: Expr<'a>, undefined_literal: Expr<'a>, cx: &Cx<'a, NoUselessUndefined>) {
+    let Some(call_expr) = e.as_call() else {
         return;
     };
-    let undefined = state.undefined;
+    let undefined = cx.state.undefined;
     let arguments = call_expr.args();
+    if arguments.last() != Some(undefined_literal) {
+        return;
+    }
     let undefined_count = arguments.iter().rev().take_while(|it| it.as_ident() == Some(undefined) && !it.is_parenthesized()).count();
     if undefined_count == 0 || should_ignore(call_expr.callee()) {
         return;

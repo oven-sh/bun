@@ -4,7 +4,7 @@ use bun_lint_oxlint::ast_util::{
 };
 use crate::react::{
     Returns, component_wrapper_functions, expression_returns, find_innermost_function_with_jsx, function_returns,
-    is_es6_component, is_hoc_call, react_version,
+    is_create_element_call, is_es6_component, is_hoc_call, react_version,
 };
 use crate::util_ast::unwrap_ts_as_expression;
 use crate::util_component_util::{Pragmas, is_es5_component};
@@ -70,11 +70,20 @@ impl Rule for DisplayName {
         if !file.language().is_oxlint {
             return (may_have_context_objects || Components::may_have_any(file)).then_some(());
         }
-        let names = ["createElement", "createClass", "createReactClass", "memo", "forwardRef"];
-        (file.has_exprs([ExprTag::Jsx])
-            || file.mentions_any(&names)
-            || may_have_context_objects
-            || !component_wrapper_functions(file).is_empty())
+        if file.has_exprs([ExprTag::Jsx]) || !component_wrapper_functions(file).is_empty() {
+            return Some(());
+        }
+        // Without JSX it takes a call to make a component or a context.
+        let names = ["createClass", "createReactClass", "memo", "forwardRef"];
+        let makes_one = |call: Call| {
+            callee_name(call).is_some_and(|name| {
+                name.is_any(&names)
+                    || name.is("createElement") && is_create_element_call(call)
+                    || may_have_context_objects && name.is("createContext")
+            })
+        };
+        ((file.mentions("createElement") || file.mentions_any(&names) || may_have_context_objects)
+            && file.exprs_of_kind(ExprTag::Call).filter_map(Expr::as_call).any(makes_one))
         .then_some(())
     }
 

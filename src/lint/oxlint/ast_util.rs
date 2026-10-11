@@ -12,16 +12,31 @@ use bun_lint::prelude::*;
 
 /// `Expression::get_inner_expression`: without the `as T`, `satisfies T`, `!`, `<T>` before and `<T>` after it. It does not look
 /// into a `ChainExpression`: `a?.b!` stays what it is.
+#[inline]
 pub fn get_inner_expression(e: Expr<'_>) -> Expr<'_> {
-    let mut at = e;
-    while matches!(
-        at.tag(),
+    match is_type_wrapper(e) {
+        true => without_type_wrappers(e),
+        false => e,
+    }
+}
+
+#[inline]
+fn is_type_wrapper(e: Expr) -> bool {
+    matches!(
+        e.tag(),
         ExprTag::As
             | ExprTag::AsConst
             | ExprTag::Satisfies
             | ExprTag::NonNull
             | ExprTag::Instantiation
-    ) && !at.is_chain_root()
+    )
+}
+
+#[inline(never)]
+fn without_type_wrappers(e: Expr<'_>) -> Expr<'_> {
+    let mut at = e;
+    while is_type_wrapper(at)
+        && !at.is_chain_root()
         && let Some(operand) = at.operand()
     {
         at = operand;
@@ -30,28 +45,34 @@ pub fn get_inner_expression(e: Expr<'_>) -> Expr<'_> {
 }
 
 /// `e.get_inner_expression()`, if that is not a `ChainExpression`.
+#[inline]
 pub fn get_inner_expression_unless_chain(e: Expr<'_>) -> Option<Expr<'_>> {
     Some(get_inner_expression(e)).filter(|it| !it.is_chain_root())
 }
 
+/// Whether `e` is neither in parentheses nor the whole of an optional chain.
+fn is_plain(e: Expr) -> bool {
+    !e.is_parenthesized() && !e.is_chain_root()
+}
+
 /// `e`, if for oxlint it is of the kind that it is here: it is neither in parentheses nor the whole of an optional
 /// chain.
+#[inline]
 pub fn plain(e: Expr<'_>) -> Option<Expr<'_>> {
-    Some(e).filter(|it| !it.is_parenthesized() && !it.is_chain_root())
+    is_plain(e).then_some(e)
 }
 
 /// What oxc has around `e`, if that is a node here: not parentheses and not a `ChainExpression`.
+#[inline]
 pub fn parent_node(e: Expr<'_>) -> Option<Node<'_>> {
-    (!e.is_parenthesized() && !e.is_chain_root()).then(|| e.parent())
+    is_plain(e).then(|| e.parent())
 }
 
 /// `Expression::as_member_expression`: `e` if it is a `Dot` or an `Index`. What is in parentheses is not, nor is the
 /// whole of an optional chain.
+#[inline]
 pub fn as_member_expression(e: Expr<'_>) -> Option<Expr<'_>> {
-    (matches!(e.tag(), ExprTag::Dot | ExprTag::Index)
-        && !e.is_parenthesized()
-        && !e.is_chain_root())
-    .then_some(e)
+    (matches!(e.tag(), ExprTag::Dot | ExprTag::Index) && is_plain(e)).then_some(e)
 }
 
 /// `Expression::is_null_or_undefined`
@@ -61,61 +82,64 @@ pub fn is_null_or_undefined(e: Expr) -> bool {
 }
 
 /// `Expression::CallExpression`
+#[inline]
 pub fn as_call_expression(e: Expr<'_>) -> Option<Call<'_>> {
-    e.as_call()
-        .filter(|_| !e.is_parenthesized() && !e.is_chain_root())
+    e.as_call().filter(|_| is_plain(e))
 }
 
 /// `Expression::FunctionExpression` or `Expression::ArrowFunctionExpression`
+#[inline]
 pub fn as_function_expression(e: Expr<'_>) -> Option<Func<'_>> {
     e.as_fn().filter(|_| !e.is_parenthesized())
 }
 
 /// `Expression::ObjectExpression`: the properties, if it is an object literal that is not in parentheses.
+#[inline]
 pub fn as_object_expression(e: Expr<'_>) -> Option<List<'_, Prop<'_>>> {
-    match e.kind() {
-        ExprKind::Object(properties) if !e.is_parenthesized() => Some(properties),
-        _ => None,
-    }
+    e.as_object().filter(|_| !e.is_parenthesized())
 }
 
 /// `Expression::is_specific_id`
+#[inline]
 pub fn is_specific_id(e: Expr, name: &str) -> bool {
     get_inner_expression(e).is_ident(name)
 }
 
 /// The value of a string, or of a template without substitutions.
 pub fn static_string(e: Expr<'_>) -> Option<Name<'_>> {
-    match e.kind() {
-        ExprKind::String(value) => Some(value),
-        ExprKind::Template(template) => template.as_static(),
-        _ => None,
+    match e.as_string() {
+        Some(value) => Some(value),
+        None => e.as_template()?.as_static(),
     }
 }
 
 /// `Expression::get_member_expr`: the `Dot` or the `Index` that it is, optional or not.
+#[inline]
 pub fn get_member_expr(e: Expr<'_>) -> Option<Expr<'_>> {
     Some(get_inner_expression(e)).filter(|it| matches!(it.tag(), ExprTag::Dot | ExprTag::Index))
 }
 
+/// The `"b"` of `a["b"]` or the `` `b` `` of `` a[`b`] ``, and its value.
+fn static_index(member: Expr<'_>) -> Option<(Expr<'_>, Name<'_>)> {
+    let index = member.index().filter(|it| !it.is_parenthesized())?;
+    Some((index, static_string(index)?))
+}
+
 /// `MemberExpression::static_property_info`: where the name of the property is written, and the name. Nothing for `a.#b`.
 pub fn static_property_info(member: Expr<'_>) -> Option<(Span, Name<'_>)> {
-    match member.kind() {
-        ExprKind::Dot { name, .. } if !member.is_private_member() => {
-            Some((name.span(), name.name()))
-        }
-        ExprKind::Index { index, .. } if !index.is_parenthesized() => match index.kind() {
-            ExprKind::String(value) => Some((index.span(), value)),
-            ExprKind::Template(template) => Some((index.span(), template.as_static()?)),
-            _ => None,
-        },
-        _ => None,
+    match member.member_name() {
+        Some(name) => (!member.is_private_member()).then(|| (name.span(), name.name())),
+        None => static_index(member).map(|(index, name)| (index.span(), name)),
     }
 }
 
 /// `MemberExpression::static_property_name`
+#[inline]
 pub fn static_property_name(member: Expr<'_>) -> Option<Name<'_>> {
-    static_property_info(member).map(|it| it.1)
+    match member.member_name() {
+        Some(name) => (!member.is_private_member()).then(|| name.name()),
+        None => static_index(member).map(|it| it.1),
+    }
 }
 
 /// `MemberExpression::static_property_name` in full: the name of `a[/b/]` is `/b/`. For where names are compared with
@@ -144,12 +168,14 @@ pub fn is_computed(member: Expr) -> bool {
     member.tag() == ExprTag::Index
 }
 
+#[inline]
 fn has_arg_count(call: Call, min_arg_count: Option<usize>, max_arg_count: Option<usize>) -> bool {
     let count = call.args().len();
     min_arg_count.is_none_or(|min| count >= min) && max_arg_count.is_none_or(|max| count <= max)
 }
 
 /// `objects`: the identifiers that the method is called on. `None`: whatever.
+#[inline]
 pub fn is_method_call(
     call: Call,
     objects: Option<&[&str]>,
@@ -157,12 +183,12 @@ pub fn is_method_call(
     min_arg_count: Option<usize>,
     max_arg_count: Option<usize>,
 ) -> bool {
-    if !has_arg_count(call, min_arg_count, max_arg_count) {
-        return false;
-    }
-    let Some(member) = get_member_expr(call.callee()) else {
-        return false;
-    };
+    has_arg_count(call, min_arg_count, max_arg_count)
+        && get_member_expr(call.callee()).is_some_and(|it| is_method_of(it, objects, methods))
+}
+
+/// Whether the `Dot` or the `Index` `member` is one of `methods` of one of `objects`.
+fn is_method_of(member: Expr, objects: Option<&[&str]>, methods: Option<&[&str]>) -> bool {
     let is_on = |objects: &[&str]| {
         (member
             .object()
@@ -292,14 +318,14 @@ pub fn scope_made_by<'a>(child: Node<'a>, parent: Node<'a>) -> Option<Node<'a>> 
         Node::Class(_) => {
             (!matches!(child, Node::Expr(e) if is_decorator_expression(e))).then_some(parent)
         }
-        Node::Stmt(statement) => match statement.kind() {
-            StmtKind::Block(_)
-            | StmtKind::For { .. }
-            | StmtKind::ForIn { .. }
-            | StmtKind::ForOf { .. }
-            | StmtKind::Module(_)
-            | StmtKind::Enum(_) => Some(parent),
-            StmtKind::With { object, .. } => (Node::Expr(object) != child).then_some(parent),
+        Node::Stmt(statement) => match statement.tag() {
+            StmtTag::For | StmtTag::ForIn | StmtTag::ForOf | StmtTag::Module | StmtTag::Enum => {
+                Some(parent)
+            }
+            StmtTag::Block => match statement.kind() {
+                StmtKind::With { object, .. } => (Node::Expr(object) != child).then_some(parent),
+                _ => Some(parent),
+            },
             _ => None,
         },
         _ => None,

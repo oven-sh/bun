@@ -125,6 +125,9 @@ impl ExplicitFunctionReturnType {
     }
 
     fn check<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if func.return_type().is_some() {
+            return;
+        }
         // oxlint also looks at a function and at a method of a class that have no body.
         let is_oxlint = cx.language().is_oxlint;
         let is_only_declared = is_oxlint
@@ -135,7 +138,7 @@ impl ExplicitFunctionReturnType {
                 }
                 _ => func.kind() == FnKind::Decl,
             };
-        if func.return_type().is_some() || !ast_utils::is_function_with_body(func) && !is_only_declared {
+        if !ast_utils::is_function_with_body(func) && !is_only_declared {
             return;
         }
         // For oxlint a function that is only declared is allowed where a function expression is.

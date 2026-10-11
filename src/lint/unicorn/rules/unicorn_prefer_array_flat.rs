@@ -7,6 +7,7 @@ use crate::unicorn::{
 };
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use smallvec::SmallVec;
 
 /// Prefers `Array#flat()` over legacy techniques to flatten arrays.
 pub struct PreferArrayFlat;
@@ -16,20 +17,32 @@ const PREFER_ARRAY_FLAT: Message = Message::new("", "Prefer Array#flat() over le
 impl Rule for PreferArrayFlat {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-array-flat", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// The methods that it is about, those that the file mentions.
+    type State<'a> = SmallVec<[Name<'a>; 5]>;
 
     fn new(_: &Options) -> Self {
         PreferArrayFlat
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions_any(&["flatMap", "reduce", "concat"]).then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        if !file.mentions_any(&["flatMap", "reduce", "concat"]) {
+            return None;
+        }
+        let methods = ["flatMap", "reduce", "concat", "call", "apply"].into_iter();
+        Some(methods.filter(|it| file.mentions(it)).map(|it| file.name_of(it)).collect())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(call) = e.as_call() else {
             return;
         };
+        let is_candidate = match call.callee().member_name() {
+            Some(method) => cx.state.contains(&method.name()),
+            None => call.callee().tag() != ExprTag::Ident,
+        };
+        if !is_candidate {
+            return;
+        }
         let Some((_, method)) = get_member_expr(call.callee()).and_then(static_property_info) else {
             return;
         };

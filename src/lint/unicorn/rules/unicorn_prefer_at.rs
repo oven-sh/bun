@@ -4,6 +4,7 @@ use bun_lint_oxlint::same_expression::{is_same_expression, is_same_inner_express
 use bun_lint_oxlint::ast_util::{PRECEDENCE_MEMBER, get_precedence};
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
+use smallvec::SmallVec;
 
 /// Prefer the `Array#at()` and `String#at()` methods for index access.
 pub struct PreferAt {
@@ -20,7 +21,8 @@ impl Rule for PreferAt {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "prefer-at", Kind::Suggestion).fixable(Fixable::Code).has_suggestions();
     const ON: On = On::new().exprs(&[ExprTag::Index, ExprTag::Call]);
-    no_state!();
+    /// The methods that it is about, those that the file mentions.
+    type State<'a> = SmallVec<[Name<'a>; 6]>;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -45,16 +47,26 @@ impl Rule for PreferAt {
         on
     }
 
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        let methods = ["charAt", "substring", "pop", "shift", "last", "slice"].into_iter();
+        Some(methods.filter(|it| file.mentions(it)).map(|it| file.name_of(it)).collect())
+    }
+
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.tag() {
             ExprTag::Index => {
-                if !is_assignment_target(e) {
+                // `a[0]`, `a[a.length - 1]`
+                let is_candidate = self.check_all_index_access
+                    || e.index().is_some_and(|it| matches!(inner_tag(it), ExprTag::Number | ExprTag::Binary));
+                if is_candidate && !is_assignment_target(e) {
                     self.handle_computed_member(e, cx);
                 }
             }
             ExprTag::Call => {
                 if let Some(call_expr) = e.as_call()
+                    && call_expr.callee().tag() != ExprTag::Ident
                     && let Some(static_member) = as_static_member(call_expr.callee())
+                    && static_member.member_name().is_some_and(|it| cx.state.contains(&it.name()))
                     && !is_assignment_target(e)
                 {
                     self.check_call_expression(e, call_expr, static_member, cx);
@@ -66,6 +78,16 @@ impl Rule for PreferAt {
 }
 
 type Context<'a> = Cx<'a, PreferAt>;
+
+/// `get_inner_expression(e).tag()`
+fn inner_tag(e: Expr) -> ExprTag {
+    match e.tag() {
+        ExprTag::As | ExprTag::AsConst | ExprTag::Satisfies | ExprTag::NonNull | ExprTag::Instantiation => {
+            get_inner_expression(e).tag()
+        }
+        tag => tag,
+    }
+}
 
 /// `callee.get_member_expr()`, if it is `a.b`.
 fn as_static_member(callee: Expr<'_>) -> Option<Expr<'_>> {

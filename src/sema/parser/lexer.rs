@@ -91,6 +91,97 @@ pub(crate) struct Mark {
     number: f64,
 }
 
+/// What a token starts with, or what is between two.
+#[derive(Copy, Clone)]
+enum First {
+    Blank,
+    LineFeed,
+    CarriageReturn,
+    Name,
+    OpenParen,
+    CloseParen,
+    OpenBrace,
+    CloseBrace,
+    OpenBracket,
+    CloseBracket,
+    Semicolon,
+    Comma,
+    Colon,
+    Tilde,
+    At,
+    Dot,
+    Equals,
+    Quote,
+    Slash,
+    Digit,
+    Exclamation,
+    Question,
+    LessThan,
+    GreaterThan,
+    Plus,
+    Minus,
+    Asterisk,
+    Percent,
+    Ampersand,
+    Bar,
+    Caret,
+    Backtick,
+    Hash,
+    Backslash,
+    NotAscii,
+    Invalid,
+}
+
+/// By byte.
+static FIRST: [First; 256] = {
+    let mut table = [First::Invalid; 256];
+    let mut byte = 0u8;
+    loop {
+        table[byte as usize] = match byte {
+            b' ' | b'\t' | 0x0B | 0x0C => First::Blank,
+            b'\n' => First::LineFeed,
+            b'\r' => First::CarriageReturn,
+            b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' => First::Name,
+            b'(' => First::OpenParen,
+            b')' => First::CloseParen,
+            b'{' => First::OpenBrace,
+            b'}' => First::CloseBrace,
+            b'[' => First::OpenBracket,
+            b']' => First::CloseBracket,
+            b';' => First::Semicolon,
+            b',' => First::Comma,
+            b':' => First::Colon,
+            b'~' => First::Tilde,
+            b'@' => First::At,
+            b'.' => First::Dot,
+            b'=' => First::Equals,
+            b'\'' | b'"' => First::Quote,
+            b'/' => First::Slash,
+            b'0'..=b'9' => First::Digit,
+            b'!' => First::Exclamation,
+            b'?' => First::Question,
+            b'<' => First::LessThan,
+            b'>' => First::GreaterThan,
+            b'+' => First::Plus,
+            b'-' => First::Minus,
+            b'*' => First::Asterisk,
+            b'%' => First::Percent,
+            b'&' => First::Ampersand,
+            b'|' => First::Bar,
+            b'^' => First::Caret,
+            b'`' => First::Backtick,
+            b'#' => First::Hash,
+            b'\\' => First::Backslash,
+            0x80.. => First::NotAscii,
+            _ => First::Invalid,
+        };
+        if byte == u8::MAX {
+            break table;
+        }
+        byte += 1;
+    }
+};
+
 /// The number of leading bytes of `bytes` that are tabs or spaces.
 #[inline(always)]
 fn blank_run(bytes: u8x16) -> u32 {
@@ -106,7 +197,7 @@ fn end_of_indentation(src: &[u8], mut pos: usize) -> usize {
         let len = blank_run(u8x16::from_array(*chunk)) as usize;
         pos += len;
         if len < 16 {
-            break;
+            return pos;
         }
     }
     while matches!(src.get(pos), Some(b'\t' | b' ')) {
@@ -420,65 +511,58 @@ impl<'a> Lexer<'a> {
                 return self.set(T::Eof, src.len(), src.len());
             };
             let next = pos + 1;
-            match byte {
-                b' ' | b'\t' => {
+            match FIRST[usize::from(byte)] {
+                First::Blank => {
                     pos = next;
-                    while matches!(src.get(pos), Some(b' ' | b'\t')) {
-                        pos += 1;
-                    }
                     continue;
                 }
-                b'\n' => {
+                First::LineFeed => {
                     self.newline_before = true;
                     pos = end_of_indentation(src, next);
                     continue;
                 }
-                b'\r' => {
+                First::CarriageReturn => {
                     self.newline_before = true;
                     pos = next;
                     continue;
                 }
-                0x0B | 0x0C => {
-                    pos = next;
-                    continue;
-                }
-                b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' => return self.name(pos),
-                b'(' => self.set(T::OpenParen, pos, next),
-                b')' => self.set(T::CloseParen, pos, next),
-                b'{' => self.set(T::OpenBrace, pos, next),
-                b'}' => self.set(T::CloseBrace, pos, next),
-                b'[' => self.set(T::OpenBracket, pos, next),
-                b']' => self.set(T::CloseBracket, pos, next),
-                b';' => self.set(T::Semicolon, pos, next),
-                b',' => self.set(T::Comma, pos, next),
-                b':' => self.set(T::Colon, pos, next),
-                b'~' => self.set(T::Tilde, pos, next),
-                b'@' => self.set(T::At, pos, next),
-                b'.' => match (at(next), at(next + 1)) {
+                First::Name => return self.name(pos),
+                First::OpenParen => self.set(T::OpenParen, pos, next),
+                First::CloseParen => self.set(T::CloseParen, pos, next),
+                First::OpenBrace => self.set(T::OpenBrace, pos, next),
+                First::CloseBrace => self.set(T::CloseBrace, pos, next),
+                First::OpenBracket => self.set(T::OpenBracket, pos, next),
+                First::CloseBracket => self.set(T::CloseBracket, pos, next),
+                First::Semicolon => self.set(T::Semicolon, pos, next),
+                First::Comma => self.set(T::Comma, pos, next),
+                First::Colon => self.set(T::Colon, pos, next),
+                First::Tilde => self.set(T::Tilde, pos, next),
+                First::At => self.set(T::At, pos, next),
+                First::Dot => match (at(next), at(next + 1)) {
                     (b'0'..=b'9', _) => return self.number(pos),
                     (b'.', b'.') => self.set(T::DotDotDot, pos, pos + 3),
                     _ => self.set(T::Dot, pos, next),
                 },
-                b'=' => match (at(next), at(next + 1)) {
+                First::Equals => match (at(next), at(next + 1)) {
                     (b'=', b'=') if at(pos + 3) == b'=' => return self.same_four_times(pos),
                     (b'=', b'=') => self.set(T::EqualsEqualsEquals, pos, pos + 3),
                     (b'=', _) => self.set(T::EqualsEquals, pos, pos + 2),
                     (b'>', _) => self.set(T::EqualsGreaterThan, pos, pos + 2),
                     _ => self.set(T::Equals, pos, next),
                 },
-                b'\'' | b'"' => return self.string(pos, byte),
-                b'/' => match at(next) {
+                First::Quote => return self.string(pos, byte),
+                First::Slash => match at(next) {
                     b'/' | b'*' => return self.scan_after_comments(pos),
                     b'=' => self.set(T::SlashEquals, pos, pos + 2),
                     _ => self.set(T::Slash, pos, next),
                 },
-                b'0'..=b'9' => return self.number(pos),
-                b'!' => match (at(next), at(next + 1)) {
+                First::Digit => return self.number(pos),
+                First::Exclamation => match (at(next), at(next + 1)) {
                     (b'=', b'=') => self.set(T::ExclamationEqualsEquals, pos, pos + 3),
                     (b'=', _) => self.set(T::ExclamationEquals, pos, pos + 2),
                     _ => self.set(T::Exclamation, pos, next),
                 },
-                b'?' => match (at(next), at(next + 1)) {
+                First::Question => match (at(next), at(next + 1)) {
                     (b'.', after) if !after.is_ascii_digit() => {
                         self.set(T::QuestionDot, pos, pos + 2);
                     }
@@ -486,7 +570,7 @@ impl<'a> Lexer<'a> {
                     (b'?', _) => self.set(T::QuestionQuestion, pos, pos + 2),
                     _ => self.set(T::Question, pos, next),
                 },
-                b'<' => match (at(next), at(next + 1)) {
+                First::LessThan => match (at(next), at(next + 1)) {
                     (b'<', b'<') if at(pos + 3) == b'<' => return self.same_four_times(pos),
                     (b'<', b'=') => self.set(T::LessThanLessThanEquals, pos, pos + 3),
                     (b'<', _) => self.set(T::LessThanLessThan, pos, pos + 2),
@@ -500,18 +584,18 @@ impl<'a> Lexer<'a> {
                     _ => self.set(T::LessThan, pos, next),
                 },
                 // The parser asks for `>=`, `>>` and so on where they can be.
-                b'>' => {
+                First::GreaterThan => {
                     if at(next) == b'>' && src.get(pos..pos + 4) == Some(b">>>>") {
                         return self.same_four_times(pos);
                     }
                     self.set(T::GreaterThan, pos, next);
                 }
-                b'+' => match at(next) {
+                First::Plus => match at(next) {
                     b'+' => self.set(T::PlusPlus, pos, pos + 2),
                     b'=' => self.set(T::PlusEquals, pos, pos + 2),
                     _ => self.set(T::Plus, pos, next),
                 },
-                b'-' => match (at(next), at(next + 1)) {
+                First::Minus => match (at(next), at(next + 1)) {
                     // Only blanks and comments are before it on its line.
                     (b'-', b'>')
                         if self.is_script && (self.newline_before || self.full_start == 0) =>
@@ -522,7 +606,7 @@ impl<'a> Lexer<'a> {
                     (b'=', _) => self.set(T::MinusEquals, pos, pos + 2),
                     _ => self.set(T::Minus, pos, next),
                 },
-                b'*' => match (at(next), at(next + 1)) {
+                First::Asterisk => match (at(next), at(next + 1)) {
                     (b'*', b'=') => self.set(T::AsteriskAsteriskEquals, pos, pos + 3),
                     (b'*', _) => self.set(T::AsteriskAsterisk, pos, pos + 2),
                     (b'=', _) => self.set(T::AsteriskEquals, pos, pos + 2),
@@ -531,38 +615,38 @@ impl<'a> Lexer<'a> {
                     }
                     _ => self.set(T::Asterisk, pos, next),
                 },
-                b'%' => match at(next) {
+                First::Percent => match at(next) {
                     b'=' => self.set(T::PercentEquals, pos, pos + 2),
                     _ => self.set(T::Percent, pos, next),
                 },
-                b'&' => match (at(next), at(next + 1)) {
+                First::Ampersand => match (at(next), at(next + 1)) {
                     (b'&', b'=') => self.set(T::AmpersandAmpersandEquals, pos, pos + 3),
                     (b'&', _) => self.set(T::AmpersandAmpersand, pos, pos + 2),
                     (b'=', _) => self.set(T::AmpersandEquals, pos, pos + 2),
                     _ => self.set(T::Ampersand, pos, next),
                 },
-                b'|' => match (at(next), at(next + 1)) {
+                First::Bar => match (at(next), at(next + 1)) {
                     (b'|', b'|') if at(pos + 3) == b'|' => return self.same_four_times(pos),
                     (b'|', b'=') => self.set(T::BarBarEquals, pos, pos + 3),
                     (b'|', _) => self.set(T::BarBar, pos, pos + 2),
                     (b'=', _) => self.set(T::BarEquals, pos, pos + 2),
                     _ => self.set(T::Bar, pos, next),
                 },
-                b'^' => match at(next) {
+                First::Caret => match at(next) {
                     b'=' => self.set(T::CaretEquals, pos, pos + 2),
                     _ => self.set(T::Caret, pos, next),
                 },
-                b'`' => return self.template(pos, true),
-                b'#' => {
+                First::Backtick => return self.template(pos, true),
+                First::Hash => {
                     let is_first = pos == 0 || pos == 3 && src.starts_with(b"\xEF\xBB\xBF");
                     if is_first && at(next) == b'!' {
                         return self.scan_after_comments(pos);
                     }
                     return self.private_name(pos);
                 }
-                b'\\' => return self.name_slowly(pos, pos),
-                0x80.. => return self.scan_after_comments(pos),
-                _ => return self.invalid_character(Refusal::UnexpectedCharacter, pos),
+                First::Backslash => return self.name_slowly(pos, pos),
+                First::NotAscii => return self.scan_after_comments(pos),
+                First::Invalid => return self.invalid_character(Refusal::UnexpectedCharacter, pos),
             }
             return;
         }
@@ -776,17 +860,24 @@ impl<'a> Lexer<'a> {
                 self.atom = atom;
                 self.set(kind, start, start + len as usize);
             }
-            None => self.new_short_name(start, len as usize, words),
+            None => self.new_short_name(start, len),
         }
     }
 
+    /// The same if it is not at its first place in the table. It has `len` bytes.
     #[cold]
     #[inline(never)]
-    fn new_short_name(&mut self, start: usize, len: usize, words: [u64; 2]) {
-        let text = Text::of_source(self.src, start, start + len);
+    fn new_short_name(&mut self, start: usize, len: u32) {
+        let src = self.src;
+        let Some(chunk) = src.get(start..).and_then(|rest| rest.first_chunk::<16>()) else {
+            return self.name_of_any_length(start);
+        };
+        let end = start + len as usize;
+        let words = crate::names::short_words(chunk, len);
+        let text = Text::of_source(src, start, end);
         let (atom, kind) = self.names.short_elsewhere(words, text, self.atoms);
         self.atom = atom;
-        self.set(kind, start, start + len);
+        self.set(kind, start, end);
     }
 
     /// The same for a name of 16 bytes or more.

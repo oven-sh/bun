@@ -23,6 +23,41 @@ fn has_placeholder(value: &[u8], is_oxlint: bool) -> bool {
     false
 }
 
+/// Where the text has what can be, or be the start of, a `${` in the value of a string: that, or either character written as an
+/// escape, or in JSX as an entity. In ascending order.
+fn find_candidates(file: &File) -> Vec<u32> {
+    let text = file.text();
+    let has_jsx = file.has_exprs([ExprTag::Jsx]);
+    let starts: &[u8] = if has_jsx { b"$\\&" } else { b"$\\" };
+    let (mut found, mut at) = (Vec::new(), 0);
+    while let Some(next) = strings::index_of_any_pos(text, starts, at) {
+        at = next + 1;
+        let is_candidate = match (text.get(next), text.get(at)) {
+            (Some(b'$'), Some(b'{' | b'\\')) => true,
+            (Some(b'$'), Some(b'&')) => has_jsx,
+            (Some(b'\\'), Some(b'$' | b'x' | b'u' | b'0' | b'4')) => true,
+            // The second starts no escape.
+            (Some(b'\\'), Some(b'\\')) => {
+                at += 1;
+                false
+            }
+            (Some(b'&'), Some(after)) => *after == b'#' || after.is_ascii_alphabetic(),
+            _ => false,
+        };
+        if is_candidate {
+            found.push(next as u32);
+        }
+    }
+    found
+}
+
+/// Whether one of `candidates` is in `span`.
+#[inline]
+fn has_candidate(candidates: &[u32], span: Span) -> bool {
+    let next = candidates.partition_point(|at| *at < span.start);
+    candidates.get(next).is_some_and(|at| *at < span.end)
+}
+
 /// Whether what is written at `span` is in quotes, as opposed to backticks.
 fn is_quoted(file: &File, span: Span) -> bool {
     matches!(file.text().get(span.start as usize), Some(b'"' | b'\''))
@@ -30,7 +65,7 @@ fn is_quoted(file: &File, span: Span) -> bool {
 
 /// A name that can be written as a string: in the braces of an import or an export, of a module.
 fn check_ident<'a>(name: Ident<'a>, cx: &mut Cx<'a, NoTemplateCurlyInString>) {
-    if has_placeholder(name.name().bytes(), cx.language().is_oxlint) && name.is_string() {
+    if name.is_string() && has_placeholder(name.name().bytes(), cx.language().is_oxlint) {
         cx.report(name, UNEXPECTED_TEMPLATE_EXPRESSION);
     }
 }
@@ -65,13 +100,30 @@ impl Rule for NoTemplateCurlyInString {
             StmtTag::ImportEquals,
             StmtTag::Module,
         ]);
-    no_state!();
+    /// What [`find_candidates`] returns.
+    type State<'a> = Vec<u32>;
 
     fn new(_: &Options) -> Self {
         NoTemplateCurlyInString
     }
 
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Vec<u32>> {
+        let candidates = find_candidates(file);
+        if candidates.is_empty() {
+            return None;
+        }
+        // Each starts with a `${` of its own: if there are as many, no candidate is in a string.
+        let substitutions = file.exprs_of_kind(ExprTag::Template).map(|e| match e.kind() {
+            ExprKind::Template(template) => template.exprs().len(),
+            _ => 0,
+        });
+        (substitutions.sum::<usize>() != candidates.len()).then_some(candidates)
+    }
+
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if !has_candidate(&cx.state, e.span()) {
+            return;
+        }
         let is_oxlint = cx.language().is_oxlint;
         let is_as_written = is_oxlint && e.is_jsx_attribute_string();
         let value = e.as_string().map(|it| if is_as_written { e.text() } else { it.bytes() });
@@ -113,7 +165,8 @@ impl Rule for NoTemplateCurlyInString {
     }
 
     fn ty<'a>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, Self>) {
-        if matches!(ty.kind(), TypeKind::StringLit(value) if has_placeholder(value.bytes(), cx.language().is_oxlint))
+        if has_candidate(&cx.state, ty.span())
+            && matches!(ty.kind(), TypeKind::StringLit(value) if has_placeholder(value.bytes(), cx.language().is_oxlint))
             && is_quoted(cx.file(), ty.span())
         {
             cx.report(ty, UNEXPECTED_TEMPLATE_EXPRESSION);
@@ -127,7 +180,9 @@ impl Rule for NoTemplateCurlyInString {
     }
 
     fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {
-        check_key(member.key(), cx);
+        if member.flags().contains(Flags::STRING_NAME) {
+            check_key(member.key(), cx);
+        }
     }
 
     fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {

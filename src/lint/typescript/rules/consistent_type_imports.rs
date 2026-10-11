@@ -3,6 +3,7 @@ use bun_lint::prelude::*;
 use bun_lint::utils::ast_utils::{is_closing_brace_token, is_comma_token, is_opening_brace_token};
 use bun_lint::utils::ts_utils::format_word_list;
 use rustc_hash::FxHashMap;
+use std::cell::OnceCell;
 
 /// Enforce consistent usage of type imports.
 pub struct ConsistentTypeImports {
@@ -78,6 +79,26 @@ struct SourceImports<'a> {
     value_import: Option<Import<'a>>,
     /// The first import of values with nothing but named imports.
     value_only_named_import: Option<Import<'a>>,
+}
+
+/// `imports`: all of the file, in the order of the source.
+fn source_imports<'a>(imports: &[Import<'a>]) -> FxHashMap<Name<'a>, SourceImports<'a>> {
+    let mut sources: FxHashMap<Name<'a>, SourceImports<'a>> = FxHashMap::default();
+    for &import in imports {
+        let source_imports = sources.entry(import.spec()).or_default();
+        let has_only_named = import.default().is_none() && import.namespace().is_none();
+        if import.is_type_only() {
+            if has_only_named {
+                source_imports.type_only_named_import.get_or_insert(import);
+            }
+        } else if source_imports.value_only_named_import.is_none() && has_only_named && !import.named().is_empty() {
+            source_imports.value_only_named_import = Some(import);
+            source_imports.value_import = Some(import);
+        } else if import.default().is_some() {
+            source_imports.value_import.get_or_insert(import);
+        }
+    }
+    sources
 }
 
 /// An import of values of which some are only used as types.
@@ -431,28 +452,14 @@ impl ConsistentTypeImports {
         let mut imports = std::mem::take(&mut cx.state.imports);
         utils::sort::sort_unstable_by_key(&mut imports, |import| import.span().start);
 
-        let mut sources: FxHashMap<Name<'a>, SourceImports<'a>> = FxHashMap::default();
         let mut reports: Vec<ReportValueImport<'a>> = Vec::new();
-        for import in imports {
-            let source_imports = sources.entry(import.spec()).or_default();
-            let has_only_named = import.default().is_none() && import.namespace().is_none();
-            if import.is_type_only() {
-                if has_only_named {
-                    source_imports.type_only_named_import.get_or_insert(import);
-                }
-                continue;
-            }
-            if source_imports.value_only_named_import.is_none()
-                && has_only_named
-                && !import.named().is_empty()
-            {
-                source_imports.value_only_named_import = Some(import);
-                source_imports.value_import = Some(import);
-            } else if import.default().is_some() {
-                source_imports.value_import.get_or_insert(import);
-            }
-
-            let scope = Node::Stmt(import.stmt()).scope();
+        let mut top_level_scope = None;
+        for &import in imports.iter().filter(|it| !it.is_type_only()) {
+            let statement = import.stmt();
+            let scope = match statement.parent() {
+                Node::File(_) => *top_level_scope.get_or_insert_with(|| Node::Stmt(statement).scope()),
+                _ => Node::Stmt(statement).scope(),
+            };
             let mut type_specifiers = Vec::new();
             let mut has_value_or_unused_specifiers = false;
             for specifier in specifiers_of(import) {
@@ -478,10 +485,13 @@ impl ConsistentTypeImports {
             }
         }
 
+        // Only a fix asks.
+        let sources = OnceCell::new();
+        let fix = |fixer: Fixer<'a>, report: &ReportValueImport<'a>| {
+            let source_imports = sources.get_or_init(|| source_imports(&imports)).get(&report.import.spec())?;
+            self.fix_to_type_import_declaration(fixer, report, source_imports)
+        };
         for report in &reports {
-            let Some(source_imports) = sources.get(&report.import.spec()) else {
-                continue;
-            };
             let statement = report.import.stmt();
             if report.has_value_or_unused_specifiers {
                 let locals = report.type_specifiers.iter().filter_map(|specifier| specifier.local());
@@ -509,11 +519,11 @@ impl ConsistentTypeImports {
                     (true, true) => problem.help("Add type specifier to imported types"),
                     (true, false) => problem.help("Mark all type-only imports with the type specifier"),
                 };
-                problem.fix(|fixer| self.fix_to_type_import_declaration(fixer, report, source_imports));
+                problem.fix(|fixer| fix(fixer, report));
             } else if !has_attributes(report.import) {
                 cx.report(statement, TYPE_OVER_VALUE)
                     .at_the_end()
-                    .fix(|fixer| self.fix_to_type_import_declaration(fixer, report, source_imports));
+                    .fix(|fixer| fix(fixer, report));
             }
         }
     }

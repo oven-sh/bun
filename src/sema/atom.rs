@@ -54,6 +54,41 @@ pub const FIXED: u32 = known::global_augmentation.0 + 1;
 /// here. An interner of many files does not get that far.
 pub const NOT_IN_THE_FILE: u32 = 1 << 29;
 
+/// Where the texts of the atoms of one file are, for a reader of many of them: nothing is called.
+#[derive(Copy, Clone, Default)]
+pub struct OwnTexts<'a> {
+    spans: &'a [(u32, u32)],
+    source: &'a [u8],
+}
+
+impl<'a> OwnTexts<'a> {
+    /// In the start of a text: it is not in the source.
+    pub const ELSEWHERE: u32 = 1 << 31;
+
+    /// `spans`: by atom, where its text starts in `source`, and its length.
+    pub fn new(spans: &'a [(u32, u32)], source: &'a [u8]) -> Self {
+        // A start with `ELSEWHERE` is past the end of the source.
+        match source.len() <= Self::ELSEWHERE as usize {
+            true => OwnTexts { spans, source },
+            false => OwnTexts::default(),
+        }
+    }
+
+    /// Where the text of `atom` starts, and its length. `None`: ask the interner.
+    #[inline]
+    pub fn span_of(&self, atom: Atom) -> Option<(u32, u32)> {
+        self.spans.get(atom.0 as usize).copied()
+    }
+
+    /// The text of `atom` if it is in the source as it is. `None`: ask the interner.
+    #[inline]
+    pub fn in_source(&self, atom: Atom) -> Option<&'a [u8]> {
+        let (start, len) = self.span_of(atom)?;
+        self.source
+            .get(start as usize..start as usize + len as usize)
+    }
+}
+
 /// `Intern::number` for an interner that is not an `Interner`.
 pub fn next_interner_number() -> u64 {
     NEXT_NUMBER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
@@ -472,6 +507,10 @@ pub trait Intern: Sync {
     fn number(&self) -> u64;
     /// The same for the calling thread, without a look at which thread that is on every call.
     fn of_this_thread(&self) -> &dyn Intern;
+    /// Empty unless it is the interner of one file.
+    fn own_texts(&self) -> OwnTexts<'_> {
+        OwnTexts::default()
+    }
 }
 
 impl Intern for Interner<'_> {

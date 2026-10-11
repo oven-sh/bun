@@ -12,18 +12,23 @@ const PREFER_ARRAY_FIND: Message = Message::new("", "Prefer `find` over filterin
 impl Rule for PreferArrayFind {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-array-find", Kind::Suggestion);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// `filter`
+    type State<'a> = Name<'a>;
 
     fn new(_: &Options) -> Self {
         PreferArrayFind
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("filter").then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Name<'a>> {
+        file.mentions("filter").then(|| file.name_of("filter"))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let Some(call) = e.as_call()
+            && match call.callee().member_name() {
+                Some(method) => method.name() == cx.state,
+                None => call.callee().tag() != ExprTag::Ident,
+            }
             && is_filter_call(call)
             && is_only_first_or_last_used(e)
         {

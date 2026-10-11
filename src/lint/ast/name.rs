@@ -2,7 +2,7 @@
 
 use super::File;
 use crate::span::{Span, Spanned};
-use bun_sema::atom::Atom;
+use bun_sema::atom::{Atom, KNOWN_TEXTS};
 
 /// The text of an identifier, a property name or a string. Interned: two names of a file compare
 /// as numbers.
@@ -18,13 +18,37 @@ impl<'a> Name<'a> {
         Name { file, atom }
     }
 
-    /// Escapes are resolved: `a` is `a`.
+    /// Escapes are resolved: `\u0061` is `a`.
     #[inline]
     pub fn bytes(self) -> &'a [u8] {
-        match self.atom.is_some() {
-            true => self.file.atoms.bytes(self.atom),
-            false => b"",
+        match self.file.texts.in_source(self.atom) {
+            Some(text) => text,
+            None => self.bytes_elsewhere(),
         }
+    }
+
+    /// It is not written in the source as it is, or the atoms are not the file's own.
+    #[inline(never)]
+    fn bytes_elsewhere(self) -> &'a [u8] {
+        match KNOWN_TEXTS.get(self.atom.0 as usize) {
+            Some(known) => known,
+            None if self.atom.is_some() => self.file.atoms.bytes(self.atom),
+            None => b"",
+        }
+    }
+
+    /// Of [`Name::bytes`].
+    #[inline]
+    pub fn len(self) -> usize {
+        match self.file.texts.span_of(self.atom) {
+            Some((_, len)) => len as usize,
+            None => self.bytes_elsewhere().len(),
+        }
+    }
+
+    #[inline]
+    pub fn is_empty(self) -> bool {
+        self.len() == 0
     }
 
     #[inline]
@@ -34,14 +58,25 @@ impl<'a> Name<'a> {
 
     #[inline]
     pub fn is(self, text: &str) -> bool {
-        self.bytes() == text.as_bytes()
+        self.has(text.as_bytes())
     }
 
     /// Whether it is one of `texts`.
     #[inline]
     pub fn is_any(self, texts: &[&str]) -> bool {
-        let bytes = self.bytes();
-        texts.iter().any(|text| bytes == text.as_bytes())
+        let len = self.len();
+        (texts.iter()).any(|text| text.len() == len && self.has_all(text.as_bytes()))
+    }
+
+    #[inline]
+    fn has(self, text: &[u8]) -> bool {
+        self.len() == text.len() && self.has_all(text)
+    }
+
+    /// Whether its bytes are `text`, which is as long.
+    #[inline(never)]
+    fn has_all(self, text: &[u8]) -> bool {
+        self.bytes() == text
     }
 }
 
@@ -61,25 +96,25 @@ impl std::hash::Hash for Name<'_> {
 impl PartialEq<str> for Name<'_> {
     #[inline]
     fn eq(&self, other: &str) -> bool {
-        self.bytes() == other.as_bytes()
+        self.has(other.as_bytes())
     }
 }
 impl PartialEq<&str> for Name<'_> {
     #[inline]
     fn eq(&self, other: &&str) -> bool {
-        self.bytes() == other.as_bytes()
+        self.has(other.as_bytes())
     }
 }
 impl PartialEq<[u8]> for Name<'_> {
     #[inline]
     fn eq(&self, other: &[u8]) -> bool {
-        self.bytes() == other
+        self.has(other)
     }
 }
 impl PartialEq<&[u8]> for Name<'_> {
     #[inline]
     fn eq(&self, other: &&[u8]) -> bool {
-        self.bytes() == *other
+        self.has(other)
     }
 }
 impl std::fmt::Display for Name<'_> {

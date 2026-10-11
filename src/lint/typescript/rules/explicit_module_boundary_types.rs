@@ -310,6 +310,9 @@ impl<'a> Checker<'a, '_> {
             return;
         }
         self.checked.push(func);
+        if self.is_fully_typed(func) {
+            return;
+        }
         if self.rule.is_allowed_name(func)
             || is_typed_function_expression(func, self.rule.options)
             || ancestor_has_return_type(func)
@@ -335,6 +338,9 @@ impl<'a> Checker<'a, '_> {
             return;
         }
         self.checked.push(func);
+        if self.is_fully_typed(func) {
+            return;
+        }
         if self.rule.is_allowed_name(func) || ancestor_has_return_type(func) {
             return;
         }
@@ -347,23 +353,31 @@ impl<'a> Checker<'a, '_> {
         self.check_parameters(func);
     }
 
-    fn check_parameters(&self, func: Func<'a>) {
+    /// There is nothing to say about it, whatever it is part of.
+    fn is_fully_typed(&self, func: Func<'a>) -> bool {
+        func.return_type().is_some() && self.untyped_parameters(func).next().is_none()
+    }
+
+    /// The parameters without a type, or with `any`, each with the message if it has a name and the one if it has none.
+    fn untyped_parameters(&self, func: Func<'a>) -> impl Iterator<Item = (Param<'a>, Message, Message)> {
         let is_oxlint = self.cx.language().is_oxlint;
-        for param in func.params_with_this() {
+        let allows_any = self.rule.allow_arguments_explicitly_typed_as_any;
+        func.params_with_this().filter_map(move |param| {
             // It has the type of its default value. oxlint does not look at `this`.
             if param.default().is_some() || is_oxlint && func.this_param() == Some(param) {
-                continue;
+                return None;
             }
-            let (named, unnamed) = match param.ty() {
-                None => (MISSING_ARG_TYPE, MISSING_ARG_TYPE_UNNAMED),
-                Some(ty)
-                    if !self.rule.allow_arguments_explicitly_typed_as_any
-                        && matches!(ty.kind(), TypeKind::Keyword(Keyword::Any)) =>
-                {
-                    (ANY_TYPED_ARG, ANY_TYPED_ARG_UNNAMED)
-                }
-                Some(_) => continue,
-            };
+            match param.ty() {
+                None => Some((param, MISSING_ARG_TYPE, MISSING_ARG_TYPE_UNNAMED)),
+                Some(ty) if !allows_any && ty.is_keyword(Keyword::Any) => Some((param, ANY_TYPED_ARG, ANY_TYPED_ARG_UNNAMED)),
+                Some(_) => None,
+            }
+        })
+    }
+
+    fn check_parameters(&self, func: Func<'a>) {
+        let is_oxlint = self.cx.language().is_oxlint;
+        for (param, named, unnamed) in self.untyped_parameters(func) {
             // oxlint points at the parameter with its modifiers, and for a rest parameter at all parameters.
             let at = match (is_oxlint, param.is_rest()) {
                 (false, _) => param.span_without_modifiers(),

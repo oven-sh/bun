@@ -1009,8 +1009,8 @@ impl<S: Starts> Clone for Enabled<'_, S> {
 
 impl<S: Starts> Copy for Enabled<'_, S> {}
 
-/// Runs `rules` on `file`. What they report is sorted by position. `Diagnostic::rule` is an index
-/// into `rules`.
+/// Runs `rules` on `file`. Returns what they report, and the places in that list in the order of the positions.
+/// `Diagnostic::rule` is an index into `rules`.
 ///
 /// `wants_fixes`: whether the fixes and suggestions are going to be read. `when`: for a tool that runs its rules in another way
 /// than ESLint, for each of `rules`, in place of what the rule and its reports say. Empty: as they say.
@@ -1019,14 +1019,16 @@ pub fn run_in_order<'a, S: Starts>(
     rules: &[Enabled<'_, S>],
     wants_fixes: bool,
     when: &[When],
-) -> Vec<Diagnostic> {
+) -> (Vec<Diagnostic>, Vec<u32>) {
     file.sink.wants_fixes.set(wants_fixes);
     file.sink.thrown.take();
     run_rules(file, rules);
-    sorted(file.sink.diagnostics.take(), when)
+    let diagnostics = file.sink.diagnostics.take();
+    let order = sorted(&diagnostics, when);
+    (diagnostics, order)
 }
 
-fn sorted(diagnostics: Vec<Diagnostic>, when: &[When]) -> Vec<Diagnostic> {
+fn sorted(diagnostics: &[Diagnostic], when: &[When]) -> Vec<u32> {
     // ESLint sorts by line and column alone, which leaves what starts at the same place in the order it was reported: for a
     // listener that is called on entering a node, the outer node first; then, for one that is called on leaving, the inner;
     // then what is reported when the program ends, rule by rule. 51 bits.
@@ -1050,25 +1052,28 @@ fn sorted(diagnostics: Vec<Diagnostic>, when: &[When]) -> Vec<Diagnostic> {
             When::Last => (6 << 48) | longer_first,
         }
     };
-    if diagnostics.is_sorted_by_key(|it| (it.span.start, within_start(it))) {
-        return diagnostics;
-    }
-    // The keys are sorted, not what is reported, which is many times as large. The place in the list is the low 32 bits.
-    let key = |at: usize, it: &Diagnostic| {
-        let place = (u128::from(it.span.start) << 51) | u128::from(within_start(it));
-        (place << 32) | at as u128
-    };
-    let mut order: Vec<u128> = diagnostics
-        .iter()
-        .enumerate()
-        .map(|(at, it)| key(at, it))
+    // Where each starts. Its place in the list is the low 32 bits.
+    let starts = diagnostics.iter().zip(0u64..);
+    let mut order: Vec<u64> = starts
+        .map(|(it, at)| (u64::from(it.span.start) << 32) | at)
         .collect();
-    order.sort();
-    let mut diagnostics: Vec<Option<Diagnostic>> = diagnostics.into_iter().map(Some).collect();
-    order
-        .iter()
-        .filter_map(|&key| diagnostics.get_mut(key as u32 as usize)?.take())
-        .collect()
+    order.sort_unstable();
+    let mut at_one_start: Vec<u128> = Vec::new();
+    for places in order.chunk_by_mut(|a, b| a >> 32 == b >> 32) {
+        if places.len() < 2 {
+            continue;
+        }
+        at_one_start.clear();
+        at_one_start.extend(places.iter().filter_map(|&place| {
+            let it = diagnostics.get(place as u32 as usize)?;
+            Some((u128::from(within_start(it)) << 32) | u128::from(place as u32))
+        }));
+        at_one_start.sort();
+        for (place, sorted) in places.iter_mut().zip(&at_one_start) {
+            *place = u64::from(*sorted as u32);
+        }
+    }
+    order.into_iter().map(|place| place as u32).collect()
 }
 
 /// Those of `enabled` for which `file` has something: all others would not be started.

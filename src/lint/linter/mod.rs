@@ -680,7 +680,8 @@ impl<S: RuleSet> Linter<S> {
             true => running.iter().map(|it| it.when).collect(),
             false => Vec::new(),
         };
-        let diagnostics = crate::runner::run_in_order(file, &enabled, options.wants_fixes, &when);
+        let (mut diagnostics, order) =
+            crate::runner::run_in_order(file, &enabled, options.wants_fixes, &when);
         if let Some(thrown) = file.sink.thrown.take() {
             let said = [&thrown.error[..], b"\nOccurred while linting ", file.path()];
             let mut said = said.concat();
@@ -701,7 +702,10 @@ impl<S: RuleSet> Linter<S> {
         problems.reserve(diagnostics.len());
         // What becomes of what the last rule and `messageId` change that change something.
         let mut changes = (None, config::OxlintChanges::default());
-        for diagnostic in diagnostics {
+        for at in order {
+            let Some(diagnostic) = diagnostics.get_mut(at as usize) else {
+                continue;
+            };
             let Some(rule) = running.get(diagnostic.rule as usize) else {
                 continue;
             };
@@ -730,6 +734,7 @@ impl<S: RuleSet> Linter<S> {
             }
             problems.push(message);
         }
+        drop(diagnostics);
         // The rule of the package looks at a file that the rule here cannot answer for as it would.
         if let Some(reason) = file.handed_back() {
             result.handed_back = Some(reason);
@@ -898,31 +903,36 @@ fn change_as_oxlint(message: &mut LintMessage, changes: config::OxlintChanges) {
     }
 }
 
-fn to_message(diagnostic: Diagnostic, rule: &'static Meta, locator: &Locator) -> LintMessage {
-    let details = diagnostic.details.as_deref();
-    let (line, column) = match details.and_then(|it| it.start_position) {
+/// Takes out of `diagnostic` what is on the heap.
+fn to_message(diagnostic: &mut Diagnostic, rule: &'static Meta, locator: &Locator) -> LintMessage {
+    let details = diagnostic.details.take();
+    let (line, column) = match details.as_deref().and_then(|it| it.start_position) {
         Some(start) => (start.line, start.column.wrapping_add(1)),
         None => locator.position(diagnostic.span.start),
     };
+    let end_position = details.as_deref().and_then(|it| it.end_position);
     LintMessage {
         rule_id: Some(RuleId::Known(rule)),
         severity: diagnostic.severity,
-        message: diagnostic.message,
+        message: std::mem::take(&mut diagnostic.message),
         message_id: Some(Cow::Borrowed(diagnostic.message_id)),
         line,
         column,
-        end: (!diagnostic.has_no_end).then(|| match details.and_then(|it| it.end_position) {
+        end: (!diagnostic.has_no_end).then(|| match end_position {
             // A column of -1, which ESLint has, is `u32::MAX`.
             Some(end) => (end.line, end.column.wrapping_add(1)),
             None => locator.position(diagnostic.span.end),
         }),
         is_fatal: false,
-        fix: diagnostic.fix,
-        suggestions: (diagnostic.suggestions.into_iter().map(Into::into)).collect(),
+        fix: diagnostic.fix.take(),
+        suggestions: match diagnostic.suggestions.is_empty() {
+            true => Vec::new(),
+            false => (diagnostic.suggestions.drain(..).map(Into::into)).collect(),
+        },
         suppressions: Vec::new(),
-        comments_apply_at: (details.and_then(|it| it.comments_apply_at))
+        comments_apply_at: (details.as_deref().and_then(|it| it.comments_apply_at))
             .map(|it| (locator.position(it.start), locator.position(it.end))),
-        details: diagnostic.details.map(|it| {
+        details: details.map(|it| {
             let place = |(span, text): (Span, Cow<'static, str>)| {
                 let (start, end) = (locator.position(span.start), locator.position(span.end));
                 (start, end, text)

@@ -104,8 +104,8 @@ fn place(member: Span, before: Span, cx: &Cx<'_, AdjacentOverloadSignatures>) ->
 fn check_statements<'a>(statements: List<'a, Stmt<'a>>, cx: &Cx<'a, AdjacentOverloadSignatures>) {
     check_body_for_overload_methods(
         statements,
-        |statement| match statement.kind() {
-            StmtKind::Fn(func) => func.name().map(Ident::name),
+        |statement| match (statement.tag() == StmtTag::Fn).then(|| statement.kind()) {
+            Some(StmtKind::Fn(func)) => func.name().map(Ident::name),
             _ => None,
         },
         |statement, name, before| {

@@ -11,7 +11,7 @@
 //!   [`FileAtoms`].
 
 use crate::token::{KEYWORDS, T, keyword};
-use bun_sema::atom::{Atom, Intern, KNOWN_TEXTS, NOT_IN_THE_FILE};
+use bun_sema::atom::{Atom, Intern, KNOWN_TEXTS, NOT_IN_THE_FILE, OwnTexts};
 use bun_sema::hir::mention_bit_of;
 use bun_threading::Guarded;
 use std::sync::OnceLock;
@@ -43,10 +43,17 @@ const LONG_BITS: u32 = 12;
 const KNOWN_BITS: u32 = 10;
 /// How many places after its first a text can be at.
 const WINDOW: usize = 7;
-/// The first atom that a file numbers itself.
-const FIRST_OWN: u32 = KNOWN_TEXTS.len() as u32;
 /// In `Names::spans`: the text is in `Names::cooked`, not in the source.
-const COOKED: u32 = 1 << 31;
+const COOKED: u32 = OwnTexts::ELSEWHERE;
+/// The length of `KNOWN_TEXTS` one after the other.
+const KNOWN_BYTES: usize = {
+    let (mut at, mut bytes) = (0, 0);
+    while at < KNOWN_TEXTS.len() {
+        bytes += KNOWN_TEXTS[at].len();
+        at += 1;
+    }
+    bytes
+};
 
 /// The tables of one thread.
 pub(crate) struct Names {
@@ -62,9 +69,10 @@ pub(crate) struct Names {
     /// `Intern::number` of the interner that the atoms are of.
     of: u64,
     is_own: bool,
-    /// By own atom, where its text starts, and its length.
+    /// By atom of a file that has its own, where its text starts, and its length. Those of
+    /// `KNOWN_TEXTS` stay from file to file.
     spans: Vec<(u32, u32)>,
-    /// The texts that are not written in the source as they are.
+    /// `KNOWN_TEXTS`, and the texts that are not written in the source as they are.
     cooked: Vec<u8>,
     /// `hir::FileIn::mentioned` of the file, if the atoms are its own.
     mentioned: [u64; MENTIONED_WORDS],
@@ -103,6 +111,12 @@ impl Default for Names {
     fn default() -> Self {
         let mut known = boxed(([0; 2], u32::MAX, T::Identifier));
         let mut known_others = Vec::new();
+        let mut spans = Vec::with_capacity(KNOWN_TEXTS.len());
+        let mut cooked = Vec::with_capacity(KNOWN_BYTES);
+        for text in KNOWN_TEXTS {
+            spans.push((cooked.len() as u32 | COOKED, text.len() as u32));
+            cooked.extend_from_slice(text);
+        }
         let with_numbers = KNOWN_TEXTS
             .iter()
             .zip(0u32..)
@@ -131,8 +145,8 @@ impl Default for Names {
             unused_bits: 0,
             of: 0,
             is_own: false,
-            spans: Vec::new(),
-            cooked: Vec::new(),
+            spans,
+            cooked,
             mentioned: [0; MENTIONED_WORDS],
             known_in_file: Default::default(),
             known,
@@ -297,8 +311,8 @@ impl Names {
         self.long[..1 << (LONG_BITS - self.unused_bits)].fill(NO_LONG);
         self.of = bun_sema::atom::next_interner_number();
         self.is_own = true;
-        self.spans.clear();
-        self.cooked.clear();
+        self.spans.truncate(KNOWN_TEXTS.len());
+        self.cooked.truncate(KNOWN_BYTES);
         self.other.clear();
         self.mentioned = [0; MENTIONED_WORDS];
         self.known_in_file = Default::default();
@@ -348,7 +362,7 @@ impl Names {
                     start | COOKED
                 });
                 self.spans.push((start, text.text.len() as u32));
-                FIRST_OWN + (self.spans.len() as u32 - 1)
+                self.spans.len() as u32 - 1
             }
         };
         Atom(atom)
@@ -508,14 +522,11 @@ impl Names {
 
     /// The text of `atom`, which is the own of the file with the text `source`.
     pub(crate) fn bytes<'a>(&'a self, atom: Atom, source: &'a [u8]) -> &'a [u8] {
-        if let Some(known) = KNOWN_TEXTS.get(atom.0 as usize) {
-            return known;
-        }
-        if atom.0 >= NOT_IN_THE_FILE {
-            return self.late.bytes(atom.0 - NOT_IN_THE_FILE);
-        }
-        let Some(&(start, len)) = self.spans.get((atom.0 - FIRST_OWN) as usize) else {
-            return b"";
+        let Some(&(start, len)) = self.spans.get(atom.0 as usize) else {
+            return match atom.0.checked_sub(NOT_IN_THE_FILE) {
+                Some(late) => self.late.bytes(late),
+                None => b"",
+            };
         };
         let (from, start) = match start & COOKED != 0 {
             true => (&self.cooked[..], (start & !COOKED) as usize),
@@ -747,6 +758,10 @@ impl Intern for FileAtoms<'_> {
 
     fn of_this_thread(&self) -> &dyn Intern {
         self
+    }
+
+    fn own_texts(&self) -> OwnTexts<'_> {
+        OwnTexts::new(&self.names.spans, self.source)
     }
 }
 

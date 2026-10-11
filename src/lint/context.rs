@@ -200,7 +200,8 @@ impl<'a> CxBase<'a> {
         let language = self.file.language();
         let message = match language.is_oxlint {
             true => {
-                let said = (self.said_by_oxlint).get_or_init(|| oxlint_messages::of_rule(self.meta));
+                let said =
+                    (self.said_by_oxlint).get_or_init(|| oxlint_messages::of_rule(self.meta));
                 oxlint_messages::of(said, message)
             }
             false if language.eslint_8.is_some() => {

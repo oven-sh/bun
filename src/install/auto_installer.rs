@@ -131,10 +131,10 @@ fn resolution_from_hooks(r: &hooks::Resolution) -> resolution::Resolution {
 
 /// Bumped by every `PackageManager::wake_raw` of the auto-install manager.
 static WAKES: AtomicU32 = AtomicU32::new(0);
-/// Threads blocked on `WAKES` (Workers share the one manager). At zero a wake skips the futex syscall.
+/// Threads blocked on `WAKES` (Workers share the manager). At zero a wake skips the syscall.
 static PARKED: AtomicU32 = AtomicU32::new(0);
 
-/// A JS thread that waits in `enqueue_dependency_to_root`. It blocks instead of running its event loop, which would run timers and other handlers inside `require()`. SeqCst: each side writes its word, then reads the other's.
+/// Blocks: an event loop would run timers inside `require()`. SeqCst: write own word, read other's.
 pub(crate) struct Parked(());
 
 impl Parked {
@@ -143,7 +143,7 @@ impl Parked {
         Parked(())
     }
 
-    /// Read before draining the finished tasks and passed to [`Parked::wait`]: a task that finishes after the drain ends the wait at once.
+    /// Read before the drain: a task that finishes after it ends [`Parked::wait`] at once.
     pub(crate) fn wakes(&self) -> u32 {
         WAKES.load(Ordering::SeqCst)
     }
@@ -455,7 +455,7 @@ impl hooks::AutoInstaller for PackageManager {
     }
 }
 
-// `bun_resolver::PackageJSON::parse` runs before the first bare import creates the manager; `lockfile_append_from_package_json` records the `npm:` aliases later.
+// `PackageJSON::parse` runs before the first bare import creates the manager.
 #[unsafe(no_mangle)]
 fn __bun_resolver_parse_dependency(
     name: SemverString,
@@ -515,7 +515,7 @@ unsafe fn __bun_resolver_init_package_manager(
     let pm: *mut PackageManager = crate::package_manager::init_with_runtime(
         log_ref,
         bun_install,
-        crate::package_manager::CommandLineArguments {
+        &crate::package_manager::CommandLineArguments {
             prefer_offline,
             ..Default::default()
         },

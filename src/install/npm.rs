@@ -71,24 +71,17 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         bstr::BStr::new(ci_name.unwrap_or(b"")),
     );
     // no otp needed, just use auth-type from options
-    let header_list: [(&str, &[u8]); 8] = [
-        ("accept", b"*/*"),
-        ("accept-encoding", b"gzip/deflate"),
-        ("authorization", &authorization),
-        ("npm-auth-type", auth_type),
-        ("npm-command", b"whoami"),
-        ("user-agent", user_agent.as_bytes()),
-        ("Connection", b"keep-alive"),
-        ("Host", registry_url.host),
+    let header_list: [(&[u8], &[u8]); 8] = [
+        (b"accept", b"*/*"),
+        (b"accept-encoding", b"gzip/deflate"),
+        (b"authorization", &authorization),
+        (b"npm-auth-type", auth_type),
+        (b"npm-command", b"whoami"),
+        (b"user-agent", user_agent.as_bytes()),
+        (b"Connection", b"keep-alive"),
+        (b"Host", registry_url.host),
     ];
-    let mut headers = HeaderBuilder::default();
-    for (name, value) in header_list {
-        headers.count(name, value);
-    }
-    headers.allocate()?;
-    for (name, value) in header_list {
-        headers.append(name, value);
-    }
+    let headers = HeaderBuilder::from_pairs(&header_list)?;
 
     let mut print_buf: Vec<u8> = Vec::new();
     write!(
@@ -243,7 +236,7 @@ pub mod registry {
     pub struct Scope {
         pub name: Box<[u8]>,
         // https://github.com/npm/npm-registry-fetch/blob/main/lib/auth.js#L96
-        // Sent verbatim as `Basic <auth>`: usually base64("${username}:${password}"), but whatever `_auth` holds.
+        // Sent verbatim as `Basic <auth>`: whatever `_auth` holds, usually base64(user:password).
         pub(crate) auth: Box<[u8]>,
         pub url: OwnedURL,
         pub url_hash: u64,
@@ -255,14 +248,13 @@ pub mod registry {
         /// See `NpmRegistry::declared_in_npmrc`. Cleared when an explicit token is set later.
         pub(crate) declared_in_npmrc: bool,
 
-        /// The `.npmrc` key this registry's URL resolves to, computed once after every source was applied.
+        /// The `.npmrc` key this registry's URL resolves to, once every source was applied.
         pub(crate) url_auth_key: Option<Box<[u8]>>,
     }
 
-    /// After `:` in yarn's shape (`/api/:_authToken=T`), after `/` in the one Bun's JFrog guide shows (`/npm/_auth=<base64>`).
+    /// After `:` in yarn's shape (`/api/:_authToken=T`), after `/` in JFrog's (`/npm/_auth=<b64>`).
     const EMBEDDED_OPTIONS: [&[u8]; 4] = [b"_authToken=", b"_auth=", b"username=", b"_password="];
 
-    /// Credentials embedded in a registry URL's pathname.
     #[derive(Default)]
     struct EmbeddedAuth<'a> {
         /// In the order of `EMBEDDED_OPTIONS`.
@@ -310,12 +302,12 @@ pub mod registry {
                 let value = &pathname[start + 1 + EMBEDDED_OPTIONS[option].len()..];
                 // The slash that closes the URL (`/:_authToken=S/`) is not part of the value.
                 let value = value.strip_suffix(b"/").unwrap_or(value);
-                // An empty marker supplies no credential: it neither ends the scan nor shadows a `.npmrc` line.
+                // An empty marker neither ends the scan nor shadows a `.npmrc` line.
                 if !out.terminal && !value.is_empty() {
                     out.values[option] = Some(value);
                     out.terminal = option < 2;
                 }
-                // A `/<name>=` segment leaves the slash that closes the path; yarn's `:<name>=` is written after that slash.
+                // `/<name>=` leaves the slash that closes the path; `:<name>=` follows that slash.
                 if pathname[start] == b'/' {
                     pathname = &pathname[..start + 1];
                     continue;
@@ -348,7 +340,7 @@ pub mod registry {
     }
 
     /// `what` names the key the credential was configured under, never its value.
-    pub(crate) fn refuse_credential(what: core::fmt::Arguments<'_>) -> Error {
+    fn refuse_credential(what: core::fmt::Arguments<'_>) -> Error {
         Output::err_generic("{} contains a newline or NUL byte", what);
         Error::InstallFailed
     }
@@ -395,6 +387,15 @@ pub mod registry {
             self.declared_in_npmrc = other.declared_in_npmrc;
         }
 
+        pub(crate) fn set_token_from_env(&mut self, key: &[u8], token: &[u8]) -> crate::Result<()> {
+            if http::async_http::breaks_header_line(token) {
+                return Err(refuse_credential(format_args!("${}", bstr::BStr::new(key))));
+            }
+            self.token = token.into();
+            self.declared_in_npmrc = false;
+            Ok(())
+        }
+
         pub(crate) fn get_name(name: &[u8]) -> &[u8] {
             if name.is_empty() || name[0] != b'@' {
                 return name;
@@ -407,7 +408,7 @@ pub mod registry {
             &name[1..]
         }
 
-        /// `env`: `None` for a registry that package data names, into which no variable of this process is expanded.
+        /// `env`: `None` for a registry that package data names: no variable is expanded into it.
         pub(crate) fn from_api(
             name: &[u8],
             registry: api::NpmRegistry,
@@ -434,7 +435,7 @@ pub mod registry {
             name: &[u8],
             mut registry: api::NpmRegistry,
             env: &mut DotEnv,
-            // `false` for a `.npmrc` line, where a value that starts with `$` and names no variable is a literal.
+            // `false` for a `.npmrc` line, where `$` before no variable's name is a literal.
             unset_variable_is_no_credential: bool,
         ) -> Result<Scope, UnsafeCredential> {
             // Support $ENV_VAR for registry URLs
@@ -457,13 +458,13 @@ pub mod registry {
                 registry.password = from_url.password;
             }
 
-            // `token = "$NPM_TOKEN"`. Sent as that text, an unset variable would also hide the `.npmrc` line for the registry.
+            // Sent as text, an unset `$NPM_TOKEN` would also hide the registry's `.npmrc` line.
             for (what, field) in [
                 ("token", &mut registry.token),
                 ("username", &mut registry.username),
                 ("password", &mut registry.password),
             ] {
-                // Anything else after the `$` is no variable name: a password that happens to start with one.
+                // Anything else after the `$` is no variable name: a password that starts so.
                 if field.len() < 2
                     || field[0] != b'$'
                     || !(field[1..].iter()).all(|c| c.is_ascii_alphanumeric() || *c == b'_')
@@ -576,7 +577,7 @@ pub mod registry {
     // Keys are pre-hashed (`Scope::hash`), so don't re-hash them.
     pub type Map = HashMap<u64, Scope, bun_collections::IdentityContext<u64>>;
 
-    /// One `.npmrc` credential key with the credential it collapsed to. A key carries no scheme, so it applies to `http` and `https` alike.
+    /// One `.npmrc` credential key. It carries no scheme: it applies to `http` and `https` alike.
     pub(crate) struct UrlAuth {
         /// npm's config key, already normalized by `bun_ini` (`host/path/`).
         pub(crate) key: Box<[u8]>,
@@ -603,7 +604,7 @@ pub mod registry {
             }))
         }
 
-        /// npm's walk. `url` is a WHATWG serialisation already: a `Scope::url`, or a tarball after `normalize_tarball_url`.
+        /// npm's walk. `url` is a WHATWG serialisation: `Scope::url`, `normalize_tarball_url`.
         pub(crate) fn find_entry<'a>(list: &'a [UrlAuth], url: &URL) -> Option<&'a UrlAuth> {
             if list.is_empty() || !url.has_http_like_protocol() {
                 return None;
@@ -614,7 +615,7 @@ pub mod registry {
         }
     }
 
-    /// `dist.tarball` as npm's `new URL()` serialises it, or `None` for a URL one parse cannot settle.
+    /// `dist.tarball` as npm's `new URL()` serialises it; `None` if one parse cannot settle it.
     pub fn normalize_tarball_url(raw: &[u8]) -> Option<Box<[u8]>> {
         // The parse would read bytes that are not UTF-8 as U+FFFD, which names another resource.
         if raw.iter().any(|&b| b <= 0x20 || b == 0x7f) || !strings::is_valid_utf8(raw) {
@@ -629,13 +630,13 @@ pub mod registry {
         Some(href)
     }
 
-    /// `normalize_tarball_url` without the parse, for a URL just built from `Scope::url` and a name.
+    /// `normalize_tarball_url` without the parse, for a URL built from `Scope::url` and a name.
     pub fn is_normalized_tarball_url(url: &[u8]) -> bool {
         !url.iter().any(|&b| b <= 0x20 || b >= 0x7f || b == b'\\')
             && !hides_dot_segment(query_free_path(&URL::parse(url)))
     }
 
-    /// A `.` or `..` segment once `%2f` and `%5c` are read as separators, and `;params` are dropped as Tomcat and Jetty do.
+    /// Reads `%2f` and `%5c` as separators and drops `;params`, as Tomcat and Jetty do.
     fn hides_dot_segment(path: &[u8]) -> bool {
         let mut start = 0;
         let mut i = 0;
@@ -665,7 +666,7 @@ pub mod registry {
         found
     }
 
-    /// `url.pathname` without its query: `url.path` is query-free too, but collapses a one-byte path such as `/r/` to `/`.
+    /// `url.path` is query-free too, but collapses a one-byte path such as `/r/` to `/`.
     pub(crate) fn query_free_path<'a>(url: &URL<'a>) -> &'a [u8] {
         let pathname = url.pathname;
         &pathname[..strings::index_of_char_usize(pathname, b'?').unwrap_or(pathname.len())]
@@ -892,7 +893,7 @@ pub struct PackageVersion {
     /// When empty, it means that the tarball URL can be inferred
     pub(crate) tarball_url: ExternalString,
 
-    /// `"deprecated"` in the registry document: the message. Empty when the version is not deprecated.
+    /// The registry document's `"deprecated"` message. Empty when the version is not deprecated.
     pub(crate) deprecated: SemverString,
 
     pub(crate) unpacked_size: u32,
@@ -903,14 +904,14 @@ pub struct PackageVersion {
     /// `"cpu"` field in package.json
     pub(crate) cpu: Architecture,
 
-    /// `"libc"` field in package.json; only in the full document, see `name_suggests_libc` (`Libc::NONE` = not declared).
+    /// `"libc"` field in package.json; only in the full document, see `name_suggests_libc`.
     pub(crate) libc: Libc,
 
     /// `hasInstallScript` field in registry API.
     pub(crate) has_install_script: bool,
     pub(crate) _padding_tail: [u8; 2],
 
-    /// Unix timestamp when this version was published (0 if the registry gives none, infinity if what it gives is not a date)
+    /// Unix timestamp of publication (0 if the registry gives none, infinity if it is no date)
     pub(crate) publish_timestamp_ms: f64,
 }
 
@@ -1004,7 +1005,7 @@ const _: () = {
         offset_of!(PackageVersion, unpacked_size)
             == offset_of!(PackageVersion, deprecated) + size_of::<SemverString>()
     );
-    // gap between `has_install_script` (bool, ends at 238) and `publish_timestamp_ms` (align 8 → 240)
+    // gap between `has_install_script` (ends at 238) and `publish_timestamp_ms` (align 8 → 240)
     assert!(
         offset_of!(PackageVersion, _padding_tail)
             == offset_of!(PackageVersion, has_install_script) + size_of::<bool>()
@@ -1044,7 +1045,7 @@ pub struct NpmPackage {
     pub(crate) versions_buf: VersionSlice,
     pub(crate) string_lists_buf: ExternalStringList,
 
-    // The full document was fetched: `publish_timestamp_ms` and `PackageVersion.libc` are populated.
+    // The full document was fetched: `publish_timestamp_ms` and `libc` are populated.
     pub(crate) has_extended_manifest: bool,
     pub(crate) _padding_tail: [u8; 7],
 }
@@ -1114,7 +1115,7 @@ pub mod package_manifest {
         // - v0.0.5: added bundled dependencies
         // - v0.0.6: changed semver major/minor/patch to each use u64 instead of u32
         // - v0.0.7: added version publish times and extended manifest flag for minimum release age
-        // - v0.0.8: fixed bundled dependencies being dropped from all but one dependency group; added `deprecated`
+        // - v0.0.8: fixed bundled dependencies kept for one group only; added `deprecated`
         const HEADER_BYTES: &'static str =
             concat!("#!/usr/bin/env bun\n", "bun-npm-manifest-cache-v0.0.8\n");
 
@@ -1684,7 +1685,7 @@ impl FindResult<'_> {
 pub struct MinimumReleaseAgeExcludes(Vec<(&'static [u8], Option<Semver::Version>)>);
 
 impl MinimumReleaseAgeExcludes {
-    /// A malformed entry (`foo@`, `foo@^1`) is dropped with a warning, never widened to the bare name.
+    /// A malformed entry (`foo@`, `foo@^1`) is dropped with a warning, never widened to the name.
     pub(crate) fn parse(entries: &[&'static [u8]], log: &mut bun_ast::Log) -> Self {
         let mut list = Vec::new();
         for &entry in entries {
@@ -1717,7 +1718,7 @@ impl MinimumReleaseAgeExcludes {
         MinimumReleaseAgeExcludes(list)
     }
 
-    /// `base` plus bare-name exemptions; `bun audit fix` exempts the packages it must move past the age gate.
+    /// `bun audit fix` exempts the packages it must move past the age gate.
     pub(crate) fn with_packages(
         base: Option<&Self>,
         names: impl IntoIterator<Item = &'static [u8]>,
@@ -1762,7 +1763,7 @@ impl PackageManifest {
         self.pkg.prereleases.keys.get(&self.versions)
     }
 
-    /// Resolves the spec of `name@spec` like `npm view`: an exact dist-tag name wins, else the best range match.
+    /// Like `npm view`: an exact dist-tag name wins, else the best range match.
     pub fn find_by_spec(&self, spec: &[u8]) -> Result<FindResult<'_>, Error> {
         use crate::dependency::{Tag, TagExt as _};
         let spec: &[u8] = if spec.is_empty() { b"latest" } else { spec };
@@ -1780,7 +1781,7 @@ impl PackageManifest {
                     spec
                 };
                 let query = Semver::query::parse(range, SlicedString::init(range, range))?;
-                // Only unknown words (e.g. `npm:x@1`): the lenient parser produced a match-all group.
+                // Only unknown words (e.g. `npm:x@1`): the lenient parser made a match-all group.
                 if query.is_empty() {
                     return Err(Error::NoMatchingVersion);
                 }
@@ -1871,7 +1872,7 @@ impl PackageManifest {
                     }
                     continue;
                 }
-                // Listed versions count as stable: no age gate, and they replace an unstable fallback in `best_version`.
+                // Listed versions count as stable: no age gate; they replace an unstable fallback.
                 if exclusions.is_some_and(|e| e.excludes_version(self.name(), version)) {
                     best_version = Some(FindResult { version, package });
                     break;
@@ -1953,7 +1954,6 @@ impl<'a> FindVersionResult<'a> {
 }
 
 impl PackageManifest {
-    /// What a range or a dist-tag in a package.json resolves to.
     pub(crate) fn find_for_dependency(
         &self,
         version: &crate::dependency::Version,
@@ -1974,7 +1974,7 @@ impl PackageManifest {
                 exclusions,
             );
         }
-        // Nobody wrote `latest` (`bun add pkg`, `"pkg": ""`): as npm does, do not follow it onto a deprecated version.
+        // Nobody wrote `latest` (`bun add pkg`): as npm, not followed onto a deprecated version.
         if literal.is_empty()
             && (self.find_by_dist_tag(b"latest"))
                 .is_some_and(|latest| !latest.package.deprecated.is_empty())
@@ -2002,7 +2002,7 @@ impl PackageManifest {
         )
     }
 
-    /// Where `bun update --latest` goes: `latest`, or `find_any_version` when that tag names no published version.
+    /// `latest`, or `find_any_version` when that tag names no published version.
     pub fn find_latest(
         &self,
         minimum_release_age_ms: Option<f64>,
@@ -2287,7 +2287,7 @@ fn deprecation_message(version_obj: Option<&JSON::E::ObjectJSON>) -> Option<&[u8
     }
 }
 
-/// npm's `!time[v] || Date.parse(time[v]) <= before`: no time passes minimum-release-age (0), one that is not a date never does.
+/// As npm: no time passes minimum-release-age (0), one that is not a date never does.
 fn publish_timestamp_ms(time: &JSON::E::JsonValue) -> f64 {
     use JSON::E::JsonValue;
     match time {
@@ -2403,7 +2403,7 @@ impl PackageManifest {
             };
 
             let versions = versions_obj.get().properties();
-            // A package that deprecates a range of versions repeats one sentence: stored once per run.
+            // A package that deprecates many versions repeats one sentence: stored once per run.
             let mut prev_deprecated: &[u8] = b"";
             for prop in versions {
                 let version_name = prop.key.slice();
@@ -2639,7 +2639,6 @@ impl PackageManifest {
         // Cursors into all_extern_strings / version_extern_strings for dependency name/value writes.
         let mut dependency_names_cursor: usize = 0; // into all_extern_strings[0..dependency_sum]
         let mut dependency_values_cursor: usize = 0; // into version_extern_strings
-        let all_dependency_names_and_values_len = dependency_sum;
 
         'get_versions2: {
             let Some(versions_expr) = json.get(b"versions") else {
@@ -2760,7 +2759,7 @@ impl PackageManifest {
                     if let Some(bin) = version_obj.and_then(|o| o.get(b"bin")) {
                         match bin {
                             JSON::E::JsonValue::Object(obj) => {
-                                // npm (normalize-package-bin) skips an entry whose value is not a string.
+                                // npm (normalize-package-bin) skips a value that is not a string.
                                 let mut entries = obj
                                     .get()
                                     .properties()
@@ -2807,19 +2806,6 @@ impl PackageManifest {
                                                 let prev_item = all_extern_strings_bin_entries
                                                     [prev.start + group_i];
                                                 is_identical = cur.hash == prev_item.hash;
-                                                if cfg!(debug_assertions) && is_identical {
-                                                    let first =
-                                                        cur.slice(string_builder.allocated_slice());
-                                                    let second = prev_item
-                                                        .slice(string_builder.allocated_slice());
-                                                    if !strings::eql_long(first, second, true) {
-                                                        Output::panic(format_args!(
-                                                            "Bin group is not identical: {} != {}",
-                                                            bstr::BStr::new(first),
-                                                            bstr::BStr::new(second),
-                                                        ));
-                                                    }
-                                                }
                                             }
                                         }
 
@@ -3131,7 +3117,6 @@ impl PackageManifest {
                                 all_extern_strings_dedupe_map.get_or_put(name_map_hash)?;
                             if name_entry.found_existing {
                                 name_list = *name_entry.value_ptr;
-                                // this_names = name_list.mut(all_extern_strings) — only used in debug asserts below
                             } else {
                                 *name_entry.value_ptr = name_list;
                                 dependency_names_cursor += count;
@@ -3161,68 +3146,6 @@ impl PackageManifest {
                             1 => package_version.optional_dependencies = map,
                             2 => package_version.peer_dependencies = map,
                             _ => unreachable!("DEPENDENCY_GROUPS has 3 entries"),
-                        }
-
-                        // The dedupe must hand back
-                        // lists resolving to identical contents. The string
-                        // pool dedupes equal strings to equal offsets, so
-                        // field equality holds even when `name_list` points
-                        // at an earlier entry's region.
-                        #[cfg(debug_assertions)]
-                        {
-                            let dependencies_list = map;
-                            let name_dependencies = dependencies_list.name.get(&all_extern_strings);
-                            let value_dependencies =
-                                dependencies_list.value.get(&version_extern_strings);
-
-                            // Element-wise field equality.
-                            debug_assert!(name_dependencies.len() == this_names.len());
-                            debug_assert!(value_dependencies.len() == this_versions.len());
-                            for (a, b) in name_dependencies.iter().zip(this_names.iter()) {
-                                debug_assert!(a.hash == b.hash && a.value == b.value);
-                            }
-                            for (a, b) in value_dependencies.iter().zip(this_versions.iter()) {
-                                debug_assert!(a.hash == b.hash && a.value == b.value);
-                            }
-
-                            // Per-element string-content checks against the
-                            // source JSON. `stored` is the items the build loop
-                            // kept: it skips a value that is not a string. Skipped
-                            // when meta-only optional peers may have been
-                            // synthesised, since `stored[j]` correspondence no
-                            // longer holds then.
-                            if !is_peer || optional_peer_dep_names.is_empty() {
-                                let string_buf: &[u8] = string_builder.allocated_slice();
-                                let stored: Vec<(&[u8], &[u8])> = items
-                                    .iter()
-                                    .filter_map(|item| {
-                                        Some((item.key.slice(), item.value.as_str()?))
-                                    })
-                                    .collect();
-                                debug_assert!(stored.len() == count);
-                                // The inline form of a `String` ends at the first NUL.
-                                let as_stored = |source| SemverString::init(source, source);
-                                for (j, dep_name) in name_dependencies.iter().enumerate() {
-                                    debug_assert!(
-                                        dep_name.value.slice(string_buf)
-                                            == this_names[j].value.slice(string_buf)
-                                    );
-                                    debug_assert!(
-                                        dep_name.value.slice(string_buf)
-                                            == as_stored(stored[j].0).slice(stored[j].0)
-                                    );
-                                }
-                                for (j, dep_version) in value_dependencies.iter().enumerate() {
-                                    debug_assert!(
-                                        dep_version.value.slice(string_buf)
-                                            == this_versions[j].value.slice(string_buf)
-                                    );
-                                    debug_assert!(
-                                        dep_version.value.slice(string_buf)
-                                            == as_stored(stored[j].1).slice(stored[j].1)
-                                    );
-                                }
-                            }
                         }
                     }
                 }
@@ -3259,9 +3182,7 @@ impl PackageManifest {
         }
         let version_extern_strings_len = dependency_values_cursor;
 
-        // extern_strings = all_extern_strings[all_dependency_names_and_values.len - dependency_names.len ..]
         let mut extern_strings_cursor = extern_strings_consumed;
-        let _ = all_dependency_names_and_values_len;
 
         if let Some(dist) = json.get(b"dist-tags") {
             if let JSON::ExprData::EObjectJSON(obj) = &dist.data {
@@ -3301,25 +3222,6 @@ impl PackageManifest {
                             [dist_tag_versions_start..dist_tag_versions_start + dist_tag_i],
                     ),
                 };
-
-                #[cfg(debug_assertions)]
-                {
-                    // Round-trip check of the just-initialized slices. `init`
-                    // is a pointer-offset round-trip, so slice identity
-                    // (ptr + len) implies element equality.
-                    let tags_rt = result.pkg.dist_tags.tags.get(&all_extern_strings);
-                    debug_assert!(core::ptr::eq(
-                        tags_rt.as_ptr(),
-                        all_extern_strings[extern_strings_slice_start..].as_ptr()
-                    ));
-                    debug_assert!(tags_rt.len() == dist_tag_i);
-                    let versions_rt = result.pkg.dist_tags.versions.get(&all_semver_versions);
-                    debug_assert!(core::ptr::eq(
-                        versions_rt.as_ptr(),
-                        all_semver_versions[dist_tag_versions_start..].as_ptr()
-                    ));
-                    debug_assert!(versions_rt.len() == dist_tag_i);
-                }
 
                 extern_strings_cursor += dist_tag_i;
             }

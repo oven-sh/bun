@@ -111,10 +111,10 @@ fn do_partial_install_of_security_scanner(
         IsolatedInstall::install_isolated_packages(
             manager,
             ctx,
-            true,
+            /* install_root_dependencies */ true,
             &[],
             packages_to_install,
-            false,
+            /* warn_incorrect_peers */ false,
         )?
     } else {
         HoistedInstall::install_hoisted_packages(
@@ -131,15 +131,6 @@ fn do_partial_install_of_security_scanner(
         &[security_scanner_pkg_id],
         isolated,
     )?;
-
-    if cfg!(debug_assertions) {
-        bun_core::debug_warn!(
-            "Partial install summary - success: {}, fail: {}, skipped: {}",
-            summary.success,
-            summary.fail,
-            summary.skipped
-        );
-    }
 
     if summary.fail > 0 {
         return Err(crate::Error::PartialInstallFailed);
@@ -453,7 +444,7 @@ impl<'a> PackageCollector<'a> {
         }
     }
 
-    /// Queues the package row `dep_id` resolves to, reached by `pkg_path` and `dep_path`, unless it was queued before.
+    /// Queues the package `dep_id` resolves to, unless it was queued before.
     fn enqueue(
         &mut self,
         pkg_path: &[PackageID],
@@ -867,7 +858,7 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         let exec_path = bun_core::self_exe_path()?;
 
-        // Like a lifecycle script: the environment install resolved, and no `.env` file on top of it.
+        // Like a lifecycle script: the environment install resolved, and no `.env` file on top.
         let code =
             std::ffi::CString::new(&*self.code).map_err(|_| crate::Error::InvalidCharacter)?;
         let argv = [

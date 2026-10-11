@@ -712,7 +712,7 @@ impl RunCommand {
                     }
                     match win::Win32Error::get() {
                         win::Win32Error::ALREADY_EXISTS => {
-                            // As in the POSIX EEXIST branch; a rebuilt or upgraded bun is a different file.
+                            // As in the POSIX EEXIST branch: a rebuilt bun is another file.
                             let keep = image_stat.as_ref().is_none_or(|image| {
                                 bun_sys::openat_windows(
                                     bun_sys::Fd::cwd(),
@@ -798,35 +798,22 @@ fn install_runner_arena() -> &'static bun_alloc::Arena {
 }
 
 impl RunCommand {
-    /// DEP-CYCLE NOTE: the full implementation walks `bun_resolver::DirInfo`
-    /// and reads `package.json` via the resolver — T6 work that lives in
-    /// `bun_runtime::cli::RunCommand::configure_env_for_run`. The install
-    /// tier needs the *Transpiler-initialisation* half of that contract
-    /// because callers (`configure_env_for_scripts_run`) `assume_init()` the
-    /// out-param. This shim performs the init + the env-var seeding that has
-    /// no T6 dependency; the `*mut ()` return stands in for `*mut DirInfo`
-    /// (opaque to install — every caller discards it).
+    /// The half of `bun_runtime`'s `RunCommand::configure_env_for_run` that needs no `DirInfo`.
     pub(crate) fn configure_env_for_run(
         ctx: &mut bun_options_types::context::ContextData,
-        this_transpiler: &mut ::core::mem::MaybeUninit<bun_transpiler::Transpiler<'static>>,
         env: Option<*mut bun_dotenv::Loader>,
-        _log_errors: bool,
-        store_root_fd: bool,
-    ) -> Result<*mut (), crate::Error> {
-        let args = ctx.args.clone();
-        this_transpiler.write(bun_transpiler::Transpiler::init(
+    ) -> Result<bun_transpiler::Transpiler<'static>, crate::Error> {
+        let mut this_transpiler = bun_transpiler::Transpiler::init(
             install_runner_arena(),
             ctx.log,
-            args,
+            ctx.args.clone(),
             env,
-        )?);
-        // SAFETY: fully written on the line above.
-        let this_transpiler = unsafe { this_transpiler.assume_init_mut() };
+        )?;
         this_transpiler.options.env.behavior =
             bun_options_types::schema::api::DotEnvBehavior::load_all;
         this_transpiler.resolver.care_about_bin_folder = true;
         this_transpiler.resolver.care_about_scripts = true;
-        this_transpiler.resolver.store_fd = store_root_fd;
+        this_transpiler.resolver.store_fd = false;
 
         // Re-derive per-use rather than holding a long-lived `&mut` (avoids
         // Stacked-Borrows overlap with `run_env_loader`).
@@ -840,7 +827,7 @@ impl RunCommand {
         )?;
 
         // `npm_package_*` is per package; see `spawn_package_lifecycle_scripts`.
-        Ok(core::ptr::null_mut())
+        Ok(this_transpiler)
     }
 
     /// What `bun run` and lifecycle scripts both find in their environment.

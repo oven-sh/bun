@@ -72,7 +72,7 @@ pub fn install_with_manager(
         }
     }
 
-    // An error from the options or the environment is printed at every log level and fails the install first.
+    // An error from the options or the environment is printed at every log level.
     if manager.log_mut().has_errors() {
         manager
             .log_mut()
@@ -270,7 +270,7 @@ pub fn install_with_manager(
                 for key in lockfile.self_contained_workspaces.keys() {
                     manager.lockfile.self_contained_workspaces.put(*key, ())?;
                 }
-                // Nor is the lockfile's record of `trustedDependencies` what decides. The differ consulted it if a workspace is missing.
+                // Nor does the lockfile's record of `trustedDependencies` decide.
                 manager.lockfile.trusted_dependencies = lockfile.trusted_dependencies.take();
                 if manager.subcommand == Subcommand::Dedupe {
                     crate::dedupe::dedupe_after_differ(manager);
@@ -610,7 +610,7 @@ pub fn install_with_manager(
         resolve_pending_tasks(manager, &root, log_level, &mut NamedUpdates::default())?;
     }
 
-    // `--depth 0`: a transitive edge that shared the old package with a moved direct entry stays on it.
+    // `--depth 0`: a transitive edge that shared the old package with a moved entry stays.
     let direct_only = manager.options.do_.update_direct_only();
     direct_deps_before.redirect_dependents(&mut manager.lockfile, direct_only);
     transitive.redirect_dependents(&mut manager.lockfile);
@@ -744,7 +744,7 @@ pub fn install_with_manager(
         'frozen_lockfile: {
             let mut changed_section = frozen_changed_section(manager, root_package_json_path);
             if changed_section.is_none() {
-                // Only an install stores a hash in bun.lockb: it also covers the project's lifecycle scripts.
+                // Only an install stores a hash in bun.lockb: it covers lifecycle scripts too.
                 let same_packages = if load_result.loaded_from_text_lockfile()
                     || load_result.migrated_from().is_some()
                     || manager.lockfile.meta_hash == [0; 32]
@@ -765,7 +765,7 @@ pub fn install_with_manager(
                         .unwrap_or(false))
                 };
                 if same_packages {
-                    // Same packages, other rows: a save would rewrite it. A migration is not judged.
+                    // Same packages, other rows: a save would rewrite it. A migration is exempt.
                     if load_result.migrated_from().is_some()
                         || !manager.summary.changes_dependencies()
                     {
@@ -1382,7 +1382,7 @@ fn print_blocked_packages_info(summary: &PackageInstallSummary, global: bool) {
     }
 }
 
-/// Both linkers leave out a package that cannot run on the target; warns for the ones the project itself requires.
+/// Both linkers leave out what cannot run on the target: warns for what the project requires.
 #[cold]
 #[inline(never)]
 fn warn_unsupported_platform(
@@ -2032,7 +2032,7 @@ fn create_new_lockfile_and_enqueue(
         Global::crash();
     }
 
-    // A loaded lockfile already describes the project; a migrated pnpm-lock.yaml imports the yaml itself.
+    // A loaded lockfile describes the project; a pnpm migration imports the yaml itself.
     if !matches!(load_result, lockfile::LoadResult::Ok { .. }) {
         crate::pnpm::migrate_pnpm_workspace_config(manager)?;
     }
@@ -2181,7 +2181,7 @@ fn wait_for_resolution(manager: &mut PackageManager) -> crate::Result<()> {
     Ok(())
 }
 
-/// Replaces `manager.lockfile` by a copy that has only the packages still reached and returns the old one.
+/// Returns the old lockfile.
 fn clean_lockfile(
     manager: &mut PackageManager,
     log_level: Options::LogLevel,
@@ -2207,7 +2207,7 @@ fn clean_lockfile(
     // For what `reresolve_rows_outside_overrides` resolves: the copy has only what is saved.
     manager.lockfile.package_extensions.rules =
         core::mem::take(&mut before_clean.package_extensions.rules);
-    // The log had no error before, so this is a name the tree builder refused: stop before the linker.
+    // The log had no error before: the tree builder refused a name. Stop before the linker.
     if manager.log_mut().has_errors() {
         manager.crash();
     }
@@ -2238,7 +2238,7 @@ fn reresolve_rows_outside_overrides(
                     && crate::dedupe::effective_version(lockfile, row as DependencyID, dependency)
                         .is_some_and(|version| {
                             version.try_npm().is_some_and(|npm| {
-                                // Under another name the row follows an `npm:` alias of its name, not the rule.
+                                // Under another name the row follows an `npm:` alias, not the rule.
                                 npm.name.slice(buf) == names[package_id as usize].slice(buf)
                                     && !npm.version.satisfies(
                                         resolutions[package_id as usize].npm().version,

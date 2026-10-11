@@ -298,20 +298,20 @@ impl Options {
         }
     }
 
-    /// npm's `getAuth` order: the tarball's own `.npmrc` line, else the registry's credentials on its origin.
+    /// npm's `getAuth` order: the tarball's own `.npmrc` line, else the registry's on its origin.
     pub fn tarball_credentials<'a>(
         &'a self,
         scope: &'a Npm::registry::Scope,
         tarball: &bun_url::URL,
-        // `tarball` is the WHATWG serialisation the request goes to; a URL one parse could not settle gets no line.
+        // A URL that one parse could not settle gets no line.
         normalized: bool,
     ) -> Option<&'a Npm::registry::Scope> {
-        // A manifest or a lockfile names this URL, and a key has no scheme: a line never follows it into cleartext.
+        // Package data names this URL and a key has no scheme: no line follows into cleartext.
         let own = (normalized && tarball.is_https())
             .then(|| Npm::registry::UrlAuth::find_entry(&self.url_auth, tarball))
             .flatten();
         if scope.has_credentials() && same_origin(tarball, &scope.url.url()) {
-            // The key the registry itself resolved to is already reflected in `scope`, behind any bunfig, env or CLI credential.
+            // The registry's own key is in `scope` already, behind bunfig, env and CLI.
             return match own {
                 Some(entry) if scope.url_auth_key.as_ref() != Some(&entry.key) => {
                     Some(&entry.credentials)
@@ -368,7 +368,7 @@ impl Options {
         }
         if self.inherits_credentials(current, &scope.url.url()) {
             if scope.has_credentials() {
-                // Embedded in the path of `url`: as weak as one in the `registry=` line that `url` stands in for.
+                // Embedded in the path of `url`: as weak as one in the line `url` stands in for.
                 scope.declared_in_npmrc = current.declared_in_npmrc;
             } else {
                 scope.copy_credentials_from(current);
@@ -636,7 +636,7 @@ fn leak_static(s: &[u8]) -> &'static [u8] {
     bun_core::heap::release(s.to_vec().into_boxed_slice())
 }
 
-/// `~` and `~/<rest>` in a path from bunfig.toml or .npmrc are below `$HOME`. `~user` is not expanded.
+/// `~` and `~/<rest>` in a path from bunfig.toml or .npmrc. `~user` is not expanded.
 fn expand_home_tilde(path: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     match (path, env_var::HOME.get_not_empty()) {
         ([b'~', rest @ ..], Some(home))
@@ -655,7 +655,7 @@ impl Options {
         &mut self,
         log: &mut bun_ast::Log,
         env: &mut DotEnvLoader,
-        maybe_cli: Option<CommandLineArguments>,
+        cli: &CommandLineArguments,
         // Every access below is a read of `config.*`; no field is ever written.
         // Taking `&` (not `&mut`) keeps provenance coherent with the bundler/
         // resolver storage (`Option<NonNull<api::BunInstall>>`).
@@ -899,12 +899,10 @@ impl Options {
             }
         }
 
-        if let Some(cli) = &maybe_cli {
-            if !cli.registry.is_empty() {
-                self.scope =
-                    self.scope_for_registry_url(b"", &self.scope, cli.registry, Some(&mut *env))?;
-                self.registry_from_command_line = true;
-            }
+        if !cli.registry.is_empty() {
+            self.scope =
+                self.scope_for_registry_url(b"", &self.scope, cli.registry, Some(&mut *env))?;
+            self.registry_from_command_line = true;
         }
 
         {
@@ -917,14 +915,7 @@ impl Options {
             for token_key in TOKEN_KEYS {
                 if let Some(token) = env.get(token_key) {
                     if !token.is_empty() {
-                        if bun_http::async_http::breaks_header_line(token) {
-                            return Err(Npm::registry::refuse_credential(format_args!(
-                                "${}",
-                                bstr::BStr::new(token_key)
-                            )));
-                        }
-                        self.scope.token = token.into();
-                        self.scope.declared_in_npmrc = false;
+                        self.scope.set_token_from_env(token_key, token)?;
                         break;
                     }
                 }
@@ -971,227 +962,215 @@ impl Options {
             self.enable.set(Enable::MANIFEST_CACHE_CONTROL, false);
         }
 
-        if let Some(cli) = maybe_cli {
-            self.do_.set(Do::ANALYZE, cli.analyze);
-            self.enable
-                .set(Enable::ONLY_MISSING, cli.only_missing || cli.analyze);
-            self.enable.set(
-                Enable::MOVE_TO_GROUP,
-                cli.names_group && !cli.only_missing && !cli.analyze,
-            );
+        self.do_.set(Do::ANALYZE, cli.analyze);
+        self.enable
+            .set(Enable::ONLY_MISSING, cli.only_missing || cli.analyze);
+        self.enable.set(
+            Enable::MOVE_TO_GROUP,
+            cli.names_group && !cli.only_missing && !cli.analyze,
+        );
 
-            if let Some(cache_dir) = cli.cache_dir {
-                self.cache_directory = cache_dir;
-            }
-
-            if cli.exact {
-                self.enable.set(Enable::EXACT_VERSIONS, true);
-            }
-
-            if cli.no_save {
-                self.do_.set(Do::SAVE_LOCKFILE, false);
-                self.do_.set(Do::WRITE_PACKAGE_JSON, false);
-            }
-
-            if cli.dry_run {
-                self.dry_run = true;
-            }
-            self.check = cli.check;
-
-            if cli.no_summary || cli.log_level.is_silent() {
-                self.do_.set(Do::SUMMARY, false);
-            }
-
-            self.filter_patterns = cli.filters;
-            self.add_catalog = cli.add_catalog;
-            self.pack_destination = cli.pack_destination;
-            self.pack_filename = cli.pack_filename;
-            self.pack_gzip_level = cli.pack_gzip_level;
-            self.json_output = cli.json_output;
-
-            if cli.no_cache {
-                self.enable.set(Enable::MANIFEST_CACHE, false);
-                self.enable.set(Enable::MANIFEST_CACHE_CONTROL, false);
-            }
-
-            if let Some(omit) = cli.omit {
-                if omit.dev {
-                    self.local_package_features.dev_dependencies = false;
-                    // remote packages should never install dev dependencies
-                    // (TODO: unless git dependency with postinstalls)
-                }
-
-                if omit.optional {
-                    self.local_package_features.optional_dependencies = false;
-                    self.remote_package_features.optional_dependencies = false;
-                }
-
-                if omit.peer {
-                    self.local_package_features.peer_dependencies = false;
-                    self.remote_package_features.peer_dependencies = false;
-                }
-            }
-
-            if cli.ignore_scripts {
-                self.do_.set(Do::RUN_SCRIPTS, false);
-            }
-
-            if cli.trusted {
-                self.do_.set(Do::TRUST_DEPENDENCIES_FROM_ARGS, true);
-            }
-
-            if let Some(save_text_lockfile) = cli.save_text_lockfile {
-                self.save_text_lockfile = Some(save_text_lockfile);
-            }
-
-            if let Some(concurrent_scripts) = cli.concurrent_scripts {
-                self.max_concurrent_lifecycle_scripts = concurrent_scripts;
-            }
-
-            if let Some(min_age_ms) = cli.minimum_release_age_ms {
-                self.minimum_release_age_ms = Some(min_age_ms);
-            }
-
-            if !cli.minimum_release_age_excludes.is_empty() {
-                let entries: Vec<&'static [u8]> = cli
-                    .minimum_release_age_excludes
-                    .iter()
-                    .flat_map(|&list| bun_core::strings::split(list, b","))
-                    .map(<[u8]>::trim_ascii)
-                    .filter(|entry| !entry.is_empty())
-                    .collect();
-                self.minimum_release_age_excludes = Some(&*bun_core::heap::release(Box::new(
-                    Npm::MinimumReleaseAgeExcludes::parse(&entries, log),
-                )));
-            }
-
-            self.lockfile_only = cli.lockfile_only;
-
-            if cli.lockfile_only {
-                self.do_.set(Do::PREFETCH_RESOLVED_TARBALLS, false);
-            }
-
-            if let Some(node_linker) = cli.node_linker {
-                self.node_linker = node_linker;
-            }
-
-            self.log_level = if default_disable_progress_bar || cli.no_progress {
-                cli.log_level.without_progress()
-            } else {
-                cli.log_level
-            };
-            if cli.log_level.is_silent() {
-                log.level = bun_ast::Level::Err;
-                bun_ast::DEFAULT_LOG_LEVEL.store(bun_ast::Level::Err);
-            }
-            // SAFETY: main-thread CLI option load — single writer.
-            super::PackageManager::set_verbose_install(cli.log_level.is_verbose());
-
-            if cli.no_verify {
-                self.do_.set(Do::VERIFY_INTEGRITY, false);
-            }
-            if cli.offline {
-                self.offline = OfflineMode::Offline;
-            } else if cli.prefer_offline && self.offline == OfflineMode::Online {
-                self.offline = OfflineMode::PreferOffline;
-            }
-
-            if cli.yarn {
-                self.do_.set(Do::SAVE_YARN_LOCK, true);
-            }
-
-            if let Some(backend) = cli.backend {
-                // Atomic store,
-                // main-thread CLI option load (single writer).
-                crate::package_install::SUPPORTED_METHOD
-                    .store(backend as u8, core::sync::atomic::Ordering::Relaxed);
-            }
-
-            self.cpu = cli.cpu.unwrap_or(Npm::Architecture::CURRENT);
-            self.os = cli.os.unwrap_or(Npm::OperatingSystem::CURRENT);
-            self.libc = cli.libc.unwrap_or(Npm::Libc::CURRENT);
-
-            self.do_.set(Do::UPDATE_TO_LATEST, cli.latest);
-            self.do_.set(Do::RECURSIVE, cli.recursive);
-            // The only depth `bun update` accepts is 0.
-            self.do_.set(
-                Do::UPDATE_DIRECT_ONLY,
-                subcommand == Subcommand::Update && cli.depth.is_some(),
-            );
-
-            if !cli.positionals.is_empty() {
-                self.positionals = cli.positionals;
-            }
-
-            if cli.production {
-                self.local_package_features.dev_dependencies = false;
-                self.enable.set(Enable::FAIL_EARLY, true);
-                self.enable.set(Enable::FROZEN_LOCKFILE, true);
-            }
-
-            if cli.frozen_lockfile {
-                self.enable.set(Enable::FROZEN_LOCKFILE, true);
-            }
-
-            if cli.force {
-                self.enable.set(Enable::MANIFEST_CACHE_CONTROL, false);
-                self.enable.set(Enable::FORCE_INSTALL, true);
-                self.enable.set(Enable::FORCE_SAVE_LOCKFILE, true);
-            }
-
-            self.update = cli.dependency_group;
-
-            match &cli.patch {
-                command_line_arguments::PatchOpts::Nothing => {}
-                command_line_arguments::PatchOpts::Patch => {
-                    self.patch_features = PatchFeatures::Patch;
-                }
-                command_line_arguments::PatchOpts::Commit { patches_dir } => {
-                    self.patch_features = PatchFeatures::Commit {
-                        patches_dir: *patches_dir,
-                    };
-                }
-            }
-
-            if let Some(cli_access) = cli.publish_config.access {
-                self.publish_config.access = Some(cli_access);
-            }
-            if !cli.publish_config.tag.is_empty() {
-                self.publish_config.tag = cli.publish_config.tag;
-            }
-            if !cli.publish_config.otp.is_empty() {
-                self.publish_config.otp = cli.publish_config.otp;
-            }
-            if let Some(auth_type) = cli.publish_config.auth_type {
-                self.publish_config.auth_type = Some(auth_type);
-            }
-            self.publish_config.tolerate_republish = cli.tolerate_republish;
-
-            // `--ca` / `--cafile` replace the config file's `ca` + `cafile` as a whole.
-            if !cli.ca.is_empty() || !cli.ca_file_name.is_empty() {
-                self.ca = cli.ca.iter().map(|s| Box::<[u8]>::from(*s)).collect();
-                self.ca_file_name = cli.ca_file_name;
-            }
-
-            // `bun pm version` command options
-            self.git_tag_version = !cli.no_git_tag_version;
-            self.allow_same_version = cli.allow_same_version;
-            self.preid = cli.preid;
-            self.message = cli.message;
-            self.force = cli.force;
-
-            // `bun pm why` command options
-            self.top_only = cli.top_only;
-            self.depth = cli.depth;
-        } else {
-            self.log_level = if default_disable_progress_bar {
-                LogLevel::DefaultNoProgress
-            } else {
-                LogLevel::Default
-            };
-            // SAFETY: main-thread CLI option load — single writer.
-            super::PackageManager::set_verbose_install(false);
+        if let Some(cache_dir) = cli.cache_dir {
+            self.cache_directory = cache_dir;
         }
+
+        if cli.exact {
+            self.enable.set(Enable::EXACT_VERSIONS, true);
+        }
+
+        if cli.no_save {
+            self.do_.set(Do::SAVE_LOCKFILE, false);
+            self.do_.set(Do::WRITE_PACKAGE_JSON, false);
+        }
+
+        if cli.dry_run {
+            self.dry_run = true;
+        }
+        self.check = cli.check;
+
+        if cli.no_summary || cli.log_level.is_silent() {
+            self.do_.set(Do::SUMMARY, false);
+        }
+
+        self.filter_patterns = cli.filters;
+        self.add_catalog = cli.add_catalog;
+        self.pack_destination = cli.pack_destination;
+        self.pack_filename = cli.pack_filename;
+        self.pack_gzip_level = cli.pack_gzip_level;
+        self.json_output = cli.json_output;
+
+        if cli.no_cache {
+            self.enable.set(Enable::MANIFEST_CACHE, false);
+            self.enable.set(Enable::MANIFEST_CACHE_CONTROL, false);
+        }
+
+        if let Some(omit) = cli.omit {
+            if omit.dev {
+                self.local_package_features.dev_dependencies = false;
+                // remote packages never install them (TODO: unless git with postinstalls)
+            }
+
+            if omit.optional {
+                self.local_package_features.optional_dependencies = false;
+                self.remote_package_features.optional_dependencies = false;
+            }
+
+            if omit.peer {
+                self.local_package_features.peer_dependencies = false;
+                self.remote_package_features.peer_dependencies = false;
+            }
+        }
+
+        if cli.ignore_scripts {
+            self.do_.set(Do::RUN_SCRIPTS, false);
+        }
+
+        if cli.trusted {
+            self.do_.set(Do::TRUST_DEPENDENCIES_FROM_ARGS, true);
+        }
+
+        if let Some(save_text_lockfile) = cli.save_text_lockfile {
+            self.save_text_lockfile = Some(save_text_lockfile);
+        }
+
+        if let Some(concurrent_scripts) = cli.concurrent_scripts {
+            self.max_concurrent_lifecycle_scripts = concurrent_scripts;
+        }
+
+        if let Some(min_age_ms) = cli.minimum_release_age_ms {
+            self.minimum_release_age_ms = Some(min_age_ms);
+        }
+
+        if !cli.minimum_release_age_excludes.is_empty() {
+            let entries: Vec<&'static [u8]> = cli
+                .minimum_release_age_excludes
+                .iter()
+                .flat_map(|&list| bun_core::strings::split(list, b","))
+                .map(<[u8]>::trim_ascii)
+                .filter(|entry| !entry.is_empty())
+                .collect();
+            self.minimum_release_age_excludes = Some(&*bun_core::heap::release(Box::new(
+                Npm::MinimumReleaseAgeExcludes::parse(&entries, log),
+            )));
+        }
+
+        self.lockfile_only = cli.lockfile_only;
+
+        if cli.lockfile_only {
+            self.do_.set(Do::PREFETCH_RESOLVED_TARBALLS, false);
+        }
+
+        if let Some(node_linker) = cli.node_linker {
+            self.node_linker = node_linker;
+        }
+
+        self.log_level = if default_disable_progress_bar || cli.no_progress {
+            cli.log_level.without_progress()
+        } else {
+            cli.log_level
+        };
+        if cli.log_level.is_silent() {
+            log.level = bun_ast::Level::Err;
+            bun_ast::DEFAULT_LOG_LEVEL.store(bun_ast::Level::Err);
+        }
+        // SAFETY: main-thread CLI option load — single writer.
+        super::PackageManager::set_verbose_install(cli.log_level.is_verbose());
+
+        if cli.no_verify {
+            self.do_.set(Do::VERIFY_INTEGRITY, false);
+        }
+        if cli.offline {
+            self.offline = OfflineMode::Offline;
+        } else if cli.prefer_offline && self.offline == OfflineMode::Online {
+            self.offline = OfflineMode::PreferOffline;
+        }
+
+        if cli.yarn {
+            self.do_.set(Do::SAVE_YARN_LOCK, true);
+        }
+
+        if let Some(backend) = cli.backend {
+            // Single writer: the main thread's CLI option load.
+            crate::package_install::SUPPORTED_METHOD
+                .store(backend as u8, core::sync::atomic::Ordering::Relaxed);
+        }
+
+        self.cpu = cli.cpu.unwrap_or(Npm::Architecture::CURRENT);
+        self.os = cli.os.unwrap_or(Npm::OperatingSystem::CURRENT);
+        self.libc = cli.libc.unwrap_or(Npm::Libc::CURRENT);
+
+        self.do_.set(Do::UPDATE_TO_LATEST, cli.latest);
+        self.do_.set(Do::RECURSIVE, cli.recursive);
+        // The only depth `bun update` accepts is 0.
+        self.do_.set(
+            Do::UPDATE_DIRECT_ONLY,
+            subcommand == Subcommand::Update && cli.depth.is_some(),
+        );
+
+        if !cli.positionals.is_empty() {
+            self.positionals = cli.positionals;
+        }
+
+        if cli.production {
+            self.local_package_features.dev_dependencies = false;
+            self.enable.set(Enable::FAIL_EARLY, true);
+            self.enable.set(Enable::FROZEN_LOCKFILE, true);
+        }
+
+        if cli.frozen_lockfile {
+            self.enable.set(Enable::FROZEN_LOCKFILE, true);
+        }
+
+        if cli.force {
+            self.enable.set(Enable::MANIFEST_CACHE_CONTROL, false);
+            self.enable.set(Enable::FORCE_INSTALL, true);
+            self.enable.set(Enable::FORCE_SAVE_LOCKFILE, true);
+        }
+
+        self.update = cli.dependency_group;
+
+        match &cli.patch {
+            command_line_arguments::PatchOpts::Nothing => {}
+            command_line_arguments::PatchOpts::Patch => {
+                self.patch_features = PatchFeatures::Patch;
+            }
+            command_line_arguments::PatchOpts::Commit { patches_dir } => {
+                self.patch_features = PatchFeatures::Commit {
+                    patches_dir: *patches_dir,
+                };
+            }
+        }
+
+        if let Some(cli_access) = cli.publish_config.access {
+            self.publish_config.access = Some(cli_access);
+        }
+        if !cli.publish_config.tag.is_empty() {
+            self.publish_config.tag = cli.publish_config.tag;
+        }
+        if !cli.publish_config.otp.is_empty() {
+            self.publish_config.otp = cli.publish_config.otp;
+        }
+        if let Some(auth_type) = cli.publish_config.auth_type {
+            self.publish_config.auth_type = Some(auth_type);
+        }
+        self.publish_config.tolerate_republish = cli.tolerate_republish;
+
+        // `--ca` / `--cafile` replace the config file's `ca` + `cafile` as a whole.
+        if !cli.ca.is_empty() || !cli.ca_file_name.is_empty() {
+            self.ca = cli.ca.iter().map(|s| Box::<[u8]>::from(*s)).collect();
+            self.ca_file_name = cli.ca_file_name;
+        }
+
+        // `bun pm version` command options
+        self.git_tag_version = !cli.no_git_tag_version;
+        self.allow_same_version = cli.allow_same_version;
+        self.preid = cli.preid;
+        self.message = cli.message;
+        self.force = cli.force;
+
+        // `bun pm why` command options
+        self.top_only = cli.top_only;
+        self.depth = cli.depth;
 
         // If the lockfile is frozen, don't save it to disk.
         if self.enable.contains(Enable::FROZEN_LOCKFILE) {
@@ -1208,7 +1187,7 @@ impl Options {
             );
         }
 
-        // After every source of a registry URL (bunfig, `.npmrc`, environment, command line) was applied.
+        // After every source of a registry URL was applied.
         if !self.url_auth.is_empty() {
             for scope in core::iter::once(&mut self.scope).chain(self.registries.values_mut()) {
                 fill_scope_from_url_auth(&self.url_auth, scope);
@@ -1228,7 +1207,7 @@ impl Options {
         if self.offline == OfflineMode::Offline {
             self.do_.set(Do::PREFETCH_RESOLVED_TARBALLS, false);
         }
-        // `0` is no gate: `is_some()` is what requests the full registry document for every package.
+        // `0` is no gate: `is_some()` requests the full registry document for every package.
         self.minimum_release_age_ms = self.minimum_release_age_ms.filter(|&ms| ms > 0.0);
         Ok(())
     }

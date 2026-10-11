@@ -46,7 +46,6 @@ fn verbose_install() -> bool {
 
 const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
 
-/// `package_id` is in the lockfile already: binds the row to it.
 fn bind_existing(
     this: &mut PackageManager,
     dependency_id: DependencyID,
@@ -62,7 +61,6 @@ fn bind_existing(
     }))
 }
 
-/// The callbacks waiting for `task_id`; an empty list if there was none.
 fn task_callback_list(this: &mut PackageManager, task_id: Task::Id) -> &mut TaskCallbackList {
     this.task_queue
         .get_or_put(task_id)
@@ -282,7 +280,7 @@ pub fn enqueue_tarball_for_reading(
     this.task_batch.push(ThreadPool::Batch::from(task));
 }
 
-/// `dependency_id` need not resolve to `package_id` (`TaskCallbackContext::GitCheckout`). `Err(Offline)`: not cached, nothing queued, so the caller counts the package as failed or skipped itself.
+/// `Err(Offline)`: not cached, nothing queued; the caller counts the package as failed or skipped.
 pub fn enqueue_git_for_checkout(
     this: &mut PackageManager,
     dependency_id: DependencyID,
@@ -293,7 +291,7 @@ pub fn enqueue_git_for_checkout(
 ) -> Result<(), ForTarballError> {
     let resolution: Resolution = this.lockfile.packages.items_resolution()[package_id as usize];
     let repository: Repository = *resolution.git();
-    // The enqueue callees copy these slices into the filename store before `string_bytes` can grow.
+    // The enqueue callees copy these into the filename store before `string_bytes` grows.
     let url = this.lockfile.str_detached(&repository.repo);
     let clone_id = Task::Id::for_git_clone(url);
     let resolved = this.lockfile.str_detached(&repository.resolved);
@@ -342,7 +340,7 @@ pub fn enqueue_git_for_checkout(
     Ok(())
 }
 
-/// A linker is only told of an `--offline` miss: `report_offline_misses` judges all of them together.
+/// A linker is only told of an `--offline` miss: `report_offline_misses` judges them together.
 fn is_asked_by_linker(context: &TaskCallbackContext) -> bool {
     matches!(
         context,
@@ -351,7 +349,7 @@ fn is_asked_by_linker(context: &TaskCallbackContext) -> bool {
     )
 }
 
-/// The download failed as a warning, while only optional dependencies had asked. A linker that requires the package says so, once.
+/// It failed as a warning while only optional dependencies asked: a linker that requires it errors.
 #[cold]
 fn report_failed_download_as_required(
     this: &mut PackageManager,
@@ -384,7 +382,7 @@ fn report_failed_download_as_required(
     Output::flush();
 }
 
-/// `--offline`, and what `task_id` would fetch is not in the cache: reported once, if required. No task is registered that nobody completes.
+/// Reported once, if required. No task is registered that nobody completes.
 pub(crate) fn offline_miss(
     this: &mut PackageManager,
     task_id: Task::Id,
@@ -521,7 +519,7 @@ pub fn enqueue_dependency_to_root(
         break 'brk index;
     } as DependencyID;
 
-    // This manager lives as long as the process: a failed lookup stands until the event loop has gone around, a 404 also for as long as a manifest would.
+    // A failed lookup stands until the event loop has gone around; a 404 as long as a manifest.
     let turn = this.event_loop.iteration_number();
     let manifest_task_id = {
         let real_name = this.lockfile.buffers.dependencies[dep_id as usize].realname();
@@ -640,12 +638,6 @@ pub fn enqueue_network_task(this: &mut PackageManager, task: *mut NetworkTask) {
 /// Hands the task to the patch-task fifo as a raw pointer; it is reclaimed once
 /// in `run_tasks` after the thread pool pushes it onto `patch_task_queue`.
 pub fn enqueue_patch_task(this: &mut PackageManager, task: Box<PatchTask>) {
-    bun_output::scoped_log!(
-        PackageManager,
-        "Enqueue patch task: {:p} {}",
-        task,
-        task.callback.tag_name()
-    );
     if this.patch_task_fifo.writable_length() == 0 {
         run_tasks::flush_patch_task_queue(this);
     }
@@ -677,7 +669,7 @@ fn resolve_from_appended_task(
     Some(pkg_id)
 }
 
-/// A git / github / tarball row learns its package's name (and commit) at extraction. Under `overrides` the row's tag is not its task's.
+/// A git / tarball row learns its name at extraction. Under `overrides` its tag is not its task's.
 pub(crate) fn name_resolved_row(
     v: &mut dependency::Version,
     pkg_name: SemverString,
@@ -730,7 +722,7 @@ fn enqueue_manifest_download(
     Ok(())
 }
 
-/// A cached manifest lacks what was published since, and a stale edge confirms it with a 304. True while an unconditional request, one per run, is on its way.
+/// A stale edge confirms a stale manifest with a 304. True while this run's one full request runs.
 fn refetch_stale_manifest(
     this: &mut PackageManager,
     name: &[u8],
@@ -774,7 +766,7 @@ fn warn_latest_names_no_version(
     );
 }
 
-/// The package bun.lock has for a git / github / tarball row parsed from package.json, which does not know the package's name yet.
+/// What bun.lock has for a git / tarball row of package.json, which does not know its name yet.
 fn locked_repository(
     this: &PackageManager,
     dependency: &Dependency,
@@ -790,7 +782,7 @@ fn locked_repository(
     this.locked_tarball(res)
 }
 
-/// The `npm:` alias a plain dependency may follow: any manifest's, but for a row of the root package.json only one that the root declares.
+/// Any manifest's `npm:` alias; for a row of the root package.json, only one the root declares.
 fn followed_npm_alias(
     this: &mut PackageManager,
     id: DependencyID,
@@ -827,7 +819,7 @@ fn followed_npm_alias(
         .find(|version| version.tag == dependency::version::Tag::Npm && version.npm().is_alias)
 }
 
-/// Whether `declared` takes what `aliased` gets bound to: like npm, only then they share a folder. `None` until the alias's manifest has arrived.
+/// Like npm, only then they share a folder. `None` until the alias's manifest has arrived.
 fn takes_alias_target(
     this: &mut PackageManager,
     declared: &Semver::query::Group,
@@ -858,26 +850,6 @@ fn takes_alias_target(
     }
 }
 
-#[inline]
-fn log_enqueued(
-    this: &PackageManager,
-    id: DependencyID,
-    name: SemverString,
-    version: &dependency::Version,
-    result: &dyn core::fmt::Display,
-) {
-    bun_output::scoped_log!(
-        PackageManager,
-        "enqueueDependency({}, {}, {}, {}) = {}",
-        id,
-        <&'static str>::from(version.tag),
-        bstr::BStr::new(this.lockfile.str(&name)),
-        bstr::BStr::new(this.lockfile.str(&version.literal)),
-        result,
-    );
-}
-
-/// `package` was appended for this row: its dependencies are resolved next.
 fn on_first_resolution(
     this: &mut PackageManager,
     version: &dependency::Version,
@@ -941,7 +913,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     resolution: PackageID,
     install_peer: bool,
     success_fn: SuccessFn,
-    // `enqueue_dependency_to_root` (auto-install): resolution errors go to `this.log` instead of propagating.
+    // Auto-install: resolution errors go to `this.log` instead of propagating.
     is_root: bool,
 ) -> crate::Result<()> {
     if dependency.behavior.is_optional_peer() {
@@ -963,7 +935,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
 
     let mut version_was_replaced = true;
     let version: dependency::Version = 'version: {
-        // An `npm:` alias names its target explicitly: only plain dependencies follow a same-named alias elsewhere in the tree.
+        // Only a plain dependency follows a same-named `npm:` alias elsewhere in the tree.
         if dependency.version.tag == dependency::version::Tag::Npm
             && !dependency.version.npm().is_alias
         {
@@ -989,7 +961,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     break 'version aliased;
                 }
 
-                // fallthrough: the name of an alias but not its version is a normal npm dependency, overrides allowed
+                // An alias's name but not its version: a normal npm dependency, overrides allowed.
             }
         }
 
@@ -1047,10 +1019,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         break 'version dependency.version.clone();
     };
 
-    // Refuse an unsafe alias (a future folder) or registry name before either is fetched or printed; an empty alias is tolerated.
+    // An unsafe alias (a future folder) or registry name: refused before it is fetched or printed.
     let alias = this.lockfile.str(&dependency.name);
     let alias_is_safe = if alias == this.lockfile.str(&dependency.version.literal) {
-        // `bun add <specifier>`'s alias until `assign_resolution` names it: never a folder, but printed.
+        // `bun add <specifier>`'s alias until `assign_resolution`: never a folder, but printed.
         !dependency::contains_control_character(alias)
     } else {
         alias.is_empty() || crate::package_installer::alias_is_safe_install_target(alias)
@@ -1064,7 +1036,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     let invalid_name = if !alias_is_safe {
         Some(alias)
     } else {
-        // `""`, `@1.0.0`, `@scope/`: a row of an older lockfile, an override. The request would be for `/`, `/@1.0.0`.
+        // `""`, `@1.0.0`, `@scope/` (an older lockfile, an override) would request `/`, `/@1.0.0`.
         registry_name.filter(|name| !crate::package_installer::alias_is_safe_install_target(name))
     };
     if let Some(invalid_name) = invalid_name {
@@ -1122,22 +1094,20 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         if let Some(task) = result.task {
                             enqueue_resolved_task(this, result.package.meta.id, task);
                         }
-                        log_enqueued(this, id, name, &version, &result.package.meta.id);
                         return Ok(());
                     }
                     if !version.tag.is_npm() {
                         return Ok(());
                     }
 
-                    // Snapshot before `this_ptr`: `&mut *this_ptr` after `scope` exists would pop its borrow-stack tag under SB.
+                    // Before `this_ptr`: a `&mut *this_ptr` later would invalidate `scope`.
                     let cache_ctx = this.manifest_disk_cache_ctx();
                     let this_ptr: *mut PackageManager = this;
-                    // Owned: `get_or_put_resolved_package_with_find_result` can reallocate `string_bytes`, and `name_str` is read afterwards.
+                    // Owned: resolving can reallocate `string_bytes`, and this is read afterwards.
                     let name_str: Vec<u8> = this.lockfile.str(&name).to_vec();
                     let task_id = Task::Id::for_manifest(&name_str);
 
                     debug_assert!(task_id.get() != 0);
-                    log_enqueued(this, id, name, &version, &format_args!("task {task_id}"));
 
                     if dependency.behavior.is_peer() && !install_peer {
                         this.peer_dependencies.write_item(id)?;
@@ -1171,7 +1141,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 loaded_manifest.insert(manifest.clone());
                             let excludes = this.options.minimum_release_age_excludes;
 
-                            // An exact version in the cached manifest needs no network request, even beyond the caching period
+                            // An exact version in an expired manifest needs no request.
                             let exact = (version.tag == dependency::version::Tag::Npm
                                 && version.npm().version.is_exact())
                             .then(|| version.npm().version.head.head.range.left.version);
@@ -1197,7 +1167,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         min_age_ms,
                                         excludes,
                                     )
-                                    // The gate is for new resolutions, not for what the lockfile pins.
+                                    // The gate is for new resolutions, not for pinned ones.
                                     && locked_version_in_lockfile(this, name_hash, &version)
                                         .is_none()
                                 {
@@ -1231,7 +1201,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 }
                             }
 
-                            // Recent enough to load without the network call? `--prefer-offline` / `--offline` load any as fresh; one still expired here needs the extended manifest.
+                            // Offline modes load any as fresh: `expired` then wants the full one.
                             if !expired
                                 && (this.options.enable.manifest_cache_control()
                                     || this.options.offline != OfflineMode::Online)
@@ -1243,7 +1213,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     }
 
                     if this.options.offline == OfflineMode::Offline {
-                        // A required edge reports once and marks the task failed; any other releases the reservation, so that a later required edge still reports.
+                        // Any other releases the reservation: a later required edge still reports.
                         if dependency.behavior.is_required() {
                             this.mark_network_task_failed(task_id);
                             this.log_mut().add_error_fmt(
@@ -1293,16 +1263,15 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 return Ok(());
             }
 
-            // A git child exits through this thread's event loop, which `auto_installer::Parked` does not run.
+            // A git child exits through the event loop, which `auto_installer::Parked` never runs.
             if this.options.runtime_auto_install {
                 return Ok(());
             }
 
-            // The enqueue callees copy these slices into the filename store before `string_bytes` can grow.
+            // The enqueue callees copy these into the filename store before `string_bytes` grows.
             let alias = this.lockfile.str_detached(&dependency.name);
             let url = this.lockfile.str_detached(&dep.repo);
             let clone_id = Task::Id::for_git_clone(url);
-            log_enqueued(this, id, name, &version, &bstr::BStr::new(url));
 
             if let Some(repo_fd) = this.git_repositories.get(&clone_id).copied() {
                 let needs_ctx =
@@ -1390,7 +1359,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         dependency::version::Tag::Symlink | dependency::version::Tag::Workspace => {
             let dependency_tag = version.tag;
 
-            // Same trust rule as the `file:` arm of `get_or_put_resolved_package`: a path is read against the project.
+            // The trust rule of `get_or_put_resolved_package`'s `file:` arm.
             let is_link_path = dependency_tag == dependency::version::Tag::Symlink
                 && dependency::is_link_path(this.lockfile.str(version.symlink()));
             if is_link_path && !this.lockfile.is_trusted_folder_dependency(id) {
@@ -1425,7 +1394,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
 
                 // should not trigger a network call
                 debug_assert!(result.task.is_none());
-                log_enqueued(this, id, name, &version, &result.package.meta.id);
                 return Ok(());
             }
 
@@ -1497,7 +1465,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 return Ok(());
             }
 
-            // The enqueue callees copy `url` into the filename store before `string_bytes` can grow.
+            // The enqueue callees copy `url` into the filename store before `string_bytes` grows.
             let github_url;
             let url: &[u8] = match res.tag {
                 ResolutionTag::Github => {
@@ -1508,7 +1476,6 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 _ => this.lockfile.str_detached(res.remote_tarball()),
             };
             let task_id = Task::Id::for_tarball(url);
-            log_enqueued(this, id, name, &version, &bstr::BStr::new(url));
 
             if this.lockfile.buffers.resolutions[id as usize] == invalid_package_id {
                 if let Some(pkg_id) = resolve_from_appended_task(this, task_id, id) {
@@ -1533,7 +1500,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 return Ok(());
             }
 
-            // `*mut` at once, so that the borrow of `this` ends before `enqueue_network_task` reborrows it.
+            // `*mut` at once: the borrow of `this` ends before `enqueue_network_task` reborrows it.
             let network_task: Option<*mut NetworkTask> =
                 match run_tasks::generate_network_task_for_tarball(
                     this,
@@ -1726,7 +1693,7 @@ fn reject_local_tarball_of_remote_package(
     );
 }
 
-/// `version` is what the edge resolves with: the declared specifier, or the one a scoped override supplied.
+/// `version`: the declared specifier, or the one a scoped override supplied.
 #[cold]
 #[inline(never)]
 fn reject_link_path_of_remote_package(
@@ -1761,7 +1728,7 @@ fn reject_link_path_of_remote_package(
     }
 }
 
-/// Whether a missing `workspace:`, `link:` or `file:` target fails the install: not in a group this install omits, and then no lockfile is saved (`may_stay_unresolved`).
+/// Not in a group this install omits; then no lockfile is saved (`may_stay_unresolved`).
 #[cold]
 fn requires_local_target(
     this: &mut PackageManager,
@@ -1779,7 +1746,7 @@ fn requires_local_target(
     !omitted && dependency.behavior.is_required()
 }
 
-/// Allocated up front, on the main thread (`preallocated_resolve_tasks` is not thread-safe), so that the streaming extractor can publish it to `resolve_tasks`.
+/// Allocated up front on the main thread: `preallocated_resolve_tasks` is not thread-safe.
 pub(crate) fn create_extract_task_for_streaming(
     this: &mut PackageManager,
     tarball: &ExtractTarball,
@@ -2044,7 +2011,6 @@ fn update_name_and_name_hash_from_version_replacement(
     }
 }
 
-/// `range` on the name of a workspace links the workspace.
 fn links_workspace(
     this: &PackageManager,
     name_hash: PackageNameHash,
@@ -2062,7 +2028,7 @@ fn links_workspace(
     .is_some()
 }
 
-/// Without a rule this row of the root or of a workspace links a member of this install, and a rule for the member's name does not displace the link.
+/// A rule for the member's name does not displace the link of a root or workspace row.
 fn links_workspace_member(
     this: &PackageManager,
     id: DependencyID,
@@ -2127,7 +2093,7 @@ pub(crate) struct ResolvedPackageResult {
     pub task: Option<ResolvedPackageTask>,
 }
 
-/// Once per version. What a package.json of the project names gets a line; the rest is counted (`--verbose`: a line each).
+/// Once per version. What a package.json of the project names gets a line; the rest is counted.
 #[cold]
 fn warn_deprecated(
     this: &mut PackageManager,
@@ -2174,12 +2140,12 @@ fn get_or_put_resolved_package_with_find_result(
                 && crate::update_scope::UpdateScope::of(this)
                     .contains_dependency(&this.lockfile, dependency_id)
         } else {
-            // Bare `bun update`: the rows the targeted workspaces declare; catalogs are root-scoped.
+            // Bare `bun update`: the rows the targeted workspaces declare; catalogs are the root's.
             dependency.version.tag == dependency::version::Tag::Catalog
                 || update_target_declares(this, dependency_id)
         };
 
-    // A patched package is held while the range still allows it (update_transitive holds the transitive rows the same way); audit fix does not set to_update and moves it, and so does --latest.
+    // A patched package is held while the range allows it; `--latest` and audit fix move it.
     if should_update && !latest_for_target && !behavior.is_peer() {
         if let Some(id) = this.lockfile.patched_package_satisfying(name_hash, version) {
             this.kept_patched.push(id);
@@ -2187,7 +2153,7 @@ fn get_or_put_resolved_package_with_find_result(
         }
     }
 
-    // Was this package already allocated? Let's reuse the existing one. A deferred peer only an exact match: its range match waits for the `install_peer` pass.
+    // A deferred peer reuses only an exact match: its range match waits for `install_peer`.
     let suppress_peer_satisfies = behavior.is_peer() && !install_peer;
     let npm_resolution = Resolution::init(ResolutionTagged::Npm(ResolutionNpmValue {
         version: find_result.version,
@@ -2434,7 +2400,7 @@ fn get_or_put_resolved_package(
                 name_hash,
                 needs_ext,
             ) else {
-                // The registry does not have the name (`run_tasks` sends the row back after the 404).
+                // The registry does not have the name: `run_tasks` sent the row back after the 404.
                 if version.tag == dependency::version::Tag::DistTag
                     && has_linkable_workspace(this, name_hash)
                     && this.network_task_has_failed(Task::Id::for_manifest(name_str))
@@ -2481,25 +2447,21 @@ fn get_or_put_resolved_package(
                             this.options.minimum_release_age_ms.unwrap_or(0.0) / MS_PER_S;
                         let manifest_buf: &[u8] = &manifest.string_buf;
                         let buf = this.lockfile.buffers.string_bytes.as_slice();
-                        match version.tag {
-                            dependency::version::Tag::DistTag => bun_core::pretty_errorln!(
-                                "<d>[minimum-release-age]<r> <b>{}@{}<r> selected <green>{}<r> instead of <yellow>{}<r> due to {}-second filter",
-                                package_name,
-                                bun_fmt::escape_control_chars(version.dist_tag().tag.slice(buf)),
-                                result.version.fmt(manifest_buf),
-                                newest.fmt(manifest_buf),
-                                min_age_seconds,
-                            ),
-                            dependency::version::Tag::Npm => bun_core::pretty_errorln!(
-                                "<d>[minimum-release-age]<r> <b>{}<r>@{}<r> selected <green>{}<r> instead of <yellow>{}<r> due to {}-second filter",
-                                package_name,
-                                version.npm().version.fmt(buf),
-                                result.version.fmt(manifest_buf),
-                                newest.fmt(manifest_buf),
-                                min_age_seconds,
-                            ),
+                        let wanted: &dyn core::fmt::Display = match version.tag {
+                            dependency::version::Tag::DistTag => {
+                                &bun_fmt::escape_control_chars(version.dist_tag().tag.slice(buf))
+                            }
+                            dependency::version::Tag::Npm => &version.npm().version.fmt(buf),
                             _ => unreachable!(),
-                        }
+                        };
+                        bun_core::pretty_errorln!(
+                            "<d>[minimum-release-age]<r> <b>{}@{}<r> selected <green>{}<r> instead of <yellow>{}<r> due to {}-second filter",
+                            package_name,
+                            wanted,
+                            result.version.fmt(manifest_buf),
+                            newest.fmt(manifest_buf),
+                            min_age_seconds,
+                        );
                     }
 
                     Some(result)
@@ -2519,7 +2481,7 @@ fn get_or_put_resolved_package(
                             if behavior.is_peer() && !install_peer {
                                 return Ok(None);
                             }
-                            // The gate is for new resolutions, not for what the lockfile pins.
+                            // The gate is for new resolutions, not for pinned ones.
                             match locked_version_in_lockfile(this, name_hash, version)
                                 .and_then(|(locked, _)| manifest.find_by_version(locked))
                             {
@@ -2542,7 +2504,7 @@ fn get_or_put_resolved_package(
                         return Ok(None);
                     }
 
-                    // A workspace stands in for a dist-tag only when the registry cannot satisfy it.
+                    // A workspace stands in for a dist-tag only if the registry cannot satisfy it.
                     if version.tag == dependency::version::Tag::DistTag
                         && let Some(id) = root_workspace_package_id(&this.lockfile, name_hash)
                     {
@@ -2579,7 +2541,7 @@ fn get_or_put_resolved_package(
                 }
             };
 
-            // `--latest` never moves a row below what bun.lock already has (e.g. a prerelease or a version ahead of the tag).
+            // `--latest` never moves a row below what bun.lock has.
             if latest_for_target
                 && let Some((locked, buf)) = locked_version_in_lockfile(this, name_hash, version)
                 && find_result.version.order(locked, &manifest.string_buf, buf)
@@ -2589,7 +2551,7 @@ fn get_or_put_resolved_package(
                 find_result = kept;
             }
 
-            // `this.manifests`, which `manifest` and `find_result` point into, is not mutated by the callee.
+            // The callee leaves `this.manifests`, which `manifest` and `find_result` point into.
             get_or_put_resolved_package_with_find_result(
                 // SAFETY: see `this_ptr` note above.
                 unsafe { &mut *this_ptr },
@@ -2610,7 +2572,7 @@ fn get_or_put_resolved_package(
         dependency::version::Tag::Folder => {
             let folder = *version.folder();
             let res: FolderResolutionValue = 'res: {
-                // A rule of the root package.json wrote the path, so the folder is read like a root `file:` dependency.
+                // A rule of the root package.json wrote the path: read like a root `file:` row.
                 let from_root_rule = version_was_replaced
                     && !behavior.is_bundled()
                     && (!crate::bin::bin_target_escapes_package_dir(this.lockfile.str(&folder))
@@ -2623,7 +2585,7 @@ fn get_or_put_resolved_package(
                     this.lockfile.is_trusted_folder_dependency(dependency_id);
 
                 // transitive folder dependencies do not have their dependencies resolved
-                // Nothing installs a bundled one: its path is recorded, and both linkers and `bun patch` refuse to read it.
+                // Nothing installs a bundled one: the linkers and `bun patch` refuse its path.
                 if !behavior.is_bundled()
                     && crate::bin::bin_target_escapes_package_dir(this.lockfile.str(&folder))
                     && !path_is_top_level_relative
@@ -2645,7 +2607,7 @@ fn get_or_put_resolved_package(
                 let mut package = Package::default();
 
                 {
-                    // only need name and path, copied out of `string_bytes`, which `StringBuilder::allocate` may grow
+                    // Copied out of `string_bytes`, which `StringBuilder::allocate` may grow.
                     let name_slice: Vec<u8> = this.lockfile.str(&name).to_vec();
                     let folder_path: Vec<u8> = this.lockfile.str(&folder).to_vec();
                     let mut builder = this.lockfile.string_builder();
@@ -2699,7 +2661,7 @@ fn get_or_put_resolved_package(
             resolved_folder_package(this, res, dependency_id, success_fn)
         }
         dependency::version::Tag::Symlink => {
-            // `get_or_put` copies `symlink_path` into the lockfile string buffer before any other mutation.
+            // `get_or_put` copies it into the lockfile string buffer before any other mutation.
             let symlink_path = this.lockfile.str_detached(version.symlink());
             if dependency::is_link_path(symlink_path) {
                 let mut buf2 = bun_paths::path_buffer_pool::get();
@@ -2778,7 +2740,7 @@ fn resolve_project_folder(
     FolderResolution::get_or_put(GlobalOrRelative::Relative(version.tag), version, abs, this)
 }
 
-/// `bun update <name>`: the row names a requested package, as declared or as `npm:<name>@…` aliased.
+/// `bun update <name>`: the row names a requested package, as declared or through `npm:`.
 fn names_update_request(
     this: &PackageManager,
     dependency: &Dependency,
@@ -2790,7 +2752,7 @@ fn names_update_request(
         || (name_hash != dependency.name_hash && this.is_update_request(name_hash, name.slice(buf)))
 }
 
-/// `bun update --latest` resolves the registry's `latest` dist-tag for the rows package.json declares in the workspaces it targets (with names: the entries a request names). The row keeps its declared specifier, so an override, a `$name` value, the workspace link and an alias read what the user wrote; a row whose specifier an override or a catalog replaced is not moved here.
+/// The row keeps its declared specifier; one an override or a catalog replaced is not moved here.
 fn picks_latest_tag(
     this: &mut PackageManager,
     dependency: &Dependency,
@@ -2811,7 +2773,7 @@ fn picks_latest_tag(
         && update_target_declares(this, dependency_id)
 }
 
-/// Does the package.json of a workspace `bun update` targets declare the row? The targets are the `-r` / `--filter` selection, else the workspace the command runs in. A member that is new to the lockfile has no package until its workspace row resolves.
+/// The targets: the `-r` / `--filter` selection, else the workspace the command runs in.
 fn update_target_declares(this: &mut PackageManager, dependency_id: DependencyID) -> bool {
     let lockfile: &Lockfile::Lockfile = &this.lockfile;
     if let Some(targets) = this.update_target_workspaces.as_deref() {
@@ -2833,7 +2795,7 @@ fn update_target_declares(this: &mut PackageManager, dependency_id: DependencyID
         .is_some_and(|rows| rows.contains(dependency_id))
 }
 
-/// The row still carries its package.json range, so its locked version is the lockfile-loaded instance that range accepts (`package_index` lists highest first); dist-tag rows follow the tag.
+/// The lockfile-loaded instance the row's range accepts (`package_index` lists highest first).
 fn locked_version_in_lockfile<'a>(
     this: &'a PackageManager,
     name_hash: PackageNameHash,
@@ -2847,7 +2809,7 @@ fn locked_version_in_lockfile<'a>(
         .then(|| (res.npm().version, lockfile.buffers.string_bytes.as_slice()))
 }
 
-/// The package to bind a deferred peer row to; the highest-or-nothing fallback is what `resolve_peer_dep_version_based` rebinds to on load.
+/// The highest-or-nothing fallback is what `resolve_peer_dep_version_based` rebinds to on load.
 fn existing_peer_target(
     this: &PackageManager,
     name_hash: PackageNameHash,
@@ -2862,7 +2824,7 @@ fn existing_peer_target(
     (!would_revive_leftover(lockfile, row, highest)).then_some(highest)
 }
 
-/// The peer `row`'s own package.json, or the root's, depends on its name through `file:`, `link:`, a tarball or git: it stays unresolved and the tree builder binds it to the nearest copy.
+/// By a `file:`, `link:`, tarball or git row: the tree builder binds the peer to the nearest copy.
 fn is_peer_provided_locally(this: &PackageManager, peer: &Dependency, row: DependencyID) -> bool {
     let lockfile: &Lockfile::Lockfile = &this.lockfile;
     let deps = lockfile.buffers.dependencies.as_slice();
@@ -2892,7 +2854,7 @@ fn is_peer_provided_locally(this: &PackageManager, peer: &Dependency, row: Depen
         || provides(0, this.options.local_package_features)
 }
 
-/// Nothing provides the peer `row`: the newest version that the ranges of all its dependents accept (those reached without crossing a peer edge). `None`: the range of `row` alone decides.
+/// The newest version the ranges of all its dependents accept. `None`: the range of `row` decides.
 fn version_every_peer_accepts<'m>(
     this: &PackageManager,
     manifest: &'m Npm::PackageManifest,
@@ -2984,7 +2946,7 @@ fn highest_peer_candidate(
     same_kind.then_some(highest)
 }
 
-/// `row` is a root or workspace `peerDependencies` entry and `package_id` is held only by non-root peer rows (usually this entry's own earlier install): nothing provides it, and it is not a root row's copy, which `Tree::hoist_dependency` dedupes every other peer onto regardless of range.
+/// `package_id` is held only by non-root peer rows, usually this entry's own earlier install.
 fn would_revive_leftover(
     lockfile: &Lockfile::Lockfile,
     row: DependencyID,
@@ -3003,7 +2965,7 @@ fn would_revive_leftover(
 }
 
 impl PackageManager {
-    /// False when the install goes on without `package_id`: `dependency_id` and every other dependency on it of a linked package are optional. The root's edge to a workspace does not count.
+    /// False when every edge to it is optional. The root's edge to a workspace does not count.
     pub(crate) fn is_package_required(
         &self,
         dependency_id: DependencyID,
@@ -3018,7 +2980,7 @@ impl PackageManager {
         }
         let features = self.options.local_package_features;
         let linked = reachable::packages(lockfile, resolutions, reachable::Options::install(self));
-        // A peer needs the copy the tree serves it, unless its package.json also has it in `optionalDependencies`. The tree is only walked for a name the package goes by.
+        // A peer needs the copy the tree serves it, unless `optionalDependencies` also has it.
         let names: Vec<PackageNameHash> = (resolutions.iter().zip(dependencies))
             .filter(|&(&resolved, _)| resolved == package_id)
             .map(|(_, dependency)| dependency.name_hash)
@@ -3050,7 +3012,7 @@ impl PackageManager {
         })
     }
 
-    /// `misses`: `Summary::offline_misses` of a linker that installed `roots`. Reports those the install cannot go on without and returns their number.
+    /// Reports the `Summary::offline_misses` the install cannot go on without; returns their count.
     #[cold]
     pub(crate) fn report_offline_misses(
         &self,
@@ -3066,7 +3028,7 @@ impl PackageManager {
         for &package_id in misses {
             missing.set(package_id as usize);
         }
-        // A peer needs the copy the linker serves it. One edge has one package here: what else it is served elsewhere counts as needed.
+        // A peer needs the copy the linker serves it; what it is served elsewhere counts as needed.
         let mut resolutions = lockfile.buffers.resolutions.clone();
         for (resolved, dependency) in resolutions.iter_mut().zip(&lockfile.buffers.dependencies) {
             if dependency.behavior.is_peer() {
@@ -3115,7 +3077,7 @@ impl PackageManager {
         Ok(reported)
     }
 
-    /// `served`: the peer rows of the layout a linker wrote and the copy each dependent loads there.
+    /// `served`: the peer rows of the layout a linker wrote and the copy each dependent loads.
     #[cold]
     #[inline(never)]
     pub(crate) fn warn_incorrect_peers(&self, served: &[(DependencyID, PackageID)]) {

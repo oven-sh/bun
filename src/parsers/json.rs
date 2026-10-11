@@ -1873,9 +1873,9 @@ mod tests {
             writeln!(
                 out,
                 "str={:?}",
-                root.get_string(bump, b"name")
-                    .unwrap()
-                    .map(|(s, _)| std::string::String::from_utf8_lossy(s).into_owned())
+                root.get(b"name")
+                    .and_then(|e| e.as_string(bump))
+                    .map(|s| std::string::String::from_utf8_lossy(s).into_owned())
             )
             .unwrap();
             writeln!(

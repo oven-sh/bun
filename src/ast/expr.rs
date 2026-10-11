@@ -461,20 +461,6 @@ impl Expr {
         Ok(())
     }
 
-    pub fn get_string<'b>(
-        &self,
-        bump: &'b Bump,
-        name: &[u8],
-    ) -> Result<Option<(&'b [u8], Loc)>, AllocError> {
-        let expr = self;
-        if let Some(q) = expr.as_property(name) {
-            if let Some(str) = q.expr.as_string(bump) {
-                return Ok(Some((str, q.expr.loc)));
-            }
-        }
-        Ok(None)
-    }
-
     pub fn get_number(&self, name: &[u8]) -> Option<(f64, Loc)> {
         if let Some(q) = self.as_property(name) {
             if let Some(num) = q.expr.as_number() {

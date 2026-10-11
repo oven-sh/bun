@@ -37,10 +37,10 @@ pub enum EditSite {
     Override(OverrideSelector),
 }
 
-/// A rule of the root package.json's `overrides`/`resolutions` as `OverrideMap` normalizes it, minus the target name (the edit's `key`).
+/// A rule as `OverrideMap` normalizes it, minus the target name (the edit's `key`).
 #[derive(Clone, PartialEq, Eq)]
 pub struct OverrideSelector {
-    /// Name and declared range of the dependent the rule is scoped to; the range is empty when any version of it qualifies.
+    /// Name and range of the dependent the rule is scoped to; an empty range takes any version.
     pub parent: Option<(Box<[u8]>, Box<[u8]>)>,
     /// Empty when the rule applies whatever range the dependent declares.
     pub target_range: Box<[u8]>,
@@ -67,7 +67,7 @@ impl OverrideSelector {
         self.parent.is_none() && self.target_range.is_empty()
     }
 
-    /// The rule's key in the `parent@range>name@range` form bun.lock writes, which `overrides` also accepts.
+    /// `parent@range>name@range`, the form bun.lock writes and `overrides` also accepts.
     pub fn key(&self, name: &[u8]) -> Box<[u8]> {
         let mut out: Vec<u8> = Vec::new();
         if let Some((parent, parent_range)) = &self.parent {
@@ -236,7 +236,7 @@ pub(super) fn root_package_json(manager: &mut PackageManager) -> Expr {
     fetch_entry_root(manager, &WorkspaceTarget::root())
 }
 
-/// The string the root package.json currently gives `name`'s rule `selector`; when several entries spell the same rule, the last one, which is the one `OverrideMap` keeps.
+/// When several entries spell the same rule, the last one, which `OverrideMap` keeps.
 pub(super) fn override_literal(
     root: &Expr,
     name: &[u8],

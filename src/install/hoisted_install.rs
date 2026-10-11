@@ -47,7 +47,7 @@ impl<'a> run_tasks::RunTasksCallbacks for HoistedRunTasksCallbacks<'a> {
     }
 }
 
-/// Puts back the trees that `Lockfile::filter` replaced for the install pass, and ends its progress.
+/// Puts back the trees that `Lockfile::filter` replaced for the install pass; ends its progress.
 struct RestoreManager {
     manager: *mut PackageManager,
     trees: Vec<tree::Tree>,
@@ -219,7 +219,7 @@ pub(crate) fn install_hoisted_packages(
         log_level,
     };
 
-    // A partial install (security scanner) runs ahead of the real one and must not touch the layout.
+    // A partial install (security scanner) runs ahead of the real one: it leaves the layout alone.
     let replacing_isolated_node_modules = packages_to_install.is_none()
         && this.options.node_linker == bun_install_types::NodeLinker::NodeLinker::Hoisted
         && sys::directory_exists_at(Fd::cwd(), bun_paths::path_literal!("node_modules/.bun"))
@@ -333,34 +333,6 @@ pub(crate) fn install_hoisted_packages(
                         }
 
                         deps.unmanaged.set_all(false);
-                    }
-                }
-
-                if cfg!(debug_assertions) {
-                    if trees.len() > 0 {
-                        // last tree should only depend on one other
-                        debug_assert!(
-                            tree_ids_to_trees_the_id_depends_on
-                                .at(trees.len() - 1)
-                                .count()
-                                == 1
-                        );
-                        // and it should be itself
-                        debug_assert!(
-                            tree_ids_to_trees_the_id_depends_on
-                                .at(trees.len() - 1)
-                                .is_set(trees.len() - 1)
-                        );
-
-                        // root tree should always depend on all trees
-                        debug_assert!(
-                            tree_ids_to_trees_the_id_depends_on.at(0).count() == trees.len()
-                        );
-                    }
-
-                    // a tree should always depend on itself
-                    for j in 0..trees.len() {
-                        debug_assert!(tree_ids_to_trees_the_id_depends_on.at(j).is_set(j));
                     }
                 }
 

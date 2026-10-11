@@ -317,11 +317,11 @@ fn exit_on_lockfile_load_failure(manager: &mut PackageManager, subject: &[u8]) -
     }
 }
 
-/// Turns `bun update` patterns and `--dev`/`--prod`/`--no-optional`/`--depth 0` into the concrete names the named path expects; a plain `bun update [name]` returns before doing anything.
+/// Turns patterns and group selectors into the concrete names the named path expects.
 pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], groups: UpdateGroups) {
     let positionals = manager.options.positionals;
     let args = positionals.get(1..).unwrap_or(&[]);
-    // `--depth 0` selects every group; like the group selectors it names the root and workspace rows only.
+    // `--depth 0` selects every group, of the root and workspace rows only.
     let direct_only = manager.options.do_.update_direct_only();
     let selecting = !groups.is_default() || direct_only;
     if !selecting && !args.iter().any(|a| is_pattern(a)) {

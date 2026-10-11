@@ -364,7 +364,6 @@ fn literal_tag(literal: &[u8]) -> dependency::Tag {
     dependency::Tag::infer(dependency::trim_literal(literal))
 }
 
-/// The key and the value of an entry whose both are strings.
 pub(crate) fn string_pair(property: &G::Property) -> Option<(&[u8], &[u8])> {
     property
         .key
@@ -378,7 +377,7 @@ pub(crate) fn string_pair(property: &G::Property) -> Option<(&[u8], &[u8])> {
         )
 }
 
-/// Split borrows, for callers holding a `&mut` to another `PackageManager` field. `selected(key, literal)` picks the entries.
+/// Split borrows, for callers holding a `&mut` to another `PackageManager` field.
 pub(crate) fn edit_update_entries(
     lockfile: &crate::Lockfile,
     arena: &bun_alloc::Arena,
@@ -403,14 +402,14 @@ pub(crate) fn edit_update_entries(
             continue;
         };
         if options.before_install {
-            // Record each npm dependency's declared literal; --latest steers the row at resolve time (`picks_latest_tag`).
+            // --latest steers the row at resolve time (`picks_latest_tag`).
             for dep in entries.properties.slice() {
                 let Some((key_str, version_literal)) = string_pair(dep) else {
                     continue;
                 };
                 let tag = literal_tag(version_literal);
 
-                // npm ranges only (and dist-tags with --latest); `catalog:` is handled by record_catalog_entries and edit_catalogs_after_update.
+                // `catalog:` is for `record_catalog_entries` and `edit_catalogs_after_update`.
                 if (tag != dependency::Tag::Npm
                     && (tag != dependency::Tag::DistTag || !update_to_latest))
                     || !selected(key_str, version_literal)
@@ -419,7 +418,7 @@ pub(crate) fn edit_update_entries(
                 }
                 let entry = updating_packages.get_or_put(key_str)?;
 
-                // The first of `dependency_groups` wins: the order that picks the installed version.
+                // The first of `dependency_groups` wins, as when picking the installed version.
                 if entry.found_existing {
                     continue;
                 }
@@ -582,13 +581,13 @@ pub(crate) fn record_catalog_entries(
     })
 }
 
-/// A bare `bun update --latest` that targets the root: `steer_used_catalogs_to_latest` runs on the catalogs each root parse produces, and `package_json_write_back` derives them from package.json again before bun.lock is saved.
+/// A bare `bun update --latest` that targets the root.
 #[inline]
 pub(crate) fn steers_catalogs_to_latest(manager: &PackageManager) -> bool {
     !manager.updating_catalogs.is_empty() && manager.options.do_.contains(Do::UPDATE_TO_LATEST)
 }
 
-/// `bun update --latest`: in the catalogs `lockfile` has just parsed from the root package.json, each entry that a `catalog:` dependency of the root or of a member names selects the dist-tag `latest` for this resolve, and `edit_catalogs_after_update` writes what those rows resolve back into it. An entry that only an override reaches keeps its range: no row would carry a new version back to it.
+/// An entry that only an override reaches keeps its range: no row carries a version back to it.
 #[cold]
 #[inline(never)]
 pub(crate) fn steer_used_catalogs_to_latest(
@@ -650,7 +649,7 @@ pub(crate) fn steer_used_catalogs_to_latest(
     Ok(())
 }
 
-/// Runs on the loaded lockfile, before the differ: every `catalog:` row of an entry recorded by `record_catalog_entries` is registered in `updating_packages` under its `catalog_row_key` with the row's locked version as the original, the way the cwd's own dependency lists register their names, so the install summary prints the entry's move as an update row.
+/// On the loaded lockfile, before the differ: the summary prints an entry's move as an update row.
 pub(crate) fn record_catalog_originals(
     manager: &mut PackageManager,
 ) -> Result<(), bun_alloc::AllocError> {
@@ -845,7 +844,7 @@ fn resolve_catalog_literals(
     }
 }
 
-/// Removes every `name` entry of the dependency list `list`, and the list once nothing is left in it. What stays keeps its order, in the list and in `package_json`. Returns whether `name` was there.
+/// Also removes `list` once nothing is left in it. Returns whether `name` was there.
 pub(crate) fn remove_entry(package_json: &mut Expr, list: &[u8], name: &[u8]) -> bool {
     let Some(query) = package_json.as_property(list) else {
         return false;
@@ -892,13 +891,13 @@ pub(crate) enum Declared {
     Removed,
 }
 
-/// What becomes of the entry that `list` already has for a package `bun add` puts into `target`. Without `move_to_target` this is only asked for a spec without a name (`package_json_write_back::fold_resolved_positionals`).
+/// What becomes of the entry `list` already has for a package `bun add` puts into `target`.
 pub(crate) fn fate_of_declared(list: &[u8], target: &[u8], move_to_target: bool) -> Declared {
     let peer = DependencyGroup::PEER.prop;
     if list == target {
         Declared::TakesSpec
     } else if !move_to_target {
-        // A peer entry and the entry of another list may share a name, so neither replaces the other.
+        // A peer entry and the entry of another list may share a name: neither replaces the other.
         if (list == peer) == (target == peer) {
             Declared::TakesSpec
         } else {
@@ -976,7 +975,7 @@ pub(crate) fn edit(
             let mut i: usize = 0;
             'loop_: while i < updates.len() {
                 let request = &mut updates[i];
-                // A spec without a name (`bun add ./folder`, a tarball, a git URL) was written as `"<spec>": "<spec>"` before the install. It has a name now, which the file may declare already.
+                // `"<spec>": "<spec>"` has a name now, which the file may declare already.
                 let resolved_name = if fold_positionals
                     && !request.is_aliased
                     && string_entry(current_package_json, dependency_list, request.get_name())
@@ -990,7 +989,7 @@ pub(crate) fn edit(
                     None
                 };
                 if let Some(name) = resolved_name {
-                    // The row of an optional peer is not folded into, so its entry is left to the rebuild below.
+                    // An optional peer's row is not folded into: left to the rebuild below.
                     let optional_peer = current_package_json
                         .as_property(b"peerDependenciesMeta")
                         .and_then(|meta| meta.expr.as_property(name))
@@ -1028,7 +1027,7 @@ pub(crate) fn edit(
                         continue 'loop_;
                     }
                 }
-                // `move_to_target` visits every list; otherwise the first match ends the scan, so `FOUR` is fine here
+                // Without `move_to_target` the first match ends the scan, so `FOUR` is fine here.
                 'dependency_group: for list in DependencyGroup::FOUR.map(|g| g.prop) {
                     if let Some(query) = current_package_json.as_property(list) {
                         if matches!(query.expr.data, bun_ast::ExprData::EObject(_)) {
@@ -1250,7 +1249,7 @@ pub(crate) fn edit(
                     bun_ast::Loc::EMPTY,
                 ));
 
-                // Read by the `workspace:` arm of the write-back below; every other arm overwrites it.
+                // Read by the `workspace:` arm of the write-back below; the others overwrite it.
                 let declared: &[u8] = match new_dependencies[k]
                     .value
                     .as_ref()
@@ -1394,7 +1393,7 @@ pub(crate) fn edit(
             // derived from a `StoreRef` to the same `E::EString` is live inside this loop body,
             // so this is the sole mutable borrow.
             let e_string = unsafe { &mut *e_string };
-            // `bun update <pkg>` only moves registry entries, like `edit_update_entries`; `bun add` still replaces any entry.
+            // `bun update <pkg>` only moves registry entries; `bun add` replaces any.
             if manager.subcommand == Subcommand::Update
                 && !literal_tag(e_string.data.slice()).is_npm()
             {
@@ -1403,7 +1402,7 @@ pub(crate) fn edit(
             if request.package_id as usize >= resolutions.len()
                 || resolutions[request.package_id as usize].tag == resolution::Tag::Uninitialized
             {
-                // Nothing satisfies it, or `picks_latest_tag` steers it later: it stays as declared.
+                // Nothing satisfies it, or `picks_latest_tag` steers it later: stays as declared.
                 if update_to_latest
                     || (manager.subcommand == Subcommand::Update && !options.before_install)
                 {
@@ -1511,9 +1510,9 @@ pub(crate) fn edit(
                     arena_dup(arena, installed)
                 }
 
-                // A range that linked a workspace member has nothing to move to; `workspace:*` is what `bun add` writes.
+                // A range that linked a workspace member has nothing to move to.
                 resolution::Tag::Workspace if manager.subcommand == Subcommand::Update => continue,
-                // Not the bound row: an unchanged resolution keeps the old lockfile row and its previous literal.
+                // Not the bound row: an unchanged resolution keeps the old row's literal.
                 resolution::Tag::Workspace => match literal_tag(e_string.data.slice()) {
                     dependency::Tag::Workspace => e_string.data.slice(),
                     _ => b"workspace:*",

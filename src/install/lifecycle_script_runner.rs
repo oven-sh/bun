@@ -591,7 +591,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         unsafe {
             if !(*this).has_incremented_alive_count {
                 (*this).has_incremented_alive_count = true;
-                // .monotonic is okay because this value is only read and written on the main thread.
+                // .monotonic is okay: only read and written on the main thread.
                 let _ = ALIVE_COUNT.fetch_add(1, Ordering::Relaxed);
             }
         }
@@ -610,7 +610,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             unsafe {
                 if (*this).has_incremented_alive_count {
                     (*this).has_incremented_alive_count = false;
-                    // .monotonic is okay because this value is only read and written on the main thread.
+                    // .monotonic is okay: only read and written on the main thread.
                     let _ = ALIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
                 }
                 Self::ensure_not_in_heap(this);
@@ -921,7 +921,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
         if self.has_incremented_alive_count {
             self.has_incremented_alive_count = false;
-            // .monotonic is okay because this value is only read and written on the main thread.
+            // .monotonic is okay: only read and written on the main thread.
             let _ = ALIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
         }
 
@@ -1119,7 +1119,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    /// The scripts of this package are over.
     fn forget_unfinished_scripts(&self) {
         if let Some(InstallCtx::Hoisted {
             tree_id,

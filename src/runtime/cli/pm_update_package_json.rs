@@ -26,7 +26,7 @@ fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> Resu
         });
     }
 
-    update_package_json_and_install_and_cli(ctx, subcommand, cli).map_err(Into::into)
+    update_package_json_and_install_and_cli(ctx, subcommand, &cli).map_err(Into::into)
 }
 
 /// `--analyze`: bundles the source files, then installs what they import as if it were typed.
@@ -34,14 +34,14 @@ pub(crate) fn analyze_dependencies_and_install(
     ctx: &mut ContextData,
     cli: &mut CommandLineArguments,
     verb: &'static [u8],
-    install: &mut dyn FnMut(&mut ContextData, CommandLineArguments) -> Result<(), Error>,
+    install: &mut dyn FnMut(&mut ContextData, &CommandLineArguments) -> Result<(), Error>,
 ) -> Result<(), Error> {
     // Raw pointers: `BuildCommand::exec` holds the same `ContextData` across the callback.
     struct Analyzer<'a> {
         ctx: *mut ContextData,
         cli: *mut CommandLineArguments,
         verb: &'static [u8],
-        install: &'a mut dyn FnMut(&mut ContextData, CommandLineArguments) -> Result<(), Error>,
+        install: &'a mut dyn FnMut(&mut ContextData, &CommandLineArguments) -> Result<(), Error>,
     }
     impl bun_bundler::bundle_v2::OnDependenciesAnalyze for Analyzer<'_> {
         fn on_analyze(
@@ -72,7 +72,7 @@ pub(crate) fn analyze_dependencies_and_install(
             let (cli, ctx) = unsafe { (&mut *self.cli, &mut *self.ctx) };
             cli.positionals = positionals.as_slice();
 
-            (self.install)(ctx, cli.clone()).map_err(bun_bundler::Error::from)?;
+            (self.install)(ctx, cli).map_err(bun_bundler::Error::from)?;
 
             Global::exit(0);
         }

@@ -74,7 +74,6 @@ impl<'a> Entry<'a> {
         (!name.is_empty()).then_some(name)
     }
 
-    /// Whether the dependency was declared as a tarball URL (`name@https://...`).
     pub(crate) fn has_direct_url_spec(&self) -> bool {
         self.specs.iter().any(|spec| {
             strings::index_of(spec, b"@https://").is_some()
@@ -131,7 +130,7 @@ impl<'a> Entry<'a> {
             || version.starts_with(b"github:")
     }
 
-    /// A spec asked a registry for this entry (a semver range, a dist-tag, or an `npm:` alias of one).
+    /// Did a spec (a semver range, a dist-tag, or an `npm:` alias of one) ask a registry for it?
     pub(crate) fn is_registry_entry(&self) -> bool {
         self.specs.iter().any(|spec| {
             let name = Entry::get_name_from_spec(spec);
@@ -181,8 +180,7 @@ impl<'a> Entry<'a> {
         (rest.starts_with(b"/-/") && dependency::is_safe_install_folder_name(name)).then_some(name)
     }
 
-    /// `commit`, `git_repo_name` and `resolved` of a git `version`/`resolved` value; a `github:`
-    /// shorthand resolves to its `https://github.com/` URL.
+    /// A `github:` shorthand resolves to its `https://github.com/` URL.
     fn set_git_source(&mut self, version: &'a [u8]) {
         let url = version.strip_prefix(b"git+").unwrap_or(version);
         self.commit = strings::split_once_char(url, b'#').map(|(_, commit)| commit);
@@ -368,7 +366,7 @@ impl<'a> YarnLock<'a> {
     }
 }
 
-/// Parses `<workspace_path>/package.json` (the root's for `None`) the way `bun install` does and appends it.
+/// `<workspace_path>/package.json` (`None`: the root's), parsed the way `bun install` does.
 fn append_package_json(
     this: &mut Lockfile,
     manager: &mut PackageManager,
@@ -504,8 +502,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     log: &mut bun_ast::Log,
     data: &[u8],
 ) -> Result<LoadResult<'a>, Error> {
-    // yarn 2+ (berry) lockfiles are YAML with a `__metadata` header. Yarn reads a file as v1 only when the marker is in
-    // the comment lines at its top, so a berry file that holds the marker further down is still a berry file.
+    // Yarn reads a file as v1 only when the marker is in the comment lines at its top.
     let is_berry = strings::contains(data, b"\n__metadata:") || data.starts_with(b"__metadata:");
     let has_v1_marker = match strings::index_of(data, b"# yarn lockfile v1") {
         Some(at) if is_berry => strings::split(&data[..at], b"\n")
@@ -545,8 +542,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     }
     let importer_count = this.packages.len();
 
-    // An entry whose resolution cannot be built is not appended; it stays `INVALID_PACKAGE_ID` here, an
-    // unresolved edge like a spec missing from yarn.lock.
+    // An entry whose resolution cannot be built stays invalid: an unresolved edge.
     let mut yarn_entry_to_package_id = vec![install::INVALID_PACKAGE_ID; yarn_lock.entries.len()];
     let silent = manager.options.log_level.is_silent();
 
@@ -644,7 +640,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     break 'blk Resolution::default();
                 }
 
-                // The bare URL a fresh install records (`has_trusted_dependency` compares it); empty means the configured registry.
+                // The bare URL a fresh install records; empty means the configured registry.
                 let url = match resolved_url {
                     Some(resolved)
                         if !(resolved.starts_with(b"https://registry.yarnpkg.com/")
@@ -784,11 +780,10 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         return Err(crate::Error::LockfileResolveFailed);
     }
 
-    this.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(manager, true, false)?;
-
-    if cfg!(debug_assertions) {
-        this.verify_data()?;
-    }
+    this.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(
+        manager, true,  // update_os_cpu
+        false, // fill_integrity
+    )?;
 
     Ok(LoadResult::Ok(lockfile::LoadResultOk {
         lockfile: this,

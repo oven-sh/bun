@@ -1,11 +1,4 @@
-//! `packageExtensions` of the root package.json: dependencies and peer dependencies that a
-//! registry package should have declared (the setting of that name in yarn and pnpm).
-//!
-//! A rule becomes ordinary rows of the packages it matches, so the lockfile reproduces them
-//! without package.json. What a package declares itself wins over a rule, and only its manifest
-//! could tell a declared row from an added one, so the lockfile also records which rows were
-//! added (`Applied`). With that an edited or removed rule is undone exactly, no manifest is
-//! needed, and only the rows that changed are resolved again.
+//! `packageExtensions`: rules become ordinary rows; `Applied` records which, to undo a rule.
 
 use std::io::Write as _;
 
@@ -47,7 +40,7 @@ struct Edge {
     behavior: Behavior,
 }
 
-/// The hash of the package's `<name>@<version>` (like the keys of `patched_dependencies`), the row's name, what was done.
+/// The hash of `<name>@<version>` (as `patched_dependencies` keys), the row's name, what was done.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Applied(u64, PackageNameHash, Kind);
 
@@ -214,8 +207,7 @@ impl Wanted<'_> {
                     .iter_mut()
                     .find(|first| first.is_for(edge.name_hash, edge.behavior))
                 {
-                    // As in yarn, the first rule that names a dependency wins, and any rule can
-                    // make a peer optional.
+                    // As in yarn, the first rule for a name wins; any can make a peer optional.
                     Some(first) => {
                         if edge.behavior.is_optional_peer() {
                             first.behavior.insert(Behavior::OPTIONAL);
@@ -236,8 +228,7 @@ impl Wanted<'_> {
         self.edge.name_hash == name_hash && self.behavior.is_peer() == behavior.is_peer()
     }
 
-    /// bun.lock lists a required peer that did not resolve among the optional ones, so a peer that
-    /// is optional there is not a sign that the rule changed.
+    /// bun.lock lists an unresolved required peer as optional: no sign that the rule changed.
     fn is_row(&self, row: &Dependency, buf: &[u8]) -> bool {
         let optional = row.behavior.contains(Behavior::OPTIONAL);
         *row.version.literal.slice(buf) == *self.edge.literal
@@ -298,8 +289,7 @@ impl PackageExtensions {
         }
     }
 
-    /// `packageExtensions` of bun.lock. What is not understood is not recorded: that row counts
-    /// as one the package declares.
+    /// From bun.lock. What is not understood is not recorded: the row counts as declared.
     #[cold]
     #[inline(never)]
     pub(crate) fn parse_applied(&mut self, section: &Expr) {
@@ -373,9 +363,7 @@ impl Lockfile {
         })
     }
 
-    /// Makes the rows of package `id` what `rules` ask for, given what was `applied` to it before.
-    /// What is applied to it afterwards goes to `now`, the rows to resolve to `unresolved`.
-    /// `true`: a row changed.
+    /// Appends what is now applied to `now`, the rows to resolve to `unresolved`. `true`: changed.
     fn extend_package(
         &mut self,
         rules: &[Rule],
@@ -473,8 +461,7 @@ impl Lockfile {
             return Ok(false);
         }
 
-        // In place for a package that was just appended. The rows of another one move to the end
-        // of the buffer, and `clean_with_logger` drops the ones they leave behind.
+        // Rows not at the end of the buffer move there; `clean_with_logger` drops the old ones.
         let dependencies = &mut self.buffers.dependencies;
         let resolutions = &mut self.buffers.resolutions;
         debug_assert_eq!(dependencies.len(), resolutions.len());
@@ -537,8 +524,7 @@ impl Lockfile {
         Ok(*self.packages.get(id as usize))
     }
 
-    /// For a lockfile that was loaded, once package.json is read. `None`: it is what the rules ask
-    /// for. Otherwise it was changed, and these rows have to be resolved.
+    /// For a loaded lockfile, once package.json is read. `Some`: changed, with the rows to resolve.
     #[cold]
     #[inline(never)]
     pub(crate) fn reconcile_package_extensions(

@@ -57,22 +57,9 @@ type AutoPath = paths::Path<u8, { PathKind::ANY }, { PathSeparators::AUTO }>;
 type OsAutoAbsPath = AbsPath<paths::OSPathChar, { PathSeparators::AUTO }>;
 type OsAutoPath = paths::Path<paths::OSPathChar, { PathKind::ANY }, { PathSeparators::AUTO }>;
 type DefaultAbsPath = AbsPath<u8>;
-/// `node_modules/.bun` — the `MODULES_DIR_NAME` const is `&[u8]` and not
-/// usable in `const_format::concatcp!`, so spell the literal.
-const NODE_MODULES_BUN: &str = "node_modules/.bun";
-
-bun_output::declare_scope!(IsolatedInstaller, hidden);
-macro_rules! debug {
-    ($($args:tt)*) => { bun_output::scoped_log!(IsolatedInstaller, $($args)*) };
-}
 
 pub struct Installer<'a> {
-    /// BACKREF. Raw pointer (not `&'a mut`) for the same
-    /// reason as `manager`: `Task::run` executes concurrently on the thread
-    /// pool and each task derefs this field; a `&'a mut` would assert
-    /// exclusivity every concurrent task violates. Task threads only read it;
-    /// while they run it is mutated only in `record_extracted_integrity` (main
-    /// thread, one row). Never null. Read via `lockfile()`.
+    /// BACKREF, as `manager`.
     pub lockfile: *mut Lockfile,
 
     pub(crate) summary: InstallSummary,
@@ -82,11 +69,7 @@ pub struct Installer<'a> {
     /// Taken by the first task that links a project-local package.
     pub(crate) staging_lock: std::sync::OnceLock<StagingLock>,
 
-    /// BACKREF. Raw pointer (not `&'a mut`) because
-    /// `Task::run`/`Task::callback` execute concurrently on the thread pool
-    /// and each derefs this field; a `&'a mut` here would assert exclusivity
-    /// every concurrent task violates. Never null. Access via `manager()` /
-    /// `manager_mut()` (main thread only for `_mut`).
+    /// BACKREF, never null; not `&'a mut`: the tasks on the thread pool all read through it.
     pub(crate) manager: *mut PackageManager,
     pub(crate) command_ctx: Command::Context<'a>,
 
@@ -97,42 +80,29 @@ pub struct Installer<'a> {
     /// The tasks on the thread pool: `start_task` adds one, `Task::task` counts itself out.
     pub(crate) tasks_in_flight: &'a WaitGroup,
 
-    /// Stable Rust has no
-    /// generic atomic-enum, so store the `#[repr(u8)]` discriminant and
-    /// round-trip via `Method::from_u8` at the load sites below.
+    /// An `InstallMethod`.
     pub(crate) supported_backend: AtomicU8,
 
     /// Built before tasks spawn and only read concurrently afterwards.
     pub(crate) trusted_dependencies_from_update_requests: ArrayHashMap<PackageID, ()>,
 
-    /// Absolute path to the global virtual store (`<cache_dir>/links`). When
-    /// non-null, npm/git/tarball entries are materialized once into this
-    /// directory and `node_modules/.bun/<storepath>` becomes a symlink into
-    /// it, so warm installs are O(packages) symlinks instead of O(files)
-    /// clonefile work.
+    /// `<cache_dir>/links`: the global virtual store; `node_modules/.bun/<storepath>` links to it.
     pub(crate) global_store_path: Option<&'a ZStr>,
 
-    /// Per-process suffix for staging global-store entries. Each entry is
-    /// built under `<cache>/links/<storepath>-<hash>.tmp-<this>/` (package
-    /// files, dep symlinks, bin links — all relative within the entry, so
-    /// they resolve identically after the rename) and renamed into place as
-    /// the final step. The directory existing at its final path is the only
-    /// completeness signal the warm-hit check needs.
+    /// An entry is built in `<cache>/links/<storepath>-<hash>.tmp-<this>/`, renamed when complete.
     pub(crate) global_store_tmp_suffix: u64,
 
     /// Main-thread only: `waiters_head[dep]` starts the intrusive list of blocked entries waiting on `dep`, linked through `next_waiter`.
     pub(crate) waiters_head: Box<[StoreEntryId]>,
     pub(crate) next_waiter: Box<[StoreEntryId]>,
 
-    /// Main-thread only: the workspace members that returned `Result::Blocked`, until
-    /// `release_members` takes them.
+    /// Main-thread only: see `release_members`.
     pub(crate) held_members: Option<Vec<StoreEntryId>>,
 
     /// Main-thread only: see `leave_out_entry`.
     pub(crate) left_out_entries: Vec<StoreEntryId>,
 
-    /// Main-thread only: entries that returned `Result::RunScripts`, in that order. `run_tasks`
-    /// spawns them while fewer than `max_concurrent_lifecycle_scripts` scripts run.
+    /// Main-thread only: entries that returned `Result::RunScripts`, in that order.
     pub(crate) pending_lifecycle_scripts: VecDeque<StoreEntryId>,
 }
 
@@ -157,11 +127,7 @@ impl<'a> Installer<'a> {
         // — same field-disjoint shape the prior `&'a mut` field permitted.
         // Caller must be on the main thread (only main mutates
         // `PackageManager`; `Task::run` / `Task::callback` on the pool read
-        // via the raw field, never this accessor). A
-        // `debug_assert!(is_main_thread())` is deferred until
-        // `bun_crash_handler::cli_state::set_main_thread_id` is actually
-        // wired at startup — today the sentinel is never set, so the assert
-        // would fire unconditionally.
+        // via the raw field, never this accessor).
         unsafe { &mut *self.manager }
     }
     #[inline]
@@ -218,8 +184,7 @@ impl<'a> Installer<'a> {
         self.start_task(entry_id);
     }
 
-    /// Named by `--trust`, or by a `trustedDependencies` entry the lockfile has not recorded: the
-    /// scripts an earlier install blocked run now. `Step::RunPreinstall` still asks whether it is trusted.
+    /// The scripts an earlier install blocked run now, if `Step::RunPreinstall` finds it trusted.
     fn is_newly_trusted(&self, entry_id: StoreEntryId) -> bool {
         let store::Ids { dep_id, pkg_id } = self.store.ids(entry_id);
         if self
@@ -276,8 +241,7 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// Main thread, before the package's tasks start (they name a local tarball's cache
-    /// entry after it). Same write-back as `install_enqueued_packages_after_extraction`.
+    /// Main thread, before the package's tasks start: they name a tarball's cache entry after it.
     fn record_extracted_integrity(&mut self, pkg_id: PackageID, integrity: &install::Integrity) {
         let pkgs = self.lockfile().packages.slice();
         assert!((pkg_id as usize) < pkgs.len());
@@ -341,7 +305,6 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// `on_package_download_error` for a download that only optional dependencies need.
     pub(crate) fn on_optional_package_download_error(
         &mut self,
         task_id: crate::package_manager_task::Id,
@@ -356,9 +319,7 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// Main thread: nothing was queued for the entry's package. Its download already failed, and
-    /// whoever found that out reported it. Or `--offline` and not cached: `report_offline_misses`
-    /// decides whether that fails the install.
+    /// Main thread. Reported by whoever saw the download fail, or by `report_offline_misses`.
     pub(crate) fn on_download_not_queued(&mut self, entry_id: StoreEntryId) {
         let store::Ids { dep_id, pkg_id } = self.store.ids(entry_id);
         let offline = self.manager().options.offline
@@ -542,9 +503,7 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// Main thread. The members go on once nothing but them is pending, so that their scripts find
-    /// every package and bin of the install, as the root's do. Waiting for the root entry instead
-    /// would deadlock: the root can depend on a member through a registry package.
+    /// Main thread. Members go on once only they are pending: their scripts find the whole install.
     pub(crate) fn release_members(&mut self) {
         let pending = self.manager().pending_task_count() as usize;
         if self
@@ -562,8 +521,7 @@ impl<'a> Installer<'a> {
         self.resolution(entry_id).tag == ResolutionTag::Workspace
     }
 
-    /// Main thread, once every task is done. Only members wait for a member's scripts, which can
-    /// write the files of its bins.
+    /// Main thread, once every task is done. A member's scripts can write the files of its bins.
     pub(crate) fn relink_bins_of_members_with_scripts(&mut self) {
         let store = self.store;
         let pkg_bins = self.lockfile().packages.items_bin();
@@ -637,15 +595,6 @@ impl<'a> Installer<'a> {
 
     /// Called from main thread
     pub(crate) fn on_task_complete(&mut self, entry_id: StoreEntryId, state: CompleteState) {
-        if Environment::CI_ASSERT {
-            // .monotonic is okay because we should have already synchronized with the completed
-            // task thread by virtue of popping from the `UnboundedQueue`.
-            assert!(
-                self.store.entries.items_step()[entry_id.get() as usize].load(Ordering::Relaxed)
-                    == Step::Done as u32,
-            );
-        }
-
         self.manager_mut().decrement_pending_tasks();
         self.resume_unblocked_tasks(entry_id);
 
@@ -657,8 +606,6 @@ impl<'a> Installer<'a> {
         let dependencies = self.lockfile().buffers.dependencies.as_slice();
         let relink = self.tasks[entry_id.get() as usize].relink;
 
-        // The root, and also a workspace that only another workspace reaches: a dependency of
-        // the root has its name.
         let state = if matches!(relink, Relink::Unchanged | Relink::ChangedOptional)
             || dep_id == invalid_dependency_id
             || dependencies[dep_id as usize].behavior.is_workspace()
@@ -706,8 +653,7 @@ impl<'a> Installer<'a> {
         deleted
     }
 
-    /// False for an entry without a copy in this project's store: a root, workspace or `link:`
-    /// entry is the user's own folder.
+    /// False without a copy in this project's store: other entries are the user's own folders.
     pub(crate) fn delete_store_copy(&self, entry_id: StoreEntryId) -> bool {
         let tag = self.resolution(entry_id).tag;
         let is_store_copy = !self.entry_uses_global_store(entry_id)
@@ -727,13 +673,11 @@ impl<'a> Installer<'a> {
     /// Of `<project>/node_modules/.bun`, which `install_isolated_packages` looked at.
     fn store_path_len() -> usize {
         let mut store = AutoPath::init_top_level_dir();
-        let _ = store.append(NODE_MODULES_BUN.as_bytes());
+        let _ = store.append(b"node_modules/.bun");
         store.len()
     }
 
-    /// `prune::remove_planted_links` for the directories of a project-local entry that this run
-    /// did not make, before anything in them is written or deleted. `real_len`: how much of the
-    /// entry's path has been looked at.
+    /// Before anything in the entry is written or deleted. `real_len`: the part already looked at.
     fn remove_planted_links_in(&self, entry_id: StoreEntryId, real_len: usize) -> sys::Result<()> {
         if self.is_new_bun_modules {
             return Ok(());
@@ -757,8 +701,7 @@ impl<'a> Installer<'a> {
         )
     }
 
-    /// Main thread; a script of `failed` ends the install. An entry that is in place counts as
-    /// installed, so those whose scripts have not all run go: the next install links them again.
+    /// Main thread. An entry left in place counts as installed: its scripts would never run.
     pub(crate) fn discard_entries_with_unfinished_scripts(&self, failed: StoreEntryId) {
         for (index, step) in self.store.entries.items_step().iter().enumerate() {
             let entry_id = StoreEntryId::from(index as u32);
@@ -788,7 +731,6 @@ impl<'a> Installer<'a> {
     }
 
     /// Main thread, once no task runs: tasks read `lockfile.trusted_dependencies` without a lock.
-    /// Records the `--trust` packages that had scripts, in bun.lock and for package.json.
     pub(crate) fn record_update_request_trust(&mut self) {
         if self.trusted_dependencies_from_update_requests.is_empty() {
             return;
@@ -887,8 +829,7 @@ pub enum Relink {
     Off,
     Pending,
     Unchanged,
-    /// Only links to optional dependencies were written. Every install writes the link to one
-    /// that is left out, and takes it away again: the entry does not count as installed.
+    /// Every install writes the link to a left out optional dependency, and takes it away again.
     ChangedOptional,
     Changed,
 }
@@ -990,28 +931,12 @@ pub enum Step {
     Blocked,
 }
 
-impl From<Step> for &'static str {
-    fn from(s: Step) -> &'static str {
-        match s {
-            Step::LinkPackage => "link_package",
-            Step::SymlinkDependencies => "symlink_dependencies",
-            Step::CheckIfBlocked => "check_if_blocked",
-            Step::SymlinkDependencyBinaries => "symlink_dependency_binaries",
-            Step::RunPreinstall => "run_preinstall",
-            Step::Binaries => "binaries",
-            Step::RunPostInstallAndPrePostPrepare => "run (post)install and (pre/post)prepare",
-            Step::Done => "done",
-            Step::Blocked => "blocked",
-        }
-    }
-}
-
 impl Step {
     /// Decode the `AtomicU32` column repr back into a `Step`. The column is
     /// only ever stored via `Step::* as u32` (this file) so the value is
     /// always a valid discriminant.
     #[inline]
-    pub(crate) const fn from_u32(raw: u32) -> Step {
+    const fn from_u32(raw: u32) -> Step {
         match raw {
             0 => Step::LinkPackage,
             1 => Step::SymlinkDependencies,
@@ -1070,9 +995,7 @@ impl Task {
 
     /// Called from task thread
     fn run(&mut self) -> TaskResult<Result> {
-        // Runs on the thread pool concurrently across many `Task`s that share one `Installer`:
-        // only `&Installer` is formed, and every `Installer` method called below takes `&self`.
-        // The lockfile is only read: see `record_update_request_trust`.
+        // Many `Task`s on the thread pool share one `Installer`: only `&Installer` is formed.
         let installer_ptr = self.installer;
         let installer = installer_ptr.get();
         let entry_id = self.entry_id;
@@ -1162,8 +1085,7 @@ impl Task {
                 }
 
                 Step::Binaries => {
-                    // The folder in the entry's own `node_modules`, not the name one dependent
-                    // uses. A tarball without a package name has neither a folder nor a command.
+                    // A tarball without a package name has neither a folder nor a command.
                     if pkgs.items_bin()[pkg_id as usize].tag != bin::Tag::None
                         && let Some(own_name) = installer
                             .entry_store_node_modules_package_name(entry_id)
@@ -1196,9 +1118,7 @@ impl Task {
                         }
 
                         if list.first_index != 0 {
-                            // when these scripts finish the package install will be
-                            // complete. the task does not have anymore work to complete
-                            // so it does not return to the thread pool.
+                            // no work is left after these scripts: no return to the thread pool
                             return Ok(Result::RunScripts);
                         }
                     }
@@ -1281,8 +1201,7 @@ impl Task {
         };
 
         let has_preinstall = list.first_index == 0;
-        // Each Task is the sole writer of its own `entry_id`'s `scripts` slot; nothing else
-        // reads it until this Task returns `Result::RunScripts`.
+        // Only this Task writes the slot; nothing reads it until it returns `Result::RunScripts`.
         installer.store.entries.items_scripts()[self.entry_id.get() as usize]
             .set(Some(bun_core::heap::into_raw(Box::new(list))));
         Ok(has_preinstall)
@@ -1315,7 +1234,7 @@ impl Task {
                             bun_core::fmt::PathSep::Posix
                         )),
                     );
-                    // The pool flushes a thread that runs out of tasks, when the process may be gone.
+                    // The pool flushes a thread out of tasks, when the process may be gone.
                     Output::flush();
                 }
                 list.total
@@ -1339,9 +1258,7 @@ impl Task {
         // SAFETY: task points to Task.task field
         let this: &mut Task = unsafe { &mut *bun_core::from_field_ptr!(Task, task, task) };
 
-        // `callback` runs on the thread pool concurrently across many `Task`s sharing the same
-        // `*mut Installer` — never materialize `&mut Installer`. `task_queue.push` takes `&self`
-        // (lock-free); `store.entries` columns are atomic / per-entry.
+        // Many `Task`s on the thread pool share one `Installer`: never form `&mut Installer`.
         let installer_ptr = this.installer;
         let installer = installer_ptr.get();
         let manager_ptr: *mut PackageManager = installer.manager;
@@ -1557,10 +1474,7 @@ impl<'a> Installer<'a> {
 
             #[cfg(windows)]
             {
-                // Hoist a single `&mut [u16]` borrow so the raw pointer and length come from the
-                // SAME reborrow — calling `src_path.buf()` twice in the FFI arg list would take a
-                // fresh `&mut` for the len, invalidating the `*mut u16` derived from the first
-                // call under Stacked Borrows.
+                // One borrow: a second `src_path.buf()` for the length would invalidate `ptr`.
                 let buf = src_path.buf();
                 let cap = buf.len();
                 let ptr = buf.as_mut_ptr();
@@ -1616,16 +1530,14 @@ impl<'a> Installer<'a> {
         Ok(())
     }
 
-    /// .monotonic access of `supported_backend` is okay because it's an optimization. It's okay
-    /// if another thread doesn't see an update to this value "in time".
+    /// `Relaxed`: an optimization, it's okay if another thread doesn't see the update "in time".
     fn set_backend(&self, method: InstallMethod) -> InstallMethod {
         self.supported_backend
             .store(method as u8, Ordering::Relaxed);
         method
     }
 
-    /// Task thread: `Step::LinkPackage` of a package in the cache. True: the entry had no
-    /// directory before.
+    /// Task thread. True: the entry had no directory before.
     fn link_cached_package(&self, entry_id: StoreEntryId) -> TaskResult<bool> {
         let patch_info = self.package_patch_info(self.store.ids(entry_id).pkg_id)?;
         let subpath = self.cached_folder_name(entry_id, patch_info.contents_hash());
@@ -1644,8 +1556,7 @@ impl<'a> Installer<'a> {
 
         let uses_global_store = self.entry_uses_global_store(entry_id);
         let staging = if uses_global_store {
-            // Clear any leftover staging directory from a crashed earlier run with the same
-            // suffix (vanishingly unlikely with a 64-bit random suffix, but cheap).
+            // Clear any leftover staging directory from a crashed earlier run with the same suffix.
             let mut staging = AutoAbsPath::init();
             self.append_global_store_entry_path(&mut staging, entry_id, Which::Staging);
             let _ = Fd::cwd().delete_tree(staging.slice());
@@ -1659,15 +1570,7 @@ impl<'a> Installer<'a> {
         loop {
             // A `node_modules/.bun` this install created holds nothing of the entry yet.
             if !uses_global_store && (!self.is_new_bun_modules || link_in_place) {
-                // An entry can lose global-store eligibility between installs — newly patched,
-                // newly trusted, a dep that became a workspace package. The previous install left
-                // `node_modules/.bun/<storepath>` as a symlink (or junction) into the shared
-                // `<cache>/links/` directory. Writing the new project-local tree *through* that
-                // link would mutate the shared entry underneath every other consumer; on Windows
-                // the `.expect_missing` dep-symlink rewrite then bakes a project-absolute junction
-                // target into the shared directory, which dangles after the next
-                // `rm -rf node_modules`. Detach first so the build lands in a real project-local
-                // directory.
+                // An entry that lost global-store eligibility is still a link into that store.
                 let mut local = AutoPath::init_top_level_dir();
                 self.append_local_store_entry_path(&mut local, entry_id);
                 let is_stale_link = is_link(local.slice_z());
@@ -1675,8 +1578,7 @@ impl<'a> Installer<'a> {
                     && let Err(err) = remove_link(local.slice_z())
                     && err.get_errno() != sys::Errno::ENOENT
                 {
-                    // Do NOT proceed: the backend below would write *through* the still-live
-                    // symlink into the shared `<cache>/links/` entry.
+                    // Do NOT proceed: the backend below would write *through* the live symlink.
                     return Err(TaskError::LinkPackage(err));
                 }
 
@@ -1771,7 +1673,6 @@ impl<'a> Installer<'a> {
                         break 'backend Err(err);
                     }
 
-                    // fallthrough copyfile
                     _ => {
                         let dir = sys::open_dir_for_iteration(cache_dir, subpath.slice())
                             .inspect_err(|err| {
@@ -1831,8 +1732,7 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// The dependency names `build_store` granted the entry in `node_modules/.bun/node_modules`:
-    /// one name, one entry, so one thread writes each link.
+    /// `build_store` grants each name to one entry, so one thread writes each link.
     fn hidden_hoist_names(&self, entry_id: StoreEntryId) -> impl Iterator<Item = &'a [u8]> {
         let (store, lockfile) = (self.store, self.lockfile());
         (store.entries.items_hoisted()[entry_id.get() as usize])
@@ -1924,7 +1824,6 @@ impl<'a> Installer<'a> {
         let node_pkg_ids = self.store.nodes.items_pkg_id();
         let new_entry_id = (self.store.entries.items_node_id().iter())
             .position(|node_id| node_pkg_ids[node_id.get() as usize] == replacement_pkg_id)?;
-        debug!("native bin link {} -> {}", pkg_id, replacement_pkg_id);
         Some(StoreEntryId::from(new_entry_id as u32))
     }
 
@@ -1938,9 +1837,10 @@ impl<'a> Installer<'a> {
         let lockfile = self.lockfile();
         let string_buf = lockfile.buffers.string_bytes.as_slice();
         let dependencies = lockfile.buffers.dependencies.as_slice();
+        let pkg_resolutions = lockfile.packages.items_resolution();
 
         let pkg_id = self.store.ids(entry_id).pkg_id;
-        let pkg_res = self.resolution(entry_id);
+        let pkg_res = &pkg_resolutions[pkg_id as usize];
         let entry_node_modules_name = self.entry_store_node_modules_package_name(entry_id);
         let uses_global_store = self.entry_uses_global_store(entry_id);
 
@@ -1948,10 +1848,7 @@ impl<'a> Installer<'a> {
         self.append_real_store_node_modules_path(&mut dest, entry_id, Which::Staging);
         let base_len = dest.len();
 
-        // `Symlinker::real_len`. What this run made holds nothing that came with the project; a
-        // first install with `--filter` does not reset the members. The root's own
-        // `node_modules` may be a link. An entry's directory has been looked at, and its
-        // `node_modules` if `Step::LinkPackage` ran.
+        // See `Symlinker::real_len`. A first install with `--filter` does not reset the members.
         let all_real = made_entry
             || uses_global_store
             || (self.is_new_bun_modules && pkg_res.tag != ResolutionTag::Workspace);
@@ -1996,7 +1893,7 @@ impl<'a> Installer<'a> {
             }
 
             let dep_pkg_id = self.store.ids(dep.entry_id).pkg_id;
-            let dep_res = self.resolution(dep.entry_id);
+            let dep_res = &pkg_resolutions[dep_pkg_id as usize];
             let folder_is_inside_this_package = dep_res.tag == ResolutionTag::Folder
                 && super::folder_is_inside_package(lockfile, pkg_id, dep_pkg_id);
             let dep_is_nested_folder =
@@ -2090,8 +1987,7 @@ impl<'a> Installer<'a> {
         {
             let entry_id = StoreEntryId::from(entry_index as u32);
             for dep in entry_deps.slice() {
-                // Other projects share a dependent in the global store, and its link is right
-                // once the package is in the store.
+                // Other projects share a dependent in the global store.
                 if !self.left_out_entries.contains(&dep.entry_id)
                     || self.entry_uses_global_store(entry_id)
                 {
@@ -2162,8 +2058,7 @@ impl<'a> Installer<'a> {
             a.cmp(&b)
         });
 
-        // Also on a run that installs nothing: a wrong entry of `.bin` is deleted and made again.
-        // That of a store entry: `remove_planted_links_in`.
+        // The `.bin` of a store entry: `remove_planted_links_in`.
         if !deps_with_bins.is_empty() && is_importer {
             let path = &mut links.node_modules_path;
             let node_modules_len = path.len();
@@ -2227,9 +2122,7 @@ impl<'a> Installer<'a> {
                     strings::StringOrTinyString::init(self.pkg_name(entry_id)),
                 )
             });
-        // `target_node_modules_path` intentionally aliases `node_modules_path` in the common
-        // (no-replacement) case — the Linker field is a raw `*const AbsPath` for exactly this
-        // reason.
+        // Aliases `node_modules_path` without a replacement: the Linker field is a raw pointer.
         let (target_node_modules_path, target_package_name) = match &replacement {
             Some((path, name)) => (core::ptr::from_ref(path), *name),
             None => (&raw const links.node_modules_path, package_name),
@@ -2338,18 +2231,14 @@ impl<'a> Installer<'a> {
             return Err(global_store_publish_error(err, &final_));
         }
         if !self.manager().options.enable.force_install() {
-            // A concurrent install renamed first; both writers produced the same
-            // content-addressed bytes, so theirs is as good as ours.
+            // A concurrent install renamed first; its content-addressed bytes are as good as ours.
             let _ = Fd::cwd().delete_tree(staging.slice());
             return Ok(());
         }
 
-        // Under --force, the existing entry may be the corrupt one we were asked to replace. Swap
-        // it aside (atomic from a reader's POV: `final` is always either the old or the new tree,
-        // never missing), publish staging, then GC the old tree.
+        // Under --force, the existing entry may be the corrupt one we were asked to replace.
         let mut old = AutoAbsPath::init();
         let _ = old.append(self.global_store_path.as_ref().unwrap().as_bytes()); // OOM/capacity: fire-and-forget
-        // OOM/capacity: fire-and-forget
         let _ = old.append_fmt(format_args!(
             "{}.old-{:x}",
             store::entry::fmt_global_store_path(entry_id, self.store, self.lockfile()),
@@ -2364,8 +2253,7 @@ impl<'a> Installer<'a> {
             let _ = Fd::cwd().delete_tree(old.slice());
             return Ok(());
         };
-        // Another --force install raced us in the window between swap-out and publish. Theirs is
-        // fresh too; clean up both temp trees.
+        // Another --force install raced us between swap-out and publish. Theirs is fresh too.
         let _ = Fd::cwd().delete_tree(staging.slice());
         let _ = Fd::cwd().delete_tree(old.slice());
         if is_rename_collision(&err.err, final_.slice_z()) {
@@ -2374,8 +2262,7 @@ impl<'a> Installer<'a> {
         Err(global_store_publish_error(err, &final_))
     }
 
-    /// The `StagingPath` next to a project-local entry's package directory. Only
-    /// `Step::LinkPackage` writes there; nothing is left of it once that step is over.
+    /// The `StagingPath` next to a project-local entry's package directory.
     fn append_local_staging_path(
         &self,
         buf: &mut impl paths::PathLike,
@@ -2391,8 +2278,7 @@ impl<'a> Installer<'a> {
         ));
     }
 
-    /// Frees a project-local entry's final path, and its staging path of what an install that
-    /// died left there. False: link in place.
+    /// Frees the final path, and the staging path of a dead install's rest. False: link in place.
     fn clear_local_store_package(&self, entry_id: StoreEntryId, mode: Staging) -> bool {
         let mut final_ = AutoPath::init_top_level_dir();
         self.append_store_path(&mut final_, entry_id);
@@ -2417,8 +2303,7 @@ impl<'a> Installer<'a> {
         Fd::cwd().delete_tree(staging.slice()).is_ok()
     }
 
-    /// Renames a project-local entry's fully linked staging directory onto its final path,
-    /// which is what the next install's skip check looks at. False: link in place.
+    /// The final path is what the next install's skip check looks at. False: link in place.
     fn commit_local_store_package(&self, entry_id: StoreEntryId, mode: Staging) -> bool {
         let mut staging = AutoPath::init_top_level_dir();
         self.append_local_staging_path(&mut staging, entry_id, mode);
@@ -2440,8 +2325,7 @@ impl<'a> Installer<'a> {
         entry_id: StoreEntryId,
     ) {
         buf.append_fmt(format_args!(
-            "{}/{}",
-            NODE_MODULES_BUN,
+            "node_modules/.bun/{}",
             store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
         ));
     }
@@ -2548,9 +2432,7 @@ impl<'a> Installer<'a> {
         self.append_store_path(buf, entry_id);
     }
 
-    /// Where a `link:` package is: a path is relative to the project, a name to the global link
-    /// dir. `isolated_install::check_link_entries` bounded the length and created that dir on the
-    /// main thread; this runs on workers. Normalized: a Windows junction does not resolve `..`.
+    /// `check_link_entries` bounded the length. Normalized: a Windows junction resolves no `..`.
     fn link_target_path<'b>(&self, target: &[u8], buf: &'b mut paths::PathBuffer) -> &'b [u8] {
         let base: &[u8] = if crate::dependency::is_link_path(target) {
             bun_fs::FileSystem::instance().top_level_dir()
@@ -2589,7 +2471,6 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// Appends `<entry's store node_modules>/<package_dir_name>/<folder>` to `buf`.
     /// `Ok(false)`: nothing to link (the path leaves the package, or no such directory).
     fn append_nested_folder_path(
         &self,
@@ -2630,9 +2511,11 @@ impl<'a> Installer<'a> {
         &self,
         entry_id: StoreEntryId,
     ) -> Option<&'a [u8]> {
-        let name = self.pkg_name(entry_id);
-        match self.resolution(entry_id).tag {
-            ResolutionTag::Root if self.store.ids(entry_id).dep_id == invalid_dependency_id => None,
+        let store::Ids { dep_id, pkg_id } = self.store.ids(entry_id);
+        let packages = &self.lockfile().packages;
+        let name = self.lockfile().str(&packages.items_name()[pkg_id as usize]);
+        match packages.items_resolution()[pkg_id as usize].tag {
+            ResolutionTag::Root if dep_id == invalid_dependency_id => None,
             ResolutionTag::Root if name.is_empty() => Some(paths::basename(
                 bun_fs::FileSystem::instance().top_level_dir(),
             )),
@@ -2653,7 +2536,6 @@ pub enum Which {
     Staging,
 }
 
-/// What linking bins into one `node_modules/.bin` goes through.
 struct BinLinks {
     node_modules_path: DefaultAbsPath,
     seen: StringHashMap<()>,
@@ -2740,9 +2622,7 @@ fn print_link_error(
 fn is_rename_collision(err: &sys::Error, final_: &ZStr) -> bool {
     match err.get_errno() {
         sys::Errno::EEXIST | sys::Errno::ENOTEMPTY => true,
-        // Windows reports both "a directory is there" and "a scanner has one of
-        // the staged files open" as ERROR_ACCESS_DENIED; only the first is a
-        // collision. On POSIX PERM/ACCES are real permission failures.
+        // Windows also says ERROR_ACCESS_DENIED when a scanner has one of the staged files open.
         sys::Errno::EPERM | sys::Errno::EACCES => cfg!(windows) && sys::exists_z(final_),
         _ => false,
     }

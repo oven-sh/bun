@@ -120,7 +120,7 @@ impl FileCopier {
                             )
                         } == 0
                         {
-                            // Also taken when the directory exists; make_path treats that as success.
+                            // Also taken when the directory exists, a success for make_path.
                             bun_sys::make_path::make_path::<u16>(&dest_dir, entry.path.as_slice())
                         } else {
                             sys::Result::Ok(())

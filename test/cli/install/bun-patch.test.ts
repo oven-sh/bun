@@ -579,6 +579,20 @@ index 0000000000000000000000000000000000000000..4932cd6395b5d79049adb4736a669e22
         expect(lstatSync(join(subdir, "node_modules", "is-odd")).isSymbolicLink()).toBe(true);
         await check(String(root), await runBun(subdir, env, "patch", "--commit", "node_modules/is-odd"));
       });
+
+      test.each([
+        ["\n", ""],
+        ["", "\n"],
+      ])("the root package.json keeps its own ending %j when the member's is %j", async (rootEnd, memberEnd) => {
+        await using root = tempDir("patch-ws-eof", {
+          "package.json": files["package.json"] + rootEnd,
+          packages: { server: { "package.json": files.packages.server["package.json"] + memberEnd } },
+        });
+        const env = projectEnv(String(root));
+        const { subdir } = await prepare(String(root), env);
+        await check(String(root), await runBun(subdir, env, "patch", "--commit", "node_modules/is-odd"));
+        expect(await Bun.file(join(String(root), "package.json")).text()).toEndWith("}" + rootEnd);
+      });
     });
   });
 

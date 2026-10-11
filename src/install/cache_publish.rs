@@ -25,7 +25,6 @@ impl<'a> StagedEntry<'a> {
         self.name
     }
 
-    /// [`publish`](Self::publish), and opens the entry.
     pub(crate) fn publish_and_open(
         self,
         cache_dir: Fd,

@@ -437,7 +437,7 @@ pub struct PackageManager {
     // if `bun update` is used without any package names we need a way to keep information for
     // the original packages that are updating.
     //
-    // dependency name (`PackageUpdateInfo::catalog_row_key` for a `catalog:` row) -> original version information
+    // dependency name (or `catalog_row_key`) -> original version information
     pub(crate) updating_packages: StringArrayHashMap<PackageUpdateInfo>,
 
     // (catalog name, dependency name) -> original version literal
@@ -453,7 +453,7 @@ pub struct PackageManager {
     pub(crate) kept_patched: Vec<PackageID>,
     pub kept_patched_text: Vec<u8>,
 
-    // Newly resolved deprecated versions that no package.json of the project names: one summary line.
+    // Newly resolved deprecated versions no package.json of the project names: one summary line.
     pub(crate) deprecated_transitive: u32,
 
     // bun dedupe: printed by dedupe::print_dedupe_summary in place of the install summary.
@@ -471,7 +471,7 @@ pub struct PackageManager {
     // Set by package_json_write_back::flush when it rewrites a file; read by the install summary.
     pub(crate) wrote_package_json: bool,
 
-    // pnpm / yarn migration: its edits of cached package.json entries, written only along with the migrated lockfile.
+    // A migration's package.json edits, written only along with the migrated lockfile.
     pub(crate) migrated_package_json_moves: Vec<package_json_write_back::MigratedPackageJson>,
 
     // bun add: catalog references decided per target and the root entries they need; see add_catalog.rs
@@ -625,12 +625,12 @@ pub struct PackageUpdateInfo {
 }
 
 impl PackageUpdateInfo {
-    /// One name can sit in several catalogs, each locked to its own version, so a `catalog:` row is keyed by both; no package name contains `@catalog:`.
+    /// One name can sit in several catalogs, each with its version. No name contains `@catalog:`.
     pub(crate) fn catalog_row_key(name: &[u8], catalog_name: &[u8]) -> Vec<u8> {
         [name, b"@catalog:".as_slice(), catalog_name].concat()
     }
 
-    /// `version`'s tag strings live in `buf` (a lockfile string buffer that cleaning rebuilds), so the original keeps its own copy of them.
+    /// `version`'s tag strings live in `buf`, which cleaning rebuilds: the original keeps a copy.
     pub(crate) fn set_original_version(&mut self, version: Semver::Version, buf: &[u8]) {
         let mut tag_buf =
             vec![0u8; version.tag.pre.len() + version.tag.build.len()].into_boxed_slice();
@@ -781,7 +781,7 @@ impl PackageManager {
     #[inline]
     pub fn init(
         ctx: Command::Context,
-        cli: CommandLineArguments,
+        cli: &CommandLineArguments,
         subcommand: Subcommand,
     ) -> Result<(&'static mut PackageManager, Box<[u8]>), Error> {
         init(ctx, cli, subcommand)
@@ -929,7 +929,6 @@ impl PackageManager {
     pub(crate) fn configure_env_for_scripts(
         &mut self,
         ctx: Command::Context,
-        log_level: package_manager_options::LogLevel,
     ) -> Result<&mut transpiler::Transpiler<'static>, Error> {
         // Compute once and return the cached value on
         // subsequent calls. `Transpiler` is non-`Copy` (and self-referential via
@@ -937,7 +936,7 @@ impl PackageManager {
         // SAFETY: `PackageManager` is a leaked singleton; main-thread-only call site.
         let mut ptr = CONFIGURE_ENV_FOR_SCRIPTS_ONCE.load(core::sync::atomic::Ordering::Acquire);
         if ptr.is_null() {
-            let t = configure_env_for_scripts_run(self, ctx, log_level)?;
+            let t = configure_env_for_scripts_run(self, ctx)?;
             ptr = bun_core::heap::into_raw(Box::new(t));
             CONFIGURE_ENV_FOR_SCRIPTS_ONCE.store(ptr, core::sync::atomic::Ordering::Release);
         }
@@ -956,7 +955,7 @@ impl PackageManager {
         self.env().get_tls_reject_unauthorized()
     }
 
-    /// A blocking request to a registry, with the proxy and the certificate check the environment asks for.
+    /// A blocking request, with the proxy and the certificate check the environment asks for.
     pub fn registry_request<'a>(
         &self,
         method: http::Method,
@@ -1119,32 +1118,16 @@ static CONFIGURE_ENV_FOR_SCRIPTS_ONCE: core::sync::atomic::AtomicPtr<
 fn configure_env_for_scripts_run(
     this: &mut PackageManager,
     ctx: Command::Context,
-    log_level: package_manager_options::LogLevel,
 ) -> Result<transpiler::Transpiler<'static>, Error> {
     // We need to figure out the PATH and other environment variables
     // to do that, we re-use the code from bun run
     // this is expensive, it traverses the entire directory tree going up to the root
     // so we really only want to do it when strictly necessary
-    // `RunCommand::configure_env_for_run` fully initializes the slot via out-param.
-    // Transpiler is NOT
-    // all-zero-valid POD, so `zeroed()` is wrong; use MaybeUninit and assume_init after fill.
-    let mut this_transpiler_slot =
-        core::mem::MaybeUninit::<transpiler::Transpiler<'static>>::uninit();
     // `self.env` is `Option<BackRef<Loader>>`; pass the raw pointer so
     // the shim's `Transpiler::init` reuses the manager's loader instead of
     // allocating a fresh singleton.
     let env_ptr: Option<*mut dot_env::Loader> = this.env.map(|p| p.as_ptr());
-    let _ = RunCommand::configure_env_for_run(
-        ctx,
-        &mut this_transpiler_slot,
-        env_ptr,
-        log_level != package_manager_options::LogLevel::Silent,
-        false,
-    )?;
-    // SAFETY: the install-tier `RunCommand::configure_env_for_run` shim
-    // (lib.rs) `.write()`s the slot via `Transpiler::init` before returning
-    // `Ok` — same contract as the runtime impl (run_command.rs:628).
-    let this_transpiler = unsafe { this_transpiler_slot.assume_init() };
+    let this_transpiler = RunCommand::configure_env_for_run(ctx, env_ptr)?;
 
     let init_cwd_entry = this.env_mut().map.get_or_put_without_value(b"INIT_CWD")?;
     if !init_cwd_entry.found_existing {
@@ -1404,7 +1387,6 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
 // allocate / get singleton
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Allocates the singleton and writes every field: the arguments, and empty for the rest.
 fn allocate_package_manager(
     options: Options,
     log: *mut bun_ast::Log,
@@ -1715,7 +1697,7 @@ fn push_package_json(path: &mut Vec<u8>) {
     path.extend_from_slice(b"package.json\0");
 }
 
-/// What the user's `.npmrc` and `project_npmrc` configure. A relative `$NPM_CONFIG_USERCONFIG` is relative to `start_dir`.
+/// A relative `$NPM_CONFIG_USERCONFIG` is relative to `start_dir`.
 fn load_npmrc_files(
     bunfig: &Api::BunInstall,
     env: &dot_env::Loader,
@@ -1757,7 +1739,7 @@ fn load_npmrc_files(
 struct PackageJsonWalk<'a> {
     cwd: &'a [u8],
     next_dir: Option<&'a [u8]>,
-    /// `<dir>/package.json` of the directory `next` returned last. The cwd alone can fill a path buffer.
+    /// `<dir>/package.json` of `next`'s last directory. The cwd alone can fill a path buffer.
     path: Vec<u8>,
 }
 
@@ -1829,7 +1811,7 @@ fn is_shared_directory(_: &[u8]) -> bool {
 /// worker-side projections.
 pub fn init(
     ctx: Command::Context,
-    cli: CommandLineArguments,
+    cli: &CommandLineArguments,
     subcommand: Subcommand,
 ) -> Result<(&'static mut PackageManager, Box<[u8]>), Error> {
     // `.npmrc` is read below, before `Options::load` applies the log level.
@@ -2053,7 +2035,7 @@ pub fn init(
 
         // Check if this is a workspace; if so, use root package
         if subcommand.should_chdir_to_root() {
-            // Above the tree `bunx` installs into are the user's cache and home: no workspace of it.
+            // Above `bunx`'s tree are the user's cache and home: no workspace of it.
             let is_bunx_install =
                 bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get() == Some(true);
             if !created_package_json && !no_project && !is_bunx_install {
@@ -2213,7 +2195,7 @@ pub fn init(
         // until now). The slice excludes the NUL — `top_level_dir` is `[]u8`.
         // PathBuffer is repr(transparent) over [u8; N], so the raw cast is sound.
         fs.set_top_level_dir(bun_core::ffi::slice(CWD_BUF.get().cast::<u8>(), tld.len()));
-        // From `top_level_dir`, not the fd's realpath, so relative paths never cross drives (#39357).
+        // From `top_level_dir`, not the fd's realpath: relative paths never cross drives.
         let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
         let tld_no_slash = strings::without_trailing_slash(tld);
         let plen = tld_no_slash.len() + SEP_PACKAGE_JSON.len();
@@ -2290,8 +2272,6 @@ pub fn init(
         }
         ctx.install = Some(Box::new(install));
     }
-    // Captured before `cli` is moved into `options.load(Some(cli), ...)` below.
-    let cli_network_concurrency = cli.network_concurrency;
 
     let options = Options {
         global: cli.global,
@@ -2414,7 +2394,7 @@ pub fn init(
             // create_context_data(); single-threaded init region.
             unsafe { &mut *ctx.log },
             env,
-            Some(cli),
+            cli,
             ctx.install.as_deref(),
             None,
             subcommand,
@@ -2435,7 +2415,7 @@ pub fn init(
                 .set(options::Enable::MANIFEST_CACHE, true);
         }
 
-        if let Some(network_concurrency) = cli_network_concurrency {
+        if let Some(network_concurrency) = cli.network_concurrency {
             http::async_http::MAX_SIMULTANEOUS_REQUESTS
                 .store(usize::from(network_concurrency.max(1)), Ordering::Relaxed);
         }
@@ -2564,7 +2544,7 @@ pub(crate) fn init_with_runtime(
     // opts); taking `&mut` here would force a const→mut provenance launder at
     // the resolver call site.
     bun_install: Option<&Api::BunInstall>,
-    cli: CommandLineArguments,
+    cli: &CommandLineArguments,
     env: &mut dot_env::Loader,
 ) -> crate::Result<*mut PackageManager> {
     // NB: not `bun_core::run_once!` — the body is fallible (reading the root
@@ -2588,7 +2568,7 @@ pub(crate) fn init_with_runtime(
 fn init_with_runtime_once(
     log: &mut bun_ast::Log,
     bun_install: Option<&Api::BunInstall>,
-    cli: CommandLineArguments,
+    cli: &CommandLineArguments,
     env: &mut dot_env::Loader,
 ) -> crate::Result<()> {
     if env.get(b"BUN_INSTALL_VERBOSE").is_some() {
@@ -2657,7 +2637,7 @@ fn init_with_runtime_once(
     manager.options.load(
         log,
         env,
-        Some(cli),
+        cli,
         bun_install,
         Some(&npmrc),
         Subcommand::Install,

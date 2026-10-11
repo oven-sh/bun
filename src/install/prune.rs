@@ -13,7 +13,7 @@ use bun_sys::{self as sys, Dir, E, EntryKind, O};
 use bun_threading::{WaitGroup, WorkPool};
 
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _, entry as store_entry};
-use crate::isolated_install::{Store, build_store};
+use crate::isolated_install::{Store, build_whole_store};
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::tree::is_filtered_dependency_or_workspace;
 use crate::lockfile::{LoadResult, Lockfile, print_log_errors, reachable, tree};
@@ -70,7 +70,7 @@ struct Plan {
     checked: usize,
     /// No install is linking: a `StagingPath` or an `OldModules` is what one that died left.
     leftovers: bool,
-    /// The workspace `node_modules` that `open_workspace_folder` refused. A plan with one is not executed.
+    /// What `open_workspace_folder` refused. A plan with one is not executed.
     linked_folders: Vec<Box<[u8]>>,
 }
 
@@ -1610,7 +1610,7 @@ fn workspace_node_modules(lockfile: &Lockfile, pkg_id: PackageID) -> Option<Box<
     Some(join(path, b"node_modules"))
 }
 
-/// The one way to open a workspace's `node_modules`, and the store. A link is not followed: `linked_folders` gets it.
+/// The one way to open a workspace's `node_modules`, and the store. A link is not followed.
 fn open_workspace_folder(folder: &[u8], linked_folders: &mut Vec<Box<[u8]>>) -> Option<Dir> {
     let st = sys::lstat(ZStr::from_slice_with_nul(&zname(folder))).ok()?;
     match sys::kind_from_mode(st.st_mode as sys::Mode) {
@@ -1692,7 +1692,7 @@ fn read_entries(dir: &Dir) -> Vec<(Box<[u8]>, EntryKind)> {
     read_entries_and_leftovers(dir, false)
 }
 
-/// `leftovers`: also the `StagingPath`s and the `OldModules`, the only names returned that start with a dot.
+/// `leftovers`: also the `StagingPath`s and the `OldModules`, the only names with a leading dot.
 fn read_entries_and_leftovers(dir: &Dir, leftovers: bool) -> Vec<(Box<[u8]>, EntryKind)> {
     let mut out = Vec::new();
     let mut iter = sys::iterate_dir(dir.fd());
@@ -1814,14 +1814,7 @@ fn wanted_packages(manager: &PackageManager, selection: Option<&Selection>) -> D
 
 fn build_store_with(manager: &mut PackageManager, features: InstallFeatures) -> Store {
     with_install_features(manager, features, |manager| {
-        handle_oom(build_store(
-            &*manager,
-            &manager.lockfile,
-            true,
-            &[],
-            None,
-            false,
-        ))
+        handle_oom(build_whole_store(&*manager, &manager.lockfile))
     })
 }
 
@@ -2054,7 +2047,7 @@ pub(crate) fn remove_planted_link(dir: &Dir, path: &ZStr) -> sys::Maybe<()> {
     });
     match stat {
         Ok(st) if sys::kind_from_mode(st.st_mode as sys::Mode) == EntryKind::SymLink => remove(),
-        // Below a plain file there is no link either: whoever makes the directory next says what is in the way.
+        // Below a plain file there is no link either.
         Err(err) if !matches!(err.get_errno(), E::ENOENT | E::ENOTDIR) => Err(err),
         _ => Ok(()),
     }
@@ -2171,7 +2164,7 @@ fn unlink_links(dir: &Dir, should_unlink: &dyn Fn(&Dir, &[u8], &[u8]) -> bool) -
     unlinked
 }
 
-// An install that skips a dependency (`--omit`, `--os`, `--cpu`) still installs its dependent, without the link to it.
+// An install that skips a dependency (`--omit`, `--os`, `--cpu`) still installs its dependent.
 fn unlink_removed_dependencies(store: &Dir) {
     for (entry, kind) in read_entries(store) {
         if kind != EntryKind::Directory || &*entry == b"node_modules" {
@@ -2184,7 +2177,7 @@ fn unlink_removed_dependencies(store: &Dir) {
         };
         unlink_links(&node_modules, &|dir, _, name| is_dangling(dir, name));
 
-        // `append_dependency_link_name` links a dependency with the package's own name inside the package.
+        // A dependency with the package's own name is linked inside the package.
         let (package, _) = split_store_key(&entry);
         let Some(package_dir) = descend(&node_modules, &package) else {
             continue;
@@ -2361,7 +2354,7 @@ fn housekeeping(plan: &Plan, layout: Layout, manager: &PackageManager) {
     }
 }
 
-/// The name of the `node_modules/.old_modules-<hex>` that `move_node_modules_aside` moved the other linker's tree to.
+/// The `node_modules/.old_modules-<hex>` that holds the other linker's tree.
 pub(crate) struct OldModules(pub(crate) Box<[u8]>);
 
 /// Dropping it waits for the deletion to end.

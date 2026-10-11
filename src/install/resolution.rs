@@ -594,7 +594,7 @@ pub(crate) fn fmt_store_url(url: &[u8]) -> StoreURLFormatter<'_> {
 
 /// `(authority_start, host_start, query_start)`: the userinfo is `authority_start..host_start`.
 fn url_credential_offsets(url: &[u8]) -> (usize, usize, usize) {
-    // RFC 3986: the authority follows `scheme://` (or starts an scp-like `user@host:path`) and ends at the first `/`, `?` or `#`; the userinfo ends at its last `@`.
+    // RFC 3986: the authority ends at the first `/`, `?` or `#`; the userinfo at its last `@`.
     let authority_start = match strings::index_of_char_usize(url, b':') {
         Some(colon) if url[colon + 1..].starts_with(b"//") => colon + b"://".len(),
         _ => 0,
@@ -608,7 +608,7 @@ fn url_credential_offsets(url: &[u8]) -> (usize, usize, usize) {
     (authority_start, host_start, query_start)
 }
 
-/// Appends `specifier` without the userinfo and the query string of a `scheme://` URL (the `#fragment` stays).
+/// Without the userinfo and the query string of a `scheme://` URL (the `#fragment` stays).
 pub(crate) fn append_without_url_credentials(out: &mut Vec<u8>, specifier: &[u8]) {
     let (authority_start, host_start, query_start) = url_credential_offsets(specifier);
     if authority_start == 0 {
@@ -623,7 +623,7 @@ pub(crate) fn append_without_url_credentials(out: &mut Vec<u8>, specifier: &[u8]
     }
 }
 
-/// [`append_without_url_credentials`] that keeps the query string: a registry may sign its tarball URLs.
+/// Keeps the query string: a registry may sign its tarball URLs.
 pub(crate) fn append_without_url_userinfo(out: &mut Vec<u8>, url: &[u8]) {
     let (authority_start, host_start, _) = url_credential_offsets(url);
     out.extend_from_slice(&url[..authority_start]);
@@ -1043,7 +1043,7 @@ impl Tag {
         self == Tag::LocalTarball || self == Tag::RemoteTarball
     }
 
-    /// `Uninitialized` is the state before a package is appended; `SingleFileModule` has no producer.
+    /// `Uninitialized` precedes a package's append; `SingleFileModule` has no producer.
     pub(crate) fn belongs_in_lockfile(self) -> bool {
         matches!(
             self,

@@ -19,8 +19,6 @@ use crate::package_install::PackageInstall;
 use crate::package_manager;
 use crate::{DependencyID, PackageID, PackageManager, lockfile::Package, resolution::Resolution};
 
-bun_output::declare_scope!(InstallPatch, visible);
-
 // The directory handles on `PatchTask`/`ApplyPatch` are *borrowed views* of the
 // `PackageManager`-owned cache/temp directory descriptors. Store the raw `Fd`
 // so the task's drop never closes a descriptor it doesn't own. Use
@@ -55,19 +53,12 @@ unsafe impl bun_threading::Linked for PatchTask {
     }
 }
 
-#[derive(strum::IntoStaticStr)]
 pub enum Callback {
-    #[strum(serialize = "calc_hash")]
     CalcHash(CalcPatchHash),
-    #[strum(serialize = "apply")]
     Apply(ApplyPatch),
 }
 
 impl Callback {
-    #[inline]
-    pub(crate) fn tag_name(&self) -> &'static str {
-        <&'static str>::from(self)
-    }
     /// Panics if the active variant is not `Apply`.
     #[inline]
     pub(crate) fn apply_mut(&mut self) -> &mut ApplyPatch {
@@ -135,11 +126,6 @@ impl PatchTask {
     }
 
     pub(crate) fn run_from_thread_pool_impl(&mut self) {
-        bun_output::scoped_log!(
-            InstallPatch,
-            "runFromThreadPoolImpl {}",
-            <&'static str>::from(&self.callback)
-        );
         // There are no early returns in the body, so the ordering
         // (body → push → wake) is inlined below.
         match &mut self.callback {
@@ -173,11 +159,6 @@ impl PatchTask {
         manager: &mut PackageManager,
         log_level: LogLevel,
     ) -> Result<(), crate::Error> {
-        bun_output::scoped_log!(
-            InstallPatch,
-            "runFromThreadMainThread {}",
-            <&'static str>::from(&self.callback)
-        );
         let result = if matches!(self.callback, Callback::CalcHash(_)) {
             self.run_from_main_thread_calc_hash(manager, log_level)
         } else {
@@ -268,21 +249,7 @@ impl PatchTask {
                 &mut out_name_and_version_hash,
                 &mut out_patchfile_hash,
             ) {
-                PreinstallState::Done => {
-                    // patched pkg in folder path, should now be handled by PackageInstall.install()
-                    bun_output::scoped_log!(
-                        InstallPatch,
-                        "pkg: {} done",
-                        BStr::new(pkg_name.slice(&manager.lockfile.buffers.string_bytes))
-                    );
-                }
                 PreinstallState::Extract => {
-                    bun_output::scoped_log!(
-                        InstallPatch,
-                        "pkg: {} extract",
-                        BStr::new(pkg_name.slice(&manager.lockfile.buffers.string_bytes))
-                    );
-
                     // SAFETY: every `Resolution` `Value` payload is `Copy`
                     // POD and the union is zero-initialized (see the union
                     // accessors in resolution.rs), so reading `.npm.version`
@@ -329,11 +296,6 @@ impl PatchTask {
                     }
                 }
                 PreinstallState::ApplyPatch => {
-                    bun_output::scoped_log!(
-                        InstallPatch,
-                        "pkg: {} apply patch",
-                        BStr::new(pkg_name.slice(&manager.lockfile.buffers.string_bytes))
-                    );
                     let patch_task = PatchTask::new_apply_patch_hash(
                         manager,
                         pkg_meta_id,
@@ -362,8 +324,6 @@ impl PatchTask {
             unreachable!()
         };
         let log = &mut patch.logger;
-        bun_output::scoped_log!(InstallPatch, "apply patch task");
-        // bun.assert(this.callback == .apply) — enforced by the match above.
 
         let dir = self.project_dir;
         let patchfile_path = &patch.patchfilepath;

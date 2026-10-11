@@ -72,7 +72,7 @@ fn strip_negations(raw: &[u8]) -> (&[u8], bool) {
     (remain, negated)
 }
 
-/// The `!` entries of a `workspaces` array: one rule for `bun install` and `bun run --filter` / `--workspaces`.
+/// The `!` entries of a `workspaces` array: one rule for `bun install` and `bun run --filter`.
 #[derive(Default)]
 pub struct NegatedWorkspaces(Vec<Box<[u8]>>);
 
@@ -385,7 +385,7 @@ impl WorkspaceGraph {
         graph
     }
 
-    /// Candidate indices, each after the candidates it depends on. A cycle is broken at one of its members.
+    /// Candidate indices, each after those it depends on. A cycle is broken at one of its members.
     pub(crate) fn dependency_order(&self) -> Vec<u32> {
         let n = self.dependencies.len();
         let mut remaining: Vec<usize> = self.dependencies.iter().map(Vec::len).collect();

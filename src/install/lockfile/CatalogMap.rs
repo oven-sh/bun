@@ -141,7 +141,7 @@ impl CatalogMap {
         .cloned()
     }
 
-    /// `bun update --latest`: until package.json is parsed again, the registry entry under `dep_name` selects the dist-tag `latest`, behind the same `npm:<name>@` when it has one. The map is cloned by re-parsing each literal, so the entry gets a real one.
+    /// `bun update --latest`. The map is cloned by re-parsing literals: the entry gets a real one.
     pub(crate) fn steer_to_latest(
         &mut self,
         string_buf: &mut StringBuf,
@@ -426,7 +426,7 @@ impl CatalogMap {
         Ok(())
     }
 
-    /// Gives the map the shape of the pnpm-workspace.yaml objects the migration writes into package.json for `parse_append` to read back: pnpm-lock.yaml's section has only the entries in use (kept, with the specifier they were resolved with) and files every default catalog under `default`.
+    /// pnpm-lock.yaml has only the entries in use, and every default catalog under `default`.
     pub(crate) fn put_missing_from_pnpm_workspace(
         &mut self,
         catalog_obj: Option<Expr>,
@@ -444,7 +444,7 @@ impl CatalogMap {
             let group_name = string_buf.append(group_name_str)?;
             let group =
                 Self::get_or_put_named_group(groups, string_buf.bytes.as_slice(), group_name)?;
-            // package.json's `catalogs.default` is a named group; the entries recorded in `default` move there.
+            // package.json's `catalogs.default` is a named group: `default`'s entries move there.
             let recorded = (group_name_str == b"default").then_some(&mut *default);
             put_declared_entries(group, recorded, &declared, string_buf)
         })
@@ -601,7 +601,7 @@ fn put_entries_from_pnpm_lockfile(
     Ok(())
 }
 
-/// Entries `group` records stay as recorded, ones `lockfile_default` recorded move into `group`, the rest are added; an entry that does not parse is left out silently because `parse_append_group` leaves it out and reports it when the next install reads package.json.
+/// Recorded entries stay as recorded. The next install reports an entry that does not parse.
 fn put_declared_entries(
     group: &mut Map,
     mut lockfile_default: Option<&mut Map>,

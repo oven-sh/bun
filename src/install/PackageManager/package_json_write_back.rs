@@ -52,7 +52,7 @@ pub(crate) fn record(
     push(&mut manager.edited_package_jsons, target, received_requests);
 }
 
-/// A package.json whose cache entry a pnpm or yarn migration edited, and what is reported once it is written.
+/// A package.json whose cache entry a migration edited, and what is reported once it is written.
 pub(crate) struct MigratedPackageJson {
     target: WorkspaceTarget,
     edits: Vec<&'static str>,
@@ -79,7 +79,7 @@ pub(crate) fn record_migrated(
     }
 }
 
-/// Writes the package.json files a migration edited in memory, just before the migrated lockfile that depends on them is saved.
+/// Just before the migrated lockfile that depends on them is saved.
 pub fn write_migrated(manager: &mut PackageManager) {
     if manager.migrated_package_json_moves.is_empty() {
         return;
@@ -102,7 +102,7 @@ pub fn write_migrated(manager: &mut PackageManager) {
     }
 }
 
-/// Phase 0 (before the lockfile is cleaned): a positional without a name (`bun add ./folder`, a tarball, a git URL) is a row keyed by its literal until it resolves, and from then on one more row of that name. The rows of the same package.json that declare the name already go the way `fate_of_declared` says, as for `bun add <name>@<literal>`; `PackageJSONEditor::edit` does the same to the file. Otherwise two rows reach the tree and bun.lock under one name.
+/// Phase 0, before the clean: `bun add ./folder` has a name now, and only one row may carry it.
 pub(crate) fn fold_resolved_positionals(manager: &mut PackageManager) {
     if manager.subcommand != Subcommand::Add
         || manager.options.add_catalog.is_some()
@@ -161,7 +161,7 @@ pub(crate) fn fold_resolved_positionals(manager: &mut PackageManager) {
                 {
                     continue;
                 }
-                // The same command also asked for this package another way (`./a-v1 ./a-v2`, `./a-v1 pkga@./a-v2`).
+                // The same command also asked for this package another way (`./a-v1 ./a-v2`).
                 if let Some(other) = requests
                     .iter()
                     .enumerate()
@@ -221,7 +221,7 @@ pub(crate) fn fold_resolved_positionals(manager: &mut PackageManager) {
     }
 }
 
-/// Phase 1 (before bun.lock is saved): write the resolved versions into the edited package.json entries and re-derive bun.lock's declared columns from them. True when that gave `overrides` other values than the rows were resolved with (a `$name` follows the literal written for `name`).
+/// Phase 1, before bun.lock is saved. True when `overrides` got other values (a `$name` follows).
 #[inline]
 pub(crate) fn edit_after_resolve(manager: &mut PackageManager) -> crate::Result<bool> {
     if manager.pending_filtered_write.is_none()
@@ -438,7 +438,7 @@ fn parse_edited(
     Ok(parsed)
 }
 
-/// Re-parses the edited files the way `bun install` would and copies every declared literal that differs (and, for the root, `overrides` + `catalogs`) into `manager.lockfile`, so the next install's differ sees no change. True when `overrides` differed.
+/// So that the next install's differ sees no change. True when `overrides` differed.
 fn sync_lockfile(
     manager: &mut PackageManager,
     edited: &[EditedPackageJson],
@@ -555,7 +555,7 @@ fn sync_lockfile(
         }
         builder.clamp();
     }
-    // --latest resolved with `latest` in the catalogs (`steer_used_catalogs_to_latest`), also when the root is not edited.
+    // `steer_used_catalogs_to_latest` ran, also when the root is not edited.
     if manager.options.do_.contains(Do::UPDATE_TO_LATEST)
         && scratch.catalogs.has_any()
         && edited.iter().all(|e| e.target.name_hash.is_some())
@@ -595,7 +595,7 @@ fn unchanged_on_disk(manager: &mut PackageManager, target: &WorkspaceTarget) -> 
     if *on_disk.source.contents == *printed {
         return true;
     }
-    // Printed as it is, the file can differ from itself (line ends, escapes, inline objects, comments). That alone is nothing to write.
+    // Printed as it is, the file can differ from itself: that alone is nothing to write.
     let root = on_disk.root;
     print_package_json_into_cache_entry(on_disk, root);
     *on_disk.source.contents == *printed

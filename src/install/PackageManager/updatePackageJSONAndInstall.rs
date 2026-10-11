@@ -13,7 +13,7 @@ use bun_core::{ZStr, strings};
 use bun_js_printer as js_printer;
 
 use super::add_catalog;
-use super::add_remove_with_filter::WorkspaceTarget;
+use super::add_remove_with_filter::{WorkspaceTarget, fetch_entry_root, store_entry};
 use super::command_line_arguments::CommandLineArguments;
 use super::package_json_editor as PackageJSONEditor;
 use super::update_request::Array as UpdateRequestArray;
@@ -219,13 +219,13 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     add_catalog::prepare(manager, &updates);
 
-    // Not `bun update <path>`: it is always rejected, with a `bun add <path>` hint the user runs from the cwd.
+    // Not `bun update <path>`: its rejection hints at a `bun add <path>` run from the cwd.
     if subcommand == Subcommand::Add {
         updates =
             super::add_remove_with_filter::respell_local_paths(manager, original_cwd, updates);
     }
 
-    // Loads the lockfile, and migrating one rewrites the cached root package.json: do it before reading the entry.
+    // Before the entry is read: migrating a lockfile rewrites the cached root package.json.
     let patch_commit: Option<PatchCommitResult> =
         if matches!(manager.options.patch_features, PatchFeatures::Commit { .. }) {
             patch_package::do_patch_commit(manager, log_level)?
@@ -256,12 +256,6 @@ fn update_package_json_and_install_with_manager_with_updates(
         );
     }
     let mut current_package_json_root: bun_ast::Expr = current_package_json.root;
-
-    // If there originally was a newline at the end of their package.json, preserve it
-    // so that we don't cause unnecessary diffs in their git history.
-    // https://github.com/oven-sh/bun/issues/1375
-    let preserve_trailing_newline_at_eof_for_package_json =
-        current_package_json.source.contents.last() == Some(&b'\n');
 
     if subcommand == Subcommand::Remove {
         if !current_package_json_root.data.is_e_object() {
@@ -341,7 +335,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         }
         _ => {
             if let Some(stuff) = patch_commit {
-                // Inside a workspace package the root package.json is edited below, not `current_package_json`.
+                // Inside a workspace package the root package.json is edited below.
                 if stuff.not_in_workspace_root {
                     not_in_workspace_root = Some(stuff);
                 } else {
@@ -418,62 +412,23 @@ fn update_package_json_and_install_with_manager_with_updates(
         // reshaped for borrowck — see `current_package_json_ptr` above.
         let root_package_json_ptr: *mut MapEntry =
             package_json_entry_or_crash(manager, root_package_json_path);
-        // SAFETY: pointer into `manager.workspace_package_json_cache`, valid until the
-        // next `get_with_path` (after this block). `edit_patched_dependencies` touches
-        // only disjoint manager fields.
-        let root_package_json: &mut MapEntry = unsafe { &mut *root_package_json_ptr };
 
         if let Some(stuff) = &not_in_workspace_root {
-            let mut root_package_json_root: bun_ast::Expr = root_package_json.root;
+            let root_target = WorkspaceTarget::root();
+            let mut root_package_json_root = fetch_entry_root(manager, &root_target);
             PackageJSONEditor::edit_patched_dependencies(
                 manager,
                 &mut root_package_json_root,
                 &stuff.patch_key,
                 &stuff.patchfile_path,
             )?;
-            let mut buffer_writer2 = js_printer::BufferWriter::init();
-            buffer_writer2.buffer.list.reserve(
-                (root_package_json.source.contents.len() + 1)
-                    .saturating_sub(buffer_writer2.buffer.list.len()),
-            );
-            buffer_writer2.append_newline = preserve_trailing_newline_at_eof_for_package_json;
-            let mut package_json_writer2 = js_printer::BufferPrinter::init(buffer_writer2);
-
-            let _ = match js_printer::print_json(
-                &mut package_json_writer2,
-                root_package_json_root,
-                &root_package_json.source,
-                js_printer::PrintJsonOptions {
-                    indent: root_package_json.indentation,
-                    mangled_props: None,
-                    ..Default::default()
-                },
-            ) {
-                Ok(n) => n,
-                Err(e) => {
-                    bun_core::pretty_errorln!(
-                        "package.json failed to write due to error {}",
-                        e.name(),
-                    );
-                    Global::crash();
-                }
-            };
-            root_package_json.source.contents = Cow::Owned(
-                package_json_writer2
-                    .ctx
-                    .written_without_trailing_zero()
-                    .to_vec(),
-            );
-            // The edit's nodes live in the AST store, which the next parse resets.
-            if let Err(err) = root_package_json.reparse_root(manager.log_mut()) {
-                bun_core::pretty_errorln!(
-                    "package.json failed to parse due to error {}",
-                    err.name(),
-                );
-                Global::crash();
-            }
-            super::package_json_write_back::record(manager, WorkspaceTarget::root(), false);
+            store_entry(manager, &root_target, root_package_json_root);
+            super::package_json_write_back::record(manager, root_target, false);
         }
+
+        // SAFETY: pointer into `manager.workspace_package_json_cache`, valid until the
+        // next `get_with_path` of a new path (after this block).
+        let root_package_json: &mut MapEntry = unsafe { &mut *root_package_json_ptr };
 
         let root_is_targeted = manager
             .update_target_workspaces
@@ -517,7 +472,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     Ok(())
 }
 
-/// After the install: what the root `node_modules` still holds of the packages the command took out of it.
+/// After the install: what the root `node_modules` still holds of what the command took out.
 pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
     if !manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
         return;
@@ -588,11 +543,11 @@ pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
 pub fn update_package_json_and_install_and_cli(
     ctx: Command::Context,
     subcommand: Subcommand,
-    cli: CommandLineArguments,
+    cli: &CommandLineArguments,
 ) -> Result<(), Error> {
     let update_groups = cli.update_groups;
     let (manager_ptr, original_cwd) = 'brk: {
-        match super::init(ctx, cli.clone(), subcommand) {
+        match super::init(ctx, cli, subcommand) {
             Ok(v) => v,
             Err(e) => {
                 if e == crate::Error::MissingPackageJSON {

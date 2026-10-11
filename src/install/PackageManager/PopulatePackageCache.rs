@@ -1,4 +1,4 @@
-//! `bun pm fetch`: resolves like `bun install` and downloads every package into the cache. Writes nothing else.
+//! `bun pm fetch`: resolves like `bun install` and writes nothing but the cache.
 
 use bun_core::{Output, ZBox};
 
@@ -18,7 +18,6 @@ use crate::{DependencyID, PackageID, PreinstallState, TaskCallbackContext, inval
 pub struct Summary {
     /// Packages extracted by this process, including the resolve phase's prefetches.
     pub fetched: u32,
-    /// Packages that were already in the cache.
     pub already_cached: u32,
 }
 
@@ -152,7 +151,7 @@ fn download_pinned_packages(manager: &mut PackageManager) -> crate::Result<Summa
         }
     }
 
-    // Nothing waits for these downloads, and a `Dependency` callback would resolve its row again (a `github:` one downloads twice).
+    // A `Dependency` callback would resolve its row again: `github:` downloads twice.
     for waiters in manager.task_queue.values_mut() {
         waiters.retain(|waiter| matches!(waiter, TaskCallbackContext::GitCheckout { .. }));
     }

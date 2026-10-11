@@ -37,7 +37,6 @@ use super::package_manager_options as Options;
 use super::package_manager_options::{Do, Enable};
 use crate::isolated_install::store as Store;
 
-/// `add_error_pretty!` if `$is_error`, else `add_warning_pretty!`.
 macro_rules! add_error_or_warning_pretty {
     ($log:expr, $is_error:expr, $($message:tt)+) => {
         if $is_error {
@@ -226,7 +225,7 @@ impl ErasedCallbacks {
         unsafe { &mut *ctx.cast() }
     }
 
-    /// The tarball of `task_id` will not arrive: marks the dedupe entry failed, so that a later enqueue fails fast, and tells the running installer. `Some(is_required)`: the caller reports it.
+    /// A later enqueue then fails fast. `Some(is_required)`: the caller reports it.
     fn dispatch_tarball_error(
         &self,
         manager: &mut PackageManager,
@@ -316,7 +315,6 @@ impl Drop for FinishPass<'_> {
     }
 }
 
-/// Returns a finished resolve task to its pool.
 struct ReturnResolveTask {
     manager: *mut PackageManager,
     task: *mut Task::Task<'static>,
@@ -333,7 +331,7 @@ impl Drop for ReturnResolveTask {
     }
 }
 
-/// Returns the network task that a finished resolve task owns to its pool. Null: it owns none.
+/// Null: the resolve task owns no network task.
 struct ReturnNetworkTask {
     manager: *mut PackageManager,
     task: *mut NetworkTask,
@@ -356,7 +354,7 @@ impl Drop for ReturnNetworkTask {
     }
 }
 
-/// `pkg` was appended for `task_id`: names and resolves the rows that waited for it. What a linker queued stays in the list.
+/// Names and resolves the rows that waited for `task_id`. What a linker queued stays in the list.
 fn resolve_waiters_of_appended_package(
     cb: &ErasedCallbacks,
     manager: &mut PackageManager,
@@ -365,7 +363,7 @@ fn resolve_waiters_of_appended_package(
     pkg: &Package,
     install_peer: bool,
 ) -> crate::Result<()> {
-    // So that a dependency enqueued later on the same task can resolve; see `AppendedTaskPackageMap`.
+    // For a dependency enqueued later on the same task; see `AppendedTaskPackageMap`.
     manager.appended_task_packages.insert(task_id, pkg.meta.id);
     let Some(entry) = manager.task_queue.get_mut(&task_id) else {
         return Ok(());
@@ -409,7 +407,7 @@ fn run_tasks_erased(
     let has_updated_this_run = Cell::new(false);
     let mut has_network_error = false;
 
-    // The guards hold `manager` as a raw pointer because the loop body holds `&mut` to it. They run on every exit (incl. `?`).
+    // The guards hold `manager` as a raw pointer: the loop body holds `&mut` to it.
     //
     // Stacked Borrows: the raw pointers must remain the provenance root for all
     // body accesses, otherwise the first direct use of the `&mut` fn params
@@ -560,7 +558,7 @@ fn run_tasks_erased(
             }
         }
 
-        // A script that exited was handled in the event loop tick before this call. (.monotonic: spawned and reaped on this thread.)
+        // .monotonic: spawned and reaped on this thread.
         while LifecycleScriptSubprocess::alive_count().load(Ordering::Relaxed)
             < manager.options.max_concurrent_lifecycle_scripts
         {
@@ -580,7 +578,7 @@ fn run_tasks_erased(
             let list_val = unsafe { (*list).clone() };
             // reborrow instead of moving the field out of `*installer`
             let command_ctx: Command::Context<'_> = &mut *installer.command_ctx;
-            // `installer.manager == manager`: called via the body shadow, a reborrow of `manager_ptr`.
+            // `installer.manager == manager`: called via the reborrow of `manager_ptr`.
             let spawn_res = manager.spawn_package_lifecycle_scripts(
                 command_ctx,
                 list_val,
@@ -592,7 +590,7 @@ fn run_tasks_erased(
                 }),
             );
             if let Err(err) = spawn_res {
-                // .monotonic is okay: the task was popped from the `UnboundedQueue` and is no longer running.
+                // .monotonic is okay: the task was popped from the queue and no longer runs.
                 installer.store.entries.items_step()[entry_id.get() as usize]
                     .store(store_installer::Step::Done as u32, Ordering::Relaxed);
                 installer.on_task_fail(entry_id, &store_installer::TaskError::RunScripts(err));
@@ -651,7 +649,7 @@ fn run_tasks_erased(
                         task.retried += 1;
                         let wait =
                             retry_timer::retry(manager, task_ptr, task.retried, &task.response);
-                        // `notify` keeps the metadata it finds here when the next attempt gets none.
+                        // `notify` keeps the metadata it finds here if the next attempt gets none.
                         task.response = Default::default();
 
                         if matches!(err, crate::Error::Http(http::Error::Timeout)) {
@@ -681,7 +679,7 @@ fn run_tasks_erased(
                         continue;
                     }
 
-                    // One more try when the full document was only requested for `libc` (`npm::name_suggests_libc`).
+                    // One more try: the full document was only requested for `libc`.
                     if is_extended_manifest && manager.options.minimum_release_age_ms.is_none() {
                         task.retry_with_abbreviated_manifest(
                             manager.scope_for_package_name(name),
@@ -744,7 +742,7 @@ fn run_tasks_erased(
                         continue;
                     }
 
-                    // A dist-tag on the name of a workspace that is not published links the workspace.
+                    // A dist-tag on the name of an unpublished workspace links the workspace.
                     if response.status_code == 404
                         && !cb.manifests_only
                         && enqueue::has_linkable_workspace(
@@ -1387,7 +1385,7 @@ fn run_tasks_erased(
                         }
                     }
 
-                    // The error also under `--silent`: git's own lines were warnings if the requiring dependency joined the clone later.
+                    // git's own lines were warnings if the requiring dependency joined later.
                     if !is_required || !cb.is_store_installer {
                         add_error_or_warning_pretty!(
                             manager.log_mut(),
@@ -1619,7 +1617,7 @@ fn run_tasks_erased(
     Ok(())
 }
 
-/// `(failed, retry)`. `failed`: the connection died before a response or under a 2xx/3xx one. `retry`: that, or a 5xx, 429 or 408 (also a proxy's to CONNECT), unless the certificate was refused.
+/// `(failed, retry)`. `failed`: the connection died before a response or under a 2xx/3xx one.
 fn download_outcome(response: &http::HTTPClientResult<'static>) -> (bool, bool) {
     let proxy_status = response
         .proxy_connect_response
@@ -1665,7 +1663,7 @@ impl PackageManager {
     #[inline]
     pub(crate) fn increment_pending_tasks(&mut self, count: u32) {
         self.total_tasks += count;
-        // .monotonic is okay: the start of a task carries no side effects that other threads depend on (finishing one does).
+        // .monotonic is okay: the start of a task has no side effects other threads depend on.
         let _ = self.pending_tasks.fetch_add(count, Ordering::Relaxed);
     }
 
@@ -1814,7 +1812,7 @@ fn forget_failed_git_task(
 static REQUEST_GOT_NO_ANSWER: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
-/// The exit code that tells `bunx` so (`EX_TEMPFAIL`): the `bun add` it spawned linked and saved nothing.
+/// Tells `bunx` so (`EX_TEMPFAIL`): the `bun add` it spawned linked and saved nothing.
 pub const BUNX_REGISTRY_UNREACHABLE: u32 = 75;
 
 /// How a command ends whose request failed, before it linked or saved anything.
@@ -1889,7 +1887,7 @@ fn fail_update_requests(
     any_failed
 }
 
-/// A download that failed twice sheds a quarter of the concurrent requests, once per pass, down to the minimum. Not under auto-install: the number is `fetch()`'s too.
+/// Once per pass. Not under auto-install: the number is `fetch()`'s too.
 fn throttle_after_network_error(manager: &PackageManager, has_network_error: &mut bool) {
     if manager.options.runtime_auto_install || core::mem::replace(has_network_error, true) {
         return;
@@ -1911,7 +1909,7 @@ fn throttle_after_network_error(manager: &PackageManager, has_network_error: &mu
     }
 }
 
-/// A host that never answers costs minutes per attempt: said at once, over the progress bar (the log is printed when the phase ends).
+/// Said at once, over the progress bar: a host that never answers costs minutes per attempt.
 #[cold]
 fn warn_timeout_retry(
     progress: &mut crate::bun_progress::Progress,
@@ -2008,7 +2006,7 @@ pub fn generate_network_task_for_tarball<'a>(
     };
 
     if let Err(err) = network_task.for_tarball(extract_tarball, scope, authorization) {
-        // The dedupe entry exists but no task will complete it: a later enqueue would wait behind it for ever.
+        // No task will complete the dedupe entry: a later enqueue would wait for ever.
         this.mark_network_task_failed(task_id);
         return Err(err);
     }

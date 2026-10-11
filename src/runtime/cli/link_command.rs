@@ -31,14 +31,11 @@ pub(crate) fn init_for_link(
     subcommand: Subcommand,
 ) -> crate::Result<(&'static mut PackageManager, Box<[u8]>)> {
     let cli = CommandLineArguments::parse(subcommand)?;
-    let dry_run = cli.dry_run;
-    let (manager, original_cwd) = match pm::init(&mut *ctx, cli, subcommand) {
+    let (manager, original_cwd) = match pm::init(&mut *ctx, &cli, subcommand) {
         Ok(v) => v,
-        Err(bun_install::Error::MissingPackageJSON) if !dry_run => {
+        Err(bun_install::Error::MissingPackageJSON) if !cli.dry_run => {
             attempt_to_create_package_json()?;
-            // `CommandLineArguments` is not `Clone`.
-            let cli = CommandLineArguments::parse(subcommand)?;
-            pm::init(&mut *ctx, cli, subcommand)?
+            pm::init(&mut *ctx, &cli, subcommand)?
         }
         Err(e) => return Err(e.into()),
     };

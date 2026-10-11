@@ -256,10 +256,8 @@ impl PackageManagerCommand {
             stat: cli.diff_stat,
             context: cli.diff_context.unwrap_or(3),
         };
-        let diff_args: Vec<&'static [u8]> = cli.diff_args.clone();
         let cache_max_age_days = cli.cache_max_age_days.unwrap_or(DEFAULT_MAX_AGE_DAYS);
-        let cache_dir_flag = cli.cache_dir;
-        let (pm, cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Pm) {
+        let (pm, cwd) = match PackageManager::init(&mut *ctx, &cli, Subcommand::Pm) {
             Ok(v) => v,
             Err(err) => {
                 if err == bun_install::Error::MissingPackageJSON {
@@ -411,7 +409,7 @@ impl PackageManagerCommand {
                 // Not `pm.options`: a project's `.env`, bunfig.toml or `.npmrc` does not choose what is deleted.
                 let mut process_env = bun_dotenv::Loader::init();
                 process_env.load_process()?;
-                let cache_dir = match fetch_cache_directory_path(&mut process_env, cache_dir_flag) {
+                let cache_dir = match fetch_cache_directory_path(&mut process_env, cli.cache_dir) {
                     Ok(cache_dir) => cache_dir,
                     Err(err) => Self::crash_getting_cache_directory(err),
                 };
@@ -732,7 +730,7 @@ impl PackageManagerCommand {
             WhyCommand::exec_from_pm(pm, positionals)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"diff") {
-            PmDiffCommand::exec(pm, positionals, &diff_args, diff_flags, &cwd)?;
+            PmDiffCommand::exec(pm, positionals, &cli.diff_args, diff_flags, &cwd)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"licenses") {
             PmLicensesCommand::exec(pm, positionals, &cwd, licenses_flags)?;

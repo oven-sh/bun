@@ -511,10 +511,8 @@ impl Package<u64> {
             &mut new.buffers.resolutions[prev_len as usize..end as usize];
         debug_assert_eq!(old_resolutions.len(), resolutions.len());
         debug_assert_eq!(old_dependencies.len(), resolutions.len());
-        for (i, (old_resolution, resolution)) in old_resolutions
-            .iter()
-            .zip(resolutions.iter_mut())
-            .enumerate()
+        for (i, (old_resolution, resolution)) in
+            (0u32..).zip(old_resolutions.iter().zip(resolutions.iter_mut()))
         {
             if *old_resolution >= max_package_id {
                 *resolution = invalid_package_id;
@@ -523,11 +521,11 @@ impl Package<u64> {
 
             let pending = PendingResolution {
                 old_resolution: *old_resolution,
-                resolve_id: new_package.resolutions.off + PackageID::try_from(i).expect("int cast"),
+                resolve_id: new_package.resolutions.off + i,
             };
 
             // Weak peer slots must not keep their target alive; bound in `Cloner::flush`.
-            if old.is_weak_peer(self.dependencies.off + i as u32, *old_resolution)
+            if old.is_weak_peer(self.dependencies.off + i, *old_resolution)
                 && old
                     .held_at_load
                     .is_set_allow_out_of_bound(*old_resolution as usize, true)
@@ -1224,7 +1222,7 @@ impl Diff {
                     }
 
                     workspace_hooks_only = !diff.changes_dependencies();
-                    // bun.lock records no scripts, and a member that did not change is not read again.
+                    // bun.lock records no scripts, and an unchanged member is not read again.
                     if !diff.changes_resolutions()
                         && !from_pkg.scripts.filled
                         && workspace_pkg.scripts.has_any()
@@ -1851,7 +1849,7 @@ impl Package<u64> {
                     }
                 } else if workspace_version.is_some() && external_alias.hash == name_hash {
                     // It doesn't satisfy, but a workspace shares the same name. Override the workspace with the other dependency
-                    // An alias installs in `node_modules/<alias>`, so it leaves the workspace in place.
+                    // An alias installs in `node_modules/<alias>`: the workspace stays in place.
                     for dep in package_dependencies.iter_mut() {
                         if dep.name_hash == name_hash && dep.behavior.is_workspace() {
                             *dep = Dependency {
@@ -2602,7 +2600,7 @@ impl Package<u64> {
             let has_scripts = self.scripts.has_any()
                 || self.scripts.wants_default_node_gyp(
                     source.path.name().dir,
-                    scripts::Gypfile::from_json(json),
+                    Some(scripts::gypfile_from_json(json)),
                 );
             self.meta.set_has_install_script(has_scripts);
         }

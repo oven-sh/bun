@@ -302,7 +302,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
         }
     };
 
-    // `name` must be the directory `handle` is: the node-gyp shim is written via `handle`, put on PATH via `name`.
+    // The node-gyp shim is written via `handle` and put on PATH via `name`.
     let name: &'static [u8] = if tried_dot_tmp {
         let joined = path::resolve_path::join::<path::platform::Auto>(&[
             manager.cache_directory_path.as_bytes(),
@@ -781,7 +781,7 @@ pub fn cached_npm_package_folder_print_basename<'a>(
     w.finish_z()
 }
 
-/// `@T@sha512-<first 16 digest bytes as hex>@@@1`: a path or URL holds other bytes tomorrow, so the integrity bun.lock pins names the entry.
+/// `@T@sha512-<first 16 digest bytes as hex>@@@1`: a path or URL holds other bytes tomorrow.
 pub fn cached_tarball_folder_name_print<'a>(
     buf: &'a mut [u8],
     integrity: &Integrity,
@@ -797,7 +797,7 @@ pub fn cached_tarball_folder_name_print<'a>(
         w.put_byte(b'-');
         w.put_hex_bytes(&digest[..digest.len().min(16)]);
     } else {
-        // A row that has none and gets none (`pins_tarballs`). The same path is another file in every project.
+        // A row that has none and gets none (`pins_tarballs`).
         let mut hasher = bun_wyhash::Wyhash11::init(0);
         if tag == ResolutionTag::LocalTarball {
             hasher.update(FileSystem::instance().top_level_dir());
@@ -810,7 +810,7 @@ pub fn cached_tarball_folder_name_print<'a>(
     w.finish_z()
 }
 
-/// Empty for a row without an integrity that this run gives one, which callers treat as a cache miss.
+/// Empty, which callers treat as a cache miss, for a row that this run gives its integrity.
 pub fn cached_tarball_folder_name(
     this: &PackageManager,
     integrity: &Integrity,
@@ -859,7 +859,6 @@ impl PackageManager {
                 })
     }
 
-    /// The package the lockfile has for a `file:` / URL tarball.
     pub(crate) fn locked_tarball(&self, resolution: &Resolution) -> Option<PackageID> {
         let buf = self.lockfile.buffers.string_bytes.as_slice();
         self.lockfile
@@ -875,7 +874,7 @@ pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool
     sys::directory_exists_at(get_cache_directory(this), folder_path).unwrap_or(false)
 }
 
-/// Cache hit for an unpatched entry: npm and tarball folders must contain `package.json`, git checkouts the `.bun-tag` written last.
+/// npm and tarball folders must contain `package.json`, git checkouts the `.bun-tag` written last.
 pub fn is_package_in_cache_at(cache_dir: Fd, folder_path: &ZStr, tag: ResolutionTag) -> bool {
     let marker: &[u8] = match tag {
         ResolutionTag::Npm | ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {

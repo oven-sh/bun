@@ -124,8 +124,7 @@ impl AuditCommand {
             Global::exit(1);
         }
 
-        let (manager, original_cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Audit)
-        {
+        let (manager, original_cwd) = match PackageManager::init(ctx, &cli, Subcommand::Audit) {
             Ok(v) => v,
             Err(err) => {
                 if err == bun_install::Error::MissingPackageJSON {
@@ -662,20 +661,15 @@ fn send_audit_request(
     let _ = compressor.compress_to_vec(body, &mut compressed_body, libdeflate::Encoding::Gzip)?;
     drop(compressor);
 
-    let mut headers = HeaderBuilder::default();
-    headers.count(b"accept", b"application/json");
-    headers.count(b"content-type", b"application/json");
-    headers.count(b"content-encoding", b"gzip");
+    let mut pairs: Vec<(&[u8], &[u8])> = vec![
+        (b"accept", b"application/json"),
+        (b"content-type", b"application/json"),
+        (b"content-encoding", b"gzip"),
+    ];
     if let Some(authorization) = &registry.authorization {
-        headers.count(b"authorization", authorization);
+        pairs.push((b"authorization", authorization));
     }
-    headers.allocate()?;
-    headers.append(b"accept", b"application/json");
-    headers.append(b"content-type", b"application/json");
-    headers.append(b"content-encoding", b"gzip");
-    if let Some(authorization) = &registry.authorization {
-        headers.append(b"authorization", authorization);
-    }
+    let headers = HeaderBuilder::from_pairs(&pairs)?;
 
     let url_str = format!(
         "{}/-/npm/v1/security/advisories/bulk",

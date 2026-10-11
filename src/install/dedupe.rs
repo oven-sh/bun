@@ -23,7 +23,7 @@ struct Pass<'a> {
     pinned: &'a DynamicBitSet,
     /// Versions no edge may move onto; see `dedupe_lockfile`.
     closed: &'a DynamicBitSet,
-    /// `collapse_appended`: edges onto packages below this id (loaded from the lockfile) and root/workspace rows stay where they are.
+    /// `collapse_appended`: edges onto loaded packages (ids below) and root/workspace rows stay.
     frozen_below: Option<PackageID>,
     /// Per group: each edge with the package that owns it.
     edges: Vec<Vec<(DependencyID, PackageID)>>,
@@ -141,12 +141,12 @@ impl<'a> Pass<'a> {
         (0..n).find(|&c| self.survivors.is_set(c) && self.sat.is_set(row + c))
     }
 
-    // `collapse_appended` leaves bundles out (`reachable`): a bundled edge neither votes nor holds its target.
+    // `collapse_appended`: a bundled edge neither votes nor holds its target.
     fn counts(&self, dep: &Dependency) -> bool {
         self.frozen_below.is_none() || !dep.behavior.is_bundled()
     }
 
-    // Like `placement`, but a version that stays whatever else was resolved (`required`) comes first.
+    // Like `placement`, but a version that stays whatever else resolved (`required`) is first.
     fn anchored_placement(&self, e: usize) -> Option<usize> {
         let n = self.candidates.len();
         let row = e * n;
@@ -260,7 +260,7 @@ impl<'a> Pass<'a> {
                                 self.movable.set(e);
                             }
                         }
-                        // No version is in range: an unmet peer is bound to the highest there is (`existing_peer_target`), so it goes along with whatever stays; any other edge stays put.
+                        // No version in range: an unmet peer goes along (`existing_peer_target`).
                         if !self.movable.is_set(e) && dep.behavior.is_peer() {
                             self.movable.set(e);
                             for c in 0..n {
@@ -312,7 +312,7 @@ impl<'a> Pass<'a> {
                 if !self.movable.is_set(e) {
                     continue;
                 }
-                // `collapse_appended`: a row of a package added this session was resolved against the versions that had arrived by then, so it is placed again; a peer stays with the copy it was bound to.
+                // `collapse_appended`: a new package's row saw only the versions that had arrived.
                 let placed_by_arrival = self.frozen_below.is_some_and(|below| owner >= below)
                     && !deps[dep_id as usize].behavior.is_peer();
                 let placement = if placed_by_arrival {
@@ -503,7 +503,7 @@ fn dedupe_lockfile(lockfile: &mut Lockfile, frozen_below: Option<PackageID>) -> 
             }
         }
 
-        // A version that stays must be held by an edge that was on it before the run and whose owner stays. One held only by edges that moved onto it won on the vote of a package the move removed (`z@*` on z@3, z@3 -> z@2): it is closed and the run starts over.
+        // One held only by edges that moved onto it won on the vote of a package the move removed.
         let mut held = DynamicBitSet::init_empty(pkg_res.len()).unwrap_or_oom();
         for (owner, slice) in lockfile.packages.items_dependencies().iter().enumerate() {
             if !live.is_set(owner) {
@@ -678,7 +678,7 @@ pub(crate) fn effective_npm_range(
         .filter(|version| version.tag == DependencyVersionTag::Npm)
 }
 
-/// The override rule the resolver applies to this edge; `workspace:` and `npm:` alias edges are never overridden (PackageManagerEnqueue.rs).
+/// As the resolver: `workspace:` and `npm:` alias edges are never overridden.
 pub(crate) fn applied_override<'a>(
     lockfile: &'a Lockfile,
     dep_id: DependencyID,
@@ -988,7 +988,7 @@ pub fn dedupe_after_differ(manager: &mut PackageManager) {
         .set(Enable::FORCE_SAVE_LOCKFILE, true);
 }
 
-/// After resolution: collapses the versions appended this session onto the fewest that satisfy their edges, whichever of them a range happened to find in place. Packages loaded from the lockfile and root/workspace rows keep their edges.
+/// After resolution: the versions appended this session, onto the fewest that satisfy their edges.
 pub fn collapse_appended(manager: &mut PackageManager) {
     let lockfile = &mut *manager.lockfile;
     let frozen_below = lockfile.loaded_package_count;

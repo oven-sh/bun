@@ -126,16 +126,11 @@ pub(crate) fn view(
     ));
 
     let authorization = scope.authorization(&url);
-    let mut headers = http::HeaderBuilder::default();
-    headers.count(b"Accept", b"application/json");
+    let mut pairs: Vec<(&[u8], &[u8])> = vec![(b"Accept", b"application/json")];
     if let Some(authorization) = &authorization {
-        headers.count(b"Authorization", authorization);
+        pairs.push((b"Authorization", authorization));
     }
-    headers.allocate()?;
-    headers.append(b"Accept", b"application/json");
-    if let Some(authorization) = &authorization {
-        headers.append(b"Authorization", authorization);
-    }
+    let headers = http::HeaderBuilder::from_pairs(&pairs)?;
 
     let mut response_buf = MutableString::init(2048)?;
     let header_buf: &[u8] = headers.content.written_slice();
@@ -340,10 +335,6 @@ pub(crate) fn view(
         Ok::<(), bun_alloc::AllocError>(())
     })?;
 
-    // This is similar to what npm does.
-    // `bun pm view react version ` => 1.2.3
-    // `bun pm view react versions` => ['1.2.3', '1.2.4', '1.2.5']
-    // `bun pm view react name maintainers.name` => one `label = value` line each
     if !fields.is_empty() {
         let mut found: StringArrayHashMap<ast::Expr> = StringArrayHashMap::new();
         for &field in fields {

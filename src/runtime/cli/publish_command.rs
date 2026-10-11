@@ -340,7 +340,7 @@ impl PublishCommand {
         let cli = install::CommandLineArguments::parse(Subcommand::Publish)?;
 
         let (manager, original_cwd) =
-            match PackageManager::init(&mut *ctx, cli.clone(), Subcommand::Publish) {
+            match PackageManager::init(&mut *ctx, &cli, Subcommand::Publish) {
                 Ok(v) => v,
                 Err(err) => {
                     if !cli.log_level.is_silent() {
@@ -417,8 +417,7 @@ impl PublishCommand {
         Global::crash();
     }
 
-    /// `-r` / `--filter`: packs every selected workspace package that has something to publish, then publishes
-    /// them, dependencies first. Every failure ends the run; what is on the registry already is skipped.
+    /// `-r` / `--filter`: packs every selected workspace, then publishes them, dependencies first.
     fn exec_workspaces(
         ctx: Command::Context<'_>,
         manager: &mut PackageManager,
@@ -589,7 +588,7 @@ impl PublishCommand {
         if let Some(authorization) = &authorization {
             pairs.push((b"authorization", authorization));
         }
-        let Ok(headers) = Self::build_headers(&pairs) else {
+        let Ok(headers) = http::HeaderBuilder::from_pairs(&pairs) else {
             return false;
         };
 
@@ -618,7 +617,6 @@ impl PublishCommand {
         (json.get(b"versions")).is_some_and(|versions| versions.get(version).is_some())
     }
 
-    /// `-r` or `--filter`: the run covers workspace packages, not only the current one.
     fn is_workspace_publish(manager: &PackageManager) -> bool {
         manager.options.do_.recursive() || !manager.options.filter_patterns.is_empty()
     }
@@ -1035,8 +1033,7 @@ impl PublishCommand {
 
         let tarball = format!(
             "http://{}/{}/-/{}",
-            // always use replace https with http
-            // https://github.com/npm/cli/blob/9281ebf8e428d40450ad75ba61bc6f040b3bf896/workspaces/libnpmpublish/lib/publish.js#L120
+            // Always http, never https, as in npm's libnpmpublish/lib/publish.js.
             bstr::BStr::new(strings::without_trailing_slash(strings::without_prefix(
                 strings::without_prefix(&registry.url.url().href_without_auth(), b"https://"),
                 b"http://",
@@ -1311,18 +1308,6 @@ impl PublishCommand {
         json.set(bump, b"bin", object_expr(bin_props))
     }
 
-    fn build_headers(pairs: &[(&[u8], &[u8])]) -> Result<http::HeaderBuilder, AllocError> {
-        let mut headers = http::HeaderBuilder::default();
-        for &(name, value) in pairs {
-            headers.count(name, value);
-        }
-        headers.allocate()?;
-        for &(name, value) in pairs {
-            headers.append(name, value);
-        }
-        Ok(headers)
-    }
-
     fn construct_publish_headers(
         manager: &PackageManager,
         registry: &Npm::Registry::Scope,
@@ -1370,7 +1355,7 @@ impl PublishCommand {
             pairs.push((b"Content-Length", content_length.as_bytes()));
         }
 
-        Self::build_headers(&pairs)
+        http::HeaderBuilder::from_pairs(&pairs)
     }
 
     fn construct_publish_request_body(

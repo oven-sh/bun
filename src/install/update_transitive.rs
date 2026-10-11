@@ -63,7 +63,7 @@ impl DirectDependencies {
         out
     }
 
-    /// Edges still resolving to the previous package of a direct dependency that moved follow it when their range allows; with `direct_only` (`--depth 0`) only root and workspace edges do.
+    /// Edges on the previous package of a moved direct dependency follow it if their range allows.
     pub fn redirect_dependents(&self, lockfile: &mut Lockfile, direct_only: bool) {
         if self.owners.is_empty() || lockfile.loaded_package_count == 0 {
             return;
@@ -691,7 +691,7 @@ pub(crate) fn print_kept_patched(manager: &mut PackageManager) {
     manager.kept_patched_text = render_kept_rows(&rows);
 }
 
-/// After the lockfile is cleaned: one warning per root `patchedDependencies` key whose `name@version` no longer names an installed npm package.
+/// After the clean: one warning per `patchedDependencies` key that names no installed package.
 pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
     if manager.lockfile.patched_dependencies.count() == 0
         || manager.options.log_level == LogLevel::Silent
@@ -999,7 +999,7 @@ pub(crate) fn plannable_peer_rows(
     rows
 }
 
-/// `edges` selects the rows to plan; each moves to the newest release its (post-override/catalog) range allows, or follows its dist-tag. Also returns the pre-clean ids of the instances at least one row moves away from.
+/// Also returns the pre-clean ids of the instances at least one row moves away from.
 fn plan_edges(
     manager: &mut PackageManager,
     edges: &DynamicBitSet,

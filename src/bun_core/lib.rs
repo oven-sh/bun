@@ -242,7 +242,6 @@ pub mod os {
 }
 
 pub mod code_generation;
-pub mod deprecated;
 pub mod env_var;
 pub mod feature_flags;
 pub use code_generation::{

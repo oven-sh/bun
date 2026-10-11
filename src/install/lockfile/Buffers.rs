@@ -128,7 +128,14 @@ pub(crate) fn write_array<T>(
     // asserts in padding_checker.rs); reading its bytes is sound.
     let bytes: &[u8] =
         unsafe { bun_core::ffi::slice(array.as_ptr().cast::<u8>(), core::mem::size_of_val(array)) };
+    write_array_bytes(stream, bytes, prefix)
+}
 
+fn write_array_bytes(
+    stream: &mut StreamType<'_>,
+    bytes: &[u8],
+    prefix: &'static str,
+) -> crate::Result<()> {
     let start_pos = stream.get_pos()?;
     stream.write_int_le::<u64>(0xDEAD_BEEF)?;
     stream.write_int_le::<u64>(0xDEAD_BEEF)?;

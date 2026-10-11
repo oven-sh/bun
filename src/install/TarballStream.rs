@@ -546,7 +546,7 @@ impl TarballStream {
                             lib::Result::Retry if (*this).archive_holds_reading => continue,
                             lib::Result::Retry => return Ok(()),
                             lib::Result::Eof => {
-                                // The gzip filter reads a body that is not gzip as the end of its input.
+                                // The gzip filter reads a body that is not gzip as end of input.
                                 if (*this).entry_count == 0 {
                                     (*this).fail_detail = b"the archive holds no files".to_vec();
                                     return Err(crate::Error::Fail);

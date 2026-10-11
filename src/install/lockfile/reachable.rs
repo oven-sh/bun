@@ -32,7 +32,7 @@ impl Options {
         }
     }
 
-    // What `bun install` would link with the manager's `--production` / `--omit` / os / cpu / libc settings.
+    // What `bun install` would link with the manager's `--production` / `--omit` / platform.
     pub(crate) fn install(manager: &PackageManager) -> Options {
         let features = manager.options.local_package_features;
         Options {

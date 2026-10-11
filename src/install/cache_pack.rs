@@ -183,7 +183,7 @@ fn is_npm_entry_package_name(name: &[u8]) -> bool {
             .is_ok_and(|scoped| strings::count_char(name, b'/') == usize::from(scoped))
 }
 
-/// `Some` for the shapes `cached_*_folder_name_print` give unpatched entries, which nothing else in the cache has.
+/// `Some` for the shapes `cached_*_folder_name_print` give unpatched entries, and nothing else.
 fn entry_tag(name: &[u8]) -> Option<ResolutionTag> {
     // Also what every file system can hold, so that no rename into the cache fails on the name.
     if !is_safe_relative_path(name)
@@ -338,7 +338,7 @@ struct Writer<'a> {
     file: &'a File,
     buf: Box<[u8]>,
     len: usize,
-    /// Bytes already in `file`. Every write names its offset: `patch_u64` must not move a file position.
+    /// Bytes already in `file`. Writes name their offset: `patch_u64` must not move a position.
     flushed: u64,
     hasher: Wyhash,
 }
@@ -672,7 +672,7 @@ impl Reader {
     }
 }
 
-/// Our own directory in the extractor's temporary directory; the `n`th new package is staged as `<name>/<n>`.
+/// Our own directory in the temporary one; the `n`th new package is staged as `<name>/<n>`.
 struct Staging {
     parent: Fd,
     name: ZBox,
@@ -847,7 +847,7 @@ fn rename_no_replace(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> sys::M
 fn rename_no_replace(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> sys::Maybe<bool> {
     let mut to_buf = bun_paths::w_path_buffer_pool::get();
     let to_w = bun_paths::strings::to_wpath_normalized(&mut to_buf, to.as_bytes());
-    // A scanner or indexer may hold the new files open for a moment; see `cache_publish::RenameRetry`.
+    // A scanner or indexer may hold the new files open; see `cache_publish::RenameRetry`.
     let mut retries: u32 = 0;
     loop {
         let dir = sys::open_dir_at_windows_a(
@@ -975,7 +975,7 @@ fn plural(n: u64) -> &'static str {
     if n == 1 { "" } else { "s" }
 }
 
-/// `pm.options.positionals` is `["cache", "pack" | "unpack", ...]`; for `pack`, the lockfile is loaded.
+/// `positionals` is `["cache", "pack" | "unpack", ...]`; for `pack`, the lockfile is loaded.
 pub fn exec(pm: &mut PackageManager, original_cwd: &[u8]) -> ! {
     let verb = bstr::BStr::new(pm.options.positionals[1]);
     let is_pack = pm.options.positionals[1] == b"pack";

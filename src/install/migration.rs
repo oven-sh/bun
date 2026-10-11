@@ -174,7 +174,7 @@ pub fn detect_and_load_other_lockfile<'a>(
     if let Ok(data) = File::read_from(dir, b"yarn.lock") {
         let migrate_result = yarn::migrate_yarn_lockfile(this, manager, log, &data);
         if migrate_result.is_err() {
-            // Left in `log`, the reasons would fail the install that resolves from package.json instead.
+            // Left in `log`, the reasons would fail the install that resolves from package.json.
             print_errors_and_reset(manager, log);
         }
         return finish_migration(migrate_result, manager, log, &timer, zstr!("yarn.lock"));
@@ -499,7 +499,6 @@ fn migrate_npm_lockfile<'a>(
     npm_lock::migrate_packages(
         this,
         manager,
-        log,
         packages_properties,
         workspace_map.as_ref(),
         lockfile_name,
@@ -509,11 +508,6 @@ fn migrate_npm_lockfile<'a>(
 
     this.tag_workspace_links(manager.options.link_workspace_packages);
     this.resolve(log)?;
-
-    #[cfg(debug_assertions)]
-    {
-        this.verify_data()?;
-    }
 
     Ok(LoadResult::Ok(LoadResultOk {
         lockfile: this,

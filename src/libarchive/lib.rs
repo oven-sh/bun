@@ -1203,7 +1203,7 @@ struct OutputFile {
 impl Drop for OutputFile {
     fn drop(&mut self) {
         if self.close {
-            // On Windows AV makes this slow; an async close can fail NtSetInformationFile, gains nothing.
+            // Slow under Windows AV; async closing gains nothing, can fail NtSetInformationFile.
             self.fd.close();
         }
     }

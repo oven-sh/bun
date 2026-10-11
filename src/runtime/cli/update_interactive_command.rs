@@ -279,14 +279,11 @@ impl UpdateInteractiveCommand {
         }
 
         let cli = CommandLineArguments::parse(Subcommand::Update)?;
-        let groups = cli.update_groups;
-        let silent = cli.log_level.is_silent();
 
-        let (manager, original_cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Update)
-        {
+        let (manager, original_cwd) = match PackageManager::init(ctx, &cli, Subcommand::Update) {
             Ok(v) => v,
             Err(err) => {
-                if !silent {
+                if !cli.log_level.is_silent() {
                     if err == bun_install::Error::MissingPackageJSON {
                         Output::err_generic("missing package.json, nothing to update", ());
                     }
@@ -296,7 +293,7 @@ impl UpdateInteractiveCommand {
             }
         };
 
-        Self::update_interactive(ctx, &original_cwd, manager, groups)
+        Self::update_interactive(ctx, &original_cwd, manager, cli.update_groups)
     }
 
     /// `None`: it cannot be read or parsed, which was reported.
@@ -719,7 +716,6 @@ impl UpdateInteractiveCommand {
 
         let mut grouped_result = Self::group_catalog_dependencies(outdated_packages)?;
 
-        // By dependency type, then by name, then by catalog (the default catalog first)
         index_sort::sort_slice_by(&mut grouped_result, |a, b| {
             dep_type_priority(a.dependency_type)
                 .cmp(&dep_type_priority(b.dependency_type))
@@ -758,7 +754,6 @@ impl UpdateInteractiveCommand {
             widths.show_workspace |= !pkg.workspace_name.is_empty();
         }
 
-        // Narrower terminals truncate more.
         let terminal_width = Self::get_terminal_size().width;
         let (max_name, max_version, max_workspace) = match terminal_width {
             ..60 => (12, 7, usize::MAX),
@@ -772,7 +767,6 @@ impl UpdateInteractiveCommand {
         widths.target = widths.target.min(max_version);
         widths.latest = widths.latest.min(max_version);
         widths.workspace = widths.workspace.min(max_workspace);
-        // All columns only fit a wide terminal.
         widths.show_workspace &= terminal_width >= 100;
         widths
     }
@@ -818,9 +812,7 @@ impl UpdateInteractiveCommand {
         } // Default fallback
     }
 
-    /// Package rows that fit next to the help line, two lines per dependency group, the bottom scroll
-    /// indicator and the row the cursor rests on. A taller frame cannot be redrawn in place: cursor-up
-    /// stops at the top of the screen.
+    /// A frame taller than the screen cannot be redrawn in place: cursor-up stops at the top.
     fn viewport_height(terminal_rows: usize, packages: &[OutdatedPackage]) -> usize {
         let groups = packages
             .chunk_by(|a, b| a.dependency_type == b.dependency_type)
@@ -1034,14 +1026,12 @@ impl UpdateInteractiveCommand {
                     let pkg = &state.packages[i];
                     let selected = state.selected[i];
 
-                    // The dependency type with the column headers
                     if current_dep_type != Some(pkg.dependency_type) {
                         debug_assert_eq!(state.packages.len(), state.selected.len());
                         let selected_count = (state.packages.iter().zip(state.selected.iter()))
                             .filter(|(p, sel)| p.dependency_type == pkg.dependency_type && **sel)
                             .count();
 
-                        // Bold if any selected
                         Output::print(format_args!("\n  "));
                         if selected_count > 0 {
                             bun_core::pretty!(
@@ -1457,7 +1447,6 @@ fn dep_type_priority(dep_type: &[u8]) -> u8 {
     }
 }
 
-/// Where `find_catalog_object` found the object.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CatalogSource {
     Workspaces,
@@ -1502,8 +1491,7 @@ fn put_catalog_version(
     Ok(())
 }
 
-/// `catalog_name`: `None` is the default catalog. New nodes come from the CLI arena: spliced into the cached `root`,
-/// they must outlive the `initialize_store()` reset that install performs.
+/// New nodes come from the CLI arena: they must outlive install's `initialize_store()` reset.
 fn update_catalog(
     package_json: &mut Expr,
     catalog_name: Option<&[u8]>,

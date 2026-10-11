@@ -19,7 +19,7 @@ use crate::bun_json as json;
 use crate::initialize_store;
 
 pub struct MapEntry {
-    /// Nodes are in the process heap and never freed: a mimalloc heap per entry costs 30 KB or more.
+    /// Nodes are in the process heap and never freed: a mimalloc heap per entry costs 30 KB.
     pub root: Expr,
     pub source: Source,
     pub indentation: Indentation,

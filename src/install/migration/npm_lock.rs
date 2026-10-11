@@ -163,7 +163,6 @@ struct Migrator<'a> {
 pub(super) fn migrate_packages(
     this: &mut Lockfile,
     manager: &mut PackageManager,
-    _log: &mut bun_ast::Log,
     packages_properties: &[E::PropertyJSON],
     workspace_map: Option<&WorkspaceMap>,
     lockfile_name: &'static str,
@@ -960,7 +959,7 @@ impl<'a> Migrator<'a> {
         self.shadow(t);
     }
 
-    /// `npm install --install-links` copies a `file:` directory: an ordinary entry whose `resolved` is `file:<dir>`.
+    /// `npm install --install-links`: an ordinary entry whose `resolved` is `file:<dir>`.
     fn is_copied_folder(&self, t: u32) -> bool {
         entry_object(&self.entries[t as usize])
             .get(b"resolved")

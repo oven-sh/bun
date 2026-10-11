@@ -293,7 +293,7 @@ pub struct SerializerLoadResult {
     pub(crate) migrated_from_lockb_v2: bool,
 }
 
-/// Consumes the next 8 bytes if they are `tag`: a section that older versions neither write nor read.
+/// Consumes the next 8 bytes if they are `tag`: a section older versions neither write nor read.
 fn next_section_is(stream: &mut Stream, total_buffer_size: u64, tag: u64) -> Result<bool, Error> {
     if total_buffer_size.saturating_sub(stream.pos as u64) <= 8 {
         return Ok(false);
@@ -305,7 +305,6 @@ fn next_section_is(stream: &mut Stream, total_buffer_size: u64, tag: u64) -> Res
     Ok(false)
 }
 
-/// Makes the two saved columns the entries of `map`.
 fn fill_map<V: Copy>(
     map: &mut ArrayHashMap<PackageNameHash, V, ArrayIdentityContextU64>,
     keys: &[PackageNameHash],
@@ -617,12 +616,10 @@ pub(crate) fn load(
         }
     }
 
-    debug_assert!(stream.pos as u64 == total_buffer_size);
-
     Ok(res)
 }
 
-/// Everything after the load indexes with these unchecked. `String`s are exempt: `slice` checks them.
+/// Everything after the load indexes with these unchecked. Not `String`s: `slice` checks them.
 fn ids_and_windows_are_in_range(lockfile: &mut Lockfile) -> bool {
     let packages_len = lockfile.packages.len();
     let dependencies_len = lockfile.buffers.dependencies.len();

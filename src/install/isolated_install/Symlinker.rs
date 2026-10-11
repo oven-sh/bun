@@ -93,7 +93,7 @@ impl Symlinker {
                                         linked => linked.map(|()| true),
                                     }
                                 }
-                                // Not a link. Kept: the copy `bun patch <pkg>` made to edit (has a package.json), a mount point (EBUSY).
+                                // Kept: the copy `bun patch <pkg>` made, a mount point (EBUSY).
                                 _ => {
                                     let has_package_json = {
                                         let mut dest = self.dest.save();
@@ -133,24 +133,11 @@ impl Symlinker {
                     return self.ensure_symlink(strategy);
                 }
 
-                #[cfg(windows)]
+                // The wrong package. On Windows a directory link, dangling or not, needs rmdir.
+                if cfg!(not(windows))
+                    || bun_sys::rmdir(self.dest.slice_z())
+                        .is_err_and(|err| err.get_errno() == Errno::EPERM)
                 {
-                    // this existing link is pointing to the wrong package.
-                    // on windows rmdir must be used for symlinks created to point
-                    // at directories, even if the target no longer exists
-                    match bun_sys::rmdir(self.dest.slice_z()) {
-                        Ok(()) => {}
-                        Err(err) => match err.get_errno() {
-                            Errno::EPERM => {
-                                let _ = bun_sys::unlink(self.dest.slice_z());
-                            }
-                            _ => {}
-                        },
-                    }
-                }
-                #[cfg(not(windows))]
-                {
-                    // this existing link is pointing to the wrong package
                     let _ = bun_sys::unlink(self.dest.slice_z());
                 }
 

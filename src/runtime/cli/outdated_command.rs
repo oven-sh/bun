@@ -102,13 +102,12 @@ impl OutdatedCommand {
         Output::flush();
 
         let cli = CommandLineArguments::parse(Subcommand::Outdated)?;
-        let silent = cli.log_level.is_silent();
 
         let (manager, original_cwd) =
-            match PackageManager::init(&mut *ctx, cli, Subcommand::Outdated) {
+            match PackageManager::init(&mut *ctx, &cli, Subcommand::Outdated) {
                 Ok(v) => v,
                 Err(err) => {
-                    if !silent {
+                    if !cli.log_level.is_silent() {
                         if err == bun_install::Error::MissingPackageJSON {
                             Output::err_generic("missing package.json, nothing outdated", ());
                         }
@@ -252,7 +251,6 @@ impl OutdatedCommand {
                 _ => package_patterns.push(FilterType::Name(arg)),
             }
         }
-        // nothing will match
         if package_patterns.is_empty() && !args.is_empty() {
             return None;
         }
@@ -379,14 +377,7 @@ impl OutdatedCommand {
         manager: &mut PackageManager,
         outdated: &OutdatedTable,
     ) {
-        let OutdatedTable {
-            declared,
-            rows,
-            column_inside_lengths,
-            show_workspace_column,
-            has_filtered_versions,
-        } = outdated;
-
+        let declared = &outdated.declared;
         let cache_ctx = manager.manifest_disk_cache_ctx();
         let min_age_ms = manager.options.minimum_release_age_ms;
         let needs_extended = min_age_ms.is_some();
@@ -395,10 +386,10 @@ impl OutdatedCommand {
         const COLUMN_LEFT_PAD: usize = 1;
         const COLUMN_RIGHT_PAD: usize = 1;
 
-        let columns = if *show_workspace_column { 5 } else { 4 };
+        let columns = if outdated.show_workspace_column { 5 } else { 4 };
         let table = Table::<COLUMN_LEFT_PAD, COLUMN_RIGHT_PAD, ENABLE_ANSI_COLORS>::init(
             &COLUMN_NAMES[..columns],
-            &column_inside_lengths[..columns],
+            &outdated.column_inside_lengths[..columns],
             "blue",
         );
         let symbols = TableSymbols {
@@ -411,7 +402,7 @@ impl OutdatedCommand {
             }
         };
         let end_cell = |column: usize, printed_length: usize| {
-            for _ in printed_length..column_inside_lengths[column] + COLUMN_RIGHT_PAD {
+            for _ in printed_length..outdated.column_inside_lengths[column] + COLUMN_RIGHT_PAD {
                 bun_core::pretty!(" ");
             }
         };
@@ -425,7 +416,7 @@ impl OutdatedCommand {
             Behavior::PEER,
             Behavior::OPTIONAL,
         ] {
-            for item in rows {
+            for item in &outdated.rows {
                 let package_id = item.dep.package_id;
 
                 let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
@@ -500,7 +491,7 @@ impl OutdatedCommand {
                     end_cell(column, version_len);
                 }
 
-                if *show_workspace_column {
+                if outdated.show_workspace_column {
                     start_cell();
                     let workspace_name: &[u8] = if let Some(names) = &item.grouped_workspace_names {
                         names
@@ -519,7 +510,7 @@ impl OutdatedCommand {
 
         table.print_bottom_line_separator();
 
-        if *has_filtered_versions {
+        if outdated.has_filtered_versions {
             bun_core::prettyln!(
                 "<d><b>Note:<r> <d>The <r><blue>*<r><d> indicates that version isn't true latest due to minimum release age<r>"
             );

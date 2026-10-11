@@ -34,7 +34,7 @@ pub struct ExtractTarball {
     pub(crate) skip_verify: bool, // = false
     pub(crate) in_trusted_dependencies: bool,
     pub(crate) integrity: Integrity, // = Integrity::default()
-    /// A row of the lockfile in a run that cannot pin it (`pins_tarballs`): no `integrity` is computed and `url` names the entry.
+    /// This run cannot pin the row (`pins_tarballs`): `url` names the cache entry.
     pub(crate) stays_unpinned: bool,
     pub(crate) url: StringOrTinyString,
     /// The lockfile's bun-tag (`repository.resolved`) for a Github resolution,

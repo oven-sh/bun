@@ -19,7 +19,6 @@ bstr.workspace = true
 enum-map.workspace = true
 thiserror.workspace = true
 bun_alloc.workspace = true
-bun_api.workspace = true
 bun_bundler.workspace = true
 bun_clap.workspace = true
 bun_collections.workspace = true

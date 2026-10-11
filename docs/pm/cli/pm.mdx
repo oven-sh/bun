@@ -358,7 +358,8 @@ bun pm cache prune --max-age 7   # older than 7 days
 bun pm cache prune --dry-run     # list what would be removed
 ```
 
-- The age of a package is the time since Bun downloaded it or, on file systems that record access times, since an install last linked it from the cache.
+- The age of a package is the time since Bun downloaded it. A package that you still install from the cache every day counts as old too.
+- Where the file system records access times (Linux with the default `relatime`), the age is the time since an install last linked the package from the cache. macOS, Windows and `noatime` mounts normally do not record that.
 - The next `bun install` that needs a removed package downloads it again. Keep this in mind before `bun install --offline`.
 - The [global store](/pm/global-store) in `<cache>/links/`, cached git clones and package manifests stay.
 - The size in the summary is the size of the removed files. A file that a `node_modules` tree hardlinks stays on disk until that tree is removed too.

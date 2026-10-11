@@ -149,7 +149,6 @@ impl Prune {
         }
     }
 
-    /// Remove the index links whose `Package` directory is gone.
     fn remove_dangling_links(&mut self, index: &Dir, prefix: &[u8]) {
         let Some(entries) = read_entries(index, prefix) else {
             self.failed += 1;

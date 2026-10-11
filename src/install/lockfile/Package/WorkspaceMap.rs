@@ -510,7 +510,7 @@ impl WorkspaceMap {
         if workspace_globs.len() > 0 {
             let mut arena = Arena::new();
             for user_pattern in &workspace_globs {
-                // Capacity is retained to keep the `mi_heap` warm across glob patterns × matched dirs.
+                // Capacity is retained to keep the `mi_heap` warm across patterns × matched dirs.
                 arena.reset_retain_with_limit(8 * 1024 * 1024);
                 let glob_pattern: &[u8] = if user_pattern.len() == 0 {
                     b"package.json"

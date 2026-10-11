@@ -496,7 +496,7 @@ impl PeerProbes {
                 continue;
             }
 
-            // The owner's own copy of the peer, if it has one, is the one the package finds from here.
+            // The owner's own copy of the peer, if any, is the one the package finds from here.
             let owner_copy = (owner_deps.begin()..owner_deps.end())
                 .find(|&dep_id| {
                     let dep = &deps[dep_id as usize];
@@ -514,7 +514,7 @@ impl PeerProbes {
         }
     }
 
-    /// True if `tree_deps` hold an out-of-range version of a peer that staying put resolves in range.
+    /// Do `tree_deps` hold an out-of-range version of a peer that staying put finds in range?
     fn is_hidden_by(
         &mut self,
         lockfile: &Lockfile,
@@ -576,6 +576,42 @@ pub(crate) struct CleanResult {
     pub dep_ids: Vec<DependencyID>,
 }
 
+/// `Some(n)`: two equal rounds of `n` trees end at `parent`, so a third would nest forever.
+fn repeating_period(
+    list: &MultiArrayList<BuilderEntry>,
+    parent: Id,
+    dependency_id: DependencyID,
+) -> Option<usize> {
+    let trees = list.items_tree();
+    let entries = list.items_dependencies();
+
+    let mut period: usize = 1;
+    let mut round_start = parent;
+    while round_start != INVALID_ID {
+        let above = trees[round_start as usize].parent;
+        if trees[round_start as usize].dependency_id == dependency_id {
+            let (mut lower, mut upper) = (parent, above);
+            let mut same: usize = 0;
+            while same < period
+                && upper != INVALID_ID
+                && trees[lower as usize].dependency_id == trees[upper as usize].dependency_id
+                && entries[upper as usize].starts_with(&entries[lower as usize])
+            {
+                lower = trees[lower as usize].parent;
+                upper = trees[upper as usize].parent;
+                same += 1;
+            }
+            if same == period {
+                return Some(period);
+            }
+        }
+        round_start = above;
+        period += 1;
+    }
+
+    None
+}
+
 impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
     /// MUST NOT be used to read `buffers.resolutions`: `self.resolutions` is a live `&mut` to it.
     #[inline]
@@ -610,38 +646,6 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         ) {
             self.resolutions[dep_id as usize] = pkg_id;
         }
-    }
-
-    /// `Some(n)`: two equal rounds of `n` trees end at `parent`, so a third would nest forever.
-    fn repeating_period(&self, parent: Id, dependency_id: DependencyID) -> Option<usize> {
-        let trees = self.list.items_tree();
-        let entries = self.list.items_dependencies();
-
-        let mut period: usize = 1;
-        let mut round_start = parent;
-        while round_start != INVALID_ID {
-            let above = trees[round_start as usize].parent;
-            if trees[round_start as usize].dependency_id == dependency_id {
-                let (mut lower, mut upper) = (parent, above);
-                let mut same: usize = 0;
-                while same < period
-                    && upper != INVALID_ID
-                    && trees[lower as usize].dependency_id == trees[upper as usize].dependency_id
-                    && entries[upper as usize].starts_with(&entries[lower as usize])
-                {
-                    lower = trees[lower as usize].parent;
-                    upper = trees[upper as usize].parent;
-                    same += 1;
-                }
-                if same == period {
-                    return Some(period);
-                }
-            }
-            round_start = above;
-            period += 1;
-        }
-
-        None
     }
 
     #[cold]
@@ -803,7 +807,7 @@ pub(crate) fn is_filtered_dependency_or_workspace(
         return true;
     }
 
-    // Not a peer: an ancestor's copy can satisfy one, so `process_subtree` and `build_store` decide.
+    // Not a peer: an ancestor's copy can satisfy one; `process_subtree` / `build_store` decide.
     if !dep.behavior.is_peer()
         && pruned_workspaces::skips_link_to_pruned_workspace(
             manager,
@@ -852,7 +856,7 @@ impl Tree {
             return Ok(());
         }
 
-        if let Some(period) = builder.repeating_period(self.id, dependency_id) {
+        if let Some(period) = repeating_period(&builder.list, self.id, dependency_id) {
             builder.crash_on_endless_nesting(self.id, dependency_id, period);
         }
 
@@ -967,8 +971,7 @@ impl Tree {
                 }
 
                 if pkg_id == invalid_package_id {
-                    // skip unresolvable dependencies. An unbound peer binds to the copy next to
-                    // or above its dependent, as loading bun.lock does.
+                    // skip unresolvable dependencies. An unbound peer binds to the nearest copy.
                     if !dependency.behavior.is_peer() {
                         continue 'dep;
                     }
@@ -1051,8 +1054,7 @@ impl Tree {
                     builder.resolutions[dep_id as usize] = res_id;
                 }
                 HoistDependencyResult::ResolveLater => {
-                    // `dep_id` is an unresolved peer. while hoisting it deduplicated
-                    // with another unresolved peer. save it so we remember resolve it
+                    // an unresolved peer that deduplicated with another one. save it to resolve it
                     // later if it's possible to resolve it.
                     let entry = builder.pending_peers.get_or_put(dependency.name_hash)?;
                     if !entry.found_existing {
@@ -1062,8 +1064,7 @@ impl Tree {
                     entry.value_ptr.put(dep_id, ())?;
                 }
                 HoistDependencyResult::Placement { id, bundled } => {
-                    // Only a placed row names a folder. An empty alias has none to escape from, and
-                    // enqueue already reported the name of an unresolved dependency if it is why.
+                    // Only a placed row names a folder; enqueue reported an unresolved one's name.
                     let dependency_name = dependency
                         .name
                         .slice(lockfile.buffers.string_bytes.as_slice());
@@ -1153,8 +1154,7 @@ impl Tree {
             let dep = &deps[dep_id as usize];
             let res_id = builder.resolutions[dep_id as usize];
 
-            // A row bun installs keeps its own copy below its dependent (`shipped_rows`). A peer
-            // shares the bundled copy itself: the tarball always has that folder.
+            // A row bun installs resolves through no shipped row; a peer shares the bundled copy.
             if METHOD == BuilderMethod::Filter
                 && !builder.in_shipped_folder
                 && package_id != invalid_package_id
@@ -1164,7 +1164,7 @@ impl Tree {
                 return HoistDependencyResult::DependencyLoop; // 3
             }
 
-            // The copy a tarball ships stays in this folder, whether or not the dependency resolved.
+            // The copy a tarball ships stays in this folder, resolved or not.
             if res_id == invalid_package_id && dep.behavior.is_bundled() {
                 return HoistDependencyResult::DependencyLoop; // 3
             }
@@ -1206,7 +1206,7 @@ impl Tree {
             // or hoist if peer version allows it
 
             if dependency.behavior.is_peer() {
-                // A rule chose this peer's package. A root alias that holds another package under the name does not serve it.
+                // A rule chose this peer's package: an alias of another package does not serve it.
                 let pkg_name_hashes = builder.lockfile().packages.items_name_hash();
                 if pkg_name_hashes[res_id as usize] != pkg_name_hashes[package_id as usize]
                     && builder.lockfile().is_overridden_dependency(input_dep_id)
@@ -1273,13 +1273,11 @@ impl Tree {
             }
         }
 
-        // A hoist root is a bundle in the saved tree. In the installed one it is for the rows the
-        // bundle ships, and a self-contained workspace for the others.
+        // Is the hoist root a bundle? In the installed tree it is one only for the rows it ships.
         if (METHOD == BuilderMethod::Resolvable || builder.in_shipped_folder)
             && this.id == hoist_root_id
         {
             // a bundle's dependency stops here, but must not shadow what resolves through here.
-            // In the installed tree it stands for the folder `npm pack` flattens it into.
             if METHOD == BuilderMethod::Resolvable
                 && !AS_DEFINED
                 && Tree::hoist_root_resolves_elsewhere(
@@ -1292,8 +1290,7 @@ impl Tree {
                 return HoistDependencyResult::DependencyLoop; // 3
             }
 
-            // A bundled dependency depending back on the bundling package resolves it from inside; copying it
-            // into itself would recurse forever.
+            // Copying the bundling package into its own bundle would recurse forever.
             if (this.dependency_id as usize) < deps.len()
                 && builder.resolutions[this.dependency_id as usize] == package_id
                 && deps[this.dependency_id as usize].name_hash == dependency.name_hash
@@ -1309,7 +1306,7 @@ impl Tree {
         } // 2
     }
 
-    /// Whether a `name_hash` edge that a loaded `bun.lock` would rebind to `hoist_root` resolves elsewhere.
+    /// Does a `name_hash` edge that loading `bun.lock` would rebind to `hoist_root` go elsewhere?
     fn hoist_root_resolves_elsewhere<const METHOD: BuilderMethod>(
         hoist_root: Id,
         package_id: PackageID,
@@ -1413,7 +1410,7 @@ pub struct FillItem {
 pub(crate) type TreeFiller =
     bun_collections::LinearFifo<FillItem, bun_collections::linear_fifo::DynamicBuffer<FillItem>>;
 
-/// Each `(peer edge, package)` pair a placement of the owner resolves, nearest `node_modules` first.
+/// Each `(peer edge, package)` pair a placement of the owner resolves, nearest folder first.
 pub fn served_peers(lockfile: &Lockfile) -> Vec<(DependencyID, PackageID)> {
     use bun_collections::HashMap;
 

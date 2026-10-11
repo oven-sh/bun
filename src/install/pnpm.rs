@@ -391,8 +391,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     crate::initialize_store();
     bun_core::analytics::Features::pnpm_migration_inc(1);
 
-    // Later `workspace_package_json_cache.get_with_path` calls reset the thread-local `Store` the parser
-    // would otherwise put its nodes in, so they go to `yaml_arena`, which lives for the whole function.
+    // Nodes go to `yaml_arena`: later package.json reads reset the thread-local `Store`.
     let yaml_source = bun_ast::Source::init_path_string(b"pnpm-lock.yaml", data);
     let yaml_arena = bun_alloc::Arena::new();
     let mut yaml_allocator = bun_ast::ASTMemoryAllocator::borrowing(&yaml_arena);
@@ -490,7 +489,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             );
         };
 
-        // Unsupported rules are warned once, with a location, when OverrideMap parses the package.json the migration writes.
+        // OverrideMap warns about unsupported rules when it parses the migrated package.json.
         if version_str == b"-" {
             continue;
         }
@@ -520,7 +519,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         path: String,
         config_key: Box<[u8]>,
     }
-    // patch hash -> every package.json/pnpm-workspace.yaml patchedDependencies key using that patch file
+    // patch hash -> every configured patchedDependencies key using that patch file
     let mut patches: StringArrayHashMap<Vec<Patch>> = StringArrayHashMap::new();
     let mut config_patch_paths: Option<StringMap> = None;
 
@@ -701,8 +700,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
     let workspace_pkgs_end = lockfile.packages.len();
 
-    // add packages for symlink dependencies. pnpm-lock does not add an entry
-    // for these dependencies in packages/snapshots
+    // add packages for symlink dependencies. pnpm-lock has no packages/snapshots entry for them
     for pkg_id in 0..workspace_pkgs_end {
         let workspace_path = importer_path(lockfile, pkg_id);
         let workspace_path: &[u8] = &workspace_path;
@@ -863,7 +861,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
         let package_obj: Expr = match packages_by_key.get(key_str) {
             Some(obj) => *obj,
-            // Like pnpm, only a `file:` directory is rebuilt from a snapshot whose `packages:` entry was pruned.
+            // Like pnpm, only a `file:` directory is rebuilt when its `packages:` entry was pruned.
             None if res_str
                 .strip_prefix(b"file:")
                 .is_some_and(|dir| !Dependency::is_tarball(dir)) =>
@@ -986,7 +984,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                     url.filter(|_| !is_scope_registry).unwrap_or(scope_registry)
                 }
             };
-            // Registries like GitHub Packages serve tarballs off the canonical `/-/` path (pnpm/pnpm#13534).
+            // Registries like GitHub Packages serve tarballs off the canonical `/-/` path.
             let recorded = resolution_expr
                 .as_ref()
                 .and_then(|r| get_str(r, b"tarball"))
@@ -1179,8 +1177,10 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     lockfile.tag_workspace_links(manager.options.link_workspace_packages);
     lockfile.resolve(log)?;
 
-    lockfile
-        .fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(manager, false, false)?;
+    lockfile.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(
+        manager, false, // update_os_cpu
+        false, // fill_integrity
+    )?;
 
     update_package_json_after_migration(Some(&mut *lockfile), manager, log, &found_patches)?;
 
@@ -1192,7 +1192,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     }))
 }
 
-/// `.` for the root, else the path a workspace package's resolution stores. Owned: the callers change `lockfile`.
+/// `.` for the root, else the workspace resolution's path. Owned: the callers change `lockfile`.
 fn importer_path(lockfile: &Lockfile, pkg_id: usize) -> Vec<u8> {
     if pkg_id == 0 {
         return b".".to_vec();
@@ -1260,8 +1260,7 @@ impl PeerDecl {
     }
 }
 
-/// `peerDependencies` and `peerDependenciesMeta` of a `packages:` entry (`strict`: anything malformed is an
-/// error) or of a package.json (it is skipped).
+/// `strict` (a `packages:` entry): anything malformed is an error. In a package.json it is skipped.
 fn declared_peers(
     obj: &Expr,
     strict: bool,
@@ -1302,8 +1301,7 @@ fn declared_peers(
     Ok(peers)
 }
 
-/// pnpm records a folder package's `file:` dependencies relative to the lockfile (`file:sub-dep/child`
-/// for a declared `file:./child`); bun.lock stores them as declared, relative to the declaring package.
+/// pnpm records a folder package's `file:` dependencies relative to the lockfile instead.
 fn declare_folder_dependencies_relative_to_their_package(
     lockfile: &mut Lockfile,
 ) -> Result<(), AllocError> {
@@ -1567,7 +1565,7 @@ fn parse_append_importer_dependencies(
             }
             *entry.value_ptr = Box::from(remove_suffix(version_str));
 
-            // pnpm records an importer's auto-installed peers under `dependencies`; the peer edge comes from package.json below.
+            // pnpm records an importer's auto-installed peers under `dependencies`.
             if manifest_peers.contains(name_str)
                 && manifest
                     .get(group_name)
@@ -1578,7 +1576,7 @@ fn parse_append_importer_dependencies(
 
             let specifier_str = as_str(&specifier_expr).ok_or(InvalidPnpmLockfile)?;
 
-            // The row keeps its `catalog:` reference (the importer's `version:` binds it); only existence is checked.
+            // The row keeps its `catalog:` reference; only existence is checked.
             if let Some(catalog_name) = specifier_str.strip_prefix(b"catalog:") {
                 let catalog_name = catalog_name.trim_ascii();
                 if lockfile
@@ -1709,7 +1707,7 @@ fn array_expr(items: js_ast::ExprNodeList) -> Expr {
     )
 }
 
-/// Imports pnpm-workspace.yaml when no pnpm-lock.yaml was migrated; a root `workspaces` field means it already was.
+/// For when no pnpm-lock.yaml was migrated; a root `workspaces` field means it already was.
 pub(crate) fn migrate_pnpm_workspace_config(
     manager: &mut PackageManager,
 ) -> Result<(), AllocError> {
@@ -1726,8 +1724,7 @@ pub(crate) fn migrate_pnpm_workspace_config(
     update_package_json_after_migration(None, manager, log, &StringArrayHashMap::new())
 }
 
-/// Copies the settings pnpm keeps in `pnpm-workspace.yaml` and the `pnpm` key into the fields bun reads, in the
-/// cached root package.json; `package_json_write_back::write_migrated` writes it if the lockfile is saved.
+/// Edits the cached root package.json; `write_migrated` writes it if the lockfile is saved.
 fn update_package_json_after_migration(
     lockfile: Option<&mut Lockfile>,
     manager: &mut PackageManager,
@@ -1794,7 +1791,7 @@ fn update_package_json_after_migration(
 
     match sys::File::read_from(Fd::cwd(), b"pnpm-workspace.yaml") {
         Ok(contents) => 'read_pnpm_workspace_yaml: {
-            // Quoted and block scalars are copied into the parse arena, so it has to outlive the print below.
+            // Quoted and block scalars are copied into the parse arena: it outlives the print.
             let contents: &[u8] = bump.alloc_slice_copy(&contents);
             let yaml_source = bun_ast::Source::init_path_string(b"pnpm-workspace.yaml", contents);
             let ws_root = match bun_parsers::yaml::YAML::parse(
@@ -1840,7 +1837,7 @@ fn update_package_json_after_migration(
             };
             catalog_obj = strings_of("catalog");
             catalogs_obj = strings_of("catalogs");
-            // The migrated root skips `Package::parse`, so the catalog these declare is recorded in the lockfile here.
+            // The migrated root skips `Package::parse`, which would record these catalogs.
             if let Some(lockfile) = lockfile {
                 let catalogs = &mut lockfile.catalogs;
                 catalogs.put_missing_from_pnpm_workspace(
@@ -1923,7 +1920,7 @@ fn update_package_json_after_migration(
         return Ok(());
     }
 
-    // The spliced-in nodes live in `bump` and the AST store; re-parse so the cache entry owns its tree.
+    // The spliced-in nodes live in `bump` and the AST store: the cache entry must own its tree.
     print_package_json_into_cache_entry(root_pkg_json, json);
     if let Err(err) = root_pkg_json.reparse_root(log) {
         bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name());
@@ -1939,9 +1936,7 @@ fn empty_object() -> Expr {
     Expr::init(E::Object::default(), bun_ast::Loc::EMPTY)
 }
 
-/// A new object with the entries of the pnpm-workspace.yaml map `map` that package.json can take: a scalar key with a
-/// scalar value (`named`: with a map of those), both as the text that was written. A YAML key can be any node, a
-/// value any tree.
+/// The entries of YAML `map` that package.json can take: scalar keys and values, as written.
 fn string_entries(source: &[u8], map: &Expr, named: bool, skipped: &mut usize) -> Expr {
     let text_of = |scalar: &Expr| -> Option<Expr> {
         let text =
@@ -1978,8 +1973,7 @@ fn string_entries(source: &[u8], map: &Expr, named: bool, skipped: &mut usize) -
     )
 }
 
-/// `string_entries` for `packageExtensions`: rule -> group -> name -> range, and the peers that
-/// `peerDependenciesMeta` makes optional. The rest is left out.
+/// `string_entries` for `packageExtensions`: rule -> group -> name -> range, and optional peers.
 fn extension_entries(
     source: &[u8],
     bump: &bun_alloc::Arena,
@@ -2020,9 +2014,7 @@ fn is_non_empty_object(expr: &Expr) -> bool {
     matches!(&expr.data, ExprData::EObject(o) if !o.properties.is_empty())
 }
 
-/// Merges `src`'s entries into the root-level object `field`, created when absent (merged rather than aliased:
-/// the `pnpm` block stays as it is); `false` if `field` is not an object. With `patches`, a bare `name` key pnpm
-/// allows becomes bun.lock's `name@version`.
+/// `false` if `field` is not an object. With `patches`, a bare `name` key becomes `name@version`.
 fn copy_into_root(
     json: &mut Expr,
     bump: &bun_alloc::Arena,

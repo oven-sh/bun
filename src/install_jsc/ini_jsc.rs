@@ -25,12 +25,12 @@ impl IniTestingAPIs {
         global: &JSGlobalObject,
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        use bun_api::BunInstall;
         use bun_ast::{Log, Source};
         use bun_core::String as BunString;
         use bun_dotenv as dotenv;
         use bun_ini::load_npmrc;
         use bun_install::npm::Registry;
+        use bun_options_types::schema::api::{BunInstall, NpmRegistry};
 
         let arg = frame.argument(0);
         let npmrc_contents = arg.to_js_string_view(global)?;
@@ -93,12 +93,10 @@ impl IniTestingAPIs {
             .find_map(|key| install.url_auth.iter().find(|entry| *entry.key == *key))
             .map(|entry| entry.credentials.clone());
         if let Some(found) = found {
-            let registry = install
-                .default_registry
-                .get_or_insert_with(|| bun_api::NpmRegistry {
-                    url: default_url,
-                    ..Default::default()
-                });
+            let registry = install.default_registry.get_or_insert_with(|| NpmRegistry {
+                url: default_url,
+                ..Default::default()
+            });
             if !registry.has_credentials() || registry.declared_in_npmrc {
                 registry.token = found.token;
                 registry.auth = found.auth;

@@ -709,7 +709,6 @@ impl<'a> LinkOrder<'a> {
 // BACKREF — the `PackageInstaller` that owns these queues also borrows the `Lockfile` mutably.
 pub struct PriorityQueueContext {
     pub(crate) lockfile: bun_ptr::BackRef<Lockfile>,
-    /// `LinkOrder::direct_packages`
     pub(crate) direct_packages: bun_ptr::BackRef<DynamicBitSet>,
 }
 
@@ -1646,7 +1645,6 @@ impl<'a> Linker<'a> {
 
         // `false`: the name does not fit.
         let mut link_named = |this: &mut Self, name: &[u8], target: &[u8]| -> bool {
-            let name = normalized_bin_name(name);
             if name.is_empty() || target.is_empty() || bin_target_escapes_package_dir(target) {
                 return true;
             }
@@ -1675,40 +1673,18 @@ impl<'a> Linker<'a> {
         match bin.tag {
             Tag::None => {}
             Tag::File => {
-                let target = bin.file().slice(string_buf);
-                if target.is_empty() || bin_target_escapes_package_dir(target) {
-                    return;
-                }
                 let package_name = self.package_name;
-                let unscoped_package_name = Dependency::unscoped_package_name(package_name.slice());
-
-                let Some(abs_target) = Self::resolve_bin_target(
-                    is_redirect,
-                    &self.abs_target_buf[0..package_dir_len],
-                    target,
-                    unscoped_package_name,
-                    resolved_target_buf,
-                ) else {
-                    self.skipped_due_to_missing_bin = true;
-                    return;
-                };
-                let Some(abs_dest) = self.append_dest(dest_dir_len, unscoped_package_name) else {
-                    return;
-                };
-                self.link_bin_or_create_shim(
-                    abs_target,
-                    abs_dest,
-                    global,
-                    bin_target_needs_resolved_containment_check(target),
-                );
+                let name = Dependency::unscoped_package_name(package_name.slice());
+                link_named(self, name, bin.file().slice(string_buf));
             }
             Tag::NamedFile => {
                 let [name, target] = bin.named_file();
-                link_named(self, name.slice(string_buf), target.slice(string_buf));
+                let name = normalized_bin_name(name.slice(string_buf));
+                link_named(self, name, target.slice(string_buf));
             }
             Tag::Map => {
                 for i in (bin.map().begin()..bin.map().end()).step_by(2) {
-                    let name = extern_string_buf[i as usize].slice(string_buf);
+                    let name = normalized_bin_name(extern_string_buf[i as usize].slice(string_buf));
                     let target = extern_string_buf[(i + 1) as usize].slice(string_buf);
                     if !link_named(self, name, target) {
                         return;

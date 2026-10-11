@@ -123,13 +123,13 @@ pub struct DedupeMapEntry {
     /// re-scheduling the entire network task (and its retry cycle) a second time.
     pub(crate) failed: bool,
     pub(crate) manifest: ManifestOrigin,
-    /// The iteration of the event loop in which a runtime lookup of this manifest found nothing (`enqueue_dependency_to_root`).
+    /// The event loop iteration in which a runtime lookup of this manifest found nothing.
     pub(crate) missed_in: Option<u64>,
-    /// `Registry::manifest_expiry` of a 404 for this manifest: a runtime lookup does not ask again before.
+    /// `Registry::manifest_expiry` of a 404: a runtime lookup does not ask again before.
     pub(crate) missing_until: u32,
 }
 
-/// Where this run's copy of a manifest is from: a version that a cached copy lacks may have been published since.
+/// A version that a cached copy of a manifest lacks may have been published since.
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
 pub enum ManifestOrigin {
     /// The disk cache, also after a 304.
@@ -435,7 +435,7 @@ fn split_url_userinfo(url: &[u8]) -> Option<(&[u8], Box<[u8]>)> {
     Some((&rest[..at], without_userinfo.into_boxed_slice()))
 }
 
-/// `Basic base64(user:pass)` with the userinfo percent-decoded, as curl and node's `http.get` send it. `user` alone means `user:`.
+/// The userinfo percent-decoded, as curl and node's `http.get` send it. `user` means `user:`.
 fn basic_authorization_from_userinfo(userinfo: &[u8]) -> Vec<u8> {
     const SCHEME: &[u8] = b"Basic ";
     let mut user_pass = PercentEncoding::decode_lenient_alloc(userinfo).into_vec();
@@ -507,7 +507,7 @@ impl NetworkTask {
             is_optional,
             needs_extended || npm::name_suggests_libc(name),
         )?;
-        // Overwritten, not dropped: the old slot value is uninitialized or a stale bitwise copy from `notify`.
+        // Not dropped: the old value is uninitialized or a stale bitwise copy from `notify`.
         self.unsafe_http_client = MaybeUninit::new(request);
         Ok(())
     }
@@ -568,7 +568,7 @@ impl NetworkTask {
                 name
             };
 
-            // The registry is a directory: a "/"-terminated base makes the WHATWG join append the name. It drops a query or fragment anyway.
+            // A "/"-terminated base makes the WHATWG join append the name.
             let registry_href = scope.url.href();
             let base_storage;
             let base: &[u8] = if scope.url.url().has_http_like_protocol() {
@@ -884,7 +884,7 @@ impl NetworkTask {
             None => None,
         };
 
-        // One parse decides the authority, the wire path and the `.npmrc` key; a URL it cannot settle is requested as written with no line.
+        // One parse decides the authority, the wire path and the `.npmrc` key.
         let normalized = if built_from_registry_url {
             npm::registry::is_normalized_tarball_url(&self.url_buf)
         } else if let Some(normalized) = npm::registry::normalize_tarball_url(&self.url_buf) {

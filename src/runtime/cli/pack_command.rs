@@ -317,7 +317,6 @@ impl PackQueue {
     fn remove_or_null(&mut self) -> Option<PackQueueItem> {
         self.heap.pop()
     }
-    /// Relative paths ascending, consuming the queue.
     pub(crate) fn into_paths(mut self) -> Vec<ZBox> {
         let mut out = Vec::with_capacity(self.heap.len());
         while let Some(item) = self.heap.pop() {
@@ -583,7 +582,6 @@ fn iterate_bundled_deps(
         .map_err(crate::Error::from)
     {
         Ok(d) => d,
-        // ignore node_modules if it isn't a directory, or doesn't exist
         Err(crate::Error::Sys(
             bun_errno::SystemErrno::ENOTDIR | bun_errno::SystemErrno::ENOENT,
         )) => return Ok(bundled_pack_queue),
@@ -891,7 +889,6 @@ fn iterate_project_tree(
         let dir = WalkedDir(dir, dir_depth);
         let dir = &dir.0;
 
-        // pop patterns from files greater than or equal to the current depth.
         while ignores.last().is_some_and(|last| last.depth >= dir_depth) {
             ignores.pop();
         }
@@ -1144,7 +1141,7 @@ fn is_unconditionally_excluded(
 enum Exclusion<'a> {
     Included,
     Excluded(&'a [u8], IgnorePatternsKind),
-    /// An excluded directory with a negation below it; unlike in npm, entries inherit the exclusion.
+    /// An excluded directory with a negation below it; unlike in npm, its entries stay excluded.
     WalkOnly(&'a [u8], IgnorePatternsKind),
 }
 
@@ -2109,7 +2106,6 @@ fn write_tarball(abs_tarball_dest: &ZStr, tarball_bytes: &[u8]) {
     }
 }
 
-/// Reports a failed write into the in-memory archive and exits.
 #[cold]
 fn archive_write_failed(archive: &Archive) -> ! {
     Output::err_generic(
@@ -2241,7 +2237,6 @@ pub(crate) enum Substitution<'a> {
     WorkspaceVersion(&'static str),
     /// `workspace:@acme/core@*` (alias), `workspace:../core`, or `workspace:1.x` on a workspace.
     WorkspaceRangeOrDirectory(&'a [u8]),
-    /// `catalog:<name>`
     Catalog(&'a [u8]),
 }
 

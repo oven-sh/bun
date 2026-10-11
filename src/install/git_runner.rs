@@ -97,7 +97,7 @@ impl Finalize {
             }),
             Finalize::PublishRepo(staging) => {
                 let name = task.request_git_clone().name.slice().to_vec();
-                // A bare clone has no completion marker: like `begin_clone`, take any folder for one.
+                // A bare clone has no completion marker: like `begin_clone`, any folder is one.
                 staging
                     .publish(
                         &mut task.log,

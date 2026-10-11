@@ -98,7 +98,7 @@ impl PostinstallOptimizer {
     ) -> Option<PackageID> {
         // Loop through the list of optional dependencies with platform-specific constraints
         // Find a matching target-specific dependency.
-        // Unlike `Libc::for_dependency`, libc is checked whatever kind of dependency the variant is.
+        // Unlike `Libc::for_dependency`, libc is checked for every kind of dependency.
         for &resolution in resolutions {
             if (resolution as usize) >= metas.len() {
                 continue;

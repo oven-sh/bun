@@ -21,7 +21,7 @@ use super::directories;
 use crate::lifecycle_script_runner::{
     InstallCtx, LifecycleScriptSubprocess as RealLifecycleScriptSubprocess,
 };
-use crate::lockfile_real::package::scripts::{Gypfile, List as ScriptsList};
+use crate::lockfile_real::package::scripts::List as ScriptsList;
 use crate::package_manager_real::Command;
 use crate::resolution_real::Tag as ResolutionTag;
 use bun_install::lockfile::{Lockfile, Package};
@@ -304,11 +304,10 @@ impl PackageManager {
 
         let add_node_gyp_rebuild_script = root_package
             .scripts
-            .wants_default_node_gyp(FileSystem::instance().top_level_dir(), Gypfile::Unread);
+            .wants_default_node_gyp(FileSystem::instance().top_level_dir(), None);
 
         if root_package.scripts.has_any() || add_node_gyp_rebuild_script {
             self.root_lifecycle_scripts = root_package.scripts.create_list(
-                &self.lockfile,
                 buf,
                 &mut top_level_dir,
                 name,
@@ -339,7 +338,7 @@ impl PackageManager {
         // `cwd` out so the PATH builder can borrow it independently.
         let cwd_owned: Vec<u8> = list.cwd.as_bytes().to_vec();
         let cwd: &[u8] = &cwd_owned;
-        let this_transpiler = self.configure_env_for_scripts(ctx, log_level)?;
+        let this_transpiler = self.configure_env_for_scripts(ctx)?;
 
         let env_loader = this_transpiler.env_mut();
         let mut script_env = env_loader.map.clone_with_allocator()?;
@@ -353,7 +352,7 @@ impl PackageManager {
         )?;
 
         let mut parent: Option<&[u8]> = Some(cwd);
-        // An untrusted package can link a `node` or `sh` into a shared `.bin`: a dependency's script finds those last.
+        // An untrusted package can link a `node` or `sh` into a shared `.bin`: searched last.
         let mut inherited_path = list.is_dependency.then_some(original_path.as_slice());
         let store_entry = bun_paths::path_literal!("/node_modules/.bun/").as_bytes();
 
@@ -489,7 +488,7 @@ fn put_npm_package_env(
     Ok(())
 }
 
-/// `inherited` without the `node_modules/.bin` of `cwd` and its ancestors, which a `bun run` above this install put in front.
+/// Without the `node_modules/.bin` of `cwd` and its ancestors that a `bun run` above put in front.
 fn append_path_without_ancestor_bins(
     path: &mut EnvPath,
     inherited: &[u8],

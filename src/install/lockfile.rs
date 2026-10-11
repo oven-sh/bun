@@ -83,7 +83,6 @@ pub use self::buffers::Buffers;
 use self::bun_lock as TextLockfile;
 pub use self::bun_lockb as Serializer;
 pub use self::catalog_map::CatalogMap;
-pub use self::lockfile_json_stringify_for_debugging::json_stringify;
 pub use self::override_map::OverrideMap;
 pub use self::package::Package;
 pub use self::tree::Tree;
@@ -584,70 +583,7 @@ impl Lockfile {
             });
         }
 
-        let mut result = self.load_from_bytes(manager.as_deref(), buf, log);
-
-        // When BUN_DEBUG_TEST_TEXT_LOCKFILE is set, convert
-        // the freshly loaded binary lockfile into a text lockfile in memory,
-        // then parse it back into a binary lockfile, so the two codepaths
-        // cross-check each other in tests.
-        if bun_core::env_var::BUN_DEBUG_TEST_TEXT_LOCKFILE
-            .get()
-            .unwrap_or(false)
-        {
-            if let (LoadResult::Ok(ok), Some(manager)) = (&mut result, manager) {
-                let mut writer_buf: Vec<u8> = Vec::new();
-                // `save_from_binary` reads only `loaded_from_binary_lockfile()`
-                // from its `load_result` parameter. `result` itself cannot be
-                // passed while `ok.lockfile` is mutably borrowed, so hand it
-                // a stand-in that answers
-                // `format == Binary` the same way the real `Ok` result does.
-                let binary_origin = LoadResultErr::of(
-                    LoadStep::ParseFile,
-                    crate::Error::DebugTextLockfileRoundTrip,
-                    LockfileFormat::Binary,
-                );
-                let config_version =
-                    (ok.lockfile.saved_config_version).unwrap_or(ConfigVersion::V0);
-                if let Err(e) = TextLockfile::Stringifier::save_from_binary(
-                    &mut *ok.lockfile,
-                    &binary_origin,
-                    config_version,
-                    &mut writer_buf,
-                ) {
-                    Output::panic(format_args!(
-                        "failed to convert binary lockfile to text lockfile: {}",
-                        e.name()
-                    ));
-                }
-
-                let source = bun_ast::Source::init_path_string(b"bun.lock", writer_buf.as_slice());
-                initialize_store();
-                let parsed = match JSON::ParsedJson::parse_package_json(&source, log) {
-                    Ok(j) => j,
-                    Err(e) => Output::panic(format_args!(
-                        "failed to print valid json from binary lockfile: {}",
-                        e.name()
-                    )),
-                };
-
-                if let Err(e) = TextLockfile::parse_into_binary_lockfile(
-                    &mut *ok.lockfile,
-                    parsed.root,
-                    &source,
-                    log,
-                    Some(&*manager),
-                ) {
-                    Output::panic(format_args!(
-                        "failed to parse text lockfile converted from binary lockfile: {}",
-                        <&'static str>::from(e)
-                    ));
-                }
-
-                bun_core::analytics::Features::text_lockfile_inc();
-            }
-        }
-
-        result
+        self.load_from_bytes(manager.as_deref(), buf, log)
     }
 
     pub fn load_from_bytes<'a>(
@@ -674,10 +610,6 @@ impl Lockfile {
             Ok(r) => r,
             Err(e) => return LoadResultErr::of(LoadStep::ParseFile, e, LockfileFormat::Binary),
         };
-
-        if cfg!(debug_assertions) {
-            self.verify_data().expect("lockfile data is corrupt");
-        }
 
         self.tag_workspace_links(link_workspace_packages);
 
@@ -1122,7 +1054,7 @@ impl Lockfile {
                     }
                     if update.matches(dep, string_buf) {
                         if package_id as usize > self.packages.len() {
-                            // Not the package another workspace's entry bound (`-r` binds once per workspace).
+                            // `-r` binds once per workspace: not what another's entry bound.
                             update.package_id = invalid_package_id;
                             continue;
                         }
@@ -1826,40 +1758,9 @@ impl<'a> Printer<'a> {
     }
 }
 
-// verifyData / saveToDisk / rootPackage / str / initEmpty
+// saveToDisk / rootPackage / str / initEmpty
 
 impl Lockfile {
-    pub(crate) fn verify_data(&self) -> Result<(), BunError> {
-        debug_assert!(self.format == FormatVersion::current());
-        for i in 0..self.packages.len() {
-            let package: Package = *self.packages.get(i);
-            debug_assert!(self.str(&package.name).len() == package.name.len());
-            debug_assert!(
-                SemverStringBuilder::string_hash(self.str(&package.name)) == package.name_hash
-            );
-            // The hoister binds peers by scanning `package_index` under the package name.
-            debug_assert!(
-                self.packages_named(package.name_hash)
-                    .contains(&(i as PackageID)),
-                "package {} is not in package_index under its own name",
-                i
-            );
-            let dependencies = package
-                .dependencies
-                .get(self.buffers.dependencies.as_slice());
-            let resolutions = package.resolutions.get(self.buffers.resolutions.as_slice());
-            debug_assert!(resolutions.len() == dependencies.len());
-            for dependency in dependencies {
-                debug_assert!(self.str(&dependency.name).len() == dependency.name.len());
-                debug_assert!(
-                    SemverStringBuilder::string_hash(self.str(&dependency.name))
-                        == dependency.name_hash
-                );
-            }
-        }
-        Ok(())
-    }
-
     /// Returns false when the lockfile on disk already had exactly these bytes and was left untouched.
     pub fn save_to_disk(
         &mut self,
@@ -1873,16 +1774,7 @@ impl Lockfile {
                 .choose_config_version_with_saved(self.saved_config_version)
                 .0
         });
-        if cfg!(debug_assertions) {
-            if let Err(e) = self.verify_data() {
-                bun_core::pretty_errorln!(
-                    "<r><red>error:<r> failed to verify lockfile: {}",
-                    e.name()
-                );
-                Global::crash();
-            }
-            debug_assert!(Fs::INSTANCE_LOADED.load(core::sync::atomic::Ordering::Relaxed));
-        }
+        debug_assert!(Fs::INSTANCE_LOADED.load(core::sync::atomic::Ordering::Relaxed));
 
         let bytes: Vec<u8> = 'bytes: {
             if save_format == LockfileFormat::Text {

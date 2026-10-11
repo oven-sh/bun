@@ -45,7 +45,7 @@ impl WorkspaceTarget {
         }
     }
 
-    /// The package.json behind lockfile package `pkg_id`: the root's, or a member's at the path its `workspace:` resolution stores. `None` for any other kind of package.
+    /// `None` unless `pkg_id` is the root or a workspace member.
     pub(crate) fn of_lockfile_package(
         lockfile: &Lockfile,
         pkg_id: PackageID,
@@ -326,7 +326,7 @@ pub(crate) fn local_relative_path(request: &UpdateRequest) -> Option<(&'static [
     } else {
         b""
     };
-    // The parsed path, not the literal: `file:/../lib`, `file://../lib` and `file:///../lib` all name `../lib`.
+    // The parsed path, not the literal: `file:/../lib` and `file://../lib` name `../lib`.
     let (prefix, path): (&'static [u8], &[u8]) = match request.version.tag {
         dependency::Tag::Folder => (file_prefix, request.version.folder().slice(buf)),
         dependency::Tag::Tarball => match &request.version.tarball().uri {
@@ -356,7 +356,6 @@ fn local_path_too_long(request: &UpdateRequest) -> ! {
     Global::crash();
 }
 
-/// The absolute form of a `local_relative_path`.
 fn resolve_from_cwd<'a>(
     cwd: &'a [u8],
     buf: &'a mut bun_paths::PathBuffer,
@@ -367,7 +366,7 @@ fn resolve_from_cwd<'a>(
         .unwrap_or_else(|| local_path_too_long(request))
 }
 
-/// `package_json_path: None` is the global package.json: it stores `abs` itself, as `-g /abs/path` does.
+/// `None` is the global package.json: it stores `abs` itself, as `-g /abs/path` does.
 fn spell_relative_to(
     package_json_path: Option<&[u8]>,
     request: &UpdateRequest,
@@ -413,7 +412,7 @@ fn spell_relative_to(
     positional
 }
 
-/// Without --filter the one target is the nearest package.json, or the global one: a local path typed in another directory is re-spelled for it.
+/// Without --filter: a local path typed in another directory is re-spelled for the one target.
 pub(super) fn respell_local_paths(
     manager: &mut PackageManager,
     original_cwd: &[u8],

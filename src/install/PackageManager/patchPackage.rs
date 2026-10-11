@@ -14,7 +14,7 @@ use crate::bun_fs::FileSystem;
 use crate::bun_json as JSON;
 use crate::dependency::{Dependency, DependencyExt as _, without_build_tag};
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _, entry as store_entry};
-use crate::isolated_install::{FileCopier, build_store};
+use crate::isolated_install::{FileCopier, build_whole_store};
 use crate::lockfile_real::package::{Package, PackageColumns as _};
 use crate::lockfile_real::{self as lockfile, Lockfile, reachable, tree};
 use crate::package_install::{StagingPath, rename_staging_into_place};
@@ -31,7 +31,7 @@ fn string_hash(s: &[u8]) -> u64 {
     bun_semver::semver_string::Builder::string_hash(s)
 }
 
-/// Formats `resolution` as the version half of a `name@version` patch key into `label` (cleared first).
+/// The version half of a `name@version` patch key, into `label` (cleared first).
 fn print_resolution_label<'a>(
     label: &'a mut Vec<u8>,
     resolution: &Resolution,
@@ -67,7 +67,7 @@ pub struct PatchCommitResult {
 /// What the argument of `bun patch` and of `bun patch --commit` selects.
 struct Target {
     pkg: Package,
-    /// As the user names it: relative to the project root unless typed absolute, links not resolved.
+    /// As the user names it: relative to the project root unless absolute, links not resolved.
     folder: Vec<u8>,
     /// The package's other folders in the isolated store: it has one for each peer resolution.
     other_folders: Vec<Vec<u8>>,
@@ -161,7 +161,7 @@ fn crash_bundled(name: &[u8]) -> ! {
     Global::crash();
 }
 
-/// The user typed a relative path in the directory the command ran in. The process is in the project root.
+/// The user typed a relative path where the command ran; the process is in the project root.
 fn path_argument_from_root(
     lockfile: &Lockfile,
     workspace_package_id: PackageID,
@@ -180,7 +180,6 @@ fn path_argument_from_root(
     argument.to_vec()
 }
 
-/// `name` and `version` of `<folder>/package.json`.
 fn read_name_and_version(manager: &PackageManager, folder: &[u8]) -> (Vec<u8>, Vec<u8>) {
     let package_json_path = resolve_path::join_z::<platform::Auto>(&[folder, b"package.json"]);
     let package_json_source: bun_ast::Source =
@@ -234,7 +233,7 @@ enum FolderLookupError {
     NeedsLabel,
 }
 
-/// Only an npm label is a version, so a non-npm package matches only as the single package of that name.
+/// Only an npm label is a version: a non-npm package matches only as the one of that name.
 fn package_for_folder(
     lockfile: &Lockfile,
     name_hash: u64,
@@ -397,7 +396,7 @@ pub fn do_patch_commit(
         return Ok(None);
     }
 
-    // The patch parser drops such a line: a new file would be installed empty, a changed one unchanged.
+    // The patch parser drops such a line: a new file would be installed empty.
     let mut binary_files = strings::split(&patchfile_contents, b"\n")
         .filter(|line| line.starts_with(b"Binary files ") && line.ends_with(b" differ"))
         .peekable();
@@ -673,7 +672,7 @@ fn move_entries_absent_from(
     Ok(())
 }
 
-/// `:?*"<>|` are NTFS-reserved; escaped on every OS so a committed patches/ dir checks out on Windows.
+/// `:?*"<>|` are NTFS-reserved: escaped on every OS, so that patches/ checks out on Windows.
 fn escape_patch_filename(name: &[u8]) -> Vec<u8> {
     let mut escaped = Vec::with_capacity(name.len());
     for c in name {
@@ -1052,7 +1051,7 @@ fn installed_module_folder(
         return (hoisted_folder, Vec::new());
     }
     let store_folders = isolated_store_folders(manager, lockfile, pkg_id, workspace_package_id);
-    // A link that `publicHoistPattern` made can lead to another version than the hoisted tree has there.
+    // A `publicHoistPattern` link can lead to another version than the hoisted tree has.
     if exists {
         let real = resolve_links(&hoisted_folder).ok();
         if store_folders
@@ -1076,7 +1075,7 @@ fn isolated_store_folders(
     pkg_id: PackageID,
     workspace_package_id: PackageID,
 ) -> Vec<Vec<u8>> {
-    let store = handle_oom(build_store(manager, lockfile, true, &[], None, false));
+    let store = handle_oom(build_whole_store(manager, lockfile));
     let name = lockfile.str(&lockfile.packages.items_name()[pkg_id as usize]);
     let resolutions = lockfile.packages.items_resolution();
     let entry_dependencies = store.entries.items_dependencies();

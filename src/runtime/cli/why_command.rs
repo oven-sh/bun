@@ -104,23 +104,18 @@ fn cmp_dependents(a: &DependentInfo, b: &DependentInfo) -> Ordering {
         .then_with(|| a.name.cmp(&b.name))
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
-enum PatternType {
-    #[default]
-    Exact,
-    Prefix,
-    Suffix,
-    Middle,
-    Contains,
+#[derive(Clone, Copy)]
+enum NamePattern<'a> {
+    Exact(&'a [u8]),
+    Prefix(&'a [u8]),
+    Suffix(&'a [u8]),
+    Middle(&'a [u8], &'a [u8]),
+    Contains(&'a [u8]),
     Invalid,
 }
 
-#[derive(Default)]
 struct GlobPattern<'a> {
-    pattern_type: PatternType,
-    prefix: &'a [u8],
-    suffix: &'a [u8],
-    substring: &'a [u8],
+    name: NamePattern<'a>,
     version_pattern: &'a [u8],
     version_query: Option<semver::query::Group>,
 }
@@ -129,7 +124,11 @@ impl<'a> GlobPattern<'a> {
     fn init(pattern: &'a [u8]) -> GlobPattern<'a> {
         let (name_pattern, version_pattern) = Dependency::split_name_and_maybe_version(pattern);
 
-        let mut result = Self::init_for_name(name_pattern);
+        let mut result = GlobPattern {
+            name: Self::init_for_name(name_pattern),
+            version_pattern: b"",
+            version_query: None,
+        };
 
         if let Some(version_pattern) = version_pattern {
             result.version_pattern = version_pattern;
@@ -144,66 +143,43 @@ impl<'a> GlobPattern<'a> {
         result
     }
 
-    /// `Exact` keeps the whole name in `prefix`.
-    fn init_for_name(pattern: &'a [u8]) -> GlobPattern<'a> {
+    fn init_for_name(pattern: &'a [u8]) -> NamePattern<'a> {
         let Some(wildcard_pos) = strings::index_of_char_usize(pattern, b'*') else {
-            return GlobPattern {
-                pattern_type: PatternType::Exact,
-                prefix: pattern,
-                ..Default::default()
-            };
+            return NamePattern::Exact(pattern);
         };
 
         if pattern.len() >= 3 && pattern[0] == b'*' && pattern[pattern.len() - 1] == b'*' {
             let substring = &pattern[1..pattern.len() - 1];
             if !substring.is_empty() && !strings::contains_char(substring, b'*') {
-                return GlobPattern {
-                    pattern_type: PatternType::Contains,
-                    substring,
-                    ..Default::default()
-                };
+                return NamePattern::Contains(substring);
             }
         }
 
         if wildcard_pos == pattern.len() - 1 {
-            return GlobPattern {
-                pattern_type: PatternType::Prefix,
-                prefix: &pattern[0..wildcard_pos],
-                ..Default::default()
-            };
+            return NamePattern::Prefix(&pattern[0..wildcard_pos]);
         }
 
         if wildcard_pos == 0 {
-            return GlobPattern {
-                pattern_type: PatternType::Suffix,
-                suffix: &pattern[1..],
-                ..Default::default()
-            };
+            return NamePattern::Suffix(&pattern[1..]);
         }
 
         if strings::contains_char(&pattern[wildcard_pos + 1..], b'*') {
-            return GlobPattern {
-                pattern_type: PatternType::Invalid,
-                ..Default::default()
-            };
+            return NamePattern::Invalid;
         }
 
-        GlobPattern {
-            pattern_type: PatternType::Middle,
-            prefix: &pattern[0..wildcard_pos],
-            suffix: &pattern[wildcard_pos + 1..],
-            ..Default::default()
-        }
+        NamePattern::Middle(&pattern[0..wildcard_pos], &pattern[wildcard_pos + 1..])
     }
 
     fn matches_name(&self, name: &[u8]) -> bool {
-        match self.pattern_type {
-            PatternType::Exact => strings::eql(name, self.prefix),
-            PatternType::Prefix => name.starts_with(self.prefix),
-            PatternType::Suffix => name.ends_with(self.suffix),
-            PatternType::Middle => name.starts_with(self.prefix) && name.ends_with(self.suffix),
-            PatternType::Contains => strings::index_of(name, self.substring).is_some(),
-            _ => false,
+        match self.name {
+            NamePattern::Exact(exact) => strings::eql(name, exact),
+            NamePattern::Prefix(prefix) => name.starts_with(prefix),
+            NamePattern::Suffix(suffix) => name.ends_with(suffix),
+            NamePattern::Middle(prefix, suffix) => {
+                name.starts_with(prefix) && name.ends_with(suffix)
+            }
+            NamePattern::Contains(substring) => strings::index_of(name, substring).is_some(),
+            NamePattern::Invalid => false,
         }
     }
 
@@ -262,15 +238,14 @@ Explain why a package is installed
             [b"why", rest @ ..] => rest,
             all => all,
         };
-        let top_only = cli.top_only;
 
-        let (pm, _cwd) = package_manager::init(&mut *ctx, cli, Subcommand::Why)?;
+        let (pm, _cwd) = package_manager::init(&mut *ctx, &cli, Subcommand::Why)?;
 
         let Some(&package_pattern) = positionals.first() else {
             Self::print_usage();
             Global::exit(1);
         };
-        Self::exec_with_manager(pm, package_pattern, top_only)
+        Self::exec_with_manager(pm, package_pattern, cli.top_only)
     }
 
     pub(crate) fn exec_from_pm(
@@ -334,7 +309,7 @@ Explain why a package is installed
         let pkg_resolution = packages.items_resolution();
 
         // The pattern also selects a package through the name of a dependency that leads to it, so an alias finds the package behind it.
-        let mut matched_by_dependency_name = vec![false; packages.len()];
+        let mut pkg_matched_by_dep_name = vec![false; packages.len()];
 
         for pkg_idx in 0..packages.len() {
             let pkg_name = pkg_names[pkg_idx].slice(string_bytes);
@@ -387,7 +362,7 @@ Explain why a package is installed
                         continue;
                     }
 
-                    matched_by_dependency_name[target_id as usize] |= glob.matches_name(dep_name);
+                    pkg_matched_by_dep_name[target_id as usize] |= glob.matches_name(dep_name);
 
                     let target_name = pkg_names[target_id as usize].slice(string_bytes);
                     all_dependents
@@ -410,7 +385,7 @@ Explain why a package is installed
             let pkg_name = pkg_names[pkg_idx].slice(string_bytes);
 
             if pkg_name.is_empty()
-                || !(glob.matches_name(pkg_name) || matched_by_dependency_name[pkg_idx])
+                || !(glob.matches_name(pkg_name) || pkg_matched_by_dep_name[pkg_idx])
             {
                 continue;
             }
@@ -551,8 +526,7 @@ struct TreeContext<'a> {
     max_depth: usize,
     /// Packages being expanded right now; the value records whether a `*circular` pointed at it.
     path_tracker: HashMap<PackageID, bool>,
-    /// `(depth, cutoff)` of subtrees already printed; repeats print `*deduped` (there are
-    /// exponentially many paths) unless shallower than `cutoff`, where a branch cut at `max_depth` shows more.
+    /// `(depth, cutoff)` of printed subtrees; a repeat not shallower than `cutoff` is `*deduped`.
     expanded: HashMap<PackageID, (usize, usize)>,
 }
 

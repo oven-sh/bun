@@ -297,7 +297,7 @@ pub mod entry {
         /// Exists only inside the packages declaring it: no store directory, task or hoist slot.
         pub nested_folder: bool,
 
-        /// Of a `file:` / URL tarball also the integrity bun.lock pins; without peers its first 8 bytes.
+        /// Of a `file:` / URL tarball also the pinned integrity; without peers its first 8 bytes.
         pub peer_hash: PeerHash,
 
         /// Content hash of (package + sorted resolved dependency global-store keys),
@@ -518,38 +518,6 @@ pub mod entry {
             inner: fmt_store_path(entry_id, store, lockfile),
             entry_hash: store.entries.items_entry_hash()[entry_id.get() as usize],
         }
-    }
-
-    pub(crate) fn debug_gather_all_parents(entry_id: Id, store: &Store) -> Vec<Id> {
-        let mut i: usize = 0;
-        let mut len: usize;
-
-        let entry_parents = store.entries.items_parents();
-
-        let mut parents: ArrayHashMap<Id, ()> = ArrayHashMap::default();
-
-        for &parent_id in entry_parents[entry_id.get() as usize].as_slice() {
-            if parent_id == Id::INVALID {
-                continue;
-            }
-            let _ = parents.put(parent_id, ()); // OOM-only Result
-        }
-
-        len = parents.len();
-        while i < len {
-            // Capture key before mutating `parents`.
-            let key = parents.keys()[i];
-            for &parent_id in entry_parents[key.get() as usize].as_slice() {
-                if parent_id == Id::INVALID {
-                    continue;
-                }
-                let _ = parents.put(parent_id, ()); // OOM-only Result
-                len = parents.len();
-            }
-            i += 1;
-        }
-
-        parents.keys().to_vec()
     }
 
     #[derive(Copy, Clone)]

@@ -476,7 +476,7 @@ impl PmPkgCommand {
         Ok(())
     }
 
-    /// `[...]` holds one literal name, dots included. `E::Object::put` keeps the sub-slices of `key`.
+    /// `[...]` holds one literal name, dots included. `E::Object::put` keeps the slices of `key`.
     fn parse_key_path(key: &[u8]) -> Result<Vec<Segment<'_>>, Error> {
         let mut segments: Vec<Segment<'_>> = Vec::new();
 
@@ -509,10 +509,6 @@ impl PmPkgCommand {
     }
 
     fn set_value(root: &mut Expr, key: &[u8], value: &[u8], parse_json: bool) -> Result<(), Error> {
-        if !matches!(root.data, ExprData::EObject(_)) {
-            return Err(crate::Error::InvalidRoot);
-        }
-
         let path = Self::parse_key_path(key)?;
         if path.is_empty() {
             return Err(crate::Error::EmptyKey);

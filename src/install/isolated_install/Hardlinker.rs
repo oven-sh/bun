@@ -10,7 +10,7 @@ use bun_sys::{self as sys, EntryKind, Fd, FdExt};
 use bun_paths::path_options::{CheckLength, Kind, PathSeparators};
 use bun_paths::{AbsPath, OSPathChar, OSPathSlice, Path};
 
-// Length-checked: the walker opens each directory relative to its parent, so entry paths are unbounded.
+// Length-checked: the walker opens each directory from its parent, so entry paths are unbounded.
 type OsAbsPath = AbsPath<OSPathChar, { PathSeparators::AUTO }, { CheckLength::CHECK }>;
 type OsPath = Path<OSPathChar, { Kind::ANY }, { PathSeparators::AUTO }, { CheckLength::CHECK }>;
 
@@ -122,7 +122,7 @@ impl Hardlinker {
                                     dest_slice,
                                 ]
                             };
-                            // The join and the NT prefix below write into the pooled buffers unchecked.
+                            // The join and the NT prefix below write into the buffers unchecked.
                             let needed_len =
                                 dest_parts.iter().map(|part| part.len() + 1).sum::<usize>()
                                     + bun_paths::windows::NT_OBJECT_PREFIX.len();

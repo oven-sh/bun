@@ -30,7 +30,6 @@ pub(crate) fn trim_js_whitespace_right(mut s: &[u8]) -> &[u8] {
 #[inline]
 pub(crate) fn should_skip_line(line: &[u8]) -> bool {
     let line = trim_js_whitespace(line);
-    // empty or a comment
     line.is_empty() || line[0] == b';' || line[0] == b'#'
 }
 
@@ -132,13 +131,13 @@ mod draft {
     use core::ptr;
 
     use bun_alloc::{AllocError, Arena, ArenaVec, ArenaVecExt as _};
-    use bun_api::{self, BunInstall, NpmRegistry, NpmUrlAuth};
     use bun_ast::E::Rope;
     use bun_ast::{E, Expr, ExprData, StoreRef};
     use bun_ast::{Loc, Log, Source};
     use bun_collections::VecExt;
     use bun_core::{Output, ZStr};
     use bun_dotenv::Loader as DotEnvLoader;
+    use bun_options_types::schema::api::{BunInstall, Ca, NpmRegistry, NpmUrlAuth};
     use bun_url::URL;
 
     use super::{
@@ -1226,7 +1225,7 @@ mod draft {
             }
         }
 
-        /// npm's `regFromURI`. `https://h/a/`: `h/a/`, `h:443/a/`, `h/a`, `h:443/a`, `h/`, ..., `h:443`.
+        /// npm's `regFromURI`. `https://h/a/`: `h/a/`, `h:443/a/`, `h/a`, `h:443/a`, ..., `h:443`.
         pub fn walk(&self) -> impl Iterator<Item = &[u8]> {
             let mut next = Some(self.key.len());
             let mut with_default_port: Option<&[u8]> = None;
@@ -1273,7 +1272,7 @@ mod draft {
         decoded.into_boxed_slice()
     }
 
-    /// npm's `hasAuth` order, without `certfile` / `keyfile`: they would stop the walk, and no mTLS.
+    /// npm's `hasAuth` order, without `certfile` / `keyfile` (no mTLS): they would stop the walk.
     fn credentials_of_key(configs: &[ConfigItem], key: &[u8]) -> Option<NpmRegistry> {
         // npm's `opts[k]` truthiness test, after the collapse: a later `username=` clears an earlier one.
         let truthy =
@@ -1431,7 +1430,7 @@ mod draft {
 
         if let Some(query) = ca {
             if let Some(str_) = query.expr.as_utf8_string_literal() {
-                install.ca = Some(bun_api::Ca::Str(Box::<[u8]>::from(str_)));
+                install.ca = Some(Ca::Str(Box::<[u8]>::from(str_)));
             } else if let ExprData::EArray(arr) = &query.expr.data {
                 let mut list: Vec<Box<[u8]>> = Vec::with_capacity(arr.items.len_u32() as usize);
                 for item in arr.items.slice() {
@@ -1439,7 +1438,7 @@ mod draft {
                         list.push(Box::<[u8]>::from(s));
                     }
                 }
-                install.ca = Some(bun_api::Ca::List(list.into_boxed_slice()));
+                install.ca = Some(Ca::List(list.into_boxed_slice()));
             }
         }
 

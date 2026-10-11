@@ -113,8 +113,8 @@ impl Scripts {
         false
     }
 
-    /// npm's rule for the default `node-gyp rebuild` install script.
-    pub(crate) fn wants_default_node_gyp(&self, package_dir: &[u8], gypfile: Gypfile) -> bool {
+    /// npm's rule for the default `node-gyp rebuild` script. `None`: read `gypfile` if it matters.
+    pub(crate) fn wants_default_node_gyp(&self, package_dir: &[u8], gypfile: Option<bool>) -> bool {
         if !self.install.is_empty() || !self.preinstall.is_empty() {
             return false;
         }
@@ -124,11 +124,7 @@ impl Scripts {
         if !bun_sys::exists_z(binding_gyp) {
             return false;
         }
-        let gypfile = match gypfile {
-            Gypfile::Unread => Gypfile::read(package_dir, &mut buf.0),
-            known => known,
-        };
-        gypfile == Gypfile::Enabled
+        gypfile.unwrap_or_else(|| read_gypfile(package_dir, &mut buf.0))
     }
 
     /// return: (first_index, total, entries)
@@ -218,14 +214,12 @@ impl Scripts {
 
     pub(crate) fn create_list(
         &self,
-        lockfile: &Lockfile,
         lockfile_buf: &[u8],
         cwd_: &mut bun_paths::AutoAbsPath,
         package_name: &[u8],
         resolution_tag: ResolutionTag,
         add_node_gyp_rebuild_script: bool,
     ) -> Option<List> {
-        let _ = lockfile;
         let (first_index, total, scripts) =
             self.get_script_entries(lockfile_buf, resolution_tag, add_node_gyp_rebuild_script);
         if first_index != -1 {
@@ -321,20 +315,13 @@ impl Scripts {
         trusted: bool,
     ) -> Result<Option<List>, crate::Error> {
         if !self.has_any() && !self.filled {
-            return self.create_from_package_json(
-                log,
-                lockfile,
-                folder_path,
-                folder_name,
-                resolution.tag,
-            );
+            return self.create_from_package_json(log, folder_path, folder_name, resolution.tag);
         }
 
         let add_node_gyp_rebuild_script =
-            trusted && self.wants_default_node_gyp(folder_path.slice(), Gypfile::Unread);
+            trusted && self.wants_default_node_gyp(folder_path.slice(), None);
 
         Ok(self.create_list(
-            lockfile,
             lockfile.buffers.string_bytes.as_slice(),
             folder_path,
             folder_name,
@@ -349,7 +336,7 @@ impl Scripts {
         string_builder: &mut LockfileStringBuilder<'_>,
         log: &mut bun_ast::Log,
         folder_path: &mut bun_paths::AutoAbsPath,
-    ) -> Result<Gypfile, crate::Error> {
+    ) -> Result<bool, crate::Error> {
         let json_buf;
         let parsed;
         let json: Expr = {
@@ -370,13 +357,12 @@ impl Scripts {
         string_builder.allocate()?;
         self.parse_alloc(string_builder, json);
         self.filled = true;
-        Ok(Gypfile::from_json(json))
+        Ok(gypfile_from_json(json))
     }
 
     pub(crate) fn create_from_package_json(
         &mut self,
         log: &mut bun_ast::Log,
-        lockfile: &Lockfile,
         folder_path: &mut bun_paths::AutoAbsPath,
         folder_name: &[u8],
         resolution_tag: ResolutionTag,
@@ -387,10 +373,10 @@ impl Scripts {
         let mut builder = tmp.string_builder();
         let gypfile = self.fill_from_package_json(&mut builder, log, folder_path)?;
 
-        let add_node_gyp_rebuild_script = self.wants_default_node_gyp(folder_path.slice(), gypfile);
+        let add_node_gyp_rebuild_script =
+            self.wants_default_node_gyp(folder_path.slice(), Some(gypfile));
 
         Ok(self.create_list(
-            lockfile,
             tmp.buffers.string_bytes.as_slice(),
             folder_path,
             folder_name,
@@ -401,36 +387,21 @@ impl Scripts {
 }
 
 /// The `gypfile` property of a package.json. Only a literal `false` opts out.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Gypfile {
-    /// Read package.json only once a `binding.gyp` is found.
-    Unread,
-    Enabled,
-    Disabled,
+pub(crate) fn gypfile_from_json(json: Expr) -> bool {
+    json.get(b"gypfile").and_then(|value| value.as_bool()) != Some(false)
 }
 
-impl Gypfile {
-    pub(crate) fn from_json(json: Expr) -> Gypfile {
-        match json.get(b"gypfile").and_then(|value| value.as_bool()) {
-            Some(false) => Gypfile::Disabled,
-            _ => Gypfile::Enabled,
-        }
-    }
-
-    /// An unreadable package.json keeps the default script.
-    fn read(package_dir: &[u8], buf: &mut [u8]) -> Gypfile {
-        let path = join_abs_string_buf_z::<platform::Auto>(package_dir, buf, &[b"package.json"]);
-        let Ok(json_buf) = bun_sys::File::read_from(Fd::cwd(), path) else {
-            return Gypfile::Enabled;
-        };
-        let json_src = bun_ast::Source::init_path_string(path.as_bytes(), json_buf.as_slice());
-        let mut log = bun_ast::Log::init();
-        initialize_store();
-        match bun_json::ParsedJson::parse_package_json(&json_src, &mut log) {
-            Ok(parsed) => Gypfile::from_json(parsed.root),
-            Err(_) => Gypfile::Enabled,
-        }
-    }
+/// An unreadable package.json keeps the default script.
+fn read_gypfile(package_dir: &[u8], buf: &mut [u8]) -> bool {
+    let path = join_abs_string_buf_z::<platform::Auto>(package_dir, buf, &[b"package.json"]);
+    let Ok(json_buf) = bun_sys::File::read_from(Fd::cwd(), path) else {
+        return true;
+    };
+    let json_src = bun_ast::Source::init_path_string(path.as_bytes(), json_buf.as_slice());
+    let mut log = bun_ast::Log::init();
+    initialize_store();
+    bun_json::ParsedJson::parse_package_json(&json_src, &mut log)
+        .map_or(true, |parsed| gypfile_from_json(parsed.root))
 }
 
 // ─── Scripts.List ────────────────────────────────────────────────────────────

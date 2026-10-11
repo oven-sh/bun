@@ -293,7 +293,7 @@ impl Queue {
     pub fn on_poll(&mut self) {
         bun_core::scoped_log!(AsyncModule, "onPoll");
         if self.map.is_empty() {
-            // A synchronous auto-install drains its own tasks; here their failures would be dropped.
+            // A synchronous auto-install drains its own tasks; here their failures would be lost.
             return;
         }
         self.run_tasks();

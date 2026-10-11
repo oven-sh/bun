@@ -382,7 +382,7 @@ impl PackageJSON {
 
         // TODO: remove this extra copy
         let parts: [&[u8]; 2] = [input_path, b"package.json"];
-        let Some(package_json_path_) = r_fs.abs_checked(&parts) else {
+        let Ok(package_json_path_) = r_fs.abs_checked(&parts) else {
             r_log.add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,

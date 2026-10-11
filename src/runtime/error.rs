@@ -70,8 +70,6 @@ pub enum Error {
     MissingShell,
     #[error("NotFound")]
     NotFound,
-    #[error("InvalidRoot")]
-    InvalidRoot,
     #[error("EmptyKey")]
     EmptyKey,
     #[error("FormatFailed")]
@@ -375,7 +373,6 @@ impl Error {
             Self::UnrecognizedCommand => "UnrecognizedCommand",
             Self::MissingShell => "MissingShell",
             Self::NotFound => "NotFound",
-            Self::InvalidRoot => "InvalidRoot",
             Self::EmptyKey => "EmptyKey",
             Self::FormatFailed => "FormatFailed",
             Self::SelfExePathFailed => "SelfExePathFailed",

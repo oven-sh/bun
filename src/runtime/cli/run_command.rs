@@ -605,8 +605,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         this_transpiler.resolver.care_about_bin_folder = true;
         this_transpiler.resolver.care_about_scripts = true;
         this_transpiler.resolver.store_fd = opts.store_root_fd;
-        // The dir cache below outlives this resolver into the VM, and only an auto-installing
-        // resolver records the package.json dependency ranges auto-install resolves against.
+        // The VM inherits this dir cache; only an auto-installing resolver records version ranges.
         this_transpiler.options.global_cache = ctx.debug.global_cache;
         this_transpiler.resolver.opts.global_cache = ctx.debug.global_cache;
 

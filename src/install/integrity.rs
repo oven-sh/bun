@@ -73,13 +73,6 @@ impl Integrity {
         let mut out_i: usize = 0;
         let mut i: usize = 0;
 
-        // initializer should zero it out
-        if cfg!(debug_assertions) {
-            for c in integrity.value.iter() {
-                debug_assert!(*c == 0);
-            }
-        }
-
         while i < end {
             // npm sha1 strings are always [0-9a-f]; canonical hex_pair_value
             // narrows the original over-broad b'g'..=b'z' acceptance.

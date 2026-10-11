@@ -24,7 +24,6 @@ use bun_zlib as Zlib;
 
 use crate::Command;
 use crate::cli::run_command::RunCommand;
-use crate::cli::which_npm_client::NPMClient;
 
 #[path = "create/SourceFileProjectGenerator.rs"]
 pub(crate) mod SourceFileProjectGenerator;
@@ -1032,13 +1031,10 @@ impl CreateCommand {
                 || !GitHandler::run(destination, path_env, create_options.verbose).unwrap_or(false);
         }
 
-        let npm_client_ = if create_options.skip_install {
+        let bun_exe = if create_options.skip_install {
             None
         } else {
-            Some(NPMClient {
-                tag: crate::cli::which_npm_client::Tag::Bun,
-                bin: bun_core::self_exe_path()?,
-            })
+            Some(bun_core::self_exe_path()?)
         };
 
         if run_tasks {
@@ -1054,14 +1050,11 @@ impl CreateCommand {
             }
         }
 
-        if let Some(ref npm_client) = npm_client_ {
+        if let Some(bun_exe) = bun_exe {
             let start_time = bun_core::time::nano_timestamp();
-            let install_args: &[&[u8]] = &[npm_client.bin, b"install"];
+            let install_args: &[&[u8]] = &[bun_exe, b"install"];
             Output::flush();
-            bun_core::pretty!(
-                "\n<r><d>$ <b><cyan>{}<r><d> install",
-                npm_client.tag.as_str(),
-            );
+            bun_core::pretty!("\n<r><d>$ <b><cyan>bun<r><d> install");
             bun_core::pretty!("<r>\n");
             Output::flush();
 
@@ -1085,7 +1078,7 @@ impl CreateCommand {
 
             Output::print_errorln("");
             Output::print_start_end(start_time, bun_core::time::nano_timestamp());
-            bun_core::pretty_error!(" <r><d>{} install<r>\n", npm_client.tag.as_str());
+            bun_core::pretty_error!(" <r><d>bun install<r>\n");
             Output::flush();
 
             Output::print(format_args!("\n"));
@@ -1568,7 +1561,6 @@ impl Example {
             bun_sys::Dir::open(filesystem.abs_buf(&parts?, home_dir_buf)).ok()
         });
 
-        // subfolders with package.json
         for folder in folders.iter().flatten() {
             let mut iter = bun_sys::dir_iterator::iterate(folder.fd());
 

@@ -101,7 +101,6 @@ enum Written {
     Kept,
 }
 
-// Writes one template file as `existing` allows.
 fn create_file(filename: &[u8], contents: &[u8], existing: Existing) -> bun_sys::Result<Written> {
     let flags = match bun_sys::File::read_from(Fd::cwd(), filename) {
         Ok(on_disk) => {
@@ -166,7 +165,6 @@ fn string_with_replacements(
     input
 }
 
-/// Prints `argv`, which says "bun", then runs it.
 fn print_and_run_bun(argv: &mut [&[u8]], failure: &str) -> Result<(), crate::Error> {
     Output::command_out(Output::CommandArgv::List(argv));
     Output::flush();
@@ -409,45 +407,6 @@ fn has_any_tailwind_classes_in_source_files(
                             source_code = &source_code[1..];
                         }
                     }
-                }
-            }
-            bun_ast::Loader::Html => {
-                let source: &LoggerSource = &sources[file.get() as usize];
-                let source_code: &[u8] = &source.contents;
-
-                // Look for class=" or class='
-                let mut i: usize = 0;
-                while i < source_code.len() {
-                    if i + 7 >= source_code.len() {
-                        break;
-                    }
-
-                    if source_code.starts_with(b"class") {
-                        // Skip whitespace
-                        let mut j = i + 5;
-                        while j < source_code.len()
-                            && (source_code[j] == b' ' || source_code[j] == b'=')
-                        {
-                            j += 1;
-                        }
-                        if j < source_code.len()
-                            && (source_code[j] == b'"' || source_code[j] == b'\'')
-                        {
-                            // Found a class attribute, now check for Tailwind patterns
-                            for pattern in COMMON_TAILWIND_PATTERNS {
-                                if bun_core::index_of(
-                                    &source_code[j..(j + 1000).min(source_code.len())],
-                                    pattern,
-                                )
-                                .is_some()
-                                {
-                                    return true;
-                                }
-                            }
-                        }
-                        i = j;
-                    }
-                    i += 1;
                 }
             }
             _ => {}

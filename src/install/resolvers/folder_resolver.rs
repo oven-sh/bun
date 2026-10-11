@@ -70,7 +70,7 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
     }
 }
 
-/// One directory resolves to a different package (`Features`, `Resolution`) per kind, so the map is keyed by both.
+/// One directory resolves to a different package (`Features`, `Resolution`) per kind.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum Kind {
     /// `file:` dependencies and workspace members (and the root seeded by `PackageManager::init`).

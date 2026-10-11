@@ -36,7 +36,7 @@ impl NpmAliasRegistry for PackageManager {
 impl NpmAliasRegistry for crate::package_manager_real::NpmAliasMap {
     #[inline]
     fn record_npm_alias(&mut self, hash: PackageNameHash, specifier: &[u8]) {
-        // One install records the same row several times (the loader, the differ, `clone_in`, `clean`).
+        // One install records the same row several times (loader, differ, `clone_in`, `clean`).
         if self.get(&hash).is_some_and(|known| **known == *specifier) {
             return;
         }
@@ -436,7 +436,7 @@ pub(crate) fn is_remote_tarball(dependency: &[u8]) -> bool {
     dependency.starts_with(b"https://") || dependency.starts_with(b"http://")
 }
 
-/// `2x`, `1beta`, `v2x`: like npm-package-arg, one word that starts like a version but is not a partial version is a dist-tag.
+/// `2x`, `1beta`, `v2x`: like npm-package-arg, a word that only starts like a version is a tag.
 fn is_dist_tag_with_leading_digit(dependency: &[u8]) -> bool {
     // `1.2.3`, the usual case: three numbers leave no wildcard, and the caller parses it again.
     if dependency.len() <= 17 {
@@ -564,7 +564,7 @@ pub fn is_scoped_package_name(name: &[u8]) -> Result<bool, PackageNameError> {
     Err(PackageNameError::InvalidPackageName)
 }
 
-/// A dependency name/alias from an untrusted `package.json` / manifest key becomes a directory under `node_modules/`: nothing that resolves outside it, no terminal control characters, no component over 255 bytes. `@scope/name` stays valid.
+/// An untrusted name or alias becomes a directory under `node_modules/` and is printed.
 pub(crate) fn is_safe_install_folder_name(name: &[u8]) -> bool {
     if name.is_empty() || name.len() > 255 + 1 + 255 {
         return false;
@@ -591,7 +591,7 @@ pub(crate) fn is_safe_install_folder_name(name: &[u8]) -> bool {
     is_safe_component(&name[component_start..])
 }
 
-/// C0 controls, DEL and UTF-8 encoded C1 controls (`C2 80`..`C2 9F`), which terminals interpret too.
+/// C0 controls, DEL and UTF-8 encoded C1 controls (`C2 80`..`C2 9F`): terminals interpret them.
 pub(crate) fn contains_control_character(name: &[u8]) -> bool {
     name.iter().enumerate().any(|(i, &byte)| {
         byte.is_ascii_control()
@@ -602,12 +602,12 @@ pub(crate) fn contains_control_character(name: &[u8]) -> bool {
     })
 }
 
-/// A name bun.lock's `"<name>@<resolution>"` keys can round-trip: a safe folder name with no `@` past the scope marker.
+/// A name that bun.lock's `"<name>@<resolution>"` keys can round-trip.
 pub(crate) fn is_safe_lockfile_package_name(name: &[u8]) -> bool {
     is_safe_install_folder_name(name) && !strings::contains_char(&name[1..], b'@')
 }
 
-/// Name for a package whose package.json has none: the last component of its path or URL (`https://host/foo.tgz?token=x` -> `foo`).
+/// For a package whose package.json has no name: `https://host/foo.tgz?token=x` -> `foo`.
 pub(crate) fn fallback_package_name(location: &[u8]) -> &[u8] {
     let without_query = strings::split(location, b"?").next().unwrap_or(location);
     let basename = bun_paths::basename(without_query);
@@ -631,7 +631,7 @@ pub(crate) fn is_link_path(target: &[u8]) -> bool {
 pub(crate) const LINK_PATH_RULE: &str =
     "only the root package.json, a workspace, or a top-level override may link to a path";
 
-/// How a `link:` directory is stored (`/`-separated, relative to the project or absolute): the `./` keeps `is_link_path` true when it is read back.
+/// The `./` keeps `is_link_path` true when the directory is read back.
 pub(crate) fn link_path_for_lockfile(folder: &[u8]) -> std::borrow::Cow<'_, [u8]> {
     if folder.is_empty() {
         return b".".into();
@@ -1187,7 +1187,7 @@ fn split_npm_alias(target: &[u8]) -> (&[u8], Option<&[u8]>) {
     }
 }
 
-/// The target of an `npm:` alias that the registry cannot be asked for (`npm:`, `npm:@1.0.0`, `npm:@scope/@1`). It parses, as a lockfile may hold one.
+/// `npm:`, `npm:@1.0.0`, `npm:@scope/@1`: it parses, as a lockfile may hold one.
 pub(crate) fn nameless_npm_alias(literal: &[u8]) -> Option<&[u8]> {
     let (name, _) = split_npm_alias(trim_literal(literal).strip_prefix(b"npm:")?);
     is_scoped_package_name(name).is_err().then_some(name)
@@ -1202,7 +1202,7 @@ pub(crate) fn parse_with_tag(
     log_: Option<&mut bun_ast::Log>,
     package_manager: Option<&mut dyn NpmAliasRegistry>,
 ) -> Option<Version> {
-    // `to_version` (bun.lockb) and `clone_with_different_buffers` pass the stored literal untrimmed.
+    // `to_version` (bun.lockb) and `clone_with_different_buffers` pass the literal untrimmed.
     let dependency = trim_literal(dependency);
     match tag {
         Tag::Npm => {
@@ -1320,7 +1320,7 @@ pub(crate) fn parse_with_tag(
                 Ok(None) | Err(_) => return None,
             };
 
-            // `info` is percent-decoded and a `String` can only point into `dependency`: a part that is not there as decoded fails to resolve.
+            // `info` is percent-decoded, and a `String` can only point into `dependency`.
             let (before_fragment, fragment) =
                 strings::split_once_char(dependency, b'#').unwrap_or((dependency, b""));
             let find = |part: &[u8]| {

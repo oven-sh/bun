@@ -22,7 +22,7 @@ use crate::lifecycle_script_runner::{InstallCtx, LifecycleScriptSubprocess, Unfi
 // which are the same types re-exported through `crate::lockfile`.
 use crate::lockfile::Lockfile;
 use crate::lockfile_real::package::{
-    self as Package, PackageColumns, scripts::Gypfile, scripts::Scripts as PackageScripts,
+    self as Package, PackageColumns, scripts::Scripts as PackageScripts,
 };
 use crate::lockfile_real::{self as lockfile, Tree};
 use crate::network_task::ForTarballError;
@@ -49,16 +49,9 @@ pub struct PendingLifecycleScript {
 }
 
 pub struct PackageInstaller<'a> {
-    /// BACKREF into the singleton. Raw pointer (not
-    /// `&'a mut`) because the install loop also re-borrows the same object
-    /// via the caller's `this`/`mgr_ptr` (e.g. `run_tasks(this, &mut installer)`
-    /// in `hoisted_install`); a `&'a mut` here would assert exclusivity that
-    /// the call shape contradicts. Never null. Access via `manager()` /
-    /// `manager_mut()`.
+    /// BACKREF, never null; not `&'a mut`: `run_tasks(this, &mut installer)` borrows it as well.
     pub(crate) manager: *mut PackageManager,
-    /// BACKREF into `(*manager).lockfile`. Same aliasing
-    /// rationale as `manager`; the column-slice fields below also point into
-    /// it. Never null. Access via `lockfile()` / `lockfile_mut()`.
+    /// BACKREF into `(*manager).lockfile`. Never null.
     pub lockfile: *mut Lockfile,
     /// BACKREF into `(*manager).progress`. Never null.
     pub(crate) progress: *mut Progress,
@@ -76,17 +69,7 @@ pub struct PackageInstaller<'a> {
     /// `None`: there may be something to delete first, and every package is linked in its turn.
     pub(crate) linked_ahead: Option<LinkedAhead>,
     pub(crate) summary: &'a mut package_install::Summary,
-    // No `options` backref field — every caller reads via
-    // `self.manager().options` so the shared borrow stays a child of the live
-    // `&mut PackageManager` Unique tag rather than a sibling raw.
-    // The following slice fields alias into `self.lockfile.packages` (BACKREF).
-    // Stored as `RawSlice<T>` (raw `*const [T]`, `usize` len) — the lockfile's
-    // `MultiArrayList<Package>` column buffers outlive this `PackageInstaller`
-    // and are only ever *grown*, never freed; `fix_cached_lockfile_package_slices`
-    // re-snapshots after a grow. `RawSlice` carries no lifetime, so the
-    // assignment sites do not need a `&'a → &'a` lifetime-detach round-trip.
-    // Every `resolutions` call site is a read (`&raw const self.resolutions[i]`),
-    // so it is also `RawSlice` here.
+    // Columns of `lockfile.packages`: `fix_cached_lockfile_package_slices` after it grows.
     pub(crate) metas: bun_ptr::RawSlice<Package::Meta>,
     pub(crate) names: bun_ptr::RawSlice<String>,
     pub(crate) pkg_name_hashes: bun_ptr::RawSlice<PackageNameHash>,
@@ -135,15 +118,14 @@ pub struct TreeDir {
     scope: Vec<u8>,
 }
 
-/// What the thread pool has linked ahead of the walk over the trees, which does the rest in each package's turn.
+/// What the thread pool has linked ahead of the walk, which does the rest in each package's turn.
 pub struct LinkedAhead {
     /// The trees below this id have had their chance.
     until: lockfile::tree::Id,
     /// In the order of the walk.
     jobs: std::vec::IntoIter<package_install::LinkJob>,
-    /// What `jobs` were linked into.
     tree_dirs: Vec<TreeDir>,
-    /// Trees below a member or folder that two trees lead to: one directory, so only the walk writes there.
+    /// Trees below a member or folder that two trees lead to: only the walk writes there.
     shared_trees: Bitset,
     /// Not in the cache when `collect_links` looked, so the walk need not look again.
     missing: Bitset,
@@ -527,25 +509,7 @@ fn print_package_version<'a>(
 }
 
 impl<'a> PackageInstaller<'a> {
-    // ──────────────────────────────────────────────────────────────────────
-    // BACKREF accessors
-    //
-    // `manager` / `lockfile` / `options` point at allocations *outside*
-    // `Self` (the singleton `PackageManager`, its boxed `Lockfile`, and its
-    // `options` field), so a `&mut PackageManager` returned here never
-    // overlaps `*self`. The `_mut` accessors take `&self` (not `&mut self`)
-    // so call sites retain field-disjoint borrow semantics — e.g.
-    // `self.manager_mut().spawn(self.command_ctx, ...)` — exactly as the
-    // original `&'a mut PackageManager` field allowed. The *return* lifetime
-    // is `'a` (not elided to the `&self` borrow) for the same reason: e.g.
-    // `link_tree_bins` does `let m = self.manager_mut(); let t = &mut
-    // self.trees[i];` — an elided return would keep `self` borrowed shared
-    // while `m` is live and reject the later `&mut self.trees` projection.
-    // The single-threaded install pass guarantees no two `&mut
-    // PackageManager` are live at once; callers must not hold the result
-    // across a call that re-derives one through another path.
-    // ──────────────────────────────────────────────────────────────────────
-
+    // BACKREF accessors: do not hold a `_mut` result across a call that derives another one.
     #[inline]
     fn manager(&self) -> &'a PackageManager {
         // SAFETY: BACKREF — never null; pointee outlives `'a`.
@@ -587,8 +551,6 @@ impl<'a> PackageInstaller<'a> {
         log_level: Options::LogLevel,
     ) {
         let tree_id = self.current_tree_id;
-        debug_assert!(tree_id != lockfile::tree::INVALID_ID);
-
         let tree = &mut self.trees[tree_id as usize];
         let current_count = tree.install_count;
         let max = self.lockfile().buffers.trees.as_slice()[tree_id as usize]
@@ -643,7 +605,6 @@ impl<'a> PackageInstaller<'a> {
         self.run_available_scripts(log_level);
     }
 
-    /// The current package failed.
     fn fail(&mut self, is_pending_package_install: bool, log_level: Options::LogLevel) {
         self.summary.fail += 1;
         self.increment_tree_install_count(is_pending_package_install, log_level);
@@ -794,7 +755,7 @@ impl<'a> PackageInstaller<'a> {
                     self.successfully_installed
                         .is_set_allow_out_of_bound(package_id as usize, false),
                 );
-            // The other global packages keep their links in the global bin dir, as under the isolated linker.
+            // The other global packages keep their links in the global bin dir.
             if !global
                 && tree_id == 0
                 && manager.options.global
@@ -928,11 +889,11 @@ impl<'a> PackageInstaller<'a> {
         let mut i: usize = self.pending_lifecycle_scripts.len();
         while i > 0 {
             i -= 1;
-            let tree_id = self.pending_lifecycle_scripts[i].tree_id;
-            if self.can_run_scripts(tree_id) {
-                let entry = self.pending_lifecycle_scripts.swap_remove(i);
-                self.spawn_scripts(entry, log_level);
+            if !self.can_run_scripts(self.pending_lifecycle_scripts[i].tree_id) {
+                continue;
             }
+            let entry = self.pending_lifecycle_scripts.swap_remove(i);
+            self.spawn_scripts(entry, log_level);
         }
     }
 
@@ -1115,7 +1076,7 @@ impl<'a> PackageInstaller<'a> {
         true
     }
 
-    /// The tree's `node_modules`, made if need be and kept open for the next package, where `alias` is about to be replaced.
+    /// Made if need be and kept open for the next package. `alias` is about to be replaced in it.
     fn open_tree_dir(
         tree_dir: &mut Option<TreeDir>,
         node_modules: &NodeModulesFolder,
@@ -1524,7 +1485,7 @@ impl<'a> PackageInstaller<'a> {
         let (scripts, gypfile) = 'brk: {
             let scripts = self.lockfile().packages.items_scripts()[package_id as usize];
             if scripts.filled {
-                break 'brk (scripts, Gypfile::Unread);
+                break 'brk (scripts, None);
             }
 
             let mut temp = PackageScripts::default();
@@ -1533,7 +1494,7 @@ impl<'a> PackageInstaller<'a> {
             let mut string_builder = temp_lockfile.string_builder();
             let log = self.manager().log_mut();
             match temp.fill_from_package_json(&mut string_builder, log, folder_path) {
-                Ok(gypfile) => break 'brk (temp, gypfile),
+                Ok(gypfile) => break 'brk (temp, Some(gypfile)),
                 Err(err) => {
                     if log_level != Options::LogLevel::Silent {
                         Output::err_generic(
@@ -1923,16 +1884,6 @@ impl<'a> PackageInstaller<'a> {
                     }
                     resolution::Tag::Npm => {
                         let npm = *resolution.npm();
-                        // No assert: lockfiles of very old versions of Bun lack the tarball url.
-                        #[cfg(debug_assertions)]
-                        if npm.url.is_empty() {
-                            bun_core::debug_warn!(
-                                "package {}@{} missing tarball_url",
-                                bstr::BStr::new(pkg_name.slice(string_buf!())),
-                                resolution.fmt(string_buf!(), PathSep::Posix),
-                            );
-                        }
-
                         package_manager::enqueue_package_for_download(
                             self.manager_mut(),
                             pkg_name.slice(string_buf!()),
@@ -2306,15 +2257,12 @@ impl<'a> PackageInstaller<'a> {
                             {
                                 let stat = match bun_sys::fstat(destination_dir.fd()) {
                                     Ok(s) => s,
-                                    Err(err) => {
+                                    Err(_) => {
                                         Output::err(
                                             "EACCES",
                                             "Permission denied while installing <b>{}<r>",
                                             (name,),
                                         );
-                                        if cfg!(debug_assertions) {
-                                            Output::err(err, "Failed to stat node_modules", ());
-                                        }
                                         Global::exit(1);
                                     }
                                 };
@@ -2353,14 +2301,6 @@ impl<'a> PackageInstaller<'a> {
                             "failed {} for package <b>{}<r>",
                             (bstr::BStr::new(cause.step.name()), name),
                         );
-                        // Symbolizing takes seconds: only with BUN_DEBUG_PackageInstaller=1.
-                        #[cfg(bun_debug)]
-                        if PackageInstaller.is_visible() {
-                            bun_crash_handler::dump_stack_trace(
-                                &cause.debug_trace.trace(),
-                                Default::default(),
-                            );
-                        }
                     }
                 }
             }
@@ -2377,10 +2317,8 @@ impl<'a> PackageInstaller<'a> {
                 (alias, dep.name_hash as TruncatedPackageNameHash),
                 (pkg_name, pkg_name_hash as TruncatedPackageNameHash),
             );
-            // trusted through a --trust dependency. need to enqueue scripts, write to package.json, and add to lockfile
             let is_trusted_through_update_request =
                 (self.trusted_dependencies_from_update_requests).contains(&package_id);
-            // or is a new trusted dependency. need to enqueue scripts
             let is_trusted = is_trusted_through_update_request
                 || (self.manager().summary.added_trusted_dependencies)
                     .get(&trusted_name_hash)
@@ -2526,7 +2464,7 @@ impl<'a> PackageInstaller<'a> {
             return false;
         }
 
-        // Bind once: a second `manager_mut()` would invalidate `scripts_node`, derived from the first.
+        // Bind once: a second `manager_mut()` would invalidate `scripts_node`, derived from this.
         let m = self.manager_mut();
         m.total_scripts += scripts_list.total as usize;
         if let Some(scripts_node) = m.scripts_node_mut() {

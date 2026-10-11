@@ -266,7 +266,6 @@ impl Options {
 }
 
 impl BunxCommand {
-    /// Adds `create-` to the package name, after the scope if it has one.
     pub(crate) fn add_create_prefix(input: &[u8]) -> Result<ZBox, AllocError> {
         if input.is_empty() {
             return Ok(ZBox::default());
@@ -289,7 +288,7 @@ impl BunxCommand {
 
     const EMPTY_PACKAGE_JSON: &[u8] = b"{}\n";
 
-    /// `bun_which::which` resolves a name with a slash against the cwd, outside `node_modules/.bin`.
+    /// `bun_which::which` resolves a name with a slash against the cwd, not `node_modules/.bin`.
     fn is_safe_bin_name(name: &[u8]) -> bool {
         !name.is_empty()
             && name != b"."
@@ -314,7 +313,6 @@ impl BunxCommand {
         let parsed = json::ParsedJson::parse_package_json(&source, transpiler.log_mut())?;
         let expr = parsed.root;
 
-        // choose the first bin that fits
         if let Some(bin_expr) = expr.get(b"bin") {
             match &bin_expr.data {
                 ExprData::EObjectJSON(object) => {
@@ -499,7 +497,6 @@ impl BunxCommand {
         Some([RealFS::platform_temp_dir(), prefix.as_bytes(), package_fmt].concat())
     }
 
-    /// The bins of the tree come first in the `$PATH` of what runs out of it.
     fn prepend_to_path(
         env: &mut bun_dotenv::Loader,
         bunx_cache_dir: &[u8],
@@ -515,7 +512,6 @@ impl BunxCommand {
         Ok(())
     }
 
-    /// `<bunx cache dir>/node_modules/.bin/<bin_name>`, if that is an executable.
     fn which_in_cache<'a>(
         buf: &'a mut bun_paths::PathBuffer,
         bunx_cache_dir: &[u8],
@@ -706,7 +702,6 @@ impl BunxCommand {
                 || strings::contains(part, b"..")
         });
 
-        // The name of the directory to install in.
         let package_fmt = if has_banned_char {
             // Usually a URL is requested as the package: https://github.com/oven-sh/bun/issues/3675
             format!(
@@ -739,7 +734,6 @@ impl BunxCommand {
         } else {
             update_request.name
         };
-        // The `{what}` of 'bun add {what}'.
         let install_param: Vec<u8> = format!(
             "{}@{}",
             BStr::new(result_package_name),
@@ -898,7 +892,6 @@ impl BunxCommand {
             }
         }
 
-        // No existing binary to run: install, then run it.
         if opts.no_install {
             Output::err_generic(
                 "Could not find an existing '{}' binary to run. Stopping because --no-install was passed.",
@@ -925,7 +918,6 @@ impl BunxCommand {
 
         // Looked at under the lock: the holder this run queued behind may just have installed the tree.
         let tree = Self::tree_state(bunx_cache_dir);
-        // `--package` names the binary; otherwise the package.json may name another one than `initial_bin_name`.
         let package_with_bin = opts.binary_name.is_none().then_some(result_package_name);
         let installed = if tree == Tree::Fresh {
             Self::find_in_cache(

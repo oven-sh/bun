@@ -1,7 +1,6 @@
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 use bun_collections::{ArrayHashMap, DynamicBitSet};
-use bun_core::Output;
 use bun_core::{MutableString, ZStr};
 use bun_paths::strings;
 use bun_paths::{self as path, OSPathChar, OSPathSlice};
@@ -66,7 +65,7 @@ pub struct Summary {
     /// Set when this install replaced the tree of the other linker.
     pub(crate) old_modules: Option<crate::prune::OldModules>,
 
-    /// `--offline`: not in the cache, one per folder. Not in `fail` until `report_offline_misses` has judged them.
+    /// `--offline`: not in the cache, one per folder. `report_offline_misses` judges them.
     pub(crate) offline_misses: Vec<PackageID>,
 }
 
@@ -136,11 +135,18 @@ pub struct Failure {
     pub(crate) step: Step,
     /// The file the copyfile backend stopped at, for `InstallResult::report`.
     pub(crate) file: Vec<u8>,
-    #[cfg(bun_debug)]
-    pub(crate) debug_trace: bun_core::StoredTrace,
 }
 
 impl Failure {
+    #[inline]
+    fn boxed(err: crate::Error, step: Step) -> Box<Failure> {
+        Box::new(Failure {
+            err,
+            step,
+            file: Vec::new(),
+        })
+    }
+
     #[inline]
     pub(crate) fn is_package_missing_from_cache(&self) -> bool {
         (self.err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
@@ -175,19 +181,6 @@ impl InstallResult {
     }
 }
 
-impl Failure {
-    #[inline]
-    fn boxed(err: crate::Error, step: Step) -> Box<Failure> {
-        Box::new(Failure {
-            err,
-            step,
-            file: Vec::new(),
-            #[cfg(bun_debug)]
-            debug_trace: bun_core::StoredTrace::capture(None),
-        })
-    }
-}
-
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Step {
@@ -212,15 +205,14 @@ impl Step {
 /// Whether, and under which names, an install links packages by way of a `StagingPath`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Staging {
-    /// Link in place.
     Off,
-    /// This install has the project's lock: fixed names, so the next install removes what one that died left.
+    /// This install has the project's lock: fixed names, which the next install clears.
     Locked,
     /// It has not: names of its own (the seed). What is left if it dies stays until `bun prune`.
     Unlocked(u64),
 }
 
-/// The project's lock: `flock` on its root `node_modules`, which also stands for those of its workspaces.
+/// `flock` on the root `node_modules`, which also stands for those of the workspaces.
 pub(crate) struct StagingLock {
     pub(crate) mode: Staging,
     /// Another install has it. Otherwise `Unlocked` means no directory locks here (Windows, NFS).
@@ -438,7 +430,7 @@ fn open_dir(dir: Fd, subpath: &[u8]) -> crate::Result<Dir> {
         .map_err(Into::into)
 }
 
-/// `Dir::make_open_path` that does not follow a link at the last component (`prune::remove_planted_link`).
+/// `Dir::make_open_path` that does not follow a link at the last component.
 #[cfg(not(windows))]
 pub(crate) fn make_open_real_dir(base: &Dir, sub_path: &ZStr) -> sys::Maybe<Dir> {
     let open = || {
@@ -459,7 +451,7 @@ pub(crate) fn make_open_real_dir(base: &Dir, sub_path: &ZStr) -> sys::Maybe<Dir>
     open()
 }
 
-/// Whether `dest` is what the hardlink backend makes of the folder `src` as it is now: the same names and inodes.
+/// Whether `dest` has the names and inodes of the folder `src` as it is now.
 fn is_hardlinked_copy(src: &Dir, dest: &Dir) -> bool {
     const INO_LEN: usize = core::mem::size_of::<u64>();
     // Each name followed by its inode number, 0 for a directory.
@@ -507,7 +499,6 @@ fn is_hardlinked_copy(src: &Dir, dest: &Dir) -> bool {
         })
 }
 
-/// `is_hardlinked_copy` for the folder itself, in either linker.
 pub(crate) fn is_linked_folder(src: &Dir, dest: &Dir) -> bool {
     let (Ok(dest_stat), Ok(src_stat)) = (sys::fstat(dest.fd()), sys::fstat(src.fd())) else {
         return false;
@@ -744,7 +735,6 @@ impl HardLinkWindowsInstallTask {
 
 // ───────────────────────────── UninstallTask ─────────────────────────────
 
-/// From any thread.
 fn wake_main_thread() {
     // SAFETY: the manager lives as long as the process. `wake_raw` is the documented
     // thread-safe wake path that never forms `&mut PackageManager` (the main thread
@@ -752,7 +742,6 @@ fn wake_main_thread() {
     unsafe { PackageManager::wake_raw(crate::package_manager::get()) };
 }
 
-/// Counts a task of the thread pool out of `pending_tasks` and wakes the main thread.
 struct PendingTaskDone;
 
 impl Drop for PendingTaskDone {
@@ -781,52 +770,13 @@ impl UninstallTask {
 
         // SAFETY: heap-allocated in uninstall_before_install; reclaim ownership here.
         let uninstall_task = unsafe { bun_core::heap::take(uninstall_task) };
-        let mut debug_timer = Output::DebugTimer::start();
 
         let dirname =
             path::resolve_path::dirname::<path::platform::Auto>(&uninstall_task.absolute_path);
-        if dirname.is_empty() {
-            bun_core::debug_warn!(
-                "Unexpectedly failed to get dirname of {}",
-                bstr::BStr::new(&uninstall_task.absolute_path)
-            );
-            return;
-        }
-        let basename = bun_paths::basename(&uninstall_task.absolute_path);
-
-        let dir = match open_dir(Fd::cwd(), dirname) {
-            Ok(d) => d,
-            Err(err) => {
-                if bun_core::Environment::IS_DEBUG || bun_core::Environment::ENABLE_ASAN {
-                    bun_core::debug_warn!(
-                        "Failed to delete {}: {}",
-                        bstr::BStr::new(&uninstall_task.absolute_path),
-                        bstr::BStr::new(err.name())
-                    );
-                }
-                return;
-            }
-        };
-        if let Err(err) = dir.delete_tree(basename) {
-            if bun_core::Environment::IS_DEBUG || bun_core::Environment::ENABLE_ASAN {
-                bun_core::debug_warn!(
-                    "Failed to delete {} in {}: {}",
-                    bstr::BStr::new(basename),
-                    bstr::BStr::new(dirname),
-                    bstr::BStr::new(err.name())
-                );
-            }
-        }
-
-        if cfg!(debug_assertions) {
-            let _ = &mut debug_timer;
-            bun_output::scoped_log!(
-                install,
-                "deleteTree({}, {}) = {}",
-                bstr::BStr::new(basename),
-                bstr::BStr::new(dirname),
-                debug_timer
-            );
+        if !dirname.is_empty()
+            && let Ok(dir) = open_dir(Fd::cwd(), dirname)
+        {
+            let _ = dir.delete_tree(bun_paths::basename(&uninstall_task.absolute_path));
         }
     }
 }
@@ -844,11 +794,10 @@ pub(crate) struct LinkJob {
     pub(crate) result: std::sync::OnceLock<InstallResult>,
 }
 
-/// Packages that the thread pool links at the same time. No destination is or is inside another's, and all are free.
+/// Linked at the same time: no destination is or is inside another's, and all are free.
 pub(crate) struct LinkBatch {
     pub(crate) jobs: Vec<LinkJob>,
     pub(crate) staging: Staging,
-    /// The job that the next free thread takes.
     pub(crate) next: AtomicUsize,
     /// The threads that are not done. The last one wakes the main thread.
     pub(crate) remaining: AtomicUsize,
@@ -883,7 +832,6 @@ impl LinkBatch {
         // The kernel lets one thread at a time into a `node_modules`: more threads are slower.
         const MAX_THREADS: usize = 8;
 
-        // Not worth waking a thread for.
         if let [job] = self.jobs.as_slice() {
             return self.link(job);
         }
@@ -1225,7 +1173,7 @@ impl PackageFiles<'_> {
                         let basename = ZStr::from_buf(&stackpath[path_len - base_len..], base_len);
                         let clone =
                             || sys::clonefileat(entry.dir, basename, destination_dir_.fd(), path_);
-                        // What is there can be another version's file: replaced, as in the other backends.
+                        // What is there can be another version's file.
                         let cloned = match clone() {
                             Err(e) if e.get_errno() == sys::Errno::EEXIST => {
                                 let _ = sys::unlinkat(destination_dir_, path_);
@@ -1858,24 +1806,6 @@ impl<'a> PackageInstall<'a> {
                 // tree. Since we're renaming the directory to a randomly
                 // generated name, we can delete it in another thread without
                 // worrying about race conditions or blocking the main thread.
-                //
-                // This should be a slight improvement to CI environments.
-                //
-                // on macOS ARM64 in a project with Gatsby, @mui/icons-material, and Next.js:
-                //
-                // ❯ hyperfine "bun install --ignore-scripts" "bun-1.1.2 install --ignore-scripts" --prepare="rm -rf node_modules/**/package.json" --warmup=2
-                // Benchmark 1: bun install --ignore-scripts
-                //   Time (mean ± σ):      2.281 s ±  0.027 s    [User: 0.041 s, System: 6.851 s]
-                //   Range (min … max):    2.231 s …  2.312 s    10 runs
-                //
-                // Benchmark 2: bun-1.1.2 install --ignore-scripts
-                //   Time (mean ± σ):      3.315 s ±  0.033 s    [User: 0.029 s, System: 2.237 s]
-                //   Range (min … max):    3.279 s …  3.356 s    10 runs
-                //
-                // Summary
-                //   bun install --ignore-scripts ran
-                //     1.45 ± 0.02 times faster than bun-1.1.2 install --ignore-scripts
-                //
                 let absolute_path = path::resolve_path::join_abs_string::<path::platform::Auto>(
                     bun_fs::FileSystem::instance().top_level_dir(),
                     &[&self.node_modules.path, temp_path.as_bytes()],
@@ -2104,7 +2034,7 @@ impl<'a> PackageInstall<'a> {
                 to_path,
             );
             if let Err(err) = sys::symlinkat(target, dest_dir.fd(), dest).or_else(|err| {
-                // A workspace's own node_modules outlives a wiped root node_modules, after which nothing is deleted first.
+                // A workspace's own node_modules outlives a wiped root node_modules.
                 if err.get_errno() != sys::E::EEXIST {
                     return Err(err);
                 }
@@ -2213,7 +2143,7 @@ impl<'a> PackageInstall<'a> {
         .report()
     }
 
-    /// See `Lockfile::bundled_by_folder`. The links are relative, and hold when a staging directory is renamed.
+    /// See `Lockfile::bundled_by_folder`. Relative links: a staging directory is renamed.
     #[cold]
     fn link_bundled_into(&self, destination_dir: &Dir) {
         let lockfile = self.lockfile;
@@ -2380,7 +2310,6 @@ impl PackageFiles<'_> {
         };
         match result {
             Ok(result) => result,
-            // The destination's file system cannot clone or link what is in the cache.
             #[cfg(not(windows))]
             Err(crate::Error::NotSupported | crate::Error::NotSameFileSystem) => {
                 if !is_folder {

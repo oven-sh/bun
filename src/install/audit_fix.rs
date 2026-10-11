@@ -57,12 +57,12 @@ pub struct PlannedEdge {
 
 #[derive(PartialEq, Eq)]
 pub struct Blocker {
-    /// The dependent package or importer file; `package.json` when `override_rule` is set, since the range then comes from its `overrides`.
+    /// The dependent package or importer file; `package.json` when `override_rule` is set.
     pub dependent: Box<[u8]>,
     pub range: Box<[u8]>,
     pub bundled: bool,
     pub latest_fixes: bool,
-    /// Key of the `overrides` rule that holds the version, in the form `OverrideSelector::key` produces.
+    /// `OverrideSelector::key` of the `overrides` rule that holds the version.
     pub override_rule: Option<Box<[u8]>>,
 }
 
@@ -193,9 +193,9 @@ pub struct FixOutcome {
 struct Edge {
     dep_id: DependencyID,
     parent: PackageID,
-    /// What the edge resolves against once overrides and catalogs are applied; `None` unless that is an npm range.
+    /// After overrides and catalogs are applied; `None` unless that is an npm range.
     range: Option<dependency::Version>,
-    /// The override rule's value when one applies, else the dependent's own specifier; shown when `range` is `None`.
+    /// The override rule's value, else the dependent's specifier; shown when `range` is `None`.
     literal: Box<[u8]>,
     dependent: Box<[u8]>,
     override_rule: Option<Box<[u8]>>,
@@ -442,7 +442,7 @@ fn print_manifest_unavailable(manager: &PackageManager, items: &[ManifestUnavail
     Output::flush();
 }
 
-/// The root/workspace package.json (or catalog, or override rule) entry whose rewrite would move this edge: an exact pin, or with `latest` any npm range.
+/// The entry whose rewrite would move this edge: an exact pin, or with `latest` any npm range.
 fn pin_for(
     lockfile: &Lockfile,
     root_json: Option<&Expr>,
@@ -498,7 +498,7 @@ fn pin_for(
                     let selector = OverrideSelector::from_rule(rule, buf);
                     let written =
                         package_json_edits::override_literal(root_json?, name, &selector)?;
-                    // Differs when package.json spells the value as a `$ref` to a dependency; bun.lock stores what it resolved to.
+                    // Differs for a `$ref` in package.json: bun.lock stores what it resolved to.
                     if *written != *strings::trim(literal, &strings::WHITESPACE_CHARS) {
                         return None;
                     }
@@ -601,7 +601,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
             }
             let dep = &deps[dep_id];
             let parent = parent_of[dep_id];
-            // A bundled copy ships inside its dependent whatever an override says, so it stays attributed to the dependent.
+            // A bundled copy ships inside its dependent whatever an override says.
             let rule = if dep.behavior.is_bundled() {
                 None
             } else {
@@ -868,7 +868,7 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                             edits.push(edit);
                         }
                         // A rewritten peer row is deferred by the differ and rebinds to the old package unless the edge is pinned too.
-                        // A rewritten range re-resolves to the newest release it allows, which for a downgrade is the vulnerable one again (`^1.0.1` still takes 1.1.0).
+                        // A range resolves to the vulnerable release again: `^1.0.1` takes 1.1.0.
                         if edge.peer || candidate.downgrade {
                             edges.push(PlannedEdge {
                                 dep_id: edge.dep_id,

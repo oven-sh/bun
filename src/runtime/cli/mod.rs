@@ -17,8 +17,6 @@ pub(crate) mod colon_list_type;
 pub(crate) mod discord_command;
 #[path = "shell_completions.rs"]
 pub(crate) mod shell_completions;
-#[path = "which_npm_client.rs"]
-pub(crate) mod which_npm_client;
 
 // ─── open (open_url wrapper; Editor/EditorContext live in open.rs) ───────────
 #[path = "open.rs"]
@@ -1767,9 +1765,8 @@ To create a project with the official Next.js scaffolding tool, run
         use bun_install::{PackageManager, Subcommand};
 
         let cli = CommandLineArguments::parse(PmSubcommand::Info)?;
-        let json_output = cli.json_output;
         let ctx = init(Tag::InfoCommand, log)?;
-        let (pm, _) = PackageManager::init(ctx, cli, Subcommand::Info)?;
+        let (pm, _) = PackageManager::init(ctx, &cli, Subcommand::Info)?;
 
         // `["info", "<spec>", "<field>"...]`
         let mut positionals: &'static [&'static [u8]] = pm.options.positionals;
@@ -1779,7 +1776,7 @@ To create a project with the official Next.js scaffolding tool, run
         let package_name: &[u8] = positionals.first().copied().unwrap_or(b"");
         let fields: &[&[u8]] = positionals.get(1..).unwrap_or(&[]);
 
-        super::pm_view_command::view(pm, package_name, fields, json_output)
+        super::pm_view_command::view(pm, package_name, fields, cli.json_output)
     }
 
     pub(crate) fn tag_print_help(cmd: Tag, show_all_flags: bool) {

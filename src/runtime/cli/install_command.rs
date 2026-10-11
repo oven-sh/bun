@@ -44,11 +44,11 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
         return analyze_dependencies_and_install(ctx, &mut cli, b"install", &mut install_with_cli);
     }
 
-    install_with_cli(ctx, cli)
+    install_with_cli(ctx, &cli)
 }
 
 #[inline(never)]
-fn install_with_cli(ctx: &mut ContextData, cli: CommandLineArguments) -> Result<(), Error> {
+fn install_with_cli(ctx: &mut ContextData, cli: &CommandLineArguments) -> Result<(), Error> {
     let subcommand: Subcommand = if cli.positionals.len() > 1 {
         Subcommand::Add
     } else {

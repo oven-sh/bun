@@ -20,7 +20,7 @@ use super::workspace_package_json_cache::GetJSONOptions;
 use super::workspace_selection::WorkspaceGraph;
 
 /// Root + member package.json files parsed the way `bun install` parses them, into a throw-away lockfile.
-/// Errors the parse only logs (an invalid catalog range, say) fail it here, as they fail `bun install`.
+/// Errors the parse only logs (an invalid catalog range, say) fail it, as in `bun install`.
 pub(crate) struct ScratchManifests {
     pub(crate) lockfile: Lockfile,
     pub(crate) log: bun_ast::Log,
@@ -164,12 +164,11 @@ impl ScratchManifests {
     }
 }
 
-/// A name listed in two groups (`dependencies` and `peerDependencies`) has one row per group, so the group counts.
+/// A name listed in two groups has one row per group, so the group counts.
 pub(crate) fn same_row(scratch: &Dependency, row: &Dependency) -> bool {
     row.name_hash == scratch.name_hash && row.behavior == scratch.behavior
 }
 
-/// One npm dependency that a package.json declares now, with the package bun.lock has installed for it.
 #[derive(Clone, Copy)]
 pub struct DeclaredDependency {
     /// The root or workspace package whose package.json declares it.
@@ -180,24 +179,24 @@ pub struct DeclaredDependency {
     pub package_id: PackageID,
 }
 
-/// The npm dependencies the package.json files declare now; bun.lock only supplies what is installed for each.
+/// What the package.json files declare now; bun.lock only supplies what is installed for each.
 pub struct DeclaredDependencies {
     /// The package.json parse: dependency rows, their strings and the root catalogs. No packages.
     lockfile: Lockfile,
     rows: Vec<DeclaredDependency>,
 }
 
-/// What a member's package.json that cannot be read or parsed does to [`DeclaredDependencies::load`].
+/// What a member's unreadable package.json does to [`DeclaredDependencies::load`].
 #[derive(Clone, Copy)]
 pub enum BrokenMember {
-    /// The command installs afterwards, which reads every member: selected or not, exit with `bun install`'s errors.
+    /// The command installs afterwards, which reads every member, selected or not.
     Fatal,
-    /// The command only reports: a selected one is named on stderr and left out, the others are never read.
+    /// The command only reports: a selected one is named on stderr, the others are never read.
     LeftOut,
 }
 
 impl DeclaredDependencies {
-    /// Exits with `bun install`'s errors when the root package.json does not parse. Declared but not installed: no row.
+    /// Exits when the root package.json does not parse. Declared but not installed: no row.
     pub fn load(
         manager: &mut PackageManager,
         workspace_pkg_ids: &[PackageID],
@@ -304,7 +303,7 @@ impl DeclaredDependencies {
             .resolve_range(self.string_bytes(), self.dependency(row))
     }
 
-    /// The newest version of `manifest` that the declared range allows, under the minimum release age.
+    /// The newest version that the declared range allows, under the minimum release age.
     pub fn find_update<'m>(
         &self,
         row: &DeclaredDependency,
@@ -360,11 +359,11 @@ impl WorkspaceManifests {
         })
     }
 
-    /// `load` for a caller that goes on without them. A root package.json that cannot be read still exits.
+    /// For a caller that goes on without them. An unreadable root package.json still exits.
     pub fn try_load(
         manager: &mut PackageManager,
     ) -> Result<WorkspaceManifests, (bun_ast::Log, crate::Error)> {
-        // Only what pack reads, so `bun install`'s checks on the root's own dependency lists do not fail a pack.
+        // Only what pack reads: `bun install`'s checks on the root's lists do not fail a pack.
         let features = Features {
             is_main: true,
             workspaces: true,
@@ -407,7 +406,7 @@ impl WorkspaceManifests {
         })
     }
 
-    /// Whether `workspace:` links a package named `name`: one of the workspaces, or the root package.
+    /// Whether `workspace:` links a package named `name`: a workspace, or the root package.
     pub fn has_workspace(&self, name: &[u8]) -> bool {
         let name_hash: PackageNameHash = bun_semver::string::Builder::string_hash(name);
         self.lockfile.workspace_paths.contains(&name_hash)
@@ -432,7 +431,6 @@ impl WorkspaceManifests {
             .map(|dependency| dependency.name.slice(string_buf))
     }
 
-    /// Whether `package_dir` is the root package's folder or a workspace's.
     pub fn contains_package_dir(&self, package_dir: &[u8]) -> bool {
         let mut buf = bun_paths::path_buffer_pool::get();
         folder_relative_to_top_level_dir(package_dir, b".", &mut buf[..])
@@ -440,19 +438,18 @@ impl WorkspaceManifests {
             || self.workspace_name_at_path(package_dir, b".").is_some()
     }
 
-    /// The package.json whose `workspaces` and catalogs these are (the packed package's own when it is no workspace).
+    /// The packed package's own when it is no workspace.
     pub fn root_package_json_path(&self) -> &[u8] {
         &self.root_package_json_path
     }
 
-    /// The (semver) `version` in the package.json of the workspace named `name`, if any.
     pub fn workspace_version(&self, name: &[u8]) -> Option<impl fmt::Display + '_> {
         let name_hash: PackageNameHash = bun_semver::string::Builder::string_hash(name);
         let version = self.lockfile.workspace_versions.get(&name_hash)?;
         Some(version.fmt(self.lockfile.buffers.string_bytes.as_slice()))
     }
 
-    /// The range catalog `catalog_name` (`""` or `"default"` for the default one) declares for `dependency_name`, as written.
+    /// The range as written. `""` or `"default"` names the default catalog.
     pub fn catalog_version(&self, catalog_name: &[u8], dependency_name: &[u8]) -> Option<&[u8]> {
         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
         let dependency = self

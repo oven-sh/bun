@@ -463,12 +463,9 @@ struct PatchMutationPart<'a> {
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
 pub enum PartType {
-    /// Additional context
     #[default]
     Context,
-    /// `+ sjfskdjfsdf`
     Insertion,
-    /// `- sjfskdjfsdf`
     Deletion,
 }
 
@@ -1398,7 +1395,6 @@ pub fn diff_post_process(
 pub fn git_diff_preprocess_paths(old_folder: &[u8], new_folder: &[u8]) -> [Vec<u8>; 2] {
     #[allow(unused_mut)]
     let mut folders = [old_folder.to_vec(), new_folder.to_vec()];
-    // Normalize Windows separators before passing paths to `git diff`.
     #[cfg(windows)]
     for folder in &mut folders {
         paths::slashes_to_posix_in_place(&mut folder[..]);

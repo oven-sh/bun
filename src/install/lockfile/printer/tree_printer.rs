@@ -393,7 +393,7 @@ fn write_updated_row<W: Write>(
     Ok(())
 }
 
-/// A bare `bun update` moves the root's catalog entries for every importer, but the one-section summary only walks `update_owners`' rows (hence the shared `update_dedupe`); entries consumed elsewhere print through whichever `catalog:` row names them. The verbose summary has a section per importer and skips this.
+/// The one-section summary only walks `update_owners`' rows; other importers consume entries too.
 fn print_catalog_entry_updates<W: Write>(
     this: &Printer,
     manager: &mut PackageManager,
@@ -425,7 +425,7 @@ fn print_catalog_entry_updates<W: Write>(
     Ok(printed)
 }
 
-/// Packages registered by the transitive half of `bun update` are not rows of the walked workspaces, so the walk above never reaches them; the walked workspaces' own targets and those of the recorded `catalog:` rows stay with them.
+/// The transitive half of `bun update` registers packages that are rows of no walked workspace.
 fn print_transitive_updates<W: Write>(
     this: &Printer,
     manager: &mut PackageManager,
@@ -677,9 +677,9 @@ pub(crate) fn print<W: Write>(
                 &mut had_printed_new_install,
                 None,
                 &[0],
-                false,
+                /* sole_section */ false,
                 enable_ansi_colors,
-                false,
+                /* print_section_header */ false,
             )?;
 
             for &workspace_dep_id in &workspaces_to_print {
@@ -693,9 +693,9 @@ pub(crate) fn print<W: Write>(
                     &mut had_printed_new_install,
                     None,
                     &[workspace_package_id],
-                    false,
+                    /* sole_section */ false,
                     enable_ansi_colors,
-                    true,
+                    /* print_section_header */ true,
                 )?;
             }
         } else {
@@ -747,9 +747,9 @@ pub(crate) fn print<W: Write>(
                 &mut had_printed_new_install,
                 Some(&mut id_map),
                 &update_owners,
-                true,
+                /* sole_section */ true,
                 enable_ansi_colors,
-                false,
+                /* print_section_header */ false,
             )?;
         }
     } else {

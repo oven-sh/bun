@@ -614,11 +614,7 @@ const PRUNE_HELP_PARAMS: &[ParamType] = &[
 // which itself lives for the program duration). They are never freed. Mapped to `&'static [u8]`
 // per PORTING.md (no `deinit`, never `allocator.free`d). An explicit lifetime would only
 // become necessary if `clap::Args` ever becomes scoped.
-//
-// `Clone` is needed because `updatePackageJSONAndInstall`
-// passes `cli` by value into `PackageManager.init` while retaining its own
-// copy.
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub struct CommandLineArguments {
     pub cache_dir: Option<&'static [u8]>,
     pub lockfile: &'static [u8],
@@ -659,7 +655,7 @@ pub struct CommandLineArguments {
     pub(crate) pack_gzip_level: Option<&'static [u8]>,
 
     pub(crate) dependency_group: Options::DependencyGroup,
-    /// `--dev`, `--optional`, `--peer` or `--save-prod` was given: an entry another group has moves.
+    /// `--dev`, `--optional`, `--peer` or `--save-prod`: an entry another group has moves.
     pub(crate) names_group: bool,
 
     pub(crate) omit: Option<Omit>,
@@ -1536,7 +1532,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         }
 
         if let Some(concurrency) = args.option(b"--concurrent-scripts") {
-            // 0 is the default, as `concurrentScripts = 0` in bunfig.toml: with a limit of 0 no script starts.
+            // 0 is the default, as in bunfig.toml: with a limit of 0 no script starts.
             cli.concurrent_scripts = strings::parse_int::<usize>(concurrency, 10)
                 .ok()
                 .filter(|&n| n != 0);
@@ -1691,7 +1687,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             cli.recursive = false;
         }
 
-        // Their registry is the global folder already. With `-g` they would run in it, on its own package.json.
+        // With `-g` they would run in the global folder, on its own package.json.
         if matches!(subcommand, Subcommand::Link | Subcommand::Unlink) {
             cli.global = false;
         }

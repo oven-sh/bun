@@ -2,20 +2,19 @@ use core::cell::Cell;
 use core::cmp::Ordering;
 
 use bun_collections::index_sort;
-use bun_core::{Global, Output, strings};
+use bun_core::{Output, strings};
 use bun_semver::{ExternalString, String as SemverString};
 
-use crate::bun_json as json;
 use crate::bun_json::Expr;
 use crate::lockfile_real::StringBuilder;
-use crate::lockfile_real::package::{Package, PackageColumns, ResolverContext, Scripts};
+use crate::lockfile_real::package::{Package, PackageColumns, ResolverContext};
 use crate::package_manager_real::options::LogLevel;
 use crate::package_manager_real::{PackageManager, enqueue};
 use crate::repository_real::RepositoryExt as _;
 use crate::resolution::{ResolutionType, Tag as ResolutionTag, TaggedValue};
 use crate::{
     DependencyID, ExtractData, Features, INVALID_PACKAGE_ID, PackageID, Resolution,
-    TaskCallbackContext, dependency, initialize_store,
+    TaskCallbackContext, dependency,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -25,7 +24,7 @@ use crate::{
 pub struct GitResolver<'a> {
     pub(crate) resolved: &'a [u8],
     pub(crate) resolution: &'a Resolution,
-    /// `Repository::fallback_package_name`, copied out of the lockfile string buffer, which parsing appends to.
+    /// Copied out of the lockfile string buffer, which parsing appends to.
     pub(crate) fallback_name: &'a [u8],
 }
 
@@ -107,7 +106,7 @@ impl<'a> ResolverContext for TarballResolver<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl PackageManager {
-    /// Appends `package` and queues its dependencies, or reuses the package with its name and resolution.
+    /// Appends `package` and queues its dependencies, or reuses one of its name and resolution.
     fn append_extracted_package(
         &mut self,
         mut package: Package,
@@ -287,56 +286,7 @@ impl PackageManager {
 
                 Some(self.append_extracted_package(package, data, package_id))
             }
-            _ => {
-                if !data.json.as_ref().unwrap().buf.is_empty() {
-                    let json = data.json.as_ref().unwrap();
-                    let package_json_source =
-                        &bun_ast::Source::init_path_string(&json.path[..], &json.buf[..]);
-                    initialize_store();
-                    // SAFETY: `self.log` is set once by `PackageManager::init()` and
-                    // never null while tasks run.
-                    let log = self.log_mut();
-                    let parsed = match json::ParsedJson::parse_package_json(
-                        package_json_source,
-                        log,
-                    ) {
-                        Ok(v) => v,
-                        Err(err) => {
-                            if log_level != LogLevel::Silent {
-                                let string_buf = self.lockfile.buffers.string_bytes.as_slice();
-                                bun_core::pretty_errorln!(
-                                    "<r><red>error:<r> expected package.json in <b>{}<r> to be a JSON file: {}\n",
-                                    bun_core::fmt::for_terminal(resolution.fmt_url(string_buf)),
-                                    err.name(),
-                                );
-                            }
-                            Global::crash();
-                        }
-                    };
-                    let json_root = parsed.root;
-                    // Intentional dead store: `scripts` is a local copy of
-                    // `lockfile.packages[id].scripts`, and the `parse_alloc` /
-                    // `.filled = true` mutations are never stored back, so
-                    // `lockfile.packages[id].scripts` is not updated. The
-                    // original implementation had this same latent dead-store
-                    // bug, and we match it exactly so observable behavior
-                    // agrees. The `builder` appends still land in
-                    // `lockfile.buffers.string_bytes`, preserving that side
-                    // effect. (Hoisted above `string_builder()` for borrowck —
-                    // `parse_count`/`allocate` don't touch `packages`.)
-                    debug_assert!(*package_id != INVALID_PACKAGE_ID);
-                    let mut scripts: Scripts =
-                        self.lockfile.packages.items_scripts()[*package_id as usize];
-                    let mut builder = self.lockfile.string_builder();
-                    Scripts::parse_count(&mut builder, json_root);
-                    builder.allocate().expect("unreachable");
-                    scripts.parse_alloc(&mut builder, json_root);
-                    scripts.filled = true;
-                    let _ = scripts;
-                }
-
-                None
-            }
+            _ => None,
         }
     }
 
@@ -383,7 +333,7 @@ impl PackageManager {
         Ok(())
     }
 
-    /// The first row of a name to resolve decides what the others bind to, so each batch of deferred peers goes out in `peer_batch_order`.
+    /// In `peer_batch_order`: the first row of a name to resolve decides what the others bind to.
     pub(crate) fn process_peer_dependency_list(&mut self) -> Result<(), crate::Error> {
         while self.peer_dependencies.readable_length() > 0 {
             let mut batch: Vec<DependencyID> =
@@ -409,7 +359,7 @@ impl PackageManager {
         Ok(())
     }
 
-    /// Sorts `batch` by id and returns indices into it, in an order that does not depend on arrival: root, workspaces, the rest; then owner name, owner resolution, dependency name.
+    /// Sorts `batch` by id and returns indices into it, in an order independent of arrival.
     fn peer_batch_order(&self, batch: &mut [DependencyID]) -> Vec<u32> {
         let mut order = index_sort::identity(batch.len());
         if batch.len() < 2 {

@@ -68,6 +68,44 @@ pub(crate) struct Node<'t> {
     has_comment: bool,
 }
 
+impl<'t> Drop for Node<'t> {
+    /// A loop. What the compiler derives calls itself for each level, and cannot ask whether there is stack for that.
+    fn drop(&mut self) {
+        fn take<'t>(node: &mut Node<'t>, rest: &mut Vec<NodeKind<'t>>) {
+            if matches!(node.kind, NodeKind::Map { .. } | NodeKind::Seq { .. }) {
+                rest.push(std::mem::replace(&mut node.kind, NodeKind::Alias));
+            }
+        }
+        fn take_pair<'t>(pair: &mut Pair<'t>, rest: &mut Vec<NodeKind<'t>>) {
+            take(&mut pair.key, rest);
+            if let Some(value) = &mut pair.value {
+                take(value, rest);
+            }
+        }
+        // What has been in a node and has something in it.
+        let mut rest = Vec::new();
+        take(self, &mut rest);
+        while let Some(mut kind) = rest.pop() {
+            match &mut kind {
+                NodeKind::Map { items, .. } => {
+                    for pair in items {
+                        take_pair(pair, &mut rest);
+                    }
+                }
+                NodeKind::Seq { items, .. } => {
+                    for item in items {
+                        match item {
+                            SeqItem::Node(node) => take(node, &mut rest),
+                            SeqItem::Pair(pair) => take_pair(pair, &mut rest),
+                        }
+                    }
+                }
+                NodeKind::Alias | NodeKind::Scalar(_) => {}
+            }
+        }
+    }
+}
+
 impl Node<'_> {
     /// `scalar.source`
     fn source<'a>(&self, text: &'a [u8]) -> Cow<'a, [u8]> {

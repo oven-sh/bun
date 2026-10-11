@@ -103,7 +103,11 @@ describe.skipIf(isASAN)("given an add(a, b) function", () => {
 
 describe.skipIf(isASAN)("given an identity(int) function", () => {
   const source = /* c */ `
+      #include <stdint.h>
       int identity(int v) {
+        return v;
+      }
+      int16_t identity16(int16_t v) {
         return v;
       }
     `;
@@ -120,7 +124,10 @@ describe.skipIf(isASAN)("given an identity(int) function", () => {
   });
 
   describe("when compiled", () => {
-    let res: Library<{ identity: { args: ["int"]; returns: "int" } }>;
+    let res: Library<{
+      identity: { args: ["int"]; returns: "int" };
+      identity16: { args: ["i16"]; returns: "i16" };
+    }>;
 
     beforeAll(() => {
       res = cc({
@@ -129,6 +136,10 @@ describe.skipIf(isASAN)("given an identity(int) function", () => {
           identity: {
             returns: "int",
             args: ["int"],
+          },
+          identity16: {
+            returns: "i16",
+            args: ["i16"],
           },
         },
       });
@@ -148,6 +159,14 @@ describe.skipIf(isASAN)("given an identity(int) function", () => {
       }
       expect(res.symbols.identity(Math.sqrt(49))).toBe(7);
       expect(res.symbols.identity(1.1)).toBe(1);
+    });
+
+    it("converts double-encoded numbers for i16 args too", () => {
+      const heap = new Float64Array([7, -5, 32767, 32768]);
+      for (const v of heap) {
+        // int16 truncation, matching C semantics
+        expect(res.symbols.identity16(v)).toBe(((v + 32768) % 65536) - 32768);
+      }
     });
   }); // </when compiled>
 }); // </given identity(int) function>

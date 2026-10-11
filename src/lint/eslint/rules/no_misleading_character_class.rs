@@ -45,8 +45,6 @@ const ZERO_WIDTH_JOINER: u32 = 0x200D;
 
 const TRACE_MAP: TraceMap<'static, ()> =
     TraceMap::new(&[("RegExp", TraceMap::EMPTY.call(()).construct(()))]);
-/// The names that a reference to it starts with.
-const ROOTS: [&str; 5] = ["RegExp", "global", "globalThis", "self", "window"];
 
 /// A `Character` of regexpp.
 type Character<'r> = regex::Node<'r>;
@@ -356,8 +354,8 @@ impl Rule for NoMisleadingCharacterClass {
         }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<Vec<Expr<'a>>> {
-        (file.has_exprs([ExprTag::Regex]) || file.mentions_any(&ROOTS)).then(Vec::new)
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<Vec<Expr<'a>>> {
+        Some(Vec::new())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -368,10 +366,7 @@ impl Rule for NoMisleadingCharacterClass {
 
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
         let file = cx.file();
-        let references = match file.mentions_any(&ROOTS) {
-            true => ReferenceTracker::new(file).iterate_global_references(&TRACE_MAP),
-            false => Vec::new(),
-        };
+        let references = ReferenceTracker::new(file).iterate_global_references(&TRACE_MAP);
         let scope = (!references.is_empty()).then(|| file.scope());
         let ecma_version = file.language().ecma_version;
         let is_valid_with_u = |pattern: &[u8]| is_valid_with_unicode_flag(ecma_version, pattern, UnicodeFlag::U);

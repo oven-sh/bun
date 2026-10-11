@@ -512,6 +512,7 @@ impl Names {
     }
 
     /// The atom of a text of 16 to 32 bytes.
+    #[inline]
     pub(crate) fn long(&mut self, text: Text<'_>, atoms: &dyn Intern) -> Atom {
         if let Some(words) = long_words(text.text) {
             let entry = &self.long[long_place(words) & self.long_mask];

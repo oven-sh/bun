@@ -178,7 +178,7 @@ impl Checker {
         owner.flatten().filter(|func| !(is_oxlint && func.params_span().is_some_and(|it| it.contains(e.span()))))
     }
 
-    /// Notes the functions of `member` that have to use `this`.
+    /// Notes the functions of the members of `class` that have to use `this`, and the others.
     pub fn check_class<'a>(&self, class: Class<'a>, state: &mut State<'a>) {
         for member in class.members() {
             let before = state.methods.len();

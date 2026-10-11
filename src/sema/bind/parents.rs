@@ -39,6 +39,8 @@ struct Lists<'l> {
     /// For a linter: `Bound::expr_kinds` with `NOT_REACHED` in it, `Bound::expr_kind_counts` with zeros.
     expr_kinds: &'l mut [u8],
     expr_kind_counts: &'l mut [u32],
+    /// For a linter: `Bound::kind_counts` with zeros.
+    kind_counts: &'l mut [u32],
     /// For a linter: the `return` statements are added, in the order of the list of the file.
     returns: &'l mut Vec<u32>,
 }
@@ -87,6 +89,7 @@ pub(super) fn fill_in<S: Storage, const LINT: bool>(f: &FileIn<S>, b: &mut Bound
     if LINT {
         refilled(&mut b.expr_kinds, f.exprs.len(), NOT_REACHED);
         refilled(&mut b.expr_kind_counts, 2 * ExprTag::COUNT, 0);
+        refilled(&mut b.kind_counts, kind_counts::LEN, 0);
     }
     refilled(&mut b.expr_parent, f.exprs.len(), Parent::None);
     refilled(&mut b.stmt_parent, f.stmts.len(), Parent::None);
@@ -128,6 +131,7 @@ fn lists_of(b: &mut BoundBuilder) -> Lists<'_> {
         type_param_scope: &mut b.type_param_scope,
         expr_kinds: &mut b.expr_kinds,
         expr_kind_counts: &mut b.expr_kind_counts,
+        kind_counts: &mut b.kind_counts,
         returns: &mut b.ids,
     }
 }
@@ -169,6 +173,7 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
         type_param_scope,
         expr_kinds,
         expr_kind_counts,
+        kind_counts,
         returns,
     } = lists;
 
@@ -357,8 +362,12 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
     if let Some(all) = expr_kind_counts.get_mut(..counts.len()) {
         all.copy_from_slice(&counts);
     }
+    let mut others = [0u32; kind_counts::LEN];
     for (i, ty) in f.types.iter().enumerate() {
         let id = TypeNodeId(i as u32);
+        if LINT {
+            others[kind_counts::TYPES + ty.kind.tag() as usize] += 1;
+        }
         match ty.kind {
             // An error. Its expression is part of what the type is in.
             TypeNodeKind::Heritage { .. } => return false,
@@ -490,6 +499,21 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
         macro_rules! stmts {
             ($($s:expr),*) => {{ $(set!(stmt_parent[$s] = me);)* }};
         }
+        macro_rules! head {
+            ($head:expr) => {
+                if LINT
+                    && let Some(Stmt {
+                        kind: StmtKind::Expr(_),
+                        ..
+                    }) = f.stmts.get($head.idx())
+                {
+                    others[kind_counts::HEADS_THAT_ARE_EXPRESSIONS] += 1;
+                }
+            };
+        }
+        if LINT {
+            others[kind_counts::STMTS + s.kind.tag() as usize] += 1;
+        }
         if !s.modifiers.is_empty() && !matches!(s.kind, StmtKind::Class(_)) {
             decorators!(s.modifiers, me);
         }
@@ -530,6 +554,7 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
             } => {
                 exprs!(test, update);
                 stmts!(init, body);
+                head!(init);
             }
             StmtKind::ForIn { left, expr, body }
             | StmtKind::ForOf {
@@ -537,6 +562,7 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
             } => {
                 exprs!(expr);
                 stmts!(left, body);
+                head!(left);
             }
             StmtKind::Block(list) => {
                 for inner in f.ids(list) {
@@ -627,6 +653,9 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
     fill_of_var_decls(&f.var_decls, expr_parent, pat_parent, type_scope);
     for (i, pat) in f.pats.iter().enumerate() {
         let id = PatId(i as u32);
+        if LINT {
+            others[kind_counts::PATS + pat.kind.tag() as usize] += 1;
+        }
         match pat.kind {
             PatKind::Missing | PatKind::Ident(_) => {}
             PatKind::Object(props) => {
@@ -674,6 +703,14 @@ fn fill<S: Storage, const LINT: bool>(f: &FileIn<S>, lists: Lists) -> bool {
     }
     for &specifier in f.specifier_expressions.iter() {
         set!(expr_parent[specifier] = Parent::File);
+    }
+    if LINT {
+        let is_orphan = |it: &&PatParent| matches!(it, PatParent::None);
+        others[kind_counts::PATS_WITHOUT_PARENT] =
+            pat_parent.iter().filter(is_orphan).count() as u32;
+    }
+    if let Some(all) = kind_counts.get_mut(..others.len()) {
+        all.copy_from_slice(&others);
     }
     true
 }

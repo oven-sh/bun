@@ -725,6 +725,110 @@ impl ExprKind {
     }
 }
 
+/// Declares `$tag`, the kind of a `$kind` without its payload, in the same order, and `$kind::tag`.
+macro_rules! tags {
+    ($(#[$doc:meta])* $tag:ident of $kind:ident { $($variant:ident $shape:tt,)* }) => {
+        $(#[$doc])*
+        #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+        #[repr(u8)]
+        pub enum $tag { $($variant,)* }
+
+        impl $tag {
+            pub const COUNT: usize = [$($tag::$variant),*].len();
+        }
+
+        impl $kind {
+            #[inline]
+            pub fn tag(&self) -> $tag {
+                match self { $(tags!(@pattern $kind $variant $shape) => $tag::$variant,)* }
+            }
+        }
+    };
+    (@pattern $kind:ident $variant:ident unit) => { $kind::$variant };
+    (@pattern $kind:ident $variant:ident tuple) => { $kind::$variant(..) };
+    (@pattern $kind:ident $variant:ident fields) => { $kind::$variant { .. } };
+}
+
+tags! {
+    /// The kind of a statement, without its payload.
+    StmtTag of StmtKind {
+        Empty unit,
+        Debugger unit,
+        Expr tuple,
+        Var tuple,
+        Fn tuple,
+        Class tuple,
+        Interface tuple,
+        TypeAlias tuple,
+        Enum tuple,
+        Module tuple,
+        Return tuple,
+        If fields,
+        For fields,
+        ForIn fields,
+        ForOf fields,
+        While fields,
+        DoWhile fields,
+        Block tuple,
+        Switch fields,
+        Try fields,
+        Throw tuple,
+        Break tuple,
+        Continue tuple,
+        Labeled fields,
+        Import tuple,
+        ImportEquals tuple,
+        ExportNamed tuple,
+        ExportStar fields,
+        ExportDefault tuple,
+        ExportAssign tuple,
+        ExportAsNamespace tuple,
+    }
+}
+
+tags! {
+    /// The kind of a type, without its payload.
+    TypeTag of TypeNodeKind {
+        Error unit,
+        Heritage fields,
+        Keyword tuple,
+        Ref fields,
+        StringLit tuple,
+        NumberLit tuple,
+        BigIntLit fields,
+        BoolLit tuple,
+        Template fields,
+        Array tuple,
+        Tuple tuple,
+        Union tuple,
+        Intersection tuple,
+        Fn tuple,
+        Object tuple,
+        Cond fields,
+        Infer tuple,
+        Mapped tuple,
+        IndexedAccess fields,
+        Keyof tuple,
+        Readonly tuple,
+        UniqueSymbol unit,
+        Unique tuple,
+        JSDoc fields,
+        Typeof fields,
+        Import fields,
+        Predicate fields,
+    }
+}
+
+tags! {
+    /// The kind of a pattern, without its payload.
+    PatTag of PatKind {
+        Missing unit,
+        Ident tuple,
+        Object tuple,
+        Array tuple,
+    }
+}
+
 /// The expressions of a file, grouped by kind. Within a kind they keep the order of the file's
 /// list.
 pub struct ExprsByKind {

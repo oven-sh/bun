@@ -74,7 +74,7 @@ macro_rules! bound_fields {
                 interface_symbol interface_scope interface_contains_this
                 alias_symbol alias_scope var_stmt assignments case_stmt stmt_flow
                 case_fallthrough import_scope export_scope free_idents alias_idents
-                flow flow_edges flow_shared expr_kinds expr_kind_counts
+                flow flow_edges flow_shared expr_kinds expr_kind_counts kind_counts
             ]
             few: [
                 export_stars ambient_modules pattern_ambient_modules

@@ -1,7 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::{ast_utils, text};
-use smallvec::SmallVec;
 
 /// Enforce a maximum number of statements allowed in function blocks.
 pub struct MaxStatements {
@@ -15,87 +14,19 @@ const EXCEED: Message = Message::new(
     "{{name}} has too many statements ({{count}}). Maximum allowed is {{max}}.",
 );
 
-/// With `ignoreTopLevelFunctions`, the functions that are in no other function or static block.
 #[derive(Default)]
-pub struct TopLevelFunctions<'a> {
+pub struct State<'a> {
+    /// By the number of a function or a static block: the sum of the lengths of the `BlockStatement`s in it, without its body and
+    /// without those of the functions and the static blocks in it.
+    in_blocks: Vec<u32>,
+    /// The function or the static block that a block is in.
+    around: AncestorMemo<'a, Func<'a>>,
+    /// With `ignoreTopLevelFunctions`: how many functions are in no other function or static block.
     count: usize,
     /// Those with too many statements, and how many.
     exceeding: Vec<(Func<'a>, usize)>,
     /// What is in a function or a static block.
     enclosed: AncestorMemo<'a, ()>,
-}
-
-fn may_contain_blocks(statement: &Stmt) -> bool {
-    matches!(
-        statement.tag(),
-        StmtTag::Block
-            | StmtTag::If
-            | StmtTag::For
-            | StmtTag::ForIn
-            | StmtTag::ForOf
-            | StmtTag::While
-            | StmtTag::DoWhile
-            | StmtTag::Labeled
-            | StmtTag::Switch
-            | StmtTag::Try
-            | StmtTag::Module
-    )
-}
-
-fn push_what_may_contain_blocks<'a>(pending: &mut SmallVec<[Stmt<'a>; 16]>, statements: List<'a, Stmt<'a>>) {
-    for statement in statements {
-        if may_contain_blocks(&statement) {
-            pending.push(statement);
-        }
-    }
-}
-
-/// The sum of the lengths of the `BlockStatement`s of `func`, without those of the functions and
-/// the static blocks in it.
-fn count_statements(func: Func) -> usize {
-    let Some(body) = func.body_statements() else {
-        return 0;
-    };
-    let mut count = body.len();
-    let mut pending: SmallVec<[Stmt; 16]> = SmallVec::new();
-    push_what_may_contain_blocks(&mut pending, body);
-    while let Some(statement) = pending.pop() {
-        match statement.kind() {
-            StmtKind::Block(statements) => {
-                count += statements.len();
-                push_what_may_contain_blocks(&mut pending, statements);
-            }
-            StmtKind::If { yes, no, .. } => {
-                pending.push(yes);
-                pending.extend(no);
-            }
-            StmtKind::For { body, .. }
-            | StmtKind::ForIn { body, .. }
-            | StmtKind::ForOf { body, .. }
-            | StmtKind::While { body, .. }
-            | StmtKind::DoWhile { body, .. }
-            | StmtKind::With { body, .. }
-            | StmtKind::Labeled { body, .. } => pending.push(body),
-            StmtKind::Switch { cases, .. } => {
-                for case in cases {
-                    push_what_may_contain_blocks(&mut pending, case.body());
-                }
-            }
-            StmtKind::Try {
-                block,
-                handler,
-                finalizer,
-                ..
-            } => {
-                pending.push(block);
-                pending.extend(handler);
-                pending.extend(finalizer);
-            }
-            StmtKind::Module(module) => push_what_may_contain_blocks(&mut pending, module.innermost().body()),
-            _ => {}
-        }
-    }
-    count
 }
 
 impl MaxStatements {
@@ -125,8 +56,8 @@ impl MaxStatements {
 
 impl Rule for MaxStatements {
     const META: Meta = Meta::eslint("max-statements", Kind::Suggestion).reports_on_exit();
-    const ON: On = On::new().funcs().finish();
-    type State<'a> = TopLevelFunctions<'a>;
+    const ON: On = On::new().stmts(&[StmtTag::Block]).funcs().finish();
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         let object = options.object(0);
@@ -140,11 +71,28 @@ impl Rule for MaxStatements {
     }
 
     fn narrow<'a>(&self, _: &'a File<'a>) -> On {
-        if self.ignore_top_level_functions { On::new().funcs().finish() } else { On::new().funcs() }
+        let on = On::new().stmts(&[StmtTag::Block]).funcs();
+        if self.ignore_top_level_functions { on.finish() } else { on }
     }
 
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<TopLevelFunctions<'a>> {
-        Some(TopLevelFunctions::default())
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
+    }
+
+    fn stmt<'a>(&self, block: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        // A `with` statement has the same tag.
+        let len = block.as_block().map_or(0, List::len);
+        if len > 0
+            && let Some(func) = cx.state.around.find(Node::Stmt(block), |_, parent| parent.as_func())
+        {
+            let at = func.id().idx();
+            if at >= cx.state.in_blocks.len() {
+                cx.state.in_blocks.resize(at + 1, 0);
+            }
+            if let Some(sum) = cx.state.in_blocks.get_mut(at) {
+                *sum += len as u32;
+            }
+        }
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
@@ -159,7 +107,8 @@ impl Rule for MaxStatements {
         let Some(max) = self.max else {
             return;
         };
-        let count = count_statements(func);
+        let in_blocks = cx.state.in_blocks.get(func.id().idx()).map_or(0, |it| *it as usize);
+        let count = func.body_statements().map_or(0, List::len) + in_blocks;
         if count <= max {
             return;
         }

@@ -1049,6 +1049,27 @@ pub struct BoundIn<S: Storage> {
     pub expr_kinds: S::List<u8>,
     /// How many of `expr_kinds` are 0, 1, 2 and so on, up to `2 * ExprTag::COUNT`.
     pub expr_kind_counts: S::List<u32>,
+    /// How many statements, types and patterns are of each kind, whether anything gets to them or
+    /// not, and a few other numbers: see [`kind_counts`]. Where it is not empty every statement has
+    /// a `stmt_parent` and every type a `type_scope`.
+    pub kind_counts: S::List<u32>,
+}
+
+/// What is where in [`BoundIn::kind_counts`].
+pub mod kind_counts {
+    use crate::hir::{PatTag, StmtTag, TypeTag};
+
+    /// From here on by `StmtTag`.
+    pub const STMTS: usize = 0;
+    /// From here on by `TypeTag`.
+    pub const TYPES: usize = STMTS + StmtTag::COUNT;
+    /// From here on by `PatTag`.
+    pub const PATS: usize = TYPES + TypeTag::COUNT;
+    /// The `init` of a `For` and the `left` of a `ForIn` or a `ForOf` that are a `StmtKind::Expr`.
+    pub const HEADS_THAT_ARE_EXPRESSIONS: usize = PATS + PatTag::COUNT;
+    /// The patterns whose `pat_parent` is `PatParent::None`.
+    pub const PATS_WITHOUT_PARENT: usize = HEADS_THAT_ARE_EXPRESSIONS + 1;
+    pub const LEN: usize = PATS_WITHOUT_PARENT + 1;
 }
 
 /// See [`BoundIn::expr_kinds`].
@@ -1888,6 +1909,7 @@ impl BoundBuilder {
             flow_places,
             expr_kinds,
             expr_kind_counts,
+            kind_counts,
         } = self;
         *ran_out_of_stack = Default::default();
         symbols.clear();
@@ -1979,6 +2001,7 @@ impl BoundBuilder {
         *flow_places = Default::default();
         expr_kinds.clear();
         expr_kind_counts.clear();
+        kind_counts.clear();
     }
 
     /// The same. What is left is empty, and the lists that are long in most files keep their room.
@@ -2116,6 +2139,7 @@ impl BoundBuilder {
             flow_places: self.flow_places,
             expr_kinds: copy_to_arena(&mut self.expr_kinds, arena),
             expr_kind_counts: copy_to_arena(&mut self.expr_kind_counts, arena),
+            kind_counts: copy_to_arena(&mut self.kind_counts, arena),
         }
     }
 }
@@ -2281,6 +2305,7 @@ impl Bound<'_> {
             flow_places: self.flow_places,
             expr_kinds: Fixed::shared(&self.expr_kinds),
             expr_kind_counts: Fixed::shared(&self.expr_kind_counts),
+            kind_counts: Fixed::shared(&self.kind_counts),
         }
     }
 }
@@ -2358,7 +2383,7 @@ impl Drop for Recycled {
 ///
 /// As in the result of `bind`: what [`bind_for_format`] lists, with the same exception, and of `fns`
 /// also `enclosing`, `returns` and, in another order, `yields`. Only here: `expr_kinds`,
-/// `expr_kind_counts`. Of the few files that are left to the binder it is the result of `bind`.
+/// `expr_kind_counts`, `kind_counts`. Of the few files that are left to the binder it is the result of `bind`.
 pub fn bind_for_lint_in<'r>(
     file: &File,
     options: BindOptions,

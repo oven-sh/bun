@@ -199,9 +199,7 @@ impl Rule for PreferExponentiationOperator {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        // The names that a reference to `Math` starts with.
-        let roots = ["Math", "global", "globalThis", "self", "window"];
-        (file.mentions_any(&roots) && file.has_exprs([ExprTag::Call])).then_some(())
+        file.has_exprs([ExprTag::Call]).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

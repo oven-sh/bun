@@ -123,7 +123,9 @@ impl<'a> Visitor<'a> for Named<'a> {
 fn oxlint_may_be_unused_after_all<'a>(file: &'a File<'a>, mut discarded: Vec<Expr<'a>>) -> Vec<Symbol<'a>> {
     let mut named = Named::default();
     for e in file.exprs_of_kind(ExprTag::Assign) {
-        if let ExprKind::Assign { op: Some(BinOp::And | BinOp::Or | BinOp::Nullish), target, .. } = e.kind() {
+        if let Some(Some(BinOp::And | BinOp::Or | BinOp::Nullish)) = e.assign_op()
+            && let Some((_, target, _)) = e.as_assign()
+        {
             named.enter(Node::Expr(target));
         }
     }
@@ -1593,7 +1595,7 @@ impl Rule for NoUnusedVars {
     }
 
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let ExprKind::Binary { left, .. } = e.kind() {
+        if let Some(left) = e.left() {
             cx.state.discarded.push(left);
         }
     }

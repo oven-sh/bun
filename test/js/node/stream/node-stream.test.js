@@ -628,6 +628,64 @@ it("Readable.fromWeb: destroy(err) after consuming a chunk cancels the web sourc
   });
 });
 
+// A native-backed Readable pushes its pull results synchronously, so while it flows Readable has the next chunk
+// buffered when a 'data' listener runs, and it pushes EOF a tick after the last chunk. destroy() stopped neither: flow()
+// emitted the buffered chunk with `destroyed === true`, and 'end' followed. Node's fromWeb pushes asynchronously, so
+// nothing is buffered or due at that point, and it emits only 'close'.
+describe.each([
+  ["Blob.stream()", size => new Blob([Buffer.alloc(size, "x")]).stream()],
+  ["Response.body", size => new Response(Buffer.alloc(size, "x")).body],
+])("Readable.fromWeb(%s): destroy() inside a 'data' listener", (_, makeWeb) => {
+  // With today's chunking, 100 bytes are the only chunk and EOF is due a tick later, 16484 bytes are two chunks with
+  // the last one buffered behind the first, and 1 MiB has more buffered behind every chunk.
+  it.each([100, 16384 + 100, 1024 * 1024])("of a %d byte body stops 'data' and 'end'", async size => {
+    const r = Readable.fromWeb(makeWeb(size));
+    const events = [];
+    const { promise: closed, resolve } = Promise.withResolvers();
+    r.on("data", () => {
+      events.push(`data destroyed=${r.destroyed}`);
+      r.destroy();
+    });
+    r.on("end", () => events.push("end"));
+    r.on("close", () => {
+      events.push("close");
+      resolve();
+    });
+    await closed;
+    expect(events).toEqual(["data destroyed=false", "close"]);
+  });
+});
+
+it("Readable.fromWeb: destroy() on a paused stream keeps the buffered chunk for read(), as in Node", async () => {
+  const r = Readable.fromWeb(new Blob([Buffer.alloc(1024, "x")]).stream());
+  const { promise, resolve } = Promise.withResolvers();
+  r.once("readable", () => {
+    r.destroy();
+    resolve(r.read());
+  });
+  const chunk = await promise;
+  expect(chunk?.length).toBe(1024);
+});
+
+// Once the source has ended, what is buffered is all that is left. Node delivers it after destroy(), and to drop it
+// would let 'end' follow data that never arrived.
+it("Readable.fromWeb: a stream that ended while paused still delivers every byte after destroy(), as in Node", async () => {
+  const size = 16384 + 100;
+  const r = Readable.fromWeb(new Blob([Buffer.alloc(size, "x")]).stream());
+  let bytes = 0;
+  r.on("data", chunk => {
+    bytes += chunk.length;
+    r.destroy();
+  });
+  r.pause();
+  const closed = new Promise(resolve => r.once("close", resolve));
+  r.read(0);
+  while (!r._readableState.ended) await new Promise(resolve => setImmediate(resolve));
+  r.resume();
+  await closed;
+  expect(bytes).toBe(size);
+});
+
 it("Readable.toWeb(Readable.fromWeb(rs)).cancel(reason) propagates to the web source", async () => {
   let cancelReason;
   const web = new ReadableStream({

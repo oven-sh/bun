@@ -4,18 +4,18 @@ import { bunEnv, bunExe } from "harness";
 
 test("indexOfLine handles non-number offset", () => {
   // Regression test: passing a non-number offset should not crash
-  expect(indexOfLine(new Uint8ClampedArray(), {})).toBe(-1);
-  expect(indexOfLine(new Uint8Array(), {})).toBe(-1);
+  expect(indexOfLine(new Uint8ClampedArray(), {} as any)).toBe(-1);
+  expect(indexOfLine(new Uint8Array(), {} as any)).toBe(-1);
 
   // Various non-number offsets should coerce properly
-  expect(indexOfLine(new Uint8Array(), null)).toBe(-1);
+  expect(indexOfLine(new Uint8Array(), null as any)).toBe(-1);
   expect(indexOfLine(new Uint8Array(), undefined)).toBe(-1);
   expect(indexOfLine(new Uint8Array(), NaN)).toBe(-1);
 
   // With actual content
   const buf = new Uint8Array([104, 101, 108, 108, 111, 10, 119, 111, 114, 108, 100]); // "hello\nworld"
-  expect(indexOfLine(buf, {})).toBe(5); // {} coerces to NaN -> 0
-  expect(indexOfLine(buf, "2")).toBe(5); // "2" coerces to 2, newline is at 5
+  expect(indexOfLine(buf, {} as any)).toBe(5); // {} coerces to NaN -> 0
+  expect(indexOfLine(buf, "2" as any)).toBe(5); // "2" coerces to 2, newline is at 5
 });
 
 test("indexOfLine", () => {
@@ -94,7 +94,7 @@ test("indexOfLine returns -1 when the offset's valueOf transfers the buffer via 
       return 0;
     },
   };
-  expect(indexOfLine(buf, offset)).toBe(-1);
+  expect(indexOfLine(buf, offset as any)).toBe(-1);
   expect(buf.byteLength).toBe(0);
   expect(kept.length).toBe(1);
   expect(new Uint8Array(kept[0])).toEqual(new Uint8Array([104, 101, 108, 108, 111, 10, 119, 111, 114, 108, 100]));
@@ -109,7 +109,7 @@ test("indexOfLine returns -1 when the offset's valueOf transfers the buffer via 
       return 0;
     },
   };
-  expect(indexOfLine(buf, offset)).toBe(-1);
+  expect(indexOfLine(buf, offset as any)).toBe(-1);
   expect(buf.byteLength).toBe(0);
   expect(kept.length).toBe(1);
   expect(new Uint8Array(kept[0])).toEqual(new Uint8Array([104, 101, 108, 108, 111, 10, 119, 111, 114, 108, 100]));

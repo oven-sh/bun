@@ -734,7 +734,7 @@ impl Lockfile {
 
         let dep = &self.buffers.dependencies[dep_id as usize];
 
-        dep.behavior.is_bundled() || !dep.behavior.is_enabled(features)
+        !dep.behavior.is_placed(features)
     }
 
     pub fn resolve_catalog_dependency(&self, dep: &Dependency) -> Option<DependencyVersion> {
@@ -861,6 +861,50 @@ impl Lockfile {
         0
     }
 
+    /// Does the root or a workspace depend on package `id` directly?
+    pub(crate) fn is_workspace_declared_package(&self, id: PackageID) -> bool {
+        let packages = self.packages.slice();
+        let resolutions = self.buffers.resolutions.as_slice();
+        for (pkg_id, res_list) in packages.items_resolutions().iter().enumerate() {
+            let tag = packages.items_resolution()[pkg_id].tag;
+            if tag != ResolutionTag::Workspace && tag != ResolutionTag::Root {
+                continue;
+            }
+            if res_list.get(resolutions).contains(&id) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Is dependency `id` declared by the root, a workspace, or a `file:` package
+    /// one of them depends on directly? Checked, not assumed: a migrated lockfile
+    /// can carry dependencies for a folder that a registry package shipped.
+    pub(crate) fn is_dependency_of_local_package(&self, id: DependencyID) -> bool {
+        let Some(parent_id) = self.get_parent_pkg_of_dependency(id) else {
+            return false;
+        };
+        match self.packages.items_resolution()[parent_id as usize].tag {
+            ResolutionTag::Root | ResolutionTag::Workspace => true,
+            ResolutionTag::Folder => self.is_workspace_declared_package(parent_id),
+            _ => false,
+        }
+    }
+
+    /// May the folder path of dependency `id` leave its package directory? Yes
+    /// when a local package declares the dependency, or when a plain override or
+    /// resolution supplies the path (those are only ever parsed from the root
+    /// package.json). Both are user authored, like a root `file:` dependency.
+    pub(crate) fn is_trusted_folder_dependency(&self, id: DependencyID) -> bool {
+        if self.is_dependency_of_local_package(id) {
+            return true;
+        }
+        let buf = self.buffers.string_bytes.as_slice();
+        let dep = &self.buffers.dependencies[id as usize];
+        self.overrides
+            .contains_name(dep.name_hash, dep.name.slice(buf), buf)
+    }
+
     /// Does this tree id belong to a workspace (including workspace root)?
     /// TODO(dylan-conway) fix!
     pub(crate) fn is_workspace_tree_id(&self, id: tree::Id) -> bool {
@@ -906,6 +950,19 @@ impl Lockfile {
         }
     }
 
+    /// The workspaces whose dependency lists `request` names: the ones that received it under `--filter` / `-r`, else the cwd's.
+    pub(crate) fn workspaces_of_update_request(
+        &self,
+        pending: Option<&crate::package_manager_real::add_remove_with_filter::PendingWrite>,
+        workspace_name_hash: Option<PackageNameHash>,
+        request: &UpdateRequest,
+    ) -> Vec<PackageID> {
+        match pending {
+            Some(pending) => pending.workspace_ids_receiving(self, request.name_hash),
+            None => vec![self.get_workspace_package_id(workspace_name_hash)],
+        }
+    }
+
     /// Re-runnable: package_json_write_back binds again after re-deriving the declared columns.
     #[cold]
     #[inline(never)]
@@ -919,19 +976,12 @@ impl Lockfile {
         let string_buf = self.buffers.string_bytes.as_slice();
         let string_buf_ptr = bun_ptr::RawSlice::new(string_buf);
         let slice = self.packages.slice();
-        let cwd_workspace = [self.get_workspace_package_id(workspace_name_hash)];
 
         'request_updated: for update in updates.iter_mut() {
             update.e_string = None;
-            let filtered: Vec<PackageID>;
-            let workspace_ids: &[PackageID] = match pending {
-                Some(pending) => {
-                    filtered = pending.workspace_ids_receiving(self, update.name_hash);
-                    &filtered
-                }
-                None => &cwd_workspace,
-            };
-            for &workspace_package_id in workspace_ids {
+            let workspace_ids =
+                self.workspaces_of_update_request(pending, workspace_name_hash, update);
+            for &workspace_package_id in &workspace_ids {
                 let dep_list = slice.items_dependencies()[workspace_package_id as usize];
                 let res_list = slice.items_resolutions()[workspace_package_id as usize];
                 let workspace_deps: &[Dependency] =
@@ -2152,6 +2202,26 @@ impl Lockfile {
         self.exact_pinned.set(i);
     }
 
+    /// See `Scratch::unplaced_subtree`.
+    pub(crate) fn mark_unplaced_subtree(&mut self, dependencies: DependencySlice) {
+        let range = bun_collections::bit_set::Range {
+            start: dependencies.begin() as usize,
+            end: dependencies.end() as usize,
+        };
+        let unplaced_subtree = &mut self.scratch.unplaced_subtree;
+        if unplaced_subtree.bit_length() < range.end {
+            bun_core::handle_oom(unplaced_subtree.resize(range.end, false));
+        }
+        unplaced_subtree.set_range_value(range, true);
+    }
+
+    #[inline]
+    pub(crate) fn is_in_unplaced_subtree(&self, id: DependencyID) -> bool {
+        self.scratch
+            .unplaced_subtree
+            .is_set_allow_out_of_bound(id as usize, false)
+    }
+
     pub(crate) fn get_package_id(
         &self,
         name_hash: u64,
@@ -2495,6 +2565,8 @@ impl Lockfile {
 pub struct Scratch {
     pub(crate) duplicate_checker_map: DuplicateCheckerMap,
     pub(crate) dependency_list_queue: DependencyQueue,
+    /// `bit[dependency_id]`: this resolve reached it below a dependency that the installers filter.
+    pub(crate) unplaced_subtree: DynamicBitSet,
 }
 
 pub(crate) type DuplicateCheckerMap =
@@ -2506,6 +2578,7 @@ impl Scratch {
         Scratch {
             dependency_list_queue: DependencyQueue::init(),
             duplicate_checker_map: DuplicateCheckerMap::default(),
+            unplaced_subtree: DynamicBitSet::default(),
         }
     }
 }

@@ -826,7 +826,6 @@ impl Parser<'_> {
         self.add_line_to_current_block(line)?;
 
         // Ensure we alternate line buffers to avoid aliasing
-        let _ = line_buf;
         *line_idx ^= 1;
         Ok(())
     }

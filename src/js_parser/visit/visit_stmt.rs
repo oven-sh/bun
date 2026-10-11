@@ -38,7 +38,9 @@ fn list_to_stmts<'a>(list: StmtList<'a>) -> StmtNodeList {
 // a direct `impl P` block. The 30+ per-variant `s_*` helpers are private; only
 // `visit_and_append_stmt` is surfaced. Full draft body preserved under  mod _draft below.
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
+    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
+{
     // Thin alias of `current_scope_mut()` kept for local readability.
     #[inline(always)]
     fn cur_scope(&mut self) -> &mut js_ast::Scope {
@@ -2268,8 +2270,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         next_numeric_value = Some(num.value() + 1.0);
                     }
-                    js_ast::ExprData::EString(str_) => {
+                    js_ast::ExprData::EString(mut str_) => {
                         has_string_value = true;
+
+                        // Inlined uses share this node's rope and folds append to ropes in place: store it flat.
+                        str_.resolve_rope_if_needed(p.arena);
 
                         exported_members.get_ptr_mut(name).unwrap().data =
                             js_ast::ts::Data::EnumString(str_);

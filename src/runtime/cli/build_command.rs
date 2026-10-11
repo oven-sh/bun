@@ -151,6 +151,29 @@ impl BuildCommand {
             .cloned()
             .unwrap_or_default();
 
+        if ctx.bundler_options.check && ctx.bundler_options.transform_only {
+            // Nothing is bundled, so nothing has been resolved or read.
+            let entry_points = this_transpiler.options.entry_points.iter();
+            let checked = options::TypeChecked {
+                cwd: bun_resolver::fs::FileSystem::instance().top_level_dir,
+                tsconfig: ctx.args.tsconfig_override.as_deref(),
+                conditions: &ctx.args.conditions,
+                loaders: &this_transpiler.options.loaders,
+                entry_points: &mut entry_points.map(|path| &**path),
+                sources: &mut core::iter::empty(),
+            };
+            if !crate::cli::check_command::check_for_build_command(checked, log_ref) {
+                log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
+                    Output::error_writer(),
+                ))?;
+                Output::flush();
+                exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
+            }
+        } else if ctx.bundler_options.check {
+            this_transpiler.options.type_check =
+                Some(crate::cli::check_command::check_for_build_command);
+        }
+
         this_transpiler.options.source_map =
             options::SourceMapOption::from_api(ctx.args.source_map);
 
@@ -255,6 +278,11 @@ impl BuildCommand {
 
         this_transpiler.options.bytecode = ctx.bundler_options.bytecode;
         this_transpiler.options.bytecode_depth = ctx.bundler_options.bytecode_depth;
+        this_transpiler.options.optimize_bytecode = ctx.bundler_options.optimize_bytecode;
+        this_transpiler
+            .options
+            .bytecode_order
+            .clone_from(&ctx.bundler_options.bytecode_order);
         let mut was_renamed_from_index = false;
 
         if ctx.bundler_options.compile {
@@ -594,13 +622,6 @@ impl BuildCommand {
         }
         let _ = client_transpiler;
 
-        // var env_loader = this_transpiler.env;
-
-        if ctx.debug.dump_environment_variables {
-            this_transpiler.dump_environment_variables();
-            return Ok(());
-        }
-
         let mut reachable_file_count: usize = 0;
         let mut minify_duration: u64 = 0;
         let mut input_code_length: u64 = 0;
@@ -932,6 +953,9 @@ impl BuildCommand {
                         }
                         flags
                     },
+                    bun_standalone_module_graph::StandaloneModuleGraph::RuntimeOptions {
+                        jit_policy: ctx.bundler_options.compile_jit_policy,
+                    },
                 ) {
                     Ok(r) => r,
                     Err(err) => {
@@ -1111,7 +1135,9 @@ impl BuildCommand {
                         options::OutputKind::ModuleInfo
                         | options::OutputKind::BuiltinBytecode
                         | options::OutputKind::BytecodeStringTable
-                        | options::OutputKind::ModuleInfoStringTable => "<d>",
+                        | options::OutputKind::BytecodePayload
+                        | options::OutputKind::ModuleInfoStringTable
+                        | options::OutputKind::PrelinkedModuleGraph => "<d>",
                         options::OutputKind::MetafileJson
                         | options::OutputKind::MetafileMarkdown => "<green>",
                     }))?;
@@ -1159,7 +1185,9 @@ impl BuildCommand {
                         options::OutputKind::ModuleInfo => "module info",
                         options::OutputKind::BuiltinBytecode => "builtin bytecode",
                         options::OutputKind::BytecodeStringTable => "bytecode strings",
+                        options::OutputKind::BytecodePayload => "bytecode payload",
                         options::OutputKind::ModuleInfoStringTable => "module info strings",
+                        options::OutputKind::PrelinkedModuleGraph => "module graph",
                         options::OutputKind::MetafileJson => "metafile json",
                         options::OutputKind::MetafileMarkdown => "metafile markdown",
                     }

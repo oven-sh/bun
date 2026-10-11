@@ -12,11 +12,11 @@ use crate::server::static_route::InitFromBytesOptions;
 use crate::webcore::AnyBlob;
 
 /// `bun.GenericIndex(u30, Assets)`.
-pub enum AssetsMarker {}
+pub(crate) enum AssetsMarker {}
 pub(crate) type EntryIndex = bun_core::GenericIndex<u32, AssetsMarker>;
 
 #[derive(Default)]
-pub struct Assets {
+pub(crate) struct Assets {
     /// Keys are absolute paths. `StringArrayHashMap` stores owned `Box<[u8]>`
     /// keys.
     pub(crate) path_map: StringArrayHashMap<EntryIndex>,

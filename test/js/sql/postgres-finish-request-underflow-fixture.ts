@@ -31,7 +31,7 @@ type ConnState = { buf: Buffer; sawStartup: boolean; simpleCount: number };
 
 const { port, server } = await listeningServer(socket => {
   const state: ConnState = { buf: Buffer.alloc(0), sawStartup: false, simpleCount: 0 };
-  socket.on("data", data => {
+  socket.on("data", (data: Buffer) => {
     state.buf = Buffer.concat([state.buf, data]);
     if (!state.sawStartup) {
       if (state.buf.length < 4) return;

@@ -241,7 +241,9 @@ fn apply_barrel_optimization_impl(
         }
     }
 
-    // Mark unneeded named re-export records as is_unused.
+    // Defer unneeded named re-export records: is_unused keeps them out of
+    // resolution and linking, is_barrel_deferred lets un_defer_record tell them
+    // from the records the parser marked is_unused.
     let mut has_deferrals = false;
     // Borrowck: collect (ref_, import_record_index)
     // pairs first so we can mutate `ast.import_records` without aliasing
@@ -254,7 +256,10 @@ fn apply_barrel_optimization_impl(
                 if (iri as usize) < ast.import_records.len() {
                     ast.import_records.as_mut_slice()[iri as usize]
                         .flags
-                        .insert(import_record::Flags::IS_UNUSED);
+                        .insert(
+                            import_record::Flags::IS_UNUSED
+                                | import_record::Flags::IS_BARREL_DEFERRED,
+                        );
                     has_deferrals = true;
                 }
             }
@@ -292,18 +297,19 @@ fn apply_barrel_optimization_impl(
     Ok(())
 }
 
-/// Clear is_unused on a deferred barrel record. Returns true if the record was un-deferred.
+/// Make a record that `apply_barrel_optimization` deferred live again. Returns true if the
+/// record was un-deferred. A record that is is_unused for another reason (an unused
+/// TypeScript import, a macro import, an HMR duplicate) is not deferred and stays as it is.
 fn un_defer_record(import_records: &mut import_record::List, record_idx: usize) -> bool {
     if record_idx >= import_records.len() {
         return false;
     }
     let rec = &mut import_records.as_mut_slice()[record_idx];
-    if rec.flags.contains(import_record::Flags::IS_INTERNAL)
-        || !rec.flags.contains(import_record::Flags::IS_UNUSED)
-    {
+    if !rec.flags.contains(import_record::Flags::IS_BARREL_DEFERRED) {
         return false;
     }
-    rec.flags.remove(import_record::Flags::IS_UNUSED);
+    rec.flags
+        .remove(import_record::Flags::IS_UNUSED | import_record::Flags::IS_BARREL_DEFERRED);
     true
 }
 

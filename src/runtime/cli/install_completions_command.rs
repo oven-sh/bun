@@ -654,11 +654,6 @@ impl InstallCompletionsCommand {
                         break 'brk true;
                     };
 
-                    #[cfg(windows)]
-                    {
-                        dot_zshrc.seek_to(0)?;
-                    }
-
                     let contents = &buf[..read];
 
                     // Do they possibly have it in the file already?

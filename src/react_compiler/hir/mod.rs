@@ -156,12 +156,6 @@ impl FloatValue {
     }
 }
 
-impl From<FloatValue> for f64 {
-    fn from(value: FloatValue) -> Self {
-        value.value()
-    }
-}
-
 impl PartialEq for FloatValue {
     fn eq(&self, other: &Self) -> bool {
         self.0 == other.0
@@ -1245,11 +1239,6 @@ impl std::fmt::Display for Effect {
 #[derive(Debug, Clone)]
 pub struct SpreadPattern {
     pub place: Place,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Hole {
-    Hole,
 }
 
 #[derive(Debug, Clone)]

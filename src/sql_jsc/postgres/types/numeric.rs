@@ -65,7 +65,7 @@ pub(crate) fn recv(cell: &[u8]) -> crate::Result<BinaryNumeric<'_>> {
         return Err(crate::Error::InvalidBuffer);
     };
     // ndigits and dscale are uint16 on the wire (:1091, :1108). A server sends
-    // up to 36864 words, which is negative as an int16.
+    // up to 36864 words, and a count over 32767 is negative as an int16.
     let ndigits = usize::from(u16::from_be_bytes([header[0], header[1]]));
     let mut weight = i32::from(i16::from_be_bytes([header[2], header[3]]));
     let sign = u16::from_be_bytes([header[4], header[5]]);
@@ -117,29 +117,31 @@ pub(crate) fn recv(cell: &[u8]) -> crate::Result<BinaryNumeric<'_>> {
         words_in_range(&words[kept..])?;
     }
 
-    // make_result: strip the leading zero words. A server never sends one, so
-    // this is one compare for its datums.
+    // make_result (:7872): strip the leading zero words. A server never sends
+    // one, so this is one compare for its datums.
     let mut digits = &words[..kept];
     while let Some(([0, 0], rest)) = digits.split_first() {
         digits = rest;
         weight -= 1;
     }
     // trunc_var also clears the low decimal digits that `dscale` hides in the
-    // last kept word (:11948). When no other word is left, that can clear the
+    // last kept word (:11959). When no other word is left, that can clear the
     // whole value.
     if let [last] = digits {
+        // Decimal digits of that word that `dscale` keeps.
         let shown = visible - DEC_DIGITS as i32 * (kept as i32 - 1);
-        let smallest_shown: u16 = match shown {
+        // The smallest word with a digit other than zero among them.
+        let smallest: u16 = match shown {
             4.. => 1,
             3 => 10,
             2 => 100,
             _ => 1000,
         };
-        if u16::from_be_bytes(*last) < smallest_shown {
+        if u16::from_be_bytes(*last) < smallest {
             digits = &[];
         }
     }
-    // make_result: a value with no digit left has weight 0 and sign plus.
+    // make_result (:7883): a value with no digit left has weight 0, sign plus.
     if digits.is_empty() {
         return Ok(BinaryNumeric::Zero { dscale });
     }
@@ -204,7 +206,10 @@ impl NumericVar<'_> {
         let integer_chars = if self.weight < 0 {
             1
         } else {
-            let first = self.digits.first().map_or(0, |word| u16::from_be_bytes(*word));
+            let first = self
+                .digits
+                .first()
+                .map_or(0, |word| u16::from_be_bytes(*word));
             first_word_chars(first) + DEC_DIGITS * self.weight as usize
         };
         let fraction_chars = if self.dscale > 0 { 1 + self.dscale } else { 0 };
@@ -217,14 +222,14 @@ impl NumericVar<'_> {
         let chars = |digit: u16| bun_core::fmt::itoa_padded::<DEC_DIGITS>(u64::from(digit));
         let mut out = Out(out);
         if self.negative {
-            out.put([b'-'])?;
+            out.put(*b"-")?;
         }
 
         // Output all digits before the decimal point
         let mut d: i32;
         if self.weight < 0 {
             d = self.weight + 1;
-            out.put([b'0'])?;
+            out.put(*b"0")?;
         } else {
             // In the first digit, suppress extra leading decimal zeroes
             let first = self.word(0)?;
@@ -244,7 +249,7 @@ impl NumericVar<'_> {
 
         // A decimal point and `dscale` digits. The last word is cut short.
         if self.dscale > 0 {
-            out.put([b'.'])?;
+            out.put(*b".")?;
             let mut left = self.dscale;
             while left >= DEC_DIGITS {
                 out.put(chars(self.word(d)?))?;

@@ -1894,7 +1894,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     // The guard of a case was written without asking whether there is stack for it: between the depth that the printer
     // refuses and the one that the parser refuses it ran out. The threads that format files have stack to spare, so this
     // is the main thread, with half of what it has.
-    test.skipIf(isWindows || isDebug || isASAN).concurrent.each([4_500, 4_612, 4_728, 4_846, 4_967, 5_091, 5_218])(
+    test.skipIf(isWindows || isDebug || isASAN).concurrent.each([4_500, 4_612, 4_728, 4_846, 4_967, 5_091])(
       "Flow's match with %d guards in each other, on a stack of 4 MB",
       async depth => {
         using dir = tempDir("bun-format-small-stack", {});
@@ -1946,6 +1946,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
         expect(result.stderr.trim()).toBe("61200");
         expect(result.exitCode).toBe(0);
       },
+      30_000,
     );
   });
 

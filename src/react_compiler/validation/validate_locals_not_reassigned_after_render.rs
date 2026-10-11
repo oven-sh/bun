@@ -101,6 +101,9 @@ fn get_context_reassignment(
     nesting: Nesting,
     diagnostics: &mut Vec<CompilerDiagnostic>,
 ) -> Option<Place> {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return None;
+    }
     let (is_function_expression, is_async) = match nesting {
         Nesting::Outer => (false, false),
         Nesting::FunctionExpression { is_async } => (true, is_async),

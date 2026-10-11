@@ -45,6 +45,9 @@ pub(crate) trait ReactiveFunctionVisitor {
     /// TS: `visitHirFunction`
     /// Nested functions are left to the visitor's `visit_value` override; upstream also recurses here, which walks depth `d` 2^d times.
     fn visit_hir_function(&self, func_id: FunctionId, state: &mut Self::State) {
+        if !crate::stack_guard::is_safe_to_recurse() {
+            return;
+        }
         let inner_func = &self.env().functions[func_id.0 as usize];
         for param in &inner_func.params {
             let place = param.place();
@@ -83,6 +86,12 @@ pub(crate) trait ReactiveFunctionVisitor {
     }
 
     fn traverse_value(&self, id: EvaluationOrder, value: &ReactiveValue, state: &mut Self::State) {
+        // An instruction is a leaf: only the other values descend.
+        if !matches!(value, ReactiveValue::Instruction(_))
+            && !crate::stack_guard::is_safe_to_recurse()
+        {
+            return;
+        }
         match value {
             ReactiveValue::OptionalExpression { value: inner, .. } => {
                 self.visit_value(id, inner, state);
@@ -276,6 +285,9 @@ pub(crate) trait ReactiveFunctionVisitor {
     }
 
     fn traverse_block(&self, block: &ReactiveBlock, state: &mut Self::State) {
+        if !crate::stack_guard::is_safe_to_recurse() {
+            return;
+        }
         for stmt in block {
             match stmt {
                 ReactiveStatement::Instruction(instr) => {
@@ -378,6 +390,9 @@ pub(crate) trait ReactiveFunctionTransform {
         value: &mut ReactiveValue,
         state: &mut Self::State,
     ) -> Result<(), CompilerError> {
+        if !matches!(value, ReactiveValue::Instruction(_)) {
+            crate::stack_guard::check()?;
+        }
         match value {
             ReactiveValue::OptionalExpression { value: inner, .. } => {
                 self.transform_value(id, inner, state)?;
@@ -669,6 +684,7 @@ pub(crate) trait ReactiveFunctionTransform {
         block: &mut ReactiveBlock,
         state: &mut Self::State,
     ) -> Result<(), CompilerError> {
+        crate::stack_guard::check()?;
         let mut next_block: Option<Vec<ReactiveStatement>> = None;
         let len = block.len();
         for i in 0..len {

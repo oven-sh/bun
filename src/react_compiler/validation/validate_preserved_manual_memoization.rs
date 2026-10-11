@@ -77,6 +77,9 @@ fn is_named(ident: &Identifier) -> bool {
 }
 
 fn visit_block(block: &ReactiveBlock, state: &mut VisitorState) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     for stmt in block {
         visit_statement(stmt, state);
     }
@@ -391,6 +394,9 @@ fn record_temporaries(instr: &ReactiveInstruction, state: &mut VisitorState) {
 /// Record dependencies from a reactive value.
 /// TS: `recordDepsInValue`
 fn record_deps_in_value(value: &ReactiveValue, state: &mut VisitorState) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     match value {
         ReactiveValue::SequenceExpression {
             instructions,

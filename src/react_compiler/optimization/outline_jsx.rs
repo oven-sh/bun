@@ -56,6 +56,9 @@ fn outline_jsx_impl(
     env: &mut Environment,
     outlined_fns: &mut Vec<HirFunction>,
 ) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     // Collect LoadGlobal instructions (tag -> instr)
     let mut globals: HashMap<IdentifierId, usize> = HashMap::new(); // id -> instr_idx
 

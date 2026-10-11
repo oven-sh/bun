@@ -38,6 +38,9 @@ pub(crate) fn name_anonymous_functions(func: &mut HirFunction, env: &mut Environ
     let nodes = name_anonymous_functions_impl(func, env);
 
     fn visit(node: &Node, prefix: &str, updates: &mut Vec<(FunctionId, String)>) {
+        if !crate::stack_guard::is_safe_to_recurse() {
+            return;
+        }
         if node.generated_name.is_some() && node.existing_name_hint.is_none() {
             // Only add the prefix to anonymous functions regardless of nesting depth
             let name = format!("{}{}]", prefix, node.generated_name.as_ref().unwrap());
@@ -127,6 +130,9 @@ struct Node {
 }
 
 fn name_anonymous_functions_impl(func: &HirFunction, env: &Environment) -> Vec<Node> {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return Vec::new();
+    }
     // Functions that we track to generate names for
     let mut functions: HashMap<IdentifierId, usize> = HashMap::new();
     // Tracks temporaries that read from variables/globals/properties

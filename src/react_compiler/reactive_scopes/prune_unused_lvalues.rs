@@ -89,6 +89,9 @@ fn null_unused_lvalues(
     env: &Environment,
     unused: &HashSet<DeclarationId>,
 ) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     for stmt in block.iter_mut() {
         match stmt {
             ReactiveStatement::Instruction(instr) => {
@@ -126,6 +129,9 @@ fn null_unused_in_value(
     env: &Environment,
     unused: &HashSet<DeclarationId>,
 ) {
+    if !crate::stack_guard::is_safe_to_recurse() {
+        return;
+    }
     match value {
         ReactiveValue::SequenceExpression {
             instructions,

@@ -420,6 +420,7 @@ fn visit_function_expression(
     env: &mut Environment,
     func_id: FunctionId,
 ) -> Result<(), CompilerError> {
+    crate::stack_guard::check()?;
     // Collect items in instruction order to process them sequentially.
     // Each item is either a call to check or a nested function to visit.
     enum Item {

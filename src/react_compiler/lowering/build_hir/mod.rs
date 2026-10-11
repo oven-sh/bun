@@ -510,6 +510,9 @@ impl<'h> CaptureWalker<'h> {
     }
 
     fn walk_binding_decl(&mut self, binding: &ast::Binding) {
+        if !crate::stack_guard::is_safe_to_recurse() {
+            return;
+        }
         match &binding.data {
             b::B::BIdentifier(id) => self.record_decl(id.r#ref),
             b::B::BArray(arr) => {
@@ -566,6 +569,9 @@ impl<'h> CaptureWalker<'h> {
     }
 
     fn walk_stmt(&mut self, stmt: &Stmt) {
+        if !crate::stack_guard::is_safe_to_recurse() {
+            return;
+        }
         let stmt_loc = stmt.loc;
         match &stmt.data {
             StmtData::SBlock(b) => {
@@ -689,6 +695,9 @@ impl<'h> CaptureWalker<'h> {
     }
 
     fn walk_expr(&mut self, e: &Expr) {
+        if !crate::stack_guard::is_safe_to_recurse() {
+            return;
+        }
         match &e.data {
             ExprData::EIdentifier(id) => self.record_ref(id.ref_, e.loc),
             ExprData::EImportIdentifier(id) => self.record_ref(id.ref_, e.loc),

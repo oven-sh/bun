@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled, type BundlerTestInput } from "../expectBundled";
@@ -3067,10 +3067,10 @@ describe("bundler", () => {
 // rebuilt a hash index for each block it took out of a map. A chain of 400
 // terms took 979 MB, and an array pattern of 300 elements with defaults 1 GB.
 test("react-compiler memory does not grow with the square of the size of a component", async () => {
-  // A debug build is 20 times slower, and its larger frames overflow the stack
-  // on a longer chain.
+  // A debug build is 20 times slower, and its larger frames run out of stack
+  // at about 95 terms, which leaves the component as written.
   const small = isDebug || isASAN;
-  const terms = small ? 100 : 400;
+  const terms = small ? 80 : 400;
   const elements = small ? 120 : 300;
   using dir = tempDir("react-compiler-memory", {
     "empty.jsx": `export default function App() { return null; }`,
@@ -3115,9 +3115,10 @@ test("react-compiler memory does not grow with the square of the size of a compo
   };
 
   const [empty, chain, pattern] = await Promise.all([peakMB("empty.jsx"), peakMB("chain.jsx"), peakMB("pattern.jsx")]);
-  // Above the empty build, without the fixes: 110 MB and 125 MB for the small
-  // inputs, 940 MB and 1050 MB for the large ones.
-  const bound = small ? 70 : 300;
+  // Above the empty build, without the fixes: 73 MB and 106 MB for the small
+  // inputs, 940 MB and 1050 MB for the large ones. With them, the small inputs
+  // take about 20 MB.
+  const bound = small ? 50 : 300;
   expect(chain - empty).toBeLessThan(bound);
   expect(pattern - empty).toBeLessThan(bound);
 });
@@ -3292,4 +3293,74 @@ test("react-compiler compile time is not exponential in the function nesting dep
   expect(stdout).toContain("p.a + s");
   expect(stdout).toMatch(/\b_c\(\d+\)/);
   expect(exitCode).toBe(0);
+});
+
+// Every pass recurses as deep as the source nests. Upstream runs on a 64 MB
+// stack and has no depth limit. Bun compiles on the thread that parses the
+// file, which has 4 MB (18 MB on Windows), so a component that nested 1,000
+// elements, `if`s or loops ended the build with SIGSEGV and no output. Each
+// recursion now checks the stack first, and a function that does not fit stays
+// as written.
+test("react-compiler leaves a function that nests too deeply as written", async () => {
+  // A release build runs out of stack between 300 and 800 levels, and near
+  // 3,500 on Windows. A debug build has frames 20 times larger: its compiler
+  // overflowed at about 30 nested `if`s or loops, and it is too slow for the
+  // other shapes. An ASAN release build and a Windows debug build compile one
+  // shape at a depth that fits: nothing they finish in time runs out of stack.
+  const small = isDebug || isASAN;
+  const sureToRunOut = isDebug && !isWindows;
+  const depth = small ? 80 : isWindows ? 6000 : 1000;
+  const repeat = (fill: string) => Buffer.alloc(fill.length * depth, fill).toString();
+  const each = (fill: (i: number) => string) => Array.from({ length: depth }, (_, i) => fill(i)).join("");
+  // Each body puts `innermost` at the deepest level.
+  const shapes: Record<string, (innermost: string) => string> = {
+    Jsx: v => `return <b>${repeat("<div>")}{${v}}${repeat("</div>")}</b>;`,
+    If: v => `let v = 0; ${each(i => `if (p.a > ${i}) { `)}v = ${v};${repeat(" }")} return <b>{v}</b>;`,
+    For: v =>
+      `let v = 0; ${each(i => `for (let i${i} = 0; i${i} < p.a; i${i}++) { `)}v = ${v};${repeat(" }")} return <b>{v}</b>;`,
+    Conditional: v => `const v = ${each(i => `p.a > ${i} ? `)}${v}${repeat(" : 0")}; return <b>{v}</b>;`,
+    Arrow: v => `const v = ${repeat("() => ")}${v}; return <b onClick={v}>{n}</b>;`,
+    Member: v => `const v = p[${v}]${repeat(".a")}; return <b>{v}{n}</b>;`,
+  };
+  const names = sureToRunOut ? ["If", "For"] : small ? ["If"] : Object.keys(shapes);
+  // One file: the compiler starts on each function with a full stack, and `Shallow` comes last.
+  using dir = tempDir("react-compiler-depth", {
+    "entry.jsx": `
+      import { useState } from "react";
+      ${names
+        .map(
+          name => `
+      export function ${name}(p) {
+        const [n] = useState(0);
+        ${shapes[name](`"innermost ${name}" + n`)}
+      }`,
+        )
+        .join("\n")}
+      export function Shallow(p) {
+        return <i>{p.a}</i>;
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const isCompiled = (name: string) =>
+    new RegExp(`function ${name}\\(p\\) \\{\\s+let \\$ = _c\\(\\d+\\);`).test(stdout);
+  // Every deep function is in the output, compiled or not, and the build went on to compile `Shallow`.
+  expect({
+    stderr,
+    missing: names.filter(name => !stdout.includes(`"innermost ${name}"`)),
+    // A release build runs out of stack here too, but its frames may shrink.
+    compiled: sureToRunOut ? names.filter(isCompiled) : [],
+    shallowCompiled: isCompiled("Shallow"),
+    exitCode,
+    signalCode: proc.signalCode,
+  }).toEqual({ stderr: "", missing: [], compiled: [], shallowCompiled: true, exitCode: 0, signalCode: null });
 });

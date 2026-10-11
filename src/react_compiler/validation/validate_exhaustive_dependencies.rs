@@ -470,6 +470,7 @@ fn collect_dependencies(
     callbacks: &mut Option<&mut Callbacks<'_>>,
     is_function_expression: bool,
 ) -> Result<Temporary, CompilerDiagnostic> {
+    crate::stack_guard::check()?;
     let optionals = find_optional_places(func);
     let mut locals: HashSet<IdentifierId> = HashSet::new();
 

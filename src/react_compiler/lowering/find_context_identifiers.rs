@@ -137,6 +137,9 @@ impl<'a> ContextIdentifierVisitor<'a> {
     }
 
     fn walk_binding_decl(&mut self, binding: &ast::Binding) {
+        if !crate::stack_guard::is_safe_to_recurse() {
+            return;
+        }
         match &binding.data {
             B::BIdentifier(id) => self.record_decl(id.r#ref),
             B::BArray(arr) => {
@@ -230,6 +233,9 @@ impl<'a> ContextIdentifierVisitor<'a> {
     }
 
     fn walk_stmt(&mut self, stmt: &Stmt) {
+        if !crate::stack_guard::is_safe_to_recurse() {
+            return;
+        }
         let stmt_loc = stmt.loc;
         match &stmt.data {
             StmtData::SBlock(b) => {
@@ -382,6 +388,9 @@ impl<'a> ContextIdentifierVisitor<'a> {
         reason = "expr::Data variants are arena-backed StoreRef; live residency is bounded"
     )]
     fn walk_expr(&mut self, e: &Expr) {
+        if !crate::stack_guard::is_safe_to_recurse() {
+            return;
+        }
         match &e.data {
             Data::EObjectJSON(_) | Data::EArrayJSON(_) => {}
             Data::EIdentifier(id) => self.check_captured_reference(id.ref_),
@@ -546,6 +555,7 @@ fn walk_lval_for_reassignment(
     visitor: &mut ContextIdentifierVisitor<'_>,
     pattern: &Expr,
 ) -> Result<(), CompilerError> {
+    crate::stack_guard::check()?;
     match &pattern.data {
         Data::EIdentifier(ident) => {
             visitor.handle_reassignment_identifier(ident.ref_);

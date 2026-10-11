@@ -67,6 +67,7 @@ fn validate_context_variable_lvalues_impl(
     identifiers: &[Identifier],
     errors: &mut CompilerError,
 ) -> Result<(), CompilerDiagnostic> {
+    crate::stack_guard::check()?;
     let mut inner_function_ids: Vec<FunctionId> = Vec::new();
 
     for (_block_id, block) in &func.body.blocks {

@@ -13,7 +13,7 @@ const PREFER_SET_SIZE: Message =
 
 impl Rule for PreferSetSize {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-set-size", Kind::Problem).fixable(Fixable::Code);
-    const ON: On = On::new().members_named(&["length"]);
+    const ON: On = On::new().exprs(&[ExprTag::Spread]).method_calls(&["from"]);
     no_state!();
 
     fn new(_: &Options) -> Self {
@@ -21,25 +21,35 @@ impl Rule for PreferSetSize {
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
-        if file.mentions("Set") && file.mentions("length") { Self::ON } else { On::new() }
+        if !file.mentions("Set") || !file.mentions("length") {
+            return On::new();
+        }
+        if file.mentions("Array") && file.mentions("from") { Self::ON } else { On::new().exprs(&[ExprTag::Spread]) }
     }
 
-    fn expr<'a>(&self, member: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let Some((obj, name, chain)) = member.as_dot() else {
+    /// `e`: the `...set` of `[...set]`, or `Array.from(set)`.
+    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        let (obj, maybe_set) = match e.as_call() {
+            Some(call) => (e, call.args().first().filter(|it| it.tag() != ExprTag::Spread && is_array_from_call(call))),
+            None => match e.parent() {
+                Node::Expr(array) if array.as_array().is_some_and(|it| it.len() == 1) => (array, e.operand()),
+                _ => return,
+            },
+        };
+        let (Some(maybe_set), Node::Expr(member)) = (maybe_set, obj.parent()) else {
             return;
         };
-        // `[...set]`, `Array.from(set)`
+        let Some((_, name, chain)) = member.as_dot().filter(|it| it.0 == obj) else {
+            return;
+        };
         if !name.name().is("length")
-            || !matches!(obj.tag(), ExprTag::Array | ExprTag::Call)
             || chain == Chain::Start
             || member.is_jsx_tag_name()
             || member.is_in_type_query()
+            || !is_set(get_inner_expression(maybe_set))
         {
             return;
         }
-        let Some(maybe_set) = get_set_node(obj).filter(|it| is_set(get_inner_expression(*it))) else {
-            return;
-        };
         let (conversion, set) = (obj.span(), maybe_set.outer_span());
         let report = cx.report(name, PREFER_SET_SIZE);
         if cx.file().comments_in(conversion).len() <= cx.file().comments_in(set).len() {
@@ -51,17 +61,6 @@ impl Rule for PreferSetSize {
     }
 }
 
-/// The `set` of `[...set]` and of `Array.from(set)`.
-fn get_set_node(expression: Expr<'_>) -> Option<Expr<'_>> {
-    match expression.kind() {
-        ExprKind::Array(elements) if elements.len() == 1 => match elements.first()?.kind() {
-            ExprKind::Spread(argument) => Some(argument),
-            _ => None,
-        },
-        ExprKind::Call(call) if is_array_from_call(call) => call.args().first().filter(|it| it.tag() != ExprTag::Spread),
-        _ => None,
-    }
-}
 
 fn is_array_from_call(call: Call) -> bool {
     !call.is_optional()

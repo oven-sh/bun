@@ -291,6 +291,7 @@ pub struct Options {
     pub exit_on_fatal_error: bool,
     pub warn_ignored: bool,
     pub pass_on_no_patterns: bool,
+    /// Empty: no file is named, as for oxlint.
     pub print_config: Option<Vec<u8>>,
     pub suppress_all: bool,
     pub suppress_rule: Option<Vec<Vec<u8>>>,
@@ -746,7 +747,7 @@ impl Options {
                     if args.get(at + 1).is_none_or(|next| next.starts_with(b"-"))
                         || at + 1 == count =>
                 {
-                    rewritten.extend([&b"--print-config"[..], b"__placeholder__.js"]);
+                    rewritten.push(b"--print-config=");
                 }
                 arg => rewritten.push(arg),
             }

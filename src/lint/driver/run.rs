@@ -965,13 +965,24 @@ impl Run<'_> {
             timing: &timing,
         };
         if let Some(file) = &options.print_config {
-            let path = paths::resolve(&environment.cwd, &paths::from_native(file));
+            let named: &[u8] = match file.is_empty() {
+                true => b"__placeholder__.js",
+                false => file,
+            };
+            let path = paths::resolve(&environment.cwd, &paths::from_native(named));
             let config = match loader.for_directory(paths::dirname(&path)) {
                 Ok(loaded) if loaded.flavor == Flavor::Oxlint => {
                     let printed = loaded.config.printed_for_oxlint();
                     crate::print_config::write_indented(&mut self.out.stdout, &printed, 0);
                     self.out.stdout.push(b'\n');
                     return self.out;
+                }
+                Ok(loaded)
+                    if file.is_empty()
+                        && matches!(loaded.flavor, Flavor::Eslint | Flavor::EslintRc) =>
+                {
+                    let message = b"Value for 'print-config' of type 'path' required.";
+                    return refuse_command_line(message, environment);
                 }
                 Ok(loaded) => loaded.config.get(linter.registry(), &path),
                 Err(Fatal(error)) => return self.fail(&error),

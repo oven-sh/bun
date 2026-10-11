@@ -946,6 +946,16 @@ describe.concurrent("bun lint", () => {
       expect(unknown.raw).toBe("undefined\n");
     });
 
+    test.each([[["--print-config"]], [["--print-config", "--fix"]]])("%j names no file", async flags => {
+      const files = { "eslint.config.js": config({ eqeqeq: "error" }), "a.js": "" };
+      const { raw, stderr, exitCode } = await lint(files, flags, { mayFail: true });
+      expect({ raw, stderr: stderr.split("\n")[0], exitCode }).toEqual({
+        raw: "",
+        stderr: "error: Value for 'print-config' of type 'path' required.",
+        exitCode: 2,
+      });
+    });
+
     test(".oxlintrc.json: categories, overrides, ignorePatterns, .gitignore, -D", async () => {
       const { stdout, exitCode } = await lint(
         {

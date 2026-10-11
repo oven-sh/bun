@@ -1408,6 +1408,7 @@ describe("bundler", () => {
       "in.js": `const ns = require('./foo'); if (ns.a !== 123 || ns.b !== void 0) throw 'fail'`,
       "foo.js": `export let a = 123, b = this`,
     },
+    run: true,
   });
 
   // Function hoisting tests

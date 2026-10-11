@@ -1,10 +1,10 @@
 use core::ffi::c_ulong;
 use std::io::Write as _;
 
-use crate::Error;
 use bun_collections::{HashMap, StringHashMap};
 use bun_core::output as bun_output;
 use bun_core::printer as js_printer;
+use crate::Error;
 use bun_core::{ZStr, strings};
 use bun_js_parser::{self as js_parser, lexer as js_lexer};
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -116,11 +116,7 @@ impl Snapshots {
         }
     }
 
-    pub(crate) fn add_count(
-        &mut self,
-        expect: &Expect,
-        hint: &[u8],
-    ) -> Result<(Vec<u8>, usize), Error> {
+    pub(crate) fn add_count(&mut self, expect: &Expect, hint: &[u8]) -> Result<(Vec<u8>, usize), Error> {
         self.total += 1;
         let snapshot_name = expect.get_snapshot_name(hint)?;
         // bun_collections::StringHashMap::get_or_put can't hand out `key_ptr`, so return the
@@ -144,7 +140,9 @@ impl Snapshots {
         target_value: &[u8],
         hint: &[u8],
     ) -> Result<Option<&[u8]>, Error> {
-        let buntest_strong = expect.bun_test().ok_or(crate::Error::SnapshotFailed)?;
+        let buntest_strong = expect
+            .bun_test()
+            .ok_or(crate::Error::SnapshotFailed)?;
         let bun_test = buntest_strong.get();
         match self.get_snapshot_file(bun_test.file_id)? {
             bun_sys::Result::Ok(()) => {}
@@ -230,8 +228,10 @@ impl Snapshots {
         // SAFETY: VM is thread-local singleton installed before any test runs; lives for the
         // duration of the runner. Per `VirtualMachine::get` doc, callers form a short-lived borrow.
         let vm = VirtualMachine::get().as_mut();
-        let opts =
-            js_parser::ParserOptions::init(vm.transpiler.options.jsx.clone(), bun_ast::Loader::Js);
+        let opts = js_parser::ParserOptions::init(
+            vm.transpiler.options.jsx.clone(),
+            bun_ast::Loader::Js,
+        );
         // Thread a per-call arena — js_parser is bump-allocated.
         let arena = bun_alloc::Arena::new();
         let mut temp_log = bun_ast::Log::init();
@@ -364,7 +364,10 @@ impl Snapshots {
         file_id: FileId,
         value: InlineSnapshotToWrite,
     ) -> Result<(), Error> {
-        let list = self.inline_snapshots_to_write.entry(file_id).or_default();
+        let list = self
+            .inline_snapshots_to_write
+            .entry(file_id)
+            .or_default();
         list.push(value);
         Ok(())
     }

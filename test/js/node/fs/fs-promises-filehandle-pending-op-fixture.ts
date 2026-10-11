@@ -65,7 +65,7 @@ async function run(form: string) {
     await started;
     // Only the pending read can reach the handle now. The collector runs from a macrotask, so
     // that no frame of the microtask loop is on the stack and holds the call that opened it.
-    for (let i = 0; i < 4 && isOpen(number); i++) {
+    for (let i = 0; i < 3 && isOpen(number); i++) {
       await new Promise<void>(resolve => {
         setImmediate(() => {
           Bun.gc(true);

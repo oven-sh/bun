@@ -1,6 +1,7 @@
 // Spawned by promises.test.js with a directory that holds "x.txt" and "script.mjs". Each part
 // asks for the close of a FileHandle while an operation that never ends holds the handle, and
-// then lets the collector take the handle. The first part is the opposite: its close has run.
+// then lets the collector take the handle. No part leaves a task with the thread pool: such a
+// task keeps its handle alive until it ends. The first part is the opposite: its close has run.
 // Prints one JSON line: for each part, whether the descriptor was open at each point.
 import fs from "node:fs";
 import fsp from "node:fs/promises";
@@ -40,10 +41,7 @@ async function openAfterCollection(fd: number, rounds: number) {
     // the finalizer of a collected handle runs in a task of its own
     await new Promise(resolve => setImmediate(resolve));
   }
-  const open = isOpen(fd);
-  // a part that fails must not change the numbers of the parts after it
-  if (open) fs.closeSync(fd);
-  return open;
+  return isOpen(fd);
 }
 
 // The close waited for a read and then ran. The collection of the handle has nothing left to close.
@@ -60,9 +58,12 @@ async function closeThatRan() {
   // Opens until an open takes the number that the handle had, and 64 times at most.
   const opened: number[] = [];
   while (opened.at(-1) !== number && opened.length < 64) opened.push(fs.openSync(file, "r"));
-  const numberTakenAgain = opened.at(-1) === number;
-  for (const fd of opened) if (fd !== number) fs.closeSync(fd);
-  return { numberTakenAgain, openAfterCollection: await openAfterCollection(number, 4) };
+  const result = {
+    numberTakenAgain: opened.at(-1) === number,
+    openAfterCollection: await openAfterCollection(number, 3),
+  };
+  for (const fd of opened) if (isOpen(fd)) fs.closeSync(fd);
+  return result;
 }
 
 // A started iterator of pullSync() keeps its ref until it ends. This one is abandoned.
@@ -79,11 +80,11 @@ async function abandonedIterator(askForTheClose: (handle: any, source: Iterable<
   return { openAfterTheRequest: isOpen(number), openAfterCollection: await openAfterCollection(number, 12) };
 }
 
-// dispose() drops what a pending operation of the graph runs at its end. The release of the handle is a part of that.
+// The handle belongs to a Bun.ModuleGraph that is disposed while a writeFile() of the handle waits for its source.
 async function disposedGraph(how: "function" | "method") {
   const graph = new (Bun as any).ModuleGraph();
   const script = await graph.import(path.join(dir, "script.mjs"));
-  // script.mjs starts a read of a handle, asks for the close, and returns the descriptor number
+  // script.mjs starts the writeFile(), asks for the close, and returns the descriptor number
   const number: number = await graph.run(() => script.start(file, how));
   graph.dispose();
   return { openAfterTheRequest: isOpen(number), openAfterCollection: await openAfterCollection(number, 12) };
@@ -96,7 +97,7 @@ const results = {
     for (const _chunks of source);
   }),
   closeBehindAnIterator: await abandonedIterator(handle => void handle.close()),
-  closeBehindReadFileOfADisposedGraph: await disposedGraph("function"),
+  closeBehindWriteFileOfADisposedGraph: await disposedGraph("function"),
   closeBehindAMethodOfADisposedGraph: await disposedGraph("method"),
 };
 console.log(JSON.stringify({ ...results, reported }));

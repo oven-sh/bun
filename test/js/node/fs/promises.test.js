@@ -437,6 +437,10 @@ const isOpen = fd => {
   }
 };
 
+// Asks for the close of a handle when a test ends, and does not wait for it. A close that a
+// leaked ref keeps waiting then fails the assertion of its test, and not the timeout.
+const closeAtEnd = handle => ({ [Symbol.dispose]: () => void handle.close().catch(() => {}) });
+
 // readFile, writeFile and appendFile of fs.promises take a FileHandle and run on its
 // descriptor number. They hold the handle until they settle, as the FileHandle methods do.
 describe("fs.promises functions with a FileHandle argument", () => {
@@ -671,6 +675,7 @@ describe("fs.promises functions with a FileHandle argument", () => {
   ])("%s does not close a handle whose wrapper drops every write", async (_name, call) => {
     await using dir = tempDir("handle-argument-wrapper", { "x.txt": "hello" });
     const fh = await fsPromises.open(join(dir, "x.txt"), "r+");
+    using _close = closeAtEnd(fh);
     const fd = fh.fd;
     const dropped = [];
     const wrapper = new Proxy(fh, {
@@ -692,7 +697,25 @@ describe("fs.promises functions with a FileHandle argument", () => {
     expect([fsPromises.readFile.length, fsPromises.appendFile.length]).toEqual([2, 3]);
   });
 
-  it("appendFile(path) with no data rejects with node's message and leaves the file as it is", async () => {
+  it("writeFile with no data rejects in the same way for a path, a number and a handle", async () => {
+    await using dir = tempDir("handle-argument-nodata-write", { "x.txt": "hello" });
+    const file = join(dir, "x.txt");
+    await using fh = await fsPromises.open(file, "r+");
+    const outcomes = [];
+    for (const target of [file, fh.fd, fh]) {
+      outcomes.push(
+        await fsPromises.writeFile(target).then(
+          () => "fulfilled",
+          err => `${err.code}: ${err.message}`,
+        ),
+      );
+    }
+    expect(outcomes[0]).toStartWith("ERR_INVALID_ARG_TYPE: ");
+    expect(outcomes).toEqual([outcomes[0], outcomes[0], outcomes[0]]);
+    expect(fs.readFileSync(file, "utf8")).toBe("hello");
+  });
+
+  it("appendFile(path) with no data names the data argument and leaves the file as it is", async () => {
     await using dir = tempDir("handle-argument-nodata", { "x.txt": "hello" });
     const file = join(dir, "x.txt");
     const error = await fsPromises.appendFile(file).then(
@@ -761,6 +784,45 @@ describe("autoClose of FileHandle.writer() and pullSync() under another pending 
     expect(writer.writeSync("HE")).toBe(true);
     expect({ written: writer.endSync(), fd: fh.fd }).toEqual({ written: 2, fd: -1 });
     expect(fs.readFileSync(file, "utf8")).toBe("HEllo");
+  });
+
+  it("endSync() of a writer without autoClose does not wait for another operation", async () => {
+    await using dir = tempDir("autoclose-off-endsync", { "x.txt": "hello" });
+    await using fh = await fsPromises.open(join(dir, "x.txt"), "r+");
+    const fd = fh.fd;
+    const stat = settled(fh.stat());
+    const writer = fh.writer();
+    expect(writer.writeSync("HE")).toBe(true);
+    expect({ written: writer.endSync(), fd: fh.fd }).toEqual({ written: 2, fd });
+    await stat;
+  });
+
+  it("the teardown of a failed writer is a no-op after an endSync() that waits", async () => {
+    await using dir = tempDir("autoclose-two-writers", { "x.txt": "" });
+    const file = join(dir, "x.txt");
+    await using fh = await fsPromises.open(file, "r+");
+    // an operation of the handle that lasts until the gate opens
+    const { promise: gate, resolve: openGate } = Promise.withResolvers();
+    const held = settled(
+      fh.writeFile({
+        [Symbol.asyncIterator]: () => ({ next: () => gate.then(() => ({ done: true, value: undefined })) }),
+      }),
+    );
+    // the first writer fails with a write in flight, so its teardown runs when the write lands
+    const first = fh.writer({ autoClose: true, start: 0 });
+    const written = settled(first.write(Buffer.alloc(1 << 20, "a")));
+    first.fail(new Error("stop"));
+    const ended = fh.writer({ autoClose: true }).endSync();
+    const outcome = await written;
+    // the gate opens before the assertions, so that a failure does not leave close() waiting
+    openGate();
+    expect({ ended, outcome, held: await held }).toEqual({
+      ended: -1,
+      outcome: { value: undefined },
+      held: { value: undefined },
+    });
+    expect(fh.fd).toBe(-1);
+    expect(fs.statSync(file).size).toBe(1 << 20);
   });
 
   it("a second teardown is a no-op while the first one waits", async () => {
@@ -841,7 +903,7 @@ describe("autoClose of FileHandle.writer() and pullSync() under another pending 
     expect(fh.fd).toBe(-1);
   });
 
-  // A stream of the handle holds a ref for its whole life. It ends when the handle emits 'close'.
+  // A stream of the handle holds a ref until it is destroyed. The 'close' event of the handle ends it.
   it.each([
     ["writer().endSync()", handle => handle.writer({ autoClose: true }).endSync()],
     ["writer().fail()", handle => handle.writer({ autoClose: true }).fail(new Error("stop"))],
@@ -881,6 +943,37 @@ describe("autoClose of FileHandle.writer() and pullSync() under another pending 
     expect(fh.fd).toBe(fd);
     await closed;
     expect({ fd: fh.fd, events }).toEqual({ fd: -1, events: [] });
+  });
+
+  // With autoClose off, a WriteStream is not destroyed when it finishes or fails, and its close()
+  // waits for a 'finish' event that does not come again. It still lets go of the handle.
+  it.each([
+    ["writer().endSync()", handle => handle.writer({ autoClose: true }).endSync(), -1],
+    ["writer().fail()", handle => handle.writer({ autoClose: true }).fail(new Error("stop")), undefined],
+    [
+      "return() of a pullSync() iterator",
+      handle => handle.pullSync({ autoClose: true })[Symbol.iterator]().return(),
+      { value: undefined, done: true },
+    ],
+    ["close()", handle => void handle.close(), undefined],
+  ])("%s is not held by a WriteStream that finished or failed with autoClose off", async (_name, teardown, result) => {
+    await using dir = tempDir("autoclose-idle-writestream", { "x.txt": "hello" });
+    // a write on a handle that is open for reading fails
+    for (const [flags, settles] of [
+      ["r+", "finish"],
+      ["r", "error"],
+    ]) {
+      const fh = await fsPromises.open(join(dir, "x.txt"), flags);
+      using _close = closeAtEnd(fh);
+      const stream = fh.createWriteStream({ autoClose: false });
+      const { promise: ended, resolve } = Promise.withResolvers();
+      stream.on("finish", () => resolve("finish")).on("error", () => resolve("error"));
+      stream.end("HE");
+      expect(await ended).toBe(settles);
+      expect(teardown(fh)).toEqual(result);
+      // the 'close' event of the handle destroys the stream, and the release of its ref closes the descriptor
+      expect({ destroyed: stream.destroyed, fd: fh.fd }).toEqual({ destroyed: true, fd: -1 });
+    }
   });
 });
 
@@ -1008,6 +1101,8 @@ describe("the first write of a FileHandle.writer()", () => {
     expect(outcome).toMatchObject({ code: "ERR_INVALID_STATE", message: "Invalid state: The FileHandle is closed" });
     await closed;
     expect(fh.fd).toBe(-1);
+    // the write did not start, so it did not fail the writer
+    expect(await settled(writer.end())).toEqual({ value: 0 });
     expect(fs.readFileSync(file, "utf8")).toBe("");
   });
 
@@ -1019,6 +1114,7 @@ describe("the first write of a FileHandle.writer()", () => {
     await using dir = tempDir("writer-getter-ends", { "x.txt": "" });
     const file = join(dir, "x.txt");
     const fh = await fsPromises.open(file, "r+");
+    using _close = closeAtEnd(fh);
     const writer = fh.writer();
     const outcome = await settled(
       writer.write(Buffer.from("x"), {
@@ -1044,12 +1140,46 @@ describe("the first write of a FileHandle.writer()", () => {
   ])("a writer whose first call is %s does not prevent close()", async (_name, options, call) => {
     await using dir = tempDir("writer-no-pin", { "x.txt": "" });
     const fh = await fsPromises.open(join(dir, "x.txt"), "r+");
+    using _close = closeAtEnd(fh);
     const writer = fh.writer(options);
     await settled(Promise.resolve().then(() => call(writer)));
     // close() takes the descriptor at once when no operation holds a ref
     const closed = fh.close();
     expect(fh.fd).toBe(-1);
     await closed;
+  });
+
+  it("writev() reads the size of a chunk once, before it checks the writer", async () => {
+    await using dir = tempDir("writer-writev-size", { "x.txt": "" });
+    const file = join(dir, "x.txt");
+    await using fh = await fsPromises.open(file, "r+");
+    const writer = fh.writer();
+    const chunk = Buffer.from("WXYZ");
+    let reads = 0;
+    Object.defineProperty(chunk, "byteLength", {
+      get() {
+        // a later read would come after the check of the writer
+        if (++reads > 1) writer.fail(new Error("stop"));
+        return 4;
+      },
+    });
+    expect(await settled(writer.writev([chunk]))).toEqual({ value: undefined });
+    expect(await settled(writer.end())).toEqual({ value: 4 });
+    expect(fs.readFileSync(file, "utf8")).toBe("WXYZ");
+  });
+
+  it("end() called from a 'close' listener of the handle, inside the end, returns a promise of the count", async () => {
+    await using dir = tempDir("writer-end-reentrant", { "x.txt": "" });
+    await using fh = await fsPromises.open(join(dir, "x.txt"), "r+");
+    const writer = fh.writer({ autoClose: true });
+    expect(writer.writeSync("HE")).toBe(true);
+    let inner;
+    fh.on("close", () => {
+      inner = writer.end();
+    });
+    expect(await writer.end()).toBe(2);
+    expect(inner).toBeInstanceOf(Promise);
+    expect(await inner).toBe(2);
   });
 });
 
@@ -1094,18 +1224,20 @@ it.skipIf(isWindows)("a pending read keeps the descriptor of its FileHandle", as
 
 // A close that waits for an operation that never ends is not lost: the descriptor closes when
 // the handle is collected, and the handle is not reported. The operation is an abandoned
-// iterator of pullSync(), or a read whose end went with its disposed Bun.ModuleGraph. A close
-// that waited and then ran leaves nothing for the collection to close.
+// iterator of pullSync(), or a writeFile() whose source never gives a chunk, in a
+// Bun.ModuleGraph that is disposed. A close that waited and then ran leaves nothing for the
+// collection to close.
 it("a close that waits for an operation that never ends happens when the handle is collected", async () => {
   using dir = tempDir("close-at-collection", {
     "x.txt": Buffer.alloc(300_000, "a").toString(),
     "script.mjs": `
       import fs from "node:fs";
       export const start = async (file, how) => {
-        const handle = await fs.promises.open(file, "r");
+        const handle = await fs.promises.open(file, "r+");
         const number = handle.fd;
-        if (how === "function") fs.promises.readFile(handle);
-        else handle.readFile();
+        const source = { [Symbol.asyncIterator]: () => ({ next: () => new Promise(() => {}) }) };
+        if (how === "function") fs.promises.writeFile(handle, source);
+        else handle.writeFile(source);
         handle.close();
         return number;
       };
@@ -1124,7 +1256,7 @@ it("a close that waits for an operation that never ends happens when the handle 
     closeThatRan: { numberTakenAgain: true, openAfterCollection: true },
     autoCloseBehindAnIterator: closedAtCollection,
     closeBehindAnIterator: closedAtCollection,
-    closeBehindReadFileOfADisposedGraph: closedAtCollection,
+    closeBehindWriteFileOfADisposedGraph: closedAtCollection,
     closeBehindAMethodOfADisposedGraph: closedAtCollection,
     reported: 0,
   });

@@ -49,17 +49,25 @@ describe.skipIf(!launcherIgnoresSigchld)("bun started with SIGCHLD ignored", () 
     ["Bun.spawn", `await Bun.spawn(["sh", "-c", "exit 7"]).exited`, "7"],
     ["child_process.spawnSync", `require("node:child_process").spawnSync("sh", ["-c", "exit 7"]).status`, "7"],
     ["Bun.$", `(await Bun.$\`sh -c "exit 5"\`.nothrow().quiet()).exitCode`, "5"],
-    // system() forks and waits inside libc, not through bun's spawn. The wait
-    // status of a command that exits holds its exit code in bits 8 to 15.
-    [
-      "system() through bun:ffi",
-      `require("bun:ffi").dlopen(${JSON.stringify(libcPathForDlopen())}, { system: { args: ["cstring"], returns: "int" } }).symbols.system(Buffer.from("exit 7\\0")) >> 8`,
-      "7",
-    ],
   ])("%s reports the exit code of the child", async (_, expression, expected) => {
     const { stdout, stderr, exitCode } = await run("CHLD", ["-e", `console.log(${expression})`]);
     expect(stderr).toBe("");
     expect(stdout).toBe(expected + "\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // system() forks and waits inside libc, not through bun's spawn. The wait
+  // status of a command that exits holds its exit code in bits 8 to 15.
+  test.concurrent("system() through bun:ffi reports the exit code of the command", async () => {
+    // A skipped describe still runs its callback, and libcPathForDlopen() throws on Windows.
+    const libc = JSON.stringify(libcPathForDlopen());
+    const { stdout, stderr, exitCode } = await run("CHLD", [
+      "-e",
+      `const { symbols } = require("bun:ffi").dlopen(${libc}, { system: { args: ["cstring"], returns: "int" } });
+       console.log(symbols.system(Buffer.from("exit 7\\0")) >> 8);`,
+    ]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("7\n");
     expect(exitCode).toBe(0);
   });
 

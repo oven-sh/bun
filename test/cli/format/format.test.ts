@@ -97,6 +97,85 @@ describe.concurrent("bun format", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  // By runs of Prettier 3.9.9 and oxfmt 0.72.0, which says "Error: " where "[error] " is here. Both say it before they look at
+  // the files, the patterns or the configuration.
+  describe("flags that say what the run does, and exclude each other", () => {
+    const together = "[error] Cannot use --check and --list-different together.";
+    const twice = (flag: string) => `[error] argument \`${flag}\` cannot be used multiple times in this context`;
+    const second = (flag: string, first: string) =>
+      `[error] \`${flag}\` cannot be used at the same time as \`${first}\``;
+    const [prettier, oxfmt] = [{ ".prettierrc": "{}" }, { ".oxfmtrc.json": "{}" }];
+    test.each<[string, Record<string, string>, string[], string]>([
+      ["Prettier", prettier, ["-l", "--check", "."], together],
+      ["Prettier", prettier, ["--check", "-l", "."], together],
+      ["Prettier", prettier, ["-l", "-c", "good.js"], together],
+      ["Prettier", prettier, ["--list-different", "--check", "--write", "."], together],
+      ["Prettier", prettier, ["--check", "--list-different"], together],
+      ["Prettier", prettier, ["--check", "--list-different", "nothing.js"], together],
+      ["Prettier", prettier, ["--check", "--list-different", "--config", "missing.json", "."], together],
+      ["Prettier", prettier, ["--check", "--list-different", "--find-config-path", "a.js"], together],
+      ["Prettier", prettier, ["-l", "--check", "--stdin-filepath", "a.js"], together],
+      ["Prettier", prettier, ["-l", "--check", "--log-level", "silent", "good.js"], ""],
+      ["Prettier", { ".prettierrc": "{" }, ["-l", "--check", "."], together],
+      [
+        "Prettier",
+        prettier,
+        ["-l", "--check", "--no-config", "--config", "x", "."],
+        "[error] Cannot use --no-config and --config together.",
+      ],
+      ["no configuration", {}, ["-l", "--check", "."], together],
+      ["oxfmt", oxfmt, ["--list-different", "--check", "."], second("--check", "--list-different")],
+      ["oxfmt", oxfmt, ["--check", "--list-different", "."], second("--list-different", "--check")],
+      ["oxfmt", oxfmt, ["--list-different", "--write", "."], second("--write", "--list-different")],
+      ["oxfmt", oxfmt, ["--write", "--list-different", "."], second("--list-different", "--write")],
+      ["oxfmt", oxfmt, ["--check", "--write", "."], second("--write", "--check")],
+      ["oxfmt", oxfmt, ["--write", "--check", "--list-different", "."], second("--check", "--write")],
+      ["oxfmt", oxfmt, ["--write", "--write", "."], twice("--write")],
+      ["oxfmt", oxfmt, ["--check", "--check", "--list-different", "."], twice("--check")],
+      ["oxfmt", oxfmt, ["--check", "--list-different", "--check", "."], second("--list-different", "--check")],
+      ["oxfmt", oxfmt, ["--check", "--list-different", "nothing.js"], second("--list-different", "--check")],
+      ["oxfmt", oxfmt, ["--check", "--write", "--config", "missing.json", "."], second("--write", "--check")],
+      ["oxfmt", oxfmt, ["--stdin-filepath", "a.js", "--check"], second("--check", "--stdin-filepath")],
+      ["oxfmt", oxfmt, ["--check", "--stdin-filepath=a.js"], second("--stdin-filepath", "--check")],
+      ["oxfmt", oxfmt, ["--init", "--check"], second("--check", "--init")],
+      ["oxfmt", {}, ["--write", "--init"], second("--init", "--write")],
+      ["oxfmt", { ".oxfmtrc.json": "{" }, ["--list-different", "--write", "."], second("--write", "--list-different")],
+    ])("%s: %j %j", async (_, configuration, args, stderr) => {
+      const files = { ...configuration, "good.js": formatted, "bad.js": ugly };
+      const result = await format(files, args, { reads: Object.keys(files), stdin: ugly });
+      expect({ ...result, cpu: 0, raw: "" }).toEqual({ raw: "", stdout: "", stderr, exitCode: 1, cpu: 0, files });
+    });
+
+    test.each<[Record<string, string>, string[], string, number, string]>([
+      // The last word on a flag counts.
+      [prettier, ["--check", "--list-different", "--no-check", "bad.js"], "bad.js", 1, ugly],
+      [
+        prettier,
+        ["--check", "--list-different", "--no-list-different", "good.js"],
+        "Checking formatting...\nAll matched files use Prettier code style!",
+        0,
+        ugly,
+      ],
+      [prettier, ["-l", "--write", "bad.js"], "bad.js", 0, formatted],
+      [
+        prettier,
+        ["--check", "--check", "good.js"],
+        "Checking formatting...\nAll matched files use Prettier code style!",
+        0,
+        ugly,
+      ],
+      // `-c` with a path behind it is `--config` for oxfmt.
+      [oxfmt, ["-c", ".oxfmtrc.json", "--list-different", "bad.js"], "bad.js", 1, ugly],
+    ])("these do not: %j %j", async (configuration, args, stdout, exitCode, bad) => {
+      const result = await format({ ...configuration, "good.js": formatted, "bad.js": ugly }, args, {
+        reads: ["bad.js"],
+      });
+      expect(result.stdout).toBe(stdout);
+      expect(result.files).toEqual({ "bad.js": bad });
+      expect(result.exitCode).toBe(exitCode);
+    });
+  });
+
   test("does not touch a file that is formatted", async () => {
     let before = 0;
     using dir = tempDir("bun-format", { "a.js": formatted });

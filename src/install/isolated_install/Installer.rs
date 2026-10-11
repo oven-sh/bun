@@ -2293,15 +2293,16 @@ impl<'a> Installer<'a> {
         self.append_local_staging_path(&mut staging, entry_id, mode);
 
         // A delete can be cut short, so an existing package leaves its final path in one step.
-        let is_refused = |moved: &sys::Result<()>| {
+        let is_refused = |moved: &core::result::Result<(), RenameError>| {
             moved
                 .as_ref()
-                .is_err_and(|err| err.get_errno() != sys::Errno::ENOENT)
+                .is_err_and(|refused| refused.err.get_errno() != sys::Errno::ENOENT)
         };
-        let mut moved = sys::renameat(Fd::cwd(), final_.slice_z(), Fd::cwd(), staging.slice_z());
+        let mut retry = RenameRetry::new();
+        let mut moved = retry.rename(Fd::cwd(), final_.slice_z(), Fd::cwd(), staging.slice_z());
         if is_refused(&moved) {
             let _ = Fd::cwd().delete_tree(staging.slice());
-            moved = sys::renameat(Fd::cwd(), final_.slice_z(), Fd::cwd(), staging.slice_z());
+            moved = retry.rename(Fd::cwd(), final_.slice_z(), Fd::cwd(), staging.slice_z());
         }
         if is_refused(&moved) {
             let _ = Fd::cwd().delete_tree(final_.slice());

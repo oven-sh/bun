@@ -625,6 +625,7 @@ const SQL = function SQL(
 
     const state: TransactionState = {
       connectionState: ReservedConnectionState.acceptQueries,
+      storedError: null,
       queries: new Set(),
     };
 

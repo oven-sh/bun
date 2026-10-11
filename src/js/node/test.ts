@@ -7,7 +7,6 @@
 // getTestContext) are observable without a separate runner process.
 
 const { jest } = Bun;
-const reportError = globalThis.reportError;
 const { kEmptyObject, throwNotImplemented } = require("internal/shared");
 const {
   validateBoolean,
@@ -1640,6 +1639,8 @@ const fileGeneration = $newRustFunction("jest.rs", "jsFileGeneration", 0);
 // `done` binds the intended sequence so a late call after the bun:test watchdog
 // moved on cannot write onto the currently-running test.
 const markCurrentResult = $newRustFunction("jest.rs", "jsNodeTestMarkResult", 2);
+// Bound privately so that a replaced globalThis.reportError cannot hide a failure.
+const reportFailure = $newRustFunction("jest.rs", "jsNodeTestReportFailure", 1);
 
 let rootNode: TestNode | undefined;
 let rootGeneration = -1;
@@ -2539,7 +2540,7 @@ function currentCollectionParent(): TestNode {
 
 // bun:test's done(value) fails only on a truthy value, so the failure is reported first and done() then completes the entry.
 function doneWithFailure(done: () => void, failure: unknown) {
-  reportError(failure);
+  reportFailure(failure);
   done();
 }
 

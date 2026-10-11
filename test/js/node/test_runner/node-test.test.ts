@@ -132,6 +132,15 @@ describe("node:test", () => {
     });
   });
 
+  test("should report a failure when globalThis.reportError was replaced before node:test loaded", async () => {
+    const { exitCode, stderr } = await runTests(["33-replaced-report-error.js"]);
+    expect(stderr).toContain("(fail) a body that throws");
+    expect({ exitCode, errors: reportedErrors(stderr) }).toEqual({
+      exitCode: 1,
+      errors: { "error: boom": 1, "error: hook boom": 1 },
+    });
+  });
+
   test("should support done callbacks in tests and hooks", async () => {
     const { exitCode, stderr } = await runTests(["10-done-callbacks.js"]);
     expect(stderr).toContain("2 pass");

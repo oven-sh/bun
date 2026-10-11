@@ -534,6 +534,16 @@ pub(crate) fn js_file_generation(
     Ok(JSValue::from(generation))
 }
 
+/// Reached only from `node:test`: reports `value` as an uncaught error, as `done(value)` does for a truthy value.
+pub(crate) fn js_node_test_report_failure(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    let [value] = callframe.arguments_as_array::<1>();
+    let _ = global.bun_vm().as_mut().uncaught_exception(global, value, false);
+    Ok(JSValue::UNDEFINED)
+}
+
 /// Reached only from `node:test` (`t.skip()` / `t.todo()` at runtime): overrides
 /// the running sequence's result so bun:test reports skip/todo instead of pass.
 /// `done`'s bound `DoneCallback.r#ref.phase` names the intended sequence so a

@@ -213,6 +213,19 @@ pub(crate) enum GetBinNameError {
     NeedToInstall,
 }
 
+/// What the project holds for a versionless `bunx <name>` that `which` could not run.
+enum ProjectCopy<'a> {
+    /// The manifest of the package in the project names a bin that `which` found.
+    Run(&'a ZStr),
+    /// `node_modules/.bin` has the bin as a file that the OS will not run.
+    /// `path` ends with a NUL.
+    CannotRun {
+        bin: Box<[u8]>,
+        path: Vec<u8>,
+    },
+    NotInstalled,
+}
+
 impl BunxCommand {
     /// Adds `create-` to the string, but also handles scoped packages correctly.
     /// Always clones the string in the process.
@@ -282,10 +295,12 @@ impl BunxCommand {
             && strings::index_of_char(name, b'\\').is_none()
     }
 
+    /// `preferred`: the bin to take when the package names several.
     fn get_bin_name_from_subpath(
         transpiler: &mut Transpiler,
         dir_fd: Fd,
         subpath_z: &ZStr,
+        preferred: Option<&[u8]>,
     ) -> crate::Result<Box<[u8]>> {
         let target_package_json_fd = bun_sys::openat(dir_fd, subpath_z, O::RDONLY, 0)?;
         let target_package_json = bun_sys::File::from_fd(target_package_json_fd);
@@ -305,11 +320,18 @@ impl BunxCommand {
         if let Some(bin_expr) = expr.get(b"bin") {
             match &bin_expr.data {
                 ExprData::EObjectJSON(object) => {
+                    let mut first: Option<&[u8]> = None;
                     for prop in object.get().properties() {
                         let bin_name = prop.key.slice();
                         if !Self::is_safe_bin_name(bin_name) {
                             continue;
                         }
+                        if preferred.is_none_or(|name| name == bin_name) {
+                            return Ok(Box::<[u8]>::from(bin_name));
+                        }
+                        first.get_or_insert(bin_name);
+                    }
+                    if let Some(bin_name) = first {
                         return Ok(Box::<[u8]>::from(bin_name));
                     }
                 }
@@ -391,7 +413,7 @@ impl BunxCommand {
         subpath[len] = 0;
         // SAFETY: subpath[len] == 0 written above
         let subpath_z = ZStr::from_buf(&subpath[..], len);
-        Self::get_bin_name_from_subpath(transpiler, dir_fd, subpath_z)
+        Self::get_bin_name_from_subpath(transpiler, dir_fd, subpath_z, None)
     }
 
     fn get_bin_name_from_temp_directory(
@@ -487,7 +509,7 @@ impl BunxCommand {
         // SAFETY: subpath[len] == 0 written above
         let subpath_z = ZStr::from_buf(&subpath[..], len);
 
-        Self::get_bin_name_from_subpath(transpiler, Fd::cwd(), subpath_z)
+        Self::get_bin_name_from_subpath(transpiler, Fd::cwd(), subpath_z, None)
     }
 
     /// Check the enclosing package.json for a matching "bin"
@@ -523,6 +545,164 @@ impl BunxCommand {
                 }
             }
         }
+    }
+
+    /// Writes `<dir>/node_modules/<parts joined by the separator><suffix>` into
+    /// `path`, NUL-terminated.
+    fn node_modules_path<'p>(
+        path: &'p mut Vec<u8>,
+        dir: &[u8],
+        parts: [&[u8]; 2],
+        suffix: &[u8],
+    ) -> &'p ZStr {
+        let dir = dir.strip_suffix(&[bun_paths::SEP]).unwrap_or(dir);
+        path.clear();
+        // three separators, "node_modules" and the NUL
+        path.reserve(dir.len() + 16 + parts[0].len() + parts[1].len() + suffix.len());
+        path.extend_from_slice(dir);
+        for part in [b"node_modules".as_slice(), parts[0], parts[1]] {
+            path.push(bun_paths::SEP);
+            path.extend_from_slice(part);
+        }
+        path.extend_from_slice(suffix);
+        path.push(0);
+        let path: &'p [u8] = path;
+        ZStr::from_buf(path, path.len() - 1)
+    }
+
+    /// Is `<ancestor>/node_modules/.bin/<bin>` a file, in any mode? `which`
+    /// passed over it. The nearest one is left in `path`.
+    fn find_unrunnable_bin(
+        path: &mut Vec<u8>,
+        cwd_info: bun_resolver::DirInfoRef,
+        bin: &[u8],
+    ) -> bool {
+        // The linker writes `<bin>.bunx`, then the `<bin>.exe` that `which` looks for.
+        const SUFFIX: &[u8] = if cfg!(windows) { b".bunx" } else { b"" };
+        let mut info = cwd_info;
+        loop {
+            // A directory the resolver could not list has an empty listing and no fd.
+            if info.has_node_modules() || !info.get_file_descriptor().is_valid() {
+                let entry = Self::node_modules_path(path, info.abs_path, [b".bin", bin], SUFFIX);
+                // An entry that `stat` cannot reach does not count: another user's
+                // node_modules in a shared parent directory must not stop every command.
+                if bun_sys::exists_z(entry)
+                    && bun_sys::stat(entry)
+                        .is_ok_and(|st| bun_sys::is_regular_file(st.st_mode as _))
+                {
+                    return true;
+                }
+            }
+            match info.get_parent() {
+                Some(parent) => info = parent,
+                None => return false,
+            }
+        }
+    }
+
+    /// `which` found nothing to run for a versionless request. Does the project
+    /// hold the command anyway?
+    #[cold]
+    fn find_project_copy<'a>(
+        transpiler: &mut Transpiler,
+        path_buf: &'a mut bun_paths::PathBuffer,
+        cwd_info: bun_resolver::DirInfoRef,
+        // `None` when the command is only a guess from a scoped package name.
+        command: Option<&[u8]>,
+        package_name: &[u8],
+        // `--package <pkg> <bin>`: the package is named, so its manifest decides.
+        is_package_named: bool,
+        local_bin_dirs: &[u8],
+        which_cwd: &[u8],
+        may_stop: bool,
+    ) -> ProjectCopy<'a> {
+        let mut path: Vec<u8> = Vec::new();
+        let command = command.filter(|name| Self::is_safe_bin_name(name));
+        let cannot_run = |path: &mut Vec<u8>, bin: &[u8]| {
+            (may_stop && Self::find_unrunnable_bin(path, cwd_info, bin)).then(|| {
+                ProjectCopy::CannotRun {
+                    bin: bin.into(),
+                    path: core::mem::take(path),
+                }
+            })
+        };
+
+        if !is_package_named {
+            if let Some(stop) = command.and_then(|bin| cannot_run(&mut path, bin)) {
+                return stop;
+            }
+        }
+
+        // The project root: the nearest directory with a package.json or a node_modules.
+        let mut root = cwd_info;
+        while !root.has_node_modules() && root.package_json().is_none() {
+            match root.get_parent() {
+                Some(parent) if !parent.is_node_modules() => root = parent,
+                _ => return ProjectCopy::NotInstalled,
+            }
+        }
+        if !root.has_node_modules() {
+            return ProjectCopy::NotInstalled;
+        }
+        let manifest = Self::node_modules_path(
+            &mut path,
+            root.abs_path,
+            [package_name, b"package.json"],
+            b"",
+        );
+        if !bun_sys::exists_z(manifest) {
+            return ProjectCopy::NotInstalled;
+        }
+        if is_package_named {
+            return command
+                .and_then(|bin| cannot_run(&mut path, bin))
+                .unwrap_or(ProjectCopy::NotInstalled);
+        }
+        let Ok(bin) = Self::get_bin_name_from_subpath(transpiler, Fd::cwd(), manifest, command)
+        else {
+            return ProjectCopy::NotInstalled;
+        };
+        // The first probe and the check above looked for `command`.
+        if command == Some(&*bin) {
+            return ProjectCopy::NotInstalled;
+        }
+        if let Some(destination) = bun_which::which(path_buf, local_bin_dirs, which_cwd, &bin) {
+            return ProjectCopy::Run(destination);
+        }
+        if Self::is_safe_bin_name(&bin) {
+            if let Some(stop) = cannot_run(&mut path, &bin) {
+                return stop;
+            }
+        }
+        ProjectCopy::NotInstalled
+    }
+
+    #[cold]
+    fn exit_cannot_run(bin: &[u8], path: &ZStr) -> ! {
+        bun_core::err_generic!(
+            "<b>{}<r> is installed in this project but cannot run: <b>{}<r> {}",
+            BStr::new(bin),
+            BStr::new(path.as_bytes()),
+            if cfg!(windows) {
+                "has no .exe launcher next to it"
+            } else {
+                "has no execute permission"
+            },
+        );
+        // A copy of the bin in place of the link (node_modules went through a
+        // zip) can import nothing by a relative path, whatever its mode.
+        let is_link = cfg!(not(windows))
+            && bun_sys::lstat(path).is_ok_and(|st| bun_sys::S::ISLNK(st.st_mode as _));
+        if is_link {
+            bun_core::note!("run `chmod +x` on it");
+        } else if cfg!(windows) {
+            bun_core::note!("install again to link it");
+        } else {
+            bun_core::note!(
+                "it is a file, not a link: install again to link it, or run `chmod +x` on it"
+            );
+        }
+        Global::exit(1);
     }
 
     /// Refuse to execute a binary resolved from inside the bunx cache unless
@@ -1045,6 +1225,33 @@ impl BunxCommand {
                             initial_bin_name,
                         ) {
                             break 'find Some(d);
+                        }
+
+                        // If the project holds the command anyway, the bunx cache and the
+                        // registry hold some other copy. `bun install` can run a lifecycle
+                        // script before it makes a bin executable: no stop there.
+                        match Self::find_project_copy(
+                            this_transpiler,
+                            &mut path_buf,
+                            root_dir_info,
+                            (!initial_bin_name_is_a_guess).then_some(initial_bin_name),
+                            result_package_name,
+                            opts.binary_name.is_some(),
+                            &local_bin_dirs,
+                            if !ignore_cwd.is_empty() {
+                                b"".as_slice()
+                            } else {
+                                top_level_dir
+                            },
+                            !bun_core::env_var::feature_flag::BUN_INTERNAL_LIFECYCLE_SCRIPT
+                                .get()
+                                .unwrap_or(false),
+                        ) {
+                            ProjectCopy::Run(d) => break 'find Some(d),
+                            ProjectCopy::CannotRun { bin, path } => {
+                                Self::exit_cannot_run(&bin, ZStr::from_buf(&path, path.len() - 1))
+                            }
+                            ProjectCopy::NotInstalled => {}
                         }
                     }
                     bun_which::which(

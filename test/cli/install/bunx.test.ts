@@ -1,8 +1,8 @@
-import { spawn } from "bun";
+import { spawn, type Server } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
-import { chmodSync, copyFileSync, readdirSync, symlinkSync } from "node:fs";
+import { bunEnv, bunExe, isMusl, isWindows, readdirSorted, tempDir, tmpdirSync } from "harness";
+import { chmodSync, copyFileSync, mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "os";
 import { delimiter, join, resolve } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
@@ -1380,3 +1380,426 @@ it.concurrent.skipIf(isWindows)(
     }
   },
 );
+
+// A versionless `bunx <name>` runs the command that node_modules/.bin has or stops. When the
+// file is there but cannot run, neither the bunx cache nor the registry stands in for it: on
+// the registry the name can belong to somebody else.
+describe("a command that node_modules/.bin has but cannot run", () => {
+  type Pkg = { name: string; bin: string };
+  const mytool: Pkg = { name: "mytool", bin: "mytool" };
+  const compiler: Pkg = { name: "compiler", bin: "cc-tool" };
+
+  // The registry has <name>@9.9.9 under every name. Its bin prints "REGISTRY <name>".
+  // Every run asks under a path prefix of its own, so `asked` holds what that run requested.
+  const registryBin: Record<string, string> = { compiler: "cc-tool", "other-compiler": "cc-tool" };
+  // Packages whose postinstall calls a command of the project, directly and through one more bunx.
+  const registryScripts: Record<string, object> = {
+    "calls-mytool": { postinstall: "npx mytool" },
+    "calls-hop": { postinstall: "npx hop" },
+  };
+  const registryCli: Record<string, string> = {
+    hop: `const { status } = require("child_process").spawnSync(process.env.BUN_UNDER_TEST, ["x", "mytool"], { stdio: "inherit" });\nprocess.exit(status ?? 1);\n`,
+  };
+  const asked = new Map<string, string[]>();
+  let registry: Server;
+  let runs = 0;
+
+  beforeAll(() => {
+    registry = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        const [run, name, ...rest] = decodeURIComponent(new URL(req.url).pathname).slice(1).split("/");
+        asked.get(run)?.push([name, ...rest].join("/"));
+        const manifest = {
+          name,
+          version: "9.9.9",
+          bin: { [registryBin[name] ?? name]: "cli.js" },
+          scripts: registryScripts[name],
+        };
+        if (req.url.endsWith(".tgz")) {
+          const files = {
+            "package/package.json": JSON.stringify(manifest),
+            "package/cli.js": `#!/usr/bin/env node\n${registryCli[name] ?? `console.log("REGISTRY ${name}");\n`}`,
+          };
+          return new Response(await new Bun.Archive(files, { compress: "gzip" }).bytes());
+        }
+        const tarball = `${registry.url}${run}/${name}/-/${name}-9.9.9.tgz`;
+        return Response.json({
+          name,
+          "dist-tags": { latest: "9.9.9" },
+          versions: { "9.9.9": { ...manifest, hasInstallScript: name in registryScripts, dist: { tarball } } },
+        });
+      },
+    });
+  });
+  afterAll(() => registry.stop(true));
+
+  const target = (app: string, pkg: Pkg) => join(app, "node_modules", pkg.name, "cli.js");
+  // What `which` runs, and what the error names. On Windows the linker of bun writes
+  // <bin>.bunx and the <bin>.exe that reads it; this fixture stands a .cmd in for the pair.
+  const launcher = (app: string, bin: string) => join(app, "node_modules", ".bin", isWindows ? `${bin}.cmd` : bin);
+  const entry = (app: string, bin: string) => join(app, "node_modules", ".bin", isWindows ? `${bin}.bunx` : bin);
+
+  // <root>/app is a project with `pkgs` in node_modules, linked the way `bun install` links them.
+  // <root>/tmp holds the bunx cache of the runs in this project.
+  function project(pkgs: Pkg[], appPackageJson: object = { name: "app" }) {
+    const root = tempDir("bunx-project", {
+      tmp: {},
+      cache: {},
+      app: { "package.json": JSON.stringify(appPackageJson) },
+    });
+    const app = join(String(root), "app");
+    for (const pkg of pkgs) {
+      const dir = join(app, "node_modules", pkg.name);
+      mkdirSync(dir, { recursive: true });
+      mkdirSync(join(app, "node_modules", ".bin"), { recursive: true });
+      writeFileSync(
+        join(dir, "package.json"),
+        JSON.stringify({ name: pkg.name, version: "1.0.0", bin: { [pkg.bin]: "cli.js" } }),
+      );
+      writeFileSync(target(app, pkg), `#!/usr/bin/env node\nconsole.log("LOCAL ${pkg.name}");\n`);
+      if (isWindows) {
+        writeFileSync(launcher(app, pkg.bin), `@node "%~dp0..\\${pkg.name}\\cli.js" %*\r\n`);
+      } else {
+        chmodSync(target(app, pkg), 0o755);
+        symlinkSync(join("..", pkg.name, "cli.js"), launcher(app, pkg.bin));
+      }
+    }
+    return root;
+  }
+
+  // Leaves the bin in node_modules/.bin and takes away what runs it: the execute bit of its
+  // target, or on Windows the launcher beside the .bunx.
+  function takeAwayWhatRunsIt(app: string, pkg: Pkg) {
+    if (isWindows) {
+      rmSync(launcher(app, pkg.bin));
+      writeFileSync(entry(app, pkg.bin), "");
+    } else {
+      chmodSync(target(app, pkg), 0o644);
+    }
+  }
+  const cannotRun = isWindows ? "has no .exe launcher next to it" : "has no execute permission";
+  const repairOfLink = isWindows ? "install again to link it" : "run `chmod +x` on it";
+  const repairOfFile = "it is a file, not a link: install again to link it, or run `chmod +x` on it";
+
+  async function run(root: string, cwd: string, cmd: string[], env: Record<string, string> = {}) {
+    const id = `run${runs++}`;
+    asked.set(id, []);
+    await using proc = spawn({
+      cmd,
+      cwd,
+      env: {
+        ...bunEnv,
+        TEMP: join(root, "tmp"),
+        TMPDIR: join(root, "tmp"),
+        BUN_TMPDIR: join(root, "tmp"),
+        BUN_INSTALL_CACHE_DIR: join(root, "cache"),
+        BUN_CONFIG_REGISTRY: `${registry.url}${id}/`,
+        BUN_UNDER_TEST: bunExe(),
+        ...env,
+      },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode, asked: asked.get(id)! };
+  }
+  type Result = Awaited<ReturnType<typeof run>>;
+
+  const isRoot = !isWindows && process.getuid!() === 0;
+  // Windows paths compare without case: the drive letter of a cwd can be in either.
+  const fold = (text: string) => (isWindows ? text.toLowerCase() : text);
+
+  function expectStopped(result: Result, bin: string, path: string, repair = repairOfLink) {
+    // musl defines O_EXEC as O_PATH, so `which` takes a file with no execute bit (#44513).
+    // bunx then fails when it runs the file, with no message of its own.
+    if (!isMusl) {
+      expect(fold(result.stderr)).toContain(
+        fold(`error: ${bin} is installed in this project but cannot run: ${path} ${cannotRun}\nnote: ${repair}\n`),
+      );
+    }
+    expect({ stdout: result.stdout, asked: result.asked, exitCode: result.exitCode }).toEqual({
+      stdout: "",
+      asked: [],
+      exitCode: 1,
+    });
+  }
+
+  type Row = {
+    title: string;
+    pkg?: Pkg;
+    cmd: string[];
+    // the directory to run in, below <root>/app
+    cwd?: string;
+    scripts?: Record<string, string>;
+  };
+  const rows: Row[] = [
+    { title: "bunx <command>", cmd: [bunExe(), "x", "mytool"] },
+    { title: "a command that is not named like its package", pkg: compiler, cmd: [bunExe(), "x", "cc-tool"] },
+    { title: "a package whose bin is not named like it", pkg: compiler, cmd: [bunExe(), "x", "compiler"] },
+    { title: "a scoped package", pkg: { name: "@acme/kit", bin: "acme-kit" }, cmd: [bunExe(), "x", "@acme/kit"] },
+    { title: "the tsc alias", pkg: { name: "typescript", bin: "tsc" }, cmd: [bunExe(), "x", "tsc"] },
+    { title: "--package", pkg: compiler, cmd: [bunExe(), "x", "--package", "compiler", "cc-tool"] },
+    { title: "--no-install", cmd: [bunExe(), "x", "--no-install", "mytool"] },
+    { title: "bun create", pkg: { name: "create-foo", bin: "create-foo" }, cmd: [bunExe(), "create", "foo"] },
+    { title: "a script that calls npx", cmd: [bunExe(), "run", "tool"], scripts: { tool: "npx mytool" } },
+    { title: "a directory below the project root", cmd: [bunExe(), "x", "mytool"], cwd: join("src", "deep") },
+  ];
+
+  for (const row of rows) {
+    it.concurrent(`stops: ${row.title}`, async () => {
+      const pkg = row.pkg ?? mytool;
+      using root = project([pkg], { name: "app", scripts: row.scripts });
+      const app = join(String(root), "app");
+      const cwd = join(app, row.cwd ?? "");
+      mkdirSync(cwd, { recursive: true });
+      takeAwayWhatRunsIt(app, pkg);
+      // A machine can have the command itself, `tsc` for one, further along PATH.
+      const result = await run(String(root), cwd, row.cmd, { PATH: pathWithout(pkg.bin, bunEnv.PATH) });
+      expectStopped(result, pkg.bin, entry(app, pkg.bin));
+    });
+  }
+
+  // A zip of node_modules keeps a copy of the bin where the link was.
+  it.concurrent.skipIf(isWindows)("stops: the .bin entry is a copy of the bin with no execute bit", async () => {
+    using root = project([mytool]);
+    const app = join(String(root), "app");
+    rmSync(launcher(app, "mytool"));
+    writeFileSync(launcher(app, "mytool"), "#!/bin/sh\necho plain\n", { mode: 0o644 });
+    const result = await run(String(root), app, [bunExe(), "x", "mytool"]);
+    expectStopped(result, "mytool", entry(app, "mytool"), repairOfFile);
+  });
+
+  it.concurrent.skipIf(isWindows)("stops: an executable named bunx", async () => {
+    using root = project([mytool]);
+    const app = join(String(root), "app");
+    takeAwayWhatRunsIt(app, mytool);
+    symlinkSync(bunExe(), join(String(root), "bunx"));
+    const result = await run(String(root), app, [join(String(root), "bunx"), "mytool"]);
+    expectStopped(result, "mytool", entry(app, "mytool"));
+  });
+
+  // The dependencies of a workspace member are in the node_modules of the workspace root.
+  it.concurrent("stops: a workspace member, the bin is in the workspace root", async () => {
+    using root = project([mytool], { name: "app", workspaces: ["packages/*"] });
+    const app = join(String(root), "app");
+    const member = join(app, "packages", "a");
+    mkdirSync(member, { recursive: true });
+    writeFileSync(join(member, "package.json"), JSON.stringify({ name: "a", dependencies: { mytool: "1.0.0" } }));
+    takeAwayWhatRunsIt(app, mytool);
+    const result = await run(String(root), member, [bunExe(), "x", "mytool"]);
+    expectStopped(result, "mytool", entry(app, "mytool"));
+  });
+
+  // The resolver keeps an empty listing for a directory it cannot read. That listing does not
+  // say whether node_modules is there.
+  it.concurrent.skipIf(isWindows || isRoot)(
+    "stops: the directory that holds node_modules cannot be listed",
+    async () => {
+      using root = project([]);
+      const holder = String(root);
+      mkdirSync(join(holder, "node_modules", ".bin"), { recursive: true });
+      writeFileSync(join(holder, "node_modules", ".bin", "mytool"), "#!/bin/sh\necho plain\n", { mode: 0o644 });
+      chmodSync(holder, 0o311);
+      try {
+        const result = await run(holder, join(holder, "app"), [bunExe(), "x", "mytool"]);
+        expectStopped(result, "mytool", join(holder, "node_modules", ".bin", "mytool"), repairOfFile);
+      } finally {
+        chmodSync(holder, 0o755);
+      }
+    },
+  );
+
+  it.concurrent("stops: the bunx cache has the registry's copy", async () => {
+    using root = project([mytool]);
+    const app = join(String(root), "app");
+    const elsewhere = join(String(root), "elsewhere");
+    mkdirSync(elsewhere);
+    const warm = await run(String(root), elsewhere, [bunExe(), "x", "mytool"]);
+    expect({ stdout: warm.stdout, exitCode: warm.exitCode }).toEqual({ stdout: "REGISTRY mytool", exitCode: 0 });
+
+    takeAwayWhatRunsIt(app, mytool);
+    const result = await run(String(root), app, [bunExe(), "x", "mytool"]);
+    expectStopped(result, "mytool", entry(app, "mytool"));
+  });
+
+  // <root>/mytool is a `file:` dependency of the project. `bun install` links each of its files
+  // and leaves their modes as they are.
+  function projectWithFileDependency(dependencies: Record<string, string> = {}) {
+    const root = project([], {
+      name: "app",
+      dependencies: { mytool: "file:../mytool", ...dependencies },
+      trustedDependencies: Object.keys(dependencies),
+    });
+    const source = join(String(root), "mytool");
+    mkdirSync(source);
+    writeFileSync(
+      join(source, "package.json"),
+      JSON.stringify({ name: "mytool", version: "1.0.0", bin: { mytool: "cli.js" } }),
+    );
+    writeFileSync(join(source, "cli.js"), `#!/usr/bin/env node\nconsole.log("LOCAL mytool");\n`, { mode: 0o644 });
+    return root;
+  }
+  const expectInstalled = (install: Result) =>
+    expect({ stderr: install.stderr, exitCode: install.exitCode }).toEqual({
+      stderr: expect.not.stringContaining("error:"),
+      exitCode: 0,
+    });
+
+  it.concurrent.skipIf(isWindows)("stops: a file: dependency after bun install, and chmod repairs it", async () => {
+    using root = projectWithFileDependency();
+    const app = join(String(root), "app");
+    expectInstalled(await run(String(root), app, [bunExe(), "install"]));
+    chmodSync(join(String(root), "mytool", "cli.js"), 0o644);
+
+    expectStopped(await run(String(root), app, [bunExe(), "x", "mytool"]), "mytool", entry(app, "mytool"));
+
+    chmodSync(entry(app, "mytool"), 0o755);
+    const repaired = await run(String(root), app, [bunExe(), "x", "mytool"]);
+    expect({ stdout: repaired.stdout, asked: repaired.asked, exitCode: repaired.exitCode }).toEqual({
+      stdout: "LOCAL mytool",
+      asked: [],
+      exitCode: 0,
+    });
+  });
+
+  // `bun install` can run a lifecycle script before it makes a bin executable, and the owner
+  // of a project cannot edit the script of a dependency. In a lifecycle script, and in what
+  // the script starts, bunx does not stop.
+  it.concurrent.skipIf(isWindows).each(["calls-mytool", "calls-hop"])(
+    "does not stop in a lifecycle script of bun install: %s",
+    async dependency => {
+      using root = projectWithFileDependency({ [dependency]: "9.9.9" });
+      const install = await run(String(root), join(String(root), "app"), [bunExe(), "install"]);
+      expectInstalled(install);
+      expect(install.asked).toContain("mytool/-/mytool-9.9.9.tgz");
+    },
+  );
+
+  const fromProject = (pkg: Pkg) => ({ stdout: `LOCAL ${pkg.name}`, asked: [], exitCode: 0 });
+  const expectFromProject = (result: Result, pkg: Pkg) =>
+    expect({ stdout: result.stdout, asked: result.asked, exitCode: result.exitCode }).toEqual(fromProject(pkg));
+
+  it.concurrent("runs the command of the project", async () => {
+    using root = project([mytool]);
+    expectFromProject(await run(String(root), join(String(root), "app"), [bunExe(), "x", "mytool"]), mytool);
+  });
+
+  it.concurrent("runs the bin of the package when it is not named like the package", async () => {
+    using root = project([compiler]);
+    expectFromProject(await run(String(root), join(String(root), "app"), [bunExe(), "x", "compiler"]), compiler);
+  });
+
+  it.concurrent("runs the bin of the package from a directory below the project root", async () => {
+    using root = project([compiler]);
+    const below = join(String(root), "app", "src", "deep");
+    mkdirSync(below, { recursive: true });
+    expectFromProject(await run(String(root), below, [bunExe(), "x", "compiler"]), compiler);
+  });
+
+  // The registry's mytool has a bin named mytool. The project's mytool names its bin mt.
+  it.concurrent("runs the package of the project, not the registry's copy in the bunx cache", async () => {
+    const local: Pkg = { name: "mytool", bin: "mt" };
+    using root = project([local]);
+    const elsewhere = join(String(root), "elsewhere");
+    mkdirSync(elsewhere);
+    const warm = await run(String(root), elsewhere, [bunExe(), "x", "mytool"]);
+    expect({ stdout: warm.stdout, exitCode: warm.exitCode }).toEqual({ stdout: "REGISTRY mytool", exitCode: 0 });
+
+    expectFromProject(await run(String(root), join(String(root), "app"), [bunExe(), "x", "mytool"]), local);
+  });
+
+  const fromRegistry = (name: string) => ({
+    stdout: `REGISTRY ${name}`,
+    asked: [name, `${name}/-/${name}-9.9.9.tgz`],
+    exitCode: 0,
+  });
+  const expectFromRegistry = (result: Result, name = "mytool") =>
+    expect({ stdout: result.stdout, asked: result.asked, exitCode: result.exitCode }).toEqual(fromRegistry(name));
+
+  it.concurrent("installs from the registry when nothing is in the project", async () => {
+    using root = project([]);
+    expectFromRegistry(await run(String(root), join(String(root), "app"), [bunExe(), "x", "mytool"]));
+  });
+
+  it.concurrent("installs from the registry when a version is asked for", async () => {
+    using root = project([mytool]);
+    const app = join(String(root), "app");
+    takeAwayWhatRunsIt(app, mytool);
+    expectFromRegistry(await run(String(root), app, [bunExe(), "x", "mytool@latest"]));
+  });
+
+  // The file in .bin is the bin of `compiler`. `--package` names another package.
+  it.concurrent("installs from the registry when --package names a package that is not in the project", async () => {
+    using root = project([compiler]);
+    const app = join(String(root), "app");
+    takeAwayWhatRunsIt(app, compiler);
+    const result = await run(String(root), app, [bunExe(), "x", "--package", "other-compiler", "cc-tool"]);
+    expectFromRegistry(result, "other-compiler");
+  });
+
+  // The package of the project names two bins, and the link of the one asked for is gone.
+  // The other bin is not the command.
+  it.concurrent("does not run another bin of the package in place of the command", async () => {
+    using root = project([{ name: "mytool", bin: "mytool-helper" }]);
+    const app = join(String(root), "app");
+    writeFileSync(
+      join(app, "node_modules", "mytool", "package.json"),
+      JSON.stringify({ name: "mytool", version: "1.0.0", bin: { "mytool-helper": "cli.js", mytool: "cli.js" } }),
+    );
+    const elsewhere = join(String(root), "elsewhere");
+    mkdirSync(elsewhere);
+    const warm = await run(String(root), elsewhere, [bunExe(), "x", "mytool"]);
+    expect({ stdout: warm.stdout, exitCode: warm.exitCode }).toEqual({ stdout: "REGISTRY mytool", exitCode: 0 });
+
+    const result = await run(String(root), app, [bunExe(), "x", "mytool"]);
+    expect({ stdout: result.stdout, asked: result.asked, exitCode: result.exitCode }).toEqual({
+      stdout: "REGISTRY mytool",
+      asked: [],
+      exitCode: 0,
+    });
+  });
+
+  // musl: `which` takes the file on PATH (#44513), and bunx runs it.
+  it.concurrent.skipIf(isWindows || isMusl)(
+    "installs from the registry when only PATH has a file of that name with no execute bit",
+    async () => {
+      using root = project([]);
+      const onPath = join(String(root), "on-path");
+      mkdirSync(onPath);
+      writeFileSync(join(onPath, "mytool"), "#!/bin/sh\necho plain\n", { mode: 0o644 });
+      const result = await run(String(root), join(String(root), "app"), [bunExe(), "x", "mytool"], {
+        PATH: `${onPath}${delimiter}${bunEnv.PATH}`,
+      });
+      expectFromRegistry(result);
+    },
+  );
+
+  it.concurrent.skipIf(isWindows)(
+    "installs from the registry when a .bin link is left and its package is gone",
+    async () => {
+      using root = project([mytool]);
+      const app = join(String(root), "app");
+      rmSync(join(app, "node_modules", "mytool"), { recursive: true });
+      expectFromRegistry(await run(String(root), app, [bunExe(), "x", "mytool"]));
+    },
+  );
+
+  // Another user's node_modules in a shared parent directory (/tmp) must not stop every command.
+  it.concurrent.skipIf(isWindows || isRoot)(
+    "installs from the registry when a node_modules above the project cannot be searched",
+    async () => {
+      using root = project([]);
+      const above = join(String(root), "node_modules");
+      mkdirSync(join(above, ".bin"), { recursive: true });
+      writeFileSync(join(above, ".bin", "mytool"), "#!/bin/sh\necho plain\n", { mode: 0o644 });
+      chmodSync(above, 0o000);
+      try {
+        expectFromRegistry(await run(String(root), join(String(root), "app"), [bunExe(), "x", "mytool"]));
+      } finally {
+        chmodSync(above, 0o755);
+      }
+    },
+  );
+});

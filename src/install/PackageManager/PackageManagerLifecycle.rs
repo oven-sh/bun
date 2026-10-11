@@ -391,6 +391,7 @@ impl PackageManager {
 
         path.append(original_path.as_slice())?;
         script_env.put(b"PATH", path.slice())?;
+        script_env.put(b"BUN_INTERNAL_LIFECYCLE_SCRIPT", b"true")?;
 
         // Ownership transfers to `LifecycleScriptSubprocess`, which
         // re-uses it across every `spawn_next_script` in the chain. Move the

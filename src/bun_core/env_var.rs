@@ -299,6 +299,8 @@ pub mod feature_flag {
     // Test-only: bypass the stdin isatty gate in `bun update --interactive` so
     // tests can drive the multi-select by writing keystrokes to a pipe.
     new_feature_flag!(pub BUN_INTERNAL_INTERACTIVE_ASSUME_TTY, "BUN_INTERNAL_INTERACTIVE_ASSUME_TTY", {});
+    // Set by `bun install` for the lifecycle scripts it runs, and inherited by what they spawn.
+    new_feature_flag!(pub BUN_INTERNAL_LIFECYCLE_SCRIPT, "BUN_INTERNAL_LIFECYCLE_SCRIPT", {});
     new_feature_flag!(pub BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN, "BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN", {});
     new_feature_flag!(pub BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT, "BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT", {});
     new_feature_flag!(pub BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB, "BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB", {});

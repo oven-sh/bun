@@ -121,12 +121,12 @@ macro_rules! file_lists {
             $(file.$field.truncate(lens.$field as usize);)*
         }
 
-        /// An empty file with the capacity of the lists of `old`.
-        fn recycled_file(mut old: FileBuilder) -> FileBuilder {
+        /// An empty file with the capacity of the lists of `old`, which is left without them.
+        fn recycled_file(old: &mut FileBuilder) -> FileBuilder {
             let mut file = FileBuilder::default();
             $(
                 old.$field.clear();
-                file.$field = old.$field;
+                file.$field = std::mem::take(&mut old.$field);
             )*
             file
         }
@@ -270,10 +270,9 @@ struct Seed<'a> {
     jsdoc: jsdoc::State,
 }
 
-/// What is left of a parser.
+/// What is left of a parser, beside the file.
 struct Harvest<'a> {
     lx: Lexer<'a>,
-    file: FileBuilder,
     stacks: Stacks,
     has_top_level_await: bool,
 }
@@ -293,7 +292,8 @@ pub(crate) fn run<'a>(
     }
     let jsdoc = jsdoc::State::new(&options, atoms.is_some(), scratch.jsdoc_wanted);
     let atoms = atoms.unwrap_or(&crate::names::NoInterner);
-    let mut file = recycled_file(std::mem::take(&mut scratch.recycled));
+    let mut f = scratch.recycled.take().unwrap_or_default();
+    let mut file = recycled_file(&mut f);
     let mut stacks = std::mem::take(&mut scratch.stacks);
     stacks.clear();
     let mut lx = Lexer::new(text, atoms, &mut scratch.names);
@@ -316,19 +316,18 @@ pub(crate) fn run<'a>(
     };
     let Harvest {
         lx,
-        file: mut f,
         stacks,
         has_top_level_await,
     } = match is_general {
-        true => Parser::<true>::new(seed).parse(),
-        false => Parser::<false>::new(seed).parse(),
+        true => Parser::<true>::new(seed).parse_into(&mut f),
+        false => Parser::<false>::new(seed).parse_into(&mut f),
     };
     let (refusal, refused_at) = (lx.refusal, lx.refused_at);
     let (comment_directives, leading_comments) = (lx.comment_directives, lx.leading_comments);
     f.comments = lx.comments;
     scratch.stacks = stacks;
     if let Some(why) = refusal {
-        scratch.recycled = f;
+        scratch.recycled = Some(f);
         return Err(Refused {
             why,
             at: refused_at.0,
@@ -348,7 +347,7 @@ pub(crate) fn run<'a>(
         &mut intern,
         &mut f,
     ) {
-        scratch.recycled = f;
+        scratch.recycled = Some(f);
         return Err(Refused::new(Refusal::Reported));
     }
     if f.diagnostics.len() > errors {
@@ -429,12 +428,13 @@ impl<'a, const GENERAL: bool> Parser<'a, GENERAL> {
         }
     }
 
-    fn parse(mut self) -> Harvest<'a> {
+    /// Leaves the file in `file`.
+    fn parse_into(mut self, file: &mut FileBuilder) -> Harvest<'a> {
         self.source_file();
         self.report_what_the_scanner_flagged();
+        *file = self.f;
         Harvest {
             lx: self.lx,
-            file: self.f,
             stacks: self.s,
             has_top_level_await: self.has_top_level_await,
         }

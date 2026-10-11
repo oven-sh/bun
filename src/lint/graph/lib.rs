@@ -146,7 +146,7 @@ pub struct Graph<'h> {
 
 /// Parses `text` as the file at `path`, binds it, without types, and calls `then` with the file, which has `modules`. `None` if the
 /// code is nested too deeply.
-pub fn with_file<R>(
+fn with_file<R>(
     path: &[u8],
     text: &[u8],
     language: &LanguageOptions,
@@ -1176,7 +1176,7 @@ impl Modules for Graph<'_> {
     fn record_exports<'a>(&self, file: &'a File<'a>, make: MakeRecord) {
         let _ = self.record_maker.set(make);
         let mut real = self.store.disk().realpath(&from_native(file.path()));
-        if file.vue_script().is_second {
+        if file.is_later_script() {
             real.push(0);
         }
         self.keep_record(real, file);

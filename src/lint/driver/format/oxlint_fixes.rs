@@ -31,7 +31,6 @@ pub(super) static FIXES: &[(&str, &[(&str, &str)])] = &[
         "no-jasmine-globals no-untyped-mock-factory prefer-jest-mocked prefer-mock-promise-shorthand ",
         "valid-title",
         )),
-        ("jsdoc", "no-blank-blocks"),
         ("jsx_a11y", "aria-props"),
         ("typescript", concat!(
         "ban-ts-comment consistent-indexed-object-style consistent-type-imports no-explicit-any ",
@@ -77,7 +76,6 @@ pub(super) static FIXES: &[(&str, &[(&str, &str)])] = &[
         "prefer-number-properties prefer-set-has",
         )),
         ("vitest", "prefer-called-exactly-once-with"),
-        ("vue", "no-import-compiler-macros"),
         ],
     ),
     (
@@ -113,7 +111,6 @@ pub(super) static FIXES: &[(&str, &[(&str, &str)])] = &[
         "prefer-lowercase-title prefer-mock-return-shorthand prefer-to-be prefer-to-contain ",
         "prefer-to-have-been-called prefer-to-have-been-called-times prefer-to-have-length prefer-todo",
         )),
-        ("jsdoc", "require-param-type"),
         ("jsx_a11y", "aria-unsupported-elements no-aria-hidden-on-focusable no-redundant-roles scope"),
         ("node", "no-exports-assign"),
         ("oxc", "no-const-enum"),
@@ -148,10 +145,6 @@ pub(super) static FIXES: &[(&str, &[(&str, &str)])] = &[
         "prefer-expect-type-of prefer-import-in-mock prefer-importing-vitest-globals prefer-lowercase-title ",
         "prefer-mock-return-shorthand prefer-strict-boolean-matchers prefer-to-be prefer-to-be-object ",
         "prefer-to-contain prefer-to-have-been-called-times prefer-to-have-length prefer-todo",
-        )),
-        ("vue", concat!(
-        "component-definition-name-casing next-tick-style no-deprecated-destroyed-lifecycle ",
-        "prefer-import-from-vue require-prop-type-constructor valid-next-tick",
         )),
         ],
     ),
@@ -203,7 +196,6 @@ pub(super) static FIXES: &[(&str, &[(&str, &str)])] = &[
         "prefer-expect-assertions prefer-spy-on prefer-strict-equal prefer-to-be-falsy prefer-to-be-truthy ",
         "valid-expect",
         )),
-        ("vue", "no-required-prop-with-default"),
         ],
     ),
     (
@@ -218,10 +210,6 @@ pub(super) static FIXES: &[(&str, &[(&str, &str)])] = &[
         )),
         ("import", "first no-absolute-path no-namespace"),
         ("jest", "no-done-callback"),
-        ("jsdoc", concat!(
-        "check-property-names check-tag-names empty-tags no-defaults require-param require-param-description ",
-        "require-property require-returns",
-        )),
         ("nextjs", "no-img-element"),
         ("node", "exports-style"),
         ("promise", "no-nesting no-return-wrap prefer-catch"),
@@ -239,11 +227,6 @@ pub(super) static FIXES: &[(&str, &[(&str, &str)])] = &[
         "prefer-blob-reading-methods prefer-dom-node-remove prefer-modern-math-apis prefer-module ",
         "prefer-native-coercion-functions prefer-object-from-entries prefer-ternary prefer-top-level-await ",
         "switch-case-break-position",
-        )),
-        ("vue", concat!(
-        "define-emits-declaration no-deprecated-data-object-declaration no-deprecated-model-definition ",
-        "no-deprecated-props-default-this no-multiple-slot-args no-shared-component-data valid-define-emits ",
-        "valid-define-props",
         )),
         ],
     ),

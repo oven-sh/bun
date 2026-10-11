@@ -14,9 +14,7 @@ use std::cmp;
 
 use crate::diagnostics::{CompilerDiagnostic, cold_invariant};
 use crate::hir::environment::Environment;
-use crate::hir::{
-    EvaluationOrder, HirFunction, IdentifierId, InstructionValue, ObjectPropertyOrSpread, ScopeId,
-};
+use crate::hir::{EvaluationOrder, HirFunction, IdentifierId, InstructionValue, ScopeId};
 use crate::utils::DisjointSet;
 
 // =============================================================================
@@ -42,10 +40,7 @@ fn find_scopes_to_merge(
                 }
                 InstructionValue::ObjectExpression { properties, .. } => {
                     for prop_or_spread in properties {
-                        let operand_place = match prop_or_spread {
-                            ObjectPropertyOrSpread::Property(prop) => &prop.place,
-                            ObjectPropertyOrSpread::Spread(spread) => &spread.place,
-                        };
+                        let operand_place = prop_or_spread.place();
                         if object_method_decls.contains(&operand_place.identifier) {
                             let operand_scope =
                                 env.identifiers[operand_place.identifier.0 as usize].scope;

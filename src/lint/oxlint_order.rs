@@ -311,17 +311,6 @@ static RULES: &[(Plugin, &[(When, u16, &str)])] = &[
             "no-unwanted-polyfillio",
         )),
     ]),
-    (Plugin::Jsdoc, &[
-        (Once, 0, concat!(
-            "check-access check-property-names check-tag-names empty-tags no-blank-blocks require-property ",
-            "require-property-description require-property-name require-property-type require-returns ",
-            "require-throws-description require-throws-type require-yields-description require-yields-type",
-        )),
-        (Entering, 6, concat!(
-            "implements-on-classes no-defaults require-param require-param-description require-param-name ",
-            "require-param-type require-returns-description require-returns-type require-yields",
-        )),
-    ]),
     (Plugin::Promise, &[
         (Entering, 2, "catch-or-return prefer-catch"),
         (Entering, 6, "always-return prefer-await-to-callbacks"),
@@ -362,35 +351,6 @@ static RULES: &[(Plugin, &[(When, u16, &str)])] = &[
         (Entering, 6, "handle-callback-err"),
         (Entering, 8,
             "callback-return global-require no-exports-assign no-new-require no-path-concat no-process-env no-sync"),
-    ]),
-    (Plugin::Vue, &[
-        (Once, 0, concat!(
-            "no-export-in-script-setup prefer-import-from-vue require-default-export valid-define-emits ",
-            "valid-define-props",
-        )),
-        (Entering, 0, "no-expose-after-await valid-define-options"),
-        (Entering, 1, concat!(
-            "max-props no-arrow-functions-in-watch no-deprecated-destroyed-lifecycle no-lifecycle-after-await ",
-            "no-required-prop-with-default no-this-in-before-route-enter no-watch-after-await require-direct-export ",
-            "require-prop-types",
-        )),
-        (Entering, 2, "no-import-compiler-macros"),
-        (Entering, 5, concat!(
-            "no-deprecated-data-object-declaration no-deprecated-model-definition no-reserved-keys no-reserved-props ",
-            "no-shared-component-data",
-        )),
-        (Entering, 6, concat!(
-            "no-async-in-computed-properties require-render-return return-in-computed-property ",
-            "return-in-emits-validator",
-        )),
-        (Entering, 8, concat!(
-            "component-definition-name-casing define-emits-declaration define-props-declaration ",
-            "define-props-destructuring next-tick-style no-computed-properties-in-data no-deprecated-delete-set ",
-            "no-deprecated-events-api no-deprecated-vue-config-keycodes no-dupe-keys no-multiple-slot-args ",
-            "no-reserved-component-names no-side-effects-in-computed-properties prop-name-casing require-default-prop ",
-            "require-prop-type-constructor require-slots-as-functions require-typed-ref valid-next-tick",
-        )),
-        (Entering, 10, "no-deprecated-props-default-this"),
     ]),
     (Plugin::ReactHooks, &[
         (Entering, 8, "exhaustive-deps rules-of-hooks"),

@@ -154,7 +154,6 @@ static INDEX: &[(u32, Texts)] = &[
     (0x01B12D02, One("Make sure there is an empty new line before the {{name}} block")), // padding-around-test-blocks
     (0x01D7F018, One("See https://nextjs.org/docs/messages/next-script-for-ga")), // next-script-for-ga
     (0x01DC3163, One("Rename '{{name}}' to avoid shadowing the global property.")), // no-shadow-restricted-names shadowingRestrictedName
-    (0x01E6B38E, One("Add description comment to `@returns` tag.")), // require-returns-description
     (0x02275BCC, One("Consider renaming '{{name}}' to avoid shadowing the global variable.")), // no-shadow noShadowGlobal
     (0x02FE0566, One("The first argument to an error constructor should be a string describing the error.")), // error-message
     (0x040964C8, One("File must begin with the Unicode BOM")), // unicode-bom expected
@@ -194,13 +193,11 @@ static INDEX: &[(u32, Texts)] = &[
     (0x0D14EA50, One("Remove one of the props, or rename them so each prop is distinct.")), // jsx-no-duplicate-props
     (0x0D7DC07F, One("Use `<></>` instead of `<React.Fragment></React.Fragment>`.")), // jsx-fragments
     (0x0D8D8E11, One("Consider adding an explicit return type annotation if the function is intended to return a union of promise and non-promise types.")), // promise-function-async missingAsyncHybridReturn
-    (0x0E0355F8, One("@property `{{type_name}}` is duplicated on the same block.")), // check-property-names
     (0x0E05869C, One("Use the `isNaN` function instead of the switch.")), // use-isnan switchNaN
     (0x0E386427, One("Avoid eval(). For JSON parsing use JSON.parse(); for dynamic property access use bracket notation (obj[key]); for other cases refactor to avoid evaluating strings as code.")), // no-eval unexpected
     (0x0E538FD3, One("\"prefer use Jest own API `{{api}}`\"")), // no-jasmine-globals
     (0x0E83665F, One("Ensure the label either has text inside it or is accessibly labelled using an attribute such as `aria-label`, or `aria-labelledby`. You can mark more attributes as accessible labels by configuring the `labelAttributes` option.")), // label-has-associated-control
     (0x0E927D39, One("Use a `break` statement to prevent fallthrough, or add a comment to indicate intentional fallthrough.")), // no-fallthrough case
-    (0x0F2D3BB6, One("Add description comment to `@yields` tag.")), // require-yields-description
     (0x0F38A7FF, One("Remove the `.bind` call.")), // no-extra-bind unexpected
     (0x0F58F8C1, One("You can try to fix this by turning on the `noImplicitThis` compiler option, or adding a `this` parameter to the function.")), // no-unsafe-call unsafeCallThis
     (0x0FD049B8, One("Refactor nested ternary expressions into if-else statements for better readability.")), // no-nested-ternary noNestedTernary
@@ -218,7 +215,6 @@ static INDEX: &[(u32, Texts)] = &[
     (0x1237F276, One("Give `aria-labelledby` an ID to a label element. Prefer the `alt` attribute over `aria-labelledby` for images.")), // alt-text
     (0x12425C48, One("Add a `displayName` property to the component.")), // display-name
     (0x124AB7BF, One("Require grouped accessor pairs in object literals and classes")), // grouped-accessor-pairs notGrouped
-    (0x12D3E40B, One("Use a regular function or method shorthand instead of an arrow function.")), // no-arrow-functions-in-watch
     (0x12D67E80, of_the_fix(false, First, "")), // prefer-string-slice
     (0x131E6446, One("Must have `alt` prop, either with meaningful text, or an empty string for decorative images.")), // alt-text
     (0x1331A7D3, One("Wrapping the error in `Promise.reject` is needlessly verbose. All errors thrown in async functions are already wrapped in a `Promise`.")), // no-useless-promise-resolve-reject
@@ -233,7 +229,6 @@ static INDEX: &[(u32, Texts)] = &[
     (0x1582E15B, One("See https://nextjs.org/docs/messages/no-head-import-in-document")), // no-head-import-in-document
     (0x15F11F3B, One("Define an explicit argument type for each argument.")), // explicit-module-boundary-types missingArgTypeUnnamed
     (0x1600E77C, One("Consider revising the pattern to remove or relocate the backreference so it points to a group that can be matched at the time of evaluation.")), // no-useless-backreference backward
-    (0x162D2C2C, One("`@property` path declaration `{{x1}}` appears before any real property.")), // check-property-names
     (0x162E6ADB, One("Use `module.exports` instead.")), // exports-style
     (0x16A58B57, One("Specify the rules you want to disable.")), // no-abusive-eslint-disable
     (0x16C210C0, One("Consider splitting it into smaller functions.")), // max-statements exceed
@@ -278,8 +273,6 @@ static INDEX: &[(u32, Texts)] = &[
     (0x24487926, One("Add `await` to the `expect.{{member_name}}` call.")), // require-awaited-expect-poll
     (0x244A0CCB, One("Omit the argument to delete all elements after the start index.")), // no-unnecessary-array-splice-count
     (0x2481EB1F, One("Replace `arguments` with rest parameters (`...args`).")), // prefer-rest-params preferRestParams
-    (0x248A8A81, One("Replace `{{deprecated}}` with `{{replacement}}`.")), // no-deprecated-destroyed-lifecycle
-    (0x24AD54E2, One("Use a function declaration instead.")), // no-deprecated-data-object-declaration
     (0x24E68FCA, of_the_fix(false, First, "")), // prefer-to-be
     (0x250F790D, One("Prefer using \"{{preferred_method}}\" instead of \"{{other_method}}\"{{within}}")), // consistent-test-it
     (0x25AAA242, One("Consider revising the pattern to remove or relocate the backreference so it points to a group that can be matched at the time of evaluation.")), // no-useless-backreference nested
@@ -302,12 +295,10 @@ static INDEX: &[(u32, Texts)] = &[
     (0x28EF0ABD, One("Pass a description argument to the Symbol()")), // symbol-description expected
     (0x28F15987, of_the_fix(false, First, "")), // prefer-to-be
     (0x2905BD12, One("Move absolute import above relative import")), // first
-    (0x2914DD32, of_the_fix(false, First, "")), // no-blank-blocks
     (0x2936D5DD, One("Imported bindings are readonly")), // no-import-assign readonly
     (0x294AC64D, One("Reference `this` directly instead of assigning it to a variable.")), // no-this-assignment
     (0x29E0C363, One("Consider using a `for...of` loop for this simple iteration.")), // prefer-for-of preferForOf
     (0x2A0567C6, One("Move the elements from `{{method}}()` into the array initializer.")), // no-immediate-mutation
-    (0x2A194A9C, One("`expose` should be called synchronously in `setup()` (or `defineExpose()` in `<script setup>`). Move the call before the first `await`.")), // no-expose-after-await
     (0x2A383EE8, One("The `arguments` object does not have a `{{method_name}}()` method. If you intended to use an array method, consider using rest parameters instead or converting the `arguments` object to an array.")), // bad-array-method-on-arguments
     (0x2A40F8AD, One("Because `{{left}}` will {{how_often}} be {{relation}} itself")), // const-comparisons
     (0x2A64055F, Three(&["The last declaration overwrites previous ones, remove one of them or rename if both should be retained", "\"{{name}}\" is previously declared here", ""])), // no-dupe-class-members unexpected
@@ -320,7 +311,6 @@ static INDEX: &[(u32, Texts)] = &[
     (0x2D97C338, One("Remove `await` if the value is synchronous, or change the expression to return a Promise or Thenable before awaiting it.")), // await-thenable await
     (0x2DB8429D, One("Replace this argument with a numeric literal.")), // prefer-expect-assertions
     (0x2E0DDD90, One("Use event handlers instead if you can.")), // jsx-no-script-url
-    (0x2EBC678D, One("Do not use spread arguments when calling slot functions.")), // no-multiple-slot-args
     (0x2EC5DBD1, Three(&["Replace the object literal type assertion with a type annotation. For example, change `const x = { a: 1 } as Type` to `const x: Type = { a: 1 }`. Alternatively, use `const x = { a: 1 } satisfies Type` if you want TypeScript to infer the exact shape.", "", "Type assertions on object literals can hide errors where the object doesn't actually match the asserted type. Using type annotations or `satisfies` ensures TypeScript verifies that the object matches the expected type."])), // consistent-type-assertions unexpectedObjectTypeAssertion
     (0x2F10E46A, One("Require or disallow initialization in variable declarations")), // init-declarations notInitialized
     (0x2F2BBEA6, One("Do not use the `with` statement.")), // no-with unexpectedWith
@@ -336,7 +326,6 @@ static INDEX: &[(u32, Texts)] = &[
     (0x313E1D6C, One("See: https://nextjs.org/docs/messages/no-async-client-component")), // no-async-client-component
     (0x31815129, One("Const enums are not supported by bundlers and are incompatible with the isolatedModules mode. Their use can lead to import nonexistent values (because const enums are erased).")), // no-const-enum
     (0x323049FB, One("The TypeScript compiler doesn't check whether properties are initialized, which can lead to TypeScript not detecting code that will cause runtime errors.")), // no-unsafe-declaration-merging unsafeMerging
-    (0x32A4602D, One("combine all events into a single `defineEmits` call.")), // valid-define-emits
     (0x32F34167, One("Prefer `node:{{module_name}}` over `{{module_name}}`.")), // prefer-node-protocol
     (0x331EE56D, One("Surround the arrow body with braces and use a return statement.")), // arrow-body-style expectedBlock
     (0x338A21D2, of_the_fix(false, First, "")), // prefer-to-have-length
@@ -348,7 +337,6 @@ static INDEX: &[(u32, Texts)] = &[
     (0x372F35A2, One("Use `.at()` for index access.")), // prefer-at
     (0x37356D1D, One("Replace `.apply()` with spread syntax (`...args`).")), // prefer-spread preferSpread
     (0x37359BE4, One("Use {{kind}} destructuring rather than direct member access.")), // prefer-destructuring preferDestructuring
-    (0x37441D54, One("Add `@yields` tag to the JSDoc comment.")), // require-yields
     (0x37A179DC, One("It's better to make it clear what the value of the digits argument is when calling Number#toFixed(), instead of relying on the default value of 0.")), // require-number-to-fixed-digits-argument
     (0x38375F1D, Three(&["`React.Children` is uncommon and leads to fragile React components.", "", "https://react.dev/reference/react/Children#alternatives"])), // no-react-children
     (0x38AA9EA3, One("When using JSX, `<a />` expands to `React.createElement(\"a\")`. Therefore the `React` variable must be in scope.")), // react-in-jsx-scope
@@ -442,7 +430,6 @@ static INDEX: &[(u32, Texts)] = &[
     (0x50FFD073, One("See https://nextjs.org/docs/messages/no-sync-scripts")), // no-sync-scripts
     (0x51203CCD, One("Rename the function or the variable/property so the names satisfy this rule.")), // func-name-matching notMatchProperty
     (0x516ED453, One("`isMounted` is not supported in modern React, and does not work in class or function components.")), // no-is-mounted
-    (0x51D00F97, One("Add `@class` tag or use class syntax.")), // implements-on-classes
     (0x51D024C7, One("Remove the try/catch wrapper, since it does not provide any additional error handling or functionality.")), // no-useless-catch unnecessaryCatch
     (0x521DF4D2, One("Return the callback call or add an explicit return immediately after it.")), // callback-return
     (0x52347A5F, One("Enforce the consistent use of either `function` declarations or expressions assigned to variables")), // func-style expression
@@ -454,7 +441,6 @@ static INDEX: &[(u32, Texts)] = &[
     (0x53091EDD, One("This logical expression can be simplified. Try using the `{{operator}}` operator instead.")), // double-comparisons
     (0x531E3EC8, One("Consider revising the pattern to remove or relocate the backreference so it points to a group that can be matched at the time of evaluation.")), // no-useless-backreference disjunctive
     (0x5354B870, One("Replace var with let or const")), // no-var unexpectedVar
-    (0x5368BAFF, One("Add {type} to `@yields` tag.")), // require-yields-type
     (0x5398EA92, One("Preserve the original error by using the `cause` property when re-throwing errors.")), // preserve-caught-error caughtErrorShadowed
     (0x53A1C515, One("Switch to `structuredClone(…)`.")), // prefer-structured-clone
     (0x53D9403E, One("Add a comment explaining the depth.")), // no-magic-array-flat-depth
@@ -467,7 +453,6 @@ static INDEX: &[(u32, Texts)] = &[
     (0x559A3AAA, One("This `if` has no `else` branch, so the callback may reach the end without a `return`. Add an `else`, or add a final `return`/`throw` after the `if`.{{value_requirement}}")), // array-callback-return mayReachEndOfIf
     (0x5646286A, One("Replace the character with its normalized form (NFC) or use Unicode code point escapes instead of combining sequences.")), // no-misleading-character-class combiningClass
     (0x568E64EB, Three(&["To replace all occurrences of a string, use the `replaceAll` method with the global flag (g) in the regular expression.", "", "Unlike `replace`, `replaceAll` throws a `TypeError` when passed a non-global regular expression instead of replacing only the first match."])), // bad-replace-all-arg
-    (0x56D50D2B, One("Remove the import statement for this macro.")), // no-import-compiler-macros
     (0x56D7811F, One("Move it to its own statement instead.")), // no-confusing-void-expression invalidVoidExpr
     (0x56E93E46, One("Replace this `void` type with an allowed type, or keep `void` only in a valid return position.")), // no-invalid-void-type invalidVoidNotReturnOrGeneric
     (0x5782557A, One("Add a `ref` parameter, or remove `forwardRef`")), // forward-ref-uses-ref
@@ -484,14 +469,12 @@ static INDEX: &[(u32, Texts)] = &[
     (0x5A9E7553, One("Add the Unicode flag 'u'.")), // no-misleading-character-class surrogatePairWithoutUFlag
     (0x5AF1595D, One("Enforce the consistent use of either `function` declarations or expressions assigned to variables")), // func-style declaration
     (0x5B734369, One("Check if you meant to write `import { {{export}} } from {{suggested_module_name}}`")), // no-named-as-default-member
-    (0x5BC28272, One("All code paths inside a render function must return a value.")), // require-render-return
     (0x5BEE2655, One("Add the entry to the Map initializer array.")), // no-immediate-mutation
     (0x5C900B00, One("Use ES module imports or `import = require` instead.")), // no-var-requires noVarReqs
     (0x5CC6FCF8, One("Remove the negation operator and use '{{suggested_operator}}' instead of '{{current_operator}}'.")), // no-negation-in-equality-check
     (0x5D0F92E9, One("Use a named constant instead of a magic number to make the code more readable and maintainable.")), // no-magic-numbers noMagic
     (0x5D441852, One("Remove string interpolation from snapshots")), // no-interpolation-in-snapshots
     (0x5D7B2CB9, One("Maximum allowed is {{max}}.")), // max-lines exceed
-    (0x5DB5EA2F, One("Export the component object directly instead of assigning it to a variable first.")), // require-direct-export
     (0x5DB72799, One("Remove this empty export.")), // no-useless-empty-export uselessExport
     (0x5E3E5C10, One("Consider removing the spread operator.")), // no-useless-spread
     (0x5E7E7B07, One("Consider removing this method from your interface.")), // no-misused-new errorMessageInterface
@@ -500,20 +483,15 @@ static INDEX: &[(u32, Texts)] = &[
     (0x5E9582B5, One("If you are testing for NaN, you can use the `Number.isNaN()` function.")), // no-self-compare comparingToSelf
     (0x5E98BF1B, One("Pass a single numeric argument to `{{prefix}}.assertions()`.")), // prefer-expect-assertions
     (0x5E9FBEEF, One("Updating state after a component update triggers a second render() call and can lead to property/layout thrashing.")), // no-did-update-set-state
-    (0x5EC9566A, of_the_fix(false, First, "")), // valid-next-tick
     (0x5ED5EA27, One("Call `super()` before `this`/`super` property access.")), // no-this-before-super noBeforeSuper
     (0x5EF87FAD, One("Assigning a variable to this instead of properly using arrow lambdas may be a symptom of pre-ES2015 practices or not managing scope well.")), // no-this-alias thisAssignment
     (0x5EFB52AD, One("Avoid executing source text at runtime.")), // no-implied-eval execScript
     (0x5F1AAC0D, Three(&["Avoid the `Function` constructor. Define the function directly with a function declaration/expression or an arrow function.", "Dynamic function construction is used here.", "The `Function` constructor compiles code from strings at runtime, which can introduce injection risks, hurts performance, and makes code harder to analyze and maintain."])), // no-new-func noFunctionConstructor
-    (0x5F289D03, One("inline the variable or import it from another module.")), // valid-define-props
     (0x5FC22DE6, One("Either `await` the promise, `return` it, or use `expect().resolves`/`expect().rejects`.")), // valid-expect-in-promise
     (0x60274EAA, One("Use `exports` instead.")), // exports-style
     (0x6050AC87, of_the_fix(false, All, "")), // array-type errorStringArray
     (0x6064B3C1, One("Remove the async wrapper and pass the promise directly to expect")), // no-unneeded-async-expect-function
-    (0x60775FC2, One("remove the argument for better type inference.")), // valid-define-emits
-    (0x608038F2, One("Add root description to `@param`.")), // require-param-description
     (0x6099C903, Three(&["Move all \"{{name}}\" overload signatures together, placing them consecutively before any other members.", "", "Function overload signatures represent multiple ways a function can be called. Keeping them adjacent makes it easier for developers to understand all available call signatures at a glance."])), // adjacent-overload-signatures adjacentSignature
-    (0x6131F82C, One("Add description comment to `@throws` tag.")), // require-throws-description
     (0x6182F6AE, One("A descriptive message makes the error easier to debug when it is caught or logged.")), // error-message
     (0x619CF5B6, One("Use Unicode code point escapes (e.g., \\u{1F3FB} for the light skin tone modifier) instead of emoji modifier sequences in character classes.")), // no-misleading-character-class emojiModifier
     (0x61C4E6B8, One("Remove `.toArray()`.")), // no-useless-iterator-to-array
@@ -530,7 +508,6 @@ static INDEX: &[(u32, Texts)] = &[
     (0x65D9A51E, One("`Reflect.apply()` is less verbose and easier to understand.")), // prefer-reflect-apply
     (0x65E653F3, One("Remove all but one spread.")), // jsx-props-no-spread-multi
     (0x65F96EAF, One("{{message}}")), // no-restricted-matchers
-    (0x6634C5A7, One("Provide an explicit type parameter or an initial value.")), // require-typed-ref
     (0x66A86706, One("Move the returned value to be immediately after the `=>`.")), // arrow-body-style unexpectedSingleBlock
     (0x67B8A380, One("Replace `findDOMNode` with one of the alternatives documented at https://react.dev/reference/react-dom/findDOMNode#alternatives.")), // no-find-dom-node
     (0x67CED70F, One("This rule enforces a maximum number of parameters allowed in function definitions.")), // max-params exceed
@@ -543,9 +520,7 @@ static INDEX: &[(u32, Texts)] = &[
     (0x692FE0A5, One("{{customMessage}}")), // no-restricted-imports pathWithCustomMessage
     (0x697C0C1E, One("Either include it or remove the dependency array.")), // exhaustive-deps
     (0x69ABD53A, One("Replace this string literal with a non-literal expression, such as a call to a translation function.")), // jsx-no-literals
-    (0x69CCD28C, One("`watch` and `watchEffect` should be called synchronously in `setup()`. Move the call before the first `await`.")), // no-watch-after-await
     (0x6A29E837, of_the_fix(false, First, "")), // prefer-math-trunc
-    (0x6A610A9A, One("Add name to `@param` tag.")), // require-param-name
     (0x6B9BE531, of_the_fix(false, First, "")), // prefer-prototype-methods
     (0x6B9CF3B0, One("Move this hoisted API to the top of the file to better reflect its behavior.\nYou may alternatively replace `vi.mock()` with `vi.doMock`, which is not hoisted.")), // hoisted-apis-on-top
     (0x6BCE2B27, Three(&["Add the 'v' flag.", "", "The 'u' and 'v' flags enable Unicode-aware regular expression behavior and stricter pattern parsing."])), // require-unicode-regexp requireVFlag
@@ -563,7 +538,6 @@ static INDEX: &[(u32, Texts)] = &[
     (0x6E682581, One("Add a type parameter to the mock function, e.g. `vi.{{method_name}}<() => void>()`.")), // require-mock-type-parameters
     (0x6E72D2C7, One("Preserve the original error by using the `cause` property when re-throwing errors.")), // preserve-caught-error missingCause
     (0x6EB15CD7, of_the_fix(false, First, "")), // no-null
-    (0x6ECB24E9, One("Remove the `required: true` option, or drop the `required` key entirely to make this prop optional.")), // no-required-prop-with-default
     (0x6F0AB04C, One("{{customMessage}}")), // no-restricted-imports everythingWithAllowedImportNamePatternWithCustomMessage
     (0x6F1DD394, of_the_fix(false, First, "")), // object-shorthand expectedMethodShorthand
     (0x6FF55E58, One("Remove the default assignment")), // no-useless-default-assignment uselessUndefined
@@ -571,7 +545,6 @@ static INDEX: &[(u32, Texts)] = &[
     (0x7043F91E, One("Consider refactoring the code to eliminate the need for labels.")), // no-labels unexpectedLabelInContinue
     (0x70558DB2, One("Use an index signature such as `{ [key: string]: unknown }` instead of a record type.")), // consistent-indexed-object-style preferIndexSignature
     (0x70962A56, One("Change to `Date.now()`.")), // prefer-date-now
-    (0x709A8728, One("Add {type} to `@param` tag.")), // require-param-type
     (0x70BF82FC, One("Move {{type}} declaration to {{body}} root")), // no-inner-declarations moveDeclToRoot
     (0x710AF355, of_the_fix(false, First, "")), // ban-tslint-comment commentDetected
     (0x718431E5, One("Replace `import()` type annotations with a regular type import. For example, change `type T = import('module').Type` to `import type { Type } from 'module'; type T = Type`.")), // consistent-type-imports noImportTypeAnnotations
@@ -607,7 +580,6 @@ static INDEX: &[(u32, Texts)] = &[
     (0x77F7FD45, One("Change the `tabIndex` prop to a non-positive value.")), // tabindex-no-positive
     (0x78474DB3, One("Use the `isNaN` function to check for NaN values.")), // use-isnan indexOfNaN
     (0x784C8E87, One("Remove the return statement from the constructor. If you need early exit, use a bare `return;` with no value.")), // no-constructor-return unexpected
-    (0x78ED9184, One("Using external library instead, for example mitt.")), // no-deprecated-events-api
     (0x78F396CE, One("The function type form `{{suggestion}}` is generally preferred when possible for being more succinct.")), // prefer-function-type unexpectedThisOnFunctionOnlyInterface
     (0x797AD421, Three(&["Remove the non-null assertion.", "non-null assertion made after optional chain", ""])), // no-non-null-asserted-optional-chain noNonNullOptionalChain
     (0x798BFAED, One("Change the first letter of the comment to uppercase")), // capitalized-comments unexpectedLowercaseComment
@@ -635,7 +607,6 @@ static INDEX: &[(u32, Texts)] = &[
     (0x7E38A935, One("This logical expression will always evaluate to the same value as the expression itself.")), // const-comparisons
     (0x7E3DED4F, One("Provide `title` property for `iframe` element.")), // iframe-has-title
     (0x7E5C6924, One("Does {{imported_name}} have the default export?")), // default
-    (0x7EF65762, One("Remove `export default`.")), // valid-define-props
     (0x7F15A285, One("Pass a function callback instead of source text.")), // no-implied-eval impliedEval
     (0x7F38C6CD, of_the_fix(false, First, "")), // jsx-boolean-value
     (0x7F86BC56, of_the_fix(false, First, "")), // catch-error-name
@@ -649,7 +620,6 @@ static INDEX: &[(u32, Texts)] = &[
     (0x822664B6, One("Consider moving this to the top of the functions scope or using let or const to declare this variable.")), // vars-on-top top
     (0x823B2F2D, One("Add assertion(s) in this Test")), // expect-expect
     (0x823B4E38, One("Wrap the `value` prop in useMemo() or useCallback(), or use a constant value to prevent unnecessary re-renders.\nAlternatively, move the value outside the render function if it doesn't depend on props or state.")), // jsx-no-constructed-context-values
-    (0x824F9C6D, One("There should be only one instance of access tag in a JSDoc comment.")), // check-access
     (0x82801981, One("`{{title}}`s should begin with lowercase")), // prefer-lowercase-title
     (0x82B929F0, One("Combine multiple assignments into a single `module.exports = { ... }` statement")), // group-exports
     (0x8303A4C7, One("Either use the value directly, or switch to `Promise.resolve(…)`.")), // no-single-promise-in-promise-methods
@@ -670,11 +640,9 @@ static INDEX: &[(u32, Texts)] = &[
     (0x853D3736, One("See https://nextjs.org/docs/messages/google-font-display")), // google-font-display
     (0x856525FC, of_the_fix(false, First, "")), // curly missingCurlyAfterCondition
     (0x85AF642F, Three(&["Use `let` instead of `const` if you need to reassign this variable.", "{{name}} is declared here as `const`.", ""])), // no-const-assign const
-    (0x863835C0, One("Add a description to this `@property` tag.")), // require-property-description
     (0x872D13BE, One("Use `()` to negate the whole expression, as '!' binds more closely than '{{operator}}'")), // no-unsafe-negation unexpected
     (0x87322D5F, One("Supported methods are: {{allowed}}.")), // no-console limited
     (0x8768308E, One("Calling `setState()` afterwards will replace the mutations you made via `this.state`.")), // no-direct-mutation-state
-    (0x8771A3F9, One("combine all `defineProps` calls into a single `defineProps` call.")), // valid-define-props
     (0x87889300, One("Add a numeric third argument, a `{ timeout }` option object second argument, or call `vi.setConfig({ testTimeout: ... })` before this test.")), // require-test-timeout
     (0x87A24908, One("Must have meaningful value for `lang` prop.")), // html-has-lang
     (0x87C0B7B7, One("Replace the argument with a literal string or immutable template literal")), // no-dynamic-require
@@ -698,7 +666,6 @@ static INDEX: &[(u32, Texts)] = &[
     (0x8AE6F07F, One("Add Braces for case clause.")), // switch-case-braces
     (0x8B6CA6B8, of_the_fix(false, First, "https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage")), // require-post-message-target-origin
     (0x8B9EEF6D, of_the_fix(true, First, "")), // jsx-no-useless-fragment
-    (0x8BA1D2F1, One("Lifecycle hooks should be called synchronously in `setup()`. Move the hook call before the first `await`.")), // no-lifecycle-after-await
     (0x8BA4818B, One("This logical expression will always evaluate to the same value as either side.")), // const-comparisons
     (0x8C9A3028, of_the_fix(false, First, "")), // consistent-empty-array-spread
     (0x8D1408A7, Three(&["Consider renaming '{{name}}' to avoid shadowing the variable from the outer scope.", "'{{name}}' is declared here", "Enum members are added to the enum scope, so references to '{{name}}' in enum member initializers resolve to this member instead of the declaration in the upper scope."])), // no-shadow noEnumShadow
@@ -713,7 +680,6 @@ static INDEX: &[(u32, Texts)] = &[
     (0x90C03318, One("Use a named capture group like \"(?<name>...)\" — this regex has {{unnamed_count}} unnamed group{{s}}.")), // prefer-named-capture-group required
     (0x914A5EF2, One("Use `then` and `catch` directly")), // no-callback-in-promise
     (0x9199CAC4, One("Remove the fallthrough comment or add code that allows fallthrough (e.g. remove `break`).")), // no-fallthrough unusedFallthroughComment
-    (0x921522BD, One("Define at least one prop in `defineProps`.")), // valid-define-props
     (0x92842C3D, One("{{customMessage}}")), // no-restricted-imports everythingWithAllowImportNamesAndCustomMessage
     (0x9285F5BC, One("You need to call your matcher, e.g. `expect(true).toBe(true)`.")), // valid-expect
     (0x92899C84, One("Use a local variable or function parameter instead of the restricted global.")), // no-restricted-globals customMessage
@@ -726,7 +692,6 @@ static INDEX: &[(u32, Texts)] = &[
     (0x93FAA91F, One("Remove `.toArray()`.")), // no-useless-iterator-to-array
     (0x93FFFE35, Three(&["If in-place mutation is acceptable, use `Object.assign` or direct property assignment instead of spreading", "", "`Object.assign` mutates the first argument. Disable this rule if copy-on-write behavior is required."])), // no-map-spread
     (0x94116C9A, of_the_fix(false, First, "`{{typeName}}` is a boxed object type, not a primitive. Boxed types have object semantics (identity/truthiness) that can be surprising. Use `{{preferred}}` for values, and in `extends`/`implements` use an interface/object shape instead.")), // no-wrapper-object-types bannedClassType
-    (0x9477C5C2, One("Valid access levels are `package`, `private`, `protected`, and `public`.")), // check-access
     (0x94EDCB08, One("Control flow inside `try` or `catch` blocks will be overwritten by this statement.")), // no-unsafe-finally unsafeUsage
     (0x95283D32, One("Do not use the `continue` statement.")), // no-continue unexpected
     (0x95474AF7, of_the_fix(false, First, "")), // prefer-string-starts-ends-with
@@ -746,7 +711,6 @@ static INDEX: &[(u32, Texts)] = &[
     (0x99B68D6E, One("Use `undefined` instead")), // no-void noVoid
     (0x99EBCD74, One("Use `find(predicate)` instead of `filter(predicate)[0]` or similar patterns.")), // prefer-array-find
     (0x9A28EDC3, One("Try to remove the irregular whitespace")), // no-irregular-whitespace noIrregularWhitespace
-    (0x9A5B5A31, of_the_fix(false, First, "")), // component-definition-name-casing
     (0x9ABD1E60, One("The listener argument should be a function reference.")), // no-invalid-remove-event-listener
     (0x9AF51DCD, One("Delete this file or add some code to it.")), // no-empty-file
     (0x9B264F04, One("Visible, non-interactive elements with click handlers must have one of `keyup`, `keydown`, or `keypress` listener.")), // click-events-have-key-events
@@ -769,7 +733,6 @@ static INDEX: &[(u32, Texts)] = &[
     (0xA04674AC, of_the_fix(false, First, "")), // prefer-dom-node-dataset
     (0xA087B343, One("Use `<Link />` from `next/link` instead for internal navigation. See https://nextjs.org/docs/messages/no-html-link-for-pages")), // no-html-link-for-pages
     (0xA09B127D, One("Remove the @ts-{{directive}} directive and fix the underlying TypeScript error instead. If you must suppress an error, consider using @ts-expect-error with a descriptive comment explaining why it's necessary.")), // ban-ts-comment tsDirectiveComment
-    (0xA0B67ACB, One("Define at least one event in `defineEmits`.")), // valid-define-emits
     (0xA0D015A0, One("Remove focus from test.")), // no-focused-tests
     (0xA0E2E977, of_the_fix(true, First, "")), // jsx-curly-brace-presence
     (0xA0E3B9A9, One("It is included in the `disallowedWords` of your config file, try to remove it from your title")), // valid-title
@@ -781,7 +744,6 @@ static INDEX: &[(u32, Texts)] = &[
     (0xA1AA64D9, One("Handle the nullish case explicitly.")), // strict-boolean-expressions conditionErrorNullableObject
     (0xA1EBE911, One("Compute the value before returning it, or wrap the assignment in parentheses to make the intent explicit.")), // no-return-assign arrowAssignment
     (0xA21E96A6, One("Make sure the title does not match the `mustNotMatch` of your config file")), // valid-title
-    (0xA237E215, One("Remove redundant `@yields` tag.")), // require-yields
     (0xA239492E, Three(&["Use a local variable instead of modifying the global '{{name}}'.", "Read-only global '{{name}}' should not be modified.", ""])), // no-global-assign globalShouldNotBeModified
     (0xA24F6A04, One("{{customMessage}}")), // no-restricted-imports patternAndEverythingWithCustomMessage
     (0xA299A7EB, of_the_fix(false, First, "")), // prefer-prototype-methods
@@ -804,20 +766,16 @@ static INDEX: &[(u32, Texts)] = &[
     (0xA59D59AF, One("Remove the unreachable code or fix the control flow to make it reachable.")), // no-unreachable unreachableCode
     (0xA5DF2034, One("Forbid named default exports.")), // no-named-default
     (0xA63FC691, One("Does {{module_name}} have the export {{imported_name}}?")), // named
-    (0xA65E38C7, One("remove the argument for better type inference.")), // valid-define-props
     (0xA680EB4A, of_the_fix(false, First, "")), // prefer-importing-jest-globals
     (0xA6848C64, One("Add a type parameter to the mock factory such as `typeof import({{module_name}})`")), // no-untyped-mock-factory
     (0xA6A3075C, One("Remove the explicit `0` delay argument.")), // explicit-timer-delay
     (0xA6C73740, One("Handle the error or rename the parameter if it's not an error.")), // handle-callback-err
-    (0xA6DEB743, One("Add {type} to the `@returns` tag.")), // require-returns-type
     (0xA6DF883A, Three(&["Use `.length - 1` to replace the last element.", "", "An array's `.length` is one past its last valid index."])), // no-confusing-array-with
     (0xA740D924, One("Each child in a list should have a unique 'key' prop")), // jsx-key
     (0xA7D7E9CA, One("These two values can never be equal")), // no-constant-binary-expression alwaysNew
     (0xA7EE021C, One("Prefer using `{{function}}` instead of `{{opposite}}`.")), // consistent-vitest-vi
-    (0xA81B952C, One("Pass only one argument to the slot function.")), // no-multiple-slot-args
     (0xA83C3DF8, One("Too many assertion calls ({{count}}) - maximum allowed is {{max}}")), // max-expects
     (0xA86EE8DB, One("Remove the constructor or add code to it.")), // no-useless-constructor noUselessConstructor
-    (0xA872474E, One("inline the variable or import it from another module.")), // valid-define-emits
     (0xA88D6F0B, One("Move `{{name}}` to the outer scope to avoid recreating it on every call.")), // consistent-function-scoping
     (0xA8D87DAF, One("Replace named exports with a single export default to ensure a consistent module entry point.")), // no-named-export
     (0xA94E0D11, of_the_fix(false, First, "")), // prefer-string-raw
@@ -836,7 +794,6 @@ static INDEX: &[(u32, Texts)] = &[
     (0xAB94B666, One("Add a `super()` call to the constructor")), // constructor-super missingAll
     (0xABA004B6, One("Hooks should come before test cases")), // prefer-hooks-on-top
     (0xAC654D44, One("Remove the unnecessary assignment")), // no-unnecessary-parameter-property-assignment unnecessaryAssign
-    (0xAC9E9DCA, One("Add a {type} to this `@property` tag.")), // require-property-type
     (0xACC35EBF, of_the_fix(false, First, "")), // no-test-prefixes
     (0xAD4FC5F0, One("Use named export instead.")), // no-restricted-exports restrictedDefault
     (0xADA5BAA4, One("Use Object.is(x, -0) to test equality with -0 and use 0 for other cases")), // no-compare-neg-zero unexpected
@@ -862,7 +819,6 @@ static INDEX: &[(u32, Texts)] = &[
     (0xB19ED905, One("Replace \"{{name}}\" with its canonical name of \"{{canonical_name}}\"")), // no-alias-methods
     (0xB1A814F2, of_the_fix(false, All, "")), // array-type errorStringGenericSimple
     (0xB2443EEA, One("Remove the `new` operator.")), // no-new-wrappers notAConstructor
-    (0xB296BFEB, One("Add a `@returns` tag to the JSDoc comment.")), // require-returns
     (0xB2C78415, One("The promise must end with a call to .catch, or end with a call to .then with a rejection handler. A rejection handler that is not a function will be ignored.")), // no-floating-promises floatingUselessRejectionHandler
     (0xB2D20D3D, One("Pass an inline function instead.")), // exhaustive-deps
     (0xB34DAB4C, One("Provide screen reader accessible content when using `a` elements.")), // anchor-has-content
@@ -876,7 +832,6 @@ static INDEX: &[(u32, Texts)] = &[
     (0xB6495F3F, of_the_fix(false, First, "")), // prefer-numeric-literals useLiteral
     (0xB6FEBA1F, One("Use a unique data-dependent key to avoid unnecessary rerenders")), // no-array-index-key
     (0xB733DAF4, One("Remove the argument and its usage. Alternatively, use the argument in the function body.")), // only-used-in-recursion
-    (0xB7864DFF, One("Remove the import statement for this macro.")), // no-import-compiler-macros
     (0xB7A2A3A3, One("See: 'https://nextjs.org/docs/messages/no-page-custom-font")), // no-page-custom-font
     (0xB7B1DBBD, One("Remove the arguments from `{{prefix}}.hasAssertions()`.")), // prefer-expect-assertions
     (0xB7E68201, One("Remove the `autoFocus` attribute.")), // no-autofocus
@@ -900,21 +855,17 @@ static INDEX: &[(u32, Texts)] = &[
     (0xBC23A703, One("Throwing literals or non-Error objects is not recommended. Use an Error object instead.")), // no-throw-literal object
     (0xBC32FC4D, One("Follow the [thing, setThing] naming convention")), // hook-use-state
     (0xBC421B75, One("See https://nextjs.org/docs/messages/no-title-in-document-head")), // no-title-in-document-head
-    (0xBC5457DD, One("Add a type name to this `@property` tag.")), // require-property-name
-    (0xBCD177C5, One("Add {type} to `@throws` tag.")), // require-throws-type
     (0xBD73E97F, One("Use a more specific type to ensure type safety.")), // strict-boolean-expressions conditionErrorAny
     (0xBD8E1A3D, One("Use array literal notation [] instead.")), // no-array-constructor useLiteral
     (0xBDAA4491, One("Use `Object.fromEntries(pairs)` instead of manually building objects with `reduce` or `forEach`.")), // prefer-object-from-entries
     (0xBDFFAF10, One("Add name as first argument and callback as second argument")), // valid-describe-callback
     (0xBE055C31, One("Remove or rephrase this comment")), // no-warning-comments unexpectedComment
-    (0xBE056113, of_the_fix(false, First, "")), // prefer-import-from-vue
     (0xBE2456FB, of_the_fix(false, First, "")), // operator-assignment replaced
     (0xBE70D594, One("Remove the `!`, or prefix the `=` with it.")), // no-confusing-non-null-assertion confusingEqual
     (0xBEAC061A, One("Instead use `jest.mock` or `vi.mock` and import from the original module path.")), // no-mocks-import
     (0xBEC89835, One("Use an object spread instead of `Object.assign` eg: `{ ...foo }`.")), // prefer-object-spread useSpreadMessage
     (0xBED5EED0, One("Prefer `jest.mocked()`")), // prefer-jest-mocked
     (0xBED66FB7, One("Did you forget to await the promise before spreading it?")), // no-misused-spread noPromiseSpreadInObject
-    (0xBF2CCD40, One("{{what}} are not permitted on `@{{tag_name}}` tag.")), // no-defaults
     (0xBFCE433D, of_the_fix(false, First, "")), // prefer-array-some
     (0xBFDF8F0D, One("Update the description after @ts-{{directive}} to match the required pattern: {{format}}.")), // ban-ts-comment tsDirectiveCommentDescriptionNotMatchPattern
     (0xBFDF9F72, One("Ensure `super()` is called in all code paths")), // constructor-super missingSome
@@ -923,16 +874,13 @@ static INDEX: &[(u32, Texts)] = &[
     (0xC12E8574, One("Use '\\${' to escape '${' in template literals.")), // consistent-template-literal-escape
     (0xC145FD68, of_the_fix(false, First, "")), // curly unexpectedCurlyAfterCondition
     (0xC1BBA066, One("Use `Math.{{method_name}}` instead.")), // approx-constant
-    (0xC1CA8D7D, One("Consider refactoring the component to reduce the number of props that are needed.")), // max-props
     (0xC1E275BC, One("Throwing literals or non-Error objects is not recommended. Use an Error object instead.")), // no-throw-literal undef
-    (0xC2008EC6, One("Add `@param` tag with name.")), // require-param
     (0xC20FCE34, One("Add a \"key\" prop to the element in the iterator (https://react.dev/learn/rendering-lists#keeping-list-items-in-order-with-key).")), // jsx-key
     (0xC2AE9121, Three(&["Remove this constructor or add code to it.", "", "Subclasses automatically use the constructor of their superclass, making this redundant."])), // no-useless-constructor noUselessConstructor
     (0xC2D7E692, One("Move the Hook call before the condition, or call it unconditionally and branch inside the Hook/effect instead.")), // rules-of-hooks
     (0xC316E67B, Three(&["If you did not intend to access a property, insert ';' before the bracket", "this is parsed as a property access, which may be unintentional", ""])), // no-unexpected-multiline property
     (0xC370CDF0, One("Only use a single `<Head />` component in your custom document in `pages/_document.js`. See: https://nextjs.org/docs/messages/no-duplicate-head")), // no-duplicate-head
     (0xC3C08E65, Three(&["If you did not intend for this to be a tagged template, insert ';' before the backtick", "this is parsed as a tagged template, which may be unintentional", ""])), // no-unexpected-multiline taggedTemplate
-    (0xC3F8879F, One("Use the callback's `vm` parameter instead of `this` in `beforeRouteEnter`.")), // no-this-in-before-route-enter
     (0xC434E826, of_the_fix(false, First, "")), // prefer-to-be-truthy
     (0xC482FC9B, One("Provide a correct `href` for the `a` element.")), // anchor-is-valid
     (0xC488C6EB, One("`Array#reverse()` mutates the original array. Use `Array#toReversed()` to return a new reversed array without modifying the original.")), // no-array-reverse
@@ -961,16 +909,13 @@ static INDEX: &[(u32, Texts)] = &[
     (0xC9D5923E, One("Handle promise errors in a `catch` instead of using the second argument of `then`.")), // prefer-catch
     (0xCA374218, One("Add either `onChange` or `readOnly`.")), // checked-requires-onchange-or-readonly
     (0xCA492FE3, One("The spread operator (`...`) is more concise and readable.")), // prefer-spread
-    (0xCA4A3180, One("Remove the redundant `@returns` tag.")), // require-returns
     (0xCA94982D, One("{{customMessage}}")), // no-restricted-imports patternAndEverythingWithRegexImportNameAndCustomMessage
-    (0xCB04B359, One("Add `@yields` tag to the JSDoc comment.")), // require-yields
     (0xCB07DF7B, One("Require or disallow initialization in variable declarations")), // init-declarations initialized
     (0xCB71F493, One("Remove the return statement or ensure it does not return a value.")), // no-setter-return returnsValue
     (0xCB8E4930, One("Remove the `!`, or wrap the left-hand side in parentheses.")), // no-confusing-non-null-assertion confusingOperator
     (0xCBA8F125, Three(&["The `{{deprecated_prop}}` property is deprecated.", "", "https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent/key"])), // prefer-keyboard-event-key
     (0xCBA9E28F, of_the_fix(false, First, "")), // object-shorthand expectedMethodLongform
     (0xCBB7DD3F, One("Remove the empty character class: `[]`")), // no-empty-character-class unexpected
-    (0xCBC1058B, One("Consider adding a `@property` tag or replacing it with a more specific type.")), // require-property
     (0xCC066ACD, One("Use named export instead.")), // no-restricted-exports restrictedDefault
     (0xCC4B2F1B, One("Use `{{replacement}}` instead. See https://legacy.reactjs.org/blog/2018/03/27/update-on-async-rendering.html")), // no-unsafe
     (0xCC71F6DB, One("Spreading falsy values in object literals won't add any unexpected properties, so it's unnecessary to add an empty object as fallback.")), // no-useless-fallback-in-spread
@@ -1010,7 +955,6 @@ static INDEX: &[(u32, Texts)] = &[
     (0xD6C0B474, One("Do not use the ternary expression.")), // no-ternary noTernaryOperator
     (0xD6C97C3E, of_the_fix(true, First, "")), // jsx-no-useless-fragment
     (0xD70F0A96, One("Remove the argument")), // no-unnecessary-array-flat-depth
-    (0xD881F071, One("All code paths inside a computed getter must return a value.")), // return-in-computed-property
     (0xD885CC19, One("simplify props or memoize props in the parent component (https://react.dev/reference/react/memo#my-component-rerenders-when-a-prop-is-an-object-or-array).")), // jsx-no-new-array-as-prop
     (0xD899622F, One("Use named export instead.")), // no-restricted-exports restrictedDefault
     (0xD8B5E5F7, One("ES modules are always strict mode, so this directive is redundant.")), // prefer-module
@@ -1034,7 +978,6 @@ static INDEX: &[(u32, Texts)] = &[
     (0xDC7EB91E, Three(&["Rename either the variable or the label to avoid confusion.", "Identifier '{{name}}' found here.", ""])), // no-label-var identifierClashWithLabel
     (0xDCC5E572, One("Remove the default assignment")), // no-useless-default-assignment uselessDefaultAssignment
     (0xDCEEC554, One("Is it a spelling mistake?")), // valid-expect
-    (0xDDEE2678, of_the_fix(false, First, "")), // require-prop-type-constructor
     (0xDDF7FF7A, One("Consider wrapping the assignment in additional parentheses")), // no-cond-assign missing
     (0xDE3B446F, One("Consider using `else if` instead.")), // no-lonely-if unexpectedLonelyIf
     (0xDE487B04, One("Remove the double negation as it will already be coerced to a boolean")), // no-extra-boolean-cast unexpectedNegation
@@ -1049,7 +992,6 @@ static INDEX: &[(u32, Texts)] = &[
     (0xE09BFF21, Three(&["Wrap this value in curly braces", "Wrap this value in curly braces", ""])), // jsx-curly-brace-presence
     (0xE09D0B18, One("Use '{{suggested_operator}}' to compare with null")), // no-eq-null unexpected
     (0xE0D8226F, Three(&["Use the Cookie Store API or a cookie library instead.", "", "https://developer.mozilla.org/en-US/docs/Web/API/Cookie_Store_API"])), // no-document-cookie
-    (0xE0E05D83, One("Remove `export default`.")), // valid-define-emits
     (0xE0EBE6D3, One("Consider using a more specific type to ensure safety.")), // no-unsafe-type-assertion unsafeToAnyTypeAssertion
     (0xE14757CE, Three(&["Move the `await` inside an `async` function, as ES modules with top-level `await` cannot be loaded with `require(esm)`.", "", "This rule is intended for published packages. Consider disabling it if this package is private."])), // no-top-level-await
     (0xE19777DE, One("Consider removing this {{fn_kind}} or adding logic to it.")), // no-empty-function unexpected
@@ -1064,15 +1006,12 @@ static INDEX: &[(u32, Texts)] = &[
     (0xE4EC54A3, Three(&["Update the condition to not be constant, or remove the condition entirely", "this expression will always evaluate to the same value", ""])), // no-constant-condition unexpected
     (0xE4FCAE99, One("Describe blocks can only have one of each hook. Consider consolidating the duplicate hooks into a single call.")), // no-duplicate-hooks
     (0xE50EA630, One("See https://nextjs.org/docs/messages/no-unwanted-polyfillio")), // no-unwanted-polyfillio
-    (0xE565B460, One("`@{{tag_name}}` tag should not have body.")), // empty-tags
     (0xE5685438, One("Remove this label. It will have the same result because the labeled statement '{{name}}' has no nested loops or switches")), // no-extra-label unexpected
     (0xE568A058, One("Rename or remove the duplicate export so each name is exported only once.")), // export
     (0xE580006E, One("Include a hint string to identify this snapshot in the snapshot file.")), // prefer-snapshot-hint
     (0xE5EBCD1C, One("Handle the nullish case explicitly.")), // strict-boolean-expressions conditionErrorNullableBoolean
     (0xE706377D, One("Rewrite into one string literal.")), // no-useless-concat unexpectedConcat
     (0xE777912D, One("Replace string concatenation of `__dirname` or `__filename` with `path.join()` or `path.resolve()`.")), // no-path-concat
-    (0xE7B34C56, of_the_fix(false, First, "")), // next-tick-style
-    (0xE8B30721, One("Add description to `@param` tag.")), // require-param-description
     (0xE8EE39F8, One("{{customMessage}}")), // no-restricted-imports importNameWithCustomMessage
     (0xE92A065A, of_the_fix(false, First, "")), // prefer-todo
     (0xE971B765, One("Replace `.filter(…).length` with `.some(…)`")), // prefer-array-some

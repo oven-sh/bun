@@ -111,6 +111,8 @@ struct Names {
 enum Has {
     Whole,
     Part,
+    /// oxlint has the plugin built in. Its configuration can name the plugin and its rules, which do not run.
+    Nothing,
 }
 
 macro_rules! plugins {
@@ -172,9 +174,9 @@ plugins! {
     /// `vitest/no-focused-tests`
     Vitest: ["vitest"], Package, Part;
     /// `jsdoc/require-param`
-    Jsdoc: ["jsdoc"], Package, Part;
+    Jsdoc: ["jsdoc"], Package, Nothing;
     /// `vue/no-dupe-keys`
-    Vue: ["vue"], Package, Part;
+    Vue: ["vue"], Package, Nothing;
     /// `bun/no-eager-dynamic-import`
     Bun: ["bun"], Always, Whole;
     /// `prettier/prettier`
@@ -205,6 +207,11 @@ impl Plugin {
 
     pub(crate) fn is_whole(self) -> bool {
         self.names().has == Has::Whole
+    }
+
+    /// None of its rules is here.
+    pub fn has_no_rules(self) -> bool {
+        self.names().has == Has::Nothing
     }
 
     fn is_only_of_oxlint(self) -> bool {

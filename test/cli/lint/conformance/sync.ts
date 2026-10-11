@@ -99,6 +99,8 @@ if (first === "--extract" && rest.length === 2) {
   const files = kept(path => !path.startsWith("oxlint/") && !path.startsWith("oxlint-import-project/"));
   const found = new Map<string, Uint8Array>();
   for (const plugin of readdirSync(directory).sort()) {
+    // `bun lint` has no rule of these two.
+    if (plugin === "jsdoc" || plugin === "vue") continue;
     if (statSync(join(directory, plugin)).isDirectory()) collect(directory, plugin, found, () => false);
   }
   clean(found, [directory]);

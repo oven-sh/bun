@@ -109,7 +109,7 @@ fn file_of(
     how: Reading<'_>,
     text: &[u8],
     atoms: Option<&dyn Intern>,
-) -> FileBuilder {
+) -> Box<FileBuilder> {
     let file = file_read_as(scratch, how, text, atoms, false);
     let is_refused = |file: &FileBuilder| file.has_errors || file.has_parse_diagnostics;
     if !how.dialect.oxc || how.dialect.script || !is_refused(&file) {
@@ -151,7 +151,7 @@ fn file_read_as(
     text: &[u8],
     atoms: Option<&dyn Intern>,
     refuses_await: bool,
-) -> FileBuilder {
+) -> Box<FileBuilder> {
     let Reading { dialect, path, .. } = how;
     let by_name = how.script_kind.is_none();
     let script_kind = how.script_kind.or_else(|| ScriptKind::from_file_name(path));
@@ -238,7 +238,8 @@ fn file_read_as(
                 Some(error) => error.clone(),
                 None => Diagnostic::new(DiagnosticKind::Parse, (at, 0), 1128, &[]),
             };
-            return FileBuilder {
+            let mut file = scratch.recycled.take().unwrap_or_default();
+            *file = FileBuilder {
                 kind: FileKind::Tsx,
                 is_js,
                 is_flow,
@@ -253,6 +254,7 @@ fn file_read_as(
                 },
                 ..Default::default()
             };
+            return file;
         }
     };
     COUNTS.parsed.fetch_add(1, Relaxed);
@@ -274,9 +276,10 @@ fn parse_into_arena<'s>(
         bun_sema::json::validate_json(&mut in_arena, text);
     }
     // A very large file would leave its capacity to every later file.
-    if text.len() < 4 << 20 {
-        scratch.recycle(file);
+    if text.len() >= 4 << 20 {
+        *file = FileBuilder::default();
     }
+    scratch.recycle(file);
     in_arena
 }
 
@@ -450,9 +453,10 @@ pub fn with_summary_in_place<'s, R>(
     let mut file = file_of(&mut scratch, how, text, None);
     let result = then(Summary::InPlace(&mut file), &scratch.atoms(text));
     // A very large file would leave its capacity to every later file.
-    if text.len() < 4 << 20 {
-        scratch.recycle(file);
+    if text.len() >= 4 << 20 {
+        *file = FileBuilder::default();
     }
+    scratch.recycle(file);
     give_back_scratch(scratch);
     result
 }

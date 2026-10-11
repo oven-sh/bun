@@ -224,6 +224,8 @@ pub struct ResolvedConfig {
     pub js_rules: Vec<ConfiguredJsRule>,
     /// Those about layout that are on, which are left to `bun format`.
     pub formatting_rules: Vec<FormattingRule>,
+    /// The plugins [none of whose rules is here](Plugin::has_no_rules), of which oxlint would run one.
+    pub plugins_without_rules: Vec<Plugin>,
     /// What the rules of JavaScript plugins see of `language`. It is there if `js_plugins` is not empty.
     pub js_settings: Option<Arc<js_plugin::FileSettings>>,
     /// The JavaScript plugins whose rules the configuration and the comments of the file can name. The name of one hides
@@ -372,6 +374,14 @@ impl ResolvedConfig {
         registry
             .get(Plugin::TypeScript, name)
             .or_else(|| registry.get(Plugin::Eslint, name))
+    }
+
+    /// A rule of `plugin`, which [has none here](Plugin::has_no_rules), is on.
+    pub(crate) fn skip_rules_of(&mut self, plugin: Plugin) {
+        if !self.plugins_without_rules.contains(&plugin) {
+            self.plugins_without_rules.push(plugin);
+        }
+        self.has_skipped_rules = true;
     }
 
     /// The rule about layout that a comment of a file that the configuration is for calls `id`: [`find_formatting_rule`]. oxlint

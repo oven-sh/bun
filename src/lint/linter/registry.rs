@@ -113,11 +113,10 @@ const ONLY_IN_TYPESCRIPT_IN_OXLINT: [&[u8]; 2] = [b"consistent-return", b"dot-no
 
 /// The plugins of oxlint, as it calls them, in the order in which it looks for a rule that is written
 /// without its plugin.
-const PLUGINS_OF_OXLINT: [(Plugin, &[u8]); 15] = [
+const PLUGINS_OF_OXLINT: [(Plugin, &[u8]); 13] = [
     (Plugin::Eslint, b"eslint"),
     (Plugin::Import, b"import"),
     (Plugin::Jest, b"jest"),
-    (Plugin::Jsdoc, b"jsdoc"),
     (Plugin::JsxA11y, b"jsx-a11y"),
     (Plugin::Nextjs, b"nextjs"),
     (Plugin::Node, b"node"),
@@ -128,7 +127,6 @@ const PLUGINS_OF_OXLINT: [(Plugin, &[u8]); 15] = [
     (Plugin::TypeScript, b"typescript"),
     (Plugin::Unicorn, b"unicorn"),
     (Plugin::Vitest, b"vitest"),
-    (Plugin::Vue, b"vue"),
 ];
 
 /// oxlint's `is_eslint_rule_adapted_to_typescript`.

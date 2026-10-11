@@ -195,22 +195,7 @@ pub(crate) struct Lazy {
     pub(crate) by_kind: crate::runner::ByKind,
     pub(crate) code_paths: crate::code_path::Store,
     pub(crate) linter: crate::linter::PerFile,
-    extensions: [OnceCell<Box<dyn std::any::Any>>; 4],
-}
-
-/// What a script of a `.vue` file knows of the file around it, which has two scripts at most. oxlint lints each as a program of its
-/// own.
-#[derive(Copy, Clone, Default, Debug)]
-pub struct VueScript {
-    /// There is a script before it in the file. Also in a file that is not of Vue.
-    pub is_second: bool,
-    /// `<script setup>`
-    pub is_setup: bool,
-    pub other_is_setup: bool,
-    /// The other script has an `export default { props: .. }`.
-    pub other_exports_props: bool,
-    /// The other script has an `export default { emits: .. }`.
-    pub other_exports_emits: bool,
+    extensions: [OnceCell<Box<dyn std::any::Any>>; 2],
 }
 
 /// The file that is linted or formatted.
@@ -232,7 +217,7 @@ pub struct File<'a> {
     pub(crate) package_module: std::cell::OnceCell<std::sync::Arc<[u8]>>,
     pub(crate) inferred_from: Cell<Option<&'a dyn crate::linter::globals::InferredGlobals>>,
     pub(crate) inferred_globals: OnceCell<Option<crate::linter::globals::ProgramGlobals<'a>>>,
-    vue_script: std::cell::Cell<VueScript>,
+    is_later_script: Cell<bool>,
     language: &'a LanguageOptions,
     body: hir::IdList<hir::StmtId>,
     path: &'a [u8],
@@ -287,19 +272,20 @@ impl<'a> File<'a> {
             package_module: std::cell::OnceCell::new(),
             inferred_from: Cell::new(None),
             inferred_globals: OnceCell::new(),
-            vue_script: std::cell::Cell::default(),
+            is_later_script: Cell::new(false),
             path,
         }
     }
 
-    /// Nothing is set unless it is a script of a `.vue` file.
+    /// It is a script in a `.vue`, `.svelte` or `.astro` file, and there is a script before it. oxlint lints each as a program of
+    /// its own.
     #[inline]
-    pub fn vue_script(&self) -> VueScript {
-        self.vue_script.get()
+    pub fn is_later_script(&self) -> bool {
+        self.is_later_script.get()
     }
 
-    pub fn set_vue_script(&self, script: VueScript) {
-        self.vue_script.set(script);
+    pub fn set_later_script(&self, is_later: bool) {
+        self.is_later_script.set(is_later);
     }
 
     /// For a `hir` that does not hold its text.
@@ -387,9 +373,8 @@ impl<'a> File<'a> {
     }
 
     /// What another crate computes from the file once and keeps as long as the file: one value of
-    /// each type. `init` runs the first time. `None` if there are values of four other types.
-    /// All four are taken: jest, jsdoc, the React Compiler, the steps of react: a fifth type needs
-    /// a fifth place.
+    /// each type. `init` runs the first time. `None` if there are values of two other types.
+    /// Both are taken: jest, the React Compiler: a third type needs a third place.
     pub fn extension<T: 'static>(&'a self, init: impl FnOnce() -> T) -> Option<&'a T> {
         let mut init = Some(init);
         self.lazy.extensions.iter().find_map(|slot| {

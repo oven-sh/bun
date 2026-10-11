@@ -338,9 +338,8 @@ const cases = [
           "oxc/const-comparisons": "error",
           "jest/no-focused-tests": "error",
           "vitest/no-import-node-test": "error",
-          "jsdoc/require-param": "warn",
         },
-        { plugins: ["typescript", "react", "import", "unicorn", "jsx-a11y", "react-perf", "nextjs", "promise", "node", "oxc", "jest", "vitest", "jsdoc"] },
+        { plugins: ["typescript", "react", "import", "unicorn", "jsx-a11y", "react-perf", "nextjs", "promise", "node", "oxc", "jest", "vitest"] },
       ),
       "src/a.tsx":
         'import fs from "fs";\nimport "./a";\nimport { useState } from "react";\nexport let x: any = null;\nnamespace N {}\nexport function List({ items, on }) {\n  if (on) useState(0);\n  return items.map(it => <li style={{ a: 1 }} children={it}><img src="a.png" /></li>);\n}\nnew Promise(a => a());\nif (x > 1 && x < 0) fs.x();\n',

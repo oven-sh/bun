@@ -521,12 +521,6 @@
     "src/lint/plugins/n/es_syntax.rs": {
       "camel_case": 1
     },
-    "src/lint/plugins/oxlint/vue.rs": {
-      "camel_case": 1,
-      "has_white_space": 1,
-      "kebab_case": 1,
-      "pascal_case": 1
-    },
     "src/lint/plugins/rules/import_extensions.rs": {
       "extension_of_path": 1
     },

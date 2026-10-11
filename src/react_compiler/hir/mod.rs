@@ -1185,6 +1185,17 @@ pub enum ArrayPatternElement {
     Hole,
 }
 
+impl ArrayPatternElement {
+    /// The element's binding, whether or not it is a rest element.
+    pub fn place(&self) -> Option<&Place> {
+        match self {
+            ArrayPatternElement::Place(p) => Some(p),
+            ArrayPatternElement::Spread(s) => Some(&s.place),
+            ArrayPatternElement::Hole => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ObjectPattern {
     pub properties: HirVec<ObjectPropertyOrSpread>,
@@ -1195,6 +1206,16 @@ pub struct ObjectPattern {
 pub enum ObjectPropertyOrSpread {
     Property(ObjectProperty),
     Spread(SpreadPattern),
+}
+
+impl ObjectPropertyOrSpread {
+    /// The property's value, or what is spread.
+    pub fn place(&self) -> &Place {
+        match self {
+            ObjectPropertyOrSpread::Property(p) => &p.place,
+            ObjectPropertyOrSpread::Spread(s) => &s.place,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1270,6 +1291,17 @@ pub enum ArrayElement {
     Place(Place),
     Spread(SpreadPattern),
     Hole,
+}
+
+impl ArrayElement {
+    /// The element's place, whether or not it is spread.
+    pub fn place(&self) -> Option<&Place> {
+        match self {
+            ArrayElement::Place(p) => Some(p),
+            ArrayElement::Spread(s) => Some(&s.place),
+            ArrayElement::Hole => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

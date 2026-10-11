@@ -210,7 +210,7 @@ impl Rule for FilenameCase {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Option<String>> {
-        let expected = self.expected_cases(file.path()).filter(|_| !file.vue_script().is_second)?;
+        let expected = self.expected_cases(file.path()).filter(|_| !file.is_later_script())?;
         Some(Some(expected))
     }
 

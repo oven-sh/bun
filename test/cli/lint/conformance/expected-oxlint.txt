@@ -3,5 +3,5 @@
 
 2 cases have their messages in another order
 
-573 rules, 573 without failures, 0 not implemented
-29880 cases passed, 0 failed, 101 skipped
+504 rules, 504 without failures, 0 not implemented
+27702 cases passed, 0 failed, 63 skipped

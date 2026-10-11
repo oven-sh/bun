@@ -868,6 +868,19 @@ impl Rc<'_, '_> {
         settings
     }
 
+    /// The plugins [none of whose rules is here](Plugin::has_no_rules), of which `categories` turn rules on. `of`: of which plugins.
+    fn without_rules(
+        &self,
+        categories: &[(Vec<u8>, Severity)],
+        of: &dyn Fn(Plugin) -> bool,
+    ) -> Vec<Plugin> {
+        let on = || categories.iter().filter(|it| it.1 != Severity::Off);
+        let lists = categories::NOT_BUILT_IN.iter();
+        let lists = lists.filter(|it| on().any(|category| has_word(it.1, &category.0)));
+        let plugins = lists.filter_map(|it| Plugin::of_oxlint_prefix(it.0.as_bytes()));
+        plugins.filter(|it| of(*it)).collect()
+    }
+
     /// The overrides, as oxlint 1.87 applies them. The `plugins` of one count for it alone. Its `rules` can name their rules, which
     /// the `rules` of the files and of other overrides cannot. Where it applies, `categories` turn on the rules of its
     /// plugins, if an override before it has not done so, and not what the command line says about a category: but see
@@ -886,6 +899,7 @@ impl Rc<'_, '_> {
                 rules.iter_mut().for_each(|it| it.yields = true);
                 rules.append(&mut object.rules);
                 object.rules = rules;
+                object.without_rules = self.without_rules(&self.categories_of_files, &is_own);
             }
             object
         });
@@ -1152,6 +1166,8 @@ impl Config {
         rc.file(json, &base_path, false)?;
         rc.reader.objects[categories_at].rules =
             rc.category_rules(&rc.categories, &|it| rc.has_plugin(it));
+        rc.reader.objects[categories_at].without_rules =
+            rc.without_rules(&rc.categories, &|it| rc.has_plugin(it));
         let lacking = rc.lacking_rules();
         if !lacking.is_empty() {
             rc.reader.note(&[

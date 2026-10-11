@@ -153,8 +153,9 @@ pub struct Options {
 pub struct Scratch {
     names: names::Names,
     stacks: parser::Stacks,
-    /// The emptied lists of a file that is no longer needed.
-    recycled: FileBuilder,
+    /// A file that is no longer needed: its lists are for the next one, and so is the box. A file is large, and goes from
+    /// hand to hand.
+    recycled: Option<Box<FileBuilder>>,
     /// What `parser::jsdoc::read_by_checker` says of the TypeScript file that is parsed for the
     /// second time. Otherwise 0.
     jsdoc_wanted: u8,
@@ -162,8 +163,8 @@ pub struct Scratch {
 
 impl Scratch {
     /// Takes the lists of `file` for the next file.
-    pub fn recycle(&mut self, file: FileBuilder) {
-        self.recycled = file;
+    pub fn recycle(&mut self, file: Box<FileBuilder>) {
+        self.recycled = Some(file);
     }
 
     /// An error in the text that was refused last, which has `len` bytes, if the parser had reported
@@ -173,7 +174,7 @@ impl Scratch {
         is_first_in_text: bool,
         len: usize,
     ) -> Option<&bun_sema::hir::Diagnostic> {
-        let errors = self.recycled.diagnostics.iter();
+        let errors = self.recycled.iter().flat_map(|it| &it.diagnostics);
         // From a refusal on the parser is at the end of the text.
         let mut errors = errors.filter(|it| {
             it.kind == bun_sema::hir::DiagnosticKind::Parse && (it.start as usize) < len
@@ -192,7 +193,7 @@ impl Scratch {
 
 /// What [`parse`] returns beside the file.
 pub struct Parsed {
-    pub file: FileBuilder,
+    pub file: Box<FileBuilder>,
     /// `await` was read as a keyword at the top level.
     pub has_top_level_await: bool,
 }

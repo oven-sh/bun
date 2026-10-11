@@ -11,7 +11,8 @@ const version = /[\d.]+/.exec(execFileSync(oxlint, ["--version"]).toString())[0]
 const rules = JSON.parse(execFileSync(oxlint, ["--rules", "--format", "json"], { maxBuffer: 1 << 26 }).toString());
 const table = {};
 for (const { scope: plugin, value: name, fix } of rules) {
-  if (fix !== "none") ((table[fix] ??= {})[plugin] ??= []).push(name);
+  // No rule of these two plugins is built in.
+  if (fix !== "none" && !["jsdoc", "vue"].includes(plugin)) ((table[fix] ??= {})[plugin] ??= []).push(name);
 }
 const wrap = names => {
   const lines = [];

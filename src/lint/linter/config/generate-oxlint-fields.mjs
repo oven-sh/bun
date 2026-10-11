@@ -74,6 +74,8 @@ const before = Object.entries(rules).flatMap(([rule, it]) => {
 const second = ask(Object.fromEntries(before.map(([rule, it]) => [rule, ["error", it, { [unknown]: 1 }]])));
 
 const rows = Object.keys(rules)
+  // No rule of these plugins is built in, and nothing looks at their options.
+  .filter(rule => !/^(jsdoc|vue)\//.test(rule))
   .flatMap(rule =>
     [first, second].flatMap((all, at) => (names(all.get(rule)) ? [[rule, at, names(all.get(rule))]] : [])),
   )

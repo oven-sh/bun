@@ -100,26 +100,15 @@ impl<'a> Iterator for PlaceIter<'a> {
                     ObjectPropertyOrSpread::Spread(spread) => Some(&spread.place),
                 }
             }
-            Rest::Elements(elements) => elements.find_map(|element| match element {
-                ArrayElement::Place(place) => Some(place),
-                ArrayElement::Spread(spread) => Some(&spread.place),
-                ArrayElement::Hole => None,
-            }),
+            Rest::Elements(elements) => elements.find_map(ArrayElement::place),
             Rest::Dependencies(dependencies) => {
                 dependencies.find_map(|dependency| match &dependency.root {
                     ManualMemoDependencyRoot::NamedLocal { value, .. } => Some(value),
                     ManualMemoDependencyRoot::Global { .. } => None,
                 })
             }
-            Rest::ArrayPattern(items) => items.find_map(|item| match item {
-                ArrayPatternElement::Place(place) => Some(place),
-                ArrayPatternElement::Spread(spread) => Some(&spread.place),
-                ArrayPatternElement::Hole => None,
-            }),
-            Rest::ObjectPattern(properties) => properties.next().map(|property| match property {
-                ObjectPropertyOrSpread::Property(property) => &property.place,
-                ObjectPropertyOrSpread::Spread(spread) => &spread.place,
-            }),
+            Rest::ArrayPattern(items) => items.find_map(ArrayPatternElement::place),
+            Rest::ObjectPattern(properties) => properties.next().map(ObjectPropertyOrSpread::place),
             Rest::Cases(cases) => cases.find_map(|case| case.test.as_ref()),
         }
     }
@@ -353,11 +342,6 @@ pub fn terminal_operands(terminal: &Terminal) -> PlaceIter<'_> {
 pub type Places = SmallVec<[Place; 4]>;
 pub type Ids = SmallVec<[IdentifierId; 4]>;
 pub type Blocks = SmallVec<[BlockId; 4]>;
-
-/// [`lvalues`], cloned.
-pub fn each_instruction_lvalue(instr: &Instruction) -> Places {
-    lvalues(instr).cloned().collect()
-}
 
 /// [`value_lvalues`], cloned.
 pub fn each_instruction_value_lvalue(value: &InstructionValue) -> Places {

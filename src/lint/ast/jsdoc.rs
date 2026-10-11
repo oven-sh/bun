@@ -247,25 +247,6 @@ impl<'a> JSDocCommentPart<'a> {
         JSDocCommentPart { span, raw }
     }
 
-    /// The first line that has something, without the white space around it.
-    pub fn span_trimmed_first_line(self) -> Span {
-        let JSDocCommentPart { span, raw } = self;
-        let start_trimmed = strings::trim_unicode_whitespace_start(raw);
-        if start_trimmed.is_empty() {
-            return Span::empty(span.start);
-        }
-        let start = span.start + (raw.len() - start_trimmed.len()) as u32;
-        // `raw.lines().count() == 1`
-        if strings::index_of_char_usize(raw, b'\n').is_none_or(|at| at + 1 == raw.len()) {
-            let end_trimmed = strings::trim_unicode_whitespace_end(raw);
-            return Span::new(start, span.end - (raw.len() - end_trimmed.len()) as u32);
-        }
-        Span::new(
-            start,
-            start + strings::index_of_char(start_trimmed, b'\n').unwrap_or(0),
-        )
-    }
-
     /// The lines of `parsed()`.
     fn parsed_lines(self) -> impl Iterator<Item = &'a [u8]> + 'a {
         let is_multiline = strings::contains_char(self.raw, b'\n');
@@ -312,11 +293,5 @@ impl<'a> JSDocCommentPart<'a> {
     /// `parsed().is_empty()`, without the allocation.
     pub fn is_empty(self) -> bool {
         self.parsed_lines().next().is_none()
-    }
-
-    /// `parsed()`, if it is one line.
-    pub fn single_line(self) -> Option<&'a [u8]> {
-        let mut lines = self.parsed_lines();
-        lines.next().filter(|_| lines.next().is_none())
     }
 }

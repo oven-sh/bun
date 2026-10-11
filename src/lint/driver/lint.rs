@@ -10,7 +10,7 @@ use crate::results::{Counts, FileResult, Linted};
 use crate::run::{Fatal, Timing};
 use crate::{Linter, fs, paths};
 use bun_core::strings;
-use bun_lint::ast::{File, VueScript};
+use bun_lint::ast::File;
 use bun_lint::context::Severity;
 use bun_lint::fix::SuggestionKind;
 use bun_lint::formats::{Formats, Reason};
@@ -107,7 +107,8 @@ struct How<'h> {
     physical_path_len: Option<usize>,
     /// It is a script in a file: its language, and which rules run.
     script: Option<(ScriptKind, &'h RuleFilter<'h>)>,
-    vue_script: VueScript,
+    /// [`File::is_later_script`]
+    is_later_script: bool,
     /// It is only to be known whether it can be parsed.
     without_rules: bool,
     /// [`Context::with_help`]
@@ -136,7 +137,7 @@ pub(crate) fn unused_directives_as_oxlint(result: &mut LintResult, is_script: bo
 /// Puts the messages that have fixes in the order in which the rules of oxlint report at one node: by the plugin, then by the name.
 /// Of two fixes with the same range the first is applied.
 pub(crate) fn order_fixes_as_oxlint(messages: &mut [LintMessage]) {
-    const PLUGINS: [Plugin; 15] = [
+    const PLUGINS: [Plugin; 13] = [
         Plugin::Import,
         Plugin::Eslint,
         Plugin::TypeScript,
@@ -147,11 +148,9 @@ pub(crate) fn order_fixes_as_oxlint(messages: &mut [LintMessage]) {
         Plugin::JsxA11y,
         Plugin::Oxc,
         Plugin::Nextjs,
-        Plugin::Jsdoc,
         Plugin::Promise,
         Plugin::Vitest,
         Plugin::Node,
-        Plugin::Vue,
     ];
     bun_lint::utils::sort::sort_by_key(messages, |it| match (&it.fix, &it.rule_id) {
         (None, _) => (0, ""),
@@ -351,12 +350,12 @@ impl Context<'_, '_> {
         path: &[u8],
         text: &[u8],
         config: &ResolvedConfig,
-        (kind, vue_script): (ScriptKind, VueScript),
+        (kind, is_later_script): (ScriptKind, bool),
         filter: &RuleFilter,
     ) -> LintResult {
         let how = How {
             script: Some((kind, filter)),
-            vue_script,
+            is_later_script,
             ..How::default()
         };
         self.verify_as(path, text, config, &how)
@@ -468,7 +467,7 @@ impl Context<'_, '_> {
                 if let Some(inferred) = self.inferred {
                     file.set_inferred_globals(inferred);
                 }
-                file.set_vue_script(as_what.vue_script);
+                file.set_later_script(as_what.is_later_script);
                 let options = self.lint_options();
                 // The parts of a file that is linted in parts are not put together a second time.
                 let is_whole = as_what.script.is_none() && as_what.physical_path_len.is_none();

@@ -17,7 +17,7 @@ use bun_lint::formats::Reason;
 use bun_lint::js_plugin::{Engine, HEAVY, Host, Loading, Route};
 use bun_lint::language::Parser;
 use bun_lint::linter::{
-    FileConfig, LintMessage, Registry, RuleId, formatting_rule, is_parse_error,
+    FileConfig, LintMessage, Registry, ResolvedConfig, RuleId, formatting_rule, is_parse_error,
 };
 use bun_sema::resolve::ScriptKind;
 use bun_sema::util::FxHashSet;
@@ -1096,10 +1096,8 @@ impl Run<'_> {
             );
         }
         let mut in_comments = std::mem::take(&mut *skipped_in_comments.lock());
-        let mut about_layout: Vec<&[u8]> = (in_comments.iter())
-            .filter_map(|it| Some(formatting_rule(it)?.0.as_bytes()))
-            .collect();
-        in_comments.retain(|it| formatting_rule(it).is_none());
+        let mut not_built_in = NotBuiltIn::default();
+        in_comments.retain(|it| !not_built_in.takes(it));
         if !in_comments.is_empty() {
             bun_lint::utils::sort::sort_by(&mut in_comments, |a, b| a.cmp(b));
             let noun: &[u8] = match in_comments.len() {
@@ -1158,31 +1156,12 @@ impl Run<'_> {
         let mut seen: Vec<&Arc<_>> = Vec::new();
         let configs = results.iter().filter_map(|it| it.linted.as_ref());
         for config in configs.map(|it| &it.config) {
-            let rules = config.formatting_rules.iter();
-            if rules.len() > 0 && !seen.iter().any(|it| Arc::ptr_eq(it, config)) {
+            if !seen.iter().any(|it| Arc::ptr_eq(it, config)) {
                 seen.push(config);
-                about_layout.extend(rules.map(|it| it.rule.0.as_bytes()));
+                not_built_in.add(config);
             }
         }
-        if !about_layout.is_empty() {
-            about_layout.sort_unstable();
-            about_layout.dedup();
-            let noun: &[u8] = match about_layout.len() {
-                1 => b" formatting rule that is deprecated",
-                _ => b" formatting rules that are deprecated",
-            };
-            let shown = &about_layout[..about_layout.len().min(3)];
-            loader.advise(
-                [
-                    about_layout.len().to_string().as_bytes(),
-                    noun,
-                    b" did not run, bun format does their work: ",
-                    &shown.join(&b", "[..]),
-                    if about_layout.len() > 3 { b", .." } else { b"" },
-                ]
-                .concat(),
-            );
-        }
+        not_built_in.notes().for_each(|it| loader.advise(it));
 
         // The rules that are about several files look at those that they have something to say about.
         let started = Instant::now();
@@ -1548,6 +1527,65 @@ impl Run<'_> {
             self.out.stderr,
             "\n  without a filter of the names they mention: {without_filter} files"
         );
+    }
+}
+
+/// What the configurations of the files that were linted, and their comments, turn on and what is left out here on purpose. It did
+/// not run, which is a note.
+#[derive(Default)]
+struct NotBuiltIn {
+    /// [`formatting_rule`]
+    about_layout: Vec<&'static str>,
+    /// [`Plugin::has_no_rules`]
+    plugins: Vec<&'static str>,
+}
+
+impl NotBuiltIn {
+    /// Whether the rule `id`, which a comment turns on, is such a rule.
+    fn takes(&mut self, id: &[u8]) -> bool {
+        let rule = formatting_rule(id);
+        self.about_layout.extend(rule.map(|it| it.0));
+        rule.is_some()
+    }
+
+    fn add(&mut self, config: &ResolvedConfig) {
+        let about_layout = config.formatting_rules.iter();
+        self.about_layout.extend(about_layout.map(|it| it.rule.0));
+        let plugins = config.plugins_without_rules.iter();
+        self.plugins.extend(plugins.map(|it| it.prefix()));
+    }
+
+    fn notes(mut self) -> impl Iterator<Item = Vec<u8>> {
+        for names in [&mut self.about_layout, &mut self.plugins] {
+            names.sort_unstable();
+            names.dedup();
+        }
+        let about_layout = match &self.about_layout[..] {
+            [] => None,
+            [one] => Some(format!(
+                "1 formatting rule that is deprecated did not run, bun format does its work: {one}"
+            )),
+            all => Some(format!(
+                "{} formatting rules that are deprecated did not run, bun format does their work: {}{}",
+                all.len(),
+                all[..all.len().min(3)].join(", "),
+                if all.len() > 3 { ", .." } else { "" },
+            )),
+        };
+        let plugins = match &self.plugins[..] {
+            [] => None,
+            [one] => Some(format!(
+                "the rules of the plugin {one} are not built in, and did not run"
+            )),
+            all => Some(format!(
+                "the rules of the plugins {} are not built in, and did not run",
+                all.join(" and "),
+            )),
+        };
+        [about_layout, plugins]
+            .into_iter()
+            .flatten()
+            .map(String::into_bytes)
     }
 }
 

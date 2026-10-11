@@ -5,7 +5,6 @@
 
 use crate::lint::{Context, RuleFilter};
 use bun_core::strings;
-use bun_lint::ast::{ExprKind, File, PropKind, StmtKind, VueScript};
 use bun_lint::context::Severity;
 use bun_lint::fix::Fix;
 use bun_lint::linter::config::oxlint_runs_on;
@@ -40,8 +39,6 @@ struct Script {
     start: usize,
     end: usize,
     kind: ScriptKind,
-    /// `<script setup>` of Vue.
-    is_setup: bool,
 }
 
 const SCRIPT_START: &[u8] = b"<script";
@@ -165,12 +162,7 @@ fn lang_of_vue(content: &[u8]) -> &[u8] {
 /// From `start`, which is after the tag, to the next `</script>`. Returns the script, and where the search goes on.
 fn until_end(text: &[u8], start: usize, kind: ScriptKind) -> Option<(Script, usize)> {
     let end = start + strings::index_of(&text[start..], SCRIPT_END)?;
-    let script = Script {
-        start,
-        end,
-        kind,
-        is_setup: false,
-    };
+    let script = Script { start, end, kind };
     Some((script, end + SCRIPT_END.len()))
 }
 
@@ -185,10 +177,7 @@ fn script_of_vue(text: &[u8], mut at: usize) -> Option<(Script, usize)> {
     }
     let tag = closing_angle(text, at)?;
     let kind = kind_of(lang_of_vue(&text[at..at + tag]))?;
-    let (mut script, after) = until_end(text, at + tag + 1, kind)?;
-    // Wherever it is in the tag.
-    script.is_setup = strings::contains(&text[at..at + tag], b"setup");
-    Some((script, after))
+    until_end(text, at + tag + 1, kind)
 }
 
 /// `SveltePartialLoader::parse_script`
@@ -232,7 +221,6 @@ fn frontmatter(text: &[u8]) -> Option<Script> {
         start: start + 3,
         end: next_fence()?,
         kind: ScriptKind::Ts,
-        is_setup: false,
     })
 }
 
@@ -272,7 +260,6 @@ fn scripts_of_astro(text: &[u8]) -> Vec<Script> {
                     start,
                     end: start,
                     kind: ScriptKind::Ts,
-                    is_setup: false,
                 }
             }
             _ => match until_end(text, start, ScriptKind::Ts) {
@@ -389,61 +376,6 @@ impl Origin {
     }
 }
 
-/// oxlint's `has_default_exports_property`: there is an `export default { name: .. }`.
-fn has_default_exports_property<'a>(file: &'a File<'a>, name: &str) -> bool {
-    file.body().iter().any(|stmt| match stmt.kind() {
-        StmtKind::ExportDefault(e) if !e.is_parenthesized() => match e.kind() {
-            ExprKind::Object(properties) => properties.iter().any(|it| {
-                it.kind() != PropKind::Spread
-                    && (it.key().and_then(|key| key.name())).is_some_and(|key| key.is(name))
-            }),
-            _ => false,
-        },
-        _ => false,
-    })
-}
-
-/// Whether a rule is on that asks what the other script of a `.vue` file exports.
-fn asks_for_exports(config: &ResolvedConfig) -> bool {
-    config.has_enabled(|it| {
-        it.plugin == Plugin::Vue && matches!(it.name, "valid-define-props" | "valid-define-emits")
-    })
-}
-
-/// What the script at `index` of a `.vue` file with the text `text` knows of the other.
-fn vue_script(text: &[u8], scripts: &[Script], index: usize, config: &ResolvedConfig) -> VueScript {
-    let is_setup = scripts.get(index).is_some_and(|it| it.is_setup);
-    let Some(other) = scripts.get(1 - index.min(1)).filter(|_| scripts.len() == 2) else {
-        return VueScript {
-            is_setup,
-            ..VueScript::default()
-        };
-    };
-    let name: &[u8] = match other.kind {
-        ScriptKind::Ts => b"a.ts",
-        ScriptKind::Tsx => b"a.tsx",
-        ScriptKind::Jsx => b"a.jsx",
-        ScriptKind::Js => b"a.js",
-    };
-    let exports = asks_for_exports(config).then(|| {
-        let code = &text[other.start..other.end];
-        bun_lint_graph::with_file(name, code, &config.language, None, |file| {
-            (
-                has_default_exports_property(file, "props"),
-                has_default_exports_property(file, "emits"),
-            )
-        })
-    });
-    let (other_exports_props, other_exports_emits) = exports.flatten().unwrap_or_default();
-    VueScript {
-        is_second: index > 0,
-        is_setup,
-        other_is_setup: other.is_setup,
-        other_exports_props,
-        other_exports_emits,
-    }
-}
-
 impl Context<'_, '_> {
     /// Lints the scripts in `text`, which is the file at `path`.
     pub(crate) fn verify_scripts(
@@ -475,14 +407,8 @@ impl Context<'_, '_> {
                     && outer.is_none_or(|outer| outer(rule, severity))
             };
             let code = &text[script.start..script.end];
-            let vue = match framework {
-                Framework::Vue => vue_script(text, &scripts, index, config),
-                _ => VueScript {
-                    is_second: index > 0,
-                    ..VueScript::default()
-                },
-            };
-            let mut result = self.verify_script(path, code, config, (script.kind, vue), &filter);
+            let how = (script.kind, index > 0);
+            let mut result = self.verify_script(path, code, config, how, &filter);
             if result.thrown.is_some() {
                 return result;
             }

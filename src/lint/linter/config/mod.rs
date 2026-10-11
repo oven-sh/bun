@@ -179,6 +179,8 @@ struct ConfigObject {
     /// Of an override of oxlint that has `plugins`: those, and those of the files, as sets. The settings at the start of its
     /// `rules` that yield are what `categories` turn on.
     plugins_of_override: Option<(u32, u32)>,
+    /// The plugins [none of whose rules is here](Plugin::has_no_rules), of which `categories` of oxlint turn rules on.
+    without_rules: Vec<Plugin>,
 }
 
 impl ConfigObject {
@@ -222,6 +224,7 @@ impl Default for ConfigObject {
             parser_location: None,
             changes_linter: false,
             plugins_of_override: None,
+            without_rules: Vec::new(),
         }
     }
 }
@@ -995,7 +998,11 @@ impl Config {
                 false => {
                     let skipped = match object.plugins_of_override.is_some() && !have_categories {
                         true => object.rules.iter().take_while(|it| it.yields).count(),
-                        false => 0,
+                        false => {
+                            let of_categories = object.without_rules.iter();
+                            of_categories.for_each(|it| config.skip_rules_of(*it));
+                            0
+                        }
                     };
                     let settings = object.rules.get(skipped..).unwrap_or_default();
                     merge::merge_rules(&mut rules, settings, self.keeps_options);
@@ -1140,6 +1147,12 @@ impl Config {
                         .formatting_rules
                         .push(FormattingRule { rule, position });
                     config.has_skipped_rules = true;
+                }
+                continue;
+            }
+            if let Some(plugin) = setting.written_for.filter(|it| it.has_no_rules()) {
+                if setting.severity != Severity::Off {
+                    config.skip_rules_of(plugin);
                 }
                 continue;
             }

@@ -304,7 +304,7 @@ In a project with `vite-plus` in its `package.json` and no configuration file of
 
 ### Rules
 
-The rules of oxlint's plugins are built in: `unicorn`, `oxc`, `react`, `react-perf`, `jsx-a11y`, `nextjs`, `import`, `promise`, `node`, `jest`, `vitest`, `vue`, and `jsdoc`. These 569 rules do what oxlint 1.87 does, with its options, messages, and fixes. The 22 React Compiler rules of `react`, such as `react/refs` and `react/set-state-in-effect`, run the React Compiler that is built into Bun. With an `eslint.config.js` these names mean the plugins that the configuration imports.
+The rules of oxlint's plugins are built in: `unicorn`, `oxc`, `react`, `react-perf`, `jsx-a11y`, `nextjs`, `import`, `promise`, `node`, `jest`, and `vitest`. These 500 rules do what oxlint 1.87 does, with its options, messages, and fixes. The 22 React Compiler rules of `react`, such as `react/refs` and `react/set-state-in-effect`, run the React Compiler that is built into Bun. With an `eslint.config.js` these names mean the plugins that the configuration imports.
 
 The rules that oxlint shares with ESLint and typescript-eslint are ports of the originals. With an `.oxlintrc.json` they report what oxlint reports, at its places, with its messages. In the few cases where they still differ, `bun lint` does what ESLint does.
 
@@ -1095,6 +1095,7 @@ These differences are intentional:
 
 - **The rules are those of oxlint 1.87**, whichever version you had installed. A project on an older version sees what it would see after the upgrade.
 - **No language server.** `--lsp` is an error: `bun lint does not support --lsp.`
+- **The rules of `jsdoc` and `vue` are not built in.** A configuration can name the two plugins, their rules, and their `settings`. The rules do not run, and a note after the report says so. The `<script>` blocks of `.vue` files are linted with all other rules.
 - **A rule that is not built in does not stop the run.** oxlint refuses the configuration. `bun lint` runs the other rules, and then [fails with exit code `2`](#what-cannot-be-linted). A configuration that is written for a newer oxlint still runs.
 - **The default format is `pretty`**, which looks like `bun check`. Every other format prints what oxlint prints.
 - **Files and problems are sorted.** oxlint prints a file when a thread is done with it.

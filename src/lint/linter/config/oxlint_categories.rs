@@ -82,21 +82,6 @@ pub(super) static CATEGORIES: &[(&str, &[(&str, &str)])] = &[
         "require-to-throw-message valid-describe-callback valid-expect valid-expect-in-promise valid-title ",
         "warn-todo",
         )),
-        ("jsdoc", concat!(
-        "check-property-names check-tag-names implements-on-classes no-defaults require-property ",
-        "require-property-description require-property-name require-property-type require-yields",
-        )),
-        ("vue", concat!(
-        "no-arrow-functions-in-watch no-async-in-computed-properties no-computed-properties-in-data ",
-        "no-deprecated-data-object-declaration no-deprecated-delete-set no-deprecated-destroyed-lifecycle ",
-        "no-deprecated-events-api no-deprecated-model-definition no-deprecated-props-default-this ",
-        "no-deprecated-vue-config-keycodes no-dupe-keys no-export-in-script-setup no-expose-after-await ",
-        "no-lifecycle-after-await no-reserved-component-names no-reserved-keys no-reserved-props ",
-        "no-shared-component-data no-side-effects-in-computed-properties no-this-in-before-route-enter ",
-        "no-watch-after-await prefer-import-from-vue require-prop-type-constructor require-render-return ",
-        "require-slots-as-functions return-in-computed-property return-in-emits-validator valid-define-emits ",
-        "valid-define-options valid-define-props valid-next-tick",
-        )),
         ],
     ),
     (
@@ -133,7 +118,6 @@ pub(super) static CATEGORIES: &[(&str, &[(&str, &str)])] = &[
         ("promise", "always-return no-multiple-resolved no-promise-in-callback"),
         ("jest", "no-commented-out-tests"),
         ("vitest", "no-commented-out-tests"),
-        ("vue", "no-required-prop-with-default require-default-export"),
         ],
     ),
     (
@@ -178,10 +162,6 @@ pub(super) static CATEGORIES: &[(&str, &[(&str, &str)])] = &[
         )),
         ("jest", "no-conditional-in-test"),
         ("vitest", "no-conditional-in-test"),
-        ("jsdoc", concat!(
-        "require-param require-param-description require-param-name require-param-type require-returns ",
-        "require-returns-description require-returns-type require-throws-type require-yields-type",
-        )),
         ],
     ),
     (
@@ -282,12 +262,6 @@ pub(super) static CATEGORIES: &[(&str, &[(&str, &str)])] = &[
         "prefer-to-be-object prefer-to-be-truthy prefer-to-contain prefer-to-have-been-called-times ",
         "prefer-to-have-length prefer-todo require-hook require-top-level-describe",
         )),
-        ("jsdoc", "no-blank-blocks require-throws-description require-yields-description"),
-        ("vue", concat!(
-        "component-definition-name-casing define-emits-declaration define-props-declaration ",
-        "define-props-destructuring next-tick-style prop-name-casing require-default-prop ",
-        "require-direct-export require-prop-types require-typed-ref",
-        )),
         ],
     ),
     (
@@ -330,8 +304,6 @@ pub(super) static CATEGORIES: &[(&str, &[(&str, &str)])] = &[
         ("jsx_a11y", "anchor-ambiguous-text"),
         ("promise", "catch-or-return spec-only"),
         ("vitest", "require-test-timeout"),
-        ("jsdoc", "check-access empty-tags"),
-        ("vue", "max-props no-import-compiler-macros no-multiple-slot-args"),
         ],
     ),
     (
@@ -345,6 +317,12 @@ pub(super) static CATEGORIES: &[(&str, &[(&str, &str)])] = &[
         ("promise", "no-return-in-finally"),
         ],
     ),
+];
+
+/// The plugins of which no rule is built in, as oxlint calls them, each with the categories that it has rules in, separated by spaces.
+pub(super) static NOT_BUILT_IN: &[(&str, &str)] = &[
+    ("jsdoc", "correctness pedantic style restriction"),
+    ("vue", "correctness suspicious style restriction"),
 ];
 
 /// The rules that only run on TypeScript files: the plugins as oxlint calls them, each with the names of its rules, separated by spaces.
@@ -364,7 +342,6 @@ pub(super) static TYPESCRIPT_ONLY: &[(&str, &str)] = &[
         "prefer-as-const prefer-enum-initializers prefer-function-type prefer-literal-enum-member ",
         "prefer-namespace-keyword prefer-ts-expect-error triple-slash-reference unified-signatures",
     )),
-    ("vue", "require-typed-ref"),
 ];
 
 /// The rules that do not run on TypeScript files: the plugins as oxlint calls them, each with the names of its rules, separated by spaces.
@@ -379,7 +356,6 @@ pub(super) static NOT_DECLARATIONS: &[(&str, &str)] = &[
     ("eslint", "no-unused-vars"),
     ("typescript", "no-useless-empty-export"),
     ("unicorn", "consistent-function-scoping prefer-string-raw"),
-    ("vue", "prefer-import-from-vue"),
 ];
 
 /// The rules that have neither a fix nor a suggestion: the plugins as oxlint calls them, each with the names of its rules, separated by spaces.

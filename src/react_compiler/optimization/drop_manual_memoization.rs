@@ -165,7 +165,7 @@ pub(crate) fn drop_manual_memoization(
             let mut next_instructions: Option<HirVec<InstructionId>> = None;
             for i in 0..block.instructions.len() {
                 let instr_id = block.instructions[i];
-                if let Some(insert_instr) = queued_inserts.remove(instr_id) {
+                if let Some(insert_instr) = queued_inserts.swap_remove(instr_id) {
                     if next_instructions.is_none() {
                         next_instructions =
                             Some(AstAlloc::vec_from_slice(&block.instructions[..i]));

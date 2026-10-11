@@ -18,7 +18,7 @@
 use std::cmp;
 use std::collections::HashMap;
 
-use crate::collections::IdMap;
+use crate::collections::{FxHashMap, IdMap};
 use crate::hir::environment::Environment;
 use crate::hir::visitors;
 use crate::hir::visitors::{each_instruction_lvalue_ids, each_terminal_operand_ids};
@@ -347,12 +347,12 @@ pub(crate) fn merge_overlapping_reactive_scopes_hir(func: &mut HirFunction, env:
     // When scope.range is updated, ALL identifiers referencing that range object
     // automatically see the new values. We use MutableRangeId to identify which
     // identifiers share the same logical range as a root scope.
-    let mut original_root_range_ids: IdMap<ScopeId, crate::hir::MutableRangeId> = IdMap::new();
+    // Not in upstream: keyed by range id for the lookup below. The first root with an id wins.
+    let mut original_root_range_ids: FxHashMap<crate::hir::MutableRangeId, ScopeId> =
+        FxHashMap::default();
     for (_, root_id) in &scope_groups {
-        if !original_root_range_ids.contains_key(*root_id) {
-            let range_id = env.scopes[root_id.0 as usize].range.id;
-            original_root_range_ids.insert(*root_id, range_id);
-        }
+        let range_id = env.scopes[root_id.0 as usize].range.id;
+        original_root_range_ids.entry(range_id).or_insert(*root_id);
     }
 
     // Update root scope ranges
@@ -369,13 +369,10 @@ pub(crate) fn merge_overlapping_reactive_scopes_hir(func: &mut HirFunction, env:
     // updated, all identifiers referencing that range object automatically see
     // the new values. We use MutableRangeId for exact identity matching.
     for ident in &mut env.identifiers {
-        for (root_id, orig_range_id) in original_root_range_ids.iter() {
-            if ident.mutable_range.id == *orig_range_id {
-                let new_range = &env.scopes[root_id.0 as usize].range;
-                ident.mutable_range.start = new_range.start;
-                ident.mutable_range.end = new_range.end;
-                break;
-            }
+        if let Some(root_id) = original_root_range_ids.get(&ident.mutable_range.id) {
+            let new_range = &env.scopes[root_id.0 as usize].range;
+            ident.mutable_range.start = new_range.start;
+            ident.mutable_range.end = new_range.end;
         }
     }
 

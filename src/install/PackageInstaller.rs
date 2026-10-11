@@ -460,6 +460,10 @@ pub(crate) fn remove_placed_package(
     let Ok(node_modules) = Dir::open(path.slice()) else {
         return;
     };
+    // First what `verify` reads: a folder that cannot be deleted whole must not count as installed.
+    if let Some(package) = crate::prune::descend(&node_modules, alias) {
+        let _ = package.delete_file_z(bun_core::zstr!("package.json"));
+    }
     let _ = node_modules.delete_tree(alias);
     crate::prune::prune_bins(&node_modules);
 }

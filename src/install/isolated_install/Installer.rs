@@ -665,6 +665,11 @@ impl<'a> Installer<'a> {
         {
             let mut path = AutoAbsPath::init_top_level_dir();
             self.append_store_path(&mut path, entry_id);
+            // First what the next install looks for: a folder that cannot be deleted whole must not count.
+            let package_len = path.len();
+            let _ = path.append(b"package.json");
+            let _ = sys::unlink(path.slice_z());
+            path.set_length(package_len);
             let _ = Fd::cwd().delete_tree(path.slice());
         }
         is_store_copy

@@ -1625,7 +1625,7 @@ fn open_workspace_folder(folder: &[u8], linked_folders: &mut Vec<Box<[u8]>>) -> 
     }
 }
 
-fn descend(dir: &Dir, alias: &[u8]) -> Option<Dir> {
+pub(crate) fn descend(dir: &Dir, alias: &[u8]) -> Option<Dir> {
     let (scope, name) = match strings::split_once_char(alias, b'/') {
         Some(split) if alias.first() == Some(&b'@') => (Some(split.0), split.1),
         _ => (None, alias),

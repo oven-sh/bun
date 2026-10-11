@@ -350,10 +350,8 @@ impl<'a> NodeFinder<'a> {
                 ExprKind::Dot { .. } | ExprKind::Index { .. } | ExprKind::NonNull(_) => true,
                 ExprKind::Call(call) => {
                     let callee = call.callee();
-                    matches!(
-                        callee.tag(),
-                        ExprTag::Dot | ExprTag::Index | ExprTag::Call
-                    ) && (self.has_tree_of_babel || !is_chain_root(callee))
+                    matches!(callee.tag(), ExprTag::Dot | ExprTag::Index | ExprTag::Call)
+                        && (self.has_tree_of_babel || !is_chain_root(callee))
                 }
                 _ => false,
             };
@@ -988,7 +986,11 @@ fn move_comments<'a>(
                 (true, false) => 1,
                 (false, _) => 2,
             };
-            (comment.start(), rank, std::cmp::Reverse(comment.leads_until))
+            (
+                comment.start(),
+                rank,
+                std::cmp::Reverse(comment.leads_until),
+            )
         });
     }
 }

@@ -3125,6 +3125,30 @@ const wrong: number = "";
       20_000,
     );
 
+    // The parser reads `A.A.A` in a loop and holds more levels of a pattern than two walks of the checker did, which are no
+    // queries and did not ask the stack: a little before the depth at which the file is refused they ran over its end. Where
+    // that is depends on the platform and the build: so every depth.
+    test.skipIf(isDebug || isASAN)(
+      "namespaces and patterns of every depth from 1,000 to 40,000",
+      async () => {
+        const files: Record<string, string> = {};
+        for (let depth = 1_000; depth < 40_000; depth = Math.ceil(depth * 1.025)) {
+          const name = `A${repeat(".A", depth)}`;
+          files[`namespaces-${depth}.ts`] =
+            `export {};\nnamespace ${name} { export const b = 1; }\nlet x: string = ${name}.b;\n`;
+          files[`patterns-${depth}.ts`] =
+            `export {};\ndeclare let y: any; let ${repeat("{ a: ", depth)}b${repeat(" }", depth)} = y; let x: string = b;\n`;
+        }
+        using dir = project(files);
+        const { stdout, exitCode } = await check(dir);
+        expect(stdout).toContain(
+          "namespaces-1000.ts(3,5): error TS2322: Type 'number' is not assignable to type 'string'.",
+        );
+        expect(exitCode).toBe(1);
+      },
+      30_000,
+    );
+
     test(
       "an import of a path with 30,000 segments",
       async () => {

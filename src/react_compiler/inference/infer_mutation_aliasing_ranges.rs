@@ -214,23 +214,31 @@ struct AliasingState {
     serials: u32,
     walks: u32,
     queue: Vec<QueueEntry>,
+    /// Whether a transitive walk that no index holds back goes along every edge both ways,
+    /// however it came to the node: there is no phi, and each edge is still in the lists of both
+    /// its ends.
+    is_symmetric: bool,
 }
 
 impl AliasingState {
-    fn new(identifiers: usize) -> Self {
+    fn new(identifiers: usize, instructions: usize) -> Self {
         AliasingState {
-            nodes: Vec::new(),
+            nodes: Vec::with_capacity(instructions),
             node_of: ByIdentifier::new(identifiers, 0),
-            links: Vec::new(),
+            links: Vec::with_capacity(instructions * 2),
             long_lists: HashSet::default(),
             serials: 0,
             walks: 0,
             queue: Vec::new(),
+            is_symmetric: true,
         }
     }
 
     fn create(&mut self, id: IdentifierId, value: NodeValue) -> NodeAt {
         self.serials += 1;
+        if matches!(value, NodeValue::Phi | NodeValue::Missing) {
+            self.is_symmetric = false;
+        }
         let node = Node {
             id,
             serial: self.serials,
@@ -252,6 +260,7 @@ impl AliasingState {
             *node_of = self.nodes.len() as u32;
         } else {
             self.nodes[*node_of as usize - 1] = node;
+            self.is_symmetric = false;
         }
         *node_of - 1
     }
@@ -650,7 +659,7 @@ pub(crate) fn infer_mutation_aliasing_ranges(
     // =========================================================================
     // Part 1: Build data flow graph and infer mutable ranges
     // =========================================================================
-    let mut state = AliasingState::new(env.identifiers.len());
+    let mut state = AliasingState::new(env.identifiers.len(), func.instructions.len());
 
     struct PendingPhiOperand {
         from: IdentifierId,
@@ -1124,25 +1133,48 @@ pub(crate) fn infer_mutation_aliasing_ranges(
 
     let returns_identifier_id = func.returns.identifier;
 
-    for i in 0..tracked.len() {
-        let into = tracked[i].clone();
-        let mutation_index = index;
+    let first_simulated_index = index;
+    let reached_in = |state: &AliasingState, mutation_index: u32| -> Vec<bool> {
+        let is_reached = |place: &Place| {
+            let node = state.node(place.identifier);
+            node.is_some_and(|node| node.last_mutated == mutation_index)
+        };
+        tracked.iter().map(is_reached).collect()
+    };
+
+    for into in &tracked {
+        let mut mutation_index = index;
         index += 1;
 
-        state.mutate(
-            mutation_index,
-            into.identifier,
-            None, // simulated mutation
-            true,
-            MutationKind::Conditional,
-            into.loc,
-            None,
-            env,
-            false, // never record errors for simulated mutations
-        );
+        // Where the walks are symmetric, each reaches all that is connected with its start. So a
+        // walk from what an earlier one has reached would reach the same.
+        let earlier_index = state
+            .node(into.identifier)
+            .map(|node| node.last_mutated)
+            .filter(|&last_mutated| {
+                state.is_symmetric
+                    && first_simulated_index > 0
+                    && last_mutated >= first_simulated_index
+            });
+        if earlier_index.is_none() || cfg!(debug_assertions) {
+            let expected = earlier_index.map(|earlier_index| reached_in(&state, earlier_index));
+            state.mutate(
+                mutation_index,
+                into.identifier,
+                None, // simulated mutation
+                true,
+                MutationKind::Conditional,
+                into.loc,
+                None,
+                env,
+                false, // never record errors for simulated mutations
+            );
+            debug_assert!(expected.is_none_or(|it| it == reached_in(&state, mutation_index)));
+        } else if let Some(earlier_index) = earlier_index {
+            mutation_index = earlier_index;
+        }
 
-        for j in 0..tracked.len() {
-            let from = &tracked[j];
+        for from in &tracked {
             if from.identifier == into.identifier || from.identifier == returns_identifier_id {
                 continue;
             }

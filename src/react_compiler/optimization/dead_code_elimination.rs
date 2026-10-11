@@ -19,8 +19,8 @@ use crate::hir::object_shape::HookKind;
 use crate::hir::visitors;
 use crate::hir::{
     ArrayPatternElement, AstAlloc, BlockId, BlockKind, HirFunction, HirVec, IdentifierId,
-    IdentifierName, Instruction, InstructionKind, InstructionValue, ObjectPropertyOrSpread,
-    Pattern, Terminal,
+    IdentifierName, Instruction, InstructionId, InstructionKind, InstructionValue,
+    ObjectPropertyOrSpread, Pattern, Terminal,
 };
 use crate::optimization::prune_maybe_throws::value_may_throw;
 
@@ -42,10 +42,14 @@ pub(crate) fn dead_code_elimination(func: &mut HirFunction, env: &Environment) {
             .retain(|phi| is_id_or_name_used(&state, &env.identifiers, phi.place.identifier));
 
         // Remove instructions with unused lvalues
-        block.instructions.retain(|instr_id| {
+        let is_used = |instr_id: &InstructionId| {
             let instr = &instructions[instr_id.0 as usize];
             is_id_or_name_used(&state, &env.identifiers, instr.lvalue.identifier)
-        });
+        };
+        debug_assert!(state.has_unmarked_instruction || block.instructions.iter().all(is_used));
+        if state.has_unmarked_instruction {
+            block.instructions.retain(is_used);
+        }
 
         // Rewrite the retained instructions (not the block value)
         let retained_count = block.instructions.len();
@@ -77,6 +81,8 @@ struct State {
     identifiers: IdBitSet<IdentifierId>,
     /// Named variable usages (any version)
     named: HashSet<crate::hir::StoreStr>,
+    /// Whether the last walk passed over an instruction without marking its lvalue.
+    has_unmarked_instruction: bool,
 }
 
 impl State {
@@ -84,6 +90,7 @@ impl State {
         State {
             identifiers: IdBitSet::with_ids(env.identifiers.len()),
             named: HashSet::default(),
+            has_unmarked_instruction: false,
         }
     }
 
@@ -202,6 +209,7 @@ fn find_referenced_identifiers(
 
     loop {
         size = state.count();
+        state.has_unmarked_instruction = false;
 
         // In reverse order (postorder - successors before predecessors)
         for block in func.body.blocks.values().rev() {
@@ -255,6 +263,8 @@ fn find_referenced_identifiers(
                             );
                         }
                     }
+                } else {
+                    state.has_unmarked_instruction = true;
                 }
             }
 

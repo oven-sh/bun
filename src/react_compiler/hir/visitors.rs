@@ -343,17 +343,6 @@ pub type Places = SmallVec<[Place; 4]>;
 pub type Ids = SmallVec<[IdentifierId; 4]>;
 pub type Blocks = SmallVec<[BlockId; 4]>;
 
-/// [`value_lvalues`], cloned.
-pub fn each_instruction_value_lvalue(value: &InstructionValue) -> Places {
-    value_lvalues(value).cloned().collect()
-}
-
-/// Delegates to each_instruction_value_operand.
-/// Equivalent to TS `eachInstructionOperand`.
-pub fn each_instruction_operand(instr: &Instruction, env: &Environment) -> Places {
-    each_instruction_value_operand(&instr.value, env)
-}
-
 /// [`operands`], cloned.
 pub fn each_instruction_value_operand(value: &InstructionValue, env: &Environment) -> Places {
     each_instruction_value_operand_with_functions(value, &env.functions)
@@ -471,11 +460,6 @@ pub fn each_terminal_successor(terminal: &Terminal) -> Blocks {
         Terminal::Unreachable { .. } | Terminal::Unsupported { .. } => {}
     }
     result
-}
-
-/// [`terminal_operands`], cloned.
-pub fn each_terminal_operand(terminal: &Terminal) -> Places {
-    terminal_operands(terminal).cloned().collect()
 }
 
 // =============================================================================
@@ -997,11 +981,6 @@ impl ScopeBlockTraversal {
 /// Collect all lvalue IdentifierIds from an instruction.
 pub fn each_instruction_lvalue_ids(instr: &Instruction) -> Ids {
     lvalues(instr).map(|p| p.identifier).collect()
-}
-
-/// Collect all operand IdentifierIds from an instruction.
-pub fn each_instruction_operand_ids(instr: &Instruction, env: &Environment) -> Ids {
-    each_instruction_value_operand_ids(&instr.value, env)
 }
 
 /// Collect all operand IdentifierIds from an instruction value.

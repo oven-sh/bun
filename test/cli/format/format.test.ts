@@ -1634,6 +1634,7 @@ ${packages["node_modules/prettier/index.cjs"]}`;
       before + open.repeat(depth) + middle + close.repeat(depth) + after;
     const oxfmtrc = { ".oxfmtrc.json": "{}" };
     const svelte = { ".prettierrc": `{ "plugins": ["prettier-plugin-svelte"] }` };
+    const wide = { ".prettierrc": `{ "printWidth": 1000000 }` };
     test.skipIf(isDebug || isASAN).concurrent.each<[string, string, Record<string, string>, string, string]>([
       [
         "a srcset of more than 1 MB",
@@ -1809,6 +1810,34 @@ ${packages["node_modules/prettier/index.cjs"]}`;
         svelte,
         nested("", "{#if a}", "b", "{/if}", "", 450),
         "a13e62998f4f687539a1e91c7cfc73031a3d1d2a",
+      ],
+      [
+        "printWidth 1,000,000: an array of 90,000 columns",
+        "a.js",
+        wide,
+        `x = [${"a, ".repeat(30_000)}a];`,
+        "ceb1977b11ba34255575ded81bd39e001c4c5ef1",
+      ],
+      [
+        "printWidth 1,000,000: a value of 80,000 columns",
+        "a.css",
+        wide,
+        `a{b:${"a ".repeat(40_000)}a}`,
+        "c4fabc142c10cf06916f937c3e06f289a39c2673",
+      ],
+      [
+        "printWidth 1,000,000: an array of 100,000 columns",
+        "a.json",
+        wide,
+        `[${'"a", '.repeat(20_000)}1]`,
+        "64818eef7c948c717b18d3c465a81ce8590d1a59",
+      ],
+      [
+        "tabWidth 254",
+        "a.js",
+        { ".prettierrc": `{ "tabWidth": 254 }` },
+        `x = {${"a".repeat(69)}: "${"a".repeat(75)}"}`,
+        "10952485e69d0548ef12ba7a9d087b5c98c4f6ad",
       ],
     ])("%s", async (_, name, configuration, text, sha1) => {
       const result = await format(configuration, ["--stdin-filepath", name], { stdin: text });

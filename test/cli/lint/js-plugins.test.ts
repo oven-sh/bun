@@ -2001,6 +2001,24 @@ export default {
   );
 
   test(
+    "what is no UTF-8 is as long for columns and for the fixes of native rules as in the text",
+    async () => {
+      const files = {
+        "eslint.config.mjs": `export default [{ rules: { "no-var": "error", "no-debugger": "error" } }];`,
+        "a.js": Buffer.from("/* \xf0\x9f\x98 \xe2\x82 \xf0\x9f \xc3 \xed\xa0\x80 \xff */ debugger; var x = 1;\n", "latin1"),
+      };
+      const { raw, exitCode } = await lint(files, ["-f", "json", "a.js"]);
+      // What ESLint 10.12 says.
+      expect(JSON.parse(raw)[0].messages.map(it => [it.ruleId, it.column, it.endColumn, it.fix?.range])).toEqual([
+        ["no-debugger", 21, 30, undefined],
+        ["no-var", 31, 41, [30, 33]],
+      ]);
+      expect(exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
     "without rules in JavaScript there is no engine",
     async () => {
       const { stderr, exitCode } = await lint(

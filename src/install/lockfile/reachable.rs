@@ -3,7 +3,8 @@ use crate::lockfile::DependencySlice;
 use crate::lockfile::package::{Meta, PackageColumns as _};
 use crate::lockfile_real::Lockfile;
 use crate::npm::{Architecture, Libc, OperatingSystem};
-use crate::{PackageID, PackageManager};
+use crate::package_manager::WorkspaceFilter;
+use crate::{DependencyID, PackageID, PackageManager};
 use bun_collections::DynamicBitSet;
 use bun_core::UnwrapOrOom;
 
@@ -47,6 +48,91 @@ impl Options {
                 manager.options.libc,
             )),
         }
+    }
+
+    // Does the install take this row's dependency group?
+    fn group_enabled(&self, behavior: Behavior) -> bool {
+        if behavior.is_optional_peer() {
+            self.optional_peer
+        } else if behavior.is_peer() {
+            self.peer
+        } else if behavior.is_optional() {
+            self.optional
+        } else if behavior.is_dev() {
+            self.dev
+        } else {
+            true
+        }
+    }
+
+    // An optional peer resolves nothing itself: it borrows the package of a row of the same name in
+    // `siblings`, the rows of its package.json. True when every such row is in an omitted group.
+    fn omits_optional_peer(&self, dep: &Dependency, siblings: &[Dependency]) -> bool {
+        if !dep.behavior.is_optional_peer() || (self.dev && self.optional) {
+            return false;
+        }
+        let mut lender_omitted = false;
+        for sibling in siblings {
+            if sibling.name_hash == dep.name_hash && !sibling.behavior.is_peer() {
+                if self.group_enabled(sibling.behavior) {
+                    return false;
+                }
+                lender_omitted = true;
+            }
+        }
+        lender_omitted
+    }
+}
+
+/// The packages a `--production` / `--omit` install links. Computed on first use, for one `resolutions` buffer.
+#[derive(Default)]
+pub(crate) struct Linked(Option<DynamicBitSet>);
+
+impl Linked {
+    /// True for an optional peer of `parent_pkg_id` whose package only an omitted group asked for
+    /// (`devDependencies` + optional `peerDependencies` under `--production`).
+    pub(crate) fn omits_optional_peer(
+        &mut self,
+        dep_id: DependencyID,
+        parent_pkg_id: PackageID,
+        workspace_filters: &[WorkspaceFilter],
+        install_root_dependencies: bool,
+        manager: &PackageManager,
+        lockfile: &Lockfile,
+        resolutions: &[PackageID],
+    ) -> bool {
+        let options = Options::install(manager);
+        let deps = lockfile.buffers.dependencies.as_slice();
+        let dep_slices = lockfile.packages.items_dependencies();
+        if !options.omits_optional_peer(
+            &deps[dep_id as usize],
+            dep_slices[parent_pkg_id as usize].get(deps),
+        ) {
+            return false;
+        }
+        let linked = self.0.get_or_insert_with(|| {
+            let pruned = &manager.summary.pruned_workspaces;
+            if workspace_filters.is_empty() && install_root_dependencies && pruned.is_empty() {
+                return packages(lockfile, resolutions, options);
+            }
+            // `--filter` or a pruned checkout links only some importers.
+            let mut roots: Vec<PackageID> = Vec::new();
+            if install_root_dependencies {
+                roots.push(0);
+            }
+            for row in dep_slices[0].begin() as usize..dep_slices[0].end() as usize {
+                let workspace = resolutions[row];
+                if deps[row].behavior.is_workspace()
+                    && (workspace as usize) < dep_slices.len()
+                    && !pruned.contains(&deps[row].name_hash)
+                    && WorkspaceFilter::is_selected(workspace_filters, workspace)
+                {
+                    roots.push(workspace);
+                }
+            }
+            packages_from(lockfile, resolutions, &roots, false, options)
+        });
+        !linked.is_set(resolutions[dep_id as usize] as usize)
     }
 }
 
@@ -166,22 +252,9 @@ impl<'a> Walk<'a> {
     }
 
     fn follows(&self, behavior: Behavior) -> bool {
-        let options = &self.options;
-        if (!self.follow_workspace_edges && behavior.is_workspace())
-            || (behavior.is_bundled() && !options.bundled)
-        {
-            false
-        } else if behavior.is_optional_peer() {
-            options.optional_peer
-        } else if behavior.is_peer() {
-            options.peer
-        } else if behavior.is_optional() {
-            options.optional
-        } else if behavior.is_dev() {
-            options.dev
-        } else {
-            true
-        }
+        !(!self.follow_workspace_edges && behavior.is_workspace())
+            && !(behavior.is_bundled() && !self.options.bundled)
+            && self.options.group_enabled(behavior)
     }
 
     // `behavior` is the edge `target` is reached through; like the tree builder
@@ -208,9 +281,13 @@ impl<'a> Walk<'a> {
     fn drain(&self, seen: &mut DynamicBitSet, worklist: &mut Vec<PackageID>) {
         while let Some(parent) = worklist.pop() {
             let slice = self.dep_slices[parent as usize];
+            let siblings = slice.get(self.deps);
             for dep_id in slice.begin() as usize..slice.end() as usize {
-                let behavior = self.deps[dep_id].behavior;
-                if !(self.follow_all || self.follows(behavior)) {
+                let dep = &self.deps[dep_id];
+                let behavior = dep.behavior;
+                if !(self.follow_all
+                    || (self.follows(behavior) && !self.options.omits_optional_peer(dep, siblings)))
+                {
                     continue;
                 }
                 self.admit(self.resolutions[dep_id], behavior, seen, worklist);

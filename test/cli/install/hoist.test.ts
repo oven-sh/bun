@@ -2,7 +2,7 @@ import { file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, realpathSync } from "fs";
 import { exists, rm } from "fs/promises";
-import { bunEnv, bunExe, isASAN, runBunInstall } from "harness";
+import { bunEnv, bunExe, isASAN, pack, readdirSorted, runBunInstall } from "harness";
 import { join } from "path";
 import { TestRegistry } from "registry";
 
@@ -548,9 +548,8 @@ describe.concurrent("a self-contained workspace", () => {
 
 // A peer whose own resolution conflicts with the copy the root package.json put
 // at the top of node_modules is served by the root's copy whatever its range
-// says (Tree.hoist_dependency). The install doing that has to say so; the
-// resolver's own `incorrect peer dependency` warning only covers peers it bound
-// out of range itself.
+// says (Tree.hoist_dependency). The install doing that has to say so, even if
+// a copy inside the range is somewhere else in the tree.
 const peerWarnings = (stderr: string) => stderr.match(/^warn: incorrect peer dependency [^\r\n]*/gm) ?? [];
 // CI exports BUN_INSTALL_CACHE_DIR, which overrides the harness bunfig's per-test `cache`; concurrent cases sharing one cache race on Windows.
 const installEnv = (dir: string) => ({ ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") });
@@ -591,7 +590,7 @@ test.concurrent("warns when a workspace member's peer is served by a root depend
 });
 
 test.concurrent(
-  "warns on every install while a dependency's peer is served by a root dependency outside its range",
+  "the install that resolves it warns when a dependency's peer is served by a root dependency outside its range",
   async () => {
     const { packageDir } = await registry.createTestDir({
       bunfigOpts: { linker: "hoisted" },
@@ -619,12 +618,9 @@ test.concurrent(
     expect(await installedVersion(packageDir, "provides-peer-deps-1-0-0", "node_modules", "no-deps")).toBe("1.0.0");
     expect(await hasOwnNodeModules(packageDir, "peer-deps-fixed")).toBe(false);
 
-    // Nothing changed, so the same tree gets installed again.
-    const again = await runBunInstall(installEnv(packageDir), packageDir, {
-      allowWarnings: true,
-      savesLockfile: false,
-    });
-    expect(peerWarnings(again.err)).toEqual([expected]);
+    // An install that has nothing to resolve does not repeat it.
+    const again = await runBunInstall(installEnv(packageDir), packageDir, { savesLockfile: false });
+    expect(peerWarnings(again.err)).toEqual([]);
   },
 );
 
@@ -712,3 +708,494 @@ test.concurrent.each([
     expect(await hasOwnNodeModules(packageDir, "one-optional-peer-dep")).toBe(false);
   },
 );
+
+// https://github.com/oven-sh/bun/issues/20376
+describe.concurrent("peer dependencies decide how far a package hoists", () => {
+  async function version(...path: string[]) {
+    return (await Bun.file(join(...path, "package.json")).json()).version;
+  }
+
+  // Installs twice, once resolving from scratch and once from the bun.lock the first install wrote.
+  // The tests run concurrently and share packages, so each gets its own cache (the env var set by
+  // the CI runner would otherwise override the one in bunfig.toml).
+  async function installAndCheck(packageDir: string, check: () => Promise<void>) {
+    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") };
+    // Warnings about peers out of range are not what is under test.
+    await runBunInstall(env, packageDir, { allowWarnings: true });
+    await check();
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    const { err } = await runBunInstall(env, packageDir, { savesLockfile: false, allowWarnings: true });
+    expect(err).not.toContain("Saved lockfile");
+    await check();
+  }
+
+  test("stays next to the peer version it was resolved against", async () => {
+    // hoisting-peer-check-parent depends on { hoisting-peer-check-child: 1.0.0, no-deps: 2.0.0 }
+    // hoisting-peer-check-child has peerDependencies: { no-deps: 2.0.0 }
+    //
+    // The root pins no-deps@1.0.0, so no-deps@2.0.0 nests under the parent. The child has to nest
+    // with it: hoisted to the root, its `require("no-deps")` would find 1.0.0.
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "root",
+          dependencies: {
+            "no-deps": "1.0.0",
+            "hoisting-peer-check-parent": "1.0.0",
+          },
+        }),
+      },
+    });
+
+    const nodeModules = join(packageDir, "node_modules");
+    await installAndCheck(packageDir, async () => {
+      expect(await readdirSorted(join(nodeModules, "hoisting-peer-check-parent", "node_modules"))).toEqual([
+        "hoisting-peer-check-child",
+        "no-deps",
+      ]);
+      expect(await version(nodeModules, "no-deps")).toBe("1.0.0");
+      expect(await version(nodeModules, "hoisting-peer-check-parent", "node_modules", "no-deps")).toBe("2.0.0");
+    });
+  });
+
+  test("stays below a peer version provided further up than its own dependent", async () => {
+    // mismatched-peer-deps-lvl0 depends on lvl1 and has peerDependencies: { no-deps: <=1.1.0 }
+    // mismatched-peer-deps-lvl1 depends on lvl2 and has peerDependencies: { no-deps: <=1.0.1 }
+    // mismatched-peer-deps-lvl2 has peerDependencies: { no-deps: 1.0.0 }
+    //
+    // Only the workspace provides an in-range no-deps. lvl1 and lvl2 depend on nothing that does,
+    // but staying under lvl0 keeps the workspace's copy in reach; the root's 2.0.0 is out of range.
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "no-deps": "2.0.0",
+          },
+        }),
+        "packages/app/package.json": JSON.stringify({
+          name: "app",
+          dependencies: {
+            "no-deps": "1.0.0",
+            "mismatched-peer-deps-lvl0": "1.0.0",
+          },
+        }),
+      },
+    });
+
+    const appModules = join(packageDir, "packages", "app", "node_modules");
+    const lvl0 = join(appModules, "mismatched-peer-deps-lvl0");
+    const lvl1 = join(lvl0, "node_modules", "mismatched-peer-deps-lvl1");
+    await installAndCheck(packageDir, async () => {
+      expect(await version(packageDir, "node_modules", "no-deps")).toBe("2.0.0");
+      expect(await readdirSorted(appModules)).toEqual(["mismatched-peer-deps-lvl0", "no-deps"]);
+      expect(await version(appModules, "no-deps")).toBe("1.0.0");
+      expect(await readdirSorted(join(lvl0, "node_modules"))).toEqual(["mismatched-peer-deps-lvl1"]);
+      expect(await readdirSorted(join(lvl1, "node_modules"))).toEqual(["mismatched-peer-deps-lvl2"]);
+    });
+  });
+
+  test("hoists past an out-of-range version when nothing below would satisfy the peer either", async () => {
+    // peer-deps-fixed has peerDependencies: { no-deps: ^1.0.0 }
+    //
+    // The root pins no-deps@2.0.0 and neither workspace that depends on peer-deps-fixed brings an
+    // in-range no-deps along, so a copy under each of them would still resolve the root's 2.0.0.
+    // One shared copy at the root, as before. (The third workspace only makes a 1.x exist in the
+    // lockfile, so the peer edge resolves to a package other than the root's.)
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "no-deps": "2.0.0",
+          },
+        }),
+        "packages/a/package.json": JSON.stringify({
+          name: "a",
+          dependencies: { "peer-deps-fixed": "1.0.0" },
+        }),
+        "packages/b/package.json": JSON.stringify({
+          name: "b",
+          dependencies: { "peer-deps-fixed": "1.0.0" },
+        }),
+        "packages/c/package.json": JSON.stringify({
+          name: "c",
+          dependencies: { "no-deps": "1.0.0" },
+        }),
+      },
+    });
+
+    await installAndCheck(packageDir, async () => {
+      expect(await version(packageDir, "node_modules", "peer-deps-fixed")).toBe("1.0.0");
+      expect(await version(packageDir, "node_modules", "no-deps")).toBe("2.0.0");
+      expect(await exists(join(packageDir, "packages", "a", "node_modules"))).toBe(false);
+      expect(await exists(join(packageDir, "packages", "b", "node_modules"))).toBe(false);
+      expect(await readdirSorted(join(packageDir, "packages", "c", "node_modules"))).toEqual(["no-deps"]);
+    });
+  });
+
+  test("hoists when its own dependent installs an out-of-range copy of the peer", async () => {
+    // The a-dep tarball depends on { no-deps: 1.1.0, mismatched-peer-deps-lvl1 } and nests under
+    // the workspace because the root has another a-dep. Its no-deps@1.1.0 nests under it too, so
+    // that is what lvl1 (peer no-deps <=1.0.1) would find if it stayed there, not the workspace's
+    // 1.0.0. Out of range either way, so it hoists to the root like before.
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "a-dep": "1.0.1",
+            "no-deps": "2.0.0",
+          },
+        }),
+        "packages/app/package.json": JSON.stringify({
+          name: "app",
+          dependencies: {
+            "a-dep": "file:../../a-dep/a-dep-9.0.0.tgz",
+            "no-deps": "1.0.0",
+          },
+        }),
+        "a-dep/package.json": JSON.stringify({
+          name: "a-dep",
+          version: "9.0.0",
+          dependencies: {
+            "mismatched-peer-deps-lvl1": "1.0.0",
+            "no-deps": "1.1.0",
+          },
+        }),
+      },
+    });
+    await pack(join(packageDir, "a-dep"), bunEnv);
+
+    const appModules = join(packageDir, "packages", "app", "node_modules");
+    await installAndCheck(packageDir, async () => {
+      expect(await version(packageDir, "node_modules", "mismatched-peer-deps-lvl1")).toBe("1.0.0");
+      expect(await version(appModules, "a-dep")).toBe("9.0.0");
+      expect(await readdirSorted(join(appModules, "a-dep", "node_modules"))).toEqual(["no-deps"]);
+      expect(await version(appModules, "a-dep", "node_modules", "no-deps")).toBe("1.1.0");
+    });
+  });
+
+  test("hoists when the version at the root satisfies the peer range", async () => {
+    // has-peer has peerDependencies: { peer-no-deps: ^1.0.0 }
+    // diff-peer-1 depends on { has-peer: 1.0.0, peer-no-deps: 1.0.0 }
+    // diff-peer-2 depends on { has-peer: 1.0.0, peer-no-deps: 1.0.1 }
+    //
+    // The peer edge resolves to 1.0.1, but the 1.0.0 that wins the root slot satisfies ^1.0.0 too,
+    // so both dependents share the has-peer at the root. Only peer-no-deps@1.0.1 nests.
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "root",
+          dependencies: {
+            "diff-peer-1": "1.0.0",
+            "diff-peer-2": "1.0.0",
+          },
+        }),
+      },
+    });
+
+    const nodeModules = join(packageDir, "node_modules");
+    await installAndCheck(packageDir, async () => {
+      expect(await version(nodeModules, "has-peer")).toBe("1.0.0");
+      expect(await version(nodeModules, "peer-no-deps")).toBe("1.0.0");
+      expect(await exists(join(nodeModules, "diff-peer-1", "node_modules"))).toBe(false);
+      expect(await readdirSorted(join(nodeModules, "diff-peer-2", "node_modules"))).toEqual(["peer-no-deps"]);
+      expect(await version(nodeModules, "diff-peer-2", "node_modules", "peer-no-deps")).toBe("1.0.1");
+    });
+  });
+
+  test("ignores a peer that the package also lists as a regular dependency", async () => {
+    // dup-peer lists no-deps@2.0.0 as both a dependency and a peer dependency. The regular
+    // dependency is what gets installed under it, so the root's no-deps@1.0.0 is no reason to
+    // keep dup-peer out of the root. (Registry manifests drop the duplicate peer edge; a tarball's
+    // package.json keeps it.)
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+        "packages/app/package.json": JSON.stringify({
+          name: "app",
+          dependencies: {
+            "dup-peer": "file:../../dup-peer/dup-peer-1.0.0.tgz",
+          },
+        }),
+        "dup-peer/package.json": JSON.stringify({
+          name: "dup-peer",
+          version: "1.0.0",
+          dependencies: { "no-deps": "2.0.0" },
+          peerDependencies: { "no-deps": "2.0.0" },
+        }),
+      },
+    });
+    await pack(join(packageDir, "dup-peer"), bunEnv);
+
+    const nodeModules = join(packageDir, "node_modules");
+    await installAndCheck(packageDir, async () => {
+      expect(await version(nodeModules, "no-deps")).toBe("1.0.0");
+      expect(await version(nodeModules, "dup-peer", "node_modules", "no-deps")).toBe("2.0.0");
+      expect(await exists(join(packageDir, "packages", "app", "node_modules"))).toBe(false);
+    });
+  });
+
+  test("never nests a workspace package", async () => {
+    // A workspace package installs as a symlink to its folder, so a nested link would still
+    // resolve the root's no-deps@1.0.0. Its peer range is no reason to add one.
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+        "packages/lib/package.json": JSON.stringify({
+          name: "lib",
+          version: "1.0.0",
+          peerDependencies: { "no-deps": "2.0.0" },
+        }),
+        "packages/app/package.json": JSON.stringify({
+          name: "app",
+          dependencies: {
+            "lib": "workspace:*",
+            "no-deps": "2.0.0",
+          },
+        }),
+      },
+    });
+
+    const nodeModules = join(packageDir, "node_modules");
+    await installAndCheck(packageDir, async () => {
+      expect(await version(nodeModules, "no-deps")).toBe("1.0.0");
+      expect(await version(nodeModules, "lib")).toBe("1.0.0");
+      expect(await readdirSorted(join(packageDir, "packages", "app", "node_modules"))).toEqual(["no-deps"]);
+    });
+  });
+});
+
+// A command that changes what bun.lock holds knows what the previous bun.lock placed. What it no
+// longer places, and the nested copies the install now provides from above, leave node_modules.
+describe.concurrent("what left the tree leaves node_modules", () => {
+  const versionAt = async (...path: string[]) =>
+    (await exists(join(...path, "package.json"))) ? (await file(join(...path, "package.json")).json()).version : null;
+  const env = (packageDir: string) => ({ ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") });
+  const project = (files: Record<string, object>) =>
+    registry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: Object.fromEntries(Object.entries(files).map(([path, json]) => [path, JSON.stringify(json)])),
+    });
+
+  test("a member's own copy, once the member uses the version at the root", async () => {
+    const { packageDir } = await project({
+      "package.json": { name: "root", workspaces: ["packages/*"], dependencies: { "no-deps": "2.0.0" } },
+      "packages/a/package.json": { name: "a", dependencies: { "no-deps": "1.0.0" } },
+      "packages/b/package.json": { name: "b", dependencies: { "no-deps": "1.0.1" } },
+    });
+    await runBunInstall(env(packageDir), packageDir);
+    expect(await versionAt(packageDir, "packages", "a", "node_modules", "no-deps")).toBe("1.0.0");
+
+    await write(
+      join(packageDir, "packages", "a", "package.json"),
+      JSON.stringify({ name: "a", dependencies: { "no-deps": "2.0.0" } }),
+    );
+    await runBunInstall(env(packageDir), packageDir);
+    expect({
+      root: await versionAt(packageDir, "node_modules", "no-deps"),
+      a: await versionAt(packageDir, "packages", "a", "node_modules", "no-deps"),
+      // Still needs its own.
+      b: await versionAt(packageDir, "packages", "b", "node_modules", "no-deps"),
+    }).toEqual({ root: "2.0.0", a: null, b: "1.0.1" });
+  });
+
+  test("not the copy of a member that --filter leaves out", async () => {
+    const { packageDir } = await project({
+      "package.json": { name: "root", workspaces: ["packages/*"], dependencies: { "no-deps": "2.0.0" } },
+      "packages/a/package.json": { name: "a", dependencies: { "no-deps": "1.0.0" } },
+      "packages/b/package.json": { name: "b", dependencies: { "no-deps": "1.0.1" } },
+    });
+    await runBunInstall(env(packageDir), packageDir);
+    await write(
+      join(packageDir, "packages", "a", "package.json"),
+      JSON.stringify({ name: "a", dependencies: { "no-deps": "2.0.0" } }),
+    );
+    await runBunInstall(env(packageDir), packageDir, { packages: ["--filter", "b"] });
+    expect({
+      a: await versionAt(packageDir, "packages", "a", "node_modules", "no-deps"),
+      b: await versionAt(packageDir, "packages", "b", "node_modules", "no-deps"),
+    }).toEqual({ a: "1.0.0", b: "1.0.1" });
+  });
+
+  // `a-fixed` (one-fixed-dep@2.0.0) sorts first and puts its `no-deps@2.0.0` at the root, so `one-dep`
+  // nests its `no-deps@1.0.1`. Without `a-fixed` the root slot goes to 1.0.1, which a folder left
+  // behind would resolve.
+  test("a dependency deleted from package.json by hand, with what only it needed and its bin", async () => {
+    const { packageDir, packageJson } = await project({
+      "package.json": {
+        name: "root",
+        dependencies: { "a-fixed": "npm:one-fixed-dep@2.0.0", "one-dep": "1.0.0", "what-bin": "1.0.0" },
+      },
+    });
+    await runBunInstall(env(packageDir), packageDir);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      ".bin",
+      "a-fixed",
+      "no-deps",
+      "one-dep",
+      "what-bin",
+    ]);
+    expect([
+      await versionAt(packageDir, "node_modules", "no-deps"),
+      await versionAt(packageDir, "node_modules", "one-dep", "node_modules", "no-deps"),
+    ]).toEqual(["2.0.0", "1.0.1"]);
+    // bun.lock never placed it: `bun prune` is the tool for that.
+    await write(join(packageDir, "node_modules", "by-hand", "package.json"), JSON.stringify({ name: "by-hand" }));
+
+    await write(packageJson, JSON.stringify({ name: "root", dependencies: { "one-dep": "1.0.0" } }));
+    await runBunInstall(env(packageDir), packageDir);
+    expect((await readdirSorted(join(packageDir, "node_modules"))).filter(name => name !== ".bin")).toEqual([
+      "by-hand",
+      "no-deps",
+      "one-dep",
+    ]);
+    expect(await exists(join(packageDir, "node_modules", ".bin", "what-bin"))).toBe(false);
+    expect([
+      await versionAt(packageDir, "node_modules", "no-deps"),
+      await versionAt(packageDir, "node_modules", "one-dep", "node_modules", "no-deps"),
+    ]).toEqual(["1.0.1", null]);
+  });
+
+  // bun.lock places the bundled no-deps under bundled-1, the install places nothing there.
+  test("not what a tarball ships", async () => {
+    const { packageDir, packageJson } = await project({
+      "package.json": { name: "root", dependencies: { "a-dep": "1.0.1", "bundled-1": "1.0.0" } },
+    });
+    await runBunInstall(env(packageDir), packageDir);
+    await write(packageJson, JSON.stringify({ name: "root", dependencies: { "bundled-1": "1.0.0" } }));
+    await runBunInstall(env(packageDir), packageDir);
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["bundled-1"]);
+    expect(await versionAt(packageDir, "node_modules", "bundled-1", "node_modules", "no-deps")).toBe("1.0.0");
+  });
+
+  test("not a devDependency that --omit=dev skips", async () => {
+    const { packageDir, packageJson } = await project({
+      "package.json": {
+        name: "root",
+        dependencies: { "a-dep": "1.0.1", "no-deps": "1.0.0" },
+        devDependencies: { "what-bin": "1.0.0" },
+      },
+    });
+    await runBunInstall(env(packageDir), packageDir);
+    await write(
+      packageJson,
+      JSON.stringify({ name: "root", dependencies: { "no-deps": "1.0.0" }, devDependencies: { "what-bin": "1.0.0" } }),
+    );
+    await runBunInstall(env(packageDir), packageDir, { packages: ["--omit=dev"] });
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", "no-deps", "what-bin"]);
+  });
+});
+
+// The root asks for no-deps@1.0.1, and a member is called no-deps too (2.0.0: not accepted).
+describe.concurrent.each(["hoisted", "isolated"] as const)(
+  "%s: the root's own dependency beats the member of that name",
+  linker => {
+    test.each([
+      ["a version", "1.0.1", undefined],
+      ["a catalog", "catalog:tools", { tools: { "no-deps": "1.0.1" } }],
+    ])("written as %s", async (_, range, catalogs) => {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker },
+        files: {
+          "package.json": JSON.stringify({
+            name: "root",
+            workspaces: { packages: ["packages/*"], catalogs },
+            dependencies: { "no-deps": range },
+          }),
+          "packages/a/package.json": JSON.stringify({
+            name: "no-deps",
+            version: "2.0.0",
+            dependencies: { "no-deps": "^1.0.1" },
+          }),
+          "packages/b/package.json": JSON.stringify({
+            name: "ws-b",
+            version: "1.0.0",
+            dependencies: { "no-deps": "workspace:2.0.0" },
+          }),
+        },
+      });
+      const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") };
+      const seen = async () => ({
+        root: (await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).version,
+        "ws-b": (await file(join(packageDir, "packages", "b", "node_modules", "no-deps", "package.json")).json())
+          .version,
+      });
+
+      await runBunInstall(env, packageDir);
+      expect(await seen()).toEqual({ root: "1.0.1", "ws-b": "2.0.0" });
+      const lockfile = await file(join(packageDir, "bun.lock")).text();
+
+      // What bun.lock holds gives the same.
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      await runBunInstall(env, packageDir, { savesLockfile: false });
+      expect(await seen()).toEqual({ root: "1.0.1", "ws-b": "2.0.0" });
+      expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+    });
+  },
+);
+
+// The host bundles no-deps@1.0.0, which is what peer-deps-fixed (peer no-deps@^1.0.0) finds next to
+// itself under the host. At the root it would find 2.0.0.
+test.concurrent("a package stays under the host that bundles the version its peer accepts", async () => {
+  const host = {
+    name: "host",
+    version: "1.0.0",
+    dependencies: { "no-deps": "1.0.0", "peer-deps-fixed": "1.0.0" },
+    bundleDependencies: ["no-deps"],
+  };
+  const { packageDir } = await registry.createTestDir({
+    bunfigOpts: { linker: "hoisted" },
+    files: {
+      "package.json": JSON.stringify({
+        name: "root",
+        dependencies: { host: "file:./host-1.0.0.tgz", "no-deps": "2.0.0" },
+      }),
+    },
+  });
+  await Bun.Archive.write(
+    join(packageDir, "host-1.0.0.tgz"),
+    {
+      "package/package.json": JSON.stringify(host),
+      "package/node_modules/no-deps/package.json": JSON.stringify({ name: "no-deps", version: "1.0.0" }),
+    },
+    { compress: "gzip" },
+  );
+  const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") };
+  const layout = async () => ({
+    root: await readdirSorted(join(packageDir, "node_modules")),
+    host: await readdirSorted(join(packageDir, "node_modules", "host", "node_modules")),
+    own: await exists(join(packageDir, "node_modules", "host", "node_modules", "peer-deps-fixed", "node_modules")),
+  });
+  const expected = { root: ["host", "no-deps"], host: ["no-deps", "peer-deps-fixed"], own: false };
+
+  await runBunInstall(env, packageDir);
+  expect(await layout()).toEqual(expected);
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await runBunInstall(env, packageDir, { savesLockfile: false });
+  expect(await layout()).toEqual(expected);
+});

@@ -270,6 +270,15 @@ impl Options {
         self.log_level != LogLevel::Silent && self.do_.contains(Do::SUMMARY)
     }
 
+    /// Which dependency groups of a package with this resolution are installed.
+    pub(crate) fn dependency_features(&self, parent: crate::resolution::Tag) -> Features {
+        if parent.is_local_package() {
+            self.local_package_features
+        } else {
+            self.remote_package_features
+        }
+    }
+
     /// Resolve the registry scope for a (possibly @-scoped) package name.
     ///
     /// Hoisted onto `Options` so callers that already hold a borrow of
@@ -1002,6 +1011,10 @@ impl Options {
             self.do_.set(Do::ANALYZE, cli.analyze);
             self.enable
                 .set(Enable::ONLY_MISSING, cli.only_missing || cli.analyze);
+            self.enable.set(
+                Enable::MOVE_TO_GROUP,
+                cli.names_group && !cli.only_missing && !cli.analyze,
+            );
 
             if let Some(cache_dir) = cli.cache_dir {
                 self.cache_directory = cache_dir;
@@ -1312,7 +1325,10 @@ bitflags::bitflags! {
         /// install. Off by default; set BUN_INSTALL_GLOBAL_STORE=1 or
         /// `install.globalStore = true` in bunfig to enable.
         const GLOBAL_VIRTUAL_STORE   = 1 << 9;
-        // _: u6 padding
+        /// `bun add` with `--dev`, `--optional`, `--peer` or `--save-prod`: an entry another
+        /// group has moves into the named one. A bare `bun add` leaves it where it is.
+        const MOVE_TO_GROUP          = 1 << 10;
+        // _: u5 padding
     }
 }
 

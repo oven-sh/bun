@@ -1,13 +1,9 @@
 use crate::lockfile::package::PackageColumns as _;
-use core::mem::ManuallyDrop;
 
-use bun_collections::index_sort;
 use bun_core::Output;
 use bun_core::strings;
 use bun_semver as semver;
-use bun_semver::{SlicedString, String as SemverString};
 
-use crate::_folder_resolver::{self as folder_resolver, GlobalOrRelative};
 use crate::dependency;
 use crate::lockfile::{DependencyIDSlice, DependencySlice};
 use crate::npm;
@@ -25,15 +21,6 @@ use super::options::LogLevel;
 // `impl PackageManager` bodies below so `pub use resolution::{...}` in
 // `PackageManager.rs` resolves (matching the directories/enqueue pattern).
 // ──────────────────────────────────────────────────────────────────────────
-
-#[inline]
-pub fn resolve_from_disk_cache(
-    this: &mut PackageManager,
-    package_name: &[u8],
-    version: &dependency::Version,
-) -> Option<PackageID> {
-    this.resolve_from_disk_cache(package_name, version)
-}
 
 #[inline]
 pub fn assign_root_resolution(
@@ -97,159 +84,6 @@ impl PackageManager {
 
     pub fn scope_for_package_name(&self, name: &[u8]) -> &npm::registry::Scope {
         self.options.scope_for_package_name(name)
-    }
-
-    pub(crate) fn get_installed_versions_from_disk_cache(
-        &mut self,
-        tags_buf: &mut Vec<u8>,
-        package_name: &[u8],
-    ) -> crate::Result<Vec<semver::Version>> {
-        let mut list: Vec<semver::Version> = Vec::new();
-        let cache_dir = super::get_cache_directory(self);
-        let dir = match bun_sys::Dir::borrow(&cache_dir)
-            .open_at(package_name)
-            .map_err(crate::Error::from)
-        {
-            Ok(d) => d,
-            Err(
-                crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
-                | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR)
-                | crate::Error::Sys(bun_errno::SystemErrno::EACCES),
-            ) => {
-                return Ok(list);
-            }
-            Err(e) => return Err(e),
-        };
-        let mut iter = bun_sys::iterate_dir(dir.fd);
-
-        loop {
-            let entry = match iter.next() {
-                Ok(Some(e)) => e,
-                Ok(None) => break,
-                Err(e) => {
-                    return Err(e.into());
-                }
-            };
-            if entry.kind != bun_sys::EntryKind::Directory
-                && entry.kind != bun_sys::EntryKind::SymLink
-            {
-                continue;
-            }
-            let name: &[u8] = entry.name.slice_u8();
-            let sliced = SlicedString::init(name, name);
-            let parsed = semver::Version::parse(sliced);
-            if !parsed.valid || parsed.wildcard != semver::query::Wildcard::None {
-                continue;
-            }
-            // not handling OOM
-            // TODO: wildcard
-            let mut version = parsed.version.min();
-            let total = (version.tag.build.len() + version.tag.pre.len()) as usize;
-            if total > 0 {
-                let mut offset = tags_buf.len();
-                tags_buf.resize(offset + total, 0);
-                version = version.clone_into(name, tags_buf, &mut offset);
-            }
-
-            list.push(version);
-        }
-
-        Ok(list)
-    }
-
-    pub(crate) fn resolve_from_disk_cache(
-        &mut self,
-        package_name: &[u8],
-        version: &dependency::Version,
-    ) -> Option<PackageID> {
-        if version.tag != dependency::Tag::Npm {
-            // only npm supported right now
-            // tags are more ambiguous
-            return None;
-        }
-
-        let mut tags_buf: Vec<u8> = Vec::new();
-        let mut installed_versions =
-            match self.get_installed_versions_from_disk_cache(&mut tags_buf, package_name) {
-                Ok(v) => v,
-                Err(err) => {
-                    bun_core::debug!(
-                        "error getting installed versions from disk cache: {}",
-                        err.name()
-                    );
-                    return None;
-                }
-            };
-
-        // TODO: make this fewer passes
-        {
-            let tags_slice: &[u8] = tags_buf.as_slice();
-            // Sort descending. Use the total-order helper with swapped args
-            // (`b.order(a)`) so equal keys yield `Equal`; a two-way Less/Greater
-            // closure is not antisymmetric and may panic since Rust 1.81.
-            index_sort::sort_slice_by(&mut installed_versions, |a, b| {
-                semver::Version::order_fn(tags_slice, *b, *a)
-            });
-        }
-        let npm_query = version.npm();
-        for installed_version in installed_versions.iter().copied() {
-            if npm_query.version.satisfies(
-                installed_version,
-                self.lockfile.buffers.string_bytes.as_slice(),
-                tags_buf.as_slice(),
-            ) {
-                let mut buf = bun_paths::path_buffer_pool::get();
-                let npm_package_path = match super::path_for_cached_npm_path(
-                    self,
-                    &mut buf,
-                    package_name,
-                    installed_version,
-                ) {
-                    Ok(p) => p,
-                    Err(err) => {
-                        bun_core::debug!("error getting path for cached npm path: {}", err.name());
-                        return None;
-                    }
-                };
-                let dep_version = dependency::Version {
-                    tag: dependency::Tag::Npm,
-                    literal: SemverString::default(),
-                    value: dependency::Value {
-                        npm: ManuallyDrop::new(dependency::NpmInfo {
-                            name: SemverString::init(package_name, package_name),
-                            version: semver::query::Group::from(installed_version),
-                            is_alias: false,
-                        }),
-                    },
-                };
-                match folder_resolver::get_or_put(
-                    GlobalOrRelative::CacheFolder(npm_package_path),
-                    &dep_version,
-                    b".",
-                    self,
-                ) {
-                    folder_resolver::FolderResolution::NewPackageId(id) => {
-                        let deps = self.lockfile.packages.items_dependencies()[id as usize];
-                        super::enqueue_dependency_list(self, deps);
-                        return Some(id);
-                    }
-                    folder_resolver::FolderResolution::PackageId(id) => {
-                        let deps = self.lockfile.packages.items_dependencies()[id as usize];
-                        super::enqueue_dependency_list(self, deps);
-                        return Some(id);
-                    }
-                    folder_resolver::FolderResolution::Err(err) => {
-                        bun_core::debug!(
-                            "error getting or putting folder resolution: {}",
-                            err.name()
-                        );
-                        return None;
-                    }
-                }
-            }
-        }
-
-        None
     }
 
     pub(crate) fn assign_resolution(&mut self, dependency_id: DependencyID, package_id: PackageID) {
@@ -330,11 +164,7 @@ impl PackageManager {
                     continue;
                 }
 
-                let features = if pkg_resolutions[parent_id].tag.is_local_package() {
-                    self.options.local_package_features
-                } else {
-                    self.options.remote_package_features
-                };
+                let features = (self.options).dependency_features(pkg_resolutions[parent_id].tag);
                 // even if optional dependencies are enabled, it's still allowed to fail
                 if failed_dep.behavior.is_optional() || !failed_dep.behavior.is_enabled(features) {
                     continue;

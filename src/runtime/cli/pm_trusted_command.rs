@@ -428,7 +428,7 @@ impl TrustCommand {
         // in the correct order as they would during a normal install
         // SAFETY: `pm_raw` singleton; the discovery phase only reads it.
         let mut blocked = Blocked::find_all(unsafe { &*pm_raw }, linker)?;
-        blocked.sort_by(|a, b| b.depth.cmp(&a.depth));
+        bun_collections::index_sort::sort_slice_by(&mut blocked, |a, b| b.depth.cmp(&a.depth));
 
         // SAFETY: `pm_raw` singleton; read-only `lockfile` borrow until the scripts have run.
         let lockfile: &Lockfile = unsafe { &*(*pm_raw).lockfile };

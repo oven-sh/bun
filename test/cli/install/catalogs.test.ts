@@ -2255,3 +2255,256 @@ describe("bun add --catalog advice for a failed catalog: dependency", () => {
     });
   });
 });
+
+// A cached manifest is used for up to 300 seconds without a request. https://github.com/oven-sh/bun/issues/39784
+describe.concurrent("a version published after the manifest was cached", () => {
+  /** `versions` and `tags` can change between installs. `requests` has the If-None-Match of every manifest request. */
+  function serveMutableRegistry(versions: string[], tags: Record<string, string> = {}, stale304 = false) {
+    const requests: (string | null)[] = [];
+    const server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        const version = pathname.match(/^\/fresh-pkg-(.+)\.tgz$/)?.[1];
+        if (version) {
+          const files = { "package/package.json": JSON.stringify({ name: "fresh-pkg", version }) };
+          return new Response(await new Bun.Archive(files, { compress: "gzip" }).bytes());
+        }
+        if (pathname !== "/fresh-pkg") return new Response("not found", { status: 404 });
+        const ifNoneMatch = request.headers.get("if-none-match");
+        requests.push(ifNoneMatch);
+        const etag = `"v${versions.length}"`;
+        // A registry edge that lags behind confirms what the client has.
+        if (stale304 && ifNoneMatch !== null) return new Response(null, { status: 304, headers: { etag } });
+        return Response.json(
+          {
+            name: "fresh-pkg",
+            versions: Object.fromEntries(
+              versions.map(v => [
+                v,
+                { name: "fresh-pkg", version: v, dist: { tarball: `${origin}/fresh-pkg-${v}.tgz` } },
+              ]),
+            ),
+            "dist-tags": { latest: versions.at(-1), ...tags },
+          },
+          { headers: { etag } },
+        );
+      },
+    });
+    return { server, requests, [Symbol.dispose]: () => void server.stop(true) };
+  }
+
+  async function install(cwd: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd,
+      stdout: "ignore",
+      stderr: "pipe",
+      // wins over bunfig.toml; every test serves another `fresh-pkg`
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const lock = Bun.JSONC.parse(await file(join(cwd, "bun.lock")).text()) as { packages: Record<string, [string]> };
+    return {
+      messages: err.split("\n").filter(line => /^(error|warn):/.test(line)),
+      exitCode,
+      locked: lock.packages["fresh-pkg"]?.[0],
+    };
+  }
+
+  /** bun install does not wait for the manifest cache writes before it exits. */
+  async function installUntilCached(cwd: string) {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      expect(await install(cwd, ...(attempt ? ["--force"] : []))).toMatchObject({ messages: [], exitCode: 0 });
+      if ((await readdir(join(cwd, ".bun-cache"))).some(name => name.endsWith(".npm"))) return;
+    }
+    throw new Error("the manifest was never cached");
+  }
+
+  const depends = (spec: string, group = "dependencies") =>
+    JSON.stringify({ name: "root", [group]: { "fresh-pkg": spec } });
+  const noVersion = (spec: string) =>
+    `error: No version matching "${spec}" found for specifier "fresh-pkg" (but package exists)`;
+
+  test.each([
+    { to: depends("1.0.1"), args: [], locked: "fresh-pkg@1.0.1" },
+    { to: depends("^1.0.1"), args: [], locked: "fresh-pkg@1.0.1" },
+    { to: depends("beta"), args: [], locked: "fresh-pkg@1.0.1" },
+    { to: depends("1.0.1"), args: ["--prefer-offline"], locked: "fresh-pkg@1.0.1" },
+    // It used to be skipped without a message, and the lockfile that was saved never tried again.
+    { to: depends("1.0.1", "optionalDependencies"), args: [], locked: "fresh-pkg@1.0.1" },
+    { to: depends("9.9.9", "optionalDependencies"), args: [] },
+    { to: depends("9.9.9"), args: [], messages: [noVersion("9.9.9"), "error: fresh-pkg@9.9.9 failed to resolve"] },
+    {
+      to: depends("nope"),
+      args: [],
+      messages: [
+        'error: Package "fresh-pkg" with tag "nope" not found, but package exists',
+        "error: fresh-pkg@nope failed to resolve",
+      ],
+    },
+    // A guard: it passes without the second request too.
+    {
+      to: depends("1.0.1"),
+      args: ["--offline"],
+      messages: [noVersion("1.0.1"), "error: fresh-pkg@1.0.1 failed to resolve"],
+      requests: [],
+    },
+  ])("$to $args", async ({ to, args, locked, messages = [], requests = [null] }) => {
+    const versions = ["1.0.0"];
+    const tags: Record<string, string> = {};
+    using registry = serveMutableRegistry(versions, tags);
+    using dir = writeRegistryProject({ "package.json": depends("1.0.0") }, registry.server.url.href);
+    await installUntilCached(String(dir));
+
+    versions.push("1.0.1");
+    tags.beta = "1.0.1";
+    await write(join(String(dir), "package.json"), to);
+    registry.requests.length = 0;
+    // A failed install leaves bun.lock as it was.
+    expect(await install(String(dir), ...args)).toEqual({
+      messages,
+      exitCode: messages.length ? 1 : 0,
+      locked: messages.length ? "fresh-pkg@1.0.0" : locked,
+    });
+    // One request, and without conditional headers: a stale 304 cannot answer it.
+    expect(registry.requests).toEqual(requests);
+
+    if (!messages.length) {
+      expect(await install(String(dir))).toEqual({ messages: [], exitCode: 0, locked });
+      expect(registry.requests).toEqual(requests);
+    }
+  });
+
+  const catalog = (version: string) =>
+    JSON.stringify({ name: "root", workspaces: { packages: ["packages/*"], catalog: { "fresh-pkg": version } } });
+  const member = (name: string, spec: string) => JSON.stringify({ name, dependencies: { "fresh-pkg": spec } });
+
+  test.each([
+    { version: "1.0.1", messages: [] },
+    { version: "9.9.9", messages: [noVersion("9.9.9"), "error: fresh-pkg@catalog: failed to resolve"] },
+  ])("a catalog entry moved to $version, used by two workspaces", async ({ version, messages }) => {
+    const versions = ["1.0.0"];
+    using registry = serveMutableRegistry(versions);
+    using dir = writeRegistryProject(
+      {
+        "package.json": catalog("1.0.0"),
+        "packages/a/package.json": member("a", "catalog:"),
+        "packages/b/package.json": member("b", "catalog:"),
+      },
+      registry.server.url.href,
+    );
+    await installUntilCached(String(dir));
+
+    versions.push("1.0.1");
+    await write(join(String(dir), "package.json"), catalog(version));
+    registry.requests.length = 0;
+    const result = await install(String(dir));
+    expect({ ...result, messages: [...new Set(result.messages)] }).toEqual({
+      messages,
+      exitCode: messages.length ? 1 : 0,
+      locked: messages.length ? "fresh-pkg@1.0.0" : "fresh-pkg@1.0.1",
+    });
+    expect(registry.requests).toEqual([null]);
+  });
+
+  test("one request serves the workspace that it helps and the one that it does not", async () => {
+    const versions = ["1.0.0"];
+    using registry = serveMutableRegistry(versions);
+    using dir = writeRegistryProject(
+      {
+        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+        "packages/a/package.json": member("a", "1.0.0"),
+        "packages/b/package.json": member("b", "1.0.0"),
+      },
+      registry.server.url.href,
+    );
+    await installUntilCached(String(dir));
+
+    versions.push("1.0.1");
+    await write(join(String(dir), "packages", "a", "package.json"), member("a", "1.0.1"));
+    await write(join(String(dir), "packages", "b", "package.json"), member("b", "9.9.9"));
+    registry.requests.length = 0;
+    expect(await install(String(dir))).toEqual({
+      messages: [noVersion("9.9.9"), "error: fresh-pkg@9.9.9 failed to resolve"],
+      exitCode: 1,
+      locked: "fresh-pkg@1.0.0",
+    });
+    expect(registry.requests).toEqual([null]);
+  });
+
+  test("a stale 304 does not hide the new version", async () => {
+    const versions = ["1.0.0"];
+    using registry = serveMutableRegistry(versions, {}, true);
+    using dir = writeRegistryProject({ "package.json": depends("1.0.0") }, registry.server.url.href);
+    await installUntilCached(String(dir));
+
+    versions.push("1.0.1");
+    await write(join(String(dir), "package.json"), depends("1.0.1"));
+    registry.requests.length = 0;
+    // --force asks whether the cached manifest is still current.
+    expect(await install(String(dir), "--force")).toEqual({ messages: [], exitCode: 0, locked: "fresh-pkg@1.0.1" });
+    expect(registry.requests).toEqual(['"v1"', null]);
+  });
+
+  test("an import that the runtime installs", async () => {
+    const versions = ["1.0.0"];
+    using registry = serveMutableRegistry(versions);
+    using dir = writeRegistryProject({}, registry.server.url.href);
+    const requireVersion = async (version: string) => {
+      await using proc = spawn({
+        cmd: [bunExe(), "--install=force", "-e", `console.log(require("fresh-pkg@${version}/package.json").version)`],
+        cwd: String(dir),
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { out: out.trim(), err, exitCode };
+    };
+    expect(await requireVersion("1.0.0")).toEqual({ out: "1.0.0", err: "", exitCode: 0 });
+
+    versions.push("1.0.1");
+    registry.requests.length = 0;
+    expect(await requireVersion("1.0.1")).toEqual({ out: "1.0.1", err: "", exitCode: 0 });
+    expect(registry.requests).toEqual([null]);
+  });
+
+  test("a tag that only a workspace of the name stands in for", async () => {
+    using registry = serveMutableRegistry(["1.0.0"]);
+    using dir = writeRegistryProject(
+      {
+        "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+        "packages/a/package.json": member("a", "1.0.0"),
+        "packages/fresh-pkg/package.json": JSON.stringify({ name: "fresh-pkg", version: "5.0.0" }),
+      },
+      registry.server.url.href,
+    );
+    await installUntilCached(String(dir));
+
+    await write(join(String(dir), "packages", "a", "package.json"), member("a", "beta"));
+    registry.requests.length = 0;
+    // The registry may have the tag by now, so it is asked before the workspace is linked. bun.lock then has the link.
+    const linked = { messages: [], exitCode: 0, locked: "fresh-pkg@workspace:packages/fresh-pkg" };
+    expect(await install(String(dir))).toEqual(linked);
+    expect(registry.requests).toEqual([null]);
+    expect(await install(String(dir))).toEqual(linked);
+    expect(registry.requests).toEqual([null]);
+  });
+
+  test.each(["latest", ""])("%j names a version that the registry does not have", async spec => {
+    using registry = serveMutableRegistry(["1.0.0", "1.0.1", "2.0.0-rc.1"], { latest: "1.0.2" });
+    using dir = writeRegistryProject({ "package.json": depends("1.0.0") }, registry.server.url.href);
+    await installUntilCached(String(dir));
+
+    await write(join(String(dir), "package.json"), depends(spec));
+    registry.requests.length = 0;
+    // The registry may have the version by now, so it is asked before another version stands in.
+    expect(await install(String(dir))).toEqual({
+      messages: ['warn: the "latest" tag of "fresh-pkg" names no published version, using 1.0.1'],
+      exitCode: 0,
+      locked: "fresh-pkg@1.0.1",
+    });
+    expect(registry.requests).toEqual([null]);
+  });
+});

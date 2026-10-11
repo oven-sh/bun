@@ -752,6 +752,32 @@ describe("bun pm licenses", () => {
     });
   });
 
+  test.concurrent(
+    "a devDependency that is also an optional peerDependency is dev-only, like bun install --production",
+    async () => {
+      const dir = await setup("hoisted", {
+        "package.json": pkg({
+          dependencies: { "no-deps": "1.0.0" },
+          devDependencies: { "a-dep": "1.0.1" },
+          peerDependencies: { "a-dep": "^1.0.1" },
+          peerDependenciesMeta: { "a-dep": { optional: true } },
+        }),
+      });
+
+      const [prod, text] = await Promise.all([licensesJson(dir, "--prod"), licensesText(dir)]);
+      expect(prod).toStrictEqual({ Unknown: [u("no-deps", "1.0.0")] });
+      expect(normalizeBunSnapshot(text)).toMatchInlineSnapshot(`
+      "bun pm licenses <version> (<revision>)
+
+      Unknown (2)
+      ├── a-dep@1.0.1 (dev)
+      └── no-deps@1.0.0
+
+      2 packages across 1 license (checked 2 packages in bun.lock)"
+    `);
+    },
+  );
+
   test.concurrent("os/cpu/libc-skipped optional dependencies are omitted, their parent is listed", async () => {
     const dir = await setup("hoisted", { "package.json": pkg({ dependencies: { "optional-native": "1.0.0" } }) });
     const installedNatives = [
@@ -1823,8 +1849,18 @@ describe("bun pm licenses", () => {
       expect(ppPath).toBe(nm(dir, "pp"));
       expect(adPath).toBe(nm(dir, "ad"));
     } else {
-      expect(ppPath).toBe(store(dir, "path-parse@.+path-parse-1.0.6.tgz", "path-parse"));
-      expect(adPath).toBe(store(dir, `a-dep@${remoteUrl.replace(/[/:]/g, "+")}`, "a-dep"));
+      // The entry of a tarball ends in the start of the sha512 that bun.lock pins.
+      const pin = (name: string, tarball: string) =>
+        new Bun.CryptoHasher("sha512")
+          .update(readFileSync(join(registry.packagesPath, name, tarball)))
+          .digest("hex")
+          .slice(0, 16);
+      expect(ppPath).toBe(
+        store(dir, `path-parse@.+path-parse-1.0.6.tgz+${pin("path-parse", "path-parse-1.0.6.tgz")}`, "path-parse"),
+      );
+      expect(adPath).toBe(
+        store(dir, `a-dep@${remoteUrl.replace(/[/:]/g, "+")}+${pin("a-dep", "a-dep-1.0.1.tgz")}`, "a-dep"),
+      );
     }
   });
 

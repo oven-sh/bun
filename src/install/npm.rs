@@ -588,11 +588,17 @@ pub mod registry {
                 match env.get(&**field) {
                     Some(value) => *field = value.into(),
                     None if unset_variable_is_no_credential => {
-                        bun_core::warn!(
-                            "registry {} references <b>{}<r>, but that environment variable is not set; treating it as no credential",
-                            what,
-                            bstr::BStr::new(&**field),
-                        );
+                        // `--silent` has lowered it by now.
+                        if bun_ast::DEFAULT_LOG_LEVEL
+                            .load()
+                            .at_least(bun_ast::Level::Warn)
+                        {
+                            bun_core::warn!(
+                                "registry {} references <b>{}<r>, but that environment variable is not set; treating it as no credential",
+                                what,
+                                bstr::BStr::new(&**field),
+                            );
+                        }
                         *field = Box::default();
                     }
                     None => {}
@@ -774,7 +780,8 @@ pub mod registry {
 
     /// `dist.tarball` as npm's `new URL()` serialises it, or `None` for a URL one parse cannot settle.
     pub fn normalize_tarball_url(raw: &[u8]) -> Option<Box<[u8]>> {
-        if raw.iter().any(|&b| b <= 0x20 || b == 0x7f) {
+        // The parse would read bytes that are not UTF-8 as U+FFFD, which names another resource.
+        if raw.iter().any(|&b| b <= 0x20 || b == 0x7f) || !strings::is_valid_utf8(raw) {
             return None;
         }
         let href = URL::from_string(&bun_core::String::borrow_utf8(raw))
@@ -789,7 +796,7 @@ pub mod registry {
     /// `normalize_tarball_url` without the parse, for a URL that was just built from `Scope::url` (a serialisation already)
     /// and a package name: nothing in it that the parse would resolve, or that hides a dot segment.
     pub fn is_normalized_tarball_url(url: &[u8]) -> bool {
-        !url.iter().any(|&b| b <= 0x20 || b == 0x7f || b == b'\\')
+        !url.iter().any(|&b| b <= 0x20 || b >= 0x7f || b == b'\\')
             && !hides_dot_segment(query_free_path(&URL::parse(url)))
     }
 
@@ -1071,7 +1078,7 @@ pub struct PackageVersion {
     pub(crate) has_install_script: bool,
     pub(crate) _padding_tail: [u8; 2],
 
-    /// Unix timestamp when this version was published (0 if unknown)
+    /// Unix timestamp when this version was published (0 if the registry gives none, infinity if what it gives is not a date)
     pub(crate) publish_timestamp_ms: f64,
 }
 
@@ -2026,6 +2033,7 @@ impl PackageManifest {
         minimum_release_age_ms: f64,
         exclusions: Option<&MinimumReleaseAgeExcludes>,
         newest_filtered: &mut Option<Semver::Version>,
+        deprecated: &mut Option<FindResult<'a>>,
     ) -> Option<FindVersionResult<'a>> {
         let mut prev_package_blocked_from_age: Option<&PackageVersion> = None;
         let mut best_version: Option<FindResult<'a>> = None;
@@ -2041,6 +2049,19 @@ impl PackageManifest {
             let version = versions[i];
             if group.satisfies(version, group_buf, &self.string_buf) {
                 let package = &packages[i];
+                if !package.deprecated.is_empty() {
+                    let found = FindResult { version, package };
+                    if self.is_version_blocked_by_age_filter(
+                        found,
+                        minimum_release_age_ms,
+                        exclusions,
+                    ) {
+                        newest_filtered.get_or_insert(version);
+                    } else {
+                        deprecated.get_or_insert(found);
+                    }
+                    continue;
+                }
                 // Listed versions count as stable: no age gate, and they replace an unstable fallback in `best_version`.
                 if exclusions.is_some_and(|e| e.excludes_version(self.name(), version)) {
                     best_version = Some(FindResult { version, package });
@@ -2135,6 +2156,56 @@ impl<'a> FindVersionResult<'a> {
 }
 
 impl PackageManifest {
+    /// What a range or a dist-tag in a package.json resolves to.
+    pub(crate) fn find_for_dependency(
+        &self,
+        version: &crate::dependency::Version,
+        buf: &[u8],
+        minimum_release_age_ms: Option<f64>,
+        exclusions: Option<&MinimumReleaseAgeExcludes>,
+    ) -> FindVersionResult<'_> {
+        let literal = version.literal.slice(buf);
+        if version.tag == crate::dependency::Tag::Npm {
+            // npm goes by the text: `x` and `>=0.0.0` are ranges like any other.
+            if literal == b"*" || literal.ends_with(b"@*") {
+                return self.find_any_version(minimum_release_age_ms, exclusions);
+            }
+            return self.find_best_version_with_filter(
+                &version.npm().version,
+                buf,
+                minimum_release_age_ms,
+                exclusions,
+            );
+        }
+        // Nobody wrote `latest` (`bun add pkg`, `"pkg": ""`): as npm does, do not follow it onto a deprecated version.
+        if literal.is_empty()
+            && (self.find_by_dist_tag(b"latest"))
+                .is_some_and(|latest| !latest.package.deprecated.is_empty())
+        {
+            return self.find_any_version(minimum_release_age_ms, exclusions);
+        }
+        self.find_by_dist_tag_with_filter(
+            version.dist_tag().tag.slice(buf),
+            minimum_release_age_ms,
+            exclusions,
+        )
+    }
+
+    /// npm's `*` (the empty range, as in `npm:name`): `latest`, prerelease or not, unless it is deprecated or names no
+    /// version. Then the highest release, a deprecated one only when all are, never a prerelease.
+    pub(crate) fn find_any_version(
+        &self,
+        minimum_release_age_ms: Option<f64>,
+        exclusions: Option<&MinimumReleaseAgeExcludes>,
+    ) -> FindVersionResult<'_> {
+        self.find_best_version_with_filter(
+            &Semver::query::Group::default(),
+            b"",
+            minimum_release_age_ms,
+            exclusions,
+        )
+    }
+
     pub fn find_by_dist_tag_with_filter(
         &self,
         tag: &[u8],
@@ -2186,6 +2257,7 @@ impl PackageManifest {
         let packages = list.values.get(&self.package_versions);
 
         let mut best_version: Option<FindResult<'_>> = None;
+        let mut deprecated: Option<FindResult<'_>> = None;
         let mut prev_package_blocked_from_age: Option<&PackageVersion> = Some(dist_result.package);
 
         let mut i: usize = versions.len();
@@ -2211,6 +2283,14 @@ impl PackageManifest {
                 if actual_tag != expected_tag {
                     continue;
                 }
+            }
+
+            if !package.deprecated.is_empty() {
+                let found = FindResult { version, package };
+                if !self.is_version_blocked_by_age_filter(found, min_age_ms, exclusions) {
+                    deprecated.get_or_insert(found);
+                }
+                continue;
             }
 
             // See `search_version_list`.
@@ -2256,7 +2336,7 @@ impl PackageManifest {
             break;
         }
 
-        if let Some(result) = best_version {
+        if let Some(result) = best_version.or(deprecated) {
             return FindVersionResult::FoundWithFilter {
                 result,
                 newest_filtered: Some(dist_result.version),
@@ -2303,11 +2383,11 @@ impl PackageManifest {
         }
 
         if let Some(result) = self.find_by_dist_tag(b"latest") {
-            if group.satisfies(result.version, group_buf, &self.string_buf) {
+            if group.is_empty() || group.satisfies(result.version, group_buf, &self.string_buf) {
                 if self.is_version_blocked_by_age_filter(result, min_age_ms, exclusions) {
                     newest_filtered = Some(result.version);
                 }
-                if newest_filtered.is_none() {
+                if newest_filtered.is_none() && result.package.deprecated.is_empty() {
                     if group.flags.is_set(Semver::query::Flags::PRE) {
                         if left
                             .version
@@ -2323,6 +2403,8 @@ impl PackageManifest {
             }
         }
 
+        let mut deprecated: Option<FindResult<'_>> = None;
+
         if let Some(result) = self.search_version_list(
             self.pkg.releases.keys.get(&self.versions),
             self.pkg.releases.values.get(&self.package_versions),
@@ -2331,6 +2413,7 @@ impl PackageManifest {
             min_age_ms,
             exclusions,
             &mut newest_filtered,
+            &mut deprecated,
         ) {
             return result;
         }
@@ -2344,9 +2427,17 @@ impl PackageManifest {
                 min_age_ms,
                 exclusions,
                 &mut newest_filtered,
+                &mut deprecated,
             ) {
                 return result;
             }
+        }
+
+        if let Some(result) = deprecated {
+            return FindVersionResult::FoundWithFilter {
+                result,
+                newest_filtered,
+            };
         }
 
         if newest_filtered.is_some() {
@@ -2367,8 +2458,13 @@ impl PackageManifest {
             return self.find_by_version(exact);
         }
 
+        // As npm-pick-manifest: a deprecated version is picked only when every match is deprecated,
+        // and the empty range (see `find_any_version`) follows `latest` even onto a prerelease.
         if let Some(result) = self.find_by_dist_tag(b"latest") {
-            if group.satisfies(result.version, group_buf, &self.string_buf) {
+            if result.package.deprecated.is_empty()
+                && (group.is_empty()
+                    || group.satisfies(result.version, group_buf, &self.string_buf))
+            {
                 if group.flags.is_set(Semver::query::Flags::PRE) {
                     if left
                         .version
@@ -2384,43 +2480,27 @@ impl PackageManifest {
             }
         }
 
-        {
-            // This list is sorted at serialization time.
-            let releases = self.pkg.releases.keys.get(&self.versions);
-            let mut i = releases.len();
-
-            while i > 0 {
-                let version = releases[i - 1];
-
+        let mut deprecated: Option<FindResult<'_>> = None;
+        let prereleases = group
+            .flags
+            .is_set(Semver::query::Flags::PRE)
+            .then_some(self.pkg.prereleases);
+        for list in [Some(self.pkg.releases), prereleases].into_iter().flatten() {
+            // These lists are sorted at serialization time.
+            let versions = list.keys.get(&self.versions);
+            let packages = list.values.get(&self.package_versions);
+            for (&version, package) in versions.iter().zip(packages).rev() {
                 if group.satisfies(version, group_buf, &self.string_buf) {
-                    return Some(FindResult {
-                        version,
-                        package: &self.pkg.releases.values.get(&self.package_versions)[i - 1],
-                    });
+                    let found = FindResult { version, package };
+                    if package.deprecated.is_empty() {
+                        return Some(found);
+                    }
+                    deprecated.get_or_insert(found);
                 }
-                i -= 1;
             }
         }
 
-        if group.flags.is_set(Semver::query::Flags::PRE) {
-            let prereleases = self.pkg.prereleases.keys.get(&self.versions);
-            let mut i = prereleases.len();
-            while i > 0 {
-                let version = prereleases[i - 1];
-
-                // This list is sorted at serialization time.
-                if group.satisfies(version, group_buf, &self.string_buf) {
-                    let packages = self.pkg.prereleases.values.get(&self.package_versions);
-                    return Some(FindResult {
-                        version,
-                        package: &packages[i - 1],
-                    });
-                }
-                i -= 1;
-            }
-        }
-
-        None
+        deprecated
     }
 }
 
@@ -2447,7 +2527,22 @@ fn bundled_dependencies_field(
 
 /// `npm undeprecate` leaves `"deprecated": ""`.
 fn deprecation_message(version_obj: Option<&JSON::E::ObjectJSON>) -> Option<&[u8]> {
-    (version_obj?.get(b"deprecated")?.as_str()).filter(|message| !message.is_empty())
+    match version_obj?.get(b"deprecated")? {
+        JSON::E::JsonValue::Boolean(true) => Some(b"true"),
+        value => value.as_str().filter(|message| !message.is_empty()),
+    }
+}
+
+/// npm's `!time[v] || Date.parse(time[v]) <= before`: no time passes minimum-release-age (0), one that is not a date never does.
+fn publish_timestamp_ms(time: &JSON::E::JsonValue) -> f64 {
+    use JSON::E::JsonValue;
+    match time {
+        JsonValue::Null | JsonValue::Boolean(false) => 0.0,
+        JsonValue::Number(n) if n.value() == 0.0 => 0.0,
+        JsonValue::String(s) if s.slice().is_empty() => 0.0,
+        JsonValue::String(s) => bun_core::wtf::parse_date(s.slice()).unwrap_or(f64::INFINITY),
+        _ => f64::INFINITY,
+    }
 }
 
 impl PackageManifest {
@@ -3351,12 +3446,17 @@ impl PackageManifest {
                                     })
                                     .collect();
                                 debug_assert!(stored.len() == count);
+                                // The inline form of a `String` ends at the first NUL.
+                                let as_stored = |source| SemverString::init(source, source);
                                 for (j, dep_name) in name_dependencies.iter().enumerate() {
                                     debug_assert!(
                                         dep_name.value.slice(string_buf)
                                             == this_names[j].value.slice(string_buf)
                                     );
-                                    debug_assert!(dep_name.value.slice(string_buf) == stored[j].0);
+                                    debug_assert!(
+                                        dep_name.value.slice(string_buf)
+                                            == as_stored(stored[j].0).slice(stored[j].0)
+                                    );
                                 }
                                 for (j, dep_version) in value_dependencies.iter().enumerate() {
                                     debug_assert!(
@@ -3364,7 +3464,8 @@ impl PackageManifest {
                                             == this_versions[j].value.slice(string_buf)
                                     );
                                     debug_assert!(
-                                        dep_version.value.slice(string_buf) == stored[j].1
+                                        dep_version.value.slice(string_buf)
+                                            == as_stored(stored[j].1).slice(stored[j].1)
                                     );
                                 }
                             }
@@ -3381,10 +3482,8 @@ impl PackageManifest {
                         // result matches the previous `ObjectJSON::get` exactly.
                         time_props.iter().find(|p| p.key.slice() == version_name)
                     };
-                    if let Some(publish_time_str) = entry.and_then(|p| p.value.as_str()) {
-                        if let Ok(ms) = bun_core::wtf::parse_es5_date(publish_time_str) {
-                            package_version.publish_timestamp_ms = ms;
-                        }
+                    if let Some(entry) = entry {
+                        package_version.publish_timestamp_ms = publish_timestamp_ms(&entry.value);
                     }
                 }
 

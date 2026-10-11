@@ -141,7 +141,9 @@ bun_core::comptime_string_map! {
     };
 }
 
-pub use draft::{NpmrcDiagnostics, Parser, RegistryKey, load_npmrc, load_npmrc_config};
+pub use draft::{
+    NpmrcDiagnostics, Parser, RegistryKey, load_npmrc, load_npmrc_config, npm_config_bool,
+};
 
 mod draft {
 
@@ -1241,19 +1243,23 @@ mod draft {
             // ini JSON-parses a single-quoted value: `'1'` is a number, `'{}'` an object
             ExprData::ENumber(_) => expr.as_number().map(|n| n != 0.0),
             ExprData::EObject(_) => Some(true),
-            ExprData::EString(_) => {
-                let value = trim_js_whitespace(expr.as_utf8_string_literal()?);
-                if value.is_empty() {
-                    return Some(true);
-                }
-                if matches!(value, b"false" | b"null" | b"undefined") {
-                    return Some(false);
-                }
-                // nopt: a numeric string is `!!Number(value)`, any other string is true
-                Some(expr.data.to_number() != Some(0.0))
-            }
+            ExprData::EString(_) => Some(npm_config_bool(expr.as_utf8_string_literal()?)),
             _ => None,
         }
+    }
+
+    /// [`npmrc_bool`] of a string, which is all that `npm_config_<key>` in the environment can hold
+    /// (npm skips a variable with an empty value).
+    pub fn npm_config_bool(value: &[u8]) -> bool {
+        let value = trim_js_whitespace(value);
+        if value.is_empty() {
+            return true;
+        }
+        if matches!(value, b"false" | b"null" | b"undefined") {
+            return false;
+        }
+        // nopt: a numeric string is `!!Number(value)`, any other string is true
+        bun_ast::expr::string_to_equivalent_number_value(value) != 0.0
     }
 
     /// Where the warnings and errors of a `.npmrc` go.
@@ -1285,7 +1291,10 @@ mod draft {
                 Ok(s) => s,
                 Err(err) => {
                     if auto_loaded {
-                        if !err.is_missing_file() && diagnostics == NpmrcDiagnostics::Print {
+                        if diagnostics == NpmrcDiagnostics::Print
+                            && log.level.at_least(bun_ast::Level::Warn)
+                            && err.is_unreadable_file(npmrc_path.as_bytes())
+                        {
                             bun_core::warn!(
                                 "{}\nThe registry and auth settings in <b>{}<r> are not applied.",
                                 err,

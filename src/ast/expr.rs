@@ -2856,7 +2856,8 @@ pub use data::Store;
 // Helpers
 // ───────────────────────────────────────────────────────────────────────────
 
-fn string_to_equivalent_number_value(str: &[u8]) -> f64 {
+/// `Number(str)`.
+pub fn string_to_equivalent_number_value(str: &[u8]) -> f64 {
     // +"" -> 0
     if str.is_empty() {
         return 0.0;

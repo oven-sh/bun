@@ -102,10 +102,6 @@ impl VersionType<u32> {
 }
 
 impl<T: VersionInt> VersionType<T> {
-    pub fn order_fn(ctx: &[u8], lhs: Self, rhs: Self) -> Ordering {
-        lhs.order(rhs, ctx, ctx)
-    }
-
     pub(crate) fn is_zero(self) -> bool {
         self.patch == T::ZERO && self.minor == T::ZERO && self.major == T::ZERO
     }

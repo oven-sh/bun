@@ -555,6 +555,13 @@
           "multiple": false
         },
         {
+          "name": "save-prod",
+          "description": "Add dependency to \"dependencies\", also when another group lists it",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "exact",
           "shortName": "E",
           "description": "Add the exact version instead of the ^range",
@@ -917,6 +924,13 @@
         {
           "name": "peer",
           "description": "Add dependency to \"peerDependencies\"",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "save-prod",
+          "description": "Add dependency to \"dependencies\", also when another group lists it",
           "hasValue": false,
           "required": false,
           "multiple": false

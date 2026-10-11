@@ -479,7 +479,8 @@ impl PackageManager {
 
 /// `npm_package_json`, `npm_package_name`, `npm_package_version` and the `config` strings as
 /// `npm_package_config_<key>` (the subset `bun run` exports), all from the package.json of the
-/// package whose scripts run. What a `bun run` above this install set for its package goes.
+/// package whose scripts run. What a `bun run` above this install set for its package and its
+/// script goes (`spawn_next_script` adds `npm_lifecycle_*` per script).
 fn put_npm_package_env(
     script_env: &mut bun_dotenv::Map,
     package_dir: &[u8],
@@ -487,7 +488,7 @@ fn put_npm_package_env(
 ) -> Result<(), crate::Error> {
     script_env
         .map
-        .retain(|key, _| !key.starts_with(b"npm_package_"));
+        .retain(|key, _| !key.starts_with(b"npm_package_") && !key.starts_with(b"npm_lifecycle_"));
 
     let package_json_path = join_abs_string_z::<platform::Auto>(package_dir, &[b"package.json"]);
     script_env.put(b"npm_package_json", package_json_path.as_bytes())?;

@@ -17,13 +17,14 @@ use crate::{PackageManager, PackageNameHash};
 // ──────────────────────────────────────────────────────────────────────────
 
 pub trait NpmAliasRegistry {
-    fn record_npm_alias(&mut self, hash: PackageNameHash, version: &Version);
+    /// Takes the alias's text: a parsed `Version` is only valid with the buffer it was parsed in.
+    fn record_npm_alias(&mut self, hash: PackageNameHash, specifier: &[u8]);
 }
 
 impl NpmAliasRegistry for PackageManager {
     #[inline]
-    fn record_npm_alias(&mut self, hash: PackageNameHash, version: &Version) {
-        self.known_npm_aliases.insert(hash, Clone::clone(version));
+    fn record_npm_alias(&mut self, hash: PackageNameHash, specifier: &[u8]) {
+        self.known_npm_aliases.record_npm_alias(hash, specifier);
     }
 }
 
@@ -34,8 +35,12 @@ impl NpmAliasRegistry for PackageManager {
 /// `&mut PackageManager`.
 impl NpmAliasRegistry for crate::package_manager_real::NpmAliasMap {
     #[inline]
-    fn record_npm_alias(&mut self, hash: PackageNameHash, version: &Version) {
-        self.insert(hash, Clone::clone(version));
+    fn record_npm_alias(&mut self, hash: PackageNameHash, specifier: &[u8]) {
+        // One install records the same row several times (the loader, the differ, `clone_in`, `clean`).
+        if self.get(&hash).is_some_and(|known| **known == *specifier) {
+            return;
+        }
+        self.insert(hash, Box::from(specifier));
     }
 }
 
@@ -309,7 +314,6 @@ pub struct Context<'a> {
     // allocator dropped (global mimalloc)
     pub(crate) log: &'a mut bun_ast::Log,
     pub(crate) buffer: &'a [u8],
-    pub(crate) package_manager: Option<&'a mut PackageManager>,
 }
 
 pub(crate) fn to_dependency(this: External, ctx: &mut Context<'_>) -> Dependency {
@@ -543,8 +547,9 @@ pub fn is_scoped_package_name(name: &[u8]) -> Result<bool, PackageNameError> {
 /// A dependency name/alias becomes a directory under `node_modules/`. Names
 /// come from untrusted `package.json` / manifest keys, so reject anything that
 /// could resolve outside that directory, and terminal control characters. `@scope/name` stays valid.
+/// Nor over 255 bytes: no file system takes a longer directory name (npm stops at 214).
 pub(crate) fn is_safe_install_folder_name(name: &[u8]) -> bool {
-    if name.is_empty() || contains_control_character(name) {
+    if name.is_empty() || name.len() > 255 || contains_control_character(name) {
         return false;
     }
 
@@ -593,6 +598,31 @@ pub(crate) fn fallback_package_name(location: &[u8]) -> &[u8] {
     }
 }
 
+/// A `link:` target names a directory unless it is a package name (a `bun link` registration).
+pub(crate) fn is_link_path(target: &[u8]) -> bool {
+    !target.is_empty() && !strings::is_npm_package_name(target)
+}
+
+/// Why the resolver and both linkers refuse one (`Lockfile::is_trusted_folder_dependency`).
+pub(crate) const LINK_PATH_RULE: &str =
+    "only the root package.json, a workspace, or a top-level override may link to a path";
+
+/// How a `link:` directory is stored. `folder` is `/`-separated and relative to the project (or
+/// absolute); the `./` keeps `is_link_path` true when it is read back.
+pub(crate) fn link_path_for_lockfile(folder: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if folder.is_empty() {
+        return b".".into();
+    }
+    if matches!(folder, b"." | b"..")
+        || folder.starts_with(b"./")
+        || folder.starts_with(b"../")
+        || bun_paths::is_absolute(folder)
+    {
+        return folder.into();
+    }
+    [b"./".as_slice(), folder].concat().into()
+}
+
 /// assumes version is valid
 pub fn without_build_tag(version: &[u8]) -> &[u8] {
     if let Some(plus) = strings::index_of_char(version, b'+') {
@@ -609,7 +639,6 @@ pub fn without_build_tag(version: &[u8]) -> &[u8] {
 pub(crate) type VersionExternal = [u8; 9];
 
 pub trait VersionExt {
-    fn is_less_than_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool;
     fn to_version(
         alias: String,
         alias_hash: PackageNameHash,
@@ -621,19 +650,6 @@ pub trait VersionExt {
 }
 
 impl VersionExt for Version {
-    fn is_less_than_with_tag(string_buf: &[u8], lhs: &Version, rhs: &Version) -> bool {
-        let tag_order = lhs.tag.cmp(rhs.tag);
-        if tag_order != Ordering::Equal {
-            return tag_order == Ordering::Less;
-        }
-
-        strings::cmp_strings_asc(
-            (),
-            lhs.literal.slice(string_buf),
-            rhs.literal.slice(string_buf),
-        )
-    }
-
     fn to_version(
         alias: String,
         alias_hash: PackageNameHash,
@@ -680,9 +696,7 @@ impl VersionExt for Version {
             tag,
             &sliced,
             Some(ctx.log),
-            ctx.package_manager
-                .as_deref_mut()
-                .map(|m| m as &mut dyn NpmAliasRegistry),
+            None,
         )
         .unwrap_or_default()
     }
@@ -711,11 +725,12 @@ impl VersionExt for Version {
                     true,
                 ) || self.npm().eql(rhs.npm(), lhs_buf, rhs_buf)
             }
-            Tag::Folder | Tag::DistTag => self.literal.eql(rhs.literal, lhs_buf, rhs_buf),
+            Tag::Folder | Tag::DistTag | Tag::Symlink => {
+                self.literal.eql(rhs.literal, lhs_buf, rhs_buf)
+            }
             Tag::Git => Repository::eql(self.git(), rhs.git(), lhs_buf, rhs_buf),
             Tag::Github => Repository::eql(self.github(), rhs.github(), lhs_buf, rhs_buf),
             Tag::Tarball => self.tarball().eql(rhs.tarball(), lhs_buf, rhs_buf),
-            Tag::Symlink => self.symlink().eql(*rhs.symlink(), lhs_buf, rhs_buf),
             Tag::Workspace => self.workspace().eql(*rhs.workspace(), lhs_buf, rhs_buf),
             Tag::Catalog => self.catalog().eql(*rhs.catalog(), lhs_buf, rhs_buf),
             _ => true,
@@ -930,65 +945,39 @@ impl TagExt for Tag {
             // hello/world
             // hello.tar.gz
             // https://github.com/user/repo
+            // httplatest
             b'h' => {
-                if dependency.starts_with(b"http") {
+                if dependency.starts_with(b"http:") || dependency.starts_with(b"https:") {
                     let mut url = &dependency[b"http".len()..];
-                    if url.len() > 2 {
-                        match url[0] {
-                            b':' => {
-                                if url.starts_with(b"://") {
-                                    url = &url[b"://".len()..];
-                                }
-                            }
-                            b's' => {
-                                if url.starts_with(b"s://") {
-                                    url = &url[b"s://".len()..];
-                                }
-                            }
-                            _ => {}
-                        }
-
-                        if url.starts_with(b"github.com/") {
-                            let path = &url[b"github.com/".len()..];
-                            if is_github_tarball_path(path) {
-                                return Tag::Tarball;
-                            }
-                            if hosted_git_info::is_github_shorthand(path) {
-                                return Tag::Github;
-                            }
-                        }
-
-                        if let Ok(Some(info)) = hosted_git_info::HostedGitInfo::from_url(dependency)
-                        {
-                            return hgi_to_tag(&info);
-                        }
-
-                        return Tag::Tarball;
+                    if url.starts_with(b"://") {
+                        url = &url[b"://".len()..];
+                    } else if url.starts_with(b"s://") {
+                        url = &url[b"s://".len()..];
                     }
+
+                    if url.starts_with(b"github.com/") {
+                        let path = &url[b"github.com/".len()..];
+                        if is_github_tarball_path(path) {
+                            return Tag::Tarball;
+                        }
+                        if hosted_git_info::is_github_shorthand(path) {
+                            return Tag::Github;
+                        }
+                    }
+
+                    if let Ok(Some(info)) = hosted_git_info::HostedGitInfo::from_url(dependency) {
+                        return hgi_to_tag(&info);
+                    }
+
+                    return Tag::Tarball;
                 }
             }
+            // ssh://git@example.com/repo.git
+            // sshlatest
             b's' => {
-                if dependency.starts_with(b"ssh") {
-                    let mut url = &dependency[b"ssh".len()..];
-                    if url.len() > 2 {
-                        if url[0] == b':' {
-                            if url.starts_with(b"://") {
-                                url = &url[b"://".len()..];
-                            }
-                        }
-
-                        if url.len() > 4 && &url[0..b"git@".len()] == b"git@" {
-                            url = &url[b"git@".len()..];
-                        }
-
-                        let _ = url; // not used after this point
-
-                        if let Ok(Some(info)) = hosted_git_info::HostedGitInfo::from_url(dependency)
-                        {
-                            return hgi_to_tag(&info);
-                        }
-                        return Tag::Git;
-                    }
+                // never a github shortcut (`hgi_to_tag`)
+                if dependency.starts_with(b"ssh:") {
+                    return Tag::Git;
                 }
             }
             // lisp.tgz
@@ -1176,28 +1165,12 @@ fn split_npm_alias(target: &[u8]) -> (&[u8], Option<&[u8]>) {
     }
 }
 
-/// `split_npm_alias` for a name the registry can be asked for; the version is empty when there is none.
-fn npm_alias_target<'a>(
-    target: &'a [u8],
-    dependency: &[u8],
-    log: Option<&mut bun_ast::Log>,
-) -> Option<(&'a [u8], &'a [u8])> {
-    let (name, version) = split_npm_alias(target);
-    if is_scoped_package_name(name).is_ok() {
-        return Some((name, version.unwrap_or(&target[target.len()..])));
-    }
-    if let Some(log) = log {
-        log.add_error_fmt(
-            None,
-            bun_ast::Loc::EMPTY,
-            format_args!(
-                "invalid package name \"{}\" in dependency \"{}\"",
-                bun_core::fmt::escape_control_chars(name),
-                bun_core::fmt::escape_control_chars(dependency),
-            ),
-        );
-    }
-    None
+/// The target of an `npm:` alias that the registry cannot be asked for: `npm:`, `npm:@1.0.0`, `npm:@scope/@1`.
+/// It parses (a lockfile may hold one). `Package::parse_dependency` and `Package::from_npm` refuse or skip it
+/// where it is declared, and the enqueue never asks for it.
+pub(crate) fn nameless_npm_alias(literal: &[u8]) -> Option<&[u8]> {
+    let (name, _) = split_npm_alias(trim_literal(literal).strip_prefix(b"npm:")?);
+    is_scoped_package_name(name).is_err().then_some(name)
 }
 
 pub(crate) fn parse_with_tag(
@@ -1218,8 +1191,8 @@ pub(crate) fn parse_with_tag(
             let mut is_alias = false;
             let name = if let Some(target) = input.strip_prefix(b"npm:") {
                 is_alias = true;
-                let (name, version) = npm_alias_target(target, dependency, log_)?;
-                input = version;
+                let (name, version) = split_npm_alias(target);
+                input = version.unwrap_or(&target[target.len()..]);
                 sliced.sub(name).value()
             } else {
                 alias
@@ -1254,9 +1227,9 @@ pub(crate) fn parse_with_tag(
                 tag: Tag::Npm,
             };
 
-            if is_alias {
+            if is_alias && nameless_npm_alias(dependency).is_none() {
                 if let Some(pm) = package_manager {
-                    pm.record_npm_alias(alias_hash.unwrap(), &result);
+                    pm.record_npm_alias(alias_hash.unwrap(), dependency);
                 }
             }
 
@@ -1267,8 +1240,10 @@ pub(crate) fn parse_with_tag(
 
             let actual = if let Some(target) = dependency.strip_prefix(b"npm:") {
                 // npm:@foo/bar@latest
-                let (name, dist_tag) = npm_alias_target(target, dependency, log_)?;
-                tag_to_use = sliced.sub(dist_tag).value();
+                let (name, dist_tag) = split_npm_alias(target);
+                tag_to_use = sliced
+                    .sub(dist_tag.unwrap_or(&target[target.len()..]))
+                    .value();
                 sliced.sub(name).value()
             } else {
                 alias
@@ -1577,9 +1552,8 @@ pub(crate) fn parse_with_tag(
             })
         }
         Tag::Catalog => {
-            debug_assert!(dependency.starts_with(b"catalog:"));
-
-            let group = &dependency[b"catalog:".len()..];
+            // bun.lockb stores the tag beside the literal.
+            let group = dependency.strip_prefix(b"catalog:")?;
 
             let trimmed = strings::trim(group, &strings::WHITESPACE_CHARS);
 

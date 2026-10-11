@@ -243,6 +243,12 @@ ${packages ?? ""}`,
       expected: linkTooLong,
     },
     {
+      name: "the link: of a link: dependency",
+      aDependencies: { b: "link:../b" },
+      aImporter: dependency("b", "link:../b", `link:${longPath}`),
+      expected: linkTooLong,
+    },
+    {
       name: "the link: of a range dependency of a workspace",
       aDependencies: { b: "^1.0.0" },
       aImporter: dependency("b", "^1.0.0", `link:${longPath}`),

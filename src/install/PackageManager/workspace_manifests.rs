@@ -2,7 +2,7 @@ use core::fmt;
 
 use bstr::BStr;
 use bun_collections::HashMap;
-use bun_core::{Global, Output};
+use bun_core::{Global, Output, UnwrapOrOom as _};
 use bun_semver as Semver;
 
 use crate::dependency::{Behavior, Tag as DependencyTag, Version as DependencyVersion};
@@ -315,21 +315,12 @@ impl DeclaredDependencies {
         minimum_release_age_ms: Option<f64>,
         exclusions: Option<&MinimumReleaseAgeExcludes>,
     ) -> FindVersionResult<'m> {
-        let range = self.range(row);
-        if range.tag == DependencyTag::Npm {
-            manifest.find_best_version_with_filter(
-                &range.npm().version,
-                self.string_bytes(),
-                minimum_release_age_ms,
-                exclusions,
-            )
-        } else {
-            manifest.find_by_dist_tag_with_filter(
-                range.dist_tag().tag.slice(self.string_bytes()),
-                minimum_release_age_ms,
-                exclusions,
-            )
-        }
+        manifest.find_for_dependency(
+            self.range(row),
+            self.string_bytes(),
+            minimum_release_age_ms,
+            exclusions,
+        )
     }
 }
 
@@ -389,6 +380,30 @@ impl WorkspaceManifests {
         if let Err(err) = scratch.parse_root(manager, features) {
             return Err((scratch.log, err));
         }
+        // `workspace:` also links the root package by its name, unless a member has that name.
+        let root_name_hash = scratch.root.name_hash;
+        let lockfile = &mut scratch.lockfile;
+        if root_name_hash != 0 && !lockfile.workspace_paths.contains(&root_name_hash) {
+            lockfile
+                .workspace_paths
+                .put(root_name_hash, Semver::String::from(b"."))
+                .unwrap_or_oom();
+            let version = fetch_entry(manager, &WorkspaceTarget::root())
+                .root
+                .get(b"version");
+            if let Some(version) = version.as_ref().and_then(|v| v.as_utf8_string_literal()) {
+                let version = lockfile.string_buf().append(version).unwrap_or_oom();
+                let parsed = Semver::Version::parse(
+                    version.sliced(lockfile.buffers.string_bytes.as_slice()),
+                );
+                if parsed.valid && parsed.wildcard == Semver::query::token::Wildcard::None {
+                    lockfile
+                        .workspace_versions
+                        .put(root_name_hash, parsed.version.min())
+                        .unwrap_or_oom();
+                }
+            }
+        }
         Ok(WorkspaceManifests {
             lockfile: scratch.lockfile,
             root_dependencies: scratch.root.dependencies,
@@ -396,7 +411,7 @@ impl WorkspaceManifests {
         })
     }
 
-    /// Whether `name` is one of the workspaces (the root package is not one).
+    /// Whether `workspace:` links a package named `name`: one of the workspaces, or the root package.
     pub fn has_workspace(&self, name: &[u8]) -> bool {
         let name_hash: PackageNameHash = bun_semver::string::Builder::string_hash(name);
         self.lockfile.workspace_paths.contains(&name_hash)

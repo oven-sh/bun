@@ -58,6 +58,10 @@ bun install <name>@<version>
   Add dependency to "peerDependencies"
 </ParamField>
 
+<ParamField path="--save-prod" type="boolean">
+  Add dependency to "dependencies", also when another group lists it
+</ParamField>
+
 <ParamField path="--exact" type="boolean">
   Add the exact version instead of the ^ range
 </ParamField>
@@ -172,7 +176,8 @@ bun install <name>@<version>
 ### Lifecycle Script Management
 
 <ParamField path="--ignore-scripts" type="boolean">
-  Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies
+  Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies. Also set by
+  <code>NPM_CONFIG_IGNORE_SCRIPTS=true</code> in the environment
 </ParamField>
 
 ### Help Information

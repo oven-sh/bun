@@ -1286,6 +1286,46 @@ test.concurrent("a published package can depend on another workspace through a w
   ).toEqual([corePkgJson, corePkgJson, corePkgJson]);
 });
 
+// One packer serves both commands; what differs is only where the tarball goes.
+test.concurrent("packs the same tarball as `bun pm pack`", async () => {
+  const pkg = { name: "pack-and-publish-1", version: "1.2.3", bin: { tool: "bin/tool.js" } };
+  using dir = await registryPackage(pkg, {
+    "index.js": "module.exports = 1;",
+    "lib/a.js": "a",
+    "bin/tool.js": "#!/usr/bin/env node\n",
+    "README.md": "# hi",
+    ".npmignore": "ignored.js",
+    "ignored.js": "x",
+  });
+  using dest = tempDir("pack-and-publish-dest", {});
+  /** What either command prints about the tarball: its files, then its totals and checksums. */
+  const tarballLines = (out: string) =>
+    out.split("\n").filter(line => /^(packed|Total files:|Shasum:|Integrity:|Unpacked size:|Packed size:) /.test(line));
+
+  const dryPacked = await pack(String(dir), env, "--dry-run");
+  expect(packedFiles(dryPacked.out)).toEqual(["package.json", "README.md", "bin/tool.js", "index.js", "lib/a.js"]);
+  const dryPublished = await publish(env, String(dir), "--dry-run");
+  expect(tarballLines(dryPublished.out)).toEqual(tarballLines(dryPacked.out));
+  expect(dryPublished.exitCode).toBe(0);
+
+  const packed = await pack(String(dir), env, "--destination", String(dest));
+  expect(packedFiles(packed.out)).toEqual(packedFiles(dryPacked.out));
+  expect(tarballLines(packed.out)).toContainEqual(expect.stringMatching(/^Shasum: [0-9a-f]{40}$/));
+  const published = await publish(env, String(dir));
+  expect(tarballLines(published.out)).toEqual(tarballLines(packed.out));
+  expect(published.exitCode).toBe(0);
+
+  await write(join(String(dir), "package.json"), JSON.stringify({ ...pkg, version: "1.2.4", private: true }));
+  expect(packedFiles((await pack(String(dir), env, "--destination", String(dest))).out)).toEqual(
+    packedFiles(packed.out),
+  );
+  expect(await publish(env, String(dir))).toEqual({
+    out: expect.stringMatching(/^bun publish v\S+ \(\S+\)\n$/),
+    err: "error: attempted to publish a private package\n",
+    exitCode: 1,
+  });
+});
+
 describe.concurrent("--dry-run", () => {
   test("does not publish", async () => {
     using dir = await registryPackage({ name: "dry-run-1", version: "1.1.1", dependencies: { "dry-run-1": "1.1.1" } });

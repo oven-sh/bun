@@ -527,17 +527,29 @@ describe.concurrent("syntax", () => {
       expect(await lock(dir)).not.toContain('"overrides"');
     });
 
+    // Installing with no rule applied would hide the typo.
     describe.concurrent.each([
-      { rules: { overrides: "nope" }, warning: '"overrides" must be an object' },
-      { rules: { resolutions: ["x"] }, warning: '"resolutions" must be an object with string values' },
-    ])("a non-object field %j", ({ rules, warning }) => {
-      test("warns and installs without rules", async () => {
-        const dir = await project({ dependencies: { "one-dep": "1.0.0" }, ...rules });
+      { field: "overrides", value: "no-deps@2.0.0" },
+      { field: "overrides", value: ["no-deps@2.0.0"] },
+      { field: "overrides", value: null },
+      { field: "resolutions", value: "no-deps@2.0.0" },
+      { field: "resolutions", value: ["no-deps@2.0.0"] },
+      { field: "resolutions", value: null },
+      { field: "resolutions", value: ["no-deps@2.0.0"], overrides: { "no-deps": "2.0.0" } },
+    ])("a non-object field %j", ({ field, value, ...rest }) => {
+      test("fails the install with an error that points at the value", async () => {
+        const dir = await project({ dependencies: { "one-dep": "1.0.0" }, ...rest, [field]: value });
         const { err, exitCode } = await install(dir);
-        expect(diagnostics(err)).toEqual([`warn: ${warning}`]);
-        expect(exitCode).toBe(0);
-        expect(await versionSeenBy(dir, "one-dep", "no-deps")).toBe("1.0.1");
-        expect(await lock(dir)).not.toContain('"overrides"');
+        const column =
+          (await packageJsonText(dir)).indexOf(`"${field}":${JSON.stringify(value)}`) + `"${field}":`.length;
+        expect(err).toContain(
+          `error: "${field}" expects a map of package names to versions, e.g.\n  "${field}": {\n    "react": "18.2.0"\n  }\n`,
+        );
+        expect(err).toContain(`package.json:1:${column + 1}\n`);
+        expect(err).not.toContain("internal error");
+        expect(exitCode).toBe(1);
+        expect(existsSync(join(dir, "node_modules"))).toBeFalse();
+        expect(existsSync(join(dir, "bun.lock"))).toBeFalse();
       });
     });
 
@@ -1179,6 +1191,54 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("linker=%s", linker =
     await installNoChanges(dir, "--linker", linker, "--frozen-lockfile");
   });
 
+  test.each([
+    ["another workspace changes", {}],
+    ["the root starts to depend on the overridden name", { "no-deps": "2.0.0" }],
+  ])("a workspace parent keeps its rule when %s", async (_, rootDependencies) => {
+    const root = (dependencies: Record<string, string>) => ({
+      workspaces: ["packages/*"],
+      overrides: { "app-b": { "no-deps": "1.0.0" } },
+      dependencies,
+    });
+    const appA = (dependencies: Record<string, string>) =>
+      JSON.stringify({ name: "app-a", dependencies: { "app-b": "workspace:*", ...dependencies } });
+    const dir = await project(root({}), linker, {
+      "packages/app-a/package.json": appA({}),
+      "packages/app-b/package.json": JSON.stringify({ name: "app-b", dependencies: { "no-deps": "2.0.0" } }),
+    });
+    await installOk(dir, "--linker", linker);
+    expect(await versionSeenBy(dir, "packages/app-b", "no-deps")).toBe("1.0.0");
+
+    await Promise.all([
+      write(join(dir, "package.json"), JSON.stringify({ name: "nested-overrides", ...root(rootDependencies) })),
+      write(join(dir, "packages", "app-a", "package.json"), appA({ "a-dep": "1.0.1" })),
+    ]);
+    await installOk(dir, "--linker", linker);
+    expect(await versionSeenBy(dir, "packages/app-b", "no-deps")).toBe("1.0.0");
+    await installOk(dir, "--linker", linker, "--frozen-lockfile");
+  });
+
+  // The new rule makes the install resolve app-b's row again and read app-b's package.json again, which replaces that
+  // row: the rule has to find the owner of the new row. With no manifest in the cache the old row is still pending then.
+  test.each([
+    ["no manifest in the cache", false],
+    ["the manifest in the cache", true],
+  ])("a rule added for a workspace parent applies to a row that bun.lock binds, %s", async (_, keepCache) => {
+    const root = (overrides: Record<string, string>) =>
+      JSON.stringify({ name: "nested-overrides", workspaces: ["packages/*"], overrides });
+    const dir = await project({ workspaces: ["packages/*"] }, linker, {
+      "packages/app-b/package.json": JSON.stringify({ name: "app-b", dependencies: { "no-deps": "^1.0.0" } }),
+    });
+    await installOk(dir, "--linker", linker);
+    expect(await versionSeenBy(dir, "packages/app-b", "no-deps")).toBe("1.1.0");
+
+    await write(join(dir, "package.json"), root({ "app-b>no-deps": "1.0.0" }));
+    if (!keepCache) await rm(join(dir, ".bun-cache"), { recursive: true, force: true });
+    await installOk(dir, "--linker", linker);
+    expect(await versionSeenBy(dir, "packages/app-b", "no-deps")).toBe("1.0.0");
+    await installOk(dir, "--linker", linker, "--frozen-lockfile");
+  });
+
   test("a ranged parent rule matches a workspace package by its version", async () => {
     const dir = await project(
       {
@@ -1254,13 +1314,62 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("linker=%s", linker =
       linker,
     );
     const { err, exitCode } = await install(dir, "--linker", linker);
-    expect(diagnostics(err)).toEqual(['warn: incorrect peer dependency "no-deps@1.1.0"']);
+    expect(diagnostics(err)).toEqual([
+      'warn: incorrect peer dependency "no-deps@1.1.0": "peer-deps@1.0.0" requires "no-deps@1.0.0"',
+    ]);
     expect(exitCode).toBe(0);
     expect(await versionSeenBy(dir, "peer-deps", "no-deps")).toBe("1.1.0");
     const first = await lock(dir);
     await installNoChanges(dir, "--linker", linker, "--frozen-lockfile");
     expect(await lock(dir)).toBe(first);
     expect(await versionSeenBy(dir, "peer-deps", "no-deps")).toBe("1.1.0");
+  });
+
+  // The root's "no-deps" is an alias of a-dep. peer-deps-fixed has the peer no-deps@^1.0.0, which a-dep@1.0.1 fits.
+  describe("next to a root alias of the same name", () => {
+    const aliased = { "no-deps": "npm:a-dep@1.0.1" };
+
+    // The isolated linker takes the nearest dependency of the peer's name, whatever package it holds.
+    test.todoIf(linker === "isolated").each([
+      ["peer-deps-fixed>no-deps", { "peer-deps-fixed>no-deps": "npm:no-deps@1.0.0" }],
+      ["a group", { "peer-deps-fixed": { "no-deps": "1.0.0" } }],
+    ])("a rule for a peer is not lost (%s)", async (_, overrides) => {
+      const dir = await project({ dependencies: { ...aliased, "peer-deps-fixed": "1.0.0" }, overrides }, linker);
+      const check = async () =>
+        expect({
+          root: await packageSeenBy(dir, undefined, "no-deps"),
+          dependent: await packageSeenBy(dir, "peer-deps-fixed", "no-deps"),
+        }).toEqual({ root: "a-dep@1.0.1", dependent: "no-deps@1.0.0" });
+
+      await installOk(dir, "--linker", linker);
+      await check();
+      const first = await lock(dir);
+      await installNoChanges(dir, "--linker", linker);
+      await rm(join(dir, "node_modules"), { recursive: true, force: true });
+      await installOk(dir, "--linker", linker, "--frozen-lockfile");
+      await check();
+      expect(await lock(dir)).toBe(first);
+    });
+
+    test("a peer without a rule shares the alias", async () => {
+      const dir = await project({ dependencies: { ...aliased, "peer-deps-fixed": "1.0.0" } }, linker);
+      await installOk(dir, "--linker", linker);
+      expect(await packageSeenBy(dir, "peer-deps-fixed", "no-deps")).toBe("a-dep@1.0.1");
+      expect(await lock(dir)).not.toContain('"no-deps@');
+    });
+
+    test("a flat rule applies to a dependency's range", async () => {
+      const dir = await project(
+        { dependencies: { ...aliased, "one-range-dep": "1.0.0" }, overrides: { "no-deps": "1.0.0" } },
+        linker,
+      );
+      await installOk(dir, "--linker", linker);
+      expect({
+        root: await packageSeenBy(dir, undefined, "no-deps"),
+        dependent: await packageSeenBy(dir, "one-range-dep", "no-deps"),
+      }).toEqual({ root: "a-dep@1.0.1", dependent: "no-deps@1.0.0" });
+      await installNoChanges(dir, "--linker", linker, "--frozen-lockfile");
+    });
   });
 
   test("a nested rule with an npm: alias value", async () => {

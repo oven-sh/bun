@@ -65,10 +65,16 @@ fn parse_platform_flag<T: Npm::NegatableEnum>(
 }
 
 type ParamType = clap::Param<clap::Help>;
+/// A command's params as the slices they are made of: 96 bytes per param, and most are shared by
+/// 17 commands. `parse` and `simple_help` join the one table they need.
+type ParamTable = &'static [&'static [ParamType]];
 
-// `bun_clap::concat_params!` is a const-fn slice concat over `Param<Help>`, so combined tables
-// (`INSTALL_PARAMS`, …) are baked into rodata with zero runtime init.
+// `bun_clap::concat_params!` is a const-fn slice concat over `Param<Help>`.
 use bun_clap::concat_params;
+
+fn simple_help(table: ParamTable) {
+    clap::simple_help(&table.concat());
+}
 
 // `clap::param!` is a proc-macro that requires a
 // *literal* token (it parses the spec at compile time), so `const_format::concatcp!`
@@ -203,7 +209,7 @@ const LINK_SHARED_PARAMS: &[ParamType] = concat_params![
     SHARED_TAIL_PARAMS.split_at(2).1
 ];
 
-pub(crate) static INSTALL_PARAMS: &[ParamType] = concat_params![
+pub(crate) static INSTALL_PARAMS: ParamTable = &[
     SHARED_PARAMS,
     &[
         clap::param!("-d, --dev                 Add dependency to \"devDependencies\""),
@@ -212,6 +218,9 @@ pub(crate) static INSTALL_PARAMS: &[ParamType] = concat_params![
             "--optional                        Add dependency to \"optionalDependencies\""
         ),
         clap::param!("--peer                        Add dependency to \"peerDependencies\""),
+        clap::param!(
+            "--save-prod                   Add dependency to \"dependencies\", also when another group lists it"
+        ),
         clap::param!("-E, --exact                  Add the exact version instead of the ^range"),
         clap::param!(
             "-F, --filter <STR>...             Install packages for the matching workspaces"
@@ -226,10 +235,10 @@ pub(crate) static INSTALL_PARAMS: &[ParamType] = concat_params![
             "--catalog <STR>?                Add the resolved version to the root package.json catalog and depend on it as \"catalog:\" (use --catalog=NAME for a named catalog)"
         ),
         clap::param!("<POS> ...                         "),
-    ]
+    ],
 ];
 
-pub(crate) static UPDATE_PARAMS: &[ParamType] = concat_params![
+pub(crate) static UPDATE_PARAMS: ParamTable = &[
     SHARED_HEAD_PARAMS,
     &[
         clap::param!(
@@ -261,10 +270,10 @@ pub(crate) static UPDATE_PARAMS: &[ParamType] = concat_params![
         clap::param!(
             "<POS> ...                             \"name\" or pattern (\"@scope/*\", \"!name\") of packages to update"
         ),
-    ]
+    ],
 ];
 
-pub(crate) static PM_PARAMS: &[ParamType] = concat_params![
+pub(crate) static PM_PARAMS: ParamTable = &[
     SHARED_PARAMS,
     &[
         clap::param!("-a, --all"),
@@ -330,10 +339,10 @@ pub(crate) static PM_PARAMS: &[ParamType] = concat_params![
             "--max-age <NUM>                        Remove cache entries older than this many days (bun pm cache prune, default 30)"
         ),
         clap::param!("<POS> ...                         "),
-    ]
+    ],
 ];
 
-pub(crate) static ADD_PARAMS: &[ParamType] = concat_params![
+pub(crate) static ADD_PARAMS: ParamTable = &[
     SHARED_PARAMS,
     &[
         clap::param!("-d, --dev                 Add dependency to \"devDependencies\""),
@@ -342,6 +351,9 @@ pub(crate) static ADD_PARAMS: &[ParamType] = concat_params![
             "--optional                        Add dependency to \"optionalDependencies\""
         ),
         clap::param!("--peer                        Add dependency to \"peerDependencies\""),
+        clap::param!(
+            "--save-prod                   Add dependency to \"dependencies\", also when another group lists it"
+        ),
         clap::param!("-E, --exact                  Add the exact version instead of the ^range"),
         clap::param!(
             "-F, --filter <STR>...            Add the package(s) to the matching workspaces instead of the current package"
@@ -358,10 +370,10 @@ pub(crate) static ADD_PARAMS: &[ParamType] = concat_params![
         clap::param!(
             "<POS> ...                         \"name\" or \"name@version\" of package(s) to install"
         ),
-    ]
+    ],
 ];
 
-pub(crate) static REMOVE_PARAMS: &[ParamType] = concat_params![
+pub(crate) static REMOVE_PARAMS: ParamTable = &[
     SHARED_PARAMS,
     &[
         clap::param!(
@@ -370,24 +382,24 @@ pub(crate) static REMOVE_PARAMS: &[ParamType] = concat_params![
         clap::param!(
             "<POS> ...                         \"name\" of package(s) to remove from package.json"
         ),
-    ]
+    ],
 ];
 
-pub(crate) static LINK_PARAMS: &[ParamType] = concat_params![
+pub(crate) static LINK_PARAMS: ParamTable = &[
     LINK_SHARED_PARAMS,
     &[clap::param!(
         "<POS> ...                         \"name\" install package as a link"
-    ),]
+    )],
 ];
 
-pub(crate) static UNLINK_PARAMS: &[ParamType] = concat_params![
+pub(crate) static UNLINK_PARAMS: ParamTable = &[
     LINK_SHARED_PARAMS,
     &[clap::param!(
         "<POS> ...                         \"name\" uninstall package as a link"
-    ),]
+    )],
 ];
 
-static PATCH_PARAMS: &[ParamType] = concat_params![
+static PATCH_PARAMS: ParamTable = &[
     SHARED_PARAMS,
     &[
         clap::param!("<POS> ...                         \"name\" of the package to patch"),
@@ -397,18 +409,18 @@ static PATCH_PARAMS: &[ParamType] = concat_params![
         clap::param!(
             "--patches-dir <dir>                    The directory to put the patch file in (only if --commit is used)"
         ),
-    ]
+    ],
 ];
 
-static PATCH_COMMIT_PARAMS: &[ParamType] = concat_params![
+static PATCH_COMMIT_PARAMS: ParamTable = &[
     SHARED_PARAMS,
     &[
         clap::param!("<POS> ...                         \"dir\" containing changes to a package"),
         clap::param!("--patches-dir <dir>                    The directory to put the patch file"),
-    ]
+    ],
 ];
 
-static OUTDATED_PARAMS: &[ParamType] = concat_params![
+static OUTDATED_PARAMS: ParamTable = &[
     SHARED_PARAMS,
     &[
         // clap::param!("--json                                 Output outdated information in JSON format"),
@@ -419,10 +431,10 @@ static OUTDATED_PARAMS: &[ParamType] = concat_params![
             "-r, --recursive                        Check outdated packages in all workspaces"
         ),
         clap::param!("<POS> ...                              Package patterns to filter by"),
-    ]
+    ],
 ];
 
-static AUDIT_PARAMS: &[ParamType] = concat_params![
+static AUDIT_PARAMS: ParamTable = &[
     SHARED_PARAMS,
     &[
         clap::param!(
@@ -438,7 +450,7 @@ static AUDIT_PARAMS: &[ParamType] = concat_params![
         clap::param!(
             "-L, --latest                           Also apply fixes your declared ranges exclude, rewriting package.json"
         ),
-    ]
+    ],
 ];
 
 const AUDIT_HELP_PARAMS: &[ParamType] = &[
@@ -465,15 +477,15 @@ const AUDIT_HELP_PARAMS: &[ParamType] = &[
     clap::param!("-h, --help                             Print this help menu"),
 ];
 
-static INFO_PARAMS: &[ParamType] = concat_params![
+static INFO_PARAMS: ParamTable = &[
     SHARED_PARAMS,
     &[
         clap::param!("<POS> ...                              Package name or path to package.json"),
         clap::param!("--json                                 Output in JSON format"),
-    ]
+    ],
 ];
 
-static PACK_PARAMS: &[ParamType] = concat_params![
+static PACK_PARAMS: ParamTable = &[
     SHARED_PARAMS,
     &[
         // clap::param!("--filter <STR>...                      Pack each matching workspace"),
@@ -485,10 +497,10 @@ static PACK_PARAMS: &[ParamType] = concat_params![
             "--gzip-level <STR>                     Specify a custom compression level for gzip. Default is 9."
         ),
         clap::param!("<POS> ...                              "),
-    ]
+    ],
 ];
 
-static PUBLISH_PARAMS: &[ParamType] = concat_params![
+static PUBLISH_PARAMS: ParamTable = &[
     SHARED_PARAMS,
     &[
         clap::param!("<POS> ...                              Package tarball to publish"),
@@ -514,10 +526,10 @@ static PUBLISH_PARAMS: &[ParamType] = concat_params![
         clap::param!(
             "-r, --recursive                        Publish every workspace package whose version is not on the registry"
         ),
-    ]
+    ],
 ];
 
-static WHY_PARAMS: &[ParamType] = concat_params![
+static WHY_PARAMS: ParamTable = &[
     SHARED_PARAMS,
     &[
         clap::param!(
@@ -529,17 +541,17 @@ static WHY_PARAMS: &[ParamType] = concat_params![
         clap::param!(
             "--depth <NUM>                          Maximum depth of the dependency tree to display"
         ),
-    ]
+    ],
 ];
 
-static DEDUPE_PARAMS: &[ParamType] = concat_params![
+static DEDUPE_PARAMS: ParamTable = &[
     SHARED_PARAMS,
     &[
         clap::param!(
             "--check                                Exit with code 1 if the lockfile has duplicate versions that can be removed, without changing anything"
         ),
         clap::param!("<POS> ...                              "),
-    ]
+    ],
 ];
 
 const DEDUPE_HELP_PARAMS: &[ParamType] = &[
@@ -561,7 +573,7 @@ const DEDUPE_HELP_PARAMS: &[ParamType] = &[
     clap::param!("-h, --help                             Print this help menu"),
 ];
 
-static PRUNE_PARAMS: &[ParamType] = concat_params![
+static PRUNE_PARAMS: ParamTable = &[
     SHARED_PARAMS,
     &[
         clap::param!(
@@ -571,7 +583,7 @@ static PRUNE_PARAMS: &[ParamType] = concat_params![
             "-F, --filter <STR>...                  Only prune the node_modules folders of the matching workspaces"
         ),
         clap::param!("<POS> ...                              "),
-    ]
+    ],
 ];
 
 const PRUNE_HELP_PARAMS: &[ParamType] = &[
@@ -656,6 +668,8 @@ pub struct CommandLineArguments {
     pub(crate) pack_gzip_level: Option<&'static [u8]>,
 
     pub(crate) dependency_group: Options::DependencyGroup,
+    /// `--dev`, `--optional`, `--peer` or `--save-prod` was given: an entry another group has moves.
+    pub(crate) names_group: bool,
 
     pub(crate) omit: Option<Omit>,
 
@@ -769,6 +783,7 @@ impl Default for CommandLineArguments {
             pack_gzip_level: None,
 
             dependency_group: Options::DependencyGroup::default(),
+            names_group: false,
 
             omit: None,
 
@@ -919,7 +934,7 @@ impl CommandLineArguments {
 Full documentation is available at <magenta>https://bun.com/docs/cli/install<r>.
 ";
                 pretty_help(intro_text);
-                clap::simple_help(INSTALL_PARAMS);
+                simple_help(INSTALL_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -962,7 +977,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/install<r>.
 Full documentation is available at <magenta>https://bun.com/docs/cli/update<r>.
 ";
                 pretty_help(intro_text);
-                clap::simple_help(UPDATE_PARAMS);
+                simple_help(UPDATE_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -990,7 +1005,7 @@ Full documentation is available at <magenta>https://bun.com/docs/install/patch<r
 ";
 
                 pretty_help(intro_text);
-                clap::simple_help(PATCH_PARAMS);
+                simple_help(PATCH_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -1013,7 +1028,7 @@ Full documentation is available at <magenta>https://bun.com/docs/install/patch<r
 Full documentation is available at <magenta>https://bun.com/docs/install/patch<r>.
 "#;
                 pretty_help(intro_text);
-                clap::simple_help(PATCH_COMMIT_PARAMS);
+                simple_help(PATCH_COMMIT_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -1051,7 +1066,7 @@ Full documentation is available at <magenta>https://bun.com/docs/install/patch<r
 Full documentation is available at <magenta>https://bun.com/docs/cli/add<r>.
 ";
                 pretty_help(intro_text);
-                clap::simple_help(ADD_PARAMS);
+                simple_help(ADD_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -1075,7 +1090,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/add<r>.
 Full documentation is available at <magenta>https://bun.com/docs/cli/remove<r>.
 ";
                 pretty_help(intro_text);
-                clap::simple_help(REMOVE_PARAMS);
+                simple_help(REMOVE_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -1102,7 +1117,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/remove<r>.
 Full documentation is available at <magenta>https://bun.com/docs/cli/link<r>.
 ";
                 pretty_help(intro_text);
-                clap::simple_help(LINK_PARAMS);
+                simple_help(LINK_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -1124,7 +1139,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/unlink<r>.
 ";
 
                 pretty_help(intro_text);
-                clap::simple_help(UNLINK_PARAMS);
+                simple_help(UNLINK_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -1156,7 +1171,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/outdated<r>
 "#;
 
                 pretty_help(intro_text);
-                clap::simple_help(OUTDATED_PARAMS);
+                simple_help(OUTDATED_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -1177,7 +1192,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#pack<r>.
 ";
 
                 pretty_help(intro_text);
-                clap::simple_help(PACK_PARAMS);
+                simple_help(PACK_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -1214,7 +1229,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/publish<r>.
 ";
 
                 pretty_help(intro_text);
-                clap::simple_help(PUBLISH_PARAMS);
+                simple_help(PUBLISH_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -1281,7 +1296,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>.
 ";
 
                 pretty_help(intro_text);
-                clap::simple_help(INFO_PARAMS);
+                simple_help(INFO_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -1304,7 +1319,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/why<r>.
 "#;
 
                 pretty_help(intro_text);
-                clap::simple_help(WHY_PARAMS);
+                simple_help(WHY_PARAMS);
                 pretty_help(outro_text);
                 Output::flush();
             }
@@ -1380,7 +1395,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         Output::set_is_verbose(Output::is_verbose());
         crate::bin::Linker::ensure_umask();
 
-        let params: &'static [ParamType] = match subcommand {
+        let table: ParamTable = match subcommand {
             Subcommand::Install => INSTALL_PARAMS,
             Subcommand::Update => UPDATE_PARAMS,
             Subcommand::Pm => PM_PARAMS,
@@ -1399,6 +1414,8 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             Subcommand::Audit => AUDIT_PARAMS,
             Subcommand::Info => INFO_PARAMS,
         };
+        // `clap::parse` interns what it builds from a table under the table's address.
+        let params: &'static [ParamType] = table.concat().leak();
         debug_assert!(
             (RUNTIME_FLAGS_PARAM.names.long_aliases.iter())
                 .all(|alias| params.iter().all(|param| param.names.long != Some(*alias))),
@@ -1521,10 +1538,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
         }
 
         if let Some(min_age_secs) = args.option(b"--minimum-release-age") {
-            // The whole value: `5d` is not 5 seconds.
-            let Some(secs) =
-                bun_core::fmt::parse_f64(min_age_secs).filter(|s| *s >= 0.0 && s.is_finite())
-            else {
+            let Some(secs) = bun_core::fmt::parse_seconds(min_age_secs) else {
                 Output::err_generic(
                     "Expected --minimum-release-age to be a positive number: {}",
                     (bstr::BStr::new(min_age_secs),),
@@ -1717,6 +1731,8 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             } else {
                 Options::DependencyGroup::DEPENDENCIES
             };
+            cli.names_group = args.flag(b"--save-prod")
+                || cli.dependency_group.prop != Options::DependencyGroup::DEPENDENCIES.prop;
             cli.exact = args.flag(b"--exact");
             cli.analyze = args.flag(b"--analyze");
             cli.only_missing = args.flag(b"--only-missing");

@@ -172,7 +172,7 @@ Prevents running lifecycle scripts during installation:
 ignore-scripts=true
 ```
 
-This is equivalent to using the `--ignore-scripts` flag with `bun install`.
+This is equivalent to using the `--ignore-scripts` flag with `bun install`. The environment variable `NPM_CONFIG_IGNORE_SCRIPTS` (or `npm_config_ignore_scripts`) also turns scripts off. See [Lifecycle scripts](/pm/lifecycle#ignore-scripts).
 
 Bun reads boolean options the way npm does: `false`, `null`, `undefined` and `0` turn an option off. Every other value turns it on, including an empty one, `1` and `True`.
 

@@ -15,8 +15,9 @@ use crate::bun_fs::FileSystem;
 use crate::bun_json::{Expr, ExprData};
 use crate::package_manager_real::Command::Context as CommandContext;
 use crate::repository_real::RepositoryExt as _;
-use crate::resolution::append_without_url_credentials;
+use crate::resolution::{append_without_url_credentials, append_without_url_userinfo};
 use bun_collections::ArrayHashMap;
+use bun_core::fmt::{escape_control_chars, escape_control_chars_multiline};
 use bun_core::strings;
 use bun_core::{self, Output};
 use bun_event_loop::EventLoopHandle;
@@ -111,7 +112,14 @@ fn do_partial_install_of_security_scanner(
         manager.lockfile.workspace_paths.len() > 0,
     );
     let summary = if linker == bun_install_types::NodeLinker::NodeLinker::Isolated {
-        IsolatedInstall::install_isolated_packages(manager, ctx, true, &[], packages_to_install)?
+        IsolatedInstall::install_isolated_packages(
+            manager,
+            ctx,
+            true,
+            &[],
+            packages_to_install,
+            false,
+        )?
     } else {
         HoistedInstall::install_hoisted_packages(
             manager,
@@ -310,12 +318,13 @@ pub fn print_security_advisories(manager: &PackageManager, results: &SecuritySca
     for advisory in results.advisories.iter() {
         Output::print(format_args!("\n"));
 
+        let package = escape_control_chars(&advisory.package);
         match advisory.level {
             SecurityAdvisoryLevel::Fatal => {
-                bun_core::pretty!("  <red>FATAL<r>: {}\n", BStr::new(&advisory.package));
+                bun_core::pretty!("  <red>FATAL<r>: {}\n", package);
             }
             SecurityAdvisoryLevel::Warn => {
-                bun_core::pretty!("  <yellow>WARNING<r>: {}\n", BStr::new(&advisory.package));
+                bun_core::pretty!("  <yellow>WARNING<r>: {}\n", package);
             }
         }
 
@@ -327,9 +336,9 @@ pub fn print_security_advisories(manager: &PackageManager, results: &SecuritySca
                         bun_core::pretty!(" › ");
                     }
                     let ancestor_name = pkg_names[*ancestor_id as usize].slice(string_buf);
-                    bun_core::pretty!("{}", BStr::new(ancestor_name));
+                    bun_core::pretty!("{}", escape_control_chars(ancestor_name));
                 }
-                bun_core::pretty!(" › <red>{}<r>\n", BStr::new(&advisory.package));
+                bun_core::pretty!(" › <red>{}<r>\n", package);
             } else {
                 bun_core::pretty!("    <d>(direct dependency)<r>\n");
             }
@@ -337,12 +346,12 @@ pub fn print_security_advisories(manager: &PackageManager, results: &SecuritySca
 
         if let Some(desc) = &advisory.description {
             if !desc.is_empty() {
-                bun_core::pretty!("    {}\n", BStr::new(desc));
+                bun_core::pretty!("    {}\n", escape_control_chars_multiline(desc));
             }
         }
         if let Some(url) = &advisory.url {
             if !url.is_empty() {
-                bun_core::pretty!("    <cyan>{}<r>\n", BStr::new(url));
+                bun_core::pretty!("    <cyan>{}<r>\n", escape_control_chars(url));
             }
         }
     }
@@ -765,7 +774,7 @@ impl<'a> JSONBuilder<'a> {
                 ResolutionTag::Npm => {
                     let npm = pkg_res.npm();
                     write!(&mut version, "{}", npm.version.fmt(string_buf))?;
-                    append_without_url_credentials(&mut tarball, npm.url.slice(string_buf));
+                    append_without_url_userinfo(&mut tarball, npm.url.slice(string_buf));
                 }
                 tag => {
                     if tag == ResolutionTag::Folder {

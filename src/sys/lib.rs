@@ -163,6 +163,8 @@ pub mod dir_iterator {
     pub struct IteratorResult {
         pub name: Name,
         pub kind: EntryKind,
+        /// The inode number the directory records for the entry; 0 on Windows.
+        pub ino: u64,
     }
 
     /// Length-known, NUL-terminated entry name in OS-native encoding.
@@ -360,6 +362,11 @@ pub mod dir_iterator {
                 // SAFETY: kernel filled `[0..end_index]`; `base < end_index` and
                 // each record fits entirely in `[base..base+reclen) ⊆ [0..end_index)`.
                 let buf = unsafe { self.buf.filled(self.end_index) };
+                let d_ino = u64::from_ne_bytes(
+                    buf[base..base + 8]
+                        .try_into()
+                        .expect("infallible: size matches"),
+                );
                 let reclen = u16::from_ne_bytes([buf[base + 16], buf[base + 17]]) as usize;
                 let d_type = buf[base + 18];
                 self.index = base + reclen;
@@ -380,6 +387,7 @@ pub mod dir_iterator {
                 return Ok(Some(IteratorResult {
                     name: Name::borrow(name),
                     kind: kind_from_dt(d_type),
+                    ino: d_ino,
                 }));
             }
         }
@@ -478,6 +486,7 @@ pub mod dir_iterator {
                 return Ok(Some(IteratorResult {
                     name: Name::borrow(name),
                     kind: kind_from_dt(d_type),
+                    ino: d_ino,
                 }));
             }
         }
@@ -550,6 +559,7 @@ pub mod dir_iterator {
                 return Ok(Some(IteratorResult {
                     name: Name::borrow(name),
                     kind: kind_from_dt(d_type),
+                    ino: fileno,
                 }));
             }
         }
@@ -733,6 +743,7 @@ pub mod dir_iterator {
                 return Ok(Some(IteratorResult {
                     name: Name::from_slice(dir_info_name),
                     kind,
+                    ino: 0,
                 }));
             }
         }

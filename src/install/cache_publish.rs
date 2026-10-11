@@ -26,18 +26,31 @@ impl<'a> StagedEntry<'a> {
         self.name
     }
 
-    /// Renames the directory to `to` in `cache_dir` and opens it.
+    /// [`publish`](Self::publish), and opens the entry.
+    pub(crate) fn publish_and_open(
+        self,
+        cache_dir: Fd,
+        to: &ZStr,
+        is_complete: &dyn Fn(&Dir) -> bool,
+    ) -> Result<Dir, RenameError> {
+        match self.publish(cache_dir, to, is_complete)? {
+            Some(kept) => Ok(kept),
+            None => Ok(Dir::borrow(&cache_dir).open_at(to.as_bytes())?),
+        }
+    }
+
+    /// Renames the directory to `to` in `cache_dir`.
     ///
     /// The name of a cache entry says what it holds, so the first writer wins: another
     /// install that shares the cache may publish `to` first and already be reading it.
-    /// A folder there that passes `is_complete` is kept and opened. Only one that fails
-    /// it is replaced.
+    /// A folder there that passes `is_complete` is kept, and returned. Only one that
+    /// fails it is replaced.
     pub(crate) fn publish(
         mut self,
         cache_dir: Fd,
         to: &ZStr,
         is_complete: &dyn Fn(&Dir) -> bool,
-    ) -> Result<Dir, RenameError> {
+    ) -> Result<Option<Dir>, RenameError> {
         const MAX_ATTEMPTS: u32 = 4;
         let cache = Dir::borrow(&cache_dir);
         let mut retry = RenameRetry::new();
@@ -47,13 +60,13 @@ impl<'a> StagedEntry<'a> {
             // overwrites a published folder.
             let Err(err) = retry.rename(self.parent, self.name, cache_dir, to) else {
                 self.renamed = true;
-                return cache.open_at(to.as_bytes()).map_err(RenameError::from);
+                return Ok(None);
             };
             attempts += 1;
             // What takes the name is removed in ways that cannot remove a published
             // folder, one that appears under the name meanwhile included.
             match cache.open_at_with(to.as_bytes(), O::RDONLY | O::CLOEXEC | O::NOFOLLOW) {
-                Ok(published) if is_complete(&published) => return Ok(published),
+                Ok(published) if is_complete(&published) => return Ok(Some(published)),
                 _ if attempts == MAX_ATTEMPTS => return Err(err),
                 // Emptied through its own handle; `rmdir` only removes an empty folder.
                 Ok(incomplete) => {

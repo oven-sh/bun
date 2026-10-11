@@ -1,11 +1,8 @@
-use std::io::Write as _;
-
 use bun_alloc::AllocError;
 
 use crate::Error;
 use crate::bun_fs::FileSystem;
 use crate::lockfile_real::package::PackageColumns;
-use crate::package_manager_task::Id as TaskId;
 use crate::repository::Repository;
 use bun_core::ZStr;
 use bun_core::{Global, Output, ZBox, env_var, fmt as bun_fmt};
@@ -856,17 +853,6 @@ impl PackageManager {
             .position(|locked| locked.eql(resolution, buf, buf))
             .map(|id| id as PackageID)
     }
-
-    /// Whether this run has read the `file:` / URL tarball, or is about to.
-    pub(crate) fn fetched_tarball(&self, resolution: &Resolution) -> bool {
-        let url = match resolution.tag {
-            ResolutionTag::LocalTarball => resolution.local_tarball(),
-            ResolutionTag::RemoteTarball => resolution.remote_tarball(),
-            _ => return false,
-        };
-        self.task_queue
-            .contains_key(&TaskId::for_tarball(self.lockfile.str(url)))
-    }
 }
 
 pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool {
@@ -1111,8 +1097,6 @@ pub fn compute_cache_dir_and_subpath<'a>(
             cache_dir = Fd::cwd();
         }
         ResolutionTag::Symlink => {
-            let directory = global_link_dir(manager);
-
             // borrowck — `global_link_dir_path` below reborrows
             // `manager` mutably, so copy the symlink target out of the lockfile
             // string buffer first instead of holding a slice across that call.
@@ -1125,21 +1109,34 @@ pub fn compute_cache_dir_and_subpath<'a>(
                 cache_dir_subpath = z_static(b".\0");
                 cache_dir = Fd::cwd();
             } else {
-                let global_link_dir = global_link_dir_path(manager);
+                // A path is relative to the project, a name to the global link dir.
+                let is_path = crate::dependency::is_link_path(&folder);
+                let directory = if is_path {
+                    Fd::cwd()
+                } else {
+                    global_link_dir(manager)
+                };
+                let global_link_dir: &[u8] = if is_path {
+                    b""
+                } else {
+                    global_link_dir_path(manager)
+                };
                 let ptr = &mut folder_path_buf.0[..];
-                let mut off = 0usize;
-                ptr[off..off + global_link_dir.len()].copy_from_slice(global_link_dir);
-                off += global_link_dir.len();
-                if global_link_dir[global_link_dir.len() - 1] != SEP {
-                    ptr[off] = SEP;
-                    off += 1;
+                if global_link_dir.len() + 1 + folder.len() < ptr.len() {
+                    let mut off = 0usize;
+                    ptr[off..off + global_link_dir.len()].copy_from_slice(global_link_dir);
+                    off += global_link_dir.len();
+                    if global_link_dir.last().is_some_and(|&c| c != SEP) {
+                        ptr[off] = SEP;
+                        off += 1;
+                    }
+                    ptr[off..off + folder.len()].copy_from_slice(&folder);
+                    off += folder.len();
+                    ptr[off] = 0;
+                    let len = off;
+                    cache_dir_subpath = ZStr::from_buf(folder_path_buf, len);
+                    cache_dir = directory;
                 }
-                ptr[off..off + folder.len()].copy_from_slice(&folder);
-                off += folder.len();
-                ptr[off] = 0;
-                let len = off;
-                cache_dir_subpath = ZStr::from_buf(folder_path_buf, len);
-                cache_dir = directory;
             }
         }
         _ => {}
@@ -1328,63 +1325,12 @@ pub fn update_lockfile_if_needed(
 }
 
 pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
-    let mut tmpname_buf = [0u8; 512];
-    tmpname_buf[0..8].copy_from_slice(b"tmplock-");
-    // Windows opens via `get_default_temp_dir`.
-    let mut tmpfile = bun_resolver::fs::RealFsTmpfile::default();
-    let mut secret = [0u8; 32];
-    secret[0..8].copy_from_slice(
-        &u64::try_from(bun_core::time::milli_timestamp())
-            .expect("int cast")
-            .to_le_bytes(),
-    );
-    let mut base64_bytes = [0u8; 64];
-    bun_boringssl_sys::rand_bytes(&mut base64_bytes);
-
-    // Format each byte as zero-padded 2-char lower hex (128 chars total).
-    let tmpname_len = {
-        let mut cursor = &mut tmpname_buf[8..];
-        let initial_len = cursor.len();
-        for b in &base64_bytes {
-            write!(cursor, "{:02x}", b).expect("unreachable");
-        }
-        initial_len - cursor.len()
-    };
-    tmpname_buf[tmpname_len + 8] = 0;
-    let tmpname = ZStr::from_buf(&tmpname_buf, tmpname_len + 8);
-
-    if let Err(err) = tmpfile.create(tmpname) {
-        bun_core::pretty_errorln!("<r><red>error:<r> failed to create tmpfile: {}", err.name());
-        Global::crash();
-    }
-
-    let file = tmpfile.file();
-    {
-        let mut printer = crate::lockfile_real::Printer {
-            lockfile: &this.lockfile,
-            options: &this.options,
-            successfully_installed: None,
-            // `Yarn::print` never reads `updates`; pass an empty slice.
-            updates: &[],
-        };
-        // `bun_sys::File`
-        // has no `bun_io::Write` impl (and `bun_sys` ⊥ `bun_io`), so buffer the
-        // entire output in a `Vec<u8>` (impls `bun_io::Write`) and flush once.
-        let mut buf: Vec<u8> = Vec::with_capacity(4096);
-        crate::lockfile_real::printer::Yarn::print(&mut printer, &mut buf)?;
-        file.write_all(&buf).map_err(Error::from)?;
-    }
-
-    #[cfg(unix)]
-    {
-        let _ = sys::fchmod(
-            tmpfile.fd,
-            // chmod 666,
-            0o0000040 | 0o0000004 | 0o0000002 | 0o0000400 | 0o0000200 | 0o0000020,
-        );
-    }
-
-    tmpfile.promote_to_cwd(tmpname, z_static(b"yarn.lock\0"))?;
+    // Printed in the header. A lockfile that was loaded from bun.lock has none.
+    let packages_len = this.lockfile.packages.len();
+    this.lockfile.meta_hash = this.lockfile.generate_meta_hash(false, packages_len)?;
+    let mut buf: Vec<u8> = Vec::with_capacity(4096);
+    crate::lockfile_real::printer::Yarn::print(&this.lockfile, &mut buf)?;
+    crate::lockfile_real::replace_in_cwd(z_static(b"yarn.lock\0"), &buf, 0o666);
     Ok(())
 }
 

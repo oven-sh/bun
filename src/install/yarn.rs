@@ -828,7 +828,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     version_bytes,
                     &sliced_string,
                     Some(&mut *log),
-                    Some(&mut *manager),
+                    None,
                 )
                 .unwrap_or_default();
                 parsed_version.literal = dep_version_string;
@@ -866,13 +866,11 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         return Err(crate::Error::LockfileResolveFailed);
     }
 
-    this.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<true, false>(manager)?;
+    this.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(manager, true, false)?;
 
     if cfg!(debug_assertions) {
         this.verify_data()?;
     }
-
-    this.meta_hash = this.generate_meta_hash(false, this.packages.len())?;
 
     let result = LoadResult::Ok(lockfile::LoadResultOk {
         lockfile: this,

@@ -1,6 +1,17 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { access, exists, mkdir, readFile, readlink, symlink, writeFile } from "fs/promises";
+import {
+  access,
+  exists,
+  link as fsLink,
+  lstat,
+  mkdir,
+  readFile,
+  readlink,
+  realpath,
+  symlink,
+  writeFile,
+} from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
@@ -460,7 +471,11 @@ it("should link dependency without crashing", async () => {
     env,
   });
   const err4 = await new Response(stderr4).text();
-  expect(err4).toContain(`FileNotFound: failed linking dependency/workspace to node_modules for package ${link_name}`);
+  // No stack trace after it in a debug build, on either stream.
+  expect(err4.split(/\r?\n/)).toEqual([
+    `FileNotFound: failed linking dependency/workspace to node_modules for package ${link_name}`,
+    "",
+  ]);
   const out4 = await new Response(stdout4).text();
   expect(out4.replace(/\[[0-9\.]+m?s\]/, "[]").split(/\r?\n/)).toEqual([
     expect.stringContaining("bun install v1."),
@@ -528,7 +543,8 @@ describe("link: specifier longer than the path buffers", () => {
     return { out, err, exitCode };
   }
 
-  it("fails to resolve a name that does not fit", async () => {
+  // Too long for a package name, so it is a path (bun-install-link-path.test.ts).
+  it("fails to read a target that does not fit", async () => {
     const target = Buffer.alloc(LONG_SPEC_BYTES, "n").toString();
     await writeFile(
       join(package_dir, "package.json"),
@@ -537,60 +553,57 @@ describe("link: specifier longer than the path buffers", () => {
 
     const { err, exitCode } = await run(package_dir, "install");
 
-    expect(err).toContain("error: ENAMETOOLONG");
-    expect(err).toContain("error: bar@link:" + target.slice(0, 64));
+    expect(err).toContain('error: Dependency "bar" has an unsafe folder path');
     expect(exitCode).toBe(1);
   });
 
-  // `x/../` segments normalize away, so this resolves to the linked package, but
-  // the specifier itself (which is what gets linked) is still too long for a path.
-  it("fails to install a linked package whose specifier only fits once normalized", async () => {
-    const link_name = basename(link_dir).slice("bun-link.".length);
-    await writeFile(join(link_dir, "package.json"), JSON.stringify({ name: link_name, version: "0.0.1" }));
-    const registered = await run(link_dir, "link");
-    expect(registered.err).toBe("");
-    expect(registered.out).toContain(`Success! Registered "${link_name}"`);
-    expect(registered.exitCode).toBe(0);
-
-    try {
-      const target = Buffer.alloc(LONG_SPEC_BYTES, "x/../").toString() + link_name;
-      await writeFile(
-        join(package_dir, "package.json"),
-        JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { [link_name]: `link:${target}` } }),
-      );
-
-      const { out, err, exitCode } = await run(package_dir, "install");
-
-      expect(err).toContain(`ENAMETOOLONG: link path for package ${link_name} is too long`);
-      expect(out).toContain("Failed to install 1 package");
-      expect(await file(join(package_dir, "node_modules", link_name, "package.json")).exists()).toBe(false);
-      expect(exitCode).toBe(1);
-
-      // Like the other per-package failures, the error respects --silent.
-      expect(await run(package_dir, "install", "--silent")).toEqual({ out: "", err: "", exitCode: 1 });
-    } finally {
-      await run(link_dir, "unlink");
-    }
-  });
-
-  it("still resolves a specifier that normalizes to a linked package", async () => {
-    const link_name = basename(link_dir).slice("bun-link.".length);
+  // The resolution of a bun.lock row is what gets linked, as written.
+  it("fails to install a bun.lock row that does not fit", async () => {
+    const dependencies = { bar: "link:./bar" };
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1", dependencies }));
     await writeFile(
-      join(package_dir, "package.json"),
+      join(package_dir, "bun.lock"),
       JSON.stringify({
-        name: "foo",
-        version: "0.0.1",
-        dependencies: { [link_name]: "link:" + Buffer.alloc(LONG_SPEC_BYTES, "x/../").toString() + link_name },
+        lockfileVersion: 1,
+        workspaces: { "": { name: "foo", dependencies } },
+        packages: { bar: [`bar@link:./${Buffer.alloc(LONG_SPEC_BYTES, "n").toString()}`, {}] },
       }),
     );
 
-    // Nothing is registered under this name: resolution gets as far as looking
-    // the name up in the link directory, like `link:${link_name}` would.
-    const { err, exitCode } = await run(package_dir, "install");
+    const { out, err, exitCode } = await run(package_dir, "install");
 
-    expect(err).toContain(`error: Package "${link_name}" is not linked`);
-    expect(err).not.toContain("ENAMETOOLONG");
+    expect(err).toContain("ENAMETOOLONG: link path for package bar is too long");
+    expect(out).toContain("Failed to install 1 package");
+    expect(await file(join(package_dir, "node_modules", "bar", "package.json")).exists()).toBe(false);
     expect(exitCode).toBe(1);
+
+    // Like the other per-package failures, the error respects --silent.
+    expect(await run(package_dir, "install", "--silent")).toEqual({ out: "", err: "", exitCode: 1 });
+  });
+
+  // `x/../` segments normalize away before the length counts.
+  it("still resolves a specifier that only fits once normalized", async () => {
+    const dependencies = { bar: "link:" + Buffer.alloc(LONG_SPEC_BYTES, "x/../").toString() + "vendor/bar" };
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1", dependencies }));
+
+    const missing = await run(package_dir, "install");
+    expect(missing.err).toContain('error: Could not find directory "./vendor/bar" for linked dependency "bar"');
+    expect(missing.err).not.toContain("ENAMETOOLONG");
+    expect(missing.exitCode).toBe(1);
+
+    await mkdir(join(package_dir, "vendor", "bar"), { recursive: true });
+    await writeFile(
+      join(package_dir, "vendor", "bar", "package.json"),
+      JSON.stringify({ name: "bar", version: "0.0.1" }),
+    );
+
+    const { err, exitCode } = await run(package_dir, "install");
+    expect(err).not.toContain("error:");
+    expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+      name: "bar",
+      version: "0.0.1",
+    });
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -687,6 +700,57 @@ it("bun link <package> only writes package.json and a lockfile when --save is pa
     dependencies: { "lib-to-link": "link:lib-to-link" },
   });
   expect(await readdirSorted(app)).toEqual(["bun.lock", "node_modules", "package.json"]);
+});
+
+it("a link: dependency whose link is in place is not linked again", async () => {
+  using dir = tempDir("bun-link-warm", {
+    "lib/package.json": JSON.stringify({ name: "lib-to-link", version: "1.0.0" }),
+    "other/package.json": JSON.stringify({ name: "lib-to-link", version: "1.0.0" }),
+    "app/package.json": JSON.stringify({
+      name: "app",
+      version: "1.0.0",
+      dependencies: { "lib-to-link": "link:lib-to-link" },
+    }),
+  });
+  const app = join(String(dir), "app");
+  const link = join(app, "node_modules", "lib-to-link");
+  const linkEnv = {
+    ...env,
+    BUN_INSTALL_GLOBAL_DIR: join(String(dir), "global", "install", "global"),
+    BUN_INSTALL_BIN: join(String(dir), "global", "bin"),
+  };
+  async function bun(cwd: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: linkEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  expect((await bun(join(String(dir), "lib"), "link")).exitCode).toBe(0);
+  let { stdout, exitCode } = await bun(app, "install", "--linker=hoisted");
+  expect(stdout).toContain("1 package installed");
+  expect(exitCode).toBe(0);
+  // A hard link of the symlink keeps its inode number from being used for a new one.
+  if (!isWindows) await fsLink(link, join(String(dir), "pin"));
+  const before = (await lstat(link)).ino;
+
+  ({ stdout, exitCode } = await bun(app, "install", "--linker=hoisted"));
+  expect(stdout).toContain("(no changes)");
+  expect(exitCode).toBe(0);
+  if (!isWindows) expect((await lstat(link)).ino).toBe(before);
+
+  // The same name and version registered from another directory: the link has to move.
+  expect((await bun(join(String(dir), "other"), "link")).exitCode).toBe(0);
+  ({ stdout, exitCode } = await bun(app, "install", "--linker=hoisted"));
+  expect(stdout).toContain("1 package installed");
+  expect(exitCode).toBe(0);
+  expect(await realpath(link)).toBe(await realpath(join(String(dir), "other")));
 });
 
 it("link and unlink --dry-run do not touch the global link directory", async () => {

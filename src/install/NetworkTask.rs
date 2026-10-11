@@ -16,7 +16,7 @@ use std::io::Write as _;
 
 use crate::extract_tarball;
 use crate::npm::{self as npm, PackageManifest};
-use crate::{ExtractTarball, PackageManager, PatchTask, TarballStream, Task};
+use crate::{ExtractTarball, PackageManager, TarballStream, Task};
 
 // Adapter so `StringOrTinyString::init_append_if_needed` can intern overflow
 // names into the resolver's filename arena. The bun_sys-level `FilenameStore` exposes `append` /
@@ -66,10 +66,6 @@ pub struct NetworkTask {
     // provenance for `for_manifest`/`for_tarball` (which call `pm.log_mut()`).
     pub(crate) package_manager: bun_ptr::ParentRef<PackageManager, bun_ptr::Mut>,
     pub(crate) callback: Callback,
-    /// Key in patchedDependencies in package.json
-    // `'static` because NetworkTask is stored lifetime-less in
-    // `PreallocatedNetworkTasks`; PatchTask's `'a` is a BACKREF on
-    pub(crate) apply_patch_task: Option<Box<PatchTask>>,
     pub(crate) next: bun_threading::Link<NetworkTask>,
 
     /// Producer/consumer buffer that feeds tarball bytes from the HTTP thread
@@ -123,6 +119,19 @@ pub struct DedupeMapEntry {
     /// later `enqueue_*_for_download` can observe the failure instead of
     /// re-scheduling the entire network task (and its retry cycle) a second time.
     pub(crate) failed: bool,
+    pub(crate) manifest: ManifestOrigin,
+}
+
+/// Where this run's copy of a manifest is from: a version that a cached copy lacks may have been published since.
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub enum ManifestOrigin {
+    /// The disk cache, also after a 304.
+    #[default]
+    Cache,
+    /// `refetch_stale_manifest` asked for it again without conditional headers.
+    Refetching,
+    /// The registry sent the document, so what it lacks does not exist.
+    Registry,
 }
 /// `Id` is already a wyhash output, so identity hashing
 /// (hash = value bits) avoids re-hashing.
@@ -559,10 +568,15 @@ impl NetworkTask {
                 registry_href
             };
 
-            let tmp = bun_url::join(
-                &bun_core::String::borrow_utf8(base),
-                &bun_core::String::borrow_utf8(encoded_name),
-            );
+            // The join would read bytes that are not UTF-8 as U+FFFD, which is another name.
+            let tmp = if strings::is_valid_utf8(encoded_name) {
+                bun_url::join(
+                    &bun_core::String::borrow_utf8(base),
+                    &bun_core::String::borrow_utf8(encoded_name),
+                )
+            } else {
+                bun_core::String::DEAD
+            };
 
             if tmp.tag() == bun_core::Tag::Dead {
                 let redacted_registry = redacted_url(scope.url.href());
@@ -1075,7 +1089,6 @@ impl NetworkTask {
         slot: *mut NetworkTask,
         task_id: crate::package_manager_task::Id,
         package_manager: *mut PackageManager,
-        apply_patch_task: Option<Box<PatchTask>>,
     ) {
         use core::ptr::addr_of_mut;
         // SAFETY: caller contract (see fn `# Safety`) — `slot` is the unique
@@ -1088,7 +1101,6 @@ impl NetworkTask {
             // `assume_mut`, so callers pass `*mut` (not `*const`).
             addr_of_mut!((*slot).package_manager)
                 .write(bun_ptr::ParentRef::from_raw_mut(package_manager));
-            addr_of_mut!((*slot).apply_patch_task).write(apply_patch_task);
             // Struct-default fields.
             addr_of_mut!((*slot).response).write(HTTPClientResult::default());
             addr_of_mut!((*slot).url_buf).write(Box::default());

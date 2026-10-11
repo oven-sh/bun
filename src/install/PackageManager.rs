@@ -251,7 +251,7 @@ use self::package_manager_lifecycle as lifecycle;
 pub use lifecycle::{determine_preinstall_state, get_preinstall_state, set_preinstall_state};
 
 use self::package_manager_resolution as resolution;
-pub use resolution::{assign_root_resolution, resolve_from_disk_cache};
+pub use resolution::assign_root_resolution;
 
 pub use self::progress_strings::ProgressStrings;
 
@@ -294,7 +294,7 @@ type AppendedTaskPackageMap =
     HashMap<Task::Id, PackageID /* , IdentityContext<Task::Id>, 80 */>;
 pub(crate) type FolderResolutionMap = HashMap<FolderResolutionKey, FolderResolutionEntry>;
 pub(crate) type NpmAliasMap =
-    HashMap<PackageNameHash, crate::dependency::Version /* , IdentityContext<u64>, 80 */>;
+    HashMap<PackageNameHash, Box<[u8]> /* , IdentityContext<u64>, 80 */>;
 
 type NetworkQueue = LinearFifo<*mut NetworkTask, StaticBuffer<*mut NetworkTask, 32>>;
 type PatchTaskFifo = LinearFifo<*mut PatchTask, StaticBuffer<*mut PatchTask, 32>>;
@@ -361,6 +361,9 @@ pub struct PackageManager {
     /// could be any of the workspaces.
     pub root_package_id: RootPackageId,
 
+    /// Of the `name` in the root package.json, which `workspace_paths` (the members) does not hold.
+    pub(crate) workspace_root_name_hash: PackageNameHash,
+
     pub(crate) thread_pool: ThreadPool,
     pub(crate) task_batch: thread_pool::Batch,
     pub(crate) task_queue: TaskDependencyQueue,
@@ -417,7 +420,7 @@ pub struct PackageManager {
 
     pub(crate) peer_dependencies: LinearFifo<DependencyID, DynamicBuffer<DependencyID>>,
 
-    // name hash from alias package name -> aliased package dependency version info
+    // name hash from alias package name -> the alias's `npm:` specifier text
     pub(crate) known_npm_aliases: NpmAliasMap,
 
     pub(crate) event_loop: AnyEventLoop,
@@ -968,6 +971,9 @@ impl PackageManager {
                 (wake.handler)(wake.context.as_ptr(), this.cast::<c_void>());
             }
             (*core::ptr::addr_of_mut!((*this).event_loop)).wakeup();
+            if *core::ptr::addr_of!((*this).options.runtime_auto_install) {
+                crate::auto_installer::Parked::wake_all();
+            }
         }
     }
 
@@ -1703,6 +1709,9 @@ pub fn init(
             explicit_global_dir = opts.global_dir.as_deref().unwrap_or(explicit_global_dir);
         }
         let global_dir = package_manager_options::open_global_dir(explicit_global_dir)?;
+        // Keeps the first directory it is given, also when `init()` runs again: `initial_top_level_dir()`
+        // is where `bun add -g ./path` was typed.
+        bun_paths::fs::FileSystem::init(bun_sys::getcwd_alloc()?.as_bytes());
         bun_sys::fchdir(global_dir)?;
     }
 
@@ -1955,7 +1964,9 @@ pub fn init(
                             break;
                         };
                         let mut log = bun_ast::Log::init();
-                        let _ = match workspace_names.process_names_array(
+                        // An error is about another entry or member. The members found up to it are
+                        // enough to tell whether the cwd is one; a command that needs the rest reports it.
+                        let _ = workspace_names.process_names_array(
                             &mut workspace_package_json_cache,
                             &mut log,
                             names,
@@ -1963,10 +1974,7 @@ pub fn init(
                             prop.loc,
                             None,
                             Package::WorkspaceMap::MissingWorkspace::Skip,
-                        ) {
-                            Ok(v) => v,
-                            Err(_) => break,
-                        };
+                        );
                         drop(log);
 
                         debug_assert_eq!(
@@ -1982,7 +1990,7 @@ pub fn init(
                                 child_cwd
                             } else {
                                 resolve_path::relative_normalized::<platform::Auto, true>(
-                                    json_source.path.name().dir,
+                                    Package::WorkspaceMap::package_json_dir(&json_source),
                                     child_cwd,
                                 )
                             };
@@ -2072,7 +2080,7 @@ pub fn init(
     ]
     .into_iter()
     .filter_map(|key| env.get(key))
-    .any(|value| !matches!(value, b"" | b"false" | b"0"));
+    .any(|value| !value.is_empty() && ini::npm_config_bool(value));
     if cli.env_files.is_empty() && !cli.no_env_file && !ctx.args.disable_default_env_files {
         // Copy the listing's basenames out under `entries_mutex`; `.data` must
         // only be probed while the lock is held.
@@ -2242,6 +2250,7 @@ pub fn init(
         wr!(update_request_index, Default::default());
         wr!(audit_fix_pins, Box::default());
         wr!(root_package_id, RootPackageId::default());
+        wr!(workspace_root_name_hash, 0);
         wr!(task_batch, thread_pool::Batch::default());
         wr!(task_queue, TaskDependencyQueue::default());
         wr!(manifests, PackageManifestMap::default());
@@ -2714,6 +2723,7 @@ fn init_with_runtime_once(
         wr!(audit_fix_pins, Box::default());
         wr!(root_package_json_name_at_time_of_init, Box::default());
         wr!(root_package_id, RootPackageId::default());
+        wr!(workspace_root_name_hash, 0);
         wr!(task_batch, thread_pool::Batch::default());
         wr!(task_queue, TaskDependencyQueue::default());
         wr!(manifests, PackageManifestMap::default());

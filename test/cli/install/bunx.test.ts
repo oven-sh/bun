@@ -1961,6 +1961,84 @@ describe("a cached tree", () => {
     expect(registry.requests).toEqual(["/@bunx-fixture%2fcli", "/@bunx-fixture/cli/-/cli-1.2.3.tgz"]);
   });
 
+  describe("when the registry cannot be reached", () => {
+    /** The URL of a registry that refuses every connection. */
+    async function unreachable() {
+      const registry = await localRegistry();
+      registry[Symbol.dispose]();
+      return registry.url;
+    }
+
+    it.concurrent("a day-old tree is used, with a warning, and left alone", async () => {
+      using registry = await localRegistry(...toolWithDep());
+      using box = sandbox(registry);
+      expect(await box.run(["tool"])).toMatchObject({ stdout: ran, exitCode: 0 });
+      age(box.tree("tool@latest"));
+      const markers = plantMarkers(box.tree("tool@latest"), "tool", "dep");
+
+      const env = { ...box.env, npm_config_registry: await unreachable() };
+      expect(await box.run(["tool"], { env })).toMatchObject({
+        stdout: ran,
+        stderr: expect.stringContaining(
+          "warn: Could not reach the registry. Using the installation of tool that bunx has.",
+        ),
+        exitCode: 0,
+      });
+      expect(markers()).toEqual([true, true]);
+      // It counts as a refresh: the next attempt is a day later.
+      expect(await box.run(["tool"], { env })).toMatchObject({ stdout: ran, stderr: "", exitCode: 0 });
+    });
+
+    it.concurrent("an explicit dist-tag fails, and the tree stays as good as it was", async () => {
+      using registry = await localRegistry(...toolWithDep());
+      using box = sandbox(registry);
+      expect(await box.run(["tool"])).toMatchObject({ stdout: ran, exitCode: 0 });
+
+      const env = { ...box.env, npm_config_registry: await unreachable() };
+      expect(await box.run(["tool@latest"], { env })).toMatchObject({ stdout: "", exitCode: 1 });
+      expect(await box.run(["tool"], { env })).toMatchObject({ stdout: ran, stderr: "", exitCode: 0 });
+    });
+
+    it.concurrent("nothing is used that was never installed to the end", async () => {
+      using registry = await localRegistry(...toolWithDep());
+      using box = sandbox(registry);
+      expect(await box.run(["tool"])).toMatchObject({ stdout: ran, exitCode: 0 });
+      writeFileSync(join(box.tree("tool@latest"), "package.json"), "{}\n");
+
+      const env = { ...box.env, npm_config_registry: await unreachable() };
+      expect(await box.run(["tool"], { env })).toMatchObject({ stdout: "", exitCode: 1 });
+    });
+
+    // The registry answered: what it took down is not run again.
+    it.concurrent("a day-old tree is not used when the registry no longer has the package", async () => {
+      using registry = await localRegistry(...toolWithDep());
+      using without = await localRegistry();
+      using box = sandbox(registry);
+      expect(await box.run(["tool"])).toMatchObject({ stdout: ran, exitCode: 0 });
+      age(box.tree("tool@latest"));
+
+      const env = { ...box.env, npm_config_registry: without.url };
+      expect(await box.run(["tool"], { env })).toMatchObject({
+        stdout: "",
+        stderr: expect.stringContaining("/tool - 404"),
+        exitCode: 1,
+      });
+    });
+  });
+
+  // The linker skips an entry of `bin` whose value is not the path of a file in the package.
+  it.concurrent("the bin of a package is the first entry of `bin` that is linked", async () => {
+    using registry = await localRegistry({
+      name: "many-bins",
+      version: "1.0.0",
+      bin: { "not-a-string": 1, "empty": "", "outside": "../../outside.js", "real": "cli.js" } as any,
+      files: { "cli.js": echoBin("real 1.0.0") },
+    });
+    using box = sandbox(registry);
+    expect(await box.run(["many-bins"])).toMatchObject({ stdout: "real 1.0.0\n", exitCode: 0 });
+    expect(await box.run(["many-bins"])).toMatchObject({ stdout: "real 1.0.0\n", exitCode: 0, requests: [] });
+  });
+
   // As on a file system without locks.
   it.concurrent.skipIf(isWindows)("runs without the lock when it cannot be taken", async () => {
     using registry = await localRegistry(...toolWithDep());
@@ -2146,6 +2224,8 @@ describe("flags", () => {
       [["x", `--minimum-release-age=${tenDays}`]],
       [["x", "--minimum-release-age", tenDays]],
       [[`--minimum-release-age=${tenDays}`, "x"]],
+      [["x", "--minimum-release-age=10d"]],
+      [["x", "--minimum-release-age", "2 weeks"]],
     ])("bun %j does not install a newer version", async flags => {
       using registry = await oldAndNew();
       using box = sandbox(registry);

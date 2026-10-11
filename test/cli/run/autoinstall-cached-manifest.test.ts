@@ -1,7 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { TestRegistry } from "registry";
+
+const registry = new TestRegistry();
+beforeAll(() => registry.start());
+afterAll(() => registry.stop());
 
 // Regression: when runtime auto-install (`enqueueDependencyToRoot`) finds a
 // cached manifest on disk but not the extracted tarball, it calls
@@ -10,8 +15,7 @@ import { join } from "node:path";
 // subsequent `.extract` branch read `dependency.behavior` from freed memory
 // (ASAN: use-after-poison).
 //
-// This test uses real npm like the neighbouring run-autoinstall.test.ts; the
-// package only needs to have at least one dependency of its own so that
+// The package only needs to have at least one dependency of its own so that
 // `fromNPM` reallocates the single-entry dependencies buffer.
 test("auto-install with cached manifest but missing tarball does not read a dangling dependency pointer", async () => {
   using dir = tempDir("autoinstall-cached-manifest", {});
@@ -20,6 +24,7 @@ test("auto-install with cached manifest but missing tarball does not read a dang
   const env = {
     ...bunEnv,
     BUN_INSTALL_CACHE_DIR: cacheDir,
+    BUN_CONFIG_REGISTRY: registry.registryUrl(),
   };
 
   // Use `-e` so the `require()` is resolved at runtime through

@@ -233,7 +233,8 @@ impl UpdateRequest {
                 &SlicedString::init(input, value),
                 Some(&mut *log),
                 pm.as_deref_mut(),
-            ) else {
+            )
+            .filter(|_| dependency::nameless_npm_alias(value).is_none()) else {
                 if fatal {
                     Output::err_generic(
                         "unrecognised dependency format: {}",
@@ -252,7 +253,10 @@ impl UpdateRequest {
 
                 return Err(crate::Error::UnrecognizedDependencyFormat);
             };
-            if alias.is_some() && version.tag == dependency::version::Tag::Git {
+            // scp-style `user@host:path/repo`, where `user` was split off as the alias
+            if alias.is_some_and(|alias| !strings::contains_char(alias, b'/'))
+                && version.tag == dependency::version::Tag::Git
+            {
                 if let Some(ver) = Dependency::parse_with_optional_tag(
                     placeholder,
                     None,
@@ -261,7 +265,13 @@ impl UpdateRequest {
                     &SlicedString::init(input, input),
                     Some(&mut *log),
                     pm.as_deref_mut(),
-                ) {
+                )
+                .filter(|ver| {
+                    matches!(
+                        ver.tag,
+                        dependency::version::Tag::Git | dependency::version::Tag::Github
+                    )
+                }) {
                     alias = None;
                     version = ver;
                 }

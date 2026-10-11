@@ -250,9 +250,8 @@ impl Options {
                         Global::exit(1);
                     }
                 } else if let Some(age) = Self::flag_value(argv, &mut i, "--minimum-release-age") {
-                    // The whole value has to be a number (`bun add` stops at the first byte that is not
-                    // part of one): it names a directory.
-                    if !bun_core::fmt::parse_f64(age).is_some_and(|s| s >= 0.0 && s.is_finite()) {
+                    // The whole value, as for `bun add`: it names a directory.
+                    if bun_core::fmt::parse_seconds(age).is_none() {
                         Output::err_generic(
                             "Expected --minimum-release-age to be a positive number: {}",
                             (BStr::new(age),),
@@ -426,7 +425,12 @@ impl BunxCommand {
                 ExprData::EObjectJSON(object) => {
                     for prop in object.get().properties() {
                         let bin_name = prop.key.slice();
-                        if !Self::is_safe_bin_name(bin_name) {
+                        // Same values the bin linker does not link (`bin.rs`).
+                        let is_linked = prop.value.as_str().is_some_and(|target| {
+                            !target.is_empty()
+                                && !bun_install::bin::bin_target_escapes_package_dir(target)
+                        });
+                        if !is_linked || !Self::is_safe_bin_name(bin_name) {
                             continue;
                         }
                         return Ok(Box::<[u8]>::from(bin_name));
@@ -1267,13 +1271,20 @@ impl BunxCommand {
         }
 
         // See `Tree`.
-        if let Ok(package_json) = bun_sys::File::create(
-            bunx_install_dir.fd,
-            b"package.json",
-            /* truncate */ true,
-        ) {
-            let _ = package_json.write_all(Self::EMPTY_PACKAGE_JSON);
-        }
+        let write_package_json = |contents: &[u8]| {
+            if let Ok(package_json) = bun_sys::File::create(
+                bunx_install_dir.fd,
+                b"package.json",
+                /* truncate */ true,
+            ) {
+                let _ = package_json.write_all(contents);
+            }
+        };
+        // Of a finished install: written back when the registry cannot be reached.
+        let finished_package_json = bun_sys::File::read_from(bunx_install_dir.fd, b"package.json")
+            .ok()
+            .filter(|contents| contents.len() > Self::EMPTY_PACKAGE_JSON.len());
+        write_package_json(Self::EMPTY_PACKAGE_JSON);
 
         let minimum_release_age_arg = opts
             .minimum_release_age
@@ -1399,8 +1410,23 @@ impl BunxCommand {
                     Global::raise_ignoring_panic_handler_raw(core::ffi::c_int::from(exited.signal));
                 }
 
-                if exited.code != 0 {
-                    Global::exit(exited.code as u32);
+                use bun_install::package_manager_real::run_tasks::BUNX_REGISTRY_UNREACHABLE;
+                match (exited.code as u32, &finished_package_json) {
+                    (0, _) => {}
+                    // The install touched nothing, so the tree is what it was. It counts as refreshed:
+                    // without a network every run would wait for the attempt.
+                    (BUNX_REGISTRY_UNREACHABLE, Some(package_json)) => {
+                        write_package_json(package_json);
+                        if !look_for_existing_bin {
+                            Global::exit(1);
+                        }
+                        bun_core::warn!(
+                            "Could not reach the registry. Using the installation of <b>{}<r> that bunx has.",
+                            BStr::new(&update_request.name),
+                        );
+                    }
+                    (BUNX_REGISTRY_UNREACHABLE, None) => Global::exit(1),
+                    (code, _) => Global::exit(code),
                 }
             }
             SpawnStatus::Signaled(sig) => {

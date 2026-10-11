@@ -1,8 +1,7 @@
 use core::sync::atomic::{AtomicU8, Ordering};
 
 use bun_collections::{ArrayHashMap, DynamicBitSet};
-use bun_core::Progress::Progress;
-use bun_core::{Global, Output};
+use bun_core::Output;
 use bun_core::{MutableString, ZStr};
 use bun_paths::strings;
 use bun_paths::{self as path, OSPathChar, OSPathSlice};
@@ -30,8 +29,6 @@ pub struct PackageInstall<'a> {
     pub(crate) cache_dir: Fd,
     pub(crate) cache_dir_subpath: &'a ZStr,
     pub(crate) destination_dir_subpath: &'a ZStr,
-
-    pub(crate) progress: Option<&'a mut Progress>,
 
     pub(crate) package_name: SemverString,
     pub(crate) package_version: &'a [u8],
@@ -82,8 +79,8 @@ pub enum Method {
     /// - it reads each dir twice incase the first pass modifies it
     Copyfile,
 
-    /// Used for file: when file: points to a parent directory
-    /// example: "file:../"
+    /// One symlink per file. Used for `--backend=symlink` and for a package
+    /// that depends on itself (`file:.`).
     Symlink,
 }
 
@@ -404,8 +401,7 @@ fn mkdir_recursive_os_path(fullpath: &bun_core::WStr) -> sys::Maybe<()> {
         Ok(()) => return Ok(()),
         Err(err) => match err.get_errno() {
             // `mkpath_np` on macOS also checks EISDIR; on Windows EEXIST suffices.
-            // NodeFS additionally probes `directoryExistsAt`; the package-install
-            // call sites discard the result (`_ =`) so a bare Ok matches behaviour.
+            // An existing entry counts as success, like `make_path`.
             E::EISDIR | E::EEXIST => return Ok(()),
             E::ENOENT => {
                 if len == 0 {
@@ -504,6 +500,77 @@ fn open_dir_a(dir: Fd, subpath: &[u8]) -> crate::Result<Dir> {
     sys::open_dir_at(dir, subpath)
         .map(Dir::from_fd)
         .map_err(Into::into)
+}
+
+/// `Dir::make_open_path` that does not follow a link at the last component
+/// (`prune::remove_planted_link`). The same syscalls where there is none.
+#[cfg(not(windows))]
+pub(crate) fn make_open_real_dir(base: &Dir, sub_path: &ZStr) -> sys::Maybe<Dir> {
+    let open = || {
+        base.open_at_with(
+            sub_path.as_bytes(),
+            sys::O::RDONLY | sys::O::CLOEXEC | sys::O::NOFOLLOW,
+        )
+    };
+    match open() {
+        Err(err) if err.get_errno() == sys::E::ENOENT => {}
+        // What Linux and macOS say to a link.
+        Err(err) if matches!(err.get_errno(), sys::E::ENOTDIR | sys::E::ELOOP) => {
+            crate::prune::remove_planted_link(base, sub_path)?;
+        }
+        result => return result,
+    }
+    base.make_path(sub_path.as_bytes())?;
+    open()
+}
+
+/// Whether `dest` is what the hardlink backend makes of the folder `src` as it is now: the same
+/// names, and each file the same inode. On POSIX the listings have both, so no file is touched.
+fn is_hardlinked_copy(src: &Dir, dest: &Dir) -> bool {
+    const INO_LEN: usize = core::mem::size_of::<u64>();
+    // Each name followed by its inode number, 0 for a directory.
+    fn list(dir: &Dir) -> Option<Vec<Box<[u8]>>> {
+        let mut entries: Vec<Box<[u8]>> = Vec::new();
+        let mut iter = sys::iterate_dir(dir.fd());
+        while let Some(entry) = iter.next().ok()? {
+            let name = entry.name.slice_u8();
+            let ino: u64 = match entry.kind {
+                EntryKind::File if cfg!(windows) => {
+                    sys::fstatat(dir, &bun_core::ZBox::from_bytes(name))
+                        .ok()?
+                        .st_ino
+                }
+                EntryKind::File => entry.ino,
+                EntryKind::Directory if name == b"node_modules" => continue,
+                EntryKind::Directory => 0,
+                EntryKind::Unknown => return None,
+                // The backends skip these.
+                _ => continue,
+            };
+            entries.push([name, &ino.to_ne_bytes()[..]].concat().into_boxed_slice());
+        }
+        crate::prune::sort_names(&mut entries);
+        Some(entries)
+    }
+
+    let (Some(src_entries), Some(dest_entries)) = (list(src), list(dest)) else {
+        return false;
+    };
+    src_entries == dest_entries
+        && src_entries.iter().all(|entry| {
+            let (name, ino) = entry.split_at(entry.len() - INO_LEN);
+            if ino != [0; INO_LEN] {
+                return true;
+            }
+            let flags = sys::O::RDONLY | sys::O::CLOEXEC | sys::O::NOFOLLOW;
+            match (
+                src.open_at_with(name, flags),
+                dest.open_at_with(name, flags),
+            ) {
+                (Ok(src), Ok(dest)) => is_hardlinked_copy(&src, &dest),
+                _ => false,
+            }
+        })
 }
 
 // macOS clonefileat(2) — routed through the safe `sys::clonefileat` wrapper
@@ -883,15 +950,17 @@ impl<'a> PackageInstall<'a> {
                 integrity.sri(&mut [0; Integrity::MAX_SRI_LEN]),
                 root_node_modules_dir,
             ),
-            resolution::Tag::Root => self.verify_transitive_symlinked_folder(root_node_modules_dir),
+            resolution::Tag::Root => self.verify_directory_exists(root_node_modules_dir),
+            resolution::Tag::Symlink => self.verify_link(root_node_modules_dir),
             resolution::Tag::Folder => {
-                if self
-                    .lockfile
-                    .is_workspace_tree_id(self.node_modules.tree_id)
+                let tree_id = self.node_modules.tree_id;
+                if self.lockfile.is_workspace_tree_id(tree_id)
+                    || self.lockfile.is_folder_tree_id(tree_id)
                 {
-                    self.verify_package_json_name_and_version(root_node_modules_dir, resolution.tag)
+                    self.verify_folder()
                 } else {
-                    self.verify_transitive_symlinked_folder(root_node_modules_dir)
+                    // Inside an installed package, and replaced together with it.
+                    self.verify_directory_exists(root_node_modules_dir)
                 }
             }
             _ => self.verify_package_json_name_and_version(root_node_modules_dir, resolution.tag),
@@ -908,9 +977,41 @@ impl<'a> PackageInstall<'a> {
 
     // Only check for destination directory in node_modules. We can't use package.json because
     // it might not exist
-    fn verify_transitive_symlinked_folder(&self, root_node_modules_dir: &Dir) -> bool {
+    fn verify_directory_exists(&self, root_node_modules_dir: &Dir) -> bool {
         self.node_modules
             .directory_exists_at(root_node_modules_dir, self.destination_dir_subpath)
+    }
+
+    /// `node_modules/<alias>` leads to the directory `install_from_link` links it to.
+    fn verify_link(&self, root_node_modules_dir: &Dir) -> bool {
+        let Some(linked) = self
+            .node_modules
+            .stat(root_node_modules_dir, self.destination_dir_subpath)
+        else {
+            return false;
+        };
+        sys::fstatat(self.cache_dir, self.cache_dir_subpath)
+            .is_ok_and(|target| target.st_ino == linked.st_ino && target.st_dev == linked.st_dev)
+    }
+
+    /// A folder changes without its lockfile row changing, so what is compared is the folder.
+    fn verify_folder(&self) -> bool {
+        let Ok(node_modules) = Dir::open(&self.node_modules.path) else {
+            return false;
+        };
+        let (Ok(dest), Ok(src)) = (
+            open_dir(node_modules.fd(), self.destination_dir_subpath),
+            open_dir(self.cache_dir, self.cache_dir_subpath),
+        ) else {
+            return false;
+        };
+        let (Ok(dest_stat), Ok(src_stat)) = (sys::fstat(dest.fd()), sys::fstat(src.fd())) else {
+            return false;
+        };
+        // Inode numbers only compare on one device. The same directory is a link to the folder.
+        dest_stat.st_dev == src_stat.st_dev
+            && dest_stat.st_ino != src_stat.st_ino
+            && is_hardlinked_copy(&src, &dest)
     }
 
     fn get_installed_package_json_source(
@@ -1060,6 +1161,7 @@ impl<'a> PackageInstall<'a> {
     fn install_with_clonefile_each_dir(
         &mut self,
         destination_dir: &Dir,
+        skip_dirs: &[&OSPathSlice],
     ) -> crate::Result<InstallResult> {
         let cached_package_dir = match open_dir(self.cache_dir, self.cache_dir_subpath) {
             Ok(d) => d,
@@ -1068,7 +1170,7 @@ impl<'a> PackageInstall<'a> {
         let mut walker_ = match walker_skippable::walk_owned(
             cached_package_dir,
             &[] as &[&OSPathSlice],
-            &[] as &[&OSPathSlice],
+            skip_dirs,
         ) {
             Ok(w) => w,
             Err(err) => return Ok(InstallResult::fail(err.into(), Step::OpeningCacheDir, None)),
@@ -1080,11 +1182,18 @@ impl<'a> PackageInstall<'a> {
             while let Some(entry) = walker.next()? {
                 match entry.kind {
                     EntryKind::Directory => {
-                        let _ = sys::mkdirat(destination_dir_, entry.path, 0o755);
+                        // EEXIST: this is also the fallback for an existing destination.
+                        match sys::mkdirat(destination_dir_, entry.path, 0o755) {
+                            Err(e) if e.get_errno() != sys::Errno::EEXIST => return Err(e.into()),
+                            _ => {}
+                        }
                     }
                     EntryKind::File => {
                         let path_len = entry.path.len();
                         let base_len = entry.basename.len();
+                        if path_len >= stackpath.len() {
+                            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+                        }
                         stackpath[..path_len].copy_from_slice(entry.path.as_bytes());
                         stackpath[path_len] = 0;
                         // `stackpath[path_len] == 0` written above; both views are
@@ -1122,18 +1231,16 @@ impl<'a> PackageInstall<'a> {
             Ok(())
         }
 
-        let subdir = match destination_dir.make_open_path(
-            self.destination_dir_subpath.as_bytes(),
-            OpenDirOptions::default(),
-        ) {
+        let subdir = match make_open_real_dir(destination_dir, self.destination_dir_subpath) {
             Ok(d) => d,
             Err(err) => return Ok(InstallResult::fail(err.into(), Step::OpeningDestDir, None)),
         };
-        if let Err(err) = copy(&subdir, &mut walker_) {
-            return Ok(InstallResult::fail(err, Step::CopyingFiles, None));
+        match copy(&subdir, &mut walker_) {
+            Ok(()) => Ok(InstallResult::Success),
+            // `install_into` falls back to copyfile on this one.
+            Err(crate::Error::NotSupported) => Err(crate::Error::NotSupported),
+            Err(err) => Ok(InstallResult::fail(err, Step::CopyingFiles, None)),
         }
-
-        Ok(InstallResult::Success)
     }
 
     // https://www.unix.com/man-page/mojave/2/fclonefileat/
@@ -1161,7 +1268,7 @@ impl<'a> PackageInstall<'a> {
                 // But, this can happen if this package contains a node_modules folder
                 // We want to continue installing as many packages as we can, so we shouldn't block while downloading
                 // We use the slow path in this case
-                sys::Errno::EEXIST => self.install_with_clonefile_each_dir(destination_dir),
+                sys::Errno::EEXIST => self.install_with_clonefile_each_dir(destination_dir, &[]),
                 sys::Errno::EACCES => Err(crate::Error::Sys(bun_errno::SystemErrno::EACCES)),
                 _ => Err(crate::Error::Unexpected),
             },
@@ -1172,6 +1279,7 @@ impl<'a> PackageInstall<'a> {
         &mut self,
         destination_dir: &Dir,
         method: Method,
+        skip_dirs: &[&OSPathSlice],
     ) -> Result<InstallDirState, Box<Failure>> {
         let destbase = destination_dir;
         let destpath = self.destination_dir_subpath;
@@ -1192,38 +1300,12 @@ impl<'a> PackageInstall<'a> {
             }
             #[cfg(not(windows))]
             {
+                let _ = method;
                 open_dir(self.cache_dir, self.cache_dir_subpath)
             }
         } {
             Ok(d) => d,
             Err(err) => return Err(Failure::boxed(err, Step::OpeningCacheDir, None)),
-        };
-
-        // `bun.OSPathLiteral("node_modules")` — u8 on posix / u16 on windows.
-        #[cfg(windows)]
-        const NODE_MODULES_LIT: &OSPathSlice = &[
-            b'n' as u16,
-            b'o' as u16,
-            b'd' as u16,
-            b'e' as u16,
-            b'_' as u16,
-            b'm' as u16,
-            b'o' as u16,
-            b'd' as u16,
-            b'u' as u16,
-            b'l' as u16,
-            b'e' as u16,
-            b's' as u16,
-        ];
-        #[cfg(not(windows))]
-        const NODE_MODULES_LIT: &OSPathSlice = b"node_modules";
-        let skip_dirs: &[&OSPathSlice] = if method == Method::Symlink
-            && self.cache_dir_subpath.len() == 1
-            && self.cache_dir_subpath.as_bytes()[0] == b'.'
-        {
-            &[NODE_MODULES_LIT]
-        } else {
-            &[]
         };
 
         let mut walker = bun_core::handle_oom(walker_skippable::walk_owned(
@@ -1235,13 +1317,7 @@ impl<'a> PackageInstall<'a> {
 
         #[cfg(not(windows))]
         {
-            let subdir = match destbase.make_open_path(
-                destpath.as_bytes(),
-                OpenDirOptions {
-                    iterate: true,
-                    ..Default::default()
-                },
-            ) {
+            let subdir = match make_open_real_dir(destbase, destpath) {
                 Ok(d) => d,
                 Err(err) => return Err(Failure::boxed(err.into(), Step::OpeningDestDir, None)),
             };
@@ -1325,256 +1401,114 @@ impl<'a> PackageInstall<'a> {
         }
     }
 
-    fn install_with_copyfile(&mut self, destination_dir: &Dir) -> InstallResult {
-        let mut state = match self.init_install_dir(destination_dir, Method::Copyfile) {
+    fn install_with_copyfile(
+        &mut self,
+        destination_dir: &Dir,
+        skip_dirs: &[&OSPathSlice],
+    ) -> InstallResult {
+        let mut state = match self.init_install_dir(destination_dir, Method::Copyfile, skip_dirs) {
             Ok(state) => state,
             Err(failure) => return InstallResult::Failure(failure),
         };
 
-        #[cfg(windows)]
-        type WinSlice<'b> = &'b mut [u16];
-        #[cfg(not(windows))]
-        type WinSlice<'b> = ();
-        #[cfg(windows)]
-        type WinOffset = usize;
-        #[cfg(not(windows))]
-        type WinOffset = ();
+        #[cold]
+        fn copy_failed(err: crate::Error, path: &OSPathSlice) -> crate::Error {
+            bun_core::pretty_errorln!(
+                "<r><red>{}<r>: copying file {}",
+                err.name(),
+                bun_core::fmt::fmt_os_path(path, Default::default())
+            );
+            err
+        }
 
-        // Two overlapping slices into the same buffer (`head` is the whole
-        // buffer, `to_copy_into` is its tail) would be two live aliasing
-        // `&mut [u16]`, which is UB — pass head buffer + tail offset and
-        // reslice inside.
-        fn copy(
-            destination_dir_: &Dir,
-            walker: &mut Walker,
-            mut progress_: Option<&mut Progress>,
-            to_copy_into1_offset: WinOffset,
-            head1: WinSlice<'_>,
-            to_copy_into2_offset: WinOffset,
-            head2: WinSlice<'_>,
-        ) -> crate::Result<()> {
-            #[cfg(not(windows))]
+        #[cfg(not(windows))]
+        fn copy(destination_dir_: &Dir, walker: &mut Walker) -> crate::Result<()> {
             let mut copy_file_state = bun_sys::copy_file::CopyFileState::default();
-            #[cfg(not(windows))]
-            let _ = (to_copy_into1_offset, head1, to_copy_into2_offset, head2);
 
             while let Some(entry) = walker.next()? {
-                #[cfg(windows)]
-                {
-                    use bun_sys::windows;
-                    match entry.kind {
-                        EntryKind::Directory | EntryKind::File => {}
-                        _ => continue,
-                    }
-
-                    if entry.path.len() > head1.len() - to_copy_into1_offset
-                        || entry.path.len() > head2.len() - to_copy_into2_offset
-                    {
-                        return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
-                    }
-
-                    let dest_len = to_copy_into1_offset + entry.path.len();
-                    head1[to_copy_into1_offset..dest_len].copy_from_slice(entry.path.as_slice());
-                    head1[dest_len] = 0;
-                    let dest = bun_core::WStr::from_buf(head1, dest_len);
-
-                    let src_len = to_copy_into2_offset + entry.path.len();
-                    head2[to_copy_into2_offset..src_len].copy_from_slice(entry.path.as_slice());
-                    head2[src_len] = 0;
-                    let src = bun_core::WStr::from_buf(head2, src_len);
-
-                    match entry.kind {
-                        EntryKind::Directory => {
-                            // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers built
-                            // into head1/head2 above.
-                            if unsafe {
-                                windows::CreateDirectoryExW(
-                                    src.as_ptr(),
-                                    dest.as_ptr(),
-                                    core::ptr::null_mut(),
-                                )
-                            } == 0
-                            {
-                                let _ = bun_sys::MakePath::make_path_u16(
-                                    destination_dir_,
-                                    entry.path.as_slice(),
-                                );
-                            }
-                        }
-                        EntryKind::File => {
-                            // `dest` can be a hardlink of `src`, which CopyFileW cannot overwrite.
-                            // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers.
-                            let copy_file =
-                                || unsafe { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 1) } != 0;
-                            if !copy_file() {
-                                let copied = match windows::Win32Error::get() {
-                                    windows::Win32Error::FILE_EXISTS
-                                    | windows::Win32Error::ALREADY_EXISTS => {
-                                        // SAFETY: FFI — dest is a valid NUL-terminated WStr buffer.
-                                        unsafe { windows::DeleteFileW(dest.as_ptr()) };
-                                        copy_file()
-                                    }
-                                    _ => {
-                                        match bun_paths::Dirname::dirname_u16(entry.path.as_slice())
-                                        {
-                                            Some(entry_dirname) => {
-                                                let _ = bun_sys::MakePath::make_path_u16(
-                                                    destination_dir_,
-                                                    entry_dirname,
-                                                );
-                                                copy_file()
-                                            }
-                                            None => false,
-                                        }
-                                    }
-                                };
-                                if copied {
-                                    continue;
-                                }
-
-                                let err = windows::last_system_errno();
-                                if let Some(progress) = progress_.as_deref_mut() {
-                                    progress.root.end();
-                                    progress.refresh();
-                                }
-
-                                bun_core::pretty_errorln!(
-                                    "<r><red>{}<r>: copying file {}",
-                                    err,
-                                    bun_core::fmt::fmt_os_path(
-                                        entry.path.as_slice(),
-                                        Default::default()
-                                    )
-                                );
-
-                                Global::crash();
-                            }
-                        }
-                        _ => unreachable!(), // handled above
-                    }
+                if entry.kind != EntryKind::File {
+                    continue;
                 }
-                #[cfg(not(windows))]
-                {
-                    if entry.kind != EntryKind::File {
-                        continue;
-                    }
 
-                    let in_file = sys::openat(entry.dir, entry.basename, sys::O::RDONLY, 0)?;
-                    let _close_in = sys::CloseOnDrop::new(in_file);
+                let in_file = sys::openat(entry.dir, entry.basename, sys::O::RDONLY, 0)?;
+                let _close_in = sys::CloseOnDrop::new(in_file);
 
-                    bun_output::scoped_log!(
-                        install,
-                        "createFile {} {}\n",
-                        destination_dir_.fd(),
-                        bstr::BStr::new(entry.path.as_bytes())
-                    );
-                    // The file can be a hardlink of `in_file`, and O_TRUNC would empty both.
-                    let create = |path: &ZStr| {
-                        let open = || {
-                            sys::openat(
-                                destination_dir_.fd(),
-                                path,
-                                sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL,
-                                0o666,
-                            )
-                        };
-                        match open() {
-                            Err(err) if err.get_errno() == sys::E::EEXIST => {
-                                let _ = sys::unlinkat(destination_dir_, path);
-                                open()
-                            }
-                            result => result,
-                        }
+                bun_output::scoped_log!(
+                    install,
+                    "createFile {} {}\n",
+                    destination_dir_.fd(),
+                    bstr::BStr::new(entry.path.as_bytes())
+                );
+                // The file can be a hardlink of `in_file`, and O_TRUNC would empty both.
+                let create = |path: &ZStr| {
+                    let open = || {
+                        sys::openat(
+                            destination_dir_.fd(),
+                            path,
+                            sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL,
+                            0o666,
+                        )
                     };
-                    let outfile = match create(entry.path) {
-                        Ok(f) => f,
-                        Err(_) => 'brk: {
-                            let entry_dirname = bun_paths::resolve_path::dirname::<
-                                bun_paths::platform::Auto,
-                            >(entry.path.as_bytes());
-                            if !entry_dirname.is_empty() {
-                                let _ = bun_sys::MakePath::make_path::<OSPathChar>(
-                                    destination_dir_,
-                                    entry_dirname,
-                                );
-                            }
-                            match create(entry.path) {
-                                Ok(f) => break 'brk f,
-                                Err(err) => {
-                                    if let Some(progress) = progress_ {
-                                        progress.root.end();
-                                        progress.refresh();
-                                    }
-
-                                    bun_core::pretty_errorln!(
-                                        "<r><red>{}<r>: copying file {}",
-                                        bstr::BStr::new(err.name()),
-                                        bun_core::fmt::fmt_os_path(
-                                            entry.path.as_bytes(),
-                                            Default::default()
-                                        )
-                                    );
-                                    Global::crash();
-                                }
-                            }
+                    match open() {
+                        Err(err) if err.get_errno() == sys::E::EEXIST => {
+                            let _ = sys::unlinkat(destination_dir_, path);
+                            open()
                         }
-                    };
-                    let _close_out = sys::CloseOnDrop::new(outfile);
-
-                    #[cfg(unix)]
-                    {
-                        let Ok(stat) = sys::fstat(in_file) else {
-                            continue;
-                        };
-                        // `sys::fchmod` is the safe by-value-fd wrapper (kernel
-                        // validates the fd; no memory-safety preconditions).
-                        // Result intentionally ignored.
-                        let _ = sys::fchmod(outfile, stat.st_mode as bun_sys::Mode);
+                        result => result,
                     }
-
-                    if let Err(err) = bun_sys::copy_file::copy_file_with_state(
-                        in_file,
-                        outfile,
-                        &mut copy_file_state,
-                    ) {
-                        if let Some(progress) = progress_.as_deref_mut() {
-                            progress.root.end();
-                            progress.refresh();
+                };
+                let outfile = match create(entry.path) {
+                    Ok(f) => f,
+                    Err(_) => {
+                        let entry_dirname = bun_paths::resolve_path::dirname::<
+                            bun_paths::platform::Auto,
+                        >(entry.path.as_bytes());
+                        if !entry_dirname.is_empty() {
+                            let _ = bun_sys::MakePath::make_path::<OSPathChar>(
+                                destination_dir_,
+                                entry_dirname,
+                            );
                         }
-
-                        bun_core::pretty_errorln!(
-                            "<r><red>{}<r>: copying file {}",
-                            bstr::BStr::new(err.name()),
-                            bun_core::fmt::fmt_os_path(entry.path.as_bytes(), Default::default())
-                        );
-                        Global::crash();
+                        create(entry.path)
+                            .map_err(|err| copy_failed(err.into(), entry.path.as_bytes()))?
                     }
-                }
+                };
+                let _close_out = sys::CloseOnDrop::new(outfile);
+
+                let stat = sys::fstat(in_file)?;
+                // Best effort: filesystems without permission bits reject fchmod.
+                let _ = sys::fchmod(outfile, stat.st_mode as bun_sys::Mode);
+
+                bun_sys::copy_file::copy_file_with_state(in_file, outfile, &mut copy_file_state)
+                    .map_err(|err| copy_failed(err.into(), entry.path.as_bytes()))?;
             }
 
             Ok(())
         }
 
         #[cfg(windows)]
-        let result = copy(
-            &state.subdir,
-            &mut state.walker,
-            self.progress.as_deref_mut(),
-            state.to_copy_buf_off,
-            &mut state.buf[..],
-            state.to_copy_buf2_off,
-            &mut state.buf2[..],
-        );
+        let result = walk_install_dir_windows(&mut state, &mut |dest, src, entry_path| {
+            use bun_sys::windows;
+            // `dest` can be a hardlink of `src`, which CopyFileW cannot overwrite.
+            // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers.
+            let copy_file = || unsafe { windows::CopyFileW(src.as_ptr(), dest.as_ptr(), 1) } != 0;
+            if copy_file() {
+                return Ok(());
+            }
+            if matches!(
+                windows::Win32Error::get(),
+                windows::Win32Error::FILE_EXISTS | windows::Win32Error::ALREADY_EXISTS
+            ) {
+                // SAFETY: FFI — dest is a valid NUL-terminated WStr buffer.
+                unsafe { windows::DeleteFileW(dest.as_ptr()) };
+                if copy_file() {
+                    return Ok(());
+                }
+            }
+            Err(copy_failed(windows::last_system_errno().into(), entry_path))
+        });
         #[cfg(not(windows))]
-        let result = copy(
-            &state.subdir,
-            &mut state.walker,
-            self.progress.as_deref_mut(),
-            (),
-            (),
-            (),
-            (),
-        );
+        let result = copy(&state.subdir, &mut state.walker);
 
         if let Err(err) = result {
             return InstallResult::fail(err, Step::CopyingFiles, None);
@@ -1583,8 +1517,12 @@ impl<'a> PackageInstall<'a> {
         InstallResult::Success
     }
 
-    fn install_with_hardlink(&mut self, dest_dir: &Dir) -> crate::Result<InstallResult> {
-        let mut state = match self.init_install_dir(dest_dir, Method::Hardlink) {
+    fn install_with_hardlink(
+        &mut self,
+        dest_dir: &Dir,
+        skip_dirs: &[&OSPathSlice],
+    ) -> crate::Result<InstallResult> {
+        let mut state = match self.init_install_dir(dest_dir, Method::Hardlink, skip_dirs) {
             Ok(state) => state,
             Err(failure) => return Ok(InstallResult::Failure(failure)),
         };
@@ -1640,10 +1578,10 @@ impl<'a> PackageInstall<'a> {
                 {
                     match entry.kind {
                         EntryKind::Directory => {
-                            let _ = bun_sys::MakePath::make_path::<OSPathChar>(
+                            bun_sys::MakePath::make_path::<OSPathChar>(
                                 destination_dir,
                                 entry.path.as_bytes(),
-                            );
+                            )?;
                         }
                         EntryKind::File => {
                             // EACCES/EPERM: FUSE (e.g. Android SDCARD) does not support hardlinks
@@ -1689,8 +1627,9 @@ impl<'a> PackageInstall<'a> {
                         _ => continue,
                     }
 
-                    if entry.path.len() > head1.len() - to_copy_into1_offset
-                        || entry.path.len() > head2.len() - to_copy_into2_offset
+                    // One unit of each buffer is for the NUL.
+                    if entry.path.len() >= head1.len() - to_copy_into1_offset
+                        || entry.path.len() >= head2.len() - to_copy_into2_offset
                     {
                         loop_err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                         break;
@@ -1750,12 +1689,6 @@ impl<'a> PackageInstall<'a> {
         let result = copy(&state.subdir, &mut state.walker, (), (), (), ());
 
         if let Err(err) = result {
-            #[cfg(windows)]
-            {
-                if err == crate::Error::FailedToCopyFile {
-                    return Ok(InstallResult::fail(err, Step::CopyingFiles, None));
-                }
-            }
             #[cfg(not(windows))]
             {
                 if err == crate::Error::NotSameFileSystem
@@ -1771,165 +1704,53 @@ impl<'a> PackageInstall<'a> {
         Ok(InstallResult::Success)
     }
 
-    fn install_with_symlink(&mut self, dest_dir: &Dir) -> crate::Result<InstallResult> {
-        let mut state = match self.init_install_dir(dest_dir, Method::Symlink) {
+    fn install_with_symlink(
+        &mut self,
+        dest_dir: &Dir,
+        skip_dirs: &[&OSPathSlice],
+    ) -> crate::Result<InstallResult> {
+        let mut state = match self.init_install_dir(dest_dir, Method::Symlink, skip_dirs) {
             Ok(state) => state,
             Err(failure) => return Ok(InstallResult::Failure(failure)),
         };
 
+        // `head2[..to_copy_into2_offset]` is the source directory, with a trailing separator.
         #[cfg(not(windows))]
-        let mut buf2 = bun_paths::path_buffer_pool::get();
-        #[cfg(not(windows))]
-        let to_copy_buf2_offset: usize;
-        #[cfg(unix)]
-        {
-            let cache_dir_path = sys::get_fd_path(state.walker.root(), &mut buf2)?;
-            let cache_len = cache_dir_path.len();
-            if cache_len > 0 && cache_dir_path[cache_len - 1] != path::SEP {
-                buf2[cache_len] = path::SEP;
-                to_copy_buf2_offset = cache_len + 1;
-            } else {
-                to_copy_buf2_offset = cache_len;
-            }
-        }
-
-        #[cfg(windows)]
-        type WinSlice<'b> = &'b mut [u16];
-        #[cfg(not(windows))]
-        type WinSlice<'b> = ();
-        #[cfg(windows)]
-        type WinOffset = usize;
-        #[cfg(not(windows))]
-        type WinOffset = ();
-        #[cfg(windows)]
-        type Head2Char = u16;
-        #[cfg(not(windows))]
-        type Head2Char = u8;
-
-        // Two overlapping slices into the same buffer (`head` is the whole
-        // buffer, `to_copy_into` is its tail) would be two live aliasing
-        // `&mut`, which is UB — pass head buffer + tail offset and reslice
-        // inside.
         fn copy(
             destination_dir: &Dir,
             walker: &mut Walker,
-            to_copy_into1_offset: WinOffset,
-            head1: WinSlice<'_>,
             to_copy_into2_offset: usize,
-            head2: &mut [Head2Char],
+            head2: &mut [u8],
         ) -> crate::Result<()> {
-            #[cfg(not(windows))]
-            let _ = (to_copy_into1_offset, head1);
             while let Some(entry) = walker.next()? {
-                #[cfg(unix)]
-                {
-                    match entry.kind {
-                        EntryKind::Directory => {
-                            let _ = bun_sys::MakePath::make_path::<OSPathChar>(
-                                destination_dir,
-                                entry.path.as_bytes(),
-                            );
-                        }
-                        EntryKind::File => {
-                            let target_len = to_copy_into2_offset + entry.path.len();
-                            head2[to_copy_into2_offset..target_len]
-                                .copy_from_slice(entry.path.as_bytes());
-                            head2[target_len] = 0;
-                            // SAFETY: NUL written above.
-                            let target = ZStr::from_buf(head2, target_len);
-
-                            if let Err(err) =
-                                sys::symlinkat(target, destination_dir.fd(), entry.path)
-                            {
-                                if err.get_errno() != sys::E::EEXIST {
-                                    return Err(err.into());
-                                }
-
-                                let _ = sys::unlinkat(destination_dir, entry.path);
-                                sys::symlinkat(target, destination_dir.fd(), entry.path)?;
-                            }
-                        }
-                        _ => {}
+                match entry.kind {
+                    EntryKind::Directory => {
+                        bun_sys::MakePath::make_path::<OSPathChar>(
+                            destination_dir,
+                            entry.path.as_bytes(),
+                        )?;
                     }
-                }
-                #[cfg(not(unix))]
-                {
-                    use bun_sys::windows;
-                    match entry.kind {
-                        EntryKind::Directory | EntryKind::File => {}
-                        _ => continue,
-                    }
-
-                    if entry.path.len() > head1.len() - to_copy_into1_offset
-                        || entry.path.len() > head2.len() - to_copy_into2_offset
-                    {
-                        return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
-                    }
-
-                    let dest_len = to_copy_into1_offset + entry.path.len();
-                    head1[to_copy_into1_offset..dest_len].copy_from_slice(entry.path.as_slice());
-                    head1[dest_len] = 0;
-                    let dest = bun_core::WStr::from_buf(head1, dest_len);
-
-                    let src_len = to_copy_into2_offset + entry.path.len();
-                    head2[to_copy_into2_offset..src_len].copy_from_slice(entry.path.as_slice());
-                    head2[src_len] = 0;
-                    let src = bun_core::WStr::from_buf(head2, src_len);
-
-                    match entry.kind {
-                        EntryKind::Directory => {
-                            // SAFETY: FFI — src/dest are valid NUL-terminated WStr buffers built
-                            // into head1/head2 above.
-                            if unsafe {
-                                windows::CreateDirectoryExW(
-                                    src.as_ptr(),
-                                    dest.as_ptr(),
-                                    core::ptr::null_mut(),
-                                )
-                            } == 0
-                            {
-                                let _ = bun_sys::MakePath::make_path_u16(
-                                    destination_dir,
-                                    entry.path.as_slice(),
-                                );
-                            }
+                    EntryKind::File => {
+                        // One byte is for the NUL.
+                        if entry.path.len() >= head2.len() - to_copy_into2_offset {
+                            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                         }
-                        EntryKind::File => match sys::symlink_w(dest, src, Default::default()) {
-                            Err(err) => {
-                                if err.get_errno() == sys::E::EEXIST {
-                                    let _ = sys::unlink_w(dest);
-                                    sys::symlink_w(dest, src, Default::default())?;
-                                    continue;
-                                }
+                        let target_len = to_copy_into2_offset + entry.path.len();
+                        head2[to_copy_into2_offset..target_len]
+                            .copy_from_slice(entry.path.as_bytes());
+                        head2[target_len] = 0;
+                        let target = ZStr::from_buf(head2, target_len);
 
-                                if let Some(entry_dirname) =
-                                    bun_paths::Dirname::dirname_u16(entry.path.as_slice())
-                                {
-                                    let _ = bun_sys::MakePath::make_path_u16(
-                                        destination_dir,
-                                        entry_dirname,
-                                    );
-                                    if sys::symlink_w(dest, src, Default::default()).is_ok() {
-                                        continue;
-                                    }
-                                }
-
-                                if PackageManager::verbose_install() {
-                                    bun_core::run_once! {{
-                                        bun_core::warn!(
-                                            "CreateHardLinkW failed, falling back to CopyFileW: {} -> {}\n",
-                                            bun_core::fmt::fmt_os_path(src.as_slice(), Default::default()),
-                                            bun_core::fmt::fmt_os_path(dest.as_slice(), Default::default()),
-                                        );
-                                    }}
-                                }
-
+                        if let Err(err) = sys::symlinkat(target, destination_dir.fd(), entry.path) {
+                            if err.get_errno() != sys::E::EEXIST {
                                 return Err(err.into());
                             }
-                            Ok(_) => {}
-                        },
-                        _ => unreachable!(), // handled above
+
+                            let _ = sys::unlinkat(destination_dir, entry.path);
+                            sys::symlinkat(target, destination_dir.fd(), entry.path)?;
+                        }
                     }
+                    _ => {}
                 }
             }
 
@@ -1937,31 +1758,41 @@ impl<'a> PackageInstall<'a> {
         }
 
         #[cfg(windows)]
-        let result = copy(
-            &state.subdir,
-            &mut state.walker,
-            state.to_copy_buf_off,
-            &mut state.buf[..],
-            state.to_copy_buf2_off,
-            &mut state.buf2[..],
-        );
-        #[cfg(not(windows))]
-        let result = copy(
-            &state.subdir,
-            &mut state.walker,
-            (),
-            (),
-            to_copy_buf2_offset,
-            &mut buf2[..],
-        );
-
-        if let Err(err) = result {
-            #[cfg(windows)]
-            {
-                if err == crate::Error::FailedToCopyFile {
-                    return Ok(InstallResult::fail(err, Step::CopyingFiles, None));
+        let result = walk_install_dir_windows(&mut state, &mut |dest, src, _| {
+            let link = || sys::symlink_w(dest, src, Default::default());
+            match link() {
+                Err(err) if err.get_errno() == sys::E::EEXIST => {
+                    let _ = sys::unlink_w(dest);
+                    link()?;
+                }
+                result => {
+                    result?;
                 }
             }
+            Ok(())
+        });
+        #[cfg(not(windows))]
+        let result = {
+            let mut buf2 = bun_paths::path_buffer_pool::get();
+            let cache_len = sys::get_fd_path(state.walker.root(), &mut buf2)?.len();
+            let to_copy_buf2_offset = if cache_len > 0 && buf2[cache_len - 1] != path::SEP {
+                if cache_len + 1 >= buf2.len() {
+                    return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+                }
+                buf2[cache_len] = path::SEP;
+                cache_len + 1
+            } else {
+                cache_len
+            };
+            copy(
+                &state.subdir,
+                &mut state.walker,
+                to_copy_buf2_offset,
+                &mut buf2[..],
+            )
+        };
+
+        if let Err(err) = result {
             #[cfg(not(windows))]
             {
                 if err == crate::Error::NotSameFileSystem
@@ -2276,7 +2107,14 @@ impl<'a> PackageInstall<'a> {
                 dest_dir_path,
                 to_path,
             );
-            if let Err(err) = sys::symlinkat(target, dest_dir.fd(), dest) {
+            if let Err(err) = sys::symlinkat(target, dest_dir.fd(), dest).or_else(|err| {
+                // A workspace's own node_modules outlives a wiped root node_modules, after which nothing is deleted first.
+                if err.get_errno() != sys::E::EEXIST {
+                    return Err(err);
+                }
+                let _ = sys::unlinkat(dest_dir.fd(), dest);
+                sys::symlinkat(target, dest_dir.fd(), dest)
+            }) {
                 return InstallResult::fail(err.into(), Step::LinkingDependency, None);
             }
         }
@@ -2293,9 +2131,7 @@ impl<'a> PackageInstall<'a> {
     }
 
     pub(crate) fn get_install_method(&self) -> Method {
-        if self.cache_dir_subpath.as_bytes() == b"."
-            || self.cache_dir_subpath.as_bytes().starts_with(b"..")
-        {
+        if self.cache_dir_subpath.as_bytes() == b"." {
             Method::Symlink
         } else {
             Self::supported_method()
@@ -2415,7 +2251,6 @@ impl<'a> PackageInstall<'a> {
         {
             let staged = PackageInstall {
                 destination_dir_subpath: staging,
-                progress: self.progress.as_deref_mut(),
                 ..*self
             }
             .install_into(destination_dir, method_, resolution_tag);
@@ -2438,15 +2273,21 @@ impl<'a> PackageInstall<'a> {
         method_: Method,
         resolution_tag: resolution::Tag,
     ) -> InstallResult {
-        let mut supported_method_to_use = method_;
-
-        if resolution_tag == resolution::Tag::Folder
-            && !self
-                .lockfile
-                .is_workspace_tree_id(self.node_modules.tree_id)
-        {
-            supported_method_to_use = Method::Symlink;
-        }
+        // The rules of the isolated linker. A folder's `node_modules` is no part of it (that of
+        // `file:..` holds the destination), it is hard linked where a package would be cloned,
+        // so that an edit shows, and what its file system cannot do says nothing about the cache's.
+        let is_folder = resolution_tag == resolution::Tag::Folder;
+        let skip_dirs: &[&OSPathSlice] = if is_folder {
+            &[bun_paths::os_path_literal!("node_modules")]
+        } else {
+            &[]
+        };
+        #[cfg_attr(windows, allow(unused_mut))]
+        let mut supported_method_to_use = if is_folder && method_ == Method::Clonefile {
+            Method::Hardlink
+        } else {
+            method_
+        };
 
         match supported_method_to_use {
             Method::Clonefile => {
@@ -2476,11 +2317,13 @@ impl<'a> PackageInstall<'a> {
             Method::ClonefileEachDir => {
                 #[cfg(target_os = "macos")]
                 {
-                    match self.install_with_clonefile_each_dir(destination_dir) {
+                    match self.install_with_clonefile_each_dir(destination_dir, skip_dirs) {
                         Ok(result) => return result,
                         Err(err) => {
                             if err == crate::Error::NotSupported {
-                                Self::set_supported_method(Method::Copyfile);
+                                if !is_folder {
+                                    Self::set_supported_method(Method::Copyfile);
+                                }
                                 supported_method_to_use = Method::Copyfile;
                             } else if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 return InstallResult::fail(
@@ -2497,13 +2340,15 @@ impl<'a> PackageInstall<'a> {
             }
             #[allow(unused_labels)]
             Method::Hardlink => 'outer: {
-                match self.install_with_hardlink(destination_dir) {
+                match self.install_with_hardlink(destination_dir, skip_dirs) {
                     Ok(result) => return result,
                     Err(err) => {
                         #[cfg(not(windows))]
                         {
                             if err == crate::Error::NotSameFileSystem {
-                                Self::set_supported_method(Method::Copyfile);
+                                if !is_folder {
+                                    Self::set_supported_method(Method::Copyfile);
+                                }
                                 supported_method_to_use = Method::Copyfile;
                                 break 'outer;
                             }
@@ -2522,7 +2367,7 @@ impl<'a> PackageInstall<'a> {
                 }
             }
             Method::Symlink => {
-                return match self.install_with_symlink(destination_dir) {
+                return match self.install_with_symlink(destination_dir, skip_dirs) {
                     Ok(result) => result,
                     Err(err) => {
                         if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
@@ -2541,8 +2386,61 @@ impl<'a> PackageInstall<'a> {
         }
 
         // TODO: linux io_uring
-        self.install_with_copyfile(destination_dir)
+        self.install_with_copyfile(destination_dir, skip_dirs)
     }
 }
 
 type Walker = walker_skippable::Walker;
+
+/// The walk of the copyfile and symlink backends on Windows: makes each directory and calls
+/// `per_file(dest, src, entry_path)`, both absolute, for each file.
+#[cfg(windows)]
+fn walk_install_dir_windows(
+    state: &mut InstallDirState,
+    per_file: &mut dyn FnMut(&bun_core::WStr, &bun_core::WStr, &[u16]) -> crate::Result<()>,
+) -> crate::Result<()> {
+    use bun_sys::windows;
+
+    let (dest_offset, src_offset) = (state.to_copy_buf_off, state.to_copy_buf2_off);
+    let head1: &mut [u16] = &mut state.buf[..];
+    let head2: &mut [u16] = &mut state.buf2[..];
+
+    while let Some(entry) = state.walker.next()? {
+        match entry.kind {
+            EntryKind::Directory | EntryKind::File => {}
+            _ => continue,
+        }
+
+        // One unit of each buffer is for the NUL.
+        if entry.path.len() >= head1.len() - dest_offset
+            || entry.path.len() >= head2.len() - src_offset
+        {
+            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+        }
+
+        let dest_len = dest_offset + entry.path.len();
+        head1[dest_offset..dest_len].copy_from_slice(entry.path.as_slice());
+        head1[dest_len] = 0;
+        let dest = bun_core::WStr::from_buf(head1, dest_len);
+
+        let src_len = src_offset + entry.path.len();
+        head2[src_offset..src_len].copy_from_slice(entry.path.as_slice());
+        head2[src_len] = 0;
+        let src = bun_core::WStr::from_buf(head2, src_len);
+
+        if entry.kind == EntryKind::File {
+            // Its directory came first.
+            per_file(dest, src, entry.path.as_slice())?;
+            continue;
+        }
+        // SAFETY: FFI — src/dest are the NUL-terminated buffers built above.
+        if unsafe {
+            windows::CreateDirectoryExW(src.as_ptr(), dest.as_ptr(), core::ptr::null_mut())
+        } == 0
+        {
+            mkdir_recursive_os_path(dest)?;
+        }
+    }
+
+    Ok(())
+}

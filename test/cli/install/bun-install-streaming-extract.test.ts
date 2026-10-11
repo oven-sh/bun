@@ -157,6 +157,8 @@ type Faults = {
   chunker?: (offset: number) => number;
   /** Milliseconds to wait between writes (default: none, `setImmediate`). */
   delayMs?: (offset: number) => number;
+  /** The rest of the tarball waits for this after the first write. */
+  afterFirstWrite?: () => Promise<void>;
   /** Destroy the tarball connection after this many body bytes... */
   dropTarballAt?: number;
   /** ...for the first N tarball requests (default: every request). */
@@ -226,7 +228,12 @@ async function makeRegistry(tgz: Buffer, shasum: string, integrity: string, chun
         }
         const n = faults.chunker ? Math.max(1, faults.chunker(i)) : chunkBytes;
         res.write(tgz.subarray(i, Math.min(i + n, tgz.length)));
+        const first = i === 0;
         i += n;
+        if (first && faults.afterFirstWrite) {
+          void faults.afterFirstWrite().then(step);
+          return;
+        }
         const delay = faults.delayMs ? faults.delayMs(i) : 0;
         if (delay > 0) setTimeout(step, delay);
         else setImmediate(step);
@@ -647,7 +654,7 @@ describe("streaming tarball extraction", () => {
 
     const { stderr, exitCode } = await runInstall(String(dir));
     expect(stderr).toMatch(
-      /error: Fail extracting tarball for "stream-pkg": [^\n]*(gzip decompression failed|[Tt]runcated|[Dd]amaged)[^\n]* \(at byte \d+ of \d+\)/,
+      /error: Fail extracting tarball for "stream-pkg": [^\n]*(gzip decompression failed|gzip trailer mismatch|[Tt]runcated|[Dd]amaged)[^\n]* \(at byte \d+ of \d+\)/,
     );
     expect(reg.tarballHits).toBe(1);
     expect(exitCode).toBe(1);
@@ -1556,6 +1563,62 @@ test.skipIf(isWindows)("streaming extract fails the install when the file system
   }
 });
 
+// Installs `tgz` as `stream-pkg`, `installs` times with one cache, and returns what each install left.
+// "libdeflate" and "libarchive": a `file:` tarball, which the buffered extractor decompresses that way.
+// "buffered" and "streaming": downloaded, from the registry or as a URL dependency, and extracted that way.
+type ExtractPath = "libdeflate" | "libarchive" | "buffered" | "streaming";
+async function installStreamPkg(path: ExtractPath, tgz: Buffer, { installs = 1, url = false, trusted = false } = {}) {
+  const sha = (algorithm: string, encoding: "hex" | "base64") => createHash(algorithm).update(tgz).digest(encoding);
+  // A tarball is streamed only if its body arrives in more than one piece. The first
+  // drain creates the extraction directory, so the rest waits until that exists.
+  let tmp = "";
+  const afterFirstWrite = async () => {
+    while (!readdirSync(tmp).some(name => name.endsWith(".stream-pkg"))) await Bun.sleep(1);
+  };
+  // The integrity is that of the bytes as they are: it holds.
+  await using reg = await makeRegistry(
+    tgz,
+    sha("sha1", "hex"),
+    `sha512-${sha("sha512", "base64")}`,
+    512,
+    path === "streaming" ? { afterFirstWrite } : {},
+  );
+  const downloaded = path === "buffered" || path === "streaming";
+  using dir = tempDir("install-stream-pkg", {
+    "package.json": JSON.stringify({
+      name: "app",
+      version: "1.0.0",
+      dependencies: {
+        "stream-pkg": !downloaded ? "file:./pkg.tgz" : url ? `${reg.url}stream-pkg/-/stream-pkg-1.0.0.tgz` : "1.0.0",
+      },
+      trustedDependencies: trusted ? ["stream-pkg"] : undefined,
+    }),
+    "bunfig.toml": Bun.TOML.stringify({ install: { registry: reg.url } }),
+    "pkg.tgz": tgz,
+    "tmp/.keep": "",
+  });
+  tmp = join(String(dir), "tmp");
+  const results = [];
+  for (let i = 0; i < installs; i++) {
+    const { stderr, exitCode } = await runInstall(String(dir), {
+      BUN_TMPDIR: tmp,
+      BUN_INSTALL_STREAMING_MIN_SIZE: "1",
+      BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: "1",
+      ...(path === "libarchive" ? { BUN_FEATURE_FLAG_NO_LIBDEFLATE: "1" } : {}),
+      ...(path === "buffered" ? { BUN_FEATURE_FLAG_DISABLE_STREAMING_INSTALL: "1" } : {}),
+    });
+    results.push({
+      error: stderr.match(/^error: .*$/m)?.[0],
+      streamed: stderr.includes("Streamed "),
+      installed: existsSync(join(String(dir), "node_modules", "stream-pkg")),
+      cached: readdirSync(join(String(dir), ".cache")).filter(name => /^(stream-pkg@|@T@)/.test(name)).length,
+      tmp: readdirSync(tmp),
+      exitCode,
+    });
+  }
+  return results;
+}
+
 // -------------------------------------------------------------------
 // A gzip member ends with the CRC32 and the length (ISIZE) of its data.
 // Where no integrity is recorded (a `file:` or URL tarball on its first
@@ -1598,36 +1661,7 @@ describe.concurrent("gzip trailer", () => {
     ["a wrong ISIZE", changed(good, good.length - 4, (b, i) => b.writeUInt32LE(100 * 1024 * 1024, i))],
   ];
   const paths = ["libdeflate", "libarchive", "streaming"] as const;
-
-  async function install(path: (typeof paths)[number], tgz: Buffer) {
-    const sha = (algorithm: string, encoding: "hex" | "base64") => createHash(algorithm).update(tgz).digest(encoding);
-    // The integrity is that of the damaged bytes: it holds.
-    await using reg = await makeRegistry(tgz, sha("sha1", "hex"), `sha512-${sha("sha512", "base64")}`, 512);
-    using dir = tempDir("gzip-trailer", {
-      "package.json": JSON.stringify({
-        name: "app",
-        version: "1.0.0",
-        dependencies: { "stream-pkg": path === "streaming" ? "1.0.0" : "file:./pkg.tgz" },
-      }),
-      "bunfig.toml": Bun.TOML.stringify({ install: { registry: reg.url } }),
-      "pkg.tgz": tgz,
-      "tmp/.keep": "",
-    });
-    const { stderr, exitCode } = await runInstall(String(dir), {
-      BUN_TMPDIR: join(String(dir), "tmp"),
-      BUN_INSTALL_STREAMING_MIN_SIZE: "1",
-      BUN_INSTALL_STREAMING_DRAIN_THRESHOLD: "1",
-      ...(path === "libarchive" ? { BUN_FEATURE_FLAG_NO_LIBDEFLATE: "1" } : {}),
-    });
-    return {
-      error: stderr.match(/^error: .*$/m)?.[0],
-      streamed: stderr.includes("Streamed "),
-      installed: existsSync(join(String(dir), "node_modules", "stream-pkg")),
-      cached: readdirSync(join(String(dir), ".cache")).filter(name => /^(stream-pkg@|@T@)/.test(name)).length,
-      tmp: readdirSync(join(String(dir), "tmp")),
-      exitCode,
-    };
-  }
+  const install = async (path: (typeof paths)[number], tgz: Buffer) => (await installStreamPkg(path, tgz))[0];
 
   test.each(paths)("a sound tarball installs (%s)", async path => {
     expect(await install(path, good)).toEqual({
@@ -1646,7 +1680,10 @@ describe.concurrent("gzip trailer", () => {
       expect(await install(path, tgz)).toEqual({
         error:
           path === "streaming"
-            ? expect.stringContaining('error: Fail extracting tarball for "stream-pkg": gzip trailer mismatch')
+            ? // libarchive's tar reader overwrites the message of the filter that failed.
+              expect.stringMatching(
+                /^error: Fail extracting tarball for "stream-pkg": (gzip trailer mismatch|Truncated tar archive)/,
+              )
             : "error: Fail extracting tarball from stream-pkg",
         streamed: false,
         installed: false,
@@ -1668,5 +1705,46 @@ describe.concurrent("gzip trailer", () => {
       tmp: [".keep"],
       exitCode: 1,
     });
+  });
+});
+
+// -------------------------------------------------------------------
+// bun reads the package.json of a tarball dependency, and of a registry
+// package that may run scripts, as soon as it is extracted. One that
+// fails the install there was already in the cache by then, where the
+// next install found it and linked it.
+// -------------------------------------------------------------------
+describe.concurrent("a package whose package.json fails the install is not published to the cache", () => {
+  const tarball = (packageJson?: string) =>
+    gzipSync(
+      Buffer.concat([
+        ...(packageJson === undefined ? [] : tarFile("package/package.json", Buffer.from(packageJson))),
+        ...tarFile("package/index.js", Buffer.from("module.exports = 1;\n")),
+        Buffer.alloc(1024, 0),
+      ]),
+    );
+  const broken = [
+    [
+      "not JSON",
+      tarball("{ not json"),
+      'error: expected "package.json" of "stream-pkg" to be a JSON file: ParserError: Expected string but found "not"',
+    ],
+    ["missing", tarball(), 'error: "package.json" for "stream-pkg" failed to open: ENOENT'],
+  ] as const;
+  const ways = [
+    ["file: tarball", "libdeflate", {}],
+    ["URL tarball, buffered", "buffered", { url: true }],
+    ["URL tarball, streaming", "streaming", { url: true }],
+    ["trusted registry package, buffered", "buffered", { trusted: true }],
+    ["trusted registry package, streaming", "streaming", { trusted: true }],
+  ] as const;
+
+  const cases = broken.flatMap(([what, tgz, error]) =>
+    ways.map(([way, path, opts]) => [what, way, tgz, error, path, opts] as const),
+  );
+
+  test.each(cases)("%s (%s)", async (_what, _way, tgz, error, path, opts) => {
+    const failed = { error, streamed: false, installed: false, cached: 0, tmp: [".keep"], exitCode: 1 };
+    expect(await installStreamPkg(path, tgz, { ...opts, installs: 2 })).toEqual([failed, failed]);
   });
 });

@@ -16,6 +16,7 @@ pub fn sort_indices_unstable(indices: &mut [u32], cmp: &mut dyn FnMut(u32, u32) 
 }
 
 /// `0..len` as a `Vec<u32>`, the usual starting point for the sorts above.
+#[inline(never)]
 pub fn identity(len: usize) -> Vec<u32> {
     (0..u32::try_from(len).expect("index sort length fits u32")).collect()
 }

@@ -6,6 +6,8 @@ import { access, appendFile, copyFile, mkdir, readlink, rm, writeFile } from "fs
 import {
   bunExe,
   bunEnv as env,
+  hostedGitRepository,
+  isWindows,
   readdirSorted,
   tempDir,
   tmpdirSync,
@@ -15,7 +17,7 @@ import {
 } from "harness";
 import { createServer } from "http";
 import type { AddressInfo } from "net";
-import { join, relative, resolve } from "path";
+import { basename, join, relative, resolve } from "path";
 import { pathToFileURL } from "url";
 import {
   check_npm_auth_type,
@@ -61,36 +63,6 @@ beforeAll(async () => {
 });
 function githubEnv() {
   return { ...env, GITHUB_API_URL: root_url };
-}
-
-/**
- * A git repository on disk standing in for one on a real host. The specifier stays the real one: bun has to turn it
- * into `clone_url`, which git then rewrites to the local repository (`url.<base>.insteadOf`). A `bun add` spawned with
- * the returned `env` cannot reach the host: git refuses every transport but `file`.
- */
-async function hostedGitRepository(clone_url: string, files: Record<string, string>) {
-  const dir = tempDir("git-dep-hosted", files);
-  await $`git init -q && git add -A && git commit -q -m init --no-gpg-sign`
-    .cwd(String(dir))
-    .env({
-      ...env,
-      GIT_CONFIG_NOSYSTEM: "1",
-      GIT_AUTHOR_NAME: "Test",
-      GIT_AUTHOR_EMAIL: "test@example.com",
-      GIT_COMMITTER_NAME: "Test",
-      GIT_COMMITTER_EMAIL: "test@example.com",
-    })
-    .quiet();
-  return {
-    env: {
-      ...env,
-      GIT_ALLOW_PROTOCOL: "file",
-      GIT_CONFIG_COUNT: "1",
-      GIT_CONFIG_KEY_0: `url.${pathToFileURL(String(dir)).href}.insteadOf`,
-      GIT_CONFIG_VALUE_0: clone_url,
-    },
-    [Symbol.dispose]: () => dir[Symbol.dispose](),
-  };
 }
 
 expect.extend({
@@ -1708,8 +1680,50 @@ for (const { desc, dep } of gitNameTests) {
   });
 }
 
+// https://github.com/oven-sh/bun/issues/13891
+describe("a git URL that is not GitHub's", () => {
+  // The clone fails without the network: ssh is `false`, and `:some` is no port number for https.
+  async function addAndFailToClone(dep: string) {
+    await Bun.write(join(package_dir, "package.json"), JSON.stringify({ name: "foo" }));
+    await using proc = spawn({
+      cmd: [bunExe(), "add", dep],
+      cwd: package_dir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env: { ...env, GIT_SSH_COMMAND: "false", GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "false" },
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode };
+  }
+
+  it.each([
+    ["mypkg", "git://bun-13891.invalid:some/repo.git"],
+    ["mypkg", "git+ssh://bun-13891.invalid:some/repo.git"],
+    ["mypkg", "git+ssh://git@bun-13891.invalid:some/repo.git#ref"],
+    ["mypkg", "git+file:///bun-13891/repo.git"],
+    ["mypkg", "git+https://bun-13891.invalid:some/repo.git"],
+    ["@myorg/tool", "git+ssh://bun-13891.invalid:some/repo.git"],
+    ["@myorg/tool", "git+https://bun-13891.invalid:some/repo.git"],
+  ])("%s@%s keeps its alias", async (name, url) => {
+    const { stderr, exitCode } = await addAndFailToClone(`${name}@${url}`);
+    expect(stderr).not.toContain("unrecognised dependency format");
+    // With the alias dropped, the whole positional is the name.
+    expect(stderr).toContain(`"git clone" for "${name}" failed`);
+    expect(exitCode).toBe(1);
+  });
+
+  // The `git` of `git@host:path` is the ssh user.
+  it("an scp-style URL has no alias", async () => {
+    const dep = "git@localhost:some/repo.git";
+    const { stderr, exitCode } = await addAndFailToClone(dep);
+    expect(stderr).not.toContain("unrecognised dependency format");
+    expect(stderr).toContain(`"git clone" for "${dep}" failed`);
+    expect(exitCode).toBe(1);
+  });
+});
+
 it("git dep without package.json and with default branch", async () => {
-  using repo = await hostedGitRepository("https://git@github.com/dylan-conway/install-test-no-packagejson", {
+  using repo = await hostedGitRepository(["https://git@github.com/dylan-conway/install-test-no-packagejson"], {
     "index.js": "",
   });
   await Bun.write(
@@ -1974,7 +1988,7 @@ it("should install version tagged with `latest` by default", async () => {
 it("should handle Git URL in dependencies (SCP-style)", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
-  using repo = await hostedGitRepository("https://bun@github.com/mishoo/UglifyJS.git", uglifyJsRepositoryFiles);
+  using repo = await hostedGitRepository(["https://bun@github.com/mishoo/UglifyJS.git"], uglifyJsRepositoryFiles);
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({
@@ -2681,6 +2695,303 @@ it("should add local tarball dependency", async () => {
     await access(join(package_dir, "bun.lockb")));
 });
 
+describe("a relative local path typed from a directory below package.json", () => {
+  const posix = (path: string) => path.replaceAll("\\", "/");
+
+  async function run(cwd: string, command: "add" | "install", ...positionals: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), command, ...positionals],
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // `add_dir` is the local package; `package_dir/src/nested` is the cwd.
+  async function makeNestedCwd() {
+    await writeFile(join(add_dir, "package.json"), JSON.stringify({ name: "lib", version: "1.0.0" }));
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "app", version: "0.0.1" }));
+    const cwd = join(package_dir, "src", "nested");
+    await mkdir(cwd, { recursive: true });
+    return cwd;
+  }
+
+  // `file:/`, `file://` and `file:///` before a `..` path are spellings of `file:`.
+  it.each([
+    ["add", "", "lib", ""],
+    ["add", "file:", "lib", "file:"],
+    ["add", "file:/", "lib", "file:"],
+    ["add", "file://", "lib", "file:"],
+    ["add", "file:///", "lib", "file:"],
+    ["add", "mylib@", "mylib", ""],
+    ["add", "mylib@file:", "mylib", "file:"],
+    ["install", "", "lib", ""],
+  ] as const)(
+    "bun %s %s<folder> resolves against the cwd and is written relative to package.json",
+    async (command, typedPrefix, key, writtenPrefix) => {
+      const cwd = await makeNestedCwd();
+
+      const { stdout, stderr, exitCode } = await run(cwd, command, typedPrefix + posix(relative(cwd, add_dir)));
+      expect(stderr).not.toContain("error:");
+      expect(stdout).toContain(`installed ${key}@`);
+      expect(await file(join(package_dir, "package.json")).json()).toEqual({
+        name: "app",
+        version: "0.0.1",
+        dependencies: { [key]: writtenPrefix + posix(relative(package_dir, add_dir)) },
+      });
+      expect(await file(join(package_dir, "node_modules", key, "package.json")).json()).toEqual({
+        name: "lib",
+        version: "1.0.0",
+      });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  it.each([
+    ["../../vendor/baz-0.0.3.tgz", "./vendor/baz-0.0.3.tgz"],
+    ["file:../../vendor/baz-0.0.3.tgz", "file:./vendor/baz-0.0.3.tgz"],
+    ["file://../../vendor/baz-0.0.3.tgz", "file:./vendor/baz-0.0.3.tgz"],
+  ])("the local tarball %s resolves against the cwd and is written as %s", async (typed, written) => {
+    const cwd = await makeNestedCwd();
+    await mkdir(join(package_dir, "vendor"));
+    await copyFile(join(__dirname, "baz-0.0.3.tgz"), join(package_dir, "vendor", "baz-0.0.3.tgz"));
+
+    const { stdout, stderr, exitCode } = await run(cwd, "add", typed);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("installed baz@");
+    expect(await file(join(package_dir, "package.json")).json()).toEqual({
+      name: "app",
+      version: "0.0.1",
+      dependencies: { baz: written },
+    });
+    expect((await file(join(package_dir, "node_modules", "baz", "package.json")).json()).version).toBe("0.0.3");
+    expect(exitCode).toBe(0);
+  });
+
+  it.each([
+    ["bar", "lib"],
+    ["lib", "bar"],
+  ] as const)("a registry package and a folder are both added, in the order typed (%s, %s)", async (...order) => {
+    const cwd = await makeNestedCwd();
+    setHandler(dummyRegistry([]));
+    const positionals = { bar: "bar", lib: posix(relative(cwd, add_dir)) };
+    const installed = { bar: "installed bar@0.0.2", lib: `installed lib@${posix(relative(package_dir, add_dir))}` };
+
+    const { stdout, stderr, exitCode } = await run(cwd, "add", ...order.map(name => positionals[name]));
+    expect(stderr).not.toContain("error:");
+    expect(stdout.split(/\r?\n/).filter(line => line.startsWith("installed "))).toEqual(
+      order.map(name => installed[name]),
+    );
+    expect(await file(join(package_dir, "package.json")).json()).toEqual({
+      name: "app",
+      version: "0.0.1",
+      dependencies: { bar: "^0.0.2", lib: posix(relative(package_dir, add_dir)) },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("the nearest package.json is a workspace member", async () => {
+    await writeFile(join(add_dir, "package.json"), JSON.stringify({ name: "lib", version: "1.0.0" }));
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "root", workspaces: ["packages/*"] }));
+    const member = join(package_dir, "packages", "member");
+    const cwd = join(member, "src");
+    await mkdir(cwd, { recursive: true });
+    await writeFile(join(member, "package.json"), JSON.stringify({ name: "member" }));
+
+    const { stderr, exitCode } = await run(cwd, "add", posix(relative(cwd, add_dir)));
+    expect(stderr).not.toContain("error:");
+    expect(await file(join(member, "package.json")).json()).toEqual({
+      name: "member",
+      dependencies: { lib: posix(relative(member, add_dir)) },
+    });
+    expect(await file(join(package_dir, "package.json")).json()).toEqual({ name: "root", workspaces: ["packages/*"] });
+    expect(exitCode).toBe(0);
+  });
+
+  // From `package_dir/src`, `../<name>` is `package_dir/<name>`. From `package_dir` it is `add_dir`, another package.
+  it("a path that names another package relative to package.json installs the one the cwd names", async () => {
+    const name = basename(add_dir);
+    await writeFile(join(add_dir, "package.json"), JSON.stringify({ name: "lib", version: "1.0.0" }));
+    await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "app", version: "0.0.1" }));
+    await mkdir(join(package_dir, name));
+    await writeFile(join(package_dir, name, "package.json"), JSON.stringify({ name: "lib", version: "2.0.0" }));
+    const cwd = join(package_dir, "src");
+    await mkdir(cwd);
+
+    const { stderr, exitCode } = await run(cwd, "add", `../${name}`);
+    expect(stderr).not.toContain("error:");
+    expect(await file(join(package_dir, "package.json")).json()).toEqual({
+      name: "app",
+      version: "0.0.1",
+      dependencies: { lib: `./${name}` },
+    });
+    expect(await file(join(package_dir, "node_modules", "lib", "package.json")).json()).toEqual({
+      name: "lib",
+      version: "2.0.0",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("a path that exists only relative to package.json is not found", async () => {
+    const cwd = await makeNestedCwd();
+    const vendored = join(package_dir, "vendor", "inner");
+    await mkdir(vendored, { recursive: true });
+    await writeFile(join(vendored, "package.json"), JSON.stringify({ name: "inner", version: "1.0.0" }));
+
+    const { stderr, exitCode } = await run(cwd, "add", "./vendor/inner");
+    expect(stderr).toContain('error: Could not find package.json for "file:src/nested/vendor/inner"');
+    expect(await file(join(package_dir, "package.json")).json()).toEqual({ name: "app", version: "0.0.1" });
+    expect(exitCode).toBe(1);
+  });
+
+  it("a directory named like a tarball keeps its trailing slash and is added as a folder", async () => {
+    const cwd = await makeNestedCwd();
+    const vendored = join(package_dir, "vendor", "lib.tgz");
+    await mkdir(vendored, { recursive: true });
+    await writeFile(join(vendored, "package.json"), JSON.stringify({ name: "lib", version: "3.0.0" }));
+
+    const { stderr, exitCode } = await run(cwd, "add", "../../vendor/lib.tgz/");
+    expect(stderr).not.toContain("error:");
+    expect(await file(join(package_dir, "package.json")).json()).toEqual({
+      name: "app",
+      version: "0.0.1",
+      dependencies: { lib: "./vendor/lib.tgz/" },
+    });
+    expect(await file(join(package_dir, "node_modules", "lib", "package.json")).json()).toEqual({
+      name: "lib",
+      version: "3.0.0",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // A Windows command line cannot carry a path longer than the path buffer.
+  it.skipIf(isWindows)("a path that does not fit a path buffer once joined with the cwd is an error", async () => {
+    const cwd = await makeNestedCwd();
+    const typed = "./" + Buffer.alloc(6000, "a").toString();
+
+    const { stderr, exitCode } = await run(cwd, "add", typed);
+    expect(stderr).toContain(`error: Dependency "${typed}" has an unsafe folder path`);
+    expect(await file(join(package_dir, "package.json")).json()).toEqual({ name: "app", version: "0.0.1" });
+    expect(exitCode).toBe(1);
+  });
+
+  it.skipIf(isWindows)("a path whose re-spelled form does not fit a path buffer is an error", async () => {
+    const app = join(package_dir, "a", "b", "c", "d", "e", "f");
+    const cwd = join(app, "src");
+    await mkdir(cwd, { recursive: true });
+    await writeFile(join(app, "package.json"), JSON.stringify({ name: "app", version: "0.0.1" }));
+    // The absolute form fits a path buffer. It does not fit after the `../` segments that lead out of `app`.
+    const maxPathBytes = process.platform === "linux" ? 4096 : 1024;
+    const name = Buffer.alloc(maxPathBytes - 8 - (add_dir.length + 1), "a").toString();
+    const typed = `${posix(relative(cwd, add_dir))}/${name}`;
+
+    const { stderr, exitCode } = await run(cwd, "add", typed);
+    expect(stderr).toContain(`error: Dependency "${typed}" has an unsafe folder path`);
+    expect(await file(join(app, "package.json")).json()).toEqual({ name: "app", version: "0.0.1" });
+    expect(exitCode).toBe(1);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/5682
+describe("-g and a relative local path", () => {
+  const files = {
+    "pkg/package.json": JSON.stringify({ name: "mypkg", version: "1.0.0", bin: { mypkg: "./cli.js" } }),
+    "pkg/cli.js": "#!/usr/bin/env node\n",
+    "sibling/.keep": "",
+  };
+
+  async function runGlobal(home: string, cwd: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...env,
+        HOME: home,
+        BUN_INSTALL: join(home, ".bun"),
+        BUN_INSTALL_GLOBAL_DIR: join(home, ".bun", "install", "global"),
+        BUN_INSTALL_BIN: join(home, ".bun", "bin"),
+        BUN_INSTALL_CACHE_DIR: join(home, ".bun", "install", "cache"),
+      },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const posix = (path: string) => path.replaceAll("\\", "/");
+
+  // The first `bun add -g` finds no global package.json, creates it and starts over, from the global directory.
+  it.each([
+    ["install", "pkg", ".", ""],
+    ["install", "pkg", "./", "/"],
+    ["install", "pkg", "file:.", ""],
+    ["add", "pkg", ".", ""],
+    ["add", "sibling", "../pkg", ""],
+    ["add", ".", "file:pkg", ""],
+    ["add", ".", "./pkg", ""],
+    ["add", ".", "alias@./pkg", ""],
+  ])("bun %s -g from %s: %s is the folder the cwd names", async (command, cwd, typed, suffix) => {
+    using dir = tempDir("bun-add-global-relative", files);
+    const home = String(dir);
+    const key = typed.startsWith("alias@") ? "alias" : "mypkg";
+    const prefix = typed.includes("file:") ? "file:" : "";
+
+    const { stdout, stderr, exitCode } = await runGlobal(home, join(home, cwd), command, "-g", typed);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain(`installed ${key}@`);
+    expect(await file(join(home, ".bun", "install", "global", "package.json")).json()).toEqual({
+      dependencies: { [key]: prefix + posix(join(home, "pkg")) + suffix },
+    });
+    expect(await readdirSorted(join(home, ".bun", "install", "global", "node_modules", key))).toEqual([
+      "cli.js",
+      "package.json",
+    ]);
+    expect(join(home, ".bun", "bin", "mypkg")).toBeValidBin(
+      join("..", "install", "global", "node_modules", key, "cli.js"),
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  it("a local tarball", async () => {
+    using dir = tempDir("bun-add-global-relative-tgz", files);
+    const home = String(dir);
+    await copyFile(join(__dirname, "baz-0.0.3.tgz"), join(home, "sibling", "baz-0.0.3.tgz"));
+
+    const { stdout, stderr, exitCode } = await runGlobal(
+      home,
+      join(home, "pkg"),
+      "add",
+      "-g",
+      "../sibling/baz-0.0.3.tgz",
+    );
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("installed baz@");
+    expect(await file(join(home, ".bun", "install", "global", "package.json")).json()).toEqual({
+      dependencies: { baz: posix(join(home, "sibling", "baz-0.0.3.tgz")) },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("a path that is not there leaves the global package.json usable", async () => {
+    using dir = tempDir("bun-add-global-relative-missing", files);
+    const home = String(dir);
+
+    const missing = await runGlobal(home, join(home, "sibling"), "add", "-g", "./pkg");
+    expect(missing.stderr).toContain("error: Could not find package.json for");
+    expect(missing.exitCode).toBe(1);
+
+    const { stderr, exitCode } = await runGlobal(home, join(home, "pkg"), "add", "-g", ".");
+    expect(stderr).not.toContain("error:");
+    expect(await file(join(home, ".bun", "install", "global", "package.json")).json()).toEqual({
+      dependencies: { mypkg: posix(join(home, "pkg")) },
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
 it("should not add duplicate package.json entries when installing the same local folder twice (#30933)", async () => {
   setHandler(dummyRegistry([]));
   // `add_dir` is a fresh tmpdir created in beforeEach; use it as the local dep source.
@@ -3284,11 +3595,12 @@ describe("should move existing dependency when an explicit group flag is given",
     initial: Record<string, unknown> | string,
     args: string[],
     registry: Record<string, unknown> = { "0.0.2": {} },
+    command = "add",
   ) {
     setHandler(dummyRegistry([], registry));
     await writeFile(join(package_dir, "package.json"), typeof initial === "string" ? initial : pkgJson(initial));
     const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "add", ...args],
+      cmd: [bunExe(), command, ...args],
       cwd: package_dir,
       stdout: "pipe",
       stdin: "pipe",
@@ -3309,10 +3621,54 @@ describe("should move existing dependency when an explicit group flag is given",
     ["devDependencies", "optionalDependencies", "--optional"],
     ["optionalDependencies", "devDependencies", "--dev"],
     ["optionalDependencies", "peerDependencies", "--peer"],
+    ["devDependencies", "dependencies", "--save-prod"],
+    ["optionalDependencies", "dependencies", "--save-prod"],
   ])("%s -> %s with %s", async (from, to, flag) => {
     expect(await add({ ...root, [from]: { BaR: "^0.0.2" } }, [flag, "BaR"])).toBe(
       pkgJson({ ...root, [to]: { BaR: "^0.0.2" } }),
     );
+  });
+
+  it("--save-prod adds to dependencies and leaves a peerDependencies entry untouched", async () => {
+    const initial = { ...root, peerDependencies: { baz: ">=0.0.3" } };
+    expect(await add(initial, ["--save-prod", "baz"], { "0.0.3": {}, "0.0.5": {} })).toBe(
+      pkgJson({ ...root, peerDependencies: { baz: ">=0.0.3" }, dependencies: { baz: "^0.0.5" } }),
+    );
+  });
+
+  it("bun install --save-prod moves like bun add", async () => {
+    expect(
+      await add({ ...root, devDependencies: { BaR: "^0.0.2" } }, ["--save-prod", "BaR"], undefined, "install"),
+    ).toBe(pkgJson({ ...root, dependencies: { BaR: "^0.0.2" } }));
+  });
+
+  it("--save-prod gives way to the flag of another group", async () => {
+    expect(await add({ ...root, dependencies: { BaR: "^0.0.2" } }, ["--save-prod", "--dev", "BaR"])).toBe(
+      pkgJson({ ...root, devDependencies: { BaR: "^0.0.2" } }),
+    );
+  });
+
+  it("--save-prod does not move with --only-missing", async () => {
+    const initial = { ...root, devDependencies: { BaR: "^0.0.2" } };
+    expect(await add(initial, ["--save-prod", "--only-missing", "BaR"])).toBe(pkgJson(initial));
+  });
+
+  it.each(["remove", "update", "link"])("bun %s does not know --save-prod", async command => {
+    const initial = pkgJson({ ...root, devDependencies: { BaR: "^0.0.2" } });
+    await writeFile(join(package_dir, "package.json"), initial);
+    await using proc = spawn({
+      cmd: [bunExe(), command, "--save-prod", "BaR"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [err, , exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(err).toBe(
+      `error: bun ${command} has no --save-prod flag.\nnote: Run 'bun ${command} --help' for more information\n`,
+    );
+    expect(await file(join(package_dir, "package.json")).text()).toBe(initial);
+    expect(exitCode).toBe(1);
   });
 
   it("keeps the remaining entries of the source group in their original order", async () => {

@@ -35,6 +35,7 @@ _bun_add_completion() {
         '--development[]' \
         '--optional[Add dependency to "optionalDependencies]' \
         '--peer[Add dependency to "peerDependencies]' \
+        '--save-prod[Add dependency to "dependencies", also when another group lists it]' \
         '--exact[Add the exact version instead of the ^range]' \
         '--catalog=-[Add the resolved version to the root package.json catalog and depend on it as "catalog:"]:catalog' \
         '*--filter[Add the package(s) to the matching workspaces instead of the current package]:workspace pattern' \
@@ -403,6 +404,7 @@ _bun_install_completion() {
         '-D[]' \
         '--optional[Add dependency to "optionalDependencies]' \
         '--peer[Add dependency to "peerDependencies]' \
+        '--save-prod[Add dependency to "dependencies", also when another group lists it]' \
         '--exact[Add the exact version instead of the ^range]' \
         '--catalog=-[Add the resolved version to the root package.json catalog and depend on it as "catalog:"]:catalog' \
         '*--filter[Install packages for the matching workspaces]:workspace pattern' \

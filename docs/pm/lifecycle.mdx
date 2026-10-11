@@ -94,4 +94,18 @@ Or with npm's environment variable, for example in a CI job:
 NPM_CONFIG_IGNORE_SCRIPTS=true bun install
 ```
 
-The variable only turns scripts off: `false`, `0` and an empty value do not undo a config file. Bun does not read it from `.env` files.
+Bun reads the value like `ignore-scripts=<value>` in `.npmrc`, and ignores an empty one. The variable only turns scripts off: `false` and `0` do not undo a config file. Bun does not read it from `.env` files.
+
+---
+
+## Environment variables
+
+Like npm, Bun sets these variables for each lifecycle script:
+
+| Variable                                                      | Value                                                   |
+| ------------------------------------------------------------- | ------------------------------------------------------- |
+| `npm_lifecycle_event`                                         | The name of the script, such as `postinstall`           |
+| `npm_lifecycle_script`                                        | The command of the script                               |
+| `npm_package_json`, `npm_package_name`, `npm_package_version` | From the `package.json` of the package the script is in |
+| `npm_package_config_<key>`                                    | The strings in `config` of that `package.json`          |
+| `npm_config_local_prefix`, `INIT_CWD`                         | The project directory, and where `bun install` ran      |

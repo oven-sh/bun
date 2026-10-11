@@ -1,10 +1,13 @@
 import { spawnSync } from "bun";
+import { install_test_helpers } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, runBunInstall, tempDir, tempDirWithFiles } from "harness";
 import { existsSync, symlinkSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 import { constants } from "os";
 import { join } from "path";
+
+const { parseLockfile } = install_test_helpers;
 
 const cwd_root = tempDirWithFiles("testworkspace", {
   packages: {
@@ -1027,6 +1030,104 @@ describe("selectors", () => {
       antipattern: [/malformed1/],
     });
   });
+});
+
+describe.concurrent("a '!' entry in \"workspaces\"", () => {
+  // Every script prints the directory of its package. `other/*` is outside every entry: the
+  // paths equal those of members but for the first segment, and `!packages` is not a glob for
+  // "any directory but packages".
+  function fixture(workspaces: string[] | { packages: string[] }) {
+    const pkg = (dir: string, name: string, dependencies?: Record<string, string>) => ({
+      "package.json": JSON.stringify({ name, dependencies, scripts: { present: `echo ran:${dir}` } }),
+    });
+    return tempDir("filter-negated-workspaces", {
+      packages: {
+        app: pkg("packages/app", "app", { lib: "workspace:*" }),
+        lib: pkg("packages/lib", "lib"),
+        legacy: {
+          ...pkg("packages/legacy", "legacy", { lib: "workspace:*" }),
+          nested: pkg("packages/legacy/nested", "legacy-nested"),
+        },
+      },
+      other: { legacy: pkg("other/legacy", "other-legacy"), lib: pkg("other/lib", "other-lib") },
+      "package.json": JSON.stringify({ name: "ws", workspaces }),
+    });
+  }
+
+  async function run(cwd: string, args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", ...args, "present"],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { ran: [...stdout.matchAll(/ran:(\S+)/g)].map(m => m[1]).sort(), stderr, exitCode };
+  }
+
+  const selections = [
+    { args: ["--filter", "*"], ran: ["packages/app", "packages/lib"] },
+    { args: ["--workspaces"], ran: ["packages/app", "packages/lib"] },
+    { args: ["--filter", "./packages/*"], ran: ["packages/app", "packages/lib"] },
+    { args: ["--filter", "{packages}"], ran: ["packages/app", "packages/lib"] },
+    { args: ["--filter", "...lib"], ran: ["packages/app", "packages/lib"] },
+    { args: ["--filter", "l*"], ran: ["packages/lib"] },
+    { args: ["--parallel", "--filter", "*"], ran: ["packages/app", "packages/lib"] },
+    { args: ["--sequential", "--workspaces"], ran: ["packages/app", "packages/lib"] },
+  ];
+  test.each(selections.map(row => [row.args.join(" "), row] as const))(
+    "bun run %s skips the excluded package",
+    async (_, { args, ran }) => {
+      using dir = fixture(["packages/*", "!packages/legacy"]);
+      expect(await run(String(dir), args)).toMatchObject({ ran, exitCode: 0 });
+    },
+  );
+
+  test("the excluded package is not selectable by name", async () => {
+    using dir = fixture(["packages/*", "!packages/legacy"]);
+    const result = await run(String(dir), ["--filter", "legacy"]);
+    expect(result.stderr).toContain('error: No workspace packages matched the filter "legacy"');
+    expect(result).toMatchObject({ ran: [], exitCode: 1 });
+  });
+
+  async function installedMembers(cwd: string): Promise<string[]> {
+    await runBunInstall(bunEnv, cwd);
+    return Object.values<string>(parseLockfile(cwd).workspace_paths).sort();
+  }
+
+  const appAndLib = ["packages/app", "packages/lib"];
+  const configs: { workspaces: string[] | { packages: string[] }; members: string[] }[] = [
+    { workspaces: { packages: ["packages/*", "!packages/legacy"] }, members: appAndLib },
+    { workspaces: ["packages/*", "!**/legacy"], members: appAndLib },
+    { workspaces: ["packages/*", "!packages/{app,legacy}"], members: ["packages/lib"] },
+    {
+      workspaces: ["packages/**", "!packages/legacy"],
+      members: ["packages/app", "packages/legacy/nested", "packages/lib"],
+    },
+    // every spelling of the directory
+    { workspaces: ["./packages/*", "!./packages/legacy"], members: appAndLib },
+    { workspaces: ["packages/*", "!./packages/legacy"], members: appAndLib },
+    { workspaces: ["packages/*", "!packages/legacy/"], members: appAndLib },
+    { workspaces: ["packages/*", "!././packages/legacy//"], members: appAndLib },
+    // wherever the entry is in the array
+    { workspaces: ["!packages/legacy", "packages/*"], members: appAndLib },
+    { workspaces: ["!./packages/legacy/", "packages/*"], members: appAndLib },
+    { workspaces: ["packages/*", "!packages/legacy", "packages/leg*"], members: appAndLib },
+    // `dir/**` removes `dir` and everything below it
+    { workspaces: ["packages/**", "!packages/legacy/**"], members: appAndLib },
+    { workspaces: ["packages/*", "!packages/leg*/**"], members: appAndLib },
+    // a path that is listed as is stays
+    { workspaces: ["packages/lib", "!packages/lib"], members: ["packages/lib"] },
+  ];
+  test.each(configs.map(row => [JSON.stringify(row.workspaces), row] as const))(
+    "bun run and bun install find the same members for %s",
+    async (_, { workspaces, members }) => {
+      using dir = fixture(workspaces);
+      expect(await run(String(dir), ["--workspaces"])).toMatchObject({ ran: members, exitCode: 0 });
+      expect(await installedMembers(String(dir))).toEqual(members);
+    },
+  );
 });
 
 // #20319: on Windows, `bun --filter` / `bun run --parallel` spawn each script

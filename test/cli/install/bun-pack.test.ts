@@ -1340,6 +1340,35 @@ describe.concurrent("workspaces", () => {
     },
   );
 
+  test.each([
+    { input: "workspace:*", expected: "2.3.4" },
+    { input: "workspace:^", expected: "^2.3.4" },
+    { input: "workspace:~", expected: "~2.3.4" },
+    { input: "workspace:2.x", expected: "2.x" },
+    { input: "workspace:pack-workspace-root@^", expected: "^2.3.4" },
+  ])("replaces workspace: protocol naming the root package: $input", async ({ input, expected }) => {
+    using dir = tempDir("pack-workspace-protocol-root", {
+      "package.json": JSON.stringify({ name: "pack-workspace-root", version: "2.3.4", workspaces: ["pkgs/*"] }),
+      "pkgs/pkg1/package.json": JSON.stringify({
+        name: "pkg1",
+        version: "1.0.0",
+        dependencies: { "pack-workspace-root": input },
+      }),
+    });
+
+    const { err, exitCode } = await runPack(dir, [], join(dir, "pkgs", "pkg1"));
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+
+    const tarball = readTarball(join(dir, "pkgs", "pkg1", "pkg1-1.0.0.tgz"));
+    expect(entryNames(tarball)).toEqual(["package/package.json"]);
+    expect(JSON.parse(tarball.entries[0].contents)).toEqual({
+      name: "pkg1",
+      version: "1.0.0",
+      dependencies: { "pack-workspace-root": expected },
+    });
+  });
+
   test("resolves workspace:* from the workspace's package.json without a lockfile", async () => {
     using dir = tempDir("pack-workspace-protocol-no-lockfile", {
       "package.json": JSON.stringify({

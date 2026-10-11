@@ -1,6 +1,5 @@
 use core::mem::size_of;
 
-use bun_collections::DynamicBitSet as Bitset;
 #[cfg(debug_assertions)]
 use bun_core::strings;
 
@@ -365,37 +364,24 @@ where
 impl Buffers {
     pub(crate) fn legacy_package_to_dependency_id(
         &self,
-        dependency_visited: Option<&mut Bitset>,
         package_id: PackageID,
     ) -> crate::Result<DependencyID> {
         match package_id {
-            0 => return Ok(tree::ROOT_DEP_ID),
-            id if id == invalid_package_id => return Ok(invalid_package_id),
-            _ => {
-                // `dependency_visited` is captured once outside the loop
-                // instead of re-matched per iteration (borrowck).
-                let mut visited = dependency_visited;
-                for (dep_id, &pkg_id) in self.resolutions.iter().enumerate() {
-                    if pkg_id == package_id {
-                        if let Some(visited) = visited.as_deref_mut() {
-                            if visited.is_set(dep_id) {
-                                continue;
-                            }
-                            visited.set(dep_id);
-                        }
-                        return Ok(dep_id as DependencyID);
-                    }
-                }
-            }
+            0 => Ok(tree::ROOT_DEP_ID),
+            id if id == invalid_package_id => Ok(invalid_package_id),
+            _ => (self.resolutions.iter())
+                .position(|&pkg_id| pkg_id == package_id)
+                .map(|dep_id| dep_id as DependencyID)
+                .ok_or(crate::Error::LockfileIsMissingResolutionData),
         }
-        Err(crate::Error::LockfileIsMissingResolutionData)
     }
 }
 
 pub(crate) fn load(
     stream: &mut Stream,
     log: &mut bun_ast::Log,
-    pm_: Option<&mut PackageManager>,
+    pm_: Option<&PackageManager>,
+    packages_len: usize,
 ) -> crate::Result<Buffers> {
     let mut this = Buffers::default();
     let external_dependency_list_: Vec<dependency::External>;
@@ -406,7 +392,7 @@ pub(crate) fn load(
     macro_rules! load_generic_field {
         ($field:ident, $name:literal, $elem:ty) => {{
             this.$field = read_array::<$elem>(stream)?;
-            if let Some(pm) = pm_.as_deref() {
+            if let Some(pm) = pm_ {
                 if pm.options.log_level.is_verbose() {
                     bun_core::pretty_errorln!("Loaded {} {}", this.$field.len(), $name);
                 }
@@ -435,7 +421,7 @@ pub(crate) fn load(
     // -- dependencies --
     {
         external_dependency_list_ = read_array::<dependency::External>(stream)?;
-        if let Some(pm) = pm_.as_deref() {
+        if let Some(pm) = pm_ {
             if pm.options.log_level.is_verbose() {
                 bun_core::pretty_errorln!(
                     "Loaded {} {}",
@@ -461,7 +447,6 @@ pub(crate) fn load(
         log,
         // allocator dropped — global mimalloc
         buffer: string_buf,
-        package_manager: pm_,
     };
     // `set_len` then `as_mut_slice()` would form `&mut Dependency` to
     // uninitialized memory (UB even when write-only), so we push into the
@@ -474,28 +459,55 @@ pub(crate) fn load(
 
     // Legacy tree structure stores package IDs instead of dependency IDs
     if !this.trees.is_empty() && this.trees[0].dependency_id != tree::ROOT_DEP_ID {
-        let mut visited = Bitset::init_empty(this.dependencies.len())?;
-        // Iterate by index so
-        // `legacy_package_to_dependency_id` can borrow `&self` while we hold
-        // `&mut this.trees[i]`.
-        for i in 0..this.trees.len() {
-            let package_id = this.trees[i].dependency_id;
-            this.trees[i].dependency_id =
-                this.legacy_package_to_dependency_id(Some(&mut visited), package_id)?;
+        // Each mention of a package is the next dependency that resolves to it: `first[package]`, `next[dependency]`.
+        let mut first: Vec<DependencyID> = vec![invalid_package_id; packages_len];
+        let mut next: Vec<DependencyID> = vec![invalid_package_id; this.resolutions.len()];
+        for (dependency_id, &package_id) in this.resolutions.iter().enumerate().rev() {
+            if let Some(head) = first.get_mut(package_id as usize) {
+                next[dependency_id] = *head;
+                *head = dependency_id as DependencyID;
+            }
         }
-        visited.set_range_value(
-            bun_collections::bit_set::Range {
-                start: 0,
-                end: this.dependencies.len(),
-            },
-            false,
-        );
-        for i in 0..this.hoisted_dependencies.len() {
-            let pid = this.hoisted_dependencies[i];
-            this.hoisted_dependencies[i] =
-                this.legacy_package_to_dependency_id(Some(&mut visited), pid)?;
+        let take = |heads: &mut [DependencyID], id: &mut u32| -> crate::Result<()> {
+            if *id == 0 {
+                *id = tree::ROOT_DEP_ID;
+            } else if *id != invalid_package_id {
+                let head = (heads.get_mut(*id as usize))
+                    .filter(|head| **head != invalid_package_id)
+                    .ok_or(crate::Error::LockfileIsMissingResolutionData)?;
+                *id = *head;
+                *head = next[*id as usize];
+            }
+            Ok(())
+        };
+        let mut heads = first.clone();
+        for tree in &mut this.trees {
+            take(&mut heads, &mut tree.dependency_id)?;
         }
-        // `visited` drops here.
+        for id in &mut this.hoisted_dependencies {
+            take(&mut first, id)?;
+        }
+
+        // Those writers (before v0.5.7) also left unused slots in the list and gave the root no id.
+        let mut kept: tree::Id = 0;
+        let new_ids: Vec<tree::Id> = (this.trees.iter())
+            .map(|tree| {
+                let id = kept;
+                kept += tree::Id::from(tree.id != tree::INVALID_ID);
+                id
+            })
+            .collect();
+        this.trees.retain(|tree| tree.id != tree::INVALID_ID);
+        for tree in &mut this.trees {
+            for id in [&mut tree.id, &mut tree.parent] {
+                if *id != tree::INVALID_ID {
+                    *id = *(new_ids.get(*id as usize)).ok_or(crate::Error::InvalidLockfile)?;
+                }
+            }
+        }
+        if let Some(root) = this.trees.first_mut() {
+            root.dependency_id = tree::ROOT_DEP_ID;
+        }
     }
 
     Ok(this)

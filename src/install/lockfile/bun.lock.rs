@@ -17,7 +17,6 @@ use crate::config_version::ConfigVersion;
 use crate::extract_tarball as ExtractTarball;
 use crate::integrity::Integrity;
 use crate::npm::Negatable;
-use crate::package_manager_real::Options as PackageManagerOptions;
 use crate::repository::RepositoryExt as _;
 use crate::{
     DependencyID, Npm, Origin, PackageID, PackageManager, PackageNameHash, Repository, Resolution,
@@ -302,7 +301,7 @@ impl Stringifier {
     pub(crate) fn save_from_binary(
         lockfile: &mut BinaryLockfile,
         load_result: &LoadResult,
-        options: &PackageManagerOptions,
+        config_version: ConfigVersion,
         writer: &mut Writer,
     ) -> Result<(), WriteError> {
         let buf = lockfile.buffers.string_bytes.as_slice();
@@ -381,8 +380,6 @@ impl Stringifier {
             writeln!(writer, "\"lockfileVersion\": {},", lockfile_version as u32)?;
             Self::write_indent(writer, *indent)?;
 
-            let config_version: ConfigVersion =
-                options.config_version.unwrap_or(ConfigVersion::CURRENT);
             writeln!(writer, "\"configVersion\": {},", config_version as u32)?;
             Self::write_indent(writer, *indent)?;
 
@@ -669,6 +666,18 @@ impl Stringifier {
                 writer.write_all(b"},\n")?;
             }
 
+            if !lockfile.package_extensions.applied.is_empty() {
+                Self::write_indent(writer, *indent)?;
+                writer.write_all(b"\"packageExtensions\": {\n")?;
+                *indent += 1;
+                for line in lockfile.package_extension_lines() {
+                    Self::write_indent(writer, *indent)?;
+                    writer.write_all(&line)?;
+                }
+                Self::dec_indent(writer, indent)?;
+                writer.write_all(b"},\n")?;
+            }
+
             let mut tree_deps_sort_buf: Vec<DependencyID> = Vec::new();
             let mut pkg_deps_sort_buf: Vec<DependencyID> = Vec::new();
             let mut pkg_key_buf: Vec<u8> = Vec::new();
@@ -694,20 +703,8 @@ impl Stringifier {
                     }
 
                     let res = &pkg_resolutions[pkg_id as usize];
-                    match res.tag {
-                        ResolutionTag::Root
-                        | ResolutionTag::Npm
-                        | ResolutionTag::Folder
-                        | ResolutionTag::LocalTarball
-                        | ResolutionTag::Github
-                        | ResolutionTag::Git
-                        | ResolutionTag::Symlink
-                        | ResolutionTag::Workspace
-                        | ResolutionTag::RemoteTarball => {}
-                        ResolutionTag::Uninitialized => continue,
-                        // should not be possible, just being safe
-                        ResolutionTag::SingleFileModule => continue,
-                        _ => continue,
+                    if !res.tag.belongs_in_lockfile() {
+                        continue;
                     }
 
                     if first {
@@ -1904,7 +1901,7 @@ pub(crate) fn parse_into_binary_lockfile(
     root: JSON::Expr,
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
-    mut manager: Option<&mut PackageManager>,
+    manager: Option<&PackageManager>,
 ) -> Result<(), ParseError> {
     lockfile.init_empty();
 
@@ -2037,6 +2034,12 @@ pub(crate) fn parse_into_binary_lockfile(
         }
     }
 
+    if let Some(package_extensions_expr) = root.get(b"packageExtensions") {
+        lockfile
+            .package_extensions
+            .parse_applied(&package_extensions_expr);
+    }
+
     if let Some(overrides_expr) = root.get(b"overrides") {
         if !overrides_expr.is_object() {
             log.add_error(
@@ -2066,7 +2069,6 @@ pub(crate) fn parse_into_binary_lockfile(
                         version_str,
                         &mut sbuf!(lockfile),
                         &mut *log,
-                        manager.as_deref_mut(),
                     )
                     .map_err(|_| ParseError::OutOfMemory)?;
                 if !ok {
@@ -2127,7 +2129,6 @@ pub(crate) fn parse_into_binary_lockfile(
                         version_str,
                         &mut sbuf!(lockfile),
                         &mut *log,
-                        manager.as_deref_mut(),
                     )
                     .map_err(|_| ParseError::OutOfMemory)?;
                 if !ok {
@@ -2184,7 +2185,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     version_sliced.slice,
                     &version_sliced,
                     &mut *log,
-                    manager.as_deref_mut(),
+                    None,
                 ) {
                     Some(v) => v,
                     None => {
@@ -2282,7 +2283,7 @@ pub(crate) fn parse_into_binary_lockfile(
                         version_sliced.slice,
                         &version_sliced,
                         &mut *log,
-                        manager.as_deref_mut(),
+                        None,
                     ) {
                         Some(v) => v,
                         None => {
@@ -2323,6 +2324,8 @@ pub(crate) fn parse_into_binary_lockfile(
     };
 
     let mut maybe_root_pkg: Option<Expr> = None;
+    // The row of each name, in the order of `workspace_paths`. Of a name that is listed twice, the last one.
+    let mut member_rows: Vec<&JSON::E::PropertyJSON> = Vec::new();
 
     for row in object_rows(&workspaces_obj) {
         if row.value.as_object().is_none() {
@@ -2365,9 +2368,13 @@ pub(crate) fn parse_into_binary_lockfile(
             return Err(ParseError::InvalidWorkspaceObject);
         };
 
-        lockfile
+        let listed_before = lockfile
             .workspace_paths
             .insert(name_hash, sbuf!(lockfile).append(path)?);
+        match listed_before.and_then(|_| lockfile.workspace_paths.get_index(&name_hash)) {
+            Some(index) => member_rows[index] = row,
+            None => member_rows.push(row),
+        }
 
         // versions are optional
         if let Some(version_expr) = value.get(b"version") {
@@ -2438,6 +2445,8 @@ pub(crate) fn parse_into_binary_lockfile(
             None
         };
 
+        let packages_obj = root.get(b"packages");
+        let package_rows: &[JSON::E::PropertyJSON] = packages_obj.as_ref().map_or(&[], object_rows);
         let (off, len) = parse_append_dependencies::<false, true>(
             lockfile,
             &root_pkg_exr,
@@ -2446,7 +2455,7 @@ pub(crate) fn parse_into_binary_lockfile(
             &mut optional_peers_buf,
             None,
             None,
-            Some(&workspaces_obj),
+            Some((member_rows.as_slice(), package_rows)),
             true,
         )?;
 
@@ -2462,6 +2471,9 @@ pub(crate) fn parse_into_binary_lockfile(
         root_pkg.resolutions = PackageIDSlice::new(off, len);
 
         root_pkg.meta.id = 0;
+        root_pkg.meta.origin = Origin::Local;
+        // Before the packages are read, so that a `<name>@root:` entry is this package and not a second one.
+        root_pkg.resolution = Resolution::init(crate::resolution::TaggedValue::Root);
         let root_name_hash = root_pkg.name_hash;
         lockfile.packages.append(root_pkg)?;
         lockfile.get_or_put_id(0, root_name_hash)?;
@@ -2474,83 +2486,54 @@ pub(crate) fn parse_into_binary_lockfile(
 
     if lockfile_version != Version::V0 {
         // these are the `workspaceOnly` packages
-        // snapshot the workspace-path handles up front so the loop
-        // body can take `&mut *lockfile` (`parse_append_dependencies`,
-        // `append_package_dedupe`) without conflicting with the
-        // `workspace_paths.values()` iterator borrow. `String` is `Copy`.
-        let workspace_path_snapshot: Vec<String> = lockfile.workspace_paths.values().to_vec();
-        'workspaces: for workspace_path in &workspace_path_snapshot {
-            for row in object_rows(&workspaces_obj) {
-                let path = row.key.slice();
-                if !strings::eql_long(
-                    path,
-                    workspace_path.slice(lockfile.buffers.string_bytes.as_slice()),
-                    true,
-                ) {
-                    continue;
-                }
-                let value = Expr::from_json_value(&row.value, row.key_loc);
+        for row in &member_rows {
+            let value = Expr::from_json_value(&row.value, row.key_loc);
 
-                let mut pkg = Package {
-                    resolution: Resolution::init(crate::resolution::TaggedValue::Workspace(
-                        sbuf!(lockfile).append(path)?,
-                    )),
-                    ..Default::default()
-                };
+            let mut pkg = Package {
+                resolution: Resolution::init(crate::resolution::TaggedValue::Workspace(
+                    sbuf!(lockfile).append(row.key.slice())?,
+                )),
+                ..Default::default()
+            };
 
-                let name_expr = value.get(b"name").unwrap();
-                let name = name_expr
-                    .as_utf8_string_literal()
-                    .expect("infallible: is_string checked");
-                let name_hash = StringBuilder::string_hash(name);
+            let name_expr = value.get(b"name").unwrap();
+            let name = name_expr
+                .as_utf8_string_literal()
+                .expect("infallible: is_string checked");
+            let name_hash = StringBuilder::string_hash(name);
 
-                pkg.name = sbuf!(lockfile).append_with_hash(name, name_hash)?;
-                pkg.name_hash = name_hash;
+            pkg.name = sbuf!(lockfile).append_with_hash(name, name_hash)?;
+            pkg.name_hash = name_hash;
 
-                let (off, len) = parse_append_dependencies::<false, false>(
-                    lockfile,
-                    &value,
-                    &mut *log,
-                    source,
-                    &mut optional_peers_buf,
-                    None,
-                    None,
-                    None,
-                    true,
+            let (off, len) = parse_append_dependencies::<false, false>(
+                lockfile,
+                &value,
+                &mut *log,
+                source,
+                &mut optional_peers_buf,
+                None,
+                None,
+                None,
+                true,
+            )?;
+
+            pkg.dependencies = DependencySlice::new(off, len);
+            pkg.resolutions = PackageIDSlice::new(off, len);
+
+            if let Some(bin_expr) = value.get(b"bin") {
+                pkg.bin = Bin::parse_append(
+                    &bin_expr,
+                    &mut sbuf!(lockfile),
+                    &mut lockfile.buffers.extern_strings,
                 )?;
-
-                pkg.dependencies = DependencySlice::new(off, len);
-                pkg.resolutions = PackageIDSlice::new(off, len);
-
-                if let Some(bin_expr) = value.get(b"bin") {
-                    pkg.bin = Bin::parse_append(
-                        &bin_expr,
-                        &mut sbuf!(lockfile),
-                        &mut lockfile.buffers.extern_strings,
-                    )?;
-                } else if let Some(bin_dir_expr) = value.get(b"binDir") {
-                    pkg.bin =
-                        Bin::parse_append_from_directories(&bin_dir_expr, &mut sbuf!(lockfile))?;
-                }
-
-                // there should be no duplicates
-                let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
-
-                let entry = pkg_map.get_or_put(name)?;
-                if entry.found_existing {
-                    log.add_error_fmt(
-                        source,
-                        row.key_loc,
-                        format_args!("Duplicate workspace name: '{}'", bstr::BStr::new(name)),
-                    );
-                    return Err(ParseError::InvalidWorkspaceObject);
-                }
-
-                *entry.value_ptr = pkg_id;
-
-                workspace_pkgs_len += 1;
-                continue 'workspaces;
+            } else if let Some(bin_dir_expr) = value.get(b"binDir") {
+                pkg.bin = Bin::parse_append_from_directories(&bin_dir_expr, &mut sbuf!(lockfile))?;
             }
+
+            // there should be no duplicates
+            let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
+            pkg_map.put(name, pkg_id);
+            workspace_pkgs_len += 1;
         }
     }
 
@@ -2716,7 +2699,7 @@ pub(crate) fn parse_into_binary_lockfile(
 
                 if registry_str.is_empty() {
                     // Use scope-specific registry if available, otherwise fall back to default
-                    let registry_url = if let Some(mgr) = manager.as_deref() {
+                    let registry_url = if let Some(mgr) = manager {
                         mgr.scope_for_package_name(name_str).url.href()
                     } else {
                         Npm::Registry::DEFAULT_URL.as_bytes()
@@ -2733,7 +2716,7 @@ pub(crate) fn parse_into_binary_lockfile(
 
                     res.npm_mut().url = sbuf!(lockfile).append(url)?;
                 } else {
-                    let configured_registry = if let Some(mgr) = manager.as_deref() {
+                    let configured_registry = if let Some(mgr) = manager {
                         mgr.scope_for_package_name(name_str).url.href()
                     } else {
                         Npm::Registry::DEFAULT_URL.as_bytes()
@@ -3065,8 +3048,21 @@ pub(crate) fn parse_into_binary_lockfile(
 
             let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
 
+            // The root's `bin` is recorded nowhere else.
+            if pkg_id == 0 && res.tag == ResolutionTag::Root {
+                lockfile.packages.items_bin_mut()[0] = pkg.bin;
+            }
+
             let entry = pkg_map.get_or_put(pkg_path)?;
-            if entry.found_existing {
+            // A registry dependency of the root takes the key from the workspace of that name, which claimed it above.
+            if entry.found_existing
+                && !(res.tag == ResolutionTag::Npm
+                    && (workspace_pkgs_off..workspace_pkgs_off + workspace_pkgs_len)
+                        .contains(&*entry.value_ptr)
+                    && lockfile.packages.items_name()[*entry.value_ptr as usize]
+                        .slice(lockfile.buffers.string_bytes.as_slice())
+                        == pkg_path)
+            {
                 log.add_error(Some(source), key_loc, b"Duplicate package path");
                 return Err(ParseError::InvalidPackageKey);
             }
@@ -3086,13 +3082,6 @@ pub(crate) fn parse_into_binary_lockfile(
             .resolutions
             .resize(lockfile.buffers.dependencies.len(), invalid_package_id);
         lockfile.buffers.resolutions.fill(invalid_package_id);
-
-        // The two `[0]` writes are done first via
-        // sequential `&mut` accessors so the loops can take all column views
-        // immutably without overlapping exclusive borrows or `unsafe`.
-        lockfile.packages.items_resolution_mut()[0] =
-            Resolution::init(crate::resolution::TaggedValue::Root);
-        lockfile.packages.items_meta_mut()[0].origin = Origin::Local;
 
         let pkgs = lockfile.packages.slice();
         let pkg_deps = pkgs.items_dependencies();
@@ -3157,6 +3146,11 @@ pub(crate) fn parse_into_binary_lockfile(
             for _pkg_id in workspace_pkgs_off..workspace_pkgs_off + workspace_pkgs_len {
                 let pkg_id: PackageID = _pkg_id;
                 let workspace_name = pkg_names[pkg_id as usize].slice(string_buf);
+
+                // A dependency of the root has its key: bound below, from the rows it is printed at.
+                if pkg_map.get(workspace_name) != Some(&pkg_id) {
+                    continue;
+                }
 
                 let deps = pkg_deps[pkg_id as usize];
                 for _dep_id in deps.begin()..deps.end() {
@@ -3231,7 +3225,9 @@ pub(crate) fn parse_into_binary_lockfile(
 
             let res = &pkg_resolutions[pkg_id as usize];
 
-            if res.tag == ResolutionTag::Workspace {
+            if res.tag == ResolutionTag::Workspace
+                && pkg_map.get(pkg_names[pkg_id as usize].slice(string_buf)) == Some(&pkg_id)
+            {
                 // we've already resolved the workspace dependencies above
                 continue;
             }
@@ -3308,12 +3304,12 @@ pub(crate) fn parse_into_binary_lockfile(
         }
 
         lockfile.tag_workspace_links(
-            manager
-                .as_deref()
-                .is_none_or(|manager| manager.options.link_workspace_packages),
+            manager.is_none_or(|manager| manager.options.link_workspace_packages),
         );
 
-        if let Err(tree::SubtreeError::OutOfMemory) = lockfile.resolve(log) {
+        // The install reports a refused name itself, after it applies package.json.
+        let mut refused_names = bun_ast::Log::init();
+        if let Err(tree::SubtreeError::OutOfMemory) = lockfile.resolve(&mut refused_names) {
             return Err(ParseError::OutOfMemory);
         }
     }
@@ -3569,7 +3565,8 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
     // Only meaningful when `CHECK_FOR_BUNDLED`; carried as Option.
     pkg_path: Option<&[u8]>,
     bundled_pkgs: Option<&PkgPathSet>,
-    workspaces_obj: Option<&Expr>,
+    // With the rows of `packages`.
+    member_rows: Option<(&[&JSON::E::PropertyJSON], &[JSON::E::PropertyJSON])>,
     catalogs_apply: bool,
 ) -> Result<(u32, u32), ParseError> {
     // Clearing on entry is equivalent to clearing on every exit path for all
@@ -3704,44 +3701,49 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
     }
 
     if IS_ROOT {
-        let workspaces_obj = workspaces_obj.expect("workspaces_obj required when IS_ROOT");
-        'workspaces: for workspace_path in lockfile.workspace_paths.values() {
-            for row in object_rows(workspaces_obj) {
-                let path = row.key.slice();
-                if !strings::eql_long(
-                    path,
-                    workspace_path.slice(lockfile.buffers.string_bytes.as_slice()),
-                    true,
-                ) {
-                    continue;
-                }
-                let value = Expr::from_json_value(&row.value, row.key_loc);
+        let (member_rows, package_rows) = member_rows.expect("member_rows required when IS_ROOT");
+        let declared_end = lockfile.buffers.dependencies.len();
+        for row in member_rows {
+            let value = Expr::from_json_value(&row.value, row.key_loc);
 
-                let name_expr = value.get(b"name").unwrap();
-                let name = name_expr
-                    .as_utf8_string_literal()
-                    .expect("infallible: is_string checked");
-                let name_hash = StringBuilder::string_hash(name);
+            let name_expr = value.get(b"name").unwrap();
+            let name = name_expr
+                .as_utf8_string_literal()
+                .expect("infallible: is_string checked");
+            let name_hash = StringBuilder::string_hash(name);
 
-                let dep = Dependency {
-                    name: sbuf!(lockfile).append_with_hash(name, name_hash)?,
-                    name_hash,
-                    behavior: Behavior::WORKSPACE,
-                    version: DependencyVersion {
-                        tag: DependencyVersionTag::Workspace,
-                        value: DependencyVersionValue {
-                            workspace: sbuf!(lockfile).append(path)?,
-                        },
-                        literal: String::default(),
-                    },
-                };
-
-                // after parseAppendDependencies has been called for each package the
-                // size of lockfile.buffers.resolutions is set to the length of dependencies
-                // and values set to invalid_package_id before mapping.
-                lockfile.buffers.dependencies.push(dep);
-                continue 'workspaces;
+            // `Package::parse_dependency` replaces the root's edge to a workspace by a dependency of
+            // the root that has its name and does not accept it.
+            if lockfile.buffers.dependencies[off..declared_end]
+                .iter()
+                .any(|dep| dep.name_hash == name_hash)
+                && package_rows
+                    .iter()
+                    .find(|package| package.key.slice() == name)
+                    .and_then(|package| package.value.as_array()?.items().first()?.as_str())
+                    .and_then(|resolved| dependency::split_name_and_version(resolved).ok())
+                    .is_some_and(|(_, resolution)| !resolution.starts_with(b"workspace:"))
+            {
+                continue;
             }
+
+            let dep = Dependency {
+                name: sbuf!(lockfile).append_with_hash(name, name_hash)?,
+                name_hash,
+                behavior: Behavior::WORKSPACE,
+                version: DependencyVersion {
+                    tag: DependencyVersionTag::Workspace,
+                    value: DependencyVersionValue {
+                        workspace: sbuf!(lockfile).append(row.key.slice())?,
+                    },
+                    literal: String::default(),
+                },
+            };
+
+            // after parseAppendDependencies has been called for each package the
+            // size of lockfile.buffers.resolutions is set to the length of dependencies
+            // and values set to invalid_package_id before mapping.
+            lockfile.buffers.dependencies.push(dep);
         }
     }
 

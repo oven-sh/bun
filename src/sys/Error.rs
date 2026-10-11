@@ -120,9 +120,14 @@ impl Error {
         self.get_errno() == E::EAGAIN
     }
 
-    /// `open` found no file at the path, as opposed to one it could not read.
-    pub fn is_missing_file(&self) -> bool {
-        matches!(self.get_errno(), E::ENOENT | E::ENOTDIR | E::ENAMETOOLONG)
+    /// Reading `path` failed on a file that is there, as opposed to finding none.
+    pub fn is_unreadable_file(&self, path: &[u8]) -> bool {
+        match self.get_errno() {
+            E::ENOENT | E::ENOTDIR | E::ENAMETOOLONG => false,
+            // Also what a directory on the way gives when it cannot be searched, which says nothing about the file.
+            E::EACCES | E::EPERM => crate::lstat(&bun_core::ZBox::from_bytes(path)).is_ok(),
+            _ => true,
+        }
     }
 
     /// `bun.sys.Error.oom` — `ENOMEM` with no syscall context. (The `Box<[u8]>`

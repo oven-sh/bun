@@ -411,6 +411,30 @@ test.concurrent.each([["--production"], ["--prod"], ["--omit=dev"]] as string[][
   },
 );
 
+// As `bun install --production`. A required peer stays: bun installs peerDependencies by default.
+test.concurrent.each(linkers)(
+  "%s: --production removes a devDependency that is also an optional peerDependency",
+  async linker => {
+    const dir = await setupWithLinker(linker, {
+      name: "foo",
+      devDependencies: { "no-deps": "1.0.0", "a-dep": "1.0.1" },
+      peerDependencies: { "no-deps": "^1.0.0", "a-dep": "^1.0.1" },
+      peerDependenciesMeta: { "no-deps": { optional: true } },
+    });
+    const nm = join(dir, "node_modules");
+    expect(existsSync(join(nm, "no-deps"))).toBeTrue();
+
+    // isolated counts the store entry and the node_modules link of each package
+    const checked = linker === "hoisted" ? 2 : 4;
+    const { stdout, exitCode } = await prune(dir, "--production", "--linker", linker);
+    expect(out(stdout)).toEndWith(`- no-deps@1.0.0\n${REMOVED(1, checked)}`);
+    expect(exitCode).toBe(0);
+    expect(existsSync(join(nm, "no-deps"))).toBeFalse();
+    expect(existsSync(join(nm, "a-dep"))).toBeTrue();
+    await expectProductionInstallIsNoop(dir);
+  },
+);
+
 test.concurrent("--production keeps a package that prod and dev both need", async () => {
   const pkg = {
     name: "foo",
@@ -1885,6 +1909,28 @@ test.concurrent(
   },
 );
 
+// The unselected root reaches the workspace through its optional peer, a second row with the workspace's name.
+test.concurrent(
+  "isolated: --production --filter keeps the store entry when the unselected root names the workspace as an optional peer",
+  async () => {
+    const dir = await setupWorkspaces("isolated", {
+      root: { peerDependencies: { selected: "*" }, peerDependenciesMeta: { selected: { optional: true } } },
+      packages: { selected: { dependencies: { "no-deps": "1.0.0" }, devDependencies: { "a-dep": "1.0.1" } } },
+    });
+    const storeEntry = join(dir, "node_modules", ".bun", "a-dep@1.0.1");
+
+    const { stdout, exitCode } = await prune(dir, "--production", "--filter", "selected", "--linker", "isolated");
+    expect(out(stdout)).toMatchInlineSnapshot(`
+      "bun prune <version> (<revision>)
+
+      - a-dep@1.0.1 (packages/selected/node_modules)
+      1 package removed (checked 4 installed packages)"
+    `);
+    expect(exitCode).toBe(0);
+    expect(existsSync(storeEntry)).toBeTrue();
+  },
+);
+
 test.concurrent.each(linkers)(
   "%s: --filter limits extraneous entries to the selected workspaces' own folders; name, path and glob selectors",
   async linker => {
@@ -2311,6 +2357,29 @@ test.concurrent.each(["hoisted", "isolated"] as Linker[])(
     const plain = await prune(plainDir, "--linker", linker);
     expect(out(plain.stdout)).toEndWith(linker === "hoisted" ? NOTHING(2, 1) : NOTHING(3, 2));
     expect(plain.exitCode).toBe(0);
+  },
+);
+
+// `bun install --omit=peer` links a workspace's peer when the root provides it. `bun prune --omit=peer` keeps that link.
+test.concurrent.each([false, true])(
+  "isolated (globalStore: %p): --omit=peer keeps a workspace peer link the root provides",
+  async globalStore => {
+    const { packageDir: dir, packageJson } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", globalStore },
+    });
+    await writeWorkspaces(dir, packageJson, {
+      root: { dependencies: { "no-deps": "1.0.0" } },
+      packages: { a: { peerDependencies: { "no-deps": "^1.0.0" } } },
+    });
+    await install(dir, "--omit=peer", "--linker", "isolated");
+    const peerLink = join(dir, "packages", "a", "node_modules", "no-deps", "package.json");
+    expect(existsSync(peerLink)).toBeTrue();
+
+    const { stdout, exitCode } = await prune(dir, "--omit=peer", "--linker", "isolated");
+    expect(out(stdout)).toEndWith(NOTHING(3, 3));
+    expect(exitCode).toBe(0);
+    expect(existsSync(peerLink)).toBeTrue();
+    expect(await install(dir, "--omit=peer", "--linker", "isolated")).toContain("no changes");
   },
 );
 
@@ -3762,6 +3831,8 @@ for (const linker of linkers) {
       ["", false],
       [", also after an install wrote through it", true],
     ] as const) {
+      // The hoisted linker puts a directory in the place of the link before it writes there.
+      if (reinstall && linker === "hoisted") continue;
       const title = `${linker}: nothing is pruned when a workspace node_modules is a link to ${name}${after}`;
       test.concurrent(title, async () => {
         const dir = await setupWorkspaces(linker, {
@@ -3874,7 +3945,7 @@ test.concurrent("hoisted: bun update does not look behind a workspace node_modul
   expect(exitCode).toBe(0);
 });
 
-// An install puts `a`'s own what-bin into `b`'s folder, through the link. There the pass takes it for a copy that hides the root's.
+// `a` finds its own what-bin in `b`'s folder, through the link. There the pass takes it for a copy that hides the root's.
 test.concurrent("hoisted: bun update removes no copy while a workspace node_modules is a link", async () => {
   const dir = await setupWorkspaces("hoisted", {
     root: { dependencies: { "no-deps": "1.0.0", "what-bin": "1.0.0" } },
@@ -3882,9 +3953,9 @@ test.concurrent("hoisted: bun update removes no copy while a workspace node_modu
   });
   const siblingModules = join(dir, "packages", "b", "node_modules");
   const workspaceModules = join(dir, "packages", "a", "node_modules");
+  renameSync(join(workspaceModules, "what-bin"), join(siblingModules, "what-bin"));
   rmSync(workspaceModules, { recursive: true, force: true });
   symlinkSync(siblingModules, workspaceModules, "junction");
-  await install(dir, "--linker", "hoisted");
   const versions = async () => ({
     "no-deps": (await file(join(siblingModules, "no-deps", "package.json")).json()).version,
     "what-bin": (await file(join(siblingModules, "what-bin", "package.json")).json()).version,
@@ -3915,6 +3986,8 @@ test.concurrent("hoisted: a nested copy left behind by an override to a tarball 
       overrides: { "no-deps": copyTarball(dir, "no-deps", "2.0.0") },
     }),
   );
+  // In two steps, as after a `git pull`: the install that changes bun.lock removes the copy itself.
+  await install(dir, "--lockfile-only");
   await install(dir);
   expect(await lock(dir)).not.toContain('"one-dep/no-deps"');
   expect(await lock(dir)).toContain("no-deps-2.0.0.tgz");

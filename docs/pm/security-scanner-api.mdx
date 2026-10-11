@@ -122,7 +122,7 @@ Each entry in `packages` describes one resolved package:
 
 Packages from every source are included: registry, git, GitHub, remote and local tarballs, local directories. Workspace packages are part of the project and are not included. Outside a registry `version` is not semver; `Bun.semver.satisfies()` returns `false` for it.
 
-The `user:password@` part and the query string of a URL are removed from all three fields.
+The `user:password@` part and the query string of a URL are removed from all three fields. The `tarball` of a registry package keeps its query string, because some registries sign their tarball URLs.
 
 ## Related
 

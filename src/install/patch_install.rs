@@ -337,7 +337,6 @@ impl PatchTask {
                             is_required,
                             dep_id,
                             &pkg_again,
-                            Some(name_and_version_hash),
                             match pkg_resolution_tag {
                                 crate::resolution_real::Tag::Npm => {
                                     Authorization::AllowAuthorization
@@ -474,7 +473,6 @@ impl PatchTask {
             cache_dir_subpath: cache_dir_subpath_z,
             destination_dir_subpath: tempdir_name,
             patch: None,
-            progress: None,
             package_name: pkg_name,
             package_version: &resolution_label,
             // dummy value

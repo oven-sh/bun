@@ -122,7 +122,7 @@ pub enum FromTarballError {
 }
 bun_core::oom_from_alloc!(FromTarballError);
 
-pub(crate) type FromWorkspaceError = pack::PackError<true>;
+pub(crate) type FromWorkspaceError = pack::PackError;
 
 impl Context {
     /// Retrieve information for publishing from a tarball path, `bun publish path/to/tarball.tgz`
@@ -424,9 +424,8 @@ impl Context {
             stats: pack::Stats::default(),
         };
 
-        // `pack::<true>` returns `Some(Context)` on success.
-        Ok(pack::pack::<true>(pack_ctx, abs_package_json_path)?
-            .expect("pack::<true> always yields a publish context"))
+        Ok(pack::pack(pack_ctx, abs_package_json_path, true)?
+            .expect("pack for a publish always yields a publish context"))
     }
 }
 

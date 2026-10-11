@@ -2,7 +2,8 @@ use bstr::BStr;
 
 use bun_core::{Global, Output};
 use bun_install::package_manager_real::{
-    PackageManager, get_cache_directory_and_abs_path, populate_package_cache,
+    PackageManager, get_cache_directory_and_abs_path, package_manager_options::LogLevel,
+    populate_package_cache,
 };
 
 use crate::cli::Command;
@@ -33,6 +34,13 @@ pub(crate) fn exec(
         Global::exit(1);
     }
 
+    // Nothing is linked or run here, so the scan is left to the command that does.
+    if pm.options.security_scanner.is_some() && pm.options.log_level != LogLevel::Silent {
+        bun_core::note!(
+            "packages are not scanned until <b>bun install<r> runs the security scanner"
+        );
+    }
+
     if !print_summary {
         return Ok(());
     }
@@ -54,14 +62,6 @@ pub(crate) fn exec(
     }
     Output::print_start_end_stdout(start_time, bun_core::time::nano_timestamp());
     bun_core::pretty!("<r>\n");
-
-    if summary.skipped_git > 0 {
-        bun_core::prettyln!(
-            "<yellow>note<r>: skipped {} git dependenc{} (run <b>bun install<r> to populate)",
-            summary.skipped_git,
-            if summary.skipped_git == 1 { "y" } else { "ies" },
-        );
-    }
 
     let (_, cache_dir) = get_cache_directory_and_abs_path(pm);
     bun_core::prettyln!("<d>Cache: {}<r>", BStr::new(cache_dir.slice()));

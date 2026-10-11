@@ -21,7 +21,7 @@ use super::override_selector::{
     PackageSelector, Selector, SelectorError, parse_package_segment, parse_selector,
 };
 use super::package::PackageColumns as _;
-use super::package::workspace_map::WorkspaceMap;
+use super::package::workspace_map::{WorkspaceMap, package_json_dir};
 use super::package::{DependencyGroup, value_loc_of};
 use super::{Lockfile, StringBuilder, package::Package};
 // LAYERING NOTE: package.json is parsed by `bun_parsers::json` which
@@ -84,11 +84,22 @@ fn cmp_range_text(l: &ScopedOverride, r: &ScopedOverride, buf: &[u8]) -> Orderin
     })
 }
 
-/// dependency id -> owning package id, filled lazily because packages are only ever appended while a map is live.
+/// dependency id -> owning package id, filled lazily. Checked on use: the differ and the folder resolver replace a package's rows.
 #[derive(Default)]
 struct OwnerIndex {
     by_dep: Vec<PackageID>,
     packages_indexed: usize,
+}
+
+impl OwnerIndex {
+    fn record(&mut self, owner: PackageID, rows: super::DependencySlice, dependencies_len: usize) {
+        let end = (rows.end() as usize).min(dependencies_len);
+        let begin = (rows.begin() as usize).min(end);
+        if end > self.by_dep.len() {
+            self.by_dep.resize(end, invalid_package_id);
+        }
+        self.by_dep[begin..end].fill(owner);
+    }
 }
 
 #[derive(Default)]
@@ -98,6 +109,9 @@ pub struct OverrideMap {
     pub(crate) scoped: Vec<ScopedOverride>,
     scoped_names: ArrayHashMap<PackageNameHash, ()>,
     owner_index: RefCell<OwnerIndex>,
+    /// Set by `parse_append` when `"resolutions"` added rules to those of `"overrides"`: how many
+    /// entries of `map` and of `scoped` the latter gave. They come first until `sort`.
+    overrides_field: Option<(usize, usize)>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -136,7 +150,7 @@ struct NoAliases;
 
 impl NpmAliasRegistry for NoAliases {
     #[inline]
-    fn record_npm_alias(&mut self, _hash: PackageNameHash, _version: &dependency::Version) {}
+    fn record_npm_alias(&mut self, _hash: PackageNameHash, _specifier: &[u8]) {}
 }
 
 #[inline]
@@ -292,12 +306,7 @@ impl OverrideMap {
         let index = &mut *index;
         if index.packages_indexed < dep_slices.len() {
             for (pkg_id, slice) in dep_slices.iter().enumerate().skip(index.packages_indexed) {
-                let end = (slice.end() as usize).min(dependencies_len);
-                let begin = (slice.begin() as usize).min(end);
-                if end > index.by_dep.len() {
-                    index.by_dep.resize(end, invalid_package_id);
-                }
-                index.by_dep[begin..end].fill(pkg_id as PackageID);
+                index.record(pkg_id as PackageID, *slice, dependencies_len);
             }
             index.packages_indexed = dep_slices.len();
         }
@@ -306,10 +315,17 @@ impl OverrideMap {
             .get(dependency_id as usize)
             .copied()
             .unwrap_or(invalid_package_id);
-        debug_assert!(
-            owner == invalid_package_id || dep_slices[owner as usize].contains(dependency_id)
-        );
-        owner
+        if owner != invalid_package_id && dep_slices[owner as usize].contains(dependency_id) {
+            return owner;
+        }
+        let Some(owner) = dep_slices
+            .iter()
+            .position(|slice| slice.contains(dependency_id))
+        else {
+            return invalid_package_id;
+        };
+        index.record(owner as PackageID, dep_slices[owner], dependencies_len);
+        owner as PackageID
     }
 
     /// Plain rules only: a scoped rule does not make every edge of this name root-authored (trust checks in PackageManagerEnqueue.rs / PackageInstaller.rs).
@@ -358,6 +374,26 @@ impl OverrideMap {
                 out.push(rule.dep.name_hash);
             }
         }
+    }
+
+    /// Bun 1.4 and older read `"resolutions"` only without `"overrides"`, so their lockfile has the
+    /// rules of `"overrides"` alone. For a frozen install, before `changed`: when `recorded` has as
+    /// many rules as that field gave `self`, the rules of `"resolutions"` are dropped from `self`.
+    #[cold]
+    pub(crate) fn drop_resolutions_unknown_to(&mut self, recorded: &OverrideMap) -> bool {
+        let Some((flat, scoped)) = self.overrides_field.take() else {
+            return false;
+        };
+        if recorded.map.count() != flat || recorded.scoped.len() != scoped {
+            return false;
+        }
+        self.map.shrink_and_free(flat);
+        self.scoped.truncate(scoped);
+        self.scoped_names.clear_retaining_capacity();
+        for rule in &self.scoped {
+            self.scoped_names.insert(rule.dep.name_hash, ());
+        }
+        true
     }
 
     pub(crate) fn changed(
@@ -553,7 +589,6 @@ impl OverrideMap {
         value: &[u8],
         buf: &mut bun_semver::string::Buf<'_>,
         log: &mut bun_ast::Log,
-        manager: Option<&mut PackageManager>,
     ) -> Result<bool, Error> {
         let name_hash = SemverBuilder::string_hash(target.name);
         let name = buf.append_with_hash(target.name, name_hash)?;
@@ -581,10 +616,9 @@ impl OverrideMap {
         };
 
         let is_flat = parent.is_none() && target_range.tag != VersionTag::Npm;
-        let manager = if is_flat { manager } else { None };
         let value = buf.append(value)?;
         let sliced = value.sliced(buf.bytes.as_slice());
-        let Some(version) = dependency::parse(name, name_hash, sliced.slice, &sliced, log, manager)
+        let Some(version) = dependency::parse(name, name_hash, sliced.slice, &sliced, log, None)
         else {
             return Ok(false);
         };
@@ -704,10 +738,14 @@ impl OverrideMap {
         if let Some(overrides) = expr.as_property(b"overrides") {
             self.parse_from_overrides(&mut ctx, overrides.expr)?;
             (ctx.overrides_flat, ctx.overrides_scoped) = (self.map.count(), self.scoped.len());
+            self.overrides_field = Some((ctx.overrides_flat, ctx.overrides_scoped));
         }
         if let Some(resolutions) = expr.as_property(b"resolutions") {
             ctx.field = Field::Resolutions;
             self.parse_from_resolutions(&mut ctx, resolutions.expr)?;
+        }
+        if self.overrides_field == Some((self.map.count(), self.scoped.len())) {
+            self.overrides_field = None;
         }
         scoped_log!(
             OverrideMap,
@@ -725,12 +763,7 @@ impl OverrideMap {
         expr: Expr,
     ) -> Result<(), Error> {
         if !expr.is_object() {
-            ctx.log.add_warning_fmt(
-                Some(ctx.source),
-                value_loc_of(ctx.source, expr.loc),
-                format_args!("\"overrides\" must be an object"),
-            );
-            return Ok(());
+            return Err(not_an_object(ctx, expr.loc));
         }
 
         self.map.ensure_unused_capacity(expr.property_count())?;
@@ -845,12 +878,7 @@ impl OverrideMap {
         expr: Expr,
     ) -> Result<(), Error> {
         if !expr.is_object() {
-            ctx.log.add_warning_fmt(
-                Some(ctx.source),
-                value_loc_of(ctx.source, expr.loc),
-                format_args!("\"resolutions\" must be an object with string values"),
-            );
-            return Ok(());
+            return Err(not_an_object(ctx, expr.loc));
         }
         self.map.ensure_unused_capacity(expr.property_count())?;
         expr.try_for_each_property(|k, key_loc, value_expr| {
@@ -1009,6 +1037,20 @@ fn clone_range(
         None,
     )
     .unwrap_or_default()
+}
+
+/// Installing with no rule applied would hide the typo.
+#[cold]
+fn not_an_object(ctx: &mut ParseContext<'_, '_>, loc: bun_ast::Loc) -> Error {
+    let name = ctx.field.json_name();
+    ctx.log.add_error_fmt(
+        ctx.source,
+        value_loc_of(ctx.source, loc),
+        format_args!(
+            "\"{name}\" expects a map of package names to versions, e.g.\n  \"{name}\": {{\n    \"react\": \"18.2.0\"\n  }}"
+        ),
+    );
+    Error::InvalidPackageJSON
 }
 
 fn warn_selector_error(
@@ -1261,7 +1303,7 @@ fn workspace_ref_literal(
     if workspace_names.count() == 0 {
         return Ok(None);
     }
-    let root_dir: &[u8] = source.path.name().dir;
+    let root_dir: &[u8] = package_json_dir(source);
     let mut path_buf = bun_paths::path_buffer_pool::get();
     let mut found: Option<Vec<u8>> = None;
     for relative_dir in workspace_names.keys() {

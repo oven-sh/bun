@@ -1,7 +1,7 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { chmod, exists, mkdir, rm } from "fs/promises";
-import { bunEnv, bunExe, isRoot, isWindows, normalizeBunSnapshot } from "harness";
+import { chmod, exists, mkdir, readdir, rm } from "fs/promises";
+import { bunEnv, bunExe, isRoot, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
 import { TestRegistry } from "registry";
 
@@ -1035,6 +1035,34 @@ test.concurrent("add --filter with an existing lockfile re-resolves only the add
   });
 });
 
+test.concurrent("add/remove --filter updates bun.lock for a workspace outside the root", async () => {
+  using dir = tempDir("add-filter-outside-root", {
+    "root/package.json": JSON.stringify({ name: "root", workspaces: ["../x", "../y"] }),
+    "x/package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+    "y/package.json": JSON.stringify({ name: "y", version: "1.0.0" }),
+  });
+  const root = join(String(dir), "root");
+  const x = () => file(join(String(dir), "x", "package.json")).json();
+  const lockedX = async () => (await lockfileJson(root)).workspaces["../x"];
+  // Hoisted: on Windows the isolated linker fails to link the dependencies of a workspace outside the root (ENOENT).
+  async function runOk(args: string[]) {
+    const { stderr, exitCode } = await run(args, String(dir), { cwd: root, linker: "hoisted" });
+    expect(stderr).toBe("Saved lockfile\n");
+    expect(exitCode).toBe(0);
+  }
+
+  await runOk(["install"]);
+  expect(await lockedX()).toStrictEqual({ name: "x", version: "1.0.0" });
+
+  await runOk(["add", "--filter", "x", "y@workspace:*"]);
+  expect(await x()).toStrictEqual({ name: "x", version: "1.0.0", dependencies: { y: "workspace:*" } });
+  expect(await lockedX()).toStrictEqual({ name: "x", version: "1.0.0", dependencies: { y: "workspace:*" } });
+
+  await runOk(["remove", "--filter", "x", "y"]);
+  expect(await x()).toStrictEqual({ name: "x", version: "1.0.0" });
+  expect(await lockedX()).toStrictEqual({ name: "x", version: "1.0.0" });
+});
+
 test.concurrent("--dry-run writes nothing", async () => {
   const dir = await makeMonorepo();
   const before = await allPackageJsonTexts(dir);
@@ -1888,6 +1916,24 @@ test.concurrent("a file: path keeps its prefix and resolves from a nested cwd", 
   ]);
 });
 
+test.concurrent.each(["file:/", "file://", "file:///"])(
+  "%s before a .. path is a spelling of file: and the path is re-spelled",
+  async prefix => {
+    const dir = await makeMonorepo();
+    await addVendorFoo(dir);
+    const before = await allPackageJsonTexts(dir);
+
+    const { stderr, exitCode } = await run(["add", `${prefix}../../vendor/foo`, "--filter", "root"], dir, {
+      cwd: join(dir, "packages", "web"),
+      linker: "hoisted",
+    });
+    expect(stderr).toBe("Saved lockfile\n");
+    await expectAddedOnlyTo(dir, before, ["root"], "foo", "file:./vendor/foo");
+    expect(await file(join(dir, "node_modules", "foo", "package.json")).json()).toStrictEqual(VENDOR_FOO);
+    expect(exitCode).toBe(0);
+  },
+);
+
 test.concurrent("a local path replaces the entry a target already declares for that package", async () => {
   const declared = { name: "api", dependencies: { foo: "file:../../vendor/old-foo" } };
   const dir = await makeMonorepo({ api: declared, web: { name: "web" } });
@@ -1915,6 +1961,79 @@ test.concurrent("a local path replaces the entry a target already declares for t
   const frozen = await run(["install", "--frozen-lockfile"], dir, { linker: "hoisted" });
   expect(frozen.stderr).not.toContain("error:");
   expect(frozen.exitCode).toBe(0);
+});
+
+// The install hoists without the moved packages: no-deps@1.0.1 takes the place of the no-deps@2.0.0 that one-fixed-dep
+// needs. What is left of them in node_modules would run against the wrong version.
+test.concurrent.each(
+  (["hoisted", "isolated"] as const).flatMap(linker =>
+    [
+      ["--peer", "--omit=peer", "peerDependencies"],
+      ["--dev", "--omit=dev", "devDependencies"],
+      ["--optional", "--omit=optional", "optionalDependencies"],
+    ].flatMap(([flag, omit, group]) =>
+      [[], ["--filter", "root"]].map(filter => ({ linker, flag, omit, group, filter })),
+    ),
+  ),
+)(
+  "$linker: add $flag $omit $filter takes an entry it moves into a group the install skips out of node_modules",
+  async ({ linker, flag, omit, group, filter }) => {
+    const topLevel = async () => ({
+      packages: (await readdir(join(dir, "node_modules"))).filter(name => !name.startsWith(".")).sort(),
+      bins: (await readdir(join(dir, "node_modules", ".bin")).catch(() => [])).sort(),
+    });
+    const dir = await makeMonorepo(
+      {
+        root: { ...ROOT, dependencies: { "one-fixed-dep": "2.0.0", "what-bin": "1.0.0", "a-dep": "1.0.1" } },
+        api: { name: "api", dependencies: { "one-dep": "1.0.0" } },
+      },
+      linker,
+    );
+    await installOk(dir, linker);
+    const before = await topLevel();
+    expect(before.packages).toContain("one-fixed-dep");
+    expect(before.bins.join()).toContain("what-bin");
+
+    const { stderr, exitCode } = await run(
+      ["add", "one-fixed-dep@2.0.0", "what-bin@1.0.0", flag, omit, ...filter],
+      dir,
+      {
+        linker,
+      },
+    );
+    expect(stderr).not.toContain("error:");
+    expect(await pkg(dir, "root")).toStrictEqual({
+      ...ROOT,
+      dependencies: { "a-dep": "1.0.1" },
+      [group]: { "one-fixed-dep": "2.0.0", "what-bin": "1.0.0" },
+    });
+    const after = await topLevel();
+    expect(exitCode).toBe(0);
+
+    await rm(join(dir, "node_modules"), { recursive: true, force: true });
+    const fresh = await run(["install", omit], dir, { linker });
+    expect(fresh.stderr).not.toContain("error:");
+    expect(after).toStrictEqual(await topLevel());
+    expect(after.packages).not.toContain("one-fixed-dep");
+    expect(fresh.exitCode).toBe(0);
+  },
+);
+
+// --production freezes the lockfile, which records the group of every entry.
+test.concurrent("add --dev --production of an entry it would move fails and writes nothing", async () => {
+  const dir = await makeMonorepo({ root: { ...ROOT, dependencies: { "what-bin": "1.0.0" } } }, "hoisted");
+  await installOk(dir, "hoisted");
+  const before = [await allPackageJsonTexts(dir), await file(join(dir, "bun.lock")).text()];
+
+  const { stderr, exitCode } = await run(["add", "what-bin@1.0.0", "--dev", "--production"], dir);
+
+  expect(stderr).toBe(
+    "error: lockfile had changes, but lockfile is frozen\n" +
+      "note: dependencies in package.json changed since bun.lock was saved\n" +
+      "note: try re-running without --frozen-lockfile and commit the updated lockfile\n",
+  );
+  expect([await allPackageJsonTexts(dir), await file(join(dir, "bun.lock")).text()]).toStrictEqual(before);
+  expect(exitCode).toBe(1);
 });
 
 test.concurrent("a local path that does not exist relative to the cwd fails and writes nothing", async () => {
@@ -2084,15 +2203,37 @@ test.concurrent.each([
   await installUnchanged(dir, "hoisted");
 });
 
-// `link:` resolves against the global link dir (same failure without --filter); the error shows the per-target spelling.
-test.concurrent("a link: path is re-spelled relative to the target before it is resolved", async () => {
+// A `link:` value that is not a package name is a path (bun-install-link-path.test.ts): like `file:`, it is relative
+// to the cwd and re-spelled per target. A bare name still means a `bun link` registration and is left alone.
+test.concurrent.each([["link:./vendor/foo"], ["link:vendor/foo"]])(
+  "a link: path (%s) is re-spelled relative to the target",
+  async positional => {
+    const dir = await makeMonorepo();
+    await addVendorFoo(dir);
+    const before = await allPackageJsonTexts(dir);
+
+    const { stderr, exitCode } = await run(["add", positional, "--filter", "api"], dir, { linker: "hoisted" });
+    expect(stderr).toBe("Saved lockfile\n");
+    expect(exitCode).toBe(0);
+
+    await expectAddedOnlyTo(dir, before, ["api"], "foo", "link:../../vendor/foo");
+    expect((await lockfileJson(dir)).packages.foo[0]).toBe("foo@link:./vendor/foo");
+    expect(await file(join(dir, "node_modules", "foo", "package.json")).json()).toStrictEqual(VENDOR_FOO);
+
+    const frozen = await run(["install", "--frozen-lockfile"], dir, { linker: "hoisted" });
+    expect(frozen.stderr).toBe("");
+    expect(frozen.exitCode).toBe(0);
+  },
+);
+
+test.concurrent("a link: path that does not exist fails with the per-target spelling and writes nothing", async () => {
   const dir = await makeMonorepo();
-  await addVendorFoo(dir);
   const before = await allPackageJsonTexts(dir);
 
   const { stderr, exitCode } = await run(["add", "link:./vendor/foo", "--filter", "api"], dir);
-  expect(stderr).toContain('error: Package "link:../../vendor/foo" is not linked');
-  expect(stderr).not.toContain('"link:./vendor/foo"');
+  expect(stderr).toContain(
+    'error: Could not find directory "./vendor/foo" for linked dependency "link:../../vendor/foo"',
+  );
   expect(exitCode).toBe(1);
 
   expect(await allPackageJsonTexts(dir)).toStrictEqual(before);

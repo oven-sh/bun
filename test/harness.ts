@@ -2110,6 +2110,50 @@ export function githubTarball(rootDir: string, files: Record<string, string | Ui
   return new Bun.Archive(entries, { compress: "gzip" }).bytes();
 }
 
+/**
+ * A git repository on disk standing in for one on a real host, for the cases whose point is the specifier
+ * (`bitbucket:user/repo`, `git@github.com:user/repo.git`): bun has to turn it into one of `cloneUrls`, which git then
+ * rewrites to the local repository (`url.<base>.insteadOf`). A bun spawned with the returned `env` cannot reach the
+ * host: git refuses every transport but `file`, so a clone URL that is not listed fails.
+ */
+export async function hostedGitRepository(cloneUrls: string[], files: Record<string, string>) {
+  const dir = tempDir("git-dep-hosted", files);
+  const git = async (...args: string[]) => {
+    await using proc = Bun.spawn({
+      cmd: ["git", ...args],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        GIT_CONFIG_NOSYSTEM: "1",
+        GIT_AUTHOR_NAME: "Test",
+        GIT_AUTHOR_EMAIL: "test@example.com",
+        GIT_COMMITTER_NAME: "Test",
+        GIT_COMMITTER_EMAIL: "test@example.com",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(`git ${args.join(" ")} exited with ${exitCode}: ${stderr}`);
+    return stdout.trim();
+  };
+  await git("-c", "init.defaultBranch=main", "init", "--quiet");
+  await git("add", "-A");
+  await git("-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "init");
+  const key = `url.${Bun.pathToFileURL(String(dir)).href}.insteadOf`;
+  const config: Record<string, string> = { GIT_ALLOW_PROTOCOL: "file", GIT_CONFIG_COUNT: `${cloneUrls.length}` };
+  cloneUrls.forEach((url, i) => {
+    config[`GIT_CONFIG_KEY_${i}`] = key;
+    config[`GIT_CONFIG_VALUE_${i}`] = url;
+  });
+  return {
+    /** Of its only commit. */
+    sha: await git("rev-parse", "HEAD"),
+    env: { ...bunEnv, ...config },
+    [Symbol.dispose]: () => dir[Symbol.dispose](),
+  };
+}
+
 export async function readdirSorted(path: string): Promise<string[]> {
   const results = await readdir(path);
   results.sort();

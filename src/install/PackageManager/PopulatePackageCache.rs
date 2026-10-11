@@ -16,8 +16,6 @@ pub struct Summary {
     pub fetched: u32,
     /// Packages that were already in the cache.
     pub already_cached: u32,
-    /// `git:` dependencies missing from the cache that were left alone.
-    pub skipped_git: u32,
 }
 
 /// Failures are reported like `bun install`'s: in `manager.log` and `any_failed_to_install`.
@@ -130,28 +128,15 @@ fn download_pinned_packages(manager: &mut PackageManager) -> crate::Result<Summa
                     npm.version,
                     &url,
                     task_context,
-                    name_and_version_hash,
                 )
             }
             ResolutionTag::Github => {
                 let url = manager.alloc_github_url(resolution.github());
-                manager.enqueue_tarball_for_download(
-                    dep_id,
-                    pkg_id,
-                    &url,
-                    task_context,
-                    name_and_version_hash,
-                )
+                manager.enqueue_tarball_for_download(dep_id, pkg_id, &url, task_context)
             }
             ResolutionTag::RemoteTarball => {
                 let url = resolution.remote_tarball().slice(string_buf).to_vec();
-                manager.enqueue_tarball_for_download(
-                    dep_id,
-                    pkg_id,
-                    &url,
-                    task_context,
-                    name_and_version_hash,
-                )
+                manager.enqueue_tarball_for_download(dep_id, pkg_id, &url, task_context)
             }
             ResolutionTag::LocalTarball => {
                 let alias = manager.lockfile.buffers.dependencies[dep_id as usize]
@@ -167,10 +152,20 @@ fn download_pinned_packages(manager: &mut PackageManager) -> crate::Result<Summa
                 );
                 Ok(())
             }
-            // `run_tasks` only schedules a checkout after a clone for an installer.
             ResolutionTag::Git => {
-                summary.skipped_git += 1;
-                continue;
+                let alias = manager.lockfile.buffers.dependencies[dep_id as usize]
+                    .name
+                    .slice(string_buf)
+                    .to_vec();
+                // An `--offline` miss is already in `manager.log`.
+                let _ = manager.enqueue_git_for_checkout(
+                    dep_id,
+                    pkg_id,
+                    &alias,
+                    task_context,
+                    name_and_version_hash,
+                );
+                Ok(())
             }
             _ => continue,
         };
@@ -185,6 +180,12 @@ fn download_pinned_packages(manager: &mut PackageManager) -> crate::Result<Summa
                 | ForTarballError::AlreadyFailed,
             ) => {}
         }
+    }
+
+    // Nothing waits for these downloads. A `Dependency` callback would resolve its row again, which downloads
+    // a `github:` dependency a second time, by the ref in package.json.
+    for waiters in manager.task_queue.values_mut() {
+        waiters.retain(|waiter| matches!(waiter, TaskCallbackContext::GitCheckout { .. }));
     }
 
     let _ = manager.schedule_tasks();

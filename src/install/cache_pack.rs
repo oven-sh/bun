@@ -283,7 +283,7 @@ fn lockfile_entries(pm: &mut PackageManager) -> Vec<LockfileEntry> {
             expected: expected.is_set(i),
         });
     }
-    entries.sort_by(|a, b| {
+    bun_collections::index_sort::sort_slice_by(&mut entries, |a, b| {
         a.name
             .as_bytes()
             .cmp(b.name.as_bytes())

@@ -2063,6 +2063,39 @@ describe("minimum-release-age", () => {
       },
     );
 
+    test.concurrent.each([
+      ['"5d"', "regular-package@2.1.0"],
+      ['"1 week"', "regular-package@2.0.0"],
+      ['"432000"', "regular-package@2.1.0"],
+      ['"0"', "regular-package@3.0.0"],
+      ['"5x"', null],
+      ['"-5d"', null],
+      ['"inf"', null],
+      ['""', null],
+      ["true", null],
+    ])("minimumReleaseAge = %s", async (value, locked) => {
+      using dir = tempDir("age-as-text", {
+        "package.json": JSON.stringify({ dependencies: { "regular-package": "*" } }),
+        "bunfig.toml": `[install]\nminimumReleaseAge = ${value}\nregistry = "${mockRegistryUrl}"\n`,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", "--lockfile-only"],
+        cwd: String(dir),
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: `${dir}/.bun-cache` },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      if (locked) {
+        expect(stderr).not.toContain("error:");
+        expect(await Bun.file(`${dir}/bun.lock`).text()).toContain(locked);
+      } else {
+        expect(stderr).toContain("error: Expected number of seconds for minimumReleaseAge");
+        expect(await Bun.file(`${dir}/bun.lock`).exists()).toBe(false);
+      }
+      expect(exitCode).toBe(locked ? 0 : 1);
+    });
+
     test("global bunfig.toml configuration works", async () => {
       // Create a fake home directory with global bunfig
       using globalConfigDir = tempDir("global-config", {
@@ -2798,6 +2831,67 @@ describe("minimum-release-age", () => {
       const lockfile = await Bun.file(`${dir}/bun.lock`).text();
       expect(lockfile).toContain("regular-package@2.1.0");
     });
+
+    // https://github.com/oven-sh/bun/issues/40031
+    // bun.lock pins regular-package@3.0.0, which is inside the age window. Writing the same range as `catalog:` makes
+    // a plain install resolve the row again: the gate is for new resolutions, so the pin stays installable. A frozen
+    // install keeps the row as it is locked.
+    describe.each([
+      // A cold cache: the manifest is fetched with publish times.
+      { title: "exact version, cold cache", range: "3.0.0", first: [], second: [], sameCache: false },
+      // --force loads the cached manifest as expired: the exact-version fast path.
+      {
+        title: "exact version, expired cached manifest",
+        range: "3.0.0",
+        first: ["--minimum-release-age", "1"],
+        second: ["--force"],
+        sameCache: true,
+      },
+      { title: "range whose every version is too recent", range: "^3.0.0", first: [], second: [], sameCache: false },
+    ])("a version bun.lock pins is not blocked: $title", ({ range, first, second, sameCache }) => {
+      test.concurrent.each([[["--frozen-lockfile"]], [[]]])("install %j", async mode => {
+        const manifest = (spec: string) =>
+          JSON.stringify({
+            name: "repro",
+            workspaces: { catalog: { "regular-package": range } },
+            dependencies: { "regular-package": spec },
+          });
+        using dir = tempDir("pinned-too-recent", {
+          "package.json": manifest(range),
+          ".npmrc": `registry=${mockRegistryUrl}`,
+        });
+        const install = async (cache: string, args: string[]) => {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "install", "--no-verify", ...args],
+            cwd: String(dir),
+            env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: `${dir}/${cache}` },
+            stdout: "ignore",
+            stderr: "pipe",
+          });
+          const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+          return { stderr, exitCode, lockfile: await Bun.file(`${dir}/bun.lock`).text() };
+        };
+
+        expect(await install("cache-1", first)).toMatchObject({
+          exitCode: 0,
+          lockfile: expect.stringContaining("regular-package@3.0.0"),
+        });
+        await Bun.write(`${dir}/package.json`, manifest("catalog:"));
+
+        expect(
+          await install(sameCache ? "cache-1" : "cache-2", [
+            ...mode,
+            ...second,
+            "--minimum-release-age",
+            `${5 * SECONDS_PER_DAY}`,
+          ]),
+        ).toMatchObject({
+          stderr: expect.not.stringMatching(/minimum[- ]release[- ]age/),
+          exitCode: 0,
+          lockfile: expect.stringContaining("regular-package@3.0.0"),
+        });
+      });
+    });
   });
 
   describe("monorepo with linker modes", () => {
@@ -2993,59 +3087,72 @@ describe("minimum-release-age", () => {
     });
 
     // The number used to be read as a prefix: `5d` was 5 seconds, so a 5 day gate let a 1 day old version in.
+    // It is read whole: a number of seconds, or digits and one unit.
     describe.each(["install", "add", "update"])("bun %s", command => {
-      test.concurrent.each(["5d", "1 week", "5/../x", "5:6", "1e999", "NaN", "Infinity", "-0.5", "", " 5", "0x10"])(
-        "--minimum-release-age=%j is refused",
-        async value => {
-          using dir = tempDir("partly-numeric-age", {
-            "package.json": JSON.stringify({ dependencies: { "regular-package": "*" } }),
-            ".npmrc": `registry=${mockRegistryUrl}`,
-          });
-          await using proc = Bun.spawn({
-            cmd: [
-              bunExe(),
-              command,
-              ...(command === "add" ? ["excluded-package"] : []),
-              `--minimum-release-age=${value}`,
-            ],
-            cwd: String(dir),
-            env: bunEnv,
-            stdout: "pipe",
-            stderr: "pipe",
-          });
-          const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-          expect(stderr).toContain(`error: Expected --minimum-release-age to be a positive number: ${value}`);
-          expect(await Bun.file(join(String(dir), "bun.lock")).exists()).toBe(false);
-          expect(exitCode).toBe(1);
-        },
-      );
+      test.concurrent.each([
+        ...["5x", "5dd", "5 d d", "5d ", "d", ".d", "-5d", "1e3d", "5D", "5..5d", "1e999d"],
+        ...["5/../x", "5:6", "1e999", "NaN", "Infinity", "-0.5", "", " 5", "0x10"],
+      ])("--minimum-release-age=%j is refused", async value => {
+        using dir = tempDir("partly-numeric-age", {
+          "package.json": JSON.stringify({ dependencies: { "regular-package": "*" } }),
+          ".npmrc": `registry=${mockRegistryUrl}`,
+        });
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            command,
+            ...(command === "add" ? ["excluded-package"] : []),
+            `--minimum-release-age=${value}`,
+          ],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(stderr).toContain(`error: Expected --minimum-release-age to be a positive number: ${value}`);
+        expect(await Bun.file(join(String(dir), "bun.lock")).exists()).toBe(false);
+        expect(exitCode).toBe(1);
+      });
 
-      test.concurrent.each(["432000", "4.32e5", "432000.5", "+432000"])(
-        "--minimum-release-age=%s is a number",
-        async value => {
-          using dir = tempDir("numeric-age", {
-            "package.json": JSON.stringify({ dependencies: { "regular-package": "*" } }),
-            ".npmrc": `registry=${mockRegistryUrl}`,
-          });
-          await using proc = Bun.spawn({
-            cmd: [
-              bunExe(),
-              command,
-              ...(command === "add" ? ["excluded-package"] : []),
-              "--no-verify",
-              `--minimum-release-age=${value}`,
-            ],
-            cwd: String(dir),
-            env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
-            stdout: "pipe",
-            stderr: "pipe",
-          });
-          const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-          expect(stderr).not.toContain("error:");
-          expect(await Bun.file(join(String(dir), "bun.lock")).text()).toContain("regular-package@2.1.0");
-          expect(exitCode).toBe(0);
-        },
-      );
+      test.concurrent.each([
+        ...["432000", "4.32e5", "432000.5", "+432000"],
+        ...[
+          "5d",
+          "5 days",
+          "5.5day",
+          "120h",
+          "120 hours",
+          "7200m",
+          "7200 mins",
+          "432000s",
+          "432000 seconds",
+          "0.75w",
+          "0.75 weeks",
+        ],
+      ])("--minimum-release-age=%s is 5 days", async value => {
+        using dir = tempDir("numeric-age", {
+          "package.json": JSON.stringify({ dependencies: { "regular-package": "*" } }),
+          ".npmrc": `registry=${mockRegistryUrl}`,
+        });
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            command,
+            ...(command === "add" ? ["excluded-package"] : []),
+            "--no-verify",
+            `--minimum-release-age=${value}`,
+          ],
+          cwd: String(dir),
+          env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect(stderr).not.toContain("error:");
+        expect(await Bun.file(join(String(dir), "bun.lock")).text()).toContain("regular-package@2.1.0");
+        expect(exitCode).toBe(0);
+      });
     });
   });
 
@@ -3091,13 +3198,110 @@ describe("minimum-release-age", () => {
         stderr: "pipe",
       });
 
-      const exitCode = await proc.exited;
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-      // Should succeed - invalid timestamps should be skipped gracefully
-      expect(exitCode).toBe(0);
+      // Its age is unknown
+      expect(stderr).toContain(
+        `No version matching "*" found for specifier "bad-timestamp-package" (blocked by minimum-release-age: ${5 * SECONDS_PER_DAY} seconds)`,
+      );
+      expect(exitCode).toBe(1);
+    });
+  });
 
-      const lockfile = await Bun.file(`${dir}/bun.lock`).text();
-      expect(lockfile).toContain("bad-timestamp-package@1.0.0");
+  describe.concurrent("which version passes a gate of 5 days", () => {
+    type Versions = Record<string, { time?: unknown; deprecated?: string }>;
+    /** What every specifier of `expected` resolves `dep` to; null when the install fails. */
+    async function picked(versions: Versions, latest: string, specs: string[]) {
+      using server = Bun.serve({
+        port: 0,
+        fetch: () =>
+          Response.json({
+            name: "dep",
+            "dist-tags": { latest },
+            versions: Object.fromEntries(
+              Object.entries(versions).map(([version, { deprecated }]) => [
+                version,
+                { name: "dep", version, deprecated, dist: { tarball: `${server.url}dep-${version}.tgz` } },
+              ]),
+            ),
+            time: Object.fromEntries(Object.entries(versions).map(([version, { time }]) => [version, time])),
+          }),
+      });
+      const entries = specs.map(async spec => {
+        using dir = tempDir("age-gate-pick", { "package.json": JSON.stringify({ dependencies: { dep: spec } }) });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "install", "--lockfile-only", "--minimum-release-age", `${5 * SECONDS_PER_DAY}`],
+          cwd: String(dir),
+          env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"), BUN_CONFIG_REGISTRY: server.url.href },
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        const failed = await proc.exited;
+        return [
+          spec,
+          failed ? null : (await Bun.file(join(String(dir), "bun.lock")).text()).match(/"dep@([^"]+)"/)![1],
+        ];
+      });
+      return Object.fromEntries(await Promise.all(entries));
+    }
+
+    // Each row is also what npm-pick-manifest 11.0.3 answers with `before` 5 days ago.
+    test.each<[string, Versions, string, Record<string, string | null>]>([
+      [
+        "the newest version that passes is deprecated",
+        {
+          "1.0.0": { time: daysAgo(30) },
+          "2.0.0": { time: daysAgo(10), deprecated: "old" },
+          "3.0.0": { time: daysAgo(1) },
+        },
+        "3.0.0",
+        { "*": "1.0.0", ">=1.0.0": "1.0.0", latest: "1.0.0", "": "1.0.0", "^2.0.0": "2.0.0" },
+      ],
+      [
+        "only a deprecated version passes",
+        { "1.0.0": { time: daysAgo(30), deprecated: "old" }, "2.0.0": { time: daysAgo(1) } },
+        "2.0.0",
+        { "*": "1.0.0", ">=1.0.0": "1.0.0", latest: "1.0.0", "": "1.0.0" },
+      ],
+      [
+        "latest is deprecated and the next version is too recent",
+        {
+          "1.0.0": { time: daysAgo(30) },
+          "1.5.0": { time: daysAgo(1) },
+          "2.0.0": { time: daysAgo(30), deprecated: "old" },
+        },
+        "2.0.0",
+        { "*": "1.0.0", "": "1.0.0", latest: "2.0.0" },
+      ],
+      [
+        "every version is deprecated and too recent",
+        { "1.0.0": { time: daysAgo(1), deprecated: "old" }, "2.0.0": { time: daysAgo(1), deprecated: "old" } },
+        "2.0.0",
+        { "*": null, "": null, latest: null },
+      ],
+    ])("%s", async (_, versions, latest, expected) => {
+      expect(await picked(versions, latest, Object.keys(expected))).toEqual(expected);
+    });
+
+    const passes = { "^1.0.0": "1.1.0", "1.1.0": "1.1.0", latest: "1.1.0" };
+    const blocked = { "^1.0.0": "1.0.0", "1.1.0": null, latest: "1.0.0" };
+    test.each<[string, unknown, typeof passes | typeof blocked]>([
+      ["ISO 8601, now", daysAgo(0), blocked],
+      ["ISO 8601, old", daysAgo(30), passes],
+      ["RFC 2822, now", new Date(currentTime).toUTCString(), blocked],
+      ["RFC 2822, old", new Date(currentTime - 30 * DAY_MS).toUTCString(), passes],
+      ["not a date", "yesterday", blocked],
+      ["a number", currentTime - 30 * DAY_MS, blocked],
+      ["true", true, blocked],
+      ["an object", {}, blocked],
+      ["an empty string", "", passes],
+      ["null", null, passes],
+      ["false", false, passes],
+      ["0", 0, passes],
+      ["missing", undefined, passes],
+    ])("a publish time that is %s", async (_, time, expected) => {
+      const versions = { "1.0.0": { time: daysAgo(30) }, "1.1.0": { time } };
+      expect(await picked(versions, "1.1.0", Object.keys(expected))).toEqual(expected);
     });
   });
 
@@ -3239,6 +3443,10 @@ describe("minimum-release-age", () => {
       gated: { time: { "1.0.0": daysAgo(30), "2.0.0": daysAgo(1) } },
       fresh: { time: { "1.0.0": daysAgo(1) } },
       "needs-gated": { time: { "1.0.0": daysAgo(30) }, peerDependencies: { gated: "^2.0.0" } },
+      // The newest 1.x is inside the age window.
+      shared: { time: { "1.0.0": daysAgo(40), "1.1.0": daysAgo(30), "1.2.0": daysAgo(1), "2.0.0": daysAgo(20) } },
+      "a-any-shared": { time: { "1.0.0": daysAgo(30) }, peerDependencies: { shared: ">=1.0.0" } },
+      "b-shared-1": { time: { "1.0.0": daysAgo(30) }, peerDependencies: { shared: "^1.0.0" } },
     };
 
     function serveRegistry() {
@@ -3494,6 +3702,22 @@ describe("minimum-release-age", () => {
         expect(await Bun.file(`${dir}/bun.lock`).text()).toBe(lockfile);
       },
     );
+
+    test.concurrent("the version every dependent of a peer accepts is picked behind the gate too", async () => {
+      using registry = serveRegistry();
+      using dir = createProject(registry.origin, {
+        "package.json": JSON.stringify({
+          name: "app",
+          dependencies: { "a-any-shared": "1.0.0", "b-shared-1": "1.0.0" },
+        }),
+      });
+
+      const { stderr, exitCode } = await install(String(dir));
+      expect(stderr).not.toContain("warn:");
+      expect(stderr).not.toContain("error:");
+      expect((await Bun.file(`${dir}/bun.lock`).text()).match(/"shared@[^"]+"/g)).toEqual(['"shared@1.1.0"']);
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("clock skew scenarios", () => {

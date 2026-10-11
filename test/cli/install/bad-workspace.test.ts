@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, renameSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { dirname, join } from "path";
 
@@ -41,15 +41,85 @@ test("bad workspace path", () => {
 
 // The glob walker opens the literal prefix of an absolute pattern before it walks it. When
 // that directory is missing, the error names the errno by its node spelling on every
-// platform (Windows used to print the bare variant name, "NOENT").
-test("glob entry under a missing directory reports the errno name", async () => {
+// platform (Windows used to print the bare variant name, "NOENT") and the directory. No
+// other error line follows it.
+test.concurrent("glob entry under a missing directory reports the errno name and the directory", async () => {
   using dir = tempDir("bad-workspace-glob-missing-root", {});
   const entry = `${String(dir).replaceAll("\\", "/")}/missing/*`;
   writeFileSync(join(String(dir), "package.json"), rootPackageJson([entry]));
 
   const { stderr, exitCode } = await runInstall(String(dir));
 
-  expect(stderr).toContain(`error: Failed to run workspace pattern ${entry} due to error ENOENT`);
+  expect(errorLines(stderr)).toEqual([
+    `error: Failed to run workspace pattern ${entry} due to error ENOENT (open "${join(String(dir), "missing")}")`,
+  ]);
+  expect(exitCode).toBe(1);
+});
+
+// npm, pnpm and yarn 1 fail here too. Root ignores the mode bits, and chmod on Windows
+// cannot make a directory unreadable or unsearchable.
+test.concurrent.skipIf(isWindows || process.getuid?.() === 0).each([
+  ["unreadable", 0o000, "open", "secret"],
+  ["unsearchable", 0o444, "fstatat", join("secret", "package.json")],
+])("glob entry that reaches an %s directory names what it failed on", async (_, mode, syscall, failedOn) => {
+  using dir = tempDir("bad-workspace-glob-eacces", {
+    "package.json": rootPackageJson(["pkgs/*"]),
+    ...PKG1,
+    "pkgs/secret/package.json": JSON.stringify({ name: "secret" }),
+  });
+  const secret = join(String(dir), "pkgs", "secret");
+  chmodSync(secret, mode);
+  try {
+    const { stderr, exitCode } = await runInstall(String(dir));
+
+    expect(errorLines(stderr)).toEqual([
+      `error: Failed to run workspace pattern pkgs/* due to error EACCES (${syscall} "${join(String(dir), "pkgs", failedOn)}")`,
+    ]);
+    expect(exitCode).toBe(1);
+  } finally {
+    chmodSync(secret, 0o755);
+  }
+});
+
+// `bun add` walks the glob again when it writes package.json back. The registry removes the
+// directory between the two walks.
+test.concurrent("glob entry that fails when bun add writes package.json back is reported", async () => {
+  using dir = tempDir("bad-workspace-glob-write-back", { "extra/.keep": "" });
+  const extra = join(String(dir), "extra");
+  const entry = `${String(dir).replaceAll("\\", "/")}/extra/*`;
+  let tarballRequested = false;
+  await using registry = Bun.serve({
+    port: 0,
+    fetch(req) {
+      if (req.url.endsWith(".tgz")) {
+        tarballRequested = true;
+        return new Response(Bun.file(join(import.meta.dir, "baz-0.0.3.tgz")));
+      }
+      rmSync(extra, { recursive: true, force: true });
+      return Response.json({
+        name: "baz",
+        versions: { "0.0.3": { name: "baz", version: "0.0.3", dist: { tarball: `${registry.url}baz-0.0.3.tgz` } } },
+        "dist-tags": { latest: "0.0.3" },
+      });
+    },
+  });
+  writeFileSync(join(String(dir), "package.json"), rootPackageJson([entry]));
+  writeFileSync(join(String(dir), "bunfig.toml"), `[install]\ncache = false\nregistry = "${registry.url}"\n`);
+
+  await using proc = spawn({
+    cmd: [bunExe(), "add", "baz"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  // bun asked for the tarball, so the first walk passed.
+  expect(tarballRequested).toBe(true);
+  expect(errorLines(stderr)).toEqual([
+    `error: Failed to run workspace pattern ${entry} due to error ENOENT (open "${extra}")`,
+  ]);
   expect(exitCode).toBe(1);
 });
 
@@ -226,6 +296,10 @@ async function runInstall(cwd: string) {
   return { stdout, stderr, exitCode };
 }
 
+function errorLines(stderr: string) {
+  return stderr.split(/\r?\n/).filter(line => line.startsWith("error:"));
+}
+
 // Installs and asserts that pkgs/pkg1 is the only workspace package that was found.
 async function expectOnlyPkg1Found(dir: string) {
   const { stderr, exitCode } = await runInstall(dir);
@@ -358,6 +432,139 @@ async function runBun(args: string[], cwd: string, env: Record<string, string | 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
+
+// A `workspace:` spec with no path used to resolve to the declaring package and link it under
+// the dependency's name.
+describe.concurrent("workspace: spec that names no workspace", () => {
+  test("empty spec in the root fails to resolve", async () => {
+    using dir = tempDir("bad-workspace-empty-spec", {
+      "package.json": JSON.stringify({ name: "p", version: "1.0.0", dependencies: { a: "workspace:" } }),
+      "index.js": `module.exports = "root";`,
+    });
+
+    const { stderr, exitCode } = await runInstall(String(dir));
+
+    expect(stderr).toContain("error: a@workspace: failed to resolve");
+    expect(existsSync(join(String(dir), "node_modules", "a"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
+  test("empty spec in a workspace member fails to resolve", async () => {
+    using dir = tempDir("bad-workspace-member-empty-spec", {
+      "package.json": JSON.stringify({ name: "p", version: "1.0.0", workspaces: ["packages/*"] }),
+      "packages/foo/package.json": JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: { bar: "workspace:" },
+      }),
+    });
+
+    const { stderr, exitCode } = await runInstall(String(dir));
+
+    expect(stderr).toContain("error: bar@workspace: failed to resolve");
+    expect(existsSync(join(String(dir), "node_modules", "bar"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
+  // `workspace:.` is a path. In the root it names the root package, like it names the member
+  // in a member (see "workspace self dependencies create symlinks" in isolated-install.test.ts).
+  test("workspace:. in the root links the root package under the dependency's name", async () => {
+    using dir = tempDir("bad-workspace-root-self-spec", {
+      "package.json": JSON.stringify({ name: "p", version: "1.0.0", dependencies: { a: "workspace:." } }),
+      "index.js": `module.exports = "root";`,
+    });
+
+    for (let i = 0; i < 2; i++) {
+      const { stderr, exitCode } = await runInstall(String(dir));
+      expect(stderr).not.toContain("error:");
+      expect(JSON.parse(readFileSync(join(String(dir), "node_modules", "a", "package.json"), "utf8")).name).toBe("p");
+      expect(exitCode).toBe(0);
+    }
+  });
+
+  test("workspace: links the workspace with the dependency's name", async () => {
+    using dir = tempDir("bad-workspace-empty-spec-found", {
+      "package.json": JSON.stringify({
+        name: "p",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+        dependencies: { a: "workspace:" },
+      }),
+      "packages/a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
+    });
+
+    const { stderr, exitCode } = await runInstall(String(dir));
+
+    expect(stderr).not.toContain("error:");
+    expect(readFileSync(join(String(dir), "node_modules", "a", "package.json"), "utf8")).toContain('"name":"a"');
+    expect(exitCode).toBe(0);
+  });
+});
+
+// A pattern that leaves the root can name the root again. The root is not its own member.
+test.concurrent.each([
+  ["glob", ["../*"]],
+  ["path", ["../root", "../proj-a"]],
+])("a workspaces %s that also names the root does not add the root as a member", async (_, workspaces) => {
+  using dir = tempDir("bad-workspace-names-root", {
+    "root/package.json": JSON.stringify({ name: "root", version: "1.0.0", workspaces }),
+    "proj-a/package.json": JSON.stringify({ name: "proj-a", version: "1.0.0" }),
+  });
+  const root = join(String(dir), "root");
+
+  const { stderr, exitCode } = await runInstall(root);
+
+  expect(stderr).not.toContain("error:");
+  expect(install_test_helpers.parseLockfile(root).packages.map(pkg => pkg.name)).toEqual(["root", "proj-a"]);
+  expect(exitCode).toBe(0);
+});
+
+// To learn whether the cwd is a member, bun reads the members of the package.json above it.
+describe.concurrent.each([
+  ["glob", ["packages/*"]],
+  ["paths", ["packages/pkg1", "packages/pkg2", "packages/pkg3"]],
+])("in a member next to one whose package.json does not parse (%s)", (_, workspaces) => {
+  async function installThenBreakSibling() {
+    const dir = tempDir("bad-workspace-broken-sibling", {
+      "package.json": rootPackageJson(workspaces),
+      "packages/pkg1/package.json": JSON.stringify({ name: "pkg1", version: "1.0.0" }),
+      "packages/pkg2/package.json": JSON.stringify({ name: "pkg2", version: "1.0.0" }),
+      "packages/pkg3/package.json": JSON.stringify({
+        name: "pkg3",
+        version: "1.0.0",
+        dependencies: { pkg1: "workspace:*" },
+      }),
+    });
+    expect((await runInstall(String(dir))).exitCode).toBe(0);
+    return {
+      member: join(String(dir), "packages", "pkg3"),
+      breakSibling: () =>
+        writeFileSync(join(String(dir), "packages", "pkg2", "package.json"), '{ "name": "pkg2", oops'),
+      [Symbol.dispose]: () => dir[Symbol.dispose](),
+    };
+  }
+
+  test.each(["outdated", "pm ls", "why pkg1"])("bun %s still finds the workspace root", async command => {
+    using project = await installThenBreakSibling();
+    const before = await runBun(command.split(" "), project.member);
+    expect(before.exitCode).toBe(0);
+    project.breakSibling();
+
+    expect(await runBun(command.split(" "), project.member)).toEqual(before);
+  });
+
+  test("bun install reports that package.json, and does not install the member as a project of its own", async () => {
+    using project = await installThenBreakSibling();
+    project.breakSibling();
+
+    const { stderr, exitCode } = await runInstall(project.member);
+
+    expect(stderr).toContain('error: ParserError reading package.json for workspace package "packages/pkg2"');
+    expect(stderr).not.toContain('Workspace dependency "pkg1" not found');
+    expect(existsSync(join(project.member, "bun.lock"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+});
 
 // The package.json that `bun install` finds above the directory it runs in becomes the root of
 // the install: it says which lifecycle scripts are trusted, and its .npmrc and bunfig.toml apply.

@@ -1084,6 +1084,23 @@ pub fn parse_f64(s: &[u8]) -> Option<f64> {
     None // partial match → trailing garbage
 }
 
+/// The whole of `s` as a finite number of seconds that is not negative: a number, or digits with a unit (`90m`, `3d`, `1.5 hours`, `2 weeks`).
+pub fn parse_seconds(s: &[u8]) -> Option<f64> {
+    let seconds = parse_f64(s).or_else(|| {
+        let digits = (s.iter().take_while(|c| matches!(c, b'0'..=b'9' | b'.'))).count();
+        let seconds_per_unit = match s[digits..].trim_ascii_start() {
+            b"s" | b"sec" | b"secs" | b"second" | b"seconds" => 1.0,
+            b"m" | b"min" | b"mins" | b"minute" | b"minutes" => 60.0,
+            b"h" | b"hr" | b"hrs" | b"hour" | b"hours" => 3_600.0,
+            b"d" | b"day" | b"days" => 86_400.0,
+            b"w" | b"week" | b"weeks" => 604_800.0,
+            _ => return None,
+        };
+        Some(parse_f64(&s[..digits])? * seconds_per_unit)
+    })?;
+    (seconds >= 0.0 && seconds.is_finite()).then_some(seconds)
+}
+
 /// `parse_f64` truncated to `f32`.
 #[inline]
 pub fn parse_f32(s: &[u8]) -> Option<f32> {

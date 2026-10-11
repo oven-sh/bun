@@ -125,8 +125,12 @@ pub struct Installer<'a> {
     pub(crate) waiters_head: Box<[StoreEntryId]>,
     pub(crate) next_waiter: Box<[StoreEntryId]>,
 
-    /// Main-thread only: entries deleted by `on_optional_dependency_scripts_failed`.
-    pub(crate) failed_optional_entries: Vec<StoreEntryId>,
+    /// Main-thread only: the workspace members that returned `Result::Blocked`, until
+    /// `release_members` takes them.
+    pub(crate) held_members: Option<Vec<StoreEntryId>>,
+
+    /// Main-thread only: see `leave_out_entry`.
+    pub(crate) left_out_entries: Vec<StoreEntryId>,
 
     /// Main-thread only: entries that returned `Result::RunScripts`, in that order. `run_tasks`
     /// spawns them while fewer than `max_concurrent_lifecycle_scripts` scripts run.
@@ -377,9 +381,25 @@ impl<'a> Installer<'a> {
         };
         for install_ctx in callbacks.as_slice() {
             if let &TaskCallbackContext::IsolatedPackageInstallContext(entry_id) = install_ctx {
-                self.on_optional_dependency_scripts_failed(entry_id);
+                self.leave_out_entry(entry_id);
             }
         }
+    }
+
+    /// Main thread: nothing was queued for the entry's package (its download already failed, or
+    /// `--offline` and not cached). Whoever found that out reported it.
+    pub(crate) fn on_download_not_queued(&mut self, entry_id: StoreEntryId) {
+        let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
+        let dep_id = self.store.nodes.items_dep_id()[node_id.get() as usize];
+        let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+        if !self.manager().is_package_required(dep_id, pkg_id) {
+            self.leave_out_entry(entry_id);
+            return;
+        }
+        // .monotonic is okay because the task isn't running on another thread.
+        self.store.entries.items_step()[entry_id.get() as usize]
+            .store(Step::Done as u32, Ordering::Relaxed);
+        self.on_task_complete(entry_id, CompleteState::Fail);
     }
 
     pub(crate) fn apply_package_patch(
@@ -456,13 +476,6 @@ impl<'a> Installer<'a> {
                     (&pkg_name, &pkg_res_fmt),
                 );
             }
-            TaskError::LinkPathTooLong => {
-                Output::err(
-                    "ENAMETOOLONG",
-                    "link path for package <b>{}<r> is too long",
-                    (&pkg_name,),
-                );
-            }
             TaskError::Patching(patch_log) => {
                 Output::err_generic("failed to patch package: {}@{}", (&pkg_name, &pkg_res_fmt));
                 let _ = patch_log.print(std::ptr::from_mut(Output::error_writer()));
@@ -502,7 +515,15 @@ impl<'a> Installer<'a> {
                     ),
                 );
             }
-            _ => {}
+            TaskError::RunScripts(scripts_err) => {
+                Output::err(
+                    *scripts_err,
+                    "failed to run lifecycle scripts for package: {}@{}",
+                    (&pkg_name, &pkg_res_fmt),
+                );
+                // It is in place, which the next install would take for installed.
+                self.delete_store_copy(entry_id);
+            }
         }
         Output::flush();
 
@@ -553,6 +574,16 @@ impl<'a> Installer<'a> {
         // fix: check if the task is unblocked after the task returns blocked, and only set/unset
         // blocked from the main thread.
 
+        if self.is_member(entry_id)
+            && let Some(held) = self.held_members.as_mut()
+        {
+            // .monotonic is okay because the task isn't running right now.
+            self.store.entries.items_step()[entry_id.get() as usize]
+                .store(Step::Blocked as u32, Ordering::Relaxed);
+            held.push(entry_id);
+            return;
+        }
+
         let mut parent_dedupe: ArrayHashMap<StoreEntryId, ()> = ArrayHashMap::default();
 
         match self.is_task_blocked(entry_id, &mut parent_dedupe) {
@@ -567,6 +598,71 @@ impl<'a> Installer<'a> {
                 self.store.entries.items_step()[entry_id.get() as usize]
                     .store(Step::Blocked as u32, Ordering::Relaxed);
                 self.push_waiter(blocked_on, entry_id);
+            }
+        }
+    }
+
+    /// Main thread. The members go on once nothing but them is pending, so that their scripts find
+    /// every package and bin of the install, as the root's do. Waiting for the root entry instead
+    /// would deadlock: the root can depend on a member through a registry package.
+    pub(crate) fn release_members(&mut self) {
+        let pending = self.manager().pending_task_count() as usize;
+        if self
+            .held_members
+            .as_ref()
+            .is_some_and(|held| !held.is_empty() && held.len() == pending)
+        {
+            for entry_id in self.held_members.take().unwrap_or_default() {
+                self.on_task_blocked(entry_id);
+            }
+        }
+    }
+
+    fn is_member(&self, entry_id: StoreEntryId) -> bool {
+        let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
+        let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+        self.lockfile().packages.items_resolution()[pkg_id as usize].tag == ResolutionTag::Workspace
+    }
+
+    /// Main thread, once every task is done. Only members wait for a member's scripts, which can
+    /// write the files of its bins.
+    pub(crate) fn relink_bins_of_members_with_scripts(&mut self) {
+        let store = self.store;
+        let entries = &store.entries;
+        let pkg_bins = self.lockfile().packages.items_bin();
+        let pkg_id_of = |entry_id: StoreEntryId| {
+            let node_id = entries.items_node_id()[entry_id.get() as usize];
+            store.nodes.items_pkg_id()[node_id.get() as usize] as usize
+        };
+
+        let mut members: Vec<usize> = Vec::new();
+        for (index, scripts) in entries.items_scripts().iter().enumerate() {
+            let entry_id = StoreEntryId::from(index as u32);
+            if scripts.get().is_some()
+                && self.is_member(entry_id)
+                && pkg_bins[pkg_id_of(entry_id)].tag != bin::Tag::None
+                && !self.left_out_entries.contains(&entry_id)
+            {
+                members.push(pkg_id_of(entry_id));
+            }
+        }
+        if members.is_empty() {
+            return;
+        }
+
+        // By package: a `workspace:` dependency on a member can be an entry of its own.
+        let dependents: Vec<StoreEntryId> = (entries.items_dependencies().iter().enumerate())
+            .filter(|(_, deps)| {
+                (deps.slice().iter()).any(|dep| members.contains(&pkg_id_of(dep.entry_id)))
+            })
+            .map(|(index, _)| StoreEntryId::from(index as u32))
+            .collect();
+        for dependent in dependents {
+            // It depends on a workspace, so its `Which::Staging` is where it is.
+            debug_assert!(!self.entry_uses_global_store(dependent));
+            if let Err(err) = self.link_dependency_bins(dependent) {
+                self.manager_mut().increment_pending_tasks(1);
+                self.on_task_fail(dependent, &err);
             }
         }
     }
@@ -592,6 +688,10 @@ impl<'a> Installer<'a> {
         for dep in deps.slice() {
             if entry_steps[dep.entry_id.get() as usize].load(Ordering::Acquire) != Step::Done as u32
             {
+                // See `release_members`.
+                if self.is_member(dep.entry_id) && !self.is_member(entry_id) {
+                    continue;
+                }
                 parent_dedupe.clear_retaining_capacity();
                 if self.store.is_cycle(entry_id, dep.entry_id, parent_dedupe) {
                     continue;
@@ -642,7 +742,13 @@ impl<'a> Installer<'a> {
 
             let dep = &self.lockfile().buffers.dependencies[dep_id as usize];
 
-            if dep.behavior.is_workspace() {
+            // Also a workspace that only another workspace reaches: a dependency of the root has its name.
+            if dep.behavior.is_workspace()
+                || self.lockfile().packages.items_resolution()
+                    [nodes.items_pkg_id()[node_id.get() as usize] as usize]
+                    .tag
+                    == ResolutionTag::Workspace
+            {
                 break 'state (node_id, CompleteState::Skipped);
             }
 
@@ -681,10 +787,10 @@ impl<'a> Installer<'a> {
     }
 
     /// Called from main thread; dependents finish without the entry. Returns `delete_store_copy`.
-    pub(crate) fn on_optional_dependency_scripts_failed(&mut self, entry_id: StoreEntryId) -> bool {
+    pub(crate) fn leave_out_entry(&mut self, entry_id: StoreEntryId) -> bool {
         // deleted first so the resumed dependents do not link its binaries
         let deleted = self.delete_store_copy(entry_id);
-        self.failed_optional_entries.push(entry_id);
+        self.left_out_entries.push(entry_id);
         self.store.entries.items_step()[entry_id.get() as usize]
             .store(Step::Done as u32, Ordering::Release);
         self.on_task_complete(entry_id, CompleteState::Skipped);
@@ -717,21 +823,36 @@ impl<'a> Installer<'a> {
     /// Main thread; a script of `failed` ends the install. An entry that is in place counts as
     /// installed, so those whose scripts have not all run go: the next install links them again.
     pub(crate) fn discard_entries_with_unfinished_scripts(&self, failed: StoreEntryId) {
-        let entries = &self.store.entries;
-        let pkg_metas = self.lockfile().packages.items_meta();
-        for (index, (step, node_id)) in (entries.items_step().iter())
-            .zip(entries.items_node_id())
-            .enumerate()
-        {
+        for (index, step) in self.store.entries.items_step().iter().enumerate() {
             let entry_id = StoreEntryId::from(index as u32);
-            let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+            // Whether an unfinished entry has scripts is not known yet (bun.lock does not say).
             if entry_id == failed
-                || (step.load(Ordering::Acquire) != Step::Done as u32
-                    && pkg_metas[pkg_id as usize].has_install_script())
+                || (step.load(Ordering::Acquire) != Step::Done as u32 && self.is_trusted(entry_id))
             {
                 self.delete_store_copy(entry_id);
             }
         }
+    }
+
+    /// Whether the scripts of a dependency's entry may run. Main and task threads.
+    fn is_trusted(&self, entry_id: StoreEntryId) -> bool {
+        let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
+        let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+        let dep_id = self.store.nodes.items_dep_id()[node_id.get() as usize];
+        if dep_id == invalid_dependency_id {
+            return false;
+        }
+        let lockfile = self.lockfile();
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        self.trusted_dependencies_from_update_requests
+            .contains(&pkg_id)
+            || lockfile.has_trusted_dependency(
+                lockfile.buffers.dependencies[dep_id as usize]
+                    .name
+                    .slice(string_buf),
+                lockfile.packages.items_name()[pkg_id as usize].slice(string_buf),
+                &lockfile.packages.items_resolution()[pkg_id as usize],
+            )
     }
 
     /// Main thread, once no task runs: tasks read `lockfile.trusted_dependencies` without a lock.
@@ -907,8 +1028,6 @@ pub struct DownloadError {
 pub enum TaskError {
     LinkPackage(sys::Error),
     SymlinkDependencies(sys::Error),
-    /// See `Installer::append_dependency_path`.
-    LinkPathTooLong,
     RunScripts(crate::Error),
     Binaries(crate::Error),
     /// (dependency entry, error)
@@ -1078,7 +1197,6 @@ impl Task {
         let entry_node_ids = entries.items_node_id();
         let entry_steps = entries.items_step();
         let entry_scripts = entries.items_scripts();
-        let entry_hoisted = entries.items_hoisted();
 
         let nodes = &installer.store.nodes;
         let node_pkg_ids = nodes.items_pkg_id();
@@ -1445,7 +1563,7 @@ impl Task {
                     // value "in time".
                     let mut backend =
                         InstallMethod::from_u8(installer.supported_backend.load(Ordering::Relaxed));
-                    'backend: loop {
+                    let linked: sys::Result<()> = 'backend: loop {
                         // Rebuild `dest_subpath` per iteration; this only
                         // re-runs once on an EXDEV/OPNOTSUPP retry.
                         let mut dest_subpath = OsAutoPath::init();
@@ -1520,15 +1638,11 @@ impl Task {
                                                 backend = InstallMethod::Hardlink;
                                                 continue 'backend;
                                             }
-                                            _ => {
-                                                return Ok(Yield::failure(TaskError::LinkPackage(
-                                                    err,
-                                                )));
-                                            }
+                                            _ => break 'backend Err(err),
                                         },
                                     }
 
-                                    break 'backend;
+                                    break 'backend Ok(());
                                 }
                             }
 
@@ -1591,11 +1705,11 @@ impl Task {
                                             );
                                             Output::flush();
                                         }
-                                        return Ok(Yield::failure(TaskError::LinkPackage(err)));
+                                        break 'backend Err(err);
                                     }
                                 }
 
-                                break 'backend;
+                                break 'backend Ok(());
                             }
 
                             // fallthrough copyfile
@@ -1656,13 +1770,29 @@ impl Task {
                                             );
                                             Output::flush();
                                         }
-                                        return Ok(Yield::failure(TaskError::LinkPackage(err)));
+                                        break 'backend Err(err);
                                     }
                                 }
 
-                                break 'backend;
+                                break 'backend Ok(());
                             }
                         }
+                    };
+
+                    if let Err(err) = linked {
+                        if !uses_global_store
+                            && !link_in_place
+                            && err.get_errno() == sys::Errno::ENAMETOOLONG
+                        {
+                            // The staging name can be longer than the package's.
+                            link_in_place = true;
+                            continue 'step;
+                        }
+                        if link_in_place {
+                            // What is at the final path counts as installed.
+                            installer.delete_store_copy(self.entry_id);
+                        }
+                        return Ok(Yield::failure(TaskError::LinkPackage(err)));
                     }
 
                     if !uses_global_store
@@ -1725,9 +1855,16 @@ impl Task {
 
                     let mut parent_dedupe: ArrayHashMap<StoreEntryId, ()> = ArrayHashMap::default();
 
-                    if installer
-                        .is_task_blocked(self.entry_id, &mut parent_dedupe)
-                        .is_some()
+                    // The main thread holds a member that can have scripts: `release_members`.
+                    let scripts = &pkg_script_lists[pkg_id as usize];
+                    let is_held = pkg_res.tag == ResolutionTag::Workspace
+                        && manager_ref.options.do_.contains(Do::RUN_SCRIPTS)
+                        && (scripts.has_any() || !scripts.filled);
+
+                    if is_held
+                        || installer
+                            .is_task_blocked(self.entry_id, &mut parent_dedupe)
+                            .is_some()
                     {
                         return Ok(Yield::Blocked);
                     }
@@ -1742,27 +1879,8 @@ impl Task {
                         return Ok(Yield::failure(err));
                     }
 
-                    match pkg_res.tag {
-                        ResolutionTag::Uninitialized
-                        | ResolutionTag::Root
-                        | ResolutionTag::Workspace
-                        | ResolutionTag::Folder
-                        | ResolutionTag::Symlink
-                        | ResolutionTag::SingleFileModule => {}
-
-                        ResolutionTag::Npm
-                        | ResolutionTag::Git
-                        | ResolutionTag::Github
-                        | ResolutionTag::LocalTarball
-                        | ResolutionTag::RemoteTarball => {
-                            if !entry_hoisted[self.entry_id.get() as usize] {
-                                step = self.next_step(current_step);
-                                continue;
-                            }
-                            installer.link_to_hidden_node_modules(self.entry_id);
-                        }
-
-                        _ => {}
+                    if pkg_res.can_enqueue_install_task() {
+                        installer.link_to_hidden_node_modules(self.entry_id);
                     }
 
                     step = self.next_step(current_step);
@@ -1780,14 +1898,7 @@ impl Task {
 
                     let dep = &lockfile.buffers.dependencies[dep_id as usize];
 
-                    let is_trusted = installer
-                        .trusted_dependencies_from_update_requests
-                        .contains(&pkg_id)
-                        || lockfile.has_trusted_dependency(
-                            dep.name.slice(string_buf),
-                            pkg_name.slice(string_buf),
-                            &pkg_res,
-                        );
+                    let is_trusted = installer.is_trusted(self.entry_id);
 
                     if !(pkg_res.tag != ResolutionTag::Root
                         && (pkg_res.tag == ResolutionTag::Workspace || is_trusted))
@@ -2335,7 +2446,29 @@ impl<'a> Installer<'a> {
         Ok(PatchInfo::None)
     }
 
+    /// The dependency names `build_store` granted the entry in `node_modules/.bun/node_modules`:
+    /// one name, one entry, so one thread writes each link.
+    fn hidden_hoist_names(&self, entry_id: StoreEntryId) -> impl Iterator<Item = &'a [u8]> {
+        let (store, lockfile) = (self.store, self.lockfile());
+        let node_id = store.entries.items_node_id()[entry_id.get() as usize];
+        (store.entries.items_hoisted()[entry_id.get() as usize])
+            .then(|| store.nodes.items_dep_id()[node_id.get() as usize])
+            .into_iter()
+            .chain(
+                (store.hidden_hoist_keys.iter())
+                    .filter(move |key| key.entry_id == entry_id)
+                    .map(|key| key.dep_id),
+            )
+            .map(move |dep_id| lockfile.str(&lockfile.buffers.dependencies[dep_id as usize].name))
+    }
+
     pub(crate) fn link_to_hidden_node_modules(&self, entry_id: StoreEntryId) {
+        for name in self.hidden_hoist_names(entry_id) {
+            self.link_to_hidden_node_modules_as(entry_id, name);
+        }
+    }
+
+    fn link_to_hidden_node_modules_as(&self, entry_id: StoreEntryId, name: &[u8]) {
         let string_buf = self.lockfile().buffers.string_bytes.as_slice();
 
         let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
@@ -2356,12 +2489,12 @@ impl<'a> Installer<'a> {
             )
             .as_bytes(),
         );
-        let _ = hidden_hoisted_node_modules.append(pkg_name.slice(string_buf)); // OOM/capacity: fire-and-forget
+        let _ = hidden_hoisted_node_modules.append(name); // OOM/capacity: fire-and-forget
 
         let mut target = AutoRelPath::init();
 
         let _ = target.append(b".."); // OOM/capacity: fire-and-forget
-        if strings::index_of_char(pkg_name.slice(string_buf), b'/').is_some() {
+        if strings::index_of_char(name, b'/').is_some() {
             let _ = target.append(b".."); // OOM/capacity: fire-and-forget
         }
 
@@ -2512,12 +2645,8 @@ impl<'a> Installer<'a> {
             } else if uses_global_store {
                 debug_assert!(self.entry_uses_global_store(dep.entry_id));
                 self.append_real_store_path(&mut dep_store_path, dep.entry_id, Which::Final);
-            } else if self
-                .append_dependency_path(&mut dep_store_path, dep.entry_id)
-                .is_err()
-            {
-                // The `link:` entry itself reports the over-long target.
-                continue;
+            } else {
+                self.append_store_path(&mut dep_store_path, dep.entry_id);
             }
 
             let dest_len = dest.len();
@@ -2540,8 +2669,8 @@ impl<'a> Installer<'a> {
     }
 
     /// Main thread, once every task is done: dependents may still be linking while a script fails.
-    pub(crate) fn unlink_failed_optional_entries(&self) {
-        if self.failed_optional_entries.is_empty() {
+    pub(crate) fn unlink_left_out_entries(&self) {
+        if self.left_out_entries.is_empty() {
             return;
         }
 
@@ -2558,10 +2687,14 @@ impl<'a> Installer<'a> {
         for (entry_index, entry_deps) in self.store.entries.items_dependencies().iter().enumerate()
         {
             for dep in entry_deps.slice() {
-                if !self.failed_optional_entries.contains(&dep.entry_id) {
+                if !self.left_out_entries.contains(&dep.entry_id) {
                     continue;
                 }
                 let entry_id = StoreEntryId::from(u32::try_from(entry_index).expect("int cast"));
+                // Other projects share it, and its link is right once the package is in the store.
+                if self.entry_uses_global_store(entry_id) {
+                    continue;
+                }
                 let node_id = entry_node_ids[entry_index].get() as usize;
                 let pkg_id = nodes.items_pkg_id()[node_id];
                 let entry_node_modules_name = self.entry_store_node_modules_package_name(
@@ -2578,13 +2711,11 @@ impl<'a> Installer<'a> {
             }
         }
 
-        for &entry_id in &self.failed_optional_entries {
-            if self.store.entries.items_hoisted()[entry_id.get() as usize] {
-                let node_id = entry_node_ids[entry_id.get() as usize].get() as usize;
-                let pkg_name = pkg_names[nodes.items_pkg_id()[node_id] as usize].slice(string_buf);
+        for &entry_id in &self.left_out_entries {
+            for name in self.hidden_hoist_names(entry_id) {
                 let mut hidden = AutoPath::init();
                 let _ = hidden.append_fmt(format_args!("{NODE_MODULES_BUN}/node_modules"));
-                let _ = hidden.append(pkg_name);
+                let _ = hidden.append(name);
                 let _ = remove_link(hidden.slice_z());
             }
         }
@@ -2647,20 +2778,29 @@ impl<'a> Installer<'a> {
             .iter()
             .filter(|dep| pkg_bins[pkg_id_of(dep.entry_id) as usize].tag != bin::Tag::None)
             .collect();
-        deps_with_bins.sort_by_key(|dep| {
-            let dependency = &lockfile.buffers.dependencies[dep.dep_id as usize];
-            bin_real::LinkOrder::new(
-                parent_dependencies.contains(dep.dep_id)
-                    && bin_real::LinkOrder::declares(dependency.behavior),
-                pkg_resolutions[pkg_id_of(dep.entry_id) as usize].tag,
-                dependency.name.slice(string_buf),
-            )
+        bun_collections::index_sort::sort_slice_by(&mut deps_with_bins, |a, b| {
+            let [a, b] = [a, b].map(|dep| {
+                let dependency = &lockfile.buffers.dependencies[dep.dep_id as usize];
+                bin_real::LinkOrder::new(
+                    parent_dependencies.contains(dep.dep_id)
+                        && bin_real::LinkOrder::declares(dependency.behavior),
+                    pkg_resolutions[pkg_id_of(dep.entry_id) as usize].tag,
+                    dependency.name.slice(string_buf),
+                )
+            });
+            a.cmp(&b)
         });
 
         for dep in deps_with_bins {
             let pkg_id = pkg_id_of(dep.entry_id);
             let bin = pkg_bins[pkg_id as usize];
             let alias = lockfile.buffers.dependencies[dep.dep_id as usize].name;
+            let global = parent_entry_id == StoreEntryId::ROOT && self.manager().options.global;
+            // A relink task: the package was installed before this run.
+            let installed = self.tasks[dep.entry_id.get() as usize].relink == Relink::Off;
+            if global && !self.manager().links_bins_globally(pkg_id, installed) {
+                continue;
+            }
 
             let mut target_node_modules_path: Option<DefaultAbsPath> = None;
             let package_name = strings::StringOrTinyString::init(alias.slice(string_buf));
@@ -2720,7 +2860,7 @@ impl<'a> Installer<'a> {
                 skipped_due_to_missing_bin: false,
             };
 
-            bin_linker.link(false);
+            bin_linker.link(global);
 
             if target_node_modules_path.is_some()
                 && (bin_linker.skipped_due_to_missing_bin || bin_linker.err.is_some())
@@ -2738,7 +2878,7 @@ impl<'a> Installer<'a> {
                     );
                 }
 
-                bin_linker.link(false);
+                bin_linker.link(global);
             }
 
             if let Some(err) = bin_linker.err {
@@ -3091,45 +3231,25 @@ impl<'a> Installer<'a> {
         self.append_store_path(buf, entry_id);
     }
 
-    /// `append_store_path` for the entry a dependency symlink points at, the one place a
-    /// `link:` package's path (`<global link dir>/<target as written>`) is needed. A target
-    /// that does not fit a path buffer fails with `LinkPathTooLong`.
-    pub(crate) fn append_dependency_path(
-        &self,
-        buf: &mut AutoAbsPath,
-        entry_id: StoreEntryId,
-    ) -> core::result::Result<(), TaskError> {
-        let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
-        let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
-        let pkg_res = self.lockfile().packages.items_resolution()[pkg_id as usize];
-
-        if pkg_res.tag != ResolutionTag::Symlink {
-            self.append_store_path(buf, entry_id);
-            return Ok(());
-        }
-
-        // Ensured on the main thread (`install_isolated_packages`) before any task starts;
-        // this runs on worker threads and cannot lazily init it.
-        let link_dir_path: &[u8] = &self.manager().global_link_dir_path;
-        debug_assert!(!link_dir_path.is_empty());
-        let string_buf = self.lockfile().buffers.string_bytes.as_slice();
-        let link_target = pkg_res.symlink().slice(string_buf);
-
-        let mut join_buf = paths::path_buffer_pool::get();
-        let Some(target) = paths::resolve_path::join_abs_string_buf_checked::<paths::platform::Auto>(
-            link_dir_path,
-            &mut join_buf[..],
-            &[link_target],
-        ) else {
-            return Err(TaskError::LinkPathTooLong);
+    /// Where a `link:` package is: a path is relative to the project, a name to the global link
+    /// dir. `isolated_install::check_link_entries` bounded the length and created that dir on the
+    /// main thread; this runs on workers. Normalized: a Windows junction does not resolve `..`.
+    fn link_target_path<'b>(&self, target: &[u8], buf: &'b mut paths::PathBuffer) -> &'b [u8] {
+        let base: &[u8] = if crate::dependency::is_link_path(target) {
+            bun_fs::FileSystem::instance().top_level_dir()
+        } else {
+            &self.manager().global_link_dir_path
         };
-
-        paths::PathLike::clear(buf);
-        buf.append(target).assume_ok(); // bounded by the same buffer size
-        Ok(())
+        debug_assert!(!base.is_empty());
+        let len = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
+            base,
+            &mut buf[..],
+            &[target],
+        )
+        .len();
+        &buf[..len]
     }
 
-    /// `entry_id` must not be a `link:` package; see `append_dependency_path`.
     pub(crate) fn append_store_path(&self, buf: &mut impl paths::PathLike, entry_id: StoreEntryId) {
         let string_buf = self.lockfile().buffers.string_bytes.as_slice();
 
@@ -3176,7 +3296,11 @@ impl<'a> Installer<'a> {
                 buf.append(pkg_res.workspace().slice(string_buf));
             }
             ResolutionTag::Symlink => {
-                unreachable!("link: packages have no store path; see append_dependency_path")
+                let mut join_buf = paths::path_buffer_pool::get();
+                buf.clear();
+                buf.append(
+                    self.link_target_path(pkg_res.symlink().slice(string_buf), &mut join_buf),
+                );
             }
             _ => {
                 let pkg_name = pkg_names[pkg_id as usize];

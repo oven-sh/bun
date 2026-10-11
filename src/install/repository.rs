@@ -9,7 +9,6 @@ use bun_semver::string::Buf as StringBuf;
 
 use crate::dependency as Dependency;
 use crate::hosted_git_info;
-use crate::install::{self as Install};
 use crate::resolution::fmt_store_url;
 
 #[derive(Clone, Copy, Default)]
@@ -428,7 +427,11 @@ pub struct StorePathFormatter<'a> {
 
 impl<'a> fmt::Display for StorePathFormatter<'a> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(writer, "{}", Install::fmt_store_path(self.label.as_bytes()))?;
+        write!(
+            writer,
+            "{}",
+            bun_semver::string::fmt_store_path(self.label.as_bytes())
+        )?;
 
         if !self.repo.owner.is_empty() {
             write!(
@@ -452,7 +455,7 @@ impl<'a> fmt::Display for StorePathFormatter<'a> {
         if !self.repo.resolved.is_empty() {
             writer.write_str("+")?; // this would be '#' but it's not valid on windows
             let resolved = self.repo.resolved_commit(self.string_buf);
-            write!(writer, "{}", Install::fmt_store_path(resolved))?;
+            write!(writer, "{}", bun_semver::string::fmt_store_path(resolved))?;
         } else if !self.repo.committish.is_empty() {
             writer.write_str("+")?; // this would be '#' but it's not valid on windows
             write!(

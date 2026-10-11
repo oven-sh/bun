@@ -831,7 +831,7 @@ fn newest_allowed(manager: &mut PackageManager, pkg_id: PackageID) -> Option<Box
             continue;
         };
         let Some(found) = manifest
-            .find_best_version_with_filter(&range.npm().version, buf, min_age, excludes)
+            .find_for_dependency(&range, buf, min_age, excludes)
             .unwrap()
         else {
             continue;
@@ -1161,9 +1161,8 @@ fn plan_edges(
         let pins_before = pins.len();
         for want in &inst.wants {
             let to = if want.version.tag == DependencyVersionTag::Npm {
-                let range = &want.version.npm().version;
                 let Some(found) = manifest
-                    .find_best_version_with_filter(range, buf, min_age, excludes)
+                    .find_for_dependency(&want.version, buf, min_age, excludes)
                     .unwrap()
                 else {
                     continue;
@@ -1182,9 +1181,8 @@ fn plan_edges(
                 }
                 Some(v)
             } else {
-                let tag = want.version.dist_tag().tag.slice(buf);
                 let Some(found) = manifest
-                    .find_by_dist_tag_with_filter(tag, min_age, excludes)
+                    .find_for_dependency(&want.version, buf, min_age, excludes)
                     .unwrap()
                 else {
                     continue;

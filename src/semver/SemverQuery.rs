@@ -506,11 +506,6 @@ impl Group {
         self.head.eql(&rhs.head)
     }
 
-    pub fn to_version(&self) -> Version {
-        debug_assert!(self.is_exact() || self.head.head.range.left.op == RangeOp::Unset);
-        self.head.head.range.left.version
-    }
-
     pub(crate) fn and_range(&mut self, range: &Range) -> Result<(), AllocError> {
         let tail: &mut List = match self.tail {
             // SAFETY: self.tail aliases a List owned by self.head.next chain; we hold &mut self.

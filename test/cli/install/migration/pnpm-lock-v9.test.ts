@@ -4132,6 +4132,87 @@ patchedDependencies:
     expect(outcomes).toEqual(depths.map((_, i) => (refusedFrom === -1 || i < refusedFrom ? "migrated" : "refused")));
   });
 
+  // pnpm wrote the edges its packageExtensions add into the snapshots, so the migrated bun.lock has them.
+  // The extensions themselves go where bun reads them when it resolves such a package again.
+  test.concurrent("packageExtensions are copied to the root of package.json", async () => {
+    const pnpm = { packageExtensions: { "no-deps@1": { dependencies: { "a-dep": "^1.0.1" } } } };
+    const { packageDir: dir } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({ name: "package-extensions", dependencies: { "no-deps": "1.0.0" }, pnpm }),
+        "pnpm-workspace.yaml": `packageExtensions:
+  a-dep:
+    peerDependencies:
+      is-number: '*'
+  left-pad@1:
+    optionalDependencies:
+      is-number: 3
+    peerDependenciesMeta:
+      react:
+        optional: true
+      vue:
+        optional: false
+    engines: [1, 2]
+  not-a-map: 1
+`,
+        "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+packageExtensionsChecksum: sha256-x
+
+importers:
+
+  .:
+    dependencies:
+      no-deps:
+        specifier: 1.0.0
+        version: 1.0.0
+
+packages:
+
+  a-dep@1.0.1:
+    resolution: {integrity: ${A_DEP_1_0_1_INTEGRITY}}
+
+  no-deps@1.0.0:
+    resolution: {integrity: ${NO_DEPS_1_0_0_INTEGRITY}}
+
+snapshots:
+
+  a-dep@1.0.1: {}
+
+  no-deps@1.0.0:
+    dependencies:
+      a-dep: 1.0.1
+`,
+      },
+    });
+
+    const { stderr, exitCode } = await migrate(dir);
+
+    expect(stderr).not.toContain("error:");
+    expect(stderr).toContain(
+      "copied pnpm.packageExtensions to packageExtensions, copied pnpm-workspace.yaml packageExtensions to packageExtensions in package.json",
+    );
+    expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+    expect(exitCode).toBe(0);
+    expect(await Bun.file(join(dir, "package.json")).json()).toStrictEqual({
+      name: "package-extensions",
+      dependencies: { "no-deps": "1.0.0" },
+      pnpm,
+      packageExtensions: {
+        "no-deps@1": { dependencies: { "a-dep": "^1.0.1" } },
+        "a-dep": { peerDependencies: { "is-number": "*" } },
+        "left-pad@1": {
+          optionalDependencies: { "is-number": "3" },
+          peerDependenciesMeta: { react: { optional: true } },
+        },
+      },
+    });
+    const bunLock = await bunLockOf(dir);
+    expect(bunLock).toMatch(/"no-deps": \["no-deps@1\.0\.0", "[^"]*", \{ "dependencies": \{ "a-dep": "1\.0\.1" \} \}/);
+    // To bun that is a row the package declares.
+    expect(bunLock).not.toContain("packageExtensions");
+  });
+
   test.concurrent("link: version with a semver specifier resolves to the workspace (pnpm/pnpm#7712)", async () => {
     // save-workspace-protocol=false / link-workspace-packages shape
     using dir = fixture("v9-link-semver-specifier");

@@ -1518,6 +1518,8 @@ impl<'a> Parser<'a> {
         }
 
         if let Some(min_age) = install_obj.get(b"minimumReleaseAge") {
+            const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
+            let duration = (min_age.as_string(self.bump)).and_then(bun_core::fmt::parse_seconds);
             match &min_age.data {
                 ExprData::ENumber(seconds) => {
                     if !(seconds.value() >= 0.0 && seconds.value().is_finite()) {
@@ -1527,8 +1529,10 @@ impl<'a> Parser<'a> {
                         )?;
                         return Ok(());
                     }
-                    const MS_PER_S: f64 = bun_core::time::MS_PER_S as f64;
                     install.minimum_release_age_ms = Some(seconds.value() * MS_PER_S);
+                }
+                _ if duration.is_some() => {
+                    install.minimum_release_age_ms = duration.map(|seconds| seconds * MS_PER_S);
                 }
                 _ => {
                     self.add_error(

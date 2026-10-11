@@ -400,11 +400,11 @@ Cache: /home/user/.bun/install/cache
 ```
 
 - Dependencies resolve the way `bun install` resolves them, but `node_modules` is not created, lifecycle scripts do not run, and `package.json` and the lockfile are left untouched.
-- With a lockfile, only the tarballs missing from the cache are downloaded, from the URLs the lockfile records.
-- A later `bun install` (or `bun install --offline`) installs from the cache.
+- With a lockfile, only what is missing from the cache is downloaded: the tarball URLs and git commits the lockfile records.
+- A later `bun install` (or `bun install --offline`) installs from the cache. Without a lockfile, `--offline` cannot tell which commit a `github:` ref or which file a tarball URL stands for, so commit the lockfile if you depend on those.
 - Packages for another operating system or CPU are skipped; pass `--os` / `--cpu` to fetch them.
 - `-g` fetches the dependencies of globally installed packages.
-- Git dependencies that are already in the lockfile are skipped with a note; `bun install` downloads them.
+- A [security scanner](/pm/security-scanner-api) does not run: nothing is linked or executed. It runs on the `bun install` that follows.
 
 ## migrate
 

@@ -16,7 +16,7 @@ use crate::bin::Bin;
 use crate::dependency::{self, Dependency, DependencyExt as _};
 use crate::external_slice::ExternalSlice;
 use crate::integrity::Integrity;
-use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile};
+use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile, join_top_level_dir};
 use crate::npm::{self};
 use crate::package_manager_real::add_remove_with_filter::WorkspaceTarget;
 use crate::package_manager_real::package_json_write_back;
@@ -165,13 +165,6 @@ fn missing_package_entry(
         ),
     );
     MigratePnpmLockfileError::PnpmLockfileUnresolvableDependency
-}
-
-/// `parts` resolved against the top-level dir, or `None` when the result does not fit a path buffer.
-fn join_top_level_dir(parts: &[&[u8]]) -> Option<bun_paths::AutoAbsPathChecked> {
-    let mut path = bun_paths::AutoAbsPathChecked::init_top_level_dir();
-    path.join(parts).ok()?;
-    Some(path)
 }
 
 fn collect_patch_paths(
@@ -389,8 +382,6 @@ pub enum MigratePnpmLockfileError {
     YamlParseError,
     #[error("NonExistentWorkspaceDependency")]
     NonExistentWorkspaceDependency,
-    #[error("RelativeLinkDependency")]
-    RelativeLinkDependency,
     #[error("PnpmLockfileNotObject")]
     PnpmLockfileNotObject,
     #[error("PnpmLockfileMissingVersion")]
@@ -652,7 +643,6 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                     version_str,
                     &mut sbuf!(lockfile),
                     log,
-                    Some(&mut *manager),
                 )?;
                 if !ok {
                     log.add_error_fmt(
@@ -752,15 +742,17 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 continue;
             }
 
-            let mut pkg_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
-            let _ = pkg_json_path.append(importer_path); // OOM/capacity error is non-actionable here
-            let _ = pkg_json_path.append(b"package.json"); // OOM/capacity error is non-actionable here
-
-            let importer_pkg_json = match manager.workspace_package_json_cache.get_with_path(
-                log,
-                pkg_json_path.slice(),
-                Default::default(),
-            ) {
+            let pkg_json_path = join_top_level_dir(&[importer_path, b"package.json"]);
+            let importer_pkg_json = match match &pkg_json_path {
+                Some(path) => manager.workspace_package_json_cache.get_with_path(
+                    log,
+                    path.slice(),
+                    Default::default(),
+                ),
+                None => crate::GetJsonResult::ReadErr(crate::Error::Sys(
+                    bun_errno::SystemErrno::ENAMETOOLONG,
+                )),
+            } {
                 crate::GetJsonResult::Entry(j) => j,
                 crate::GetJsonResult::ReadErr(_) => {
                     log.add_error_fmt(
@@ -888,10 +880,12 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                     ..Default::default()
                 };
 
-                let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
-                let _ = path_buf.append(path); // OOM/capacity error is non-actionable here
-                let abs_path: Box<[u8]> = Box::from(path_buf.slice());
-                let _ = path_buf.append(b"package.json"); // OOM/capacity error is non-actionable here
+                let (Some(abs_path), Some(path_buf)) = (
+                    join_top_level_dir(&[path]),
+                    join_top_level_dir(&[path, b"package.json"]),
+                ) else {
+                    return Err(invalid_pnpm_lockfile());
+                };
 
                 let workspace_pkg_json = match manager
                     .workspace_package_json_cache
@@ -950,7 +944,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
                 let pkg_id = lockfile.append_package_dedupe(&mut pkg)?;
 
-                let entry = pkg_map.get_or_put(&abs_path)?;
+                let entry = pkg_map.get_or_put(abs_path.slice())?;
                 if entry.found_existing {
                     return Err(invalid_pnpm_lockfile());
                 }
@@ -997,7 +991,16 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 }
 
                 match dep.version.tag {
-                    dependency::VersionTag::Folder | dependency::VersionTag::Workspace => {
+                    dependency::VersionTag::Folder
+                    | dependency::VersionTag::Workspace
+                    | dependency::VersionTag::Symlink => {
+                        if dep.version.tag == dependency::VersionTag::Symlink
+                            && !dependency::is_link_path(
+                                dep.version.symlink().slice(string_bytes!(lockfile)),
+                            )
+                        {
+                            continue;
+                        }
                         let Some(version_str) =
                             importer_versions.get(dep.name.slice(string_bytes!(lockfile)))
                         else {
@@ -1024,18 +1027,12 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                                 };
 
                                 for existing_workspace_path in lockfile.workspace_paths.values() {
-                                    let mut workspace_path_buf =
-                                        bun_paths::AutoAbsPath::init_top_level_dir();
-                                    // OOM/capacity error is non-actionable here
-                                    let _ = workspace_path_buf.append(
-                                        existing_workspace_path.slice(string_bytes!(lockfile)),
-                                    );
-
-                                    if strings::eql_long(
-                                        workspace_path_buf.slice(),
-                                        link_path_buf.slice(),
-                                        true,
-                                    ) {
+                                    if join_top_level_dir(&[
+                                        existing_workspace_path.slice(string_bytes!(lockfile))
+                                    ])
+                                    .is_some_and(|existing| {
+                                        existing.slice() == link_path_buf.slice()
+                                    }) {
                                         continue 'next_dep;
                                     }
                                 }
@@ -1045,18 +1042,16 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                                 );
                             }
 
-                            let mut pkg = lockfile::Package {
-                                name: dep.name,
-                                name_hash: dep.name_hash,
-                                resolution: Resolution::init_symlink(
-                                    sbuf!(lockfile).append(link_path)?,
+                            // pnpm's value is relative to the importer, the stored one to the project.
+                            let mut folder_buf = bun_paths::path_buffer_pool::get();
+                            let (Some(abs_link_path), Some(folder)) = (
+                                join_top_level_dir(&[workspace_path, link_path]),
+                                lockfile::package::folder_relative_to_top_level_dir(
+                                    workspace_path,
+                                    link_path,
+                                    &mut folder_buf[..],
                                 ),
-                                ..Default::default()
-                            };
-
-                            let Some(abs_link_path) =
-                                join_top_level_dir(&[workspace_path, link_path])
-                            else {
+                            ) else {
                                 log.add_error_fmt(
                                     None,
                                     bun_ast::Loc::EMPTY,
@@ -1075,25 +1070,16 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                                 continue;
                             }
 
-                            *pkg_entry.value_ptr = lockfile.append_package_dedupe(&mut pkg)?;
-                        }
-                    }
-                    dependency::VersionTag::Symlink => {
-                        if !strings::is_npm_package_name(
-                            dep.version.symlink().slice(string_bytes!(lockfile)),
-                        ) {
-                            log.add_warning_fmt(
-                                None,
-                                bun_ast::Loc::EMPTY,
-                                format_args!(
-                                    "relative link dependency not supported: {}@{}\n",
-                                    bstr::BStr::new(dep.name.slice(string_bytes!(lockfile))),
-                                    bstr::BStr::new(
-                                        dep.version.literal.slice(string_bytes!(lockfile))
-                                    ),
+                            let mut pkg = lockfile::Package {
+                                name: dep.name,
+                                name_hash: dep.name_hash,
+                                resolution: Resolution::init_symlink(
+                                    sbuf!(lockfile)
+                                        .append(&dependency::link_path_for_lockfile(folder))?,
                                 ),
-                            );
-                            return Err(MigratePnpmLockfileError::RelativeLinkDependency);
+                                ..Default::default()
+                            };
+                            *pkg_entry.value_ptr = lockfile.append_package_dedupe(&mut pkg)?;
                         }
                     }
                     _ => {}
@@ -1667,7 +1653,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     lockfile.resolve(log)?;
 
     lockfile
-        .fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<false, false>(manager)?;
+        .fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(manager, false, false)?;
 
     update_package_json_after_migration(Some(&mut *lockfile), manager, log, &found_patches)?;
 
@@ -2319,9 +2305,9 @@ fn parse_append_importer_dependencies(
                     continue;
                 }
 
-                let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
-                let _ = path_buf.append(path); // OOM/capacity error is non-actionable here
-                let _ = path_buf.append(b"package.json"); // OOM/capacity error is non-actionable here
+                let Some(path_buf) = join_top_level_dir(&[path, b"package.json"]) else {
+                    return Err(ParseAppendDependenciesError::InvalidPnpmLockfile);
+                };
 
                 let workspace_pkg_json = match manager
                     .workspace_package_json_cache
@@ -2503,6 +2489,14 @@ fn update_package_json_after_migration(
                 copied.push("copied pnpm.patchedDependencies to patchedDependencies");
             }
         }
+        if let Some(extensions) = pnpm_obj
+            .get(b"packageExtensions")
+            .filter(is_non_empty_object)
+        {
+            if copy_into_root(&mut json, &bump, b"packageExtensions", &extensions, None)? {
+                copied.push("copied pnpm.packageExtensions to packageExtensions");
+            }
+        }
         if let Some(only_built) = pnpm_obj.get(b"onlyBuiltDependencies") {
             pnpm_only_built_deps = collect_only_built_dependencies(&only_built, &mut trusted_names);
         }
@@ -2513,6 +2507,7 @@ fn update_package_json_after_migration(
     let mut catalogs_obj: Option<Expr> = None;
     let mut workspace_overrides_obj: Option<Expr> = None;
     let mut workspace_patched_deps_obj: Option<Expr> = None;
+    let mut workspace_extensions_obj: Option<Expr> = None;
 
     match sys::File::read_from(Fd::cwd(), b"pnpm-workspace.yaml") {
         Ok(contents) => 'read_pnpm_workspace_yaml: {
@@ -2577,6 +2572,10 @@ fn update_package_json_after_migration(
             }
             workspace_overrides_obj = strings_of("overrides");
             workspace_patched_deps_obj = strings_of("patchedDependencies");
+            if let Some(extensions) = ws_root.get_object(b"packageExtensions") {
+                workspace_extensions_obj = Some(extension_entries(contents, &bump, &extensions)?)
+                    .filter(is_non_empty_object);
+            }
             if let Some(only_built) = ws_root.get(b"onlyBuiltDependencies") {
                 workspace_only_built_deps =
                     collect_only_built_dependencies(&only_built, &mut trusted_names);
@@ -2625,6 +2624,11 @@ fn update_package_json_after_migration(
             Some(patches),
         )? {
             copied.push("copied pnpm-workspace.yaml patchedDependencies to patchedDependencies");
+        }
+    }
+    if let Some(extensions) = workspace_extensions_obj {
+        if copy_into_root(&mut json, &bump, b"packageExtensions", &extensions, None)? {
+            copied.push("copied pnpm-workspace.yaml packageExtensions to packageExtensions");
         }
     }
 
@@ -2691,6 +2695,50 @@ fn string_entries(source: &[u8], map: &Expr, named: bool, skipped: &mut usize) -
         },
         map.loc,
     )
+}
+
+/// `string_entries` for `packageExtensions`: rule -> group -> name -> range, and the peers that
+/// `peerDependenciesMeta` makes optional. The rest is left out.
+fn extension_entries(
+    source: &[u8],
+    bump: &bun_alloc::Arena,
+    map: &Expr,
+) -> Result<Expr, AllocError> {
+    let empty = || Expr::init(E::Object::default(), bun_ast::Loc::EMPTY);
+    let mut rules = empty();
+    for prop in e_object(map).properties.slice() {
+        let (Some(key), Some(value)) = (
+            prop.key.as_ref().and_then(|key| scalar_text(source, key)),
+            prop.value
+                .as_ref()
+                .filter(|value| is_non_empty_object(value)),
+        ) else {
+            continue;
+        };
+        let mut rule = empty();
+        for group in [
+            b"dependencies".as_slice(),
+            b"optionalDependencies",
+            b"peerDependencies",
+        ] {
+            if let Some(ranges) = value.get_object(group) {
+                let ranges = string_entries(source, &ranges, false, &mut 0);
+                e_object_mut(&mut rule).put(bump, group, ranges)?;
+            }
+        }
+        let mut meta = empty();
+        for peer in crate::yarn_berry::optional_names(source, value, b"peerDependenciesMeta") {
+            let mut optional = empty();
+            let yes = Expr::init(E::Boolean { value: true }, bun_ast::Loc::EMPTY);
+            e_object_mut(&mut optional).put(bump, b"optional", yes)?;
+            e_object_mut(&mut meta).put(bump, peer, optional)?;
+        }
+        if is_non_empty_object(&meta) {
+            e_object_mut(&mut rule).put(bump, b"peerDependenciesMeta", meta)?;
+        }
+        e_object_mut(&mut rules).put(bump, key, rule)?;
+    }
+    Ok(rules)
 }
 
 fn is_non_empty_object(expr: &Expr) -> bool {

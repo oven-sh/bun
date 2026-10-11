@@ -765,32 +765,49 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             (*manager)
                 .active_lifecycle_scripts
                 .insert(this.cast::<LifecycleScriptSubprocess<'static>>());
-            let spawned = match bun_spawn::spawn_process(
-                &spawn_options,
-                argv.as_ptr(),
-                (*this).envp.as_ptr().cast::<*const c_char>(),
-            ) {
-                Ok(Ok(s)) => s,
-                res => {
-                    #[cfg(windows)]
-                    {
-                        // `spawn_process_windows` only `heap::take`s the `Stdio::Buffer`
-                        // raw `*mut uv::Pipe` allocations on the SUCCESS path; on every
-                        // error return (uv_pipe_init failure, uv_spawn failure) ownership
-                        // stays with the caller. `WindowsStdio` has no `Drop`, so reclaim
-                        // and `uv_close`+free them explicitly here — otherwise the heap
-                        // `uv::Pipe`s leak (and, if already `uv_pipe_init`'d, remain
-                        // linked in the libuv loop's handle queue forever). Allocation
-                        // happens inline (see OWNERSHIP note above), so the error
-                        // path must be handled explicitly.
-                        let mut spawn_options = spawn_options;
-                        spawn_options.stdout.deinit();
-                        spawn_options.stderr.deinit();
+            // `envp` is the chain's; these two differ per script.
+            let lifecycle_event = [
+                b"npm_lifecycle_event=".as_slice(),
+                (*this).script_name(),
+                b"\0",
+            ]
+            .concat();
+            let lifecycle_script = [
+                b"npm_lifecycle_script=".as_slice(),
+                &original_script[..],
+                b"\0",
+            ]
+            .concat();
+            let chain_envp = (*this).envp.as_slice();
+            let mut envp: Vec<*const c_char> = chain_envp[..chain_envp.len() - 1].to_vec();
+            envp.extend([
+                lifecycle_event.as_ptr().cast::<c_char>(),
+                lifecycle_script.as_ptr().cast::<c_char>(),
+                core::ptr::null(),
+            ]);
+            let spawned =
+                match bun_spawn::spawn_process(&spawn_options, argv.as_ptr(), envp.as_ptr()) {
+                    Ok(Ok(s)) => s,
+                    res => {
+                        #[cfg(windows)]
+                        {
+                            // `spawn_process_windows` only `heap::take`s the `Stdio::Buffer`
+                            // raw `*mut uv::Pipe` allocations on the SUCCESS path; on every
+                            // error return (uv_pipe_init failure, uv_spawn failure) ownership
+                            // stays with the caller. `WindowsStdio` has no `Drop`, so reclaim
+                            // and `uv_close`+free them explicitly here — otherwise the heap
+                            // `uv::Pipe`s leak (and, if already `uv_pipe_init`'d, remain
+                            // linked in the libuv loop's handle queue forever). Allocation
+                            // happens inline (see OWNERSHIP note above), so the error
+                            // path must be handled explicitly.
+                            let mut spawn_options = spawn_options;
+                            spawn_options.stdout.deinit();
+                            spawn_options.stderr.deinit();
+                        }
+                        res??;
+                        unreachable!();
                     }
-                    res??;
-                    unreachable!();
-                }
-            };
+                };
             #[cfg(windows)]
             let mut spawned = spawned;
 
@@ -1157,7 +1174,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         match &self.ctx {
             Some(InstallCtx::Hoisted { unfinished, .. }) => {
                 for (tree_id, folder_name) in unfinished.borrow().iter() {
-                    crate::package_installer::discard_failed_optional(
+                    crate::package_installer::remove_placed_package(
                         &self.manager().lockfile,
                         *tree_id,
                         folder_name,
@@ -1179,16 +1196,16 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         self.decrement_pending_script_tasks();
         let deleted = match self.ctx.take() {
             Some(InstallCtx::Hoisted { tree_id, .. }) => {
-                crate::package_installer::discard_failed_optional(
+                crate::package_installer::remove_placed_package(
                     &self.manager().lockfile,
                     tree_id,
                     &self.package_name,
                 );
                 true
             }
-            Some(ctx) => ctx.isolated().is_some_and(|(entry_id, installer)| {
-                installer.on_optional_dependency_scripts_failed(entry_id)
-            }),
+            Some(ctx) => ctx
+                .isolated()
+                .is_some_and(|(entry_id, installer)| installer.leave_out_entry(entry_id)),
             None => false,
         };
         if self.manager().options.log_level.is_verbose() {

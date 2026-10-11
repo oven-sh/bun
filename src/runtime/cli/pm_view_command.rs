@@ -343,7 +343,7 @@ pub(crate) fn view(
                 keys.push((parsed.version.min(), text, key));
             }
         }
-        keys.sort_by(|a, b| a.0.order(b.0, a.1, b.1));
+        bun_collections::index_sort::sort_slice_by(&mut keys, |a, b| a.0.order(b.0, a.1, b.1));
         let keys: Vec<ast::Expr> = keys.into_iter().map(|(_, _, key)| key).collect();
         let versions_array = ast::Expr::init(
             ast::E::Array {

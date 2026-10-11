@@ -55,6 +55,7 @@ use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile};
 use crate::lockfile_real::package::value_loc_of;
 use crate::lockfile_real::package::workspace_map::{MissingWorkspace, NamesArray, WorkspaceMap};
+use crate::lockfile_real::package_extensions::Kind as ExtensionKind;
 use crate::npm;
 use crate::package_manager_real::add_remove_with_filter::WorkspaceTarget;
 use crate::package_manager_real::package_json_write_back;
@@ -63,7 +64,7 @@ use crate::pnpm::{e_object_mut, sort_appended_dependencies};
 use crate::repository::Repository;
 use crate::resolution::{Resolution, TaggedValue};
 use crate::versioned_url::VersionedURLType;
-use crate::{DependencyID, Error, INVALID_PACKAGE_ID, PackageID, PackageManager};
+use crate::{DependencyID, Error, INVALID_PACKAGE_ID, PackageID, PackageManager, PackageNameHash};
 
 // A `Buf` held for the whole function would lock out every other `lockfile.*`
 // access; build a fresh one per append so the borrow ends immediately
@@ -183,6 +184,8 @@ fn shown(text: &[u8]) -> impl core::fmt::Display + '_ {
     bun_core::fmt::for_terminal(bstr::BStr::new(text))
 }
 
+#[cold]
+#[inline(never)]
 fn invalid_lockfile(log: &mut bun_ast::Log, args: core::fmt::Arguments<'_>) -> Error {
     log.add_error_fmt(None, bun_ast::Loc::EMPTY, args);
     Error::InvalidYarnBerryLockfile
@@ -626,23 +629,6 @@ fn join_folder(base: &[u8], path: &[u8]) -> Vec<u8> {
         bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(&mut joined);
     }
     joined
-}
-
-/// How a `link:` folder is stored: spelled so that it reads back as a path and
-/// not as the name of a `bun link` registration.
-fn link_path(folder: &[u8]) -> Vec<u8> {
-    if folder.is_empty() {
-        return b".".to_vec();
-    }
-    let is_path = matches!(folder, b"." | b"..")
-        || folder.starts_with(b"./")
-        || folder.starts_with(b"../")
-        || bun_paths::is_absolute(folder);
-    if is_path {
-        folder.to_vec()
-    } else {
-        [b"./", folder].concat()
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1174,7 +1160,9 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             };
             let joined = join_folder(&base, path);
             if protocol == b"link:" {
-                Resolution::init_symlink(sbuf!(this).append(&link_path(&joined))?)
+                Resolution::init_symlink(
+                    sbuf!(this).append(&dependency::link_path_for_lockfile(&joined))?,
+                )
             } else if Dependency::is_tarball(&joined) {
                 Resolution::init(TaggedValue::LocalTarball(sbuf!(this).append(&joined)?))
             } else {
@@ -1212,7 +1200,9 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             ..Default::default()
         };
         let extended = extensions_of(this, log, &yarnrc, data, name, &entry_expr)?;
-        let (off, len) = append_entry_dependencies(this, log, data, name, &entry_expr, &extended)?;
+        let mut added: Vec<(PackageNameHash, ExtensionKind)> = Vec::new();
+        let (off, len) =
+            append_entry_dependencies(this, log, data, name, &entry_expr, &extended, &mut added)?;
         pkg.dependencies = ExternalSlice::new(off, len);
         pkg.resolutions = ExternalSlice::new(off, len);
         if let Some(bin) = entry_expr.get(b"bin") {
@@ -1222,6 +1212,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
             (pkg.meta.os, pkg.meta.arch, pkg.meta.libc) = parse_conditions(cond);
         }
         entries[i].package_id = this.append_package_dedupe(&mut pkg)?;
+        this.record_package_extensions(entries[i].package_id, &added);
         if let Some(slot) = entry_of_package.get_mut(entries[i].package_id as usize) {
             *slot = Some(i);
         } else {
@@ -1518,7 +1509,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
                                 }
                                 crate::resolution::Tag::Symlink => {
                                     bound.symlink().slice(string_bytes!(this))
-                                        == link_path(ws_path).as_slice()
+                                        == &*dependency::link_path_for_lockfile(ws_path)
                                 }
                                 _ => false,
                             };
@@ -1600,7 +1591,7 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
 
     // bins yarn did not record (older lockfiles), os/cpu for lockfiles without
     // `conditions`, and tarball integrity, all from the registry manifests.
-    this.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<true, true>(manager)?;
+    this.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(manager, true, true)?;
     // Yarn's `checksum` covers yarn's own zip of the package, so the registry
     // manifest is the only integrity there is for the tarball. Without one (the
     // registry was not reachable, or the manifest does not list an
@@ -1698,7 +1689,6 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     if cfg!(debug_assertions) {
         this.verify_data()?;
     }
-    this.meta_hash = this.generate_meta_hash(false, this.packages.len())?;
 
     for (target, changed) in edited {
         package_json_write_back::record_migrated(manager, target, changed);
@@ -1975,7 +1965,7 @@ fn resolution_target_entry(
 }
 
 /// Names under `dependenciesMeta` / `peerDependenciesMeta` with `optional: true`.
-fn optional_names(source: &[u8], entry: &Expr, meta_key: &[u8]) -> Vec<&'static [u8]> {
+pub(crate) fn optional_names(source: &[u8], entry: &Expr, meta_key: &[u8]) -> Vec<&'static [u8]> {
     let mut names = Vec::new();
     let Some(meta) = entry.get(meta_key) else {
         return names;
@@ -2006,6 +1996,7 @@ struct Extended<'a> {
 
 /// Dependencies of a third-party entry: `dependencies` (optional ones per
 /// `dependenciesMeta`) and `peerDependencies` (optional per `peerDependenciesMeta`).
+/// `added`: what is there because of `extended`.
 fn append_entry_dependencies(
     this: &mut Lockfile,
     log: &mut bun_ast::Log,
@@ -2013,10 +2004,15 @@ fn append_entry_dependencies(
     entry_name: &[u8],
     entry: &Expr,
     extended: &Extended<'_>,
+    added: &mut Vec<(PackageNameHash, ExtensionKind)>,
 ) -> Result<(u32, u32), Error> {
+    let mut add = |name: &[u8], kind: ExtensionKind| {
+        added.push((semver::string::Builder::string_hash(name), kind));
+    };
     let off = this.buffers.dependencies.len();
     let optional_deps: Vec<&[u8]> = optional_names(source, entry, b"dependenciesMeta");
     let mut optional_peers: Vec<&[u8]> = optional_names(source, entry, b"peerDependenciesMeta");
+    let own_optional_peers = optional_peers.len();
     for &name in &extended.optional_peers {
         if !optional_peers.contains(&name) {
             optional_peers.push(name);
@@ -2053,6 +2049,9 @@ fn append_entry_dependencies(
             if optional.contains(&name) {
                 if behavior.is_peer() {
                     behavior.insert(Behavior::OPTIONAL);
+                    if optional_peers[own_optional_peers..].contains(&name) {
+                        add(name, ExtensionKind::OptionalPeer);
+                    }
                 } else {
                     behavior = Behavior::OPTIONAL;
                 }
@@ -2069,6 +2068,7 @@ fn append_entry_dependencies(
     for &(name, range) in &extended.dependencies {
         if !declares(b"dependencies", name) {
             append_dependency(this, log, name, range, Behavior::PROD)?;
+            add(name, ExtensionKind::Dependency);
         }
     }
     for &(name, range) in &extended.peer_dependencies {
@@ -2078,14 +2078,18 @@ fn append_entry_dependencies(
                 behavior.insert(Behavior::OPTIONAL);
             }
             append_dependency(this, log, name, range, behavior)?;
+            add(name, ExtensionKind::Peer);
         }
     }
     // peers listed only in peerDependenciesMeta
-    for &name in &optional_peers {
+    for (i, &name) in optional_peers.iter().enumerate() {
         if !declares(b"peerDependencies", name)
             && !extended.peer_dependencies.iter().any(|(n, _)| *n == name)
         {
             append_dependency(this, log, name, b"*", Behavior::PEER | Behavior::OPTIONAL)?;
+            if i >= own_optional_peers {
+                add(name, ExtensionKind::Peer);
+            }
         }
     }
     let end = this.buffers.dependencies.len();
@@ -2396,6 +2400,7 @@ fn append_dependency(
     Ok(())
 }
 
+#[inline(never)]
 fn string_expr(s: &[u8]) -> Expr {
     // Interned into the store that backs the cached package.json tree, which
     // outlives this function.
@@ -2406,6 +2411,10 @@ fn string_expr(s: &[u8]) -> Expr {
 }
 
 fn object_expr<'a>(entries: impl IntoIterator<Item = (&'a [u8], Expr)>) -> Expr {
+    object_expr_from(&mut entries.into_iter())
+}
+
+fn object_expr_from<'a>(entries: &mut dyn Iterator<Item = (&'a [u8], Expr)>) -> Expr {
     let mut properties = bun_alloc::AstAlloc::vec();
     for (key, value) in entries {
         VecExt::append(

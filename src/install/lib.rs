@@ -58,7 +58,6 @@ pub(crate) mod bun_bunfig {
 }
 
 use core::cell::Cell;
-use core::fmt;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Module declarations — explicit #[path] attrs for PascalCase files.
@@ -917,51 +916,11 @@ pub(crate) fn buntaghashbuf_make(buf: &mut BuntagHashBuf, patch_hash: u64) -> &m
     &mut buf[..BUN_HASH_TAG.len() + digits_len]
 }
 
-pub struct StorePathFormatter<'a> {
-    str: &'a [u8],
-}
-
-impl<'a> StorePathFormatter<'a> {
-    /// Emits raw bytes
-    /// verbatim (mapping `/` and `\` to `+`). This is the byte-faithful sink; callers that
-    /// need an on-disk store path (legal non-UTF-8 on Linux) must use this, not `Display`.
-    pub(crate) fn write_to<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
-        // if (!this.opts.replace_slashes) {
-        //     try writer.writeAll(this.str);
-        //     return;
-        // }
-        for &c in self.str {
-            match c {
-                b'/' | b'\\' => w.write_all(b"+")?,
-                _ => w.write_all(core::slice::from_ref(&c))?,
-            }
-        }
-        Ok(())
-    }
-}
-
-impl<'a> fmt::Display for StorePathFormatter<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // `core::fmt` cannot emit non-UTF-8 bytes, but the store path must be
-        // emitted byte-faithfully; routing through `to_str_lossy()` here was wrong
-        // (it silently expanded each invalid byte to U+FFFD = 3 bytes, changing on-disk
-        // store directory names). We now build the raw byte sequence via `write_to` and
-        // pass it through only when it is already valid UTF-8 — otherwise we surface
-        // `fmt::Error` rather than corrupt the path.
-        let mut buf = Vec::with_capacity(self.str.len());
-        self.write_to(&mut buf).map_err(|_| fmt::Error)?;
-        f.write_str(bun_core::str_utf8(&buf).ok_or(fmt::Error)?)
-    }
-}
-
-fn fmt_store_path(str: &[u8]) -> StorePathFormatter<'_> {
-    StorePathFormatter { str }
-}
-
 // these bytes are skipped
 // so we just make it repeat bun bun bun bun bun bun bun bun bun
 pub(crate) static ALIGNMENT_BYTES_TO_REPEAT_BUFFER: [u8; 144] = [0u8; 144];
 
+#[inline(never)]
 pub(crate) fn initialize_store() {
     bun_ast::initialize_store_or_reset();
 }

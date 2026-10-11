@@ -1,11 +1,10 @@
 import { write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { mkdirSync, readdirSync, writeFileSync } from "fs";
+import { chmodSync, mkdirSync, readdirSync, writeFileSync } from "fs";
 import { rm } from "fs/promises";
-import { bunEnv, bunExe, isASAN, isIPv6, isLinux, isWindows, tempDir, tls } from "harness";
-import { mkfifo } from "mkfifo";
+import { bunEnv, bunExe, isIPv6, isLinux, isWindows, tempDir, tls, unprivilegedSpawnOptions } from "harness";
 import { createServer as createTlsServer } from "node:tls";
-import { join } from "path";
+import { dirname, join } from "path";
 import { TestRegistry } from "registry";
 const { iniInternals } = require("bun:internal-for-testing");
 const { loadNpmrc } = iniInternals;
@@ -4729,6 +4728,16 @@ describe.concurrent("registry credentials from $VAR env references", () => {
     expect(exitCode).not.toBe(0);
   });
 
+  test("--silent hides the warning about an unset $VAR token", async () => {
+    const auths: (string | null)[] = [];
+    await using server = authLoggingRegistry(auths);
+    using dir = tempDir("bunfig-unset-token-silent", scopeFiles(server.port!, `token = "$UNSET_TOKEN_41044"`, false));
+    const { stderr, exitCode } = await install(String(dir), {}, ["--silent"]);
+    expect(auths).toEqual([null]);
+    expect(stderr).not.toContain("UNSET_TOKEN_41044");
+    expect(exitCode).not.toBe(0);
+  });
+
   test("an unset $VAR token falls back to the .npmrc credential", async () => {
     const auths: (string | null)[] = [];
     await using server = authLoggingRegistry(auths);
@@ -4944,478 +4953,6 @@ describe.concurrent("registry credentials from $VAR env references", () => {
     expect(auths).toEqual(["Bearer $UNSET_TOKEN_41044"]);
     expect(stderr).not.toContain("is not set");
     expect(exitCode).not.toBe(0);
-  });
-});
-
-// https://github.com/oven-sh/bun/issues/14378: `bun install` routed `@corp/*`
-// to the registry that `.npmrc` names, but the runtime's auto-install read
-// only bunfig.toml and asked the default registry.
-describe("auto-install reads the registries and credentials of .npmrc", () => {
-  // An ASAN build starts too slowly to run all of these at once within the default timeout.
-  const cell = test.concurrentIf(!isASAN);
-  const token = "SECRET-TOKEN";
-
-  type Seen = { registry: string; path: string; authorization: string | null };
-  type Registries = { PRIVATE: string; DEFAULT: string };
-  type Files = Record<string, string>;
-
-  /** A directory path below `base` that is exactly `bytes` bytes long. It is not created. */
-  function directoryPathOfLength(base: string, bytes: number): string {
-    let path = base;
-    while (path.length < bytes) {
-      let name = Math.min(bytes - path.length - 1, 200);
-      if (bytes - path.length - 1 - name === 1) name--;
-      path = join(path, Buffer.alloc(name, "d").toString());
-    }
-    return path;
-  }
-
-  // Three packages at 1.0.0. Each one exports the name of the registry it came from.
-  async function buildPackages(registry: string) {
-    const packages: Record<string, { index: string; dependencies?: Record<string, string> }> = {
-      "@corp/thing": { index: `module.exports = globalThis.servedBy = ${JSON.stringify(registry)};\n` },
-      "plain-thing": { index: `module.exports = ${JSON.stringify(registry)};\n` },
-      "@corp/with-dep": {
-        index: `module.exports = ${JSON.stringify(registry)} + " " + require("plain-thing");\n`,
-        dependencies: { "plain-thing": "1.0.0" },
-      },
-    };
-    return Promise.all(
-      Object.entries(packages).map(async ([name, { index, dependencies }]) => {
-        const manifest = { name, version: "1.0.0", main: "index.js", dependencies };
-        const tarball = await new Bun.Archive({
-          "package/package.json": JSON.stringify(manifest),
-          "package/index.js": index,
-        }).bytes("gzip");
-        const integrity = "sha512-" + new Bun.CryptoHasher("sha512").update(tarball).digest("base64");
-        return { name, manifest, tarball, integrity, tarballPath: `/${name}/-/${name.split("/").pop()}-1.0.0.tgz` };
-      }),
-    );
-  }
-  const built = { PRIVATE: buildPackages("PRIVATE"), DEFAULT: buildPackages("DEFAULT") };
-
-  async function serveRegistry(registry: keyof typeof built, seen: Seen[]) {
-    const packages = await built[registry];
-    const server = Bun.serve({
-      port: 0,
-      hostname: "127.0.0.1",
-      fetch(req) {
-        // The registry is mounted at `/` and at `/npm/`.
-        const path = (URL.canParse(req.url) ? decodeURIComponent(new URL(req.url).pathname) : req.url).replace(
-          /^\/npm\//,
-          "/",
-        );
-        seen.push({ registry, path, authorization: req.headers.get("authorization") });
-        for (const { name, manifest, tarball, integrity, tarballPath } of packages) {
-          if (path === tarballPath) return new Response(tarball);
-          if (path !== "/" + name) continue;
-          const dist = { tarball: new URL(tarballPath, server.url).href, integrity };
-          return Response.json({
-            name,
-            "dist-tags": { latest: "1.0.0" },
-            versions: { "1.0.0": { ...manifest, dist } },
-          });
-        }
-        return new Response("{}", { status: 404 });
-      },
-    });
-    return server;
-  }
-
-  // Runs bun in `<dir>/app` with `<dir>/home` as the home directory. Both
-  // registries serve the packages, and `BUN_CONFIG_REGISTRY` makes DEFAULT the
-  // default registry, so only the `.npmrc` under test can lead to PRIVATE.
-  async function autoInstall(options: {
-    args: string[];
-    files: (registries: Registries) => Files;
-    env?: (registries: Registries, dir: string) => Record<string, string | undefined>;
-    prepare?: (dir: string) => void;
-    cwd?: (dir: string) => string;
-    timeout?: number;
-  }) {
-    const seen: Seen[] = [];
-    await using privateRegistry = await serveRegistry("PRIVATE", seen);
-    await using defaultRegistry = await serveRegistry("DEFAULT", seen);
-    const registries = { PRIVATE: privateRegistry.url.host, DEFAULT: defaultRegistry.url.host };
-
-    using dir = tempDir("autoinstall-npmrc", { "home/.keep": "", ...options.files(registries) });
-    const home = join(String(dir), "home");
-    const env: Record<string, string | undefined> = {
-      ...bunEnv,
-      // bunEnv spreads process.env, and CI runners export some of these.
-      XDG_CONFIG_HOME: undefined,
-      NPM_CONFIG_USERCONFIG: undefined,
-      npm_config_userconfig: undefined,
-      NPM_CONFIG_REGISTRY: undefined,
-      npm_config_registry: undefined,
-      BUN_CONFIG_TOKEN: undefined,
-      NPM_CONFIG_TOKEN: undefined,
-      npm_config_token: undefined,
-      HOME: home,
-      USERPROFILE: home,
-      BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
-      BUN_CONFIG_REGISTRY: `http://${registries.DEFAULT}/`,
-      ...options.env?.(registries, String(dir)),
-    };
-    options.prepare?.(String(dir));
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), ...options.args],
-      cwd: options.cwd?.(String(dir)) ?? join(String(dir), "app"),
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: options.timeout,
-      killSignal: "SIGKILL",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const created = readdirSync(String(dir)).sort();
-    return { stdout, stderr, seen, created, exitCode, signalCode: proc.signalCode };
-  }
-
-  const requests = (registry: string, pkg: string, authorization: string | null): Seen[] => [
-    { registry, path: `/${pkg}`, authorization },
-    { registry, path: `/${pkg}/-/${pkg.split("/").pop()}-1.0.0.tgz`, authorization },
-  ];
-  const fromPrivateRegistry = {
-    stdout: "PRIVATE\n",
-    stderr: "",
-    seen: requests("PRIVATE", "@corp/thing", `Bearer ${token}`),
-    created: ["app", "cache", "home"],
-    exitCode: 0,
-    signalCode: null,
-  };
-
-  const scopeAndToken = (r: Registries) => `@corp:registry=http://${r.PRIVATE}/\n//${r.PRIVATE}/:_authToken=${token}\n`;
-  const importIt = `import servedBy from "@corp/thing";\nconsole.log(servedBy);\n`;
-  const importLater = `const { default: servedBy } = await import("@corp/thing");\nconsole.log(servedBy);\n`;
-  const inNodeModules = {
-    "app/node_modules/@corp/thing/package.json": JSON.stringify({ name: "@corp/thing", version: "1.0.0" }),
-    "app/node_modules/@corp/thing/index.js": `module.exports = "node_modules";\n`,
-  };
-
-  cell.each([
-    ["bun <file>", ["x.mjs"], { "app/x.mjs": importIt }],
-    ["bun -i <file>", ["-i", "x.mjs"], { "app/x.mjs": importIt }],
-    ["bun -e", ["-e", importIt], {}],
-    ["require()", ["x.cjs"], { "app/x.cjs": `console.log(require("@corp/thing"));\n` }],
-    [
-      "Bun.resolveSync()",
-      ["x.cjs"],
-      { "app/x.cjs": `console.log(require(Bun.resolveSync("@corp/thing", __dirname)));\n` },
-    ],
-    ["--preload", ["--preload", "@corp/thing", "x.mjs"], { "app/x.mjs": `console.log(globalThis.servedBy);\n` }],
-  ] as [string, string[], Files][])("./.npmrc scope and token: %s", async (_, args, files) => {
-    const result = await autoInstall({ args, files: r => ({ "app/.npmrc": scopeAndToken(r), ...files }) });
-    expect(result).toEqual(fromPrivateRegistry);
-  });
-
-  cell("./.npmrc scope and token beside a bunfig.toml that sets no registry", async () => {
-    const result = await autoInstall({
-      args: ["x.mjs"],
-      files: r => ({
-        "app/.npmrc": scopeAndToken(r),
-        "app/bunfig.toml": `[install]\nexact = true\n`,
-        "app/x.mjs": importIt,
-      }),
-    });
-    expect(result).toEqual(fromPrivateRegistry);
-  });
-
-  cell("~/.npmrc scope and token", async () => {
-    const result = await autoInstall({
-      args: ["x.mjs"],
-      files: r => ({ "home/.npmrc": scopeAndToken(r), "app/x.mjs": importIt }),
-    });
-    expect(result).toEqual(fromPrivateRegistry);
-  });
-
-  cell("$XDG_CONFIG_HOME/.npmrc scope and token, in place of ~/.npmrc", async () => {
-    const result = await autoInstall({
-      args: ["x.mjs"],
-      files: r => ({
-        "xdg/.npmrc": scopeAndToken(r),
-        "home/.npmrc": `@corp:registry=http://${r.DEFAULT}/\n`,
-        "app/x.mjs": importIt,
-      }),
-      env: (_, dir) => ({ XDG_CONFIG_HOME: join(dir, "xdg") }),
-    });
-    expect(result).toEqual({ ...fromPrivateRegistry, created: ["app", "cache", "home", "xdg"] });
-  });
-
-  cell("./.npmrc registry= and token", async () => {
-    const result = await autoInstall({
-      args: ["x.mjs"],
-      files: r => ({
-        "app/.npmrc": `registry=http://${r.PRIVATE}/\n//${r.PRIVATE}/:_authToken=${token}\n`,
-        "app/x.mjs": importIt,
-      }),
-      // Without `registry=` the default registry is https://registry.npmjs.org/.
-      // The proxy sends such a request to DEFAULT, not to the internet.
-      env: r => ({ BUN_CONFIG_REGISTRY: undefined, HTTPS_PROXY: `http://${r.DEFAULT}/` }),
-    });
-    expect(result).toEqual(fromPrivateRegistry);
-  });
-
-  // The line `jsr add` writes: a scope with no trailing slash and no credential.
-  cell("./.npmrc scope without a credential", async () => {
-    const result = await autoInstall({
-      args: ["x.mjs"],
-      files: r => ({
-        "app/.npmrc": `@corp:registry=http://${r.PRIVATE}\n`,
-        "home/.npmrc": `//${r.DEFAULT}/:_authToken=${token}\n`,
-        "app/x.mjs": importIt,
-      }),
-    });
-    expect(result).toEqual({ ...fromPrivateRegistry, seen: requests("PRIVATE", "@corp/thing", null) });
-  });
-
-  cell("~/.npmrc token for the ./.npmrc scope, and no token for an unscoped package", async () => {
-    const result = await autoInstall({
-      args: ["x.cjs"],
-      files: r => ({
-        "app/.npmrc": `@corp:registry=http://${r.PRIVATE}/\n`,
-        "home/.npmrc": `//${r.PRIVATE}/:_authToken=${token}\n`,
-        "app/x.cjs": `console.log(require("@corp/thing"), require("plain-thing"));\n`,
-      }),
-    });
-    expect(result).toEqual({
-      ...fromPrivateRegistry,
-      stdout: "PRIVATE DEFAULT\n",
-      seen: [...requests("PRIVATE", "@corp/thing", `Bearer ${token}`), ...requests("DEFAULT", "plain-thing", null)],
-    });
-  });
-
-  cell("./.npmrc token for a scope whose URL is in bunfig.toml", async () => {
-    const result = await autoInstall({
-      args: ["x.mjs"],
-      files: r => ({
-        "app/.npmrc": `//${r.PRIVATE}/:_authToken=${token}\n`,
-        "app/bunfig.toml": `[install.scopes]\n"@corp" = "http://${r.PRIVATE}/"\n`,
-        "app/x.mjs": importIt,
-      }),
-    });
-    expect(result).toEqual(fromPrivateRegistry);
-  });
-
-  cell("a bunfig.toml scope overrides the ./.npmrc scope", async () => {
-    const result = await autoInstall({
-      args: ["x.mjs"],
-      files: r => ({
-        "app/.npmrc": `@corp:registry=http://${r.DEFAULT}/\n`,
-        "app/bunfig.toml": `[install.scopes]\n"@corp" = { url = "http://${r.PRIVATE}/", token = "${token}" }\n`,
-        "app/x.mjs": importIt,
-      }),
-    });
-    expect(result).toEqual(fromPrivateRegistry);
-  });
-
-  // The runtime expands `${NAME}` from the environment the script runs with.
-  // `bun install` loads `.env.production` in place of `.env.development`.
-  cell.each([
-    ["the process environment", {}, { MY_NPM_TOKEN: token }],
-    ["./.env", { "app/.env": `MY_NPM_TOKEN=${token}\n` }, {}],
-    ["./.env.development", { "app/.env.development": `MY_NPM_TOKEN=${token}\n` }, {}],
-  ] as [string, Files, Record<string, string>][])("./.npmrc ${MY_NPM_TOKEN} from %s", async (_, files, env) => {
-    const result = await autoInstall({
-      args: ["x.mjs"],
-      files: r => ({
-        "app/.npmrc": `@corp:registry=http://${r.PRIVATE}/\n//${r.PRIVATE}/:_authToken=\${MY_NPM_TOKEN}\n`,
-        "app/x.mjs": importIt,
-        ...files,
-      }),
-      env: () => env,
-    });
-    expect(result).toEqual(fromPrivateRegistry);
-  });
-
-  // bunfig.toml is read from the start directory, and so is `.npmrc`.
-  cell.each([
-    ["import()", "x.mjs", `process.chdir("../elsewhere");\n` + importLater],
-    ["require()", "x.cjs", `process.chdir("../elsewhere");\nconsole.log(require("@corp/thing"));\n`],
-  ])("./.npmrc of the start directory after process.chdir(): %s", async (_, file, source) => {
-    const result = await autoInstall({
-      args: [file],
-      files: r => ({
-        "app/.npmrc": scopeAndToken(r),
-        "elsewhere/.npmrc": `@corp:registry=http://${r.DEFAULT}/\n`,
-        [`app/${file}`]: source,
-      }),
-    });
-    expect(result).toEqual({ ...fromPrivateRegistry, created: ["app", "cache", "elsewhere", "home"] });
-  });
-
-  cell("a ./.npmrc written before the first auto-install", async () => {
-    const result = await autoInstall({
-      args: ["x.mjs"],
-      files: r => ({
-        "app/x.mjs":
-          `import { writeFileSync } from "node:fs";\n` +
-          `writeFileSync(".npmrc", ${JSON.stringify(scopeAndToken(r))});\n` +
-          importLater,
-      }),
-    });
-    expect(result).toEqual(fromPrivateRegistry);
-  });
-
-  cell("a scoped package's unscoped dependency comes from the default registry, without the token", async () => {
-    const result = await autoInstall({
-      args: ["x.mjs"],
-      files: r => ({
-        "app/.npmrc": scopeAndToken(r),
-        "app/x.mjs": `import servedBy from "@corp/with-dep";\nconsole.log(servedBy);\n`,
-      }),
-    });
-    const byPath = (a: Seen, b: Seen) => a.path.localeCompare(b.path);
-    expect({ ...result, seen: result.seen.sort(byPath) }).toEqual({
-      ...fromPrivateRegistry,
-      stdout: "PRIVATE DEFAULT\n",
-      seen: [
-        ...requests("PRIVATE", "@corp/with-dep", `Bearer ${token}`),
-        ...requests("DEFAULT", "plain-thing", null),
-      ].sort(byPath),
-    });
-  });
-
-  // `bun install` takes `cache=` from .npmrc and warns about `certfile=`.
-  // The runtime takes the registries only and prints nothing.
-  cell("other ./.npmrc keys do not reach the runtime", async () => {
-    const result = await autoInstall({
-      args: ["x.mjs"],
-      files: r => ({
-        "app/.npmrc": scopeAndToken(r) + `cache=../npmrc-cache\n//${r.PRIVATE}/:certfile=/nope.pem\n`,
-        "app/x.mjs": importIt,
-      }),
-      env: (_, dir) => ({ BUN_INSTALL_CACHE_DIR: undefined, BUN_INSTALL: join(dir, "bun-install") }),
-    });
-    expect(result).toEqual({ ...fromPrivateRegistry, created: ["app", "bun-install", "home"] });
-  });
-
-  // Neither `.npmrc` path fits a path buffer, so the default registry answers.
-  cell.skipIf(!isLinux)("a start directory and a home directory at the path length limit", async () => {
-    const atLimit = (dir: string, name: string) => directoryPathOfLength(join(dir, name), 4092);
-    const result = await autoInstall({
-      args: ["-e", `console.log(require("@corp/thing"));`],
-      files: () => ({}),
-      env: (_, dir) => ({ HOME: atLimit(dir, "home") }),
-      prepare: dir => {
-        mkdirSync(atLimit(dir, "app"), { recursive: true });
-        mkdirSync(atLimit(dir, "home"), { recursive: true });
-      },
-      cwd: dir => atLimit(dir, "app"),
-    });
-    expect(result).toEqual({
-      ...fromPrivateRegistry,
-      stdout: "DEFAULT\n",
-      seen: requests("DEFAULT", "@corp/thing", null),
-    });
-  });
-
-  cell("nothing is printed and no registry is asked when node_modules has the package", async () => {
-    const broken = (r: Registries) => `@corp:registry=http://${r.DEFAULT}/\n//${r.DEFAULT}/:certfile=/nope.pem\n`;
-    const result = await autoInstall({
-      args: ["x.mjs"],
-      files: r => ({ ...inNodeModules, "app/.npmrc": broken(r), "home/.npmrc": broken(r), "app/x.mjs": importIt }),
-    });
-    expect(result).toEqual({ ...fromPrivateRegistry, stdout: "node_modules\n", seen: [], created: ["app", "home"] });
-  });
-
-  // Opening a FIFO for reading blocks until a writer shows up, which never
-  // happens. The timeout only turns that hang into a failure.
-  cell.skipIf(isWindows)("no .npmrc is opened when node_modules has the package", async () => {
-    const result = await autoInstall({
-      args: ["x.mjs"],
-      files: () => ({ ...inNodeModules, "app/x.mjs": importIt }),
-      prepare: dir => {
-        mkfifo(join(dir, "app", ".npmrc"));
-        mkfifo(join(dir, "home", ".npmrc"));
-      },
-      timeout: 30_000,
-    });
-    expect(result).toEqual({ ...fromPrivateRegistry, stdout: "node_modules\n", seen: [], created: ["app", "home"] });
-  });
-
-  cell("$NPM_CONFIG_USERCONFIG scope and token, in place of ~/.npmrc", async () => {
-    const result = await autoInstall({
-      args: ["x.mjs"],
-      files: r => ({
-        "user/npmrc": scopeAndToken(r),
-        "home/.npmrc": `@corp:registry=http://${r.DEFAULT}/\n`,
-        "app/x.mjs": importIt,
-      }),
-      env: (_, dir) => ({ NPM_CONFIG_USERCONFIG: join(dir, "user", "npmrc") }),
-    });
-    expect(result).toEqual({ ...fromPrivateRegistry, created: ["app", "cache", "home", "user"] });
-  });
-
-  cell("~/.npmrc token on the host, for a bunfig.toml scope under a path of it", async () => {
-    const result = await autoInstall({
-      args: ["x.mjs"],
-      files: r => ({
-        "home/.npmrc": `//${r.PRIVATE}/:_authToken=${token}\n`,
-        "app/bunfig.toml": `[install.scopes]\n"@corp" = "http://${r.PRIVATE}/npm/"\n`,
-        "app/x.mjs": importIt,
-      }),
-    });
-    expect(result).toEqual(fromPrivateRegistry);
-  });
-
-  cell('~/.npmrc token where the bunfig.toml scope has token = "$UNSET"', async () => {
-    const result = await autoInstall({
-      args: ["x.mjs"],
-      files: r => ({
-        "home/.npmrc": `//${r.PRIVATE}/:_authToken=${token}\n`,
-        "app/bunfig.toml": `[install.scopes]\n"@corp" = { url = "http://${r.PRIVATE}/", token = "$UNSET_AUTOINSTALL_TOKEN" }\n`,
-        "app/x.mjs": importIt,
-      }),
-      env: () => ({ UNSET_AUTOINSTALL_TOKEN: undefined }),
-    });
-    expect(result).toEqual({
-      ...fromPrivateRegistry,
-      stderr: expect.stringContaining("$UNSET_AUTOINSTALL_TOKEN"),
-    });
-  });
-
-  // A manifest names the tarball URL, so at run time too it can summon a line of ~/.npmrc, but never into cleartext.
-  cell.each([
-    ["https", `Bearer ${token}`],
-    ["http", null],
-  ])("a tarball on another %s host that ~/.npmrc has a line for", async (scheme, authorization) => {
-    const thing = (await built.PRIVATE).find(pkg => pkg.name === "@corp/thing")!;
-    const seen: (string | null)[] = [];
-    await using cdn = Bun.serve({
-      port: 0,
-      hostname: "127.0.0.1",
-      ...(scheme === "https" ? { tls } : {}),
-      fetch(req) {
-        seen.push(req.headers.get("authorization"));
-        return new Response(thing.tarball);
-      },
-    });
-    await using registry = Bun.serve({
-      port: 0,
-      hostname: "127.0.0.1",
-      fetch() {
-        const dist = { tarball: `${scheme}://127.0.0.1:${cdn.port}/files/thing-1.0.0.tgz`, integrity: thing.integrity };
-        return Response.json({
-          name: thing.name,
-          "dist-tags": { latest: "1.0.0" },
-          versions: { "1.0.0": { ...thing.manifest, dist } },
-        });
-      },
-    });
-    const result = await autoInstall({
-      args: ["x.mjs"],
-      files: () => ({
-        "home/.npmrc": `//127.0.0.1:${cdn.port}/:_authToken=${token}\n`,
-        "app/.npmrc": `@corp:registry=http://127.0.0.1:${registry.port}/\n`,
-        "app/x.mjs": importIt,
-        "cert.pem": tls.cert,
-      }),
-      env: (_, dir) => ({ NODE_EXTRA_CA_CERTS: join(dir, "cert.pem") }),
-    });
-    expect({ stdout: result.stdout, seen }).toEqual({ stdout: "PRIVATE\n", seen: [authorization] });
-    expect(result.exitCode).toBe(0);
   });
 });
 
@@ -5656,54 +5193,280 @@ describe.concurrent("`ca` and `cafile` are one setting: a layer that sets either
 });
 
 // A config file that is there and cannot be read must not be skipped in silence: without its `registry=` and
-// `_authToken`, every package name goes to the public registry.
-describe.concurrent.skipIf(isWindows)("unreadable config files", () => {
-  // root reads a file of any mode.
-  const isRoot = process.getuid?.() === 0;
-
-  /** `bun install` in `<dir>/project` with `<dir>/home` as the home directory. No dependencies, so no network. */
-  async function install(prepare: (dir: string) => void) {
+// `_authToken`, every package name goes to the public registry. Not concurrent: `unprivilegedSpawnOptions` may change
+// and restore the modes of directories above the test's own.
+describe.skipIf(isWindows)("unreadable config files", () => {
+  /** Runs bun in `<dir>/project` with `<dir>/home` as the home directory, as a user that file modes apply to. */
+  async function run(cmd: string[], prepare: (dir: string, lock: (path: string) => void) => void, xdg = false) {
     using dir = tempDir("npmrc-unreadable", {
+      // No dependencies, so no network.
       "project/package.json": JSON.stringify({ name: "app", version: "1.0.0" }),
       "home/.keep": "",
+      "xdg/.keep": "",
+      "cache/.keep": "",
     });
-    prepare(String(dir));
-    const home = join(String(dir), "home");
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "install"],
-      cwd: join(String(dir), "project"),
-      env: { ...env, HOME: home, XDG_CONFIG_HOME: undefined, BUN_INSTALL_CACHE_DIR: join(String(dir), "cache") },
-      stdout: "pipe",
-      stderr: "pipe",
+    const locked: string[] = [];
+    prepare(String(dir), path => {
+      chmodSync(join(String(dir), path), 0o000);
+      locked.push(join(String(dir), path));
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    return { stderr, exitCode };
+    using unprivileged = unprivilegedSpawnOptions(String(dir));
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...cmd],
+        cwd: join(String(dir), "project"),
+        env: {
+          ...env,
+          HOME: join(String(dir), "home"),
+          XDG_CONFIG_HOME: xdg ? join(String(dir), "xdg") : undefined,
+          BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+        ...unprivileged,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    } finally {
+      // So that the directory can be removed.
+      for (const path of locked) chmodSync(path, 0o755);
+    }
   }
 
-  const files = [
+  const files: [name: string, path: string, message: string][] = [
     ["./.npmrc", "project/.npmrc", "The registry and auth settings in .npmrc are not applied."],
     ["~/.npmrc", "home/.npmrc", "home/.npmrc are not applied."],
     ["./bunfig.toml", "project/bunfig.toml", "project/bunfig.toml are not applied."],
     ["~/.bunfig.toml", "home/.bunfig.toml", "home/.bunfig.toml are not applied."],
+    ["$XDG_CONFIG_HOME/.bunfig.toml", "xdg/.bunfig.toml", "xdg/.bunfig.toml are not applied."],
   ];
 
   test.each(files)("%s is a directory", async (_, path, message) => {
-    const { stderr, exitCode } = await install(dir => mkdirSync(join(dir, path)));
+    const { stderr, exitCode } = await run(["install"], dir => mkdirSync(join(dir, path)), path.startsWith("xdg"));
     expect(stderr).toContain("warn: EISDIR");
     expect(stderr).toContain(message);
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(isRoot).each(files)("%s has mode 000", async (_, path, message) => {
-    const { stderr, exitCode } = await install(dir => writeFileSync(join(dir, path), "", { mode: 0o000 }));
+  test.each(files)("%s has mode 000", async (_, path, message) => {
+    const { stderr, exitCode } = await run(
+      ["install"],
+      (dir, lock) => {
+        writeFileSync(join(dir, path), "");
+        lock(path);
+      },
+      path.startsWith("xdg"),
+    );
     expect(stderr).toContain("warn: EACCES");
     expect(stderr).toContain(message);
     expect(exitCode).toBe(0);
   });
 
+  // `sudo -u nobody bun ...` with the HOME of the caller, `USER nobody` in a container with HOME=/root: EACCES comes from
+  // the directory, and whether the file exists is not known. The file is there in these tests, which changes nothing.
+  test.each([
+    ["~/.npmrc", "home/.npmrc"],
+    ["~/.bunfig.toml", "home/.bunfig.toml"],
+    ["$XDG_CONFIG_HOME/.bunfig.toml", "xdg/.bunfig.toml"],
+  ])("nothing is said about %s in a directory that cannot be searched", async (_, path) => {
+    const { stderr, exitCode } = await run(
+      ["install"],
+      (dir, lock) => {
+        writeFileSync(join(dir, path), "");
+        lock(dirname(path));
+      },
+      path.startsWith("xdg"),
+    );
+    expect(stderr).not.toContain("warn:");
+    expect(stderr).not.toContain("EACCES");
+    expect(exitCode).toBe(0);
+  });
+
+  test("nothing is said about ./bunfig.toml in a directory that cannot be searched", async () => {
+    const result = await run(["-e", "console.log(1)"], (dir, lock) => {
+      writeFileSync(join(dir, "project/bunfig.toml"), "");
+      lock("project");
+    });
+    expect(result).toEqual({ stdout: "1\n", stderr: "", exitCode: 0 });
+  });
+
+  // The package.json beside it is refused first, so this is the one message.
+  test("nothing is said about ./.npmrc in a directory that cannot be searched", async () => {
+    const { stderr, exitCode } = await run(["install"], (dir, lock) => {
+      writeFileSync(join(dir, "project/.npmrc"), "");
+      lock("project");
+    });
+    expect(stderr).toContain("package.json");
+    expect(stderr).not.toContain("not applied");
+    expect(exitCode).toBe(1);
+  });
+
+  test("--silent hides the warning about a .npmrc", async () => {
+    const { stderr, exitCode } = await run(["install", "--silent"], (dir, lock) => {
+      writeFileSync(join(dir, "project/.npmrc"), "");
+      lock("project/.npmrc");
+    });
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   test("nothing is said when no config file exists", async () => {
-    const { stderr, exitCode } = await install(() => {});
+    const { stderr, exitCode } = await run(["install"], () => {});
     expect(stderr).not.toContain("warn:");
     expect(exitCode).toBe(0);
+  });
+});
+
+// A WHATWG parse reads such bytes as U+FFFD and serialises that as %EF%BF%BD: a request for something else than was named.
+describe.concurrent("bytes that are not valid UTF-8 are not read as U+FFFD", () => {
+  // Latin-1 text: a stray continuation byte and a lone 0x9B.
+  const bad = Buffer.from([0x82, 0x41, 0x9b, 0x41]);
+  const bytes = (...parts: (string | Buffer)[]) => Buffer.concat(parts.map(part => Buffer.from(part as string)));
+  const packageJson = (...dependencies: (string | Buffer)[]) =>
+    bytes(`{"name":"app","version":"1.0.0","dependencies":{`, ...dependencies, `}}`);
+
+  /** Records request lines byte for byte (as Latin-1). Answers 404, or `manifest` to what is not a tarball. */
+  function rawServer({
+    secure = false,
+    manifest,
+  }: { secure?: boolean; manifest?: (host: string, line: string) => Buffer } = {}) {
+    const requests: { line: string; authorization: string | null }[] = [];
+    const listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      ...(secure ? { tls } : {}),
+      socket: {
+        data(socket, chunk) {
+          const head = chunk.toString("latin1");
+          const line = head.slice(0, head.indexOf("\r\n"));
+          requests.push({ line, authorization: /\r\nauthorization: ([^\r]*)/i.exec(head)?.[1] ?? null });
+          const body = manifest && !line.includes(".tgz") ? manifest(host, line) : Buffer.alloc(0);
+          const status = body.length ? "200 OK" : "404 Not Found";
+          socket.end(
+            bytes(
+              `HTTP/1.1 ${status}\r\nContent-Type: application/json\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n`,
+              body,
+            ),
+          );
+        },
+      },
+    });
+    const host = `127.0.0.1:${listener.port}`;
+    return {
+      host,
+      requests,
+      [Symbol.dispose]() {
+        listener.stop(true);
+      },
+    };
+  }
+
+  async function install(files: Record<string, string | Buffer>, ...args: string[]) {
+    using dir = tempDir("npmrc-not-utf8", { "home/.keep": "", ...files });
+    const home = join(String(dir), "home");
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd: String(dir),
+      env: {
+        ...env,
+        HOME: home,
+        USERPROFILE: home,
+        XDG_CONFIG_HOME: undefined,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"),
+        BUN_CONFIG_HTTP_RETRY_COUNT: "0",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.bytes(), proc.exited]);
+    return { stderr: Buffer.from(stderr).toString("latin1"), exitCode };
+  }
+
+  test("a tarball URL is requested as written", async () => {
+    using server = rawServer();
+    const { exitCode } = await install({
+      "package.json": packageJson(`"bad":"http://${server.host}/f/bad-`, bad, `.tgz"`),
+    });
+    expect(server.requests.map(request => request.line)).toEqual(["GET /f/bad-\x82A\x9bA.tgz HTTP/1.1"]);
+    expect(exitCode).toBe(1);
+  });
+
+  // No key is computed for it: the key would come from the parse, the request from the bytes as written.
+  test("such a tarball URL gets no .npmrc line of its own", async () => {
+    using cdn = rawServer({ secure: true });
+    using registry = rawServer({
+      manifest(_, line) {
+        const name = line.includes("/good") ? "good" : "bad";
+        return bytes(
+          `{"name":"${name}","dist-tags":{"latest":"1.0.0"},"versions":{"1.0.0":{"name":"${name}","version":"1.0.0","dist":{"tarball":"https://${cdn.host}/f/${name}-`,
+          name === "bad" ? bad : "1.0.0",
+          `.tgz"}}}}`,
+        );
+      },
+    });
+    const { exitCode } = await install(
+      {
+        "package.json": packageJson(`"bad":"1.0.0","good":"1.0.0"`),
+        ".npmrc": `registry=http://${registry.host}/\n//${cdn.host}/:_authToken=line-token\n`,
+      },
+      "--ca",
+      tls.cert,
+    );
+    expect(cdn.requests.sort((a, b) => a.line.localeCompare(b.line))).toEqual([
+      { line: "GET /f/bad-\x82A\x9bA.tgz HTTP/1.1", authorization: null },
+      { line: "GET /f/good-1.0.0.tgz HTTP/1.1", authorization: "Bearer line-token" },
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("on the origin of its registry it gets the registry's credentials", async () => {
+    using server = rawServer({
+      manifest: host =>
+        bytes(
+          `{"name":"pkg","dist-tags":{"latest":"1.0.0"},"versions":{"1.0.0":{"name":"pkg","version":"1.0.0","dist":{"tarball":"http://${host}/f/pkg-`,
+          bad,
+          `.tgz"}}}}`,
+        ),
+    });
+    const { exitCode } = await install({
+      "package.json": packageJson(`"pkg":"1.0.0"`),
+      ".npmrc": `registry=http://${server.host}/reg/\n//${server.host}/reg/:_authToken=registry-token\n`,
+    });
+    expect(server.requests).toEqual([
+      { line: "GET /reg/pkg HTTP/1.1", authorization: "Bearer registry-token" },
+      { line: "GET /f/pkg-\x82A\x9bA.tgz HTTP/1.1", authorization: "Bearer registry-token" },
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test.each([
+    ["a dependency name", [`"n-`, bad, `":"1.0.0"`]],
+    ["the name an alias points to", [`"alias":"npm:n-`, bad, `@1.0.0"`]],
+  ])("%s is refused before any request", async (_, dependencies) => {
+    using server = rawServer();
+    const { stderr, exitCode } = await install({
+      "package.json": packageJson(...dependencies),
+      ".npmrc": `registry=http://${server.host}/reg/\n//${server.host}/reg/:_authToken=registry-token\n`,
+    });
+    expect(server.requests).toEqual([]);
+    expect(stderr).toContain(`error: Failed to join registry "http://${server.host}/reg/" and package "n-`);
+    expect(exitCode).toBe(1);
+  });
+
+  // The one case in which the URL is built at request time, from the registry URL and the name, and is not parsed again.
+  test("a manifest without dist.tarball: the URL is built from the registry URL", async () => {
+    using server = rawServer({
+      manifest: () =>
+        bytes(`{"name":"pkg","dist-tags":{"latest":"1.0.0"},"versions":{"1.0.0":{"name":"pkg","version":"1.0.0"}}}`),
+    });
+    const { exitCode } = await install({
+      "package.json": packageJson(`"pkg":"1.0.0"`),
+      ".npmrc": `registry=http://${server.host}/reg/\n//${server.host}/reg/:_authToken=registry-token\n`,
+    });
+    expect(server.requests).toEqual([
+      { line: "GET /reg/pkg HTTP/1.1", authorization: "Bearer registry-token" },
+      { line: "GET /reg/pkg/-/pkg-1.0.0.tgz HTTP/1.1", authorization: "Bearer registry-token" },
+    ]);
+    expect(exitCode).toBe(1);
   });
 });

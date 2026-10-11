@@ -1,5 +1,6 @@
 import { file, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
+import { lstatSync, readdirSync, rmSync } from "fs";
 import { access, writeFile } from "fs/promises";
 import {
   bunExe,
@@ -485,10 +486,8 @@ describe.each(["hoisted", "isolated"])("linker=%s", linker => {
       name: "baz",
       version: "0.0.3",
     });
-    if (linker === "hoisted") {
-      expect(out).not.toContain("Failed to install");
-      expect(exitCode).toBe(0);
-    }
+    expect(out).not.toContain("Failed to install");
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -632,7 +631,7 @@ describe.concurrent("backoff", () => {
     { retryAfter: "Wed, 21 Oct 2096 07:28:00 GMT", backoff: "1", wait: /^1ms$/ },
     { retryAfter: "3600", backoff: "0", wait: /^0ms$/ },
     { retryAfter: null, backoff: "nonsense", wait: /^(2[0-9][0-9]|300)ms$/ },
-  ])("Retry-After: $retryAfter with a base of $backoff", async ({ retryAfter, backoff, wait }) => {
+  ])("Retry-After %j", async ({ retryAfter, backoff, wait }) => {
     using registry = flakyRegistry((_, hit) => (hit === 1 ? busy(503, retryAfter) : undefined));
     using dir = project(registry.url);
     const { err, lines, exitCode } = await install(
@@ -847,10 +846,7 @@ describe.concurrent("a tarball that cannot be installed", () => {
       for (const group of ["dependencies", "optionalDependencies"]) {
         // Without a lockfile the tarballs are downloaded while the dependencies are resolved, with one by the linker.
         for (const phase of ["without a lockfile", "with a lockfile"]) {
-          // Still wrong: the isolated linker fails the install for an optional dependency, and
-          // both linkers do for a tarball that does not extract.
-          const wrong = group === "optionalDependencies" && (linker === "isolated" || fault === "corrupt tarball");
-          (wrong ? it.failing : it)(`${fault}, ${group}, ${linker}, ${phase}`, async () => {
+          it(`${fault}, ${group}, ${linker}, ${phase}`, async () => {
             using registry = await serve(fault);
             using dir = tempDir("tarball-fails", {
               "package.json": JSON.stringify({
@@ -886,4 +882,326 @@ describe.concurrent("a tarball that cannot be installed", () => {
       }
     }
   }
+});
+
+describe.concurrent("an optional dependency whose tarball is gone", () => {
+  // Every package is at 1.0.0; the tarball of `bad` is a 404.
+  async function project(linker: string, root: object, packages: Record<string, object> = {}) {
+    packages = { ...packages, bad: {} };
+    const tarballs = new Map<string, Uint8Array>();
+    for (const [name, pkg] of Object.entries(packages)) {
+      if (name === "bad") continue;
+      const files = { "package/package.json": JSON.stringify({ name, version: "1.0.0", ...pkg }) };
+      tarballs.set(`/${name}-1.0.0.tgz`, await new Bun.Archive(files, { compress: "gzip" }).bytes());
+    }
+    const registry = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        const name = pathname.slice(1);
+        if (name in packages) {
+          const dist = { tarball: `${origin}/${name}-1.0.0.tgz` };
+          return Response.json({
+            name,
+            "dist-tags": { latest: "1.0.0" },
+            versions: { "1.0.0": { name, version: "1.0.0", ...packages[name], dist } },
+          });
+        }
+        const tarball = tarballs.get(pathname);
+        return tarball ? new Response(tarball) : new Response("gone", { status: 404 });
+      },
+    });
+    const dir = tempDir("optional-tarball-gone", {
+      "package.json": JSON.stringify({ name: "foo", ...root }),
+      "bunfig.toml": Bun.TOML.stringify({ install: { cache: "./.bun-cache", registry: registry.url.href, linker } }),
+    });
+    return {
+      dir: String(dir),
+      has: (...path: string[]) => lstatSync(join(String(dir), ...path), { throwIfNoEntry: false }) !== undefined,
+      async run(...args: string[]) {
+        await using proc = spawn({
+          cmd: [bunExe(), ...args],
+          cwd: String(dir),
+          env: { ...env, BUN_INSTALL_CACHE_DIR: undefined, BUN_CONFIG_HTTP_RETRY_COUNT: "0" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const count = (prefix: string) => err.split("\n").filter(line => line.startsWith(prefix)).length;
+        return {
+          errors: count("error:"),
+          warnings: count("warn:"),
+          failed: out.includes("Failed to install"),
+          exitCode,
+        };
+      },
+      [Symbol.dispose]() {
+        registry.stop(true);
+        dir[Symbol.dispose]();
+      },
+    };
+  }
+  const leftOut = { errors: 0, warnings: 1, failed: false, exitCode: 0 };
+  const goodAndOptionalBad = { dependencies: { good: "1.0.0" }, optionalDependencies: { bad: "1.0.0" } };
+
+  describe.each(["hoisted", "isolated"])("%s", linker => {
+    it("is left out without a link to it, but fails `bun add --optional`", async () => {
+      using p = await project(linker, goodAndOptionalBad, { good: {} });
+      // Downloaded while resolving, then by the linker.
+      expect(await p.run("install")).toEqual(leftOut);
+      expect(await p.run("install")).toEqual(leftOut);
+      expect([p.has("node_modules", "good", "package.json"), p.has("node_modules", "bad")]).toEqual([true, false]);
+      expect(await p.run("add", "--optional", "bad@1.0.0")).toMatchObject({ exitCode: 1 });
+    });
+
+    it("of a dependency is left out without a link to it", async () => {
+      using p = await project(
+        linker,
+        { dependencies: { pkg: "1.0.0" } },
+        { pkg: { optionalDependencies: { bad: "1.0.0" } } },
+      );
+      expect(await p.run("install", "--lockfile-only")).toMatchObject({ exitCode: 0 });
+      expect(await p.run("install")).toEqual(leftOut);
+      expect(p.has("node_modules", "pkg", "package.json")).toBe(true);
+      const besidePkg = linker === "hoisted" ? ["node_modules"] : ["node_modules", ".bun", "pkg@1.0.0", "node_modules"];
+      expect([p.has(...besidePkg, "bad"), p.has("node_modules", ".bun", "node_modules", "bad")]).toEqual([
+        false,
+        false,
+      ]);
+    });
+
+    it("is left out by --offline", async () => {
+      using p = await project(linker, goodAndOptionalBad, { good: {} });
+      expect(await p.run("install")).toEqual(leftOut);
+      rmSync(join(p.dir, "node_modules"), { recursive: true });
+      expect(await p.run("install", "--offline")).toEqual({ ...leftOut, warnings: 0 });
+      expect([p.has("node_modules", "good", "package.json"), p.has("node_modules", "bad")]).toEqual([true, false]);
+    });
+
+    // Whichever dependent reaches it first.
+    it.each([
+      ["the root", { dependencies: { needs: "1.0.0" }, optionalDependencies: { bad: "1.0.0" } }],
+      ["a dependency that sorts after it", { dependencies: { aneeds: "1.0.0", pkg: "1.0.0" } }],
+      ["a dependency that sorts before it", { dependencies: { zneeds: "1.0.0", pkg: "1.0.0" } }],
+    ])("fails the install when a dependency requires it and it is optional for %s", async (_, root) => {
+      const needs = { dependencies: { bad: "1.0.0" } };
+      using p = await project(linker, root, {
+        needs,
+        aneeds: needs,
+        zneeds: needs,
+        pkg: { optionalDependencies: { bad: "1.0.0" } },
+      });
+      expect(await p.run("install", "--lockfile-only")).toMatchObject({ exitCode: 0 });
+      expect(await p.run("install")).toMatchObject({ errors: 1, warnings: 0, exitCode: 1 });
+    });
+  });
+});
+
+// One download serves every dependency on a package, and one of them asks for it. Whether its
+// failure fails the install must not depend on which one that is, nor on when it failed.
+describe.concurrent("a failed download that several dependencies share", () => {
+  type Pkg = { name: string; version: string } & Record<string, unknown>;
+
+  async function project(linker: string, packages: Pkg[], files: Record<string, string> = {}) {
+    const gone = new Set<string>();
+    const tarballs = new Map<string, Uint8Array>();
+    for (const pkg of packages) {
+      tarballs.set(
+        `/${pkg.name}-${pkg.version}.tgz`,
+        await new Bun.Archive({ "package/package.json": JSON.stringify(pkg) }, { compress: "gzip" }).bytes(),
+      );
+    }
+    const registry = Bun.serve({
+      port: 0,
+      fetch(request) {
+        const { origin, pathname } = new URL(request.url);
+        const tarball = tarballs.get(pathname);
+        if (tarball) return gone.has(pathname) ? new Response("gone", { status: 404 }) : new Response(tarball);
+        const versions = packages.filter(pkg => pkg.name === pathname.slice(1));
+        if (versions.length === 0) return new Response("unexpected", { status: 404 });
+        return Response.json({
+          name: versions[0].name,
+          "dist-tags": { latest: versions[0].version },
+          versions: Object.fromEntries(
+            versions.map(pkg => [
+              pkg.version,
+              { ...pkg, dist: { tarball: `${origin}/${pkg.name}-${pkg.version}.tgz` } },
+            ]),
+          ),
+        });
+      },
+    });
+    const dir = tempDir("shared-failed-download", {
+      ...files,
+      "bunfig.toml": Bun.TOML.stringify({ install: { cache: "./.bun-cache", registry: registry.url.href, linker } }),
+    });
+    return {
+      dir: String(dir),
+      url: (name: string, version: string) => `${registry.url.href}${name}-${version}.tgz`,
+      /** From now on nothing is installed or cached, and this tarball is a 404. */
+      loseTarball(name: string, version: string) {
+        rmSync(join(String(dir), "node_modules"), { recursive: true, force: true });
+        rmSync(join(String(dir), ".bun-cache"), { recursive: true, force: true });
+        gone.add(`/${name}-${version}.tgz`);
+      },
+      async install(root: object, ...args: string[]) {
+        await writeFile(join(String(dir), "package.json"), JSON.stringify({ name: "foo", version: "0.0.1", ...root }));
+        await using proc = spawn({
+          cmd: [bunExe(), "install", "--ignore-scripts", ...args],
+          cwd: String(dir),
+          env: { ...env, BUN_INSTALL_CACHE_DIR: undefined, BUN_CONFIG_HTTP_RETRY_COUNT: "0" },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const lines = err.split(/\r?\n/);
+        return {
+          errors: lines.filter(line => line.startsWith("error:")).length,
+          // Not the ones about peers.
+          warnings: lines.filter(line => line.startsWith("warn: GET ")).length,
+          failed: out.includes("Failed to install"),
+          exitCode,
+        };
+      },
+      [Symbol.dispose]() {
+        registry.stop(true);
+        dir[Symbol.dispose]();
+      },
+    };
+  }
+  const installed = { errors: 0, warnings: 0, failed: false, exitCode: 0 };
+  const leftOut = { errors: 0, warnings: 1, failed: false, exitCode: 0 };
+  const baz = { name: "baz", version: "1.0.0" };
+
+  describe.each(["hoisted", "isolated"])("%s", linker => {
+    // `b` resolves baz first and asks for its tarball, `a` finds baz resolved: the download that
+    // fails while the dependencies are resolved is a warning. The linker then needs it for `a`.
+    it("fails for the required alias after it failed for the optional alias while resolving", async () => {
+      using p = await project(linker, [baz]);
+      p.loseTarball("baz", "1.0.0");
+      expect(
+        await p.install({ dependencies: { a: "npm:baz@1.0.0" }, optionalDependencies: { b: "npm:baz@1.0.0" } }),
+      ).toEqual({ errors: 0, warnings: 1, failed: true, exitCode: 1 });
+    });
+
+    // bun.lock resolves both to one package. The linker asks for it through `b`, which sorts first.
+    it("is an error when the required url joins the download of the optional one", async () => {
+      using p = await project(linker, [baz]);
+      const url = p.url("baz", "1.0.0");
+      expect(await p.install({ dependencies: { a: url } })).toEqual(installed);
+      p.loseTarball("baz", "1.0.0");
+      expect(await p.install({ dependencies: { a: url }, optionalDependencies: { b: url } })).toMatchObject({
+        errors: 1,
+        warnings: 0,
+        exitCode: 1,
+      });
+    });
+
+    it("--offline reports the package that a dependency requires and the root has as optional", async () => {
+      using p = await project(linker, [baz, { name: "bar", version: "1.0.0", dependencies: { baz: "1.0.0" } }]);
+      const root = { dependencies: { bar: "1.0.0" }, optionalDependencies: { baz: "1.0.0" } };
+      expect(await p.install(root)).toEqual(installed);
+      // bar stays cached.
+      rmSync(join(p.dir, "node_modules"), { recursive: true });
+      for (const entry of readdirSync(join(p.dir, ".bun-cache"))) {
+        if (entry.startsWith("baz")) rmSync(join(p.dir, ".bun-cache", entry), { recursive: true });
+      }
+      expect(await p.install(root, "--offline")).toMatchObject({ errors: 1, exitCode: 1 });
+    });
+
+    it("is a warning when only a devDependency that --production skips requires the package", async () => {
+      using p = await project(linker, [baz, { name: "bar", version: "1.0.0", dependencies: { baz: "1.0.0" } }]);
+      const root = { devDependencies: { bar: "1.0.0" }, optionalDependencies: { baz: "1.0.0" } };
+      expect(await p.install(root)).toEqual(installed);
+      p.loseTarball("baz", "1.0.0");
+      expect(await p.install(root, "--production")).toEqual(leftOut);
+    });
+
+    // `x` sorts first, so its optional peer is the dependency the linker asks through.
+    it.each(["without a lockfile", "with a lockfile"])(
+      "is a warning when an optional peer and an optional dependency share the package, %s",
+      async phase => {
+        using p = await project(linker, [
+          baz,
+          {
+            name: "x",
+            version: "1.0.0",
+            peerDependencies: { baz: "*" },
+            peerDependenciesMeta: { baz: { optional: true } },
+          },
+          { name: "y", version: "1.0.0", optionalDependencies: { baz: "1.0.0" } },
+        ]);
+        const root = { dependencies: { x: "1.0.0", y: "1.0.0" } };
+        if (phase === "with a lockfile") expect(await p.install(root)).toEqual(installed);
+        p.loseTarball("baz", "1.0.0");
+        expect(await p.install(root)).toEqual(leftOut);
+      },
+    );
+
+    // Dependencies sort by name, so the parent named `aaa` is the one the linker asks through.
+    it.each([
+      ["the parent with the peer", "aaa", "zzz"],
+      ["the parent with the optional dependency", "zzz", "aaa"],
+    ])("is an error when a peer needs the package and %s sorts first", async (_, peerHost, optionalHost) => {
+      using p = await project(linker, [
+        baz,
+        { name: peerHost, version: "1.0.0", peerDependencies: { baz: "1.0.0" } },
+        { name: optionalHost, version: "1.0.0", optionalDependencies: { baz: "1.0.0" } },
+      ]);
+      const root = { dependencies: { [peerHost]: "1.0.0", [optionalHost]: "1.0.0" } };
+      expect(await p.install(root)).toEqual(installed);
+      p.loseTarball("baz", "1.0.0");
+      expect(await p.install(root)).toMatchObject({ errors: 1, warnings: 0, exitCode: 1 });
+    });
+  });
+
+  // A name in both groups of one package.json is an optional peer.
+  it.each([
+    ["the root", {}, { optionalDependencies: { baz: "1.0.0" }, peerDependencies: { baz: "1.0.0" } }],
+    [
+      "a workspace, and the root owns the slot",
+      {
+        "packages/w/package.json": JSON.stringify({
+          name: "w",
+          version: "0.0.1",
+          optionalDependencies: { baz: "1.0.0" },
+          peerDependencies: { baz: "1.0.0" },
+        }),
+      },
+      { workspaces: ["packages/*"], optionalDependencies: { baz: "1.0.0" } },
+    ],
+  ])("hoisted: is a warning when %s has the peer as optional too", async (_, files, root) => {
+    using p = await project("hoisted", [baz], files);
+    expect(await p.install(root)).toEqual(installed);
+    p.loseTarball("baz", "1.0.0");
+    expect(await p.install(root)).toEqual(leftOut);
+  });
+
+  // What a peer needs is the copy the tree gives it, which is not always the one it resolved to:
+  // a dependency of the root provides a peer whatever its version.
+  describe("hoisted: a peer that is served the root's version", () => {
+    const packages = [
+      baz,
+      { name: "baz", version: "2.0.0" },
+      { name: "x", version: "1.0.0", peerDependencies: { baz: "1.0.0" } },
+      { name: "y", version: "1.0.0", optionalDependencies: { baz: "1.0.0" } },
+    ];
+
+    it("is an error when that version, optional for the root, cannot be downloaded", async () => {
+      using p = await project("hoisted", packages);
+      const root = { dependencies: { x: "1.0.0" }, optionalDependencies: { baz: "2.0.0" } };
+      expect(await p.install(root)).toEqual(installed);
+      expect(await file(join(p.dir, "node_modules", "baz", "package.json")).json()).toMatchObject({ version: "2.0.0" });
+      p.loseTarball("baz", "2.0.0");
+      expect(await p.install(root)).toMatchObject({ errors: 1, warnings: 0, exitCode: 1 });
+    });
+
+    it("is a warning when the version it resolved to, which only an optional dependency links, cannot be", async () => {
+      using p = await project("hoisted", packages);
+      const root = { dependencies: { x: "1.0.0", y: "1.0.0" }, optionalDependencies: { baz: "2.0.0" } };
+      expect(await p.install(root)).toEqual(installed);
+      p.loseTarball("baz", "1.0.0");
+      expect(await p.install(root)).toEqual(leftOut);
+    });
+  });
 });

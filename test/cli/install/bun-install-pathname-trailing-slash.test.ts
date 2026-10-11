@@ -184,13 +184,14 @@ describe.concurrent("registry path without trailing slash is preserved", () => {
   // The manifest URL must stay under the registry path, and that check has to
   // measure against the same slash-terminated base as the join: measured against
   // the URL as written, the directory of ".../r/default" is ".../r/", which is
-  // exactly where ".." lands.
+  // exactly where ".." lands. A literal ".." is refused as a dependency name
+  // before any URL is built; the join reads "%2e%2e" as the same segment.
   test("dependency name that resolves above the registry path is rejected", async () => {
     using registry = serve();
     const { origin } = registry;
     using dir = tempDir("no-trailing-slash-dotdot", {
       "bunfig.toml": Bun.TOML.stringify({ install: { registry: `${origin}/r/default` } }),
-      "package.json": packageJson(".."),
+      "package.json": packageJson("%2e%2e"),
     });
 
     const { stderr, exitCode } = await install(String(dir));

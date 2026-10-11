@@ -344,10 +344,11 @@ diffme@1.0.0 → diffme@2.0.0
       stderr: "",
       exitCode: 0,
     });
-    // The root package itself.
+    // The root package itself. The filter is a base name: its own package.json and the five it packs along, which
+    // are files like any other and stay as written on both sides.
     const rootTgz = await pack(String(dir), join(String(dir), "out-root"));
     expect((await diff([rootTgz, ".", "package.json"], String(dir))).stdout).toBe(
-      `${rootTgz} → .\nNo differences (1 files)\n`,
+      `${rootTgz} → .\nNo differences (6 files)\n`,
     );
 
     // A folder that is no package of the project keeps what it says: nothing is taken from a workspace of the same name.

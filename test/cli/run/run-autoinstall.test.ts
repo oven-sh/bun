@@ -1,47 +1,34 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync } from "fs";
-import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
+import { existsSync, mkdirSync, readdirSync } from "fs";
+import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir, tls } from "harness";
+import { mkfifo } from "mkfifo";
+import { connect, type Socket } from "net";
 import { join } from "path";
+import { pathToFileURL } from "url";
 
 //   --install=<val>                 Configure auto-install behavior. One of "auto" (default, auto-installs when no node_modules), "fallback" (missing packages only), "force" (always).
 //   -i                              Auto-install dependencies during execution. Equivalent to --install=fallback.
 
-describe("basic autoinstall", () => {
+describe.concurrent("basic autoinstall", () => {
   for (const install of ["", "-i", "--install=auto", "--install=fallback", "--install=force"]) {
     for (const has_node_modules of [true, false]) {
-      let should_install = false;
-      if (has_node_modules) {
-        if (install === "" || install === "--install=auto") {
-          should_install = false;
-        } else {
-          should_install = true;
-        }
-      } else {
-        should_install = true;
-      }
+      const should_install = !has_node_modules || (install !== "" && install !== "--install=auto");
 
       test(`${install || "<no flag>"} ${has_node_modules ? "with" : "without"} node_modules ${should_install ? "should" : "should not"} autoinstall`, async () => {
-        const dir = tmpdirSync();
-        mkdirSync(dir, { recursive: true });
-        await Bun.write(join(dir, "index.js"), "import isEven from 'is-even'; console.log(isEven(2));");
-        const env = bunEnv;
-        env.BUN_INSTALL = install;
-        if (has_node_modules) {
-          mkdirSync(join(dir, "node_modules/abc"), { recursive: true });
-        }
-        const { stdout, stderr } = Bun.spawnSync({
-          cmd: [bunExe(), ...(install === "" ? [] : [install]), join(dir, "index.js")],
-          cwd: dir,
-          env,
-          stdout: "pipe",
-          stderr: "pipe",
+        using registry = fixtureRegistry();
+        using dir = tempDir("autoinstall-basic", {
+          "index.js": "import isEven from 'is-even'; console.log(isEven(2));",
+          "bunfig.toml": registry.bunfig,
+          ...(has_node_modules ? { "node_modules/abc/index.js": "" } : {}),
         });
+        const { stdout, stderr } = await runAutoInstall(String(dir), ...(install === "" ? [] : [install]), "index.js");
 
         if (should_install) {
-          expect(stderr?.toString("utf8")).not.toContain("error: Cannot find package 'is-even'");
-          expect(stdout?.toString("utf8")).toBe("true\n");
+          expect(stderr).not.toContain("error: Cannot find package 'is-even'");
+          expect(stdout).toBe("true\n");
         } else {
-          expect(stderr?.toString("utf8")).toContain("error: Cannot find package 'is-even'");
+          expect(stderr).toContain("error: Cannot find package 'is-even'");
+          expect(registry.requests).toEqual([]);
         }
       });
     }
@@ -85,25 +72,28 @@ test("auto-install in a project whose package.json has a name and version", asyn
   expect(exitCode).toBe(1);
 });
 
-// Serves the `no-deps` fixture (versions 1.0.0, 1.0.1, 1.1.0 and 2.0.0, with
-// `latest` pointing at 2.0.0) and records every request path, so a test can
-// tell which version auto-install decided to download.
-function noDepsRegistry() {
-  const fixtures = join(import.meta.dir, "..", "install", "registry", "packages", "no-deps");
+// Serves test/cli/install/registry/packages: `/<name>` is the manifest and
+// `/<name>/-/<file>.tgz` a tarball. Everything else is a 404. `requests` has
+// the path of every request, in order, so a test can tell which version
+// auto-install decided to download. `no-deps` has 1.0.0, 1.0.1, 1.1.0 and
+// 2.0.0, with `latest` pointing at 2.0.0.
+function fixtureRegistry() {
+  const packages = join(import.meta.dir, "..", "install", "registry", "packages");
   const requests: string[] = [];
   const server = Bun.serve({
     port: 0,
     async fetch(req) {
-      const pathname = new URL(req.url).pathname;
+      const { pathname } = new URL(req.url);
       requests.push(pathname);
-      if (pathname === "/no-deps") {
-        const manifest = await Bun.file(join(fixtures, "package.json")).text();
-        return Response.json(
-          JSON.parse(manifest.replaceAll("http://localhost:4873", `http://127.0.0.1:${server.port}`)),
-        );
+      const tarball = pathname.match(/^\/([a-z\d-]+)\/-\/(\1-[a-z\d.-]+\.tgz)$/);
+      if (tarball) return new Response(Bun.file(join(packages, tarball[1], tarball[2])));
+      if (/^\/[a-z\d-]+$/.test(pathname)) {
+        const manifest = Bun.file(join(packages, pathname.slice(1), "package.json"));
+        if (await manifest.exists()) {
+          const text = await manifest.text();
+          return Response.json(JSON.parse(text.replaceAll("http://localhost:4873", `http://127.0.0.1:${server.port}`)));
+        }
       }
-      const tgz = pathname.match(/^\/no-deps\/-\/(no-deps-[\d.]+\.tgz)$/);
-      if (tgz) return new Response(Bun.file(join(fixtures, tgz[1])));
       return new Response("not found", { status: 404 });
     },
   });
@@ -117,11 +107,13 @@ function noDepsRegistry() {
   };
 }
 
-async function runAutoInstall(cwd: string, ...args: string[]) {
+const runAutoInstall = (cwd: string, ...args: string[]) => runAutoInstallWithEnv({}, cwd, ...args);
+
+async function runAutoInstallWithEnv(env: Record<string, string>, cwd: string, ...args: string[]) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), ...args],
     cwd,
-    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache"), ...env },
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -136,7 +128,7 @@ const printNoDepsVersion = `console.log(require("no-deps").version);\n`;
 // package.json lists the package.
 describe.concurrent("auto-install uses the version range from package.json", () => {
   test("bun <file> run from the project directory", async () => {
-    using registry = noDepsRegistry();
+    using registry = fixtureRegistry();
     using dir = tempDir("autoinstall-range", {
       "package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "^1.0.0" } }),
       "index.js": printNoDepsVersion,
@@ -154,7 +146,7 @@ describe.concurrent("auto-install uses the version range from package.json", () 
   // package.json script before it boots the runtime; the cached result must
   // still carry the dependency ranges.
   test("bun run <file> run from the project directory", async () => {
-    using registry = noDepsRegistry();
+    using registry = fixtureRegistry();
     using dir = tempDir("autoinstall-range-run", {
       "package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "^1.0.0" } }),
       "index.js": printNoDepsVersion,
@@ -169,7 +161,7 @@ describe.concurrent("auto-install uses the version range from package.json", () 
   });
 
   test("project package.json in a directory below the cwd", async () => {
-    using registry = noDepsRegistry();
+    using registry = fixtureRegistry();
     using dir = tempDir("autoinstall-range-nested", {
       "bunfig.toml": registry.bunfig,
       "app/package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "^1.0.0" } }),
@@ -184,7 +176,7 @@ describe.concurrent("auto-install uses the version range from package.json", () 
   });
 
   test("package.json without a name field", async () => {
-    using registry = noDepsRegistry();
+    using registry = fixtureRegistry();
     using dir = tempDir("autoinstall-range-nameless", {
       "package.json": JSON.stringify({ dependencies: { "no-deps": "~1.0.0" } }),
       "index.js": printNoDepsVersion,
@@ -202,7 +194,7 @@ describe.concurrent("auto-install uses the version range from package.json", () 
   // source rather than inline, so this also checks they are read back from the
   // right buffer.
   test("range longer than an inline semver string", async () => {
-    using registry = noDepsRegistry();
+    using registry = fixtureRegistry();
     using dir = tempDir("autoinstall-range-long", {
       "package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": ">=1.0.0 <1.1.0" } }),
       "index.js": printNoDepsVersion,
@@ -217,7 +209,7 @@ describe.concurrent("auto-install uses the version range from package.json", () 
   });
 
   test("a range nothing in the registry satisfies is an error, not latest", async () => {
-    using registry = noDepsRegistry();
+    using registry = fixtureRegistry();
     using dir = tempDir("autoinstall-range-unsatisfiable", {
       "package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "^3.0.0" } }),
       "index.js": printNoDepsVersion,
@@ -233,7 +225,7 @@ describe.concurrent("auto-install uses the version range from package.json", () 
   });
 
   test("npm: alias installs the aliased package", async () => {
-    using registry = noDepsRegistry();
+    using registry = fixtureRegistry();
     using dir = tempDir("autoinstall-range-alias", {
       "package.json": JSON.stringify({ name: "app", dependencies: { "my-alias": "npm:no-deps@^1.0.0" } }),
       "index.js": `console.log(require("my-alias").version);\n`,
@@ -248,7 +240,7 @@ describe.concurrent("auto-install uses the version range from package.json", () 
   });
 
   test("a package the package.json does not list still resolves to latest", async () => {
-    using registry = noDepsRegistry();
+    using registry = fixtureRegistry();
     using dir = tempDir("autoinstall-range-unlisted", {
       "package.json": JSON.stringify({ name: "app", dependencies: { "something-else": "^1.0.0" } }),
       "index.js": printNoDepsVersion,
@@ -260,6 +252,122 @@ describe.concurrent("auto-install uses the version range from package.json", () 
     expect(stderr).not.toContain("error");
     expect(exitCode).toBe(0);
     expect(registry.tarballs()).toEqual(["/no-deps/-/no-deps-2.0.0.tgz"]);
+  });
+});
+
+// A part of a dependency version that is longer than 8 bytes (the name an
+// alias points at, a git URL, a pre-release tag) is stored as an offset into
+// the package.json source. The resolver computed those offsets from the start
+// of the version string, and some readers took them as offsets into the
+// lockfile's strings: bytes of package.json went to the registry as a name.
+describe.concurrent("auto-install reads a package.json dependency version from the buffer it was parsed in", () => {
+  // A name of up to 8 bytes is stored inline, a longer name is an offset.
+  // Both fixtures have an index.js that exports the package.json next to it.
+  test.each(["no-deps@1.0.1", "is-number@1.0.0"])("npm: alias of %s", async target => {
+    using registry = fixtureRegistry();
+    using dir = tempDir("autoinstall-alias", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { "my-alias": `npm:${target}` } }),
+      "index.js": `const { name, version } = require("my-alias");\nconsole.log(name + "@" + version);\n`,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, exitCode } = await runAutoInstall(String(dir), "index.js");
+    expect(stdout).toBe(target + "\n");
+    // For is-number the lookup was `/me%22:%22app%22`, bytes 4 to 12 of the package.json.
+    const [name, version] = target.split("@");
+    expect(registry.requests).toEqual([`/${name}`, `/${name}/-/${name}-${version}.tgz`]);
+    expect(exitCode).toBe(0);
+  });
+
+  // A value with an escape is not a slice of the source, so it has no offset
+  // into it. An import of it asks for the name as written, like an import that
+  // no package.json lists.
+  test("value with a JSON escape", async () => {
+    using registry = fixtureRegistry();
+    using dir = tempDir("autoinstall-escaped-value", {
+      "package.json": String.raw`{"name":"app","dependencies":{"my-alias":"npm:is-number@\u0031.0.0"}}`,
+      "index.js": `try {\n  require("my-alias");\n} catch (e) {\n  console.log(e.code);\n}\n`,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, exitCode } = await runAutoInstall(String(dir), "index.js");
+    expect(stdout).toBe("MODULE_NOT_FOUND\n");
+    expect([...new Set(registry.requests)]).toEqual(["/my-alias"]);
+    expect(exitCode).toBe(0);
+  });
+
+  // The first bare import creates the package manager. A package.json that is
+  // read after that is parsed through it, and it records the aliases it sees.
+  // So the tests below import another package first and declare their
+  // dependencies in a directory that is read later.
+
+  // one-range-dep depends on no-deps@^1.0.0. The alias of sub/ has that name
+  // and a version in that range, so one-range-dep gets the target of the alias,
+  // as it does from `bun install`. The alias was recorded with offsets into
+  // sub/package.json and read with the lockfile's strings: bun asked for
+  // `/:%2f%2f127.0.`. A target name of up to 8 bytes is inline and has no offset.
+  test.each(["left-pad@1.0.0", "is-number@1.0.0"])(
+    "npm: alias of %s under the name of a package that another package depends on",
+    async target => {
+      using registry = fixtureRegistry();
+      const [name, version] = target.split("@");
+      const first = name === "left-pad" ? "is-number" : "left-pad";
+      using dir = tempDir("autoinstall-alias-key", {
+        "package.json": JSON.stringify({ name: "root" }),
+        "index.js": `require("${first}");\nrequire("./sub/index.js");\n`,
+        "sub/package.json": JSON.stringify({ name: "sub", dependencies: { "no-deps": `npm:${target}` } }),
+        // The index.js of one-range-dep exports its package.json, with each
+        // dependency replaced by what `require` gives for it.
+        "sub/index.js": `const dep = require("one-range-dep").dependencies["no-deps"];\nconsole.log(dep.name + "@" + dep.version);\n`,
+        "bunfig.toml": registry.bunfig,
+      });
+
+      const { stdout, exitCode } = await runAutoInstall(String(dir), "index.js");
+      expect(stdout).toBe(target + "\n");
+      expect(registry.requests.filter(path => !path.startsWith(`/${first}`)).toSorted()).toEqual([
+        `/${name}`,
+        `/${name}/-/${name}-${version}.tgz`,
+        "/one-range-dep",
+        "/one-range-dep/-/one-range-dep-1.0.0.tgz",
+      ]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // A package's own `version` is not a dependency: `npm:` in it names no alias.
+  test("a package.json whose own version is an npm: specifier records no alias", async () => {
+    using registry = fixtureRegistry();
+    using dir = tempDir("autoinstall-alias-own-version", {
+      "package.json": JSON.stringify({ name: "root" }),
+      "index.js": `require("left-pad");\nrequire("./sub/index.js");\n`,
+      "sub/package.json": JSON.stringify({ name: "no-deps", version: "npm:is-number@1.0.0" }),
+      "sub/index.js": `const dep = require("one-range-dep").dependencies["no-deps"];\nconsole.log(dep.name + "@" + dep.version);\n`,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, exitCode } = await runAutoInstall(String(dir), "index.js");
+    expect(stdout).toBe("no-deps@1.1.0\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // No version of prereleases-3 is in the range of b/. The check for a match
+  // among the installed packages compared the tag of the range with the
+  // lockfile's strings, and took the 5.0.0-alpha.150 of a/ for one.
+  test("pre-release tag of a range", async () => {
+    using registry = fixtureRegistry();
+    using dir = tempDir("autoinstall-prerelease-tag", {
+      "package.json": JSON.stringify({ name: "root" }),
+      "index.js": `require("left-pad");\nrequire("./a/index.js");\nrequire("./b/index.js");\n`,
+      "a/package.json": JSON.stringify({ name: "a", dependencies: { "prereleases-3": "5.0.0-alpha.150" } }),
+      "a/index.js": `console.log("a " + require("prereleases-3/package.json").version);\n`,
+      "b/package.json": JSON.stringify({ name: "b", dependencies: { "prereleases-3": ">=5.0.0-alpha.154" } }),
+      "b/index.js": `try {\n  console.log("b " + require("prereleases-3/package.json").version);\n} catch (e) {\n  console.log("b " + e.code);\n}\n`,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, exitCode } = await runAutoInstall(String(dir), "index.js");
+    expect(stdout).toBe("a 5.0.0-alpha.150\nb MODULE_NOT_FOUND\n");
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -356,7 +464,8 @@ describe.concurrent("auto-install reports why a package could not be installed",
     using r = registryWithMissingTarball("some-other-package");
     const { stderr, exitCode } = await runWithRegistry(r.origin, "index.js", `import "${name}";\n`);
 
-    expect(r.requests).toEqual([`/${name}`]);
+    // A resolve that misses runs the resolver a second time, and a failed lookup is not remembered.
+    expect(r.requests).toEqual([`/${name}`, `/${name}`]);
     expect(stderr).toContain(`error: Cannot find package '${name}'`);
     expect(stderr).toContain(`note: GET ${r.origin}/${name} - 404`);
     expect(exitCode).toBe(1);
@@ -482,41 +591,20 @@ describe.concurrent("auto-install reports why a package could not be resolved", 
   });
 });
 
-test("--install=fallback to install missing packages", async () => {
-  const dir = tmpdirSync();
-  mkdirSync(dir, { recursive: true });
-  await Promise.all([
-    Bun.write(
-      join(dir, "index.js"),
-      "import isEven from 'is-even'; import isOdd from 'is-odd'; console.log(isEven(2), isOdd(2));",
-    ),
-    Bun.write(
-      join(dir, "package.json"),
-      JSON.stringify({
-        name: "test",
-        dependencies: {
-          "is-odd": "1.0.0",
-        },
-      }),
-    ),
-  ]);
-
-  Bun.spawnSync({
-    cmd: [bunExe(), "install"],
-    cwd: dir,
-    env: bunEnv,
+test.concurrent("--install=fallback to install missing packages", async () => {
+  using registry = fixtureRegistry();
+  using dir = tempDir("autoinstall-fallback", {
+    "index.js": "import isEven from 'is-even'; import isOdd from 'is-odd'; console.log(isEven(2), isOdd(2));",
+    "package.json": JSON.stringify({ name: "test", dependencies: { "is-odd": "3.0.1" } }),
+    "bunfig.toml": registry.bunfig,
   });
 
-  const { stdout, stderr } = Bun.spawnSync({
-    cmd: [bunExe(), "--install=fallback", join(dir, "index.js")],
-    cwd: dir,
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  expect((await runAutoInstall(String(dir), "install")).exitCode).toBe(0);
+  expect(readdirSync(join(String(dir), "node_modules"))).toEqual(["is-odd"]);
 
-  expect(stderr?.toString("utf8")).not.toContain("error: Cannot find package 'is-odd'");
-  expect(stdout?.toString("utf8")).toBe("true false\n");
+  const { stdout, stderr } = await runAutoInstall(String(dir), "--install=fallback", "index.js");
+  expect(stderr).not.toContain("error: Cannot find package");
+  expect(stdout).toBe("true false\n");
 });
 
 // `bun install` lowers the process-wide cap on concurrent HTTP requests when a download keeps
@@ -711,41 +799,31 @@ describe.concurrent("a failed registry lookup is asked again by the next resolve
 
   // A resolve that misses runs the resolver a second time, which is a second lookup.
   function expectLookups(requests: string[], path: string, requestsPerLookup: number) {
-    expect(requests).toBeOneOf([Array(requestsPerLookup).fill(path), Array(2 * requestsPerLookup).fill(path)]);
+    expect(requests).toEqual(Array(2 * requestsPerLookup).fill(path));
   }
 
-  const failures: Record<string, { respond: (deadPort: number) => Response; requestsPerLookup: number; busy?: true }> =
-    {
-      "404": { respond: () => new Response("{}", { status: 404 }), requestsPerLookup: 1 },
-      "500": { respond: () => new Response("{}", { status: 500 }), requestsPerLookup: 2 },
-      // The JS thread waits for the lookup, so there is no backoff, whatever the registry asks for.
-      "503 with Retry-After": {
-        respond: () => new Response("{}", { status: 503, headers: { "Retry-After": "3600" } }),
-        requestsPerLookup: 2,
-      },
-      "a manifest that does not parse": { respond: () => new Response("not json"), requestsPerLookup: 1 },
-      // the connection closes before a response arrives
-      "a dropped connection": {
-        respond: port => Response.redirect(`http://127.0.0.1:${port}/flaky-pkg`, 302),
-        requestsPerLookup: 2,
-      },
-      // The wait for the registry runs the event loop. While a microtask keeps that turn busy, the
-      // response lands, and the module queue's poll handles the failure in place of the waiter.
-      // The spin only steers which of the two handles it: every assertion holds for both.
-      "404 while the event loop is busy": {
-        respond: () => new Response("{}", { status: 404 }),
-        requestsPerLookup: 1,
-        busy: true,
-      },
-    };
+  const failures: Record<string, { respond: (deadPort: number) => Response; requestsPerLookup: number }> = {
+    "404": { respond: () => new Response("{}", { status: 404 }), requestsPerLookup: 1 },
+    "500": { respond: () => new Response("{}", { status: 500 }), requestsPerLookup: 2 },
+    // The JS thread waits for the lookup, so there is no backoff, whatever the registry asks for.
+    "503 with Retry-After": {
+      respond: () => new Response("{}", { status: 503, headers: { "Retry-After": "3600" } }),
+      requestsPerLookup: 2,
+    },
+    "a manifest that does not parse": { respond: () => new Response("not json"), requestsPerLookup: 1 },
+    // the connection closes before a response arrives
+    "a dropped connection": {
+      respond: port => Response.redirect(`http://127.0.0.1:${port}/flaky-pkg`, 302),
+      requestsPerLookup: 2,
+    },
+  };
 
-  test.each(Object.entries(failures))("%s", async (_, { respond, requestsPerLookup, busy }) => {
+  test.each(Object.entries(failures))("%s", async (_, { respond, requestsPerLookup }) => {
     using registry = flakyRegistry(respond);
     const { stdout, exitCode } = await run(
       registry,
       `
         const attempt = () => {
-          ${busy ? "queueMicrotask(() => { const end = performance.now() + 100; while (performance.now() < end); });" : ""}
           try { return require("flaky-pkg").version; } catch (e) { return e.code; }
         };
         const results = [attempt()];
@@ -812,5 +890,908 @@ describe.concurrent("a failed registry lookup is asked again by the next resolve
       expect(registry.lookups[2 * i + 1]).toEqual([`/flaky-pkg-${i}`, `/flaky-pkg-${i}/-/flaky-pkg-${i}-1.0.0.tgz`]);
     }
     expect(exitCode).toBe(0);
+  });
+});
+
+// Resolving a package that is not installed waits for the registry inside a
+// synchronous call. That wait must block the thread. It used to run the JS
+// event loop, so timers, immediates and other sockets' callbacks ran inside
+// `require()`, and a `Bun.serve` handler that made the call read another
+// request's url out of the shared receive buffer.
+describe.concurrent("auto-install does not run the event loop inside", () => {
+  // Answers 404, and holds the first request for `packageName` until `release()`.
+  function gatedRegistry(packageName: string) {
+    const requested = Promise.withResolvers<void>();
+    const released = Promise.withResolvers<void>();
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      async fetch(req) {
+        if (new URL(req.url).pathname === `/${packageName}`) {
+          requested.resolve();
+          await released.promise;
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+    return {
+      bunfig: `[install]\nregistry = "http://127.0.0.1:${server.port}/"\n`,
+      requested: requested.promise,
+      release: released.resolve,
+      [Symbol.dispose]: () => void server.stop(true),
+    };
+  }
+
+  // Runs server.ts, which prints one JSON value per line, the first with the port of its server.
+  function spawnServer(cwd: string, ...args: string[]) {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "server.ts", ...args],
+      cwd,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stderr = proc.stderr.text();
+    // If the child dies, the step that waits on it fails with the child's
+    // stderr. Without this, a crash is a timeout or a JSON parse error.
+    const died = proc.exited.then(async code => {
+      throw new Error(`the child exited (code ${code}, signal ${proc.signalCode}):\n${await stderr}`);
+    });
+    died.catch(() => {});
+    const lines = (async function* () {
+      const decoder = new TextDecoder();
+      let buffered = "";
+      for await (const chunk of proc.stdout) {
+        buffered += decoder.decode(chunk, { stream: true });
+        for (let end = buffered.indexOf("\n"); end >= 0; end = buffered.indexOf("\n")) {
+          yield buffered.slice(0, end);
+          buffered = buffered.slice(end + 1);
+        }
+      }
+    })();
+    return {
+      stderr,
+      died,
+      async nextJson() {
+        const line = await Promise.race([lines.next(), died]);
+        return line.done ? await died : JSON.parse(line.value);
+      },
+      kill: () => proc.kill(),
+      [Symbol.asyncDispose]: () => proc[Symbol.asyncDispose](),
+    };
+  }
+
+  async function connectTo(port: number) {
+    const socket = connect(port, "127.0.0.1");
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    socket.once("connect", resolve);
+    socket.once("error", reject);
+    await promise;
+    socket.on("error", () => {});
+    socket.setNoDelay(true);
+    return socket;
+  }
+
+  function send(socket: Socket, head: string) {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    socket.write(head + "\r\n\r\n", error => (error ? reject(error) : resolve()));
+    return promise;
+  }
+
+  // The test is the registry and both HTTP clients. It holds the manifest
+  // request until the second client's request has been written, so the second
+  // request is readable for the whole time the first handler is inside the
+  // call. The manifest request itself proves that the handler is inside it.
+  const doors = {
+    "require": "name => require(name)",
+    "require.resolve": "name => require.resolve(name)",
+    "Module._resolveFilename": `name => require("module")._resolveFilename(name, { filename: import.meta.path })`,
+    "Bun.resolveSync": "name => Bun.resolveSync(name, import.meta.dir)",
+    "import.meta.resolve": "name => import.meta.resolve(name)",
+    "import.meta.resolveSync": "name => import.meta.resolveSync(name)",
+    // These two resolve inside the call and only report the failure through the promise.
+    "import()": "name => void import(name).catch(() => {})",
+    "Bun.resolve": "name => void Bun.resolve(name, import.meta.dir).catch(() => {})",
+  };
+
+  test.each(Object.entries(doors))("%s", async (_, door) => {
+    using registry = gatedRegistry("not-installed");
+    using dir = tempDir("autoinstall-no-reentry", {
+      "bunfig.toml": registry.bunfig,
+      "server.ts": `
+        const door = ${door};
+        let insideTheCall = false;
+        const ranInsideTheCall: string[] = [];
+        function record(what: string) {
+          if (insideTheCall) ranInsideTheCall.push(what);
+        }
+
+        let requests = 0;
+        const server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          fetch(req) {
+            if (++requests > 1) {
+              record("another request");
+              return new Response("second");
+            }
+
+            setTimeout(() => record("timer"), 0);
+            setImmediate(() => record("immediate"));
+            process.nextTick(() => record("nextTick"));
+            Promise.resolve().then(() => record("microtask"));
+
+            // Nothing may read the request before the call: a read copies the head
+            // out of the receive buffer, and the url below has to come from there.
+            insideTheCall = true;
+            try {
+              door("not-installed");
+            } catch {}
+            insideTheCall = false;
+
+            console.log(JSON.stringify({ url: req.url, ranInsideTheCall: ranInsideTheCall.sort() }));
+            return new Response("first");
+          },
+        });
+        console.log(JSON.stringify({ port: server.port }));
+      `,
+    });
+
+    await using child = spawnServer(String(dir));
+    const { port } = await child.nextJson();
+    const first = await connectTo(port);
+    const second = await connectTo(port);
+    try {
+      await send(first, "GET /first HTTP/1.1\r\nHost: first.example");
+      await Promise.race([registry.requested, child.died]);
+      await send(second, "GET /second HTTP/1.1\r\nHost: second.example");
+      registry.release();
+
+      const result = await child.nextJson();
+      child.kill();
+      expect({ ...result, stderr: await child.stderr }).toEqual({
+        url: "http://first.example/first",
+        ranInsideTheCall: [],
+        stderr: "",
+      });
+    } finally {
+      first.destroy();
+      second.destroy();
+    }
+  });
+
+  // https://github.com/oven-sh/bun/issues/43842. A handler memoises the import()
+  // of an optional peer that is not installed. While the first import() waited
+  // for the registry, the event loop ran the other requests' handlers inside it,
+  // before `p` was assigned. Each of them called import() again, inside the one
+  // before, and with enough requests the stack overflowed.
+  test("a memoised import(), which runs once for concurrent requests", async () => {
+    using registry = gatedRegistry("not-installed");
+    using dir = tempDir("autoinstall-no-reentry-memoised", {
+      "bunfig.toml": registry.bunfig,
+      "server.ts": `
+        let p: Promise<unknown> | undefined;
+        let imports = 0;
+        function getOptional() {
+          if (!p) {
+            imports++;
+            p = import("not-installed").catch(() => undefined);
+          }
+          return p;
+        }
+        const server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          async fetch() {
+            await getOptional();
+            return new Response("imports " + imports);
+          },
+        });
+        console.log(JSON.stringify({ port: server.port }));
+      `,
+    });
+
+    await using child = spawnServer(String(dir));
+    const { port } = await child.nextJson();
+    const sockets = await Promise.all(Array.from({ length: 20 }, () => connectTo(port)));
+    try {
+      // The status line and the body, once the server has closed the connection.
+      const answers = sockets.map(socket => {
+        const { promise, resolve } = Promise.withResolvers<string>();
+        let received = "";
+        socket.on("data", chunk => (received += chunk));
+        socket.on("close", () => {
+          const [head, body] = received.split("\r\n\r\n");
+          resolve(`${head.split("\r\n")[0]}: ${body}`);
+        });
+        return promise;
+      });
+      const request = "GET / HTTP/1.1\r\nHost: x\r\nConnection: close";
+
+      await send(sockets[0], request);
+      await Promise.race([registry.requested, child.died]);
+      await Promise.all(sockets.slice(1).map(socket => send(socket, request)));
+      registry.release();
+
+      const received = await Promise.race([Promise.all(answers), child.died]);
+      child.kill();
+      expect({ received, stderr: await child.stderr }).toEqual({
+        received: sockets.map(() => "HTTP/1.1 200 OK: imports 1"),
+        stderr: "",
+      });
+    } finally {
+      for (const socket of sockets) socket.destroy();
+    }
+  });
+
+  // An ES module imports a node builtin and then a package that auto-install has
+  // to fetch. The builtin's fetch settles at once, so its load steps are queued
+  // microtasks while the resolver waits for the registry. If the wait runs them,
+  // the builtin's edge of the importer completes underneath JSC's
+  // HostLoadImportedModule call for the package. JSC reads that as "the package
+  // loaded synchronously" and does not watch its load for errors: debug builds
+  // assert in JSModuleLoader::innerModuleLoading, release builds lose a later
+  // load error of the package and the entry never runs.
+  test.each([
+    ["loads", "export const value = 42;\n", { stdout: "value 42\n", stderr: "", exitCode: 0 }],
+    ["reports its load error", "export const value = ;\n", { stdout: "", stderr: "error: Unexpected ;", exitCode: 1 }],
+  ])("the load of a module graph: a package imported after a builtin %s", async (_, source, expected) => {
+    const tarball = await new Bun.Archive(
+      {
+        "package/package.json": JSON.stringify({ name: "pkg", version: "1.0.0", type: "module", main: "index.js" }),
+        "package/index.js": source,
+      },
+      { compress: "gzip" },
+    ).bytes();
+    const requests: string[] = [];
+    using registry = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { origin, pathname } = new URL(req.url);
+        requests.push(pathname);
+        if (pathname === "/pkg-1.0.0.tgz") return new Response(tarball);
+        if (pathname !== "/pkg") return new Response("not found", { status: 404 });
+        return Response.json({
+          name: "pkg",
+          "dist-tags": { latest: "1.0.0" },
+          versions: { "1.0.0": { name: "pkg", version: "1.0.0", dist: { tarball: `${origin}/pkg-1.0.0.tgz` } } },
+        });
+      },
+    });
+    using dir = tempDir("autoinstall-module-graph", {
+      "entry.mjs": `import "node:http2";\nimport { value } from "pkg";\nconsole.log("value", value);\n`,
+      "bunfig.toml": `[install]\nregistry = "http://127.0.0.1:${registry.port}/"\n`,
+    });
+
+    const { stdout, stderr, exitCode } = await runAutoInstall(String(dir), "entry.mjs");
+    expect({
+      stdout,
+      stderr: expected.stderr ? stderr.split("\n").find(line => line.startsWith("error:")) : stderr,
+      exitCode,
+    }).toEqual(expected);
+    expect(requests).toEqual(["/pkg", "/pkg-1.0.0.tgz"]);
+  });
+});
+
+// `git` for a git dependency is a child process on the event loop of the thread
+// that installs, which is the JS loop here. A blocked thread cannot reap it, and
+// the resolver can only load a package from the registry out of the cache. So
+// auto-install reports the package as not found and never starts git.
+describe.concurrent("auto-install does not start git", () => {
+  const gitEnv = {
+    ...bunEnv,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_AUTHOR_NAME: "Test",
+    GIT_AUTHOR_EMAIL: "test@example.com",
+    GIT_COMMITTER_NAME: "Test",
+    GIT_COMMITTER_EMAIL: "test@example.com",
+  };
+
+  async function git(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({ cmd: ["git", ...args], cwd, env: gitEnv, stdout: "pipe", stderr: "pipe" });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) throw new Error(`git ${args.join(" ")} failed in ${cwd}:\n${stderr}`);
+  }
+
+  // The URL of a repository with a package `git-dep` in `<root>/git-dep`.
+  async function gitDependency(root: string) {
+    const repo = join(root, "git-dep");
+    await git(repo, "init", "-q");
+    await git(repo, "add", "-A");
+    await git(repo, "commit", "-q", "-m", "init", "--no-gpg-sign");
+    return `git+${pathToFileURL(repo)}`;
+  }
+
+  const gitDepFiles = {
+    "git-dep/package.json": JSON.stringify({ name: "git-dep", version: "1.0.0" }),
+    "git-dep/index.js": `module.exports = "from git";\n`,
+  };
+
+  const cacheEntries = (app: string) =>
+    existsSync(join(app, ".bun-cache"))
+      ? readdirSync(join(app, ".bun-cache")).filter(name => /git|@G@/i.test(name))
+      : [];
+
+  test.each([
+    ["require()", `try {\n  require("git-dep");\n} catch (e) {\n  console.log(e.code);\n}\n`, "MODULE_NOT_FOUND\n"],
+    ["import", `import marker from "git-dep";\nconsole.log(marker);\n`, ""],
+  ])("for a git dependency of the project, %s", async (_, source, expectedStdout) => {
+    using registry = fixtureRegistry();
+    using dir = tempDir("autoinstall-git-url", {
+      ...gitDepFiles,
+      "app/index.js": source,
+      "app/bunfig.toml": registry.bunfig,
+    });
+    const app = join(String(dir), "app");
+    await Bun.write(
+      join(app, "package.json"),
+      JSON.stringify({ name: "app", dependencies: { "git-dep": await gitDependency(String(dir)) } }),
+    );
+
+    const { stdout, stderr, exitCode } = await runAutoInstall(app, "index.js");
+    expect({ stdout, error: stderr.split("\n").find(line => line.includes("error")) }).toEqual({
+      stdout: expectedStdout,
+      error: expectedStdout ? undefined : expect.stringContaining("Cannot find package 'git-dep'"),
+    });
+    expect(cacheEntries(app)).toEqual([]);
+    expect(registry.requests).toEqual([]);
+    expect(exitCode).toBe(expectedStdout ? 0 : 1);
+  });
+
+  test("for a git dependency of an auto-installed package", async () => {
+    const tarball = await Bun.file(join(import.meta.dir, "..", "install", "baz-0.0.3.tgz")).bytes();
+    using dir = tempDir("autoinstall-git-transitive", {
+      ...gitDepFiles,
+      "app/index.js": `require("baz");\nconsole.log("loaded");\n`,
+    });
+    const url = await gitDependency(String(dir));
+    using registry = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { origin, pathname } = new URL(req.url);
+        if (pathname === "/baz/-/baz-0.0.3.tgz") return new Response(tarball);
+        if (pathname !== "/baz") return new Response("not found", { status: 404 });
+        return Response.json({
+          name: "baz",
+          "dist-tags": { latest: "0.0.3" },
+          versions: {
+            "0.0.3": {
+              name: "baz",
+              version: "0.0.3",
+              dependencies: { "git-dep": url },
+              dist: { tarball: `${origin}/baz/-/baz-0.0.3.tgz` },
+            },
+          },
+        });
+      },
+    });
+    const app = join(String(dir), "app");
+    await Bun.write(join(app, "bunfig.toml"), `[install]\nregistry = "http://127.0.0.1:${registry.port}/"\n`);
+
+    // `baz` prints "run baz" when it loads.
+    expect(await runAutoInstall(app, "index.js")).toEqual({ stdout: "run baz\nloaded\n", stderr: "", exitCode: 0 });
+    expect(cacheEntries(app)).toEqual([]);
+  });
+});
+
+// The runtime's package manager then takes a cached manifest of any age for
+// fresh, as `bun install --prefer-offline` does.
+describe.concurrent("--prefer-offline resolves an auto-installed package from the cached manifest", () => {
+  // "1": a cached manifest of any age counts as expired, and the registry is asked again.
+  const run = (cwd: string, ...flags: string[]) =>
+    runAutoInstallWithEnv({ BUN_MANIFEST_CACHE: "1" }, cwd, ...flags, "index.js");
+
+  const cases = {
+    "a range": { name: "no-deps", range: "^1.0.0", version: "1.1.0" },
+    "a range with a pre-release tag": { name: "prereleases-3", range: ">=5.0.0-alpha.151", version: "5.0.0-alpha.153" },
+    // 1.0.0-next.23 is newer than the version that the tag names
+    "the latest tag": { name: "prereleases-2", range: undefined, version: "0.5.0" },
+  };
+  const ways = { "the flag": ["--prefer-offline"], 'prefer = "offline" in bunfig.toml': [] };
+
+  for (const [way, flags] of Object.entries(ways)) {
+    test.each(Object.entries(cases))(`%s, with ${way}`, async (_, { name, range, version }) => {
+      using registry = fixtureRegistry();
+      using dir = tempDir("autoinstall-prefer-offline", {
+        "package.json": JSON.stringify({ name: "app", dependencies: range ? { [name]: range } : {} }),
+        "index.js": `console.log(require("${name}/package.json").version);\n`,
+        "bunfig.toml": registry.bunfig,
+      });
+      const expected = { stdout: version + "\n", stderr: "", exitCode: 0 };
+
+      expect(await run(String(dir))).toEqual(expected);
+      expect(registry.requests).toEqual([`/${name}`, `/${name}/-/${name}-${version}.tgz`]);
+
+      registry.requests.length = 0;
+      expect(await run(String(dir))).toEqual(expected);
+      expect(registry.requests).toEqual([`/${name}`]);
+
+      registry.requests.length = 0;
+      if (!flags.length) await Bun.write(join(String(dir), "bunfig.toml"), registry.bunfig + `prefer = "offline"\n`);
+      expect(await run(String(dir), ...flags)).toEqual(expected);
+      expect(registry.requests).toEqual([]);
+    });
+  }
+
+  test("a package that is not in the cache is downloaded", async () => {
+    using registry = fixtureRegistry();
+    using dir = tempDir("autoinstall-prefer-offline-cold", {
+      "index.js": `console.log(require("no-deps/package.json").version);\n`,
+      "bunfig.toml": registry.bunfig,
+    });
+    expect(await run(String(dir), "--prefer-offline")).toEqual({ stdout: "2.0.0\n", stderr: "", exitCode: 0 });
+    expect(registry.requests).toEqual(["/no-deps", "/no-deps/-/no-deps-2.0.0.tgz"]);
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/14378: `bun install` routed `@corp/*`
+// to the registry that `.npmrc` names, but the runtime's auto-install read
+// only bunfig.toml and asked the default registry.
+describe("auto-install reads the registries and credentials of .npmrc", () => {
+  // An ASAN build starts too slowly to run all of these at once within the default timeout.
+  const cell = test.concurrentIf(!isASAN);
+  const token = "SECRET-TOKEN";
+
+  type Seen = { registry: string; path: string; authorization: string | null };
+  type Registries = { PRIVATE: string; DEFAULT: string };
+  type Files = Record<string, string>;
+
+  /** A directory path below `base` that is exactly `bytes` bytes long. It is not created. */
+  function directoryPathOfLength(base: string, bytes: number): string {
+    let path = base;
+    while (path.length < bytes) {
+      let name = Math.min(bytes - path.length - 1, 200);
+      if (bytes - path.length - 1 - name === 1) name--;
+      path = join(path, Buffer.alloc(name, "d").toString());
+    }
+    return path;
+  }
+
+  // Three packages at 1.0.0. Each one exports the name of the registry it came from.
+  async function buildPackages(registry: string) {
+    const packages: Record<string, { index: string; dependencies?: Record<string, string> }> = {
+      "@corp/thing": { index: `module.exports = globalThis.servedBy = ${JSON.stringify(registry)};\n` },
+      "plain-thing": { index: `module.exports = ${JSON.stringify(registry)};\n` },
+      "@corp/with-dep": {
+        index: `module.exports = ${JSON.stringify(registry)} + " " + require("plain-thing");\n`,
+        dependencies: { "plain-thing": "1.0.0" },
+      },
+    };
+    return Promise.all(
+      Object.entries(packages).map(async ([name, { index, dependencies }]) => {
+        const manifest = { name, version: "1.0.0", main: "index.js", dependencies };
+        const tarball = await new Bun.Archive({
+          "package/package.json": JSON.stringify(manifest),
+          "package/index.js": index,
+        }).bytes("gzip");
+        const integrity = "sha512-" + new Bun.CryptoHasher("sha512").update(tarball).digest("base64");
+        return { name, manifest, tarball, integrity, tarballPath: `/${name}/-/${name.split("/").pop()}-1.0.0.tgz` };
+      }),
+    );
+  }
+  const built = { PRIVATE: buildPackages("PRIVATE"), DEFAULT: buildPackages("DEFAULT") };
+
+  async function serveRegistry(registry: keyof typeof built, seen: Seen[]) {
+    const packages = await built[registry];
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        // The registry is mounted at `/` and at `/npm/`.
+        const path = (URL.canParse(req.url) ? decodeURIComponent(new URL(req.url).pathname) : req.url).replace(
+          /^\/npm\//,
+          "/",
+        );
+        seen.push({ registry, path, authorization: req.headers.get("authorization") });
+        for (const { name, manifest, tarball, integrity, tarballPath } of packages) {
+          if (path === tarballPath) return new Response(tarball);
+          if (path !== "/" + name) continue;
+          const dist = { tarball: new URL(tarballPath, server.url).href, integrity };
+          return Response.json({
+            name,
+            "dist-tags": { latest: "1.0.0" },
+            versions: { "1.0.0": { ...manifest, dist } },
+          });
+        }
+        return new Response("{}", { status: 404 });
+      },
+    });
+    return server;
+  }
+
+  // Runs bun in `<dir>/app` with `<dir>/home` as the home directory. Both
+  // registries serve the packages, and `BUN_CONFIG_REGISTRY` makes DEFAULT the
+  // default registry, so only the `.npmrc` under test can lead to PRIVATE.
+  async function autoInstall(options: {
+    args: string[];
+    files: (registries: Registries) => Files;
+    env?: (registries: Registries, dir: string) => Record<string, string | undefined>;
+    prepare?: (dir: string) => void;
+    cwd?: (dir: string) => string;
+    timeout?: number;
+  }) {
+    const seen: Seen[] = [];
+    await using privateRegistry = await serveRegistry("PRIVATE", seen);
+    await using defaultRegistry = await serveRegistry("DEFAULT", seen);
+    const registries = { PRIVATE: privateRegistry.url.host, DEFAULT: defaultRegistry.url.host };
+
+    using dir = tempDir("autoinstall-npmrc", { "home/.keep": "", ...options.files(registries) });
+    const home = join(String(dir), "home");
+    const env: Record<string, string | undefined> = {
+      ...bunEnv,
+      // bunEnv spreads process.env, and CI runners export some of these.
+      XDG_CONFIG_HOME: undefined,
+      NPM_CONFIG_USERCONFIG: undefined,
+      npm_config_userconfig: undefined,
+      NPM_CONFIG_REGISTRY: undefined,
+      npm_config_registry: undefined,
+      BUN_CONFIG_TOKEN: undefined,
+      NPM_CONFIG_TOKEN: undefined,
+      npm_config_token: undefined,
+      HOME: home,
+      USERPROFILE: home,
+      BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"),
+      BUN_CONFIG_REGISTRY: `http://${registries.DEFAULT}/`,
+      ...options.env?.(registries, String(dir)),
+    };
+    options.prepare?.(String(dir));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...options.args],
+      cwd: options.cwd?.(String(dir)) ?? join(String(dir), "app"),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: options.timeout,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const created = readdirSync(String(dir)).sort();
+    return { stdout, stderr, seen, created, exitCode, signalCode: proc.signalCode };
+  }
+
+  const requests = (registry: string, pkg: string, authorization: string | null): Seen[] => [
+    { registry, path: `/${pkg}`, authorization },
+    { registry, path: `/${pkg}/-/${pkg.split("/").pop()}-1.0.0.tgz`, authorization },
+  ];
+  const fromPrivateRegistry = {
+    stdout: "PRIVATE\n",
+    stderr: "",
+    seen: requests("PRIVATE", "@corp/thing", `Bearer ${token}`),
+    created: ["app", "cache", "home"],
+    exitCode: 0,
+    signalCode: null,
+  };
+
+  const scopeAndToken = (r: Registries) => `@corp:registry=http://${r.PRIVATE}/\n//${r.PRIVATE}/:_authToken=${token}\n`;
+  const importIt = `import servedBy from "@corp/thing";\nconsole.log(servedBy);\n`;
+  const importLater = `const { default: servedBy } = await import("@corp/thing");\nconsole.log(servedBy);\n`;
+  const inNodeModules = {
+    "app/node_modules/@corp/thing/package.json": JSON.stringify({ name: "@corp/thing", version: "1.0.0" }),
+    "app/node_modules/@corp/thing/index.js": `module.exports = "node_modules";\n`,
+  };
+
+  cell.each([
+    ["bun <file>", ["x.mjs"], { "app/x.mjs": importIt }],
+    ["bun -i <file>", ["-i", "x.mjs"], { "app/x.mjs": importIt }],
+    ["bun -e", ["-e", importIt], {}],
+    ["require()", ["x.cjs"], { "app/x.cjs": `console.log(require("@corp/thing"));\n` }],
+    [
+      "Bun.resolveSync()",
+      ["x.cjs"],
+      { "app/x.cjs": `console.log(require(Bun.resolveSync("@corp/thing", __dirname)));\n` },
+    ],
+    ["--preload", ["--preload", "@corp/thing", "x.mjs"], { "app/x.mjs": `console.log(globalThis.servedBy);\n` }],
+  ] as [string, string[], Files][])("./.npmrc scope and token: %s", async (_, args, files) => {
+    const result = await autoInstall({ args, files: r => ({ "app/.npmrc": scopeAndToken(r), ...files }) });
+    expect(result).toEqual(fromPrivateRegistry);
+  });
+
+  cell("./.npmrc scope and token beside a bunfig.toml that sets no registry", async () => {
+    const result = await autoInstall({
+      args: ["x.mjs"],
+      files: r => ({
+        "app/.npmrc": scopeAndToken(r),
+        "app/bunfig.toml": `[install]\nexact = true\n`,
+        "app/x.mjs": importIt,
+      }),
+    });
+    expect(result).toEqual(fromPrivateRegistry);
+  });
+
+  cell("~/.npmrc scope and token", async () => {
+    const result = await autoInstall({
+      args: ["x.mjs"],
+      files: r => ({ "home/.npmrc": scopeAndToken(r), "app/x.mjs": importIt }),
+    });
+    expect(result).toEqual(fromPrivateRegistry);
+  });
+
+  cell("$XDG_CONFIG_HOME/.npmrc scope and token, in place of ~/.npmrc", async () => {
+    const result = await autoInstall({
+      args: ["x.mjs"],
+      files: r => ({
+        "xdg/.npmrc": scopeAndToken(r),
+        "home/.npmrc": `@corp:registry=http://${r.DEFAULT}/\n`,
+        "app/x.mjs": importIt,
+      }),
+      env: (_, dir) => ({ XDG_CONFIG_HOME: join(dir, "xdg") }),
+    });
+    expect(result).toEqual({ ...fromPrivateRegistry, created: ["app", "cache", "home", "xdg"] });
+  });
+
+  cell("./.npmrc registry= and token", async () => {
+    const result = await autoInstall({
+      args: ["x.mjs"],
+      files: r => ({
+        "app/.npmrc": `registry=http://${r.PRIVATE}/\n//${r.PRIVATE}/:_authToken=${token}\n`,
+        "app/x.mjs": importIt,
+      }),
+      // Without `registry=` the default registry is https://registry.npmjs.org/.
+      // The proxy sends such a request to DEFAULT, not to the internet.
+      env: r => ({ BUN_CONFIG_REGISTRY: undefined, HTTPS_PROXY: `http://${r.DEFAULT}/` }),
+    });
+    expect(result).toEqual(fromPrivateRegistry);
+  });
+
+  // The line `jsr add` writes: a scope with no trailing slash and no credential.
+  cell("./.npmrc scope without a credential", async () => {
+    const result = await autoInstall({
+      args: ["x.mjs"],
+      files: r => ({
+        "app/.npmrc": `@corp:registry=http://${r.PRIVATE}\n`,
+        "home/.npmrc": `//${r.DEFAULT}/:_authToken=${token}\n`,
+        "app/x.mjs": importIt,
+      }),
+    });
+    expect(result).toEqual({ ...fromPrivateRegistry, seen: requests("PRIVATE", "@corp/thing", null) });
+  });
+
+  cell("~/.npmrc token for the ./.npmrc scope, and no token for an unscoped package", async () => {
+    const result = await autoInstall({
+      args: ["x.cjs"],
+      files: r => ({
+        "app/.npmrc": `@corp:registry=http://${r.PRIVATE}/\n`,
+        "home/.npmrc": `//${r.PRIVATE}/:_authToken=${token}\n`,
+        "app/x.cjs": `console.log(require("@corp/thing"), require("plain-thing"));\n`,
+      }),
+    });
+    expect(result).toEqual({
+      ...fromPrivateRegistry,
+      stdout: "PRIVATE DEFAULT\n",
+      seen: [...requests("PRIVATE", "@corp/thing", `Bearer ${token}`), ...requests("DEFAULT", "plain-thing", null)],
+    });
+  });
+
+  cell("./.npmrc token for a scope whose URL is in bunfig.toml", async () => {
+    const result = await autoInstall({
+      args: ["x.mjs"],
+      files: r => ({
+        "app/.npmrc": `//${r.PRIVATE}/:_authToken=${token}\n`,
+        "app/bunfig.toml": `[install.scopes]\n"@corp" = "http://${r.PRIVATE}/"\n`,
+        "app/x.mjs": importIt,
+      }),
+    });
+    expect(result).toEqual(fromPrivateRegistry);
+  });
+
+  cell("a bunfig.toml scope overrides the ./.npmrc scope", async () => {
+    const result = await autoInstall({
+      args: ["x.mjs"],
+      files: r => ({
+        "app/.npmrc": `@corp:registry=http://${r.DEFAULT}/\n`,
+        "app/bunfig.toml": `[install.scopes]\n"@corp" = { url = "http://${r.PRIVATE}/", token = "${token}" }\n`,
+        "app/x.mjs": importIt,
+      }),
+    });
+    expect(result).toEqual(fromPrivateRegistry);
+  });
+
+  // The runtime expands `${NAME}` from the environment the script runs with.
+  // `bun install` loads `.env.production` in place of `.env.development`.
+  cell.each([
+    ["the process environment", {}, { MY_NPM_TOKEN: token }],
+    ["./.env", { "app/.env": `MY_NPM_TOKEN=${token}\n` }, {}],
+    ["./.env.development", { "app/.env.development": `MY_NPM_TOKEN=${token}\n` }, {}],
+  ] as [string, Files, Record<string, string>][])("./.npmrc ${MY_NPM_TOKEN} from %s", async (_, files, env) => {
+    const result = await autoInstall({
+      args: ["x.mjs"],
+      files: r => ({
+        "app/.npmrc": `@corp:registry=http://${r.PRIVATE}/\n//${r.PRIVATE}/:_authToken=\${MY_NPM_TOKEN}\n`,
+        "app/x.mjs": importIt,
+        ...files,
+      }),
+      env: () => env,
+    });
+    expect(result).toEqual(fromPrivateRegistry);
+  });
+
+  // bunfig.toml is read from the start directory, and so is `.npmrc`.
+  cell.each([
+    ["import()", "x.mjs", `process.chdir("../elsewhere");\n` + importLater],
+    ["require()", "x.cjs", `process.chdir("../elsewhere");\nconsole.log(require("@corp/thing"));\n`],
+  ])("./.npmrc of the start directory after process.chdir(): %s", async (_, file, source) => {
+    const result = await autoInstall({
+      args: [file],
+      files: r => ({
+        "app/.npmrc": scopeAndToken(r),
+        "elsewhere/.npmrc": `@corp:registry=http://${r.DEFAULT}/\n`,
+        [`app/${file}`]: source,
+      }),
+    });
+    expect(result).toEqual({ ...fromPrivateRegistry, created: ["app", "cache", "elsewhere", "home"] });
+  });
+
+  cell("a ./.npmrc written before the first auto-install", async () => {
+    const result = await autoInstall({
+      args: ["x.mjs"],
+      files: r => ({
+        "app/x.mjs":
+          `import { writeFileSync } from "node:fs";\n` +
+          `writeFileSync(".npmrc", ${JSON.stringify(scopeAndToken(r))});\n` +
+          importLater,
+      }),
+    });
+    expect(result).toEqual(fromPrivateRegistry);
+  });
+
+  cell("a scoped package's unscoped dependency comes from the default registry, without the token", async () => {
+    const result = await autoInstall({
+      args: ["x.mjs"],
+      files: r => ({
+        "app/.npmrc": scopeAndToken(r),
+        "app/x.mjs": `import servedBy from "@corp/with-dep";\nconsole.log(servedBy);\n`,
+      }),
+    });
+    const byPath = (a: Seen, b: Seen) => a.path.localeCompare(b.path);
+    expect({ ...result, seen: result.seen.sort(byPath) }).toEqual({
+      ...fromPrivateRegistry,
+      stdout: "PRIVATE DEFAULT\n",
+      seen: [
+        ...requests("PRIVATE", "@corp/with-dep", `Bearer ${token}`),
+        ...requests("DEFAULT", "plain-thing", null),
+      ].sort(byPath),
+    });
+  });
+
+  // `bun install` takes `cache=` from .npmrc and warns about `certfile=`.
+  // The runtime takes the registries only and prints nothing.
+  cell("other ./.npmrc keys do not reach the runtime", async () => {
+    const result = await autoInstall({
+      args: ["x.mjs"],
+      files: r => ({
+        "app/.npmrc": scopeAndToken(r) + `cache=../npmrc-cache\n//${r.PRIVATE}/:certfile=/nope.pem\n`,
+        "app/x.mjs": importIt,
+      }),
+      env: (_, dir) => ({ BUN_INSTALL_CACHE_DIR: undefined, BUN_INSTALL: join(dir, "bun-install") }),
+    });
+    expect(result).toEqual({ ...fromPrivateRegistry, created: ["app", "bun-install", "home"] });
+  });
+
+  // Neither `.npmrc` path fits a path buffer, so the default registry answers.
+  cell.skipIf(!isLinux)("a start directory and a home directory at the path length limit", async () => {
+    const atLimit = (dir: string, name: string) => directoryPathOfLength(join(dir, name), 4092);
+    const result = await autoInstall({
+      args: ["-e", `console.log(require("@corp/thing"));`],
+      files: () => ({}),
+      env: (_, dir) => ({ HOME: atLimit(dir, "home") }),
+      prepare: dir => {
+        mkdirSync(atLimit(dir, "app"), { recursive: true });
+        mkdirSync(atLimit(dir, "home"), { recursive: true });
+      },
+      cwd: dir => atLimit(dir, "app"),
+    });
+    expect(result).toEqual({
+      ...fromPrivateRegistry,
+      stdout: "DEFAULT\n",
+      seen: requests("DEFAULT", "@corp/thing", null),
+    });
+  });
+
+  cell("nothing is printed and no registry is asked when node_modules has the package", async () => {
+    const broken = (r: Registries) => `@corp:registry=http://${r.DEFAULT}/\n//${r.DEFAULT}/:certfile=/nope.pem\n`;
+    const result = await autoInstall({
+      args: ["x.mjs"],
+      files: r => ({ ...inNodeModules, "app/.npmrc": broken(r), "home/.npmrc": broken(r), "app/x.mjs": importIt }),
+    });
+    expect(result).toEqual({ ...fromPrivateRegistry, stdout: "node_modules\n", seen: [], created: ["app", "home"] });
+  });
+
+  // Opening a FIFO for reading blocks until a writer shows up, which never
+  // happens. The timeout only turns that hang into a failure.
+  cell.skipIf(isWindows)("no .npmrc is opened when node_modules has the package", async () => {
+    const result = await autoInstall({
+      args: ["x.mjs"],
+      files: () => ({ ...inNodeModules, "app/x.mjs": importIt }),
+      prepare: dir => {
+        mkfifo(join(dir, "app", ".npmrc"));
+        mkfifo(join(dir, "home", ".npmrc"));
+      },
+      timeout: 30_000,
+    });
+    expect(result).toEqual({ ...fromPrivateRegistry, stdout: "node_modules\n", seen: [], created: ["app", "home"] });
+  });
+
+  cell("$NPM_CONFIG_USERCONFIG scope and token, in place of ~/.npmrc", async () => {
+    const result = await autoInstall({
+      args: ["x.mjs"],
+      files: r => ({
+        "user/npmrc": scopeAndToken(r),
+        "home/.npmrc": `@corp:registry=http://${r.DEFAULT}/\n`,
+        "app/x.mjs": importIt,
+      }),
+      env: (_, dir) => ({ NPM_CONFIG_USERCONFIG: join(dir, "user", "npmrc") }),
+    });
+    expect(result).toEqual({ ...fromPrivateRegistry, created: ["app", "cache", "home", "user"] });
+  });
+
+  cell("~/.npmrc token on the host, for a bunfig.toml scope under a path of it", async () => {
+    const result = await autoInstall({
+      args: ["x.mjs"],
+      files: r => ({
+        "home/.npmrc": `//${r.PRIVATE}/:_authToken=${token}\n`,
+        "app/bunfig.toml": `[install.scopes]\n"@corp" = "http://${r.PRIVATE}/npm/"\n`,
+        "app/x.mjs": importIt,
+      }),
+    });
+    expect(result).toEqual(fromPrivateRegistry);
+  });
+
+  cell('~/.npmrc token where the bunfig.toml scope has token = "$UNSET"', async () => {
+    const result = await autoInstall({
+      args: ["x.mjs"],
+      files: r => ({
+        "home/.npmrc": `//${r.PRIVATE}/:_authToken=${token}\n`,
+        "app/bunfig.toml": `[install.scopes]\n"@corp" = { url = "http://${r.PRIVATE}/", token = "$UNSET_AUTOINSTALL_TOKEN" }\n`,
+        "app/x.mjs": importIt,
+      }),
+      env: () => ({ UNSET_AUTOINSTALL_TOKEN: undefined }),
+    });
+    expect(result).toEqual({
+      ...fromPrivateRegistry,
+      stderr: expect.stringContaining("$UNSET_AUTOINSTALL_TOKEN"),
+    });
+  });
+
+  // A manifest names the tarball URL, so at run time too it can summon a line of ~/.npmrc, but never into cleartext.
+  cell.each([
+    ["https", `Bearer ${token}`],
+    ["http", null],
+  ])("a tarball on another %s host that ~/.npmrc has a line for", async (scheme, authorization) => {
+    const thing = (await built.PRIVATE).find(pkg => pkg.name === "@corp/thing")!;
+    const seen: (string | null)[] = [];
+    await using cdn = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      ...(scheme === "https" ? { tls } : {}),
+      fetch(req) {
+        seen.push(req.headers.get("authorization"));
+        return new Response(thing.tarball);
+      },
+    });
+    await using registry = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        const dist = { tarball: `${scheme}://127.0.0.1:${cdn.port}/files/thing-1.0.0.tgz`, integrity: thing.integrity };
+        return Response.json({
+          name: thing.name,
+          "dist-tags": { latest: "1.0.0" },
+          versions: { "1.0.0": { ...thing.manifest, dist } },
+        });
+      },
+    });
+    const result = await autoInstall({
+      args: ["x.mjs"],
+      files: () => ({
+        "home/.npmrc": `//127.0.0.1:${cdn.port}/:_authToken=${token}\n`,
+        "app/.npmrc": `@corp:registry=http://127.0.0.1:${registry.port}/\n`,
+        "app/x.mjs": importIt,
+        "cert.pem": tls.cert,
+      }),
+      env: (_, dir) => ({ NODE_EXTRA_CA_CERTS: join(dir, "cert.pem") }),
+    });
+    expect({ stdout: result.stdout, seen }).toEqual({ stdout: "PRIVATE\n", seen: [authorization] });
+    expect(result.exitCode).toBe(0);
   });
 });

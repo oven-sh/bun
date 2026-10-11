@@ -37,6 +37,7 @@ unsafe extern "Rust" {
         log: NonNull<bun_ast::Log>,
         install: Option<NonNull<bun_options_types::schema::api::BunInstall>>,
         env: NonNull<bun_dotenv::Loader>,
+        prefer_offline: bool,
     ) -> core::result::Result<NonNull<dyn AutoInstaller>, bun_errno::SystemErrno>;
 
     /// `Dependency.parse` with no `PackageManager` (it only uses one to record
@@ -847,8 +848,15 @@ impl<'a> Resolver<'a> {
         // final binary; `self.log` / `self.opts.install` / `env` point at
         // process-lifetime storage (Transpiler-owned). The returned pointer
         // names the `PackageManager` singleton (`'static`).
-        let pm: NonNull<dyn AutoInstaller> =
-            unsafe { __bun_resolver_init_package_manager(self.log, self.opts.install, env) }?;
+        let pm: NonNull<dyn AutoInstaller> = unsafe {
+            __bun_resolver_init_package_manager(
+                self.log,
+                self.opts.install,
+                env,
+                self.opts.install_preference
+                    == bun_options_types::offline_mode::OfflineMode::Offline,
+            )
+        }?;
         // SAFETY: `pm` is the just-initialized singleton; sole `&mut` here.
         unsafe { (*pm.as_ptr()).set_on_wake(self.on_wake_package_manager) };
         self.package_manager = Some(pm);
@@ -3131,7 +3139,6 @@ impl<'a> Resolver<'a> {
                                                 resolved_package_id,
                                                 &resolution,
                                                 Install::TaskCallbackContext { root_request_id: 0 },
-                                                None,
                                             )
                                         {
                                             if let Some(d) = self.debug_logs.as_mut() {
@@ -3164,6 +3171,14 @@ impl<'a> Resolver<'a> {
                         return MatchStatus::Failure(err.into());
                     }
                 };
+
+                // Only an npm resolution has a folder here. On Windows "" would open the cwd.
+                if dir_path_for_resolution.is_empty() {
+                    if let Some(d) = self.debug_logs.as_mut() {
+                        d.decrease_indent();
+                    }
+                    return MatchStatus::NotFound;
+                }
 
                 match self.dir_info_for_resolution(dir_path_for_resolution, resolved_package_id) {
                     Ok(dir_info_to_use_) => {
@@ -3590,15 +3605,6 @@ impl<'a> Resolver<'a> {
                 if let Err(err) = pm!().lockfile_append_root_stub() {
                     return DependencyToResolve::Failure(err.into());
                 }
-            }
-        }
-
-        if self.opts.install_preference == bun_options_types::offline_mode::OfflineMode::Offline {
-            if let Some(package_id) = pm!().resolve_from_disk_cache(esm.name, &version) {
-                *input_package_id_ = package_id;
-                return DependencyToResolve::Resolution(
-                    pm!().lockfile_package_resolution(package_id),
-                );
             }
         }
 

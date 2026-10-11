@@ -163,11 +163,9 @@ fn update_package_json_and_install_with_manager_with_updates(
 ) -> Result<(), Error> {
     let log_level = manager.options.log_level;
     if manager.log_mut().errors > 0 {
-        if log_level != LogLevel::Silent {
-            let _ = manager
-                .log_mut()
-                .print(std::ptr::from_mut(Output::error_writer()));
-        }
+        let _ = manager
+            .log_mut()
+            .print(std::ptr::from_mut(Output::error_writer()));
         Global::crash();
     }
 
@@ -259,6 +257,12 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     add_catalog::prepare(manager, &updates);
 
+    // Not `bun update <path>`: it is always rejected, with a `bun add <path>` hint the user runs from the cwd.
+    if subcommand == Subcommand::Add {
+        updates =
+            super::add_remove_with_filter::respell_local_paths(manager, original_cwd, updates);
+    }
+
     // Loads the lockfile, and migrating one rewrites the cached root package.json: do it before reading the entry.
     let patch_commit: Option<PatchCommitResult> =
         if matches!(manager.options.patch_features, PatchFeatures::Commit { .. }) {
@@ -311,6 +315,14 @@ fn update_package_json_and_install_with_manager_with_updates(
     // valid until the next `get_with_path`. No `&mut manager.workspace_package_json_cache`
     // is taken across this borrow; `PackageJSONEditor` touches only disjoint manager fields.
     let current_package_json: &mut MapEntry = unsafe { &mut *current_package_json_ptr };
+    // `bun add` and `bun link` put their dependency into the empty file.
+    if current_package_json.source.contents.is_empty()
+        && !matches!(subcommand, Subcommand::Add | Subcommand::Link)
+    {
+        install_with_manager::exit_on_empty_package_json(
+            manager.original_package_json_path.as_bytes(),
+        );
+    }
     let mut current_package_json_root: bun_ast::Expr = current_package_json.root;
     let current_package_json_indent = current_package_json.indentation;
 
@@ -587,6 +599,14 @@ fn update_package_json_and_install_with_manager_with_updates(
                     .written_without_trailing_zero()
                     .to_vec(),
             );
+            // The edit's nodes live in the AST store, which the next parse resets.
+            if let Err(err) = root_package_json.reparse_root(manager.log_mut()) {
+                bun_core::pretty_errorln!(
+                    "package.json failed to parse due to error {}",
+                    err.name(),
+                );
+                Global::crash();
+            }
             super::package_json_write_back::record(manager, WorkspaceTarget::root(), false);
         }
 
@@ -600,19 +620,7 @@ fn update_package_json_and_install_with_manager_with_updates(
             && root_is_targeted
         {
             let root_package_json_root: bun_ast::Expr = root_package_json.root;
-            if PackageJSONEditor::edit_catalogs_before_update(manager, &root_package_json_root)?
-                && manager.options.do_.contains(Do::UPDATE_TO_LATEST)
-            {
-                // entries now hold a temporary `latest`; refresh the cache so install resolves those.
-                print_package_json_into_cache_entry(root_package_json, root_package_json_root);
-                if let Err(err) = root_package_json.reparse_root(manager.log_mut()) {
-                    bun_core::pretty_errorln!(
-                        "package.json failed to parse due to error {}",
-                        err.name(),
-                    );
-                    Global::crash();
-                }
-            }
+            PackageJSONEditor::record_catalog_entries(manager, &root_package_json_root)?;
         }
 
         if manager.options.add_catalog.is_some() && manager.workspace_name_hash.is_some() {
@@ -633,31 +641,74 @@ fn update_package_json_and_install_with_manager_with_updates(
     }
     super::package_json_write_back::flush(manager)?;
 
-    if subcommand == Subcommand::Remove && manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
-        if !any_changes {
-            Global::exit(0);
-        }
-        let updates: Box<[UpdateRequest]> = core::mem::take(&mut manager.update_requests);
-        remove_leftover_node_modules(manager, &updates);
+    if subcommand == Subcommand::Remove
+        && manager.options.do_.contains(Do::WRITE_PACKAGE_JSON)
+        && !any_changes
+    {
+        Global::exit(0);
     }
+    remove_leftover_node_modules(manager);
 
     Ok(())
 }
 
-pub(super) fn remove_leftover_node_modules(
-    manager: &mut PackageManager,
-    updates: &[UpdateRequest],
-) {
+/// After the install: what the root `node_modules` still holds of the packages the command took out of it.
+pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
+    if !manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
+        return;
+    }
+    let subcommand = manager.subcommand;
+    let placed: Option<Vec<Box<[u8]>>> = match subcommand {
+        Subcommand::Remove => None,
+        // `-d` with `--production`, `--peer` with `peer = false`: the install skips the group the
+        // entry is in now, and hoists without it. bun.lock keeps the package.
+        Subcommand::Add
+            if manager.options.do_.contains(Do::INSTALL_PACKAGES)
+                && !manager
+                    .options
+                    .update
+                    .behavior
+                    .is_enabled(manager.options.local_package_features) =>
+        {
+            let Some(placed) = crate::prune::top_level_names(manager) else {
+                return;
+            };
+            Some(placed)
+        }
+        _ => return,
+    };
     let Ok(node_modules) = bun_sys::Dir::open(b"node_modules") else {
         return;
     };
     let name_hashes = manager.lockfile.packages.items_name_hash();
-    for request in updates.iter() {
-        // Only top-level folders are removed; nested copies are left alone.
-        let name_hash = bun_semver::semver_string::Builder::string_hash(request.name);
-        if !name_hashes.contains(&name_hash) {
-            let _ = node_modules.delete_tree(request.name);
+    for request in manager.update_requests.iter() {
+        // A path or URL has no name here.
+        if request.name.is_empty() {
+            continue;
         }
+        // Only top-level folders are removed; nested copies are left alone.
+        let left = match &placed {
+            Some(placed) => placed
+                .binary_search_by(|name| name.as_ref().cmp(request.name))
+                .is_err(),
+            None => !name_hashes.contains(&bun_semver::semver_string::Builder::string_hash(
+                request.name,
+            )),
+        };
+        if !left {
+            continue;
+        }
+        // Not through a link at `@scope`.
+        if let Some((scope, _)) = strings::split_once_char(request.name, b'/')
+            && crate::prune::remove_planted_link(
+                &bun_sys::Dir::cwd(),
+                &bun_core::ZBox::from_bytes([b"node_modules/".as_slice(), scope].concat()),
+            )
+            .is_err()
+        {
+            continue;
+        }
+        let _ = node_modules.delete_tree(request.name);
     }
 
     crate::prune::prune_bins(&node_modules);

@@ -4,7 +4,9 @@ use bstr::BStr;
 use bun_collections::{DynamicBitSet, HashMap, index_sort};
 use bun_core::{Global, Output, UnwrapOrOom as _, strings};
 use bun_paths::path_buffer_pool;
-use bun_paths::resolve_path::{join_abs_string_buf, platform};
+use bun_paths::resolve_path::{
+    join_abs_string_buf, join_abs_string_buf_checked, platform, platform_to_posix_in_place,
+};
 
 use crate::bun_fs::FileSystem;
 use crate::dependency::Behavior;
@@ -68,6 +70,40 @@ fn strip_negations(raw: &[u8]) -> (&[u8], bool) {
         remain = rest;
     }
     (remain, negated)
+}
+
+/// The `!` entries of a `workspaces` array: one rule for `bun install` and `bun run --filter` / `--workspaces`.
+#[derive(Default)]
+pub struct NegatedWorkspaces(Vec<Box<[u8]>>);
+
+impl NegatedWorkspaces {
+    /// Whether `entry` is negated (an odd count of `!`). Such an entry only removes members: it is never walked.
+    /// Kept in the shape of a matched directory: `/` separators, no `./`, no trailing slash.
+    pub fn take(&mut self, entry: &[u8]) -> bool {
+        let (glob, negated) = strip_negations(entry);
+        if negated {
+            let mut glob = glob.to_vec();
+            platform_to_posix_in_place::<u8>(&mut glob);
+            let mut remain: &[u8] = &glob;
+            while let Some(rest) = remain.strip_prefix(b"./") {
+                remain = rest;
+            }
+            self.0.push(strings::without_trailing_slash(remain).into());
+        }
+        negated
+    }
+
+    /// Whether a `!` entry removes `dir`, a directory relative to the workspace root that a glob entry matched.
+    /// Like npm and pnpm, wherever the `!` entry is in the array. A directory listed by its path stays a member: do not ask.
+    pub fn excludes(&self, dir: &[u8]) -> bool {
+        // `dir/**` also removes `dir` itself, as in npm.
+        self.0.iter().any(|glob| {
+            bun_glob::r#match(glob, dir).matches()
+                || glob
+                    .strip_suffix(b"/**")
+                    .is_some_and(|base| bun_glob::r#match(base, dir).matches())
+        })
+    }
 }
 
 /// Accepted shapes: `!`* then `...`/`...^` prefix and/or `...`/`^...` suffix around `*`, `{dir}`, `./path` or a name glob.
@@ -470,11 +506,15 @@ pub fn select_lockfile_workspaces(
                 ResolutionTag::Workspace => res.workspace().slice(string_buf),
                 _ => b".",
             };
-            strings::without_trailing_slash(join_abs_string_buf::<platform::Posix>(
-                top_level_dir,
-                &mut path_buf.0,
-                &[rel],
-            ))
+            // A path out of bun.lock that fits no path buffer is selected by its name only.
+            strings::without_trailing_slash(
+                join_abs_string_buf_checked::<platform::Posix>(
+                    top_level_dir,
+                    &mut path_buf.0,
+                    &[rel],
+                )
+                .unwrap_or_default(),
+            )
             .into()
         })
         .collect();

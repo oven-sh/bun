@@ -617,6 +617,28 @@ describe("literal fast path", async () => {
     const entries = await Array.fromAsync(glob.scan({ cwd: tempdir }));
     expect(entries.sort()).toEqual([`packages${path.sep}foo`].sort());
   });
+
+  // The fast path stats the literal in each matched directory. Mode 444 fails that stat.
+  // Root ignores the mode bits, and chmod on Windows cannot make a directory unsearchable.
+  test.skipIf(isWindows || process.getuid?.() === 0)("a failed stat reports the path from cwd", () => {
+    using dir = tempDir("glob-scan-literal-fast-path-eacces", { "packages/a/package.json": "hi" });
+    const unsearchable = path.join(String(dir), "packages", "a");
+    fs.chmodSync(unsearchable, 0o444);
+    try {
+      expect(() => [...new Glob("packages/*/package.json").scanSync({ cwd: String(dir) })]).toThrow(
+        expect.objectContaining({ code: "EACCES", syscall: "fstatat", path: "packages/a/package.json" }),
+      );
+      expect(() => [...new Glob("packages/*/package.json").scanSync({ cwd: String(dir), absolute: true })]).toThrow(
+        expect.objectContaining({
+          code: "EACCES",
+          syscall: "fstatat",
+          path: path.join(unsearchable, "package.json"),
+        }),
+      );
+    } finally {
+      fs.chmodSync(unsearchable, 0o755);
+    }
+  });
 });
 
 describe("trailing directory separator", async () => {

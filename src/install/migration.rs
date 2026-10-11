@@ -100,11 +100,6 @@ pub fn detect_and_load_other_lockfile<'a>(
                                 "Workspace link dependencies to non-existent folders aren't supported yet in pnpm-lock.yaml migration. Please follow along at <magenta>https://github.com/oven-sh/bun/issues/23026<r>",
                             );
                         }
-                        MigratePnpmLockfileError::RelativeLinkDependency => {
-                            bun_core::warn!(
-                                "Relative link dependencies aren't supported yet. Please follow along at <magenta>https://github.com/oven-sh/bun/issues/23026<r>",
-                            );
-                        }
                         MigratePnpmLockfileError::YamlParseError => {
                             bun_core::warn!("Failed to parse pnpm-lock.yaml.");
                         }
@@ -151,6 +146,18 @@ fn finish_migration<'a>(
     {
         print_errors_and_reset(manager, log);
         return migrating_error(err, lockfile_name);
+    }
+    // Nor the root's `patchedDependencies`. Its package.json was read just above.
+    if let Some(path) = crate::lockfile_real::join_top_level_dir(&[b"package.json"])
+        && let crate::GetJsonResult::Entry(root) = manager
+            .workspace_package_json_cache
+            .get_with_path(log, path.slice(), Default::default())
+    {
+        bun_core::handle_oom(crate::lockfile_real::package::append_patched_dependencies(
+            ok.lockfile,
+            root.root,
+            &bun_alloc::Arena::new(),
+        ));
     }
     report_migrated(manager, log, timer, lockfile_name);
     LoadResult::Ok(ok)
@@ -444,8 +451,6 @@ fn migrate_npm_lockfile<'a>(
     {
         this.verify_data()?;
     }
-
-    this.meta_hash = this.generate_meta_hash(false, this.packages.len())?;
 
     Ok(LoadResult::Ok(LoadResultOk {
         lockfile: this,

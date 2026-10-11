@@ -426,9 +426,12 @@ fn target_package_ids(lockfile: &Lockfile, edited: &[EditedPackageJson]) -> Vec<
     ids
 }
 
-/// Re-parses the edited files the way `bun install` would and copies every declared literal that differs (and, for the root, `overrides` + `catalogs`) into `manager.lockfile`, so the next install's differ sees no change.
-fn sync_lockfile(manager: &mut PackageManager, edited: &[EditedPackageJson]) -> crate::Result<()> {
-    let mut scratch = super::workspace_manifests::ScratchManifests::new();
+/// The root and every edited member, with its position in `edited`.
+fn parse_edited(
+    manager: &mut PackageManager,
+    scratch: &mut super::workspace_manifests::ScratchManifests,
+    edited: &[EditedPackageJson],
+) -> crate::Result<Vec<(usize, Package)>> {
     scratch.parse_root(manager, Features::main())?;
     let mut root_pkg = Some(core::mem::take(&mut scratch.root));
     let mut parsed: Vec<(usize, Package)> = Vec::with_capacity(edited.len());
@@ -439,6 +442,21 @@ fn sync_lockfile(manager: &mut PackageManager, edited: &[EditedPackageJson]) -> 
         }
         parsed.push((i, scratch.parse_member(manager, &e.target)?));
     }
+    Ok(parsed)
+}
+
+/// Re-parses the edited files the way `bun install` would and copies every declared literal that differs (and, for the root, `overrides` + `catalogs`) into `manager.lockfile`, so the next install's differ sees no change.
+fn sync_lockfile(manager: &mut PackageManager, edited: &[EditedPackageJson]) -> crate::Result<()> {
+    let mut scratch = super::workspace_manifests::ScratchManifests::new();
+    let parsed = match parse_edited(manager, &mut scratch, edited) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            let _ = scratch
+                .log
+                .print(std::ptr::from_mut(Output::error_writer()));
+            return Err(err);
+        }
+    };
     let super::workspace_manifests::ScratchManifests {
         lockfile: scratch, ..
     } = scratch;
@@ -526,6 +544,18 @@ fn sync_lockfile(manager: &mut PackageManager, edited: &[EditedPackageJson]) -> 
         }
         builder.clamp();
     }
+    // --latest resolved with `latest` in the catalogs (`steer_used_catalogs_to_latest`), also when the root is not edited.
+    if manager.options.do_.contains(Do::UPDATE_TO_LATEST)
+        && scratch.catalogs.has_any()
+        && edited.iter().all(|e| e.target.name_hash.is_some())
+    {
+        let known = &mut manager.known_npm_aliases;
+        let (mut builder, lf) = manager.lockfile.string_builder_split();
+        scratch.catalogs.count(sbuf, &mut builder);
+        builder.allocate()?;
+        *lf.catalogs = scratch.catalogs.clone(known, sbuf, &mut builder)?;
+        builder.clamp();
+    }
     Ok(())
 }
 
@@ -573,10 +603,10 @@ pub(crate) fn flush(manager: &mut PackageManager) -> Result<(), crate::Error> {
     let mut any_failed = false;
     for e in &edited {
         if e.received_requests && !trusted.is_empty() {
-            let entry = fetch_entry(manager, &e.target);
-            let mut root = entry.root;
+            let mut root = fetch_entry_root(manager, &e.target);
             PackageJSONEditor::edit_trusted_dependencies(&mut root, &mut trusted)?;
-            print_package_json_into_cache_entry(entry, root);
+            // The new nodes live in the AST store and their strings in `trusted`.
+            store_entry(manager, &e.target, root);
         }
         if unchanged_on_disk(manager, &e.target) {
             continue;

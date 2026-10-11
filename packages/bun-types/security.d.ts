@@ -22,7 +22,8 @@ declare module "bun" {
        * as semver.
        *
        * The `user:password@` part and the query string of a URL are left out
-       * of this field, of {@link tarball} and of {@link requestedRange}.
+       * of this field, of {@link tarball} and of {@link requestedRange}. The
+       * {@link tarball} of a package from a registry keeps its query string.
        */
       version: string;
 

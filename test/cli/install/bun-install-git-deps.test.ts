@@ -958,9 +958,10 @@ test.concurrent(
     writeProject(root, { a: urlOf("tb-dep"), b: urlOf("tb-dep"), q: urlOf("q-dep") });
     rmSync(join(project, "node_modules"), { recursive: true });
     const { stdout, stderr, exitCode } = await runInstall(project, join(root, "cache-cold"), {}, "--linker=isolated");
+    // q-dep and r-dep: `b` and `c` find the locked tb-dep by its URL, and the linker downloads it
     expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
       "Resolving dependencies
-      Resolved, downloaded and extracted [6]
+      Resolved, downloaded and extracted [4]
       Saved lockfile"
     `);
     // tb-dep, q-dep and r-dep
@@ -2558,7 +2559,7 @@ test.concurrent.skipIf(isWindows).each([
 ])("clones %s from the right URLs", async (dependency, https, ssh = https) => {
   const { calls, stderr, exitCode } = await failingGitCalls(dependency);
   // `--`: whatever follows is not an option of git
-  const clone = ["clone", "-c", "core.longpaths=true", "--quiet", "--bare", "--"];
+  const clone = ["clone", "-c", "core.longpaths=true", "--quiet", "--bare", "-o", "origin", "--"];
   expect(calls).toEqual([
     [...clone, `https://${https}`],
     [...clone, `ssh://${ssh}`],
@@ -3042,12 +3043,13 @@ async function expectFileDepsInstalled(project: string) {
   expect(lockfile).toContain(`"${name}/${name}-self": ["${name}-self@file:.", {}]`);
   expect(lockfile).toContain(`"${name}/gone": ["gone@file:./not-in-package", {}]`);
 
-  // Transitive folder dependencies are not hoisted: each one is linked file by
-  // file into the declaring package's own node_modules, relative to that
-  // package. The folder missing from the package is skipped, as it is for a
-  // registry package.
+  // Transitive folder dependencies are not hoisted: each one is installed into
+  // the declaring package's own node_modules, relative to that package, as real
+  // files (`file:.` as one symlink per file). The folder missing from the
+  // package is skipped, as it is for a registry package.
   expect((await readdir(nested)).sort()).toEqual([`${name}-self`, "sub"]);
-  expect(await linkedJson(join(nested, "sub", "package.json"))).toEqual({ name: "sub", version: "1.0.0" });
+  expect((await lstat(join(nested, "sub", "package.json"))).isFile()).toBe(true);
+  expect(await Bun.file(join(nested, "sub", "package.json")).json()).toEqual({ name: "sub", version: "1.0.0" });
   expect(await linkedJson(join(nested, `${name}-self`, "package.json"))).toEqual(fileDepsManifest);
 
   await using proc = Bun.spawn({

@@ -132,6 +132,8 @@ Bun supports npm's `"overrides"` and Yarn's `"resolutions"` in `package.json`. B
 }
 ```
 
+To add a dependency or peer dependency that a third-party package forgot to declare, use pnpm's and Yarn's `"packageExtensions"`. See [package extensions](/pm/package-extensions).
+
 ---
 
 ## Global packages
@@ -171,6 +173,8 @@ For reproducible installs, use `--frozen-lockfile`. Bun installs the exact versi
 ```bash terminal icon="terminal"
 bun install --frozen-lockfile
 ```
+
+`package.json` disagrees with `bun.lock` when a dependency would resolve to a different package, and also when a dependency of the root or of a workspace was added, removed, moved to another group or given another range (`^1.0.0` to `>=1.0.0`) while every package stays as locked. The same goes for `overrides` and `catalog`. Run `bun install` and commit the updated `bun.lock` to fix it. Other edits, such as a workspace's `version`, `bin` or `scripts`, `trustedDependencies` and `patchedDependencies`, do not fail the install. If the `package.json` of a `file:` directory changed its dependencies, Bun prints a warning and installs what is locked.
 
 Bun does not enable `--frozen-lockfile` automatically in CI; pass the flag or use `bun ci`. If there is no lockfile at all, `--frozen-lockfile` installs from `package.json` without writing one.
 
@@ -213,6 +217,8 @@ bun install --omit dev
 # Install only dependencies from "dependencies"
 bun install --omit=dev --omit=peer --omit=optional
 ```
+
+A package listed under both `devDependencies` and optional `peerDependencies` is left out by `--omit dev` and `--production`, unless an installed package still depends on it.
 
 ---
 
@@ -300,6 +306,8 @@ bun add @types/bun --minimum-release-age 259200 # seconds
 bun install --minimum-release-age 259200 --minimum-release-age-excludes @types/node,typescript@5.4.5
 ```
 
+A number is in seconds. The flag and `minimumReleaseAge` also take a number with a unit: `90m`, `12 hours`, `3d`, `2 weeks`.
+
 `--minimum-release-age-excludes` takes the same entries as `minimumReleaseAgeExcludes` below and replaces that list.
 
 You can also configure this in `bunfig.toml`:
@@ -327,6 +335,7 @@ When the minimum age filter is active:
   - The check searches up to 7 days past the age gate; if releases are still rapid beyond that, Bun ignores the stability check
   - Exact version requests (like `package@1.1.1`) still respect the age gate but bypass the stability check
 - Bun treats versions without a `time` field as passing the age check (the npm registry should always provide timestamps)
+- Bun blocks a version whose `time` value is not a date string that `Date.parse` can read, because its age is unknown
 
 For more advanced security scanning, including integration with services and custom filtering, see the [Security Scanner API](/pm/security-scanner-api).
 
@@ -487,6 +496,14 @@ Each flag can be repeated, takes `*` to allow every value, and takes `!name` to 
 
 Bun handles peer dependencies like Yarn: `bun install` installs them automatically. If the dependency is marked optional in `peerDependenciesMeta`, Bun uses an existing dependency if possible.
 
+If nothing else depends on the peer, Bun installs the newest version that every package asking for it accepts. Otherwise the peer reuses the copy that is already there, which can be outside its range. An install that resolves dependencies then prints which package gets which copy:
+
+```txt
+warn: incorrect peer dependency "react@17.0.2": "react-dom@18.3.1" requires "react@^18.3.1"
+```
+
+To choose the version, add the peer to the `dependencies` in your `package.json`.
+
 ## Lockfile
 
 `bun.lock` is Bun’s lockfile format. See [our blog post about the text lockfile](https://bun.com/blog/bun-lock-text-lockfile).
@@ -553,7 +570,7 @@ rm -rf node_modules
 bun install --backend copyfile
 ```
 
-**`symlink`** is typically only used for `file:` dependencies internally (for example `file:../foo` and transitive `file:` dependencies). `link:` dependencies do not use this backend; Bun installs them as a single symlink to the linked directory.
+**`symlink`** symlinks each file instead of copying it. Without the flag, Bun only uses it for a package that depends on itself (`"pkg": "file:."`). Other `file:` folders are hardlinked, so their files resolve their dependencies from the project's `node_modules`. `link:` dependencies do not use this backend; Bun installs them as a single symlink to the linked directory.
 
 If you install with `--backend=symlink`, Node.js won't resolve node_modules of dependencies unless each dependency has its own node_modules folder or you pass `--preserve-symlinks` to `node` or `bun`. See [Node.js documentation on `--preserve-symlinks`](https://nodejs.org/api/cli.html#--preserve-symlinks).
 
@@ -656,7 +673,8 @@ Bun copies the following pnpm configuration into the root `package.json`:
 
 - **Overrides**: Copied from `pnpm.overrides` to root-level `overrides` in `package.json`
 - **Patched Dependencies**: Copied from `pnpm.patchedDependencies` to root-level `patchedDependencies` in `package.json`
-- **Workspace Overrides**: Copied from `overrides` and `patchedDependencies` in `pnpm-workspace.yaml` to the same root-level fields
+- **Package Extensions**: Copied from `pnpm.packageExtensions` to root-level [`packageExtensions`](/pm/package-extensions) in `package.json`
+- **Workspace Overrides**: Copied from `overrides`, `patchedDependencies` and `packageExtensions` in `pnpm-workspace.yaml` to the same root-level fields
 
 Bun leaves the `pnpm` field of `package.json` as it is. pnpm reads its configuration from that field and ignores the root-level fields, so `pnpm install --frozen-lockfile` keeps working for teammates who still use pnpm. Bun reads the root-level fields and ignores the `pnpm` field.
 
@@ -668,7 +686,7 @@ Bun leaves the `pnpm` field of `package.json` as it is. pnpm reads its configura
 - Workspace packages must have a `name` field in their `package.json`
 - All catalog entries referenced by dependencies must exist in the catalogs definition
 - Every workspace in `pnpm-lock.yaml` must have its `package.json` on disk (in Docker, copy them in before `bun install`)
-- Relative `link:` dependencies and git dependencies with a sub-directory (`resolution.path`) are not supported
+- Git dependencies with a sub-directory (`resolution.path`) are not supported
 - If migration fails for any of these reasons, Bun prints why and resolves from scratch instead. The `pnpm-workspace.yaml` settings above are still migrated, so workspaces, catalogs and overrides are not lost
 
 Once nobody on the repository uses pnpm anymore, you can remove `pnpm-lock.yaml`, `pnpm-workspace.yaml`, and the `pnpm` field of `package.json`.

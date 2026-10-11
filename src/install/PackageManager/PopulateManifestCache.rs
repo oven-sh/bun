@@ -76,7 +76,7 @@ fn start_manifest_task(
     // stale (reused hive slot).
     // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
     // other alias exists until we hand it to `enqueue_network_task`.
-    unsafe { NetworkTask::write_init(net_ptr, task_id, manager_backref, None) };
+    unsafe { NetworkTask::write_init(net_ptr, task_id, manager_backref) };
     // SAFETY: `write_init` populated every field with a drop-safe value;
     // `unsafe_http_client` is `MaybeUninit` and overwritten by `for_manifest`.
     let task = unsafe { &mut *net_ptr };

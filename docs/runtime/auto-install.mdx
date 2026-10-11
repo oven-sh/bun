@@ -35,6 +35,10 @@ Once Bun determines a version or version range, it:
 2. When resolving `latest`, checks if `package@latest` was downloaded and cached in the last _24 hours_. If so, uses it.
 3. Otherwise, downloads and installs the appropriate version from the registry.
 
+With `bun --prefer-offline` (or [`install.prefer = "offline"`](/runtime/bunfig#install-prefer)), Bun resolves versions and tags from the cached registry metadata, however old it is, and only asks the registry for a package that is not in the cache.
+
+The first import of a package that is not in the cache blocks the thread until the download finishes. Timers and other requests' handlers do not run inside `require()`, `import()`, or `Bun.resolveSync()`.
+
 ---
 
 ## Registries
@@ -83,6 +87,7 @@ import { z } from "zod@^3.20.0"; // semver range
 
 - No Intellisense. TypeScript auto-completion in IDEs relies on type declaration files inside `node_modules`. We are investigating solutions to this.
 - No [patch-package](https://github.com/ds300/patch-package) support
+- No git dependencies. Auto-install loads packages from the npm registry only. Run `bun install` for a dependency on a git URL.
 
 ---
 

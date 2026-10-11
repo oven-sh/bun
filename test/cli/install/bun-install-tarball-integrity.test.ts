@@ -745,8 +745,7 @@ describe.concurrent.each(
     expect(await box.lockfile("app")).toBe(lockfile);
   });
 
-  // The isolated linker names its entry after the path or URL and only asks whether it exists.
-  it.todoIf(linker === "isolated")("a bun.lock that pins another build replaces what is installed", async () => {
+  it("a bun.lock that pins another build replaces what is installed", async () => {
     const v1 = await tarball("v1");
     const v2 = await tarball("v2");
     using box = sandbox("tarball-pulled-lockfile", { app: {}, teammate: {} });

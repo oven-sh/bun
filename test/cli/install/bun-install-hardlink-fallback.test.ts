@@ -98,6 +98,126 @@ describe.skipIf(!isLinux || isMusl || !cc)("hardlink backend falls back to copyf
   }
 });
 
+// A folder dependency is linked from its own directory, not from the cache.
+describe.skipIf(!isLinux || isMusl || !cc)("hardlink backend, folder dependency that cannot be hardlinked", () => {
+  // `linkat` fails with EXDEV when `fail` (a C expression over `calls`,
+  // `oldpath`, `newpath`) is true. Other calls go to the real `linkat`.
+  const shimC = (fail: string) => /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <string.h>
+
+int linkat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath,
+           int flags) {
+  static int calls = 0;
+  calls++;
+  if (${fail}) {
+    errno = EXDEV;
+    return -1;
+  }
+  int (*real)(int, const char *, int, const char *, int) = dlsym(RTLD_NEXT, "linkat");
+  return real(olddirfd, oldpath, newdirfd, newpath, flags);
+}
+`;
+
+  async function installWithShim(dir: string, projectDir: string, expectedInstalled: string) {
+    {
+      await using compile = Bun.spawn({
+        cmd: [cc!, "-shared", "-fPIC", "-o", "shim.so", "shim.c", "-ldl"],
+        cwd: dir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [compileOut, compileErr, compileExit] = await Promise.all([
+        compile.stdout.text(),
+        compile.stderr.text(),
+        compile.exited,
+      ]);
+      if (compileExit !== 0) {
+        throw new Error(`shim compile failed: ${compileOut}${compileErr}`);
+      }
+    }
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--backend", "hardlink", "--linker", "hoisted"],
+      cwd: projectDir,
+      env: {
+        ...bunEnv,
+        BUN_INSTALL_CACHE_DIR: join(dir, "cache"),
+        LD_PRELOAD: [join(dir, "shim.so"), bunEnv.LD_PRELOAD].filter(Boolean).join(":"),
+      },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("EXDEV");
+    expect(stdout).toContain(expectedInstalled);
+    expect(exitCode).toBe(0);
+  }
+
+  // The folder is on another file system: only this package falls back to
+  // copying. Packages from the cache keep using hardlinks.
+  for (const spec of ["file:./aaa-local", "file:../aaa-local"]) {
+    test.concurrent(`does not switch the remaining packages to copyfile (${spec})`, async () => {
+      // Packages install in name order: `aaa-local` hits EXDEV before `zzz-bar`
+      // is linked from the cache.
+      const local = spec === "file:./aaa-local" ? "project/aaa-local" : "aaa-local";
+      using dir = tempDir("hardlink-xdev-folder", {
+        "shim.c": shimC(`strstr(oldpath, "xdev-marker") || strstr(newpath, "xdev-marker")`),
+        "project/package.json": JSON.stringify({
+          name: "hardlink-xdev-folder-test",
+          dependencies: { "aaa-local": spec, "zzz-bar": "file:./bar-0.0.2.tgz" },
+        }),
+        [`${local}/package.json`]: JSON.stringify({ name: "aaa-local", version: "1.2.3" }),
+        [`${local}/xdev-marker.js`]: "module.exports = 1;",
+      });
+      const projectDir = join(String(dir), "project");
+      cpSync(join(import.meta.dir, "bar-0.0.2.tgz"), join(projectDir, "bar-0.0.2.tgz"));
+
+      await installWithShim(String(dir), projectDir, "2 packages installed");
+
+      // The folder was copied, its source is as it was: nlink === 1.
+      expect(statSync(join(projectDir, "node_modules", "aaa-local", "xdev-marker.js")).nlink).toBe(1);
+      expect(await Bun.file(join(String(dir), local, "xdev-marker.js")).text()).toBe("module.exports = 1;");
+      // The package after it is still hardlinked from the cache: nlink >= 2.
+      const fromCache = join(projectDir, "node_modules", "zzz-bar", "package.json");
+      expect(await Bun.file(fromCache).json()).toMatchObject({ name: "bar", version: "0.0.2" });
+      expect(statSync(fromCache).nlink).toBeGreaterThanOrEqual(2);
+    });
+  }
+
+  // The first file of the folder is hardlinked, then `linkat` fails. The copy
+  // that follows must not truncate the source through that hardlink.
+  test.concurrent(
+    "keeps the source files intact when the fallback to copyfile starts after a partial link",
+    async () => {
+      const files = {
+        "package.json": JSON.stringify({ name: "local", version: "1.2.3" }),
+        "index.js": "module.exports = require('./other.js') + ' from index';",
+        "other.js": "module.exports = 'other';",
+      };
+      using dir = tempDir("hardlink-partial-folder", {
+        "shim.c": shimC("calls == 2"),
+        "package.json": JSON.stringify({
+          name: "hardlink-partial-folder-test",
+          dependencies: { local: "file:./local" },
+        }),
+        ...Object.fromEntries(Object.entries(files).map(([name, content]) => [`local/${name}`, content])),
+      });
+
+      await installWithShim(String(dir), String(dir), "1 package installed");
+
+      for (const [name, content] of Object.entries(files)) {
+        expect(await Bun.file(join(String(dir), "local", name)).text()).toBe(content);
+        const installed = join(String(dir), "node_modules", "local", name);
+        expect(await Bun.file(installed).text()).toBe(content);
+        expect(statSync(installed).nlink).toBe(1);
+      }
+    },
+  );
+});
+
 // What the kernel does for a filesystem without symlinks: the path is looked up first.
 const symlinkShimC = (errno: string) => /* c */ `
 #define _GNU_SOURCE

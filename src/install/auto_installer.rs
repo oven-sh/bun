@@ -21,16 +21,17 @@
 //! `value` union by plain assignment.
 
 use core::mem::{align_of, size_of};
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_install_types::resolver_hooks as hooks;
 use bun_semver::{SlicedString, String as SemverString};
+use bun_threading::Futex;
 
 use crate::dependency::{self, DependencyExt as _};
 use crate::lockfile::{self, Package};
 use crate::package_manager::package_manager_directories as directories;
 use crate::package_manager::package_manager_enqueue as enqueue;
 use crate::package_manager::package_manager_lifecycle as lifecycle;
-use crate::package_manager::package_manager_resolution as pm_resolution;
 use crate::resolution;
 use crate::{DependencyID, Features, PackageID, PackageManager, PreinstallState};
 
@@ -127,6 +128,52 @@ fn resolution_from_hooks(r: &hooks::Resolution) -> resolution::Resolution {
 // (src/install/dependency.rs), so no overlay helper is needed — values pass
 // through nominally.
 
+// ─── The wait of a resolve ────────────────────────────────────────────────
+
+/// Bumped by every `PackageManager::wake_raw` of the auto-install manager.
+static WAKES: AtomicU32 = AtomicU32::new(0);
+/// Threads blocked on `WAKES` (the manager is one per process, Workers share it).
+/// At zero a wake skips the futex syscall.
+static PARKED: AtomicU32 = AtomicU32::new(0);
+
+/// A JS thread that waits in `enqueue_dependency_to_root` for the registry. It blocks
+/// instead of running its event loop: `require()`, `import()` and `Bun.resolveSync()`
+/// would run timers and other requests' handlers inside the call. So nothing pending
+/// on this manager may need the event loop (a git child does).
+///
+/// SeqCst throughout: each side writes its word, then reads the other's.
+pub(crate) struct Parked(());
+
+impl Parked {
+    pub(crate) fn new() -> Parked {
+        PARKED.fetch_add(1, Ordering::SeqCst);
+        Parked(())
+    }
+
+    /// Read this before draining the finished tasks and pass it to [`Parked::wait`]:
+    /// a task that finishes after the drain then ends the wait at once.
+    pub(crate) fn wakes(&self) -> u32 {
+        WAKES.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn wait(&self, wakes: u32) {
+        Futex::wait_forever(&WAKES, wakes);
+    }
+
+    pub(crate) fn wake_all() {
+        WAKES.fetch_add(1, Ordering::SeqCst);
+        if PARKED.load(Ordering::SeqCst) > 0 {
+            Futex::wake(&WAKES, u32::MAX);
+        }
+    }
+}
+
+impl Drop for Parked {
+    fn drop(&mut self) {
+        PARKED.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 // ─── impl AutoInstaller ───────────────────────────────────────────────────
 
 impl hooks::AutoInstaller for PackageManager {
@@ -182,7 +229,7 @@ impl hooks::AutoInstaller for PackageManager {
     ) -> Result<DependencyID, bun_core::Error> {
         self.lockfile
             .buffers
-            .legacy_package_to_dependency_id(None, package_id)
+            .legacy_package_to_dependency_id(package_id)
             .map_err(Into::into)
     }
 
@@ -344,7 +391,6 @@ impl hooks::AutoInstaller for PackageManager {
         package_id: PackageID,
         resolution: &hooks::Resolution,
         ctx: hooks::TaskCallbackContext,
-        patch_name_and_version_hash: Option<u64>,
     ) -> Result<(), bun_core::Error> {
         let r = resolution_from_hooks(resolution);
         // Only the npm arm reaches this enqueue.
@@ -361,17 +407,8 @@ impl hooks::AutoInstaller for PackageManager {
             npm.version,
             &url,
             crate::TaskCallbackContext::RootRequestId(ctx.root_request_id),
-            patch_name_and_version_hash,
         )
         .map_err(|e| crate::Error::from(e).into())
-    }
-
-    fn resolve_from_disk_cache(
-        &mut self,
-        name: &[u8],
-        version: &hooks::DependencyVersion,
-    ) -> Option<PackageID> {
-        pm_resolution::resolve_from_disk_cache(self, name, version)
     }
 
     fn enqueue_dependency_to_root(
@@ -411,7 +448,7 @@ impl hooks::AutoInstaller for PackageManager {
     }
 
     fn parse_dependency_with_tag(
-        &mut self,
+        &self,
         name: SemverString,
         name_hash: u64,
         version: &[u8],
@@ -419,15 +456,7 @@ impl hooks::AutoInstaller for PackageManager {
         sliced: &SlicedString,
         log: Option<&mut bun_ast::Log>,
     ) -> Option<hooks::DependencyVersion> {
-        dependency::parse_with_tag(
-            name,
-            Some(name_hash),
-            version,
-            tag,
-            sliced,
-            log,
-            Some(self as &mut dyn dependency::NpmAliasRegistry),
-        )
+        dependency::parse_with_tag(name, Some(name_hash), version, tag, sliced, log, None)
     }
 
     fn infer_dependency_tag(&self, dep: &[u8]) -> hooks::DependencyVersionTag {
@@ -479,6 +508,7 @@ unsafe fn __bun_resolver_init_package_manager(
     mut log: core::ptr::NonNull<bun_ast::Log>,
     install: Option<core::ptr::NonNull<crate::bun_schema::api::BunInstall>>,
     mut env: core::ptr::NonNull<bun_dotenv::Loader>,
+    prefer_offline: bool,
 ) -> core::result::Result<core::ptr::NonNull<dyn hooks::AutoInstaller>, bun_errno::SystemErrno> {
     // ABI: the resolver-side `extern "Rust"` declaration names
     // `bun_errno::SystemErrno` (both crates depend on bun_errno; carries the
@@ -500,7 +530,10 @@ unsafe fn __bun_resolver_init_package_manager(
     let pm: *mut PackageManager = crate::package_manager::init_with_runtime(
         log_ref,
         bun_install,
-        crate::package_manager::CommandLineArguments::default(),
+        crate::package_manager::CommandLineArguments {
+            prefer_offline,
+            ..Default::default()
+        },
         env_ref,
     )
     .map_err(|e| match e {

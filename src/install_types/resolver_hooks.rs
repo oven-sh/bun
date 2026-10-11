@@ -466,6 +466,7 @@ impl Clone for DependencyVersion {
 }
 
 impl Drop for DependencyVersion {
+    #[inline(never)]
     fn drop(&mut self) {
         if self.tag == DependencyVersionTag::Npm {
             // SAFETY: tag == Npm, so `npm` is the active arm.
@@ -692,7 +693,7 @@ impl<T: NegatableEnum> Negatable<T> {
     }
 
     /// writes to a one line json array with a trailing comma and space, or writes a string
-    pub fn to_json(field: T, writer: &mut impl core::fmt::Write) -> core::fmt::Result {
+    pub fn to_json(field: T, writer: &mut dyn core::fmt::Write) -> core::fmt::Result {
         if field == T::NONE {
             // [] means everything, so unrecognized value
             return writer.write_str(r#""none""#);
@@ -1488,13 +1489,7 @@ pub trait AutoInstaller {
         package_id: PackageID,
         resolution: &Resolution,
         ctx: TaskCallbackContext,
-        patch_name_and_version_hash: Option<u64>,
     ) -> core::result::Result<(), bun_core::Error>;
-    fn resolve_from_disk_cache(
-        &mut self,
-        name: &[u8],
-        version: &DependencyVersion,
-    ) -> Option<PackageID>;
     fn enqueue_dependency_to_root(
         &mut self,
         name: &[u8],
@@ -1504,9 +1499,7 @@ pub trait AutoInstaller {
     ) -> EnqueueResult;
 
     // ── Dependency parsing ─────────────────────────────────────────────────
-    // `&mut self`: `parse_with_tag` records `npm:`-aliased deps into
-    // `pm.known_npm_aliases`, so the impl needs a
-    // mutable manager handle even though parsing is otherwise pure.
+    // `&mut self`: the manager records an `npm:` alias.
     fn parse_dependency(
         &mut self,
         name: SemverString,
@@ -1515,8 +1508,9 @@ pub trait AutoInstaller {
         sliced: &bun_semver::SlicedString,
         log: Option<&mut bun_ast::Log>,
     ) -> Option<DependencyVersion>;
+    /// A package's own `version`: records nothing.
     fn parse_dependency_with_tag(
-        &mut self,
+        &self,
         name: SemverString,
         name_hash: u64,
         version: &[u8],

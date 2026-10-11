@@ -12,6 +12,7 @@ use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP};
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{
     DepSorter, DependencyIDList, DependencyIDSlice, Lockfile, bun_lock, pruned_workspaces,
+    reachable,
 };
 use crate::package_manager::{PackageManager, WorkspaceFilter};
 use crate::{
@@ -133,8 +134,6 @@ enum HoistDependencyResult {
     ResolveLater,
     /// `Hoisted`, plus the optional peer's slot now points at the version it deduplicated onto.
     Rebind(PackageID),
-    /// `Hoisted` onto the root package.json's copy of a peer, whose version the peer's range rejects.
-    HoistedOutOfRange(PackageID),
     Placement(Placement),
 }
 
@@ -449,6 +448,127 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) packages_to_install: Option<&'a [PackageID]>,
     /// Workspace package ids that are hoisting barriers (self-contained node_modules).
     pub(crate) self_contained: Vec<PackageID>,
+    pub(crate) peer_probes: PeerProbes,
+    /// `(tree id, dependency id)` of each row of the install tree that a tarball ships: a bundled
+    /// dependency and every row placed from below one. They take their places as in the saved
+    /// tree, so that no row bun installs resolves through one, and `clean` drops them.
+    pub(crate) shipped_rows: bun_collections::HashMap<(Id, DependencyID), ()>,
+    /// The folder `process_subtree` is filling is one of `shipped_rows`.
+    pub(crate) in_shipped_folder: bool,
+    pub(crate) linked: reachable::Linked,
+}
+
+/// The required peers of the package that is being hoisted, each with whether a `node_modules`
+/// it would still see if it stayed put holds a version in range. Hoisting stops below a
+/// `node_modules` that would hide that version behind one out of range.
+#[derive(Default)]
+pub(crate) struct PeerProbes(Vec<(DependencyID, bool)>);
+
+impl PeerProbes {
+    /// `package_id` is about to be hoisted out of the package with `owner_deps`.
+    fn begin(
+        &mut self,
+        lockfile: &Lockfile,
+        deps: &[Dependency],
+        resolutions: &[PackageID],
+        owner_deps: DependencyIDSlice,
+        package_id: PackageID,
+    ) {
+        self.0.clear();
+        if package_id == invalid_package_id {
+            return;
+        }
+
+        let pkg_resolutions = lockfile.packages.items_resolution();
+        // Installed as a link, so a nested copy would resolve the same peers as the root copy.
+        if matches!(
+            pkg_resolutions[package_id as usize].tag,
+            crate::resolution::Tag::Workspace | crate::resolution::Tag::Symlink
+        ) {
+            return;
+        }
+
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let pkg_deps = lockfile.packages.items_resolutions()[package_id as usize];
+
+        for peer_dep_id in pkg_deps.begin()..pkg_deps.end() {
+            let peer = &deps[peer_dep_id as usize];
+            if !peer.behavior.is_peer()
+                || peer.behavior.is_optional_peer()
+                || peer.version.tag != crate::dependency::VersionTag::Npm
+            {
+                continue;
+            }
+
+            // A regular dependency on the same name is what gets installed next to the package.
+            if (pkg_deps.begin()..pkg_deps.end()).any(|dep_id| {
+                let dep = &deps[dep_id as usize];
+                dep.name_hash == peer.name_hash && !dep.behavior.is_peer()
+            }) {
+                continue;
+            }
+
+            // The owner's own copy of the peer, if it has one, is the one the package finds from here.
+            let owner_copy = (owner_deps.begin()..owner_deps.end())
+                .find(|&dep_id| {
+                    let dep = &deps[dep_id as usize];
+                    dep.name_hash == peer.name_hash
+                        && !dep.behavior.is_peer()
+                        && resolutions[dep_id as usize] != invalid_package_id
+                })
+                .map(|dep_id| {
+                    pkg_resolutions[resolutions[dep_id as usize] as usize]
+                        .satisfies_dependency_version(&peer.version, buf, buf)
+                });
+            if owner_copy != Some(false) {
+                self.0.push((peer_dep_id, owner_copy.is_some()));
+            }
+        }
+    }
+
+    /// True if `tree_deps` hold an out-of-range version of a peer that staying put resolves in range.
+    fn is_hidden_by(
+        &mut self,
+        lockfile: &Lockfile,
+        deps: &[Dependency],
+        resolutions: &[PackageID],
+        tree_deps: &[DependencyID],
+    ) -> bool {
+        let pkg_resolutions = lockfile.packages.items_resolution();
+        let buf = lockfile.buffers.string_bytes.as_slice();
+
+        let mut i = 0;
+        while i < self.0.len() {
+            let (peer_dep_id, provided) = self.0[i];
+            let peer = &deps[peer_dep_id as usize];
+            let held = tree_deps
+                .iter()
+                .find(|&&dep_id| deps[dep_id as usize].name_hash == peer.name_hash)
+                .map(|&dep_id| resolutions[dep_id as usize])
+                .filter(|&res_id| res_id != invalid_package_id)
+                .map(|res_id| {
+                    pkg_resolutions[res_id as usize].satisfies_dependency_version(
+                        &peer.version,
+                        buf,
+                        buf,
+                    )
+                });
+            match held {
+                None => i += 1,
+                Some(true) => {
+                    self.0[i].1 = true;
+                    i += 1;
+                }
+                Some(false) if provided => return true,
+                // Out of range wherever the package ends up.
+                Some(false) => {
+                    self.0.swap_remove(i);
+                }
+            }
+        }
+
+        false
+    }
 }
 
 pub struct BuilderEntry {
@@ -487,35 +607,6 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 
     fn maybe_report_error(&mut self, args: core::fmt::Arguments<'_>) {
         let _ = self.log.add_error_fmt(None, bun_ast::Loc::EMPTY, args);
-    }
-
-    /// The resolver's "incorrect peer dependency" message, with the dependent and range added.
-    #[cold]
-    fn warn_peer_out_of_range(
-        &mut self,
-        dependent_id: PackageID,
-        peer: &Dependency,
-        copy_id: PackageID,
-    ) {
-        let lockfile_ref = self.lockfile;
-        let lockfile: &Lockfile = lockfile_ref.get();
-        let buf = lockfile.buffers.string_bytes.as_slice();
-        let pkg_names = lockfile.packages.items_name();
-        let pkg_resolutions = lockfile.packages.items_resolution();
-        let range = lockfile.catalogs.resolve_range(buf, peer);
-        self.log.add_warning_fmt(
-            None,
-            bun_ast::Loc::EMPTY,
-            format_args!(
-                "incorrect peer dependency \"{}@{}\": \"{}@{}\" requires \"{}@{}\"",
-                pkg_names[copy_id as usize].fmt(buf),
-                pkg_resolutions[copy_id as usize].fmt(buf, PathSep::Posix),
-                pkg_names[dependent_id as usize].fmt(buf),
-                pkg_resolutions[dependent_id as usize].fmt(buf, PathSep::Posix),
-                peer.name.fmt(buf),
-                range.literal.fmt(buf),
-            ),
-        );
     }
 
     fn buf(&self) -> &[u8] {
@@ -647,6 +738,11 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
                     // peers that never resolved
                     continue;
                 }
+                if !self.shipped_rows.is_empty()
+                    && self.shipped_rows.contains_key(&(tree.id, dep_id))
+                {
+                    continue;
+                }
 
                 dep_ids.push(dep_id);
             }
@@ -680,6 +776,7 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     manager: &PackageManager,
     lockfile: &Lockfile,
     resolutions: &[PackageID],
+    linked: &mut reachable::Linked,
 ) -> bool {
     let pkg_id = resolutions[dep_id as usize];
     if (pkg_id as usize) >= lockfile.packages.len() {
@@ -731,13 +828,21 @@ pub(crate) fn is_filtered_dependency_or_workspace(
         return true;
     }
 
-    let dep_features = if parent_res.tag.is_local_package() {
-        manager.options.local_package_features
-    } else {
-        manager.options.remote_package_features
-    };
+    if !(dep.behavior).is_placed(manager.options.dependency_features(parent_res.tag)) {
+        return true;
+    }
 
-    if !dep.behavior.is_placed(dep_features) {
+    if dep.behavior.is_optional_peer()
+        && linked.omits_optional_peer(
+            dep_id,
+            parent_pkg_id,
+            workspace_filters,
+            install_root_dependencies,
+            manager,
+            lockfile,
+            resolutions,
+        )
+    {
         return true;
     }
 
@@ -818,6 +923,8 @@ impl Tree {
         } else {
             hoist_root_id
         };
+        let shipped = builder.shipped_rows.contains_key(&(self.id, dependency_id));
+        builder.in_shipped_folder = shipped;
 
         // Copy the `ParentRef` out (it's `Copy`) so the resulting `&Lockfile`
         // is borrowed from a local, not `&builder` — subsequent `&mut builder`
@@ -860,8 +967,11 @@ impl Tree {
             builder.bind_peer(dep_id);
             let pkg_id = builder.resolutions[dep_id as usize];
 
-            // filter out disabled dependencies
-            if METHOD == BuilderMethod::Filter {
+            // filter out disabled dependencies. Not what a tarball ships: see `shipped_rows`.
+            if METHOD == BuilderMethod::Filter
+                && !shipped
+                && !dependencies[dep_id as usize].behavior.is_bundled()
+            {
                 // As in `isolated_install::build_store`: the list replaces the filter for
                 // the root's own dependencies (a devDependency under `--production`).
                 match builder.packages_to_install.filter(|_| parent_pkg_id == 0) {
@@ -879,6 +989,7 @@ impl Tree {
                             builder.manager.expect("manager set when METHOD == Filter"),
                             lockfile,
                             &*builder.resolutions,
+                            &mut builder.linked,
                         ) {
                             continue;
                         }
@@ -915,7 +1026,7 @@ impl Tree {
                 .slice(lockfile.buffers.string_bytes.as_slice());
             if pkg_id != invalid_package_id
                 && !dependency_name.is_empty()
-                && !crate::dependency::is_safe_install_folder_name(dependency_name)
+                && !crate::package_installer::alias_is_safe_install_target(dependency_name)
             {
                 builder.maybe_report_error(format_args!(
                     "Invalid dependency name \"{}\"",
@@ -983,10 +1094,16 @@ impl Tree {
                         }
                         tree_id = tree.parent;
                     }
-                    break 'hoisted HoistDependencyResult::Placement(Placement {
-                        id: next_id,
-                        bundled: false,
-                    });
+
+                    // Its own hoist root: stays in this node, dedupes against a same-name sibling.
+                    break 'hoisted Tree::hoist_dependency::<true, METHOD>(
+                        next_id,
+                        next_id,
+                        pkg_id,
+                        dep_id,
+                        resolution_list,
+                        builder,
+                    );
                 }
 
                 Tree::hoist_dependency::<true, METHOD>(
@@ -1053,6 +1170,10 @@ impl Tree {
                             }
                         }
                     }
+                    builder.shipped_rows.remove(&(replace.id, replace.dep_id));
+                    if shipped {
+                        builder.shipped_rows.insert((replace.id, dep_id), ());
+                    }
                     if pkg_id != invalid_package_id
                         && builder.resolution_lists[pkg_id as usize].len > 0
                     {
@@ -1066,12 +1187,6 @@ impl Tree {
                 HoistDependencyResult::Rebind(res_id) => {
                     debug_assert!(dependency.behavior.is_optional_peer());
                     builder.resolutions[dep_id as usize] = res_id;
-                }
-                HoistDependencyResult::HoistedOutOfRange(res_id) => {
-                    // Resolvable builds also run on load and clean; only the installed tree warns.
-                    if METHOD == BuilderMethod::Filter {
-                        builder.warn_peer_out_of_range(parent_pkg_id, dependency, res_id);
-                    }
                 }
                 HoistDependencyResult::ResolveLater => {
                     // `dep_id` is an unresolved peer. while hoisting it deduplicated
@@ -1092,6 +1207,9 @@ impl Tree {
                         builder.list.items_tree_mut()[dest.id as usize]
                             .dependencies
                             .len += 1;
+                    }
+                    if METHOD == BuilderMethod::Filter && (shipped || dest.bundled) {
+                        builder.shipped_rows.insert((dest.id, dep_id), ());
                     }
                     if pkg_id != invalid_package_id
                         && builder.resolution_lists[pkg_id as usize].len > 0
@@ -1146,6 +1264,17 @@ impl Tree {
         let this_deps: &[DependencyID] = this
             .dependencies
             .get(builder.list.items_dependencies()[self_id as usize].as_slice());
+        if !AS_DEFINED
+            && !builder.peer_probes.0.is_empty()
+            && builder.peer_probes.is_hidden_by(
+                builder.lockfile.get(),
+                deps,
+                &*builder.resolutions,
+                this_deps,
+            )
+        {
+            return HoistDependencyResult::DependencyLoop; // 3
+        }
         // Keep the comparand in a register; `deps.get_unchecked` may alias `dependency`.
         let target_name_hash = dependency.name_hash;
         for &dep_id in this_deps {
@@ -1157,6 +1286,22 @@ impl Tree {
             }
 
             let res_id = builder.resolutions[dep_id as usize];
+
+            // A row bun installs keeps its own copy below its dependent (`shipped_rows`). A peer
+            // shares the bundled copy itself: the tarball always has that folder.
+            if METHOD == BuilderMethod::Filter
+                && !builder.in_shipped_folder
+                && package_id != invalid_package_id
+                && !(dependency.behavior.is_peer() && dep.behavior.is_bundled())
+                && builder.shipped_rows.contains_key(&(this.id, dep_id))
+            {
+                return HoistDependencyResult::DependencyLoop; // 3
+            }
+
+            // The copy a tarball ships stays in this folder, whether or not the dependency resolved.
+            if res_id == invalid_package_id && dep.behavior.is_bundled() {
+                return HoistDependencyResult::DependencyLoop; // 3
+            }
 
             if res_id == invalid_package_id && package_id == invalid_package_id {
                 debug_assert!(dep.behavior.is_peer());
@@ -1195,6 +1340,14 @@ impl Tree {
             // or hoist if peer version allows it
 
             if dependency.behavior.is_peer() {
+                // A rule chose this peer's package. A root alias that holds another package under the name does not serve it.
+                let pkg_name_hashes = builder.lockfile().packages.items_name_hash();
+                if pkg_name_hashes[res_id as usize] != pkg_name_hashes[package_id as usize]
+                    && builder.lockfile().is_overridden_dependency(input_dep_id)
+                {
+                    return HoistDependencyResult::DependencyLoop; // 3
+                }
+
                 // An optional peer's binding follows the dedupe, but only in the tree being saved.
                 let dedupe = || {
                     if METHOD == BuilderMethod::Resolvable && dependency.behavior.is_optional_peer()
@@ -1223,18 +1376,7 @@ impl Tree {
                 // Root dependencies are manually chosen by the user. Allow them
                 // to hoist other peers even if they don't satisfy the version
                 if builder.lockfile().is_workspace_root_dependency(dep_id) {
-                    // Optional peers take whatever the tree offers, as they do in the resolver.
-                    let buf = builder.buf();
-                    let rejected = !dependency.behavior.is_optional_peer()
-                        && peer_range.try_npm().is_some_and(|npm| {
-                            (builder.lockfile().package_version(res_id))
-                                .is_some_and(|copy| !npm.version.satisfies(copy, buf, buf))
-                        });
-                    return if rejected {
-                        HoistDependencyResult::HoistedOutOfRange(res_id) // 1
-                    } else {
-                        dedupe() // 1
-                    };
+                    return dedupe(); // 1
                 }
             }
 
@@ -1243,6 +1385,15 @@ impl Tree {
 
         // this dependency was not found in this tree, try hoisting or placing in the next parent
         if this.parent != INVALID_ID && this.id != hoist_root_id {
+            if AS_DEFINED {
+                builder.peer_probes.begin(
+                    builder.lockfile.get(),
+                    deps,
+                    &*builder.resolutions,
+                    input_dep_range,
+                    package_id,
+                );
+            }
             let id = Tree::hoist_dependency::<false, METHOD>(
                 this.parent,
                 hoist_root_id,
@@ -1256,10 +1407,15 @@ impl Tree {
             }
         }
 
-        // A hoist root is a bundle in the saved tree and a self-contained workspace in the installed one.
-        if METHOD == BuilderMethod::Resolvable && this.id == hoist_root_id {
-            // a bundle's dependency stops here, but must not shadow what resolves through here
-            if !AS_DEFINED
+        // A hoist root is a bundle in the saved tree. In the installed one it is for the rows the
+        // bundle ships, and a self-contained workspace for the others.
+        if (METHOD == BuilderMethod::Resolvable || builder.in_shipped_folder)
+            && this.id == hoist_root_id
+        {
+            // a bundle's dependency stops here, but must not shadow what resolves through here.
+            // In the installed tree it stands for the folder `npm pack` flattens it into.
+            if METHOD == BuilderMethod::Resolvable
+                && !AS_DEFINED
                 && Tree::hoist_root_resolves_elsewhere(
                     this.id,
                     package_id,

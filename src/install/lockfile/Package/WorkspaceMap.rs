@@ -13,6 +13,7 @@ use crate::lockfile_real::{Lockfile, StringBuilder, pruned_workspaces};
 use crate::package_manager::workspace_package_json_cache::{
     GetJSONOptions, WorkspacePackageJSONCache,
 };
+use crate::package_manager::workspace_selection::NegatedWorkspaces;
 
 bun_output::declare_scope!(Lockfile, hidden);
 
@@ -99,24 +100,26 @@ impl WorkspaceMap {
         self.map.get(key)
     }
 
-    fn insert(&mut self, key: &[u8], value: Entry) -> Result<(), bun_alloc::AllocError> {
-        // No `bun.sys.exists(key)` debug check here: `key` is
-        // relative to the workspace root while `exists` resolves against process
-        // cwd — false positive whenever the two differ (e.g. `bun unlink` from a
-        // workspace package). Existence is already verified by the caller via
-        // `process_workspace_name`, so the check is dropped.
+    /// `key` is the member's directory relative to the workspace root.
+    fn insert(
+        &mut self,
+        string_builder: Option<&mut StringBuilder<'_>>,
+        key: &[u8],
+        value: Entry,
+    ) -> Result<(), bun_alloc::AllocError> {
+        if let Some(builder) = string_builder {
+            builder.count(&value.name);
+            builder.count(key);
+            builder.cap += MAX_PATH_BYTES;
+            if let Some(version) = &value.version {
+                builder.count(version);
+            }
+        }
         let entry = self.map.get_or_put(key)?;
         if !entry.found_existing {
             *entry.key_ptr = Box::<[u8]>::from(key);
         }
-        // old value (incl. owned `name`) dropped automatically on assignment
-        *entry.value_ptr = Entry {
-            name: value.name,
-            version: value.version,
-            name_loc: value.name_loc,
-            hoisting_limits: value.hoisting_limits,
-            unsupported_hoisting_limits: value.unsupported_hoisting_limits,
-        };
+        *entry.value_ptr = value;
         Ok(())
     }
 }
@@ -177,7 +180,7 @@ fn process_workspace_name(
     workspace_names: &mut WorkspaceMap,
     json_cache: &mut WorkspacePackageJSONCache,
     abs_package_json_path: &[u8],
-    root_dir: &[u8],
+    dir: &[u8],
     log: &mut bun_ast::Log,
 ) -> crate::Result<Option<Entry>> {
     let workspace_json = json_cache
@@ -191,6 +194,11 @@ fn process_workspace_name(
             },
         )
         .unwrap()?;
+    if workspace_json.source.contents.is_empty() {
+        crate::package_manager_real::install_with_manager::exit_on_empty_package_json(
+            abs_package_json_path,
+        );
+    }
 
     // Scratch arena for `as_string_cloned`;
     // results are immediately boxed so the bump can drop at scope exit.
@@ -214,12 +222,6 @@ fn process_workspace_name(
             json.get(group.prop)
                 .is_some_and(|deps| deps.property_count() > 0)
         });
-        let mut buf = path::path_buffer_pool::get();
-        let dir = relative_workspace_path(
-            &mut buf.0,
-            root_dir,
-            workspace_dir_of(abs_package_json_path),
-        );
         // Overlapping patterns match the same directory more than once.
         let skipped = &mut workspace_names.skipped_with_dependencies;
         if declares_dependencies && !skipped.iter().any(|skipped| **skipped == *dir) {
@@ -268,11 +270,63 @@ fn process_workspace_name(
     Ok(Some(entry))
 }
 
+/// `dir`, or the filesystem root for a package.json in it, where `dir` is `""` or `C:`.
+fn keeping_root<'a>(dir: &'a [u8], package_json_path: &'a [u8]) -> &'a [u8] {
+    if path::is_absolute(dir) {
+        return dir;
+    }
+    path::dirname(package_json_path).unwrap_or_default()
+}
+
 fn workspace_dir_of(abs_package_json_path: &[u8]) -> &[u8] {
-    strings::without_suffix_comptime(
+    keeping_root(
+        strings::without_suffix_comptime(
+            abs_package_json_path,
+            const_format::concatcp!(SEP_STR, "package.json").as_bytes(),
+        ),
         abs_package_json_path,
-        const_format::concatcp!(SEP_STR, "package.json").as_bytes(),
     )
+}
+
+/// The absolute directory that the `workspaces` of `source` are relative to.
+pub(crate) fn package_json_dir(source: &bun_ast::Source) -> &[u8] {
+    let dir = keeping_root(source.path.name().dir, source.path.text);
+    if dir.is_empty() {
+        return bun_resolver::fs::FileSystem::instance().top_level_dir();
+    }
+    dir
+}
+
+/// `err.path` is relative to `root_dir`, or absolute when the pattern is.
+#[cold]
+fn add_glob_error(
+    log: &mut bun_ast::Log,
+    source: &bun_ast::Source,
+    loc: bun_ast::Loc,
+    user_pattern: &[u8],
+    root_dir: &[u8],
+    err: &bun_sys::Error,
+) -> crate::Error {
+    let mut buf = path::path_buffer_pool::get();
+    let failed_path = path::string_paths::without_trailing_slash_windows_path(
+        resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
+            root_dir,
+            &mut buf.0[..],
+            &[&err.path],
+        )
+        .unwrap_or(&err.path),
+    );
+    let _ = bun_ast::add_error_pretty!(
+        log,
+        Some(source),
+        loc,
+        "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r> ({} \"{}\")",
+        BStr::new(user_pattern),
+        BStr::new(err.name()),
+        <&'static str>::from(err.syscall),
+        BStr::new(failed_path),
+    );
+    crate::Error::InstallFailed
 }
 
 fn relative_workspace_path<'b>(
@@ -310,10 +364,11 @@ impl WorkspaceMap {
         let orig_msgs_len = log.msgs.len();
 
         let mut workspace_globs: Vec<Box<[u8]>> = Vec::new();
+        let mut negated = NegatedWorkspaces::default();
         let mut filepath_buf_os = path::path_buffer_pool::get();
         let filepath_buf: &mut [u8] = &mut filepath_buf_os.0[..];
         let mut rel_path_buf = path::path_buffer_pool::get();
-        let root_dir: &[u8] = source.path.name().dir;
+        let root_dir: &[u8] = package_json_dir(source);
 
         let scratch = Arena::new();
 
@@ -337,7 +392,9 @@ impl WorkspaceMap {
             }
 
             if glob::detect_glob_syntax(input_path) {
-                workspace_globs.push(Box::<[u8]>::from(input_path));
+                if !negated.take(input_path) {
+                    workspace_globs.push(Box::<[u8]>::from(input_path));
+                }
                 continue;
             }
 
@@ -348,12 +405,13 @@ impl WorkspaceMap {
             );
             let processed = match abs_package_json_path {
                 Some(abs_package_json_path) => {
-                    // skip root package.json
-                    if strings::eql_long(
-                        resolve_path::dirname::<path::platform::Auto>(abs_package_json_path),
+                    let dir = relative_workspace_path(
+                        &mut rel_path_buf.0,
                         root_dir,
-                        true,
-                    ) {
+                        workspace_dir_of(abs_package_json_path),
+                    );
+                    // skip root package.json
+                    if dir.is_empty() {
                         continue;
                     }
 
@@ -361,15 +419,15 @@ impl WorkspaceMap {
                         workspace_names,
                         json_cache,
                         abs_package_json_path,
-                        root_dir,
+                        dir,
                         log,
                     )
-                    .map(|entry| (abs_package_json_path, entry))
+                    .map(|entry| (dir, entry))
                 }
                 None => Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)),
             };
 
-            let (abs_package_json_path, workspace_entry) = match processed {
+            let (rel_input_path, workspace_entry) = match processed {
                 Ok(processed) => processed,
                 Err(err) => {
                     if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
@@ -422,36 +480,16 @@ impl WorkspaceMap {
             let Some(workspace_entry) = workspace_entry else {
                 continue;
             };
-            let rel_input_path = relative_workspace_path(
-                &mut rel_path_buf.0,
-                root_dir,
-                workspace_dir_of(abs_package_json_path),
-            );
-
-            if let Some(builder) = string_builder.as_deref_mut() {
-                builder.count(&workspace_entry.name);
-                builder.count(rel_input_path);
-                builder.cap += MAX_PATH_BYTES;
-                if let Some(version_string) = &workspace_entry.version {
-                    builder.count(version_string);
-                }
-            }
-
             workspace_names.insert(
+                string_builder.as_deref_mut(),
                 rel_input_path,
-                Entry {
-                    name: workspace_entry.name,
-                    name_loc: workspace_entry.name_loc,
-                    version: workspace_entry.version,
-                    hoisting_limits: workspace_entry.hoisting_limits,
-                    unsupported_hoisting_limits: workspace_entry.unsupported_hoisting_limits,
-                },
+                workspace_entry,
             )?;
         }
 
         if workspace_globs.len() > 0 {
             let mut arena = Arena::new();
-            for (i, user_pattern) in workspace_globs.iter().enumerate() {
+            for user_pattern in &workspace_globs {
                 // walker/iter borrow `&arena` and Drop at scope exit,
                 // so resetting here (top of next iter) ensures they drop before invalidation.
                 // Last iter's allocs are freed when `arena` itself drops after the loop.
@@ -468,34 +506,22 @@ impl WorkspaceMap {
                     ))
                 };
 
-                let mut cwd = resolve_path::dirname::<path::platform::Auto>(source.path.text);
-                if cwd.is_empty() {
-                    cwd = bun_resolver::fs::FileSystem::instance().top_level_dir();
-                }
                 // GlobWalker::init_with_cwd is now an associated constructor
                 // returning `Result<Maybe<Self>>`; arena param dropped (heap-backed),
                 // ignore filter supplied as final arg.
                 let mut walker = match GlobWalker::init_with_cwd(
                     glob_pattern,
-                    cwd,
-                    false,
-                    false,
-                    false,
-                    false,
-                    true,
+                    root_dir,
+                    /* dot: */ false,
+                    /* absolute: */ false,
+                    /* follow_symlinks: */ true,
+                    /* error_on_broken_symlinks: */ false,
+                    /* only_files: */ true,
                     Some(ignored_workspace_paths),
                 )? {
                     Ok(w) => w,
                     Err(e) => {
-                        let _ = bun_ast::add_error_pretty!(
-                            log,
-                            Some(source),
-                            loc,
-                            "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
-                            BStr::new(user_pattern),
-                            BStr::new(e.name()),
-                        );
-                        return Err(crate::Error::GlobError);
+                        return Err(add_glob_error(log, source, loc, user_pattern, root_dir, &e));
                     }
                 };
                 // walker dropped at end of loop iter; GlobWalker is heap-backed with no
@@ -503,31 +529,22 @@ impl WorkspaceMap {
 
                 let mut iter = glob::walk::Iterator::new(&mut walker);
                 if let Err(e) = iter.init()? {
-                    let _ = bun_ast::add_error_pretty!(
-                        log,
-                        Some(source),
-                        loc,
-                        "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
-                        BStr::new(user_pattern),
-                        BStr::new(e.name()),
-                    );
-                    return Err(crate::Error::GlobError);
+                    return Err(add_glob_error(log, source, loc, user_pattern, root_dir, &e));
                 }
 
-                'next_match: loop {
+                loop {
                     let matched_path_owned = match iter.next()? {
                         Ok(Some(r)) => r,
                         Ok(None) => break,
                         Err(e) => {
-                            let _ = bun_ast::add_error_pretty!(
+                            return Err(add_glob_error(
                                 log,
-                                Some(source),
+                                source,
                                 loc,
-                                "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
-                                BStr::new(user_pattern),
-                                BStr::new(e.name()),
-                            );
-                            return Err(crate::Error::GlobError);
+                                user_pattern,
+                                root_dir,
+                                &e,
+                            ));
                         }
                     };
                     let matched_path: &[u8] = &matched_path_owned;
@@ -535,30 +552,8 @@ impl WorkspaceMap {
                     let entry_dir: &[u8] =
                         resolve_path::dirname::<path::platform::Auto>(matched_path);
 
-                    // skip root package.json
-                    if matched_path == b"package.json" {
+                    if negated.excludes(entry_dir) {
                         continue;
-                    }
-
-                    {
-                        let matched_path_without_package_json = strings::without_trailing_slash(
-                            strings::without_suffix_comptime(matched_path, b"package.json"),
-                        );
-
-                        // check if it's negated by any remaining patterns
-                        for next_pattern in &workspace_globs[i + 1..] {
-                            let result =
-                                glob::r#match(next_pattern, matched_path_without_package_json);
-                            if result.is_negated() && !result.matches() {
-                                bun_output::scoped_log!(
-                                    Lockfile,
-                                    "skipping negated path: {}, {}\n",
-                                    BStr::new(matched_path_without_package_json),
-                                    BStr::new(next_pattern)
-                                );
-                                continue 'next_match;
-                            }
-                        }
                     }
 
                     bun_output::scoped_log!(
@@ -571,20 +566,32 @@ impl WorkspaceMap {
                     let processed = match resolve_path::join_abs_string_buf_checked::<
                         path::platform::Auto,
                     >(
-                        cwd, filepath_buf, &[entry_dir, b"package.json"]
+                        root_dir, filepath_buf, &[entry_dir, b"package.json"]
                     ) {
-                        Some(abs_package_json_path) => process_workspace_name(
-                            workspace_names,
-                            json_cache,
-                            abs_package_json_path,
-                            root_dir,
-                            log,
-                        )
-                        .map(|entry| (abs_package_json_path, entry)),
+                        Some(abs_package_json_path) => {
+                            let dir = relative_workspace_path(
+                                &mut rel_path_buf.0,
+                                root_dir,
+                                workspace_dir_of(abs_package_json_path),
+                            );
+                            // skip root package.json: `**`, or a pattern that leaves the root and matches it again (`../*`)
+                            if dir.is_empty() {
+                                continue;
+                            }
+
+                            process_workspace_name(
+                                workspace_names,
+                                json_cache,
+                                abs_package_json_path,
+                                dir,
+                                log,
+                            )
+                            .map(|entry| (dir, entry))
+                        }
                         None => Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)),
                     };
 
-                    let (abs_package_json_path, workspace_entry) = match processed {
+                    let (workspace_path, workspace_entry) = match processed {
                         Ok(processed) => processed,
                         Err(err) => {
                             if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
@@ -608,31 +615,10 @@ impl WorkspaceMap {
                     let Some(workspace_entry) = workspace_entry else {
                         continue;
                     };
-                    let workspace_path: &[u8] = relative_workspace_path(
-                        &mut rel_path_buf.0,
-                        root_dir,
-                        workspace_dir_of(abs_package_json_path),
-                    );
-
-                    if let Some(builder) = string_builder.as_deref_mut() {
-                        builder.count(&workspace_entry.name);
-                        builder.count(workspace_path);
-                        builder.cap += MAX_PATH_BYTES;
-                        if let Some(version) = &workspace_entry.version {
-                            builder.count(version);
-                        }
-                    }
-
                     workspace_names.insert(
+                        string_builder.as_deref_mut(),
                         workspace_path,
-                        Entry {
-                            name: workspace_entry.name,
-                            version: workspace_entry.version,
-                            name_loc: workspace_entry.name_loc,
-                            hoisting_limits: workspace_entry.hoisting_limits,
-                            unsupported_hoisting_limits: workspace_entry
-                                .unsupported_hoisting_limits,
-                        },
+                        workspace_entry,
                     )?;
                 }
             }

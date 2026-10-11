@@ -191,12 +191,7 @@ impl ExtractTarball {
         let name: &[u8] = if !self.name.slice().is_empty() {
             self.name.slice()
         } else {
-            // Not sure where this case hits yet.
-            // BUN-2WQ
-            bun_core::warn!(
-                "Extracting nameless packages is not supported yet. Please open an issue on GitHub with reproduction steps.",
-            );
-            debug_assert!(false);
+            // A tarball package from the lockfile whose package.json has no `name`.
             b"unnamed-package"
         };
         let basename: &[u8] = 'brk: {
@@ -486,7 +481,7 @@ impl ExtractTarball {
             // The entire body lives inside the thread_local borrow closure.
             let folder_name_z: &ZStr = match self.resolution.tag {
                 ResolutionTag::Npm => {
-                    if !bun_install::dependency::is_safe_install_folder_name(name) {
+                    if !bun_install::package_installer::alias_is_safe_install_target(name) {
                         log.add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
@@ -565,8 +560,73 @@ impl ExtractTarball {
                     bun_sys::make_path::make_path(cache_dir, &folder_name[..scope_len as usize]);
             }
 
+            // Read where it was extracted: a package that fails the install for its
+            // package.json must not become a cache hit for the next one.
+            let needs_json = match self.resolution.tag {
+                // TODO remove extracted files not matching any globs under "files"
+                ResolutionTag::Github
+                | ResolutionTag::LocalTarball
+                | ResolutionTag::RemoteTarball => true,
+                _ => self.in_trusted_dependencies,
+            };
+            let mut json_buf: Option<Vec<u8>> = None;
+            if needs_json {
+                match sys::File::read_from(
+                    self.temp_dir,
+                    path::resolve_path::join_z_buf::<path::platform::Auto>(
+                        &mut bufs.json_path_buf.0,
+                        &[tmpname.as_bytes(), b"package.json"],
+                    )
+                    .as_bytes(),
+                ) {
+                    Ok(buf) => json_buf = Some(buf),
+                    // allow git dependencies without package.json
+                    Err(err)
+                        if self.resolution.tag == ResolutionTag::Github
+                            && err.get_errno() == sys::E::ENOENT => {}
+                    Err(err) => {
+                        log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "\"package.json\" for \"{}\" failed to open: {}",
+                                bun_fmt::s(name),
+                                bun_fmt::s(err.name()),
+                            ),
+                        );
+                        return Err(crate::Error::InstallFailed);
+                    }
+                }
+            }
+            if let Some(buf) = &json_buf {
+                crate::initialize_mini_store();
+                // Its locations borrow `buf`.
+                let mut json_log = bun_ast::Log::init();
+                if let Err(err) = crate::bun_json::ParsedJson::parse_package_json(
+                    &bun_ast::Source::init_path_string("package.json", &buf[..]),
+                    &mut json_log,
+                ) {
+                    log.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "expected \"package.json\" of \"{}\" to be a JSON file: {}: {}",
+                            bun_fmt::s(name),
+                            err.name(),
+                            bun_fmt::escape_control_chars(
+                                json_log
+                                    .msgs
+                                    .first()
+                                    .map_or(&b"syntax error"[..], |msg| &msg.data.text[..]),
+                            ),
+                        ),
+                    );
+                    return Err(crate::Error::InstallFailed);
+                }
+            }
+
             // Now that we've extracted the archive, we rename.
-            let final_dir = match staging.publish(self.cache_dir, folder_name_z, &|_| {
+            let final_dir = match staging.publish_and_open(self.cache_dir, folder_name_z, &|_| {
                 directories::is_package_in_cache_at(
                     self.cache_dir,
                     folder_name_z,
@@ -610,70 +670,22 @@ impl ExtractTarball {
                 .dirname_store()
                 .append(self.url.slice())?;
 
-            let mut json_path: &[u8] = b"";
-            let mut json_buf: Vec<u8> = Vec::new();
-            let needs_json = match self.resolution.tag {
-                // TODO remove extracted files not matching any globs under "files"
-                ResolutionTag::Github
-                | ResolutionTag::LocalTarball
-                | ResolutionTag::RemoteTarball => true,
-                _ => self.in_trusted_dependencies,
-            };
-            if needs_json {
-                let read_result = sys::File::read_file_from(
-                    cache_dir.fd(),
-                    path::resolve_path::join_z_buf::<path::platform::Auto>(
-                        &mut bufs.json_path_buf.0,
-                        &[folder_name, b"package.json"],
-                    )
-                    .as_bytes(),
-                );
-                let (json_file, buf) = match read_result {
-                    Ok(pair) => pair,
-                    Err(err) => {
-                        if self.resolution.tag == ResolutionTag::Github
-                            && err.get_errno() == sys::E::ENOENT
-                        {
-                            // allow git dependencies without package.json
-                            return Ok(ExtractData {
-                                url: url.into(),
-                                resolved: resolved.into(),
-                                ..Default::default()
-                            });
-                        }
-
-                        log.add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "\"package.json\" for \"{}\" failed to open: {}",
-                                bun_fmt::s(name),
-                                bun_fmt::s(err.name()),
-                            ),
-                        );
-                        return Err(crate::Error::InstallFailed);
-                    }
-                };
-                json_buf = buf;
-                // `defer json_file.close()` → close after resolving path.
-                json_path = match json_file.get_path(&mut bufs.json_path_buf) {
-                    Ok(p) => p,
-                    Err(err) => {
-                        let _ = json_file.close();
-                        log.add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "\"package.json\" for \"{}\" failed to resolve: {}",
-                                bun_fmt::s(name),
-                                bun_fmt::s(err.name()),
-                            ),
-                        );
-                        return Err(crate::Error::InstallFailed);
-                    }
-                };
-                let _ = json_file.close();
+            if needs_json && json_buf.is_none() {
+                return Ok(ExtractData {
+                    url: url.into(),
+                    resolved: resolved.into(),
+                    ..Default::default()
+                });
             }
+            let json_path: &[u8] = if needs_json {
+                path::resolve_path::join_z_buf::<path::platform::Auto>(
+                    &mut bufs.json_path_buf.0,
+                    &[final_path.as_bytes(), b"package.json"],
+                )
+                .as_bytes()
+            } else {
+                b""
+            };
 
             // create an index storing each version of a package installed
             if strings::index_of_char(basename, b'/').is_none()
@@ -704,7 +716,7 @@ impl ExtractTarball {
                 resolved: resolved.into(),
                 json: Some(Install::ExtractDataJson {
                     path: ret_json_path.into(),
-                    buf: json_buf,
+                    buf: json_buf.unwrap_or_default(),
                 }),
                 ..Default::default()
             })

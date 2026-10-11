@@ -32,6 +32,10 @@ use crate::{Error, PackageManager};
 impl PackageManager {
     /// Queues a git task; it counts as pending from now on.
     pub(crate) fn enqueue_git_task(&mut self, task: NonNull<Task::Task<'static>>) {
+        debug_assert!(
+            !self.options.runtime_auto_install,
+            "a git child exits through this thread's event loop"
+        );
         self.increment_pending_tasks(1);
         self.git_tasks.push_back(task);
     }
@@ -373,7 +377,7 @@ impl CacheStaging {
         is_complete: fn(&bun_sys::Dir) -> bool,
     ) -> Result<bun_sys::Dir, Error> {
         StagedEntry::new(self.cache_dir, &bun_core::ZBox::from_bytes(&self.tmp_name))
-            .publish(
+            .publish_and_open(
                 self.cache_dir,
                 &bun_core::ZBox::from_bytes(folder_name),
                 &is_complete,

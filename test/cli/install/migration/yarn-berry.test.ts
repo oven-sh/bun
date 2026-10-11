@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync } from "fs";
+import { chmodSync, existsSync, realpathSync } from "fs";
 import { readdir, rm } from "fs/promises";
 import {
   bunEnv,
@@ -719,7 +719,7 @@ describe("yarn berry migration", () => {
     expect(again.exitCode).toBe(0);
   });
 
-  // Only migrated, not installed: bun.lock holds the folder relative to the project, spelled as a path.
+  // bun.lock holds the folder relative to the project, spelled as a path.
   test.concurrent("link: dependencies stay links", async () => {
     const link = (name: string, range: string, owner: string) => ({
       [`${name}@${range}::locator=${encodeURIComponent(owner)}`]: [
@@ -728,20 +728,22 @@ describe("yarn berry migration", () => {
       ],
     });
     const member = { name: "pkg-a", version: "1.0.0", dependencies: { shared: "link:../../vendor/shared" } };
-    const { packageDir: dir } = await testRegistry.createTestDir({
-      bunfigOpts: { linker: "hoisted" },
+    // The project is a subfolder, so that `../outside` is the test's own.
+    const { packageDir } = await testRegistry.createTestDir({
       files: {
-        "package.json": JSON.stringify({
+        "outside/package.json": JSON.stringify({ name: "outside", version: "1.0.0" }),
+        "project/bunfig.toml": `[install]\nlinker = "hoisted"\n`,
+        "project/package.json": JSON.stringify({
           name: "berry-links",
           workspaces: ["packages/*"],
           // to bun, `link:bare` without `./` names a `bun link` registration
           dependencies: { bare: "link:bare", dotted: "link:./vendor/dotted", outside: "link:../outside" },
         }),
-        "packages/pkg-a/package.json": JSON.stringify(member),
-        "bare/package.json": JSON.stringify({ name: "bare", version: "1.0.0" }),
-        "vendor/dotted/package.json": JSON.stringify({ name: "dotted", version: "1.0.0" }),
-        "vendor/shared/package.json": JSON.stringify({ name: "shared", version: "1.0.0" }),
-        "yarn.lock": yarnLock({
+        "project/packages/pkg-a/package.json": JSON.stringify(member),
+        "project/bare/package.json": JSON.stringify({ name: "bare", version: "1.0.0" }),
+        "project/vendor/dotted/package.json": JSON.stringify({ name: "dotted", version: "1.0.0" }),
+        "project/vendor/shared/package.json": JSON.stringify({ name: "shared", version: "1.0.0" }),
+        "project/yarn.lock": yarnLock({
           "berry-links@workspace:.": [
             `resolution: "berry-links@workspace:."`,
             `dependencies:`,
@@ -761,6 +763,7 @@ describe("yarn berry migration", () => {
         }),
       },
     });
+    const dir = join(packageDir, "project");
 
     const { stderr, exitCode } = await run(dir, "pm", "migrate");
     expect(stderr).toContain("migrated lockfile from yarn.lock");
@@ -782,6 +785,19 @@ describe("yarn berry migration", () => {
     ]);
     expect(bunLock).toContain(`"shared": "link:../../vendor/shared",`);
     expect(exitCode).toBe(0);
+
+    await expectFrozenInstall(dir);
+    expect(
+      Object.fromEntries(
+        ["bare", "dotted", "outside", "shared"].map(name => [name, realpathSync(join(dir, "node_modules", name))]),
+      ),
+    ).toEqual({
+      bare: realpathSync(join(dir, "bare")),
+      dotted: realpathSync(join(dir, "vendor", "dotted")),
+      outside: realpathSync(join(packageDir, "outside")),
+      shared: realpathSync(join(dir, "vendor", "shared")),
+    });
+    expect(await bunLockOf(dir)).toBe(bunLock);
 
     // the next migration reads its own `link:./bare` spelling of `link:bare`
     await rm(join(dir, "bun.lock"));
@@ -1850,7 +1866,10 @@ catalogs:
       expect(bunLock).toContain(
         `"one-range-dep@1.0.0", "http://localhost:1234/one-range-dep/-/one-range-dep-1.0.0.tgz", { "dependencies": { "no-deps": "^1.0.0 ", "one-fixed-dep": "1.0.0" }, "peerDependencies": { "a-dep": "*" }, "optionalPeers": ["a-dep"] }`,
       );
-      // bun.lock does not say which edges an extension added, so the extensions go where bun can read them again
+      // bun.lock says which edges an extension added, and the extensions go where bun reads them
+      expect(bunLock).toContain(
+        `  "packageExtensions": {\n    "one-range-dep@1.0.0": { "dependencies": ["one-fixed-dep"], "peerDependencies": ["a-dep"] },\n  },\n`,
+      );
       expect(stderr).toContain("copied .yarnrc.yml packageExtensions to packageExtensions in package.json");
       expect((await Bun.file(join(dir, "package.json")).json()).packageExtensions).toEqual({
         "one-range-dep@1": {
@@ -1867,6 +1886,53 @@ catalogs:
       expect(await bunLockOf(dir)).toBe(bunLock);
     },
   );
+
+  test.concurrent("packageExtensions keep working after the migration", async () => {
+    const { packageDir: dir } = await testRegistry.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({ name: "berry-extended", dependencies: { "a-dep": "^1.0.1" } }),
+        ".yarnrc.yml": `packageExtensions:\n  a-dep@*:\n    dependencies:\n      no-deps: 1.0.0\n`,
+        "yarn.lock": yarnLock({
+          "a-dep@npm:^1.0.1": [`version: 1.0.3`, `resolution: "a-dep@npm:1.0.3"`],
+          "berry-extended@workspace:.": [
+            `resolution: "berry-extended@workspace:."`,
+            `dependencies:`,
+            `  a-dep: "npm:^1.0.1"`,
+          ],
+          "no-deps@npm:1.0.0": [`version: 1.0.0`, `resolution: "no-deps@npm:1.0.0"`],
+        }),
+      },
+    });
+    const extended = (bunLock: string) => bunLock.match(/^    "a-dep@[^\n]*$/m)?.[0];
+
+    const migrated = await run(dir, "install");
+    expect(migrated.stderr).toContain("migrated lockfile from yarn.lock");
+    expect(migrated.stderr).not.toContain("error:");
+    expect(migrated.exitCode).toBe(0);
+    expect(lockedVersions(await bunLockOf(dir))).toEqual(["a-dep@1.0.3", "no-deps@1.0.0"]);
+    expect(extended(await bunLockOf(dir))).toBe(`    "a-dep@1.0.3": { "dependencies": ["no-deps"] },`);
+
+    // an edit of the extension moves the edge that the migration added, and nothing else
+    const manifest = await Bun.file(join(dir, "package.json")).json();
+    expect(manifest.packageExtensions).toEqual({ "a-dep@*": { dependencies: { "no-deps": "1.0.0" } } });
+    manifest.packageExtensions["a-dep@*"].dependencies["no-deps"] = "1.0.1";
+    await Bun.write(join(dir, "package.json"), JSON.stringify(manifest));
+    const edited = await run(dir, "install");
+    expect(edited.stderr).not.toContain("error:");
+    expect(edited.exitCode).toBe(0);
+    expect(lockedVersions(await bunLockOf(dir))).toEqual(["a-dep@1.0.3", "no-deps@1.0.1"]);
+
+    // a version that is resolved later is extended as well
+    const updated = await run(dir, "update", "a-dep");
+    expect(updated.stderr).not.toContain("error:");
+    expect(updated.exitCode).toBe(0);
+    const bunLock = await bunLockOf(dir);
+    expect(lockedVersions(bunLock)).toEqual(["a-dep@1.0.10", "no-deps@1.0.1"]);
+    expect(bunLock).toContain(`{ "dependencies": { "no-deps": "1.0.1" } }`);
+    expect(extended(bunLock)).toBe(`    "a-dep@1.0.10": { "dependencies": ["no-deps"] },`);
+    await expectFrozenInstall(dir);
+  });
 
   test.concurrent("workspaces in both dependency groups, and a link: to a workspace's own folder", async () => {
     const { packageDir: dir } = await testRegistry.createTestDir({

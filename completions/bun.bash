@@ -94,7 +94,7 @@ _bun_completions() {
     GLOBAL_OPTIONS[LONG_OPTIONS]="--use --cwd --bunfile --server-bunfile --config --disable-react-fast-refresh --disable-hmr --env-file --extension-order --jsx-factory --jsx-fragment --extension-order --jsx-factory --jsx-fragment --jsx-import-source --jsx-production --jsx-runtime --main-fields --no-summary --version --platform --public-dir --tsconfig-override --define --external --help --inject --loader --origin --port";
     GLOBAL_OPTIONS[SHORT_OPTIONS]="-c -v -d -e -h -i -l -u -p";
 
-    PACKAGE_OPTIONS[ADD_OPTIONS_LONG]="--development --optional --peer --catalog --filter";
+    PACKAGE_OPTIONS[ADD_OPTIONS_LONG]="--development --optional --peer --save-prod --catalog --filter";
     PACKAGE_OPTIONS[ADD_OPTIONS_SHORT]="-d -F";
     PACKAGE_OPTIONS[REMOVE_OPTIONS_LONG]="--filter";
     PACKAGE_OPTIONS[REMOVE_OPTIONS_SHORT]="-F";

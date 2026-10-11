@@ -168,7 +168,7 @@ pub(crate) fn install_hoisted_packages(
         && sys::directory_exists_at(Fd::cwd(), bun_paths::path_literal!("node_modules/.bun"))
             .unwrap_or(false);
     let old_modules = if replacing_isolated_node_modules {
-        crate::isolated_install::move_node_modules_aside(&this.lockfile)
+        crate::isolated_install::move_node_modules_aside(&this.lockfile, this.options.global)
     } else {
         None
     };
@@ -386,6 +386,7 @@ pub(crate) fn install_hoisted_packages(
                 lockfile: lockfile_ptr,
                 root_node_modules_folder: node_modules_folder,
                 staging_lock: None,
+                tree_dir: None,
                 node: &mut install_node,
                 node_modules: NodeModulesFolder {
                     path: strings::without_trailing_slash(FileSystem::instance().top_level_dir())
@@ -588,6 +589,7 @@ pub(crate) fn install_hoisted_packages(
         }
         // Every package is linked; the scripts still to run need no lock.
         installer.staging_lock = None;
+        installer.tree_dir = None;
 
         // .monotonic is okay because this value is only accessed on this thread.
         this.finished_installing.store(true, Ordering::Relaxed);

@@ -46,7 +46,8 @@ let tarballSpec: string;
 let tarballSpecEscaped: string;
 /** `dist.tarball` of `<name>` for the packages whose tarball tests break on purpose. */
 const distTarball = (name: string) => `${registryUrl}/${name}/-/dep-${C1}.tgz`;
-const distTarballEscaped = (name: string) => `${registryUrl}/${name}/-/dep-${C1_ESCAPED}.tgz`;
+/** A failed request is reported with the URL that was requested, which is `dist.tarball` as `new URL()` serialises it. */
+const distTarballEscaped = (name: string) => new URL(distTarball(name)).href;
 /** Decoded request paths the server answers with a 404. */
 const brokenTarballPaths = new Set<string>();
 
@@ -258,7 +259,7 @@ test.concurrent("the verbose retry warning escapes the resolution", async () => 
   // --verbose also dumps the HTTP client's request trace, which is not package
   // manager output, so only the package manager's own lines are checked here.
   expect(stderr).toContain(`downloading tarball dep@${specEscaped}. Retrying 1/`);
-  expect(stderr).toContain(`GET ${specEscaped} - 500`);
+  expect(stderr).toContain(`GET ${new URL(spec).href} - 500`);
   expect(stderr).not.toContain(`dep@${spec}`);
   expect(stderr).not.toContain(`${spec} - 500`);
   expect(exitCode).toBe(1);

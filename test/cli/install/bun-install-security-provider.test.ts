@@ -926,6 +926,12 @@ describe("Dependencies that do not come from a registry", () => {
       version: "link:dep",
       tarball: "",
     }),
+    "link: path": () => ({
+      specifier: "link:./dep",
+      requestedRange: "link:./dep",
+      version: "link:./dep",
+      tarball: "",
+    }),
     "local tarball": () => ({
       specifier: "./dep.tgz",
       requestedRange: "./dep.tgz",
@@ -989,7 +995,7 @@ describe("Dependencies that do not come from a registry", () => {
       const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { out, err, exitCode };
     };
-    if (source.specifier.startsWith("link:")) {
+    if (source.specifier === "link:dep") {
       expect(await run([bunExe(), "link"], join(String(dir), "dep"))).toMatchObject({ exitCode: 0 });
     }
     const { out, err, exitCode } = await run([bunExe(), "install"], String(dir));

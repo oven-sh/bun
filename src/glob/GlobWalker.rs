@@ -673,10 +673,8 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             self.iter_state = IterState::GetNext;
                             return Ok(Ok(()));
                         }
-                        return Ok(Err(e.with_path(
-                            self.walker.pattern_components[idx as usize]
-                                .pattern_slice(&self.walker.pattern),
-                        )));
+                        let full_path = self.walker.join(&[dir_path.as_bytes(), &pat_slice])?;
+                        return Ok(Err(e.with_path(matched_as_slice::<SENTINEL>(&full_path))));
                     }
                     Ok(stat) => stat,
                 };

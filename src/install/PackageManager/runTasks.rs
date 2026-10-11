@@ -11,7 +11,7 @@ use bun_threading::thread_pool::Batch as ThreadPoolBatch;
 use crate::extract_tarball;
 use crate::network_task::Callback as NetworkTaskCallback;
 use crate::npm;
-use crate::patch_install::{Callback as PatchTaskCallback, PatchTask};
+use crate::patch_install::Callback as PatchTaskCallback;
 use crate::retry_timer;
 use crate::tarball_stream::TarballStream;
 use bun_install::{
@@ -217,7 +217,8 @@ impl ErasedCallbacks {
     /// The tarball of `task_id` will not arrive. Marks the dedupe entry as failed, so
     /// that a later `enqueue_package_for_download` fails fast instead of waiting for it
     /// for ever (entry kept) or downloading it again (entry removed), then tells the
-    /// running installer. `false`: none is running, and the caller reports the failure.
+    /// running installer. `Some(is_required)`: the caller reports the failure, as an
+    /// error or as a warning.
     fn dispatch_tarball_error(
         &self,
         manager: &mut PackageManager,
@@ -228,18 +229,29 @@ impl ErasedCallbacks {
         resolution: &bun_install::Resolution,
         err: crate::Error,
         url: &[u8],
-    ) -> bool {
+    ) -> Option<bool> {
         manager.mark_network_task_failed(task_id);
-        if !self.has_on_package_download_error {
-            return false;
-        }
-        if self.is_store_installer {
-            (self.on_package_download_error_store)(ctx, task_id, name, resolution, err, url);
+        // A linker queues a tarball once, for the first dependency that reaches it.
+        let is_required = if self.has_on_extract {
+            let package_id = manager.lockfile.buffers.resolutions[dependency_id as usize];
+            manager.is_package_required(dependency_id, package_id)
         } else {
+            manager.is_network_task_required(task_id)
+        };
+        if !self.has_on_package_download_error {
+            return Some(is_required);
+        }
+        if !self.is_store_installer {
             let package_id = manager.lockfile.buffers.resolutions[dependency_id as usize];
             (self.on_package_download_error_pkg)(ctx, package_id, name, resolution, err, url);
+        } else if is_required {
+            (self.on_package_download_error_store)(ctx, task_id, name, resolution, err, url);
+        } else {
+            self.store_installer(ctx)
+                .on_optional_package_download_error(task_id);
+            return Some(false);
         }
-        true
+        None
     }
 }
 
@@ -259,6 +271,98 @@ pub fn run_tasks<C: RunTasksCallbacks>(
     )
 }
 
+/// What every exit of `run_tasks_erased` does last.
+struct FinishPass<'a> {
+    manager: *mut PackageManager,
+    counts_tasks: bool,
+    log_level: Options::LogLevel,
+    has_updated_this_run: &'a Cell<bool>,
+}
+
+impl Drop for FinishPass<'_> {
+    fn drop(&mut self) {
+        // SAFETY: drops after every body borrow of `manager` has ended
+        // (scope exit or `?` unwind); the pointer retains provenance because
+        // the body only ever accessed that allocation through reborrows of it.
+        let manager = unsafe { &mut *self.manager };
+        manager.drain_dependency_list();
+
+        if self.log_level.show_progress() {
+            manager.start_progress_bar_if_none();
+
+            if self.counts_tasks {
+                let completed_items = (manager.total_tasks - manager.pending_task_count()) as usize;
+                // SAFETY: `downloads_node` set by `start_progress_bar_if_none`;
+                // points into `manager.progress` which is live.
+                let node = manager.downloads_node_mut();
+                if completed_items != node.unprotected_completed_items.load(Ordering::Relaxed)
+                    || self.has_updated_this_run.get()
+                {
+                    node.set_completed_items(completed_items);
+                    node.set_estimated_total_items(manager.total_tasks as usize);
+                }
+            }
+            manager.downloads_node_mut().activate();
+            manager.progress.maybe_refresh();
+        }
+    }
+}
+
+/// Returns a finished resolve task to its pool.
+struct ReturnResolveTask {
+    manager: *mut PackageManager,
+    task: *mut Task::Task<'static>,
+}
+
+impl Drop for ReturnResolveTask {
+    fn drop(&mut self) {
+        // SAFETY: `manager` is the provenance root for every body access
+        // to the manager; `task` is the sole live handle to this pool slot.
+        unsafe {
+            (*self.task).deinit_payload();
+            (*self.manager).preallocated_resolve_tasks.put(self.task);
+        }
+    }
+}
+
+/// Returns the network task that a finished resolve task owns to its pool. Null: it owns none.
+struct ReturnNetworkTask {
+    manager: *mut PackageManager,
+    task: *mut NetworkTask,
+}
+
+impl Drop for ReturnNetworkTask {
+    fn drop(&mut self) {
+        if self.task.is_null() {
+            return;
+        }
+        // SAFETY: see `ReturnResolveTask`. `unsafe_http_client` is `MaybeUninit` so
+        // `put()`'s `drop_in_place<NetworkTask>` skips it — drop manually
+        // (HTTP completed, so it IS init) so the inner
+        // `AsyncHTTP.{request,response}_headers: EntryList` don't
+        // leak per put/get cycle.
+        unsafe {
+            (*self.task).unsafe_http_client.assume_init_drop();
+            (*self.manager).preallocated_network_tasks.put(self.task);
+        }
+    }
+}
+
+/// Calls `on_resolve` after the waiters of a task, if a root dependency was among them.
+struct NotifyResolved<'a> {
+    cb: &'a ErasedCallbacks,
+    ctx: *mut (),
+    any_root: &'a Cell<bool>,
+}
+
+impl Drop for NotifyResolved<'_> {
+    fn drop(&mut self) {
+        if self.cb.has_on_resolve && self.any_root.get() {
+            (self.cb.on_resolve)(self.ctx);
+        }
+    }
+}
+
 fn run_tasks_erased(
     manager: &mut PackageManager,
     extract_ctx: *mut (),
@@ -266,14 +370,13 @@ fn run_tasks_erased(
     install_peer: bool,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
-    // `Cell<bool>` so the `scopeguard::defer!` below can read it via `&self`
+    // `Cell<bool>` so `FinishPass` below can read it via `&self`
     // while the loop body sets it — no raw-ptr provenance dance needed.
     let has_updated_this_run = Cell::new(false);
     let mut has_network_error = false;
 
-    // scopeguard captures `manager` via raw pointer because the loop
-    // body holds `&mut` to it for the function's duration; `has_updated_this_run`
-    // is a `Cell<bool>` so the guard captures it by shared ref. The guard runs
+    // The guards hold `manager` as a raw pointer because the loop
+    // body holds `&mut` to it for the function's duration. They run
     // on every exit (incl. `?` early-returns).
     //
     // Stacked Borrows: the raw pointers must remain the provenance root for all
@@ -288,31 +391,11 @@ fn run_tasks_erased(
     // before the guards reborrow the same pointer. (`extract_ctx` is already a
     // raw pointer and is only materialized as `&mut` inside the callbacks.)
     let manager = unsafe { &mut *manager_ptr };
-    scopeguard::defer! {
-        // SAFETY: guard drops after every body borrow of `manager` has ended
-        // (scope exit or `?` unwind); `manager_ptr` retains provenance because
-        // the body only ever accessed that allocation through reborrows of it.
-        let manager = unsafe { &mut *manager_ptr };
-        manager.drain_dependency_list();
-
-        if log_level.show_progress() {
-            manager.start_progress_bar_if_none();
-
-            if cb.progress_bar {
-                let completed_items = (manager.total_tasks - manager.pending_task_count()) as usize;
-                // SAFETY: `downloads_node` set by `start_progress_bar_if_none`;
-                // points into `manager.progress` which is live.
-                let node = manager.downloads_node_mut();
-                if completed_items != node.unprotected_completed_items.load(Ordering::Relaxed)
-                    || has_updated_this_run.get()
-                {
-                    node.set_completed_items(completed_items);
-                    node.set_estimated_total_items(manager.total_tasks as usize);
-                }
-            }
-            manager.downloads_node_mut().activate();
-            manager.progress.maybe_refresh();
-        }
+    let _finish_pass = FinishPass {
+        manager: manager_ptr,
+        counts_tasks: cb.progress_bar,
+        log_level,
+        has_updated_this_run: &has_updated_this_run,
     };
 
     let patch_tasks_batch = manager.patch_task_queue.pop_batch();
@@ -554,7 +637,7 @@ fn run_tasks_erased(
                                 bun_ast::Loc::EMPTY,
                                 "{} downloading package manifest <b>{}<r>. Retry {}/{} in {}ms...",
                                 bstr::BStr::new(err.name().as_bytes()),
-                                bstr::BStr::new(name),
+                                bun_core::fmt::escape_control_chars(name),
                                 task.retried,
                                 manager.options.max_retry_count,
                                 wait.as_millis(),
@@ -609,9 +692,15 @@ fn run_tasks_erased(
                             );
                         }
 
-                        fail_update_requests(manager, task.task_id, name, None);
+                        if fail_update_requests(manager, task.task_id, name, None) {
+                            REQUEST_GOT_NO_ANSWER.store(true, Ordering::Relaxed);
+                        }
                     }
 
+                    drop(ReturnNetworkTask {
+                        manager: manager_ptr,
+                        task: task_ptr,
+                    });
                     continue;
                 };
                 let response = &metadata.response;
@@ -635,7 +724,38 @@ fn run_tasks_erased(
                             &task.url_buf,
                         );
 
+                        drop(ReturnNetworkTask {
+                            manager: manager_ptr,
+                            task: task_ptr,
+                        });
                         continue;
+                    }
+
+                    // A dist-tag on the name of a workspace that is not published links the workspace.
+                    if response.status_code == 404
+                        && !cb.manifests_only
+                        && enqueue::has_linkable_workspace(
+                            manager,
+                            bun_semver::string::Builder::string_hash(name),
+                        )
+                    {
+                        manager.mark_network_task_failed(task.task_id);
+                        let waiting = (manager.task_queue.get_mut(&task.task_id))
+                            .map(core::mem::take)
+                            .unwrap_or_default();
+                        process_dependency_list_for_ctx(
+                            cb,
+                            manager,
+                            waiting,
+                            extract_ctx,
+                            install_peer,
+                        )?;
+                        // A row that the workspace cannot satisfy waits for the task again.
+                        if (manager.task_queue.get(&task.task_id))
+                            .is_none_or(|list| list.is_empty())
+                        {
+                            continue;
+                        }
                     }
 
                     if manager.is_network_task_required(task.task_id) {
@@ -659,6 +779,10 @@ fn run_tasks_erased(
                     }
                     fail_update_requests(manager, task.task_id, name, None);
 
+                    drop(ReturnNetworkTask {
+                        manager: manager_ptr,
+                        task: task_ptr,
+                    });
                     continue;
                 }
 
@@ -736,6 +860,10 @@ fn run_tasks_erased(
                             )?;
                         }
 
+                        drop(ReturnNetworkTask {
+                            manager: manager_ptr,
+                            task: task_ptr,
+                        });
                         continue;
                     }
                 }
@@ -850,8 +978,7 @@ fn run_tasks_erased(
                         .map(crate::Error::from)
                         .unwrap_or(crate::Error::TarballFailedToDownload);
 
-                    let is_required = manager.is_network_task_required(task.task_id);
-                    if cb.dispatch_tarball_error(
+                    let Some(is_required) = cb.dispatch_tarball_error(
                         manager,
                         extract_ctx,
                         task.task_id,
@@ -860,9 +987,9 @@ fn run_tasks_erased(
                         &extract.resolution,
                         err,
                         &task.url_buf,
-                    ) {
+                    ) else {
                         continue;
-                    }
+                    };
 
                     if is_required {
                         bun_ast::add_error_pretty!(
@@ -910,8 +1037,7 @@ fn run_tasks_erased(
                 let response = &metadata.response;
 
                 if response.status_code > 399 {
-                    let is_required = manager.is_network_task_required(task.task_id);
-                    if cb.dispatch_tarball_error(
+                    let Some(is_required) = cb.dispatch_tarball_error(
                         manager,
                         extract_ctx,
                         task.task_id,
@@ -928,9 +1054,9 @@ fn run_tasks_erased(
                             _ => crate::Error::TarballHTTP5xx,
                         },
                         &task.url_buf,
-                    ) {
+                    ) else {
                         continue;
-                    }
+                    };
 
                     if is_required {
                         bun_ast::add_error_pretty!(
@@ -1018,18 +1144,14 @@ fn run_tasks_erased(
         // Phase B: have the iterator yield a pool guard that puts back on Drop.
         // SAFETY: `task_ptr` non-null per loop guard; node exclusively owned by this batch.
         let task = unsafe { &mut *task_ptr };
-        // The per-iteration scopeguards capture the function-scope provenance
+        // The per-iteration guards hold the function-scope provenance
         // root (`manager_ptr`) — the body shadow `manager` is a reborrow of
-        // that same root (see drain `defer!` setup), so dereffing the root in a
+        // that same root (see the `FinishPass` setup), so dereffing the root in a
         // guard is valid both before *and* after every body use of the shadow
         // under Stacked Borrows.
-        scopeguard::defer! {
-            // SAFETY: `manager_ptr` is the provenance root for every body access
-            // to `manager`; `task_ptr` is the sole live handle to this pool slot.
-            unsafe {
-                (*task_ptr).deinit_payload();
-                (*manager_ptr).preallocated_resolve_tasks.put(task_ptr);
-            }
+        let _return_task = ReturnResolveTask {
+            manager: manager_ptr,
+            task: task_ptr,
         };
         manager.decrement_pending_tasks();
 
@@ -1048,24 +1170,10 @@ fn run_tasks_erased(
             Task::Tag::PackageManifest => {
                 // capture the `*mut NetworkTask` up front — the
                 // `&'a mut NetworkTask` field can't be moved out through
-                // `ManuallyDrop`'s immutable `Deref` inside the defer body.
-                let net_ptr: *mut NetworkTask = {
-                    let req = task.request_package_manifest_mut();
-                    &raw mut *req.network
-                };
-                scopeguard::defer! {
-                    // SAFETY: see the put-task `defer!` above — `manager_ptr` is the
-                    // function-scope provenance root; `net_ptr` is the network task
-                    // owned by this resolve task and is returned to the pool here.
-                    // `unsafe_http_client` is `MaybeUninit` so `put()`'s
-                    // `drop_in_place<NetworkTask>` skips it — drop manually
-                    // (HTTP completed, so it IS init) so the inner
-                    // `AsyncHTTP.{request,response}_headers: EntryList` don't
-                    // leak per put/get cycle.
-                    unsafe {
-                        (*net_ptr).unsafe_http_client.assume_init_drop();
-                        (*manager_ptr).preallocated_network_tasks.put(net_ptr);
-                    }
+                // `ManuallyDrop`'s immutable `Deref` inside the guard.
+                let _return_network_task = ReturnNetworkTask {
+                    manager: manager_ptr,
+                    task: &raw mut *task.request_package_manifest_mut().network,
                 };
                 if task.status == Task::Status::Fail {
                     let req = task.request_package_manifest();
@@ -1107,6 +1215,9 @@ fn run_tasks_erased(
                     .then(|| manifest.name().to_vec());
 
                 manager.manifests.insert(name_hash, manifest)?;
+                if let Some(entry) = manager.network_dedupe_map.get_mut(&task.id) {
+                    entry.manifest = crate::network_task::ManifestOrigin::Registry;
+                }
 
                 // A task that `populate_manifest_cache` started has no entry.
                 if let Some(dependency_list_entry) = manager.task_queue.get_mut(&task.id) {
@@ -1132,26 +1243,15 @@ fn run_tasks_erased(
             }
             Task::Tag::Extract | Task::Tag::LocalTarball => {
                 // capture the `*mut NetworkTask` up front (only for the
-                // Extract arm) so the defer body need not move the `&mut` out
+                // Extract arm) so the guard need not move the `&mut` out
                 // through `ManuallyDrop`'s immutable `Deref`.
-                let net_ptr: *mut NetworkTask = if task.tag == Task::Tag::Extract {
-                    let req = task.request_extract_mut();
-                    &raw mut *req.network
-                } else {
-                    core::ptr::null_mut()
-                };
-                scopeguard::defer! {
-                    if !net_ptr.is_null() {
-                        // SAFETY: see the put-task `defer!` above — `manager_ptr` is the
-                        // function-scope provenance root; `net_ptr` (checked non-null) is
-                        // the network task owned by this resolve task.
-                        // `unsafe_http_client` is `MaybeUninit` so `put()`'s drop
-                        // skips it — drop manually so headers don't leak.
-                        unsafe {
-                            (*net_ptr).unsafe_http_client.assume_init_drop();
-                            (*manager_ptr).preallocated_network_tasks.put(net_ptr);
-                        }
-                    }
+                let _return_network_task = ReturnNetworkTask {
+                    manager: manager_ptr,
+                    task: if task.tag == Task::Tag::Extract {
+                        &raw mut *task.request_extract_mut().network
+                    } else {
+                        core::ptr::null_mut()
+                    },
                 };
 
                 // SAFETY: `task.tag` selects the active `task.request` union arm.
@@ -1184,7 +1284,7 @@ fn run_tasks_erased(
                         }
                     };
                     // The mark is a no-op for `local_tarball` tasks (they never populate the map).
-                    if cb.dispatch_tarball_error(
+                    let Some(is_required) = cb.dispatch_tarball_error(
                         manager,
                         extract_ctx,
                         task.id,
@@ -1193,18 +1293,30 @@ fn run_tasks_erased(
                         resolution,
                         err,
                         fail_url,
-                    ) {
+                    ) else {
                         continue;
-                    }
+                    };
 
-                    bun_ast::add_error_pretty!(
-                        manager.log_mut(),
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        "{} extracting tarball from <b>{}<r>",
-                        err.name(),
-                        bstr::BStr::new(alias),
-                    );
+                    if is_required {
+                        bun_ast::add_error_pretty!(
+                            manager.log_mut(),
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            "{} extracting tarball from <b>{}<r>",
+                            err.name(),
+                            bstr::BStr::new(alias),
+                        );
+                    } else {
+                        bun_ast::add_warning_pretty!(
+                            manager.log_mut(),
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            "{} extracting tarball from <b>{}<r>",
+                            err.name(),
+                            bstr::BStr::new(alias),
+                        );
+                    }
+                    fail_update_requests(manager, task.id, alias, Some(dependency_id));
 
                     // Void-callback fallback (resolve phase): drain the
                     // `task_queue` entry too so a later install-phase
@@ -1261,10 +1373,10 @@ fn run_tasks_erased(
                             core::mem::take(entry)
                         };
 
-                        scopeguard::defer! {
-                            if cb.has_on_resolve && any_root.get() {
-                                (cb.on_resolve)(extract_ctx);
-                            }
+                        let _notify_resolved = NotifyResolved {
+                            cb,
+                            ctx: extract_ctx,
+                            any_root: &any_root,
                         };
 
                         for dep in dependency_list.into_iter() {
@@ -1411,7 +1523,14 @@ fn run_tasks_erased(
 
                 manager.git_repositories.insert(task.id, repo_fd);
 
-                if cb.has_on_extract {
+                // `bun pm fetch` has no installer, and parks its checkouts on the clone like one.
+                let has_checkout_waiters = cb.has_on_extract
+                    || manager.task_queue.get(&task.id).is_some_and(|waiters| {
+                        waiters.iter().any(|waiter| {
+                            matches!(waiter, bun_install::TaskCallbackContext::GitCheckout { .. })
+                        })
+                    });
+                if has_checkout_waiters {
                     // Installing! The clone task is shared by every dependency on
                     // this repo URL; enqueue a checkout per waiter, not just one.
                     let Some(waiters) = manager.task_queue.remove(&task.id) else {
@@ -1634,10 +1753,10 @@ fn run_tasks_erased(
                             core::mem::take(entry)
                         };
 
-                        scopeguard::defer! {
-                            if cb.has_on_resolve && any_root.get() {
-                                (cb.on_resolve)(extract_ctx);
-                            }
+                        let _notify_resolved = NotifyResolved {
+                            cb,
+                            ctx: extract_ctx,
+                            any_root: &any_root,
                         };
 
                         for dep in dependency_list.into_iter() {
@@ -1970,15 +2089,34 @@ fn forget_failed_git_task(
     this.task_queue.remove(&task_id).unwrap_or_default()
 }
 
+/// No attempt to download the manifest of a package named on the command line got an answer.
+static REQUEST_GOT_NO_ANSWER: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// The exit code that tells `bunx` so (`EX_TEMPFAIL`): the `bun add` it spawned linked and saved
+/// nothing, and the registry did not say that the package is gone.
+pub const BUNX_REGISTRY_UNREACHABLE: u32 = 75;
+
+/// How a command ends whose request failed, before it linked or saved anything.
+pub(crate) fn failed_request_error() -> crate::Error {
+    if REQUEST_GOT_NO_ANSWER.load(Ordering::Relaxed)
+        && bun_core::env_var::feature_flag::BUN_INTERNAL_BUNX_INSTALL.get() == Some(true)
+    {
+        bun_core::Global::exit(BUNX_REGISTRY_UNREACHABLE);
+    }
+    crate::Error::InstallFailed
+}
+
 /// `bun add` / `bun update <name>` exits 1 and saves nothing when a download for the request fails.
+/// True when it was for one.
 fn fail_update_requests(
     this: &mut PackageManager,
     task_id: Task::Id,
     package_name: &[u8],
     tarball_dependency_id: Option<DependencyID>,
-) {
+) -> bool {
     if this.subcommand == Subcommand::Remove {
-        return;
+        return false;
     }
     let lockfile = &*this.lockfile;
     let string_buf = lockfile.buffers.string_bytes.as_slice();
@@ -2028,6 +2166,7 @@ fn fail_update_requests(
             .do_
             .remove(Do::SAVE_LOCKFILE | Do::SAVE_YARN_LOCK | Do::INSTALL_PACKAGES);
     }
+    any_failed
 }
 
 /// A download that failed twice sheds a quarter of the concurrent requests, once
@@ -2080,7 +2219,6 @@ pub fn generate_network_task_for_tarball<'a>(
     is_required: bool,
     dependency_id: DependencyID,
     package: &Package,
-    patch_name_and_version_hash: Option<u64>,
     authorization: Authorization,
 ) -> Result<Option<&'a mut NetworkTask>, ForTarballError> {
     if has_created_network_task(this, task_id, is_required) {
@@ -2111,37 +2249,10 @@ pub fn generate_network_task_for_tarball<'a>(
     }
 
     // reshaped for borrowck —
-    // all `&mut this` uses (patch-task alloc, cache/temp dir, pool slot) happen
+    // all `&mut this` uses (cache/temp dir, pool slot) happen
     // first; the immutable `pkg_name`/`scope` borrows are taken afterwards and
     // live only through `for_tarball`, leaving `this` free for the streaming
     // tail.
-    // The patched-dependency entry can be missing (or its hash not yet
-    // computed) when install state went stale — e.g. the patch was removed
-    // from package.json, leaving the hash only in
-    // `patched_dependencies_to_remove`. Install the package unpatched instead
-    // of panicking.
-    let patch = patch_name_and_version_hash.and_then(|h| {
-        // Its cache entry has no name until the integrity is known; the installers patch it after extraction.
-        if package.resolution.tag.is_tarball() {
-            return None;
-        }
-        Some((
-            h,
-            this.lockfile
-                .patched_dependencies
-                .get(&h)?
-                .patchfile_hash()?,
-        ))
-    });
-    let apply_patch_task = if let Some((h, patch_hash)) = patch {
-        let mut task = PatchTask::new_apply_patch_hash(this, package.meta.id, patch_hash, h);
-        if let PatchTaskCallback::Apply(apply) = &mut task.callback {
-            apply.task_id = Some(task_id);
-        }
-        Some(task)
-    } else {
-        None
-    };
     // Borrowed views: `cache_dir` and `temp_dir` are owned by the `PackageManager`
     // singleton and the `TemporaryDirectory` once-cell, respectively. They flow
     // into `ExtractTarball::{cache_dir,temp_dir}`, which must be `Fd` (not `Dir`)
@@ -2163,7 +2274,7 @@ pub fn generate_network_task_for_tarball<'a>(
     // (`HiveArrayFallback::get()` heap fallback) or stale (reused hive slot).
     // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
     // other alias exists until we return it.
-    unsafe { NetworkTask::write_init(net_ptr, task_id, this_backref, apply_patch_task) };
+    unsafe { NetworkTask::write_init(net_ptr, task_id, this_backref) };
     // SAFETY: `write_init` populated every field with a drop-safe value;
     // `unsafe_http_client` is `MaybeUninit` and overwritten by `for_tarball`.
     let network_task = unsafe { &mut *net_ptr };

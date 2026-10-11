@@ -157,6 +157,7 @@ describe.concurrent("bun pm scan", () => {
         "local-tarball": "./local-tarball.tgz",
         "member": "workspace:*",
         "remote-tarball": "https://user:s3cret@example.com/remote-tarball.tgz?token=s3cret",
+        "signed": "1.0.0",
       };
       await using dir = tempDir("scan-every-kind", {
         "package.json": JSON.stringify({ name: "test-app", workspaces: ["member"], dependencies }),
@@ -180,6 +181,12 @@ describe.concurrent("bun pm scan", () => {
             "local-tarball": ["local-tarball@./local-tarball.tgz", {}],
             "member": ["member@workspace:member"],
             "remote-tarball": ["remote-tarball@https://user:s3cret@example.com/remote-tarball.tgz?token=s3cret", {}],
+            "signed": [
+              "signed@1.0.0",
+              "https://user:s3cret@registry.example.com/signed/-/signed-1.0.0.tgz?signature=abc#fragment",
+              {},
+              "sha512-" + Buffer.alloc(64).toString("base64"),
+            ],
           },
         }),
         "bunfig.toml": scannerBunfig,
@@ -240,6 +247,13 @@ describe.concurrent("bun pm scan", () => {
           version: "https://example.com/remote-tarball.tgz",
           requestedRange: "https://example.com/remote-tarball.tgz",
           tarball: "https://example.com/remote-tarball.tgz",
+        },
+        // The manifest names this URL, not the user: a registry that signs its tarball URLs puts the signature there.
+        {
+          name: "signed",
+          version: "1.0.0",
+          requestedRange: "1.0.0",
+          tarball: "https://registry.example.com/signed/-/signed-1.0.0.tgz?signature=abc#fragment",
         },
       ]);
       expect(stdout).toContain("No advisories found");
@@ -369,6 +383,40 @@ describe.concurrent("bun pm scan", () => {
       expect(stdout).toContain("WARNING: is-odd");
       expect(stdout).toMatch(/3 advisories \(.*1 fatal.*2 warnings.*\)/);
       expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(1);
+    });
+
+    // What an advisory says comes from a database that strangers write to.
+    test("control characters in an advisory are spelled out", async () => {
+      await using dir = tempDir("scan-control-characters", {
+        "package.json": leftPadPkg,
+        "bun.lock": leftPadLock,
+        "bunfig.toml": scannerBunfig,
+        "scanner.js": `
+          module.exports = {
+            scanner: {
+              version: "1",
+              scan: async () => [{
+                package: "left-pad\\x1b[2K\\rsafe",
+                level: "fatal",
+                description: "first line\\n\\tsecond line\\x1b[1A\\x1b[2K",
+                url: "https://example.com/\\x1b]8;;https://evil.example\\x07",
+              }],
+            }
+          };
+        `,
+      });
+
+      const [stdout, , exitCode] = await runScan(dir);
+
+      expect(stdout.split("\n").slice(0, 6)).toEqual([
+        "",
+        String.raw`  FATAL: left-pad\x1b[2K\rsafe`,
+        "    first line",
+        "\t" + String.raw`second line\x1b[1A\x1b[2K`,
+        String.raw`    https://example.com/\x1b]8;;https://evil.example\x07`,
+        "",
+      ]);
       expect(exitCode).toBe(1);
     });
 

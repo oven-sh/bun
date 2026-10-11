@@ -627,6 +627,14 @@ pub(crate) fn append_without_url_credentials(out: &mut Vec<u8>, specifier: &[u8]
     }
 }
 
+/// [`append_without_url_credentials`] that keeps the query string: a registry may sign the
+/// tarball URLs in its manifests.
+pub(crate) fn append_without_url_userinfo(out: &mut Vec<u8>, url: &[u8]) {
+    let (authority_start, host_start, _) = url_credential_offsets(url);
+    out.extend_from_slice(&url[..authority_start]);
+    out.extend_from_slice(&url[if authority_start == 0 { 0 } else { host_start }..]);
+}
+
 impl fmt::Display for StoreURLFormatter<'_> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         let url = self.url;
@@ -1038,6 +1046,22 @@ impl Tag {
     /// The path or URL can name other bytes tomorrow: cached under the integrity bun.lock records.
     pub(crate) fn is_tarball(self) -> bool {
         self == Tag::LocalTarball || self == Tag::RemoteTarball
+    }
+
+    /// `Uninitialized` is the state before a package is appended; `SingleFileModule` has no producer.
+    pub(crate) fn belongs_in_lockfile(self) -> bool {
+        matches!(
+            self,
+            Tag::Root
+                | Tag::Npm
+                | Tag::Folder
+                | Tag::LocalTarball
+                | Tag::Github
+                | Tag::Git
+                | Tag::Symlink
+                | Tag::Workspace
+                | Tag::RemoteTarball
+        )
     }
 
     pub(crate) fn can_enqueue_install_task(self) -> bool {

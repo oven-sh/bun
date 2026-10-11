@@ -94,10 +94,8 @@ it.concurrent("should remove existing package", async () => {
     expect(out1.replace(/\s*\[[0-9\.]+m?s\]/, "").split(/\r?\n/)).toEqual([
       expect.stringContaining("bun remove v1."),
       "",
-      `+ pkg2@${pkg2_path.replace(/\\/g, "/")}`,
-      "",
-      "1 package installed",
-      "Removed: 1",
+      "- pkg1",
+      "1 package removed",
       "",
     ]);
     expect(err1.split(/\r?\n/)).toEqual(["Saved lockfile", ""]);
@@ -487,8 +485,6 @@ for (const linker of ["hoisted", "isolated"] as const) {
       // Every global-dir variable is set so an inherited one can never point the test at the developer's real global folder.
       const globalEnv = { BUN_INSTALL: bunInstall, BUN_INSTALL_GLOBAL_DIR: globalDir, BUN_INSTALL_BIN: globalBin };
       const runGlobal = (...args: string[]) => runWithEnv(globalEnv, String(dir), ...args, "-g", "--linker", linker);
-      // The hoisted linker links the bins into the global bin dir, the isolated one into the node_modules/.bin of the global dir.
-      const binsOf = (of: typeof linker, ...names: string[]) => (linker === of ? binFiles(...names) : []);
 
       for (const name of ["what-bin", "other-bin"]) {
         const { stderr, exitCode } = await runGlobal("add", join(String(dir), name));
@@ -496,8 +492,8 @@ for (const linker of ["hoisted", "isolated"] as const) {
         expect(exitCode).toBe(0);
       }
       expect({ globalBin: readdirSync(globalBin).sort(), bin: binEntries(globalDir) }).toStrictEqual({
-        globalBin: binsOf("hoisted", "other-bin", "what-bin"),
-        bin: binsOf("isolated", "other-bin", "what-bin"),
+        globalBin: binFiles("other-bin", "what-bin"),
+        bin: [],
       });
 
       // The global node_modules is also the `bun link` registry.
@@ -522,8 +518,8 @@ for (const linker of ["hoisted", "isolated"] as const) {
         removed: existsSync(join(globalDir, "node_modules", "what-bin")),
         linked: existsSync(join(globalDir, "node_modules", "linked", "package.json")),
       }).toStrictEqual({
-        globalBin: [...foreign, ...binsOf("hoisted", "other-bin")].sort(),
-        bin: binsOf("isolated", "other-bin"),
+        globalBin: [...foreign, ...binFiles("other-bin")].sort(),
+        bin: [],
         removed: false,
         linked: true,
       });
@@ -599,6 +595,39 @@ it.concurrent("bun remove of a package that is not declared does not write packa
   expect(exitCode).toBe(0);
 });
 
+// A path has no package name. The folder removed for it used to be `node_modules/` + "".
+it.concurrent.each(["../src", "./bar", "file:./bar"])(
+  "bun remove foo %s removes foo and leaves the rest of node_modules alone",
+  async path => {
+    using dir = tempDir("bun-remove-path", {
+      ...local("foo"),
+      ...local("bar"),
+      "src/index.ts": "export {};",
+      "package.json": JSON.stringify({ name: "root", dependencies: { foo: "file:./foo", bar: "file:./bar" } }),
+    });
+    expect((await run(String(dir), "install")).exitCode).toBe(0);
+
+    const { stderr, exitCode } = await remove(String(dir), "foo", path);
+    expect(stderr).not.toContain("error:");
+    expect(await file(join(String(dir), "package.json")).json()).toEqual({
+      name: "root",
+      dependencies: { bar: "file:./bar" },
+    });
+    expect(readdirSync(join(String(dir), "node_modules")).filter(name => !name.startsWith("."))).toEqual(["bar"]);
+    expect(await file(join(String(dir), "node_modules", "bar", "package.json")).json()).toEqual({
+      name: "bar",
+      version: "1.0.0",
+    });
+    expect(
+      readdirSync(String(dir))
+        .filter(name => !name.startsWith("."))
+        .sort(),
+    ).toEqual(["bar", "bun.lock", "foo", "node_modules", "package.json", "src"]);
+    expect(existsSync(join(String(dir), "src", "index.ts"))).toBe(true);
+    expect(exitCode).toBe(0);
+  },
+);
+
 it.concurrent("bun r is an alias of bun remove", async () => {
   using dir = tempDir("bun-r-alias", {
     ...local("foo"),
@@ -617,10 +646,8 @@ it.concurrent("bun r is an alias of bun remove", async () => {
   expect(normalizeBunSnapshot(stdout, String(dir))).toMatchInlineSnapshot(`
     "bun remove <version> (<revision>)
 
-    + bar@bar
-
-    1 package installed
-    Removed: 1"
+    - foo
+    1 package removed"
   `);
   expect(await file(join(String(dir), "package.json")).json()).toStrictEqual({
     name: "root",

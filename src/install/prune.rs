@@ -218,7 +218,7 @@ fn zname(name: &[u8]) -> Vec<u8> {
     z
 }
 
-fn sort_names(names: &mut Vec<Box<[u8]>>) {
+pub(crate) fn sort_names(names: &mut Vec<Box<[u8]>>) {
     index_sort::sort_vec_unstable_by(names, |a, b| a.cmp(b));
 }
 
@@ -534,7 +534,10 @@ fn print_apply_hint() {
 
 fn is_pruned_workspace(manager: &PackageManager, pkg_id: usize) -> bool {
     let pruned = &manager.summary.pruned_workspaces;
-    !pruned.is_empty() && pruned.contains(&manager.lockfile.packages.items_name_hash()[pkg_id])
+    // A registry package can share the name of a pruned workspace.
+    !pruned.is_empty()
+        && manager.lockfile.packages.items_resolution()[pkg_id].tag == ResolutionTag::Workspace
+        && pruned.contains(&manager.lockfile.packages.items_name_hash()[pkg_id])
 }
 
 fn collect_workspace_names(manager: &PackageManager) -> Vec<Box<[u8]>> {
@@ -824,6 +827,27 @@ fn hoist_install_tree(
 fn restore_tree(lockfile: &mut Lockfile, saved: SavedTree) {
     lockfile.buffers.trees = saved.trees;
     lockfile.buffers.hoisted_dependencies = saved.hoisted_dependencies;
+}
+
+/// The sorted names this install puts in the root `node_modules`. The lockfile also keeps the
+/// packages of the dependency types the install skips.
+pub(crate) fn top_level_names(manager: &mut PackageManager) -> Option<Vec<Box<[u8]>>> {
+    let saved = hoist_install_tree(manager, install_features(manager)).ok()?;
+    let buffers = &manager.lockfile.buffers;
+    let deps = buffers.dependencies.as_slice();
+    let buf = buffers.string_bytes.as_slice();
+    let mut names: Vec<Box<[u8]>> = match buffers.trees.as_slice().first() {
+        Some(root) => root
+            .dependencies
+            .get(buffers.hoisted_dependencies.as_slice())
+            .iter()
+            .map(|&id| deps[id as usize].name.slice(buf).into())
+            .collect(),
+        None => Vec::new(),
+    };
+    sort_names(&mut names);
+    restore_tree(&mut manager.lockfile, saved);
+    Some(names)
 }
 
 struct TreeFolder {
@@ -1331,8 +1355,9 @@ fn has_bundled_deps(lockfile: &Lockfile, pkg_id: PackageID) -> bool {
     (slice.begin() as usize..slice.end() as usize).any(|i| deps[i].behavior.is_bundled())
 }
 
-/// Hoisted post-install pass for dedupe / audit fix / update (install_with_manager.rs): removes the copies
-/// `before` placed in a nested or workspace `node_modules` that the install now provides from an ancestor.
+/// Hoisted post-install pass of every command that changed what bun.lock holds (install_with_manager.rs):
+/// removes what `before` placed at the root and the install no longer does, and the copies `before` placed
+/// in a nested or workspace `node_modules` that the install now provides from an ancestor.
 /// The folders are compared with the install tree, not the lockfile's: only the install tree applies the
 /// self-contained barrier, so only it says what a self-contained workspace keeps. The tree carries every
 /// dependency type, so a copy under a dependency that `--production` / `--omit` skipped this run stays.
@@ -1349,7 +1374,7 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
     let after: &Lockfile = &manager.lockfile;
     let workspace_names = collect_workspace_names(manager);
     if after.buffers.trees.is_empty()
-        || (before.buffers.trees.len() < 2 && workspace_names.is_empty())
+        || (before.buffers.trees.is_empty() && workspace_names.is_empty())
     {
         return;
     }
@@ -1378,7 +1403,7 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
     let old_deps = before.buffers.dependencies.as_slice();
     let old_buf = before.buffers.string_bytes.as_slice();
     let mut plan = Plan::default();
-    for old_idx in 1..old.folders.len() {
+    for old_idx in 0..old.folders.len() {
         let old_path = old.path(old_idx);
         if old_path.is_empty() {
             continue;
@@ -1405,6 +1430,7 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
         }
         let resolve_from: tree::Id = match surviving {
             Some(id) => new.trees[id as usize].parent,
+            None if old_idx == 0 => continue,
             None => match new_tree_at(old.path(old.trees[old_idx].parent as usize)) {
                 Some(parent_id) => parent_id,
                 None => continue,
@@ -1847,7 +1873,11 @@ fn store_entry_names(manager: &mut PackageManager, wanted: &DynamicBitSet) -> Ve
     names
 }
 
-fn direct_aliases(manager: &PackageManager, pkg_id: PackageID) -> Vec<Box<[u8]>> {
+fn direct_aliases(
+    manager: &PackageManager,
+    pkg_id: PackageID,
+    linked: &mut reachable::Linked,
+) -> Vec<Box<[u8]>> {
     let lockfile: &Lockfile = &manager.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();
     let deps = lockfile.buffers.dependencies.as_slice();
@@ -1855,15 +1885,22 @@ fn direct_aliases(manager: &PackageManager, pkg_id: PackageID) -> Vec<Box<[u8]>>
     let slice = lockfile.packages.items_dependencies()[pkg_id as usize];
     let mut direct: Vec<Box<[u8]>> = Vec::new();
     for dep_id in slice.begin()..slice.end() {
-        if is_filtered_dependency_or_workspace(
-            dep_id,
-            pkg_id,
-            &[],
-            true,
-            manager,
-            lockfile,
-            resolutions,
-        ) {
+        // `build_store` links a peer that `--omit=peer` leaves out when an ancestor provides it.
+        let behavior = deps[dep_id as usize].behavior;
+        let is_omitted_peer =
+            behavior.is_peer() && !behavior.is_placed(manager.options.local_package_features);
+        if !is_omitted_peer
+            && is_filtered_dependency_or_workspace(
+                dep_id,
+                pkg_id,
+                &[],
+                true,
+                manager,
+                lockfile,
+                resolutions,
+                linked,
+            )
+        {
             continue;
         }
         let target = resolutions[dep_id as usize];
@@ -1917,6 +1954,7 @@ fn plan_isolated(
     let lockfile: &Lockfile = &manager.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
+    let mut linked = reachable::Linked::default();
     for pkg_id in 0..lockfile.packages.len() {
         let res = &pkg_res[pkg_id];
         let folder_path: Box<[u8]> = match res.tag {
@@ -1944,7 +1982,7 @@ fn plan_isolated(
         let Some(dir) = dir else {
             continue;
         };
-        let direct = direct_aliases(manager, pkg_id as PackageID);
+        let direct = direct_aliases(manager, pkg_id as PackageID, &mut linked);
         let folder_idx = scan_folder(
             dir,
             &folder_path,
@@ -1986,6 +2024,26 @@ fn remove_link(dir: &Dir, name: &[u8]) -> sys::Maybe<()> {
     #[cfg(windows)]
     let result = result.or_else(|_| sys::rmdirat(dir.fd(), z));
     result
+}
+
+/// `path` is a directory the installer makes for itself below the project's `node_modules`: an
+/// `@scope`, `.bin`, the `node_modules` of a package or a member, a package's own folder. A link
+/// there came with the project, and what is written and deleted below it would be somewhere
+/// else. The link goes, what it leads to stays.
+pub(crate) fn remove_planted_link(dir: &Dir, path: &ZStr) -> sys::Maybe<()> {
+    #[cfg(not(windows))]
+    let (stat, remove) = (sys::lstatat(dir, path), || sys::unlinkat(dir, path));
+    // `lstatat` takes a junction for a directory. Every caller there names `path` from the cwd.
+    #[cfg(windows)]
+    let (stat, remove) = (sys::lstat(path), || {
+        let _ = dir;
+        sys::unlink(path).or_else(|_| sys::rmdir(path))
+    });
+    match stat {
+        Ok(st) if sys::kind_from_mode(st.st_mode as sys::Mode) == EntryKind::SymLink => remove(),
+        Err(err) if err.get_errno() != E::ENOENT => Err(err),
+        _ => Ok(()),
+    }
 }
 
 fn execute(plan: &Plan, quiet: bool) -> usize {

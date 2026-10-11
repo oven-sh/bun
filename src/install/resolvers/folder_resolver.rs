@@ -16,7 +16,6 @@ use crate::lockfile_real::package::ResolverContext;
 use crate::npm;
 use crate::package_manager_real::PackageManager;
 use crate::resolution::{ResolutionType, Tag as ResolutionTag, TaggedValue};
-use crate::versioned_url::VersionedURLType;
 
 #[derive(Copy, Clone)]
 pub enum FolderResolution {
@@ -91,8 +90,6 @@ pub(crate) enum Kind {
     Folder,
     /// `link:` targets (`Resolution::Symlink`, dependencies not installed).
     Link,
-    /// npm packages already extracted into the cache (`Resolution::Npm`).
-    CacheFolder,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
@@ -166,42 +163,20 @@ type Resolver<'a> = NewResolver<'a, { ResolutionTag::Folder }>;
 type SymlinkResolver<'a> = NewResolver<'a, { ResolutionTag::Symlink }>;
 type WorkspaceResolver<'a> = NewResolver<'a, { ResolutionTag::Workspace }>;
 
-pub(crate) struct CacheFolderResolver {
-    pub version: semver::Version,
-}
-
-impl ResolverContext for CacheFolderResolver {
-    fn check_bundled_dependencies() -> bool {
-        true
-    }
-
-    fn count(&mut self, _builder: &mut StringBuilder<'_>, _json: &Expr) {}
-
-    fn resolve(
-        &mut self,
-        _builder: &mut StringBuilder<'_>,
-        _json: &Expr,
-    ) -> crate::Result<ResolutionType<u64>> {
-        Ok(ResolutionType::<u64>::init(TaggedValue::Npm(
-            VersionedURLType {
-                version: self.version,
-                url: SemverString::from(b""),
-            },
-        )))
-    }
-}
-
-/// Unifies `NewResolver<TAG>` and `CacheFolderResolver` for
-/// `read_package_json_from_disk`; the associated const `IS_WORKSPACE`
-/// distinguishes the workspace resolver.
+/// The associated const `IS_WORKSPACE` distinguishes the workspace resolver
+/// for `read_package_json_from_disk`.
 trait FolderResolverImpl: ResolverContext {
     const IS_WORKSPACE: bool;
+
+    /// As in yarn, the directory of a `link:<path>` needs no package.json.
+    fn manifest_is_optional(&self) -> bool;
 }
 impl<'a, const TAG: ResolutionTag> FolderResolverImpl for NewResolver<'a, TAG> {
     const IS_WORKSPACE: bool = matches!(TAG, ResolutionTag::Workspace);
-}
-impl FolderResolverImpl for CacheFolderResolver {
-    const IS_WORKSPACE: bool = false;
+
+    fn manifest_is_optional(&self) -> bool {
+        matches!(TAG, ResolutionTag::Symlink) && dependency::is_link_path(self.folder_path)
+    }
 }
 
 struct Paths<'a> {
@@ -243,9 +218,7 @@ fn normalize_package_json_path<'a>(
             .len()
     } else {
         let (prefix, needs_sep): (&[u8], bool) = match global_or_relative {
-            GlobalOrRelative::Global(path) | GlobalOrRelative::CacheFolder(path)
-                if !path.is_empty() =>
-            {
+            GlobalOrRelative::Global(path) if !path.is_empty() => {
                 let ends_with_sep = path[path.len() - 1] == SEP;
                 (
                     &path[..path.len() - ends_with_sep as usize],
@@ -347,13 +320,30 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
             bun_perf::trace(bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskFolder);
 
         let source = {
-            let file = File::openat(Fd::cwd(), abs.as_bytes(), O::RDONLY, 0)?;
             body.reset();
-            let read_result = file
-                .read_to_end_with_array_list(&mut body.list, bun_sys::SizeHint::ProbablySmall)
-                .map(|_| ());
-            let _ = file.close();
-            read_result?;
+            match File::openat(Fd::cwd(), abs.as_bytes(), O::RDONLY, 0) {
+                Ok(file) => {
+                    let read_result = file
+                        .read_to_end_with_array_list(
+                            &mut body.list,
+                            bun_sys::SizeHint::ProbablySmall,
+                        )
+                        .map(|_| ());
+                    let _ = file.close();
+                    read_result?;
+                }
+                Err(err)
+                    if resolver.manifest_is_optional()
+                        && matches!(err.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) =>
+                {
+                    let dir = bun_core::ZBox::from_bytes(bun_paths::dirname_simple(abs.as_bytes()));
+                    if !bun_sys::directory_exists_at(Fd::cwd(), &dir).unwrap_or(false) {
+                        return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT));
+                    }
+                    body.list.extend_from_slice(b"{}");
+                }
+                Err(err) => return Err(err.into()),
+            }
 
             bun_ast::Source::init_path_string(abs.as_bytes(), body.list.as_slice())
         };
@@ -378,6 +368,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
             .get_package_id(package.name_hash, Some(version), &package.resolution)
     {
         package.meta.id = existing_id;
+        crate::lockfile_real::package::Diff::keep_resolutions(manager, existing_id, &package);
         manager.lockfile.packages.set(existing_id as usize, package);
         return Ok(*manager.lockfile.packages.get(existing_id as usize));
     }
@@ -389,7 +380,6 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
 pub enum GlobalOrRelative<'a> {
     Global(&'a [u8]),
     Relative(dependency::version::Tag),
-    CacheFolder(&'a [u8]),
 }
 
 pub(crate) fn get_or_put(
@@ -442,9 +432,9 @@ pub(crate) fn get_or_put(
     };
     // Must agree with the resolver picked for each variant below.
     let kind = match global_or_relative {
-        GlobalOrRelative::Global(_) => Kind::Link,
+        GlobalOrRelative::Global(_)
+        | GlobalOrRelative::Relative(dependency::version::Tag::Symlink) => Kind::Link,
         GlobalOrRelative::Relative(_) => Kind::Folder,
-        GlobalOrRelative::CacheFolder(_) => Kind::CacheFolder,
     };
     let key = Key::new(kind, abs.as_bytes());
 
@@ -494,23 +484,21 @@ pub(crate) fn get_or_put(
                     &mut resolver,
                 );
             }
+            dependency::version::Tag::Symlink => 'link: {
+                let folder_path = dependency::link_path_for_lockfile(rel);
+                let mut resolver: SymlinkResolver = NewResolver {
+                    folder_path: &folder_path,
+                };
+                break 'link read_package_json_from_disk(
+                    manager,
+                    abs,
+                    version,
+                    Features::LINK,
+                    &mut resolver,
+                );
+            }
             _ => unreachable!(),
         },
-        GlobalOrRelative::CacheFolder(_) => 'cache_folder: {
-            let mut resolver = CacheFolderResolver {
-                // `GlobalOrRelative::CacheFolder` is only passed by
-                // `PackageManagerResolution` with a `version.tag == .npm`
-                // dependency.
-                version: version.npm().version.to_version(),
-            };
-            break 'cache_folder read_package_json_from_disk(
-                manager,
-                abs,
-                version,
-                Features::NPM,
-                &mut resolver,
-            );
-        }
     };
 
     let package = match result {

@@ -11,7 +11,7 @@ use bun_io::Write as _;
 use super::PatchedDep;
 use super::override_map::ScopedOverride;
 use super::{
-    FormatVersion, Lockfile, Scratch, Stream, StringPool, buffers, package,
+    FormatVersion, Lockfile, Scratch, Stream, StringPool, Tree, buffers, package,
     package_index as PackageIndex,
 };
 use crate::ALIGNMENT_BYTES_TO_REPEAT_BUFFER;
@@ -40,6 +40,7 @@ const HAS_OVERRIDES_TAG: u64 = u64::from_ne_bytes(*b"oVeRriDs");
 const HAS_CATALOGS_TAG: u64 = u64::from_ne_bytes(*b"cAtAlOgS");
 const HAS_CONFIG_VERSION_TAG: u64 = u64::from_ne_bytes(*b"cNfGvRsN");
 const HAS_SCOPED_OVERRIDES_TAG: u64 = u64::from_ne_bytes(*b"sCoPdOvR");
+const HAS_PACKAGE_EXTENSIONS_TAG: u64 = u64::from_ne_bytes(*b"pKgExTnS");
 
 /// Wraps a growing `Vec<u8>` to provide both positional-write semantics
 /// (`get_pos`/`pwrite`) and append semantics (`write_all`/`write_int_*`) for
@@ -169,6 +170,7 @@ impl<'a, 'b> bun_collections::array_hash_map::ArrayHashAdapter<SemverString, Sem
 pub(crate) fn save(
     this: &mut Lockfile,
     options: &PackageManagerOptions,
+    config_version: ConfigVersion,
     bytes: &mut Vec<u8>,
     total_size: &mut usize,
     end_pos: &mut usize,
@@ -279,10 +281,6 @@ pub(crate) fn save(
     }
 
     if this.patched_dependencies.count() > 0 {
-        for patched_dep in this.patched_dependencies.values() {
-            debug_assert!(!patched_dep.patchfile_hash_is_null);
-        }
-
         stream.write_all(&HAS_PATCHED_DEPENDENCIES_TAG.to_ne_bytes())?;
 
         write_array::<PackageNameAndVersionHash>(
@@ -341,7 +339,6 @@ pub(crate) fn save(
     }
 
     stream.write_all(&HAS_CONFIG_VERSION_TAG.to_ne_bytes())?;
-    let config_version: ConfigVersion = options.config_version.unwrap_or(ConfigVersion::CURRENT);
     stream.write_int_le::<u64>(config_version as u64)?;
 
     if this.overrides.has_scoped() {
@@ -375,6 +372,15 @@ pub(crate) fn save(
         write_array::<dependency::External>(&mut stream, &externals, PREFIX_DEP_EXTERNAL)?;
     }
 
+    if !this.package_extensions.applied.is_empty() {
+        stream.write_all(&HAS_PACKAGE_EXTENSIONS_TAG.to_ne_bytes())?;
+        write_array::<u64>(
+            &mut stream,
+            &this.package_extensions.applied_words(),
+            PREFIX_U64,
+        )?;
+    }
+
     *total_size = stream.get_pos()?;
 
     stream.write_all(&ALIGNMENT_BYTES_TO_REPEAT_BUFFER)?;
@@ -392,7 +398,7 @@ pub(crate) fn load(
     lockfile: &mut Lockfile,
     stream: &mut Stream,
     log: &mut Log,
-    mut manager: Option<&mut PackageManager>,
+    manager: Option<&PackageManager>,
 ) -> Result<SerializerLoadResult, Error> {
     let mut res = SerializerLoadResult::default();
     // `FixedBufferStream` exposes the read methods directly, so we
@@ -436,26 +442,18 @@ pub(crate) fn load(
 
     lockfile.packages = packages_load_result.list;
 
-    // `meta.id` is memcpy'd verbatim from disk with no range validation; a
-    // corrupt `bun.lockb` can make it garbage and trip `panic_bounds_check`
-    // in `Package::clone` / `preinstall_state` indexing later. Surface it
-    // here as a parse error so the installer can warn + re-resolve instead
-    // of aborting.
-    {
-        let len = lockfile.packages.len();
-        for meta in lockfile.packages.items_meta() {
-            if meta.id as usize >= len {
-                return Err(crate::Error::InvalidLockfile);
-            }
-        }
-    }
-
     res.packages_need_update = packages_load_result.needs_update;
     res.migrated_from_lockb_v2 = migrate_from_v2;
 
-    lockfile.buffers = buffers::load(stream, log, manager.as_deref_mut())?;
+    lockfile.buffers = buffers::load(stream, log, manager, lockfile.packages.len())?;
     if stream.read_int_le::<u64>()? != 0 {
         return Err(crate::Error::LockfileIsMalformedExpected0AtTheEnd);
+    }
+
+    if packages_load_result.bin_map_end > lockfile.buffers.extern_strings.len()
+        || !ids_and_windows_are_in_range(lockfile)
+    {
+        return Err(crate::Error::InvalidLockfile);
     }
 
     // `name_hash` is derived from `name`. Recompute it, as loading `bun.lock` does.
@@ -627,7 +625,6 @@ pub(crate) fn load(
                     let mut context = dependency::Context {
                         log: &mut *log,
                         buffer: string_bytes,
-                        package_manager: manager.as_deref_mut(),
                     };
                     overrides.map.put_assume_capacity(
                         *name,
@@ -708,7 +705,6 @@ pub(crate) fn load(
                     let mut context = dependency::Context {
                         log: &mut *log,
                         buffer: string_bytes,
-                        package_manager: manager.as_deref_mut(),
                     };
                     let value = dependency::to_dependency(*dep, &mut context);
                     catalogs.default.put_assume_capacity_context(
@@ -752,7 +748,6 @@ pub(crate) fn load(
                         let mut context = dependency::Context {
                             log,
                             buffer: string_bytes,
-                            package_manager: manager.as_deref_mut(),
                         };
                         let value = dependency::to_dependency(*dep, &mut context);
                         group.put_assume_capacity_context(
@@ -805,7 +800,6 @@ pub(crate) fn load(
                     let mut context = dependency::Context {
                         log: &mut *log,
                         buffer: string_bytes,
-                        package_manager: manager.as_deref_mut(),
                     };
                     let parent = dependency::to_dependency(*parent, &mut context);
                     let rule = ScopedOverride {
@@ -815,6 +809,20 @@ pub(crate) fn load(
                     };
                     overrides.push_scoped(rule, string_bytes);
                 }
+            } else {
+                stream.pos -= 8;
+            }
+        }
+    }
+
+    {
+        let remaining_in_buffer = total_buffer_size.saturating_sub(stream.pos as u64);
+
+        if remaining_in_buffer > 8 && total_buffer_size <= stream.buffer.len() as u64 {
+            let next_num = stream.read_int_le::<u64>()?;
+            if next_num == HAS_PACKAGE_EXTENSIONS_TAG {
+                let words: Vec<u64> = buffers::read_array(stream)?;
+                lockfile.package_extensions.set_applied_words(&words);
             } else {
                 stream.pos -= 8;
             }
@@ -877,4 +885,58 @@ pub(crate) fn load(
     debug_assert!(stream.pos as u64 == total_buffer_size);
 
     Ok(res)
+}
+
+/// Everything after the load indexes with these unchecked. `String`s are exempt: `slice` checks them.
+fn ids_and_windows_are_in_range(lockfile: &mut Lockfile) -> bool {
+    let packages_len = lockfile.packages.len();
+    let dependencies_len = lockfile.buffers.dependencies.len();
+    // One dependency id indexes both `dependencies` and `resolutions`.
+    if lockfile.buffers.resolutions.len() != dependencies_len {
+        return false;
+    }
+    for (package_id, dependency) in
+        (lockfile.buffers.resolutions.iter_mut()).zip(lockfile.buffers.dependencies.iter())
+    {
+        if *package_id as usize >= packages_len && *package_id != crate::invalid_package_id {
+            // Writers before v0.6.11 left the id of a peer they did not resolve uninitialized.
+            if !dependency.behavior.is_peer() {
+                return false;
+            }
+            *package_id = crate::invalid_package_id;
+        }
+    }
+
+    let packages = &lockfile.packages;
+    let buffers = &lockfile.buffers;
+    let hoisted_len = buffers.hoisted_dependencies.len();
+    let fits = |off: u32, len: u32, buffer_len: usize| off as usize + len as usize <= buffer_len;
+
+    (packages.items_resolution().first()).is_some_and(|root| root.tag == ResolutionTag::Root)
+        && (packages.items_meta().iter().enumerate()).all(|(id, meta)| meta.id as usize == id)
+        && (packages.items_dependencies().iter())
+            .zip(packages.items_resolutions())
+            .all(|(dependencies, resolutions)| {
+                fits(dependencies.off, dependencies.len, dependencies_len)
+                    && fits(resolutions.off, resolutions.len, dependencies_len)
+                    && resolutions.len == dependencies.len
+                    && (resolutions.off == dependencies.off || dependencies.len == 0)
+            })
+        // Their names are joined into paths; only an install hoists again, which checks them.
+        && buffers.hoisted_dependencies.iter().all(|&id| {
+            (buffers.dependencies.get(id as usize)).is_some_and(|dependency| {
+                super::tree::folder_name_is_safe(dependency.name.slice(&buffers.string_bytes))
+            })
+        })
+        // A tree follows its parent, which rules out cycles.
+        && buffers.trees.iter().enumerate().all(|(position, tree)| {
+            tree.id as usize == position
+                && fits(tree.dependencies.off, tree.dependencies.len, hoisted_len)
+                && if position == 0 {
+                    tree.parent == Tree::INVALID_ID
+                } else {
+                    (tree.parent as usize) < position
+                        && (tree.dependency_id as usize) < dependencies_len
+                }
+        })
 }

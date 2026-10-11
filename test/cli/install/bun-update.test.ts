@@ -414,7 +414,8 @@ it.concurrent("--filter updates only matching workspaces, leaving siblings and r
 });
 
 // Root and pkg-a pin baz to different versions, so pkg-a gets a nested copy. The pin named in `widen` is then
-// replaced by a range its locked resolution still satisfies, so a plain install keeps both copies where they are.
+// replaced by a range its locked resolution still satisfies. Only bun.lock is written, so both copies stay where they
+// are: an install that changes bun.lock removes the copy whose row collapsed itself.
 async function nestedBazRepo(
   ctx: TestContext,
   rootPin: string,
@@ -433,7 +434,7 @@ async function nestedBazRepo(
     join(ctx.package_dir, "packages", "pkg-a", "package.json"),
     JSON.stringify(written["packages/pkg-a"]),
   );
-  await runInstall(ctx);
+  await runInstall(ctx, "--lockfile-only");
   await expectWorkspaces(ctx, written);
   expect(await installedBazVersion(ctx)).toBe(rootPin);
   expect(await installedBazVersion(ctx, "packages/pkg-a")).toBe(pkgAPin);
@@ -1021,6 +1022,66 @@ it.concurrent("should print UTF-8 arrows correctly with colors enabled", async (
   expect(out.replace(/\x1b\[[\d;]*m/g, "")).toContain("↑ baz 0.0.3 → 0.0.5");
   expect(exitCode).toBe(0);
   expect(await packageJsonOf(ctx)).toEqual({ name: "foo", dependencies: { baz: "0.0.5" } });
+});
+
+// The summary picks its colors and its section headers at run time: every kind of row, byte for byte.
+it.concurrent("should print every row of the install summary with colors enabled", async () => {
+  using ctx = await testContext();
+  serve(ctx, {
+    "0.0.3": { bin: { "baz-run": "index.js" } },
+    "0.0.5": { bin: { "baz-exec": "index.js" } },
+    latest: "0.0.5",
+  });
+  await writeFile(
+    join(ctx.package_dir, "package.json"),
+    JSON.stringify({ name: "foo", workspaces: ["packages/*"], dependencies: { baz: "0.0.3" } }),
+  );
+  await mkdir(join(ctx.package_dir, "packages", "pkg-a"), { recursive: true });
+  await writeFile(
+    join(ctx.package_dir, "packages", "pkg-a", "package.json"),
+    JSON.stringify({ name: "pkg-a", dependencies: { baz: "0.0.5" } }),
+  );
+
+  const [r, b, d, green, blue, cyan] = [0, 1, 2, 32, 34, 36].map(code => `\x1b[${code}m`);
+  // `expected` is stdout from the end of `after` (by default the version line) up to the line with the count and the time.
+  const expectSummary = async (args: string[], expected: string, after = "\n") => {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: ctx.package_dir,
+      env: { ...env, FORCE_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [out, exitCode] = await Promise.all([proc.stdout.text(), proc.exited, proc.stderr.text()]);
+    expect(out.slice(out.indexOf(after) + after.length, out.lastIndexOf("\n", out.length - 2) + 1)).toBe(expected);
+    expect(exitCode).toBe(0);
+  };
+
+  await expectSummary(
+    ["install"],
+    `\n${r}${green}+${r} ${b}baz${r}${d}@0.0.3${r} ${d}(${blue}v0.0.5 available${r}${d})${r}\n\n`,
+  );
+
+  await rm(join(ctx.package_dir, "node_modules"), { recursive: true });
+  await rm(join(ctx.package_dir, "packages", "pkg-a", "node_modules"), { recursive: true });
+  await expectSummary(
+    ["install", "--verbose"],
+    `\n${r}${green}+${r} ${b}baz${r}${d}@0.0.3${r}\n` +
+      `${r}\n${cyan}pkg-a${r}${d}:${r}\n${r}${green}+${r} ${b}baz${r}${d}@0.0.5${r}\n\n`,
+    "-- END HASH--\n",
+  );
+
+  await expectSummary(
+    ["update", "--latest"],
+    `\n${r}${cyan}↑${r} ${b}baz${r} ${d}0.0.3 →${r} ${b}${cyan}0.0.5${r}\n\n`,
+  );
+
+  await expectSummary(
+    ["add", "qux@npm:baz@0.0.3"],
+    `\n${r}${green}installed${r} ${b}qux${r}${d}@npm:${r}${b}baz${r}${d}@0.0.3${r} with binaries:\n` +
+      `${r} ${d}- ${r}${b}baz-run${r}\n\n`,
+  );
 });
 
 // The previous version in the "^ name old -> new" line is copied out of the old lockfile before it is rebuilt. Tags

@@ -9,6 +9,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMusl, isWindows, tempDir } from "harness";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -734,7 +735,8 @@ for (const linker of ["hoisted", "isolated"]) {
 // The staging directory of a scoped package is created inside node_modules/@scope.
 // mkdir of anything below a dangling symlink is ENOENT and mkdir of the symlink
 // itself is EEXIST, between which the hoisted linker went back and forth forever.
-// The isolated linker moves a node_modules it did not make aside first.
+// It replaces a link at node_modules/@scope by a directory now, and the isolated
+// linker moves a node_modules it did not make aside first.
 for (const linker of ["hoisted", "isolated"]) {
   test.concurrent.skipIf(isWindows)(
     `${linker} linker: a dangling node_modules/@scope symlink does not hang the install`,
@@ -752,16 +754,11 @@ for (const linker of ["hoisted", "isolated"]) {
       const root = String(dir);
       symlinkSync(join(root, "does-not-exist"), join(root, "node_modules", "@scope"));
 
-      const { stdout, stderr, exitCode } = await install(root);
-      if (linker === "hoisted") {
-        expect(stderr).toContain("ENOENT: failed opening node_modules/package dir for package @scope/dep");
-        expect(stdout).toContain("Failed to install 1 package");
-        expect(exitCode).toBe(1);
-      } else {
-        expect(stderr).not.toContain("error");
-        expect(exitCode).toBe(0);
-        expect(readdirSync(join(root, "node_modules", "@scope"))).toEqual(["dep"]);
-      }
+      const { stderr, exitCode } = await install(root);
+      expect(stderr).not.toContain("error");
+      expect(readdirSync(join(root, "node_modules", "@scope"))).toEqual(["dep"]);
+      expect(lstatSync(join(root, "node_modules", "@scope")).isDirectory()).toBe(true);
+      expect(exitCode).toBe(0);
     },
   );
 }

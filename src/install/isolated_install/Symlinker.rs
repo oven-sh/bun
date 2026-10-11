@@ -61,52 +61,36 @@ impl Symlinker {
                         Ok(len) => len,
                         Err(readlink_err) => {
                             return match readlink_err.get_errno() {
-                                Errno::ENOENT => match self.symlink() {
-                                    Ok(()) => Ok(true),
-                                    Err(symlink_err) => match symlink_err.get_errno() {
-                                        Errno::ENOENT => {
-                                            let Some(dest_parent) = self.dest.dirname() else {
-                                                return Err(symlink_err);
-                                            };
-
-                                            let _ = Fd::cwd().make_path(dest_parent);
-                                            return self.symlink().map(|()| true);
-                                        }
-                                        _ => Err(symlink_err),
-                                    },
-                                },
-                                // readlink failed for a reason other than NOENT —
-                                // dest exists but isn't a symlink. If it's a non-empty
-                                // directory, leave it: this is the `bun patch <pkg>`
-                                // workspace (a detached copy the user is editing
-                                // before `--commit`), and `deleteTree` here would
-                                // silently destroy their in-progress edits. If it's
-                                // a regular file, replace it.
-                                _ => {
-                                    #[cfg(windows)]
-                                    let is_dir = if let Some(a) =
-                                        bun_sys::get_file_attributes(self.dest.slice_z())
+                                Errno::ENOENT => {
+                                    let mut linked = self.symlink();
+                                    if linked
+                                        .as_ref()
+                                        .is_err_and(|err| err.get_errno() == Errno::ENOENT)
+                                        && let Some(dest_parent) = self.dest.dirname()
                                     {
-                                        a.is_directory && !a.is_reparse_point
-                                    } else {
-                                        false
-                                    };
-                                    #[cfg(not(windows))]
-                                    let is_dir = if let Ok(st) = bun_sys::lstat(self.dest.slice_z())
-                                    {
-                                        // `mode_t` is `u16` on darwin/freebsd/android, `u32` on linux.
-                                        bun_sys::posix::s_isdir(st.st_mode as u32)
-                                    } else {
-                                        false
-                                    };
-                                    if is_dir {
-                                        // rmdir succeeds only on an empty directory.
-                                        if bun_sys::rmdir(self.dest.slice_z()).is_err() {
-                                            return Ok(false);
-                                        }
-                                    } else {
-                                        let _ = bun_sys::unlink(self.dest.slice_z());
+                                        let _ = Fd::cwd().make_path(dest_parent);
+                                        linked = self.symlink();
                                     }
+                                    match linked {
+                                        // Another install made it since the readlink.
+                                        Err(err) if err.get_errno() == Errno::EEXIST => {
+                                            self.ensure_symlink(strategy)
+                                        }
+                                        linked => linked.map(|()| true),
+                                    }
+                                }
+                                // Not a link. A directory with a package.json is the copy
+                                // `bun patch <pkg>` made for the user to edit: keep it.
+                                _ => {
+                                    let has_package_json = {
+                                        let mut dest = self.dest.save();
+                                        let _ = dest.append(b"package.json");
+                                        bun_sys::exists_z(dest.slice_z())
+                                    };
+                                    if has_package_json {
+                                        return Ok(false);
+                                    }
+                                    let _ = Fd::cwd().delete_tree(self.dest.slice_z());
                                     return self.symlink().map(|()| true);
                                 }
                             };

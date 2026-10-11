@@ -657,11 +657,6 @@ impl<'a> Segment<'a> {
     pub fn all_prev_segments(self) -> Segments<'a> {
         self.others(|segment| &segment.all_prev)
     }
-
-    /// Whether `prev` leads here from the end of a loop.
-    pub fn is_looped_prev_segment(self, prev: Segment<'a>) -> bool {
-        self.read(|segment| segment.looped_prev.binary_search(&prev.id).is_ok())
-    }
 }
 
 /// The set of current segments that many of ESLint's rules keep, with the stack of those of the

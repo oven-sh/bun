@@ -128,9 +128,17 @@ pub(crate) fn has_newline_backwards(text: &[u8], end: usize) -> bool {
 /// and comments after `at` are passed over.
 #[inline]
 pub(crate) fn is_next_line_empty(text: &[u8], at: usize) -> bool {
-    match text.get(at) {
-        // Nearly always the line ends here.
-        Some(b'\n') => has_newline(text, at + 1),
+    match text.get(at..).unwrap_or_default() {
+        // Nearly always the line ends here, or something else follows on it.
+        [b'\n', ..] => has_newline(text, at + 1),
+        [b',', b' ', next, ..]
+            if !matches!(
+                next,
+                b',' | b';' | b' ' | b'\t' | b'/' | b'\n' | b'\r' | 0xE2
+            ) =>
+        {
+            false
+        }
         _ => is_line_after_the_rest_of_the_line_empty(text, at),
     }
 }

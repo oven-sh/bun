@@ -12,6 +12,7 @@
 
 use crate::rule::When::{AtTheEnd, Entering, Last, Once};
 use crate::rule::{Meta, Plugin, When};
+use crate::utils::sort;
 use bun_core::strings;
 use bun_wyhash::hash_const;
 use std::sync::LazyLock;
@@ -42,11 +43,11 @@ static BY_KEY: LazyLock<Vec<(u32, When, u16)>> = LazyLock::new(|| {
             all.extend(names.map(|name| (rank(*plugin), name, *plugin, *when, *outer)));
         }
     }
-    all.sort_unstable_by_key(|it| (it.0, it.1));
+    sort::sort_unstable_by_key(&mut all, |it| (it.0, it.1));
     let mut by_key: Vec<_> = (all.iter().zip(0u16..))
         .map(|(it, number)| (key(it.2, it.1), it.3, (it.4 << 10) | number))
         .collect();
-    by_key.sort_unstable_by_key(|it| it.0);
+    sort::sort_unstable_by_key(&mut by_key, |it| it.0);
     by_key
 });
 

@@ -466,22 +466,8 @@ impl<'a> Checks<'a> {
         }
     }
 
-    /// The statement whose head the `VariableDeclarationList` at `id` is in, if it is in one.
-    fn loop_with_head(&self, id: usize) -> Option<&'a StmtKind> {
-        let Some(&Parent::Stmt(parent)) = self.file.bound.stmt_parent.get(id) else {
-            return None;
-        };
-        let kind = &self.file.hir.stmts.get(parent.idx())?.kind;
-        let head = match *kind {
-            StmtKind::For { init, .. } => init,
-            StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } => left,
-            _ => return None,
-        };
-        (head.idx() == id).then_some(kind)
-    }
-
     fn is_in_head_of_loop(&self, id: usize) -> bool {
-        self.loop_with_head(id).is_some()
+        super::oxc::loop_with_head(self.file, id).is_some()
     }
 
     /// `checkForStatementDeclaration`
@@ -596,7 +582,7 @@ impl<'a> Checks<'a> {
         if !matches!(statement.kind, StmtKind::Var(_)) {
             return;
         }
-        let head_of = self.loop_with_head(list.idx());
+        let head_of = super::oxc::loop_with_head(self.file, list.idx());
         let kind = var_kind_text(raw.kind);
         if matches!(raw.kind, VarKind::Using | VarKind::AwaitUsing) {
             match head_of {

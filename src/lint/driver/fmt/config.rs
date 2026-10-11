@@ -9,6 +9,7 @@
 
 use super::cli::{Options, Precedence};
 use super::{editorconfig, tailwind};
+use crate::configs::NAMES_OF_VITE;
 use crate::gitignore::{self, Chain};
 use crate::run::{Environment, Fatal};
 use crate::{evaluate, fs, paths};
@@ -552,16 +553,6 @@ impl Formatters {
         }
     }
 }
-
-/// Where Vite+ has its configuration.
-const NAMES_OF_VITE: [&[u8]; 6] = [
-    b"vite.config.ts",
-    b"vite.config.mts",
-    b"vite.config.cts",
-    b"vite.config.js",
-    b"vite.config.mjs",
-    b"vite.config.cjs",
-];
 
 impl Plugins {
     /// `json`: the options that may have `plugins`.

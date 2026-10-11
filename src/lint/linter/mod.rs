@@ -54,7 +54,7 @@ pub use json_v8::parse as json_parse;
 pub use levn::parse_object as parse_levn_object;
 pub use message::{
     Details, LintMessage, RuleId, Suggestion, Suppression, SuppressionKind, Utf16Offsets,
-    write_json,
+    write_json, write_json_indented,
 };
 pub(crate) use per_file::PerFile;
 pub use registry::{
@@ -304,21 +304,6 @@ fn quoted(parts: &[&[u8]]) -> Vec<u8> {
 
 fn is_same_rule(a: &RuleEntry, b: &RuleEntry) -> bool {
     a.meta.plugin == b.meta.plugin && a.meta.name == b.meta.name
-}
-
-/// The opposite of ESLint's `containsDifferentProperty`: equal, whatever the order of the keys.
-fn is_same_json(a: &Json, b: &Json) -> bool {
-    match (a, b) {
-        (Json::Array(a), Json::Array(b)) => {
-            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| is_same_json(a, b))
-        }
-        (Json::Object(a), Json::Object(_)) => {
-            a.len() == b.as_object().map_or(0, <[_]>::len)
-                && a.iter()
-                    .all(|(key, a)| b.get(key).is_some_and(|b| is_same_json(a, b)))
-        }
-        _ => a == b,
-    }
 }
 
 impl<S: RuleSet> Linter<S> {
@@ -1341,7 +1326,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
                 && options
                     .iter()
                     .zip(&existing_options)
-                    .all(|(a, b)| is_same_json(a, b))
+                    .all(|(a, b)| schema::is_equal(a, b))
             {
                 if has_only_severity {
                     b")."

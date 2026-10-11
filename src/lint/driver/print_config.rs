@@ -1,46 +1,9 @@
 //! `--print-config`
 
-use bun_core::printer::json_stringify;
 use bun_lint::language::{Global, Parser, SourceType};
-use bun_lint::linter::{ResolvedConfig, RuleId, write_json};
+pub(crate) use bun_lint::linter::write_json_indented as write_indented;
+use bun_lint::linter::{ResolvedConfig, RuleId};
 use bun_lint::options::Json;
-
-/// `JSON.stringify(value, null, "  ")`
-pub(crate) fn write_indented(out: &mut Vec<u8>, value: &Json, depth: usize) {
-    let new_line = |out: &mut Vec<u8>, depth: usize| {
-        out.push(b'\n');
-        out.resize(out.len() + depth * 2, b' ');
-    };
-    match value {
-        Json::Array(items) if !items.is_empty() => {
-            out.push(b'[');
-            for (i, item) in items.iter().enumerate() {
-                if i > 0 {
-                    out.push(b',');
-                }
-                new_line(out, depth + 1);
-                write_indented(out, item, depth + 1);
-            }
-            new_line(out, depth);
-            out.push(b']');
-        }
-        Json::Object(entries) if !entries.is_empty() => {
-            out.push(b'{');
-            for (i, (key, item)) in entries.iter().enumerate() {
-                if i > 0 {
-                    out.push(b',');
-                }
-                new_line(out, depth + 1);
-                json_stringify(key, out);
-                out.extend_from_slice(b": ");
-                write_indented(out, item, depth + 1);
-            }
-            new_line(out, depth);
-            out.push(b'}');
-        }
-        value => write_json(out, value),
-    }
-}
 
 pub(crate) fn text(text: &[u8]) -> Json {
     Json::String(text.to_vec())

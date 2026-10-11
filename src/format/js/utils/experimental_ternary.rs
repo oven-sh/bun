@@ -9,46 +9,12 @@
 //! ```
 
 use super::assignment_like::is_short_argument;
-use super::conditional::ConditionalLike;
+use super::conditional::{ConditionalLike, Operand, should_extra_indent};
 use super::format_node_without_trailing_comments::FormatNodeWithoutTrailingComments;
 use crate::js::parentheses;
 use crate::js::print::binary_like_expression::is_angular_pipe;
 use crate::prelude::*;
 use crate::{format_args, write};
-
-/// An operand of either.
-#[derive(Copy, Clone)]
-enum Operand<'a> {
-    Expr(Expr<'a>),
-    Type(TypeNode<'a>),
-}
-
-impl Spanned for Operand<'_> {
-    fn span(&self) -> Span {
-        match self {
-            Operand::Expr(e) => e.span(),
-            Operand::Type(ty) => ty.span(),
-        }
-    }
-}
-
-impl Operand<'_> {
-    fn is_conditional(self) -> bool {
-        match self {
-            Operand::Expr(e) => matches!(e.kind(), ExprKind::Cond { .. }),
-            Operand::Type(ty) => matches!(ty.kind(), TypeKind::Cond { .. }),
-        }
-    }
-}
-
-impl<'a> Format<'a> for Operand<'a> {
-    fn fmt(&self, f: &mut Formatter<'a>) {
-        match self {
-            Operand::Expr(e) => e.fmt(f),
-            Operand::Type(ty) => ty.fmt(f),
-        }
-    }
-}
 
 /// The comments between the operands, by what they belong to. Prettier's
 /// `handleConditionalExpressionComments`.
@@ -541,53 +507,6 @@ fn is_followed_by_line_break(e: Expr<'_>) -> bool {
     }
     matches!(parent, AstNodes::JSXExpressionContainer(_))
         && matches!(parent.parent(), AstNodes::JSXAttribute(_))
-}
-
-/// Prettier's `shouldExtraIndentForConditionalExpression`: whether `conditional` is what a chain of
-/// member accesses and calls starts with, which is the whole of what is returned, assigned, ..
-fn should_extra_indent(conditional: Expr<'_>) -> bool {
-    let mut child = conditional;
-    let mut parent = conditional.ast_parent();
-    loop {
-        match parent {
-            AstNodes::ChainExpression(_) => {}
-            AstNodes::TSNonNullExpression(it) => child = it,
-            AstNodes::CallExpression(it) if it.callee() == Some(child) => child = it,
-            AstNodes::StaticMemberExpression(it)
-            | AstNodes::ComputedMemberExpression(it)
-            | AstNodes::PrivateFieldExpression(it)
-                if it.object() == Some(child) =>
-            {
-                child = it;
-            }
-            AstNodes::NewExpression(it) if it.callee() == Some(child) => {
-                child = it;
-                parent = parent.parent();
-                break;
-            }
-            AstNodes::TSAsExpression(it) | AstNodes::TSSatisfiesExpression(it)
-                if it.expression() == Some(child) =>
-            {
-                child = it;
-                parent = parent.parent();
-                break;
-            }
-            _ => break,
-        }
-        parent = parent.parent();
-    }
-    if child == conditional {
-        return false;
-    }
-    match parent {
-        AstNodes::AssignmentExpression(it) => it.right() == Some(child),
-        AstNodes::VariableDeclarator(it) => it.init() == Some(child),
-        AstNodes::ReturnStatement(_) | AstNodes::ThrowStatement(_) => true,
-        AstNodes::UnaryExpression(it)
-        | AstNodes::YieldExpression(it)
-        | AstNodes::AwaitExpression(it) => it.argument() == Some(child),
-        _ => false,
-    }
 }
 
 /// Prettier's `isSimpleExpressionByNodeCount`: whether there are at most `max` nodes in `e`, of

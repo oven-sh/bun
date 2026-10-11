@@ -33,63 +33,6 @@ pub(crate) fn strip_chain_element_wrappers(mut e: Expr<'_>) -> Expr<'_> {
     e
 }
 
-/// Prettier's `isNextLineEmpty`: whether the line after the one that `position` is on is empty. What
-/// is behind `position` on its line may be `,`, `;` and comments.
-#[inline]
-pub(crate) fn is_next_line_empty(source_text: SourceText<'_>, position: u32) -> bool {
-    match source_text
-        .as_bytes()
-        .get(position as usize..)
-        .unwrap_or_default()
-    {
-        // Something else follows on the line.
-        [b',', b' ', next, ..]
-            if !matches!(
-                next,
-                b',' | b';' | b' ' | b'\t' | b'/' | b'\n' | b'\r' | 0xE2
-            ) =>
-        {
-            false
-        }
-        rest => is_line_after_the_rest_of_the_line_empty(rest),
-    }
-}
-
-fn is_line_after_the_rest_of_the_line_empty(mut rest: &[u8]) -> bool {
-    use bun_core::strings::{js_line_break_len, trim_left};
-
-    loop {
-        let count = rest
-            .iter()
-            .take_while(|b| matches!(b, b',' | b';' | b' ' | b'\t'))
-            .count();
-        rest = rest.get(count..).unwrap_or_default();
-        // A block comment on one line.
-        let Some(comment) = rest.strip_prefix(b"/*") else {
-            break;
-        };
-        let Some(end) = bun_core::strings::index_of(comment, b"*/") else {
-            break;
-        };
-        let (comment, after) = comment.split_at(end);
-        if SourceText::new(comment).contains_newline(Span::new(0, comment.len() as u32)) {
-            break;
-        }
-        rest = after.get(2..).unwrap_or_default();
-    }
-    if rest.starts_with(b"//") {
-        let mut end = 0;
-        while let Some(tail) = rest.get(end..)
-            && !tail.is_empty()
-            && js_line_break_len(tail) == 0
-        {
-            end += 1;
-        }
-        rest = rest.get(end..).unwrap_or_default();
-    }
-    js_line_break_len(trim_left(&rest[js_line_break_len(rest)..], b" \t")) > 0
-}
-
 /// Of the comments between the callee of `call`, which ends at `callee_end` and is written, and the `<` or the `(`,
 /// those that trail the callee. `call` has a `(`.
 pub(crate) fn callee_trailing_comments<'a>(

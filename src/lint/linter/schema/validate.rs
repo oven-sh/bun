@@ -52,8 +52,8 @@ fn has_type(data: &Json, name: &[u8]) -> bool {
     }
 }
 
-/// `fast-deep-equal`
-fn is_equal(a: &Json, b: &Json) -> bool {
+/// `fast-deep-equal`, and the opposite of ESLint's `containsDifferentProperty`: equal, whatever the order of the keys.
+pub(in crate::linter) fn is_equal(a: &Json, b: &Json) -> bool {
     match (a, b) {
         (Json::Array(a), Json::Array(b)) => {
             a.len() == b.len() && a.iter().zip(b).all(|(a, b)| is_equal(a, b))

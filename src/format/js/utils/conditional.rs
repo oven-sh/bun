@@ -14,7 +14,7 @@ pub(crate) enum ConditionalLike<'a> {
 
 /// An operand of either.
 #[derive(Copy, Clone, PartialEq, Eq)]
-enum Operand<'a> {
+pub(super) enum Operand<'a> {
     Expr(Expr<'a>),
     Type(TypeNode<'a>),
 }
@@ -38,7 +38,7 @@ impl<'a> Format<'a> for Operand<'a> {
 }
 
 impl Operand<'_> {
-    fn is_conditional(self) -> bool {
+    pub(super) fn is_conditional(self) -> bool {
         match self {
             Operand::Expr(e) => matches!(e.kind(), ExprKind::Cond { .. }),
             Operand::Type(ty) => matches!(ty.kind(), TypeKind::Cond { .. }),
@@ -73,6 +73,62 @@ impl<'a> ConditionalLike<'a> {
                 _ => None,
             },
         }
+    }
+}
+
+/// Prettier's `shouldExtraIndentForConditionalExpression`: whether `conditional` is what a chain of member accesses and calls starts with, which is the whole of
+/// what is returned, assigned, ..:
+///
+/// ```javascript
+/// return (
+///   a
+///     ? b
+///     : c
+/// ).member;
+/// ```
+pub(super) fn should_extra_indent<'a>(conditional: Expr<'a>) -> bool {
+    let mut expression = conditional;
+    let mut parent = conditional.ast_parent();
+    loop {
+        let is = |head: Option<Expr<'a>>| head == Some(expression);
+        match parent {
+            AstNodes::ChainExpression(_) => {}
+            AstNodes::StaticMemberExpression(e)
+            | AstNodes::PrivateFieldExpression(e)
+            | AstNodes::ComputedMemberExpression(e)
+                if is(e.object()) =>
+            {
+                expression = e;
+            }
+            AstNodes::CallExpression(e) if is(e.callee()) => expression = e,
+            AstNodes::TSNonNullExpression(e) => expression = e,
+            // The chain ends here.
+            AstNodes::NewExpression(e) if is(e.callee()) => {
+                expression = e;
+                parent = parent.parent();
+                break;
+            }
+            AstNodes::TSAsExpression(e) | AstNodes::TSSatisfiesExpression(e) => {
+                expression = e;
+                parent = parent.parent();
+                break;
+            }
+            _ => break,
+        }
+        parent = parent.parent();
+    }
+    if expression == conditional {
+        return false;
+    }
+
+    match parent {
+        AstNodes::VariableDeclarator(declarator) => declarator.init() == Some(expression),
+        AstNodes::ReturnStatement(_) | AstNodes::ThrowStatement(_) => true,
+        AstNodes::UnaryExpression(e)
+        | AstNodes::YieldExpression(e)
+        | AstNodes::AwaitExpression(e) => e.argument() == Some(expression),
+        AstNodes::AssignmentExpression(assignment) => assignment.right() == Some(expression),
+        _ => false,
     }
 }
 
@@ -220,69 +276,6 @@ impl<'a> FormatConditionalLike<'a> {
         }
     }
 
-    /// Whether it is what a chain of member accesses and calls starts with, which is the whole of
-    /// what is returned, assigned, ..:
-    ///
-    /// ```javascript
-    /// return (
-    ///   a
-    ///     ? b
-    ///     : c
-    /// ).member;
-    /// ```
-    fn should_extra_indent(&self, layout: ConditionalLayout) -> bool {
-        let ConditionalLike::ConditionalExpression(conditional) = self.conditional else {
-            return false;
-        };
-        if !layout.is_root() {
-            return false;
-        }
-
-        let mut expression = conditional;
-        let mut parent = conditional.ast_parent();
-        loop {
-            let is = |head: Option<Expr<'a>>| head == Some(expression);
-            match parent {
-                AstNodes::ChainExpression(_) => {}
-                AstNodes::StaticMemberExpression(e)
-                | AstNodes::PrivateFieldExpression(e)
-                | AstNodes::ComputedMemberExpression(e)
-                    if is(e.object()) =>
-                {
-                    expression = e;
-                }
-                AstNodes::CallExpression(e) if is(e.callee()) => expression = e,
-                AstNodes::TSNonNullExpression(e) => expression = e,
-                // The chain ends here.
-                AstNodes::NewExpression(e) if is(e.callee()) => {
-                    expression = e;
-                    parent = parent.parent();
-                    break;
-                }
-                AstNodes::TSAsExpression(e) | AstNodes::TSSatisfiesExpression(e) => {
-                    expression = e;
-                    parent = parent.parent();
-                    break;
-                }
-                _ => break,
-            }
-            parent = parent.parent();
-        }
-        if expression == conditional {
-            return false;
-        }
-
-        match parent {
-            AstNodes::VariableDeclarator(declarator) => declarator.init() == Some(expression),
-            AstNodes::ReturnStatement(_) | AstNodes::ThrowStatement(_) => true,
-            AstNodes::UnaryExpression(e)
-            | AstNodes::YieldExpression(e)
-            | AstNodes::AwaitExpression(e) => e.argument() == Some(expression),
-            AstNodes::AssignmentExpression(assignment) => assignment.right() == Some(expression),
-            _ => false,
-        }
-    }
-
     fn is_parent_static_member_expression(
         &self,
         layout: ConditionalLayout,
@@ -406,7 +399,8 @@ struct FormatConditionalLike<'a> {
 impl<'a> Format<'a> for FormatConditionalLike<'a> {
     fn fmt(&self, f: &mut Formatter<'a>) {
         let layout = self.layout(f);
-        let should_extra_indent = self.should_extra_indent(layout);
+        let should_extra_indent = layout.is_root()
+            && matches!(self.conditional, ConditionalLike::ConditionalExpression(e) if should_extra_indent(e));
         let is_jsx_chain = self.jsx_chain || layout.is_jsx_chain();
 
         let format_inner = format_with(|f| {

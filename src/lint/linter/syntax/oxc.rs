@@ -43,8 +43,8 @@ fn error_of_grammar<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
 }
 
 /// The statement in whose head the list of declarations `statement` is: a `for`, a `for-in` or a `for-of`.
-fn loop_with_head<'a>(file: &'a File<'a>, statement: StmtId) -> Option<StmtKind> {
-    let Some(&Parent::Stmt(parent)) = file.bound.stmt_parent.get(statement.idx()) else {
+pub(super) fn loop_with_head<'a>(file: &'a File<'a>, statement: usize) -> Option<StmtKind> {
+    let Some(&Parent::Stmt(parent)) = file.bound.stmt_parent.get(statement) else {
         return None;
     };
     let kind = file.hir.stmts.get(parent.idx())?.kind;
@@ -53,7 +53,7 @@ fn loop_with_head<'a>(file: &'a File<'a>, statement: StmtId) -> Option<StmtKind>
         StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } => left,
         _ => return None,
     };
-    (head == statement).then_some(kind)
+    (head.idx() == statement).then_some(kind)
 }
 
 /// `const` and nothing behind it. `for (const a, b of c)`.
@@ -61,7 +61,7 @@ fn declaration_list<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     let empty = file.stmts_of_kind(StmtTag::Var).filter_map(|it| {
         let raw = it.try_raw()?;
         let is_empty = matches!(raw.kind, StmtKind::Var(list) if list.is_empty())
-            && loop_with_head(file, it.id()).is_none();
+            && loop_with_head(file, it.id().idx()).is_none();
         is_empty.then(|| SyntaxError {
             at: raw.start,
             message: b"A variable declaration list must have at least one variable declarator."
@@ -176,7 +176,7 @@ fn declaration_without_initializer<'a>(file: &'a File<'a>) -> Option<SyntaxError
     let (hir, bound) = (&file.hir, &file.bound);
     let is_in_loop_head = |statement: StmtId| {
         matches!(
-            loop_with_head(file, statement),
+            loop_with_head(file, statement.idx()),
             Some(StmtKind::ForIn { .. } | StmtKind::ForOf { .. })
         )
     };

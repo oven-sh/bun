@@ -107,8 +107,8 @@ const BUILT_IN: &[u8] = br#"[
     { "files": ["**/*.{ts,mts,cts,tsx}"], "extends": ["typescript-eslint/TYPESCRIPT"] }
 ]"#;
 
-/// The files whose `lint` is the configuration of oxlint in a project of Vite+, by priority.
-const NAMES_OF_VITE: [&[u8]; 6] = [
+/// The files whose `lint` and `fmt` are the configurations of oxlint and oxfmt in a project of Vite+, by priority.
+pub(crate) const NAMES_OF_VITE: [&[u8]; 6] = [
     b"vite.config.ts",
     b"vite.config.mts",
     b"vite.config.cts",

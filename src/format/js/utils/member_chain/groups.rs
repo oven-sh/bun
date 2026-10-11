@@ -1,5 +1,5 @@
 use super::chain_member::{CallExpressionPosition, ChainMember};
-use crate::js::utils::call_expression::is_next_line_empty;
+use crate::js::print::program::is_next_line_empty;
 use crate::prelude::*;
 use crate::write;
 

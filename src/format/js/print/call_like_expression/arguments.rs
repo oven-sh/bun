@@ -9,9 +9,8 @@ use crate::js::print::arrow_function_expression::{
 };
 use crate::js::print::function::FormatFunctionOptions;
 use crate::js::print::parameters::{FormatFormalParameters, has_only_simple_parameters};
-use crate::js::utils::call_expression::{
-    is_call_expression, is_next_line_empty, strip_chain_element_wrappers,
-};
+use crate::js::print::program::is_next_line_empty;
+use crate::js::utils::call_expression::{is_call_expression, strip_chain_element_wrappers};
 use crate::js::utils::is_long_curried_call;
 use crate::js::utils::member_chain::simple_argument::SimpleArgument;
 use crate::js::utils::typecast::is_cast_target;

@@ -16,6 +16,7 @@ use crate::options::Json;
 use crate::rule::Meta;
 use bun_core::strings;
 use validate::Validator;
+pub(super) use validate::is_equal;
 
 /// The strings of an entry of [`data::NAMES`].
 fn names(mut list: &[u8]) -> Json {

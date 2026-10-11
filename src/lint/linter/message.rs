@@ -327,7 +327,7 @@ pub fn write_json(out: &mut Vec<u8>, value: &Json) {
 }
 
 /// `JSON.stringify(value, null, 2)`
-pub(crate) fn write_json_indented(out: &mut Vec<u8>, value: &Json, depth: usize) {
+pub fn write_json_indented(out: &mut Vec<u8>, value: &Json, depth: usize) {
     let new_line = |out: &mut Vec<u8>, depth: usize| {
         out.push(b'\n');
         out.resize(out.len() + 2 * depth, b' ');

@@ -145,6 +145,7 @@ describe("an empty ca list trusts no certificate on Bun's own APIs", () => {
       },
       "Bun.serve({ tls: { ca: [] } })": "http:",
       "Bun.listen({ tls: { ca: [] } })": "plain text: hello",
+      "upgradeTLS({ isServer: true, tls: { ca: [] } })": 'throws Expected "tls" option',
     },
     "pooled connections": {
       "fetch through a CONNECT proxy": {

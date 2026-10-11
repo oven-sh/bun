@@ -136,18 +136,20 @@ pub(crate) trait SSLConfigFromJs: Sized {
         is_server: bool,
     ) -> JsResult<Option<Self>>;
 
-    /// `from_js` for the tls object of `Bun.serve` or `Bun.listen`: [`LoneEmptyCa::NoTlsOption`].
-    fn listener_from_js(
+    /// `from_js` for a socket that its tls object turns to TLS. A server gets [`LoneEmptyCa::NoTlsOption`].
+    fn from_js_for_socket(
         vm: &VirtualMachine,
         global: &JSGlobalObject,
         value: JSValue,
+        is_server: bool,
     ) -> JsResult<Option<Self>>;
 
-    /// `from_generated` for the tls object of `Bun.serve` or `Bun.listen`: [`LoneEmptyCa::NoTlsOption`].
-    fn listener_from_generated(
+    /// `from_generated` for a socket that its tls object turns to TLS. A server gets [`LoneEmptyCa::NoTlsOption`].
+    fn from_generated_for_socket(
         vm: &VirtualMachine,
         global: &JSGlobalObject,
         generated: &jsc::generated::SSLConfig,
+        is_server: bool,
     ) -> JsResult<Option<Self>>;
 
     fn from_generated_with(
@@ -164,9 +166,7 @@ pub(crate) trait SSLConfigFromJs: Sized {
 pub(crate) enum LoneEmptyCa {
     /// A TLS option: a trust list with no entry.
     TrustsNoCa,
-    /// No TLS option, as before `ca: []` had a meaning. A tls object that names no option leaves
-    /// `Bun.serve` and `Bun.listen` without TLS. A server that has no certificate cannot do TLS, so
-    /// the empty list must not turn a plain-text server into one that fails every handshake.
+    /// No TLS option: a server stays plain text. With no certificate it cannot do TLS.
     NoTlsOption,
 }
 
@@ -191,21 +191,28 @@ impl SSLConfigFromJs for SSLConfig {
         Self::from_generated_with(vm, global, generated, is_server, LoneEmptyCa::TrustsNoCa)
     }
 
-    fn listener_from_js(
+    fn from_js_for_socket(
         vm: &VirtualMachine,
         global: &JSGlobalObject,
         value: JSValue,
+        is_server: bool,
     ) -> JsResult<Option<SSLConfig>> {
         let generated = jsc::generated::SSLConfig::from_js(global, value)?;
-        Self::listener_from_generated(vm, global, &generated)
+        Self::from_generated_for_socket(vm, global, &generated, is_server)
     }
 
-    fn listener_from_generated(
+    fn from_generated_for_socket(
         vm: &VirtualMachine,
         global: &JSGlobalObject,
         generated: &jsc::generated::SSLConfig,
+        is_server: bool,
     ) -> JsResult<Option<SSLConfig>> {
-        Self::from_generated_with(vm, global, generated, true, LoneEmptyCa::NoTlsOption)
+        let lone_empty_ca = if is_server {
+            LoneEmptyCa::NoTlsOption
+        } else {
+            LoneEmptyCa::TrustsNoCa
+        };
+        Self::from_generated_with(vm, global, generated, is_server, lone_empty_ca)
     }
 
     fn from_generated_with(
@@ -439,9 +446,7 @@ fn handle_path(
 enum EmptyArray {
     /// The same as an option that was not given.
     Absent,
-    /// A given list that holds nothing. `ca: []` trusts no CA: Node adds its
-    /// default roots only for a falsy `ca`, and an empty array is not falsy.
-    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/secure-context.js#L177-L184
+    /// A given list with no entry: `ca: []` trusts no CA, as in Node's `configSecureContext`.
     EmptySet,
 }
 

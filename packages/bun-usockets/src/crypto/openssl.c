@@ -824,13 +824,9 @@ end:
   return ret;
 }
 
-/* The context's own cert store for mutation. A marked context has one and
- * keeps it as it is, also when its `ca` put zero certificates in it (an empty
- * list, or a key PEM, which Node ignores too): the default roots are neither
- * added to that intentionally-empty pin set nor built for it. An unmarked
- * context holds the process-shared default roots (us_ssl_ctx_build_raw): they
- * are replaced by a private full copy, and the context is marked so the
- * per-socket attach keeps it.
+/* The context's own cert store for mutation. A marked context keeps the store
+ * it has, also an empty one (`ca: []`). An unmarked one holds the shared
+ * default roots: a private full copy replaces them, and the context is marked.
  * https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_context.cc#L1831 */
 static X509_STORE *us_ssl_ctx_get_own_cert_store(SSL_CTX *ctx) {
   us_ex_idx_ensure();
@@ -1353,8 +1349,7 @@ SSL_CTX *us_ssl_ctx_build_raw(struct us_bun_socket_context_options_t options,
     SSL_CTX_set_ex_data(ssl_context, us_ctx_user_ca_ex_idx, (void *)1);
     /* As above: user CAs only, into the SSL_CTX's own initially-empty store —
      * otherwise a server doing mTLS with `ca: [internalCA]` would also accept
-     * any client certificate that chains to a public root. A `ca` list with
-     * no entries (node's `ca: []`) leaves the store empty: nothing is trusted. */
+     * any client certificate that chains to a public root. */
     X509_STORE *cert_store = SSL_CTX_get_cert_store(ssl_context);
     STACK_OF(CRYPTO_BUFFER) *ca_certs = sk_CRYPTO_BUFFER_new_null();
     for (unsigned int i = 0; ca_certs != NULL && i < options.ca_count; i++) {

@@ -343,31 +343,44 @@ const modes = {
       return promise;
     };
     using lone = Bun.serve({ port: 0, hostname: "127.0.0.1", tls: { ca: [] }, fetch: () => new Response("ok") });
-    // What a listener gets from a client that sends "hello" in the clear.
+    // A client that sends "hello" in the clear.
+    const sendHello = (port, onClose) =>
+      Bun.connect({
+        hostname: "127.0.0.1",
+        port,
+        socket: { open: socket => void socket.write("hello"), data() {}, error() {}, close: onClose },
+      }).catch(() => {});
+    // What a listener gets from that client.
     const listenerGets = async tls => {
       const { promise, resolve } = Promise.withResolvers();
       using listener = Bun.listen({
         hostname: "127.0.0.1",
         port: 0,
         tls,
+        socket: { data: (socket, chunk) => resolve(`plain text: ${chunk}`), error() {} },
+      });
+      sendHello(listener.port, () => resolve("nothing: it closed the client"));
+      return await promise;
+    };
+    // What upgradeTLS() does on a socket of a plain-text listener.
+    const serverUpgrade = async tls => {
+      const { promise, resolve } = Promise.withResolvers();
+      using listener = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
         socket: {
-          data(socket, chunk) {
-            resolve(`plain text: ${chunk}`);
+          data(raw) {
+            try {
+              raw.upgradeTLS({ isServer: true, tls, socket: { data() {} } });
+              resolve("upgraded");
+            } catch (err) {
+              resolve(`throws ${err.message}`);
+            }
           },
           error() {},
         },
       });
-      const sendsHello = {
-        open(socket) {
-          socket.write("hello");
-        },
-        data() {},
-        error() {},
-        close() {
-          resolve("nothing: it closed the client");
-        },
-      };
-      Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: sendsHello }).catch(() => {});
+      sendHello(listener.port, () => {});
       return await promise;
     };
     return {
@@ -382,9 +395,10 @@ const modes = {
         "key: []": await connect({ key: [] }),
         "crl: []": await connect({ crl: [] }),
       },
-      // A server that has no certificate cannot do TLS. `ca: []` alone leaves it without TLS, as `tls: {}` does.
+      // A server that has no certificate cannot do TLS. For it `ca: []` alone is no TLS option, as `tls: {}` is none.
       "Bun.serve({ tls: { ca: [] } })": lone.url.protocol,
       "Bun.listen({ tls: { ca: [] } })": await listenerGets({ ca: [] }),
+      "upgradeTLS({ isServer: true, tls: { ca: [] } })": await serverUpgrade({ ca: [] }),
     };
   },
 

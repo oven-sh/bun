@@ -254,8 +254,8 @@ impl JsdocFormatter<'_> {
             let (type_to_normalize, type_optional) = strip_optional_type_suffix(type_part.parsed());
             is_type_optional = type_optional;
             normalized_type = match preserve_quotes {
-                true => normalize_type_preserve_quotes(type_to_normalize),
-                false => normalize_type(type_to_normalize, self.quote_style()),
+                true => normalize_type_preserve_quotes(type_to_normalize, self.stack),
+                false => normalize_type(type_to_normalize, self.quote_style(), self.stack),
             };
             if !preserve_quotes {
                 let is_multiline = strings::contains_char(type_to_normalize, b'\n');
@@ -467,8 +467,8 @@ impl JsdocFormatter<'_> {
 
         if let Some(raw_type) = type_part.map(|it| it.parsed()).filter(|it| !it.is_empty()) {
             let mut normalized_type = match preserve_quotes {
-                true => normalize_type_preserve_quotes(raw_type),
-                false => normalize_type_return(raw_type, self.quote_style()),
+                true => normalize_type_preserve_quotes(raw_type, self.stack),
+                false => normalize_type_return(raw_type, self.quote_style(), self.stack),
             };
             // `@type{import('...')}` stays as it is.
             if !(preserve_quotes && has_no_space_before_type && !normalized_type.starts_with(b"{"))

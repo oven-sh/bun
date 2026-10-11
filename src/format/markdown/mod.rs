@@ -19,6 +19,7 @@ use crate::css::doc;
 use crate::front_matter;
 use crate::options::{EmbeddedLanguageFormatting, LineEnding, LineWidth};
 use crate::range::{Offsets, write_with_line_ending};
+use crate::stack::Stack;
 use crate::text::BOM;
 use crate::{FormatError, FormatOptions};
 
@@ -530,12 +531,13 @@ fn with_document<R>(
         indentation: 0,
         is_in_label: false,
         first_of_run: Vec::new(),
-        stack_check: bun_core::StackCheck::init(),
-        is_nested_too_deeply: false,
+        stack: Stack::for_tree(),
+        failure: None,
     };
     let document = printer.print(root);
-    match printer.is_nested_too_deeply {
-        true => Err(FormatError::NestedTooDeeply),
-        false => Ok(then(document)),
+    match printer.failure {
+        _ if printer.stack.ran_out() => Err(FormatError::NestedTooDeeply),
+        Some(failure) => Err(failure),
+        None => Ok(then(document)),
     }
 }

@@ -28,9 +28,10 @@ impl Stack {
         }
     }
 
+    /// Not any more once it has run out: what is left to do is of no use.
     #[inline]
     pub(crate) fn has_room(&self) -> bool {
-        let has_room = self.check.is_safe_to_recurse();
+        let has_room = !self.ran_out.get() && self.check.is_safe_to_recurse();
         if !has_room {
             self.ran_out.set(true);
         }

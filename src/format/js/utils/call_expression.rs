@@ -276,7 +276,10 @@ fn is_test_call(e: Expr<'_>, is_test_callee: fn(Expr<'_>) -> bool) -> bool {
     match (args.next(), args.next(), args.next()) {
         (Some(argument), None, None) => {
             if is_angular_test_wrapper(e)
-                && matches!(e.as_chain_element().parent(), AstNodes::CallExpression(parent) if is_test_call(parent, is_test_callee))
+                // A wrapper with nothing but a wrapper in it is none: what is in it is no function.
+                && matches!(e.as_chain_element().parent(), AstNodes::CallExpression(parent)
+                    if !(is_angular_test_wrapper(parent) && parent.call().is_some_and(|it| it.args().len() == 1))
+                        && is_test_call(parent, is_test_callee))
             {
                 return argument.as_fn().is_some();
             }

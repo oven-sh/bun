@@ -688,14 +688,17 @@ fn inner_node_count(e: Expr<'_>, max: u32, is_javascript: bool) -> u32 {
 }
 
 /// The same for a type. Anything but the simplest counts as many.
-fn inner_type_node_count(ty: TypeNode<'_>) -> u32 {
-    match ty.kind() {
+fn inner_type_node_count(mut ty: TypeNode<'_>) -> u32 {
+    let mut arrays = 0u32;
+    while let TypeKind::Array(element) = ty.kind() {
+        (ty, arrays) = (element, arrays.saturating_add(1));
+    }
+    arrays.saturating_add(match ty.kind() {
         TypeKind::Keyword(_) => 0,
         TypeKind::StringLit(_) | TypeKind::BoolLit(_) => 1,
         TypeKind::Ref { name, args } => {
             (2 * name.len() as u32).saturating_sub(1) + u32::from(!args.is_empty())
         }
-        TypeKind::Array(element) => 1 + inner_type_node_count(element),
         _ => 4,
-    }
+    })
 }

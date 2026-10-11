@@ -8,6 +8,7 @@ use super::text::{lines, parse_index, push_number, push_spaces, trim_start_match
 use super::wrap::{format_table_block, wrap_paragraph, wrap_plain_paragraphs};
 use crate::markdown::ast::{Kind, Node, NodeId, ReferenceType, Tree};
 use crate::options::{FormatOptions, LineWrappingStyle};
+use crate::stack::Stack;
 use crate::text::first_char;
 use bun_core::strings;
 use std::borrow::Cow;
@@ -285,6 +286,7 @@ struct Serializer<'a> {
     prefer_code_fences: bool,
     is_balanced: bool,
     format_options: &'a FormatOptions,
+    stack: &'a Stack,
 }
 
 impl<'a> Serializer<'a> {
@@ -297,6 +299,9 @@ impl<'a> Serializer<'a> {
     }
 
     fn collect_children(&self, id: NodeId, out: &mut Vec<u8>, inside_link: bool) {
+        if !self.stack.has_room() {
+            return;
+        }
         for child in self.tree.children(id) {
             self.collect_inline(child, out, inside_link);
         }
@@ -522,6 +527,9 @@ impl<'a> Serializer<'a> {
         first_paragraph_offset: usize,
         lines: &mut LineBuffer,
     ) {
+        if !self.stack.has_room() {
+            return;
+        }
         let Some(node) = self.node(id) else {
             return;
         };
@@ -909,6 +917,7 @@ pub(super) fn format_description(
     tag_string_length: usize,
     capitalize: bool,
     format_options: &FormatOptions,
+    stack: &Stack,
 ) -> Vec<u8> {
     if strings::is_all_unicode_whitespace(text) {
         return Vec::new();
@@ -962,6 +971,7 @@ pub(super) fn format_description(
         prefer_code_fences: jsdoc_options.is_some_and(|it| it.prefer_code_fences),
         is_balanced,
         format_options,
+        stack,
     };
     let mut lines = LineBuffer::new();
     serializer.serialize_children(root, 0, tag_string_length, &mut lines);

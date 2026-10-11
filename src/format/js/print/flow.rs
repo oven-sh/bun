@@ -143,27 +143,28 @@ fn is_function_type_param(param: Param<'_>) -> bool {
 
 /// Prettier's `includesFunctionTypeInObjectType`. `is_in_object_type`: `node` is.
 fn includes_function_type_in_object_type(node: Node<'_>, is_in_object_type: bool) -> bool {
-    let (is_function_type, is_object_type, operand) = match node {
-        Node::Type(ty) => (
-            ty.tag() == TypeTag::Fn,
-            ty.tag() == TypeTag::Object,
-            ty.flow_nullable_operand(),
-        ),
-        Node::Func(_) => (true, false, None),
-        _ => (false, false, None),
-    };
-    if is_function_type && is_in_object_type {
-        return true;
+    // What is in it and has not been looked at.
+    let mut rest = vec![(node, is_in_object_type)];
+    while let Some((node, is_in_object_type)) = rest.pop() {
+        let (is_function_type, is_object_type, operand) = match node {
+            Node::Type(ty) => (
+                ty.tag() == TypeTag::Fn,
+                ty.tag() == TypeTag::Object,
+                ty.flow_nullable_operand(),
+            ),
+            Node::Func(_) => (true, false, None),
+            _ => (false, false, None),
+        };
+        if is_function_type && is_in_object_type {
+            return true;
+        }
+        let is_in_object_type = is_in_object_type || is_object_type;
+        match operand {
+            Some(operand) => rest.push((Node::Type(operand), is_in_object_type)),
+            None => node.for_each_child(|child| rest.push((child, is_in_object_type))),
+        }
     }
-    let is_in_object_type = is_in_object_type || is_object_type;
-    if let Some(operand) = operand {
-        return includes_function_type_in_object_type(Node::Type(operand), is_in_object_type);
-    }
-    let mut is_found = false;
-    node.for_each_child(|child| {
-        is_found = is_found || includes_function_type_in_object_type(child, is_in_object_type)
-    });
-    is_found
+    false
 }
 
 /// Prettier's `needsParentheses` for the types of Flow.

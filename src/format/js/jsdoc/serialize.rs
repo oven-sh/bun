@@ -7,6 +7,7 @@ use super::normalize::normalize_tag_kind;
 use super::param_order::reorder_param_tags;
 use super::text::trim_end_matches;
 use crate::options::{CommentLineStrategy, FormatOptions, IndentStyle, JsdocOptions, QuoteStyle};
+use crate::stack::Stack;
 use bun_core::strings;
 use bun_lint::ast::File;
 use bun_lint::ast::jsdoc::{JSDoc, JSDocTag};
@@ -30,6 +31,7 @@ pub(super) struct JsdocFormatter<'o> {
     pub(super) format_options: &'o FormatOptions,
     pub(super) wrap_width: usize,
     pub(super) content_lines: LineBuffer,
+    pub(super) stack: &'o Stack,
 }
 
 impl JsdocFormatter<'_> {
@@ -82,6 +84,7 @@ impl JsdocFormatter<'_> {
                 0,
                 self.options.capitalize_descriptions,
                 self.format_options,
+                self.stack,
             );
             let out = self.content_lines.begin_line();
             if self.options.description_tag {
@@ -278,6 +281,7 @@ impl JsdocFormatter<'_> {
             tag_string_length,
             false,
             self.format_options,
+            self.stack,
         )
     }
 }
@@ -613,12 +617,14 @@ pub(crate) fn format_jsdoc_comment<'a>(
     options: &JsdocOptions,
     format_options: &FormatOptions,
     available_width: usize,
+    stack: &Stack,
 ) -> Option<FormattedJsdoc> {
     JsdocFormatter {
         options,
         format_options,
         wrap_width: available_width.saturating_sub(LINE_PREFIX_LEN),
         content_lines: LineBuffer::new(),
+        stack,
     }
     .format(doc, file)
 }

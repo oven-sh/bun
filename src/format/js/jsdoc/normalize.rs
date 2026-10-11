@@ -2,6 +2,7 @@
 
 use super::text::{lines, parse_index, push_number};
 use crate::options::QuoteStyle;
+use crate::stack::Stack;
 use crate::text::{first_char, last_char};
 use bun_core::strings;
 use std::borrow::Cow;
@@ -190,25 +191,33 @@ pub(super) fn strip_jsdoc_stars_preserve_newlines(text: &[u8]) -> Vec<u8> {
 /// `convertToModernType` of prettier-plugin-jsdoc: `?Type` and `Type?` become `Type | null`, `*` becomes
 /// `any`, `Array<T>` becomes `T[]`, `Foo.<T>` becomes `Foo<T>`, and the quotes in `import()` are those of
 /// `quote_style`.
-pub(super) fn normalize_type(type_str: &[u8], quote_style: QuoteStyle) -> Bytes<'_> {
-    normalize_type_impl(type_str, Some(quote_style))
+pub(super) fn normalize_type<'t>(
+    type_str: &'t [u8],
+    quote_style: QuoteStyle,
+    stack: &Stack,
+) -> Bytes<'t> {
+    normalize_type_impl(type_str, Some(quote_style), stack)
 }
 
 /// The same with the quotes as they are, for `@type`, `@typedef` and `@satisfies`.
-pub(super) fn normalize_type_preserve_quotes(type_str: &[u8]) -> Bytes<'_> {
-    normalize_type_impl(type_str, None)
+pub(super) fn normalize_type_preserve_quotes<'t>(type_str: &'t [u8], stack: &Stack) -> Bytes<'t> {
+    normalize_type_impl(type_str, None, stack)
 }
 
-fn normalize_type_impl(type_str: &[u8], quote_style: Option<QuoteStyle>) -> Bytes<'_> {
+fn normalize_type_impl<'t>(
+    type_str: &'t [u8],
+    quote_style: Option<QuoteStyle>,
+    stack: &Stack,
+) -> Bytes<'t> {
     if strings::contains_char(type_str, b'\n') {
         let stripped = strip_stars(type_str, b' ');
-        return Cow::Owned(normalize_type_impl(&stripped, quote_style).into_owned());
+        return Cow::Owned(normalize_type_impl(&stripped, quote_style, stack).into_owned());
     }
     let trimmed = strings::trim_unicode_whitespace(type_str);
     if is_already_normalized(trimmed) {
         return Cow::Borrowed(trimmed);
     }
-    let transformed = without_strings(type_str, normalize_type_inner);
+    let transformed = without_strings(type_str, |it| normalize_type_inner(it, stack));
     let unquoted = match quote_style {
         Some(quote_style) => {
             let quoted = normalize_type_quotes(&transformed, quote_style);
@@ -290,7 +299,10 @@ fn without_strings(type_str: &[u8], transform: impl FnOnce(&[u8]) -> Vec<u8>) ->
     restored
 }
 
-fn normalize_type_inner(type_str: &[u8]) -> Vec<u8> {
+fn normalize_type_inner(type_str: &[u8], stack: &Stack) -> Vec<u8> {
+    if !stack.has_room() {
+        return type_str.to_vec();
+    }
     let replaced: Bytes<'_> = match strings::contains_char(type_str, b'*') {
         true => Cow::Owned(strings::replace_owned(type_str, b"*", b" any ")),
         false => Cow::Borrowed(type_str),
@@ -307,7 +319,7 @@ fn normalize_type_inner(type_str: &[u8]) -> Vec<u8> {
         if rest.is_empty() {
             return trimmed.to_vec();
         }
-        let normalized = normalize_type_inner(rest);
+        let normalized = normalize_type_inner(rest, stack);
         return match needs_parens_for_union(&normalized) {
             true => [b"...(", &normalized[..], b")"].concat(),
             false => [b"...", &normalized[..]].concat(),
@@ -317,7 +329,7 @@ fn normalize_type_inner(type_str: &[u8]) -> Vec<u8> {
     if let Some(rest) = trimmed.strip_prefix(b"?") {
         let inner = strings::trim_unicode_whitespace(rest);
         if !inner.is_empty() {
-            return [&normalize_type_core(inner)[..], b" | null"].concat();
+            return [&normalize_type_core(inner, stack)[..], b" | null"].concat();
         }
     }
     // `Type?`
@@ -326,31 +338,34 @@ fn normalize_type_inner(type_str: &[u8]) -> Vec<u8> {
         && !inner.is_empty()
         && !strings::contains_char(inner, b'?')
     {
-        return [&normalize_type_core(inner)[..], b" | null"].concat();
+        return [&normalize_type_core(inner, stack)[..], b" | null"].concat();
     }
-    normalize_type_core(trimmed)
+    normalize_type_core(trimmed, stack)
 }
 
 /// Arrays, the dots before `<`, white space. Each member of a union by itself.
-fn normalize_type_core(type_str: &[u8]) -> Vec<u8> {
+fn normalize_type_core(type_str: &[u8], stack: &Stack) -> Vec<u8> {
     let trimmed = strings::trim_unicode_whitespace(type_str);
     let parts = split_at_top_level_pipe(trimmed);
     if parts.len() > 1 {
         let normalized: Vec<Vec<u8>> = parts
             .iter()
-            .map(|part| normalize_type_core(strings::trim_unicode_whitespace(part)))
+            .map(|part| normalize_type_core(strings::trim_unicode_whitespace(part), stack))
             .collect();
         return normalized.join(&b" | "[..]);
     }
     let mut converted = remove_closure_dot_generics(trimmed).into_owned();
-    while let Some(next) = replace_one_array_pattern(&converted) {
+    while let Some(next) = replace_one_array_pattern(&converted, stack) {
         converted = next;
     }
     normalize_type_whitespace(&converted).into_owned()
 }
 
 /// Makes `T[]` of one `Array<T>` in `type_str`. `None` if there is none.
-fn replace_one_array_pattern(type_str: &[u8]) -> Option<Vec<u8>> {
+fn replace_one_array_pattern(type_str: &[u8], stack: &Stack) -> Option<Vec<u8>> {
+    if stack.ran_out() {
+        return None;
+    }
     let mut search_start = 0;
     while let Some(found) = strings::index_of(&type_str[search_start..], b"Array") {
         let pos = search_start + found;
@@ -372,7 +387,7 @@ fn replace_one_array_pattern(type_str: &[u8]) -> Option<Vec<u8>> {
         let Some(end_offset) = find_matching_close_angle(&type_str[inner_start..]) else {
             continue;
         };
-        let inner = normalize_type_inner(&type_str[inner_start..inner_start + end_offset]);
+        let inner = normalize_type_inner(&type_str[inner_start..inner_start + end_offset], stack);
         let after = &type_str[inner_start + end_offset + 1..];
         return Some(match needs_parens_for_array(&inner) {
             true => [&type_str[..pos], b"(", &inner, b")[]", after].concat(),
@@ -428,13 +443,17 @@ fn has_optional_suffix(trimmed: &[u8]) -> bool {
 }
 
 /// For `@returns`, `@yields` and `@throws`: `type=` is `type | undefined`.
-pub(super) fn normalize_type_return(type_str: &[u8], quote_style: QuoteStyle) -> Bytes<'_> {
+pub(super) fn normalize_type_return<'t>(
+    type_str: &'t [u8],
+    quote_style: QuoteStyle,
+    stack: &Stack,
+) -> Bytes<'t> {
     let trimmed = strings::trim_unicode_whitespace(type_str);
     if has_optional_suffix(trimmed) && trimmed.len() > 1 {
-        let normalized = normalize_type(&trimmed[..trimmed.len() - 1], quote_style);
+        let normalized = normalize_type(&trimmed[..trimmed.len() - 1], quote_style, stack);
         return Cow::Owned([&normalized[..], b" | undefined"].concat());
     }
-    normalize_type(trimmed, quote_style)
+    normalize_type(trimmed, quote_style, stack)
 }
 
 /// The type without the `=` at its end, and whether there is one.

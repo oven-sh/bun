@@ -265,29 +265,34 @@ fn comments_alone_in_braces_are_not_hugged(f: &Formatter<'_>) -> bool {
 /// Prettier's `shouldInline` in `printJsxExpressionContainer`: it starts right after the `{` and
 /// ends right before the `}`, even if it breaks. `is_child`: the braces are among the children of
 /// an element.
-fn should_inline_jsx_expression(expression: Expr<'_>, is_child: bool) -> bool {
-    match expression.as_ast_nodes() {
-        AstNodes::ArrayExpression(_)
-        | AstNodes::ObjectExpression(_)
-        | AstNodes::ArrowFunctionExpression(_)
-        | AstNodes::Function(_)
-        | AstNodes::TemplateLiteral(_)
-        | AstNodes::TaggedTemplateExpression(_) => true,
-        AstNodes::AwaitExpression(it) => it.argument().is_some_and(|argument| {
-            should_inline_jsx_expression(argument, false)
-                || matches!(argument.as_ast_nodes(), AstNodes::JSXElement(_))
-        }),
-        AstNodes::ConditionalExpression(_)
-        | AstNodes::LogicalExpression(_)
-        | AstNodes::BinaryExpression(_)
-        | AstNodes::PrivateInExpression(_) => is_child,
-        _ => {
-            // Prettier's `stripChainElementWrappers`
-            let mut callee = expression;
-            while let ExprKind::NonNull(inner) = callee.kind() {
-                callee = inner;
+fn should_inline_jsx_expression(mut expression: Expr<'_>, mut is_child: bool) -> bool {
+    loop {
+        match expression.as_ast_nodes() {
+            AstNodes::ArrayExpression(_)
+            | AstNodes::ObjectExpression(_)
+            | AstNodes::ArrowFunctionExpression(_)
+            | AstNodes::Function(_)
+            | AstNodes::TemplateLiteral(_)
+            | AstNodes::TaggedTemplateExpression(_) => return true,
+            AstNodes::AwaitExpression(it) => match it.argument() {
+                Some(argument) if matches!(argument.as_ast_nodes(), AstNodes::JSXElement(_)) => {
+                    return true;
+                }
+                Some(argument) => (expression, is_child) = (argument, false),
+                None => return false,
+            },
+            AstNodes::ConditionalExpression(_)
+            | AstNodes::LogicalExpression(_)
+            | AstNodes::BinaryExpression(_)
+            | AstNodes::PrivateInExpression(_) => return is_child,
+            _ => {
+                // Prettier's `stripChainElementWrappers`
+                let mut callee = expression;
+                while let ExprKind::NonNull(inner) = callee.kind() {
+                    callee = inner;
+                }
+                return matches!(callee.as_chain_element(), AstNodes::CallExpression(_));
             }
-            matches!(callee.as_chain_element(), AstNodes::CallExpression(_))
         }
     }
 }

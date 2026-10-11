@@ -19,6 +19,7 @@ mod wrap;
 use self::serialize::{FormattedJsdoc, format_jsdoc_comment};
 use super::comments::Comment;
 use crate::prelude::*;
+use crate::stack::Stack;
 use crate::write;
 use bun_core::strings;
 use bun_lint::ast::jsdoc::JSDoc;
@@ -29,6 +30,18 @@ pub(crate) fn write_comment<'a>(comment: &Comment, f: &mut Formatter<'a>) -> boo
     let Some(options) = f.options().jsdoc else {
         return false;
     };
+    let stack = Stack::new();
+    let is_written = write_formatted(comment, &options, &stack, f);
+    f.context_mut().ran_out_of_stack |= stack.ran_out();
+    is_written
+}
+
+fn write_formatted<'a>(
+    comment: &Comment,
+    options: &JsdocOptions,
+    stack: &Stack,
+    f: &mut Formatter<'a>,
+) -> bool {
     let content = f.source_text().text_for(&comment.span);
     if !content.starts_with(b"/**") {
         return false;
@@ -63,7 +76,7 @@ pub(crate) fn write_comment<'a>(comment: &Comment, f: &mut Formatter<'a>) -> boo
     };
     // An escape or a blank that is gone would end the comment early.
     let format = |doc: JSDoc<'a>, f: &Formatter<'a>| {
-        format_jsdoc_comment(doc, f.file(), &options, f.options(), available_width).filter(
+        format_jsdoc_comment(doc, f.file(), options, f.options(), available_width, stack).filter(
             |formatted| match formatted {
                 FormattedJsdoc::SingleLine(text) | FormattedJsdoc::MultiLine(text) => {
                     !strings::contains(text, b"*/")

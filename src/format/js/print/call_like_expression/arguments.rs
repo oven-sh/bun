@@ -538,53 +538,58 @@ fn is_hopefully_short_call_argument<'a>(argument: Expr<'a>, f: &Formatter<'a>) -
 }
 
 /// Prettier's `couldExpandArg`.
-fn can_group_expression_argument<'a>(argument: Expr<'a>, f: &Formatter<'a>) -> bool {
-    if is_cast_target(argument, f) {
-        return false;
-    }
-    match argument.kind() {
-        ExprKind::Object(props) => {
-            !props.is_empty() || f.comments().has_comment_in_span(argument.span())
+fn can_group_expression_argument<'a>(mut argument: Expr<'a>, f: &Formatter<'a>) -> bool {
+    loop {
+        if is_cast_target(argument, f) {
+            return false;
         }
-        ExprKind::Array(elements) => {
-            !elements.is_empty() || f.comments().has_comment_in_span(argument.span())
-        }
-        ExprKind::As { .. } if argument.is_flow_type_cast() => false,
-        ExprKind::As { expr, .. } | ExprKind::AsConst(expr) | ExprKind::Satisfies { expr, .. } => {
-            can_group_expression_argument(expr, f)
-        }
-        ExprKind::Fn(func) if func.is_arrow() => {
-            can_group_arrow_function_expression_argument(func, false, f)
-        }
-        ExprKind::Fn(_) => true,
-        _ => false,
+        argument = match argument.kind() {
+            ExprKind::Object(props) => {
+                return !props.is_empty() || f.comments().has_comment_in_span(argument.span());
+            }
+            ExprKind::Array(elements) => {
+                return !elements.is_empty() || f.comments().has_comment_in_span(argument.span());
+            }
+            ExprKind::As { .. } if argument.is_flow_type_cast() => return false,
+            ExprKind::As { expr, .. }
+            | ExprKind::AsConst(expr)
+            | ExprKind::Satisfies { expr, .. } => expr,
+            ExprKind::Fn(func) if func.is_arrow() => {
+                return can_group_arrow_function_expression_argument(func, f);
+            }
+            ExprKind::Fn(_) => return true,
+            _ => return false,
+        };
     }
 }
 
 fn can_group_arrow_function_expression_argument<'a>(
-    arrow_function: Func<'a>,
-    is_arrow_recursion: bool,
+    mut arrow_function: Func<'a>,
     f: &Formatter<'a>,
 ) -> bool {
-    let FnBody::Expr(expression) = arrow_function.body() else {
-        return true;
-    };
-    // The parentheses of a type cast are a node for Prettier, which is not one of these.
-    if is_cast_target(expression, f) {
-        return false;
-    }
-    match expression.kind() {
-        ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Jsx(_) => true,
-        ExprKind::Fn(inner) if inner.is_arrow() => {
-            can_group_arrow_function_expression_argument(inner, true, f)
+    // It is the body of another one.
+    let mut is_arrow_recursion = false;
+    loop {
+        let FnBody::Expr(expression) = arrow_function.body() else {
+            return true;
+        };
+        // The parentheses of a type cast are a node for Prettier, which is not one of these.
+        if is_cast_target(expression, f) {
+            return false;
         }
-        ExprKind::Cond { .. } => !is_arrow_recursion,
-        _ => {
-            !is_arrow_recursion
-                && matches!(
-                    strip_chain_element_wrappers(expression).kind(),
-                    ExprKind::Call(_)
-                )
+        match expression.kind() {
+            ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Jsx(_) => return true,
+            ExprKind::Fn(inner) if inner.is_arrow() => {
+                (arrow_function, is_arrow_recursion) = (inner, true);
+            }
+            ExprKind::Cond { .. } => return !is_arrow_recursion,
+            _ => {
+                return !is_arrow_recursion
+                    && matches!(
+                        strip_chain_element_wrappers(expression).kind(),
+                        ExprKind::Call(_)
+                    );
+            }
         }
     }
 }

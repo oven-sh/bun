@@ -20,7 +20,7 @@ use crate::js::utils::number::format_trimmed_number;
 use crate::options::FormatOptions;
 use bun_lint::ast::{Expr as ExprHandle, File, Handle};
 use bun_lint::tokens::skip_trivia;
-use bun_sema::atom::{Atom, Intern};
+use bun_sema::atom::{Atom, Intern, NOT_IN_THE_FILE};
 use bun_sema::hir::*;
 
 macro_rules! lists {
@@ -246,9 +246,6 @@ pub struct Scratch {
 
 /// No atom has been found for it yet.
 const UNKNOWN: u32 = u32::MAX - 1;
-/// Atoms from here on are compared by their texts every time. The atoms of a file of its own are
-/// numbered from 0.
-const MOST_ATOMS: usize = 1 << 22;
 
 /// `Err`: a difference has been found, and the walk is over.
 type Same = Result<(), ()>;
@@ -481,7 +478,9 @@ impl Walk<'_, '_> {
             return has_same_words(text, text2);
         }
         let (at, known) = (a.0 as usize, &mut self.scratch.atoms);
-        if is_same && at < MOST_ATOMS {
+        // The names of a file are numbered one after the other. What is not among them has a number far from theirs, and
+        // is compared by its text every time.
+        if is_same && a.0 < NOT_IN_THE_FILE {
             if known.len() <= at {
                 known.resize(at + 1, UNKNOWN);
             }

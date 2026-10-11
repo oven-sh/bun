@@ -6,12 +6,13 @@ use super::preprocess::{
     ordered_item_info,
 };
 use super::strings::character_reference;
-use crate::FormatOptions;
 use crate::css::doc::{
     self, Alignment, Doc, Line, align_with_spaces, docs, fill, group, hardline, indent,
 };
 use crate::options::ProseWrap;
+use crate::stack::Stack;
 use crate::text::{first_char, last_char};
+use crate::{FormatError, FormatOptions};
 use std::borrow::Cow;
 
 /// Code in another language, to be formatted.
@@ -40,8 +41,9 @@ pub(crate) struct Printer<'a, 'e> {
     pub(crate) is_in_label: bool,
     /// For oxfmt: of the lists that have been asked about, the first of the lists of their kind that they follow.
     pub(crate) first_of_run: Vec<NodeId>,
-    pub(crate) stack_check: bun_core::StackCheck,
-    pub(crate) is_nested_too_deeply: bool,
+    pub(crate) stack: Stack,
+    /// Why a cell of a table could not be printed.
+    pub(crate) failure: Option<FormatError>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -707,8 +709,7 @@ impl<'a> Printer<'a, '_> {
 
     /// A node: as it is in the text if it is ignored, or as the language in it, or as Markdown.
     pub(crate) fn print(&mut self, id: NodeId) -> Doc<'a> {
-        if !self.stack_check.is_safe_to_recurse() {
-            self.is_nested_too_deeply = true;
+        if !self.stack.has_room() {
             return Doc::EMPTY;
         }
         let Some(node) = self.node(id) else {
@@ -2133,8 +2134,9 @@ impl<'a> Printer<'a, '_> {
             for (column, cell) in self.tree.children(row).enumerate() {
                 let mut text = Vec::new();
                 let doc = self.print(cell);
-                self.is_nested_too_deeply |=
-                    doc::print(doc, self.options, b"\n", &mut text).is_err();
+                if let Err(failure) = doc::print(doc, self.options, b"\n", &mut text) {
+                    self.failure = Some(failure);
+                }
                 let width = crate::ir::width::string_width_as(&text, self.options.flavor) as usize;
                 if widths.len() <= column {
                     // `---`, `:--`, `:-:`, `--:`

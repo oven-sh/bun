@@ -1115,8 +1115,9 @@ enum Mode {
 
 /// Prettier's `Indent`.
 struct Indent {
-    /// Only `Indent` and `Align`.
-    queue: Vec<IndentCommand>,
+    /// An indentation that has its `queue`, in which there are only `Indent` and `Align`, without the last. `None`: there
+    /// is nothing in the queue.
+    before_last: Option<u32>,
     value: Vec<u8>,
     length: usize,
     root: u32,
@@ -1201,7 +1202,7 @@ impl<'o> Printer<'o> {
             out,
             start,
             indents: vec![Indent {
-                queue: Vec::new(),
+                before_last: None,
                 value: Vec::new(),
                 length: 0,
                 root: 0,
@@ -1259,41 +1260,40 @@ impl<'o> Printer<'o> {
         if let Some((_, derived)) = parent.derived.iter().find(|(it, _)| *it == command) {
             return *derived;
         }
-        let mut queue = parent.queue.clone();
-        let mut root = parent.root;
+        // What is written depends on the queue alone.
+        let (same_queue, root) = match command {
+            IndentCommand::Dedent => (parent.before_last.unwrap_or(indent), parent.root),
+            IndentCommand::MarkAsRoot => (indent, indent),
+            _ => (indent, parent.root),
+        };
+        let same = &self.indents[same_queue as usize];
+        let (mut before_last, mut value, mut length) =
+            (same.before_last, same.value.clone(), same.length);
         match command {
-            IndentCommand::Dedent => {
-                queue.pop();
+            IndentCommand::Indent if self.use_tabs => {
+                value.push(b'\t');
+                length += self.tab_width;
             }
-            IndentCommand::MarkAsRoot => root = indent,
-            command => queue.push(command),
+            IndentCommand::Indent => {
+                value.resize(value.len() + self.tab_width, b' ');
+                length += self.tab_width;
+            }
+            IndentCommand::Align(Alignment::Spaces(width)) => {
+                value.resize(value.len() + width as usize, b' ');
+                length += width as usize;
+            }
+            IndentCommand::Align(Alignment::Text(text)) => {
+                value.extend_from_slice(text.as_bytes());
+                length += text.len();
+            }
+            IndentCommand::Dedent | IndentCommand::DedentToRoot | IndentCommand::MarkAsRoot => {}
         }
-        let (mut value, mut length) = (Vec::new(), 0);
-        for command in &queue {
-            match command {
-                IndentCommand::Indent if self.use_tabs => {
-                    value.push(b'\t');
-                    length += self.tab_width;
-                }
-                IndentCommand::Indent => {
-                    value.resize(value.len() + self.tab_width, b' ');
-                    length += self.tab_width;
-                }
-                IndentCommand::Align(Alignment::Spaces(width)) => {
-                    value.resize(value.len() + *width as usize, b' ');
-                    length += *width as usize;
-                }
-                IndentCommand::Align(Alignment::Text(text)) => {
-                    value.extend_from_slice(text.as_bytes());
-                    length += text.len();
-                }
-                IndentCommand::Dedent | IndentCommand::DedentToRoot | IndentCommand::MarkAsRoot => {
-                }
-            }
+        if matches!(command, IndentCommand::Indent | IndentCommand::Align(_)) {
+            before_last = Some(indent);
         }
         let id = self.indents.len() as u32;
         self.indents.push(Indent {
-            queue,
+            before_last,
             value,
             length,
             root,

@@ -1204,8 +1204,18 @@ fn comment_in_call_chain_makes_it_breakable(f: &Formatter<'_>) -> bool {
 }
 
 /// Prettier's `isShortCallArgument`/`isLoneShortArgument`.
-pub(crate) fn is_short_argument<'a>(argument: Expr<'a>, threshold: u16, f: &Formatter<'a>) -> bool {
+pub(crate) fn is_short_argument<'a>(
+    mut argument: Expr<'a>,
+    threshold: u16,
+    f: &Formatter<'a>,
+) -> bool {
     let threshold = threshold as usize;
+    while let AstNodes::UnaryExpression(_) = argument.as_ast_nodes() {
+        match argument.argument() {
+            Some(operand) => argument = operand,
+            None => return false,
+        }
+    }
     // Prettier asks for the `length` of a string of JavaScript, oxfmt for that of one of Rust.
     let is_oxfmt = f.options().flavor.is_oxfmt();
     let len = |text: &[u8]| match is_oxfmt {
@@ -1214,9 +1224,6 @@ pub(crate) fn is_short_argument<'a>(argument: Expr<'a>, threshold: u16, f: &Form
     };
     match argument.as_ast_nodes() {
         AstNodes::IdentifierReference(_) => len(argument.text()) <= threshold,
-        AstNodes::UnaryExpression(_) => argument
-            .argument()
-            .is_some_and(|operand| is_short_argument(operand, threshold as u16, f)),
         AstNodes::RegExpLiteral(_) => {
             matches!(argument.kind(), ExprKind::Regex(regex) if len(regex.pattern()) <= threshold)
         }

@@ -8,10 +8,16 @@ pub struct NoAssign<const IS_NATIVE_REASSIGN: bool> {
 pub type NoGlobalAssign = NoAssign<false>;
 
 impl<const IS_NATIVE_REASSIGN: bool> NoAssign<IS_NATIVE_REASSIGN> {
-    const MESSAGE: Message = Message::new(
-        if IS_NATIVE_REASSIGN { "nativeReassign" } else { "globalShouldNotBeModified" },
-        "Read-only global '{{name}}' should not be modified.",
-    );
+    const MESSAGE: Message = match IS_NATIVE_REASSIGN {
+        true => Message::new(
+            "nativeReassign",
+            "Read-only global '{{name}}' should not be modified.",
+        ),
+        false => Message::new(
+            "globalShouldNotBeModified",
+            "Read-only global '{{name}}' should not be modified.",
+        ),
+    };
 
     fn check<'a>(&self, references: impl IntoIterator<Item = Reference<'a>>, cx: &Cx<'a, Self>) {
         for reference in ast_utils::get_modifying_references(references) {

@@ -15,7 +15,7 @@ use bun_lint::utils::ts_utils::{
     is_start_of_arrow_function_body_needing_parentheses,
     is_start_of_expression_statement_needing_parentheses,
 };
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
 
 /// Disallow type assertions that do not change the type of an expression.
@@ -166,7 +166,6 @@ fn is_type_unchanged<'a>(
     expression: Expr<'a>,
     uncast: Type<'a>,
     cast: Type<'a>,
-    known: &mut Contained<'a>,
 ) -> bool {
     if uncast == cast {
         return true;
@@ -179,7 +178,7 @@ fn is_type_unchanged<'a>(
     {
         return false;
     }
-    if type_annotation.is_some_and(|it| it.tag() == TypeTag::Intersection) && contains_type_variable(cast, known) {
+    if type_annotation.is_some_and(|it| it.tag() == TypeTag::Intersection) && contains_type_variable(cast) {
         return false;
     }
     if is_type_flag_set(uncast, TypeFlags::UNDEFINED)
@@ -196,9 +195,9 @@ fn is_type_unchanged<'a>(
     }
     if (is_type_flag_set(uncast, TypeFlags::NON_PRIMITIVE) && !is_type_flag_set(cast, TypeFlags::NON_PRIMITIVE))
         || has_index_signature(uncast) != has_index_signature(cast)
-        || contains_any(uncast, known)
-        || contains_any(cast, known)
-        || (contains_type_variable(cast, known) && !contains_type_variable(uncast, known))
+        || contains_any(uncast)
+        || contains_any(cast)
+        || (contains_type_variable(cast) && !contains_type_variable(uncast))
     {
         return false;
     }
@@ -216,7 +215,7 @@ fn is_type_unchanged<'a>(
             && cast_parts
                 .iter()
                 .find(|part| *part != uncast)
-                .is_some_and(|other_part| is_empty_object_type(other_part) && !contains_type_variable(other_part, known))
+                .is_some_and(|other_part| is_empty_object_type(other_part) && !contains_type_variable(other_part))
             && uncast.get_base_constraint_of_type().is_some_and(|constraint| !is_nullable_type(constraint));
     }
     // The properties last: each is looked up in each constituent of a union.
@@ -302,33 +301,15 @@ fn type_contains<'a>(ty: Type<'a>, predicate: fn(Type<'a>) -> bool, met: &mut Me
     Some(false)
 }
 
-/// Whether a union or an intersection of many contains `any` (`false`) or a type variable (`true`): to go through it for each
-/// assertion that has to do with it takes long.
-#[derive(Default)]
-pub struct Contained<'a>(FxHashMap<(Type<'a>, bool), bool>);
-
-impl<'a> Contained<'a> {
-    fn ask(&mut self, ty: Type<'a>, is_about_type_variables: bool) -> bool {
-        let predicate: fn(Type<'a>) -> bool = match is_about_type_variables {
-            true => |t| is_type_flag_set(t, TypeFlags::TYPE_VARIABLE | TypeFlags::INDEX),
-            false => |t| is_type_flag_set(t, TypeFlags::ANY),
-        };
-        // What upstream says of `any` in an infinite type, once it has run out of stack, changes with the rest of the
-        // file. Mostly it is that there is one, which is also what reports nothing.
-        let ask = || type_contains(ty, predicate, &mut Met::default()).unwrap_or(!is_about_type_variables);
-        match ty.is_union_or_intersection() && ty.types().len() > 16 {
-            true => *self.0.entry((ty, is_about_type_variables)).or_insert_with(ask),
-            false => ask(),
-        }
-    }
+// What upstream says of `any` in an infinite type, once it has run out of stack, changes with the rest of the file. Mostly it is
+// that there is one, which is also what reports nothing.
+fn contains_any(ty: Type) -> bool {
+    type_contains(ty, |t| is_type_flag_set(t, TypeFlags::ANY), &mut Met::default()).unwrap_or(true)
 }
 
-fn contains_any<'a>(ty: Type<'a>, known: &mut Contained<'a>) -> bool {
-    known.ask(ty, false)
-}
-
-fn contains_type_variable<'a>(ty: Type<'a>, known: &mut Contained<'a>) -> bool {
-    known.ask(ty, true)
+fn contains_type_variable(ty: Type) -> bool {
+    let is_one = |t| is_type_flag_set(t, TypeFlags::TYPE_VARIABLE | TypeFlags::INDEX);
+    type_contains(ty, is_one, &mut Met::default()).unwrap_or(false)
 }
 
 fn has_phantom_type_arguments(ty: Type) -> bool {
@@ -395,13 +376,12 @@ fn get_original_expression(assertion: Assertion<'_>) -> Expr<'_> {
 fn is_double_assertion_unnecessary<'a>(
     assertion: Assertion<'a>,
     contextual_type: Option<Type<'a>>,
-    known: &mut Contained<'a>,
 ) -> Option<Message> {
     let inner_expression = assertion.expression;
     as_assertion(inner_expression)?;
     let original_type = get_original_expression(assertion).ty();
     let cast_type = assertion.node.ty();
-    if is_type_unchanged(assertion.type_annotation, inner_expression, original_type, cast_type, known)
+    if is_type_unchanged(assertion.type_annotation, inner_expression, original_type, cast_type)
         && !is_type_flag_set(cast_type, TypeFlags::ANY)
     {
         return Some(UNNECESSARY_ASSERTION);
@@ -657,7 +637,6 @@ fn tsgolint_has_generic_inference_parameter_at_argument<'a>(
     call: Expr<'a>,
     arg_index: usize,
     element_path: impl Iterator<Item = usize>,
-    known: &mut Contained<'a>,
 ) -> bool {
     let Some(declaration) = call.resolved_signature().and_then(|it| it.declaration()) else {
         return false;
@@ -697,14 +676,13 @@ fn tsgolint_has_generic_inference_parameter_at_argument<'a>(
             None => break,
         }
     }
-    contains_type_variable(param_type, known)
+    contains_type_variable(param_type)
 }
 
 /// tsgolint's `isNestedInArrayLiteralArgumentToGenericCall`: `new Map([["a", b as string]])`. That the context accepts
 /// the element does not say what is inferred from it.
 fn tsgolint_is_nested_in_array_literal_argument_to_generic_call<'a>(
     node: Expr<'a>,
-    known: &mut Contained<'a>,
 ) -> bool {
     // From the innermost array outwards.
     let mut element_path: SmallVec<[usize; 4]> = SmallVec::new();
@@ -742,7 +720,7 @@ fn tsgolint_is_nested_in_array_literal_argument_to_generic_call<'a>(
         let arg_index = call.args().iter().position(|it| it == argument).unwrap_or_else(|| call.args().len());
         let (arg_index, left_out) = if is_spread { (arg_index + element_index, 1) } else { (arg_index, 0) };
         let element_path = element_path.into_iter().rev().skip(left_out);
-        return tsgolint_has_generic_inference_parameter_at_argument(parent, arg_index, element_path, known);
+        return tsgolint_has_generic_inference_parameter_at_argument(parent, arg_index, element_path);
     }
     false
 }
@@ -1011,7 +989,7 @@ impl NoUnnecessaryTypeAssertion {
             false => !type_annotation_is_const_assertion,
         };
         if would_same_type_be_inferred
-            && is_type_unchanged(type_annotation, expression, uncast_type, cast_type, &mut cx.state)
+            && is_type_unchanged(type_annotation, expression, uncast_type, cast_type)
         {
             if !cx.language().is_oxlint && is_generic_call_with_inferred_type_arguments(expression) {
                 cx.report(node, CONTEXTUALLY_INFERRED_TYPE_ARGUMENTS);
@@ -1026,7 +1004,7 @@ impl NoUnnecessaryTypeAssertion {
         let skips_contextual_type = should_skip_contextual_type_fallback(assertion, cast_is_any, types)
             || cx.language().is_oxlint
                 && !cast_is_any
-                && tsgolint_is_nested_in_array_literal_argument_to_generic_call(node, &mut cx.state);
+                && tsgolint_is_nested_in_array_literal_argument_to_generic_call(node);
         let contextual_type = match skips_contextual_type {
             true => None,
             false => node.contextual_type(),
@@ -1034,17 +1012,17 @@ impl NoUnnecessaryTypeAssertion {
 
         if let Some(contextual_type) = contextual_type {
             let contextual_type_is_any = is_type_flag_set(contextual_type, TypeFlags::ANY);
-            let any_involved_in_contextual_check = |known: &mut Contained<'a>| match contextual_type_is_any {
-                true => as_argument(node).is_some() && !contains_any(cast_type, known),
-                false => !contains_any(contextual_type, known),
+            let any_involved_in_contextual_check = || match contextual_type_is_any {
+                true => as_argument(node).is_some() && !contains_any(cast_type),
+                false => !contains_any(contextual_type),
             };
             let is_nullish_literal_to_union = cast_type.is_union()
                 && (expression.tag() == ExprTag::Null || expression.is_ident("undefined"));
             let is_contextually_unnecessary = !type_annotation_is_const_assertion
                 && !is_nullish_literal_to_union
                 && !contextual_type.is_unresolved()
-                && !contains_any(uncast_type, &mut cx.state)
-                && any_involved_in_contextual_check(&mut cx.state)
+                && !contains_any(uncast_type)
+                && any_involved_in_contextual_check()
                 && !has_phantom_type_argument_mismatch(node, uncast_type, contextual_type)
                 && (cast_is_any || !generics_mismatch(uncast_type, contextual_type))
                 && (contextual_type_is_any || uncast_type.is_assignable_to(contextual_type));
@@ -1054,7 +1032,7 @@ impl NoUnnecessaryTypeAssertion {
             }
         }
 
-        if let Some(message) = is_double_assertion_unnecessary(assertion, contextual_type, &mut cx.state) {
+        if let Some(message) = is_double_assertion_unnecessary(assertion, contextual_type) {
             cx.report(node, message).fix(|fixer| {
                 let original_expr = get_original_expression(assertion);
                 let text = original_expr.text();
@@ -1157,7 +1135,7 @@ impl Rule for NoUnnecessaryTypeAssertion {
         .presets(Presets::RECOMMENDED_TYPE_CHECKED)
         .requires_types();
     const ON: On = On::new().exprs(&[ExprTag::As, ExprTag::AsConst, ExprTag::NonNull]);
-    type State<'a> = Contained<'a>;
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -1165,10 +1143,6 @@ impl Rule for NoUnnecessaryTypeAssertion {
             check_literal_const_assertions: options.bool_or("checkLiteralConstAssertions", false),
             types_to_ignore: options.strings("typesToIgnore").into_iter().map(|it| it.as_bytes().to_vec()).collect(),
         }
-    }
-
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<Contained<'a>> {
-        Some(Contained::default())
     }
 
     fn expr<'a>(&self, expr: Expr<'a>, cx: &mut Cx<'a, Self>) {

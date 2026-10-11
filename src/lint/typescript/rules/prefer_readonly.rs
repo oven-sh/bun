@@ -48,12 +48,9 @@ struct PrivateModifiable<'a> {
 struct ClassScope<'a> {
     class_type: Option<Type<'a>>,
     private_modifiables: SmallVec<[PrivateModifiable<'a>; 4]>,
-    /// Where each is in `private_modifiables`, by its name and whether it is static, once there are more than [`FEW`].
+    /// Where each is in `private_modifiables`, by its name and whether it is static.
     positions: FxHashMap<(&'a [u8], bool), usize>,
 }
-
-/// So many members are searched one by one.
-const FEW: usize = 16;
 
 /// The classes that have a private member that is not `readonly`.
 pub struct ClassScopes<'a>(FxHashMap<Class<'a>, ClassScope<'a>>);
@@ -119,21 +116,12 @@ fn get_type_to_class_relation<'a>(ty: Type<'a>, class_type: Type<'a>) -> TypeToC
 
 impl<'a> ClassScope<'a> {
     fn position(&self, name: &[u8], is_static: bool) -> Option<usize> {
-        match self.private_modifiables.len() <= FEW {
-            true => self.private_modifiables.iter().position(|it| it.name == name && it.is_static == is_static),
-            false => self.positions.get(&(name, is_static)).copied(),
-        }
+        self.positions.get(&(name, is_static)).copied()
     }
 
     fn push(&mut self, member: PrivateModifiable<'a>) {
+        self.positions.insert((member.name, member.is_static), self.private_modifiables.len());
         self.private_modifiables.push(member);
-        let known = match self.private_modifiables.len() {
-            0..=FEW => return,
-            len if len == FEW + 1 => 0,
-            len => len - 1,
-        };
-        let added = self.private_modifiables.iter().enumerate().skip(known);
-        self.positions.extend(added.map(|(i, it)| ((it.name, it.is_static), i)));
     }
 
     fn add_declared_variable(

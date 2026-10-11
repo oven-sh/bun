@@ -138,7 +138,11 @@ fn assignment_of<'a>(right: Expr<'a>) -> Option<Assignment> {
 }
 
 /// Whether the variable can only be observed within the function that declares it.
-fn is_local_variable_without_escape(symbol: Symbol, is_member_access: bool) -> bool {
+fn is_local_variable_without_escape(variable: Variable, is_member_access: bool) -> bool {
+    // It is referred to from a function, which is not where it is declared.
+    let Variable::Declared(symbol) = variable else {
+        return false;
+    };
     if is_member_access && symbol.declarations().any(|def| matches!(def, Declaration::Param(_))) {
         return false;
     }
@@ -326,26 +330,11 @@ pub struct State<'a> {
     segments_after_chain: Option<SmallVec<[Segment<'a>; 2]>>,
     /// By what is assigned: the references to verify once that has been evaluated.
     assignment_references: FxHashMap<Expr<'a>, SmallVec<[Resolved<'a>; 1]>>,
-    /// [`is_local_variable_without_escape`] of the variables that are referred to many times.
-    local_variables: FxHashMap<(Symbol<'a>, bool), bool>,
     /// Where the `await` and the `yield` expressions of the file start, in ascending order.
     pauses: Option<Vec<u32>>,
 }
 
 impl<'a> State<'a> {
-    /// Each assignment to the variable asks.
-    fn is_local_variable_without_escape(&mut self, variable: Variable<'a>, is_member_access: bool) -> bool {
-        // It is referred to from a function, which is not where it is declared.
-        let Variable::Declared(symbol) = variable else {
-            return false;
-        };
-        if symbol.references().len() <= 8 {
-            return is_local_variable_without_escape(symbol, is_member_access);
-        }
-        *(self.local_variables.entry((symbol, is_member_access)))
-            .or_insert_with(|| is_local_variable_without_escape(symbol, is_member_access))
-    }
-
     fn has_pause_in(&mut self, file: &'a File<'a>, span: Span) -> bool {
         let pauses = self.pauses.get_or_insert_with(|| {
             let pauses = file.exprs_of_kind(ExprTag::Await).chain(file.exprs_of_kind(ExprTag::Yield));
@@ -519,7 +508,7 @@ impl RequireAtomicUpdates {
 
         if let Some(write_expr) = write_expr
             && assignment_of(write_expr).is_some()
-            && !state.is_local_variable_without_escape(variable, is_member_access)
+            && !is_local_variable_without_escape(variable, is_member_access)
         {
             state.assignment_references.entry(write_expr).or_default().push((reference, variable, number));
         }

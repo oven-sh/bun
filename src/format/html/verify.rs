@@ -16,26 +16,17 @@ use std::hash::Hasher;
 
 /// What is compared of a text.
 #[derive(PartialEq, Eq)]
-pub(crate) struct Signature {
+struct Signature {
     /// Of the nodes that are not text.
     structure: u64,
     /// How often each letter is there, and each byte of a character that is not ASCII.
     letters: [u64; 26 + 128],
 }
 
-pub(crate) struct Reader {
+struct Reader {
     structure: FxHasher,
     /// How often each byte is there, of those that count.
     bytes: [u64; 256],
-}
-
-impl Default for Reader {
-    fn default() -> Reader {
-        Reader {
-            structure: FxHasher::default(),
-            bytes: [0; 256],
-        }
-    }
 }
 
 /// The bytes that do not always count, or next to which another does not.
@@ -72,14 +63,7 @@ impl Reader {
         *count = count.wrapping_sub(1);
     }
 
-    pub(crate) fn finish(&self) -> Signature {
-        Signature {
-            structure: self.structure.finish(),
-            letters: self.letters(),
-        }
-    }
-
-    pub(crate) fn count(&mut self, text: &[u8]) {
+    fn count(&mut self, text: &[u8]) {
         for (at, &byte) in text.iter().enumerate() {
             self.add(byte);
             if IS_SPECIAL[usize::from(byte)] {
@@ -115,7 +99,7 @@ impl Reader {
     }
 
     /// The same for the value of an attribute, in which a quote can be written as an entity.
-    pub(crate) fn count_value(&mut self, value: &[u8]) {
+    fn count_value(&mut self, value: &[u8]) {
         self.count(value);
         for entity in [&b"&quot;"[..], b"&apos;"] {
             let mut rest = value;
@@ -137,7 +121,7 @@ impl Reader {
         letters
     }
 
-    pub(crate) fn name(&mut self, namespace: &[u8], name: &[u8]) {
+    fn name(&mut self, namespace: &[u8], name: &[u8]) {
         for &byte in namespace.iter().chain(b":").chain(name) {
             self.structure.write_u8(byte.to_ascii_lowercase());
         }
@@ -184,7 +168,10 @@ fn signature(text: &[u8], parser: Parser) -> Option<Signature> {
     let (content, front_matter_len) = super::without_front_matter(text);
     let mut tree = Tree::default();
     parse::parse(&content, front_matter_len, parser, &mut tree).ok()?;
-    let mut reader = Reader::default();
+    let mut reader = Reader {
+        structure: FxHasher::default(),
+        bytes: [0; 256],
+    };
     // What is in a node comes behind it.
     let root = tree.root;
     let mut next = tree.first_child(root);
@@ -203,7 +190,10 @@ fn signature(text: &[u8], parser: Parser) -> Option<Signature> {
             }
         });
     }
-    Some(reader.finish())
+    Some(Signature {
+        structure: reader.structure.finish(),
+        letters: reader.letters(),
+    })
 }
 
 /// Whether `after`, which is what has become of `before`, has all that is in `before` and nothing else. Both are what

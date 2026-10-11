@@ -75,8 +75,6 @@ for (const { scope: plugin, value: name, category, fix, type_aware: needsTypes }
       : undefined;
   if (fixes && !needsTypes && ["eslint", "typescript"].includes(plugin)) ((runsOn[fixes] ??= {})[plugin] ??= []).push(name);
 }
-// The names of all rules, whatever the plugin.
-const allNames = new Set(rules.map(it => it.value));
 const commit = execFileSync("git", ["-C", oxc, "rev-parse", "--short", "HEAD"]).toString().trim();
 const wrap = names => {
   const lines = [];
@@ -139,11 +137,7 @@ ${Object.entries(runsOn[kind] ?? {})
 ];
 `,
   )
-  .join("\n")}
-/// The names of all rules of oxlint, without their plugins, sorted and separated by spaces.
-#[rustfmt::skip]
-pub(super) static RULE_NAMES: &str = ${literal([...allNames].sort(), "")};
-`,
+  .join("\n")}`,
 );
 console.log(
   Object.entries(table)

@@ -4,8 +4,7 @@ use bun_lint::utils::ts_scope::{
     check_function_return_type, does_immediately_return_function_expression,
     is_typed_function_expression,
 };
-use crate::rules::no_invalid_void_type::OverloadSignatures;
-use bun_lint::utils::ts_utils::is_static_member_access_of_value;
+use bun_lint::utils::ts_utils::{has_overload_signatures, is_static_member_access_of_value};
 use rustc_hash::FxHashSet;
 
 /// Require explicit return and argument types on exported functions' and classes' public class
@@ -131,7 +130,6 @@ struct Checker<'a, 'c> {
     followed: FxHashSet<Symbol<'a>>,
     /// The expressions that are still to be checked.
     pending: Vec<Expr<'a>>,
-    overloads: OverloadSignatures<'a>,
     /// Upstream's `checkedFunctions`.
     checked: Vec<Func<'a>>,
     /// Upstream collects the `return` statements while it walks the file, and checks what is
@@ -321,7 +319,7 @@ impl<'a> Checker<'a, '_> {
         if self.rule.allow_overload_functions
             && let Node::Member(member) = func.owner()
             && !member.flags().contains(Flags::ABSTRACT)
-            && self.overloads.has(Node::Member(member))
+            && has_overload_signatures(Node::Member(member))
         {
             return;
         }
@@ -340,7 +338,7 @@ impl<'a> Checker<'a, '_> {
         if self.rule.is_allowed_name(func) || ancestor_has_return_type(func) {
             return;
         }
-        if self.rule.allow_overload_functions && self.overloads.has(Node::Func(func)) {
+        if self.rule.allow_overload_functions && has_overload_signatures(Node::Func(func)) {
             return;
         }
         check_function_return_type(func, self.options_for(func), |loc| {
@@ -458,7 +456,6 @@ impl Rule for ExplicitModuleBoundaryTypes {
             visited: FxHashSet::default(),
             followed: FxHashSet::default(),
             pending: Vec::new(),
-            overloads: OverloadSignatures::default(),
             checked: Vec::new(),
             returns_known_until: 0,
         };

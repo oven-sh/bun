@@ -1,6 +1,5 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::ts_utils::for_each_child_estree;
-use rustc_hash::FxHashMap;
 
 /// Enforce using a particular method signature syntax.
 pub struct MethodSignatureStyle {
@@ -94,9 +93,6 @@ fn return_type_references_this_type(func: Func) -> bool {
     func.return_type().is_some_and(|ty| for_each_child_estree(ty, is_this_type).is_some())
 }
 
-/// The methods and accessors of an interface or a type literal with many members, by their keys.
-type Overloads<'a> = FxHashMap<MethodKey<'a>, Vec<Member<'a>>>;
-
 /// The members of the interface or the type literal that `member` is in.
 fn siblings<'a>(member: Member<'a>) -> Option<List<'a, Member<'a>>> {
     match member.parent() {
@@ -128,23 +124,7 @@ impl MethodSignatureStyle {
             let key_of_method = |it: &Member<'a>| {
                 MethodKey::of(*it).filter(|_| matches!(it.kind(), MemberKind::Method | MemberKind::Getter | MemberKind::Setter))
             };
-            let siblings = siblings(member)?;
-            let few: Vec<Member<'a>>;
-            let overloads: &[Member<'a>] = if !cx.state.contains_key(&member.parent()) && siblings.len() <= 16 {
-                few = siblings.iter().filter(|it| key_of_method(it) == Some(key)).collect();
-                &few
-            } else {
-                let by_key = cx.state.entry(member.parent()).or_insert_with(|| {
-                    let mut by_key = Overloads::default();
-                    for sibling in siblings {
-                        if let Some(key) = key_of_method(&sibling) {
-                            by_key.entry(key).or_default().push(sibling);
-                        }
-                    }
-                    by_key
-                });
-                by_key.get(&key)?
-            };
+            let overloads: Vec<Member<'a>> = siblings(member)?.iter().filter(|it| key_of_method(it) == Some(key)).collect();
             let mut text = Vec::new();
             key.append_to(&mut text);
             text.extend_from_slice(b": ");
@@ -207,17 +187,12 @@ impl Rule for MethodSignatureStyle {
         .fixable(Fixable::Code)
         .has_suggestions();
     const ON: On = On::new().members();
-    /// By the interface or the type literal.
-    type State<'a> = FxHashMap<Node<'a>, Overloads<'a>>;
+    no_state!();
 
     fn new(options: &Options) -> Self {
         MethodSignatureStyle {
             is_method: options.str(0) == Some("method"),
         }
-    }
-
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some(FxHashMap::default())
     }
 
     fn member<'a>(&self, member: Member<'a>, cx: &mut Cx<'a, Self>) {

@@ -356,7 +356,7 @@ fn format_block_in(
 }
 
 /// For the scripts and expressions in HTML.
-pub fn parse_javascript(code: Code<'_>, then: Then<'_>) {
+fn parse_javascript(code: Code<'_>, then: Then<'_>) {
     let names = Session::new();
     let names = (&Interner::new_in(&names) as &dyn Intern, &names);
     parse_code(code, &Resolved::default(), names, then);

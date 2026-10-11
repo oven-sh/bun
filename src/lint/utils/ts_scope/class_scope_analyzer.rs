@@ -185,8 +185,6 @@ impl<'a> ClassMember<'a> {
 struct ClassScopeResult<'a> {
     /// `None` for an anonymous class.
     class_name: Option<Name<'a>>,
-    first_member: u32,
-    member_count: u32,
 }
 
 /// What typescript-eslint's `analyzeClassMemberUsage` returns.
@@ -197,12 +195,9 @@ pub struct ClassMemberUsage<'a> {
     members: Vec<ClassMember<'a>>,
     /// For each of `members`.
     keys: Vec<MemberKey>,
-    /// Where the members of the classes that have more than `FEW_MEMBERS` are in `members`, by the class and the key.
+    /// Where they are in `members`, by the class and the key.
     places: FxHashMap<(u32, MemberKey), u32>,
 }
-
-/// So many are searched one after the other.
-const FEW_MEMBERS: usize = 16;
 
 /// Upstream's `Key`, and which of the two maps of the class it is a key of.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -244,15 +239,7 @@ impl<'a> ClassMemberUsage<'a> {
 
     /// `members.static.get(key)` or `members.instance.get(key)`, as an index.
     fn find(&self, class: u32, key: MemberKey) -> Option<usize> {
-        let members = self.classes.get(class as usize)?;
-        if members.member_count as usize > FEW_MEMBERS {
-            return self.places.get(&(class, key)).map(|&it| it as usize);
-        }
-        let first = members.first_member as usize;
-        let keys = self
-            .keys
-            .get(first..first + members.member_count as usize)?;
-        Some(first + keys.iter().position(|it| *it == key)?)
+        self.places.get(&(class, key)).map(|&it| it as usize)
     }
 
     /// What the constructor of upstream's `ClassScope` does. `candidates` is scratch space.
@@ -264,7 +251,7 @@ impl<'a> ClassMemberUsage<'a> {
     ) {
         let file = class.file();
         candidates.clear();
-        // Where each is among the candidates, once there are more than a few.
+        // Where each is among the candidates.
         let mut places: FxHashMap<MemberKey, usize> = FxHashMap::default();
         let mut add = |node: MemberNode<'a>, flags: Flags| {
             let (name, is_private, extracted) = match plain_name(node) {
@@ -284,19 +271,10 @@ impl<'a> ClassMemberUsage<'a> {
                 name: extracted,
             };
             // As in a `Map`, the last with a key takes the place of the first.
-            if candidates.len() == FEW_MEMBERS && places.is_empty() {
-                places.extend(candidates.iter().enumerate().map(|(i, it)| (it.key, i)));
-            }
-            let place = match candidates.len() < FEW_MEMBERS {
-                true => candidates.iter().position(|it| it.key == candidate.key),
-                false => places.get(&candidate.key).copied(),
-            };
-            match place.and_then(|it| candidates.get_mut(it)) {
+            let place = *places.entry(candidate.key).or_insert(candidates.len());
+            match candidates.get_mut(place) {
                 Some(same) => *same = candidate,
                 None => {
-                    if candidates.len() >= FEW_MEMBERS {
-                        places.insert(candidate.key, candidates.len());
-                    }
                     candidates.push(candidate);
                 }
             }
@@ -344,18 +322,14 @@ impl<'a> ClassMemberUsage<'a> {
             self.members.push(member);
             self.keys.push(candidate.key);
         }
-        if self.members.len() - first > FEW_MEMBERS {
-            let (class, keys) = (
-                self.classes.len() as u32,
-                self.keys.iter().enumerate().skip(first),
-            );
-            self.places
-                .extend(keys.map(|(i, &key)| ((class, key), i as u32)));
-        }
+        let (id, keys) = (
+            self.classes.len() as u32,
+            self.keys.iter().enumerate().skip(first),
+        );
+        self.places
+            .extend(keys.map(|(i, &key)| ((id, key), i as u32)));
         self.classes.push(ClassScopeResult {
             class_name: class.name().map(|name| name.name()),
-            first_member: first as u32,
-            member_count: (self.members.len() - first) as u32,
         });
     }
 }

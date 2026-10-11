@@ -1,16 +1,11 @@
 use bun_core::strings;
 use bun_lint::language::Parser;
 use bun_lint::prelude::*;
-use bun_lint::utils::token_key::TokenClasses;
-use rustc_hash::FxHashMap;
 
 /// Disallow duplicate case labels.
 pub struct NoDuplicateCase;
 
 const UNEXPECTED: Message = Message::new("unexpected", "Duplicate case label.");
-
-/// With more cases than this, the tests are not compared with each other but looked up.
-const COMPARED: usize = 16;
 
 /// It is a single token, so that two of them are equal only if their text is.
 fn is_single_token(e: Expr) -> bool {
@@ -52,36 +47,6 @@ fn equal<'a>(file: &'a File<'a>, a: Expr<'a>, b: Expr<'a>, is_text_enough: bool)
     (can_be_written_differently(a) || can_be_written_differently(b)) && ast_utils::equal_tokens(file, a, b)
 }
 
-/// What comparing each test with those before it by [`equal`] finds, in time in proportion to the text of the tests.
-fn check_many<'a>(cases: List<'a, Case<'a>>, is_text_enough: bool, cx: &Cx<'a, NoDuplicateCase>) {
-    let is_espree = cx.language().parser == Parser::Espree;
-    // Where the first of each is.
-    let (mut texts, mut names) = (FxHashMap::default(), FxHashMap::default());
-    let (mut classes, mut first_of_class) = (TokenClasses::default(), Vec::new());
-    for case in cases {
-        let Some(test) = case.test() else {
-            continue;
-        };
-        let at = test.span();
-        let first = match test.as_ident() {
-            _ if is_text_enough => *texts.entry(test.text()).or_insert(at),
-            Some(name) if is_espree => *names.entry(name).or_insert(at),
-            Some(_) => *texts.entry(test.text()).or_insert(at),
-            None => {
-                let known = classes.len();
-                let class = classes.number_of(cx.file(), test) as usize;
-                if class == known {
-                    first_of_class.push(at);
-                }
-                first_of_class.get(class).copied().unwrap_or(at)
-            }
-        };
-        if first != at {
-            report(case, first, cx);
-        }
-    }
-}
-
 /// oxlint points at the first test that is the same.
 fn report<'a>(case: Case<'a>, first: Span, cx: &Cx<'a, NoDuplicateCase>) {
     cx.report(if cx.language().is_oxlint { first } else { case.span() }, UNEXPECTED).labels_with(|labels| {
@@ -105,9 +70,6 @@ impl Rule for NoDuplicateCase {
         // Spares the tokens of the file for `case Kind.A: case Kind.B:`.
         let mut tests = cases.iter().filter_map(Case::test);
         let is_text_enough = !tests.any(|it| !is_single_token(it) && can_be_written_differently(it));
-        if cases.iter().nth(COMPARED).is_some() {
-            return check_many(cases, is_text_enough, cx);
-        }
         for (i, case) in cases.iter().enumerate() {
             let Some(test) = case.test() else {
                 continue;

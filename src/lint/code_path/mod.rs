@@ -78,9 +78,6 @@
 //!   pattern. Here the annotation comes after the pattern and the decorators before it. A name in
 //!   a type is what may throw first in a `try` block as far as ESLint knows, so in
 //!   `try { let a: T = b; }` the segment changes before ESLint leaves the `a`, and here after.
-//! - Each `finally` block that a `return` or a `throw` leads through doubles the number of
-//!   current segments in it. Here that ends with 256 of them, which takes 8 such blocks each in
-//!   the `finally` block of the other: further ones are analyzed as if only their end was left.
 
 mod analyzer;
 mod matters;

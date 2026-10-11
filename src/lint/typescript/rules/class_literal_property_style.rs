@@ -3,7 +3,7 @@ use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::ts_utils::{
     FixOrSuggest, MemberAccessValue, get_fix_or_suggest, get_static_member_access_value, is_assignee,
 };
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 
 /// Enforce that literals on classes are exposed in a consistent style.
 pub struct ClassLiteralPropertyStyle {
@@ -17,8 +17,6 @@ pub struct State<'a> {
     excluded: FxHashSet<(Class<'a>, MemberAccessValue<'a>)>,
     /// The `readonly` properties whose value is a literal.
     properties: Vec<Member<'a>>,
-    /// The names of the setters of the classes that have many members.
-    setters: FxHashMap<Class<'a>, FxHashSet<MemberAccessValue<'a>>>,
     /// What is around something: the function, and the class whose body it is in.
     functions: AncestorMemo<'a, Func<'a>>,
     class_bodies: AncestorMemo<'a, Class<'a>>,
@@ -100,17 +98,7 @@ impl ClassLiteralPropertyStyle {
             return;
         }
         if let Some(name) = truthy_name(get_static_member_access_value(member)) {
-            let members = class.members();
-            let has_setter = match cx.state.setters.get(&class) {
-                Some(setters) => setters.contains(&name),
-                None if members.len() <= 16 => members.iter().any(|element| name_of_setter(element).as_ref() == Some(&name)),
-                None => {
-                    let setters: FxHashSet<MemberAccessValue<'a>> = members.iter().filter_map(name_of_setter).collect();
-                    let has_setter = setters.contains(&name);
-                    cx.state.setters.insert(class, setters);
-                    has_setter
-                }
-            };
+            let has_setter = class.members().iter().any(|element| name_of_setter(element).as_ref() == Some(&name));
             if has_setter {
                 return;
             }

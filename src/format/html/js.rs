@@ -42,8 +42,8 @@ pub(crate) enum SourceType {
 }
 
 /// The name of a file whose text is `(`, an expression and `)`. See `AstNodes::parent`.
-pub(crate) const EXPRESSION_JSX: &[u8] = b"\0.jsx";
-pub(crate) const EXPRESSION_TS: &[u8] = b"\0.ts";
+const EXPRESSION_JSX: &[u8] = b"\0.jsx";
+const EXPRESSION_TS: &[u8] = b"\0.ts";
 
 /// Prettier's `isProbablyJsx`: `/(?:^[^"'`]*<\/|^[^/]{2}.*\/>)/m`
 fn is_probably_jsx(text: &[u8]) -> bool {
@@ -125,8 +125,7 @@ impl<'p> Parse<'p> {
         Parse::new(f.context().parse_javascript, f.options())
     }
 
-    /// A program.
-    pub(crate) fn call(self, path: &[u8], text: &[u8], is_script: bool, then: Then<'_>) {
+    fn call(self, path: &[u8], text: &[u8], is_script: bool, then: Then<'_>) {
         let code = Code {
             path,
             text,
@@ -139,11 +138,11 @@ impl<'p> Parse<'p> {
     }
 }
 
-pub(crate) type Write<'w> = &'w mut dyn for<'b> FnMut(&'b File<'b>, &mut Formatter<'b>) -> bool;
+type Write<'w> = &'w mut dyn for<'b> FnMut(&'b File<'b>, &mut Formatter<'b>) -> bool;
 
 /// What code is.
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub(crate) enum Piece {
+enum Piece {
     /// All that is in a `<script>`, and whose output it is. What sorts imports and rewrites JSDoc comments takes it for
     /// a file.
     Script(Flavor),
@@ -165,7 +164,7 @@ enum Attempt {
 /// Parses `code` as the file at each of `paths`, until it is one without errors, and calls `write` with that file and
 /// a formatter that goes on with the document of `f`. Returns what `write` returns, and `false` if `code` cannot be
 /// parsed: nothing has been written then.
-pub(crate) fn with_file(
+fn with_file(
     f: &mut Formatter<'_>,
     code: &[u8],
     paths: &[&[u8]],
@@ -412,7 +411,7 @@ pub(crate) fn with_sorted_classes(
     Some(sorted)
 }
 
-pub(crate) fn paths_of(syntax: Syntax, code: &[u8]) -> &'static [&'static [u8]] {
+fn paths_of(syntax: Syntax, code: &[u8]) -> &'static [&'static [u8]] {
     match syntax {
         Syntax::Babel => &[b"dummy.jsx"],
         Syntax::BabelTs => &[b"dummy.tsx", b"dummy.ts"],
@@ -545,7 +544,7 @@ pub(crate) fn write_hugged<'b>(
 }
 
 /// The expression that `file` is made of, if its text is `(`, an expression, a line break and `)`.
-pub(crate) fn expression_of<'b>(file: &'b File<'b>) -> Option<Expr<'b>> {
+fn expression_of<'b>(file: &'b File<'b>) -> Option<Expr<'b>> {
     let mut statements = file.body().iter();
     let (Some(statement), None) = (statements.next(), statements.next()) else {
         return None;
@@ -615,7 +614,7 @@ fn is_reserved_word(name: &[u8]) -> bool {
 
 /// Most expressions in templates are `a`, `a.b.c` or `!a`. Those are written here, as `printMemberExpression` has them,
 /// without being parsed. Returns whether `code` is one.
-pub(crate) fn write_path(f: &mut Formatter<'_>, code: &[u8], hug: Hug) -> bool {
+fn write_path(f: &mut Formatter<'_>, code: &[u8], hug: Hug) -> bool {
     let code = code.trim_ascii();
     let path = &code[code.iter().take_while(|byte| **byte == b'!').count()..];
     let is_name = |name: &[u8]| {

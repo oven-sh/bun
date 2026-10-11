@@ -15,10 +15,7 @@ const STATIC: u8 = 3;
 
 /// The names that the members of one class have defined so far, each with how, and with a configuration of oxlint with
 /// the key of the last member that has the name. It is kept between classes only for its allocation.
-pub type Seen<'a> = Vec<(Cow<'a, [u8]>, u8, Span)>;
-
-/// With more names than this, they are looked up in a map.
-const SEARCHED: usize = 16;
+pub type Seen<'a> = FxHashMap<Cow<'a, [u8]>, (u8, Span)>;
 
 /// The range of ESLint's `key`.
 fn key_span(member: Member<'_>) -> Option<Span> {
@@ -41,8 +38,6 @@ pub fn check<'a, R: Rule>(
     }
     seen.clear();
     let is_oxlint = cx.language().is_oxlint;
-    // Where each name is in `seen`.
-    let mut index_of: FxHashMap<Cow<'a, [u8]>, usize> = FxHashMap::default();
     for member in members {
         // Neither a `MethodDefinition` nor a `PropertyDefinition`, or an overload.
         if member.flags().intersects(Flags::ABSTRACT | Flags::ACCESSOR)
@@ -73,28 +68,7 @@ pub fn check<'a, R: Rule>(
             _ => (INIT, INIT | GET | SET),
         };
         let shift = if member.is_static() { STATIC } else { 0 };
-        let found = match seen.len() > SEARCHED {
-            false => seen.iter().position(|it| *it.0 == *name),
-            true => {
-                if index_of.is_empty() {
-                    index_of.extend(seen.iter().enumerate().map(|(index, it)| (it.0.clone(), index)));
-                }
-                index_of.get(&name).copied()
-            }
-        };
-        let index = match found {
-            Some(index) => index,
-            None => {
-                if !index_of.is_empty() {
-                    index_of.insert(name.clone(), seen.len());
-                }
-                seen.push((name, 0, Span::empty(0)));
-                seen.len() - 1
-            }
-        };
-        let Some((name, state, last_key)) = seen.get_mut(index) else {
-            continue;
-        };
+        let (state, last_key) = seen.entry(name.clone()).or_insert((0, Span::empty(0)));
         let is_duplicate = *state & (conflicting << shift) != 0;
         *state |= own << shift;
         if (is_duplicate || is_oxlint)
@@ -107,7 +81,7 @@ pub fn check<'a, R: Rule>(
                     .labels_with(|labels| {
                         labels.push(key, format!("\"{}\" is re-declared here", bstr::BStr::new(&name[..])));
                     })
-                    .data("name", name.clone());
+                    .data("name", name);
             }
         }
     }
@@ -123,7 +97,7 @@ impl Rule for NoDupeClassMembers {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Seen<'a>> {
-        Some(Vec::new())
+        Some(Seen::default())
     }
 
     fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {

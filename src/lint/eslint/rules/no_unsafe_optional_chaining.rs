@@ -1,5 +1,5 @@
 use bun_lint::prelude::*;
-use rustc_hash::FxHashMap;
+use bun_lint::utils::ancestor_memo::AncestorMemo;
 
 /// Disallow use of optional chaining in contexts where the `undefined` value is not allowed.
 pub struct NoUnsafeOptionalChaining {
@@ -16,9 +16,8 @@ const UNSAFE_ARITHMETIC: Message = Message::new(
 );
 
 /// What becomes of the value of an expression.
-enum Usage<'a> {
-    /// It is the value of this expression, or can be.
-    ValueOf(Expr<'a>),
+#[derive(Copy, Clone)]
+pub enum Outcome {
     /// `undefined` throws a `TypeError`.
     Unsafe,
     /// `undefined` makes `NaN`.
@@ -38,20 +37,22 @@ fn is_destructuring_pattern(pattern: Pat) -> bool {
 ///
 /// oxlint 1.87 sees through what only concerns types, as in `(a?.b as T).c` and `(a?.b)!.c`. It says nothing about a
 /// spread among arguments, about the default value of a parameter and about `#a in b?.c`.
-fn usage_of(e: Expr<'_>, is_oxlint: bool) -> Usage<'_> {
-    let unsafe_if = |is_unsafe: bool| if is_unsafe { Usage::Unsafe } else { Usage::Safe };
+///
+/// `None`: it is the value of the parent, or can be.
+fn usage_of(e: Expr<'_>, is_oxlint: bool) -> Option<Outcome> {
+    let unsafe_if = |is_unsafe: bool| Some(if is_unsafe { Outcome::Unsafe } else { Outcome::Safe });
     match e.parent() {
         Node::Expr(parent) => match parent.kind() {
             ExprKind::Binary { op, left, right } => match op {
-                BinOp::And => Usage::ValueOf(parent),
-                BinOp::Or | BinOp::Nullish | BinOp::Comma if right == e => Usage::ValueOf(parent),
-                BinOp::In if is_oxlint && left.tag() == ExprTag::PrivateIdentifier => Usage::Safe,
+                BinOp::And => None,
+                BinOp::Or | BinOp::Nullish | BinOp::Comma if right == e => None,
+                BinOp::In if is_oxlint && left.tag() == ExprTag::PrivateIdentifier => Some(Outcome::Safe),
                 BinOp::In | BinOp::Instanceof => unsafe_if(right == e),
-                _ if is_arithmetic(op) => Usage::Arithmetic,
-                _ => Usage::Safe,
+                _ if is_arithmetic(op) => Some(Outcome::Arithmetic),
+                _ => Some(Outcome::Safe),
             },
-            ExprKind::Cond { test, .. } if test != e => Usage::ValueOf(parent),
-            ExprKind::Await(_) => Usage::ValueOf(parent),
+            ExprKind::Cond { test, .. } if test != e => None,
+            ExprKind::Await(_) => None,
             ExprKind::As { .. }
             | ExprKind::AsConst(_)
             | ExprKind::Satisfies { .. }
@@ -59,13 +60,13 @@ fn usage_of(e: Expr<'_>, is_oxlint: bool) -> Usage<'_> {
             | ExprKind::Instantiation { .. }
                 if is_oxlint =>
             {
-                Usage::ValueOf(parent)
+                None
             }
             // Also the default value of a pattern in the target of an assignment.
             ExprKind::Assign { op, target, value } if value == e => match op {
                 None => unsafe_if(matches!(target.tag(), ExprTag::Object | ExprTag::Array)),
-                Some(op) if is_arithmetic(op) => Usage::Arithmetic,
-                Some(_) => Usage::Safe,
+                Some(op) if is_arithmetic(op) => Some(Outcome::Arithmetic),
+                Some(_) => Some(Outcome::Safe),
             },
             ExprKind::Call(call) => unsafe_if(call.callee() == e && !call.is_optional()),
             ExprKind::New(call) | ExprKind::TaggedTemplate(call) => unsafe_if(call.callee() == e),
@@ -77,8 +78,8 @@ fn usage_of(e: Expr<'_>, is_oxlint: bool) -> Usage<'_> {
                 unsafe_if(matches!(parent.parent(), Node::Expr(list) if list.tag() == ExprTag::Array))
             }
             ExprKind::Spread(_) => unsafe_if(parent.jsx_container_span().is_none()),
-            ExprKind::Unary { op: UnOp::Plus | UnOp::Minus, .. } => Usage::Arithmetic,
-            _ => Usage::Safe,
+            ExprKind::Unary { op: UnOp::Plus | UnOp::Minus, .. } => Some(Outcome::Arithmetic),
+            _ => Some(Outcome::Safe),
         },
         Node::Class(class) => unsafe_if(class.extends() == Some(e)),
         Node::VarDecl(declaration) => unsafe_if(is_destructuring_pattern(declaration.pat())),
@@ -92,50 +93,10 @@ fn usage_of(e: Expr<'_>, is_oxlint: bool) -> Usage<'_> {
         Node::Stmt(statement) => match statement.kind() {
             StmtKind::ForOf { expr, .. } => unsafe_if(expr == e),
             StmtKind::With { object, .. } => unsafe_if(object == e),
-            _ => Usage::Safe,
+            _ => Some(Outcome::Safe),
         },
-        _ => Usage::Safe,
+        _ => Some(Outcome::Safe),
     }
-}
-
-/// What becomes of the value of an expression in the end.
-#[derive(Copy, Clone)]
-pub enum Outcome {
-    Unsafe,
-    Arithmetic,
-    Safe,
-}
-
-type State<'a> = FxHashMap<Expr<'a>, Outcome>;
-
-/// How far up the way is before it is remembered. Otherwise every operand of a long `a?.b && c?.d && ..` goes all of it.
-const MANY_STEPS: u32 = 32;
-
-fn outcome_of<'a>(chain: Expr<'a>, is_oxlint: bool, remembered: &mut State<'a>) -> Outcome {
-    let (mut at, mut steps, mut far) = (chain, 0, None);
-    let outcome = loop {
-        if steps >= MANY_STEPS {
-            if let Some(&known) = remembered.get(&at) {
-                break known;
-            }
-            far.get_or_insert(at);
-        }
-        match usage_of(at, is_oxlint) {
-            Usage::ValueOf(parent) => at = parent,
-            Usage::Unsafe => break Outcome::Unsafe,
-            Usage::Arithmetic => break Outcome::Arithmetic,
-            Usage::Safe => break Outcome::Safe,
-        }
-        steps += 1;
-    };
-    while let Some(e) = far {
-        remembered.insert(e, outcome);
-        far = match usage_of(e, is_oxlint) {
-            Usage::ValueOf(parent) if e != at => Some(parent),
-            _ => None,
-        };
-    }
-    outcome
 }
 
 impl NoUnsafeOptionalChaining {
@@ -143,7 +104,9 @@ impl NoUnsafeOptionalChaining {
         if !chain.is_chain_root() {
             return;
         }
-        match outcome_of(chain, cx.language().is_oxlint, &mut cx.state) {
+        let is_oxlint = cx.language().is_oxlint;
+        let outcome = cx.state.find(chain.into(), |child, _| child.as_expr().and_then(|it| usage_of(it, is_oxlint)));
+        match outcome.unwrap_or(Outcome::Safe) {
             Outcome::Unsafe => {
                 cx.report(chain, UNSAFE_OPTIONAL_CHAIN);
             }
@@ -158,7 +121,7 @@ impl NoUnsafeOptionalChaining {
 impl Rule for NoUnsafeOptionalChaining {
     const META: Meta = Meta::eslint("no-unsafe-optional-chaining", Kind::Problem).recommended();
     const ON: On = On::new().optional_chains().exprs(&[ExprTag::NonNull]);
-    type State<'a> = State<'a>;
+    type State<'a> = AncestorMemo<'a, Outcome>;
 
     fn new(options: &Options) -> Self {
         NoUnsafeOptionalChaining {
@@ -167,7 +130,7 @@ impl Rule for NoUnsafeOptionalChaining {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some(FxHashMap::default())
+        Some(AncestorMemo::default())
     }
 
     fn expr<'a>(&self, chain: Expr<'a>, cx: &mut Cx<'a, Self>) {

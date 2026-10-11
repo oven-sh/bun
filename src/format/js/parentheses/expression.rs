@@ -110,8 +110,6 @@ fn may_need_parentheses<'a>(e: Expr<'a>) -> bool {
         T::Assign => match parent {
             Node::Stmt(statement) if statement.tag() == StmtTag::Expr => {
                 e.left().is_none_or(|left| left.tag() == T::Object)
-                    // The file is one expression: it depends on whose.
-                    || statement.file().path().first() == Some(&0)
             }
             _ => true,
         },

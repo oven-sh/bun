@@ -14,7 +14,6 @@ use bun_lint::types::utils::{
 use bun_lint::types::{Literal, SymbolFlags, Type, TypeFlags};
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::eslint_utils::StaticValue;
-use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 use std::cmp::Ordering;
 
@@ -38,10 +37,6 @@ pub struct State<'a> {
     is_no_unchecked_indexed_access: bool,
     /// [`is_only_used_for_truthiness`]
     only_used_for_truthiness: AncestorMemo<'a, bool>,
-    /// [`option_chain_contains_option_array_index`], for links of long chains.
-    chains_with_option_array_index: FxHashMap<Expr<'a>, bool>,
-    /// For a type with many properties: whether the first of each name is optional.
-    optional_properties: FxHashMap<Type<'a>, FxHashMap<&'a [u8], bool>>,
 }
 
 type Context<'a> = Cx<'a, NoUnnecessaryCondition>;
@@ -268,28 +263,14 @@ fn is_nullable_property_type<'a>(obj_type: Type<'a>, property_type: Type<'a>) ->
 }
 
 /// `node` is a member access.
-fn is_nullable_member_expression<'a>(node: Expr<'a>, cx: &mut Context<'a>) -> bool {
+fn is_nullable_member_expression(node: Expr) -> bool {
     match node.kind() {
         ExprKind::Index { obj, index, .. } => is_nullable_property_type(obj.ty(), index.ty()),
         ExprKind::Dot { obj, name, .. } => {
             // As it is written, which for `this.#prop` is the name of the symbol.
             let property_name = node.file().slice(name.span());
-            let object_type = obj.ty();
-            let properties = object_type.get_properties();
-            if properties.len() <= 16 {
-                return properties
-                    .iter()
-                    .find(|prop| prop.name() == property_name)
-                    .is_some_and(|prop| prop.has_flags(SymbolFlags::OPTIONAL));
-            }
-            let by_name = cx.state.optional_properties.entry(object_type).or_insert_with(|| {
-                let mut by_name = FxHashMap::default();
-                for prop in properties {
-                    by_name.entry(prop.name()).or_insert_with(|| prop.has_flags(SymbolFlags::OPTIONAL));
-                }
-                by_name
-            });
-            by_name.get(property_name).copied().unwrap_or(false)
+            let mut properties = obj.ty().get_properties().iter();
+            properties.find(|prop| prop.name() == property_name).is_some_and(|prop| prop.has_flags(SymbolFlags::OPTIONAL))
         }
         _ => false,
     }
@@ -321,46 +302,21 @@ fn has_possibly_non_nullish_computed_member_property(node: Expr) -> bool {
 /// the types of the rest: in `[{ x: { y: "z" } }][n]?.x?.y` the second `?.` looks unnecessary.
 ///
 /// `node` is a call or a member access, whether or not it is the whole of the chain.
-///
-/// The answer for a link is the answer for all the links that the search passes. `known` has it for those that are far from
-/// where a search began, so that to ask it of each link of a chain takes time in proportion to the length of the chain.
-fn option_chain_contains_option_array_index<'a>(node: Expr<'a>, known: &mut FxHashMap<Expr<'a>, bool>) -> bool {
-    const PLAIN_STEPS: usize = 32;
-    let lhs_of = |node: Expr<'a>| match node.kind() {
-        ExprKind::Call(call) => Some(call.callee()),
-        ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => Some(obj),
-        _ => None,
-    };
-    let (mut at, mut steps) = (node, 0);
-    let answer = loop {
-        if steps >= PLAIN_STEPS
-            && let Some(&known) = known.get(&at)
-        {
-            break known;
-        }
-        let Some(lhs_node) = lhs_of(at) else {
-            break false;
+fn option_chain_contains_option_array_index(mut node: Expr) -> bool {
+    loop {
+        let lhs_node = match node.kind() {
+            ExprKind::Call(call) => call.callee(),
+            ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => obj,
+            _ => return false,
         };
-        if at.is_optional() && is_array_index_expression(lhs_node) {
-            break true;
+        if node.is_optional() && is_array_index_expression(lhs_node) {
+            return true;
         }
         if lhs_node.is_chain_root() {
-            break false;
+            return false;
         }
-        at = lhs_node;
-        steps += 1;
-    };
-    let mut passed = Some(node);
-    for step in 0..steps {
-        let Some(it) = passed else {
-            break;
-        };
-        if step >= PLAIN_STEPS {
-            known.insert(it, answer);
-        }
-        passed = lhs_of(it);
+        node = lhs_node;
     }
-    answer
 }
 
 /// tsgolint 7.0 takes the constraint of a type parameter only. A conditional type that is not resolved, `Awaited<T>`,
@@ -484,14 +440,14 @@ fn check_node_for_nullish<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
         NEVER
     } else if !is_possibly_nullish(ty)
         // For tsgolint `a?.[b]` is an access like `a[b]`.
-        && ((is_chain_expression && !cx.language().is_oxlint) || !is_nullable_member_expression(node, cx))
+        && ((is_chain_expression && !cx.language().is_oxlint) || !is_nullable_member_expression(node))
     {
         // The type of an element of an array does not tell that the index may be out of bounds.
         if !cx.state.is_no_unchecked_indexed_access
             && (is_array_index_expression(node)
                 || is_chain_expression
                     && !matches!(node.kind(), ExprKind::NonNull(_))
-                    && option_chain_contains_option_array_index(node, &mut cx.state.chains_with_option_array_index))
+                    && option_chain_contains_option_array_index(node))
         {
             return;
         }
@@ -702,7 +658,7 @@ fn check_optional_chain<'a>(node: Expr<'a>, cx: &mut Context<'a>) {
     if !cx.state.is_no_unchecked_indexed_access
         && match cx.language().is_oxlint {
             true => tsgolint_has_unguarded_element_access(node_to_check),
-            false => option_chain_contains_option_array_index(node, &mut cx.state.chains_with_option_array_index),
+            false => option_chain_contains_option_array_index(node),
         }
     {
         return;
@@ -978,8 +934,6 @@ impl Rule for NoUnnecessaryCondition {
                 CompilerOption::NoUncheckedIndexedAccess,
             ),
             only_used_for_truthiness: AncestorMemo::default(),
-            chains_with_option_array_index: FxHashMap::default(),
-            optional_properties: FxHashMap::default(),
         };
         Some(flags)
     }

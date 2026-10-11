@@ -168,7 +168,7 @@ pub(crate) fn oxlint_changes(meta: &Meta, message_id: &str) -> OxlintChanges {
 
 /// Whether oxlint has a rule that is called `name`, in whatever plugin.
 pub(crate) fn is_rule_of_oxlint(name: &[u8]) -> bool {
-    has_word(categories::RULE_NAMES, name)
+    (categories::CATEGORIES.iter().flat_map(|it| it.1)).any(|it| has_word(it.1, name))
 }
 
 /// What an element of `plugins` can be for oxlint 1.80, after `eslint-plugin-` or `oxlint-plugin-`. Each was tried.

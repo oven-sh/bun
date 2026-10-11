@@ -27,9 +27,6 @@ impl<'a> State<'a> {
     /// How many of the references to `symbol` are `e`. In total it takes time in proportion to the
     /// number of references.
     fn count(&mut self, symbol: Symbol<'a>, e: Expr<'a>) -> u32 {
-        if symbol.references().len() <= 8 {
-            return symbol.references().filter(|it| it.expr() == Some(e)).count() as u32;
-        }
         if self.counted.insert(symbol) {
             for identifier in symbol.references().filter_map(Reference::expr) {
                 *self.references.entry(identifier).or_default() += 1;

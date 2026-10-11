@@ -15,7 +15,7 @@ impl Rule for NoDupeClassMembers {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<Seen<'a>> {
-        Some(Vec::new())
+        Some(Seen::default())
     }
 
     fn class<'a>(&self, class: Class<'a>, cx: &mut Cx<'a, Self>) {

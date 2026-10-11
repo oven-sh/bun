@@ -6,7 +6,7 @@ use bun_lint::types::utils::{
     get_constrained_type_at_location, is_array_method_call_with_predicate, is_promise_like,
     is_rest_parameter_declaration, parse_finally_call,
 };
-use bun_lint::types::{NameOf, SignatureList, SymbolList, SyntaxKind, TsNode, TsSymbol, Type, TypeFlags};
+use bun_lint::types::{NameOf, SignatureList, SyntaxKind, TsNode, TsSymbol, Type, TypeFlags};
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint::utils::oxlint::tsgolint_function_head_loc;
 use bun_lint::utils::ts_utils::get_function_head_loc;
@@ -279,36 +279,22 @@ fn has_matching_promise_type_argument(node: TsNode) -> bool {
 /// A type that a class or an interface extends or implements.
 struct HeritageType<'a> {
     ty: Type<'a>,
-    /// `type.getSymbol()?.members`
-    members: Option<SymbolList<'a>>,
-    /// The first of each name, if they are many.
-    members_by_name: Option<FxHashMap<&'a [u8], TsSymbol<'a>>>,
+    /// `type.getSymbol()?.members`: the first of each name.
+    members: FxHashMap<&'a [u8], TsSymbol<'a>>,
 }
 
 impl<'a> HeritageType<'a> {
     fn new(ty: Type<'a>) -> Self {
-        let members = ty.get_symbol().map(|symbol| symbol.members());
-        let members_by_name = members.filter(|members| members.len() > 16).map(|members| {
-            let mut by_name = FxHashMap::default();
-            for member in members {
-                by_name.entry(member.name()).or_insert(member);
-            }
-            by_name
-        });
-        HeritageType {
-            ty,
-            members,
-            members_by_name,
+        let mut members = FxHashMap::default();
+        for member in ty.get_symbol().into_iter().flat_map(|symbol| symbol.members()) {
+            members.entry(member.name()).or_insert(member);
         }
+        HeritageType { ty, members }
     }
 
     /// The member with the given name, if it exists.
     fn get_member_if_exists(&self, member_name: &[u8]) -> Option<TsSymbol<'a>> {
-        let member = match &self.members_by_name {
-            Some(by_name) => by_name.get(member_name).copied(),
-            None => self.members.and_then(|members| members.iter().find(|member| member.name() == member_name)),
-        };
-        member.or_else(|| self.ty.get_property(member_name))
+        self.members.get(member_name).copied().or_else(|| self.ty.get_property(member_name))
     }
 }
 

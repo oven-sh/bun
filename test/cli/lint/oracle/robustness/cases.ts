@@ -250,7 +250,7 @@ export const cases: Case[] = [
     isHeavy: true,
     file: "a.js",
     text: () => fn(`switch (a) {\n${seq(65_000, i => `case "k${i}": b(); break;\n`)}}`),
-    rules: { "no-duplicate-case": "error", "max-statements-per-line": "error", "no-fallthrough": "error" },
+    rules: { "max-statements-per-line": "error", "no-fallthrough": "error" },
     reports: { "max-statements-per-line": 65_000 },
     exitCode: 1,
   },

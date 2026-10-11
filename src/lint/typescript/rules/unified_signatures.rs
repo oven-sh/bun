@@ -1,7 +1,7 @@
 use bun_lint::prelude::*;
-use rustc_hash::{FxHashMap, FxHashSet, FxHasher};
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 
 /// Disallow two overloads that could be unified into one with a union or an optional/rest parameter.
 pub struct UnifiedSignatures {
@@ -453,47 +453,6 @@ fn failure_string_start(file: &File<'_>, other: Option<Span>) -> String {
     }
 }
 
-/// A hash of `parts`.
-fn hash_of(parts: impl Hash) -> u64 {
-    let mut hasher = FxHasher::default();
-    parts.hash(&mut hasher);
-    hasher.finish()
-}
-
-/// Gives each value a number.
-struct Numbers<T>(FxHashMap<T, u32>);
-
-impl<T: Eq + Hash> Numbers<T> {
-    fn number_of(&mut self, value: T) -> u32 {
-        let next = self.0.len() as u32;
-        *self.0.entry(value).or_insert(next)
-    }
-}
-
-/// See [`UnifiedSignatures::candidates`].
-#[derive(Default)]
-struct Candidates {
-    /// Positions of signatures, in ascending order, by a hash of what they have in common.
-    lists: FxHashMap<u64, SmallVec<[u32; 2]>>,
-    /// The hashes of the lists in which the candidates for each signature are,
-    searched: Vec<u64>,
-    /// and where those of each signature start in there, and where those of the last end.
-    starts: Vec<usize>,
-}
-
-impl Candidates {
-    /// Puts the positions of the signatures after that at `at` which it has to be compared with into `found`, in ascending order.
-    fn after(&self, at: u32, found: &mut Vec<u32>) {
-        found.clear();
-        let range = self.starts.get(at as usize).copied().unwrap_or(0)..self.starts.get(at as usize + 1).copied().unwrap_or(0);
-        for list in self.searched.get(range).unwrap_or_default().iter().filter_map(|it| self.lists.get(it)) {
-            found.extend_from_slice(&list[list.partition_point(|it| *it <= at)..]);
-        }
-        found.sort_unstable();
-        found.dedup();
-    }
-}
-
 impl UnifiedSignatures {
     fn signatures_can_be_unified<'a>(&self, a: &Signature<'a>, b: &Signature<'a>) -> bool {
         if self.ignore_differently_named_parameters
@@ -527,126 +486,6 @@ impl UnifiedSignatures {
         }
     }
 
-    /// Finds, for many signatures, those that each has to be compared with: all for which [`Self::compare_signatures`] finds
-    /// something, and perhaps some more. It takes time in proportion to the number of parameters, and so does
-    /// [`Candidates::after`] to the number of signatures that it finds: signatures that can be unified have the same hash of what
-    /// has to be the same in them. With `ignoreDifferentlyNamedParameters` that includes the names, except for a signature with a
-    /// parameter that has no name: it is compared with all that it could be unified with but for the names.
-    fn candidates<'a>(&self, signatures: &[Signature<'a>]) -> Candidates {
-        // What a list of `Candidates::lists` has: the signatures that have all parameters in common,
-        const SAME: u8 = 0;
-        // all but one,
-        const SAME_BUT_ONE: u8 = 1;
-        // those that have parameters of these types and no more,
-        const SHORTER: u8 = 2;
-        // or more, which may be missing.
-        const LONGER: u8 = 3;
-        // Which signatures are in the lists, and whether the names count: all,
-        const ALL: u8 = 0;
-        // those in which every parameter has a name, which counts,
-        const WITH_NAMES: u8 = 1;
-        // and the others.
-        const WITHOUT_NAMES: u8 = 2;
-
-        let mut classes = Numbers(FxHashMap::default());
-        let mut parameters = Numbers(FxHashMap::default());
-        let mut types = Numbers(FxHashMap::default());
-        let mut found = Candidates::default();
-        let (mut before, mut after, mut numbers): (Vec<u64>, Vec<u64>, Vec<u32>) = Default::default();
-        for (at, signature) in signatures.iter().enumerate() {
-            let (at, list) = (at as u32, &signature.parameters[..]);
-            found.starts.push(found.searched.len());
-            if is_this_void_param(list.first()) {
-                continue;
-            }
-            let text = |ty: Option<TypeNode<'a>>| ty.map(TypeNode::text);
-            let type_parameters: SmallVec<[_; 2]> =
-                (signature.func.type_params().iter()).map(|it| (it.name().name(), text(it.constraint()))).collect();
-            let class = classes.number_of((
-                text(signature.func.return_type()),
-                type_parameters,
-                signature.uses_type_parameter,
-                signature.block_comment,
-            ));
-            // What it has in common with others: the kind of list, and the hash.
-            let mut find_common = |with_names: bool| {
-                let name = |it: Param<'a>| get_static_parameter_name(it).filter(|_| with_names);
-                let mut common: Vec<(u8, u64)> = Vec::with_capacity(2 * list.len() + 2);
-                numbers.clear();
-                numbers.extend(list.iter().map(|it| {
-                    parameters.number_of((is_rest_element(*it), is_optional(*it), text(get_parameter_type_annotation(*it)), name(*it)))
-                }));
-                // The hashes of the parameters before each, and after each.
-                before.clear();
-                before.push(0);
-                before.extend(numbers.iter().scan(0, |hash, it| {
-                    *hash = hash_of((*hash, *it));
-                    Some(*hash)
-                }));
-                after.clear();
-                after.push(0);
-                after.extend(numbers.iter().rev().scan(0, |hash, it| {
-                    *hash = hash_of((*hash, *it));
-                    Some(*hash)
-                }));
-                after.reverse();
-                common.push((SAME, hash_of((class, list.len(), before.last()))));
-                for (i, it) in list.iter().enumerate().filter(|it| !is_rest_element(*it.1)) {
-                    let others = (class, list.len(), i, before.get(i), after.get(i + 1));
-                    common.push((SAME_BUT_ONE, hash_of((others, is_optional(*it), name(*it)))));
-                }
-                // The hashes of the types of the first parameters.
-                before.truncate(1);
-                before.extend(list.iter().scan(0, |hash, it| {
-                    *hash = hash_of((*hash, types.number_of((text(get_parameter_type_annotation(*it)), name(*it)))));
-                    Some(*hash)
-                }));
-                let is_this = is_this_param(list.first());
-                let of_first = |count: usize| hash_of((class, count, before.get(count), is_this));
-                if !list.last().is_some_and(|it| is_rest_element(*it)) {
-                    common.push((SHORTER, of_first(list.len())));
-                }
-                // All after the first that the shorter does not have may be missing.
-                let required = list.iter().rposition(|it| !parameter_may_be_missing(*it)).map_or(0, |it| it + 1);
-                common.extend((required.saturating_sub(1)..list.len()).map(|count| (LONGER, of_first(count))));
-                common
-            };
-            // Puts it into the lists of some signatures, and has it compared with those in the lists of others.
-            let mut add = |common: &[(u8, u64)], into: &[u8], compared_with: u8| {
-                for &(kind, hash) in common {
-                    for which in into {
-                        found.lists.entry(hash_of((kind, which, hash))).or_default().push(at);
-                    }
-                    let other = match kind {
-                        SHORTER => LONGER,
-                        LONGER => SHORTER,
-                        same => same,
-                    };
-                    found.searched.push(hash_of((other, compared_with, hash)));
-                }
-            };
-            if !self.ignore_differently_named_parameters {
-                add(&find_common(false), &[ALL], ALL);
-                continue;
-            }
-            // The name has to be the same where both are an identifier or both a rest element: everywhere, if all are one of the
-            // two and only the last is a rest element.
-            let has_name = |(i, it): (usize, &Param<'_>)| match parameter_type(*it) {
-                ParameterType::Identifier => true,
-                ParameterType::RestElement => i + 1 == list.len(),
-                _ => false,
-            };
-            if list.iter().enumerate().all(has_name) {
-                add(&find_common(true), &[WITH_NAMES], WITH_NAMES);
-                add(&find_common(false), &[ALL], WITHOUT_NAMES);
-            } else {
-                add(&find_common(false), &[ALL, WITHOUT_NAMES], ALL);
-            }
-        }
-        found.starts.push(found.searched.len());
-        found
-    }
-
     fn check_overloads<'a>(&self, overloads: &[Func<'a>], outer: &OuterTypeParameters<'a>, cx: &Cx<'a, Self>) {
         let only2 = overloads.len() == 2;
         let start = |other: Span| failure_string_start(cx, (!only2).then_some(other));
@@ -661,17 +500,8 @@ impl UnifiedSignatures {
                 }
             })
             .collect();
-        let candidates = (signatures.len() > 8).then(|| self.candidates(&signatures));
-        let mut later: Vec<u32> = Vec::new();
         for (i, a) in signatures.iter().enumerate() {
-            match &candidates {
-                Some(candidates) => candidates.after(i as u32, &mut later),
-                None => {
-                    later.clear();
-                    later.extend(i as u32 + 1..signatures.len() as u32);
-                }
-            }
-            self.compare_with_later(a, later.iter().filter_map(|j| signatures.get(*j as usize)), &start, cx);
+            self.compare_with_later(a, signatures.iter().skip(i + 1), &start, cx);
         }
     }
 

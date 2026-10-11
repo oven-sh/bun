@@ -27,8 +27,8 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { availableParallelism } from "node:os";
-import { basename, join, resolve, sep } from "node:path";
+import { availableParallelism, tmpdir } from "node:os";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { endChildren, spawn } from "../children";
 import { inputs as lineEndingInputs } from "./line-endings.cases.ts";
 
@@ -76,6 +76,12 @@ async function format(files: Record<string, string>, args: string[], options: Op
     files: Object.fromEntries((options.reads ?? []).map(name => [name, read(name)])),
   };
 }
+
+/** Whether the temporary directory is in a repository. */
+const isInRepository = (function look(directory: string): boolean {
+  const isRoot = [".git", ".jj"].some(name => existsSync(join(directory, name)));
+  return isRoot || (dirname(directory) !== directory && look(dirname(directory)));
+})(realpathSync(tmpdir()));
 
 /** The files that are not formatted, according to `-l`. */
 async function different(files: Record<string, string>, args: string[], options?: Options) {
@@ -3240,6 +3246,27 @@ try {
         expect(
           await Promise.all([different(project, []), different(project, ["!deep"]), different(project, ["*.ts"])]),
         ).toEqual([["a.js", "src/b.ts", "src/deep/c.js"], ["a.js", "src/b.ts"], ["src/b.ts"]]);
+      });
+
+      // What oxfmt 0.72.0 does.
+      describe("a repository in a repository", () => {
+        const [o, i, s] = ["dist/o.js", "vendor/lib/dist/i.js", "vendor/lib/src/s.js"];
+        const tree = { ".oxfmtrc.json": "{}\n", [o]: ugly, [i]: ugly, [s]: ugly };
+        const [outer, inner] = [{ ".git/HEAD": "" }, { "vendor/lib/.git/HEAD": "" }];
+
+        test.each<[Record<string, string>, string[]]>([
+          [{ ...inner, ".gitignore": "dist/\n" }, [i, s]],
+          [{ "vendor/lib/.git": "gitdir: ../../.git/modules/lib\n", ".gitignore": "dist/\n" }, [i, s]],
+          [{ ...inner, ".git/info/exclude": "src/\n" }, [o, i, s]],
+          [{ ...inner, "vendor/lib/.git/info/exclude": "src/\n" }, [o, i]],
+        ])("the files of Git above its root do not count in it, and its own do: %j", async (files, expected) => {
+          expect(await different({ ...tree, ...outer, ...files }, [])).toEqual(expected);
+        });
+
+        test.skipIf(isInRepository)("no root counts if a directory is in no repository", async () => {
+          const files = { ...tree, ...inner, ".gitignore": "i.js\n" };
+          expect(await different(files, ["vendor/lib", "dist"])).toEqual([o, s]);
+        });
       });
 
       test("nested configuration files, --disable-nested-config, .prettierrc is not read", async () => {

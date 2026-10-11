@@ -8,6 +8,7 @@
 use crate::{fs, paths};
 use bun_core::strings;
 use bun_glob::ignore::{IgnoreOptions, IgnoreRules, IgnoreSyntax, Verdict};
+use bun_sema::util::FxHashSet;
 use std::sync::Arc;
 
 /// The ignore files that count in a directory: those in it, and those above it.
@@ -99,12 +100,11 @@ pub(crate) fn with_file(chain: Chain, directory: &[u8], file: &[u8], is_for_oxc:
     }
 }
 
-/// Where the repository at `root` has `info/exclude`, as the crate `ignore` finds it. In a working tree of `git worktree add`,
-/// `.git` is a file. That of a submodule names a directory without `commondir`, and nothing is read. A path that is not absolute
-/// is taken from where the process is, not from `root`.
-fn common_directory(root: &[u8]) -> Option<Vec<u8>> {
-    let dot_git = paths::join(root, b".git");
-    if !fs::is_file(&dot_git) {
+/// Where the repository with the `.git` at `dot_git` has `info/exclude`, as the crate `ignore` finds it. In a working tree of
+/// `git worktree add`, `.git` is a file. That of a submodule names a directory without `commondir`, and nothing is read. A path
+/// that is not absolute is taken from where the process is, not from the repository.
+fn common_directory(dot_git: Vec<u8>, kind: fs::Kind) -> Option<Vec<u8>> {
+    if kind == fs::Kind::Directory {
         return Some(dot_git);
     }
     let first_line = |file: &[u8]| {
@@ -126,32 +126,114 @@ fn common_directory(root: &[u8]) -> Option<Vec<u8>> {
     })
 }
 
-/// What counts in `directory`, which is where a search starts: the files in it and above it, up to
-/// the root of the repository. `names`: what they are called, the one that overrides the other
-/// last.
-pub(crate) fn above_and_in(directory: &[u8], names: &[&[u8]]) -> Chain {
-    let is_root = |directory: &&[u8]| {
-        [&b".git"[..], b".jj"]
-            .iter()
-            .any(|name| bun_sys::exists(&paths::join(directory, name)))
+fn is_root(directory: &[u8]) -> bool {
+    [&b".git"[..], b".jj"]
+        .iter()
+        .any(|name| bun_sys::exists(&paths::join(directory, name)))
+}
+
+/// oxc's `all_paths_have_vcs_boundary`. `searched`: where the searches of a run start. One that is ignored is not searched, and
+/// does not count. `named`: the directories of the files that are arguments.
+pub(crate) fn are_all_in_repositories<'p>(
+    mut searched: impl Iterator<Item = &'p [u8]>,
+    mut named: impl Iterator<Item = &'p [u8]>,
+) -> bool {
+    let mut known: FxHashSet<&[u8]> = FxHashSet::default();
+    let mut is_in_one = |directory: &'p [u8]| {
+        let root = paths::ancestors(directory).find(|it| known.contains(it) || is_root(it));
+        let shortest = root.map_or(usize::MAX, <[u8]>::len);
+        known.extend(paths::ancestors(directory).take_while(|it| it.len() >= shortest));
+        root.is_some()
     };
-    let mut directories: Vec<&[u8]> = paths::ancestors(directory).collect();
-    // Outside of a repository, all the way up.
-    if let Some(root) = directories.iter().position(is_root) {
-        directories.truncate(root + 1);
-    }
-    let mut chain = None;
-    if let Some(root) = directories.last()
-        && let Some(common) = common_directory(root)
-    {
-        chain = with_file(chain, root, &paths::join(&common, b"info/exclude"), true);
-    }
-    for directory in directories.iter().rev() {
-        for name in names {
-            chain = with_file(chain, directory, &paths::join(directory, name), true);
+    let is_left_out = |it: &[u8]| OfGit::above_and_in(it, true).is_directory_ignored_anywhere(it);
+    searched.all(|it| is_in_one(it) || is_left_out(it)) && named.all(is_in_one)
+}
+
+/// `.gitignore` and `info/exclude` for a search of oxlint or oxfmt, as the crate `ignore` reads them.
+#[derive(Clone, Default)]
+pub(crate) struct OfGit {
+    ignores: Chain,
+    /// `info/exclude`. Every `.gitignore` comes first.
+    excludes: Chain,
+    /// What is above the root of a repository does not count in it.
+    stops_at_roots: bool,
+}
+
+impl OfGit {
+    /// For a search that starts in `directory`. `None`: they have it, or a directory that it is in, so it is not searched.
+    /// With one search of the run that is in no repository, no root stops any of them.
+    pub(crate) fn for_search(
+        directory: &[u8],
+        are_all_in_repositories: impl FnOnce() -> bool,
+    ) -> Option<Self> {
+        let own = Self::above_and_in(directory, true);
+        if own.is_directory_ignored_anywhere(directory) {
+            return None;
         }
+        Some(match own.stops_at_roots && !are_all_in_repositories() {
+            true => Self::above_and_in(directory, false),
+            false => own,
+        })
     }
-    chain
+
+    /// The files in `directory` and above it, up to the root of the repository. Outside of one, all the way up.
+    pub(crate) fn above_and_in(directory: &[u8], stops_at_roots: bool) -> Self {
+        let mut directories: Vec<&[u8]> = paths::ancestors(directory).collect();
+        let nearest = directories.iter().position(|it| is_root(it));
+        let stops_at_roots = stops_at_roots && nearest.is_some();
+        if let Some(nearest) = nearest.filter(|_| stops_at_roots) {
+            directories.truncate(nearest + 1);
+        }
+        let mut files = Self {
+            stops_at_roots,
+            ..Self::default()
+        };
+        for (index, directory) in directories.iter().enumerate().rev() {
+            let can_be_root = nearest.is_some_and(|nearest| nearest <= index);
+            files = files.and_in(directory, |name| can_be_root || name == b".gitignore");
+        }
+        files
+    }
+
+    /// The same with the files in `directory`, which the search has come to. `has`: whether an entry of it can be called so.
+    pub(crate) fn and_in(mut self, directory: &[u8], has: impl Fn(&[u8]) -> bool) -> Self {
+        let own = |chain, file: &[u8]| with_file(chain, directory, file, true);
+        let dot_git = has(b".git").then(|| paths::join(directory, b".git"));
+        let kind = match &dot_git {
+            Some(dot_git) if self.stops_at_roots => fs::kind(dot_git),
+            // Where no root stops it, the crate does not look at what `.git` is.
+            Some(_) => Some(fs::Kind::Directory),
+            None => None,
+        };
+        let has_jj = || has(b".jj") && bun_sys::exists(&paths::join(directory, b".jj"));
+        if self.stops_at_roots && (kind.is_some() || has_jj()) {
+            (self.ignores, self.excludes) = (None, None);
+        }
+        if let (Some(dot_git), Some(kind)) = (dot_git, kind)
+            && let Some(common) = common_directory(dot_git, kind)
+        {
+            self.excludes = own(self.excludes, &paths::join(&common, b"info/exclude"));
+        }
+        if has(b".gitignore") {
+            self.ignores = own(self.ignores, &paths::join(directory, b".gitignore"));
+        }
+        self
+    }
+
+    fn decide(&self, path: &[u8], is_directory: bool) -> Option<bool> {
+        decide(&self.ignores, path, is_directory, false)
+            .or_else(|| decide(&self.excludes, path, is_directory, false))
+    }
+
+    /// Whether `path` is ignored, if the directory that it is in is not.
+    pub(crate) fn is_ignored(&self, path: &[u8], is_directory: bool) -> bool {
+        self.decide(path, is_directory).unwrap_or(false)
+    }
+
+    /// Whether the directory at `path` is ignored, or one that it is in.
+    pub(crate) fn is_directory_ignored_anywhere(&self, path: &[u8]) -> bool {
+        paths::ancestors(path).any(|directory| self.is_ignored(directory, true))
+    }
 }
 
 /// The files that a search of `bun lint` asks, in the order of the crate `ignore`, with which oxlint walks: wherever they are,
@@ -159,14 +241,14 @@ pub(crate) fn above_and_in(directory: &[u8], names: &[&[u8]]) -> Chain {
 #[derive(Clone, Default)]
 pub(crate) struct Files {
     pub(crate) named: Chain,
-    of_git: Chain,
+    of_git: OfGit,
 }
 
 impl Files {
     /// What counts in `directory`, which is where a search starts. `name`: `.eslintignore`, or what `--ignore-path` has. The
     /// root of a repository does not end the way up for it. Above `directory` it is joined to each directory, so a path is
     /// found too, and an absolute one is read for each. From `directory` on it is looked for among the entries.
-    pub(crate) fn above_and_in(directory: &[u8], name: Option<&[u8]>) -> Self {
+    pub(crate) fn above_and_in(directory: &[u8], name: Option<&[u8]>, of_git: OfGit) -> Self {
         let mut named = None;
         if let Some(name) = name {
             let is_path = strings::contains_char(name, b'/');
@@ -177,10 +259,7 @@ impl Files {
                 named = with_file(named, directory, &paths::resolve(directory, name), true);
             }
         }
-        Self {
-            named,
-            of_git: above_and_in(directory, &[b".gitignore"]),
-        }
+        Self { named, of_git }
     }
 
     /// The same with the files in `directory`, which the search has come to. `has`: whether an entry of it is called so.
@@ -190,20 +269,18 @@ impl Files {
         name: Option<&[u8]>,
         has: impl Fn(&[u8]) -> bool,
     ) -> Self {
-        let own = |chain, name| with_file(chain, directory, &paths::join(directory, name), true);
-        if has(b".gitignore") {
-            self.of_git = own(self.of_git, b".gitignore");
-        }
         if let Some(name) = name.filter(|it| has(it)) {
-            self.named = own(self.named, name);
+            let file = paths::join(directory, name);
+            self.named = with_file(self.named, directory, &file, true);
         }
+        self.of_git = self.of_git.and_in(directory, has);
         self
     }
 
     /// Whether `path` is ignored, if the directory that it is in is not.
     pub(crate) fn is_ignored(&self, path: &[u8], is_directory: bool) -> bool {
         decide(&self.named, path, is_directory, false)
-            .or_else(|| decide(&self.of_git, path, is_directory, false))
+            .or_else(|| self.of_git.decide(path, is_directory))
             .unwrap_or(false)
     }
 }

@@ -6,7 +6,7 @@
 
 use crate::configs::{Flavor, Loaded, Loader};
 use crate::embedded::Framework;
-use crate::gitignore::Files;
+use crate::gitignore::{self, Files};
 use crate::run::{Environment, Fatal, Pool};
 use crate::{Linter, fs, paths};
 use bun_core::strings;
@@ -16,8 +16,8 @@ use bun_lint::linter::config::Dotfiles;
 use bun_lint::linter::{FileConfig, ResolvedConfig};
 use bun_lint::modules::Listed;
 use bun_threading::Guarded;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, LazyLock};
 
 /// What the configuration says about a file: ESLint's `getConfigStatus`.
 #[derive(Clone)]
@@ -209,6 +209,7 @@ fn search(
     loader: &Loader,
     pool: &Pool,
     search: &Search,
+    are_all_in_repositories: &(dyn Fn() -> bool + Sync),
     found: &mut Vec<Target>,
 ) -> Result<Option<usize>, Fatal> {
     let matchers: Vec<Matcher> = (search.patterns.iter())
@@ -227,7 +228,10 @@ fn search(
         // From here on, a directory is only listed if it is not ignored.
         let is_hidden = (inherited.config).is_directory_ignored(&search.base_path, dotfiles);
         let name = paths::basename(&search.base_path);
-        if !is_hidden || loader.looks_for_configurations_in(&inherited, name) {
+        if (!is_hidden || loader.looks_for_configurations_in(&inherited, name))
+            && let Some(ignores) =
+                loader.ignore_files_at(&search.base_path, &inherited, are_all_in_repositories)
+        {
             let real = fs::real_path(&search.base_path);
             if loader.notes_tsconfigs() {
                 (loader.searched_from.lock()).push(search.base_path.clone());
@@ -239,7 +243,7 @@ fn search(
                     above: None,
                 }),
                 relative: Vec::new(),
-                ignores: loader.ignore_files_at(&search.base_path, &inherited),
+                ignores,
                 inherited,
                 is_hidden,
             });
@@ -286,7 +290,10 @@ fn search(
             let mut ignores = directory.ignores.clone();
             if reads_ignore_files && !loader.reads_ignore_files(&directory.inherited) {
                 // They start to count here.
-                ignores = loader.ignore_files_at(&directory.path, &own);
+                match loader.ignore_files_at(&directory.path, &own, are_all_in_repositories) {
+                    Some(own) => ignores = own,
+                    None => return,
+                }
             } else if reads_ignore_files && !directory.relative.is_empty() {
                 let has = |name: &[u8]| entries.iter().any(|it| it.name == name);
                 ignores = ignores.and_in(&directory.path, loader.ignore_file_name(&own), has);
@@ -513,15 +520,35 @@ pub(crate) fn find_files(
         return Err(no_files_found(&missing));
     }
     let mut unmatched = None;
+    let wanted = || searches.iter().filter(|it| !it.patterns.is_empty());
+    let are_all_in_repositories = LazyLock::new(|| {
+        let named = found
+            .iter()
+            .filter(|it| !matches!(it.status, Status::Ignored));
+        (found.is_empty() && wanted().count() == 1)
+            || gitignore::are_all_in_repositories(
+                wanted().map(|it| &it.base_path[..]),
+                named.map(|it| paths::dirname(&it.path)),
+            )
+    });
+    let mut searched = Vec::new();
     for (index, it) in searches
         .iter()
         .enumerate()
         .filter(|it| !it.1.patterns.is_empty())
     {
-        if let Some(pattern) = search(loader, pool, it, &mut found)? {
+        if let Some(pattern) = search(
+            loader,
+            pool,
+            it,
+            &|| *are_all_in_repositories,
+            &mut searched,
+        )? {
             unmatched.get_or_insert((index, pattern));
         }
     }
+    drop(are_all_in_repositories);
+    found.append(&mut searched);
     if let Some((index, pattern)) = unmatched
         && error_on_unmatched_pattern
     {

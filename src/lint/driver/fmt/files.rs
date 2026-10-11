@@ -3,7 +3,7 @@
 
 use super::cli::Options;
 use super::config::{Configs, Flavor, Scope, glob_of_oxc};
-use crate::gitignore::{self, Chain};
+use crate::gitignore::{self, Chain, OfGit};
 use crate::run::{Fatal, Pool};
 use crate::{fs, paths};
 use bun_collections::index_sort;
@@ -11,6 +11,7 @@ use bun_core::strings;
 use bun_lint::linter::config::glob_refusal;
 use bun_sema::util::FxHashSet;
 use bun_threading::Guarded;
+use std::cell::LazyCell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -507,8 +508,8 @@ struct Directory {
     /// Of the directory that it is in or, for the one that is searched, its own.
     above: Arc<Scope>,
     is_first: bool,
-    /// The `.gitignore` files above it or, for the one that is searched, in it too.
-    git: Chain,
+    /// The files of Git above it or, for the one that is searched, in it too.
+    git: OfGit,
     /// `ignorePatterns` of the configuration above it have it. It is looked at all the same: a
     /// configuration file in it starts over.
     is_ignored_by_configuration: bool,
@@ -522,17 +523,16 @@ fn search(
     base: &[u8],
     matches: &(dyn Fn(&[u8]) -> bool + Sync),
     enters: &(dyn Fn(&[u8]) -> bool + Sync),
-    reads_gitignore: bool,
+    // `None`: the files of Git are not read. Otherwise [`gitignore::are_all_in_repositories`] of the run.
+    are_all_in_repositories: Option<&dyn Fn() -> bool>,
 ) -> Result<Vec<Target>, Fatal> {
     let (mut found, mut failure) = (Guarded::new(Vec::new()), Guarded::new(None::<Fatal>));
-    let git = match reads_gitignore {
-        true => gitignore::above_and_in(base, &[b".gitignore"]),
-        false => None,
+    let reads_gitignore = are_all_in_repositories.is_some();
+    let git = match are_all_in_repositories.map(|it| OfGit::for_search(base, it)) {
+        Some(Some(git)) => git,
+        Some(None) => return Ok(Vec::new()),
+        None => OfGit::default(),
     };
-    // A `.gitignore` above has it, or a directory that it is in.
-    if gitignore::is_directory_ignored_anywhere(&git, base) {
-        return Ok(Vec::new());
-    }
     let above = configs.for_directory(base)?;
     let mut level = vec![Directory {
         path: base.to_vec(),
@@ -572,16 +572,10 @@ fn search(
                 && !std::ptr::eq(configs.ignores_of(&directory.above), of_config);
             let is_ignored_by_configuration = directory.is_ignored_by_configuration && !starts_over;
             let mut git = directory.git.clone();
-            if reads_gitignore
-                && !directory.is_first
-                && entries.iter().any(|it| it.name == b".gitignore")
-            {
-                git = gitignore::with_file(
-                    git,
-                    &directory.path,
-                    &paths::join(&directory.path, b".gitignore"),
-                    true,
-                );
+            if reads_gitignore && !directory.is_first {
+                git = git.and_in(&directory.path, |name| {
+                    entries.iter().any(|it| it.name == name)
+                });
             }
             let (mut files, mut directories) = (Vec::new(), Vec::new());
             // Links are not followed, and not formatted.
@@ -600,7 +594,7 @@ fn search(
                     }
                     continue;
                 }
-                if gitignore::is_ignored(&git, &path, entry.is_directory) {
+                if git.is_ignored(&path, entry.is_directory) {
                     continue;
                 }
                 let is_ignored_by_configuration = is_ignored_by_configuration
@@ -729,7 +723,7 @@ pub(crate) fn expand(
                     is_anything_ignored = true;
                     continue;
                 }
-                let mut found = search(configs, pool, ignored, &path, &|_| true, &|_| true, false)?;
+                let mut found = search(configs, pool, ignored, &path, &|_| true, &|_| true, None)?;
                 found.iter_mut().for_each(|it| it.ignores_unknown = true);
                 written_base = (paths::relative(&cwd, &path), path);
                 (found, b"No supported files were found in the directory")
@@ -767,7 +761,7 @@ pub(crate) fn expand(
                             true => glob.may_match_inside(&absolute(relative)),
                             false => glob.may_match_inside(relative),
                         },
-                        false,
+                        None,
                     )?,
                     _ => Vec::new(),
                 };
@@ -851,38 +845,42 @@ pub(crate) fn expand_as_oxfmt(
     index_sort::sort_slice(&mut targets[..]);
     targets.dedup();
 
+    let is_ignored = |chain: &Chain, path: &[u8], kind: fs::Kind| match kind {
+        fs::Kind::Directory => gitignore::is_directory_ignored_anywhere(chain, path),
+        fs::Kind::File => gitignore::is_file_ignored_anywhere(chain, path),
+    };
+    let targets: Vec<(Vec<u8>, fs::Kind, u64)> = targets
+        .into_iter()
+        .filter_map(|path| fs::kind_and_size(&path).map(|(kind, size)| (path, kind, size)))
+        .filter(|(path, kind, _)| !ignored.files.iter().any(|it| is_ignored(it, path, *kind)))
+        .collect();
+    let are_all_in_repositories = LazyCell::new(|| {
+        let directories = || targets.iter().filter(|it| it.1 == fs::Kind::Directory);
+        let searched = directories().map(|it| &it.0[..]);
+        directories().count() == 1
+            || gitignore::are_all_in_repositories(searched, std::iter::empty())
+    });
     let mut found: Vec<Target> = Vec::new();
-    for path in targets {
-        let Some((kind, size)) = fs::kind_and_size(&path) else {
-            continue;
-        };
-        let is_directory = kind == fs::Kind::Directory;
-        let is_ignored = |chain: &Chain| match is_directory {
-            true => gitignore::is_directory_ignored_anywhere(chain, &path),
-            false => gitignore::is_file_ignored_anywhere(chain, &path),
-        };
-        if ignored.files.iter().any(is_ignored) {
-            continue;
-        }
-        if is_directory {
+    for (path, kind, size) in &targets {
+        if *kind == fs::Kind::Directory {
             let matches =
                 |relative: &[u8]| globs.is_empty() || globs.iter().any(|it| it.matches(relative));
             found.append(&mut search(
                 configs,
                 pool,
                 ignored,
-                &path,
+                path,
                 &matches,
                 &|_| true,
-                true,
+                Some(&|| *are_all_in_repositories),
             )?);
             continue;
         }
-        let scope = configs.for_directory(paths::dirname(&path))?;
-        if !is_ignored(configs.ignores_of(&scope)) {
+        let scope = configs.for_directory(paths::dirname(path))?;
+        if !is_ignored(configs.ignores_of(&scope), path, *kind) {
             found.push(Target {
-                path,
-                size,
+                path: path.clone(),
+                size: *size,
                 scope,
                 ignores_unknown: true,
                 is_named: false,

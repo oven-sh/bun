@@ -1,6 +1,16 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
-import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { endChildren, spawn } from "../children";
 import { cases as rowsOfESLint8 } from "./oracle/driver/eslintrc-cli-cases.mjs";
@@ -67,6 +77,11 @@ const rc = (config: object) => JSON.stringify({ root: true, ...config });
 const eqeqeq = { rules: { eqeqeq: "error" } };
 const noVar = { rules: { "no-var": "error" } };
 const yaml = (rule: string) => `root: true\nrules:\n  ${rule}: error\n`;
+/** Whether the temporary directory is in a repository. */
+const isInRepository = (function look(directory: string): boolean {
+  const isRoot = [".git", ".jj"].some(name => existsSync(join(directory, name)));
+  return isRoot || (dirname(directory) !== directory && look(dirname(directory)));
+})(realpathSync(tmpdir()));
 
 // The parts of @eslint/eslintrc that the functions of its `FlatCompat` are made of, in the shape that they have there.
 const eslintrc = `
@@ -1723,6 +1738,60 @@ describe.concurrent("an .oxlintrc.json", () => {
     });
     const all = ["gen.js:1:1 no-var", "kept.js:1:1 no-var", "sub/gen.js:1:1 no-var"];
     expect(problems).toEqual(isRead ? ["kept.js:1:1 no-var"] : all);
+  });
+
+  // What oxlint 1.87.0 lints.
+  describe("a repository in a repository", () => {
+    const [o, top, i, s] = ["dist/o.js", "top.js", "vendor/lib/dist/i.js", "vendor/lib/src/s.js"];
+    const [d, k] = ["vendor/lib/sub/deep/dist/d.js", "vendor/lib/sub/deep/k.js"];
+    const names = [o, top, i, s, d, k];
+    const tree = {
+      ".oxlintrc.json": JSON.stringify({ ...noVar, categories: { correctness: "off" } }),
+      ...Object.fromEntries(names.map(name => [name, code])),
+    };
+    const [outer, inner] = [{ ".git/HEAD": "" }, { "vendor/lib/.git/HEAD": "" }];
+    /** The files that are linted. */
+    async function linted(files: Record<string, string>, args?: string[], options?: Options) {
+      const { problems } = await lint({ ...tree, ...files }, args, options);
+      return problems.map(it => it.split(":")[0]);
+    }
+
+    test.each<[string, Record<string, string>, Options]>([
+      ["a directory", inner, {}],
+      ["an empty directory", {}, { before: dir => mkdirSync(join(dir, "vendor", "lib", ".git")) }],
+      ["a file, which a submodule has", { "vendor/lib/.git": "gitdir: ../../.git/modules/lib\n" }, {}],
+      ["of Jujutsu", { "vendor/lib/.jj/working_copy/type": "" }, {}],
+    ])("the .gitignore above its root does not count in it: %s", async (_, root, options) => {
+      expect(await linted({ ...outer, ...root, ".gitignore": "dist/\n" }, ["."], options)).toEqual([top, i, s, d, k]);
+    });
+
+    test.each<[Record<string, string>, string[]]>([
+      [{ "vendor/.gitignore": "dist/\n" }, names],
+      [{ ".git/info/exclude": "src/\n" }, names],
+      [{ "vendor/lib/.git/info/exclude": "src/\n" }, [o, top, i, d, k]],
+      [{ "vendor/lib/.gitignore": "dist/\n", "vendor/lib/sub/deep/.git/HEAD": "" }, [o, top, s, d, k]],
+      // It is not of Git.
+      [{ ".gitignore": "dist/\n", ".eslintignore": "src/\n" }, [top, i, d, k]],
+    ])("nor does any other file of Git, and its own do: %j", async (files, expected) => {
+      expect(await linted({ ...outer, ...inner, ...files })).toEqual(expected);
+    });
+
+    test.each<[Record<string, string>, string]>([
+      [{ ".gitignore": "dist/\n" }, "dist"],
+      [{ ".git/info/exclude": "dist/\n" }, "dist"],
+      [{ ".gitignore": "vendor/\n" }, "vendor/lib/src"],
+    ])("a directory that is named is not searched if the files of Git have it: %j %s", async (files, directory) => {
+      expect(await linted({ ...outer, ...files }, [directory, top])).toEqual([top]);
+    });
+
+    describe.skipIf(isInRepository)("with an argument that is in no repository", () => {
+      test.each([
+        ["dist", [o, s, d, k]],
+        [top, [top, s, d, k]],
+      ])("no root counts: %s", async (outside, expected) => {
+        expect(await linted({ ...inner, ".gitignore": "i.js\n" }, ["vendor/lib", outside])).toEqual(expected);
+      });
+    });
   });
 
   // What oxlint 1.87.0 reports. A junction needs no privilege on Windows. Elsewhere it is a link like any other.

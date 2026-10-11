@@ -12,7 +12,7 @@
 
 use crate::cli::{Options, Tool};
 use crate::embedded::Framework;
-use crate::gitignore::{self, Files};
+use crate::gitignore::{self, Files, OfGit};
 use crate::print_config::object;
 use crate::run::{Environment, Fatal};
 use crate::{Linter, eslintrc, evaluate, fs, paths, rulesdir};
@@ -1580,16 +1580,27 @@ impl<'l> Loader<'l> {
             })
     }
 
-    /// The ignore files that count in `directory`, where a search starts.
-    pub(crate) fn ignore_files_at(&self, directory: &[u8], loaded: &Loaded) -> Files {
+    /// The ignore files that count in `directory`, where a search starts. `None`: oxlint does not search it, because those of
+    /// Git have it. `are_all_in_repositories`: [`gitignore::are_all_in_repositories`] of the run.
+    pub(crate) fn ignore_files_at(
+        &self,
+        directory: &[u8],
+        loaded: &Loaded,
+        are_all_in_repositories: impl FnOnce() -> bool,
+    ) -> Option<Files> {
         if !self.reads_ignore_files(loaded) {
-            return Files::default();
+            return Some(Files::default());
         }
+        let of_git = match OfGit::for_search(directory, are_all_in_repositories) {
+            Some(of_git) => of_git,
+            None if loaded.flavor == Flavor::Oxlint => return None,
+            None => OfGit::above_and_in(directory, true),
+        };
         let name = self.ignore_file_name(loaded).map(paths::from_native);
-        let mut files = Files::above_and_in(directory, name.as_deref());
+        let mut files = Files::above_and_in(directory, name.as_deref(), of_git);
         let (cwd, patterns) = (self.cwd(), &self.options.ignore_pattern);
         if !self.options.ignore {
-            return files;
+            return Some(files);
         }
         if loaded.flavor == Flavor::Oxlint {
             // For oxlint `--ignore-pattern` is for the whole run, whatever configuration file is nearest.
@@ -1599,7 +1610,7 @@ impl<'l> Loader<'l> {
             let path = paths::resolve(cwd, &paths::from_native(path));
             files.named = gitignore::with_file(files.named, cwd, &path, true);
         }
-        files
+        Some(files)
     }
 
     pub(crate) fn environment(&self) -> &'l Environment<'l> {

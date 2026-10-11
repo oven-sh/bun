@@ -314,7 +314,7 @@ The plugins in `jsPlugins` are loaded and run. As in oxlint, a rule that is writ
 
 Where an `.oxlintrc.json` is the configuration, `bun lint` behaves like oxlint, not like ESLint:
 
-- It skips what `.gitignore` ignores, and follows symbolic links. `node_modules` is skipped because `.gitignore` has it.
+- It skips what the `.gitignore` files of the repository ignore, even a directory that is named as an argument, and follows symbolic links. `node_modules` is skipped because `.gitignore` has it.
 - `--ignore-path` takes the name of a file, not a path: it is looked for in every directory, as `.eslintignore` is.
 - A configuration file with a key that oxlint does not know is an error.
 - If the command line or a configuration file cannot be used, the exit code is `1`.

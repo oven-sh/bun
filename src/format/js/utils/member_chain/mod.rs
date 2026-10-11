@@ -117,8 +117,7 @@ impl<'a, 'b> MemberChain<'a, 'b> {
             return false;
         };
         if !f.is_quiet()
-            && (has_leading_comment(first_member, f)
-                || has_trailing_comment(first_member, f))
+            && (has_leading_comment(first_member, f) || has_trailing_comment(first_member, f))
         {
             return false;
         }

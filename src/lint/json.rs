@@ -132,7 +132,8 @@ fn from_expr(expr: &Expr, room: RoomToNest) -> Option<Json> {
     }
     Some(match &expr.data {
         Data::EBoolean(it) => Json::Bool(it.value),
-        Data::ENumber(it) if it.value().is_finite() => Json::Number(it.value()),
+        // `.inf` of YAML, `inf` of TOML, `Infinity` of JSON5. What is no number is `null`, as for `JSON.stringify`.
+        Data::ENumber(it) if !it.value().is_nan() => Json::Number(it.value()),
         Data::EString(it) if it.is_utf16 => Json::String(string_from_code_points(
             it.slice16().iter().map(|unit| u32::from(*unit)),
         )),

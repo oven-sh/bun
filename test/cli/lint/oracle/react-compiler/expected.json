@@ -3806,7 +3806,7 @@
   },
   "names": {
    "exit": 1,
-   "files": 4,
+   "files": 5,
    "diagnostics": {
     "defaults-with-jsx.jsx": [
      {

@@ -1006,7 +1006,10 @@ impl<'a> CollectDependenciesVisitor<'a> {
                             state.escaping_values.insert(decl);
                         }
                     }
-                } else if receiver.effect.is_mutable() {
+                } else if receiver.effect.is_mutable()
+                    && (env.config.arguments_of_no_alias_methods_escape
+                        || !env.has_no_alias_signature(property.identifier))
+                {
                     // Args of a mutable-array method call escape via the receiver.
                     let type_id = env.identifiers[receiver.identifier.0 as usize].type_;
                     if is_array_type(&env.types[type_id.0 as usize]) {

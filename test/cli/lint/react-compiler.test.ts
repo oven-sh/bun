@@ -215,6 +215,7 @@ describe.concurrent(`bun lint: the rules of the React Compiler report what oxlin
     const { diagnostics, exit } = await report(small.names);
     expect(diagnostics).toEqual(expected.reports.names.diagnostics);
     expect(diagnostics["own-hooks.tsx"]).toBeUndefined();
+    expect(diagnostics["callback-of-map.jsx"]).toBeUndefined();
     expect(placesOf(diagnostics["react-by-its-name.jsx"]).map(it => it[1])).toEqual([5, 5]);
     expect(placesOf(diagnostics["fbt.jsx"])).toEqual([
       ["react(todo)", 2, 3],

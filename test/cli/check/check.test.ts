@@ -3125,7 +3125,32 @@ const wrong: number = "";
       20_000,
     );
 
-    // The parser reads `A.A.A` in a loop and holds more levels of a pattern than two walks of the checker did, which are no
+    // What matches a path with a pattern of `include` called itself for each `**`, and tried every number of directories for
+    // each of them in turn: the stack, and time that grows like a power of their number.
+    test.each([
+      ["200,000 in a row", [`${repeat("**/", 200_000)}*.ts`], "a.ts"],
+      ["16 that match nothing, 34 directories", [`${repeat("**/a/", 16)}b.ts`, "**/*.ts"], `${repeat("a/", 34)}a.ts`],
+    ])("`**` in `include`: %s", async (_, include, file) => {
+      using dir = project({
+        "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), include }),
+        [file]: `export const wrong: number = "";\n`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(`${file}(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`);
+      expect(exitCode).toBe(1);
+    });
+
+    // What reads a tsconfig.json called itself for each file that is extended, on the main thread.
+    test("a chain of 5,000 configuration files that extend each other", async () => {
+      const files: Record<string, string> = { "tsconfig.json": '{ "extends": "./t0.json" }', "t5000.json": tsconfig };
+      for (let i = 0; i < 5_000; i++) files[`t${i}.json`] = `{ "extends": "./t${i + 1}.json" }`;
+      using dir = project({ ...files, "a.ts": `export const wrong: number = "";\n` });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout).toBe(`a.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`);
+      expect(exitCode).toBe(1);
+    });
+
+    // The parser reads `A.A.A` in a loop and holds more levels of a pattern than three walks of the checker did, which are no
     // queries and did not ask the stack: a little before the depth at which the file is refused they ran over its end. Where
     // that is depends on the platform and the build: so every depth.
     test.skipIf(isDebug || isASAN)(
@@ -3138,6 +3163,11 @@ const wrong: number = "";
             `export {};\nnamespace ${name} { export const b = 1; }\nlet x: string = ${name}.b;\n`;
           files[`patterns-${depth}.ts`] =
             `export {};\ndeclare let y: any; let ${repeat("{ a: ", depth)}b${repeat(" }", depth)} = y; let x: string = b;\n`;
+        }
+        // Slower, and it fell at every depth from 4,600 to 17,500.
+        for (let depth = 4_000; depth < 20_000; depth = Math.ceil(depth * 1.1)) {
+          files[`parameters-${depth}.ts`] =
+            `export {};\nfunction f(${repeat("{ a: ", depth)}b${repeat(" }", depth)}) {}\n`;
         }
         using dir = project(files);
         const { stdout, exitCode } = await check(dir);

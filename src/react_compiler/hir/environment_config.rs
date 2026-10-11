@@ -91,6 +91,9 @@ pub struct EnvironmentConfig {
     /// JSX that is a default, or in one, can be evaluated earlier if its operands can: the parser has made a call of
     /// it. Upstream does not compile such a function.
     pub jsx_can_be_reordered: bool,
+    /// What is passed to a method of a mutable array escapes by the array, also for `map`, `filter` and the like, whose
+    /// signatures say that they keep none of their arguments. To upstream nothing escapes so.
+    pub arguments_of_no_alias_methods_escape: bool,
     /// `({ k: a, b } = o)` where a function captures `a` goes through temporaries, as `[a, b] = o` does. Upstream
     /// assigns `b` at once and `a` not, and fails: "Expected consistent kind for destructuring". So do both for `{ a, b }`.
     pub captured_targets_with_keys_force_temporaries: bool,
@@ -156,6 +159,7 @@ impl Default for EnvironmentConfig {
             captured_refs_are_known_in_functions: true,
             effects_keep_their_place: false,
             jsx_can_be_reordered: true,
+            arguments_of_no_alias_methods_escape: true,
             captured_targets_with_keys_force_temporaries: false,
             unreachable_code_is_reported_at_its_function: false,
             tagged_templates_are_always_called: false,

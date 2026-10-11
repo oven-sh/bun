@@ -301,6 +301,20 @@ function AnAttribute(props) {
 }
 `;
 
+/** `map` keeps none of its arguments: the function has no scope of its own, whose dependency would be `i18n`. */
+const callbackOfMap = `import { useMemo } from "react";
+export function Component({ nodes, i18n }) {
+  const grouped = useMemo(() => {
+    const groups = [];
+    for (const node of nodes) {
+      groups.push(node);
+    }
+    return groups.map(key => format(key).locale(i18n.language));
+  }, [nodes, i18n.language]);
+  return <div>{grouped}</div>;
+}
+`;
+
 /** JSX cannot be evaluated earlier, nor can what has JSX in it. */
 const defaultsWithJsx = `export function A({ icon = { on: <Eye />, off: <Off /> } }) {
   return <div>{icon.on}</div>;
@@ -608,7 +622,7 @@ function Component(props) {
   },
   order: { ".oxlintrc.json": rc(), "order.jsx": order },
   writes: { ".oxlintrc.json": rc(), "writes.jsx": writes },
-  names: { ".oxlintrc.json": rc(), "own-hooks.tsx": ownHooks, "defaults-with-jsx.jsx": defaultsWithJsx, "react-by-its-name.jsx": reactByItsName, "fbt.jsx": duplicateFbtTags },
+  names: { ".oxlintrc.json": rc(), "own-hooks.tsx": ownHooks, "defaults-with-jsx.jsx": defaultsWithJsx, "react-by-its-name.jsx": reactByItsName, "fbt.jsx": duplicateFbtTags, "callback-of-map.jsx": callbackOfMap },
   lowering: { ".oxlintrc.json": rc(), "forever.tsx": forever, "defaults.tsx": defaults },
   node_modules: {
     ".oxlintrc.json": rc(),
@@ -695,6 +709,7 @@ ${["a", "b", "c", "d", "e", "f", "g", "h", "i"].map(name => `    value += props.
   "defaults-with-jsx.jsx": defaultsWithJsx,
   "react-by-its-name.jsx": reactByItsName,
   "fbt.jsx": duplicateFbtTags,
+  "callback-of-map.jsx": callbackOfMap,
   "disabled.jsx": readsRef("// eslint-disable-next-line react-hooks/refs"),
   "flow-hook.jsx": readsRef("// $FlowFixMe[react-rule-hook]"),
   "flow-ref.jsx": readsRef("// $FlowFixMe[react-rule-unsafe-ref]"),

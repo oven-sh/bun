@@ -51,6 +51,7 @@ fn config_of(flavor: Flavor) -> EnvironmentConfig {
         captured_refs_are_known_in_functions: false,
         effects_keep_their_place: is_oxlint,
         jsx_can_be_reordered: false,
+        arguments_of_no_alias_methods_escape: false,
         captured_targets_with_keys_force_temporaries: is_oxlint,
         unreachable_code_is_reported_at_its_function: is_oxlint,
         tagged_templates_are_always_called: is_oxlint,

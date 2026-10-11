@@ -1812,6 +1812,14 @@ describe("enableDefensive()", () => {
 });
 
 describe("row-shape structure caching", () => {
+  // bun:jsc's describe() exposes the StructureID, which is the only
+  // JS-visible handle on the cached row Structure.
+  const structureId = (row: unknown) => {
+    const m = jscDescribe(row).match(/StructureID: (\d+)/);
+    expect(m).not.toBeNull();
+    return m![1];
+  };
+
   test("all() results share a null-prototype structure and handle duplicate columns", () => {
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE t (a INTEGER, b TEXT)");
@@ -1881,13 +1889,7 @@ describe("row-shape structure caching", () => {
     // Rebuilding the Structure per call costs one Structure cell per
     // column per get(). The cache must survive the reset between
     // calls and only rebuild when SQLite re-prepares the statement
-    // with different column names. bun:jsc's describe() exposes the
-    // StructureID, which is the only JS-visible handle on this.
-    const structureId = (row: unknown) => {
-      const m = jscDescribe(row).match(/StructureID: (\d+)/);
-      expect(m).not.toBeNull();
-      return m![1];
-    };
+    // with different column names.
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE t (a, b, c, d, e); INSERT INTO t VALUES (1,2,3,4,5),(6,7,8,9,10)");
     // `LIMIT ?` and `LIKE ?` make SQLite re-prepare the statement on
@@ -1923,6 +1925,27 @@ describe("row-shape structure caching", () => {
     expect(Object.keys(middle)).toEqual(["x", "b", "y", "d", "z"]);
     expect(structureId(middle)).not.toBe(structureId(last));
     expect(structureId(stmt.get())).toBe(structureId(middle));
+    db.close();
+  });
+
+  test("non-ASCII column names reuse the row Structure and follow a rename", () => {
+    // sqlite3_column_name() returns UTF-8. The cache keeps those bytes
+    // and compares them after a re-prepare.
+    const db = new DatabaseSync(":memory:");
+    db.exec(`CREATE TABLE t ("é" INTEGER, "名前" TEXT); INSERT INTO t VALUES (1, 'a')`);
+    const stmt = db.prepare("SELECT * FROM t");
+    const first = stmt.get();
+    expect(first).toEqual({ "é": 1, "名前": "a" });
+    const id = structureId(first);
+    // Any schema change re-prepares the statement. The names are the same.
+    db.exec("CREATE TABLE other (x)");
+    expect([stmt.get(), ...stmt.all(), ...stmt.iterate()].map(structureId)).toEqual([id, id, id]);
+    // "é" is C3 A9 and "è" is C3 A8: the names differ in the last byte only.
+    db.exec(`ALTER TABLE t RENAME COLUMN "é" TO "è"`);
+    const renamed = stmt.get();
+    expect(renamed).toEqual({ "è": 1, "名前": "a" });
+    expect(structureId(renamed)).not.toBe(id);
+    expect(structureId(stmt.get())).toBe(structureId(renamed));
     db.close();
   });
 

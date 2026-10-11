@@ -354,6 +354,7 @@ impl<'a> Context<'a> {
                 .map_err(|_| FromTarballError::InvalidPackageName)?;
 
             manager.options.apply_publish_config(&json, &bump, &name)?;
+            PublishCommand::refuse_publish_config_provenance(&json);
 
             if let Some(access) = manager.options.publish_config.access {
                 if access == Access::Restricted && !is_scoped {
@@ -429,7 +430,6 @@ impl<'a> Context<'a> {
     pub(crate) fn from_workspace(
         ctx: Command::Context<'a>,
         manager: &'a mut PackageManager,
-        original_cwd: &[u8],
     ) -> Result<Context<'static>, FromWorkspaceError> {
         // Note: capture the package.json path before constructing
         // `pack::Context` so the `&mut PackageManager` borrow doesn't conflict.
@@ -439,7 +439,6 @@ impl<'a> Context<'a> {
         let mut pack_ctx = pack::Context {
             manager,
             command_ctx: ctx,
-            original_cwd,
             bundled_deps: Vec::new(),
             stats: pack::Stats::default(),
         };
@@ -451,12 +450,33 @@ impl<'a> Context<'a> {
 }
 
 impl PublishCommand {
+    /// Publishing without the provenance statement `asked_by` asks for would look like success.
+    fn refuse_provenance(asked_by: &str) -> ! {
+        Output::err_generic(
+            "{} is not supported yet: bun publish cannot generate provenance statements",
+            (asked_by,),
+        );
+        Global::crash();
+    }
+
+    pub(crate) fn refuse_publish_config_provenance(package_json: &Expr) {
+        let provenance = (package_json.get(b"publishConfig"))
+            .and_then(|publish_config| publish_config.get(b"provenance"));
+        if provenance.is_some_and(|value| value.as_bool() != Some(false)) {
+            Self::refuse_provenance("\"provenance\" in the publishConfig of package.json");
+        }
+    }
+
     pub(crate) fn exec(ctx: Command::Context) -> Result<(), Error> {
         bun_core::prettyln!(
             "<r><b>bun publish <r><d>v{}<r>",
             Global::package_json_version_with_sha,
         );
         Output::flush();
+
+        if (bun_core::argv().iter()).any(|arg| arg.starts_with(b"--provenance")) {
+            Self::refuse_provenance("--provenance");
+        }
 
         let cli = install::CommandLineArguments::parse(Subcommand::Publish)?;
 
@@ -543,7 +563,7 @@ impl PublishCommand {
             return Ok(());
         }
 
-        let context = match Context::from_workspace(ctx, manager, &original_cwd) {
+        let context = match Context::from_workspace(ctx, manager) {
             Ok(c) => c,
             Err(err) => {
                 use pack::PackError;
@@ -1678,14 +1698,22 @@ impl PublishCommand {
                     0,
                 ) {
                     Ok(fd) => fd,
-                    Err(e) => {
-                        if matches!(e.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENAMETOOLONG) {
+                    Err(e) => match e.get_errno() {
+                        bun_sys::E::ENOENT | bun_sys::E::ENAMETOOLONG => {
                             bun_core::warn!(
                                 "bin directory '{}' does not exist",
                                 bstr::BStr::new(normalized_bin_dir.as_bytes()),
                             );
                             return Ok(());
-                        } else {
+                        }
+                        bun_sys::E::ENOTDIR => {
+                            bun_core::warn!(
+                                "bin directory '{}' is not a directory",
+                                bstr::BStr::new(normalized_bin_dir.as_bytes()),
+                            );
+                            return Ok(());
+                        }
+                        _ => {
                             Output::err(
                                 e,
                                 "failed to open bin directory: '{}'",
@@ -1693,20 +1721,15 @@ impl PublishCommand {
                             );
                             Global::crash();
                         }
-                    }
+                    },
                 };
 
-                let mut dirs: Vec<(Fd, Box<[u8]>, bool)> = Vec::new();
+                let mut dirs: Vec<(Fd, Box<[u8]>)> = Vec::new();
 
-                dirs.push((bin_dir, normalized_bin_dir.as_bytes().into(), false));
+                dirs.push((bin_dir, normalized_bin_dir.as_bytes().into()));
 
-                while let Some(dir_info) = dirs.pop() {
-                    let (dir, dir_subpath, close_dir) = dir_info;
-                    let _close = scopeguard::guard(dir, move |d| {
-                        if close_dir {
-                            let _ = d.close();
-                        }
-                    });
+                while let Some((dir, dir_subpath)) = dirs.pop() {
+                    let _close = bun_sys::CloseOnDrop::new(dir);
 
                     let mut iter = DirIterator::iterate(dir);
                     iter.resolve_unknown_entry_types = true;
@@ -1766,7 +1789,7 @@ impl PublishCommand {
                             else {
                                 continue;
                             };
-                            dirs.push((subdir, subpath.as_bytes().into(), true));
+                            dirs.push((subdir, subpath.as_bytes().into()));
                         }
                     }
                 }

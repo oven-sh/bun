@@ -125,21 +125,6 @@ pub struct DedupeMapEntry {
     /// later `enqueue_*_for_download` can observe the failure instead of
     /// re-scheduling the entire network task (and its retry cycle) a second time.
     pub(crate) failed: bool,
-    /// Manifest tasks only (these three): see `PackageManager::has_created_manifest_task`.
-    pub(crate) is_extended_manifest: bool,
-    pub(crate) has_abbreviated_manifest_request: bool,
-    /// The package then resolves from the abbreviated document (`PackageManager::needs_extended_manifest`).
-    pub(crate) extended_manifest_failed: bool,
-}
-
-impl DedupeMapEntry {
-    pub(crate) fn manifest_requested(&mut self, extended: bool) -> &mut bool {
-        if extended {
-            &mut self.is_extended_manifest
-        } else {
-            &mut self.has_abbreviated_manifest_request
-        }
-    }
 }
 /// `Id` is already a wyhash output, so identity hashing
 /// (hash = value bits) avoids re-hashing.
@@ -485,6 +470,7 @@ fn redacted_url(url: &[u8]) -> Vec<u8> {
 }
 
 impl NetworkTask {
+    /// `needs_extended`: the caller cannot use the abbreviated document.
     pub(crate) fn for_manifest(
         &mut self,
         name: &[u8],
@@ -493,6 +479,58 @@ impl NetworkTask {
         is_optional: bool,
         needs_extended: bool,
     ) -> Result<(), ForManifestError> {
+        let request = self.manifest_request(
+            name,
+            scope,
+            loaded_manifest,
+            is_optional,
+            needs_extended || npm::name_suggests_libc(name),
+        )?;
+        // MaybeUninit overwrite — see field doc; old slot value is
+        // either uninitialized (fresh hive slot) or a stale bitwise copy from
+        // `notify`, neither of which is safe/meaningful to drop.
+        self.unsafe_http_client = MaybeUninit::new(request);
+        Ok(())
+    }
+
+    /// The full document could not be downloaded and only `libc` is lost without it.
+    pub(crate) fn retry_with_abbreviated_manifest(
+        &mut self,
+        scope: &npm::registry::Scope,
+        is_optional: bool,
+    ) -> Result<(), ForManifestError> {
+        let Callback::PackageManifest {
+            name,
+            loaded_manifest,
+            ..
+        } = core::mem::replace(&mut self.callback, Callback::LocalTarball)
+        else {
+            unreachable!("not a manifest task")
+        };
+        // The finished request's client borrows these until the assignment below drops it.
+        let _borrowed = (
+            core::mem::take(&mut self.url_buf),
+            core::mem::take(&mut self.header_buf),
+        );
+        let request = self.manifest_request(
+            name.slice(),
+            scope,
+            loaded_manifest.as_ref(),
+            is_optional,
+            false,
+        )?;
+        *self.http_mut() = request;
+        Ok(())
+    }
+
+    fn manifest_request(
+        &mut self,
+        name: &[u8],
+        scope: &npm::registry::Scope,
+        loaded_manifest: Option<&PackageManifest>,
+        is_optional: bool,
+        needs_extended: bool,
+    ) -> Result<AsyncHTTP<'static>, ForManifestError> {
         let pm = self.pm_mut();
         // SAFETY: `pm.log` is the long-lived `*mut Log` the package manager
         // was constructed with.
@@ -696,10 +734,7 @@ impl NetworkTask {
         let url = URL::parse(unsafe { bun_ptr::detach_lifetime(&self.url_buf) });
         let http_proxy = pm.http_proxy(&url);
         let completion_callback = self.get_completion_callback();
-        // MaybeUninit overwrite — see field doc; old slot value is
-        // either uninitialized (fresh hive slot) or a stale bitwise copy from
-        // `notify`, neither of which is safe/meaningful to drop.
-        self.unsafe_http_client = MaybeUninit::new(AsyncHTTP::init(
+        let mut request = AsyncHTTP::init(
             http::Method::GET,
             url,
             header_builder.entries,
@@ -711,13 +746,12 @@ impl NetworkTask {
                 http_proxy,
                 ..Default::default()
             },
-        ));
-        self.http_mut().client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
-        self.http_mut().client.flags.redirect_credentials =
-            http::RedirectCredentialsPolicy::HttpsUpgrade;
+        );
+        request.client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
+        request.client.flags.redirect_credentials = http::RedirectCredentialsPolicy::HttpsUpgrade;
 
         if PackageManager::verbose_install() {
-            self.http_mut().client.verbose = HTTPVerboseLevel::Headers;
+            request.client.verbose = HTTPVerboseLevel::Headers;
         }
 
         self.callback = Callback::PackageManifest {
@@ -729,23 +763,18 @@ impl NetworkTask {
             is_extended_manifest: needs_extended,
         };
 
-        if PackageManager::verbose_install() {
-            self.http_mut().client.verbose = HTTPVerboseLevel::Headers;
-        }
-
         // Incase the ETag causes invalidation, we fallback to the last modified date.
         if !last_modified.is_empty()
             && bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304
                 .get()
                 .unwrap_or(false)
         {
-            self.http_mut().client.flags.force_last_modified = true;
+            request.client.flags.force_last_modified = true;
             // SAFETY: `last_modified` points into `self.header_buf` or into the manifest `string_buf` cloned into `self.callback`; both outlive the request.
-            self.http_mut().client.if_modified_since =
-                unsafe { bun_ptr::detach_lifetime(last_modified) };
+            request.client.if_modified_since = unsafe { bun_ptr::detach_lifetime(last_modified) };
         }
 
-        Ok(())
+        Ok(request)
     }
 
     pub(crate) fn get_completion_callback(&mut self) -> HTTPClientResultCallback {

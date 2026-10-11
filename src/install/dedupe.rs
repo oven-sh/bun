@@ -21,7 +21,10 @@ struct Pass<'a> {
     groups: &'a [Vec<PackageID>],
     group_of: &'a [u32],
     pinned: &'a DynamicBitSet,
-    edges: Vec<Vec<(DependencyID, bool)>>,
+    /// `collapse_appended`: edges onto packages below this id (loaded from the lockfile) and root/workspace rows stay where they are.
+    frozen_below: Option<PackageID>,
+    /// Per group: each edge with the package that owns it.
+    edges: Vec<Vec<(DependencyID, PackageID)>>,
     candidates: Vec<PackageID>,
     edge_count: usize,
     sat: DynamicBitSet,
@@ -43,6 +46,7 @@ impl<'a> Pass<'a> {
         groups: &'a [Vec<PackageID>],
         group_of: &'a [u32],
         pinned: &'a DynamicBitSet,
+        frozen_below: Option<PackageID>,
         max_candidates: usize,
         max_edges: usize,
     ) -> Pass<'a> {
@@ -52,6 +56,7 @@ impl<'a> Pass<'a> {
             groups,
             group_of,
             pinned,
+            frozen_below,
             edges: vec![Vec::new(); groups.len()],
             candidates: Vec::with_capacity(max_candidates),
             edge_count: 0,
@@ -132,6 +137,15 @@ impl<'a> Pass<'a> {
         (0..n).find(|&c| self.survivors.is_set(c) && self.sat.is_set(row + c))
     }
 
+    // Like `placement`, but a version that stays whatever else was resolved (`required`) comes first.
+    fn anchored_placement(&self, e: usize) -> Option<usize> {
+        let n = self.candidates.len();
+        let row = e * n;
+        (0..n)
+            .find(|&c| self.required.is_set(c) && self.sat.is_set(row + c))
+            .or_else(|| self.placement(e))
+    }
+
     // Keeps the fewest versions that satisfy every group edge owned by `voters` and re-points only edges whose version is dropped; `voted` records who voted.
     fn vote(&mut self, cur: &[PackageID], live: &DynamicBitSet) -> Vec<PackageID> {
         let lockfile = self.lockfile;
@@ -142,6 +156,12 @@ impl<'a> Pass<'a> {
         let pkg_res = lockfile.packages.items_resolution();
         let dep_slices = lockfile.packages.items_dependencies();
         let deps = lockfile.buffers.dependencies.as_slice();
+        let is_direct = |owner: PackageID| {
+            matches!(
+                pkg_res[owner as usize].tag,
+                ResolutionTag::Root | ResolutionTag::Workspace
+            )
+        };
 
         for edges in &mut self.edges {
             edges.clear();
@@ -151,10 +171,6 @@ impl<'a> Pass<'a> {
             if !self.voters.is_set(pkg_id) {
                 continue;
             }
-            let direct = matches!(
-                pkg_res[pkg_id].tag,
-                ResolutionTag::Root | ResolutionTag::Workspace
-            );
             for dep_id in slice.begin() as usize..slice.end() as usize {
                 let target = cur[dep_id];
                 if target == invalid_package_id {
@@ -166,7 +182,7 @@ impl<'a> Pass<'a> {
                 if g == u32::MAX {
                     continue;
                 }
-                self.edges[g as usize].push((dep_id as DependencyID, direct));
+                self.edges[g as usize].push((dep_id as DependencyID, pkg_id as PackageID));
                 self.voted.set(pkg_id);
             }
         }
@@ -198,7 +214,7 @@ impl<'a> Pass<'a> {
             self.cur_c.resize(m, 0);
             self.required.unmanaged.set_all(false);
 
-            for (e, &(dep_id, _)) in edges.iter().enumerate() {
+            for (e, &(dep_id, owner)) in edges.iter().enumerate() {
                 let dep = &deps[dep_id as usize];
                 let target = cur[dep_id as usize];
                 let cur_c = self
@@ -209,7 +225,11 @@ impl<'a> Pass<'a> {
                 self.cur_c[e] = cur_c;
                 let row = e * n;
 
-                let range = if pinned.is_set(target as usize) || dep.behavior.is_bundled() {
+                let frozen = self
+                    .frozen_below
+                    .is_some_and(|below| is_direct(owner) || target < below);
+                let range = if pinned.is_set(target as usize) || frozen || dep.behavior.is_bundled()
+                {
                     None
                 } else {
                     effective_npm_range(lockfile, dep_id, dep)
@@ -220,13 +240,27 @@ impl<'a> Pass<'a> {
                         self.required.set(cur_c);
                     }
                     Some(range) => {
-                        self.movable.set(e);
                         let query = &range.npm().version;
                         for c in 0..n {
                             let id = self.candidates[c];
                             if query.satisfies(pkg_res[id as usize].npm().version, buf, buf) {
                                 self.sat.set(row + c);
+                                self.movable.set(e);
                             }
+                        }
+                        // No version is in range: an unmet peer is bound to the highest there is (`existing_peer_target`), so it goes along with whatever stays; any other edge stays put.
+                        if !self.movable.is_set(e) && dep.behavior.is_peer() {
+                            self.movable.set(e);
+                            self.sat.set_range_value(
+                                Range {
+                                    start: row,
+                                    end: row + n,
+                                },
+                                true,
+                            );
+                        } else if !self.movable.is_set(e) {
+                            self.sat.set(row + cur_c);
+                            self.required.set(cur_c);
                         }
                     }
                 }
@@ -236,8 +270,11 @@ impl<'a> Pass<'a> {
             self.chosen.copy_into(&mut self.survivors);
 
             self.protected.clear();
-            for (e, &(_, direct)) in edges.iter().enumerate() {
-                if !direct || !self.movable.is_set(e) || self.survivors.is_set(self.cur_c[e]) {
+            for (e, &(_, owner)) in edges.iter().enumerate() {
+                if !is_direct(owner)
+                    || !self.movable.is_set(e)
+                    || self.survivors.is_set(self.cur_c[e])
+                {
                     continue;
                 }
                 if self.placement(e).is_some_and(|p| p > self.cur_c[e]) {
@@ -261,11 +298,21 @@ impl<'a> Pass<'a> {
                 }
             }
 
-            for (e, &(dep_id, _)) in edges.iter().enumerate() {
-                if !self.movable.is_set(e) || self.survivors.is_set(self.cur_c[e]) {
+            for (e, &(dep_id, owner)) in edges.iter().enumerate() {
+                if !self.movable.is_set(e) {
                     continue;
                 }
-                if let Some(p) = self.placement(e) {
+                // `collapse_appended`: a row of a package added this session was resolved against the versions that had arrived by then, so it is placed again; a peer stays with the copy it was bound to.
+                let placed_by_arrival = self.frozen_below.is_some_and(|below| owner >= below)
+                    && !deps[dep_id as usize].behavior.is_peer();
+                let placement = if placed_by_arrival {
+                    self.anchored_placement(e)
+                } else if self.survivors.is_set(self.cur_c[e]) {
+                    continue;
+                } else {
+                    self.placement(e)
+                };
+                if let Some(p) = placement {
                     next[dep_id as usize] = self.candidates[p];
                 }
             }
@@ -347,7 +394,7 @@ fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
 }
 
-fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
+fn dedupe_lockfile(lockfile: &mut Lockfile, frozen_below: Option<PackageID>) -> Report {
     let buf = lockfile.buffers.string_bytes.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
     let checked = pkg_res.len();
@@ -379,7 +426,9 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
             .copied()
             .filter(|&id| pkg_res[id as usize].tag == ResolutionTag::Npm)
             .collect();
-        if candidates.len() < 2 {
+        if candidates.len() < 2
+            || frozen_below.is_some_and(|below| candidates.iter().all(|&id| id < below))
+        {
             continue;
         }
         index_sort::sort_indices(&mut candidates, &mut |a, b| {
@@ -431,6 +480,7 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
                 &groups,
                 &group_of,
                 &pinned,
+                frozen_below,
                 max_candidates,
                 max_edges,
             );
@@ -511,6 +561,7 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
         .filter(|&id| initial.is_set(id as usize) && !live.is_set(id as usize))
         .collect();
     if removed.is_empty() {
+        lockfile.buffers.resolutions = cur;
         return Report {
             rows: Vec::new(),
             kept,
@@ -863,7 +914,7 @@ pub fn dedupe_after_differ(manager: &mut PackageManager) {
         refuse_out_of_date(manager);
     }
 
-    let report = dedupe_lockfile(&mut manager.lockfile);
+    let report = dedupe_lockfile(&mut manager.lockfile, None);
     if report.rows.is_empty() {
         report_already_deduplicated(manager, &report);
     }
@@ -909,4 +960,23 @@ pub fn dedupe_after_differ(manager: &mut PackageManager) {
         .options
         .enable
         .set(Enable::FORCE_SAVE_LOCKFILE, true);
+}
+
+/// After resolution: collapses the versions appended this session onto the fewest that satisfy their edges, whichever of them a range happened to find in place. Packages loaded from the lockfile and root/workspace rows keep their edges.
+pub fn collapse_appended(manager: &mut PackageManager) {
+    let lockfile = &mut *manager.lockfile;
+    let frozen_below = lockfile.loaded_package_count;
+    if lockfile.packages.len() as PackageID <= frozen_below {
+        return;
+    }
+    let report = dedupe_lockfile(lockfile, Some(frozen_below));
+    for row in &report.rows {
+        bun_output::scoped_log!(
+            PackageManager,
+            "collapsed {}@{} onto {}",
+            BStr::new(&row.name),
+            BStr::new(&row.from),
+            BStr::new(&row.to)
+        );
+    }
 }

@@ -8,7 +8,7 @@ use super::Subcommand;
 use super::command_line_arguments::{self, CommandLineArguments};
 use crate::network_task::Authorization;
 use bun_dotenv::Loader as DotEnvLoader;
-use bun_install::{Behavior, Features, Npm};
+use bun_install::{Features, Npm};
 
 /// Network policy for this install.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
@@ -124,19 +124,6 @@ pub struct Options {
     pub libc: Npm::Libc,
 
     pub(crate) config_version: Option<ConfigVersion>,
-}
-
-impl Options {
-    /// Only the full registry document has the publish times `minimumReleaseAge` filters on.
-    pub(crate) fn needs_extended_manifest_to_pick_versions(&self) -> bool {
-        self.minimum_release_age_ms.is_some()
-    }
-
-    /// The abbreviated document also lacks `libc`, which is only enforced for optional
-    /// dependencies (`Libc::for_dependency`); host-independent so lockfiles stay portable.
-    pub(crate) fn needs_extended_manifest(&self, dependency: Behavior) -> bool {
-        self.needs_extended_manifest_to_pick_versions() || dependency.is_optional()
-    }
 }
 
 impl Default for Options {
@@ -958,10 +945,7 @@ impl Options {
             }
 
             if cli.dry_run {
-                self.do_.set(Do::INSTALL_PACKAGES, false);
                 self.dry_run = true;
-                self.do_.set(Do::WRITE_PACKAGE_JSON, false);
-                self.do_.set(Do::SAVE_LOCKFILE, false);
             }
             self.check = cli.check;
 
@@ -1146,6 +1130,15 @@ impl Options {
             self.enable.set(Enable::FORCE_SAVE_LOCKFILE, false);
         }
 
+        if self.dry_run {
+            self.do_.remove(
+                Do::INSTALL_PACKAGES
+                    | Do::WRITE_PACKAGE_JSON
+                    | Do::SAVE_LOCKFILE
+                    | Do::SAVE_YARN_LOCK,
+            );
+        }
+
         self.fill_credentials_from_url_auth();
 
         // moved from `defer { ... }` after scope assignment (see note above).
@@ -1161,6 +1154,8 @@ impl Options {
         if self.offline == OfflineMode::Offline {
             self.do_.set(Do::PREFETCH_RESOLVED_TARBALLS, false);
         }
+        // `0` is no gate: `is_some()` is what requests the full registry document for every package.
+        self.minimum_release_age_ms = self.minimum_release_age_ms.filter(|&ms| ms > 0.0);
         Ok(())
     }
 }

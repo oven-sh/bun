@@ -231,7 +231,6 @@ pub enum Step {
     OpeningCacheDir,
     OpeningDestDir,
     CopyingFiles,
-    MovingIntoPlace,
     LinkingDependency,
 }
 
@@ -242,33 +241,32 @@ impl Step {
             Step::CopyingFiles => b"copying files from cache to destination",
             Step::OpeningCacheDir => b"opening cache/package/version dir",
             Step::OpeningDestDir => b"opening node_modules/package dir",
-            Step::MovingIntoPlace => b"moving copied files into node_modules/package dir",
             Step::LinkingDependency => b"linking dependency/workspace to node_modules",
         }
     }
 }
 
-/// Where a package is linked to before being renamed onto its real path, which
-/// later installs take as proof that it is installed: `@scope/name` becomes
-/// `@scope/.bun-tmp-<hash>`. Hashed because a name may already be NAME_MAX long,
-/// deterministic so the next install of the package removes a stale one.
+/// The sibling `.bun-tmp-<hash>` a package is linked in before it is renamed onto its real path.
 pub(crate) struct StagingPath<'a>(pub(crate) &'a [u8]);
 
 impl core::fmt::Display for StagingPath<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        // Two installs at once must not share a staging directory.
+        static SEED: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+        let seed = *SEED.get_or_init(bun_core::fast_random);
         let name_start = strings::last_index_of_char(self.0, b'/').map_or(0, |slash| slash + 1);
         let scope = &self.0[..name_start];
+        // A hash, because the name can be NAME_MAX long already.
         write!(
             f,
             "{}.bun-tmp-{:016x}",
             bstr::BStr::new(scope),
-            bun_wyhash::hash(self.0)
+            bun_wyhash::hash_with_seed(seed, self.0)
         )
     }
 }
 
-/// Renames a fully linked `StagingPath` (relative to `dir`) onto `dest`. Fails if
-/// `dest` is occupied.
+/// Renames a fully linked `StagingPath` (relative to `dir`) onto `dest`, which has to be free.
 pub(crate) fn rename_staging_into_place(dir: Fd, staging: &ZStr, dest: &ZStr) -> sys::Maybe<()> {
     #[cfg(windows)]
     {
@@ -1191,13 +1189,11 @@ impl<'a> PackageInstall<'a> {
 
         #[cfg(not(windows))]
         {
-            let subdir = match destbase.make_open_path(
-                destpath.as_bytes(),
-                OpenDirOptions {
-                    iterate: true,
-                    ..Default::default()
-                },
-            ) {
+            // mkdir first: a staging directory never exists yet.
+            let subdir = match destbase
+                .make_path(destpath.as_bytes())
+                .and_then(|()| destbase.open_at(destpath.as_bytes()))
+            {
                 Ok(d) => d,
                 Err(err) => return Err(Failure::boxed(err.into(), Step::OpeningDestDir, None)),
             };
@@ -2326,48 +2322,29 @@ impl<'a> PackageInstall<'a> {
             self.uninstall_before_install(destination_dir);
         }
 
-        let mut staging_buf = path::path_buffer_pool::get();
-        let Ok(staging) = bun_core::fmt::buf_print_z(
-            &mut staging_buf[..],
-            format_args!("{}", StagingPath(self.destination_dir_subpath.as_bytes())),
-        ) else {
-            return InstallResult::fail(
-                crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG),
-                Step::OpeningDestDir,
-                None,
-            );
-        };
-        // A stale one may hold files of another version, which the backends would keep.
-        if let Err(err) = destination_dir.delete_tree(staging.as_bytes()) {
-            return InstallResult::fail(err.into(), Step::OpeningDestDir, None);
-        }
-
-        let staged = PackageInstall {
-            destination_dir_subpath: staging,
-            progress: self.progress.as_deref_mut(),
-            ..*self
-        }
-        .install_into(destination_dir, method_, resolution_tag);
-        if let failure @ InstallResult::Failure(_) = staged {
-            let _ = destination_dir.delete_tree(staging.as_bytes());
-            return failure;
-        }
-
         let dest = self.destination_dir_subpath;
-        let mut renamed = rename_staging_into_place(destination_dir.fd(), staging, dest);
-        if renamed.is_err() && dest.as_bytes() != b"." {
-            // Occupied: a workspace depended on under two names is walked as two trees,
-            // so the packages inside it are installed twice. The later one replaces it.
-            self.uninstall_before_install(destination_dir);
-            renamed = rename_staging_into_place(destination_dir.fd(), staging, dest);
-        }
-        match renamed {
-            Ok(()) => InstallResult::Success,
-            Err(err) => {
-                let _ = destination_dir.delete_tree(staging.as_bytes());
-                InstallResult::fail(err.into(), Step::MovingIntoPlace, None)
+        let mut staging_buf = path::path_buffer_pool::get();
+        if let Ok(staging) = bun_core::fmt::buf_print_z(
+            &mut staging_buf[..],
+            format_args!("{}", StagingPath(dest.as_bytes())),
+        ) {
+            let staged = PackageInstall {
+                destination_dir_subpath: staging,
+                progress: self.progress.as_deref_mut(),
+                ..*self
             }
+            .install_into(destination_dir, method_, resolution_tag);
+            if let failure @ InstallResult::Failure(_) = staged {
+                let _ = destination_dir.delete_tree(staging.as_bytes());
+                return failure;
+            }
+            if rename_staging_into_place(destination_dir.fd(), staging, dest).is_ok() {
+                return InstallResult::Success;
+            }
+            let _ = destination_dir.delete_tree(staging.as_bytes());
         }
+        // Staging did not work (`dest` is occupied, the rename is refused): link in place.
+        self.install_into(destination_dir, method_, resolution_tag)
     }
 
     fn install_into(

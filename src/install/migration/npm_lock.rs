@@ -129,7 +129,7 @@ fn parent_dir(dir: &[u8]) -> &[u8] {
 fn path_inside<'k>(dir: &[u8], path: &'k [u8]) -> Option<&'k [u8]> {
     path.strip_prefix(dir)?
         .strip_prefix(b"/")
-        .filter(|rest| !rest.is_empty())
+        .filter(|rest| !rest.is_empty() && !bin::bin_target_escapes_package_dir(rest))
 }
 
 /// Folder inside a cache-installed dependent; the installer reads its row relative to the package.

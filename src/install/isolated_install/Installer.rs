@@ -468,9 +468,9 @@ impl<'a> Installer<'a> {
                 | ResolutionTag::LocalTarball
                 | ResolutionTag::RemoteTarball
         ) {
-            // A failed link only ever wrote to the staging directory.
+            // A staged link that failed only wrote to the staging directory.
             let mut staging = AutoPath::init_top_level_dir();
-            self.append_real_store_path(&mut staging, entry_id, Which::Staging);
+            self.append_local_staging_path(&mut staging, entry_id);
             let _ = Fd::cwd().delete_tree(staging.slice());
         }
 
@@ -952,6 +952,7 @@ impl Task {
 
         let mut step =
             Step::from_u32(entry_steps[self.entry_id.get() as usize].load(Ordering::Acquire));
+        let mut link_in_place = false;
         'step: loop {
             match step {
                 Step::LinkPackage => {
@@ -1226,7 +1227,8 @@ impl Task {
 
                     let uses_global_store = installer.entry_uses_global_store(self.entry_id);
 
-                    if !uses_global_store {
+                    // A `node_modules/.bun` this install created holds nothing of the entry yet.
+                    if !uses_global_store && (!installer.is_new_bun_modules || link_in_place) {
                         // An entry can lose global-store eligibility between
                         // installs — newly patched, newly trusted, a dep that
                         // became a workspace package. The previous install
@@ -1271,15 +1273,7 @@ impl Task {
                             }
                         }
 
-                        // The final path must be free for the rename below, and the backends
-                        // would keep whatever a stale staging tree holds.
-                        for which in [Which::Final, Which::Staging] {
-                            let mut leftover = AutoPath::init_top_level_dir();
-                            installer.append_real_store_path(&mut leftover, self.entry_id, which);
-                            if let sys::Result::Err(err) = Fd::cwd().delete_tree(leftover.slice()) {
-                                return Ok(Yield::failure(TaskError::LinkPackage(err)));
-                            }
-                        }
+                        link_in_place |= !installer.clear_local_store_package(self.entry_id);
                     }
 
                     if uses_global_store {
@@ -1295,15 +1289,6 @@ impl Task {
                         let _ = Fd::cwd().delete_tree(staging.slice());
                     }
 
-                    // reshaped for borrowck — `defer if (cached_package_dir) |d| d.close()`
-                    // becomes a guard that *owns* the `Option<Fd>` so the loop body can reassign
-                    // through `*cached_package_dir` without an outstanding closure borrow.
-                    let mut cached_package_dir = scopeguard::guard(None::<Fd>, |dir| {
-                        if let Some(d) = dir {
-                            d.close();
-                        }
-                    });
-
                     // .monotonic access of `supported_backend` is okay because it's an
                     // optimization. It's okay if another thread doesn't see an update to this
                     // value "in time".
@@ -1313,11 +1298,15 @@ impl Task {
                         // Rebuild `dest_subpath` per iteration; this only
                         // re-runs once on an EXDEV/OPNOTSUPP retry.
                         let mut dest_subpath = OsAutoPath::init();
-                        installer.append_real_store_path(
-                            &mut dest_subpath,
-                            self.entry_id,
-                            Which::Staging,
-                        );
+                        if uses_global_store || link_in_place {
+                            installer.append_real_store_path(
+                                &mut dest_subpath,
+                                self.entry_id,
+                                Which::Staging,
+                            );
+                        } else {
+                            installer.append_local_staging_path(&mut dest_subpath, self.entry_id);
+                        }
                         match backend {
                             InstallMethod::Clonefile => {
                                 #[cfg(not(target_os = "macos"))]
@@ -1389,11 +1378,11 @@ impl Task {
                             }
 
                             InstallMethod::Hardlink => {
-                                *cached_package_dir = match bun_sys::open_dir_for_iteration(
+                                let cached_package_dir = match bun_sys::open_dir_for_iteration(
                                     cache_dir,
                                     pkg_cache_dir_subpath.slice(),
                                 ) {
-                                    sys::Result::Ok(fd) => Some(fd),
+                                    sys::Result::Ok(fd) => fd,
                                     sys::Result::Err(err) => {
                                         if PackageManager::verbose_install() {
                                             bun_core::pretty_errorln!(
@@ -1405,17 +1394,15 @@ impl Task {
                                         return Ok(Yield::failure(TaskError::LinkPackage(err)));
                                     }
                                 };
+                                let _cached_package_dir_guard =
+                                    sys::CloseOnDrop::new(cached_package_dir);
 
                                 let mut src = OsAutoAbsPath::from_long_path(cache_dir_path.slice())
                                     .assume_ok();
                                 let _ = src.append_join(pkg_cache_dir_subpath.slice()); // OOM/capacity: fire-and-forget
 
-                                let mut hardlinker = Hardlinker::init(
-                                    cached_package_dir.unwrap(),
-                                    src,
-                                    dest_subpath,
-                                    &[],
-                                )?;
+                                let mut hardlinker =
+                                    Hardlinker::init(cached_package_dir, src, dest_subpath, &[])?;
 
                                 match hardlinker.link()? {
                                     sys::Result::Ok(()) => {}
@@ -1458,15 +1445,11 @@ impl Task {
 
                             // fallthrough copyfile
                             _ => {
-                                // close the fd the failed hardlink attempt left behind
-                                if let Some(old) = cached_package_dir.take() {
-                                    old.close();
-                                }
-                                *cached_package_dir = match bun_sys::open_dir_for_iteration(
+                                let cached_package_dir = match bun_sys::open_dir_for_iteration(
                                     cache_dir,
                                     pkg_cache_dir_subpath.slice(),
                                 ) {
-                                    sys::Result::Ok(fd) => Some(fd),
+                                    sys::Result::Ok(fd) => fd,
                                     sys::Result::Err(err) => {
                                         if PackageManager::verbose_install() {
                                             bun_core::pretty_errorln!(
@@ -1486,13 +1469,15 @@ impl Task {
                                         return Ok(Yield::failure(TaskError::LinkPackage(err)));
                                     }
                                 };
+                                let _cached_package_dir_guard =
+                                    sys::CloseOnDrop::new(cached_package_dir);
 
                                 let mut src_path =
                                     OsAutoAbsPath::from(cache_dir_path.slice()).assume_ok();
                                 let _ = src_path.append(pkg_cache_dir_subpath.slice()); // OOM/capacity: fire-and-forget
 
                                 let mut file_copier = FileCopier::init(
-                                    cached_package_dir.unwrap(),
+                                    cached_package_dir,
                                     src_path.into_sep::<{ PathSeparators::AUTO }>(),
                                     dest_subpath.into_sep::<{ PathSeparators::AUTO }>(),
                                     &[],
@@ -1525,12 +1510,13 @@ impl Task {
                         }
                     }
 
-                    if !uses_global_store {
-                        if let sys::Result::Err(err) =
-                            installer.commit_local_store_package(self.entry_id)
-                        {
-                            return Ok(Yield::failure(TaskError::LinkPackage(err)));
-                        }
+                    if !uses_global_store
+                        && !link_in_place
+                        && !installer.commit_local_store_package(self.entry_id)
+                    {
+                        // The rename was refused: run the step again, linking in place.
+                        link_in_place = true;
+                        continue 'step;
                     }
 
                     step = self.next_step(current_step);
@@ -2741,15 +2727,50 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// Renames a project-local entry's fully linked `StagingPath` onto its final
-    /// path, which is what the next install's skip check looks at.
-    pub(crate) fn commit_local_store_package(&self, entry_id: StoreEntryId) -> sys::Result<()> {
+    /// The `StagingPath` next to a project-local entry's package directory. Only
+    /// `Step::LinkPackage` writes there; nothing is left of it once that step is over.
+    fn append_local_staging_path(&self, buf: &mut impl paths::PathLike, entry_id: StoreEntryId) {
         debug_assert!(!self.entry_uses_global_store(entry_id));
+        let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
+        let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+        let pkg_name = self.lockfile().packages.items_name()[pkg_id as usize];
+
+        self.append_local_store_entry_path(buf, entry_id);
+        buf.append(b"node_modules");
+        buf.append_fmt(format_args!(
+            "{}",
+            StagingPath(pkg_name.slice(self.lockfile().buffers.string_bytes.as_slice())),
+        ));
+    }
+
+    /// Frees a project-local entry's final path. False: link in place.
+    fn clear_local_store_package(&self, entry_id: StoreEntryId) -> bool {
         let mut staging = AutoPath::init_top_level_dir();
-        self.append_real_store_path(&mut staging, entry_id, Which::Staging);
+        self.append_local_staging_path(&mut staging, entry_id);
         let mut final_ = AutoPath::init_top_level_dir();
-        self.append_real_store_path(&mut final_, entry_id, Which::Final);
-        rename_staging_into_place(Fd::cwd(), staging.slice_z(), final_.slice_z())
+        self.append_store_path(&mut final_, entry_id);
+
+        // A delete can be cut short, so an existing package leaves its final path in one step.
+        match sys::renameat(Fd::cwd(), final_.slice_z(), Fd::cwd(), staging.slice_z()) {
+            sys::Result::Ok(()) => Fd::cwd().delete_tree(staging.slice()).is_ok(),
+            sys::Result::Err(err) if err.get_errno() == sys::Errno::ENOENT => true,
+            sys::Result::Err(_) => Fd::cwd().delete_tree(final_.slice()).is_ok(),
+        }
+    }
+
+    /// Renames a project-local entry's fully linked staging directory onto its final path,
+    /// which is what the next install's skip check looks at. False: link in place.
+    fn commit_local_store_package(&self, entry_id: StoreEntryId) -> bool {
+        let mut staging = AutoPath::init_top_level_dir();
+        self.append_local_staging_path(&mut staging, entry_id);
+        let mut final_ = AutoPath::init_top_level_dir();
+        self.append_store_path(&mut final_, entry_id);
+
+        if rename_staging_into_place(Fd::cwd(), staging.slice_z(), final_.slice_z()).is_ok() {
+            return true;
+        }
+        let _ = Fd::cwd().delete_tree(staging.slice());
+        false
     }
 
     /// Project-local path `node_modules/.bun/<storepath>` (the symlink that
@@ -2912,7 +2933,7 @@ impl<'a> Installer<'a> {
             buf.append(pkg_name.slice(string_buf));
             return;
         }
-        self.append_store_path_at(buf, entry_id, which);
+        self.append_store_path(buf, entry_id);
     }
 
     /// `append_store_path` for the entry a dependency symlink points at, the one place a
@@ -2955,15 +2976,6 @@ impl<'a> Installer<'a> {
 
     /// `entry_id` must not be a `link:` package; see `append_dependency_path`.
     pub(crate) fn append_store_path(&self, buf: &mut impl paths::PathLike, entry_id: StoreEntryId) {
-        self.append_store_path_at(buf, entry_id, Which::Final);
-    }
-
-    fn append_store_path_at(
-        &self,
-        buf: &mut impl paths::PathLike,
-        entry_id: StoreEntryId,
-        which: Which,
-    ) {
         let string_buf = self.lockfile().buffers.string_bytes.as_slice();
 
         let entries = &self.store.entries;
@@ -3019,12 +3031,7 @@ impl<'a> Installer<'a> {
                     store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
                 ));
                 buf.append(b"node_modules");
-                match which {
-                    Which::Final => buf.append(pkg_name.slice(string_buf)),
-                    Which::Staging => {
-                        buf.append_fmt(format_args!("{}", StagingPath(pkg_name.slice(string_buf))))
-                    }
-                }
+                buf.append(pkg_name.slice(string_buf));
             }
         }
     }
@@ -3099,9 +3106,9 @@ pub enum Which {
     /// The published location (`<cache>/links/<entry>`). Use for symlink
     /// *targets* that point at other entries, and for the warm-hit check.
     Final,
-    /// What the build steps write into, renamed onto `Final` once complete: the
-    /// whole entry (`<entry>.tmp-<suffix>`) for a global-store entry, only the
-    /// package directory (`StagingPath`) for a project-local one.
+    /// The per-process temp sibling (`<entry>.tmp-<suffix>`) the build
+    /// steps write into. Use for *destinations* of clonefile/hardlink/
+    /// dep-symlink/bin-link when building this entry.
     Staging,
 }
 

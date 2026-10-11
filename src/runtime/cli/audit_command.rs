@@ -763,15 +763,13 @@ fn send_audit_request(
         Ok(res) if res.status_code() >= 400 => SkipReason::Status(res.status_code()),
         Ok(_) => {
             let response = response_buf.list.as_slice();
-            let trimmed = response.trim_ascii();
-            if trimmed.is_empty() || trimmed[0] == b'{' {
+            if response.trim_ascii().is_empty() {
                 return Ok(Ok(Box::<[u8]>::from(response)));
             }
-            let source = bun_ast::Source::init_path_string(b"audit-response.json", response);
-            if bun_json::ParsedJson::parse_json(&source, &mut bun_ast::Log::init()).is_ok() {
-                SkipReason::NotAdvisories
-            } else {
-                SkipReason::NotJson
+            // Before the bodies are merged, so that the registry that sent this one is named.
+            match collect_vulnerabilities(response, None, &[], &mut AuditStats::default())? {
+                Ok(_) => return Ok(Ok(Box::<[u8]>::from(response))),
+                Err(reason) => reason,
             }
         }
         Err(err) => SkipReason::Send(err.name()),

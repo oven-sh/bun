@@ -1074,12 +1074,13 @@ describe("minimum-release-age", () => {
     // publish times, so an age-gated install must not resolve from it. Each test
     // uses its own cache directory and reads which manifest flavor was requested
     // off the Accept header.
-    const minAgeArgs = ["--minimum-release-age", `${5 * SECONDS_PER_DAY}`];
-    const blockedMessage = /blocked by minimum-release-age|minimum release age/;
+    const minAge = 5 * SECONDS_PER_DAY;
+    const minAgeArgs = ["--minimum-release-age", `${minAge}`];
+    const blockedMessage = `No version matching "3.0.0" found for specifier "regular-package" (blocked by minimum-release-age: ${minAge} seconds)`;
 
-    const project = (dependencies: Record<string, string>) => ({
+    const project = (dependencies: Record<string, string>, bunfig: Record<string, unknown> = {}) => ({
       "package.json": JSON.stringify({ name: "app", dependencies }),
-      ".npmrc": `registry=${mockRegistryUrl}`,
+      "bunfig.toml": Bun.TOML.stringify({ install: { registry: mockRegistryUrl, ...bunfig } }),
     });
 
     async function runWithCache(cwd: string, cacheDir: string, args: string[], { stale = false } = {}) {
@@ -1106,17 +1107,28 @@ describe("minimum-release-age", () => {
       return { stdout, stderr, exitCode, manifestRequests };
     }
 
+    // bun install does not wait for the manifest cache write before it exits, so a run can leave nothing behind.
+    async function populateCache(cwd: string, cacheDir: string, flavor: "abbreviated" | "full", args: string[] = []) {
+      for (let attempt = 0; ; attempt++) {
+        const { manifestRequests, exitCode } = await runWithCache(cwd, cacheDir, ["install", ...args]);
+        expect(manifestRequests).toEqual([flavor]);
+        expect(exitCode).toBe(0);
+        if ((await readdir(cacheDir)).some(name => name.endsWith(".npm"))) return;
+        if (attempt === 20) throw new Error("the manifest was never cached");
+        await rm(`${cwd}/bun.lock`, { force: true });
+        await rm(`${cwd}/node_modules`, { recursive: true, force: true });
+      }
+    }
+
     test("too-recent exact version is blocked when only the abbreviated manifest is cached", async () => {
       using cache = tempDir("abbreviated-cache", {});
       using ungated = tempDir("abbreviated-ungated", project({ "regular-package": "3.0.0" }));
       using gated = tempDir("abbreviated-gated", project({ "regular-package": "3.0.0" }));
 
-      const first = await runWithCache(String(ungated), String(cache), ["install"]);
-      expect(first.manifestRequests).toEqual(["abbreviated"]);
-      expect(first.exitCode).toBe(0);
+      await populateCache(String(ungated), String(cache), "abbreviated");
 
       const second = await runWithCache(String(gated), String(cache), ["install", ...minAgeArgs]);
-      expect(second.stderr).toMatch(blockedMessage);
+      expect(second.stderr).toContain(blockedMessage);
       expect(second.manifestRequests).toEqual(["full"]);
       expect(await Bun.file(`${gated}/node_modules/regular-package/package.json`).exists()).toBe(false);
       expect(second.exitCode).toBe(1);
@@ -1127,9 +1139,7 @@ describe("minimum-release-age", () => {
       using ungated = tempDir("abbreviated-ungated-old", project({ "regular-package": "1.0.0" }));
       using gated = tempDir("abbreviated-gated-old", project({ "regular-package": "1.0.0" }));
 
-      const first = await runWithCache(String(ungated), String(cache), ["install"]);
-      expect(first.manifestRequests).toEqual(["abbreviated"]);
-      expect(first.exitCode).toBe(0);
+      await populateCache(String(ungated), String(cache), "abbreviated");
 
       const second = await runWithCache(String(gated), String(cache), ["install", ...minAgeArgs]);
       expect(second.manifestRequests).toEqual(["full"]);
@@ -1142,12 +1152,10 @@ describe("minimum-release-age", () => {
       using ungated = tempDir("abbreviated-ungated-add", project({ "regular-package": "3.0.0" }));
       using gated = tempDir("abbreviated-gated-add", project({}));
 
-      const first = await runWithCache(String(ungated), String(cache), ["install"]);
-      expect(first.manifestRequests).toEqual(["abbreviated"]);
-      expect(first.exitCode).toBe(0);
+      await populateCache(String(ungated), String(cache), "abbreviated");
 
       const second = await runWithCache(String(gated), String(cache), ["add", "regular-package@3.0.0", ...minAgeArgs]);
-      expect(second.stderr).toMatch(blockedMessage);
+      expect(second.stderr).toContain(blockedMessage);
       expect(second.manifestRequests).toEqual(["full"]);
       expect(await Bun.file(`${gated}/package.json`).json()).toEqual({ name: "app", dependencies: {} });
       expect(second.exitCode).toBe(1);
@@ -1158,9 +1166,7 @@ describe("minimum-release-age", () => {
       using first = tempDir("full-first", project({ "regular-package": "1.0.0" }));
       using second = tempDir("full-second", project({ "regular-package": "1.0.0" }));
 
-      const populate = await runWithCache(String(first), String(cache), ["install", ...minAgeArgs]);
-      expect(populate.manifestRequests).toEqual(["full"]);
-      expect(populate.exitCode).toBe(0);
+      await populateCache(String(first), String(cache), "full", minAgeArgs);
 
       const fromCache = await runWithCache(String(second), String(cache), ["install", ...minAgeArgs], { stale: true });
       expect(fromCache.manifestRequests).toEqual([]);
@@ -1173,15 +1179,29 @@ describe("minimum-release-age", () => {
       using first = tempDir("full-first-blocked", project({ "regular-package": "1.0.0" }));
       using second = tempDir("full-second-blocked", project({ "regular-package": "3.0.0" }));
 
-      const populate = await runWithCache(String(first), String(cache), ["install", ...minAgeArgs]);
-      expect(populate.manifestRequests).toEqual(["full"]);
-      expect(populate.exitCode).toBe(0);
+      await populateCache(String(first), String(cache), "full", minAgeArgs);
 
       const fromCache = await runWithCache(String(second), String(cache), ["install", ...minAgeArgs], { stale: true });
-      expect(fromCache.stderr).toMatch(blockedMessage);
+      expect(fromCache.stderr).toContain(blockedMessage);
       expect(fromCache.manifestRequests).toEqual([]);
       expect(await Bun.file(`${second}/node_modules/regular-package/package.json`).exists()).toBe(false);
       expect(fromCache.exitCode).toBe(1);
+    });
+
+    test("excluded exact version still resolves from the abbreviated manifest without a request", async () => {
+      using cache = tempDir("abbreviated-cache-excluded", {});
+      using ungated = tempDir("abbreviated-ungated-excluded", project({ "regular-package": "3.0.0" }));
+      using gated = tempDir(
+        "abbreviated-gated-excluded",
+        project({ "regular-package": "3.0.0" }, { minimumReleaseAgeExcludes: ["regular-package"] }),
+      );
+
+      await populateCache(String(ungated), String(cache), "abbreviated");
+
+      const second = await runWithCache(String(gated), String(cache), ["install", ...minAgeArgs], { stale: true });
+      expect(second.manifestRequests).toEqual([]);
+      expect(await Bun.file(`${gated}/bun.lock`).text()).toContain("regular-package@3.0.0");
+      expect(second.exitCode).toBe(0);
     });
   });
 
@@ -1841,6 +1861,34 @@ describe("minimum-release-age", () => {
       const lockfile = await Bun.file(`${dir}/bun.lock`).text();
       // With 0, should get latest
       expect(lockfile).toContain("regular-package@3.0.0");
+    });
+
+    test.each([
+      ["--minimum-release-age 0 over a bunfig gate", `${10 * SECONDS_PER_DAY}`, ["--minimum-release-age", "0"]],
+      ["minimumReleaseAge = 0", "0", []],
+      ["minimumReleaseAge = nan", "nan", []],
+    ])("%s is no gate, so the abbreviated manifest is requested", async (_, minimumReleaseAge, args) => {
+      using dir = tempDir("no-gate", {
+        "package.json": JSON.stringify({ dependencies: { "regular-package": "*" } }),
+        "bunfig.toml": `[install]\nminimumReleaseAge = ${minimumReleaseAge}\nregistry = "${mockRegistryUrl}"\n`,
+      });
+
+      const firstRequest = registryRequests.length;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install", ...args],
+        cwd: String(dir),
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: `${dir}/.bun-cache` },
+        stdout: "ignore",
+        stderr: "ignore",
+      });
+      const exitCode = await proc.exited;
+
+      const manifestRequests = registryRequests.slice(firstRequest).filter(r => r.pathname === "/regular-package");
+      expect(manifestRequests.map(r => r.accept)).toEqual([
+        "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*",
+      ]);
+      expect(await Bun.file(`${dir}/bun.lock`).text()).toContain("regular-package@3.0.0");
+      expect(exitCode).toBe(0);
     });
 
     test("global bunfig.toml configuration works", async () => {

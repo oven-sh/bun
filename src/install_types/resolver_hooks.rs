@@ -905,12 +905,8 @@ impl Libc {
     /// The libc to filter a package against when it is reached through a
     /// dependency with `behavior`, `self` being the target libc (`--libc`).
     ///
-    /// A package's `libc` is only requested from the registry for optional
-    /// dependencies (the abbreviated manifest used for everything else does not
-    /// carry it), so it is also only enforced on them. Through a regular
-    /// dependency a package installs on every libc, whether or not its `libc`
-    /// happens to be known from an optional edge, a migrated lockfile or the
-    /// manifest cache; otherwise what gets installed would depend on that.
+    /// Only optional dependencies are filtered: through a regular dependency a
+    /// package installs on every libc, so a required package is never left out.
     #[inline]
     pub fn for_dependency(self, behavior: Behavior) -> Self {
         if behavior.is_optional() {

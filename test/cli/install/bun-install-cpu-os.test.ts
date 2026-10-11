@@ -590,7 +590,8 @@ describe("bun install --libc flag and the libc field", () => {
   // Every package served by dummyRegistry shares one version table, so each variant gets its own
   // version: dep-glibc@1.0.0 declares glibc, dep-musl@2.0.0 declares musl, dep-universal@3.0.0
   // declares nothing. Like registry.npmjs.org, dummyRegistry only includes `libc` in the full
-  // manifest, so a variant can only be skipped if bun asked for the full manifest.
+  // manifest, so a variant can only be skipped if bun asked for the full manifest, which it does
+  // for a package whose name contains `linux`, `musl` or `glibc`.
   const variants = {
     "1.0.0": { libc: ["glibc"] },
     "2.0.0": { libc: ["musl"] },
@@ -604,14 +605,13 @@ describe("bun install --libc flag and the libc field", () => {
 
   /**
    * Like `serveRecordingAccepts`, with a version table per package name (`fallback` serves the rest).
-   * The full manifest of the packages in `withoutFullManifest` is a 404, as on a registry that only
-   * has the abbreviated document.
+   * `failing` gives the status a package's full or abbreviated manifest is answered with instead.
    */
   function serveByName(
     urls: string[],
     tables: Record<string, any>,
     fallback: ReturnType<typeof dummyRegistry> = dummyRegistry(urls, variants),
-    withoutFullManifest: string[] = [],
+    failing: Record<string, { full?: number; abbreviated?: number }> = {},
   ) {
     const accepts: Record<string, string[]> = {};
     const registries = Object.fromEntries(
@@ -622,9 +622,10 @@ describe("bun install --libc flag and the libc field", () => {
       const name = new URL(request.url).pathname.slice(1);
       const accept = request.headers.get("accept")!;
       (accepts[name] ??= []).push(accept);
-      if (withoutFullManifest.includes(name) && accept === FULL_MANIFEST_ACCEPT) {
+      const status = failing[name]?.[accept === FULL_MANIFEST_ACCEPT ? "full" : "abbreviated"];
+      if (status) {
         urls.push(request.url);
-        return new Response("not found", { status: 404 });
+        return new Response("failing", { status });
       }
       return (registries[name] ?? fallback)(request);
     });
@@ -666,9 +667,7 @@ describe("bun install --libc flag and the libc field", () => {
     return err;
   }
 
-  const installedVersion = async (...path: string[]) =>
-    ((await Bun.file(join(package_dir, "node_modules", ...path, "package.json")).json()) as { version: string })
-      .version;
+  const warnings = (err: string) => err.split(/\r?\n/).filter(line => line.startsWith("warn:"));
 
   /** Installed packages: node_modules entries with a package.json (the .cache directory has none). */
   async function installed() {
@@ -703,7 +702,7 @@ describe("bun install --libc flag and the libc field", () => {
 
     await install("--libc", "glibc", "--save-text-lockfile");
     expect(await installed()).toEqual(["dep-glibc", "dep-universal"]);
-    // Only optional dependencies pay for the full manifest; the skipped variant is never downloaded.
+    // Only the names that suggest a libc pay for the full manifest; the skipped variant is never downloaded.
     expect(accepts).toEqual({
       "dep-universal": [ABBREVIATED_MANIFEST_ACCEPT],
       "dep-glibc": [FULL_MANIFEST_ACCEPT],
@@ -788,46 +787,34 @@ describe("bun install --libc flag and the libc field", () => {
     expect(await installed()).toEqual([]);
   });
 
-  it("does not trust a cached abbreviated manifest for an optional dependency", async () => {
+  it("requests the full manifest by the package's name, whatever the kind of dependency and the host", async () => {
     const urls: string[] = [];
-    const accepts = serveRecordingAccepts(urls);
-    const env = await enableManifestCache();
-    // As regular dependencies both variants install from the abbreviated manifests, which get cached.
-    await writePackageJson({ dependencies: { "dep-glibc": "1.0.0", "dep-musl": "2.0.0" } });
-    await installWithEnv(env, "--libc", "glibc");
-    expect(await installed()).toEqual(["dep-glibc", "dep-musl"]);
-    expect(accepts).toEqual({
-      "dep-glibc": [ABBREVIATED_MANIFEST_ACCEPT],
-      "dep-musl": [ABBREVIATED_MANIFEST_ACCEPT],
+    const accepts = serveRecordingAccepts(urls, {
+      "1.0.0": { os: ["linux"], libc: ["glibc"] },
+      "2.0.0": { libc: ["musl"] },
+      "3.0.0": {},
+    });
+    await writePackageJson({
+      dependencies: { "dep-musl": "2.0.0" },
+      devDependencies: { "dep-linux-x64": "1.0.0" },
+      optionalDependencies: { "dep-universal": "3.0.0" },
     });
 
-    // Resolving the same exact versions again as regular dependencies is served by the cache.
-    await rm(join(package_dir, "bun.lockb"), { force: true });
-    clear(accepts, urls);
-    await installWithEnv(env, "--libc", "glibc");
-    expect(accepts).toEqual({});
-
-    // As optional dependencies, the cached manifests have these versions but not their libc, so the
-    // full manifests are fetched instead of resolving from the cache.
-    await rm(join(package_dir, "bun.lockb"), { force: true });
-    await rm(join(package_dir, "node_modules", "dep-glibc"), { recursive: true });
-    await rm(join(package_dir, "node_modules", "dep-musl"), { recursive: true });
-    await writePackageJson({ optionalDependencies: { "dep-glibc": "1.0.0", "dep-musl": "2.0.0" } });
-    await installWithEnv(env, "--libc", "glibc");
-    expect(await installed()).toEqual(["dep-glibc"]);
+    await install("--lockfile-only", "--save-text-lockfile");
     expect(accepts).toEqual({
-      "dep-glibc": [FULL_MANIFEST_ACCEPT],
       "dep-musl": [FULL_MANIFEST_ACCEPT],
+      "dep-linux-x64": [FULL_MANIFEST_ACCEPT],
+      "dep-universal": [ABBREVIATED_MANIFEST_ACCEPT],
     });
+    expect(await lockfileEntry("dep-musl")).toContain(`{ "libc": "musl" }`);
+    expect(await lockfileEntry("dep-linux-x64")).toContain(`{ "os": "linux", "libc": "glibc" }`);
   });
 
-  it("records libc for a package that is both a regular and an optional dependency, and only filters the optional one", async () => {
+  it("only filters the optional dependency on a package that is both a regular and an optional dependency", async () => {
     const urls: string[] = [];
     // dep-universal@3.0.0 optionally depends on dep-musl@2.0.0, which the root also depends on
-    // directly. The root's edge only needs the abbreviated manifest; dep-universal's edge needs the
-    // full one, and its libc must end up on the shared lockfile entry no matter which response
-    // arrives first. It only disables dep-universal's optional edge: the root's regular dependency
-    // installs dep-musl like it did before libc was read at all.
+    // directly. One request serves both edges. The libc only disables dep-universal's optional edge:
+    // the root's regular dependency installs dep-musl like it did before libc was read at all.
     const accepts = serveRecordingAccepts(urls, {
       "2.0.0": { libc: ["musl"] },
       "3.0.0": { optionalDependencies: { "dep-musl": "2.0.0" } },
@@ -836,7 +823,7 @@ describe("bun install --libc flag and the libc field", () => {
 
     await install("--libc", "glibc", "--save-text-lockfile");
     expect(await installed()).toEqual(["dep-musl", "dep-universal"]);
-    expect(accepts["dep-musl"].sort()).toEqual([FULL_MANIFEST_ACCEPT, ABBREVIATED_MANIFEST_ACCEPT].sort());
+    expect(accepts["dep-musl"]).toEqual([FULL_MANIFEST_ACCEPT]);
     expect(await lockfileEntry("dep-musl")).toContain(`{ "libc": "musl" }`);
 
     // The lockfile now knows dep-musl's libc. Whether the root gets it still depends only on how the
@@ -874,144 +861,83 @@ describe("bun install --libc flag and the libc field", () => {
     expect(await lockfileEntry("dep-musl")).toContain(`{ "libc": "musl" }`);
   });
 
-  it("falls back to the abbreviated manifest when the request for the full one fails", async () => {
+  it("takes a 404 for the full manifest as final", async () => {
     const urls: string[] = [];
-    // baz@0.0.3 is a regular dependency of the root and baz@0.0.5 an optional dependency of
-    // dep-universal@3.0.0, so baz is requested both ways, and the registry only has the abbreviated
-    // document. The optional edge then resolves from that document, which has no libc, so baz@0.0.5
-    // is installed the way it was before libc was read; the install neither fails nor drops the edge.
+    const accepts = serveByName(urls, {}, undefined, { "dep-musl": { full: 404 } });
+    await writePackageJson({ optionalDependencies: { "dep-musl": "2.0.0" } });
+
+    const err = await install("--libc", "musl");
+    expect(warnings(err)).toEqual([`warn: GET ${root_url}/dep-musl - 404`]);
+    expect(accepts).toEqual({ "dep-musl": [FULL_MANIFEST_ACCEPT] });
+    expect(await exists(join(package_dir, "node_modules", "dep-musl"))).toBe(false);
+  });
+
+  it("falls back to the abbreviated manifest without a message once the retries of the full one are used up", async () => {
+    const urls: string[] = [];
+    const accepts = serveByName(urls, {}, undefined, { "dep-musl": { full: 503 } });
+    await writePackageJson({ optionalDependencies: { "dep-glibc": "1.0.0", "dep-musl": "2.0.0" } });
+
+    const env = { ...bunEnv, BUN_CONFIG_HTTP_RETRY_COUNT: "1" };
+    expect(warnings(await installWithEnv(env, "--libc", "glibc", "--save-text-lockfile"))).toEqual([]);
+    expect(accepts["dep-musl"]).toEqual([FULL_MANIFEST_ACCEPT, FULL_MANIFEST_ACCEPT, ABBREVIATED_MANIFEST_ACCEPT]);
+    // That document has no libc, so dep-musl is installed the way it was before libc was read.
+    expect(await installed()).toEqual(["dep-glibc", "dep-musl"]);
+    expect(await lockfileEntry("dep-musl")).not.toContain(`"libc"`);
+  });
+
+  it.each<[string[], string[]]>([
+    [[], [FULL_MANIFEST_ACCEPT, ABBREVIATED_MANIFEST_ACCEPT]],
+    // The abbreviated manifest has no publish times either, and those cannot be done without.
+    [["--minimum-release-age", "60"], [FULL_MANIFEST_ACCEPT]],
+  ])("warns once when no manifest can be downloaded (extra args: %p)", async (args, requests) => {
+    const urls: string[] = [];
+    const accepts = serveByName(urls, {}, undefined, { "dep-musl": { full: 503, abbreviated: 503 } });
+    await writePackageJson({ optionalDependencies: { "dep-musl": "2.0.0" } });
+
+    const err = await installWithEnv({ ...bunEnv, BUN_CONFIG_HTTP_RETRY_COUNT: "0" }, "--libc", "musl", ...args);
+    expect(warnings(err)).toEqual([`warn: GET ${root_url}/dep-musl - 503`]);
+    expect(accepts).toEqual({ "dep-musl": requests });
+  });
+
+  it.each(["--offline", "--prefer-offline"])(
+    "%s resolves an optional dependency from a cached abbreviated manifest",
+    async flag => {
+      const urls: string[] = [];
+      const accepts = serveByName(urls, {}, undefined, { "dep-musl": { full: 503 } });
+      const env = { ...(await enableManifestCache()), BUN_CONFIG_HTTP_RETRY_COUNT: "0" };
+      await writePackageJson({ optionalDependencies: { "dep-musl": "^2.0.0" } });
+      // `bun install` does not wait for its manifest cache writes before it exits.
+      for (let attempt = 0; ; attempt++) {
+        await installWithEnv(env, "--libc", "musl");
+        expect(accepts["dep-musl"]).toEqual([FULL_MANIFEST_ACCEPT, ABBREVIATED_MANIFEST_ACCEPT]);
+        clear(accepts, urls);
+        await rm(join(package_dir, "bun.lockb"), { force: true });
+        if ((await readdirSorted(env.BUN_INSTALL_CACHE_DIR)).some(name => name.endsWith(".npm"))) break;
+        if (attempt === 20) throw new Error("the manifest was never cached");
+      }
+      await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+
+      expect(warnings(await installWithEnv(env, "--libc", "musl", flag))).toEqual([]);
+      expect(accepts).toEqual({});
+      expect(await installed()).toEqual(["dep-musl"]);
+    },
+  );
+
+  // The yarn.lock migration fetches every package's manifest to fill in os, cpu and libc; no dependency waits for them.
+  it.each<[number | undefined, string[], string]>([
+    [undefined, [FULL_MANIFEST_ACCEPT], `{ "os": "linux", "libc": "musl" }`],
+    [503, [FULL_MANIFEST_ACCEPT, ABBREVIATED_MANIFEST_ACCEPT], `{ "os": "linux" }`],
+  ])("migrates a yarn.lock when the status of the full manifest is %p", async (full, requests, info) => {
+    const urls: string[] = [];
     const accepts = serveByName(
       urls,
       {
-        baz: { "0.0.3": { libc: ["musl"] }, "0.0.5": { libc: ["musl"] } },
-        "dep-universal": { "3.0.0": { optionalDependencies: { baz: "0.0.5" } } },
+        "dep-universal": { "3.0.0": { optionalDependencies: { "dep-musl": "2.0.0" } } },
+        "dep-musl": { "2.0.0": { os: ["linux"], libc: ["musl"] } },
       },
       undefined,
-      ["baz"],
+      { "dep-musl": { full } },
     );
-    await writePackageJson({ dependencies: { "dep-universal": "3.0.0", baz: "0.0.3" } });
-
-    const err = await install("--libc", "glibc", "--save-text-lockfile");
-    expect(err).toContain(
-      "warn: HTTP 404 downloading the full package metadata for baz, using the abbreviated metadata: its libc field will not be checked",
-    );
-    expect(accepts.baz.sort()).toEqual([FULL_MANIFEST_ACCEPT, ABBREVIATED_MANIFEST_ACCEPT].sort());
-    expect(await installed()).toEqual(["baz", "dep-universal"]);
-    expect(await installedVersion("baz")).toBe("0.0.3");
-    expect(await installedVersion("dep-universal", "node_modules", "baz")).toBe("0.0.5");
-    expect(await Bun.file(join(package_dir, "bun.lock")).text()).not.toContain(`"libc"`);
-
-    // Everything was resolved and saved, so installing from the lockfile needs no manifest at all.
-    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
-    clear(accepts, urls);
-    expect(await install("--libc", "glibc", "--frozen-lockfile")).not.toContain("warn:");
-    expect(accepts).toEqual({});
-    expect(await installedVersion("dep-universal", "node_modules", "baz")).toBe("0.0.5");
-  });
-
-  it("falls back to the abbreviated manifest when the optional dependency is reached before the regular one", async () => {
-    const urls: string[] = [];
-    // Same registry, but here the regular dependency on baz comes from dep-both, which is only
-    // resolved after its own manifest arrives, so the optional edge from dep-universal requests baz
-    // first and its 404 may even be processed before the regular edge exists. Whichever of the two
-    // requests the abbreviated document, both edges resolve from it, exactly as in the other order.
-    const accepts = serveByName(
-      urls,
-      {
-        baz: { "0.0.5": { libc: ["musl"] } },
-        "dep-universal": {
-          "3.0.0": { dependencies: { "dep-both": "1.0.0" }, optionalDependencies: { baz: "0.0.5" } },
-        },
-        "dep-both": { "1.0.0": { dependencies: { baz: "0.0.5" } } },
-      },
-      undefined,
-      ["baz"],
-    );
-    await writePackageJson({ dependencies: { "dep-universal": "3.0.0" } });
-
-    const err = await install("--libc", "glibc", "--save-text-lockfile");
-    expect(err).toContain("warn: HTTP 404 downloading the full package metadata for baz");
-    expect(accepts.baz.sort()).toEqual([FULL_MANIFEST_ACCEPT, ABBREVIATED_MANIFEST_ACCEPT].sort());
-    expect(await installed()).toEqual(["baz", "dep-both", "dep-universal"]);
-    expect(await lockfileEntry("baz")).not.toContain(`"libc"`);
-
-    // Both edges were resolved, including the optional one that was waiting when the full request
-    // failed, so installing from the lockfile needs no manifest at all.
-    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
-    clear(accepts, urls);
-    expect(await install("--libc", "glibc", "--frozen-lockfile")).not.toContain("warn:");
-    expect(accepts).toEqual({});
-    expect(await installed()).toEqual(["baz", "dep-both", "dep-universal"]);
-  });
-
-  it("falls back to the abbreviated manifest for a package that is only an optional dependency", async () => {
-    const urls: string[] = [];
-    // Nothing requested the abbreviated document, so the dependency that was waiting for the full
-    // one requests it once the full one has failed: the package installs as it did before libc was
-    // read instead of being left out.
-    const accepts = serveByName(urls, { baz: { "0.0.5": { libc: ["musl"] } } }, undefined, ["baz"]);
-    await writePackageJson({ optionalDependencies: { baz: "0.0.5" } });
-
-    const err = await install("--libc", "glibc", "--save-text-lockfile");
-    expect(err).toContain("warn: HTTP 404 downloading the full package metadata for baz");
-    expect(accepts.baz).toEqual([FULL_MANIFEST_ACCEPT, ABBREVIATED_MANIFEST_ACCEPT]);
-    expect(await installed()).toEqual(["baz"]);
-    expect(await lockfileEntry("baz")).not.toContain(`"libc"`);
-
-    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
-    clear(accepts, urls);
-    expect(await install("--libc", "glibc", "--frozen-lockfile")).not.toContain("warn:");
-    expect(accepts).toEqual({});
-    expect(await installed()).toEqual(["baz"]);
-  });
-
-  it("falls back to a cached abbreviated manifest without requesting it again", async () => {
-    const urls: string[] = [];
-    // First install: baz is a regular dependency, so its abbreviated manifest ends up in the cache.
-    const tables = {
-      baz: { "0.0.5": { libc: ["musl"] } },
-      "dep-universal": {
-        "3.0.0": { dependencies: { "dep-both": "1.0.0" }, optionalDependencies: { baz: "0.0.5" } },
-      },
-      "dep-both": { "1.0.0": { dependencies: { baz: "0.0.5" } } },
-    };
-    serveByName(urls, tables, undefined, ["baz"]);
-    const env = await enableManifestCache();
-    await writePackageJson({ dependencies: { baz: "0.0.5" } });
-    await installWithEnv(env, "--libc", "glibc");
-    expect(await installed()).toEqual(["baz"]);
-
-    // Second install: the optional edge from dep-universal requests the full document, which fails,
-    // and the regular edge from dep-both is satisfied by the cached abbreviated one, which the
-    // optional edge then falls back to as well. The dedupe entry of the failing request has to
-    // survive the cache hit: the install must not fail, and the cached document is not requested.
-    await rm(join(package_dir, "bun.lockb"), { force: true });
-    await rm(join(package_dir, "node_modules", "baz"), { recursive: true });
-    const accepts = serveByName(urls, tables, undefined, ["baz"]);
-    await writePackageJson({ dependencies: { "dep-universal": "3.0.0" } });
-
-    const err = await installWithEnv(env, "--libc", "glibc", "--save-text-lockfile");
-    expect(err).toContain("warn: HTTP 404 downloading the full package metadata for baz");
-    expect(accepts.baz).toEqual([FULL_MANIFEST_ACCEPT]);
-    expect(await installed()).toEqual(["baz", "dep-both", "dep-universal"]);
-    expect(await lockfileEntry("baz")).not.toContain(`"libc"`);
-
-    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
-    clear(accepts, urls);
-    expect(await install("--libc", "glibc", "--frozen-lockfile")).not.toContain("warn:");
-    expect(accepts).toEqual({});
-    expect(await installed()).toEqual(["baz", "dep-both", "dep-universal"]);
-  });
-
-  it("records libc when migrating a yarn.lock whose package is a regular dependency first and an optional one later", async () => {
-    const urls: string[] = [];
-    // The yarn.lock migration fetches every package's manifest to fill in os, cpu and libc. The
-    // root's regular dependency on dep-musl comes first; dep-universal's optional dependency on it,
-    // which is what makes the full manifest necessary, comes later and must still get it requested.
-    const accepts = serveByName(urls, {
-      "dep-universal": { "3.0.0": { optionalDependencies: { "dep-musl": "2.0.0" } } },
-      "dep-musl": { "2.0.0": { libc: ["musl"] } },
-    });
     await writePackageJson({ dependencies: { "dep-universal": "3.0.0", "dep-musl": "2.0.0" } });
     await writeFile(
       join(package_dir, "yarn.lock"),
@@ -1033,9 +959,10 @@ describe("bun install --libc flag and the libc field", () => {
       ].join("\n"),
     );
 
-    await install("--save-text-lockfile", "--lockfile-only");
-    expect(accepts["dep-musl"]).toContain(FULL_MANIFEST_ACCEPT);
-    expect(await lockfileEntry("dep-musl")).toContain(`{ "libc": "musl" }`);
+    const env = { ...bunEnv, BUN_CONFIG_HTTP_RETRY_COUNT: "0" };
+    expect(warnings(await installWithEnv(env, "--save-text-lockfile", "--lockfile-only"))).toEqual([]);
+    expect(accepts["dep-musl"]).toEqual(requests);
+    expect(await lockfileEntry("dep-musl")).toContain(info);
   });
 
   // None of these may silently turn into "every libc".

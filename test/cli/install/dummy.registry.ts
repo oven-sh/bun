@@ -48,9 +48,9 @@ let server: Server<undefined>;
 export let root_url: string;
 export let check_npm_auth_type = { check: true };
 
-/** What `bun install` sends for a regular dependency: the abbreviated document. */
+/** What `bun install` sends by default: the abbreviated document. */
 export const ABBREVIATED_MANIFEST_ACCEPT = "application/vnd.npm.install-v1+json; q=1.0, application/json; q=0.8, */*";
-/** Sent for optional dependencies (and with `minimumReleaseAge`): the full document. */
+/** Sent for a name containing `linux`, `musl` or `glibc` (and with `minimumReleaseAge`): the full document. */
 export const FULL_MANIFEST_ACCEPT = "application/json, */*";
 
 /**

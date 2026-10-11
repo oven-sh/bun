@@ -583,7 +583,7 @@ describe.concurrent("flags", () => {
   describe.skipIf(isWindows)("--destination longer than the path buffer", () => {
     const longName = Buffer.alloc(MAX_PATH_BYTES + 1, "d").toString();
     const packageJson = JSON.stringify({ name: "pack-long-dest", version: "1.0.0" });
-    const expectedError = `error: archive destination name too long: "${longName}/pack-long-dest-1.0.0.tgz"\n`;
+    const expectedError = `error: archive destination name too long: "${longName}"\n`;
 
     async function packWithDestination(dir: string, destination: string, ...args: string[]) {
       await using proc = spawn({
@@ -1947,6 +1947,25 @@ tarball: \${fs.existsSync("pack-lifecycle-order-1.1.1.tgz")}\`)`;
     "\nprepack: true\nprepare: true\npostpack: false\ntarball: true",
     "\nprepack: true\nprepare: false\npostpack: false\ntarball: false",
   ]);
+});
+
+test.concurrent("--dry-run still runs prepack, prepare and postpack", async () => {
+  using dir = tempDir("pack-dry-run-scripts", {
+    "package.json": JSON.stringify({
+      name: "pack-dry-run-scripts",
+      version: "1.1.1",
+      scripts: {
+        prepack: "echo prepack > prepack.txt",
+        prepare: "echo prepare > prepare.txt",
+        postpack: "echo postpack > postpack.txt",
+      },
+    }),
+  });
+
+  const { exitCode } = await runPack(dir, ["--dry-run"]);
+  // The three markers exist and no tarball does.
+  expect(await sortedNames(String(dir))).toEqual(["package.json", "postpack.txt", "prepack.txt", "prepare.txt"]);
+  expect(exitCode).toBe(0);
 });
 
 test.concurrent("lifecycle script modifying version updates tarball filename (#17195)", async () => {
@@ -3327,6 +3346,37 @@ describe.concurrent("bins", () => {
     expect(out).toContain("Total files: 2");
   });
 
+  test('the same file under several bin names and in "files" is packed once', async () => {
+    using dir = tempDir("pack-bins-dedupe", {
+      "package.json": JSON.stringify({
+        name: "pack-bins-dedupe",
+        version: "1.2.3",
+        files: ["dist/minified/index.mjs", "dist/other.js"],
+        bin: { pbd: "dist/minified/index.mjs", "pack-bins-dedupe": "dist/minified/index.mjs" },
+      }),
+      "dist/minified/index.mjs": "#!/usr/bin/env bun\n",
+      "dist/other.js": "console.log('other')",
+    });
+
+    const dryRun = await runPack(dir, ["--dry-run"]);
+    expect(dryRun.err).toBe("");
+    expect(dryRun.out.match(/dist\/minified\/index\.mjs/g)).toHaveLength(1);
+    expect(dryRun.out).toContain("Total files: 3");
+    expect(dryRun.exitCode).toBe(0);
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+
+    const tarball = readTarball(join(dir, "pack-bins-dedupe-1.2.3.tgz"));
+    expect(entryNames(tarball)).toEqual([
+      "package/package.json",
+      "package/dist/minified/index.mjs",
+      "package/dist/other.js",
+    ]);
+    expect(tarball.entries[1].perm & 0o111).toBe(0o111);
+  });
+
   // None of these name a file that can be packed as a bin: the package root, a
   // file spelled as a directory, a directory, and the root package.json (which
   // is always in the tarball). The package packs as if "bin" were absent.
@@ -3450,6 +3500,33 @@ describe.concurrent("bins", () => {
       { pathname: "package/index.js" },
       { pathname: "package/lib/a.js" },
     ]);
+  });
+
+  // "directories.bin" applies only without a "bin" field, so `files` decides about bins/a.js here.
+  test.each([
+    ["", []],
+    ["cli.js", ["package/cli.js"]],
+  ] as [string, string[]][])('"bin" of %p with "directories.bin"', async (bin, bins) => {
+    using dir = tempDir("pack-bins-with-dir", {
+      "package.json": JSON.stringify({
+        name: "pack-bins-with-dir",
+        version: "1.0.0",
+        files: ["index.js"],
+        bin,
+        directories: { bin: "bins" },
+      }),
+      "index.js": "console.log('index')",
+      "cli.js": "console.log('cli')",
+      "bins/a.js": "console.log('a')",
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+
+    const tarball = readTarball(join(dir, "pack-bins-with-dir-1.0.0.tgz"));
+    expect(entryNames(tarball)).toEqual(["package/package.json", ...bins, "package/index.js"]);
+    expect(tarball.entries.filter(entry => (entry.perm & 0o111) !== 0).map(entry => entry.pathname)).toEqual(bins);
   });
 });
 

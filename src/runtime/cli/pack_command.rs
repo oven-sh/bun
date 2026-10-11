@@ -114,9 +114,6 @@ pub(crate) struct Context<'a> {
     // allocator param dropped — global mimalloc (see PORTING.md §Allocators)
     pub(crate) command_ctx: Command::Context<'a>,
 
-    /// Where the command was run from; relative `--destination`/`--filename` resolve against it.
-    pub(crate) original_cwd: &'a [u8],
-
     pub(crate) bundled_deps: Vec<BundledDep>,
 
     pub(crate) stats: Stats,
@@ -213,6 +210,41 @@ impl PackCommand {
             Output::flush();
         }
 
+        let options = &mut manager.options;
+        if !options.pack_filename.is_empty() && !options.pack_destination.is_empty() {
+            Output::err_generic(
+                "cannot use both filename and destination at the same time with tarball: filename \"{}\" and destination \"{}\"",
+                (
+                    bstr::BStr::new(strings::without_trailing_slash(options.pack_filename)),
+                    bstr::BStr::new(strings::without_trailing_slash(options.pack_destination)),
+                ),
+            );
+            Global::crash();
+        }
+        // Typed relative to `original_cwd`; `PackageManager::init` has changed directory since.
+        let mut abs_buf = bun_paths::path_buffer_pool::get();
+        for (what, option) in [
+            ("filename", &mut options.pack_filename),
+            ("destination name", &mut options.pack_destination),
+        ] {
+            if option.is_empty() {
+                continue;
+            }
+            let Some(abs) = resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
+                original_cwd,
+                &mut abs_buf,
+                &[*option],
+            ) else {
+                Output::err_generic(
+                    "archive {} too long: \"{}\"",
+                    (what, bstr::BStr::new(strings::without_trailing_slash(*option))),
+                );
+                Global::crash();
+            };
+            *option = crate::cli::cli_dupe(abs);
+        }
+        drop(abs_buf);
+
         // Note: split-borrowing through
         // `Context` would conflict with `&mut PackageManager`, so capture the
         // package.json path before constructing `Context`.
@@ -221,7 +253,6 @@ impl PackCommand {
         let mut pack_ctx = Context {
             manager,
             command_ctx: ctx,
-            original_cwd,
             bundled_deps: Vec::new(),
             stats: Stats::default(),
         };
@@ -354,9 +385,14 @@ impl PartialEq for PackQueueItem {
 #[derive(Default)]
 pub(crate) struct PackQueue {
     heap: std::collections::BinaryHeap<PackQueueItem>,
+    seen: StringHashMap<()>,
 }
 impl PackQueue {
+    /// A path that is already queued is dropped: no file is packed twice.
     fn add(&mut self, item: PackQueueItem) -> Result<(), AllocError> {
+        if self.seen.get_or_put(item.path.as_bytes())?.found_existing {
+            return Ok(());
+        }
         self.heap.push(item);
         Ok(())
     }
@@ -382,6 +418,16 @@ fn new_pack_queue() -> PackQueue {
 
 /// (dir, dir_subpath, dir_depth)
 struct DirInfo(Dir, Box<[u8]>, usize);
+
+/// (dir, dir_depth). The root (depth 1) is the caller's and stays open; the walk closes the rest.
+struct WalkedDir(Dir, usize);
+impl Drop for WalkedDir {
+    fn drop(&mut self) {
+        if self.1 == 1 {
+            self.0.fd = Fd::INVALID;
+        }
+    }
+}
 
 // ───────────────────────────────────────────────────────────────────────────
 // tree iteration (includes / excludes)
@@ -410,20 +456,13 @@ fn iterate_included_project_tree(
 
     let mut included_dirs: Vec<DirInfo> = Vec::new();
 
-    let mut subpath_dedupe: StringHashMap<()> = StringHashMap::new();
-
     // first find included dirs and files
     while let Some(dir_info) = dirs.pop() {
         let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
-        // Root (depth 1) is borrowed from the caller's `root_dir`; only close
-        // subdirs we opened.
-        let dir = scopeguard::guard(dir, move |d| {
-            if dir_depth == 1 {
-                let _ = d.into_raw();
-            }
-        });
+        let dir = WalkedDir(dir, dir_depth);
+        let dir = &dir.0;
 
-        let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(&dir));
+        let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(dir));
         dir_iter.resolve_unknown_entry_types = true;
         'next_entry: while let Some(entry) = dir_iter.next().ok().flatten() {
             // On iterator error, treat as end of iteration.
@@ -535,7 +574,7 @@ fn iterate_included_project_tree(
                             continue 'next_entry;
                         }
                     }
-                    let subdir = open_subdir(&dir, entry_name, &entry_subpath);
+                    let subdir = open_subdir(dir, entry_name, &entry_subpath);
                     dirs.push(DirInfo(
                         subdir,
                         entry_subpath.as_bytes().into(),
@@ -555,7 +594,7 @@ fn iterate_included_project_tree(
                             continue 'next_entry;
                         }
                     }
-                    let subdir = open_subdir(&dir, entry_name, &entry_subpath);
+                    let subdir = open_subdir(dir, entry_name, &entry_subpath);
                     included_dirs.push(DirInfo(
                         subdir,
                         entry_subpath.as_bytes().into(),
@@ -563,12 +602,6 @@ fn iterate_included_project_tree(
                     ));
                 }
                 bun_sys::FileKind::File => {
-                    let dedupe_entry = subpath_dedupe.get_or_put(entry_subpath.as_bytes())?;
-                    debug_assert!(!dedupe_entry.found_existing);
-                    if dedupe_entry.found_existing {
-                        continue;
-                    }
-
                     for bin in bins {
                         if bin.ty == BinType::File
                             && strings::eql_long(&bin.path, entry_subpath.as_bytes(), true)
@@ -585,20 +618,11 @@ fn iterate_included_project_tree(
                 _ => unreachable!(),
             }
         }
-
-        drop(dir);
     }
 
     // for each included dir, traverse its entries, exclude any with `negate_no_match`.
     for included_dir_info in included_dirs {
-        add_entire_tree(
-            bins,
-            excludes,
-            included_dir_info,
-            pack_queue,
-            &mut subpath_dedupe,
-            log_level,
-        )?;
+        add_entire_tree(bins, excludes, included_dir_info, pack_queue, log_level)?;
     }
 
     Ok(())
@@ -610,7 +634,6 @@ fn add_entire_tree(
     excludes: &[Pattern],
     root_dir_info: DirInfo,
     pack_queue: &mut PackQueue,
-    dedupe: &mut StringHashMap<()>,
     log_level: LogLevel,
 ) -> Result<(), AllocError> {
     let root_depth = root_dir_info.2;
@@ -701,10 +724,6 @@ fn add_entire_tree(
 
             match entry.kind {
                 bun_sys::FileKind::File => {
-                    let dedupe_entry = dedupe.get_or_put(entry_subpath.as_bytes())?;
-                    if dedupe_entry.found_existing {
-                        continue;
-                    }
                     for bin in bins {
                         if bin.ty == BinType::File
                             && strings::eql_long(&bin.path, entry_subpath.as_bytes(), true)
@@ -1208,12 +1227,8 @@ fn iterate_project_tree(
 
     while let Some(dir_info) = dirs.pop() {
         let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
-        // Root (depth 1) is caller-owned; only close subdirs we opened.
-        let dir = scopeguard::guard(dir, move |d| {
-            if dir_depth == 1 {
-                let _ = d.into_raw();
-            }
-        });
+        let dir = WalkedDir(dir, dir_depth);
+        let dir = &dir.0;
 
         while let Some(last) = ignores.last() {
             if last.depth < dir_depth {
@@ -1223,7 +1238,7 @@ fn iterate_project_tree(
             ignores.pop();
         }
 
-        if let Some(patterns) = IgnorePatterns::read_from_disk(&dir, dir_depth)? {
+        if let Some(patterns) = IgnorePatterns::read_from_disk(dir, dir_depth)? {
             ignores.push(patterns);
         }
 
@@ -1236,7 +1251,7 @@ fn iterate_project_tree(
             }
         }
 
-        let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(&dir));
+        let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(dir));
         dir_iter.resolve_unknown_entry_types = true;
         'next_entry: while let Some(entry) = dir_iter.next().ok().flatten() {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
@@ -1304,7 +1319,7 @@ fn iterate_project_tree(
                         }
                     }
 
-                    let subdir = open_subdir(&dir, entry_name, &entry_subpath_);
+                    let subdir = open_subdir(dir, entry_name, &entry_subpath_);
 
                     dirs.push(DirInfo(
                         subdir,
@@ -1437,12 +1452,9 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
             for bin_prop in bin_obj.properties.slice() {
                 if let Some(bin_prop_value) = &bin_prop.value {
                     if let Some(bin_str) = bin_prop_value.as_string(pack_bump()) {
-                        let Some(subpath) =
+                        if let Some(subpath) =
                             bin_subpath(bin_str, BinType::File, &mut path_buf, &mut path_spill)
-                        else {
-                            continue;
-                        };
-                        if !bins.iter().any(|listed| listed.path.as_bytes() == subpath) {
+                        {
                             bins.push(BinInfo {
                                 path: ZBox::from_bytes(subpath),
                                 ty: BinType::File,
@@ -2022,6 +2034,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         ctx.manager
             .options
             .apply_publish_config(&json.root, bump, package_name)?;
+        Publish::PublishCommand::refuse_publish_config_provenance(&json.root);
         if let Some(access) = ctx.manager.options.publish_config.access {
             if access == bun_install::Access::Restricted && !is_scoped {
                 return Err(PackError::RestrictedUnscopedPackage);
@@ -2090,14 +2103,16 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     // `MaybeUninit` does not run `Drop` on its contents, so without this the
     // `Arc<TransformOptions>` and resolver hash maps strand on every `bun pm
     // pack` / `bun publish`.
-    let transpiler_for_deinit: *mut bun_bundler::Transpiler<'static> = this_transpiler;
-    scopeguard::defer! {
-        // SAFETY: `transpiler_for_deinit` points at the initialized
-        // `this_transpiler` stack slot, which outlives the guard. `defer!`
-        // fires exactly once so the `drop_in_place` calls inside `deinit` are
-        // not repeated.
-        unsafe { (*transpiler_for_deinit).deinit() };
+    struct DeinitTranspiler(*mut bun_bundler::Transpiler<'static>);
+    impl Drop for DeinitTranspiler {
+        fn drop(&mut self) {
+            // SAFETY: points at the initialized `this_transpiler` stack slot,
+            // which outlives the guard. `drop` runs exactly once so the
+            // `drop_in_place` calls inside `deinit` are not repeated.
+            unsafe { (*self.0).deinit() };
+        }
     }
+    let _deinit_transpiler = DeinitTranspiler(this_transpiler);
     let script_env = &mut ctx.manager.env_mut().map;
     script_env.put(b"npm_command", b"pack")?;
     // `configure_env_for_run` described the workspace root's package.json, not the one packed.
@@ -2330,7 +2345,6 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 let (abs_tarball_dest, _) = tarball_destination(
                     opt_pack_destination(ctx.manager),
                     opt_pack_filename(ctx.manager),
-                    ctx.original_cwd,
                     abs_workspace_path,
                     package_name,
                     package_version,
@@ -2469,7 +2483,6 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         let (abs_tarball_dest, abs_tarball_dest_dir_end) = tarball_destination(
             opt_pack_destination(ctx.manager),
             opt_pack_filename(ctx.manager),
-            ctx.original_cwd,
             abs_workspace_path,
             package_name,
             package_version,
@@ -2831,44 +2844,31 @@ fn has_unsafe_tarball_filename_part(value: &[u8]) -> bool {
 fn tarball_destination<'a>(
     pack_destination: &[u8],
     pack_filename: &[u8],
-    original_cwd: &[u8],
     abs_workspace_path: &[u8],
     package_name: &[u8],
     package_version: &[u8],
     dest_buf: &'a mut [u8],
 ) -> (&'a ZStr, usize) {
-    if !pack_filename.is_empty() && !pack_destination.is_empty() {
-        Output::err_generic(
-            "cannot use both filename and destination at the same time with tarball: filename \"{}\" and destination \"{}\"",
-            (
-                bstr::BStr::new(strings::without_trailing_slash(pack_filename)),
-                bstr::BStr::new(strings::without_trailing_slash(pack_destination)),
-            ),
-        );
-        Global::crash();
-    }
     if !pack_filename.is_empty() {
-        let Some(tarball_name) = resolve_path::join_abs_string_buf_z_checked::<
-            resolve_path::platform::Auto,
-        >(original_cwd, dest_buf, &[pack_filename]) else {
+        if pack_filename.len() + 1 > dest_buf.len() {
             Output::err_generic(
                 "archive filename too long: \"{}\"",
                 format_args!("{}", bstr::BStr::new(pack_filename)),
             );
             Global::crash();
-        };
-        return (tarball_name, 0);
+        }
+        dest_buf[..pack_filename.len()].copy_from_slice(pack_filename);
+        dest_buf[pack_filename.len()] = 0;
+        let tarball_name_len = pack_filename.len() + 1;
+
+        // SAFETY: NUL written at pack_filename.len()
+        return (ZStr::from_buf(&dest_buf[..], tarball_name_len - 1), 0);
     } else {
-        let destination_base = if pack_destination.is_empty() {
-            abs_workspace_path
-        } else {
-            original_cwd
-        };
         let (dir_len_trimmed, dir_len_full) = {
             let Some(tarball_destination_dir) = resolve_path::join_abs_string_buf_checked::<
                 resolve_path::platform::Auto,
             >(
-                destination_base, dest_buf, &[pack_destination]
+                abs_workspace_path, dest_buf, &[pack_destination]
             ) else {
                 Output::err_generic(
                     "archive destination name too long: \"{}/{}\"",

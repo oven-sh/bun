@@ -2705,9 +2705,25 @@ test.concurrent("--production --linker hoisted on an isolated install prunes the
   expect(storeEntries(dir)).toStrictEqual([]);
 });
 
-// A hoisted install after an isolated one reuses the links into the store that still match bun.lock.
-// The hoisted planner trusts them the way the installer does; --linker isolated prunes the same
-// mixed tree as an isolated install.
+// Up to Bun 1.4 a hoisted install over an isolated one kept the store and the links into it that still
+// matched bun.lock, and installed the rest around them. Those trees are still on disk, but `bun install`
+// now moves the isolated tree aside first, so what is in the root folder sits out the hoisted install.
+async function hoistedInstallAroundIsolated(dir: string) {
+  const nm = join(dir, "node_modules");
+  const aside = join(dir, "isolated-entries");
+  const isolatedEntries = readdirSync(nm);
+  mkdirSync(aside);
+  for (const name of isolatedEntries) renameSync(join(nm, name), join(aside, name));
+  await install(dir, "--linker", "hoisted");
+  for (const name of isolatedEntries) {
+    rmSync(join(nm, name), { recursive: true, force: true });
+    renameSync(join(aside, name), join(nm, name));
+  }
+  rmSync(aside, { recursive: true });
+}
+
+// The hoisted planner trusts the links into the store the way the installer does; --linker isolated
+// prunes the same mixed tree as an isolated install.
 test.concurrent("mixed: a hoisted install over an isolated one is pruned as the configured linker", async () => {
   const dir = await setupWorkspaces("isolated", {
     root: { dependencies: { "no-deps": "2.0.0" } },
@@ -2715,7 +2731,7 @@ test.concurrent("mixed: a hoisted install over an isolated one is pruned as the 
   });
   const nm = join(dir, "node_modules");
   const aNm = join(dir, "packages", "a", "node_modules");
-  await install(dir, "--linker", "hoisted");
+  await hoistedInstallAroundIsolated(dir);
   expect(isSymlink(join(nm, "no-deps"))).toBeTrue();
   expect(isSymlink(join(nm, "one-dep"))).toBeFalse();
   expect(existsSync(join(nm, "one-dep", "package.json"))).toBeTrue();
@@ -2764,6 +2780,33 @@ test.concurrent("mixed: a hoisted install over an isolated one is pruned as the 
   expect(isSymlink(join(nm, "no-deps"))).toBeTrue();
   expect(storeEntries(dir)).toStrictEqual(["no-deps@1.0.1", "no-deps@2.0.0", "one-dep@1.0.0"]);
 });
+
+// The store that `bun install` moved into node_modules/.old_modules-<random> is neither evidence nor pruned.
+test.concurrent(
+  "a switch from the isolated to the hoisted linker leaves a tree every --linker prunes as hoisted",
+  async () => {
+    const dir = await setupWorkspaces("isolated", {
+      root: { dependencies: { "no-deps": "2.0.0" } },
+      packages: { a: { dependencies: { "one-dep": "1.0.0", "no-deps": "2.0.0" } } },
+    });
+    const nm = join(dir, "node_modules");
+    await install(dir, "--linker", "hoisted");
+    const entries = readdirSync(nm).toSorted();
+    expect(entries).toStrictEqual([expect.stringMatching(/^\.old_modules-/), "a", "no-deps", "one-dep"]);
+    const movedStore = join(nm, entries[0], ".bun");
+    const movedEntries = readdirSync(movedStore).toSorted();
+    expect(movedEntries).toStrictEqual(["no-deps@1.0.1", "no-deps@2.0.0", "node_modules", "one-dep@1.0.0"]);
+
+    for (const flags of [[], ["--linker", "isolated"], ["--linker", "hoisted"]]) {
+      const { stdout, stderr, exitCode } = await prune(dir, ...flags);
+      expect(stderr).toBe("");
+      expect(lines(stdout)).toStrictEqual([BANNER, "", NOTHING(4, 2)]);
+      expect(exitCode).toBe(0);
+    }
+    expect(readdirSync(nm).toSorted()).toStrictEqual(entries);
+    expect(readdirSync(movedStore).toSorted()).toStrictEqual(movedEntries);
+  },
+);
 
 // `rm -rf node_modules` leaves the workspace folders' links into the store behind. After a hoisted
 // install, neither linker may refuse the tree: the root is hoisted and the links are junk.
@@ -2825,7 +2868,7 @@ test.concurrent("mixed: a stale store under a hoisted install does not make the 
   for (const name of readdirSync(nm)) {
     if (!name.startsWith(".")) rmSync(join(nm, name), { recursive: true });
   }
-  await install(dir, "--linker", "hoisted");
+  await hoistedInstallAroundIsolated(dir);
   expect(existsSync(join(nm, "one-dep", "package.json"))).toBeTrue();
   expect(isSymlink(join(nm, "one-dep"))).toBeFalse();
   expect(existsSync(join(nm, "no-deps", "package.json"))).toBeTrue();
@@ -2851,7 +2894,7 @@ test.concurrent("mixed: real directories of npm: aliases are hoisted evidence", 
   for (const name of readdirSync(nm)) {
     if (!name.startsWith(".")) rmSync(join(nm, name), { recursive: true });
   }
-  await install(dir, "--linker", "hoisted");
+  await hoistedInstallAroundIsolated(dir);
   expect(isSymlink(join(nm, "x"))).toBeFalse();
   expect(existsSync(join(nm, "x", "package.json"))).toBeTrue();
   expect(existsSync(join(nm, "y", "package.json"))).toBeTrue();

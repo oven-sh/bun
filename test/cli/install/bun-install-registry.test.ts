@@ -6285,6 +6285,10 @@ describe.concurrent("hoisting", async () => {
   // The project's own range decides which copy that `*` shares, the same way an exact pin would.
   async function sharedResolutions({ packageDir, env }: { packageDir: string; env: NodeJS.Dict<string> }) {
     await runBunInstall(env, packageDir, { saveTextLockfile: true });
+    return lockedShared(packageDir);
+  }
+
+  async function lockedShared(packageDir: string) {
     const { packages } = Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()) as {
       packages: Record<string, [string]>;
     };
@@ -6328,6 +6332,32 @@ describe.concurrent("hoisting", async () => {
       "hoist-lockfile-shared": "hoist-lockfile-shared@1.0.2",
     });
     expect(await exists(join(packageDir, "node_modules", "hoist-lockfile-1", "node_modules"))).toBeFalse();
+  });
+
+  test("`bun add` of a dependency with a `*` range shares the copy the root's own range already resolved to", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
+    await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "hoist-lockfile-shared": "^1.0.1" } }));
+    expect(await sharedResolutions({ packageDir, env })).toStrictEqual({
+      "hoist-lockfile-shared": "hoist-lockfile-shared@1.0.2",
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "add", "hoist-lockfile-1@1.0.0"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "pipe",
+      env,
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+
+    expect((await file(packageJson).json()).dependencies).toEqual({
+      "hoist-lockfile-1": "1.0.0",
+      "hoist-lockfile-shared": "^1.0.1",
+    });
+    expect(await lockedShared(packageDir)).toStrictEqual({ "hoist-lockfile-shared": "hoist-lockfile-shared@1.0.2" });
+    expect(await exists(join(packageDir, "node_modules", "hoist-lockfile-1", "node_modules"))).toBeFalse();
+    expect(exitCode).toBe(0);
   });
 });
 

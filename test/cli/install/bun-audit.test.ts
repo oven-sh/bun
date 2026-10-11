@@ -984,8 +984,6 @@ describe("`bun audit` with a secret in the registry URL", () => {
     expect(exitCode).toBe(1);
   });
 
-  // A body starting with `{` gets past the response check and is rejected when it is parsed instead; the report,
-  // --json and fix code paths each report that themselves.
   test.concurrent("the unparsable response line masks the secret in every mode", async () => {
     const body = "{ not json";
     await using registry = registryAnswering(body);
@@ -1506,6 +1504,46 @@ describe("`bun audit` report", () => {
       unaudited: [{ registry: registryHref(scoped), packages: ["@types/is-number"], reason: "non-JSON response" }],
     });
     expect(fix.exitCode).toBe(0);
+  });
+
+  // Each starts like the object the bulk endpoint answers with, so only looking inside tells them apart from one.
+  test.concurrent.each([
+    ['{"error":"audit is not supported by this registry"}', "not a list of advisories"],
+    ['{"@types/is-number":["high"]}', "not a list of advisories"],
+    ["{ not json", "non-JSON response"],
+  ])("a scoped registry that answers 200 with %s is skipped, the rest is still audited", async (bulkBody, reason) => {
+    await using scoped = startRegistry({}, { bulkBody });
+    await using server = startRegistry({ "a-dep": [adv("<1.0.2")] });
+    using dir = await setup(
+      server,
+      { name: "foo", dependencies: { "@types/is-number": "1.0.0", "a-dep": "1.0.1", "no-deps": "1.0.0" } },
+      {},
+      { types: scoped.url.href },
+    );
+    const skipped = skippedWarning(registryHref(scoped), reason, "@types/is-number");
+
+    const report = await audit(dir);
+    expect(normalizeBunSnapshot(report.stderr)).toBe(skipped);
+    expect(report.stdout).toContain("a-dep@1.0.1");
+    expect(report.stdout).toContain("1 vulnerability (1 high)");
+    expect(report.exitCode).toBe(1);
+
+    const json = await audit(dir, "--json");
+    expect(normalizeBunSnapshot(json.stderr)).toBe(skipped);
+    expect(JSON.parse(json.stdout)).toStrictEqual({ "a-dep": [adv("<1.0.2")] });
+    expect(json.exitCode).toBe(1);
+
+    // Only the default registry's two packages count as checked.
+    const ignored = await audit(dir, "--ignore", adv("<1.0.2").url);
+    expect(normalizeBunSnapshot(ignored.stderr)).toBe(skipped);
+    expect(normalizeBunSnapshot(ignored.stdout)).toBe(AUDIT_HEADER + noVulnerabilities(2, "1 ignored", "1 skipped"));
+    expect(ignored.exitCode).toBe(0);
+
+    const fix = await auditFix(dir, "--json", "--dry-run");
+    expect(normalizeBunSnapshot(fix.stderr)).toBe(skipped);
+    expect(JSON.parse(fix.stdout)).toMatchObject({
+      unaudited: [{ registry: registryHref(scoped), packages: ["@types/is-number"], reason }],
+    });
   });
 });
 

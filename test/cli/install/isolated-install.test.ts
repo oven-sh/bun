@@ -648,6 +648,7 @@ describe("link: dependencies", () => {
     {
       name: "linked-pkg",
       gone: "the package was unlinked",
+      code: "ENOENT",
       async remove(pkgDir: string, env: NodeJS.Dict<string>) {
         const result = await runBun(["unlink"], pkgDir, env);
         expect(result.stdout).toContain(`success: unlinked package "linked-pkg"`);
@@ -657,11 +658,21 @@ describe("link: dependencies", () => {
     {
       name: "@scope/linked-pkg",
       gone: "the linked directory was deleted",
+      code: "ENOENT",
       async remove(pkgDir: string) {
         await rm(pkgDir, { recursive: true, force: true });
       },
     },
-  ])("installing from the lockfile fails when $gone", async ({ name, remove }) => {
+    {
+      name: "linked-pkg",
+      gone: "the linked directory was replaced by a file",
+      code: "ENOTDIR",
+      async remove(pkgDir: string) {
+        await rm(pkgDir, { recursive: true, force: true });
+        await write(pkgDir, "");
+      },
+    },
+  ])("installing from the lockfile fails when $gone", async ({ name, code, remove }) => {
     using dir = tempDir("isolated-link-target", {
       "pkg/package.json": JSON.stringify({ name, version: "1.0.0" }),
       "app/package.json": JSON.stringify({ name: "app", dependencies: { [name]: `link:${name}` } }),
@@ -689,14 +700,14 @@ describe("link: dependencies", () => {
     // failed entry, node_modules/<name> still points at the registration and
     // resolves again once the package is re-linked.
     result = await runBun(["install"], appDir, env);
-    expect(result.stderr).toContain("ENOENT");
+    expect(result.stderr).toContain(code);
     expect(result.stderr).toContain(`failed to link package: ${name}@link:`);
     expect(result.stdout).toContain("Failed to install 1 package");
     expect(result.exitCode).toBe(1);
 
     await rm(join(appDir, "node_modules"), { recursive: true, force: true });
     result = await runBun(["install"], appDir, env);
-    expect(result.stderr).toContain("ENOENT");
+    expect(result.stderr).toContain(code);
     expect(result.stderr).toContain(`failed to link package: ${name}@link:`);
     expect(result.stdout).toContain("Failed to install 1 package");
     expect(result.exitCode).toBe(1);

@@ -248,7 +248,7 @@ pub fn install_with_manager(
                 if manager.subcommand == Subcommand::Dedupe {
                     crate::dedupe::dedupe_after_differ(manager);
                 }
-                if manager.summary.changes_resolutions() || bare_update {
+                if manager.summary.changes_resolutions() {
                     direct_deps_before = DirectDependencies::snapshot(&manager.lockfile);
                 }
 
@@ -562,9 +562,6 @@ pub fn install_with_manager(
     let mut named = NamedUpdates::default();
     if !needs_new_lockfile {
         if named_update {
-            // The rows of a workspace the differ re-parsed are still queued; they are
-            // direct entries, so they go out ahead of the rows the named pass enqueues.
-            manager.drain_dependency_list();
             named = enqueue_named_updates(
                 manager,
                 &direct_deps_before,
@@ -606,21 +603,17 @@ pub fn install_with_manager(
     if manager.pending_task_count() > 0
         || manager.peer_dependencies.readable_length() > 0
         || !named.latest_rows.is_empty()
-        || !transitive.deferred.is_empty()
     {
-        resolve_pending_tasks(
-            manager,
-            &root,
-            log_level,
-            &mut named,
-            &mut transitive,
-            &direct_deps_before,
-        )?;
+        resolve_pending_tasks(manager, &root, log_level, &mut named)?;
     }
 
     direct_deps_before.redirect_dependents(&mut manager.lockfile);
     transitive.redirect_dependents(&mut manager.lockfile);
     redirect_moved_edges(&mut manager.lockfile, &named.moved);
+    // `bun audit fix` moved its rows to the fixed versions on purpose.
+    if !matches!(manager.subcommand, Subcommand::Dedupe | Subcommand::Audit) {
+        crate::dedupe::collapse_appended(manager);
+    }
     transitive.print_plan(manager, &direct_deps_before, &named.moved);
     print_kept_patched(manager);
 
@@ -954,15 +947,12 @@ pub fn install_with_manager(
         manager.summary.add = manager.lockfile.packages.len() as u32;
     }
 
-    if !manager.options.dry_run {
-        if manager.options.do_.save_yarn_lock() {
-            write_yarn_lock_with_progress(manager, log_level)?;
-        }
+    if manager.options.do_.save_yarn_lock() {
+        write_yarn_lock_with_progress(manager, log_level)?;
+    }
 
-        if manager.options.do_.run_scripts() && install_root_dependencies && !manager.options.global
-        {
-            run_root_lifecycle_scripts(manager, ctx, log_level)?;
-        }
+    if manager.options.do_.run_scripts() && install_root_dependencies && !manager.options.global {
+        run_root_lifecycle_scripts(manager, ctx, log_level)?;
     }
 
     if log_level != Options::LogLevel::Silent {
@@ -1571,12 +1561,11 @@ fn enqueue_named_updates(
     let mut matched_elsewhere = DynamicBitSet::init_empty(requests).unwrap_or_oom();
     let mut named = NamedUpdates::default();
     let mut peer_rows: Vec<DependencyID> = Vec::new();
-    let mut rows: Vec<(DependencyID, PackageID)> = Vec::new();
     let dependencies_len = manager.lockfile.buffers.dependencies.len();
     for dependency_i in 0..dependencies_len {
-        let dependency = &manager.lockfile.buffers.dependencies[dependency_i];
+        let dependency = manager.lockfile.buffers.dependencies[dependency_i].clone();
         let package_id = manager.lockfile.buffers.resolutions[dependency_i];
-        let Some(request) = index_of_named_update(manager, dependency, package_id) else {
+        let Some(request) = index_of_named_update(manager, &dependency, package_id) else {
             continue;
         };
         if !walkable.is_set(dependency_i) {
@@ -1596,21 +1585,11 @@ fn enqueue_named_updates(
             }
             continue;
         }
-        rows.push((dependency_i as DependencyID, package_id));
-    }
-
-    // Direct rows resolve first, so rows regular packages own can land on the copy they move to
-    // (`get_or_put_resolved_package_with_find_result`) and redirected edges follow the direct entry.
-    let (direct_rows, transitive_rows): (Vec<_>, Vec<_>) = rows
-        .into_iter()
-        .partition(|&(dependency_i, _)| manager.lockfile.is_workspace_dependency(dependency_i));
-    for (dependency_i, package_id) in direct_rows.into_iter().chain(transitive_rows) {
-        let dependency = manager.lockfile.buffers.dependencies[dependency_i as usize].clone();
-        manager.lockfile.buffers.resolutions[dependency_i as usize] = invalid_package_id;
-        named.moved.push((dependency_i, package_id));
+        manager.lockfile.buffers.resolutions[dependency_i] = invalid_package_id;
+        named.moved.push((dependency_i as DependencyID, package_id));
         if let Err(err) = enqueue_dependency_with_main(
             manager,
-            dependency_i,
+            dependency_i as DependencyID,
             &dependency,
             invalid_package_id,
             false,
@@ -1974,8 +1953,6 @@ fn resolve_pending_tasks(
     root: &lockfile::Package,
     log_level: Options::LogLevel,
     named: &mut NamedUpdates,
-    transitive: &mut TransitiveUpdate,
-    direct_deps_before: &DirectDependencies,
 ) -> crate::Result<()> {
     if root.dependencies.len > 0 {
         let _ = manager.get_cache_directory();
@@ -1994,10 +1971,6 @@ fn resolve_pending_tasks(
     }
 
     wait_for_resolution(manager)?;
-
-    if transitive.plan_unanchored(manager, direct_deps_before)? {
-        wait_for_resolution(manager)?;
-    }
 
     if !named.latest_rows.is_empty() {
         let child_moves = refresh_children_of_named(manager, &named.latest_rows)?;
@@ -2312,6 +2285,10 @@ fn run_root_lifecycle_scripts(
 ) -> crate::Result<()> {
     if let Some(scripts) = manager.root_lifecycle_scripts.take() {
         debug_assert!(scripts.total > 0);
+
+        if manager.options.dry_run {
+            return Ok(());
+        }
 
         if log_level != Options::LogLevel::Silent {
             Output::print_error(format_args!("\n"));

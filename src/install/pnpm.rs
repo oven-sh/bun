@@ -191,7 +191,7 @@ fn root_package_json<'a>(
     let cache = &mut manager.workspace_package_json_cache;
     cache
         .get_with_path(log, pkg_json_path.slice(), options)
-        .entry()
+        .unwrap()
         .ok()
 }
 

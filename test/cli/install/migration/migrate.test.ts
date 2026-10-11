@@ -2291,6 +2291,62 @@ describe("package-lock.json migration fixes", () => {
         expect(resolve.exitCode).toBe(0);
       },
     );
+
+    // The target's key starts with the package's key and then climbs out of the package and of the project, so it
+    // is not inside the package. It is skipped like every other transitive folder outside the project. The
+    // directory is planted where the path leads from the package and where it leads from the project.
+    test.concurrent.each(linkers)("a link target that climbs out of the package is skipped (%s)", async linker => {
+      using registry = localRegistry();
+      const dependencies = { "file-dep": "1.0.0" };
+      const climbing = "node_modules/file-dep/../../../secret";
+      const secret = {
+        "package.json": JSON.stringify({ name: "loot", version: "1.0.0" }),
+        "credentials.txt": "do-not-link-me",
+      };
+      using copy = tempDir(`npm-migrate-folder-climbs-${linker}`, {
+        secret,
+        a: {
+          b: {
+            secret,
+            root: {
+              "package.json": JSON.stringify({ name: "root", dependencies }),
+              "package-lock.json": npmLock("root", {
+                "": { name: "root", dependencies },
+                "node_modules/file-dep": {
+                  version: "1.0.0",
+                  resolved: registry.tarball("file-dep", "1.0.0"),
+                  integrity: registry.integrity("file-dep", "1.0.0"),
+                  dependencies: { loot: "file:../../../secret" },
+                },
+                [climbing]: {},
+                "node_modules/file-dep/node_modules/loot": { resolved: climbing, link: true },
+              }),
+            },
+          },
+        },
+      });
+      const dir = join(String(copy), "a", "b", "root");
+      writeExtra(dir, {}, registry.url);
+
+      const { stderr, text, lock } = await migrate(dir);
+      expect(stderr).toContain(
+        `skipped "loot" from package-lock.json: transitive folder dependency "${climbing}" is outside the project`,
+      );
+      expect(Object.keys(lock.packages)).toStrictEqual(["file-dep"]);
+      expect(text).not.toContain("secret");
+      await frozen(dir);
+
+      const install = await run(dir, "install", "--linker", linker);
+      expect(install.stderr).not.toContain("error");
+      expect([
+        ...new Bun.Glob("**/credentials.txt").scanSync({
+          cwd: join(dir, "node_modules"),
+          dot: true,
+          followSymlinks: true,
+        }),
+      ]).toStrictEqual([]);
+      expect(install.exitCode).toBe(0);
+    });
   });
 
   test.concurrent("lockfileVersion 5 is refused, and install falls back to a fresh resolve", async () => {

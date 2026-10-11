@@ -751,6 +751,15 @@ pub(crate) fn negatable_from_json_value<T: NegatableEnum>(value: &JSON::E::JsonV
     this.combine()
 }
 
+/// Only the registry's full document has `libc`, so it is what `NetworkTask::for_manifest` requests for these
+/// names. A function of the name alone, not of the host or the dependency kind: a lockfile written on macOS
+/// records `libc` for Linux. `gnu` is left out: it is also in `signup`, and comes after `linux` where it means glibc.
+pub(crate) fn name_suggests_libc(name: &[u8]) -> bool {
+    strings::contains(name, b"linux")
+        || strings::contains(name, b"musl")
+        || strings::contains(name, b"glibc")
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 
 #[repr(C)]
@@ -811,7 +820,7 @@ pub struct PackageVersion {
     /// `"cpu"` field in package.json
     pub(crate) cpu: Architecture,
 
-    /// `"libc"` field in package.json; only in the extended manifest (`Libc::NONE` = not declared).
+    /// `"libc"` field in package.json; only in the full document, see `name_suggests_libc` (`Libc::NONE` = not declared).
     pub(crate) libc: Libc,
 
     /// `hasInstallScript` field in registry API.

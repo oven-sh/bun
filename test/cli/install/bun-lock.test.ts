@@ -1122,40 +1122,98 @@ it("escapes quotes and newlines in requested version literals when writing yarn.
   expect(lines.filter(line => line.trimStart().startsWith('resolved "http://injected.example'))).toEqual([]);
 });
 
-it("--yarn does not write yarn.lock during --dry-run", async () => {
-  const { packageDir, packageJson } = await registry.createTestDir();
+describe.concurrent("yarn.lock and --dry-run", () => {
+  // A way to ask for a yarn.lock: flags, an environment variable, or bunfig.
+  type Route = { flags: string[]; env?: Record<string, string>; bunfig?: string };
+  const yarnBunfig = '\n[install.lockfile]\nprint = "yarn"\n';
 
-  await write(
-    packageJson,
-    JSON.stringify({
-      name: "yarn-lock-dry-run",
-      dependencies: {
-        "no-deps": "1.0.0",
-      },
-    }),
-  );
+  async function setup(route: Pick<Route, "env" | "bunfig"> = {}) {
+    const { packageDir, packageJson } = await registry.createTestDir();
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "yarn-lock-dry-run",
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+      }),
+    );
+    if (route.bunfig) {
+      const bunfig = join(packageDir, "bunfig.toml");
+      await write(bunfig, (await file(bunfig).text()) + route.bunfig);
+    }
+    const yarnLock = join(packageDir, "yarn.lock");
 
-  const { exited, stdout, stderr } = spawn({
-    cmd: [bunExe(), "install", "--yarn", "--dry-run"],
-    cwd: packageDir,
-    env,
-    stdout: "pipe",
-    stderr: "pipe",
+    async function run(args: string[]) {
+      const { exited, stderr } = spawn({
+        cmd: [bunExe(), ...args],
+        cwd: packageDir,
+        env: { ...env, ...route.env },
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [err, exitCode] = await Promise.all([stderr.text(), exited]);
+      return { err, result: { args, wrote: await exists(yarnLock), exitCode } };
+    }
+
+    return { yarnLock, run };
+  }
+
+  describe.each([
+    ["--yarn before --dry-run", { flags: ["--yarn", "--dry-run"] }],
+    ["--yarn after --dry-run", { flags: ["--dry-run", "--yarn"] }],
+    ["BUN_CONFIG_YARN_LOCKFILE", { flags: ["--dry-run"], env: { BUN_CONFIG_YARN_LOCKFILE: "1" } }],
+    ['bunfig print = "yarn"', { flags: ["--dry-run"], bunfig: yarnBunfig }],
+  ] as [string, Route][])("%s", (_, route) => {
+    it("a dry run does not write it", async () => {
+      const { run } = await setup(route);
+      const args = ["install", ...route.flags];
+      const { err, result } = await run(args);
+      expect(err).not.toContain("error:");
+      expect(result).toEqual({ args, wrote: false, exitCode: 0 });
+    });
   });
 
-  const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
-  expect(err).not.toContain("yarn.lock");
-  expect(err).not.toContain("error:");
-  expect(out).toContain("no-deps@1.0.0");
-  expect(exitCode).toBe(0);
+  describe.each(["add a-dep", "update"])("%s", command => {
+    it("a dry run does not write it", async () => {
+      const { run } = await setup();
+      const args = [...command.split(" "), "--yarn", "--dry-run"];
+      const { err, result } = await run(args);
+      expect(err).not.toContain("error:");
+      expect(result).toEqual({ args, wrote: false, exitCode: 0 });
+    });
+  });
 
-  expect(
-    await Promise.all([
-      exists(join(packageDir, "yarn.lock")),
-      exists(join(packageDir, "bun.lock")),
-      exists(join(packageDir, "node_modules")),
-    ]),
-  ).toEqual([false, false, false]);
+  it("a dry run leaves an existing yarn.lock unchanged", async () => {
+    const { yarnLock, run } = await setup();
+    const install = await run(["install", "--yarn"]);
+    expect(install.err).toContain("Saved yarn.lock");
+    expect(install.result).toEqual({ args: ["install", "--yarn"], wrote: true, exitCode: 0 });
+    const before = await file(yarnLock).text();
+    expect(before).toContain("no-deps@1.0.0");
+
+    const args = ["add", "a-dep", "--yarn", "--dry-run"];
+    const { err, result } = await run(args);
+    expect(err).not.toContain("error:");
+    expect({ ...result, unchanged: (await file(yarnLock).text()) === before }).toEqual({
+      args,
+      wrote: true,
+      exitCode: 0,
+      unchanged: true,
+    });
+  });
+
+  describe.each([
+    ["BUN_CONFIG_YARN_LOCKFILE", { flags: [], env: { BUN_CONFIG_YARN_LOCKFILE: "1" } }],
+    ['bunfig print = "yarn"', { flags: [], bunfig: yarnBunfig }],
+  ] as [string, Route][])("%s", (_, route) => {
+    it("an install that is not a dry run writes it", async () => {
+      const { run } = await setup(route);
+      const { err, result } = await run(["install"]);
+      expect(err).toContain("Saved yarn.lock");
+      expect(result).toEqual({ args: ["install"], wrote: true, exitCode: 0 });
+    });
+  });
 });
 
 it("prints an actionable error for a lockfile version newer than this build supports", async () => {
@@ -2511,13 +2569,23 @@ describe("loading bun.lock binds the edges of a package printed at several paths
 
 // A fresh install resolves transitive rows as their parents' manifests come back
 // from the registry, so whether some other version of a package exists yet when
-// a row is resolved depends on network timing. Each shape below is installed
+// a row is resolved depends on network timing. Once everything is resolved, the
+// versions the install added collapse onto the fewest that satisfy every range;
+// of those, a range takes the one the project itself depends on if it accepts
+// it, else the highest it accepts. Each shape below is installed
 // under arrival orders forced by holding one manifest back until a request that
 // can only be made once the other parent's row is resolved (the tarball of the
 // version it resolved to) has come in; every order has to write the same
 // bun.lock. `z`, the package the rows disagree on, has 1.0.0, 1.0.5, 1.1.0 and 2.0.0.
 type OrderedManifests = Record<string, Record<string, Record<string, Record<string, string>>>>;
 type Hold = { manifest: string; until: string };
+type OrderedShape = {
+  shape: string;
+  manifests: OrderedManifests;
+  files: Record<string, object>;
+  orders: Record<string, Hold[]>;
+  z: Record<string, string>;
+};
 const zVersions = { "1.0.0": {}, "1.0.5": {}, "1.1.0": {}, "2.0.0": {} };
 
 async function registryWithHolds(manifests: OrderedManifests) {
@@ -2562,21 +2630,29 @@ async function registryWithHolds(manifests: OrderedManifests) {
   };
 }
 
-async function freshInstallLock(server: Bun.Server, files: Record<string, object>) {
-  using dir = tempDir("lock-arrival-order", {
+function projectOn(server: Bun.Server, files: Record<string, object>) {
+  return tempDir("lock-arrival-order", {
     ...Object.fromEntries(Object.entries(files).map(([path, json]) => [path, JSON.stringify(json)])),
     "bunfig.toml": `[install]\nregistry = "${server.url.href}"\nlinker = "hoisted"\nsaveTextLockfile = true\n`,
   });
+}
+
+async function installAndReadLock(cwd: string) {
   await using proc = spawn({
     cmd: [bunExe(), "install"],
-    cwd: String(dir),
-    env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+    cwd,
+    env: { ...env, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
     stdout: "pipe",
     stderr: "pipe",
   });
   const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ out, err, code }).toMatchObject({ err: expect.stringContaining("Saved lockfile"), code: 0 });
-  return await file(join(String(dir), "bun.lock")).text();
+  return await file(join(cwd, "bun.lock")).text();
+}
+
+async function freshInstallLock(server: Bun.Server, files: Record<string, object>) {
+  using dir = projectOn(server, files);
+  return await installAndReadLock(String(dir));
 }
 
 // `{ "z": "z@1.0.0", "b/z": "z@1.1.0" }`: every instance of `name`, keyed by where it is placed.
@@ -2589,13 +2665,20 @@ function instancesOf(lock: string, name: string): Record<string, string> {
   );
 }
 
-it.each<{
-  shape: string;
-  manifests: OrderedManifests;
-  files: Record<string, object>;
-  orders: Record<string, Hold[]>;
-  z: Record<string, string>;
-}>([
+async function writesTheSameLockInEveryOrder({ manifests, files, orders, z }: OrderedShape) {
+  const ordered = await registryWithHolds(manifests);
+  using server = ordered.server;
+  let expected: string | undefined;
+  for (const [order, holds] of Object.entries(orders)) {
+    ordered.hold(holds);
+    const lock = await freshInstallLock(server, files);
+    expected ??= lock;
+    expect({ order, lock }).toEqual({ order, lock: expected });
+  }
+  expect(instancesOf(expected!, "z")).toEqual(z);
+}
+
+it.each<OrderedShape>([
   {
     shape: "a -> z@1.0.0 next to b -> z@^1.0.0",
     manifests: {
@@ -2608,7 +2691,7 @@ it.each<{
       "a's manifest last": [{ manifest: "a", until: "/z-1.1.0.tgz" }],
       "b's manifest last": [{ manifest: "b", until: "/z-1.0.0.tgz" }],
     },
-    z: { "z": "z@1.0.0", "b/z": "z@1.1.0" },
+    z: { "z": "z@1.0.0" },
   },
   {
     shape: "a -> z@~1.0.0 next to b -> z@^1.0.0",
@@ -2622,7 +2705,49 @@ it.each<{
       "a's manifest last": [{ manifest: "a", until: "/z-1.1.0.tgz" }],
       "b's manifest last": [{ manifest: "b", until: "/z-1.0.5.tgz" }],
     },
-    z: { "z": "z@1.0.5", "b/z": "z@1.1.0" },
+    z: { "z": "z@1.0.5" },
+  },
+  {
+    shape: "a -> z@* next to b -> z@~1.0.0",
+    manifests: {
+      a: { "1.0.0": { dependencies: { z: "*" } } },
+      b: { "1.0.0": { dependencies: { z: "~1.0.0" } } },
+      z: zVersions,
+    },
+    files: { "package.json": { name: "foo", dependencies: { a: "1.0.0", b: "1.0.0" } } },
+    orders: {
+      "a's manifest last": [{ manifest: "a", until: "/z-1.0.5.tgz" }],
+      "b's manifest last": [{ manifest: "b", until: "/z-2.0.0.tgz" }],
+    },
+    z: { "z": "z@1.0.5" },
+  },
+  {
+    // No version covers all three, so two stay; a's range accepts both and takes the higher one, whichever
+    // of them was in place when a's row was resolved.
+    shape: "a -> z@^1.0.0, b -> z@~1.0.0, c -> z@~1.1.0",
+    manifests: {
+      a: { "1.0.0": { dependencies: { z: "^1.0.0" } } },
+      b: { "1.0.0": { dependencies: { z: "~1.0.0" } } },
+      c: { "1.0.0": { dependencies: { z: "~1.1.0" } } },
+      z: { "1.0.5": {}, "1.1.3": {}, "1.2.0": {} },
+    },
+    files: { "package.json": { name: "foo", dependencies: { a: "1.0.0", b: "1.0.0", c: "1.0.0" } } },
+    orders: {
+      "a's manifest first": [
+        { manifest: "b", until: "/z-1.2.0.tgz" },
+        { manifest: "c", until: "/z-1.2.0.tgz" },
+      ],
+      // a's row is resolved (against the one z there is) before a's tarball is requested.
+      "b's, then a's, then c's": [
+        { manifest: "a", until: "/z-1.0.5.tgz" },
+        { manifest: "c", until: "/a-1.0.0.tgz" },
+      ],
+      "c's, then a's, then b's": [
+        { manifest: "a", until: "/z-1.1.3.tgz" },
+        { manifest: "b", until: "/a-1.0.0.tgz" },
+      ],
+    },
+    z: { "z": "z@1.1.3", "b/z": "z@1.0.5" },
   },
   {
     // b's range accepts the root's pin; c puts b's own best match in place, which must not change what b gets.
@@ -2644,8 +2769,8 @@ it.each<{
     z: { "z": "z@1.0.0", "c/z": "z@1.1.0" },
   },
   {
-    // a and b resolve to the same z, so either of them may be the one that appends it; a's pin has to count
-    // either way when p (installed as a's peer after every regular row) brings a range from another major.
+    // a and b resolve to the same z, so either of them may be the one that appends it; p (installed as a's peer
+    // after every regular row) brings a range from another major, and shares that z either way.
     shape: "a -> z@1.1.0 and b -> z@^1.0.0 share a z that absorbs peer p -> z@*",
     manifests: {
       a: { "1.0.0": { dependencies: { z: "1.1.0" }, peerDependencies: { p: "1.0.0" } } },
@@ -2694,8 +2819,8 @@ it.each<{
     z: { "z": "z@1.0.5" },
   },
   {
-    // The root's z is in place for every later row, so c's `*` lands on it (across the major, as
-    // every `@types/*` package's `@types/node: *` lands on the project's own `@types/node`)
+    // The root's z stays whatever else is resolved, so c's `*` ends up on it (across the major, as
+    // every `@types/*` package's `@types/node: *` ends up on the project's own `@types/node`)
     // whether a's row is resolved before c's or after.
     shape: "the root's z@~1.0.0 absorbs c -> z@* whether or not a -> z@1.0.5 has pinned it yet",
     manifests: {
@@ -2738,21 +2863,163 @@ it.each<{
     },
     z: { "z": "z@1.0.0" },
   },
-])(
-  "a fresh install writes the same bun.lock whichever manifest arrives last: $shape",
-  async ({ manifests, files, orders, z }) => {
-    const ordered = await registryWithHolds(manifests);
-    using server = ordered.server;
-    let expected: string | undefined;
-    for (const [order, holds] of Object.entries(orders)) {
-      ordered.hold(holds);
-      const lock = await freshInstallLock(server, files);
-      expected ??= lock;
-      expect({ order, lock }).toEqual({ order, lock: expected });
-    }
-    expect(instancesOf(expected!, "z")).toEqual(z);
+  // Workspace rows resolve in workspace order, so either the range row or the exact row puts z in place:
+  // c gets that z either way.
+  ...[
+    ["wa", "wb"],
+    ["wb", "wa"],
+  ].map(([range, exact]) => ({
+    shape: `workspace ${range} -> z@^1.0.0 and workspace ${exact} -> z@1.1.0 hold what c -> z@* takes`,
+    manifests: { c: { "1.0.0": { dependencies: { z: "*" } } }, z: zVersions },
+    files: {
+      "package.json": { name: "foo", workspaces: ["wa", "wb"], dependencies: { c: "1.0.0" } },
+      [`${range}/package.json`]: { name: range, dependencies: { z: "^1.0.0" } },
+      [`${exact}/package.json`]: { name: exact, dependencies: { z: "1.1.0" } },
+    },
+    orders: {
+      "c's manifest last": [{ manifest: "c", until: "/z-1.1.0.tgz" }],
+      "z's manifest last": [{ manifest: "z", until: "/c-1.0.0.tgz" }],
+    },
+    z: { "z": "z@1.1.0" },
+  })),
+  // Peers nothing provides are installed once every regular row is resolved, in the order of the
+  // packages that declare them, not the order those packages' manifests arrived in.
+  {
+    shape: "a peers z@>=1.0.0 next to b peers z@^1.0.0",
+    manifests: {
+      a: { "1.0.0": { peerDependencies: { z: ">=1.0.0" } } },
+      b: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
+      z: zVersions,
+    },
+    files: { "package.json": { name: "foo", dependencies: { a: "1.0.0", b: "1.0.0" } } },
+    orders: {
+      "a's manifest last": [{ manifest: "a", until: "/b-1.0.0.tgz" }],
+      "b's manifest last": [{ manifest: "b", until: "/a-1.0.0.tgz" }],
+    },
+    z: { "z": "z@2.0.0" },
   },
+  {
+    shape: "a peers z@^1.0.0 next to b peers z@>=1.0.0",
+    manifests: {
+      a: { "1.0.0": { peerDependencies: { z: "^1.0.0" } } },
+      b: { "1.0.0": { peerDependencies: { z: ">=1.0.0" } } },
+      z: zVersions,
+    },
+    files: { "package.json": { name: "foo", dependencies: { a: "1.0.0", b: "1.0.0" } } },
+    orders: {
+      "a's manifest last": [{ manifest: "a", until: "/b-1.0.0.tgz" }],
+      "b's manifest last": [{ manifest: "b", until: "/a-1.0.0.tgz" }],
+    },
+    z: { "z": "z@1.1.0" },
+  },
+])("a fresh install writes the same bun.lock whichever manifest arrives last: $shape", writesTheSameLockInEveryOrder);
+
+// The collapse chooses among the versions the install added, and j's row adds its own best match (1.5.0) only
+// when it is resolved before k's 1.0.9 is in place. With 1.5.0 the two versions kept are 1.5.0 and 1.0.9,
+// without it 2.0.0 and 1.0.9.
+it.todo("a fresh install writes the same bun.lock whichever manifest arrives last: two covers of the same size", () =>
+  writesTheSameLockInEveryOrder({
+    shape: "j -> z@^1.0.0, k -> z@~1.0.0, m -> z@>=1.2.0, n -> z@*",
+    manifests: {
+      j: { "1.0.0": { dependencies: { z: "^1.0.0" } } },
+      k: { "1.0.0": { dependencies: { z: "~1.0.0" } } },
+      m: { "1.0.0": { dependencies: { z: ">=1.2.0" } } },
+      n: { "1.0.0": { dependencies: { z: "*" } } },
+      z: { "1.0.9": {}, "1.5.0": {}, "2.0.0": {} },
+    },
+    files: { "package.json": { name: "foo", dependencies: { j: "1.0.0", k: "1.0.0", m: "1.0.0", n: "1.0.0" } } },
+    orders: {
+      "j's manifest first": [
+        { manifest: "k", until: "/z-1.5.0.tgz" },
+        { manifest: "m", until: "/z-1.0.9.tgz" },
+        { manifest: "n", until: "/z-1.0.9.tgz" },
+      ],
+      "k's manifest first": [
+        { manifest: "j", until: "/z-1.0.9.tgz" },
+        { manifest: "m", until: "/j-1.0.0.tgz" },
+        { manifest: "n", until: "/j-1.0.0.tgz" },
+      ],
+    },
+    z: { "z": "z@1.5.0", "k/z": "z@1.0.9" },
+  }),
 );
+
+it("an install that only adds packages leaves the versions bun.lock already has where they are", async () => {
+  using server = (
+    await registryWithHolds({
+      a: { "1.0.0": { dependencies: { z: "*" } } },
+      b: { "1.0.0": { dependencies: { z: "~1.0.0" } } },
+      z: zVersions,
+    })
+  ).server;
+  using dir = projectOn(server, { "package.json": { name: "foo", dependencies: { a: "1.0.0" } } });
+  const before = await installAndReadLock(String(dir));
+  expect(instancesOf(before, "z")).toEqual({ "z": "z@2.0.0" });
+
+  // 1.0.5 would cover a's `*` too, and does on a fresh install ("a -> z@* next to b -> z@~1.0.0" above).
+  await write(
+    join(String(dir), "package.json"),
+    JSON.stringify({ name: "foo", dependencies: { a: "1.0.0", b: "1.0.0" } }),
+  );
+  const after = await installAndReadLock(String(dir));
+  expect(instancesOf(after, "z")).toEqual({ "z": "z@2.0.0", "b/z": "z@1.0.5" });
+});
+
+// b's range accepts the z bun.lock already has; whether c's 1.1.0 is in place when b's row is resolved must not matter.
+it("an install that adds packages to a bun.lock writes the same bun.lock whichever manifest arrives last", async () => {
+  const ordered = await registryWithHolds({
+    a: { "1.0.0": { dependencies: { z: "1.0.0" } } },
+    b: { "1.0.0": { dependencies: { z: "^1.0.0" } } },
+    c: { "1.0.0": { dependencies: { z: "~1.1.0" } } },
+    z: zVersions,
+  });
+  using server = ordered.server;
+  let expected: string | undefined;
+  for (const [order, holds] of Object.entries<Hold[]>({
+    "b's manifest last": [{ manifest: "b", until: "/z-1.1.0.tgz" }],
+    "c's manifest last": [{ manifest: "c", until: "/b-1.0.0.tgz" }],
+  })) {
+    ordered.hold([]);
+    using dir = projectOn(server, { "package.json": { name: "foo", dependencies: { a: "1.0.0" } } });
+    await installAndReadLock(String(dir));
+
+    ordered.hold(holds);
+    await write(
+      join(String(dir), "package.json"),
+      JSON.stringify({ name: "foo", dependencies: { a: "1.0.0", b: "1.0.0", c: "1.0.0" } }),
+    );
+    const lock = await installAndReadLock(String(dir));
+    expected ??= lock;
+    expect({ order, lock }).toEqual({ order, lock: expected });
+  }
+  expect(instancesOf(expected!, "z")).toEqual({ "z": "z@1.0.0", "c/z": "z@1.1.0" });
+});
+
+it("a peer no version in the tree satisfies stays on the one it was bound to", async () => {
+  using server = (
+    await registryWithHolds({
+      a: { "1.0.0": { dependencies: { z: "1.0.0" } } },
+      b: { "1.0.0": { dependencies: { z: "2.0.0" } } },
+      p: { "1.0.0": { peerDependencies: { z: "^3.0.0" } } },
+      z: zVersions,
+    })
+  ).server;
+  using dir = projectOn(server, {
+    "package.json": { name: "foo", dependencies: { a: "1.0.0", b: "1.0.0", p: "1.0.0" } },
+  });
+  const lock = await installAndReadLock(String(dir));
+  expect(instancesOf(lock, "z")).toEqual({ "z": "z@1.0.0", "b/z": "z@2.0.0", "p/z": "z@2.0.0" });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "dedupe", "--check"],
+    cwd: String(dir),
+    env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out, err, code }).toEqual({ out: expect.stringContaining("No duplicates"), err: "", code: 0 });
+});
 
 // The bundled-shadow-* fixtures are described in
 // registry/packages/create-bundled-shadow-packages.ts. In short: host depends

@@ -614,6 +614,26 @@ describe("relative tarball path", () => {
     expect(out).toContain(" + publish-tarball-workspace-member@1.2.3");
     expect(exitCode).toBe(0);
   });
+
+  test.concurrent("names the file `bun pm pack --filename` wrote for the same path from the same cwd", async () => {
+    using dir = tempDir("publish-tarball-round-trip", {
+      "package.json": JSON.stringify({
+        name: "publish-tarball-round-trip-root",
+        version: "0.0.0",
+        workspaces: ["packages/*"],
+      }),
+      "packages/member/package.json": JSON.stringify({ name: "publish-tarball-round-trip-member", version: "1.2.3" }),
+    });
+    const memberDir = join(String(dir), "packages", "member");
+    await pack(memberDir, env, "--filename", "./x.tgz");
+    expect(await exists(join(memberDir, "x.tgz"))).toBeTrue();
+    expect(await exists(join(String(dir), "x.tgz"))).toBeFalse();
+
+    const { out, err, exitCode } = await publish(dryRunEnv, memberDir, "./x.tgz", "--dry-run");
+    expect(err).not.toContain("error:");
+    expect(out).toContain(" + publish-tarball-round-trip-member@1.2.3");
+    expect(exitCode).toBe(0);
+  });
 });
 test("can publish scoped packages", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
@@ -1551,6 +1571,70 @@ test("attempting to publish a private package should fail", async () => {
   expect(await exists(join(packageDir, "publish-pkg-6-6.6.6.tgz"))).toBeTrue();
 });
 
+// bun cannot sign a provenance statement. A publish that asks for one has to fail: one that goes through
+// without it looks the same as one that has it.
+describe.concurrent("provenance", () => {
+  const NOT_SUPPORTED = "is not supported yet: bun publish cannot generate provenance statements\n";
+
+  // `requests` counts everything that reaches the registry. A prepublishOnly that runs is echoed to stderr.
+  async function publishProvenancePkg(publishConfig: object | undefined, args: string[], fromTarball = false) {
+    let requests = 0;
+    using mock = Bun.serve({
+      port: 0,
+      fetch() {
+        requests++;
+        return new Response("OK", { status: 200 });
+      },
+    });
+    using dir = tempDir("publish-provenance", {
+      "bunfig.toml": Bun.TOML.stringify({
+        install: { cache: false, registry: { url: `http://localhost:${mock.port}`, token: "unused" } },
+      }),
+      "package.json": JSON.stringify({
+        name: "provenance-pkg",
+        version: "1.0.0",
+        publishConfig,
+        scripts: { prepublishOnly: "echo prepublishOnly" },
+      }),
+    });
+    if (fromTarball) await pack(String(dir), env, "--filename", "pkg.tgz");
+
+    const result = await publish(env, String(dir), ...(fromTarball ? ["./pkg.tgz"] : []), ...args);
+    return { ...result, requests };
+  }
+
+  test.each(["--provenance", "--provenance --dry-run", "--provenance=true", "--provenance-file x.json"])(
+    "%s is refused",
+    async args => {
+      const { out, err, exitCode, requests } = await publishProvenancePkg(undefined, args.split(" "));
+      expect(err).toBe(`error: --provenance ${NOT_SUPPORTED}`);
+      expect(out).not.toContain("provenance-pkg@1.0.0");
+      expect({ requests, exitCode }).toEqual({ requests: 0, exitCode: 1 });
+    },
+  );
+
+  test.each([
+    [true, false],
+    [true, true],
+    ["true", false],
+  ] as [boolean | string, boolean][])(
+    "publishConfig.provenance: %p, from a tarball: %p",
+    async (provenance, fromTarball) => {
+      const { out, err, exitCode, requests } = await publishProvenancePkg({ provenance }, [], fromTarball);
+      expect(err).toBe(`error: "provenance" in the publishConfig of package.json ${NOT_SUPPORTED}`);
+      expect(out).not.toContain("provenance-pkg@1.0.0");
+      expect({ requests, exitCode }).toEqual({ requests: 0, exitCode: 1 });
+    },
+  );
+
+  test("publishConfig.provenance: false publishes", async () => {
+    const { out, err, exitCode, requests } = await publishProvenancePkg({ provenance: false }, []);
+    expect(err).not.toContain("error:");
+    expect(out).toContain(" + provenance-pkg@1.0.0");
+    expect({ requests, exitCode }).toEqual({ requests: 1, exitCode: 0 });
+  });
+});
+
 // Publishing from a directory used to pack into that directory and delete the file again after
 // publishing, so any failure in between (here: postpack) left the tarball behind.
 test("a failed publish does not leave a tarball in the package directory", async () => {
@@ -2184,6 +2268,10 @@ describe("bin in the published manifest", () => {
     [{ directories: { bin: "bins/" } }, { "a.js": "bins/a.js" }],
     [{ directories: { bin: "" } }, undefined],
     [{ directories: { bin: "." } }, undefined],
+    [{ directories: { bin: "cli.js" } }, undefined],
+    [{ directories: { bin: "missing" } }, undefined],
+    [{ bin: "", directories: { bin: "bins" } }, {}],
+    [{ bin: "cli.js", directories: { bin: "bins" } }, { "bin-pkg": "cli.js" }],
   ])("%j", async (fields, expected) => {
     let captured: any = null;
     using mock = Bun.serve({

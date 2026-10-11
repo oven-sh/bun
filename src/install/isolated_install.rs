@@ -1303,6 +1303,25 @@ pub(crate) fn move_node_modules_aside(lockfile: &Lockfile) {
     }
 }
 
+/// Fails unless `path`, links followed, is a directory.
+fn expect_directory(path: &bun_core::ZStr) -> sys::Result<()> {
+    // `exists_at_type` reports a junction itself, so a dangling one would pass.
+    #[cfg(windows)]
+    {
+        use bun_sys::FdExt as _;
+        sys::openat(Fd::cwd(), path, sys::O::RDONLY | sys::O::DIRECTORY, 0).map(|fd| fd.close())
+    }
+    #[cfg(not(windows))]
+    {
+        match sys::exists_at_type(Fd::cwd(), path)? {
+            sys::ExistsAtType::Directory => Ok(()),
+            sys::ExistsAtType::File => {
+                Err(sys::Error::from_code(sys::E::ENOTDIR, sys::Tag::fstatat))
+            }
+        }
+    }
+}
+
 /// Runs on main thread
 pub(crate) fn install_isolated_packages(
     manager: &mut PackageManager,
@@ -2145,18 +2164,11 @@ pub(crate) fn install_isolated_packages(
                     let checked = installer
                         .append_dependency_path(&mut link_target, entry_id)
                         .and_then(|()| {
-                            sys::openat(
-                                Fd::cwd(),
-                                link_target.slice_z(),
-                                sys::O::RDONLY | sys::O::DIRECTORY,
-                                0,
-                            )
-                            .map_err(installer::TaskError::LinkPackage)
+                            expect_directory(link_target.slice_z())
+                                .map_err(installer::TaskError::LinkPackage)
                         });
                     match checked {
-                        Ok(fd) => {
-                            use bun_sys::FdExt as _;
-                            fd.close();
+                        Ok(()) => {
                             installer.on_task_complete(entry_id, installer::CompleteState::Skipped);
                         }
                         Err(err) => installer.on_task_fail(entry_id, &err),

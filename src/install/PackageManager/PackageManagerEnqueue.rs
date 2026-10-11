@@ -1179,17 +1179,12 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         }
 
                         if !dependency.behavior.is_peer() || install_peer {
-                            let needs_extended_manifest = run_tasks::needs_extended_manifest(
-                                this,
-                                dependency.behavior,
-                                task_id,
-                            );
-                            if !run_tasks::has_created_manifest_task(
-                                this,
+                            if !this.has_created_network_task(
                                 task_id,
                                 dependency.behavior.is_required(),
-                                needs_extended_manifest,
                             ) {
+                                let needs_extended_manifest =
+                                    this.options.minimum_release_age_ms.is_some();
                                 if this.options.enable.manifest_cache() {
                                     let mut expired = false;
                                     // SAFETY: `this_ptr` is the live exclusive
@@ -1214,17 +1209,20 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     } {
                                         loaded_manifest = Some(manifest.clone());
 
+                                        let age_check_can_use_cache = {
+                                            let manifest = loaded_manifest.as_ref().unwrap();
+                                            !needs_extended_manifest
+                                                || manifest.pkg.has_extended_manifest
+                                                || manifest.should_exclude_from_age_filter(
+                                                    this.options.minimum_release_age_excludes,
+                                                )
+                                        };
+
                                         // If it's an exact package version already living in the cache
                                         // We can skip the network request, even if it's beyond the caching period
-                                        // (unless minimum-release-age needs publish times an abbreviated manifest lacks).
                                         if version.tag == dependency::version::Tag::Npm
                                             && version.npm().version.is_exact()
-                                            && (!needs_extended_manifest
-                                                || loaded_manifest
-                                                    .as_ref()
-                                                    .unwrap()
-                                                    .pkg
-                                                    .has_extended_manifest)
+                                            && age_check_can_use_cache
                                         {
                                             if let Some(find_result) =
                                                 loaded_manifest.as_ref().unwrap().find_by_version(
@@ -1257,11 +1255,9 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                         // Reported by the `TooRecentVersion` arm above, like a fresh manifest would be.
                                                         resolve_result_ =
                                                             Err(crate::Error::TooRecentVersion);
-                                                        run_tasks::manifest_request_not_sent(
-                                                            this,
-                                                            task_id,
-                                                            needs_extended_manifest,
-                                                        );
+                                                        let _ = this
+                                                            .network_dedupe_map
+                                                            .remove(&task_id);
                                                         continue 'retry_with_new_resolve_result;
                                                     }
                                                 }
@@ -1293,11 +1289,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                     .flatten()
                                                 {
                                                     resolve_result_ = Ok(Some(new_resolve_result));
-                                                    run_tasks::manifest_request_not_sent(
-                                                        this,
-                                                        task_id,
-                                                        needs_extended_manifest,
-                                                    );
+                                                    let _ =
+                                                        this.network_dedupe_map.remove(&task_id);
                                                     continue 'retry_with_new_resolve_result;
                                                 }
                                             }
@@ -1313,11 +1306,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                 || this.options.offline
                                                     != crate::package_manager_real::options::OfflineMode::Online)
                                         {
-                                            run_tasks::manifest_request_not_sent(
-                                                this,
-                                                task_id,
-                                                needs_extended_manifest,
-                                            );
+                                            let _ = this.network_dedupe_map.remove(&task_id);
                                             continue 'retry_from_manifests_ptr;
                                         }
                                     }
@@ -1342,11 +1331,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                             ),
                                         );
                                     } else {
-                                        run_tasks::manifest_request_not_sent(
-                                            this,
-                                            task_id,
-                                            needs_extended_manifest,
-                                        );
+                                        let _ = this.network_dedupe_map.remove(&task_id);
                                     }
                                     return Ok(());
                                 }
@@ -1658,13 +1643,13 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         dependency::version::Tag::Symlink | dependency::version::Tag::Workspace => {
             let dependency_tag = version.tag;
 
+            // Same trust rule as the `file:` folder arm of `get_or_put_resolved_package`.
             if dependency_tag == dependency::version::Tag::Symlink
-                && !version_was_replaced
                 && crate::bin::bin_target_escapes_package_dir(this.lockfile.str(version.symlink()))
-                && let Some((declarer, false)) = this.lockfile.declarer_of(id)
+                && !this.lockfile.is_trusted_folder_dependency(id)
             {
                 if dependency.behavior.is_required() {
-                    reject_escaping_link_of_remote_package(this, declarer, dependency);
+                    reject_escaping_link_of_remote_package(this, id, dependency, &version);
                 }
                 return Ok(());
             }
@@ -1778,10 +1763,14 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         }
         dependency::version::Tag::Tarball => {
             let tarball = version.tarball();
+            // Only a package.json read from the project may name a tarball in the project.
             if matches!(tarball.uri, dependency::tarball::Uri::Local(_))
                 && !version_was_replaced
-                && let Some((declarer, false)) = this.lockfile.declarer_of(id)
+                && !this.lockfile.is_dependency_of_local_package(id)
                 && !this.lockfile.has_equal_root_dependency(dependency)
+                && let Some(declarer) = this.lockfile.get_parent_pkg_of_dependency(id)
+                && this.lockfile.packages.items_resolution()[declarer as usize].tag
+                    != ResolutionTag::LocalTarball
             {
                 if dependency.behavior.is_required() {
                     reject_local_tarball_of_remote_package(this, declarer, dependency);
@@ -1960,47 +1949,68 @@ fn reject_local_tarball_of_remote_package(
 ) {
     let buf = this.lockfile.buffers.string_bytes.as_slice();
     let packages = this.lockfile.packages.slice();
-    let name = bstr::BStr::new(dependency.name.slice(buf));
-    let literal = bstr::BStr::new(dependency.version.literal.slice(buf));
-    let declarer_name = bstr::BStr::new(packages.items_name()[declarer as usize].slice(buf));
-    this.log_mut().add_range_error_fmt_with_notes(
-        None,
-        bun_ast::Range::NONE,
+    let name = bun_fmt::escape_control_chars(dependency.name.slice(buf));
+    let literal = bun_fmt::escape_control_chars(dependency.version.literal.slice(buf));
+    let declarer_name =
+        bun_fmt::escape_control_chars(packages.items_name()[declarer as usize].slice(buf));
+    // A bundled dependency ships inside the declaring package. The root cannot stand in for it.
+    let notes: Box<[bun_ast::Data]> = if dependency.behavior.is_bundled() {
+        Box::new([])
+    } else {
         Box::new([bun_ast::range_data(
             None,
             bun_ast::Range::NONE,
             bun_ast::alloc_print(format_args!(
                 "add \"{name}\": \"{literal}\" to the root package.json to install that tarball for {declarer_name} as well",
             )),
-        )]),
+        )])
+    };
+    this.log_mut().add_range_error_fmt_with_notes(
+        None,
+        bun_ast::Range::NONE,
+        notes,
         format_args!(
             "refusing to resolve \"{name}@{literal}\" declared by {declarer_name}@{}: local tarball dependencies are only allowed in the package.json files of this project",
-            packages.items_resolution()[declarer as usize].fmt(buf, bun_fmt::PathSep::Posix),
+            bun_fmt::EscapeControlChars(
+                packages.items_resolution()[declarer as usize].fmt(buf, bun_fmt::PathSep::Posix)
+            ),
         ),
     );
 }
 
-/// `normalize_package_json_path` resolves the value against the project, not the declaring package, so only package.json files read from the project may use `..` or an absolute path.
+/// `version` is what the edge resolves with: the declared specifier, or the one a scoped override supplied.
 #[cold]
 #[inline(never)]
 fn reject_escaping_link_of_remote_package(
     this: &PackageManager,
-    declarer: PackageID,
+    dependency_id: DependencyID,
     dependency: &Dependency,
+    version: &dependency::Version,
 ) {
+    const REASON: &str = "only the root package.json, a workspace, or a top-level override may link to a path outside the project";
     let buf = this.lockfile.buffers.string_bytes.as_slice();
     let packages = this.lockfile.packages.slice();
-    this.log_mut().add_error_fmt(
-        None,
-        bun_ast::Loc::EMPTY,
-        format_args!(
-            "refusing to resolve \"{}@{}\" declared by {}@{}: link: paths with \"..\" or an absolute path are only allowed in the package.json files of this project",
-            bstr::BStr::new(dependency.name.slice(buf)),
-            bstr::BStr::new(dependency.version.literal.slice(buf)),
-            bstr::BStr::new(packages.items_name()[declarer as usize].slice(buf)),
-            packages.items_resolution()[declarer as usize].fmt(buf, bun_fmt::PathSep::Posix),
+    let name = bun_fmt::escape_control_chars(dependency.name.slice(buf));
+    let literal = bun_fmt::escape_control_chars(version.literal.slice(buf));
+    match this.lockfile.get_parent_pkg_of_dependency(dependency_id) {
+        Some(declarer) => this.log_mut().add_error_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "refusing to resolve \"{name}@{literal}\" declared by {}@{}: {REASON}",
+                bun_fmt::escape_control_chars(packages.items_name()[declarer as usize].slice(buf)),
+                bun_fmt::EscapeControlChars(
+                    packages.items_resolution()[declarer as usize]
+                        .fmt(buf, bun_fmt::PathSep::Posix)
+                ),
+            ),
         ),
-    );
+        None => this.log_mut().add_error_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!("refusing to resolve \"{name}@{literal}\": {REASON}"),
+        ),
+    }
 }
 
 /// Allocate and initialise an `.extract` Task for an npm tarball.
@@ -2470,21 +2480,10 @@ fn get_or_put_resolved_package_with_find_result(
                     .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id)
         };
 
-    // A patched package is held while the range still allows it (audit fix does not set to_update and moves it);
-    // a row owned by a regular package stays on the copy a direct row (enqueued first) resolves to when its
-    // range allows, as a fresh resolution would dedupe it there.
+    // A patched package is held while the range still allows it (update_transitive holds the transitive rows the same way); audit fix does not set to_update and moves it.
     if should_update && !behavior.is_peer() {
-        let lockfile = &this.lockfile;
-        let held = if let Some(id) = lockfile.patched_package_satisfying(name_hash, version) {
+        if let Some(id) = this.lockfile.patched_package_satisfying(name_hash, version) {
             this.kept_patched.push(id);
-            Some(id)
-        } else if !lockfile.is_workspace_dependency(dependency_id) {
-            let direct = |id| lockfile.is_workspace_declared_package(id);
-            lockfile.package_satisfying(name_hash, version, direct)
-        } else {
-            None
-        };
-        if let Some(id) = held {
             success_fn(this, dependency_id, id);
             return Ok(Some(ResolvedPackageResult {
                 package: *this.lockfile.packages.get(id as usize),
@@ -2758,11 +2757,7 @@ fn get_or_put_resolved_package(
             // materializing `&mut *this_ptr` after `name_str`/`scope` are
             // derived from it would pop their borrow-stack tags under SB.
             let cache_ctx = this.manifest_disk_cache_ctx();
-            let needs_ext = run_tasks::needs_extended_manifest(
-                this,
-                behavior,
-                Task::Id::for_manifest(this.lockfile.str(&name)),
-            );
+            let needs_ext = this.options.minimum_release_age_ms.is_some();
             let this_ptr: *mut PackageManager = this;
             // SAFETY: `string_bytes` is not resized between here and the
             // `find_result` lookup; `manifest` lives in `this.manifests` and
@@ -3168,7 +3163,7 @@ fn resolved_folder_package(
 }
 
 /// `bun update <name>`: the row names a requested package (declared or `npm:<name>@…` aliased) and is in the update scope; other resolutions stay pinned.
-pub(crate) fn is_named_update_row(
+fn is_named_update_row(
     this: &PackageManager,
     dependency: &Dependency,
     dependency_id: DependencyID,
@@ -3184,7 +3179,7 @@ pub(crate) fn is_named_update_row(
 }
 
 /// `--latest` never moves a row below what bun.lock already has (e.g. a prerelease or a version ahead of the tag).
-pub(crate) fn keep_locked_if_ahead<'m>(
+fn keep_locked_if_ahead<'m>(
     manifest: &'m Npm::PackageManifest,
     found: Npm::FindResult<'m>,
     locked: &Option<(Semver::Version, &[u8])>,

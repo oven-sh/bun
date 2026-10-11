@@ -1,6 +1,8 @@
 use core::cell::Cell;
+use core::cmp::Ordering;
 
-use bun_core::{Global, Output};
+use bun_collections::index_sort;
+use bun_core::{Global, Output, strings};
 use bun_paths::dirname;
 use bun_paths::platform;
 use bun_paths::resolve_path::join_abs_string_z;
@@ -18,8 +20,8 @@ use crate::package_manager_real::{
 use crate::repository_real::RepositoryExt as _;
 use crate::resolution::{ResolutionType, Tag as ResolutionTag, TaggedValue};
 use crate::{
-    ExtractData, Features, INVALID_PACKAGE_ID, PackageID, Resolution, TaskCallbackContext,
-    dependency, initialize_store,
+    DependencyID, ExtractData, Features, INVALID_PACKAGE_ID, PackageID, Resolution,
+    TaskCallbackContext, dependency, initialize_store,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -382,25 +384,77 @@ impl PackageManager {
         Ok(())
     }
 
+    /// Deferred peers are queued as their owners' manifests arrive, and the first row of a name
+    /// to resolve decides what the other rows bind to, so each batch goes out in
+    /// `peer_batch_order`.
     pub(crate) fn process_peer_dependency_list(&mut self) -> Result<(), crate::Error> {
-        while let Some(peer_dependency_id) = self.peer_dependencies.read_item() {
-            // Clone the dependency row out of the buffer before re-borrowing
-            // `self` for enqueue.
-            let dependency = Clone::clone(
-                &self.lockfile.buffers.dependencies.as_slice()[peer_dependency_id as usize],
-            );
-            let resolution =
-                self.lockfile.buffers.resolutions.as_slice()[peer_dependency_id as usize];
+        while self.peer_dependencies.readable_length() > 0 {
+            let mut batch: Vec<DependencyID> =
+                Vec::with_capacity(self.peer_dependencies.readable_length());
+            while let Some(peer_dependency_id) = self.peer_dependencies.read_item() {
+                batch.push(peer_dependency_id);
+            }
+            for i in self.peer_batch_order(&mut batch) {
+                let peer_dependency_id = batch[i as usize];
+                // Clone the dependency row out of the buffer before re-borrowing
+                // `self` for enqueue.
+                let dependency = Clone::clone(
+                    &self.lockfile.buffers.dependencies.as_slice()[peer_dependency_id as usize],
+                );
+                let resolution =
+                    self.lockfile.buffers.resolutions.as_slice()[peer_dependency_id as usize];
 
-            enqueue::enqueue_dependency_with_main(
-                self,
-                peer_dependency_id,
-                &dependency,
-                resolution,
-                true,
-            )?;
+                enqueue::enqueue_dependency_with_main(
+                    self,
+                    peer_dependency_id,
+                    &dependency,
+                    resolution,
+                    true,
+                )?;
+            }
         }
         Ok(())
+    }
+
+    /// Sorts `batch` by id and returns indices into it ordered by owner name, owner resolution,
+    /// then dependency name. Ids are handed out in arrival order; these do not depend on it.
+    fn peer_batch_order(&self, batch: &mut [DependencyID]) -> Vec<u32> {
+        let mut order = index_sort::identity(batch.len());
+        if batch.len() < 2 {
+            return order;
+        }
+        index_sort::sort_indices_unstable(batch, &mut |a, b| a.cmp(&b));
+
+        let lockfile = &*self.lockfile;
+        let mut owners: Vec<PackageID> = vec![INVALID_PACKAGE_ID; batch.len()];
+        for (owner, slice) in lockfile.packages.items_dependencies().iter().enumerate() {
+            let first = batch.partition_point(|&id| id < slice.begin());
+            let end = first + batch[first..].partition_point(|&id| id < slice.end());
+            owners[first..end].fill(owner as PackageID);
+        }
+
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let names = lockfile.packages.items_name();
+        let resolutions = lockfile.packages.items_resolution();
+        let dependencies = lockfile.buffers.dependencies.as_slice();
+        index_sort::sort_indices_unstable(&mut order, &mut |a, b| {
+            let (a, b) = (a as usize, b as usize);
+            let by_owner = match (owners[a] as usize, owners[b] as usize) {
+                (x, y) if x == y => Ordering::Equal,
+                (x, y) if x >= names.len() || y >= names.len() => x.cmp(&y),
+                (x, y) => strings::order(names[x].slice(buf), names[y].slice(buf))
+                    .then_with(|| resolutions[x].order(&resolutions[y], buf, buf)),
+            };
+            by_owner
+                .then_with(|| {
+                    strings::order(
+                        dependencies[batch[a] as usize].name.slice(buf),
+                        dependencies[batch[b] as usize].name.slice(buf),
+                    )
+                })
+                .then(batch[a].cmp(&batch[b]))
+        });
+        order
     }
 
     pub(crate) fn process_dependency_list<C>(

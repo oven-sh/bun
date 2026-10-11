@@ -1047,14 +1047,6 @@ impl Lockfile {
             .contains_name(dep.name_hash, dep.name.slice(buf), buf)
     }
 
-    /// The declaring package and whether it is local (`Tag::is_local_package`); a folder package a
-    /// registry package declares gets no dependency list, so a local declarer was reached through local ones only.
-    pub(crate) fn declarer_of(&self, id: DependencyID) -> Option<(PackageID, bool)> {
-        let declarer = self.get_parent_pkg_of_dependency(id)?;
-        let tag = self.packages.items_resolution()[declarer as usize].tag;
-        Some((declarer, tag.is_local_package()))
-    }
-
     /// Does this tree id belong to a workspace (including workspace root)?
     /// TODO(dylan-conway) fix!
     pub(crate) fn is_workspace_tree_id(&self, id: tree::Id) -> bool {
@@ -2454,14 +2446,6 @@ impl Lockfile {
             //     (an exact pin anywhere in the tree is a deliberate choice,
             //     not a network-order artefact — `dragon test 2` /
             //     "dependency from root satisfies range from dependency"),
-            //   - no dependency declared by the root or a workspace resolves
-            //     to the entry. Those rows are enqueued before any package's
-            //     dependency list is drained, so whatever they resolved to is
-            //     already in place by the time a transitive row on the same
-            //     name gets here, whichever order the manifests landed in.
-            //     This is what keeps a project's `@types/node: ~20` as the
-            //     single copy every `@types/*` package's `@types/node: *`
-            //     collapses onto, instead of each nesting the latest major.
             //   - the manifest's best-match is a *different major* (within a
             //     major, deduping to an older patch is the long-standing
             //     behaviour and the worst case is still ^-compatible).
@@ -2474,7 +2458,6 @@ impl Lockfile {
                 if let Some(floor) = resolved_npm_floor {
                     if existing_ver.order(floor, buf, buf) == Ordering::Less
                         && existing_ver.major != floor.major
-                        && !self.is_workspace_declared_package(id)
                     {
                         return false;
                     }

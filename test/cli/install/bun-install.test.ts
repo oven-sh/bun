@@ -1733,7 +1733,7 @@ describe.concurrent("bun-install", () => {
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toContain(
-        "ENAMETOOLONG: failed moving copied files into node_modules/package dir for package pkg",
+        "ENAMETOOLONG: failed opening node_modules/package dir for package pkg",
       );
       expect(stdout).toContain("Failed to install 1 package");
       expect(exitCode).toBe(1);
@@ -11233,8 +11233,8 @@ describe.skipIf(isWindows)("file: dependency whose package.json path is around t
 // The tarball form of the above. A `file:` tarball path is read relative to the
 // project (or to the workspace declaring it), which is only meaningful for the
 // package.json files that are part of the project. The same path declared by a
-// package bun extracts from the cache (registry, git, tarball) used to be read
-// from the project too, so a published package declaring `"x": "file:./x.tgz"`
+// package bun extracts from the cache (registry, git, remote tarball) used to be
+// read from the project too, so a published package declaring `"x": "file:./x.tgz"`
 // got whatever `x.tgz` the project directory held, and with `file:../x.tgz` or
 // an absolute path any tarball on the machine, installed under its name.
 describe.concurrent("file: tarballs declared by a package installed from the cache", () => {
@@ -11281,21 +11281,13 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
 
   // Packs `manifest` as the package.json of an otherwise empty package into `tarball`.
   async function packManifest(tarball: string, manifest: object) {
-    using work = tempDir("pack-manifest", { "package/package.json": JSON.stringify(manifest) });
-    await using tar = spawn({
-      cmd: ["tar", "-czf", tarball, "-C", String(work), "package"],
-      stdout: "ignore",
-      stderr: "pipe",
-    });
-    const [tarStderr, tarExitCode] = await Promise.all([tar.stderr.text(), tar.exited]);
-    if (tarExitCode !== 0) {
-      throw new Error(`tar exited with ${tarExitCode}: ${tarStderr}`);
-    }
+    const archive = new Bun.Archive({ "package/package.json": JSON.stringify(manifest) }, { compress: "gzip" });
+    await write(tarball, await archive.bytes());
   }
 
-  async function install(root: string) {
+  async function install(root: string, ...args: string[]) {
     await using proc = spawn({
-      cmd: [bunExe(), "install"],
+      cmd: [bunExe(), "install", ...args],
       cwd: join(root, "project"),
       env: { ...env, BUN_INSTALL_CACHE_DIR: join(root, "cache") },
       stdout: "pipe",
@@ -11306,12 +11298,12 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
     return { err, out, exitCode };
   }
 
-  // What bun prints for an edge it refuses. The declaring package is always named
-  // `bar` here; `declarer` is how bun prints it, which depends on where it came from.
+  // What bun prints for an edge it refuses. `declarer` is how bun prints the
+  // declaring package, which depends on where it came from.
   function refusal(name: string, spec: string, declarer: string) {
     return [
       `error: refusing to resolve "${name}@${spec}" declared by ${declarer}: local tarball dependencies are only allowed in the package.json files of this project`,
-      `note: add "${name}": "${spec}" to the root package.json to install that tarball for bar as well`,
+      `note: add "${name}": "${spec}" to the root package.json to install that tarball for ${declarer.slice(0, declarer.indexOf("@"))} as well`,
     ];
   }
 
@@ -11338,8 +11330,10 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
     expect(exitCode).toBe(1);
   }
 
-  it("rejects the ones declared by a tarball dependency", async () => {
-    using dir = tempDir("local-tarballs-of-tarball-dep", {
+  // A local tarball is part of the project like a file: folder, so it may name
+  // other tarballs of the project. They are read relative to the project.
+  it("installs the ones declared by a local tarball dependency", async () => {
+    using dir = tempDir("local-tarballs-of-local-tarball-dep", {
       "project/package.json": rootPackageJson({ bar: "file:./bar.tgz" }),
     });
     const root = String(dir);
@@ -11350,7 +11344,32 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
       dependencies: declaredTarballs(root),
     });
 
-    await expectRejected(root, "bar@./bar.tgz");
+    const { err, out, exitCode } = await install(root);
+    expect(diagnostics(err)).toEqual([]);
+    expect(out).toContain("4 packages installed");
+    expect(await readdirSorted(join(root, "project", "node_modules"))).toEqual([
+      ".bin",
+      "absolute",
+      "bar",
+      "inside",
+      "outside",
+    ]);
+    const lockfile = await file(join(root, "project", "bun.lock")).text();
+    expect(lockfile).toContain('"inside": ["baz@./inside.tgz"');
+    expect(lockfile).toContain('"outside": ["baz@../outside.tgz"');
+    expect(exitCode).toBe(0);
+  });
+
+  it("rejects the ones declared by a remote tarball dependency", async () => {
+    using dir = tempDir("local-tarballs-of-remote-tarball-dep", {});
+    const root = String(dir);
+    using server = serveDirectory(root);
+    const url = `http://localhost:${server.port}/bar.tgz`;
+    await write(join(root, "project", "package.json"), rootPackageJson({ bar: url }));
+    await plantDeclaredTarballs(root);
+    await packManifest(join(root, "bar.tgz"), { name: "bar", version: "0.0.2", dependencies: declaredTarballs(root) });
+
+    await expectRejected(root, `bar@${url}`);
   });
 
   it("rejects the ones declared by a git dependency", async () => {
@@ -11459,6 +11478,28 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
     });
   }
 
+  // A bundled dependency ships inside the declaring package, so the root cannot
+  // stand in for it and the note is left out.
+  it("rejects the one a registry package declares as bundled, without the root remedy", async () => {
+    await withContext(defaultOpts, async ctx => {
+      using dir = tempDir("bundled-local-tarball-of-registry-dep", {});
+      const root = String(dir);
+      await writeRegistryProject(ctx, root, {
+        dependencies: { inside: "file:./inside.tgz" },
+        bundleDependencies: ["inside"],
+      });
+      await cp(planted, join(root, "project", "inside.tgz"));
+
+      const { err, exitCode } = await install(root);
+      expect(diagnostics(err)).toEqual([
+        refusal("inside", "file:./inside.tgz", "bar@0.0.2")[0],
+        "error: inside@file:./inside.tgz failed to resolve",
+      ]);
+      expect(await exists(join(root, "project", "bun.lock"))).toBe(false);
+      expect(exitCode).toBe(1);
+    });
+  });
+
   it("leaves the one a registry package declares as optional uninstalled", async () => {
     await withContext(defaultOpts, async ctx => {
       using dir = tempDir("optional-local-tarball-of-registry-dep", {});
@@ -11528,6 +11569,47 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
     expect(out).toContain("2 packages installed");
     expect(await file(join(root, "project", "node_modules", "tool", "package.json")).json()).toEqual(plantedManifest);
     expect(exitCode).toBe(0);
+  });
+
+  // Only a file: folder the root or a workspace declares counts. A folder a registry
+  // package ships has no dependencies after a fresh resolve, but a lockfile migrated
+  // from package-lock.json can give it some. The override edit makes bun resolve
+  // the rows named `inside` again.
+  it("rejects the one declared by a file: folder that a registry package ships", async () => {
+    const lockfile = JSON.stringify({
+      lockfileVersion: 1,
+      configVersion: 1,
+      workspaces: { "": { name: "my-app", dependencies: { bar: "0.0.2" } } },
+      overrides: { "zzz>inside": "1.0.0" },
+      packages: {
+        bar: [
+          "bar@0.0.2",
+          "",
+          { dependencies: { inner: "file:./inner" } },
+          `sha512-${Buffer.alloc(64).toString("base64")}`,
+        ],
+        "bar/inner": ["inner@file:inner", { dependencies: { inside: "file:./inside.tgz" } }],
+        "bar/inner/inside": ["baz@./inside.tgz", { bin: { "baz-run": "index.js" } }],
+      },
+    });
+    using dir = tempDir("local-tarball-of-shipped-folder", {
+      "project/package.json": rootPackageJson({ bar: "0.0.2" }, { overrides: { "zzz>inside": "2.0.0" } }),
+      "project/bunfig.toml": `[install]\nregistry = "http://localhost:1/"\n`,
+      "project/bun.lock": lockfile,
+    });
+    const root = String(dir);
+    await Promise.all([
+      cp(planted, join(root, "project", "inside.tgz")),
+      cp(planted, join(root, "project", "inner", "inside.tgz")),
+    ]);
+
+    const { err, exitCode } = await install(root, "--lockfile-only");
+    expect(diagnostics(err)).toEqual([
+      ...refusal("inside", "file:./inside.tgz", "inner@file:inner"),
+      "error: inside@file:./inside.tgz failed to resolve",
+    ]);
+    expect(await file(join(root, "project", "bun.lock")).text()).toBe(lockfile);
+    expect(exitCode).toBe(1);
   });
 });
 
@@ -12296,7 +12378,7 @@ describe.concurrent("link: paths with .. or an absolute path declared by a depen
 
   // `declarer` is how bun prints the package declaring the dependency.
   function refusal(name: string, spec: string, declarer: string) {
-    return `error: refusing to resolve "${name}@${spec}" declared by ${declarer}: link: paths with ".." or an absolute path are only allowed in the package.json files of this project`;
+    return `error: refusing to resolve "${name}@${spec}" declared by ${declarer}: only the root package.json, a workspace, or a top-level override may link to a path outside the project`;
   }
 
   // The rest of stderr is progress output ("Resolving dependencies", ...).
@@ -12439,6 +12521,93 @@ describe.concurrent("link: paths with .. or an absolute path declared by a depen
       });
     });
   }
+
+  // A scoped rule only replaces one parent -> child edge, so the trust rule
+  // consults plain rules only, as it does for a nested rule with a `file:` path
+  // (tested above). The error names the value the rule supplied.
+  for (const [shape, rules] of [
+    ["parent-name", { "bar>outside": "link:../outside" }],
+    ["nested", { bar: { outside: "link:../outside" } }],
+  ] as const) {
+    it(`are refused when a scoped root override (${shape}) puts one on a registry package's dependency`, async () => {
+      await withContext(defaultOpts, async ctx => {
+        using dir = tempDir(`scoped-override-escaping-link-${shape}`, linkTargets());
+        const root = String(dir);
+        await writeRegistryProject(ctx, root, { dependencies: { outside: "0.0.1" } }, { overrides: rules });
+
+        const { err, exitCode } = await install(root, "--lockfile-only");
+        expect(errorLines(err)).toEqual([
+          refusal("outside", "link:../outside", "bar@0.0.2"),
+          "error: outside@0.0.1 failed to resolve",
+        ]);
+        expect(await exists(join(root, "project", "bun.lock"))).toBe(false);
+        expect(exitCode).toBe(1);
+      });
+    });
+  }
+
+  // An override edit makes bun rebuild the root's dependency rows and resolve
+  // every row whose name an override rule has again. The rows it replaced stay
+  // in the buffer with no declaring package; resolving those too would be refused
+  // by the trust rule (for `file:` it reported `Could not find package.json`).
+  for (const protocol of ["link", "file"]) {
+    it(`declared by the root as ${protocol}: are still resolved after an override edit`, async () => {
+      using dir = tempDir(`root-${protocol}-override-edit`, linkTargets());
+      const root = String(dir);
+      const spec = `${protocol}:../outside`;
+      const overrides = [
+        { "foo>outside": spec },
+        { "foo>outside": spec, zzz: "1.0.0" },
+        { "foo>outside": spec, zzz: "1.0.1" },
+      ];
+
+      for (const rules of overrides) {
+        await write(join(root, "project", "package.json"), rootPackageJson({ outside: spec }, { overrides: rules }));
+        const { err, exitCode } = await install(root, "--lockfile-only");
+        expect(err).not.toContain("error:");
+        expect(await file(join(root, "project", "bun.lock")).text()).toContain(`"outside": ["outside-dir@${spec}"`);
+        expect(exitCode).toBe(0);
+      }
+    });
+  }
+
+  // Only a file: directory the root or a workspace declares counts. One a registry
+  // package ships has no dependencies after a fresh resolve, but a lockfile migrated
+  // from package-lock.json can give it some. The override edit makes bun resolve
+  // the rows named `outside` again.
+  it("are refused when a file: directory that a registry package ships declares them", async () => {
+    const lockfile = JSON.stringify({
+      lockfileVersion: 1,
+      configVersion: 1,
+      workspaces: { "": { name: "my-app", dependencies: { bar: "0.0.2" } } },
+      overrides: { "zzz>outside": "1.0.0" },
+      packages: {
+        bar: [
+          "bar@0.0.2",
+          "",
+          { dependencies: { inner: "file:./inner" } },
+          `sha512-${Buffer.alloc(64).toString("base64")}`,
+        ],
+        "bar/inner": ["inner@file:inner", { dependencies: { outside: "link:../outside" } }],
+        "bar/inner/outside": ["outside-dir@link:../outside", {}],
+      },
+    });
+    using dir = tempDir("escaping-link-of-shipped-folder", {
+      ...linkTargets(),
+      "project/package.json": rootPackageJson({ bar: "0.0.2" }, { overrides: { "zzz>outside": "2.0.0" } }),
+      "project/bunfig.toml": `[install]\nregistry = "http://localhost:1/"\n`,
+      "project/bun.lock": lockfile,
+    });
+    const root = String(dir);
+
+    const { err, exitCode } = await install(root, "--lockfile-only");
+    expect(errorLines(err)).toEqual([
+      refusal("outside", "link:../outside", "inner@file:inner"),
+      "error: outside@link:../outside failed to resolve",
+    ]);
+    expect(await file(join(root, "project", "bun.lock")).text()).toBe(lockfile);
+    expect(exitCode).toBe(1);
+  });
 
   // A file: directory's package.json is read from the project like a workspace's,
   // so it may declare one. The target is planted both where bun reads the path

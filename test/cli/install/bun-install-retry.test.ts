@@ -101,10 +101,7 @@ it("retries a manifest whose redirect target 500s once", async () => {
 // same rule. Which redirects keep the token is covered by "registry token
 // across redirects" in bun-install.test.ts.
 const token = "test-registry-token";
-it.each([
-  { cdnHost: "localhost", expectedCdnAuth: [null, null] },
-  { cdnHost: "127.0.0.1", expectedCdnAuth: [null, null] },
-])("retries an authorized manifest redirected to $cdnHost when it 500s once", async ({ cdnHost, expectedCdnAuth }) => {
+it.each(["localhost", "127.0.0.1"])("retries an authorized manifest redirected to %s when it 500s once", async host => {
   const registryUrls: string[] = [];
   const cdnAuth: (string | null)[] = [];
   let cdnHits = 0;
@@ -137,7 +134,7 @@ it.each([
       }
       return new Response(null, {
         status: 302,
-        headers: { Location: `http://${cdnHost}:${cdn.port}/cdn/BaR` },
+        headers: { Location: `http://${host}:${cdn.port}/cdn/BaR` },
       });
     }
     if (pathname === "/BaR-0.0.2.tgz") {
@@ -174,7 +171,7 @@ it.each([
   expect(exitCode).toBe(0);
   // Both registry hits carried the token (the handler 401s otherwise).
   expect(registryUrls).toEqual(["/BaR", "/BaR", "/BaR-0.0.2.tgz"]);
-  expect(cdnAuth).toEqual(expectedCdnAuth);
+  expect(cdnAuth).toEqual([null, null]);
 });
 
 // Sibling retry site (tarball downloads in runTasks): the tarball URL

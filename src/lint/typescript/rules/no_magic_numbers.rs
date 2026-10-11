@@ -18,6 +18,7 @@ impl Rule for NoMagicNumbers {
         self.0.narrow()
     }
 
+    #[inline]
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         self.0.expr(e, cx);
     }

@@ -1,5 +1,6 @@
 use bun_core::strings;
 use bun_lint::prelude::*;
+use bun_lint::tokens::next_token;
 use bun_lint::utils::string_utils;
 
 /// Require or disallow method and property shorthand syntax for object literals.
@@ -152,12 +153,20 @@ fn make_function_shorthand<'a>(fixer: Fixer<'a>, prop: Prop<'a>, func: Func<'a>)
     method.extend_from_slice(file.slice(key));
     match func.arrow_span() {
         None => {
-            let function_token = file.tokens_in(value).find(|token| token.is_keyword("function"))?;
+            // `function`, `async function`
+            let first = next_token(file.text(), value.start);
+            let keyword = if func.is_async() { next_token(file.text(), first.end) } else { first };
+            let function_token = match file.slice(keyword) == b"function" {
+                true => keyword,
+                false => file.tokens_in(value).find(|token| token.is_keyword("function"))?.span(),
+            };
             let token_before_params = match func.is_generator() {
-                true => file.token_after(function_token)?,
+                true => Some(next_token(file.text(), function_token.end))
+                    .filter(|it| file.slice(*it) == b"*")
+                    .or_else(|| file.token_after(function_token).map(|it| it.span()))?,
                 false => function_token,
             };
-            method.extend_from_slice(file.slice(Span::new(token_before_params.end(), value.end)));
+            method.extend_from_slice(file.slice(Span::new(token_before_params.end, value.end)));
         }
         Some(arrow) => {
             // The first token that is not `async`.

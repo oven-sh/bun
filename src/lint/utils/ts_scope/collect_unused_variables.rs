@@ -940,6 +940,41 @@ fn is_used_variable_with<'a>(variable: Variable<'a>, facts: Facts, walks: &mut W
     has_use(references, counts, walks)
 }
 
+/// Whether a look at the first reference that reads `symbol` tells that [`is_used_variable_with`] holds for it, if it has
+/// a definition at all, and its declarations that [`Facts::MARKED`] does not. Nearly every variable is such.
+fn is_plainly_used(symbol: Symbol) -> bool {
+    let kinds = symbol.declaration_kinds();
+    let plain = DeclarationKinds::VARIABLE
+        | DeclarationKinds::CATCH_CLAUSE
+        | DeclarationKinds::PARAMETER
+        | DeclarationKinds::FUNCTION_NAME
+        | DeclarationKinds::IMPORT_BINDING;
+    // What nothing modifies is on the left of no assignment, and is not read for itself.
+    if kinds.is_empty() || !plain.contains(kinds) || symbol.has_modifying_references() {
+        return false;
+    }
+    let is_parameter_property = |it: Declaration| match it {
+        Declaration::Param(pat) => match pat.file().bound.pat_parent.get(pat.id().idx()) {
+            Some(&PatParent::Param(param)) => Param::new(pat.file(), param).is_parameter_property(),
+            _ => false,
+        },
+        _ => false,
+    };
+    if kinds.contains(DeclarationKinds::PARAMETER)
+        && (symbol.name().atom() == known::this
+            || symbol.declarations().any(is_parameter_property))
+    {
+        return false;
+    }
+    let Some(read) = symbol.references().find(|it| it.is_read()) else {
+        return false;
+    };
+    // The ranges of `self_reference_range` are those of functions here.
+    let has_ranges = kinds.intersects(DeclarationKinds::VARIABLE | DeclarationKinds::FUNCTION_NAME);
+    !is_type_only_reference(symbol, read)
+        && (!has_ranges || read.scope().variable_scope() == symbol.scope().variable_scope())
+}
+
 /// typescript-eslint's `isUsedVariable` for a variable of the global scope that the file does not
 /// declare, which is no [`Symbol`]: one that a `/* global name */` comment or the configuration
 /// defines.
@@ -1034,6 +1069,14 @@ fn collect<'a>(
     let declares_globals = file.scope().symbols().len() != 0;
     let mut walks = Walks::default();
     for symbol in file.symbols() {
+        if !keeps_used
+            && !declares_globals
+            && is_plainly_used(symbol)
+            && !marked_by_loops.contains(symbol)
+            && !symbol.is_marked_used()
+        {
+            continue;
+        }
         let variable = Variable::new(symbol);
         let facts = Facts::of(variable);
         if keeps_used && facts.has(Facts::CLASS) {

@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::tokens::next_token;
 
 /// Disallow unnecessary constructors.
 pub struct NoUselessConstructor;
@@ -117,9 +118,16 @@ fn check_constructor<'a, R: Rule>(member: Member<'a>, cx: &Cx<'a, R>) {
             }
         })
         .suggest(REMOVE_CONSTRUCTOR, |fixer| {
-            let next = fixer.file().token_after(member);
-            let adds_semicolon = next.is_some_and(|it| ast_utils::can_continue_expression_in_class_body(&it))
-                && ast_utils::needs_preceding_semicolon(member);
+            let file = fixer.file();
+            let can_continue = match file.slice(next_token(file.text(), member.span().end)) {
+                b"[" | b"*" | b"in" | b"instanceof" => true,
+                // It can be a comment of HTML.
+                [b'<' | b'-', ..] => {
+                    file.token_after(member).is_some_and(|it| ast_utils::can_continue_expression_in_class_body(&it))
+                }
+                _ => false,
+            };
+            let adds_semicolon = can_continue && ast_utils::needs_preceding_semicolon(member);
             fixer.replace(member, if adds_semicolon { ";" } else { "" })
         });
 }

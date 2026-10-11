@@ -1182,6 +1182,45 @@ impl<T> Walk<'_, T> {
     }
 }
 
+/// Ranges that nest in the order of a walk: by the start, of two that start together the one that ends later first, then by the
+/// rank, then by the place in the list. Returned is the place of each, in the low 32 bits.
+///
+/// `starts`: where each starts. `rest`: where the one at a place ends, and its rank. Few start together, so the numbers that
+/// are sorted have the start and the place, and only those few are asked for the rest.
+pub(crate) fn in_walk_order(
+    starts: impl Iterator<Item = u32>,
+    rest: &dyn Fn(u32) -> (u32, u8),
+) -> Vec<u64> {
+    let mut order: Vec<u64> = starts
+        .zip(0u64..)
+        .map(|(start, place)| u64::from(start) << 32 | place)
+        .collect();
+    order.sort();
+    let mut together: Vec<u128> = Vec::new();
+    let (mut first, mut previous) = (0, u64::MAX);
+    for at in 0..=order.len() {
+        let start = order.get(at).map_or(u64::MAX, |key| key >> 32);
+        if start == previous {
+            continue;
+        }
+        if at - first > 1
+            && let Some(run) = order.get_mut(first..at)
+        {
+            together.clear();
+            together.extend(run.iter().map(|&key| {
+                let (end, rank) = rest(key as u32);
+                Span::new(0, end).sort_key(u16::from(rank), key as u32 as usize)
+            }));
+            together.sort();
+            for (key, sorted) in run.iter_mut().zip(&together) {
+                *key = previous << 32 | u64::from(*sorted as u32);
+            }
+        }
+        (first, previous) = (at, start);
+    }
+    order
+}
+
 /// Enters and leaves the nodes that are listened for, without walking: the nodes of a file nest, so their spans determine the order.
 /// Only the nodes of the kinds that are listened for are collected, from the vectors they are in, and sorted. The cost depends on
 /// how many of those there are, not on the size of the file.
@@ -1229,10 +1268,11 @@ fn walk_listened<'a, T: Running<'a>>(file: &'a File<'a>, walk: &mut Walk<'_, T>)
             node,
         });
     });
-    let keys = found.iter().enumerate();
-    let keys = keys.map(|(at, it)| Span::new(it.start, it.end).sort_key(u16::from(it.rank), at));
-    let mut order: Vec<u128> = keys.collect();
-    order.sort();
+    let order = in_walk_order(found.iter().map(|it| it.start), &|at| {
+        found
+            .get(at as usize)
+            .map_or((0, 0), |it| (it.end, it.rank))
+    });
 
     // The nodes that have been entered and not left, each with its end and its kind.
     let mut open: Vec<(u32, u8, Node<'a>)> = Vec::new();

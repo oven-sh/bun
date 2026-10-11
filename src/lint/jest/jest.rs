@@ -423,8 +423,8 @@ impl PossibleJestNodes {
         let is_valid_without_members = is_valid_without_members(frameworks, name);
         let mut at = reference;
         while let Some(parent) = parent_expression(at) {
-            match parent.kind() {
-                ExprKind::Call(call) if call.callee() == at => {
+            match parent.tag() {
+                ExprTag::Call if parent.callee() == Some(at) => {
                     let (span, id, reference) = (parent.span(), parent.id().0, reference.id().0);
                     self.calls.push(PossibleCall {
                         span,
@@ -437,8 +437,8 @@ impl PossibleJestNodes {
                         is_valid_without_members,
                     });
                 }
-                ExprKind::Dot { .. } if !parent.is_private_member() => {}
-                ExprKind::Index { .. } | ExprKind::TaggedTemplate(_) => {}
+                ExprTag::Dot if !parent.is_private_member() => {}
+                ExprTag::Index | ExprTag::TaggedTemplate => {}
                 _ => return,
             }
             at = parent;
@@ -575,11 +575,9 @@ impl<'a> KnownMemberExpressionProperty<'a> {
     pub(crate) fn name(&self) -> Option<&'a [u8]> {
         match self.element {
             MemberExpressionElement::IdentName(name) => Some(name.bytes()),
-            MemberExpressionElement::Expression(e) => match e.kind() {
-                ExprKind::Ident(name) | ExprKind::String(name) => Some(name.bytes()),
-                ExprKind::Template(template) => template.as_static().map(Name::bytes),
-                _ => None,
-            },
+            MemberExpressionElement::Expression(e) => {
+                (e.as_ident()).or_else(|| static_string(e)).map(Name::bytes)
+            }
         }
     }
 
@@ -610,8 +608,8 @@ fn get_node_chain(callee: Expr<'_>) -> Option<(KnownMemberExpressionProperty<'_>
         if at.is_parenthesized() {
             return None;
         }
-        let (next, kind) = match at.kind() {
-            ExprKind::Ident(_) => {
+        let (next, kind) = match at.tag() {
+            ExprTag::Ident => {
                 let head = KnownMemberExpressionProperty {
                     element: MemberExpressionElement::Expression(at),
                     parent,
@@ -622,7 +620,8 @@ fn get_node_chain(callee: Expr<'_>) -> Option<(KnownMemberExpressionProperty<'_>
                 chain.reverse();
                 return Some((head, chain));
             }
-            ExprKind::Dot { obj, name, .. } => {
+            ExprTag::Dot => {
+                let (obj, name, _) = at.as_dot()?;
                 if !at.is_private_member() {
                     chain.push(KnownMemberExpressionProperty {
                         element: MemberExpressionElement::IdentName(name),
@@ -634,7 +633,8 @@ fn get_node_chain(callee: Expr<'_>) -> Option<(KnownMemberExpressionProperty<'_>
                 }
                 (obj, Member)
             }
-            ExprKind::Index { obj, index, .. } => {
+            ExprTag::Index => {
+                let (obj, index, _) = at.as_index()?;
                 if let Some((span, _)) = static_property_info(at) {
                     chain.push(KnownMemberExpressionProperty {
                         element: MemberExpressionElement::Expression(index),
@@ -646,8 +646,8 @@ fn get_node_chain(callee: Expr<'_>) -> Option<(KnownMemberExpressionProperty<'_>
                 }
                 (obj, Member)
             }
-            ExprKind::Call(call) => (call.callee(), Call),
-            ExprKind::TaggedTemplate(call) => (call.callee(), TaggedTemplate),
+            ExprTag::Call => (at.as_call()?.callee(), Call),
+            ExprTag::TaggedTemplate => (at.as_tagged_template()?.callee(), TaggedTemplate),
             _ => return None,
         };
         (parent, grandparent_kind, parent_kind) = (Some(at), parent_kind, Some(kind));

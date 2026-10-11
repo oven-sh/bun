@@ -7,7 +7,7 @@
 use super::ScopeKind;
 use crate::ast::File;
 use crate::language::{Parser, SourceType};
-use crate::span::Span;
+use crate::runner::in_walk_order;
 use bun_sema::bind::{ClassOwner, FnOwner, MemberOwner, Parent};
 use bun_sema::hir::{self, FnKind, StmtKind, TypeNodeKind, VarKind};
 use std::cell::OnceCell;
@@ -118,12 +118,6 @@ struct Proto {
     what: What,
 }
 
-/// By start. Of two that start together, the one that ends later contains the other.
-#[inline]
-fn sort_key(start: u32, end: u32, rank: u8, index: usize) -> u128 {
-    Span::new(start, end).sort_key(u16::from(rank), index)
-}
-
 fn rank_of(kind: ScopeKind, block: Block) -> u8 {
     match kind {
         ScopeKind::Global => 0,
@@ -218,10 +212,12 @@ impl ScopeTree {
             unvisited,
             ..
         } = Collector::run(file);
-        let mut order: Vec<u128> = (protos.iter().enumerate())
-            .map(|(i, it)| sort_key(it.start, it.end, it.rank, i))
-            .collect();
-        order.sort();
+        // Of two that start together, the one that ends later contains the other.
+        let order = in_walk_order(protos.iter().map(|it| it.start), &|at| {
+            protos
+                .get(at as usize)
+                .map_or((0, 0), |it| (it.end, it.rank))
+        });
 
         let language = file.language();
         let supports_strict = !is_javascript_mode(file) || language.ecma_version >= 5;
@@ -395,13 +391,13 @@ impl ScopeTree {
 
     fn regions(&self) -> &[Region] {
         self.regions.get_or_init(|| {
-            let scopes = self.scopes.iter().enumerate();
-            let scopes =
-                scopes.map(|(i, it)| sort_key(it.start, it.end, rank_of(it.kind, it.block), i));
-            let zones = self.zones.iter().enumerate();
-            let zones = zones.map(|(i, it)| sort_key(it.start, it.end, 2, self.scopes.len() + i));
-            let mut order: Vec<u128> = scopes.chain(zones).collect();
-            order.sort();
+            let starts = self.scopes.iter().map(|it| it.start);
+            let starts = starts.chain(self.zones.iter().map(|it| it.start));
+            let order = in_walk_order(starts, &|at| match self.scopes.get(at as usize) {
+                Some(it) => (it.end, rank_of(it.kind, it.block)),
+                None => (self.zones.get(at as usize - self.scopes.len()))
+                    .map_or((0, 2), |it| (it.end, 2)),
+            });
             let mut regions: Vec<Region> = Vec::with_capacity(order.len());
             let mut stack: Vec<u32> = Vec::new();
             for key in order {

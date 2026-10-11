@@ -30,6 +30,8 @@ enum Type {
 pub struct Entry<'a> {
     statement: Stmt<'a>,
     module: &'a [u8],
+    /// The number of the name of the module, if that is `module`: nothing is trimmed off it.
+    name: Option<u32>,
     ty: Type,
     is_type_only: bool,
     is_export: bool,
@@ -192,11 +194,13 @@ impl NoDuplicateImports {
             }
             _ => return,
         };
-        let module = strings::trim_js_whitespace(module.map_or(&[][..], Name::bytes));
+        let written = module.map_or(&[][..], Name::bytes);
+        let (name, module) = (module.map(|it| it.atom().0), strings::trim_js_whitespace(written));
         if !module.is_empty() {
             cx.state.push(Entry {
                 statement,
                 module,
+                name: name.filter(|_| module.len() == written.len()),
                 ty,
                 is_type_only,
                 is_export,
@@ -256,6 +260,12 @@ impl Rule for NoDuplicateImports {
             if cx.file().stmts_of_kind(StmtTag::Import).any(names_module) {
                 self.check_imports_as_oxlint(cx);
             }
+            return;
+        }
+        // Nothing is said about a module that is named once.
+        let mut names: SmallVec<[u32; 32]> = entries.iter().filter_map(|it| it.name).collect();
+        names.sort_unstable();
+        if names.len() == entries.len() && names.iter().zip(names.iter().skip(1)).all(|(a, b)| a != b) {
             return;
         }
         // oxlint looks at the imports without names only if the file has no others.

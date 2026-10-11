@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::tokens::next_token;
 
 /// Disallow calling some `Object.prototype` methods directly on objects.
 pub struct NoPrototypeBuiltins;
@@ -88,7 +89,11 @@ impl NoPrototypeBuiltins {
                 {
                     return None;
                 }
-                let open_paren = file.tokens_after(callee).find(ast_utils::is_opening_paren_token)?;
+                let after = next_token(file.text(), callee.outer_span().end);
+                let open_paren = match file.slice(after) == b"(" {
+                    true => after,
+                    false => file.tokens_after(callee).find(ast_utils::is_opening_paren_token)?.span(),
+                };
                 let needs_parens = ast_utils::get_precedence(object)
                     <= ast_utils::get_binary_operator_precedence(BinOp::Comma);
                 let mut argument = Vec::new();

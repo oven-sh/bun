@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use std::borrow::Cow;
 
 /// Disallow magic numbers.
 pub struct NoMagicNumbers(Checker);
@@ -237,8 +238,18 @@ impl Checker {
         on
     }
 
+    #[inline]
     pub fn expr<'a, R: Rule>(&self, e: Expr<'a>, cx: &mut Cx<'a, R>) {
-        self.check_expr(e, cx);
+        let parent = e.parent();
+        // Where no number is reported.
+        let is_allowed = match parent {
+            Node::VarDecl(_) => !self.enforce_const,
+            Node::Prop(property) => !self.detect_objects && property.kind() != PropKind::Spread,
+            _ => false,
+        };
+        if !is_allowed {
+            self.check_expr(e, parent, cx);
+        }
     }
 
     pub fn ty<'a, R: Rule>(&self, ty: TypeNode<'a>, cx: &mut Cx<'a, R>) {
@@ -279,7 +290,9 @@ impl Checker {
         }
     }
 
-    fn check_expr<'a, R: Rule>(&self, e: Expr<'a>, cx: &Cx<'a, R>) {
+    /// `parent`: that of `e`.
+    #[inline(never)]
+    fn check_expr<'a, R: Rule>(&self, e: Expr<'a>, parent: Node<'a>, cx: &Cx<'a, R>) {
         let value = match e.as_number() {
             Some(value) => Value::Number(value),
             None => match e.kind() {
@@ -290,7 +303,6 @@ impl Checker {
                 _ => return,
             },
         };
-        let parent = e.parent();
         let (full, sign, value, parent) = match parent.as_expr().map(|it| (it, it.unary_op())) {
             Some((full, Some(UnOp::Minus))) => (full, Some(b'-'), value.negated(), full.parent()),
             Some((full, Some(UnOp::Plus))) => (full, Some(b'+'), value, full.parent()),
@@ -417,14 +429,12 @@ impl Checker {
 }
 
 fn report_magic<R: Rule>(at: Span, sign: Option<u8>, unsigned: Span, cx: &Cx<'_, R>) {
-    let raw = cx.slice(unsigned);
-    match sign {
-        Some(_) if at.start + 1 == unsigned.start && at.end == unsigned.end => {
-            cx.report(at, NO_MAGIC).data("raw", cx.slice(at))
-        }
-        Some(sign) => cx.report(at, NO_MAGIC).data("raw", [&[sign][..], raw].concat()),
-        None => cx.report(at, NO_MAGIC).data("raw", raw),
+    let raw = match sign {
+        Some(_) if at.start + 1 == unsigned.start && at.end == unsigned.end => Cow::Borrowed(cx.slice(at)),
+        Some(sign) => Cow::Owned([&[sign][..], cx.slice(unsigned)].concat()),
+        None => Cow::Borrowed(cx.slice(unsigned)),
     };
+    cx.report(at, NO_MAGIC).data("raw", raw);
 }
 
 impl Rule for NoMagicNumbers {
@@ -440,6 +450,7 @@ impl Rule for NoMagicNumbers {
         self.0.narrow()
     }
 
+    #[inline]
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         self.0.expr(e, cx);
     }

@@ -36,6 +36,8 @@ use crate::reactive_scopes::visitors::{self};
 struct Scopes {
     seen: IdMap<DeclarationId, IdentifierName>,
     stack: Vec<HashMap<StoreStr, DeclarationId>>,
+    /// For each of `stack`: all `t0`, `t1`, .. below the first number and all `T0`, `T1`, .. below the second are taken.
+    taken: Vec<[u32; 2]>,
     globals: HashSet<StoreStr>,
     names: HashSet<StoreStr>,
 }
@@ -45,6 +47,7 @@ impl Scopes {
         Self {
             seen: IdMap::new(),
             stack: vec![HashMap::default()],
+            taken: vec![[0; 2]],
             globals,
             names: HashSet::default(),
         }
@@ -69,7 +72,10 @@ impl Scopes {
 
         let mut name: Vec<u8> = Vec::with_capacity(original_value.len() + 4);
         let mut itoa = bun_core::fmt::ItoaBuf::new();
-        let mut id: u32 = 0;
+        let mut id: u32 = match is_promoted_temp || is_promoted_jsx {
+            true => self.taken.last().unwrap()[usize::from(is_promoted_jsx)],
+            false => 0,
+        };
         let mut regen = |buf: &mut Vec<u8>, n: u32| {
             buf.clear();
             if is_promoted_temp {
@@ -93,6 +99,9 @@ impl Scopes {
             regen(&mut name, id);
             id += 1;
         }
+        if is_promoted_temp || is_promoted_jsx {
+            self.taken.last_mut().unwrap()[usize::from(is_promoted_jsx)] = id;
+        }
 
         let stored = StoreStr::new(bun_ast::data_store_dupe_str(&name));
         self.seen
@@ -115,10 +124,12 @@ impl Scopes {
 
     fn enter(&mut self) {
         self.stack.push(HashMap::default());
+        self.taken.push(*self.taken.last().unwrap());
     }
 
     fn leave(&mut self) {
         self.stack.pop();
+        self.taken.pop();
     }
 }
 

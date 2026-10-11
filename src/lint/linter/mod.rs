@@ -102,6 +102,8 @@ pub struct LintOptions<'o> {
     pub report_unused_disable_directives: Option<Severity>,
     /// Whether anything reads [`LintMessage::fix`] and [`LintMessage::suggestions`].
     pub wants_fixes: bool,
+    /// Whether anything reads the texts of these. If not, they are empty: see `Sink::drops_texts_of_fixes`.
+    pub wants_texts_of_fixes: bool,
     /// Whether anything reads [`LintMessage::help`].
     pub wants_help: bool,
     /// Whether anything reads what is in [`LintMessage::suppressions`]. If not, a message that comments suppress has one of
@@ -136,6 +138,7 @@ impl Default for LintOptions<'_> {
             allow_inline_config: true,
             report_unused_disable_directives: None,
             wants_fixes: true,
+            wants_texts_of_fixes: true,
             wants_help: true,
             wants_suppressions: true,
             rule_filter: None,
@@ -693,6 +696,7 @@ impl<S: RuleSet> Linter<S> {
         }
         let of_js = problems.len() - before_js;
         file.sink.wants_help.set(options.wants_help);
+        (file.sink.drops_texts_of_fixes).set(!options.wants_texts_of_fixes);
         let when: Vec<When> = match file.language().is_oxlint {
             true => running.iter().map(|it| it.when).collect(),
             false => Vec::new(),

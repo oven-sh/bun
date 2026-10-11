@@ -416,8 +416,10 @@ fn parse_code(
             let Some(bound) = try_bind_for_format_in(&*hir, &mut recycled) else {
                 return;
             };
-            let file =
-                File::new(code.path, &*hir, bound, atoms, &language, None).with_text(code.text);
+            // Not what follows the part: what a file finds out about its text once would be found out about the rest of a
+            // component for each expression in it.
+            let text = code.text.get(..end as usize).unwrap_or(code.text);
+            let file = File::new(code.path, &*hir, bound, atoms, &language, None).with_text(text);
             then(&Parsed {
                 file: &file,
                 end,

@@ -43,6 +43,8 @@ pub(crate) struct Context<'c, 'm> {
     pub(crate) keeps_text: bool,
     /// Whether the fixes and the suggestions of messages are read, if only to be counted.
     pub(crate) reads_fixes: bool,
+    /// Whether they are printed.
+    pub(crate) reads_texts_of_fixes: bool,
     /// Whether the help of oxlint is read.
     pub(crate) reads_help: bool,
     /// It is read of the few problems that are shown with their code. So it is not made for each, which takes longer than to find
@@ -158,6 +160,7 @@ impl Context<'_, '_> {
             // It is part of the configuration: see `Loader::override_config`.
             report_unused_disable_directives: None,
             wants_fixes: self.fixes() || self.reads_fixes,
+            wants_texts_of_fixes: self.fixes() || self.reads_texts_of_fixes,
             wants_help: self.reads_help,
             wants_suppressions: self.reads_suppressions,
             // Warnings have to be counted for `--max-warnings`, and for oxlint, from whose report `--quiet` only hides them.
@@ -457,6 +460,9 @@ impl Context<'_, '_> {
                 let options = LintOptions {
                     again: as_what.again,
                     wants_fixes: options.wants_fixes && !as_what.without_fixes,
+                    // A processor is given the messages.
+                    wants_texts_of_fixes: options.wants_texts_of_fixes
+                        || as_what.physical_path_len.is_some(),
                     wants_help: options.wants_help && !waits_for_demand,
                     // Its rules have no such thing.
                     js_plugins: options.js_plugins.filter(|_| !as_what.with_help),

@@ -23,7 +23,7 @@ pub(crate) fn preprocess<'a>(tree: &mut Tree<'a>, options: &Options<'_>) -> bool
     let mut preprocessor = Preprocessor {
         tree,
         options,
-        stack_check: bun_core::StackCheck::init(),
+        stack_check: crate::stack::check_for_tree(),
         is_nested_too_deeply: false,
     };
     preprocessor.visit(root, false);

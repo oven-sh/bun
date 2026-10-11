@@ -160,7 +160,7 @@ pub fn format(
         out: &mut scratch.elements,
         is_damaged: false,
         pre_depth: 0,
-        stack: Stack::new(),
+        stack: Stack::for_tree(),
     };
     printer.template(template);
     if printer.stack.ran_out() {

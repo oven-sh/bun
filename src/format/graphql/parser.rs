@@ -261,7 +261,7 @@ pub(crate) fn parse(text: &[u8], tree: &mut Tree) -> std::result::Result<(), Syn
         },
         next: None,
         last_end: 0,
-        stack_check: bun_core::StackCheck::init(),
+        stack_check: crate::stack::check_for_tree(),
     };
     parser.parse_document().map_err(|_| parser.refusal.reason())
 }

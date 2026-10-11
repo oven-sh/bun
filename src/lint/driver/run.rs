@@ -954,6 +954,7 @@ impl Run<'_> {
             checks_types,
             keeps_text: format.reads_text() && !options.silent,
             reads_fixes: format.reads_fixes() && !options.silent,
+            reads_texts_of_fixes: format.reads_texts_of_fixes() && !options.silent,
             reads_help: format.reads_help() && !options.silent,
             help_on_demand: format.groups() && !options.all,
             reads_suppressions: format.reads_suppressions() && !options.silent,

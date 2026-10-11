@@ -30,7 +30,7 @@ pub(crate) fn write_comment<'a>(comment: &Comment, f: &mut Formatter<'a>) -> boo
     let Some(options) = f.options().jsdoc else {
         return false;
     };
-    let stack = Stack::new();
+    let stack = Stack::for_tree();
     let is_written = write_formatted(comment, &options, &stack, f);
     f.context_mut().ran_out_of_stack |= stack.ran_out();
     is_written

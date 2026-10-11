@@ -1219,19 +1219,25 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     expect(result.exitCode).toBe(2);
   });
 
-  test.skipIf(isWindows)("/dev/null is a file without patterns to ignore, and a configuration without options", async () => {
-    const files = { ".prettierignore": "a.js\n", ".prettierrc": `{ "semi": false }\n`, "a.js": formatted };
-    expect(await different(files, ["."])).toEqual([]);
-    expect(await different(files, ["--ignore-path", "/dev/null", "."])).toEqual(["a.js"]);
-    expect(await different(files, ["--ignore-path", "/dev/null", "--config", "/dev/null", "."])).toEqual([]);
-  });
+  test.skipIf(isWindows)(
+    "/dev/null is a file without patterns to ignore, and a configuration without options",
+    async () => {
+      const files = { ".prettierignore": "a.js\n", ".prettierrc": `{ "semi": false }\n`, "a.js": formatted };
+      expect(await different(files, ["."])).toEqual([]);
+      expect(await different(files, ["--ignore-path", "/dev/null", "."])).toEqual(["a.js"]);
+      expect(await different(files, ["--ignore-path", "/dev/null", "--config", "/dev/null", "."])).toEqual([]);
+    },
+  );
 
   // "Never break a line." Prettier takes every whole number from 0 on, and Infinity.
   test.each([
     [{ ".prettierrc": `{ "printWidth": 100000 }` }, []],
     [{ ".prettierrc.mjs": `export default { printWidth: Infinity };` }, []],
     [{ "prettier.config.cjs": `module.exports = { printWidth: Infinity };` }, []],
-    [{ ".prettierrc.mjs": `export default { overrides: [{ files: "*.js", options: { printWidth: Infinity } }] };` }, []],
+    [
+      { ".prettierrc.mjs": `export default { overrides: [{ files: "*.js", options: { printWidth: Infinity } }] };` },
+      [],
+    ],
     [{ ".prettierrc.mjs": `export default { printWidth: Infinity, rangeStart: 0, rangeEnd: Infinity };` }, []],
     [{ "bunfig.toml": `[format]\nprintWidth = 100000\n` }, []],
     [{}, ["--print-width", "65536"]],
@@ -1249,9 +1255,13 @@ ${packages["node_modules/prettier/index.cjs"]}`;
 
   // oxfmt 0.72: "Failed to load configuration file.", 1.
   test("an infinite printWidth is none that oxfmt takes", async () => {
-    const result = await format({ "oxfmt.config.ts": `export default { printWidth: Infinity };`, "a.js": ugly }, ["a.js"], {
-      reads: ["a.js"],
-    });
+    const result = await format(
+      { "oxfmt.config.ts": `export default { printWidth: Infinity };`, "a.js": ugly },
+      ["a.js"],
+      {
+        reads: ["a.js"],
+      },
+    );
     expect(result.files["a.js"]).toBe(ugly);
     expect(result.stderr).toContain("Invalid printWidth: The line width should be between 1 and 320");
     expect(result.exitCode).toBe(1);
@@ -1614,6 +1624,248 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     expect(ok.stderr).not.toContain("[error]");
     expect(huge.stderr).toContain("[error] huge.json:");
     expect(huge.exitCode).toBe(2);
+  });
+
+  // Neither Prettier nor oxfmt has a number for how deep something can be nested or how long it can be: Prettier ends where its
+  // stack does, or the longest string of JavaScript. What is expected is the SHA-1 of what Prettier 3.9.9 (run with
+  // `node --stack-size=50000`, or its stack ends sooner than ours) and oxfmt 0.72.0 print.
+  describe("as deep and as long as it is written", () => {
+    const nested = (before: string, open: string, middle: string, close: string, after: string, depth: number) =>
+      before + open.repeat(depth) + middle + close.repeat(depth) + after;
+    const oxfmtrc = { ".oxfmtrc.json": "{}" };
+    const svelte = { ".prettierrc": `{ "plugins": ["prettier-plugin-svelte"] }` };
+    test.skipIf(isDebug || isASAN).concurrent.each<[string, string, Record<string, string>, string, string]>([
+      [
+        "a srcset of more than 1 MB",
+        "a.html",
+        {},
+        `<img srcset="${"u".repeat(2_000)} 1w${", a 2w".repeat(530)}">`,
+        "cd5d914bd74ea6d35260353a2a7d1b863aedda26",
+      ],
+      [
+        "@param tags 300 blocks deep",
+        "a.js",
+        { ".oxfmtrc.json": `{ "jsdoc": {} }` },
+        nested("", "{", "/**\n * @param {x} b x\n * @param {x} a y\n */\nfunction f(a, b) {}", "}", "", 300),
+        "a78549a9394497bf5f8ec95622265c3a7e3044bb",
+      ],
+      [
+        "150 unions in each other",
+        "a.ts",
+        {},
+        nested("type A = ", `| ${"a".repeat(90)} | { a: `, "b", " }", ";", 150),
+        "560cf5303a94ab88e5b60a881654b7802ee98c0e",
+      ],
+      [
+        "TOML: 300 arrays",
+        "a.toml",
+        oxfmtrc,
+        nested("a = ", "[", "1", "]", "", 300),
+        "d09bbd9c36a29ea5b19dba2aee988f14078152bc",
+      ],
+      [
+        "TOML: 300 inline tables in arrays",
+        "a.toml",
+        oxfmtrc,
+        nested("a = ", "[{ b = ", "1", " }]", "", 300),
+        "ef05a4d39a16033686fa0f7feaa67915d48f3021",
+      ],
+      [
+        "JSON: 600 arrays",
+        "a.json",
+        oxfmtrc,
+        nested("", "[", "1", "]", "", 600),
+        "d3b357229942f2d7f19db1569095a5830ac90354",
+      ],
+      [
+        "JSON: 600 objects",
+        "a.json",
+        oxfmtrc,
+        nested("", '{"a":', "1", "}", "", 600),
+        "75277b2894408bad0d9c3f7cde2312caaf0cc7f8",
+      ],
+      [
+        "CSS: 300 rules",
+        "a.css",
+        {},
+        nested("", "a{", "b:c", "}", "", 300),
+        "67eeb07bbf7e53a317be732b9e1e6f6778d6a8e4",
+      ],
+      [
+        "SCSS: 300 rules",
+        "a.scss",
+        {},
+        nested("", "a{", "b:c", "}", "", 300),
+        "67eeb07bbf7e53a317be732b9e1e6f6778d6a8e4",
+      ],
+      [
+        "Less: 300 rules",
+        "a.less",
+        {},
+        nested("", "a{", "b:c", "}", "", 300),
+        "67eeb07bbf7e53a317be732b9e1e6f6778d6a8e4",
+      ],
+      [
+        "CSS: 200 parentheses",
+        "a.css",
+        {},
+        nested("a{b:", "(", "1", ")", "}", 200),
+        "1b8aec53490fd2ed6cdea4429746a7738bf7fd19",
+      ],
+      [
+        "CSS: 200 functions",
+        "a.css",
+        {},
+        nested("a{b:", "f(", "1", ")", "}", 200),
+        "aa39aa342f4a8213ec969b51635d90bcccda1dd8",
+      ],
+      [
+        "CSS: 200 pseudo classes",
+        "a.css",
+        {},
+        nested("a", ":not(", "b", ")", "{}", 200),
+        "ce28e0b8d5fd202f3a3ab2e1f9254d32412ad032",
+      ],
+      [
+        "YAML: 150 flow sequences",
+        "a.yaml",
+        {},
+        nested("", "[", "1", "]", "", 150),
+        "76b35730b2709ae9a6c44fe63e3fea53b034d9d6",
+      ],
+      [
+        "YAML: 150 flow mappings",
+        "a.yaml",
+        {},
+        nested("", "{a: ", "1", "}", "", 150),
+        "cd73cae399a8333bb28815e88cbccf5f7f13ca73",
+      ],
+      [
+        "YAML: 150 sequences",
+        "a.yaml",
+        {},
+        nested("", "- ", "1", "", "", 150),
+        "e1a8ea12ccc9716fce57009c7ca4c541033bc57d",
+      ],
+      [
+        "Handlebars: 300 blocks",
+        "a.hbs",
+        {},
+        nested("", "{{#if a}}", "b", "{{/if}}", "", 300),
+        "9a68d3fd6774fab8566ba24622555917ef869b8a",
+      ],
+      [
+        "Handlebars: 300 elements",
+        "a.hbs",
+        {},
+        nested("", "<div>", "b", "</div>", "", 300),
+        "360991e16eaad56f383ff2080ade36c8c345f7f9",
+      ],
+      [
+        "Handlebars: 300 expressions",
+        "a.hbs",
+        {},
+        nested("{{a ", "(b ", "c", ")", "}}", 300),
+        "38c9869108b53b9fffbfde5362460097932b06ba",
+      ],
+      [
+        "Handlebars: 300 times else if",
+        "a.hbs",
+        {},
+        `{{#if a}}b${"{{else if a}}b".repeat(300)}{{/if}}`,
+        "862ae827fa53b6c631b0297941557cd0478e439b",
+      ],
+      [
+        "Angular: 450 blocks",
+        "a.component.html",
+        {},
+        nested("", "@if (a) {", "b", "}", "", 450),
+        "72eb9cbaf3752a0693787cff1ba17d2c5ad3a410",
+      ],
+      [
+        "HTML: 450 elements",
+        "a.html",
+        {},
+        nested("", "<div>", "a", "</div>", "", 450),
+        "2017edf44316b0dc0b2212749e4fe09f7acd28e6",
+      ],
+      [
+        "Vue: 450 elements",
+        "a.vue",
+        {},
+        nested("<template>", "<div>", "a", "</div>", "</template>", 450),
+        "3fbdb4e6fd57e141396b7e393fc1c7cad22b0eab",
+      ],
+      [
+        "Svelte: 450 elements",
+        "a.svelte",
+        svelte,
+        nested("", "<div>", "a", "</div>", "", 450),
+        "78248b064f3edb4cb6430c13e608b5ab398e7096",
+      ],
+      [
+        "Svelte: 450 blocks",
+        "a.svelte",
+        svelte,
+        nested("", "{#if a}", "b", "{/if}", "", 450),
+        "a13e62998f4f687539a1e91c7cfc73031a3d1d2a",
+      ],
+    ])("%s", async (_, name, configuration, text, sha1) => {
+      const result = await format(configuration, ["--stdin-filepath", name], { stdin: text });
+      expect(result.stderr).toBe("");
+      expect(new Bun.CryptoHasher("sha1").update(result.raw).digest("hex")).toBe(sha1);
+      expect(result.exitCode).toBe(0);
+    });
+
+    // The frames of a debug build are larger, so its stack ends sooner.
+    const tooDeep = isDebug || isASAN ? 100_000 : 1_000_000;
+    test.each([
+      ["a.css", nested("", "a{", "b:c", "}", "", tooDeep)],
+      ["b.css", nested("a{b:", "(", "1", ")", "}", tooDeep)],
+      ["c.css", nested("a{b:", "f(", "1", ")", "}", tooDeep)],
+      ["d.css", nested("a", ":not(", "b", ")", "{}", tooDeep)],
+    ])("what there is no stack for, or no string, is an error, and the file stays as it is: %s", async (name, text) => {
+      const files = { ".oxfmtrc.json": `{ "svelte": {} }`, [name]: text };
+      const result = await format(files, [name], { reads: [name] });
+      expect(result.files[name]).toBe(text);
+      expect(result.stderr).toMatch(
+        /^\[error\] \S+: RangeError: (?:The code is nested too deeply\.|Invalid string length)$/m,
+      );
+      expect(result.exitCode).toBe(2);
+    });
+
+    test("a text that is longer than a string of JavaScript can be is refused in the words of Prettier", async () => {
+      // 560 MB. Prettier prints 490 MB.
+      const text = `<img srcset="${"u".repeat(70_000)} 1w${", a 2w".repeat(8_000)}">\n`;
+      const result = await format({ "a.html": text }, ["a.html"], { reads: ["a.html"] });
+      expect(result.files["a.html"]).toBe(text);
+      expect(result.stderr).toContain("[error] a.html: RangeError: Invalid string length");
+      expect(result.exitCode).toBe(2);
+    });
+
+    test("under a syntax error are the lines around it, however long they are", async () => {
+      const result = await format({ "a.css": `a{${"b:c;".repeat(250)}}}` }, ["a.css"]);
+      // As Prettier shows them.
+      expect(result.stderr.split("\n").slice(0, 3)).toEqual([
+        `[error] a.css: SyntaxError: Unexpected "}" (1:1004)`,
+        `[error] > 1 | a{${"b:c;".repeat(250)}}}`,
+        `[error]     | ${" ".repeat(1_003)}^`,
+      ]);
+      expect(result.exitCode).toBe(2);
+    });
+
+    // The time it takes is in proportion to the square of the number of differences: 84 s in Prettier.
+    test.skipIf(isDebug || isASAN)(
+      "the cursor is found by comparing all of the text, whatever has changed",
+      async () => {
+        const result = await format({}, ["--stdin-filepath", "a.yaml", "--cursor-offset", "71400"], {
+          stdin: "- [a,]\n".repeat(20_400),
+        });
+        expect(result.raw).toBe("- [a]\n".repeat(20_400));
+        expect(result.stderr.trim()).toBe("61200");
+        expect(result.exitCode).toBe(0);
+      },
+    );
   });
 
   test.each(["@", "keyof ", "renders ", "infer A extends ", "component() renders "])(
@@ -3018,13 +3270,16 @@ describe.concurrent("what an ignore file has is not written, however it is come 
     expect(result.exitCode).toBe(0);
   });
 
-  test.each([["src"], ["src/*.js"], ["src", "src/*.js"]])("%s, of which every file is ignored, is no error", async (...args) => {
-    const files = { ".prettierignore": "src/a.js\nsrc/b.js\n", "src/a.js": ugly, "src/b.js": ugly };
-    const result = await format(files, ["--check", ...args], { reads: ["src/a.js"] });
-    expect(result.stderr).not.toContain("[error]");
-    expect(result.files).toEqual({ "src/a.js": ugly });
-    expect(result.exitCode).toBe(0);
-  });
+  test.each([["src"], ["src/*.js"], ["src", "src/*.js"]])(
+    "%s, of which every file is ignored, is no error",
+    async (...args) => {
+      const files = { ".prettierignore": "src/a.js\nsrc/b.js\n", "src/a.js": ugly, "src/b.js": ugly };
+      const result = await format(files, ["--check", ...args], { reads: ["src/a.js"] });
+      expect(result.stderr).not.toContain("[error]");
+      expect(result.files).toEqual({ "src/a.js": ugly });
+      expect(result.exitCode).toBe(0);
+    },
+  );
 
   test("a pattern that matches nothing is an error beside a directory of which every file is ignored", async () => {
     const files = { ".prettierignore": "src/a.js\n", "src/a.js": ugly };

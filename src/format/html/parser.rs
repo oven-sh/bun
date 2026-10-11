@@ -717,7 +717,7 @@ pub(crate) fn parse<'a>(
         allow_htm_component_closing_tags: options.lexer.allow_htm_component_closing_tags,
         is_tag_name_case_sensitive: is_case_sensitive,
         is_nested_too_deeply: false,
-        stack_check: bun_core::StackCheck::init(),
+        stack_check: crate::stack::check_for_tree(),
     };
     builder.build();
     errors.append(&mut builder.errors);

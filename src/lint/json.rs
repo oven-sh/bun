@@ -16,25 +16,17 @@ use bun_parsers::yaml::{CyclicAliases, YAML};
 /// level too: with frames of another size, perhaps on another thread, and `Drop`, `Clone` and `==` cannot ask whether there
 /// is any. So what builds one has a quarter of the smallest stack.
 #[derive(Copy, Clone)]
-pub(crate) struct RoomToNest {
-    stack: bun_core::StackCheck,
-    /// How much of the stack it leaves.
-    left: usize,
-}
+pub(crate) struct RoomToNest(bun_core::StackCheck);
 
 impl RoomToNest {
     pub(crate) fn new() -> RoomToNest {
-        let stack = bun_core::StackCheck::init();
         let smallest = bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize;
-        RoomToNest {
-            stack,
-            left: stack.remaining().saturating_sub(smallest / 4),
-        }
+        RoomToNest(bun_core::StackCheck::init().with_at_most(smallest / 4))
     }
 
     #[inline]
     pub(crate) fn has_more(self) -> bool {
-        self.stack.remaining() > self.left
+        self.0.is_safe_to_recurse()
     }
 }
 

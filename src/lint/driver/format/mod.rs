@@ -147,6 +147,11 @@ impl Format {
         matches!(self, Format::Pretty | Format::Agent | Format::OxlintDefault)
     }
 
+    /// Whether it prints fixes or suggestions.
+    pub(crate) fn reads_texts_of_fixes(self) -> bool {
+        matches!(self, Format::Json | Format::JsonWithMetadata)
+    }
+
     /// Whether it prints fixes or suggestions, or counts what can be fixed.
     pub(crate) fn reads_fixes(self) -> bool {
         matches!(

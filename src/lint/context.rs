@@ -86,6 +86,9 @@ pub(crate) struct Sink {
     /// Whether anything reads `Diagnostic::fix` and `Diagnostic::suggestions`. If not, they are
     /// not computed.
     pub(crate) wants_fixes: Cell<bool>,
+    /// Nothing reads [`Fix::text`]: what can be fixed is only counted. A fix often has the text of its node, so those of n nodes
+    /// that are in each other have n² bytes.
+    pub(crate) drops_texts_of_fixes: Cell<bool>,
     /// Whether anything reads the help of oxlint. If not, it is not looked up.
     pub(crate) wants_help: Cell<bool>,
     /// What a rule has thrown: of all the first in the text, which ESLint comes to first.
@@ -430,7 +433,7 @@ impl<'a> Report<'a> {
     pub fn fix<F: IntoFix>(mut self, fix: impl FnOnce(Fixer<'a>) -> F) -> Self {
         if self.reads_fixes() {
             let fix = fix(Fixer::new(self.file));
-            let fix = self.merged(fix);
+            let fix = self.merged(fix).map(|it| self.as_it_is_read(it));
             if self.file.sink.wants_fixes.get()
                 && let Some(diagnostic) = &mut self.diagnostic
             {
@@ -443,6 +446,14 @@ impl<'a> Report<'a> {
     #[inline]
     fn reads_fixes(&self) -> bool {
         self.diagnostic.is_some() && (self.file.sink.wants_fixes.get() || self.makes_help_of_fix())
+    }
+
+    #[inline]
+    fn as_it_is_read(&self, mut fix: Fix) -> Fix {
+        if self.file.sink.drops_texts_of_fixes.get() {
+            fix.text = Vec::new();
+        }
+        fix
     }
 
     #[inline]
@@ -538,6 +549,7 @@ impl<'a> Report<'a> {
             if let Some(fix) = self.merged(fix)
                 && self.file.sink.wants_fixes.get()
             {
+                let fix = self.as_it_is_read(fix);
                 self.push_suggestion(kind, message, data, fix);
             }
         }

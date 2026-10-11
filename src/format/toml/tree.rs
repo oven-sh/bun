@@ -56,7 +56,7 @@ pub(super) fn build(text: &[u8], tokens: &[Token]) -> Result<Vec<Element>, Forma
         tokens: tokens.iter(),
         at: if text.starts_with(BOM) { BOM.len() } else { 0 },
         elements: Vec::with_capacity(tokens.len() * 2),
-        stack_check: bun_core::StackCheck::init(),
+        stack_check: crate::stack::check_for_tree(),
     };
     loop {
         builder.trivia();

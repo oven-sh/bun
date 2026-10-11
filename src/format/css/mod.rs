@@ -339,7 +339,7 @@ fn parse_and_print<'o>(
             syntax: parser,
             is_oxfmt: options.flavor.is_oxfmt(),
             refusal: Default::default(),
-            stack: Stack::new(),
+            stack: Stack::for_tree(),
             convertible_sets: Default::default(),
         },
         single_quote: matches!(options.quote_style, QuoteStyle::Single),

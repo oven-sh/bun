@@ -11,11 +11,6 @@ pub struct Utf16OffsetTable {
 }
 
 impl Utf16OffsetTable {
-    /// A byte order mark is a character as any other.
-    pub fn new(text: &[u8]) -> Utf16OffsetTable {
-        Self::from(text, 0)
-    }
-
     /// For a side that does not have the byte order mark that `text` may start with: what is in it
     /// is at 0 there.
     pub fn without_bom(text: &[u8]) -> Utf16OffsetTable {
@@ -111,7 +106,7 @@ mod tests {
             text.extend_from_slice(part);
             text.push(b'.');
             let units = String::from_utf8_lossy(&text).encode_utf16().count() as u32;
-            let offsets = Utf16OffsetTable::new(&text);
+            let offsets = Utf16OffsetTable::from(&text, 0);
             assert_eq!(offsets.to_utf16(text.len() as u32), units, "{text:?}");
             assert_eq!(offsets.to_bytes(units), text.len() as u32, "{text:?}");
         }
@@ -128,7 +123,7 @@ mod tests {
             for without_bom in [false, true] {
                 let offsets = match without_bom {
                     true => Utf16OffsetTable::without_bom(text.as_bytes()),
-                    false => Utf16OffsetTable::new(text.as_bytes()),
+                    false => Utf16OffsetTable::from(text.as_bytes(), 0),
                 };
                 let skipped = u32::from(has_bom && without_bom);
                 let mut units = 0;

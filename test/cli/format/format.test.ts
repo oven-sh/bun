@@ -176,6 +176,161 @@ describe.concurrent("bun format", () => {
     });
   });
 
+  // By runs of Prettier 3.9.9: what is on the command line is `Number(text)`; an integer is what is its own `Math.floor`.
+  describe("printWidth and tabWidth", () => {
+    const text = `f(${"a, ".repeat(40)}a);\nif (a) {\n\tb(c, { d: 1 });\n}\n`;
+    test.each<[Record<string, string>, string[], string]>([
+      [{}, ["--print-width", "1e3"], "73086142db5ba22c6ea91ef3a0a7b1946ed3b177"],
+      [{}, ["--print-width=2.0"], "e4cc4ef9d5036279f56298dd8089b052c320ad7b"],
+      [{}, ["--print-width=0x10"], "38fccfacad6f6f01cb53a41c2819b9f6e101ad5f"],
+      [{}, ["--print-width=+5"], "e4cc4ef9d5036279f56298dd8089b052c320ad7b"],
+      [{}, ["--print-width="], "e4cc4ef9d5036279f56298dd8089b052c320ad7b"],
+      [{}, ["--print-width=-1"], "e4cc4ef9d5036279f56298dd8089b052c320ad7b"],
+      [{}, ["--print-width=-0"], "e4cc4ef9d5036279f56298dd8089b052c320ad7b"],
+      [{}, ["--print-width", "Infinity"], "73086142db5ba22c6ea91ef3a0a7b1946ed3b177"],
+      [{}, ["--print-width=-Infinity"], "e4cc4ef9d5036279f56298dd8089b052c320ad7b"],
+      [{}, ["--print-width", "1e20"], "73086142db5ba22c6ea91ef3a0a7b1946ed3b177"],
+      [{ ".prettierrc": '{"printWidth": -1}' }, [], "e4cc4ef9d5036279f56298dd8089b052c320ad7b"],
+      [{ ".prettierrc.yaml": "printWidth: -1\n" }, [], "e4cc4ef9d5036279f56298dd8089b052c320ad7b"],
+      [{ ".prettierrc.toml": "printWidth = -1\n" }, [], "e4cc4ef9d5036279f56298dd8089b052c320ad7b"],
+      [
+        { "prettier.config.mjs": "export default { printWidth: -Infinity };" },
+        [],
+        "e4cc4ef9d5036279f56298dd8089b052c320ad7b",
+      ],
+      [
+        { ".prettierrc": '{"overrides": [{"files": "*.js", "options": {"printWidth": -1}}]}' },
+        [],
+        "e4cc4ef9d5036279f56298dd8089b052c320ad7b",
+      ],
+      [{}, ["--tab-width", "256"], "98cd880581dcf1c45c95ee04ee491afe161db8d6"],
+      [{}, ["--tab-width=1000"], "19b91609f52f0b51bc0e425ef945d326e6d73ed8"],
+      [{}, ["--tab-width", "1e3"], "19b91609f52f0b51bc0e425ef945d326e6d73ed8"],
+      [{}, ["--tab-width=0x10"], "d7e62efdd2e86b3f79b1d89c0c1b58f822445456"],
+      [{}, ["--tab-width=-0"], "7d460c931c7c7b750fce254b4ed949d2942ec2fb"],
+      [{ ".prettierrc": '{"tabWidth": 256}' }, [], "98cd880581dcf1c45c95ee04ee491afe161db8d6"],
+      [{ ".prettierrc": '{"tabWidth": 70000}' }, [], "b76f5819101710e92181ff63e8a0e1011319cc3e"],
+      [{ ".prettierrc.toml": "tabWidth = 1_000\n" }, [], "19b91609f52f0b51bc0e425ef945d326e6d73ed8"],
+      [
+        { ".editorconfig": "root = true\n[*]\nindent_style = space\nindent_size = 1000\n" },
+        [],
+        "19b91609f52f0b51bc0e425ef945d326e6d73ed8",
+      ],
+      [
+        { ".editorconfig": "root = true\n[*]\nindent_style = space\ntab_width = 256\n" },
+        [],
+        "98cd880581dcf1c45c95ee04ee491afe161db8d6",
+      ],
+    ])("take what Prettier takes: %j %j", async (configuration, args, sha1) => {
+      const result = await format(configuration, [...args, "--stdin-filepath", "a.js"], { stdin: text });
+      expect(result.stderr).toBe("");
+      expect(new Bun.CryptoHasher("sha1").update(result.raw).digest("hex")).toBe(sha1);
+      expect(result.exitCode).toBe(0);
+    });
+
+    test.each<[Record<string, string>, string[], string, number]>([
+      [{}, ["--tab-width=4294967295"], "[error] a.js: RangeError: Invalid string length", 2],
+      [{ ".prettierrc": '{"tabWidth": 1e20}' }, [], "[error] a.js: RangeError: Invalid string length", 2],
+      [{}, ["--print-width", "1.5"], "[error] Invalid --print-width value. Expected an integer, but received 1.5.", 1],
+      [{}, ["--print-width=abc"], "[error] Invalid --print-width value. Expected an integer, but received null.", 1],
+      [{}, ["--print-width", "1e-1"], "[error] Invalid --print-width value. Expected an integer, but received 0.1.", 1],
+      [{}, ["--print-width=1_000"], "[error] Invalid --print-width value. Expected an integer, but received null.", 1],
+      [{}, ["--tab-width=1.5"], "[error] Invalid --tab-width value. Expected an integer, but received 1.5.", 1],
+      [{}, ["--tab-width", "NaN"], "[error] Invalid --tab-width value. Expected an integer, but received null.", 1],
+      [
+        { ".prettierrc": '{"printWidth": 1.5}' },
+        [],
+        "[error] Invalid printWidth value. Expected an integer, but received 1.5.",
+        1,
+      ],
+      [
+        { ".prettierrc": '{"printWidth": "5"}' },
+        [],
+        '[error] Invalid printWidth value. Expected an integer, but received "5".',
+        1,
+      ],
+      [
+        { ".prettierrc": '{"printWidth": true}' },
+        [],
+        "[error] Invalid printWidth value. Expected an integer, but received true.",
+        1,
+      ],
+      [
+        { ".prettierrc": '{"printWidth": null}' },
+        [],
+        "[error] Invalid printWidth value. Expected an integer, but received null.",
+        1,
+      ],
+      [
+        { ".prettierrc.yaml": "tabWidth: abc\n" },
+        [],
+        '[error] Invalid tabWidth value. Expected an integer, but received "abc".',
+        1,
+      ],
+      [
+        { "prettier.config.mjs": "export default { tabWidth: NaN };" },
+        [],
+        "[error] Invalid tabWidth value. Expected an integer, but received null.",
+        1,
+      ],
+      [
+        { ".prettierrc": '{"overrides": [{"files": "*.js", "options": {"tabWidth": 0.5}}]}' },
+        [],
+        "[error] Invalid tabWidth value. Expected an integer, but received 0.5.",
+        1,
+      ],
+      [
+        { ".prettierrc": '{"printWidth": 1.5}' },
+        ["--print-width", "1.5"],
+        "[error] Invalid --print-width value. Expected an integer, but received 1.5.",
+        1,
+      ],
+      [
+        { ".prettierrc": '{"printWidth": 1.5}' },
+        ["--print-width", "80"],
+        "[error] Invalid printWidth value. Expected an integer, but received 1.5.",
+        1,
+      ],
+      [
+        { ".prettierrc": "{}" },
+        ["--print-width", "2.5", "--config-precedence", "prefer-file"],
+        "[error] Invalid --print-width value. Expected an integer, but received 2.5.",
+        1,
+      ],
+    ])("are refused in the words of Prettier: %j %j", async (configuration, args, stderr, exitCode) => {
+      const result = await format(configuration, [...args, "--stdin-filepath", "a.js"], { stdin: text });
+      expect({ stdout: result.raw, stderr: result.stderr.split("\n")[0], exitCode }).toEqual({
+        stdout: "",
+        stderr,
+        exitCode,
+      });
+      expect(result.exitCode).toBe(exitCode);
+    });
+
+    test("the run ends at the first file whose configuration has one that is no integer", async () => {
+      const files = { ".prettierrc": `{ "printWidth": 1.5 }`, "a.js": ugly, "b.js": ugly };
+      const result = await format(files, ["--check", "a.js", "b.js"]);
+      expect(result.stdout).toBe("Checking formatting...");
+      expect(result.stderr).toBe("[error] Invalid printWidth value. Expected an integer, but received 1.5.");
+      expect(result.exitCode).toBe(1);
+    });
+  });
+
+  // Prettier's `listDifferent`: it has nothing to say about what is going to be written, and then nothing is printed either.
+  test.each([
+    ["--check", "--write"],
+    ["--write", "--check"],
+    ["-l", "--write"],
+    ["--check", "--write", "--log-level", "warn"],
+  ])("standard input with %s %s: nothing is said, and nothing is printed", async (...args) => {
+    const result = await format({ ".prettierrc": "{}" }, [...args, "--stdin-filepath", "a.js"], { stdin: ugly });
+    expect({ stdout: result.raw, stderr: result.stderr, exitCode: result.exitCode }).toEqual({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("does not touch a file that is formatted", async () => {
     let before = 0;
     using dir = tempDir("bun-format", { "a.js": formatted });
@@ -1275,7 +1430,6 @@ ${packages["node_modules/prettier/index.cjs"]}`;
   test.each([
     ['{ "semi": null }', "Invalid semi value: null."],
     ['{ "semi": "true" }', 'Invalid semi value: "true".'],
-    ['{ "printWidth": "80" }', 'Invalid printWidth value: "80".'],
     ['{ "endOfLine": null }', "Invalid endOfLine value: null."],
     ['{ "plugins": "x" }', '"plugins" is not an array.'],
     ['{ "overrides": 1 }', '"overrides" is not an array of objects with "files"'],
@@ -1909,6 +2063,13 @@ ${packages["node_modules/prettier/index.cjs"]}`;
         "printWidth 1,000,000: an array of 90,000 columns",
         "a.js",
         wide,
+        `x = [${"a, ".repeat(30_000)}a];`,
+        "ceb1977b11ba34255575ded81bd39e001c4c5ef1",
+      ],
+      [
+        "printWidth: Infinity in a program: an array of 90,000 columns",
+        "a.js",
+        { "prettier.config.mjs": "export default { printWidth: Infinity };" },
         `x = [${"a, ".repeat(30_000)}a];`,
         "ceb1977b11ba34255575ded81bd39e001c4c5ef1",
       ],
@@ -5187,7 +5348,6 @@ describe.concurrent("[format] in bunfig.toml", () => {
     [`printWidth = "80"`, "expected number but received string"],
     ["printWidth = true", "expected number but received boolean"],
     ["printWidth = 1.5", "Invalid printWidth value: 1.5."],
-    ["printWidth = -1", "Invalid printWidth value: -1."],
     ["trailingComma = 5", "expected string but received number"],
     [`trailingComma = "some"`, "Invalid trailingComma value: some."],
     [`endOfLine = ["lf"]`, "expected string but received array"],

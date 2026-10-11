@@ -347,7 +347,8 @@ impl<'p, 's> Checker<'p, 's> {
         report_errors: ReportErrors,
     ) -> Option<TypeId> {
         if self.is_stack_low() {
-            return None;
+            self.bailed_out();
+            return Some(TypeId::UNRESOLVED);
         }
         let hir = self.hir(file);
         match hir[pat].kind {

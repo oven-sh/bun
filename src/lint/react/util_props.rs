@@ -28,27 +28,22 @@ fn is_annotated_field(node: Node<'_>, name: &str) -> bool {
     matches!(node, Node::Member(member) if member.ty().is_some() && is_field_named(member, name))
 }
 
-/// `isPropTypesDeclaration`
 pub(crate) fn is_prop_types_declaration(node: Node<'_>) -> bool {
     is_annotated_field(node, "props") || is_named(node, "propTypes")
 }
 
-/// `isContextTypesDeclaration`
 pub(crate) fn is_context_types_declaration(node: Node<'_>) -> bool {
     is_annotated_field(node, "context") || is_named(node, "contextTypes")
 }
 
-/// `isContextTypeDeclaration`
 pub(crate) fn is_context_type_declaration(node: Node<'_>) -> bool {
     is_named(node, "contextType")
 }
 
-/// `isChildContextTypesDeclaration`
 pub(crate) fn is_child_context_types_declaration(node: Node<'_>) -> bool {
     is_named(node, "childContextTypes")
 }
 
-/// `isDefaultPropsDeclaration`
 pub(crate) fn is_default_props_declaration(node: Node<'_>) -> bool {
     get_property_name(node).is_some_and(|it| it == b"defaultProps" || it == b"getDefaultProps")
 }

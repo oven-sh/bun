@@ -438,7 +438,6 @@ impl<'a> Visitor<'a> {
         }
     }
 
-    /// `exportedDecls`
     fn exported_decls(&mut self, exported_name: Name<'a>) -> SmallVec<[Stmt<'a>; 1]> {
         let file = self.file;
         let declarations = self.declarations.get_or_insert_with(|| {

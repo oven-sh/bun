@@ -28,7 +28,6 @@ fn versions(part: Part) -> &'static [[u8; 3]] {
     data::VERSIONS.get(part.range()).unwrap_or_default()
 }
 
-/// `versionsToString`
 fn versions_to_string(versions: &[[u8; 3]]) -> String {
     let mut text = String::new();
     for (index, [a, b, c]) in versions.iter().enumerate() {
@@ -106,7 +105,6 @@ pub(crate) fn configured_node_version_as<T>(
     parse(node.get(b"version")?.as_str()?)
 }
 
-/// `isInRange`
 fn is_in_range(feature: &[[u8; 3]], requested: &Range) -> bool {
     Range::since(feature).is_some_and(|range| requested.is_subset_of(&range))
 }

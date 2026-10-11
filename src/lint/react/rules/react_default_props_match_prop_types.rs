@@ -55,7 +55,6 @@ impl Rule for DefaultPropsMatchPropTypes {
 }
 
 impl DefaultPropsMatchPropTypes {
-    /// upstream's `reportInvalidDefaultProps`
     fn report_invalid_default_props<'a>(
         &self,
         prop_types: &DeclaredPropTypes<'a>,

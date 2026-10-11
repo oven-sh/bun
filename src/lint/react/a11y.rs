@@ -12,7 +12,6 @@ use bun_lint::prelude::*;
 use bun_lint_oxlint::text::contains_name;
 use std::borrow::Cow;
 
-/// `cow_to_ascii_lowercase`
 pub(crate) fn cow_to_ascii_lowercase(text: &[u8]) -> Cow<'_, [u8]> {
     match text.iter().any(u8::is_ascii_uppercase) {
         true => Cow::Owned(text.to_ascii_lowercase()),

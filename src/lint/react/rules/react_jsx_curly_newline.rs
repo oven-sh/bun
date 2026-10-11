@@ -54,7 +54,6 @@ impl Rule for JsxCurlyNewline {
 }
 
 impl JsxCurlyNewline {
-    /// upstream's `validateCurlys`
     fn validate_curlys<'a>(&self, container: Span, expression: Expr<'a>, cx: &Cx<'a, Self>) {
         let file = cx.file();
         if self.singleline != Newlines::Require && ast_utils::is_on_one_line(file, container) {

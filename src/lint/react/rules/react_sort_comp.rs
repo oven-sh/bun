@@ -162,7 +162,6 @@ impl MethodsOrder {
         if a.max(b) == self.infinity() { u32::MAX } else { a.abs_diff(b) }
     }
 
-    /// upstream's `getRefPropIndexes`
     fn get_ref_prop_indexes(&self, name: Option<&[u8]>, kinds: Kinds) -> RefPropIndexes {
         let mut indexes: Option<RefPropIndexes> = None;
         for (group_index, current_group) in self.groups.iter().enumerate() {

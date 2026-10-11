@@ -101,7 +101,6 @@ fn start_of_line(file: &File, offset: u32) -> u32 {
 }
 
 impl JsxIndentProps {
-    /// `getNodeIndent`
     fn get_node_indent(&self, node: Span, line: &mut Line, file: &File) -> i64 {
         let src = file.slice(Span::new(start_of_line(file, node.start), node.end));
         let src = strings::index_of_char_usize(src, b'\n')
@@ -118,7 +117,6 @@ impl JsxIndentProps {
             .map_or_else(|| src.len() as i64, i64::from)
     }
 
-    /// `checkNodesIndent`
     fn check_nodes_indent<'a>(
         &self,
         nodes: List<'a, Prop<'a>>,

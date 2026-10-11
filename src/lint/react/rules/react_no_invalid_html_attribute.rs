@@ -216,7 +216,6 @@ impl Rule for NoInvalidHtmlAttribute {
     }
 }
 
-/// upstream's `checkAttribute`
 fn check_attribute<'a>(node: Prop<'a>, parent_node_name: &'a [u8], cx: &Cx<'a, NoInvalidHtmlAttribute>) {
     let Some(name) = node.key().map(|it| it.span(cx.file())) else {
         return;
@@ -375,7 +374,6 @@ fn check_call<'a>(node: Call<'a>, cx: &Cx<'a, NoInvalidHtmlAttribute>) {
     }
 }
 
-/// upstream's `checkPropValidValue`
 fn check_prop_valid_value<'a>(value: Expr<'a>, element: Element<'a>, cx: &Cx<'a, NoInvalidHtmlAttribute>) {
     if !ast_utils::is_literal(value) {
         return;

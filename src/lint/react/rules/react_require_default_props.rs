@@ -105,7 +105,6 @@ impl Rule for RequireDefaultProps {
 }
 
 impl RequireDefaultProps {
-    /// upstream's `reportPropTypesWithoutDefault`
     fn report_prop_types_without_default<'a>(
         &self,
         prop_types: &DeclaredPropTypes<'a>,
@@ -126,7 +125,6 @@ impl RequireDefaultProps {
         }
     }
 
-    /// upstream's `reportFunctionComponent`
     fn report_function_component<'a>(
         component_node: Func<'a>,
         prop_types: &DeclaredPropTypes<'a>,

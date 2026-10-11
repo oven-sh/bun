@@ -851,7 +851,7 @@ impl<'d> Printer<'d> {
 
         let mut flat_pairs = 0usize;
         // On a line that is too long already, Prettier's `fits` says no to everything, also to an item that is nothing, or a
-        // line break: the texts of `prettier-plugin-svelte` that start with a blank are fills whose items are the line breaks.
+        // line break.
         let is_too_long =
             !self.options.flavor.is_oxfmt() && measure.is_past(self.options.print_width);
         if is_too_long || !self.fill_entry_fits(&mut measure)? {

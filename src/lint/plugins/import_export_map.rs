@@ -311,7 +311,6 @@ impl<'a> ExportMaps<'a> {
         })
     }
 
-    /// `isEsModuleInterop`
     fn is_es_module_interop(&self) -> bool {
         *self.interop.get_or_init(|| {
             let parser_options = &self.file.language().parser_options;
@@ -458,7 +457,6 @@ impl<'a> ExportMaps<'a> {
         returned
     }
 
-    /// `has`
     pub(crate) fn has(&self, map: ExportMap<'a>, name: &[u8]) -> bool {
         let (interop, name) = (self.is_es_module_interop(), Some(name));
         // The calls that are to come, the next last.

@@ -518,7 +518,6 @@ impl<'a> Paths<'a> {
         }
     }
 
-    /// `shortestPathLengthToStart`
     fn shortest_path_length_to_start(&mut self, start: Segment<'a>) -> u32 {
         struct Frame<'a> {
             segment: Segment<'a>,

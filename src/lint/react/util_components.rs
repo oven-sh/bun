@@ -558,7 +558,6 @@ impl<'a> Components<'a> {
 
     // ───────────────────────────── utils ─────────────────────────────
 
-    /// `isDestructuredFromPragmaImport`
     pub(crate) fn is_destructured_from_pragma_import(
         &self,
         node: Node<'a>,
@@ -601,7 +600,6 @@ impl<'a> Components<'a> {
         })
     }
 
-    /// `isReturningOnlyNull`
     pub(crate) fn is_returning_only_null(&self, node: Node<'a>) -> bool {
         self.is_returning(node, 4, &util_jsx::is_returning_only_null)
     }
@@ -676,7 +674,6 @@ impl<'a> Components<'a> {
         })
     }
 
-    /// `getParentComponent`
     pub(crate) fn get_parent_component(&mut self, node: Node<'a>) -> Option<Node<'a>> {
         let pragmas = *self.pragmas();
         get_parent_es6_component(node, &pragmas)
@@ -685,7 +682,6 @@ impl<'a> Components<'a> {
             .or_else(|| self.get_parent_stateless_component(node))
     }
 
-    /// `isInAllowedPositionForComponent`
     fn is_in_allowed_position_for_component(mut node: Node<'a>) -> bool {
         loop {
             match Parent::of(node) {
@@ -872,7 +868,6 @@ impl<'a> Components<'a> {
         found
     }
 
-    /// `getParentStatelessComponent`
     pub(crate) fn get_parent_stateless_component(&mut self, node: Node<'a>) -> Option<Node<'a>> {
         let mut scope = Some(node.scope());
         while let Some(candidate) = scope.and_then(|it| self.closest_candidate(it)) {

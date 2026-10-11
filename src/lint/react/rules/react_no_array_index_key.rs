@@ -150,7 +150,6 @@ impl Rule for NoArrayIndexKey {
     }
 }
 
-/// upstream's `isCreateCloneElement`
 fn is_create_clone_element<'a>(callee: Expr<'a>, cx: &mut Cx<'a, NoArrayIndexKey>) -> bool {
     if let Some(name) = callee.as_ident() {
         return matches!(
@@ -205,7 +204,6 @@ impl<'a> IteratorCall<'a> {
     }
 }
 
-/// upstream's `isUsingReactChildren`
 fn is_using_react_children(callee: Expr<'_>, method: Name<'_>, pragma: &[u8]) -> bool {
     method.is_any(&["map", "forEach"])
         && callee.object().is_some_and(|obj| {
@@ -259,7 +257,6 @@ fn as_binary_expression(expr: Expr<'_>, is_oxlint: bool) -> Option<[Expr<'_>; 2]
     }
 }
 
-/// upstream's `checkPropValue`
 fn check_prop_value<'a>(
     node: Expr<'a>,
     is_oxlint: bool,

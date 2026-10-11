@@ -61,7 +61,6 @@ impl Rule for NoChildrenProp {
 }
 
 impl NoChildrenProp {
-    /// upstream's `isFunction`
     fn is_function(&self, node: Expr<'_>) -> bool {
         self.allow_functions && node.as_fn().is_some_and(ast_utils::is_function_with_body)
     }

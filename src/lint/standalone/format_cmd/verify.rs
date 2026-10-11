@@ -167,14 +167,6 @@ pub(super) fn verify_pairs(args: &Args) {
         let html = html_parser.map(|parser| {
             bun_format::html::has_same_content(&before, &after, parser, &args.options)
         });
-        let is_svelte = args.options.parser.as_deref() == Some(&b"svelte"[..]);
-        let html = html.or_else(|| {
-            let options = FormatOptions {
-                parse_javascript: Some(bun_lint_driver::fmt::parse_javascript),
-                ..args.options.clone()
-            };
-            is_svelte.then(|| bun_format::svelte::has_same_content(&before, &after, &options, None))
-        });
         let _ = match html.map_or_else(
             || compare(name, &before, &after, &args.options, &mut scratch),
             |is_same| {

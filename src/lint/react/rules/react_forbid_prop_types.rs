@@ -264,7 +264,6 @@ impl ForbidPropTypes {
             || (self.check_child_context_types && is_child_context_types_declaration(node))
     }
 
-    /// `reportIfForbidden`
     fn report_if_forbidden<'a>(
         &self,
         target: Option<&'a [u8]>,
@@ -279,7 +278,6 @@ impl ForbidPropTypes {
         }
     }
 
-    /// `checkProperties`
     fn check_properties<'a>(
         &self,
         declarations: List<'a, Prop<'a>>,
@@ -330,7 +328,6 @@ impl ForbidPropTypes {
         }
     }
 
-    /// `checkNode`
     fn check_node<'a>(&self, mut node: Expr<'a>, listened: &Listened<'a>, cx: &mut Cx<'a, Self>) {
         loop {
             match node.kind() {

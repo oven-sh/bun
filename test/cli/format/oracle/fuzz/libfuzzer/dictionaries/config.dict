@@ -345,7 +345,6 @@
 "\"tabWidth\":0"
 "\"useTabs\":true"
 "\"parser\":\"babel\""
-"\"parser\":\"svelte\""
 "\"endOfLine\":\"auto\""
 "\"$schema\":\"a\""
 "\"ignorePatterns\":["

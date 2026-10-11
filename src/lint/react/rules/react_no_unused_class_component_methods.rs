@@ -109,7 +109,6 @@ fn leaving(node: Span) -> Time {
     (node.end, false, Reverse(node.start))
 }
 
-/// `classInfo`
 #[derive(Default)]
 struct ClassInfo<'a> {
     /// `classNode`, unless `isClass`.
@@ -128,7 +127,6 @@ impl<'a> ClassInfo<'a> {
         self.properties.extend(key.and_then(|key| Some((key.inner_span(file), get_name_of_key(file, key)?))));
     }
 
-    /// `addUsedProperty`
     fn add_used_property(&mut self, name: Cow<'a, [u8]>) {
         if !name.is_empty() {
             self.used_properties.insert(name);
@@ -173,7 +171,6 @@ impl<'a> ClassInfo<'a> {
         }
     }
 
-    /// `reportUnusedProperties`
     fn report_unused_properties(self, cx: &Cx<'a, NoUnusedClassComponentMethods>) {
         for (node, name) in self.properties {
             if self.used_properties.contains(&name) || is_lifecycle(&name, self.object.is_none()) {

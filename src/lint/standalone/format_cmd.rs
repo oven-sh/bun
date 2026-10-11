@@ -10,7 +10,6 @@
 //! - `check-idempotent <paths..>`: formatting what has been formatted changes nothing.
 //! - `verify <paths..>`: what has been formatted is the same program. See `bun_format::verify`.
 //! - `letters <paths..>`: see `letters.rs`.
-//! - `svelte-trees <list>`: for test/cli/format/oracle/svelte/trees.cjs.
 //! - `verify-pairs`: answers whether the second of two texts is the same program as the first.
 //!   test/cli/format/oracle/verify-mutants.ts talks to it.
 //! - `bench <paths..> [--iterations=n] [--threads=n] [--check] [--only=parse]`: MB/s, with and without parsing.
@@ -320,22 +319,6 @@ fn serve(args: &Args) {
     }
 }
 
-/// For each line of a file, `<component>\t<prefix>`: writes the text without what is in scripts and style sheets to
-/// `<prefix>.snip`, and its tree, or why there is none, to `<prefix>.json`.
-fn svelte_trees(args: &Args) {
-    let list = host::read_text(args.positional.first().expect("a list")).expect("the list");
-    for line in host::lines(&list) {
-        if let Some((component, prefix)) = host::split_once(line, "\t")
-            && let Ok(text) = host::read(component)
-        {
-            let parse = bun_lint_driver::fmt::parse_javascript;
-            let (snipped, tree) = bun_format::svelte::tree_for_tests(&text, parse);
-            let _ = host::write(format!("{prefix}.snip"), snipped);
-            let _ = host::write(format!("{prefix}.json"), tree);
-        }
-    }
-}
-
 pub(crate) fn run(args: &[String]) {
     let command = args.first().map(String::as_str);
     let raw = args.get(1..).unwrap_or_default();
@@ -376,7 +359,6 @@ pub(crate) fn run(args: &[String]) {
         Some("cursor") => cursor::run(&args),
         Some("markdown") => markdown::run(&args),
         Some("sort-imports") => sort_imports::run(&args),
-        Some("svelte-trees") => svelte_trees(&args),
         _ => output_line!(
             "usage: bun-lint format file|ir|conformance|check-idempotent|verify|bench|serve .."
         ),

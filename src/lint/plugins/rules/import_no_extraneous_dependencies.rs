@@ -167,7 +167,6 @@ impl DepFields {
         (DepFields::new(&packages), None)
     }
 
-    /// `checkDependencyDeclaration`
     fn check_dependency_declaration(&self, package_name: &[u8], declaration_status: u8) -> u8 {
         let (mut status, mut start) = (declaration_status, 0);
         while let Some(rest) = package_name.get(start..).filter(|_| !package_name.is_empty()) {
@@ -185,7 +184,6 @@ impl DepFields {
     }
 }
 
-/// `getModuleOriginalName`
 fn get_module_original_name(name: &[u8]) -> Cow<'_, [u8]> {
     let is_scoped = name.starts_with(b"@");
     match strings::split_once_char(name, b'/') {

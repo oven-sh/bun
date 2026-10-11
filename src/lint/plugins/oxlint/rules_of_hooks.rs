@@ -34,7 +34,6 @@ fn is_component_or_hook_name(name: &[u8]) -> bool {
         || crate::rules::react_hooks_rules_of_hooks::is_hook_name(name)
 }
 
-/// oxc's `callee_name`
 fn callee_name(call: Call) -> Option<Name> {
     let callee = call.callee();
     match callee.kind() {

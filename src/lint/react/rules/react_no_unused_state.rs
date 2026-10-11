@@ -25,7 +25,6 @@ fn raw_of<'a>(file: &File<'a>, written: &'a [u8]) -> Cow<'a, [u8]> {
     }
 }
 
-/// `getName`
 fn get_name(node: Expr<'_>) -> Option<Cow<'_, [u8]>> {
     match node.kind() {
         ExprKind::Ident(name) => Some(Cow::Borrowed(name.bytes())),
@@ -59,7 +58,6 @@ fn get_name_of_property(node: Expr<'_>) -> Option<Cow<'_, [u8]>> {
     }
 }
 
-/// `isThisExpression`
 fn is_this_expression(node: Expr<'_>) -> bool {
     unwrap_ts_as_expression(node).tag() == ExprTag::This
 }
@@ -116,7 +114,6 @@ fn state_parameter(function: Func<'_>) -> Option<Option<Name<'_>>> {
     function.params_with_this().nth(1).filter(|_| gets_the_state).map(name_of_param)
 }
 
-/// `classInfo`
 #[derive(Default)]
 struct ClassInfo<'a> {
     /// Each with the `getName` of its key.
@@ -222,7 +219,6 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// `handleStateDestructuring`
     fn handle_state_destructuring(&mut self, node: Target<'a>) {
         for property in node.elements() {
             match (property.key, property.target.map(Target::kind)) {
@@ -233,7 +229,6 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// `handleAssignment`
     fn handle_assignment(&mut self, left: Target<'a>, right: Expr<'a>) {
         let unwrapped_right = unwrap_ts_as_expression(right);
         match left.kind() {
@@ -268,7 +263,6 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// `CallExpression`
     fn call_expression(&mut self, node: Expr<'a>) {
         let Some(call) = node.as_call() else {
             return;
@@ -338,7 +332,6 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// `FunctionExpression`
     fn function_expression(&mut self, node: Func<'a>) {
         // The parent of a method of a class is in a `ClassBody`.
         let Node::Expr(function) = node.owner() else {
@@ -362,7 +355,6 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// `AssignmentExpression`
     fn assignment_expression(&mut self, node: Expr<'a>) {
         let ExprKind::Assign { target, value, .. } = node.kind() else {
             return;

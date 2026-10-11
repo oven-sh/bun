@@ -99,7 +99,6 @@ impl Rule for ForbidForeignPropTypes {
 }
 
 impl ForbidForeignPropTypes {
-    /// `isAllowedAssignment`
     fn is_allowed_assignment<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) -> bool {
         if !self.allow_in_prop_types {
             return false;

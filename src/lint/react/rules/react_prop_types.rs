@@ -111,7 +111,6 @@ fn accepts(prop_type: &DeclaredPropType<'_>, key_list: &[&[u8]]) -> bool {
 }
 
 impl PropTypes {
-    /// upstream's `mustBeValidated`
     fn must_be_validated(&self, component: &Component<'_>) -> bool {
         let is_skipped_by_config = self.skip_undeclared && component.declared_prop_types.is_none();
         component.used_prop_types.is_some() && !component.ignore_props_validation && !is_skipped_by_config
@@ -137,7 +136,6 @@ impl PropTypes {
             .is_some_and(|it| it.confidence >= 2 && (it.ignore_props_validation || self.must_be_validated(it)))
     }
 
-    /// upstream's `reportUndeclaredPropTypes`
     fn report_undeclared_prop_types<'a>(
         &self,
         used_prop_types: &[UsedPropType<'a>],

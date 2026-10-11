@@ -133,7 +133,6 @@ impl Rule for ForbidComponentProps {
 }
 
 impl ForbidComponentProps {
-    /// `getPropOptions`
     fn get_prop_options(&self, prop: &[u8], is_oxlint: bool) -> Option<&ForbidOption> {
         let is_named = |it: &&ForbidOption| *it.key.written == *prop;
         let matches = |it: &&ForbidOption| it.is_pattern && it.key.matches(prop, is_oxlint);

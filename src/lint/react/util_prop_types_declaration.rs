@@ -108,7 +108,6 @@ struct ReactDeclarationTypes<'a, 'b> {
 }
 
 impl<'a> ReactDeclarationTypes<'a, '_> {
-    /// `hasCustomValidator`
     fn has_custom_validator(&self, validator: Name<'_>) -> bool {
         self.custom_validators
             .iter()
@@ -273,7 +272,6 @@ pub(crate) fn build_react_declaration_types<'a>(
     }
 }
 
-/// `isValidReactGenericTypeAnnotation`
 pub(crate) fn is_valid_react_generic_type_annotation(
     annotation: TypeNode<'_>,
     imports: &ReactTypeImports<'_>,
@@ -453,7 +451,6 @@ impl<'a> DeclarePropTypesForTsTypeAnnotation<'a, '_> {
         self.should_ignore_prop_types |= !is_declared;
     }
 
-    /// `traverseDeclaredInterfaceOrTypeAlias`
     fn traverse_declared_interface_or_type_alias(&mut self, node: Declaration<'a>) {
         match node {
             Declaration::Interface(it) => {
@@ -467,14 +464,12 @@ impl<'a> DeclarePropTypesForTsTypeAnnotation<'a, '_> {
         }
     }
 
-    /// `convertIntersectionTypeToPropTypes`
     fn convert_intersection_type_to_prop_types(&mut self, types: List<'a, TypeNode<'a>>) {
         for x in types {
             self.visit_ts_node(Some(x));
         }
     }
 
-    /// `convertReturnTypeToPropTypes`
     fn convert_return_type_to_prop_types(
         &mut self,
         file: &'a File<'a>,
@@ -583,7 +578,6 @@ impl<'a> DeclarePropTypesForTsTypeAnnotation<'a, '_> {
         self.declared_prop_types.insert(Cow::Borrowed(name), types);
     }
 
-    /// `endAndStructDeclaredPropTypes`
     fn end_and_struct_declared_prop_types(&mut self) {
         if self.should_specify_optional_children_props {
             self.specify_optional_prop(b"children");

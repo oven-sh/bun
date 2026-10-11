@@ -245,7 +245,6 @@ impl Rule for NoDeprecated {
 }
 
 impl<'a> State<'a> {
-    /// upstream's `checkSpecifiers`
     fn check_specifiers(&mut self, import: Import<'a>) {
         let Some(imports) = self.maps.get(import.spec().bytes()) else {
             return;

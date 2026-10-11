@@ -147,7 +147,6 @@ fn characters(name: &[u8], is_oxlint: bool) -> impl Iterator<Item = Character> {
     })
 }
 
-/// `testAllCaps`
 fn test_all_caps(name: &[u8], is_oxlint: bool) -> bool {
     // oxlint takes the number of bytes for the number of characters.
     let length = if is_oxlint { name.len() } else { strings::wtf8_codepoint_count(name) };
@@ -158,7 +157,6 @@ fn test_all_caps(name: &[u8], is_oxlint: bool) -> bool {
     })
 }
 
-/// `testPascalCase`
 fn test_pascal_case(name: &[u8], is_oxlint: bool) -> bool {
     let mut characters = characters(name, is_oxlint);
     if characters.next() != Some(Character::UpperCase) {

@@ -404,7 +404,6 @@ pub(crate) fn only_where_sorted(options: &mut FormatOptions, kind: Option<Kind>)
                 | Kind::Css(_)
                 | Kind::Markdown
                 | Kind::Handlebars
-                | Kind::Svelte
                 | Kind::Html(Parser::Html | Parser::Vue | Parser::Angular)
         )
     );

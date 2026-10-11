@@ -72,11 +72,6 @@ impl Reader {
         *count = count.wrapping_sub(1);
     }
 
-    /// Something that is not text.
-    pub(crate) fn mark(&mut self, mark: u8) {
-        self.structure.write_u8(mark);
-    }
-
     pub(crate) fn finish(&self) -> Signature {
         Signature {
             structure: self.structure.finish(),

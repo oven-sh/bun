@@ -18,7 +18,6 @@ pub struct NoInternalModules {
 
 const REACHING: Message = Message::new("", "Reaching to \"{{importPath}}\" is not allowed.");
 
-/// `normalizeSep`
 fn normalize_sep(some_path: &[u8]) -> Cow<'_, [u8]> {
     match strings::contains_char(some_path, b'\\') {
         true => Cow::Owned(strings::replace_owned(some_path, b"\\", b"/")),
@@ -26,7 +25,6 @@ fn normalize_sep(some_path: &[u8]) -> Cow<'_, [u8]> {
     }
 }
 
-/// `toSteps`
 fn to_steps(some_path: &[u8]) -> SmallVec<[&[u8]; 8]> {
     let mut steps = SmallVec::new();
     for step in strings::tokenize_any(some_path, b"/\\") {

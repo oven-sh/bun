@@ -81,7 +81,6 @@ fn is_namespaced_name(jsx: Jsx<'_>) -> bool {
     matches!(jsx.tag().map(Expr::kind), Some(ExprKind::String(name)) if strings::contains_char(name.bytes(), b':'))
 }
 
-/// upstream's `childrenIsMultilineSpaces`
 fn children_is_multiline_spaces<'a>(jsx: Jsx<'a>, file: &'a File<'a>) -> bool {
     let mut children = jsx.children_with_whitespace();
     let (Some(child), None) = (children.next(), children.next()) else {

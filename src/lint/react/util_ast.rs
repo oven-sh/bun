@@ -90,7 +90,6 @@ fn traverse_all<'a>(mut worklist: Worklist<'a>, enter: &mut dyn FnMut(Node<'a>) 
     }
 }
 
-/// `loopNodes`
 fn loop_nodes<'a>(mut nodes: List<'a, Stmt<'a>>) -> Option<Stmt<'a>> {
     'nodes: loop {
         for node in nodes.iter().rev() {
@@ -370,13 +369,11 @@ pub(crate) fn get_first_node_in_line<'a>(file: &'a File<'a>, node: Span) -> Opti
     })
 }
 
-/// `isNodeFirstInLine`
 pub(crate) fn is_node_first_in_line<'a>(file: &'a File<'a>, node: Span) -> bool {
     get_first_node_in_line(file, node)
         .is_none_or(|token| file.line_of(node.start) != file.line_of(token.end()))
 }
 
-/// `inConstructor`
 pub(crate) fn in_constructor(node: Node<'_>) -> bool {
     node.scope().chain().any(|scope| match scope.node() {
         Node::Func(func) => matches!(func.owner(), Node::Member(it) if it.is_constructor()),

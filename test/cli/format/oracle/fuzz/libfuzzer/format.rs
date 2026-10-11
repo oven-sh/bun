@@ -264,8 +264,6 @@ const TARGETS: &[Target] = &[
             ("a.html.hl", None),
             ("a.Component.Html", None),
             ("a.VUE", None),
-            // As `prettier-plugin-svelte` prints it.
-            ("a.svelte", Some("svelte")),
         ],
         growth: 8,
     },

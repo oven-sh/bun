@@ -16,7 +16,6 @@ pub(crate) enum NativeAllowList {
     None,
 }
 
-/// `react_perf_from_configuration`
 pub(crate) fn react_perf_from_configuration(options: &Options) -> NativeAllowList {
     match options.object(0).get("nativeAllowList") {
         Some(Json::String(all)) if **all == *b"all" => NativeAllowList::All,

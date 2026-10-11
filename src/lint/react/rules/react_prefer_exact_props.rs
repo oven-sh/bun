@@ -94,7 +94,6 @@ fn is_not_exact(node: Expr<'_>) -> bool {
     }
 }
 
-/// `reportPropTypesError`
 fn report_prop_types_error(node: Span, cx: &mut Cx<'_, PreferExactProps>) {
     let formatted_wrappers = format_exact_prop_wrapper_functions(cx.file()).unwrap_or_default();
     let message = match get_exact_prop_wrapper_functions(cx.file()).count() > 1 {

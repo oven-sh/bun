@@ -109,7 +109,6 @@ impl Context {
     }
 }
 
-/// `isNodeModule`
 fn is_node_module(path: &[u8]) -> bool {
     strings::contains(path, b"/node_modules/")
 }
@@ -352,7 +351,6 @@ impl NoUnusedModules {
         (!is_exempt).then(|| Arc::clone(exports))
     }
 
-    /// `checkUsage`
     fn check_usage<'a>(&self, node: Span, exported_value: Option<&'a [u8]>, is_type_export: bool, cx: &Cx<'a, Self>) {
         if is_type_export && self.ignore_unused_type_exports {
             return;

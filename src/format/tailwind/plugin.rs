@@ -300,26 +300,6 @@ impl<'a> Visitor<'a> for Sorter<'a, '_> {
     }
 }
 
-/// For `file`, which is the expression in the braces of an attribute for classes of Svelte: what is written in the place
-/// of what. All its strings and templates are sorted, and nothing else is done to them.
-pub fn sorted_in_svelte<'a>(file: &'a File<'a>, tailwind: &Tailwind) -> Vec<(Span, Vec<u8>)> {
-    if file.has_parse_errors() {
-        return Vec::new();
-    }
-    let mut sorter = Sorter {
-        tailwind,
-        around: Vec::new(),
-        roots: 1,
-        changes: Vec::new(),
-        tidies: Tidies {
-            collapses_white_space: false,
-            removes_duplicates: false,
-        },
-    };
-    walk(file, &mut sorter);
-    sorter.changes
-}
-
 /// The text of `file` with the classes in it sorted. `None`: it is the same.
 pub fn sorted_text<'a>(file: &'a File<'a>, tailwind: &Tailwind) -> Option<Vec<u8>> {
     let text = file.text();

@@ -131,7 +131,6 @@ impl Rule for Extensions {
     }
 }
 
-/// `isExternalRootModule`
 fn is_external_root_module(file: &[u8]) -> bool {
     match strings::count_char(file, b'/') {
         0 => !matches!(file, b"." | b".."),
@@ -214,7 +213,6 @@ impl Props {
         self.pattern.get(extension).copied().unwrap_or(self.default_config)
     }
 
-    /// `checkFileExtension`
     fn check_file_extension<'a>(&self, visited: &Visited<'a>, types: &ImportTypes<'a>, cx: &Cx<'a, Extensions>) {
         let import_path_with_query_string = visited.specifier;
         if import_path_with_query_string.is_empty() {

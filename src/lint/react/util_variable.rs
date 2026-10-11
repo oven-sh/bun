@@ -35,7 +35,6 @@ pub(crate) enum Found<'a> {
     Init(Expr<'a>),
 }
 
-/// `findVariableByName`
 pub(crate) fn find_variable_by_name<'a>(node: Node<'a>, name: Name<'a>) -> Option<Found<'a>> {
     use Declaration::{ImportDefault, ImportEquals, ImportNamespace, ImportSpec};
     let declaration = get_variable_from_context(node, name)?
@@ -52,7 +51,6 @@ pub(crate) fn find_variable_by_name<'a>(node: Node<'a>, name: Name<'a>) -> Optio
     }
 }
 
-/// `getLatestVariableDefinition`
 pub(crate) fn get_latest_variable_definition(variable: Symbol<'_>) -> Option<Declaration<'_>> {
     variable.declarations().next_back()
 }

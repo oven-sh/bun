@@ -32,7 +32,6 @@ fn is_from_pragma(init: Expr, pragma: &[u8]) -> bool {
         })
 }
 
-/// `isDestructuredFromPragmaImport(context, node, variable)`
 pub(crate) fn is_destructured_from_pragma_import<'a>(
     node: Node<'a>,
     variable: Name<'a>,

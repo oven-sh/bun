@@ -163,7 +163,6 @@ fn name_of_property(node: Expr<'_>) -> Option<Option<&[u8]>> {
     }
 }
 
-/// `getPropKey`
 fn get_prop_key(node: Prop<'_>) -> Option<&[u8]> {
     let value = node.value().filter(|_| node.kind() != PropKind::Spread)?;
     match name_of_property(value) {
@@ -203,7 +202,6 @@ fn right_of_parent(node: Expr<'_>) -> Option<Expr<'_>> {
     }
 }
 
-/// `getComponentTypeAnnotation`
 fn get_component_type_annotation(node: Node<'_>) -> Option<TypeNode<'_>> {
     // If this is a functional component that uses a global type, check it
     if let Node::Func(func) = node
@@ -230,7 +228,6 @@ fn get_component_type_annotation(node: Node<'_>) -> Option<TypeNode<'_>> {
 /// The `members` of some `TSTypeLiteral`s, the `body` of some `TSInterfaceBody`s.
 type ObjectTypes<'a> = SmallVec<[List<'a, Member<'a>>; 2]>;
 
-/// `findAllTypeAnnotations`
 fn find_all_type_annotations<'a>(node: TypeNode<'a>, found: &mut ObjectTypes<'a>) {
     let mut worklist: SmallVec<[TypeNode<'a>; 8]> = smallvec![node];
     while let Some(node) = worklist.pop() {
@@ -295,7 +292,6 @@ impl<'a> Walk<'_, 'a> {
         !self.rule.test(prop.name().unwrap_or(UNDEFINED))
     }
 
-    /// `regularCheck`
     fn regular_check(&self, prop: Prop<'a>) -> bool {
         get_prop_key(prop).is_some_and(|prop_key| self.config.prop_type_names.iter().any(|it| prop_key == &**it))
             && self.is_named_otherwise(Property::Prop(prop))
@@ -308,7 +304,6 @@ impl<'a> Walk<'_, 'a> {
             && self.is_named_otherwise(Property::Member(prop))
     }
 
-    /// `runCheck`
     fn run_check(&self, proptypes: PropTypes<'a>, invalid_props: &mut Vec<Property<'a>>) {
         let properties = match proptypes {
             PropTypes::Undefined => return,
@@ -333,7 +328,6 @@ impl<'a> Walk<'_, 'a> {
         }
     }
 
-    /// `validatePropNaming`
     fn validate_prop_naming(&mut self, node: Node<'a>, proptypes: PropTypes<'a>) {
         let component = self.components.get(node);
         let mut invalid_props = component.and_then(|it| self.invalid_props.remove(&it)).unwrap_or_default();
@@ -344,7 +338,6 @@ impl<'a> Walk<'_, 'a> {
         }
     }
 
-    /// `checkPropWrapperArguments`
     fn check_prop_wrapper_arguments(&mut self, node: Node<'a>, args: List<'a, Expr<'a>>) {
         for object in args {
             if let properties @ PropTypes::Properties(_) = PropTypes::properties_of(object) {
@@ -370,7 +363,6 @@ impl<'a> Walk<'_, 'a> {
         }
     }
 
-    /// `MemberExpression`
     fn member_expression(&mut self, node: Expr<'a>) {
         let Some(component) = self.components.get_related_component(node) else {
             return;
@@ -385,7 +377,6 @@ impl<'a> Walk<'_, 'a> {
         }
     }
 
-    /// `ObjectExpression`
     fn object_expression(&mut self, node: Expr<'a>, properties: List<'a, Prop<'a>>) {
         for property in properties {
             if is_prop_types_declaration(Node::Prop(property)) {

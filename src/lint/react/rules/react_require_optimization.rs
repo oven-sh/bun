@@ -152,7 +152,6 @@ fn is_class_declaration(node: Node<'_>) -> bool {
     estree_type_name(node) == "ClassDeclaration"
 }
 
-/// upstream's `isFunctionInClass`
 fn is_function_in_class(func: Func<'_>) -> bool {
     Node::Func(func).scope().chain().any(|scope| scope.kind() == ScopeKind::Class && is_class_declaration(scope.node()))
 }

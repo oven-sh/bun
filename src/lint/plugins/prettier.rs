@@ -15,7 +15,6 @@ const REPLACE: Message = Message::new(
     "Replace `{{ deleteText }}` with `{{ insertText }}`",
 );
 
-/// `showInvisibles()`
 fn show_invisibles(shown: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(shown.len() * 2);
     for &byte in shown {

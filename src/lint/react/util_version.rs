@@ -23,7 +23,6 @@ pub(crate) type Version = (u64, u64, u64);
 
 pub(crate) const ULTIMATE_LATEST_SEMVER: Version = (999, 999, 999);
 
-/// `convertConfVerToSemver`
 fn convert_conf_ver_to_semver(conf_ver: &[u8]) -> Option<Version> {
     let numbers = strings::split(conf_ver, b".").map(bun_core::fmt::js_string_to_number);
     let numbers: Vec<Vec<u8>> = numbers.map(text::number_to_string).collect();
@@ -98,7 +97,6 @@ fn default_version(file: &File) -> Version {
     (written.and_then(|it| convert_conf_ver_to_semver(&it))).unwrap_or(ULTIMATE_LATEST_SEMVER)
 }
 
-/// `getReactVersionFromContext`
 pub(crate) fn get_react_version_from_context<'a>(file: &'a File<'a>) -> Version {
     let version = match setting(file, b"version") {
         Some(version) if version == b"detect" => detect_version(file, b"react").map(<[u8]>::to_vec),

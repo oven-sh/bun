@@ -143,7 +143,6 @@ fn is_coerce_valid_nested_logical_expression(mut e: Expr) -> bool {
     }
 }
 
-/// `extractExpressionBetweenLogicalAnds`
 fn extract_expression_between_logical_ands<'a>(mut e: Expr<'a>, all: &mut Vec<Expr<'a>>) {
     let mut operands = Vec::new();
     while let ExprKind::Binary { op: BinOp::And, left, right } = e.kind() {

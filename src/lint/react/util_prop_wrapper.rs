@@ -8,7 +8,6 @@ fn string_of<'a>(func: &'a Json, key: &[u8]) -> Option<&'a [u8]> {
     func.get(key)?.as_str()
 }
 
-/// `searchPropWrapperFunctions`
 fn search_prop_wrapper_functions(
     name: &[u8],
     prop_wrapper_functions: &mut dyn Iterator<Item = &Json>,
@@ -37,12 +36,10 @@ fn get_prop_wrapper_functions<'a>(file: &'a File<'a>) -> &'a [Json] {
     (prop_wrapper_functions.and_then(Json::as_array)).unwrap_or_default()
 }
 
-/// `isPropWrapperFunction`
 pub(crate) fn is_prop_wrapper_function<'a>(file: &'a File<'a>, name: &[u8]) -> bool {
     search_prop_wrapper_functions(name, &mut get_prop_wrapper_functions(file).iter())
 }
 
-/// `getExactPropWrapperFunctions`
 pub(crate) fn get_exact_prop_wrapper_functions<'a>(
     file: &'a File<'a>,
 ) -> impl Iterator<Item = &'a Json> {
@@ -50,7 +47,6 @@ pub(crate) fn get_exact_prop_wrapper_functions<'a>(
     prop_wrapper_functions.filter(|func| func.get(b"exact").and_then(Json::as_bool) == Some(true))
 }
 
-/// `isExactPropWrapperFunction`
 pub(crate) fn is_exact_prop_wrapper_function<'a>(file: &'a File<'a>, name: &[u8]) -> bool {
     search_prop_wrapper_functions(name, &mut get_exact_prop_wrapper_functions(file))
 }

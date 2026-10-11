@@ -163,7 +163,6 @@ impl Rule for JsxNoBind {
 }
 
 impl JsxNoBind {
-    /// upstream's `getNodeViolationType`
     fn get_node_violation_type(&self, mut node: Expr<'_>) -> Option<Violation> {
         let mut pending: SmallVec<[Expr<'_>; 4]> = SmallVec::new();
         loop {

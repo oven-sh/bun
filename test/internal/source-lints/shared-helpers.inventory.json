@@ -413,13 +413,6 @@
     "src/format/range.rs": {
       "offset_of_utf16_index": 1
     },
-    "src/format/svelte/parser.rs": {
-      "code_points": 1
-    },
-    "src/format/svelte/print.rs": {
-      "ends_with_white_space": 1,
-      "starts_with_white_space": 1
-    },
     "src/format/text.rs": {
       "first_char": 1,
       "has_newline": 1,

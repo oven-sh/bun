@@ -15,7 +15,6 @@ pub struct NoAccessStateInSetstate;
 const USE_CALLBACK: Message =
     Message::new("useCallback", "Use callback in setState when referencing the previous state.");
 
-/// `isSetStateCall`
 fn is_set_state_call(node: Expr<'_>) -> bool {
     node.as_call().is_some_and(|call| {
         let callee = call.callee();
@@ -23,7 +22,6 @@ fn is_set_state_call(node: Expr<'_>) -> bool {
     })
 }
 
-/// `isClassComponent`
 fn is_class_component(node: Expr<'_>, pragmas: &Pragmas<'_>) -> bool {
     let node = Node::Expr(node);
     get_parent_es6_component(node, pragmas).is_some() || get_parent_es5_component(node, pragmas).is_some()

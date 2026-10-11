@@ -201,7 +201,6 @@ impl Rule for SortPropTypes {
 }
 
 impl SortPropTypes {
-    /// `checkNode`
     fn check_node<'a>(&self, mut node: Expr<'a>, cx: &Cx<'a, Self>) {
         while let ExprKind::Call(call) = node.kind()
             && !node.is_chain_root()
@@ -225,7 +224,6 @@ impl SortPropTypes {
         }
     }
 
-    /// `checkSorted`
     fn check_sorted<'a>(&self, declarations: Declarations<'a>, cx: &Cx<'a, Self>) {
         let fix = OnceCell::new();
         let report = |node: Property<'a>, message: Message| {
@@ -389,7 +387,6 @@ fn right_of_parent(node: Expr<'_>) -> Option<Expr<'_>> {
     }
 }
 
-/// `isCallbackPropName`
 fn is_callback_prop_name(prop_name: &[u8]) -> bool {
     matches!(prop_name, [b'o', b'n', b'A'..=b'Z', ..])
 }

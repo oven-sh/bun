@@ -1002,7 +1002,6 @@ fn is_ref(object: Expr) -> bool {
     hook().is_some_and(|hook| hook.is("useRef"))
 }
 
-/// `ref_update`
 fn ref_update<'a>(file: &'a File<'a>, out: &mut Rendered) {
     out.relabel("Cannot update ref value during render");
     let Some(whole) = out.place() else {
@@ -1075,7 +1074,6 @@ fn derived_state_in_effect<'a>(file: &'a File<'a>, out: &mut Rendered) {
     ));
 }
 
-/// `jsx_in_try`
 fn jsx_in_try<'a>(file: &'a File<'a>, out: &mut Rendered) {
     out.help = Cow::Borrowed(
         "React does not immediately render components when JSX is constructed, so rendering errors will not be caught by the \

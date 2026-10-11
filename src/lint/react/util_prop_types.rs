@@ -57,7 +57,6 @@ pub(crate) fn is_in_object_prototype(name: &[u8]) -> bool {
     )
 }
 
-/// `isSuperTypeParameterPropsDeclaration`
 fn is_super_type_parameter_props_declaration(node: Class<'_>) -> bool {
     !node.extends_args().is_empty()
 }
@@ -221,7 +220,6 @@ struct PropTypesInstructions<'a> {
 }
 
 impl<'a> PropTypesInstructions<'a> {
-    /// `isInsideClassBody`
     fn is_inside_class_body(&mut self, node: Node<'a>) -> bool {
         let class_body = self.class_bodies.find(node, |_, parent| {
             matches!(parent, Node::Member(it) if !it.is_signature()).then_some(())
@@ -443,7 +441,6 @@ impl<'a> PropTypesInstructions<'a> {
         }
     }
 
-    /// `markAnnotatedFunctionArgumentsAsDeclared`
     fn mark_annotated_function_arguments_as_declared(
         &mut self,
         components: &mut Components<'a>,
@@ -504,7 +501,6 @@ impl<'a> PropTypesInstructions<'a> {
         }
     }
 
-    /// `resolveSuperParameterPropsType`
     fn resolve_super_parameter_props_type(&mut self, node: Class<'a>) -> PropTypes<'a> {
         let parameters = node.extends_args();
         let flow_version = *self
@@ -544,7 +540,6 @@ impl<'a> PropTypesInstructions<'a> {
         self.mark_prop_types_as_declared(components, node, prop_types, Some(node));
     }
 
-    /// `MethodDefinition(node)`
     fn method_definition(&mut self, components: &mut Components<'a>, member: Member<'a>) {
         let node = Node::Member(member);
         if !member.is_static()
@@ -564,7 +559,6 @@ impl<'a> PropTypesInstructions<'a> {
         }
     }
 
-    /// `ObjectExpression(node)`
     fn object_expression(
         &mut self,
         components: &mut Components<'a>,
@@ -580,7 +574,6 @@ impl<'a> PropTypesInstructions<'a> {
         }
     }
 
-    /// `MemberExpression(node)`
     fn member_expression(&mut self, components: &mut Components<'a>, e: Expr<'a>) {
         let Some(component) = components.get_related_component(e) else {
             return;

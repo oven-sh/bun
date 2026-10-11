@@ -146,7 +146,6 @@ impl JsxTagSpacing {
         }
     }
 
-    /// `validateBeforeSelfClosing`
     fn validate_before_self_closing(&self, node: Span, left_token: Span, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
         // After a name with type arguments it is their `<`.
@@ -183,7 +182,6 @@ impl JsxTagSpacing {
         }
     }
 
-    /// `validateBeforeClosing`
     fn validate_before_closing(&self, node: Span, left_token: Span, element: Element, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
         // After a name with type arguments it is their `<`.

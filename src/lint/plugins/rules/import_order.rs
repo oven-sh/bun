@@ -296,7 +296,6 @@ fn is_literal(e: Expr) -> bool {
     matches!(e.kind(), String(_) | Number(_) | True | False | Null | Regex(_) | BigInt(_))
 }
 
-/// `isRequireExpression`
 fn is_require_expression(e: Expr) -> bool {
     match e.kind() {
         ExprKind::Call(call) => {

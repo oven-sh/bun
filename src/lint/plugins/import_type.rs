@@ -56,7 +56,6 @@ pub(crate) fn is_scoped(name: &[u8]) -> bool {
     }
 }
 
-/// `baseModule`
 fn base_module(name: &[u8]) -> Cow<'_, [u8]> {
     let slash = strings::index_of_char_usize(name, b'/');
     if is_scoped(name) {
@@ -77,22 +76,18 @@ fn is_module(name: &[u8]) -> bool {
         .is_some_and(|it| strings::is_regexp_word_byte(*it))
 }
 
-/// `isRelativeToParent`
 fn is_relative_to_parent(name: &[u8]) -> bool {
     matches!(name, b".." | [b'.', b'.', b'\\' | b'/', ..])
 }
 
-/// `isIndex`
 fn is_index(name: &[u8]) -> bool {
     matches!(name, b"." | b"./" | b"./index" | b"./index.js")
 }
 
-/// `isRelativeToSibling`
 fn is_relative_to_sibling(name: &[u8]) -> bool {
     matches!(name, [b'.', b'\\' | b'/', ..])
 }
 
-/// `isExternalLookingName`
 fn is_external_looking_name(name: &[u8]) -> bool {
     is_module(name) || is_scoped(name)
 }
@@ -148,7 +143,6 @@ impl<'a> ImportTypes<'a> {
         }
     }
 
-    /// `isExternalPath`
     fn is_external_path(&self, path: Option<&[u8]>) -> bool {
         let Some(path) = path else {
             return false;
@@ -167,7 +161,6 @@ impl<'a> ImportTypes<'a> {
         })
     }
 
-    /// `isInternalPath`
     fn is_internal_path(&self, path: Option<&[u8]>) -> bool {
         let Some(path) = path else {
             return false;
@@ -216,7 +209,6 @@ impl<'a> ImportTypes<'a> {
         self.type_test(name, &|| path)
     }
 
-    /// `isExternalModule(name, path, context)`
     pub(crate) fn is_external_module(&self, name: &[u8], path: &Resolved) -> bool {
         (is_module(name) || is_scoped(name)) && self.of_resolved(name, path) == ImportType::External
     }

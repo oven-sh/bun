@@ -131,7 +131,6 @@ impl<'a> Child<'a> {
     }
 }
 
-/// upstream's `nodeDescriptor`
 fn node_descriptor<'a>(n: Option<Expr<'a>>, source: &'a [u8]) -> Cow<'a, [u8]> {
     if let Some(n) = n
         && n.jsx_container_span().is_none()

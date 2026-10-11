@@ -46,8 +46,6 @@ pub struct FormatOptions {
     /// For HTML and what is like it.
     pub html_whitespace_sensitivity: HtmlWhitespaceSensitivity,
     pub vue_indent_script_and_style: bool,
-    /// For Svelte.
-    pub svelte: SvelteOptions,
     /// The name of the file, if it is not the one that it was parsed under: text from stdin.
     pub filepath: Option<Box<[u8]>>,
     /// Prettier's `parser`, if it is not left to the name of the file: `json5`, `babel`, ..
@@ -185,10 +183,6 @@ pub enum HtmlRoot {
     NgDirective,
     /// `__ng_interpolation`
     NgInterpolation,
-    /// `svelteExpressionParser`, `svelteTSExpressionParser`: the root is a `File` whose `program` is an expression, or a function.
-    SvelteExpression,
-    /// `svelteStatementParser`, `svelteTSStatementParser`: the same with a statement, which loses its `;`.
-    SvelteStatement,
 }
 
 impl HtmlRoot {
@@ -202,65 +196,6 @@ impl HtmlRoot {
                 | HtmlRoot::NgDirective
                 | HtmlRoot::NgInterpolation
         )
-    }
-}
-
-/// The parts of a component of Svelte.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum SveltePart {
-    Options,
-    Scripts,
-    Markup,
-    Styles,
-}
-
-impl SveltePart {
-    /// `options-scripts-markup-styles` and the like: each of the four once.
-    fn order(value: &[u8]) -> Option<[SveltePart; 4]> {
-        let mut order = Vec::with_capacity(4);
-        for name in bun_core::strings::split(value, b"-") {
-            let part = match name {
-                b"options" => SveltePart::Options,
-                b"scripts" => SveltePart::Scripts,
-                b"markup" => SveltePart::Markup,
-                b"styles" => SveltePart::Styles,
-                _ => return None,
-            };
-            if order.contains(&part) {
-                return None;
-            }
-            order.push(part);
-        }
-        <[SveltePart; 4]>::try_from(order).ok()
-    }
-}
-
-/// The options of `prettier-plugin-svelte`.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct SvelteOptions {
-    /// `svelteSortOrder`. `None`: `"none"`.
-    pub sort_order: Option<[SveltePart; 4]>,
-    /// `svelteAllowShorthand`
-    pub allows_shorthand: bool,
-    /// `svelteIndentScriptAndStyle`
-    pub indents_script_and_style: bool,
-    /// The tool has the language, so the blocks of it in Markdown are formatted.
-    pub is_in_markdown: bool,
-}
-
-impl Default for SvelteOptions {
-    fn default() -> Self {
-        SvelteOptions {
-            sort_order: Some([
-                SveltePart::Options,
-                SveltePart::Scripts,
-                SveltePart::Markup,
-                SveltePart::Styles,
-            ]),
-            allows_shorthand: true,
-            indents_script_and_style: true,
-            is_in_markdown: false,
-        }
     }
 }
 
@@ -411,15 +346,6 @@ impl FormatOptions {
                 };
             }
             b"vueIndentScriptAndStyle" => self.vue_indent_script_and_style = boolean()?,
-            b"svelte" => self.svelte.is_in_markdown = boolean()?,
-            b"svelteSortOrder" => {
-                self.svelte.sort_order = match value {
-                    b"none" => None,
-                    _ => Some(SveltePart::order(value).ok_or(InvalidOption)?),
-                };
-            }
-            b"svelteAllowShorthand" => self.svelte.allows_shorthand = boolean()?,
-            b"svelteIndentScriptAndStyle" => self.svelte.indents_script_and_style = boolean()?,
             b"filepath" => self.filepath = Some(value.into()),
             b"parser" => self.parser = Some(value.into()),
             b"rangeStart" => self.range_start = Some(number(u32::MAX)?),

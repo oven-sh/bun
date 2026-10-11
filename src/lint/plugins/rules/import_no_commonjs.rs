@@ -157,7 +157,6 @@ fn check_heritage<'a>(ty: TypeNode<'a>, cx: &Cx<'a, NoCommonjs>) {
 }
 
 impl NoCommonjs {
-    /// upstream's `allowPrimitive`
     fn allow_primitive(&self, member: Expr) -> bool {
         self.allow_primitive_modules
             && !member.is_chain_root()

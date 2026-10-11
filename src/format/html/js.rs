@@ -46,7 +46,6 @@ pub(crate) enum SourceType {
 /// The name of a file whose text is `(`, an expression and `)`. See `AstNodes::parent`.
 pub(crate) const EXPRESSION_JSX: &[u8] = b"\0.jsx";
 pub(crate) const EXPRESSION_TS: &[u8] = b"\0.ts";
-pub(crate) const EXPRESSION_TSX: &[u8] = b"\0.tsx";
 
 /// Prettier's `isProbablyJsx`: `/(?:^[^"'`]*<\/|^[^/]{2}.*\/>)/m`
 fn is_probably_jsx(text: &[u8]) -> bool {

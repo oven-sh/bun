@@ -239,7 +239,6 @@ fn is_callback_prop_name(name: &[u8]) -> bool {
     matches!(name, [b'o', b'n', b'A'..=b'Z', ..])
 }
 
-/// `isMultilineProp`
 fn is_multiline_prop(node: Prop<'_>) -> bool {
     !ast_utils::is_on_one_line(node.file(), node.span())
 }

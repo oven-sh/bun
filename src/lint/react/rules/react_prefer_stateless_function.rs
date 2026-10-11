@@ -20,7 +20,6 @@ pub struct PreferStatelessFunction {
 const COMPONENT_SHOULD_BE_PURE: Message =
     Message::new("componentShouldBePure", "Component should be written as a pure function");
 
-/// upstream's `isValidPair`
 fn is_valid_pair<'a>(ctor_param: Param<'a>, super_arg: Expr<'a>) -> bool {
     let super_arg = match super_arg.kind() {
         ExprKind::Spread(argument) if ctor_param.is_rest() => argument,
@@ -54,7 +53,6 @@ fn is_redundant_super_call(constructor: Func<'_>) -> bool {
     ctor_params.iter().all(is_simple) && (is_spread_arguments || is_passing_through())
 }
 
-/// upstream's `hasOtherProperties`
 fn has_other_properties(node: Node<'_>) -> bool {
     get_component_properties(node).into_iter().any(|property| match (property.name(), property) {
         (Some(b"displayName" | b"propTypes" | b"contextTypes" | b"defaultProps" | b"render"), _) => false,

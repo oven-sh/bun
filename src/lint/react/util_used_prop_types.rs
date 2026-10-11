@@ -109,12 +109,10 @@ impl<'a> PropVariables<'a> {
     }
 }
 
-/// `isCommonVariableNameForProps`
 fn is_common_variable_name_for_props(name: Name<'_>) -> bool {
     name.is_any(&["props", "nextProps", "prevProps"])
 }
 
-/// `mustBeValidated`
 fn must_be_validated(component: &Component<'_>) -> bool {
     !component.ignore_props_validation
 }
@@ -142,7 +140,6 @@ fn parent_with_key(node: Node<'_>) -> Option<Node<'_>> {
     }
 }
 
-/// `inLifeCycleMethod`
 fn in_life_cycle_method(node: Node<'_>, check_async_safe_life_cycles: bool) -> bool {
     node.scope().chain().any(|scope| {
         parent_with_key(scope.node())
@@ -158,7 +155,6 @@ fn is_node_a_life_cycle_method(node: Node<'_>, check_async_safe_life_cycles: boo
             .is_some_and(|name| is_name_of_life_cycle_method(name, check_async_safe_life_cycles))
 }
 
-/// `isSetStateUpdater`
 fn is_set_state_updater(node: Func<'_>) -> bool {
     let Some(written) = node.owner().as_expr() else {
         return false;
@@ -178,7 +174,6 @@ fn name_of_param(param: Param<'_>) -> Option<Name<'_>> {
     param.pat().as_ident().filter(|_| is_pattern)
 }
 
-/// `isPropArgumentInSetStateUpdater`
 fn is_prop_argument_in_set_state_updater<'a>(node: Node<'a>, name: Name<'a>) -> bool {
     let prop_argument = node.scope().chain().find_map(|scope| match scope.node() {
         Node::Func(block) if is_set_state_updater(block) => block.params_with_this().nth(1),
@@ -187,7 +182,6 @@ fn is_prop_argument_in_set_state_updater<'a>(node: Node<'a>, name: Name<'a>) -> 
     prop_argument.and_then(name_of_param) == Some(name)
 }
 
-/// `isInClassComponent`
 fn is_in_class_component(node: Node<'_>, pragmas: &Pragmas<'_>) -> bool {
     get_parent_es6_component(node, pragmas).is_some()
         || get_parent_es5_component(node, pragmas).is_some()
@@ -477,7 +471,6 @@ impl<'a> UsedPropTypesInstructions<'a> {
         }
     }
 
-    /// `markDestructuredFunctionArgumentsAsUsed`
     fn mark_destructured_function_arguments_as_used(
         &mut self,
         node: Func<'a>,
@@ -502,7 +495,6 @@ impl<'a> UsedPropTypesInstructions<'a> {
         }
     }
 
-    /// `handleSetStateUpdater`
     fn handle_set_state_updater(&mut self, node: Func<'a>, components: &mut Components<'a>) {
         if node.params_with_this().nth(1).is_none() || !is_set_state_updater(node) {
             return;
@@ -521,7 +513,6 @@ impl<'a> UsedPropTypesInstructions<'a> {
         self.mark_destructured_function_arguments_as_used(node, components);
     }
 
-    /// `handleCustomValidators`
     fn handle_custom_validators(
         &mut self,
         component: ComponentId,
@@ -540,7 +531,6 @@ impl<'a> UsedPropTypesInstructions<'a> {
         }
     }
 
-    /// `VariableDeclarator(node)`
     fn variable_declarator(&mut self, node: VarDecl<'a>, components: &mut Components<'a>) {
         let Some(unwrapped_init_node) = node.init().map(unwrap_ts_as_expression) else {
             return;

@@ -51,7 +51,6 @@ impl<'a> Names<'a> {
         }
     }
 
-    /// `refersToReactFragment`
     fn refers_to_react_fragment(&self, node: Expr<'a>, name: Name<'a>) -> bool {
         let Some(Found::Init(variable_init)) = find_variable_by_name(Node::Expr(node), name) else {
             return false;

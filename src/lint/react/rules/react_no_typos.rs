@@ -321,7 +321,6 @@ fn values_of<'a>(properties: List<'a, Prop<'a>>) -> impl Iterator<Item = Expr<'a
     properties.iter().filter(|it| it.kind() != PropKind::Spread).filter_map(Prop::value)
 }
 
-/// upstream's `checkValidPropTypeQualifier(member.property)`
 fn check_valid_prop_type_qualifier<'a>(member: Expr<'a>, cx: &Cx<'a, NoTypos>) {
     let node = Node::Expr(member);
     let name = get_property_name(node);
@@ -332,7 +331,6 @@ fn check_valid_prop_type_qualifier<'a>(member: Expr<'a>, cx: &Cx<'a, NoTypos>) {
     }
 }
 
-/// upstream's `checkValidPropType(member.property)`
 fn check_valid_prop_type<'a>(member: Expr<'a>, cx: &Cx<'a, NoTypos>) {
     let node = Node::Expr(member);
     if let Some(name) = get_property_name(node)
@@ -361,7 +359,6 @@ fn check_valid_call_expression<'a>(node: Expr<'a>, pending: &mut SmallVec<[Expr<
 }
 
 impl<'a> Packages<'a> {
-    /// upstream's `isPropTypesPackage`
     fn is_prop_types_package(self, node: Expr<'a>) -> bool {
         match node.as_ident() {
             Some(name) => self.prop_types == Some(name),

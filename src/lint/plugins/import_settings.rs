@@ -80,7 +80,6 @@ impl<'s> Settings<'s> {
         }
     }
 
-    /// `makeValidExtensionSet`
     fn make_valid_extension_set(&self) -> SmallVec<[&'s [u8]; 8]> {
         let own = truthy(self.settings.get(b"import/extensions"));
         let mut exts: SmallVec<[&'s [u8]; 8]> = match own {
@@ -98,7 +97,6 @@ impl<'s> Settings<'s> {
         exts
     }
 
-    /// `validExtensions`
     fn valid_extensions(&self) -> &[&'s [u8]] {
         self.extensions
             .get_or_init(|| self.make_valid_extension_set())
@@ -109,7 +107,6 @@ impl<'s> Settings<'s> {
         SmallVec::from_slice(self.valid_extensions())
     }
 
-    /// `hasValidExtension`
     pub(crate) fn has_valid_extension(&self, path: &[u8]) -> bool {
         self.valid_extensions().contains(&paths::extname(path))
     }
@@ -133,7 +130,6 @@ impl<'s> Settings<'s> {
         strings_in(self.settings.get(b"import/core-modules")).any(|it| it == name)
     }
 
-    /// `isInternalRegexMatch`
     pub(crate) fn is_internal_regex_match(&self, name: &[u8]) -> bool {
         let regex = self.internal_regex.get_or_init(|| {
             let internal_scope = truthy(self.settings.get(b"import/internal-regex"))?;

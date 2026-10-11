@@ -154,7 +154,6 @@ impl<'a> State<'a> {
         self.candidates.len() > others
     }
 
-    /// upstream's `isInClassProperty`
     fn is_in_class_property(&mut self, node: Expr<'a>) -> bool {
         let found = self.class_properties.find(Node::Expr(node), |_, parent| {
             matches!(parent, Node::Member(member) if ast_utils::is_property_definition(member)).then_some(())

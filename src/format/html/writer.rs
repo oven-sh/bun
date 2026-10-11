@@ -28,8 +28,6 @@ pub(crate) struct Writer<'w, 'f> {
     /// Line breaks right after each other that have not been written yet: what they are if the group is on one line,
     /// and how many.
     pending_line: Option<(LineMode, u32)>,
-    /// How many of them are blanks if they are no line breaks: see [`Writer::line_or_blank`].
-    pending_blanks: u32,
     empty_line: EmptyLine,
     /// How many `indent`s are around what is written, if nothing else has a say in where its lines start.
     indent_level: Option<u32>,
@@ -46,7 +44,6 @@ impl<'w, 'f> Writer<'w, 'f> {
         Writer {
             f,
             pending_line: None,
-            pending_blanks: 0,
             empty_line: if is_at_start {
                 EmptyLine::Yes
             } else {
@@ -87,14 +84,6 @@ impl<'w, 'f> Writer<'w, 'f> {
         let Some((mode, count)) = self.pending_line.take() else {
             return;
         };
-        // The first blank of a line is the printer's, unless it may be at the start of the line. The others are texts.
-        let (mode, blanks) = match (mode, std::mem::take(&mut self.pending_blanks)) {
-            (LineMode::SoftOrSpace, blanks @ 1..) if self.empty_line != EmptyLine::No => {
-                (LineMode::Soft, blanks)
-            }
-            (LineMode::SoftOrSpace, blanks @ 1..) => (mode, blanks - 1),
-            _ => (mode, 0),
-        };
         match self.empty_line {
             EmptyLine::IfGroupHasBroken(id) => {
                 for (group_mode, is_line_empty) in
@@ -110,16 +99,6 @@ impl<'w, 'f> Writer<'w, 'f> {
                 }
             }
             empty_line => self.write_lines(mode, count, empty_line != EmptyLine::No),
-        }
-        if blanks > 0 {
-            let condition = Condition::new(PrintMode::Flat);
-            self.f
-                .write_element(FormatElement::Tag(Tag::StartConditionalContent(condition)));
-            for _ in 0..blanks {
-                self.f.write_token(" ");
-            }
-            self.f
-                .write_element(FormatElement::Tag(Tag::EndConditionalContent));
         }
         self.empty_line = if mode == LineMode::Hard {
             EmptyLine::Yes
@@ -347,33 +326,6 @@ impl<'w, 'f> Writer<'w, 'f> {
         self.indent_level = self.indent_level.map(|level| level.saturating_sub(1));
     }
 
-    /// `dedent(..)`
-    pub(crate) fn start_dedent(&mut self) {
-        self.indent_tag(Tag::StartDedent(DedentMode::Level));
-        self.indent_level = self.indent_level.map(|level| level.saturating_sub(1));
-    }
-
-    pub(crate) fn end_dedent(&mut self) {
-        self.indent_tag(Tag::EndDedent(DedentMode::Level));
-        self.indent_level = self.indent_level.map(|level| level + 1);
-    }
-
-    /// `line`, to the letter: one that is no line break is a blank, also at the start of a line and behind another one, where
-    /// the printer of `ir` has none. HTML has no two in a row and none at the start of a line.
-    pub(crate) fn line_or_blank(&mut self) {
-        self.add_line(LineMode::SoftOrSpace);
-        self.pending_blanks += 1;
-    }
-
-    /// `lineSuffix(..)`
-    pub(crate) fn start_line_suffix(&mut self) {
-        self.tag(Tag::StartLineSuffix);
-    }
-
-    pub(crate) fn end_line_suffix(&mut self) {
-        self.tag(Tag::EndLineSuffix);
-    }
-
     /// `dedentToRoot(softline)`
     pub(crate) fn softline_dedented_to_root(&mut self) {
         self.indent_tag(Tag::StartDedent(DedentMode::Root));
@@ -481,7 +433,6 @@ impl<'w, 'f> Writer<'w, 'f> {
             true => self.flush(),
             false => {
                 self.pending_line = None;
-                self.pending_blanks = 0;
                 self.empty_line = attempt.empty_line;
                 self.indent_level = attempt.indent_level;
             }
@@ -502,7 +453,7 @@ impl<'w, 'f> Writer<'w, 'f> {
     ) -> Option<Interned> {
         match is_kept {
             true => self.flush(),
-            false => (self.pending_line, self.pending_blanks) = (None, 0),
+            false => self.pending_line = None,
         }
         self.empty_line = attempt.empty_line;
         self.indent_level = attempt.indent_level;

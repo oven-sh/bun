@@ -295,7 +295,6 @@ struct Scratches {
     graphql: bun_format::graphql::Scratch,
     handlebars: bun_format::handlebars::Scratch,
     html: bun_format::html::Scratch,
-    svelte: bun_format::svelte::Scratch,
     yaml: bun_format::yaml::Scratch,
     markdown: bun_format::markdown::Scratch,
     verify: bun_format::verify::Scratch,
@@ -586,31 +585,6 @@ fn format(
             }
             return finish(done, out, "TOML");
         }
-        Some(Kind::Svelte) => {
-            let plain = Resolved::default();
-            let parse = |code: Code<'_>, then: &mut dyn for<'b> FnMut(&Parsed<'b>)| {
-                parse_code(code, &plain, (atoms, memory), then);
-            };
-            let parse = Some(&parse as bun_format::options::JavaScriptParser<'_>);
-            let done = bun_format::svelte::format(
-                name,
-                text,
-                options,
-                parse,
-                &mut scratch.svelte,
-                &mut out,
-            );
-            if verifies
-                && done.is_ok()
-                && out != text
-                && !bun_format::svelte::has_same_content(text, &out, options, parse)
-            {
-                return Err(Failure::Loss(
-                    "formatting it the way prettier-plugin-svelte does would change what is in it",
-                ));
-            }
-            return finish(done, out, "Svelte");
-        }
         Some(Kind::Handlebars) => {
             let done =
                 bun_format::handlebars::format(text, options, &mut scratch.handlebars, &mut out);
@@ -890,20 +864,12 @@ struct Run<'r> {
 fn language_of(configs: &Configs, scope: &config::Scope, path: &[u8]) -> Language {
     // The `parser` option says what it is. One that Prettier does not have is that of a plugin.
     match configs.parser_for(scope, path) {
-        Some(parser) if &*parser == b"svelte" && !configs.has_our_svelte(scope, path) => {
-            Language::Other
-        }
         Some(parser) if Kind::of_parser(&parser).is_none() => Language::Other,
         Some(_) => Language::Supported,
         None if configs.is_oxfmt_for(scope) => {
             files::language_for_oxfmt(path, configs.formats_svelte(scope, path))
         }
         None => match files::language_of(path) {
-            Language::Unknown
-                if path.ends_with(b".svelte") && configs.has_our_svelte(scope, path) =>
-            {
-                Language::Supported
-            }
             Language::Unknown if configs.is_read_by_plugin(scope, path) => Language::Other,
             Language::Unknown if files::parser_by_interpreter(path).is_some() => {
                 Language::Supported
@@ -1352,7 +1318,7 @@ impl Run<'_> {
                 let is_free = || {
                     matches!(
                         Kind::with_options(&target.path, &options.options),
-                        Some(Kind::Handlebars | Kind::Html(_) | Kind::Svelte)
+                        Some(Kind::Handlebars | Kind::Html(_))
                     )
                 };
                 let formatted = match format(

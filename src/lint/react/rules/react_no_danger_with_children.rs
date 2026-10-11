@@ -130,7 +130,6 @@ fn prop(name: &[u8]) -> u8 {
     }
 }
 
-/// `isLineBreak`
 fn is_line_break<'a>(file: &'a File<'a>, child: JsxChild<'a>) -> bool {
     let (written, value) = match child {
         JsxChild::Whitespace(span) => (file.slice(span), None),

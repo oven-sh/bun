@@ -1334,21 +1334,20 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     test(
       "is left as it is if the plugin is not installed, and what would help is said",
       async () => {
-        // Svelte is built in, for whoever has not installed another version of the plugin.
-        const astro = { ".prettierrc": '{ "plugins": ["prettier-plugin-astro"] }\n', "a.astro": "<p   >a</p>\n" };
-        const result = await format({ ...packages, ...astro }, [], { reads: ["a.astro"] });
-        expect(result.files["a.astro"]).toBe(astro["a.astro"]);
+        const { "node_modules/prettier-plugin-svelte/package.json": plugin, ...others } = files;
+        const result = await format(others, [], { reads: ["a.svelte"] });
+        expect(result.files["a.svelte"]).toBe(files["a.svelte"]);
         expect(result.stderr).toContain(
-          "[warn] Not installed: prettier-plugin-astro. With all plugins of the configuration and prettier installed, bun format hands the files of their languages to them.",
+          "[warn] Not installed: prettier-plugin-svelte. With all plugins of the configuration and prettier installed, bun format hands the files of their languages to them.",
         );
-        expect(result.stderr).toContain("and left as they are: 1 .astro.");
+        expect(result.stderr).toContain("and left as they are: 1 .svelte.");
         expect(result.exitCode).toBe(2);
       },
       timeout,
     );
   });
 
-  test("with an .oxfmtrc.json TOML is formatted, and Svelte if the configuration has svelte", async () => {
+  test("with an .oxfmtrc.json TOML is formatted, and Svelte is left as it is, which is said if the configuration has svelte", async () => {
     const files = {
       "a.svelte": "<p   >a</p>\n",
       "b.toml": "a   = 1\n",
@@ -1359,9 +1358,9 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     const after = { ...files, "b.toml": "a = 1\n", "Pipfile": "[a]\nb = [1, 2]\n", "c.js": formatted };
     const reads = Object.keys(files);
     const result = await format({ ...files, ".oxfmtrc.json": '{ "svelte": {} }\n' }, [], { reads });
-    expect(result.files).toEqual({ ...after, "a.svelte": "<p>a</p>\n" });
-    expect(result.stderr).not.toContain("does not support yet");
-    expect(result.exitCode).toBe(0);
+    expect(result.files).toEqual(after);
+    expect(result.stderr).toContain("does not support yet, and left as they are: 1 .svelte.");
+    expect(result.exitCode).toBe(2);
     const without = await format({ ...files, ".oxfmtrc.json": "{}\n" }, [], { reads });
     expect(without.files).toEqual(after);
     expect(without.stderr).not.toContain("does not support yet");
@@ -1886,7 +1885,6 @@ ${packages["node_modules/prettier/index.cjs"]}`;
     const nested = (before: string, open: string, middle: string, close: string, after: string, depth: number) =>
       before + open.repeat(depth) + middle + close.repeat(depth) + after;
     const oxfmtrc = { ".oxfmtrc.json": "{}" };
-    const svelte = { ".prettierrc": `{ "plugins": ["prettier-plugin-svelte"] }` };
     const wide = { ".prettierrc": `{ "printWidth": 1000000 }` };
     test.skipIf(isDebug || isASAN).concurrent.each<[string, string, Record<string, string>, string, string]>([
       [
@@ -2059,20 +2057,6 @@ ${packages["node_modules/prettier/index.cjs"]}`;
         "3fbdb4e6fd57e141396b7e393fc1c7cad22b0eab",
       ],
       [
-        "Svelte: 450 elements",
-        "a.svelte",
-        svelte,
-        nested("", "<div>", "a", "</div>", "", 450),
-        "78248b064f3edb4cb6430c13e608b5ab398e7096",
-      ],
-      [
-        "Svelte: 450 blocks",
-        "a.svelte",
-        svelte,
-        nested("", "{#if a}", "b", "{/if}", "", 450),
-        "a13e62998f4f687539a1e91c7cfc73031a3d1d2a",
-      ],
-      [
         "HTML in a template that more than 1,024 bytes of its line are before",
         "a.js",
         {},
@@ -2141,12 +2125,10 @@ ${packages["node_modules/prettier/index.cjs"]}`;
       ["a.vue", nested("<template>", "<div>", "a", "</div>", "</template>", tooDeep)],
       ["a.component.html", nested("", "@if (a) {", "b", "}", "", tooDeep)],
       ["b.component.html", nested("", "{a, select, b {", "c", "}}", "", tooDeep)],
-      ["a.svelte", nested("", "<div>", "a", "</div>", "", tooDeep)],
-      ["c.svelte", nested("", "<slot>", "a", "</slot>", "", tooDeep)],
       // In a JSDoc comment, with `jsdoc` of oxfmt.
       ["a.js", nested("/**\n * ", "> ", "a", "", "\n */ let a;", tooDeep)],
     ])("what there is no stack for, or no string, is an error, and the file stays as it is: %s", async (name, text) => {
-      const files = { ".oxfmtrc.json": `{ "svelte": {}, "jsdoc": {} }`, [name]: text };
+      const files = { ".oxfmtrc.json": `{ "jsdoc": {} }`, [name]: text };
       const result = await format(files, [name], { reads: [name] });
       expect(result.files[name]).toBe(text);
       expect(result.stderr).toMatch(

@@ -155,7 +155,6 @@ fn message(is_oxlint: bool) -> Message {
     if is_oxlint { STYLE_PROP_OBJECT } else { STYLE_PROP_NOT_OBJECT }
 }
 
-/// upstream's `isNonNullaryLiteral`
 fn is_non_nullary_literal(expression: Expr) -> bool {
     ast_utils::is_literal(expression) && expression.tag() != ExprTag::Null
 }

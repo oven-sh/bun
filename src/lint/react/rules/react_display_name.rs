@@ -224,7 +224,6 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// `markDisplayNameAsDeclared`
     fn mark_display_name_as_declared(&mut self, node: Node<'a>) {
         self.has_display_name.extend(self.components.set(node));
     }
@@ -312,7 +311,6 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// `isNestedMemo`
     fn is_nested_memo(&mut self, node: Node<'a>) -> bool {
         let argument = node.as_expr().and_then(Expr::as_call).and_then(|call| call.args().first());
         argument.is_some_and(|it| it.tag() == ExprTag::Call && !it.is_chain_root())

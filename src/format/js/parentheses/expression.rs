@@ -587,9 +587,7 @@ fn assignment_needs_parentheses<'a>(
                 || (matches!(left.kind(), ExprKind::Object(_)) && is_assignment_target(left))
         }
         // `interface A { [a = 1]; }`, `a = b = c`, Prettier's `JsExpressionRoot`
-        N::TSPropertySignature(_) | N::AssignmentExpression(_) => false,
-        // Not the `File` that `prettier-plugin-svelte` has in that place.
-        N::Program(_) => f.options().in_html.root == HtmlRoot::SvelteExpression,
+        N::TSPropertySignature(_) | N::AssignmentExpression(_) | N::Program(_) => false,
         // `({ a: (b = 1) } = c)`, which is an error. Not `({ [(a = 1)]: b } = c)`.
         N::AssignmentTargetPropertyProperty(property) => property.value() != Some(e),
         // `for (a = 1, b = 2; ; a++, b++)`

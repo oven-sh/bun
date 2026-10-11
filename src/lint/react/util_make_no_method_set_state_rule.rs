@@ -20,7 +20,6 @@ const METHOD_NOOPS_AS_OF: [(&str, Version); 2] = [
     ("componentDidUpdate", (16, 3, 0)),
 ];
 
-/// `shouldBeNoop`
 pub(crate) fn should_be_noop<'a>(file: &'a File<'a>, method_name: &str) -> bool {
     let as_of = METHOD_NOOPS_AS_OF.iter().find(|it| it.0 == method_name);
     as_of.is_some_and(|&(_, as_of)| {

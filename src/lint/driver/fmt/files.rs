@@ -83,8 +83,6 @@ pub(crate) enum Kind {
     Toml,
     /// HTML, Vue, Angular templates, Lightning Web Components, MJML.
     Html(bun_format::html::Parser),
-    /// For oxfmt with `svelte` in the configuration, for Prettier with the plugin.
-    Svelte,
 }
 
 impl Kind {
@@ -99,8 +97,6 @@ impl Kind {
             b"mdx" => Some(Kind::Mdx),
             b"graphql" => Some(Kind::GraphQl),
             b"glimmer" => Some(Kind::Handlebars),
-            // Of `prettier-plugin-svelte`. Whether it is this one that reads the file: `Configs::has_our_svelte`.
-            b"svelte" => Some(Kind::Svelte),
             b"babel" | b"babel-flow" | b"babel-ts" | b"flow" | b"typescript" | b"acorn"
             | b"espree" | b"meriyah" | b"oxc" | b"oxc-ts" => Some(Kind::Script),
             _ => None,
@@ -114,10 +110,7 @@ impl Kind {
         if !options.flavor.is_oxfmt() || options.parser.is_some() {
             return Kind::of(path, options.parser.as_deref());
         }
-        match classify_for_oxfmt(path)? {
-            ForOxfmt::Kind(kind) => Some(kind),
-            ForOxfmt::Svelte => Some(Kind::Svelte),
-        }
+        classify_for_oxfmt(path)
     }
 
     /// Of the file at `path`. `parser`: Prettier's option of that name, which decides if it is set.
@@ -196,16 +189,8 @@ fn is_javascript_by_another_name(name: &[u8], extension: &[u8]) -> bool {
         || name.ends_with(b".end.frag")
 }
 
-/// What a name stands for to oxfmt.
-#[derive(Copy, Clone)]
-enum ForOxfmt {
-    Kind(Kind),
-    /// Only with `svelte` in the configuration.
-    Svelte,
-}
-
 /// oxfmt's `classify_file_kind`. Unlike Prettier it tells upper case from lower case.
-fn classify_for_oxfmt(path: &[u8]) -> Option<ForOxfmt> {
+fn classify_for_oxfmt(path: &[u8]) -> Option<Kind> {
     use bun_format::{css, html, json};
     let name = paths::basename(path);
     // `Path::extension`: a name that starts with its only dot has none.
@@ -221,13 +206,13 @@ fn classify_for_oxfmt(path: &[u8]) -> Option<ForOxfmt> {
         return None;
     }
     if is_script || is_javascript_by_another_name(name, extension) {
-        return Some(ForOxfmt::Kind(Kind::Script));
+        return Some(Kind::Script);
     }
     if extension == b"toml"
         || matches!(name, b"Pipfile" | b"Cargo.toml.orig")
         || name.ends_with(b".toml.example")
     {
-        return Some(ForOxfmt::Kind(Kind::Toml));
+        return Some(Kind::Toml);
     }
     let by_name = match name {
         b"package.json" | b"composer.json" => Some(Kind::Json(json::Parser::JsonStringify)),
@@ -307,13 +292,9 @@ fn classify_for_oxfmt(path: &[u8]) -> Option<ForOxfmt> {
         })
     };
     match extension {
-        b"svelte" => Some(ForOxfmt::Svelte),
         // It hands MDX to the Prettier that comes with it.
-        b"mdx" => Some(ForOxfmt::Kind(Kind::Mdx)),
-        _ => by_name
-            .or_else(by_ending)
-            .or_else(by_extension)
-            .map(ForOxfmt::Kind),
+        b"mdx" => Some(Kind::Mdx),
+        _ => by_name.or_else(by_ending).or_else(by_extension),
     }
 }
 
@@ -359,15 +340,15 @@ pub(crate) fn language_of(path: &[u8]) -> Language {
 
 /// Whether oxfmt takes the file at `path` for a component of Svelte.
 pub(crate) fn is_svelte_for_oxfmt(path: &[u8]) -> bool {
-    matches!(classify_for_oxfmt(path), Some(ForOxfmt::Svelte))
+    (paths::basename(path).strip_suffix(b".svelte")).is_some_and(|stem| !stem.is_empty())
 }
 
 /// The same for oxfmt, which also has TOML and, if `formats_svelte`, Svelte.
 pub(crate) fn language_for_oxfmt(path: &[u8], formats_svelte: bool) -> Language {
     match classify_for_oxfmt(path) {
-        Some(ForOxfmt::Kind(_)) => Language::Supported,
-        Some(ForOxfmt::Svelte) if formats_svelte => Language::Supported,
-        Some(ForOxfmt::Svelte) | None => Language::Unknown,
+        Some(_) => Language::Supported,
+        None if formats_svelte && is_svelte_for_oxfmt(path) => Language::Other,
+        None => Language::Unknown,
     }
 }
 

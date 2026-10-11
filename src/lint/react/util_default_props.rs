@@ -63,7 +63,6 @@ fn resolve_node_value(mut node: Expr<'_>) -> Option<Expr<'_>> {
     }
 }
 
-/// `getDefaultPropsFromObjectExpression`
 fn get_default_props_from_object_expression<'a>(
     properties: List<'a, Prop<'a>>,
 ) -> DefaultPropsList<'a> {
@@ -100,7 +99,6 @@ fn get_es6_component_around<'a>(
     components.get(Node::Class(class))
 }
 
-/// `defaultPropsInstructions`
 #[derive(Default)]
 struct DefaultPropsInstructions<'a> {
     /// `component.defaultProps` of those that have one. `None`: `"unresolved"`.
@@ -108,7 +106,6 @@ struct DefaultPropsInstructions<'a> {
 }
 
 impl<'a> DefaultPropsInstructions<'a> {
-    /// `markDefaultPropsAsUnresolved`
     fn mark_default_props_as_unresolved(
         &mut self,
         component: ComponentId,
@@ -120,7 +117,6 @@ impl<'a> DefaultPropsInstructions<'a> {
         }
     }
 
-    /// `addDefaultPropsToComponent`
     fn add_default_props_to_component(
         &mut self,
         component: ComponentId,
@@ -248,7 +244,6 @@ impl<'a> DefaultPropsInstructions<'a> {
         );
     }
 
-    /// `ObjectExpression(node)`
     fn object_expression(
         &mut self,
         node: Expr<'a>,

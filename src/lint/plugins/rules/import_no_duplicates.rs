@@ -102,7 +102,6 @@ impl Rule for NoDuplicates {
 }
 
 impl NoDuplicates {
-    /// upstream's `resolver`
     fn resolver<'a>(&self, resolvers: &Resolvers, file: &'a File<'a>, source: &'a [u8]) -> Cow<'a, [u8]> {
         let default_resolver = |path: &'a [u8]| match resolvers.resolve(file, path, false) {
             Resolved::File(found) => Cow::Owned(found),

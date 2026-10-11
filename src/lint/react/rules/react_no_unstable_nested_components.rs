@@ -370,19 +370,16 @@ fn is_in_class_declaration<'a>(node: Node<'a>, detected: &Detected<'a>) -> bool 
     get_parent_es6_component(node, detected.pragmas()).is_some_and(|it| matches!(it.owner(), Node::Stmt(_)))
 }
 
-/// upstream's `isInsideRenderMethod`
 fn is_inside_render_method<'a>(node: Node<'a>, detected: &Detected<'a>) -> bool {
     matches!(node.as_written(), Node::Member(method)
         if method.key().and_then(name_of_key).is_some_and(|it| it == b"render"))
         && is_in_class_declaration(node, detected)
 }
 
-/// upstream's `isStatelessComponentReturningNull`
 fn is_stateless_component_returning_null<'a>(node: Node<'a>, detected: &mut Detected<'a>) -> bool {
     detected.get_stateless_component(node).is_some_and(|it| !detected.is_returning_jsx(it, Branches::Any))
 }
 
-/// upstream's `resolveComponentName`
 fn resolve_component_name(node: Node<'_>) -> Option<&[u8]> {
     match node {
         Node::Func(func) if func.is_arrow() => match estree_parent(node) {

@@ -217,7 +217,7 @@ impl NoRestrictedProperties {
 
     /// An `ObjectPattern` in an assignment.
     fn check_assignment_pattern<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Object(properties) = e.kind() else {
+        let Some(properties) = e.as_object() else {
             return;
         };
         if properties.is_empty() || !utils::is_assignment_target(e) {

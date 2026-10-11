@@ -152,7 +152,14 @@ impl Exprs {
             let (strings, templates) =
                 (2 * ExprTag::String as usize, 2 * ExprTag::Template as usize);
             const { assert!((ExprTag::String as usize) < ExprTag::Template as usize) };
-            let is_template = |id: &u32| file.expr_in_tree(*id as usize) == Some(ExprTag::Template);
+            let starts_with_backtick = |id: u32| {
+                let raw = file.hir.exprs.get(id as usize);
+                raw.is_some_and(|it| file.text().get(it.pos as usize) == Some(&b'`'))
+            };
+            let is_template = |id: &u32| {
+                starts_with_backtick(*id)
+                    && file.expr_in_tree(*id as usize) == Some(ExprTag::Template)
+            };
             let moved: Vec<u32> = grouped
                 .of(strings)
                 .iter()

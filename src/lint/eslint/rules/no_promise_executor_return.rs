@@ -35,7 +35,7 @@ impl Rule for NoPromiseExecutorReturn {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::New(call) = e.kind() else {
+        let Some(call) = e.as_new() else {
             return;
         };
         let callee = call.callee();
@@ -45,7 +45,7 @@ impl Rule for NoPromiseExecutorReturn {
         let Some(executor) = call.args().first() else {
             return;
         };
-        let ExprKind::Fn(func) = executor.kind() else {
+        let Some(func) = executor.as_fn() else {
             return;
         };
         if !ast_utils::is_global_reference(callee) {
@@ -71,7 +71,7 @@ impl Rule for NoPromiseExecutorReturn {
         }
 
         for statement in func.returns() {
-            let StmtKind::Return(Some(argument)) = statement.kind() else {
+            let Some(Some(argument)) = statement.as_return() else {
                 continue;
             };
             if allow_void && is_expression_void(argument) {

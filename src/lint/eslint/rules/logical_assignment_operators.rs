@@ -53,7 +53,7 @@ fn is_logical(op: BinOp) -> bool {
 fn is_undefined(e: Expr<'_>) -> bool {
     match e.kind() {
         ExprKind::Ident(name) if name.is("undefined") => ast_utils::is_reference_to_global_variable(e),
-        ExprKind::Unary { op: UnOp::Void, operand } => matches!(operand.kind(), ExprKind::Number(n) if n == 0.0),
+        ExprKind::Unary { op: UnOp::Void, operand } => operand.as_number() == Some(0.0),
         _ => false,
     }
 }
@@ -124,9 +124,7 @@ fn get_existence(expression: Expr<'_>) -> Option<(Expr<'_>, BinOp)> {
     {
         return Some((argument, truthiness));
     }
-    let ExprKind::Binary { op, left, right } = expression.kind() else {
-        return None;
-    };
+    let (op, left, right) = expression.as_binary()?;
     match (op, left.kind(), right.kind()) {
         (BinOp::EqEq, ..) => {
             let (reference, nullish) = reference_first(left, right);
@@ -183,7 +181,7 @@ fn accesses_single_property<'a>(e: Expr<'a>, with_blocks: &mut WithBlocks<'a>) -
 /// Whether an assignment in the place of `logical` needs parentheses.
 fn requires_outer_parenthesis(logical: Expr<'_>) -> bool {
     match logical.parent() {
-        Node::Stmt(parent) => !matches!(parent.kind(), StmtKind::Expr(_)),
+        Node::Stmt(parent) => parent.tag() != StmtTag::Expr,
         // The body of an arrow function.
         Node::Func(_) => false,
         Node::Expr(parent) => {
@@ -353,7 +351,7 @@ impl LogicalAssignmentOperators {
             },
             _ => (yes, false),
         };
-        let StmtKind::Expr(expression) = body.kind() else {
+        let Some(expression) = body.as_expr() else {
             return;
         };
         let ExprKind::Assign { op: None, target, .. } = expression.kind() else {
@@ -365,7 +363,7 @@ impl LogicalAssignmentOperators {
         if !is_same_reference(reference, target) {
             return;
         }
-        let is_logical_test = matches!(test.kind(), ExprKind::Binary { op, .. } if is_logical(op));
+        let is_logical_test = test.binary_op().is_some_and(is_logical);
         let descriptor = Descriptor {
             node: if_node.span(),
             message: IF,

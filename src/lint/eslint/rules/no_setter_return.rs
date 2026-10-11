@@ -19,7 +19,7 @@ fn is_setter(func: Func, is_oxlint: bool) -> bool {
         && ast_utils::get_static_property_name(prop).is_some_and(|name| &*name == b"set")
         && let Node::Expr(object) = prop.parent()
     {
-        return matches!(object.kind(), ExprKind::Object(_)) && ast_utils::is_property_descriptor(object);
+        return object.tag() == ExprTag::Object && ast_utils::is_property_descriptor(object);
     }
     false
 }
@@ -51,7 +51,7 @@ impl NoSetterReturn {
             cx.report(body, RETURNS_VALUE);
         }
         for statement in func.returns() {
-            if let StmtKind::Return(Some(_)) = statement.kind() {
+            if let Some(Some(_)) = statement.as_return() {
                 cx.report(statement, RETURNS_VALUE);
             }
         }

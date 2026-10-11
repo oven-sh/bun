@@ -39,7 +39,7 @@ enum Remedy {
 
 /// A `Literal` whose value is `value`.
 fn is_number(e: Expr, value: f64) -> bool {
-    e.tag() == ExprTag::Number && matches!(e.kind(), ExprKind::Number(it) if it == value)
+    e.as_number() == Some(value)
 }
 
 /// `node.type === "BinaryExpression"`
@@ -91,7 +91,7 @@ fn is_already_numeric(e: Expr) -> bool {
 fn is_operand_of_arithmetic(e: Expr) -> bool {
     !e.is_parenthesized()
         && matches!(e.parent(), Node::Expr(parent)
-            if matches!(parent.kind(), ExprKind::Binary { op, .. } if is_arithmetic(op)))
+            if parent.binary_op().is_some_and(is_arithmetic))
 }
 
 /// What oxlint takes for the operand of `1 * a` and `a * 1`.
@@ -295,7 +295,7 @@ impl NoImplicitCoercion {
 
     #[inline(never)]
     fn check_template<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Template(template) = e.kind() else {
+        let Some(template) = e.as_template() else {
             return;
         };
         let is_empty = |i: usize| template.cooked(i).is_some_and(|it| it.bytes().is_empty());

@@ -165,8 +165,8 @@ struct PossibleCall {
     import_index: u32,
     /// [`is_in_call_or_member`]
     is_in_call_or_member: bool,
-    /// [`is_valid_without_members`] of that name.
-    is_valid_without_members: bool,
+    /// For `it(..)`, where that identifier is what is called and is no `expect`: whether it is parsed as a call of Jest.
+    without_members: Option<bool>,
 }
 
 pub(crate) fn is_vitest_import_source(source: &[u8]) -> bool {
@@ -420,21 +420,27 @@ impl PossibleJestNodes {
             .get(original as usize)
             .map_or(local, |it| &**it);
         let kind = JestFnKind::from(name);
-        let is_valid_without_members = is_valid_without_members(frameworks, name);
+        let is_valid = local != b"each"
+            && match kind {
+                JestFnKind::General(JestGeneralFnKind::Jest | JestGeneralFnKind::Vitest) => true,
+                _ => is_valid_without_members(frameworks, name),
+            };
+        let is_expect = matches!(kind, JestFnKind::Expect | JestFnKind::ExpectTypeOf);
         let mut at = reference;
         while let Some(parent) = parent_expression(at) {
             match parent.tag() {
                 ExprTag::Call if parent.callee() == Some(at) => {
-                    let (span, id, reference) = (parent.span(), parent.id().0, reference.id().0);
+                    let is_in_call_or_member = is_in_call_or_member(parent);
                     self.calls.push(PossibleCall {
-                        span,
-                        id,
+                        span: parent.span(),
+                        id: parent.id().0,
                         original,
                         kind,
-                        reference,
+                        reference: reference.id().0,
                         import_index,
-                        is_in_call_or_member: is_in_call_or_member(parent),
-                        is_valid_without_members,
+                        is_in_call_or_member,
+                        without_members: (at == reference && !is_expect)
+                            .then_some(is_valid && !is_in_call_or_member),
                     });
                 }
                 ExprTag::Dot if !parent.is_private_member() => {}
@@ -721,12 +727,15 @@ pub(crate) fn parse_jest_fn_call_in<'a>(
             let members = Members::new();
             return parse_jest_expect_fn_call(node, call_expr, members, name, local, head, kind);
         }
-        let is_valid = || match (kind, known) {
-            (JestFnKind::General(JestGeneralFnKind::Jest | JestGeneralFnKind::Vitest), _) => true,
-            (_, Some(known)) => known.is_valid_without_members,
-            (_, None) => per_file(file).is_none_or(|it| is_valid_without_members(it, name)),
+        let is_valid = || match kind {
+            JestFnKind::General(JestGeneralFnKind::Jest | JestGeneralFnKind::Vitest) => true,
+            _ => per_file(file).is_none_or(|it| is_valid_without_members(it, name)),
         };
-        return (!is_part() && is_valid()).then(|| {
+        let is_call = match known.and_then(|it| it.without_members) {
+            Some(is_call) => is_call,
+            None => !is_part() && is_valid(),
+        };
+        return is_call.then(|| {
             ParsedJestFnCall::GeneralJest(ParsedGeneralJestFnCall {
                 kind,
                 members: Members::new(),
@@ -989,18 +998,33 @@ pub(crate) fn is_type_of_jest_fn_call<'a>(
     kinds: &[JestFnKind],
 ) -> bool {
     (possible_jest_node.kind()).is_some_and(|it| kinds.contains(&it))
-        && parse_jest_fn_call(file, possible_jest_node).is_some_and(|it| kinds.contains(&it.kind()))
+        && match possible_jest_node.known.and_then(|it| it.without_members) {
+            Some(is_call) => is_call,
+            None => parse_jest_fn_call(file, possible_jest_node)
+                .is_some_and(|it| kinds.contains(&it.kind())),
+        }
 }
 
 pub(crate) fn parse_general_jest_fn_call<'a>(
     file: &'a File<'a>,
     possible_jest_node: PossibleJestNode<'a>,
 ) -> Option<ParsedGeneralJestFnCall<'a>> {
-    if matches!(
-        possible_jest_node.kind()?,
-        JestFnKind::Expect | JestFnKind::ExpectTypeOf
-    ) {
+    let kind = possible_jest_node.kind()?;
+    if matches!(kind, JestFnKind::Expect | JestFnKind::ExpectTypeOf) {
         return None;
+    }
+    if let Some(is_call) = possible_jest_node.known.and_then(|it| it.without_members) {
+        if !is_call {
+            return None;
+        }
+        return Some(ParsedGeneralJestFnCall {
+            kind,
+            members: Members::new(),
+            name: match possible_jest_node.original {
+                Some(original) => original,
+                None => possible_jest_node.node.callee()?.as_ident()?.bytes(),
+            },
+        });
     }
     match parse_jest_fn_call(file, possible_jest_node)? {
         ParsedJestFnCall::GeneralJest(jest_fn_call) => Some(jest_fn_call),

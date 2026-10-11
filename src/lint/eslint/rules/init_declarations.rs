@@ -116,7 +116,7 @@ fn end_of_first_declared_namespace_in(namespace: Module<'_>) -> Option<u32> {
     let (mut first, mut pending) = (None, vec![namespace]);
     while let Some(namespace) = pending.pop() {
         for statement in namespace.innermost().body() {
-            if let StmtKind::Module(inner) = statement.kind() {
+            if let Some(inner) = statement.as_module() {
                 let end = statement.span().end;
                 if has_declare(statement) && first.is_none_or(|first| end < first) {
                     first = Some(end);

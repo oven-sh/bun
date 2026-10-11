@@ -158,7 +158,7 @@ impl Rule for PreferNamedCaptureGroup {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let ExprKind::Regex(literal) = e.kind() {
+        if let Some(literal) = e.as_regex() {
             check_regex(cx, literal.pattern(), e, e, literal.flags());
         }
     }

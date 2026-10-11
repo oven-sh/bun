@@ -134,9 +134,7 @@ fn get_string_value(e: Expr<'_>) -> Option<Cow<'_, [u8]>> {
         ExprKind::Template(template) => Some(Cow::Borrowed(template.as_static()?.bytes())),
         ExprKind::TaggedTemplate(tagged) => {
             let tag = tagged.callee();
-            let ExprKind::Template(template) = tagged.template()?.kind() else {
-                return None;
-            };
+            let template = tagged.template()?.as_template()?;
             let is_string_raw = template.exprs().is_empty()
                 && ast_utils::is_specific_member_access(tag, Some("String"), Some("raw"))
                 && ast_utils::member_object(tag).is_some_and(ast_utils::is_global_reference);
@@ -299,7 +297,7 @@ impl Rule for PreferRegexLiterals {
                 },
                 None => Cow::Borrowed(&b""[..]),
             };
-            if let ExprKind::Regex(literal) = first.kind() {
+            if let Some(literal) = first.as_regex() {
                 if !self.disallow_redundant_wrapping {
                     continue;
                 }

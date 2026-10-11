@@ -49,7 +49,7 @@ fn is_watched_call(e: Expr) -> bool {
     let Some(callee) = e.as_call().map(|it| it.callee()) else {
         return false;
     };
-    let (ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }) = callee.kind() else {
+    let Some(obj) = callee.object() else {
         return false;
     };
     ast_utils::get_static_property_name(callee)
@@ -140,7 +140,7 @@ fn is_getter_for_oxlint(func: Func) -> bool {
 impl GetterReturn {
     /// oxlint reports a function once, and points at it.
     fn check_as_oxlint<'a>(&self, func: Func<'a>, cx: &Cx<'a, Self>) {
-        let returns_nothing = |it: Stmt| matches!(it.kind(), StmtKind::Return(None));
+        let returns_nothing = |it: Stmt| matches!(it.as_return(), Some(None));
         if func.is_end_reachable() || !self.allows_implicit && func.returns().any(returns_nothing) {
             cx.report(func.estree_span(), EXPECTED).data("name", ast_utils::get_function_name_with_kind(func));
         }
@@ -184,7 +184,7 @@ impl GetterReturn {
         }
         if !self.allows_implicit {
             for statement in func.returns() {
-                if matches!(statement.kind(), StmtKind::Return(None)) {
+                if matches!(statement.as_return(), Some(None)) {
                     cx.report(statement, EXPECTED)
                         .data("name", ast_utils::get_function_name_with_kind(func));
                 }

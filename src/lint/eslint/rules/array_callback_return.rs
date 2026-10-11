@@ -156,7 +156,7 @@ fn get_array_method_name<'a>(func: Func<'a>, state: &mut State<'a>) -> Option<(&
 }
 
 pub(crate) fn is_expression_void(e: Expr) -> bool {
-    matches!(e.kind(), ExprKind::Unary { op: UnOp::Void, .. })
+    e.unary_op() == Some(UnOp::Void)
 }
 
 /// ESLint's `voidPrependFixer`. `return_or_arrow` is the `return` or the `=>` before `node`.
@@ -212,7 +212,7 @@ impl ArrayCallbackReturn {
         let (last, mut returns) = (body.last(), func.returns());
         let is_end_reachable =
             !matches!(last.map(Stmt::tag), Some(StmtTag::Return | StmtTag::Throw)) && func.is_end_reachable();
-        let mut returns_nothing = || returns.any(|it| matches!(it.kind(), StmtKind::Return(None)));
+        let mut returns_nothing = || returns.any(|it| matches!(it.as_return(), Some(None)));
         if !is_end_reachable && (self.allow_implicit || !returns_nothing()) {
             return;
         }
@@ -265,7 +265,7 @@ impl ArrayCallbackReturn {
             });
         };
         for statement in func.returns() {
-            let StmtKind::Return(Some(argument)) = statement.kind() else {
+            let Some(Some(argument)) = statement.as_return() else {
                 continue;
             };
             if is_allowed(argument) {
@@ -357,7 +357,7 @@ impl ArrayCallbackReturn {
         let mut has_return = false;
         for statement in func.returns() {
             has_return = true;
-            if !self.allow_implicit && matches!(statement.kind(), StmtKind::Return(None)) {
+            if !self.allow_implicit && matches!(statement.as_return(), Some(None)) {
                 Self::report(cx, statement, EXPECTED_RETURN_VALUE, func, method);
             }
         }

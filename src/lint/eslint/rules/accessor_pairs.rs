@@ -171,7 +171,7 @@ impl Rule for AccessorPairs {
         if !is_argument_or_value {
             return;
         }
-        let ExprKind::Object(props) = e.kind() else {
+        let Some(props) = e.as_object() else {
             return;
         };
         let (mut has_getter, mut has_setter, mut key_of_setter) = (false, false, None);
@@ -221,7 +221,7 @@ impl AccessorPairs {
             Node::Expr(e) => {
                 if let Node::Prop(prop) = e.parent()
                     && let Node::Expr(object) = prop.parent()
-                    && let ExprKind::Object(props) = object.kind()
+                    && let Some(props) = object.as_object()
                 {
                     self.check(
                         func,
@@ -253,7 +253,7 @@ impl AccessorPairs {
                     }
                 }
                 Node::Stmt(statement) if self.enforce_for_ts_types => {
-                    if let StmtKind::Interface(interface) = statement.kind() {
+                    if let Some(interface) = statement.as_interface() {
                         self.check_type(func, interface.members(), cx);
                     }
                 }

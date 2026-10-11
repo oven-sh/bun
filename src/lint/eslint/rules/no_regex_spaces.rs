@@ -94,7 +94,7 @@ fn has_double_space(raw: &[u8]) -> bool {
 }
 
 fn check_literal<'a>(_: &NoRegexSpaces, e: Expr<'a>, cx: &mut Cx<'a, NoRegexSpaces>) {
-    let ExprKind::Regex(literal) = e.kind() else {
+    let Some(literal) = e.as_regex() else {
         return;
     };
     let pattern = literal.pattern();

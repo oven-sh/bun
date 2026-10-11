@@ -115,7 +115,7 @@ impl Rule for NoControlRegex {
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.tag() {
             ExprTag::Regex => {
-                if let ExprKind::Regex(literal) = e.kind() {
+                if let Some(literal) = e.as_regex() {
                     check(e, literal.pattern(), literal.flags(), cx);
                 }
             }

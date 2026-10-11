@@ -34,7 +34,7 @@ fn is_neg_zero(e: Expr) -> bool {
 
 /// Appends the text of `operand`, in parentheses where an argument needs them.
 fn push_operand_text(text: &mut Vec<u8>, operand: Expr) {
-    let is_sequence = matches!(operand.kind(), ExprKind::Binary { op: BinOp::Comma, .. });
+    let is_sequence = operand.binary_op() == Some(BinOp::Comma);
     if is_sequence {
         text.push(b'(');
     }

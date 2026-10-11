@@ -791,6 +791,17 @@ impl<'a> Expr<'a> {
         }
     }
 
+    /// The call, if it is a `Call` or a `New`.
+    #[inline]
+    pub fn as_call_or_new(self) -> Option<Call<'a>> {
+        match self.try_raw()?.kind {
+            hir::ExprKind::Call(call) | hir::ExprKind::New(call) => {
+                Some(Call::new(self.file, call))
+            }
+            _ => None,
+        }
+    }
+
     /// The call, if it is a `Call`, a `New` or a `TaggedTemplate`.
     #[inline]
     pub fn as_call_like(self) -> Option<Call<'a>> {

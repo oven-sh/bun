@@ -23,7 +23,7 @@ impl Rule for NoAsyncPromiseExecutor {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::New(call) = e.kind() else {
+        let Some(call) = e.as_new() else {
             return;
         };
         let callee = call.callee();

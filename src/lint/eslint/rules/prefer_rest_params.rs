@@ -12,7 +12,7 @@ const PREFER_REST_PARAMS: Message = Message::new(
 /// `arguments.length`, as opposed to `arguments` and `arguments[0]`.
 fn is_normal_member_access(e: Expr<'_>) -> bool {
     matches!(e.parent(), Node::Expr(parent)
-        if matches!(parent.kind(), ExprKind::Dot { obj, .. } if obj == e))
+        if parent.as_dot().is_some_and(|(obj, ..)| obj == e))
 }
 
 /// For the `arguments` that are referred to many times.

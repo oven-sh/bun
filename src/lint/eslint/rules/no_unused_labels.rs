@@ -36,7 +36,7 @@ fn is_fixable<'a>(
         _ => Some(false),
     });
     if has_directives == Some(true)
-        && let StmtKind::Expr(e) = body.kind()
+        && let Some(e) = body.as_expr()
         && (e.as_string().is_some() || ast_utils::is_static_template_literal(e))
     {
         return false;

@@ -32,7 +32,7 @@ const REPLACE_WITH_FIND_INDEX: Message =
     Message::new("replaceWithFindIndex", "Replace with Array.prototype.{{ methodName }}.");
 
 fn is_sequence(e: Expr) -> bool {
-    matches!(e.kind(), ExprKind::Binary { op: BinOp::Comma, .. })
+    e.binary_op() == Some(BinOp::Comma)
 }
 
 /// ESLint's `isNaNIdentifier`: the global `NaN` or `Number.NaN`, or a sequence that ends with it.
@@ -77,7 +77,7 @@ fn is_compared_nan(e: Expr) -> bool {
 
 impl UseIsnan {
     fn check_binary_expression<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Binary { op, left, right } = e.kind() else {
+        let Some((op, left, right)) = e.as_binary() else {
             return;
         };
         let (nan, compared) = if is_compared_nan(left) {
@@ -116,7 +116,7 @@ impl UseIsnan {
     }
 
     fn check_switch_statement<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        let StmtKind::Switch { expr, cases } = statement.kind() else {
+        let Some((expr, cases)) = statement.as_switch() else {
             return;
         };
         if is_compared_nan(expr) {
@@ -130,7 +130,7 @@ impl UseIsnan {
     }
 
     fn check_call_expression<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Call(call) = e.kind() else {
+        let Some(call) = e.as_call() else {
             return;
         };
         let callee = call.callee();

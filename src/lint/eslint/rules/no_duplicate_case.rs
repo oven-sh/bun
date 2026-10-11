@@ -64,7 +64,7 @@ impl Rule for NoDuplicateCase {
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        let StmtKind::Switch { cases, .. } = stmt.kind() else {
+        let Some((_, cases)) = stmt.as_switch() else {
             return;
         };
         // Spares the tokens of the file for `case Kind.A: case Kind.B:`.

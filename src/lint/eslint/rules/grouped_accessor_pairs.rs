@@ -169,7 +169,7 @@ impl GroupedAccessorPairs {
             Node::Expr(e) => {
                 if let Node::Prop(prop) = e.parent()
                     && let Node::Expr(object) = prop.parent()
-                    && let ExprKind::Object(props) = object.kind()
+                    && let Some(props) = object.as_object()
                 {
                     self.check_list(
                         func,
@@ -196,7 +196,7 @@ impl GroupedAccessorPairs {
                     }
                 }
                 Node::Stmt(statement) if self.enforce_for_ts_types => {
-                    if let StmtKind::Interface(interface) = statement.kind() {
+                    if let Some(interface) = statement.as_interface() {
                         self.check_signatures(func, interface.members(), cx);
                     }
                 }

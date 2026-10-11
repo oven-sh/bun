@@ -56,11 +56,11 @@ fn is_head_of<'a>(head: Stmt<'a>, statement: Stmt<'a>) -> bool {
 /// or a `for`-`of` loop.
 fn is_left(e: Expr) -> bool {
     match e.parent() {
-        Node::Expr(parent) => matches!(parent.kind(), ExprKind::Assign { target, .. } if target == e),
+        Node::Expr(parent) => parent.as_assign().is_some_and(|(_, target, _)| target == e),
         Node::Stmt(parent) => match parent.kind() {
             StmtKind::Expr(_) => parent.parent().as_stmt().is_some_and(|it| is_head_of(parent, it)),
             StmtKind::ForIn { left, .. } | StmtKind::ForOf { left, .. } => {
-                matches!(left.kind(), StmtKind::Expr(head) if head == e)
+                left.as_expr() == Some(e)
             }
             _ => false,
         },
@@ -397,7 +397,7 @@ impl IdLength {
     fn check_member_expression_as_oxlint<'a>(&self, e: Expr<'a>, name: Ident<'a>, cx: &mut Cx<'a, Self>) {
         self.check(cx, name.name(), || {
             let is_assigned_to = || match e.parent() {
-                Node::Expr(parent) => matches!(parent.kind(), ExprKind::Assign { target, .. } if target == e),
+                Node::Expr(parent) => parent.as_assign().is_some_and(|(_, target, _)| target == e),
                 Node::Prop(prop) => {
                     prop.kind() == PropKind::Init
                         && prop.value() == Some(e)
@@ -561,7 +561,7 @@ impl Rule for IdLength {
         if cx.language().is_oxlint {
             return self.check_statement_as_oxlint(statement, cx);
         }
-        let StmtKind::Import(import) = statement.kind() else {
+        let Some(import) = statement.as_import() else {
             return;
         };
         for name in [import.default(), import.namespace()].into_iter().flatten() {

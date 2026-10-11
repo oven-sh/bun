@@ -126,8 +126,10 @@ struct ScopeInfo<'a> {
 pub struct State<'a> {
     /// What the code paths to analyze start with.
     roots: FxHashSet<Node<'a>>,
-    /// Whether a `return` statement is known to be useful, by what is around it.
-    useful: AncestorMemo<'a, bool>,
+    /// What is known of a `return` statement by what is around it.
+    known: AncestorMemo<'a, Known>,
+    /// The `return` statements after which their function ends, each with the function.
+    at_the_end: Vec<(Node<'a>, Stmt<'a>)>,
     /// The function around a `return` statement.
     functions: AncestorMemo<'a, Func<'a>>,
     /// Whether a `return` statement is in a loop or in a `finally` block.
@@ -279,11 +281,19 @@ const STATEMENTS: [StmtTag; 28] = [
     StmtTag::ImportEquals,
 ];
 
-/// Whether the statements alone tell that a `return` without a value is not reported: it is in a
-/// loop, or something is executed if it is left out. That is the statement after it, or after the
-/// `if` statements and the blocks that it is the end of. This is what `parent` tells, which `current`,
-/// the `return` statement or one of these, is directly in.
-fn is_known_to_be_useful<'a>(current: Node<'a>, parent: Node<'a>) -> Option<bool> {
+/// What the statements alone tell about a `return` without a value.
+#[derive(Copy, Clone)]
+enum Known {
+    /// It is not reported: it is in a loop, or something is executed if it is left out.
+    Useful,
+    /// Nothing is: the function ends. It is reported if it can be reached.
+    Useless,
+    Nothing,
+}
+
+/// What is executed if a `return` is left out is the statement after it, or after the `if` statements and the blocks that
+/// it is the end of. This is what `parent` tells, which `current`, the `return` statement or one of these, is directly in.
+fn what_is_known<'a>(current: Node<'a>, parent: Node<'a>) -> Option<Known> {
     let list = match parent {
         Node::Func(func) => func.body_statements(),
         Node::Stmt(parent) => parent.as_block(),
@@ -304,16 +314,17 @@ fn is_known_to_be_useful<'a>(current: Node<'a>, parent: Node<'a>) -> Option<bool
                 | StmtTag::While
                 | StmtTag::DoWhile
         ) || matches!(next.as_return(), Some(Some(_)));
-        return Some(is_executed);
+        return Some(if is_executed { Known::Useful } else { Known::Nothing });
     }
     match parent {
+        Node::Func(_) if list.is_some() => Some(Known::Useless),
         Node::Stmt(parent) => match parent.tag() {
-            StmtTag::While | StmtTag::DoWhile | StmtTag::For | StmtTag::ForIn | StmtTag::ForOf => Some(true),
+            StmtTag::While | StmtTag::DoWhile | StmtTag::For | StmtTag::ForIn | StmtTag::ForOf => Some(Known::Useful),
             StmtTag::If => None,
             StmtTag::Block if parent.as_block().is_some() => None,
-            _ => Some(false),
+            _ => Some(Known::Nothing),
         },
-        _ => Some(false),
+        _ => Some(Known::Nothing),
     }
 }
 
@@ -351,16 +362,19 @@ impl NoUselessReturn {
         }
         cx.state.useless_count = 0;
         for (statement, is_useless) in std::mem::take(&mut cx.state.returns) {
-            if !is_useless {
-                continue;
+            if is_useless {
+                self.report(statement, cx);
             }
-            cx.report(statement, UNNECESSARY_RETURN).fix(|fixer| {
-                let is_removable = ast_utils::is_statement_list_parent(statement.parent())
-                    && fixer.file().comments_in(statement).next().is_none();
-                // The whole function, so that this does not conflict with `no-else-return`.
-                is_removable.then(|| FixTracker::new(fixer).retain_enclosing_function(statement).remove(statement))
-            });
         }
+    }
+
+    fn report<'a>(&self, statement: Stmt<'a>, cx: &Cx<'a, Self>) {
+        cx.report(statement, UNNECESSARY_RETURN).fix(|fixer| {
+            let is_removable = ast_utils::is_statement_list_parent(statement.parent())
+                && fixer.file().comments_in(statement).next().is_none();
+            // The whole function, so that this does not conflict with `no-else-return`.
+            is_removable.then(|| FixTracker::new(fixer).retain_enclosing_function(statement).remove(statement))
+        });
     }
 
     fn on_segment_start<'a>(&self, segment: Segment<'a>, cx: &mut Cx<'a, Self>) {
@@ -443,17 +457,30 @@ impl Rule for NoUselessReturn {
     }
 
     fn stmt<'a>(&self, statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        if !matches!(statement.as_return(), Some(None))
-            || cx.state.useful.find(statement.into(), is_known_to_be_useful) == Some(true)
-        {
+        if !matches!(statement.as_return(), Some(None)) {
+            return;
+        }
+        let known = cx.state.known.find(statement.into(), what_is_known);
+        if matches!(known, Some(Known::Useful)) {
             return;
         }
         let function = cx.state.functions.find(statement.into(), |_, parent| parent.as_func());
         let root = function.map_or_else(|| Node::File(cx.file()), Node::Func);
-        cx.state.roots.insert(root);
+        match known {
+            Some(Known::Useless) => cx.state.at_the_end.push((root, statement)),
+            _ => {
+                cx.state.roots.insert(root);
+            }
+        }
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
+        // A function in which all is known is not analyzed.
+        for (root, statement) in std::mem::take(&mut cx.state.at_the_end) {
+            if !cx.state.roots.contains(&root) && statement.is_reachable() {
+                self.report(statement, cx);
+            }
+        }
         for root in std::mem::take(&mut cx.state.roots) {
             self.check_code_path(root, cx);
         }

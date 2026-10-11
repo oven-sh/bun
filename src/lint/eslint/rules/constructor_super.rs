@@ -432,7 +432,7 @@ impl ConstructorSuper {
     /// Returning a value is a substitute for `super()`.
     fn on_return<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
         if let Node::Stmt(statement) = node
-            && let StmtKind::Return(Some(_)) = statement.kind()
+            && let Some(Some(_)) = statement.as_return()
             && let Some(code_path) = cx.state.constructor().map(|it| it.code_path)
         {
             cx.state.mark_current_segments(code_path);

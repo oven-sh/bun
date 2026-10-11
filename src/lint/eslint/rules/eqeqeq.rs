@@ -23,7 +23,7 @@ const REPLACE_OPERATOR: Message = Message::new(
 );
 
 fn is_typeof(e: Expr) -> bool {
-    matches!(e.kind(), ExprKind::Unary { op: UnOp::Typeof, .. })
+    e.unary_op() == Some(UnOp::Typeof)
 }
 
 /// What `typeof node.value` is for ESLint's `Literal`, and for a template without substitutions.
@@ -52,7 +52,7 @@ fn literal_type_of_oxlint(e: Expr) -> Option<&'static str> {
 
 impl Eqeqeq {
     fn check<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Binary { op, left, right } = e.kind() else {
+        let Some((op, left, right)) = e.as_binary() else {
             return;
         };
         let is_oxlint = cx.language().is_oxlint;

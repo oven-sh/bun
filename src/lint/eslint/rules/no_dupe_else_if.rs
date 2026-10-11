@@ -40,13 +40,22 @@ fn can_have_equal_tokens<'a>(a: Expr<'a>, b: Expr<'a>) -> bool {
         if a.tag() != b.tag()
             || a.as_ident() != b.as_ident()
             || a.as_string() != b.as_string()
+            || a.as_number().map(f64::to_bits) != b.as_number().map(f64::to_bits)
             || a.member_name().map(Ident::name) != b.member_name().map(Ident::name)
             || a.binary_op() != b.binary_op()
             || a.unary_op() != b.unary_op()
         {
             return false;
         }
+        if let (Some(a), Some(b)) = (a.as_call_like(), b.as_call_like()) {
+            if a.args().len() != b.args().len() {
+                return false;
+            }
+            pending.push((a.callee(), b.callee()));
+            pending.extend(a.args().iter().zip(b.args()));
+        }
         pending.extend(a.object().zip(b.object()));
+        pending.extend(a.index().zip(b.index()));
         pending.extend(a.operand().zip(b.operand()));
         pending.extend(a.right().zip(b.right()));
         pending.extend(a.left().zip(b.left()));

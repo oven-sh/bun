@@ -2430,6 +2430,23 @@ describe.concurrent("bun lint", () => {
     expect(proc.resourceUsage()!.maxRSS).toBeLessThan((isASAN || isDebug ? 700 : 300) * 1024 * 1024);
   });
 
+  // What matches a path with a pattern of `include` called itself for each `**`, and tried every number of directories for each
+  // of them in turn: the stack, and time that grows like a power of their number.
+  test.each([
+    ["200,000 in a row", [`${"**/".repeat(200_000)}*.ts`], "a.ts"],
+    ["16 that match nothing, 34 directories", [`${"**/a/".repeat(16)}b.ts`, "**/*.ts"], `${"a/".repeat(34)}a.ts`],
+  ])("`**` in `include` of a tsconfig.json: %s", async (_, include, file) => {
+    const rules = { "typescript/no-floating-promises": "error" };
+    const files = {
+      ".oxlintrc.json": JSON.stringify({ plugins: ["typescript"], categories: { correctness: "off" }, rules }),
+      "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, noEmit: true, types: [] }, include }),
+      [file]: "async function f() {}\nf();\nexport {};\n",
+    };
+    const { raw, exitCode } = await lint(files, ["--type-aware", "-f", "unix", file]);
+    expect(raw).toContain(`${file}:2:1: `);
+    expect(exitCode).toBe(1);
+  });
+
   // A file to which links give several names, and rules that look at several files. It must be the same in every run.
   describe("a file that has several names by links", () => {
     const project = (configuration: Record<string, string>) => {

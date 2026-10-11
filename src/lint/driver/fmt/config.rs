@@ -1491,7 +1491,9 @@ impl<'c> Configs<'c> {
                 }
                 name if OPTIONS.contains(&name) && resolved.options.set(name, value).is_err() => {
                     let flags = &self.options.format;
-                    let is_flag = flags.iter().any(|it| std::ptr::eq(&it.1[..], value));
+                    let is_flag = flags
+                        .iter()
+                        .any(|it| std::ptr::eq(it.1.as_ptr(), value.as_ptr()));
                     return Err(Fatal(match not_an_integer(name, value, is_flag) {
                         Some(refusal) if !is_oxfmt => refusal,
                         _ => [b"Invalid ", name, b" value: ", value, b"."].concat(),

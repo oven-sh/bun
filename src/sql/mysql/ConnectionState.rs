@@ -5,6 +5,8 @@ pub enum ConnectionState {
     Handshaking,
     Authenticating,
     AuthenticationAwaitingPk,
+    /// Authenticated; awaiting the OK of the session-setup `SET time_zone`.
+    SessionSetup,
     Connected,
     Failed,
 }

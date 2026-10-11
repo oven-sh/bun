@@ -13,31 +13,55 @@ on:
     branches: [main]
     paths:
       - "src/**/*.rs"
+      - "src/**/*.h"
+      - "src/**/*.cpp"
+      - "src/**/*.classes.ts"
+      - "src/codegen/**"
+      - "src/js/builtins.d.ts"
       - "src/jsc/bindings/**"
+      - "packages/bun-types/redis.d.ts"
       - "scripts/build/**"
       - "scripts/glob-sources.ts"
+      - "scripts/agent.ts"
+      - "scripts/buildkite.ts"
+      - ".buildkite/ci.ts"
+      - "rust-toolchain.toml"
+      - "bun.lock"
+      - "test/bun.lock"
       - "test/harness.ts"
       - "test/tsconfig.json"
       - "test/_util/**"
       - "test/internal/source-lints/**"
-      - ".github/workflows/source-lints.yml"
+      - ".github/workflows/*.yml"
       - ".github/actions/setup-bun/**"
   pull_request:
     paths:
       - "src/**/*.rs"
+      - "src/**/*.h"
+      - "src/**/*.cpp"
+      - "src/**/*.classes.ts"
+      - "src/codegen/**"
+      - "src/js/builtins.d.ts"
       - "src/jsc/bindings/**"
+      - "packages/bun-types/redis.d.ts"
       - "scripts/build/**"
       - "scripts/glob-sources.ts"
+      - "scripts/agent.ts"
+      - "scripts/buildkite.ts"
+      - ".buildkite/ci.ts"
+      - "rust-toolchain.toml"
+      - "bun.lock"
+      - "test/bun.lock"
       - "test/harness.ts"
       - "test/tsconfig.json"
       - "test/_util/**"
       - "test/internal/source-lints/**"
-      - ".github/workflows/source-lints.yml"
+      - ".github/workflows/*.yml"
       - ".github/actions/setup-bun/**"
   merge_group:
 
 env:
-  BUN_VERSION: "1.3.14"
+  BUN_VERSION: "1.4.2"
 
 jobs:
   source-lints:

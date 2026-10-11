@@ -179,6 +179,18 @@ plugin({
     }
   });
 
+  // node:sys is another name of node:util.
+  test.concurrent.each(["--preload", "--import", "--require"])("%s of a builtin by an alias", async flag => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), flag, "node:sys", "-e", "console.log('main ran')"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "main ran\n", stderr: "", exitCode: 0 });
+  });
+
   test("throws an error when preloaded module not found", async () => {
     const bunfig = `preload = ["./bad-file.js"]`;
 

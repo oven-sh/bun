@@ -53,6 +53,15 @@ pub(crate) fn postgres_error_to_js(
     message: Option<&[u8]>,
     err: AnyPostgresError,
 ) -> JSValue {
+    postgres_error_to_js_with_hint(global, message, None, err)
+}
+
+pub(crate) fn postgres_error_to_js_with_hint(
+    global: &JSGlobalObject,
+    message: Option<&[u8]>,
+    hint: Option<&[u8]>,
+    err: AnyPostgresError,
+) -> JSValue {
     use AnyPostgresError::*;
     let code: &'static [u8] = match err {
         ConnectionClosed => b"ERR_POSTGRES_CONNECTION_CLOSED",
@@ -105,9 +114,6 @@ pub(crate) fn postgres_error_to_js(
         JSError => {
             return global.take_exception(JsError::Thrown);
         }
-        JSTerminated => {
-            return global.take_exception(JsError::Terminated);
-        }
         OutOfMemory => {
             return global.create_out_of_memory_error();
         }
@@ -137,6 +143,7 @@ pub(crate) fn postgres_error_to_js(
         msg,
         &PostgresErrorOptions {
             code,
+            hint,
             ..Default::default()
         },
     ) {

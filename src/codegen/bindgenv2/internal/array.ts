@@ -1,5 +1,5 @@
-import { hasRawAny } from "./any";
-import { CodeStyle, Type } from "./base";
+import { hasRawAny } from "./any.ts";
+import { type CodeStyle, Type } from "./base.ts";
 
 export abstract class ArrayType extends Type {}
 

@@ -125,7 +125,7 @@ impl JsRef {
     pub fn try_get(&self) -> Option<JSValue> {
         match self {
             JsRef::Weak(weak) => {
-                if weak.is_empty_or_undefined_or_null() {
+                if weak.is_empty_or_undefined_or_null() || !weak.is_live_cell() {
                     None
                 } else {
                     Some(*weak)
@@ -173,6 +173,9 @@ impl JsRef {
             JsRef::Weak(weak) => {
                 debug_assert!(!weak.is_empty_or_undefined_or_null());
                 let weak = *weak;
+                if !weak.is_live_cell() {
+                    return;
+                }
                 *self = JsRef::Strong(Strong::create(weak, global));
             }
             JsRef::Strong(_) => {}
@@ -203,6 +206,10 @@ impl JsRef {
             JsRef::Strong(_) => false,
             JsRef::Finalized => true,
         }
+    }
+
+    pub fn is_finalized(&self) -> bool {
+        matches!(self, JsRef::Finalized)
     }
 
     pub fn is_not_empty(&self) -> bool {
@@ -252,17 +259,22 @@ impl Default for JsRef {
 /// Forwarding accessors for the common `JsCell<JsRef>` field shape, so call
 /// sites read `field.try_get()` / `field.get_or_undefined()` instead of the
 /// double-step `field.get().try_get()` / `field.get().get()`.
-impl crate::JsCell<JsRef> {
+pub trait JsCellRefExt {
     /// [`JsRef::try_get`] on the contained ref: the live `JSValue`, or `None`
     /// if empty/finalized.
+    fn try_get(&self) -> Option<JSValue>;
+    /// [`JsRef::get`] on the contained ref: `try_get().unwrap_or(UNDEFINED)`.
+    fn get_or_undefined(&self) -> JSValue;
+}
+
+impl JsCellRefExt for crate::JsCell<JsRef> {
     #[inline]
-    pub fn try_get(&self) -> Option<JSValue> {
+    fn try_get(&self) -> Option<JSValue> {
         self.get().try_get()
     }
 
-    /// [`JsRef::get`] on the contained ref: `try_get().unwrap_or(UNDEFINED)`.
     #[inline]
-    pub fn get_or_undefined(&self) -> JSValue {
+    fn get_or_undefined(&self) -> JSValue {
         self.get().get()
     }
 }

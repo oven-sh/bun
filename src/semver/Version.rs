@@ -114,13 +114,15 @@ impl<T: VersionInt> VersionType<T> {
         Self::parse(SlicedString { buf: slice, slice })
     }
 
-    pub fn clone_into(self, slice: &[u8], buf: &mut &mut [u8]) -> Self {
+    /// Copies the tag strings into `buf` at `*offset` (advancing it); the
+    /// returned version's strings are offsets into the whole of `buf`.
+    pub fn clone_into(self, slice: &[u8], buf: &mut [u8], offset: &mut usize) -> Self {
         Self {
             major: self.major,
             minor: self.minor,
             patch: self.patch,
             _tag_padding: Default::default(),
-            tag: self.tag.clone_into(slice, buf),
+            tag: self.tag.clone_into(slice, buf, offset),
         }
     }
 
@@ -1016,29 +1018,21 @@ impl Tag {
         self.pre.order(&rhs.pre, lhs_buf, rhs_buf)
     }
 
-    pub fn clone_into(self, slice: &[u8], buf: &mut &mut [u8]) -> Tag {
-        let pre: SemverString;
-        let build: SemverString;
-
-        if self.pre.is_inline() {
-            pre = self.pre.value;
-        } else {
-            let pre_slice = self.pre.slice(slice);
-            buf[..pre_slice.len()].copy_from_slice(pre_slice);
-            // reshaped for borrowck —
-            // capture the init args before advancing `buf`.
-            pre = SemverString::init(buf, &buf[0..pre_slice.len()]);
-            *buf = &mut core::mem::take(buf)[pre_slice.len()..];
-        }
-
-        if self.build.is_inline() {
-            build = self.build.value;
-        } else {
-            let build_slice = self.build.slice(slice);
-            buf[..build_slice.len()].copy_from_slice(build_slice);
-            build = SemverString::init(buf, &buf[0..build_slice.len()]);
-            *buf = &mut core::mem::take(buf)[build_slice.len()..];
-        }
+    /// Copies `pre`/`build` into `buf` at `*offset` (advancing it); the
+    /// returned strings are offsets into the whole of `buf`.
+    pub fn clone_into(self, slice: &[u8], buf: &mut [u8], offset: &mut usize) -> Tag {
+        let mut copy = |s: ExternalString| -> SemverString {
+            if s.is_inline() {
+                return s.value;
+            }
+            let bytes = s.slice(slice);
+            let start = *offset;
+            *offset += bytes.len();
+            buf[start..*offset].copy_from_slice(bytes);
+            SemverString::init(buf, &buf[start..*offset])
+        };
+        let pre = copy(self.pre);
+        let build = copy(self.build);
 
         Tag {
             pre: ExternalString {
@@ -1209,5 +1203,39 @@ impl<T: VersionInt> Default for ParseResult<T> {
             version: Partial::default(),
             len: 0,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Version;
+    use crate::sliced_string::SlicedString;
+
+    fn parse(s: &[u8]) -> Version {
+        let r = Version::parse(SlicedString::init(s, s));
+        assert!(r.valid);
+        r.version.min()
+    }
+
+    #[test]
+    fn clone_into_offsets_are_relative_to_the_whole_buffer() {
+        let a_src: &[u8] = b"1.0.0-canary.20240101+build.aaaaaaaa";
+        let b_src: &[u8] = b"1.0.0-canary.20240315+build.bbbbbbbb";
+        let a = parse(a_src);
+        let b = parse(b_src);
+
+        let mut buf = vec![0u8; 128];
+        let mut offset = 0usize;
+        let a2 = a.clone_into(a_src, &mut buf, &mut offset);
+        let b2 = b.clone_into(b_src, &mut buf, &mut offset);
+        assert_eq!(
+            offset,
+            2 * ("canary.20240101".len() + "build.aaaaaaaa".len())
+        );
+
+        assert_eq!(a2.tag.pre.slice(&buf), b"canary.20240101");
+        assert_eq!(a2.tag.build.slice(&buf), b"build.aaaaaaaa");
+        assert_eq!(b2.tag.pre.slice(&buf), b"canary.20240315");
+        assert_eq!(b2.tag.build.slice(&buf), b"build.bbbbbbbb");
     }
 }

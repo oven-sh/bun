@@ -311,7 +311,11 @@ describe.concurrent("prettier/prettier", () => {
   test("bun/format reports the files that it cannot check, and why", async () => {
     const rule = { "eslint.config.mjs": `export default [{ rules: { "bun/format": "error" } }];` };
     const unchecked = (why: string) => [`Files like this are not checked: ${why}.`];
-    const plugin = await lint({ ...rule, ".prettierrc": '{ "plugins": ["prettier-plugin-brace-style"] }', "a.js": "a  ;\n" });
+    const plugin = await lint({
+      ...rule,
+      ".prettierrc": '{ "plugins": ["prettier-plugin-brace-style"] }',
+      "a.js": "a  ;\n",
+    });
     expect(plugin.reports["a.js"]).toEqual(
       unchecked("a plugin of Prettier that bun format does not have may print them"),
     );
@@ -321,10 +325,26 @@ describe.concurrent("prettier/prettier", () => {
       ".oxfmtrc.json": '{ "sortTailwindcss": true }',
       "a.js": 'a  (`<a class="p-4 flex">`);\nhtml`<a class="p-4 flex"></a>`;\n',
       "b.js": "b  ;\n",
+      "off.js": '/* eslint-disable bun/format */\nhtml`<a class="p-4 flex"></a>`;\n',
     });
     expect(classes.reports["a.js"]).toEqual(unchecked("only bun format asks Tailwind CSS where their classes go"));
+    expect(classes.reports["off.js"]).toEqual([]);
     expect(classes.reports["b.js"]).toEqual(['1:2-1:4 delete [1,3] "" Delete `··`']);
     expect(classes.exitCode).toBe(1);
+    // A comment of oxlint counts from its end, so the report is behind those at the top.
+    const html = 'html`<a class="p-4 flex"></a>`;\n';
+    const { stdout } = await run(
+      {
+        ".oxlintrc.json": '{ "rules": { "bun/format": "error" } }',
+        ".oxfmtrc.json": '{ "sortTailwindcss": true }',
+        "a.js": `#!/usr/bin/env bun\n// a\n${html}`,
+        "off.js": `/* oxlint-disable bun/format */\n${html}`,
+      },
+      "-f",
+      "unix",
+    );
+    const places = stdout.split("\n").filter(it => it.includes("bun(format)"));
+    expect(places.map(it => it.split(": ")[0])).toEqual(["a.js:3:1"]);
   });
 
   test("the rule of the package is asked: an option that is not Prettier's", async () => {

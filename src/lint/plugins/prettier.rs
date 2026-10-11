@@ -139,7 +139,9 @@ impl Settings {
             Err(reason) if like == Like::InstalledPrettier => return file.hand_back(reason),
             // `bun/format` stands in for nothing, so nobody else looks at the file.
             Err(reason) => {
-                cx.report(Span::new(0, 0), UNCHECKED)
+                // Behind the comments at the top, one of which may turn the rule off.
+                let at = cx.program_span().start;
+                cx.report(Span::new(at, at), UNCHECKED)
                     .data("reason", reason.text());
                 return;
             }

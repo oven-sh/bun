@@ -706,10 +706,13 @@ process.on('message', (m, sock) => {
   });
 
   // node holds a disconnect() back from the moment it submits a handle until that handle is acked:
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L861-L866
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L861-L864
   // Every fixture here sends a 2 MiB message first. It does not fit in the IPC socket buffer, so the
   // sends behind it are still unwritten when disconnect() runs in the same tick.
-  describe("disconnect() with sends still queued behind an unfinished write", () => {
+  // Not on Windows: a pipe write there completes later whatever its size, so the same-tick order in the
+  // last describe of this file is the Windows form of this case. A close there also waits for the write
+  // in progress, so the no-handle test cannot finish against a peer that never reads.
+  describe.skipIf(isWindows)("disconnect() with sends still queued behind an unfinished write", () => {
     const disconnectedState = {
       connected: false,
       secondDisconnect: "ERR_IPC_DISCONNECTED",

@@ -389,6 +389,8 @@ it.skipIf(isWindows)("advanced serialization advertises wire format version 2", 
 
 // Subprocess.disconnect() takes the same native path as node:child_process: a handle send that is
 // still queued postpones the close until the handle is acked and the queue is flushed.
+// Not on Windows: the backlog here comes from a POSIX socket buffer, and the onDisconnect tests in
+// spawn.test.ts do not pass there yet.
 it.skipIf(isWindows)("disconnect() delivers a handle send still queued behind an unfinished write", async () => {
   const childSource = [
     `const received = [];`,

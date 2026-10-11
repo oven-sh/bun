@@ -401,6 +401,36 @@ for (const expectation of ["100-continue", "something-else"]) {
   });
 }
 
+// The head of /a needs two reads. The read that completes it also brings the
+// chunked body of /a and all of /b. The parser must leave that body at its last
+// chunk and read /b as a request.
+test("a request pipelined behind a chunked request whose head took two reads is answered", async () => {
+  const server = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", chunk => (body += chunk));
+    req.on("end", () => res.end(`${req.url}:${body};`));
+  });
+  await withServer(server, async port => {
+    const { promise: failed, reject } = Promise.withResolvers<never>();
+    const head = "POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n";
+    const socket = send(port, head.slice(0, 20), reject);
+    let response = "";
+    socket.on("data", chunk => (response += chunk));
+    // One round trip on another connection: the server has read the partial head by then.
+    const barrier = connect(port, "127.0.0.1");
+    barrier.resume();
+    barrier.end("GET /barrier HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    await once(barrier, "close");
+    socket.write(
+      head.slice(20) +
+        "5\r\nhello\r\n0\r\n\r\n" +
+        "POST /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length: 5\r\n\r\nworld",
+    );
+    await Promise.race([once(socket, "close"), failed]);
+    assert.deepStrictEqual(response.match(/\/[ab]:\w*;/g), ["/a:hello;", "/b:world;"]);
+  });
+});
+
 // close() and closeIdleConnections() take a connection whose parser is between
 // messages and whose response has ended:
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L693-L706

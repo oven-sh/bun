@@ -441,6 +441,43 @@ test.each([
   }
 });
 
+// The same handler over TLS. The client's answer to the close_notify of the
+// server reaches the parser as an EOF, with no request open: no 'clientError'.
+test("https: no clientError when the client closes behind a chunked request whose handler ended the socket", async () => {
+  const errors: (string | undefined)[] = [];
+  const serverSocketClosed = Promise.withResolvers<void>();
+  const server = createHttpsServer(tlsCert, (req, res) => {
+    req.socket.on("close", () => serverSocketClosed.resolve());
+    req.resume().on("end", () => {
+      res.end("stored");
+      req.socket.end();
+    });
+  });
+  server.on("clientError", (error: NodeJS.ErrnoException, socket) => {
+    errors.push(error.code);
+    socket.destroy();
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+
+  // This socket ends its own side when it sees the end of the server.
+  const socket = tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false }, () => {
+    socket.write("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n");
+  });
+  try {
+    socket.on("error", () => {});
+    let response = "";
+    socket.on("data", chunk => (response += chunk));
+    await serverSocketClosed.promise;
+    expect({ errors, stored: response.endsWith("stored") }).toEqual({ errors: [], stored: true });
+  } finally {
+    socket.destroy();
+    server.closeAllConnections();
+    server.close();
+  }
+});
+
 // A last chunk that the parser rejects completes nothing. Node.js keeps that
 // connection for a sweep, and the 'clientError' listener can still answer on it.
 // Each row runs another chunk loop of the parser, or another of its two checks.

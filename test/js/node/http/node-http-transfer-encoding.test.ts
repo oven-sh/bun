@@ -1179,39 +1179,6 @@ test("pipelined chunked request keeps its own trailers when the next one is pars
   expect(trailers).toEqual({ "x-a": "a" });
 });
 
-// The head of /a needs two reads. The read that completes it also brings the
-// chunked body of /a and all of /b. The parser must leave that body at its last
-// chunk and read /b as a request.
-test("a request pipelined behind a chunked request whose head took two reads is answered", async () => {
-  await using server = createServer((req, res) => {
-    let body = "";
-    req.on("data", chunk => (body += chunk));
-    req.on("end", () => res.end(`${req.url}:${body};`));
-  });
-  await once(server.listen(0, "127.0.0.1"), "listening");
-  const { port } = server.address() as AddressInfo;
-
-  const socket = connect(port, "127.0.0.1");
-  await once(socket, "connect");
-  socket.on("error", () => {});
-  let response = "";
-  socket.on("data", chunk => (response += chunk));
-  const head = "POST /a HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n";
-  socket.write(head.slice(0, 20));
-  // One round trip on another connection: the server has read the partial head by then.
-  const barrier = connect(port, "127.0.0.1");
-  barrier.resume();
-  barrier.end("GET /barrier HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
-  await once(barrier, "close");
-  socket.write(
-    head.slice(20) +
-      "5\r\nhello\r\n0\r\n\r\n" +
-      "POST /b HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length: 5\r\n\r\nworld",
-  );
-  await once(socket, "close");
-  expect(response.match(/\/[ab]:\w*;/g)).toEqual(["/a:hello;", "/b:world;"]);
-});
-
 // Once the header section is on the wire, tearing a response down (res.destroy(),
 // req.destroy(), a handler throwing) must not write anything else: the header
 // terminator is gone, so header bytes would land inside the body. Node writes

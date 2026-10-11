@@ -12,10 +12,8 @@ const QMARK: &[u8] = b"[^/]";
 const STAR: &[u8] = b"[^/]*?";
 const TWO_STAR_DOT: &[u8] = br"(?:(?!(?:\/|^)(?:\.{1,2})($|\/)).)*?";
 const TWO_STAR_NO_DOT: &[u8] = br"(?:(?!(?:\/|^)\.).)*?";
-/// Ours: each of these cuts and writes the text again. Beyond them the pattern matches nothing.
+/// Ours: how deep `parse` calls itself. Beyond it the pattern matches nothing.
 const MAX_DEPTH: usize = 64;
-const MAX_OPEN_LISTS: usize = 100;
-const MAX_NEGATIVE_LISTS: usize = 1_024;
 
 /// `reSpecials`
 fn is_re_special(c: u8) -> bool {
@@ -192,7 +190,6 @@ fn parse(pattern: &[u8], options: Options, depth: usize) -> Option<Parsed> {
             b'(' if class.is_some() => w.re.push(b'('),
             b'(' => match w.state_char.take() {
                 None => w.re.extend_from_slice(b"\\("),
-                Some(_) if lists.len() >= MAX_OPEN_LISTS => return None,
                 Some(kind) => {
                     lists.push(List {
                         kind,
@@ -210,9 +207,6 @@ fn parse(pattern: &[u8], options: Options, depth: usize) -> Option<Parsed> {
                     w.has_magic = true;
                     w.re.extend_from_slice(close_of(list.kind));
                     if list.kind == b'!' {
-                        if negative_lists.len() >= MAX_NEGATIVE_LISTS {
-                            return None;
-                        }
                         let re_end = w.re.len();
                         negative_lists.push(List { re_end, ..list });
                     }
@@ -365,7 +359,7 @@ fn source(pattern: &[u8], options: Options) -> Option<Vec<u8>> {
         .count();
     let rest = &pattern[bangs..];
     let globs = match has_braces(rest) && !options.nobrace {
-        true => braces::expand(rest)?,
+        true => braces::expand(rest),
         false => vec![rest.to_vec()],
     };
     if globs.is_empty() {

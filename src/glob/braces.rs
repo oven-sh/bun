@@ -6,10 +6,6 @@ const MAX: usize = 100_000;
 const MAX_LENGTH: usize = 4_000_000;
 const MAX_DEPTH: usize = 1_000;
 const MAX_REWRITES: usize = 1_000;
-/// Ours: every byte that is searched or written, and `COST` for every list that is made. `{a,b}` x 4,000 would run for minutes.
-const MAX_WORK: usize = 16 * MAX_LENGTH;
-/// What a `Vec` costs, in bytes written: `{,}` x 17 is 100,000 results of no bytes.
-const COST: usize = 32;
 
 // What an escaped character is replaced by while braces are expanded. None of these bytes occurs in UTF-8.
 const ESC_SLASH: u8 = 0xF8;
@@ -57,12 +53,8 @@ struct Balanced<'t> {
 }
 
 /// `balanced("{", "}", text)` of the package `balanced-match`: the first pair of braces that match each other.
-fn balanced<'t>(text: &'t [u8], work: &mut usize) -> Option<Balanced<'t>> {
-    let mut find = |byte: u8, from: usize| {
-        let found = strings::index_of_char_pos(text, byte, from);
-        *work += (found.unwrap_or(text.len()) + 1).saturating_sub(from);
-        found
-    };
+fn balanced(text: &[u8]) -> Option<Balanced<'_>> {
+    let find = |byte: u8, from: usize| strings::index_of_char_pos(text, byte, from);
     let mut open = Some(find(b'{', 0)?);
     let mut close = find(b'}', open? + 1);
     close?;
@@ -106,19 +98,15 @@ fn balanced<'t>(text: &'t [u8], work: &mut usize) -> Option<Balanced<'t>> {
 }
 
 /// `text.split(",")`, but a braced section is not split.
-fn parse_comma_parts(mut text: &[u8], work: &mut usize) -> Vec<Vec<u8>> {
+fn parse_comma_parts(mut text: &[u8]) -> Vec<Vec<u8>> {
     let mut parts: Vec<Vec<u8>> = Vec::new();
     // The part that is being written. What is before the first comma of what is left is added to it.
     let mut carry: Vec<u8> = Vec::new();
     loop {
-        let found = balanced(text, work);
+        let found = balanced(text);
         let mut split: Vec<Vec<u8>> = strings::split(found.as_ref().map_or(text, |m| m.pre), b",")
             .map(<[u8]>::to_vec)
             .collect();
-        let read = found
-            .as_ref()
-            .map_or(text.len(), |m| m.pre.len() + m.body.len() + 2);
-        *work += read + COST * split.len();
         if let Some(first) = split.first_mut() {
             carry.extend_from_slice(first);
             *first = std::mem::take(&mut carry);
@@ -237,25 +225,18 @@ fn expand_sequence(parts: &[&[u8]], is_alpha: bool) -> Vec<Vec<u8>> {
 }
 
 /// Every `acc[a] + pre + values[v]`.
-fn combine(
-    acc: Vec<Vec<u8>>,
-    pre: &[u8],
-    values: &[Vec<u8>],
-    drop_empties: bool,
-    work: &mut usize,
-) -> Vec<Vec<u8>> {
+fn combine(acc: Vec<Vec<u8>>, pre: &[u8], values: &[Vec<u8>], drop_empties: bool) -> Vec<Vec<u8>> {
     if let [value] = values {
-        return append(acc, pre, value, drop_empties, work);
+        return append(acc, pre, value, drop_empties);
     }
     let mut out = Vec::new();
     let mut length = 0;
     for a in &acc {
         for value in values {
-            if out.len() >= MAX || *work > MAX_WORK {
+            if out.len() >= MAX {
                 return out;
             }
             let len = a.len() + pre.len() + value.len();
-            *work += len + COST;
             if drop_empties && len == 0 {
                 continue;
             }
@@ -270,21 +251,14 @@ fn combine(
 }
 
 /// `combine` with one value, in place. Otherwise a run of groups that do not multiply is quadratic.
-fn append(
-    mut acc: Vec<Vec<u8>>,
-    pre: &[u8],
-    value: &[u8],
-    drop_empties: bool,
-    work: &mut usize,
-) -> Vec<Vec<u8>> {
+fn append(mut acc: Vec<Vec<u8>>, pre: &[u8], value: &[u8], drop_empties: bool) -> Vec<Vec<u8>> {
     let (mut length, mut kept, mut is_full) = (0, 0, false);
     acc.retain_mut(|a| {
-        is_full |= kept >= MAX || *work > MAX_WORK;
+        is_full |= kept >= MAX;
         if is_full {
             return false;
         }
         let len = a.len() + pre.len() + value.len();
-        *work += pre.len() + value.len() + 1;
         if drop_empties && len == 0 {
             return false;
         }
@@ -302,12 +276,10 @@ fn append(
 }
 
 /// `/,(?!,).*\}/.test(text)`
-fn has_comma_before_close(text: &[u8], work: &mut usize) -> bool {
+fn has_comma_before_close(text: &[u8]) -> bool {
     let mut from = 0;
     loop {
-        let comma = strings::index_of_char_pos(text, b',', from);
-        *work += (comma.unwrap_or(text.len()) + 1).saturating_sub(from);
-        let Some(comma) = comma else {
+        let Some(comma) = strings::index_of_char_pos(text, b',', from) else {
             return false;
         };
         from = comma + 1;
@@ -322,25 +294,14 @@ fn has_comma_before_close(text: &[u8], work: &mut usize) -> bool {
             at += 1;
         }
         // No comma up to here has a `}` behind it either.
-        *work += at - from;
         from = at;
     }
 }
 
-/// The pieces, one behind the other.
-fn join(pieces: &[&[u8]], work: &mut usize) -> Vec<u8> {
-    let joined = pieces.concat();
-    *work += joined.len() + COST;
-    joined
-}
-
 /// At most `MAX_DEPTH` deep.
-fn expand_inner(text: &[u8], depth: usize, mut is_top: bool, work: &mut usize) -> Vec<Vec<u8>> {
+fn expand_inner(text: &[u8], depth: usize, mut is_top: bool) -> Vec<Vec<u8>> {
     if depth > MAX_DEPTH {
         return vec![text.to_vec()];
-    }
-    if *work > MAX_WORK {
-        return Vec::new();
     }
     let none = [Vec::new()];
     let mut owned: Vec<u8>;
@@ -348,13 +309,13 @@ fn expand_inner(text: &[u8], depth: usize, mut is_top: bool, work: &mut usize) -
     let mut acc = vec![Vec::new()];
     let (mut rewrites, mut drop_empties, mut is_first_group) = (0, false, true);
     loop {
-        let Some(m) = balanced(text, work) else {
-            return combine(acc, text, &none, drop_empties, work);
+        let Some(m) = balanced(text) else {
+            return combine(acc, text, &none, drop_empties);
         };
         let is_last = m.post.is_empty();
         if m.pre.ends_with(b"$") {
-            let braced = join(&[m.pre, b"{", m.body, b"}"], work);
-            acc = combine(acc, &braced, &none, drop_empties && is_last, work);
+            let braced = [m.pre, b"{", m.body, b"}"].concat();
+            acc = combine(acc, &braced, &none, drop_empties && is_last);
             is_first_group = false;
             if is_last {
                 break;
@@ -369,16 +330,16 @@ fn expand_inner(text: &[u8], depth: usize, mut is_top: bool, work: &mut usize) -
         let is_sequence = numbers.is_some() || letters.is_some();
         if !is_sequence && !strings::contains_char(m.body, b',') {
             // `{a},b}`
-            if rewrites < MAX_REWRITES && has_comma_before_close(m.post, work) {
+            if rewrites < MAX_REWRITES && has_comma_before_close(m.post) {
                 rewrites += 1;
-                owned = join(&[m.pre, b"{", m.body, &[ESC_CLOSE], m.post], work);
+                owned = [m.pre, b"{", m.body, &[ESC_CLOSE], m.post].concat();
                 text = &owned;
                 is_top = true;
                 continue;
             }
-            let braced = join(&[m.pre, b"{", m.body, b"}"], work);
-            let rest = join(&[&braced, m.post], work);
-            return combine(acc, &rest, &none, drop_empties, work);
+            let braced = [m.pre, b"{", m.body, b"}"].concat();
+            let rest = [&braced[..], m.post].concat();
+            return combine(acc, &rest, &none, drop_empties);
         }
         if is_first_group {
             drop_empties = is_top && !is_sequence;
@@ -387,18 +348,17 @@ fn expand_inner(text: &[u8], depth: usize, mut is_top: bool, work: &mut usize) -
         let values = if let Some(parts) = numbers.as_ref().or(letters.as_ref()) {
             expand_sequence(parts, numbers.is_none())
         } else {
-            let mut parts = parse_comma_parts(m.body, work);
+            let mut parts = parse_comma_parts(m.body);
             if let [only] = &parts[..] {
                 // `x{{a,b}}y` is `x{a}y x{b}y`.
-                parts = expand_inner(only, depth + 1, false, work);
+                parts = expand_inner(only, depth + 1, false);
                 for part in &mut parts {
-                    *work += part.len() + 2;
                     part.insert(0, b'{');
                     part.push(b'}');
                 }
                 if let [only] = &parts[..] {
-                    let whole = join(&[m.pre, only], work);
-                    acc = combine(acc, &whole, &none, drop_empties && is_last, work);
+                    let whole = [m.pre, &only[..]].concat();
+                    acc = combine(acc, &whole, &none, drop_empties && is_last);
                     if is_last {
                         break;
                     }
@@ -410,7 +370,7 @@ fn expand_inner(text: &[u8], depth: usize, mut is_top: bool, work: &mut usize) -
                 drop_empties && is_last && m.pre.is_empty() && acc.iter().all(Vec::is_empty);
             let (mut values, mut length) = (Vec::new(), 0);
             'parts: for part in &parts {
-                for value in expand_inner(part, depth + 1, false, work) {
+                for value in expand_inner(part, depth + 1, false) {
                     if drops_empties && value.is_empty() {
                         continue;
                     }
@@ -423,7 +383,7 @@ fn expand_inner(text: &[u8], depth: usize, mut is_top: bool, work: &mut usize) -
             }
             values
         };
-        acc = combine(acc, m.pre, &values, drop_empties && is_last, work);
+        acc = combine(acc, m.pre, &values, drop_empties && is_last);
         if is_last {
             break;
         }
@@ -432,16 +392,15 @@ fn expand_inner(text: &[u8], depth: usize, mut is_top: bool, work: &mut usize) -
     acc
 }
 
-/// `expand(text)`. `None`: beyond `MAX_WORK`.
-pub fn expand(text: &[u8]) -> Option<Vec<Vec<u8>>> {
+/// `expand(text)`
+pub fn expand(text: &[u8]) -> Vec<Vec<u8>> {
     if text.is_empty() {
-        return Some(Vec::new());
+        return Vec::new();
     }
     let escaped = match text.strip_prefix(b"{}") {
         Some(rest) => escape_braces(&[b"\\{\\}", rest].concat()),
         None => escape_braces(text),
     };
-    let mut work = 0;
-    let expanded = expand_inner(&escaped, 0, true, &mut work);
-    (work <= MAX_WORK).then(|| expanded.into_iter().map(unescape_braces).collect())
+    let expanded = expand_inner(&escaped, 0, true);
+    expanded.into_iter().map(unescape_braces).collect()
 }

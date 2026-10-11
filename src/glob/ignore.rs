@@ -53,9 +53,6 @@ struct Rule {
     is_for_directories: bool,
 }
 
-/// Ours: how many directories `ignores` and `verdict_or_of_parents` ask about. The references ask about all: names x bytes.
-const MAX_PARENTS: usize = 256;
-
 /// Where in `IgnoreRules::rules`, the first first.
 type Places = StringHashMap<Vec<u32>>;
 
@@ -283,18 +280,13 @@ impl IgnoreRules {
             return Verdict::Unmentioned;
         }
         let mut found = self.verdict(path, is_directory);
-        // `Path::parent`: the last of them is the empty path. Beyond the limit: the empty path at once.
-        let mut asked = 0;
+        // `Path::parent`: the last of them is the empty path.
         while found == Verdict::Unmentioned && !path.is_empty() {
-            path = match asked < MAX_PARENTS {
-                true => &path[..strings::last_index_of_char(path, b'/').unwrap_or(0)],
-                false => b"",
-            };
+            path = &path[..strings::last_index_of_char(path, b'/').unwrap_or(0)];
             while let [rest @ .., b'/'] = path {
                 path = rest;
             }
             found = self.verdict(path, true);
-            asked += 1;
         }
         found
     }
@@ -307,15 +299,12 @@ impl IgnoreRules {
         if self.options.syntax == IgnoreSyntax::Npm5 || !has_empty_name {
             // At each `/` but the last byte.
             let mut from = 0;
-            for _ in 0..MAX_PARENTS {
-                let Some(slash) = path
-                    .get(from..)
-                    .and_then(|rest| strings::index_of_char_usize(rest, b'/'))
-                    .map(|it| from + it)
-                    .filter(|it| it + 1 < path.len())
-                else {
-                    break;
-                };
+            while let Some(slash) = path
+                .get(from..)
+                .and_then(|rest| strings::index_of_char_usize(rest, b'/'))
+                .map(|it| from + it)
+                .filter(|it| it + 1 < path.len())
+            {
                 if is_ignored(&path[..slash], true) {
                     return true;
                 }
@@ -327,10 +316,7 @@ impl IgnoreRules {
                 .filter(|it| !it.is_empty())
                 .peekable();
             let mut parent = Vec::with_capacity(path.len());
-            for _ in 0..MAX_PARENTS {
-                let Some(name) = names.next().filter(|_| names.peek().is_some()) else {
-                    break;
-                };
+            while let Some(name) = names.next().filter(|_| names.peek().is_some()) {
                 if !parent.is_empty() {
                     parent.push(b'/');
                 }

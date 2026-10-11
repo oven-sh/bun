@@ -11,7 +11,7 @@
 //! | the same with `ask: "refused"` | an array of `{ line, why }` |
 //! | `{ mode: "is-glob", text }` | `true`, `false` |
 //! | `{ mode: "glob-parent", text }` | a string |
-//! | `{ mode: "braces", text }` | an array, `null` beyond the limit |
+//! | `{ mode: "braces", text }` | an array |
 //! | `{ mode: "unclosed", text }` | `null`, `{ kind: "class" \| "braces" \| "backslash", at }` |
 //!
 //! A pattern, a path, a line or a text that is not UTF-8 is `{ hex: ".." }`.
@@ -189,9 +189,10 @@ fn answer(case: &Json, memory: &mut Kept) -> Json {
             .map_or(Json::Null, |it| Json::Bool(it.matches(&path))),
         b"is-glob" => Json::Bool(scan::is_glob(&text)),
         b"glob-parent" => Json::String(scan::glob_parent(&text)),
-        b"braces" => bun_glob::testing::expand_braces(&text).map_or(Json::Null, |expanded| {
+        b"braces" => {
+            let expanded = bun_glob::testing::expand_braces(&text);
             Json::Array(expanded.into_iter().map(Json::String).collect())
-        }),
+        }
         b"unclosed" => unclosed(&text).map_or(Json::Null, |found| {
             let kind: &[u8] = match found.kind {
                 UnclosedKind::Class => b"class",

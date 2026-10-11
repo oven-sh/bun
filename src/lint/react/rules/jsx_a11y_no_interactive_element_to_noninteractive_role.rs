@@ -62,10 +62,10 @@ impl<const REVERSED: bool> Rule for NoElementToOtherRole<REVERSED> {
         };
         if contains_name(&HTML_TAG, &element_type) && !self.allowed_roles.has(&element_type, first_role) && is_other() {
             let message = match REVERSED {
-                true => "Non-interactive elements should not be assigned interactive roles.",
-                false => "Interactive elements should not be assigned non-interactive roles.",
+                true => Message::new("", "Non-interactive elements should not be assigned interactive roles."),
+                false => Message::new("", "Interactive elements should not be assigned non-interactive roles."),
             };
-            cx.report(role_attr, Message::new("", message));
+            cx.report(role_attr, message);
         }
     }
 }

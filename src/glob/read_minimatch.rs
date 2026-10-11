@@ -52,12 +52,6 @@ pub(crate) fn part(pattern: &[u8], dot: bool) -> Part {
 const MAX_EXTGLOB_RECURSION: usize = 2;
 /// minimatch has no such limit: extglobs that could be merged with the one around them nest as deep as the pattern is long.
 const MAX_OPEN_EXTGLOBS: usize = 100;
-/// What `#fillNegs` may copy. `!(a)` x k in a row is 2^k.
-const MAX_NODES: usize = 65_536;
-/// Each `!(..)` is a lookahead later, copies counted: as many as a program may have. So reading stops where the program would.
-const MAX_BANGS: usize = 1_024;
-/// `!(a|a|a|..)` with 10,000 branches before 30,000 characters would be 300 MB.
-const MAX_COPIED_BYTES: usize = 262_144;
 
 fn is_extglob_type(byte: u8) -> bool {
     matches!(byte, b'!' | b'?' | b'+' | b'*' | b'@')
@@ -134,9 +128,6 @@ struct Ast {
     /// The option `dot`.
     dot: bool,
     code_points: bool,
-    copied_bytes: usize,
-    bangs: usize,
-    is_too_big: bool,
 }
 
 fn push_bytes(pieces: &mut Vec<Piece>, bytes: &[u8]) {
@@ -245,10 +236,6 @@ fn has_bar_at_top(pieces: &[Piece]) -> bool {
 impl Ast {
     fn create(&mut self, kind: Option<u8>, parent: Option<usize>) -> usize {
         let id = self.nodes.len();
-        self.bangs += usize::from(kind == Some(b'!'));
-        if id >= MAX_NODES || self.bangs > MAX_BANGS {
-            self.is_too_big = true;
-        }
         if kind == Some(b'!') && !self.has_filled_negs {
             self.negs.push(id);
         }
@@ -370,13 +357,8 @@ impl Ast {
     }
 
     fn copy_in(&mut self, node: usize, child: &Child) {
-        if self.is_too_big {
-            return;
-        }
         match child {
             Child::Text(text) => {
-                self.copied_bytes += text.len();
-                self.is_too_big = self.copied_bytes > MAX_COPIED_BYTES;
                 if !text.is_empty() {
                     self.nodes[node].children.push(child.clone());
                 }
@@ -403,9 +385,7 @@ impl Ast {
             return;
         }
         self.has_filled_negs = true;
-        while !self.is_too_big
-            && let Some(neg) = self.negs.pop()
-        {
+        while let Some(neg) = self.negs.pop() {
             if self.nodes[neg].kind != Some(b'!') {
                 continue;
             }
@@ -650,13 +630,6 @@ impl Ast {
             self.flatten(0);
             self.fill_negs();
         }
-        if self.is_too_big {
-            return Source {
-                pieces: vec![Piece::Node(Node::Fail)],
-                has_magic: true,
-                needs_u_flag: false,
-            };
-        }
         let Some(kind) = self.nodes[node].kind else {
             return self.text_to_regexp_source(node, allow_dot, dot);
         };
@@ -787,9 +760,6 @@ fn into_part(pattern: &[u8], dot: bool, code_points: bool) -> Option<Part> {
         nesting: 0,
         dot,
         code_points,
-        copied_bytes: 0,
-        bangs: 0,
-        is_too_big: false,
     };
     let root = ast.create(None, None);
     ast.parse(pattern, root, 0, 0);

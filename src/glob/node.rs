@@ -448,12 +448,12 @@ pub(crate) enum Program {
         fallback: Option<Box<sets::Program>>,
         /// The same tree for the other loop, which has to give the same answers.
         #[cfg(debug_assertions)]
-        check: Option<Box<sets::Program>>,
+        check: Box<sets::Program>,
     },
     Sets {
         program: sets::Program,
         /// For `may_match_inside`.
-        forwards: Option<Box<sets::Program>>,
+        forwards: Box<sets::Program>,
     },
 }
 
@@ -465,29 +465,18 @@ pub(crate) fn lower(node: Node, text: Text) -> Program {
         it => vec![it],
     };
     let Some(mut tokens) = tokens_of(&nodes, text) else {
-        return match sets::Program::new(&nodes, text) {
-            // The other has fewer instructions than this one, so it is within the limit too.
-            Some(program) => Program::Sets {
-                program,
-                forwards: sets::Program::new_forwards(&nodes, text).map(Box::new),
-            },
-            None => Program::Never,
+        return Program::Sets {
+            program: sets::Program::new(&nodes, text),
+            forwards: Box::new(sets::Program::new_forwards(&nodes, text)),
         };
     };
     tokens.finish();
-    let other_loop = || sets::Program::new(&nodes, text).map(Box::new);
-    let fallback = match tokens.has_two_kinds_of_deep {
-        true => Some(other_loop()),
-        false => None,
-    };
-    match fallback {
-        Some(None) => Program::Never,
-        fallback => Program::Linear {
-            tokens,
-            fallback: fallback.flatten(),
-            #[cfg(debug_assertions)]
-            check: other_loop(),
-        },
+    let other_loop = || Box::new(sets::Program::new(&nodes, text));
+    Program::Linear {
+        fallback: tokens.has_two_kinds_of_deep.then(other_loop),
+        tokens,
+        #[cfg(debug_assertions)]
+        check: other_loop(),
     }
 }
 
@@ -519,10 +508,7 @@ impl Program {
                 let hit = tokens.run(subject, false);
                 #[cfg(debug_assertions)]
                 {
-                    if let Program::Linear {
-                        check: Some(check), ..
-                    } = self
-                    {
+                    if let Program::Linear { check, .. } = self {
                         debug_assert_eq!(hit, check.run(subject), "the two loops differ");
                     }
                 }
@@ -537,9 +523,7 @@ impl Program {
         match self {
             Program::Never => false,
             Program::Linear { tokens, .. } => tokens.run(directory, true),
-            Program::Sets { forwards, .. } => {
-                forwards.as_ref().is_none_or(|it| it.run_prefix(directory))
-            }
+            Program::Sets { forwards, .. } => forwards.run_prefix(directory),
         }
     }
 

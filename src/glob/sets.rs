@@ -41,9 +41,6 @@ enum Inst {
     Match,
 }
 
-/// About as many as a pattern has bytes. It is `MAX_LOOKS` that cuts what grows.
-const MAX_INSTRUCTIONS: usize = 65_536;
-const MAX_LOOKS: usize = 1_024;
 const SLASH: u32 = b'/' as u32;
 
 pub(crate) struct Program {
@@ -65,58 +62,51 @@ struct Compiler {
     forwards: bool,
 }
 
-/// `None`: beyond a limit.
 impl Compiler {
-    fn emit(&mut self, inst: Inst) -> Option<u32> {
-        if self.insts.len() >= MAX_INSTRUCTIONS {
-            return None;
-        }
+    fn emit(&mut self, inst: Inst) -> u32 {
         self.insts.push(inst);
-        Some(self.insts.len() as u32 - 1)
+        self.insts.len() as u32 - 1
     }
 
     /// Writes `nodes` as a program of its own, and returns its number.
-    fn program(&mut self, nodes: &[Node]) -> Option<u32> {
-        let entry = self.emit(Inst::Match)?;
-        let entry = self.sequence(nodes, entry)?;
-        if self.programs.len() > MAX_LOOKS {
-            return None;
-        }
+    fn program(&mut self, nodes: &[Node]) -> u32 {
+        let entry = self.emit(Inst::Match);
+        let entry = self.sequence(nodes, entry);
         self.programs.push(entry);
-        Some(self.programs.len() as u32 - 1)
+        self.programs.len() as u32 - 1
     }
 
     /// What is written last is read first.
-    fn sequence(&mut self, nodes: &[Node], next: u32) -> Option<u32> {
+    fn sequence(&mut self, nodes: &[Node], next: u32) -> u32 {
         match self.forwards {
             true => nodes
                 .iter()
                 .rev()
-                .try_fold(next, |next, it| self.build(it, next)),
-            false => nodes.iter().try_fold(next, |next, it| self.build(it, next)),
+                .fold(next, |next, it| self.build(it, next)),
+            false => nodes.iter().fold(next, |next, it| self.build(it, next)),
         }
     }
 
     /// Where to start so that `node` is read, from its end to its start, and then `next`. As deep as the tree.
-    fn build(&mut self, node: &Node, mut next: u32) -> Option<u32> {
+    fn build(&mut self, node: &Node, mut next: u32) -> u32 {
         match node {
             Node::Fail => self.emit(Inst::Fail),
-            Node::Empty => Some(next),
+            Node::Empty => next,
             Node::Lit(bytes) if self.forwards => {
                 let mut at = bytes.len();
                 while let Some((unit, len)) = self.text.prev(Subject::of(bytes), at) {
-                    next = self.emit(Inst::Unit { unit, out: next })?;
+                    next = self.emit(Inst::Unit { unit, out: next });
                     at = at.saturating_sub(len);
                 }
-                Some(next)
+                next
             }
             Node::Lit(bytes) => {
                 let mut at = 0;
                 while let Some((unit, len)) = self.text.next(Subject::of(bytes), at) {
-                    next = self.emit(Inst::Unit { unit, out: next })?;
+                    next = self.emit(Inst::Unit { unit, out: next });
                     at += len;
                 }
-                Some(next)
+                next
             }
             Node::Any => self.emit(Inst::Any { out: next }),
             Node::Dot { newlines } => self.emit(Inst::Dot {
@@ -165,23 +155,23 @@ impl Compiler {
             Node::Alt(nodes) => {
                 let mut entry = None;
                 for it in nodes {
-                    let other = self.build(it, next)?;
+                    let other = self.build(it, next);
                     entry = Some(match entry {
-                        Some(out) => self.emit(Inst::Split { out, other })?,
+                        Some(out) => self.emit(Inst::Split { out, other }),
                         None => other,
                     });
                 }
-                entry
+                entry.unwrap_or_else(|| self.emit(Inst::Fail))
             }
             Node::Repeat {
                 node,
                 min,
                 unbounded: false,
             } => {
-                let other = self.build(node, next)?;
+                let other = self.build(node, next);
                 match min {
                     0 => self.emit(Inst::Split { out: next, other }),
-                    _ => Some(other),
+                    _ => other,
                 }
             }
             // The body is written once, whatever `min` is.
@@ -189,17 +179,17 @@ impl Compiler {
                 let again = self.emit(Inst::Split {
                     out: next,
                     other: 0,
-                })?;
-                let body = self.build(node, again)?;
+                });
+                let body = self.build(node, again);
                 if let Some(Inst::Split { other, .. }) = self.insts.get_mut(again as usize) {
                     *other = body;
                 }
-                Some(if *min == 0 { again } else { body })
+                if *min == 0 { again } else { body }
             }
             // What it asks lies behind the end of the text of which `run_prefix` is asked.
-            Node::Look { .. } if self.forwards => Some(next),
+            Node::Look { .. } if self.forwards => next,
             Node::Look { negated, node } => {
-                let table = self.program(std::slice::from_ref(&**node))?;
+                let table = self.program(std::slice::from_ref(&**node));
                 self.emit(Inst::Look {
                     table,
                     negated: *negated,
@@ -311,7 +301,7 @@ impl Run<'_> {
 }
 
 impl Program {
-    fn compiled(nodes: &[Node], text: Text, forwards: bool) -> Option<Program> {
+    fn compiled(nodes: &[Node], text: Text, forwards: bool) -> Program {
         let mut compiler = Compiler {
             insts: Vec::new(),
             programs: Vec::new(),
@@ -319,33 +309,29 @@ impl Program {
             text,
             forwards,
         };
-        compiler.program(nodes)?;
-        Some(Program {
+        compiler.program(nodes);
+        Program {
             insts: compiler.insts.into(),
             programs: compiler.programs.into(),
             classes: compiler.classes.into(),
             text,
             floats: true,
-        })
+        }
     }
 
-    /// `None`: beyond a limit.
-    pub(crate) fn new(nodes: &[Node], text: Text) -> Option<Program> {
+    pub(crate) fn new(nodes: &[Node], text: Text) -> Program {
         // An end that is the last thing of all is not an instruction: the main program is then entered at the end of the text only.
         match nodes {
-            [main @ .., Node::Assert(Assertion::End)] => {
-                let program = Program::compiled(main, text, false)?;
-                Some(Program {
-                    floats: false,
-                    ..program
-                })
-            }
+            [main @ .., Node::Assert(Assertion::End)] => Program {
+                floats: false,
+                ..Program::compiled(main, text, false)
+            },
             _ => Program::compiled(nodes, text, false),
         }
     }
 
     /// The same tree written forwards, for `run_prefix`. Lookaheads are left out of it.
-    pub(crate) fn new_forwards(nodes: &[Node], text: Text) -> Option<Program> {
+    pub(crate) fn new_forwards(nodes: &[Node], text: Text) -> Program {
         Program::compiled(nodes, text, true)
     }
 

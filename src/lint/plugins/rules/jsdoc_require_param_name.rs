@@ -19,11 +19,11 @@ struct Required {
 const fn required(
     rule: &'static str,
     kind: Kind,
-    message: &'static str,
+    message: Message,
     (tags, of_functions): (&'static [&'static str], bool),
     is_missing: fn(JSDocTag) -> bool,
 ) -> Required {
-    Required { rule, kind, message: Message::new("", message), tags, of_functions, is_missing }
+    Required { rule, kind, message, tags, of_functions, is_missing }
 }
 
 const PARAM: (&[&str], bool) = (&["param"], true);
@@ -33,21 +33,43 @@ const THROWS: (&[&str], bool) = (&["throws", "exception"], false);
 const YIELDS: (&[&str], bool) = (&["yield", "yields"], false);
 
 const RULES: [Required; 10] = [
-    required("require-param-name", Kind::Suggestion, "Missing JSDoc `@param` name.", PARAM, has_no_name),
-    required("require-property-description", Kind::Problem, "Missing description in `@property` tag.", PROPERTY, |tag| {
-        tag.type_name_comment().2.is_empty()
-    }),
-    required("require-property-name", Kind::Problem, "Missing name in `@property` tag.", PROPERTY, has_no_name),
-    required("require-property-type", Kind::Problem, "Missing type in `@property` tag.", PROPERTY, has_no_type),
-    required("require-returns-description", Kind::Suggestion, "Missing JSDoc `@returns` description.", RETURNS, |tag| {
-        let returns_nothing = |it: &[u8]| matches!(it, b"void" | b"undefined" | b"Promise<void>" | b"Promise<undefined>");
-        !tag.type_comment().0.is_some_and(|it| returns_nothing(it.parsed())) && has_no_description(tag)
-    }),
-    required("require-returns-type", Kind::Suggestion, "Missing JSDoc `@returns` type.", RETURNS, has_no_type),
-    required("require-throws-description", Kind::Suggestion, "Missing JSDoc `@throws` description.", THROWS, has_no_description),
-    required("require-throws-type", Kind::Suggestion, "Missing JSDoc `@throws` type.", THROWS, has_no_type),
-    required("require-yields-description", Kind::Suggestion, "Missing JSDoc `@yields` description.", YIELDS, has_no_description),
-    required("require-yields-type", Kind::Suggestion, "Missing JSDoc `@yields` type.", YIELDS, has_no_type),
+    required("require-param-name", Kind::Suggestion, Message::new("", "Missing JSDoc `@param` name."), PARAM, has_no_name),
+    required(
+        "require-property-description",
+        Kind::Problem,
+        Message::new("", "Missing description in `@property` tag."),
+        PROPERTY,
+        |tag| tag.type_name_comment().2.is_empty(),
+    ),
+    required("require-property-name", Kind::Problem, Message::new("", "Missing name in `@property` tag."), PROPERTY, has_no_name),
+    required("require-property-type", Kind::Problem, Message::new("", "Missing type in `@property` tag."), PROPERTY, has_no_type),
+    required(
+        "require-returns-description",
+        Kind::Suggestion,
+        Message::new("", "Missing JSDoc `@returns` description."),
+        RETURNS,
+        |tag| {
+            let returns_nothing = |it: &[u8]| matches!(it, b"void" | b"undefined" | b"Promise<void>" | b"Promise<undefined>");
+            !tag.type_comment().0.is_some_and(|it| returns_nothing(it.parsed())) && has_no_description(tag)
+        },
+    ),
+    required("require-returns-type", Kind::Suggestion, Message::new("", "Missing JSDoc `@returns` type."), RETURNS, has_no_type),
+    required(
+        "require-throws-description",
+        Kind::Suggestion,
+        Message::new("", "Missing JSDoc `@throws` description."),
+        THROWS,
+        has_no_description,
+    ),
+    required("require-throws-type", Kind::Suggestion, Message::new("", "Missing JSDoc `@throws` type."), THROWS, has_no_type),
+    required(
+        "require-yields-description",
+        Kind::Suggestion,
+        Message::new("", "Missing JSDoc `@yields` description."),
+        YIELDS,
+        has_no_description,
+    ),
+    required("require-yields-type", Kind::Suggestion, Message::new("", "Missing JSDoc `@yields` type."), YIELDS, has_no_type),
 ];
 
 fn has_no_type(tag: JSDocTag) -> bool {

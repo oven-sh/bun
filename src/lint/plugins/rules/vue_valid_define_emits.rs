@@ -5,29 +5,26 @@ use bun_lint::rule::Plugin;
 /// Enforce valid usage of the `defineEmits`, or the `defineProps`, compiler macro in Vue.
 pub struct ValidDefine<const PROPS: bool = false>;
 
-/// The rule, the macro, two labels, and what is said of each problem.
-const TEXTS: [[&str; 9]; 2] = [
+/// The rule, the macro, two labels.
+const TEXTS: [[&str; 4]; 2] = [
+    ["valid-define-emits", "defineEmits", "`defineEmits` is called here", "`defineEmits` is called here too"],
+    ["valid-define-props", "defineProps", "`defineProps` is called here", "`defineProps` is called here too"],
+];
+/// It is called several times, then what is said of each [`DefineMacroProblem`].
+const MESSAGES: [[Message; 5]; 2] = [
     [
-        "valid-define-emits",
-        "defineEmits",
-        "`defineEmits` is called here",
-        "`defineEmits` is called here too",
-        "`defineEmits` has been called multiple times.",
-        "Custom events are defined in both `defineEmits` and `export default {}`.",
-        "`defineEmits` has both a type-only emit and an argument.",
-        "Custom events are not defined.",
-        "`defineEmits` is referencing locally declared variables.",
+        Message::new("", "`defineEmits` has been called multiple times."),
+        Message::new("", "Custom events are defined in both `defineEmits` and `export default {}`."),
+        Message::new("", "`defineEmits` has both a type-only emit and an argument."),
+        Message::new("", "Custom events are not defined."),
+        Message::new("", "`defineEmits` is referencing locally declared variables."),
     ],
     [
-        "valid-define-props",
-        "defineProps",
-        "`defineProps` is called here",
-        "`defineProps` is called here too",
-        "`defineProps` has been called multiple times.",
-        "Props are defined in both `defineProps` and `export default {}`.",
-        "`defineProps` has both a type-only emit and an argument.",
-        "Props are not defined.",
-        "`defineProps` is referencing locally declared variables.",
+        Message::new("", "`defineProps` has been called multiple times."),
+        Message::new("", "Props are defined in both `defineProps` and `export default {}`."),
+        Message::new("", "`defineProps` has both a type-only emit and an argument."),
+        Message::new("", "Props are not defined."),
+        Message::new("", "`defineProps` is referencing locally declared variables."),
     ],
 ];
 
@@ -45,11 +42,11 @@ impl<const PROPS: bool> Rule for ValidDefine<PROPS> {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let [_, name, here, here_too, multiple_times, in_both, type_and_arguments, not_defined, locally] =
-            TEXTS[PROPS as usize];
+        let [_, name, here, here_too] = TEXTS[PROPS as usize];
+        let [multiple_times, in_both, type_and_arguments, not_defined, locally] = MESSAGES[PROPS as usize];
         let calls = calls_of(cx.file(), name);
         for (call_expr, _) in calls.iter().skip(1) {
-            cx.report(call_expr, Message::new("", multiple_times))
+            cx.report(call_expr, multiple_times)
                 .first_label(here)
                 .label(calls.first().map(|it| it.0.span()).unwrap_or_default(), here_too);
         }
@@ -65,6 +62,6 @@ impl<const PROPS: bool> Rule for ValidDefine<PROPS> {
             Some(DefineMacroProblem::ReferencingLocally) => locally,
             None => return,
         };
-        cx.report(call_expr, Message::new("", message));
+        cx.report(call_expr, message);
     }
 }

@@ -7,7 +7,7 @@
 //
 // | Oracle | What | Judge |
 // |---|---|---|
-// | B1, B2 | `braces::expand`. B2: what bounds its work leaves every list as it is | brace-expansion |
+// | B1, B2 | `braces::expand` | brace-expansion |
 // | M1, M1n, M2, M3 | `MINIMATCH_DOT`, `MINIMATCH`, `flipNegate`, `partial` | minimatch |
 // | M4 | `.editorconfig` | `buildFullGlob` and minimatch |
 // | M5 | POSIX classes beyond ASCII | minimatch |

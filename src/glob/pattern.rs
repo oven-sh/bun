@@ -145,7 +145,7 @@ impl Alternative {
 }
 
 enum Kind {
-    /// It can match nothing: a comment of minimatch, too long, too complex.
+    /// It can match nothing: a comment of minimatch, too long.
     Never,
     /// The empty pattern of minimatch, which matches the empty path.
     Empty,
@@ -233,10 +233,7 @@ impl Pattern {
                     .take_while(|b| **b == b'!' && !options.nonegate)
                     .count();
                 Pattern {
-                    kind: match segments::read(&pattern[bangs..], options) {
-                        Some(set) => Kind::Minimatch(set, options.dot),
-                        None => Kind::Never,
-                    },
+                    kind: Kind::Minimatch(segments::read(&pattern[bangs..], options), options.dot),
                     is_negated: bangs % 2 == 1,
                 }
             }

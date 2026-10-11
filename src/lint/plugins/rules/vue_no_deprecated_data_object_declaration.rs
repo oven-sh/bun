@@ -35,10 +35,10 @@ impl<const SHARED: bool> Rule for NoDataObject<SHARED> {
             && object_of(prop).is_some_and(is_options_object)
         {
             let message = match SHARED {
-                true => "`data` property in component must be a function.",
-                false => "Object declaration on `data` property is deprecated.",
+                true => Message::new("", "`data` property in component must be a function."),
+                false => Message::new("", "Object declaration on `data` property is deprecated."),
             };
-            cx.report(prop, Message::new("", message));
+            cx.report(prop, message);
         }
     }
 }

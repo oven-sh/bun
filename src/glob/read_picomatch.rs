@@ -1623,8 +1623,7 @@ pub(crate) fn expand_for_fast_glob(bytes: &[u8]) -> Vec<Vec<u8>> {
     let has_braces = strings::index_of_char_usize(bytes, b'{')
         .is_some_and(|open| strings::contains_char(&bytes[open..], b'}'));
     let mut out = match has_braces {
-        // Beyond its limit there is nothing to match with.
-        true => braces::expand(bytes).unwrap_or_default(),
+        true => braces::expand(bytes),
         false => vec![bytes.to_vec()],
     };
     let mut seen = StringHashMap::<()>::new();

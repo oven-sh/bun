@@ -222,9 +222,6 @@ fn is_globby(text: &[u8]) -> bool {
     is_glob(text)
 }
 
-/// Ours: how many names `glob_parent` takes off one by one, which is names x bytes. Beyond it: the top.
-const MAX_NAMES: usize = 256;
-
 /// The package `glob-parent` 6.0.2: the directory that everything a pattern matches is in. `.` if there is none.
 pub fn glob_parent(pattern: &[u8]) -> Vec<u8> {
     let mut text = pattern.to_vec();
@@ -239,14 +236,8 @@ pub fn glob_parent(pattern: &[u8]) -> Vec<u8> {
     }
     text.push(b'a');
     let mut parent: &[u8] = &text;
-    let mut taken_off = 0;
     loop {
-        parent = match taken_off < MAX_NAMES {
-            true => posix_dirname(parent),
-            false if parent.starts_with(b"/") => b"/",
-            false => b".",
-        };
-        taken_off += 1;
+        parent = posix_dirname(parent);
         if !is_globby(parent) {
             break;
         }

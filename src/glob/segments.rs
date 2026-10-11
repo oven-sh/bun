@@ -209,12 +209,12 @@ pub(crate) fn has_braces(pattern: &[u8]) -> bool {
     false
 }
 
-/// Braces, split, `levelOneOptimize`, parts. `pattern`: without the `!` at its start. `None`: beyond a limit of `braces.rs`.
-pub(crate) fn read(pattern: &[u8], options: Options) -> Option<Vec<Expansion>> {
+/// Braces, split, `levelOneOptimize`, parts. `pattern`: without the `!` at its start.
+pub(crate) fn read(pattern: &[u8], options: Options) -> Vec<Expansion> {
     // 3.1.5 has no `levelOneOptimize`.
     let (is_3, dot) = (options.syntax == Syntax::Minimatch3, options.dot);
     let mut globs = match has_braces(pattern) && !(is_3 && options.nobrace) {
-        true => braces::expand(pattern)?,
+        true => braces::expand(pattern),
         false => vec![pattern.to_vec()],
     };
     if globs.len() > 1 {
@@ -256,7 +256,7 @@ pub(crate) fn read(pattern: &[u8], options: Options) -> Option<Vec<Expansion>> {
         });
         Expansion::new(parts.collect())
     };
-    Some(globs.iter().map(expansion).collect())
+    globs.iter().map(expansion).collect()
 }
 
 // ───────────────────────────── matching ─────────────────────────────

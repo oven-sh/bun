@@ -12,6 +12,7 @@ use super::postcss::{Kind, Node, NodeId, Tree};
 use super::selector_parser::{Namespace, SelectorId, SelectorKind, Selectors};
 use super::sink::Sink;
 use super::value_parser::{Before, ValueId, ValueKind, Values};
+use crate::FormatError;
 use crate::syntax_error::{Message, SyntaxError};
 use crate::text::{self, has_newline_backwards, is_next_line_empty};
 use std::borrow::Cow;
@@ -363,6 +364,9 @@ impl<'a> Printer<'a, '_> {
         {
             self.sink.start_document(&mark);
             write(self);
+            if self.context.stack.ran_out() {
+                self.sink.fail(FormatError::NestedTooDeeply);
+            }
             self.sink.end_document();
         }
     }

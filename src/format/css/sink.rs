@@ -102,6 +102,13 @@ impl<'o> Sink<'o> {
         self.elements.to_tree()
     }
 
+    /// Not all has been written, so nothing more is printed.
+    pub(crate) fn fail(&mut self, failure: FormatError) {
+        if let Some(printer) = &mut self.printer {
+            printer.fail(failure);
+        }
+    }
+
     /// Whether what has gone to the output is what has been written.
     pub(crate) fn result(&self) -> Result<(), FormatError> {
         match &self.printer {

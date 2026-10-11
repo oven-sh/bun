@@ -74,6 +74,18 @@ The printer for style sheets returns no documents. It writes operations (text, l
 - `FormatError::SyntaxError`, without a place, is for scripts: the driver has the parser's diagnostics.
 - `format.test.ts` has a row for each language and kind of refusal.
 
+## How deep, how long
+
+**There is no number for how deep something can be nested, how long it can be, or how many steps something may take.** Prettier and oxfmt have none (but `serde_json`'s 128 in `json/sort_package_json.rs`, which oxfmt shows), and every one that was here refused or, worse, silently misprinted what they print.
+
+- **Whatever calls itself for what is nested asks the stack first**, in every stage: parser, what walks the tree, printer, document, check before writing. `stack.rs`: `Stack::has_room()`. One that is told no goes on with anything, and whoever started the work asks `Stack::ran_out()` at the end: `FormatError::NestedTooDeeply`, "RangeError: The code is nested too deeply.", and the file stays as it is. Never an answer like "it does not match" or "as it is written". For JavaScript: `f.context_mut().has_stack_left()`.
+- **What builds a tree** that is walked afterwards takes `Stack::for_tree()`, which leaves room for that.
+- **A question with a yes or a no** (is there a line break in it, is it empty) is a loop over a list of what has not been looked at.
+- **Trees are vectors of nodes with indices.** The two that own what is in them, `css/doc.rs::Doc` and `svelte/doc.rs::Doc`, have a `Drop` that is a loop: what the compiler derives calls itself for each level, and cannot ask. So a `Doc` is taken apart through `&mut` and `take()`, not by moving out of it.
+- **A loop that could go on for ever** gets a condition that makes it end, not a count: the selector parser refuses where `postcss-selector-parser` goes round in circles.
+- **What is nested `n` deep is indented by `n * n` blanks.** `is_too_long` (`lib.rs`) is the longest string of JavaScript, where Prettier ends with "RangeError: Invalid string length": `FormatError::TooLong`. Each printer asks where it starts a line, and indents nothing from there on.
+- A crash by the stack lives in a window of depths: shallower fits, deeper is refused early. So it is looked for at every size in steps of 3 % around each change of answer, on a release build: a debug build keeps more stack free.
+
 ## HTML
 
 ```

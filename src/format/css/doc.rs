@@ -1217,6 +1217,11 @@ impl<'o> Printer<'o> {
         }
     }
 
+    /// What is printed from now on is of no use.
+    pub(crate) fn fail(&mut self, failure: FormatError) {
+        self.failure = Some(failure);
+    }
+
     /// Whether what has been printed is what the documents print.
     pub(crate) fn result(&self) -> Result<(), FormatError> {
         match self.failure {
@@ -1463,6 +1468,9 @@ impl<'o> Printer<'o> {
         let mut should_remeasure = false;
         if elements.is_nested_too_deeply {
             self.failure = Some(FormatError::NestedTooDeeply);
+        }
+        if self.failure.is_some() {
+            return position;
         }
         self.frames.clear();
         self.tasks.clear();

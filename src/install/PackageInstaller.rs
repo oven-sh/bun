@@ -176,12 +176,14 @@ impl LinkedAhead {
         }
     }
 
-    /// It is the turn of `dependency_id`: the `node_modules` it was linked into and how that went.
+    /// It is the turn of `dependency_id` in `tree_id`: the `node_modules` it was linked into and how that went.
     fn take(
         &mut self,
+        tree_id: lockfile::tree::Id,
         dependency_id: DependencyID,
     ) -> Option<(Fd, package_install::InstallResult)> {
-        if self.jobs.as_slice().first()?.dependency_id != dependency_id {
+        let next = self.jobs.as_slice().first()?;
+        if next.tree_id != tree_id || next.dependency_id != dependency_id {
             return None;
         }
         let job = self.jobs.next()?;
@@ -1306,6 +1308,7 @@ impl<'a> PackageInstaller<'a> {
                     continue;
                 };
                 jobs.push(package_install::LinkJob {
+                    tree_id: tree.id,
                     dependency_id,
                     tree_dir: tree_dir_fd,
                     cache_dir,
@@ -1970,8 +1973,9 @@ impl<'a> PackageInstaller<'a> {
                 return;
             }
 
+            let current_tree_id = self.current_tree_id;
             let linked_ahead = (self.linked_ahead.as_mut())
-                .and_then(|linked_ahead| linked_ahead.take(dependency_id));
+                .and_then(|linked_ahead| linked_ahead.take(current_tree_id, dependency_id));
 
             // creating this directory now, right before installing package
             let destination_fd = match linked_ahead.as_ref().map_or_else(

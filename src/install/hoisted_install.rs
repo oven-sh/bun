@@ -367,8 +367,11 @@ pub(crate) fn install_hoisted_packages(
                 staging_lock: None,
                 tree_dir: None,
                 // On Windows the hardlink backend has one queue of its own, a task for each file.
-                linked_ahead: (cfg!(not(windows)) && skip_delete)
-                    .then(|| LinkedAhead::init(&lockfile_ref)),
+                // A batch keeps up to 64 directories open, and each thread a few more.
+                linked_ahead: (cfg!(not(windows))
+                    && skip_delete
+                    && !FileSystem::instance().fs.need_to_close_files())
+                .then(|| LinkedAhead::init(&lockfile_ref)),
                 node: &mut install_node,
                 node_modules: NodeModulesFolder {
                     path: strings::without_trailing_slash(FileSystem::instance().top_level_dir())

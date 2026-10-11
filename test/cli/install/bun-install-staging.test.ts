@@ -1007,6 +1007,110 @@ describe("hoisted linker: packages linked by the thread pool", () => {
     },
   );
 
+  // `nested` sits below every host, so its dependencies have the same ids in each of those trees.
+  // The one below `host-00` is left to the main thread: that host's tree waits for the patch.
+  test.concurrent("a package nested in several places gets its dependencies in each", async () => {
+    const hosts = Array.from({ length: 16 }, (_, i) => `host-${String(i).padStart(2, "0")}`);
+    const leaves = ["leaf-1", "leaf-2", "leaf-3"];
+    const files = ["index.js"];
+    const all = (range: string) => Object.fromEntries(leaves.map(name => [name, range]));
+    const publish = async (name: string, more: Omit<RegistryPackage, "tgz"> = {}) => [
+      name,
+      { ...more, tgz: await pack(name, { files, ...more }) },
+    ];
+    using registry = serveRegistry(
+      Object.fromEntries(
+        await Promise.all([
+          ...hosts.map((name, i) =>
+            publish(name, {
+              dependencies: { nested: "1.0.0", ...all("npm:filler@3.0.0"), ...(i === 0 ? { patched: "1.0.0" } : {}) },
+            }),
+          ),
+          publish("nested", { dependencies: all("1.0.0") }),
+          publish("patched"),
+          ...leaves.map(name => publish(name)),
+          publish("root-filler", { version: "2.0.0" }),
+          publish("filler", { version: "3.0.0" }),
+        ]),
+      ),
+    );
+    using dir = project("pool-nested-twice", registry, {
+      dependencies: {
+        ...Object.fromEntries(hosts.map(name => [name, "1.0.0"])),
+        ...Object.fromEntries(["nested", "patched", ...leaves].map(name => [name, "npm:root-filler@2.0.0"])),
+      },
+      patchedDependencies: { "patched@1.0.0": "patched.patch" },
+    });
+    const root = String(dir);
+    writeFileSync(
+      join(root, "patched.patch"),
+      `diff --git a/index.js b/index.js
+--- a/index.js
++++ b/index.js
+@@ -1 +1 @@
+-module.exports = "patched/index.js";
++module.exports = "patched";
+`,
+    );
+
+    await warmUp(root);
+    rmSync(join(root, "node_modules"), { recursive: true });
+    for (const entry of readdirSync(join(root, ".bun-cache"))) {
+      if (entry.includes("_patch_hash=")) rmSync(join(root, ".bun-cache", entry), { recursive: true });
+    }
+
+    const { stderr, exitCode } = await install(root);
+    expect(stderr).not.toContain("error");
+    expect(
+      Object.fromEntries(
+        hosts.map(name => [
+          name,
+          readdirSync(join(root, "node_modules", name, "node_modules", "nested", "node_modules")),
+        ]),
+      ),
+    ).toEqual(Object.fromEntries(hosts.map(name => [name, leaves])));
+    expect(exitCode).toBe(0);
+  });
+
+  // The pool keeps the node_modules of a batch open. Each `host-N` has one, for its `inner`.
+  test.concurrent.skipIf(isWindows)("a low limit on open files does not fail the install", async () => {
+    const hosts = Array.from({ length: 60 }, (_, i) => `host-${i}`);
+    const files = ["index.js"];
+    using registry = serveRegistry({
+      ...Object.fromEntries(
+        await Promise.all(
+          hosts.map(async name => {
+            const dependencies = { inner: "1.0.0" };
+            return [name, { dependencies, tgz: await pack(name, { files, dependencies }) }];
+          }),
+        ),
+      ),
+      inner: { tgz: await pack("inner", { files }) },
+      "root-filler": { version: "2.0.0", tgz: await pack("root-filler", { files, version: "2.0.0" }) },
+    });
+    using dir = project("pool-open-files", registry, {
+      dependencies: { ...Object.fromEntries(hosts.map(name => [name, "1.0.0"])), inner: "npm:root-filler@2.0.0" },
+    });
+    const root = String(dir);
+
+    await warmUp(root);
+    rmSync(join(root, "node_modules"), { recursive: true });
+
+    await using proc = Bun.spawn({
+      cmd: ["sh", "-c", 'ulimit -n 64 && exec "$0" install', bunExe()],
+      cwd: root,
+      env: installEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, , exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(stderr).not.toContain("EMFILE");
+    expect(
+      hosts.filter(name => !existsSync(join(root, "node_modules", name, "node_modules", "inner", "index.js"))),
+    ).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
   test.concurrent.skipIf(!shimDir)("two threads link at the same time", async () => {
     using registry = serveRegistry(await packAll(["one", "two"]));
     using dir = project("pool-two-threads", registry, { dependencies: { one: "1.0.0", two: "1.0.0" } });

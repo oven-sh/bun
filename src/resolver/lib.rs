@@ -1440,7 +1440,7 @@ pub mod fs {
         /// Whether cached file descriptors should be closed eagerly instead
         /// of kept open (fd budget exceeded or fd-storing disabled).
         #[inline]
-        pub(crate) fn need_to_close_files(&self) -> bool {
+        pub fn need_to_close_files(&self) -> bool {
             if !bun_core::feature_flags::STORE_FILE_DESCRIPTORS {
                 return true;
             }

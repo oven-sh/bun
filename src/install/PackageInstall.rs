@@ -782,6 +782,8 @@ impl UninstallTask {
 }
 
 pub(crate) struct LinkJob {
+    /// A package that is nested in two places has its dependencies, with the same ids, in two trees.
+    pub(crate) tree_id: crate::lockfile::tree::Id,
     pub(crate) dependency_id: DependencyID,
     /// The `node_modules` it goes into. Whoever made the batch keeps it open.
     pub(crate) tree_dir: Fd,
@@ -836,6 +838,11 @@ impl LinkBatch {
             return self.link(job);
         }
         let pool = &PackageManager::get().thread_pool;
+        // What is scheduled on a pool whose first worker the OS refuses never runs.
+        pool.warm(1);
+        if !pool.has_workers() {
+            return self.jobs.iter().for_each(|job| self.link(job));
+        }
         let threads = MAX_THREADS.min(pool.max_threads()).min(self.jobs.len());
         self.remaining.store(threads, Ordering::Relaxed);
         pool.each_while(

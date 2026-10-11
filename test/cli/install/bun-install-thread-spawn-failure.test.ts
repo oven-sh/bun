@@ -5,7 +5,7 @@
 // through the crash reporter ("oh no: Bun has crashed", bun.report link).
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, compileFixture, isASAN, isLinux, isMusl, tempDir } from "harness";
-import { rm } from "node:fs/promises";
+import { readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
@@ -61,7 +61,25 @@ describe.skipIf(!isLinux || isMusl || isASAN || !cc)(
   },
 );
 
-// Only the HTTP client thread starts. After a 304 the main thread queues the manifest's cache entry on a pool that never runs it.
+// Only the first thread starts: the HTTP client's.
+const onlyTheFirstThreadC = /* c */ `
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <errno.h>
+#include <pthread.h>
+#include <unistd.h>
+
+int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start)(void *), void *arg) {
+  static int created;
+  if (__atomic_fetch_add(&created, 1, __ATOMIC_SEQ_CST) > 0) {
+    (void)!write(2, "refused a thread\\n", 17);
+    return EAGAIN;
+  }
+  return ((int (*)(pthread_t *, const pthread_attr_t *, void *(*)(void *), void *))dlsym(RTLD_NEXT, "pthread_create"))(thread, attr, start, arg);
+}
+`;
+
+// After a 304 the main thread queues the manifest's cache entry on a pool that never runs it.
 test.skipIf(!isLinux || isMusl || isASAN || !cc)(
   "bun install exits when no worker of the thread pool can be started",
   async () => {
@@ -81,22 +99,7 @@ test.skipIf(!isLinux || isMusl || isASAN || !cc)(
       },
     });
     using dir = tempDir("install-no-pool-worker", {
-      "shim.c": /* c */ `
-#define _GNU_SOURCE
-#include <dlfcn.h>
-#include <errno.h>
-#include <pthread.h>
-#include <unistd.h>
-
-int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start)(void *), void *arg) {
-  static int created;
-  if (__atomic_fetch_add(&created, 1, __ATOMIC_SEQ_CST) > 0) {
-    (void)!write(2, "refused a thread\\n", 17);
-    return EAGAIN;
-  }
-  return ((int (*)(pthread_t *, const pthread_attr_t *, void *(*)(void *), void *))dlsym(RTLD_NEXT, "pthread_create"))(thread, attr, start, arg);
-}
-`,
+      "shim.c": onlyTheFirstThreadC,
       "package.json": JSON.stringify({ name: "no-pool-worker", dependencies: { dep: "^1.0.0" } }),
       "bunfig.toml": `[install]\nregistry = "${server.url}"\n`,
     });
@@ -121,6 +124,52 @@ int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start)
     expect(stderr).toContain("refused a thread");
     expect(stderr).not.toContain("error:");
     expect(statuses).toEqual([200, 304]);
+    expect(exitCode).toBe(0);
+  },
+);
+
+// With the packages in the cache and no node_modules, the hoisted linker gives them to the pool.
+test.skipIf(!isLinux || isMusl || isASAN || !cc)(
+  "the hoisted linker links a new node_modules when no worker of the thread pool can be started",
+  async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        const name = new URL(request.url).pathname.slice(1).replace(/-1\.0\.0\.tgz$/, "");
+        const version = { name, version: "1.0.0", dist: { tarball: `${server.url}${name}-1.0.0.tgz` } };
+        if (!request.url.endsWith(".tgz")) {
+          return Response.json({ name, "dist-tags": { latest: "1.0.0" }, versions: { "1.0.0": version } });
+        }
+        const files = { "package/package.json": JSON.stringify({ name, version: "1.0.0" }) };
+        return new Response(await new Bun.Archive(files, { compress: "gzip" }).bytes());
+      },
+    });
+    using dir = tempDir("install-link-no-pool-worker", {
+      "shim.c": onlyTheFirstThreadC,
+      "package.json": JSON.stringify({ name: "no-pool-worker", dependencies: { one: "1.0.0", two: "1.0.0" } }),
+      "bunfig.toml": `[install]\nregistry = "${server.url}"\nlinker = "hoisted"\n`,
+    });
+    const shim = compileFixture(join(String(dir), "shim.c"), { flags: ["-ldl"] });
+
+    async function install(env: Record<string, string> = {}) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), "cache"), ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stderr, , exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      return { stderr, exitCode };
+    }
+
+    expect(await install()).toEqual({ stderr: expect.not.stringContaining("error:"), exitCode: 0 });
+    await rm(join(String(dir), "node_modules"), { recursive: true });
+
+    const { stderr, exitCode } = await install({ LD_PRELOAD: [shim, bunEnv.LD_PRELOAD].filter(Boolean).join(":") });
+    expect(stderr).toContain("refused a thread");
+    expect(stderr).not.toContain("error:");
+    expect((await readdir(join(String(dir), "node_modules"))).sort()).toEqual(["one", "two"]);
     expect(exitCode).toBe(0);
   },
 );

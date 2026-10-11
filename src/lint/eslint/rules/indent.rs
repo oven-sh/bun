@@ -138,10 +138,16 @@ impl Rule for Indent {
     }
 
     fn node<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        if cx.has_thrown_for_selector() {
+            return;
+        }
         for selector in &self.ignored_nodes {
-            selector.for_each_match(node, |it| {
+            let result = selector.for_each_match(node, |it| {
                 cx.state.push((it.span().start, it.span().end, it.type_name()));
             });
+            if let Err(error) = result {
+                cx.throw_for_selector(&error);
+            }
         }
     }
 

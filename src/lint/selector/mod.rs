@@ -12,9 +12,12 @@
 //!     On::new().nodes(self.selector.listens_to())
 //! }
 //! fn node<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-//!     self.selector.for_each_match(node, |found| {
+//!     let result = self.selector.for_each_match(node, |found| {
 //!         cx.report(found, MESSAGE);
 //!     });
+//!     if let Err(error) = result {
+//!         cx.throw_for_selector(&error);
+//!     }
 //! }
 //! ```
 //!
@@ -47,6 +50,7 @@ use crate::rule::NodeTags;
 use crate::span::{Span, Spanned};
 use matcher::Matcher;
 use program::{Id, Op, Program, TypeSet};
+use std::cell::Cell;
 use std::cmp::Ordering;
 
 /// Why a selector cannot be used.
@@ -258,34 +262,59 @@ impl Selector {
             .then_with(|| bun_core::strings::order_utf16(&self.source, &other.source))
     }
 
-    /// Whether ESLint calls the listener with `node`.
+    /// Whether ESLint calls the listener with `node`. `Err`: what is left of the stack here does not hold the selector.
     #[inline]
-    pub fn matches(&self, node: EsNode<'_>) -> bool {
+    pub fn test(&self, node: EsNode<'_>) -> Result<bool, Error> {
         if !self.types.is_none_or(|it| it.contains(node.node_type)) {
-            return false;
+            return Ok(false);
         }
-        self.always_matches || self.matches_slowly(node)
+        if self.always_matches {
+            return Ok(true);
+        }
+        self.matches_slowly(node)
     }
 
-    fn matches_slowly(&self, node: EsNode<'_>) -> bool {
+    /// [`Selector::test`], where an error is `false`.
+    #[inline]
+    pub fn matches(&self, node: EsNode<'_>) -> bool {
+        self.test(node).unwrap_or(false)
+    }
+
+    fn matches_slowly(&self, node: EsNode<'_>) -> Result<bool, Error> {
+        let is_too_deep = Cell::new(false);
         let matcher = Matcher {
             program: &self.program,
             dialect: node.dialect,
             limit: None,
             stack: bun_core::StackCheck::init(),
+            is_too_deep: &is_too_deep,
         };
-        matcher.matches(self.root, node.node, node.node_type)
+        let matches = matcher.matches(self.root, node.node, node.node_type);
+        match is_too_deep.get() {
+            true => Err(Error::too_deep()),
+            false => Ok(matches),
+        }
     }
 
     /// Calls `visit` with each node of the ESTree that is made of `node` and matches, an outer one before what is in it. `node`
     /// is what a listener for [`Selector::listens_to`] is called with.
     ///
-    /// With several selectors, [`EsNode::for_each_at`] and [`Selector::matches`] for each do the same with less work.
-    pub fn for_each_match<'a>(&self, node: Node<'a>, mut visit: impl FnMut(EsNode<'a>)) {
+    /// With several selectors, [`EsNode::for_each_at`] and [`Selector::test`] for each do the same with less work.
+    pub fn for_each_match<'a>(
+        &self,
+        node: Node<'a>,
+        mut visit: impl FnMut(EsNode<'a>),
+    ) -> Result<(), Error> {
+        let mut result = Ok(());
         EsNode::for_each_at(node, |it| {
-            if self.matches(it) {
-                visit(it);
+            if result.is_ok() {
+                match self.test(it) {
+                    Ok(true) => visit(it),
+                    Ok(false) => {}
+                    Err(error) => result = Err(error),
+                }
             }
         });
+        result
     }
 }

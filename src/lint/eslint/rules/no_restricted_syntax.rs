@@ -62,9 +62,17 @@ impl Rule for NoRestrictedSyntax {
     }
 
     fn node<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
+        if cx.has_thrown_for_selector() {
+            return;
+        }
         EsNode::for_each_at(node, |it| {
-            let matching = self.restrictions.iter().enumerate().filter(|(_, restriction)| restriction.selector.matches(it));
-            cx.state.extend(matching.map(|(i, _)| (it, i)));
+            for (i, restriction) in self.restrictions.iter().enumerate() {
+                match restriction.selector.test(it) {
+                    Ok(true) => cx.state.push((it, i)),
+                    Ok(false) => {}
+                    Err(error) => cx.throw_for_selector(&error),
+                }
+            }
         });
     }
 

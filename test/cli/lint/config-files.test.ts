@@ -1669,6 +1669,28 @@ describe.concurrent("an .oxlintrc.json", () => {
     expect(results.map(it => it.problems)).toEqual(results.map(() => ["d.js:1:1 no-var", "keep.gen.js:1:1 no-var"]));
   });
 
+  // What oxlint 1.87.0 reports. `git worktree add` writes the first. A submodule has no `commondir`.
+  test.each([
+    ["a working tree", "gitdir: main/.git/worktrees/x\n", "../..\n", true],
+    ["\\r\\n", "gitdir: main/.git/worktrees/x\r\n", "../..\r\n", true],
+    ["a directory that is named from where the process is", "gitdir: main/.git/worktrees/x\n", "main/.git\n", true],
+    ["no commondir", "gitdir: main/.git/worktrees/x\n", undefined, false],
+    ["no blank", "gitdir:main/.git/worktrees/x\n", "../..\n", false],
+  ])("info/exclude where .git is a file: %s", async (_, pointer, commondir, isRead) => {
+    const { problems } = await lint({
+      ".oxlintrc.json": JSON.stringify({ ...noVar, categories: { correctness: "off" } }),
+      ".git": pointer,
+      ...(commondir === undefined ? {} : { "main/.git/worktrees/x/commondir": commondir }),
+      "main/.git/worktrees/x/info/exclude": "gen.js\n",
+      "main/.git/info/exclude": "gen.js\n",
+      "gen.js": code,
+      "kept.js": code,
+      "sub/gen.js": code,
+    });
+    const all = ["gen.js:1:1 no-var", "kept.js:1:1 no-var", "sub/gen.js:1:1 no-var"];
+    expect(problems).toEqual(isRead ? ["kept.js:1:1 no-var"] : all);
+  });
+
   // What oxlint 1.87.0 reports. A junction needs no privilege on Windows. Elsewhere it is a link like any other.
   test("a link to a directory is followed, unless it leads to a directory on the way from where the search starts", async () => {
     const files = {

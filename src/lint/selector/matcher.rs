@@ -4,6 +4,7 @@ use super::program::{Bound, Id, Key, Op, Program, Relation, Test};
 use super::value::Val;
 use crate::estree::{Dialect, FieldEntry, NodeType, Nodes, VNode, Value};
 use smallvec::SmallVec;
+use std::cell::Cell;
 use std::cmp::Ordering;
 
 /// Where `esquery` passes the ancestors of a node along, this asks the node for its parent.
@@ -14,6 +15,8 @@ pub(super) struct Matcher<'s, 'a> {
     /// The node that a `:has()` is asked about. What is in the parentheses does not see above it.
     pub(super) limit: Option<VNode<'a>>,
     pub(super) stack: bun_core::StackCheck,
+    /// The stack has not held the selector, where `esquery` throws. What [`Matcher::matches`] returns says nothing then.
+    pub(super) is_too_deep: &'s Cell<bool>,
 }
 
 #[derive(Copy, Clone)]
@@ -60,6 +63,12 @@ impl<'s, 'a> Matcher<'s, 'a> {
             return None;
         }
         node.parent()
+    }
+
+    /// What goes from node to node asks before each: or every `:has()` around would come down here again for each of its nodes.
+    #[inline]
+    fn goes_on(&self) -> bool {
+        !self.is_too_deep.get()
     }
 
     fn children(&self, node: VNode<'a>, node_type: NodeType) -> Children<'a> {
@@ -163,8 +172,8 @@ impl<'s, 'a> Matcher<'s, 'a> {
         let mut matches =
             |it: Option<VNode<'a>>| it.is_some_and(|it| self.matches_node(selector, it));
         match side {
-            Side::Left => list.take(at).any(&mut matches),
-            Side::Right => list.skip(at + 1).any(&mut matches),
+            Side::Left => (list.take(at).take_while(|_| self.goes_on())).any(&mut matches),
+            Side::Right => (list.skip(at + 1).take_while(|_| self.goes_on())).any(&mut matches),
         }
     }
 
@@ -217,7 +226,7 @@ impl<'s, 'a> Matcher<'s, 'a> {
         }
         let mut open: SmallVec<[Children<'a>; 8]> = SmallVec::new();
         open.push(self.children(node, node_type));
-        while let Some(innermost) = open.last_mut() {
+        while let Some(innermost) = open.last_mut().filter(|_| self.goes_on()) {
             let Some(child) = innermost.next() else {
                 open.pop();
                 continue;
@@ -265,7 +274,10 @@ impl<'s, 'a> Matcher<'s, 'a> {
         let program = self.program;
         match program.ops.get(id as usize) {
             None => false,
-            _ if !self.stack.is_safe_to_recurse() => false,
+            _ if !self.stack.is_safe_to_recurse() => {
+                self.is_too_deep.set(true);
+                false
+            }
             Some(Op::Wildcard) => true,
             Some(Op::Identifier {
                 node_type: wanted, ..
@@ -330,6 +342,7 @@ impl<'s, 'a> Matcher<'s, 'a> {
             Op::Descendant(left, right) => {
                 self.matches(right, node, node_type)
                     && std::iter::successors(self.parent(node), |it| self.parent(*it))
+                        .take_while(|_| self.goes_on())
                         .any(|it| self.matches_node(left, it))
             }
             Op::Sibling {

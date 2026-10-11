@@ -92,11 +92,12 @@ pub(crate) struct Sink {
     pub(crate) thrown: RefCell<Option<Thrown>>,
 }
 
-/// [`Cx::repeat_count`]
+/// [`Cx::repeat_count`], [`Cx::throw_for_selector`]
 pub(crate) struct Thrown {
     /// As `Diagnostic::rule`.
     pub(crate) rule: u16,
-    pub(crate) at: u32,
+    /// `None`: before ESLint comes to a node, and not in the rule.
+    pub(crate) at: Option<u32>,
     pub(crate) error: Vec<u8>,
 }
 
@@ -147,6 +148,24 @@ impl<'a, R: Rule> Cx<'a, R> {
     /// that ends the run. `at`: the node that ESLint is at. The rules of oxlint do not throw. The text itself: [`Fixer::repeat`].
     pub fn repeat_count(&self, count: f64, at: impl Spanned) -> Option<u64> {
         self.base.repeat_count(count, at.span().start)
+    }
+
+    /// A selector that the rule listens for cannot be matched. ESLint throws when it reads the selectors, before it comes to
+    /// a node: that ends the run.
+    #[cold]
+    pub fn throw_for_selector(&self, error: &crate::selector::Error) {
+        *self.base.file.sink.thrown.borrow_mut() = Some(Thrown {
+            rule: self.base.rule,
+            at: None,
+            error: error.message().to_vec(),
+        });
+    }
+
+    /// [`Cx::throw_for_selector`] has been called for this file: nothing that is found in it is reported.
+    #[inline]
+    pub fn has_thrown_for_selector(&self) -> bool {
+        let thrown = self.base.file.sink.thrown.borrow();
+        thrown.as_ref().is_some_and(|it| it.at.is_none())
     }
 
     /// Reports `message` at a position: where ESLint's `loc` is a `{ line, column }` and not a
@@ -220,6 +239,7 @@ impl<'a> CxBase<'a> {
             _ => return Some(whole as u64),
         };
         let (rule, mut thrown) = (self.rule, self.file.sink.thrown.borrow_mut());
+        let at = Some(at);
         if thrown.as_ref().is_none_or(|it| at < it.at) {
             *thrown = Some(Thrown { rule, at, error });
         }

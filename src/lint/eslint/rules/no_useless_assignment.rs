@@ -1189,8 +1189,11 @@ impl NoUselessAssignment {
         // Nearly all are a name with an initializer that nothing else assigns to.
         if !variable.has_modifying_references()
             && variable.declaration_count() == 1
-            && let Some(Declaration::Var(name)) = variable.declarations().next()
-            && let Node::VarDecl(declarator) = name.parent()
+            && let Some(declaration @ Declaration::Var(name)) = variable.declarations().next()
+            && let Some(Node::VarDecl(declarator)) = match name.parent() {
+                parent @ Node::VarDecl(_) => Some(parent),
+                _ => declaration.node(),
+            }
             && is_read_after_declarator(variable, declarator, &mut cx.state.evaluated_in)
         {
             return;

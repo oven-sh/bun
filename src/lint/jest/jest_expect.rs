@@ -874,8 +874,12 @@ pub(crate) mod expect_expect {
             let shortest = expected().map(str::len).min().unwrap_or(0);
             // As it is written in nearly every file that has one. Otherwise in another mix of cases, or before a dot in a string.
             expected().any(|it| file.find_name(it).is_some())
-                || file.own_names().is_none_or(|mut texts| {
-                    texts.any(|it| it.len() >= shortest && self.is_match(&[it.bytes()]))
+                || file.own_names().is_none_or(|texts| {
+                    texts.filter(|it| it.len() >= shortest).any(|it| {
+                        let text = it.bytes();
+                        expected().any(|it| matches!(text.get(it.len()), None | Some(b'.')))
+                            && self.is_match(&[text])
+                    })
                 })
         }
 

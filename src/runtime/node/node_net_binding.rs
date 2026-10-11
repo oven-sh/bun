@@ -148,6 +148,7 @@ pub(crate) fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) ->
             this_value: JsCell::new(jsc::JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
+            delayed_connect_error: Cell::new(0),
             connection: JsCell::new(None),
             server_name: JsCell::new(None),
             buffered_data_for_node_net: Default::default(),
@@ -180,5 +181,6 @@ pub(crate) fn do_connect(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         maybe_tcp,
         maybe_tls,
         opts,
+        crate::socket::ConnectFailure::AfterTurn,
     )
 }

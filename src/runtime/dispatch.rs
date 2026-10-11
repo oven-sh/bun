@@ -534,6 +534,8 @@ pub(crate) fn run_task(
         }
         // ── bake dev-server (cold — hoisted to `run_task_cold`) ──────────
         task_tag::BakeHotReloadEvent => run_task_cold(task),
+        // ── a node:net dial that failed before it had a socket (cold) ────
+        task_tag::TCPSocketConnectFailed | task_tag::TLSSocketConnectFailed => run_task_cold(task),
         task_tag::FSWatchTask => {
             // The task is heap-allocated
             // (cloned from `FSWatcher.current_task` at enqueue). `deinit` is
@@ -718,6 +720,24 @@ fn run_task_cold(task: Task) {
             unsafe { BakeHotReloadEvent::run(cast_ptr!(BakeHotReloadEvent)) };
         }
 
+        // ── node:net dial that failed before it had a socket ─────────────
+        task_tag::TCPSocketConnectFailed => {
+            // SAFETY: the socket `connect_finish` queued, with the dial's ref.
+            fold(unsafe {
+                crate::socket::ConnectFailedTask::<false>::run(cast_ptr!(
+                    crate::socket::ConnectFailedTask<false>
+                ))
+            });
+        }
+        task_tag::TLSSocketConnectFailed => {
+            // SAFETY: the socket `connect_finish` queued, with the dial's ref.
+            fold(unsafe {
+                crate::socket::ConnectFailedTask::<true>::run(cast_ptr!(
+                    crate::socket::ConnectFailedTask<true>
+                ))
+            });
+        }
+
         // Any tag the hot path mis-routed: producer bug.
         _ => panic!("Unexpected Task tag: {}", task.tag.0),
     }
@@ -727,7 +747,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 83,
+    task_tag::COUNT == 85,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1479,6 +1499,8 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::AsyncCpTask => release!(crate::node::fs::AsyncCpTask),
         task_tag::ShellAsyncCpTask => release!(crate::node::fs::ShellAsyncCpTask),
         task_tag::StreamPending => release!(StreamPending),
+        task_tag::TCPSocketConnectFailed => release!(crate::socket::ConnectFailedTask<false>),
+        task_tag::TLSSocketConnectFailed => release!(crate::socket::ConnectFailedTask<true>),
         task_tag::ThreadSafeFunction => release!(ThreadSafeFunction),
         task_tag::ValkeyDeferredClose => {
             release!(crate::valkey_jsc::js_valkey::ValkeyDeferredClose)

@@ -92,6 +92,12 @@ impl Handlers {
         self.cell.to_js()
     }
 
+    /// The context of the script that gave these handlers.
+    #[inline]
+    pub(crate) fn context(&self) -> bun_jsc::ContextId {
+        self.context
+    }
+
     /// Roots the cell until the returned handle drops. Entry points that
     /// construct a `Handlers` hold one across the window between the cell's
     /// creation and the first JS wrapper that stores it — user JS (option

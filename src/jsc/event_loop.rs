@@ -864,6 +864,23 @@ impl EventLoop {
         let _ = self.tasks.write_item(task);
     }
 
+    /// JS thread: queue `task` behind what other threads have posted. It runs
+    /// at a later refill: after the turn that queued it, before the immediates
+    /// that turn queued. A task that queues its successor here returns to the
+    /// poll every `CONCURRENT_REFILLS_PER_TICK` refills, as libuv's pending
+    /// queue does; through [`enqueue_task`](Self::enqueue_task) the drain never ends.
+    pub fn enqueue_task_after_turn(&mut self, task: Task) {
+        if self.closed_for_tasks {
+            // SAFETY: JS thread, JSC heap alive (teardown phase B/C).
+            unsafe { self.release_task_unrun(task) };
+            return;
+        }
+        self.concurrent_tasks.push(ConcurrentTaskItem::create(task));
+        // POSIX polls without blocking while `has_pending_tasks()`.
+        #[cfg(windows)]
+        self.wakeup();
+    }
+
     /// Release one task that will never run, folding what its release left
     /// pending (a few releases run an addon callback that can enter JS).
     ///

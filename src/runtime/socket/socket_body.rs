@@ -327,6 +327,11 @@ pub(crate) struct NewSocket<const SSL: bool> {
     pub this_value: JsCell<JsRef>,
     pub poll_ref: JsCell<KeepAlive>,
     pub(crate) ref_pollref_on_connect: Cell<bool>,
+    /// The errno of a dial that failed before it had a socket and is not
+    /// reported yet (libuv's `delayed_error`); 0 when none.
+    /// [`ConnectFailedTask`] reports it, unless a close or a later dial takes
+    /// it first.
+    pub(crate) delayed_connect_error: Cell<c_int>,
     pub(crate) connection: JsCell<Option<super::listener::UnixOrHost>>,
     /// `localAddress`/`localPort` from the connect options: the socket is
     /// bound to this address before connecting. Always a literal IP.
@@ -442,6 +447,60 @@ impl<const SSL: bool> Drop for ConnectErrorTeardown<SSL> {
         if this.handlers_are(&self.entered) {
             this.mark_inactive();
         }
+    }
+}
+
+/// A dial that failed before it had a socket, reported from the event loop
+/// instead of from inside `connect()`: libuv's `uv__io_feed` for a failed
+/// `uv_pipe_connect2`. The same pointer as the socket, one tag per
+/// monomorphization; the queued task owns the ref `connect_finish` took.
+#[repr(transparent)]
+pub(crate) struct ConnectFailedTask<const SSL: bool>(NewSocket<SSL>);
+
+impl<const SSL: bool> bun_event_loop::Taskable for ConnectFailedTask<SSL> {
+    const TAG: bun_event_loop::TaskTag = if SSL {
+        bun_event_loop::task_tag::TLSSocketConnectFailed
+    } else {
+        bun_event_loop::task_tag::TCPSocketConnectFailed
+    };
+    /// Gives back what the dial held. Calls no script.
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract — the socket `connect_finish` queued, held by the dial's ref.
+        let socket = unsafe { bun_ptr::ThisPtr::new(this.cast::<NewSocket<SSL>>()) };
+        if socket.delayed_connect_error.replace(0) != 0 {
+            socket.release_unreported_dial();
+        }
+        socket.get().deref();
+    }
+    /// The dialing script's: `connectError` is its callback.
+    unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
+        // SAFETY: fn contract.
+        let socket = unsafe { &*this.cast::<NewSocket<SSL>>() };
+        match socket.handlers.get() {
+            Some(handlers) => handlers.context(),
+            None => bun_event_loop::ContextId::NONE,
+        }
+    }
+}
+
+impl<const SSL: bool> ConnectFailedTask<SSL> {
+    /// # Safety
+    /// `this` is the socket `connect_finish` queued, with the dial's ref.
+    pub(crate) unsafe fn run(this: *mut Self) -> JsResult<()> {
+        // SAFETY: fn contract.
+        let socket = unsafe { bun_ptr::ThisPtr::new(this.cast::<NewSocket<SSL>>()) };
+        // 0: a close or a later dial ended this one first.
+        let errno = socket.delayed_connect_error.replace(0);
+        let reported = if errno == 0 {
+            Ok(())
+        } else if socket.has_handlers() {
+            NewSocket::handle_connect_error(socket, errno, 0)
+        } else {
+            socket.release_unreported_dial();
+            Ok(())
+        };
+        socket.get().deref();
+        reported
     }
 }
 
@@ -1137,6 +1196,58 @@ impl<const SSL: bool> NewSocket<SSL> {
             NativeSocketRef::Held
         };
         Self::connect_failed(this, errno, dns_error, native_ref)
+    }
+
+    /// Gives back the keep-alive and the pinned wrapper of a dial whose
+    /// queued failure (`delayed_connect_error`) will not be reported.
+    fn release_unreported_dial(&self) {
+        self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
+        if !matches!(self.this_value.get(), JsRef::Finalized) {
+            self.this_value.with_mut(|r| r.downgrade());
+        }
+    }
+
+    /// Ends a dial whose failure is still queued (`delayed_connect_error`)
+    /// the way closing a dial in flight ends it: reported now, as cancelled.
+    fn cancel_delayed_connect_error(&self) -> JsResult<()> {
+        if self.delayed_connect_error.replace(0) == 0 {
+            return Ok(());
+        }
+        if !self.has_handlers() {
+            self.release_unreported_dial();
+            return Ok(());
+        }
+        // SAFETY: `self` is the live heap allocation.
+        let this = unsafe { bun_ptr::ThisPtr::new(self.as_ctx_ptr()) };
+        Self::handle_connect_error(this, sys::SystemErrno::ECANCELED as c_int, 0)
+    }
+
+    /// A later dial on this socket replaces one whose failure is still queued
+    /// (`delayed_connect_error`), as `uv_pipe_connect2` replaces `connect_req`:
+    /// that failure is never reported. Its promise is settled, which is how
+    /// node:net ends the replaced request's trace span.
+    pub(crate) fn supersede_delayed_connect_error(&self) -> JsResult<()> {
+        if self.delayed_connect_error.replace(0) == 0 {
+            return Ok(());
+        }
+        self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
+        let Some(handlers) = self.handlers_opt() else {
+            return Ok(());
+        };
+        let Some(promise) = handlers.take_promise() else {
+            return Ok(());
+        };
+        let global = handlers.global_object;
+        let promise = jsc::JSPromise::opaque_mut(promise.as_promise().unwrap());
+        let err = SystemError {
+            errno: -(sys::SystemErrno::ECANCELED as c_int),
+            message: BunString::static_("Failed to connect"),
+            syscall: BunString::static_("connect"),
+            code: BunString::static_("ECANCELED"),
+            ..Default::default()
+        }
+        .to_error_instance_with_async_stack(&global, promise);
+        promise.reject_as_handled(&global, err)
     }
 
     fn connect_failed(
@@ -3228,6 +3339,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
+        this.cancel_delayed_connect_error()?;
         this.close_and_detach(uws::CloseCode::Failure);
         Ok(JSValue::UNDEFINED)
     }
@@ -3256,6 +3368,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         _callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         jsc::mark_binding!();
+        this.cancel_delayed_connect_error()?;
         let socket = this.socket.get();
         // `_handle.close()` is the net.Socket `_destroy()` path. Node closes the fd
         // with no close_notify (crypto_tls.cc sends the alert only from DoShutdown,
@@ -3339,6 +3452,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     pub(crate) fn finalize(&self) {
         log!("finalize() {}", core::ptr::from_ref(self) as usize);
         self.update_flags(|f| f.insert(Flags::FINALIZING));
+        self.delayed_connect_error.set(0);
         self.this_value.with_mut(|r| r.finalize());
         if !self.socket.get().is_closed() {
             self.socket.get().prepare_for_finalize();
@@ -3609,6 +3723,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
+            delayed_connect_error: Cell::new(0),
             buffered_data_for_node_net: JsCell::new(Vec::new()),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),
@@ -3734,6 +3849,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
+            delayed_connect_error: Cell::new(0),
             buffered_data_for_node_net: JsCell::new(Vec::new()),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(NativeCallbacks::None),
@@ -4811,6 +4927,7 @@ pub(crate) fn js_upgrade_duplex_to_tls(
         this_value: JsCell::new(JsRef::empty()),
         poll_ref: JsCell::new(KeepAlive::init()),
         ref_pollref_on_connect: Cell::new(true),
+        delayed_connect_error: Cell::new(0),
         buffered_data_for_node_net: JsCell::new(Vec::new()),
         bytes_written: Cell::new(0),
         native_callback: JsCell::new(NativeCallbacks::None),

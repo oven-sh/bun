@@ -286,6 +286,8 @@ const kReinitializeHandle = Symbol("kReinitializeHandle");
 const kRealListen = Symbol("kRealListen");
 const kSetNoDelay = Symbol("kSetNoDelay");
 const kSetTOS = Symbol("kSetTOS");
+// A unix socket. Node's Pipe handle has no setTypeOfService.
+const kIsPipe = Symbol("kIsPipe");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
 const kSyncWriteFd = Symbol("kSyncWriteFd");
 const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
@@ -1406,6 +1408,7 @@ function onconnection(err, clientHandle) {
     highWaterMark: self.highWaterMark,
   }) as SocketInstance;
   _socket.isServer = true;
+  if (self._handle?.unix || self[kClusterUnixPath]) _socket[kIsPipe] = true;
   // Use the server's normalized fields so the per-socket flag agrees with the
   // native listener: node's tlsConnectionListener passes `this.requestCert`
   // (`=== true`-normalized), not the raw option.
@@ -1646,7 +1649,13 @@ const SocketHandlers2 = {
     // after destroy(err)'s 'error'. Not deferred here: it would land on a connect() made right
     // after destroy() and fail that one.
     // An attempt that timed out was closed with its `oncomplete` cleared.
-    req.oncomplete?.(error.errno, self._handle, req, true, true);
+    // Node reports a throwing 'connectionAttemptFailed' listener as uncaughtException.
+    // Left to propagate, it would only reject the connect promise, which nothing observes.
+    try {
+      req.oncomplete?.(error.errno, self._handle, req, true, true);
+    } catch (e) {
+      reportError(e);
+    }
   },
 } satisfies InternalSocketHandler<ConnectData>;
 
@@ -2351,6 +2360,7 @@ Socket.prototype.connect = function connect(...args) {
 
   const { path } = options;
   const pipe = !!path;
+  this[kIsPipe] = pipe;
   $debug("pipe", pipe, path);
 
   if (!this._handle) {
@@ -2875,7 +2885,7 @@ Socket.prototype.setTypeOfService = function setTypeOfService(tos) {
   }
   validateInt32(tos, "tos", 0, 255);
 
-  if (!this._handle || !this._handle.setTypeOfService) {
+  if (!this._handle || !this._handle.setTypeOfService || this[kIsPipe]) {
     this[kSetTOS] = tos;
     return this;
   }
@@ -2893,7 +2903,7 @@ Socket.prototype.setTypeOfService = function setTypeOfService(tos) {
 };
 
 Socket.prototype.getTypeOfService = function getTypeOfService() {
-  if (!this._handle || !this._handle.getTypeOfService) {
+  if (!this._handle || !this._handle.getTypeOfService || this[kIsPipe]) {
     return this[kSetTOS] !== undefined ? this[kSetTOS] : 0;
   }
   const res = this._handle.getTypeOfService();

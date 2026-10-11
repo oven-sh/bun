@@ -138,6 +138,8 @@ pub mod task_tag {
         AsyncCpTask,
         ShellAsyncCpTask,
         StreamPending,
+        TCPSocketConnectFailed,   // bun_runtime::socket::ConnectFailedTask<false>
+        TLSSocketConnectFailed,   // bun_runtime::socket::ConnectFailedTask<true>
         ThreadSafeFunction,
         ValkeyDeferredClose,
         ValkeyDeferredFailure,

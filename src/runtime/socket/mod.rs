@@ -85,11 +85,12 @@ pub(crate) use ssl_config::{
 // `socket_body`/`tls_socket_functions`/`uws_handlers` all agree on one type.
 
 pub(crate) use handlers::{Handlers, SocketConfig};
-pub(crate) use listener::Listener;
+pub(crate) use listener::{ConnectFailure, Listener};
 pub(crate) use socket_address::SocketAddress;
 pub(crate) use socket_body::DuplexUpgradeContext;
 pub(crate) use socket_body::{
-    Flags as SocketFlags, NativeCallbacks, NewSocket, SocketMode, TCPSocket, TLSSocket,
+    ConnectFailedTask, Flags as SocketFlags, NativeCallbacks, NewSocket, SocketMode, TCPSocket,
+    TLSSocket,
 };
 
 #[cfg(windows)]

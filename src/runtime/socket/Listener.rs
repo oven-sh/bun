@@ -22,7 +22,8 @@ use bun_uws_sys as uws_sys;
 
 use crate::api::bun_secure_context::SecureContext;
 use crate::socket::{
-    Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket,
+    ConnectFailedTask, Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket,
+    TLSSocket,
 };
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 
@@ -142,6 +143,36 @@ pub(crate) enum UnixOrHost {
     Unix(Box<[u8]>),
     Host { host: Box<[u8]>, port: u16 },
     Fd(Fd),
+}
+
+/// When a unix-socket dial that fails at connect(2), before it has a socket, reports it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConnectFailure {
+    /// Inside the call: `connectError` runs before `connect()` returns.
+    InCall,
+    /// From the event loop, after the calling turn, as libuv reports it to node:net.
+    AfterTurn,
+}
+
+/// Whether `uv_pipe_connect2` returns this failure from the call instead of
+/// queuing it: a name that does not fit `sun_path`, or one with a NUL in it
+/// (Linux accepts the NUL that starts an abstract name).
+fn pipe_connect_fails_in_call(os_errno: c_int, name: &[u8]) -> bool {
+    #[cfg(unix)]
+    const SUN_PATH_LEN: usize =
+        size_of::<libc::sockaddr_un>() - core::mem::offset_of!(libc::sockaddr_un, sun_path);
+    #[cfg(windows)]
+    const SUN_PATH_LEN: usize = 108;
+
+    if os_errno == bun_sys::SystemErrno::ENAMETOOLONG as c_int || name.len() > SUN_PATH_LEN {
+        return true;
+    }
+    let past_abstract_marker = if cfg!(any(target_os = "linux", target_os = "android")) {
+        name.get(1..).unwrap_or_default()
+    } else {
+        name
+    };
+    bun_core::strings::contains_char(past_abstract_marker, 0)
 }
 
 impl Listener {
@@ -632,6 +663,7 @@ impl Listener {
             this_value: JsCell::new(jsc::JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
+            delayed_connect_error: Cell::new(0),
             connection: JsCell::new(None),
             local_binding: JsCell::new(None),
             server_name: JsCell::new(None),
@@ -679,6 +711,7 @@ impl Listener {
             this_value: JsCell::new(jsc::JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
+            delayed_connect_error: Cell::new(0),
             connection: JsCell::new(None),
             local_binding: JsCell::new(None),
             server_name: JsCell::new(None),
@@ -1087,7 +1120,7 @@ impl Listener {
     // Note: no #[bun_jsc::host_fn] — BunObject.rs::static_adapters owns the
     // C-ABI shim (it extracts `opts` from the CallFrame and calls this directly).
     pub(crate) fn connect(cx: &bun_jsc::JsThread<'_>, opts: JSValue) -> JsResult<JSValue> {
-        Self::connect_inner(cx, None, None, opts)
+        Self::connect_inner(cx, None, None, opts, ConnectFailure::InCall)
     }
 
     /// `Bun.connect`, and node:net's dial (which hands in the socket it already made).
@@ -1096,6 +1129,7 @@ impl Listener {
         prev_maybe_tcp: Option<*mut TCPSocket>,
         prev_maybe_tls: Option<*mut TLSSocket>,
         opts: JSValue,
+        connect_failure: ConnectFailure,
     ) -> JsResult<JSValue> {
         // What script of a disposed `Bun.ModuleGraph` opens is closed at once and reports nothing.
         // Dialing would report: a port that refuses (a listener the same script just made is one,
@@ -1258,6 +1292,7 @@ impl Listener {
                         // SAFETY: caller passes a live TLSSocket, owned by its JS wrapper.
                         let prev = unsafe { bun_ptr::ThisPtr::new(prev_ptr) };
                         debug_assert!(!prev.this_value.get().is_empty());
+                        prev.supersede_delayed_connect_error()?;
                         prev.set_handlers(cx.global(), Some(Rc::clone(&handlers)));
                         debug_assert!(matches!(
                             prev.socket.get().socket,
@@ -1291,6 +1326,7 @@ impl Listener {
                             this_value: JsCell::new(jsc::JsRef::empty()),
                             poll_ref: JsCell::new(KeepAlive::init()),
                             ref_pollref_on_connect: Cell::new(true),
+                            delayed_connect_error: Cell::new(0),
                             buffered_data_for_node_net: Default::default(),
                             bytes_written: Cell::new(0),
                             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
@@ -1357,6 +1393,7 @@ impl Listener {
                         // SAFETY: caller passes a live TCPSocket, owned by its JS wrapper.
                         let prev = unsafe { bun_ptr::ThisPtr::new(prev_ptr) };
                         debug_assert!(!prev.this_value.get().is_empty());
+                        prev.supersede_delayed_connect_error()?;
                         prev.set_handlers(cx.global(), Some(Rc::clone(&handlers)));
                         debug_assert!(matches!(
                             prev.socket.get().socket,
@@ -1385,6 +1422,7 @@ impl Listener {
                             this_value: JsCell::new(jsc::JsRef::empty()),
                             poll_ref: JsCell::new(KeepAlive::init()),
                             ref_pollref_on_connect: Cell::new(true),
+                            delayed_connect_error: Cell::new(0),
                             buffered_data_for_node_net: Default::default(),
                             bytes_written: Cell::new(0),
                             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
@@ -1491,6 +1529,7 @@ impl Listener {
                 pause_on_connect,
                 port,
                 promise_value,
+                connect_failure,
             )
         } else {
             connect_finish::<false>(
@@ -1506,6 +1545,7 @@ impl Listener {
                 pause_on_connect,
                 port,
                 promise_value,
+                connect_failure,
             )
         }
     }
@@ -1588,6 +1628,7 @@ fn connect_finish<const IS_SSL: bool>(
     pause_on_connect: bool,
     port: Option<u16>,
     promise_value: JSValue,
+    connect_failure: ConnectFailure,
 ) -> JsResult<JSValue> {
     let vm = handlers.vm;
     let socket: bun_ptr::ThisPtr<NewSocket<IS_SSL>> = if let Some(prev_ptr) = maybe_previous {
@@ -1598,6 +1639,7 @@ fn connect_finish<const IS_SSL: bool>(
         // still-connecting socket. Close the previous native socket before
         // reusing this wrapper so `do_connect` does not alias two native
         // sockets onto one ext slot.
+        prev.supersede_delayed_connect_error()?;
         prev.detach_for_reconnect();
         // Dropping the previous `Rc` here is safe even mid-callback: a `Scope`
         // from a `data`/`close` handler that synchronously re-entered `connect`
@@ -1630,6 +1672,7 @@ fn connect_finish<const IS_SSL: bool>(
             this_value: JsCell::new(jsc::JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
+            delayed_connect_error: Cell::new(0),
             buffered_data_for_node_net: Default::default(),
             bytes_written: Cell::new(0),
             native_callback: JsCell::new(crate::socket::NativeCallbacks::None),
@@ -1712,6 +1755,22 @@ fn connect_finish<const IS_SSL: bool>(
                     bun_sys::SystemErrno::ECONNREFUSED as c_int
                 }
             };
+            if connect_failure == ConnectFailure::AfterTurn
+                && matches!(
+                    socket_ref.connection.get(),
+                    Some(UnixOrHost::Unix(name)) if !pipe_connect_fails_in_call(os_errno, name)
+                )
+            {
+                // Until `ConnectFailedTask` runs the dial holds what one in
+                // flight holds: the ref taken above, the pinned wrapper, the
+                // keep-alive and the pending promise.
+                socket_ref.delayed_connect_error.set(errno);
+                vm.event_loop_mut()
+                    .enqueue_task_after_turn(bun_event_loop::Task::init(
+                        socket.as_ptr().cast::<ConnectFailedTask<IS_SSL>>(),
+                    ));
+                return Ok(promise_value);
+            }
             {
                 let this = socket;
                 let handled = NewSocket::<IS_SSL>::handle_connect_error(this, errno, 0);

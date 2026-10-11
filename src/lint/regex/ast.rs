@@ -803,12 +803,6 @@ impl<'a> Node<'a> {
     }
 }
 
-/// The handlers of `visitRegExpAST`. `match node.kind()` to tell the nodes apart.
-pub trait Visitor<'a> {
-    fn enter(&mut self, _node: Node<'a>) {}
-    fn leave(&mut self, _node: Node<'a>) {}
-}
-
 /// See [`Node::descendants`].
 pub struct Descendants<'a> {
     ast: &'a Ast<'a>,

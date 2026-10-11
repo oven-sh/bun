@@ -389,6 +389,8 @@ void us_socket_start_tls_handshake(us_socket_r s) nonnull_fn_decl;
  * server that fails verification. Must run before the handshake is driven
  * (on_open, or between adopt_tls and start_tls_handshake). No-op otherwise. */
 void us_socket_set_inline_reject(us_socket_r s) nonnull_fn_decl;
+/* For an owner that refuses the peer in its handshake callback: drops the flight held across that callback. */
+void us_socket_release_held_flight(us_socket_r s) nonnull_fn_decl;
 /* Call it from on_open. A shutdown before the first handshake step sends its FIN after that step. */
 void us_socket_set_first_flight_before_fin(us_socket_r s) nonnull_fn_decl;
 
@@ -410,13 +412,13 @@ struct us_listen_socket_t *us_socket_group_listen_fd(us_socket_group_r group,
     __attribute__((nonnull(1, 8)));  /* ssl_ctx nullable */
 void us_listen_socket_close(struct us_listen_socket_t *ls) nonnull_fn_decl;
 
-/* SNI: tree hangs off the listen socket. ssl_ctx is up_ref'd; user is opaque
- * (uWS stores a per-domain HttpRouter*). user may be NULL. */
-int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
+/* SNI: the names outlive us_listen_socket_close() for the connections already
+ * accepted. ssl_ctx is up_ref'd; user is opaque (uWS stores a per-domain
+ * HttpRouter*). user may be NULL. The last registration of a name replaces the
+ * earlier one. */
+void us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
     const char *hostname_pattern, struct ssl_ctx_st *ssl_ctx, void *user)
     __attribute__((nonnull(1, 2, 3)));
-void us_listen_socket_remove_server_name(struct us_listen_socket_t *ls,
-    const char *hostname_pattern) nonnull_fn_decl;
 void *us_listen_socket_find_server_name_userdata(struct us_listen_socket_t *ls,
     const char *hostname_pattern) nonnull_fn_decl;
 /* Returns an owned reference; the caller must release it. */
@@ -432,6 +434,7 @@ void us_listen_socket_set_default_ssl_ctx(struct us_listen_socket_t *ls,
 int us_ssl_parse_pkcs12(const char *data, size_t len, const char *pass,
     char **out_key, size_t *out_key_len, char **out_cert, size_t *out_cert_len,
     char **out_ca, size_t *out_ca_len, const char **err_reason);
+/* After us_listen_socket_close(ls) the resolver still runs for accepted connections, with NULL in place of `ls`. */
 void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
     struct ssl_ctx_st *(*cb)(struct us_listen_socket_t *, const char *hostname, int *abort_handshake, struct us_socket_t *socket)) nonnull_fn_decl;
 /* Resume a handshake suspended by an async SNICallback (the dynamic resolver
@@ -552,7 +555,7 @@ enum create_bun_socket_error_t {
  *
  * Mode-neutral: the same SSL_CTX may back client connects and server accepts
  * (Node's createSecureContext semantics). CTX-level verify mode is derived
- * purely from options.{ca,request_cert,reject_unauthorized}; the per-socket
+ * purely from options.{request_cert,reject_unauthorized}; the per-socket
  * client override happens in us_internal_ssl_attach so a server using this
  * SSL_CTX never sends CertificateRequest unless options asked it to. Reneg
  * limits attach as SSL_CTX ex_data. */
@@ -572,8 +575,12 @@ long us_ssl_ctx_live_count(void);
 /* Appends the certificates in the PEM `content` to `ctx`'s trust store;
  * returns 0 when nothing could be added. */
 int us_ssl_ctx_add_ca_cert(struct ssl_ctx_st *ctx, const char *content);
+/* The client half of us_internal_ssl_attach, for an SSL that no us_socket_t drives. */
+void us_internal_ssl_client_verify_defaults(struct ssl_st *ssl, struct ssl_ctx_st *ctx);
 /* 1 when the verify step of this handshake asked the owner for the server's name. */
 int us_ssl_identity_checked(struct ssl_st *ssl);
+/* Why the SSL_* call that just returned failed, NUL-terminated. Clears the thread's queue. 0 when nothing is queued. */
+int us_ssl_take_error_reason(char *reason, size_t length);
 /* For an SSL that no us_socket_t drives: its callbacks go to `wrapper`, which must outlive `ssl`. */
 void us_ssl_set_wrapper(struct ssl_st *ssl, void *wrapper);
 /* `ctx` is the X509_STORE_CTX of a verify callback. */
@@ -663,8 +670,8 @@ int us_socket_writev(us_socket_r s, const struct us_iovec_t *iov, int count) non
 int us_socket_raw_write(us_socket_r s, const char *data, int length);
 /* Like us_socket_write, but additionally reports a fatal (non-would-block)
  * send error through *fatal_write_error so opted-in callers can fail the
- * write instead of retrying forever. TLS sockets fall back to
- * us_socket_write (their errors propagate through the SSL layer). */
+ * write instead of retrying forever. A TLS socket reports the failed send of
+ * its ciphertext, or EPROTO for a failed SSL_write, once its handshake was reported. */
 int us_socket_write_check_error(us_socket_r s, const char *data, int length, int *fatal_write_error);
 
 void us_socket_timeout(us_socket_r s, unsigned int seconds) nonnull_fn_decl;
@@ -700,11 +707,13 @@ int us_socket_is_ssl_handshake_finished(us_socket_r s) nonnull_fn_decl;
 int us_socket_ssl_handshake_callback_has_fired(us_socket_r s) nonnull_fn_decl;
 /* TLS ciphertext bytes already sealed for this socket and reported as
  * written by us_socket_write(), still waiting on a writable event to reach
- * the kernel (the loop-wide spill slot owned by this socket). 0 for
+ * the kernel (the connection's spill). 0 for
  * plain-TCP sockets and for TLS sockets with nothing spilled. */
 unsigned int us_socket_ssl_spill_pending(us_socket_r s) nonnull_fn_decl;
 
 struct us_socket_t *us_socket_close(us_socket_r s, int code, void *reason) __attribute__((nonnull(1)));
+/* Closes before it returns. A TLS socket first sends what the kernel takes now: its unsent ciphertext, then close_notify. */
+struct us_socket_t *us_socket_close_now(us_socket_r s) nonnull_fn_decl;
 
 int us_socket_local_port(us_socket_r s) nonnull_fn_decl;
 int us_socket_remote_port(us_socket_r s) nonnull_fn_decl;

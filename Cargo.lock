@@ -1719,7 +1719,6 @@ dependencies = [
  "bun_core",
  "bun_jsc_macros",
  "bun_uws_sys",
- "scopeguard",
  "strum",
 ]
 

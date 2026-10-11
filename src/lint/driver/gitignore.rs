@@ -99,6 +99,33 @@ pub(crate) fn with_file(chain: Chain, directory: &[u8], file: &[u8], is_for_oxc:
     }
 }
 
+/// Where the repository at `root` has `info/exclude`, as the crate `ignore` finds it. In a working tree of `git worktree add`,
+/// `.git` is a file. That of a submodule names a directory without `commondir`, and nothing is read. A path that is not absolute
+/// is taken from where the process is, not from `root`.
+fn common_directory(root: &[u8]) -> Option<Vec<u8>> {
+    let dot_git = paths::join(root, b".git");
+    if !fs::is_file(&dot_git) {
+        return Some(dot_git);
+    }
+    let first_line = |file: &[u8]| {
+        let mut text = fs::read(file).ok()?;
+        if let Some(end) = strings::index_of_char(&text, b'\n') {
+            text.truncate(end as usize);
+        }
+        if text.ends_with(b"\r") {
+            text.pop();
+        }
+        Some(text)
+    };
+    let pointer = first_line(&dot_git)?;
+    let git_directory = pointer.strip_prefix(b"gitdir: ")?;
+    let common = first_line(&paths::join(git_directory, b"commondir"))?;
+    Some(match common.starts_with(b".") {
+        true => paths::join(git_directory, &common),
+        false => common,
+    })
+}
+
 /// What counts in `directory`, which is where a search starts: the files in it and above it, up to
 /// the root of the repository. `names`: what they are called, the one that overrides the other
 /// last.
@@ -114,8 +141,10 @@ pub(crate) fn above_and_in(directory: &[u8], names: &[&[u8]]) -> Chain {
         directories.truncate(root + 1);
     }
     let mut chain = None;
-    if let Some(root) = directories.last() {
-        chain = with_file(chain, root, &paths::join(root, b".git/info/exclude"), true);
+    if let Some(root) = directories.last()
+        && let Some(common) = common_directory(root)
+    {
+        chain = with_file(chain, root, &paths::join(&common, b"info/exclude"), true);
     }
     for directory in directories.iter().rev() {
         for name in names {

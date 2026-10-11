@@ -2,7 +2,7 @@
 //! `test/cli/format/{prettier,oxfmt}/bundle.zst`.
 //!
 //! It is compiled into debug and canary builds of Bun (`bun format --run-prettier-tests`,
-//! `--run-oxfmt-tests`, for `test/cli/format/conformance.test.ts`) and into `bun-lint`.
+//! `--run-oxfmt-tests`, for `test/cli/format/conformance.test.ts`).
 
 #![forbid(unsafe_code)]
 

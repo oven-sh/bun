@@ -57,44 +57,6 @@ pub struct Scratch {
     tree: ast::Tree,
 }
 
-/// The syntax tree of `original`, for debugging.
-pub fn dump_ast(original: &[u8], out: &mut Vec<u8>) {
-    let mut tree = ast::Tree::default();
-    let blanked = parse::blank_front_matter(original);
-    let content = blanked.as_deref().unwrap_or(original);
-    if let Some(root) = parse::parse(content, original, parse::Syntax::Markdown, &mut tree) {
-        ast::dump(content, &tree, root, out);
-    }
-}
-
-/// For the harness: the syntax tree of `original`, which is MDX.
-pub fn dump_mdx_ast(original: &[u8], out: &mut Vec<u8>) {
-    let mut tree = ast::Tree::default();
-    if let Some(root) = parse::parse(original, original, parse::Syntax::Mdx, &mut tree) {
-        ast::dump(original, &tree, root, out);
-    }
-}
-
-/// For the harness: makes the syntax tree of `original`. Returns how many nodes it has.
-pub fn count_nodes(original: &[u8], scratch: &mut Scratch) -> usize {
-    let blanked = parse::blank_front_matter(original);
-    let content = blanked.as_deref().unwrap_or(original);
-    let syntax = parse::Syntax::Markdown;
-    parse::parse(content, original, syntax, &mut scratch.tree);
-    scratch.tree.nodes.len()
-}
-
-/// For the harness: what `Bun.markdown.html` makes of `text` with the options `on` set.
-pub fn render_to_html(text: &[u8], on: &[&str]) -> Option<Box<[u8]>> {
-    let mut options = bun_md::root::Options::default();
-    for (name, _, set) in bun_md::root::Options::BOOL_FIELD_SETTERS {
-        if on.contains(name) {
-            set(&mut options, true);
-        }
-    }
-    bun_md::root::render_to_html_with_options(text, options).ok()
-}
-
 /// Fills `tree` with the syntax of `text`, which is a description in a JSDoc comment. Returns the root.
 pub(crate) fn parse_plain(text: &[u8], tree: &mut ast::Tree) -> Option<ast::NodeId> {
     parse::parse_content(text, tree, true)

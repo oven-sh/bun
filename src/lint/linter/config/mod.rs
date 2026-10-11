@@ -89,22 +89,6 @@ use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::sync::Arc;
 
-#[doc(hidden)]
-pub mod testing {
-    use bun_glob::{How, Options, Pattern};
-
-    /// `new Minimatch(pattern, { dot: true, flipNegate }).match(path, partial)`
-    pub fn minimatch(pattern: &[u8], path: &[u8], flip_negate: bool, partial: bool) -> bool {
-        Pattern::new(pattern, Options::MINIMATCH_DOT).matches_with(
-            path,
-            How {
-                flip_negate,
-                partial,
-            },
-        )
-    }
-}
-
 /// A pattern in `files` or `ignores`.
 struct Pattern {
     matcher: bun_glob::Pattern,

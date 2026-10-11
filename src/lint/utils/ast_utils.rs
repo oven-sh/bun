@@ -48,14 +48,6 @@ pub fn create_global_linebreak_matcher(text: &[u8]) -> impl Iterator<Item = (usi
     })
 }
 
-/// ESLint's `SHEBANG_MATCHER`: what follows the `#!` that `text` starts with, to the end of the
-/// line.
-pub fn match_shebang(text: &[u8]) -> Option<&[u8]> {
-    let rest = text.strip_prefix(b"#!")?;
-    let end = strings::index_of_any(rest, b"\r\n").unwrap_or(rest.len());
-    (end > 0).then(|| &rest[..end])
-}
-
 /// ESLint's `COMMENTS_IGNORE_PATTERN.test(value)`, for the value of a comment.
 pub fn matches_comments_ignore_pattern(value: &[u8]) -> bool {
     let rest = strings::trim_js_whitespace_start(value);
@@ -817,34 +809,6 @@ pub fn is_start_of_expression_statement<'a>(node: impl Into<Node<'a>>) -> bool {
     node.ancestors()
         .take_while(|ancestor| !matches!(ancestor, Node::File(_)) && ancestor.span().start == start)
         .any(|it| matches!(it, Node::Stmt(statement) if is_expression_statement(statement)))
-}
-
-/// ESLint's `getDirectivePrologue`, for a `File` or a function: the expression statements at the
-/// start of its body that consist of a literal.
-pub fn get_directive_prologue<'a>(node: impl Into<Node<'a>>) -> impl Iterator<Item = Stmt<'a>> {
-    let node = node.into();
-    let statements = match node {
-        Node::File(file) => Some(file.body()),
-        _ => as_function(node).and_then(Func::body_statements),
-    };
-    statements
-        .into_iter()
-        .flatten()
-        .take_while(|it| matches!(it.kind(), StmtKind::Expr(e) if is_literal(e)))
-}
-
-/// ESLint's `getTrailingStatement`, which is `esutils.ast.trailingStatement`: the statement that
-/// `statement` ends with. It knows nothing of `for`-`of`.
-pub fn get_trailing_statement(statement: Stmt<'_>) -> Option<Stmt<'_>> {
-    match statement.kind() {
-        StmtKind::If { yes, no, .. } => Some(no.unwrap_or(yes)),
-        StmtKind::Labeled { body, .. }
-        | StmtKind::For { body, .. }
-        | StmtKind::ForIn { body, .. }
-        | StmtKind::While { body, .. }
-        | StmtKind::With { body, .. } => Some(body),
-        _ => None,
-    }
 }
 
 /// ESLint's `areBracesNecessary`, for a block with one statement: without the braces, the
@@ -1969,17 +1933,6 @@ fn has_jsdoc_this_tag<'a>(
         || (func.file())
             .comments_before(estree_span(Node::Func(func)))
             .any(|comment| has_this_tag(comment.comment_value()))
-}
-
-/// ESLint's `isDefaultThisBinding`: `this` in `func`, which is not an arrow function, is the
-/// default binding: `undefined` in strict mode, otherwise the global object. That is unless the
-/// function is a method, a constructor, is bound, or is given to something with a `this` to call it
-/// with.
-///
-/// `cap_is_constructor`: a function whose name starts with a capital letter is a constructor.
-/// Upstream's default is `true`.
-pub fn is_default_this_binding(func: Func<'_>, cap_is_constructor: bool) -> bool {
-    is_default_this_binding_with(func, cap_is_constructor, &mut ThisBindingMemo::default())
 }
 
 /// What [`is_default_this_binding`] passes on its ways up from a function. The functions that are operands of one chain of

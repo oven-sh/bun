@@ -1,7 +1,7 @@
 // Runs the command line of real ESLint and `bun lint` on generated projects, and compares standard output byte for byte, the
 // exit code, and the files after `--fix`.
 //
-//   bun eslint-cli.mjs --deps=<directory with node_modules/eslint> --scratch=<directory> --bin="<bun-lint> cli" [--only=substring] [--verbose]
+//   bun eslint-cli.mjs --deps=<directory with node_modules/eslint> --scratch=<directory> --bin="bun lint" [--only=substring] [--verbose]
 //
 // `--bin` is the command that stands for `bun lint`.
 import { spawnSync } from "node:child_process";
@@ -12,7 +12,7 @@ import { cases } from "./eslint-cli-cases.mjs";
 const flag = name => process.argv.find(it => it.startsWith(`--${name}=`))?.slice(name.length + 3);
 const deps = path.resolve(flag("deps"));
 const scratch = path.resolve(flag("scratch"));
-const bin = flag("bin").split(" ");
+const bin = (flag("bin") ?? "bun lint").split(" ");
 const only = flag("only");
 const verbose = process.argv.includes("--verbose");
 const eslint = path.join(deps, "node_modules/eslint/bin/eslint.js");

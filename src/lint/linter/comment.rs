@@ -10,10 +10,10 @@ const FEW: usize = 16;
 
 /// `/* label value -- justification */`. All are slices of the text that was parsed.
 #[derive(Copy, Clone, Debug)]
-pub struct DirectiveComment<'t> {
-    pub label: &'t [u8],
-    pub value: &'t [u8],
-    pub justification: &'t [u8],
+pub(crate) struct DirectiveComment<'t> {
+    pub(crate) label: &'t [u8],
+    pub(crate) value: &'t [u8],
+    pub(crate) justification: &'t [u8],
 }
 
 /// Where the first `\s-{2,}\s` starts and ends.
@@ -35,7 +35,7 @@ fn find_justification_separator(text: &[u8]) -> Option<(usize, usize)> {
 }
 
 /// `parseDirective`. `text`: the comment without its delimiters.
-pub fn parse_directive(text: &[u8]) -> Option<DirectiveComment<'_>> {
+pub(crate) fn parse_directive(text: &[u8]) -> Option<DirectiveComment<'_>> {
     let (directive, justification) = match find_justification_separator(text) {
         Some((start, end)) => (
             strings::trim_js_whitespace(&text[..start]),
@@ -68,7 +68,7 @@ pub fn parse_directive(text: &[u8]) -> Option<DirectiveComment<'_>> {
 }
 
 /// `parseListConfig`: the distinct names of a list that is separated by commas, in order.
-pub fn parse_list_config(text: &[u8]) -> Vec<&[u8]> {
+pub(crate) fn parse_list_config(text: &[u8]) -> Vec<&[u8]> {
     let mut names: Vec<&[u8]> = Vec::new();
     // All of them, once there are many.
     let mut seen: FxHashSet<&[u8]> = FxHashSet::default();
@@ -98,7 +98,7 @@ pub fn parse_list_config(text: &[u8]) -> Vec<&[u8]> {
 
 /// `parseStringConfig`: `name` or `name:value`, separated by commas or white space. The last value
 /// of a name counts.
-pub fn parse_string_config(text: &[u8]) -> Vec<(Vec<u8>, Option<Vec<u8>>)> {
+pub(crate) fn parse_string_config(text: &[u8]) -> Vec<(Vec<u8>, Option<Vec<u8>>)> {
     let text = strings::trim_js_whitespace(text);
     // `.replace(/(?<!\s)\s*([:,])\s*/gu, "$1")`
     let skip_space = |mut at: usize| {
@@ -218,7 +218,7 @@ fn normalize_for_json(text: &[u8]) -> Vec<u8> {
 }
 
 /// `parseJSONLikeConfig`. `Err`: the message.
-pub fn parse_json_like_config(text: &[u8]) -> Result<Vec<(Vec<u8>, Json)>, Vec<u8>> {
+pub(crate) fn parse_json_like_config(text: &[u8]) -> Result<Vec<(Vec<u8>, Json)>, Vec<u8>> {
     if let Some(items) = levn::parse_object(text) {
         let severity_of = |value: &Json| match value {
             Json::Array(items) => items.first().is_some_and(is_valid_severity),

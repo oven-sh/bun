@@ -1,6 +1,6 @@
 // Compares what `bun lint` and oxlint make of the files of fixes.ts with each of the flags.
 //
-//   BUN_LINT="<bun-lint> cli" OXLINT_BIN=<oxlint 1.87> OXLINT_TSGOLINT_PATH=<tsgolint 7.0.2003> bun compare-fixes.ts [--record]
+//   BUN_LINT="bun lint" OXLINT_BIN=<oxlint 1.87> OXLINT_TSGOLINT_PATH=<tsgolint 7.0.2003> bun compare-fixes.ts [--record]
 //
 // Without OXLINT_BIN, what oxlint makes of them is read from fixes.expected.json, which `--record` writes.
 

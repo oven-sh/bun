@@ -5,18 +5,18 @@ macro_rules! fields {
         /// A field of an ESTree node.
         #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
         #[repr(u8)]
-        pub enum Field { $($variant),* }
+        pub(crate) enum Field { $($variant),* }
 
         impl Field {
             /// Sorted by name.
-            pub const ALL: &[Field] = &[$(Field::$variant),*];
+            pub(crate) const ALL: &[Field] = &[$(Field::$variant),*];
 
-            pub const fn name(self) -> &'static str {
+            pub(crate) const fn name(self) -> &'static str {
                 match self { $(Field::$variant => $name),* }
             }
 
             /// The field that is called `name`. `None` if no type of node has such a field.
-            pub fn from_name(name: &[u8]) -> Option<Field> {
+            pub(crate) fn from_name(name: &[u8]) -> Option<Field> {
                 let at = Field::ALL.binary_search_by(|it| it.name().as_bytes().cmp(name)).ok()?;
                 Some(Field::ALL[at])
             }

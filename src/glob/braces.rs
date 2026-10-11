@@ -393,7 +393,7 @@ fn expand_inner(text: &[u8], depth: usize, mut is_top: bool) -> Vec<Vec<u8>> {
 }
 
 /// `expand(text)`
-pub fn expand(text: &[u8]) -> Vec<Vec<u8>> {
+pub(crate) fn expand(text: &[u8]) -> Vec<Vec<u8>> {
     if text.is_empty() {
         return Vec::new();
     }

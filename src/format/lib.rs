@@ -44,7 +44,7 @@ pub mod sort_imports {
     pub use crate::js::sort_imports::{Settings, SortImports, sorted_text};
 }
 
-pub use ir::run::{Scratch, dump_document, format};
+pub use ir::run::{Scratch, format};
 pub use options::FormatOptions;
 
 // Not in the prelude: a glob import cannot shadow the macros of the same names in `std`.

@@ -3,10 +3,6 @@
 use super::*;
 use crate::util::SharedSort;
 
-fn filled<T: Copy>(arena: &Arena, len: usize, value: T) -> Fixed<'_, T> {
-    Fixed::filled_in(arena, len, value)
-}
-
 fn refilled<T: Copy>(list: &mut Vec<T>, len: usize, value: T) {
     list.clear();
     list.resize(len, value);
@@ -53,98 +49,6 @@ const REACHED: ScopeId = ScopeId(0);
 /// What comes from JSDoc comments is bound where the comment is.
 fn is_for_the_binder<S: Storage>(f: &FileIn<S>) -> bool {
     f.is_js && !f.jsdoc_comments.is_empty()
-}
-
-/// [`bind`] for a formatter, which goes down from the file and now and then asks what a node is part
-/// of. It declares nothing and resolves nothing.
-///
-/// For every node that `bind` reaches, these are as in its result: `expr_parent`, `stmt_parent`,
-/// `pat_parent`, `prop_owner`, `member_owner`, `param_fn`, `var_stmt`, `case_stmt`,
-/// `enum_member_owner`, `class_owner`, `FnInfo::owner`, whether it is among
-/// `type_query_operands`, and whether its entry in `class_scope`, `type_scope` or `type_param_scope`
-/// is `NONE`, which is all that these three tell here. The exception is the parent of the `a.b` of the type `typeof a.b`, which
-/// is the file here. All else is empty.
-///
-/// A node says what its children are part of, so this goes through the lists of the file once and
-/// never calls itself. A file in which the parser has left something behind where it backtracked is
-/// left to the binder, which does not get to it: so what has no entry in the result of `bind` has
-/// none here.
-pub fn bind_for_format<'s>(
-    f: &File,
-    options: BindOptions,
-    atoms: &dyn crate::atom::Intern,
-    arena: &'s Arena,
-) -> Bound<'s> {
-    if is_for_the_binder(f) {
-        return bind(f, options, atoms, arena);
-    }
-    let mut expr_parent = filled(arena, f.exprs.len(), Parent::None);
-    let mut stmt_parent = filled(arena, f.stmts.len(), Parent::None);
-    let mut pat_parent = filled(arena, f.pats.len(), PatParent::None);
-    let mut prop_owner = filled(arena, f.props.len(), ExprId::NONE);
-    let mut member_owner = filled(arena, f.members.len(), MemberOwner::None);
-    let mut param_fn = filled(arena, f.params.len(), FnId::NONE);
-    let mut var_stmt = filled(arena, f.var_decls.len(), StmtId::NONE);
-    let mut case_stmt = filled(arena, f.cases.len(), StmtId::NONE);
-    let mut class_owner = filled(arena, f.classes.len(), ClassOwner::Stmt(StmtId::NONE));
-    let mut fns = filled(arena, f.fns.len(), NO_FUNCTION);
-    let mut class_scope = filled(arena, f.classes.len(), ScopeId::NONE);
-    let mut type_scope = filled(arena, f.types.len(), ScopeId::NONE);
-    let mut type_param_scope = filled(arena, f.type_params.len(), ScopeId::NONE);
-    let mut enum_member_owner = vec![EnumId::NONE; f.enum_members.len()];
-    let mut type_query_operands = Vec::new();
-    let is_done = fill::<_, false>(
-        f,
-        Lists {
-            expr_parent: &mut expr_parent,
-            stmt_parent: &mut stmt_parent,
-            pat_parent: &mut pat_parent,
-            prop_owner: &mut prop_owner,
-            member_owner: &mut member_owner,
-            param_fn: &mut param_fn,
-            var_stmt: &mut var_stmt,
-            case_stmt: &mut case_stmt,
-            class_owner: &mut class_owner,
-            enum_member_owner: &mut enum_member_owner,
-            fns: &mut fns,
-            type_query_operands: &mut type_query_operands,
-            class_scope: &mut class_scope,
-            type_scope: &mut type_scope,
-            type_param_scope: &mut type_param_scope,
-            expr_kinds: &mut [],
-            expr_kind_counts: &mut [],
-            returns: &mut Vec::new(),
-        },
-    ) && is_all_part_of_something(
-        &expr_parent,
-        &stmt_parent,
-        &fns,
-        &class_owner,
-        &type_scope,
-        &type_param_scope,
-    );
-    in_order(&mut type_query_operands);
-    if !is_done {
-        return bind(f, options, atoms, arena);
-    }
-    Bound {
-        expr_parent,
-        stmt_parent,
-        pat_parent,
-        prop_owner,
-        member_owner,
-        param_fn,
-        var_stmt,
-        case_stmt,
-        class_owner,
-        fns,
-        class_scope,
-        type_scope,
-        type_param_scope,
-        enum_member_owner: few_to_arena(enum_member_owner, arena),
-        type_query_operands: few_to_arena(type_query_operands, arena),
-        ..Bound::empty_in(arena)
-    }
 }
 
 /// [`bind_for_format`] without an arena: see [`bind_for_lint_in`].

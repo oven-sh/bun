@@ -34,4 +34,4 @@ pub use super::ast_utils::{
     get_static_string_value, is_function, is_loop, is_null_literal,
     is_start_of_expression_statement, is_token_on_same_line,
 };
-pub use super::text::{escape_reg_exp, upper_case_first};
+pub use super::text::upper_case_first;

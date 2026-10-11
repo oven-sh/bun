@@ -21,7 +21,7 @@ const CODE_POINTS: Text = Text {
 pub(crate) fn text_for(options: IgnoreOptions) -> Text {
     Text {
         unit: match options.syntax {
-            IgnoreSyntax::Git | IgnoreSyntax::Globset => Unit::Byte,
+            IgnoreSyntax::Globset => Unit::Byte,
             _ => Unit::Utf16,
         },
         folds: options.ignores_case,
@@ -32,7 +32,6 @@ pub(crate) fn text_for(options: IgnoreOptions) -> Text {
 pub(crate) fn line(bytes: &[u8], options: IgnoreOptions) -> Result<Option<Line>, Vec<u8>> {
     match options.syntax {
         IgnoreSyntax::Globset => globset_line(bytes, options.ignores_case),
-        IgnoreSyntax::Git => Ok(wildmatch_line(bytes, options)),
         IgnoreSyntax::Npm7012 => Ok(wildmatch_line(&well_formed(bytes), options)),
         IgnoreSyntax::Npm5 | IgnoreSyntax::Npm705 => Ok(legacy_line(&well_formed(bytes), options)),
     }
@@ -370,12 +369,10 @@ fn trailing(bytes: &[u8], byte: u8) -> usize {
     bytes.iter().rev().take_while(|it| **it == byte).count()
 }
 
-/// `trim_trailing_spaces` of git, `trimEnd` of the package: blanks at the end go, unless a `\` is before the first of them.
-fn trim_blanks(mut body: &[u8], is_git: bool) -> &[u8] {
-    if !is_git {
-        while let [rest @ .., b'\r' | b'\n'] = body {
-            body = rest;
-        }
+/// `trimEnd` of the package: blanks at the end go, unless a `\` is before the first of them.
+fn trim_blanks(mut body: &[u8]) -> &[u8] {
+    while let [rest @ .., b'\r' | b'\n'] = body {
+        body = rest;
     }
     let end = body.len() - trailing(body, b' ');
     // `\ ` stays, as the two that it is: it is read as a blank below.
@@ -384,21 +381,18 @@ fn trim_blanks(mut body: &[u8], is_git: bool) -> &[u8] {
 }
 
 fn wildmatch_line(line: &[u8], options: IgnoreOptions) -> Option<Line> {
-    let is_git = options.syntax == IgnoreSyntax::Git;
     let text = text_for(options);
     let mut body = line;
-    if !is_git {
-        // `/(?:[^\\]|^)\\$/`
-        if body.ends_with(b"\\") && !body.ends_with(b"\\\\") {
-            return None;
-        }
-        body = body.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(body);
+    // `/(?:[^\\]|^)\\$/`
+    if body.ends_with(b"\\") && !body.ends_with(b"\\\\") {
+        return None;
     }
+    body = body.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(body);
     if body.is_empty() || body.starts_with(b"#") {
         return None;
     }
     let is_negated = body.starts_with(b"!");
-    body = trim_blanks(&body[usize::from(is_negated)..], is_git);
+    body = trim_blanks(&body[usize::from(is_negated)..]);
     if body.is_empty() {
         return None;
     }
@@ -413,22 +407,20 @@ fn wildmatch_line(line: &[u8], options: IgnoreOptions) -> Option<Line> {
     // A `/` that is not the last character ties the pattern to the directory of the file. It counts wherever it stands.
     let is_anchored =
         strings::index_of_char_usize(body, b'/').is_some_and(|it| it == 0 || it + 1 < body.len());
-    if !is_git {
-        // The package: nothing but `**/`, any number of times, behind a `/` or not: every directory.
-        let mut at = usize::from(body.starts_with(b"/"));
-        while has_at(body, at, b"**/") {
-            at += 3;
-        }
-        if at == body.len() && at > 1 {
-            let end = Node::Assert(Assertion::EndOrFinalSlash);
-            return line_of(Node::Seq(vec![ANY_NAMES, end]), false);
-        }
+    // Nothing but `**/`, any number of times, behind a `/` or not: every directory.
+    let mut at = usize::from(body.starts_with(b"/"));
+    while has_at(body, at, b"**/") {
+        at += 3;
+    }
+    if at == body.len() && at > 1 {
+        let end = Node::Assert(Assertion::EndOrFinalSlash);
+        return line_of(Node::Seq(vec![ANY_NAMES, end]), false);
     }
     if let [rest @ .., b'/'] = body
         && !rest.is_empty()
     {
-        // The package: `\/` at the end matches nothing.
-        if !is_git && trailing(rest, b'\\') % 2 == 1 {
+        // `\/` at the end matches nothing.
+        if trailing(rest, b'\\') % 2 == 1 {
             return line_of(Node::Fail, false);
         }
         is_for_directories = true;
@@ -439,23 +431,18 @@ fn wildmatch_line(line: &[u8], options: IgnoreOptions) -> Option<Line> {
     let is_slash_or_end = |at: usize| matches!(body.get(at), None | Some(b'/'));
     // `**/` at the start, any number of times.
     let mut has_deep = false;
-    while (is_anchored || !is_git) && has_at(body, i, b"**/") {
+    while has_at(body, i, b"**/") {
         i += 3;
         has_deep = true;
     }
     if has_deep {
         nodes.push(Node::Deep {
             empty_names: true,
-            newlines: is_git,
+            newlines: false,
         });
     } else if !is_anchored {
         nodes.push(ANY_NAMES);
     }
-    // git compares what is before the first of `*?[\` as characters. To `wildmatch` a `**` at the start of the rest is a whole name.
-    let first_special = (is_git && is_anchored && !has_deep).then(|| {
-        let rest = body.get(i..).unwrap_or_default();
-        i + strings::index_of_any(rest, b"*?[\\").unwrap_or(rest.len())
-    });
     // The last thing read is a `/` that is written as one.
     let mut is_behind_slash = false;
     while let Some(&c) = body.get(i) {
@@ -467,12 +454,11 @@ fn wildmatch_line(line: &[u8], options: IgnoreOptions) -> Option<Line> {
                 };
                 let escaped = body.get(i + 1..i + 1 + len).unwrap_or_default();
                 nodes.push(Node::Lit(escaped.to_vec()));
-                // git looks at the byte before a `**`, escaped or not. So does the package before a `*` that is the last name.
+                // The package looks at the byte before a `*` that is the last name, escaped or not.
                 is_behind_slash = escaped == b"/";
                 i += 1 + len;
                 // The leak. A `*` that is the last character is spared.
-                if !is_git
-                    && escaped == b"\\"
+                if escaped == b"\\"
                     && let Some(&leaked) = body.get(i)
                     && is_leakable(leaked)
                     && !(leaked == b'*' && i + 1 == body.len() && !is_for_directories)
@@ -494,8 +480,8 @@ fn wildmatch_line(line: &[u8], options: IgnoreOptions) -> Option<Line> {
                 }
                 _ => return line_of(Node::Fail, is_for_directories),
             },
-            // The package: `/**` that is a whole name, any number of times.
-            b'/' if !is_git && is_anchored && has_at(body, i, b"/**") && is_slash_or_end(i + 3) => {
+            // `/**` that is a whole name, any number of times.
+            b'/' if is_anchored && has_at(body, i, b"/**") && is_slash_or_end(i + 3) => {
                 let mut groups = 0;
                 while has_at(body, i, b"/**") && is_slash_or_end(i + 3) {
                     i += 3;
@@ -518,30 +504,11 @@ fn wildmatch_line(line: &[u8], options: IgnoreOptions) -> Option<Line> {
             }
             b'*' => {
                 let stars = body[i..].iter().take_while(|it| **it == b'*').count();
-                let is_whole_name_of_git = is_git
-                    && is_anchored
-                    && (first_special == Some(i) || was_behind_slash)
-                    && stars >= 2;
                 i += stars;
-                if is_whole_name_of_git && has_at(body, i, b"\\/") {
-                    // Before `\/` it is a whole name too, but one that cannot be left out with its `/`.
-                    nodes.push(anything());
-                } else if is_whole_name_of_git && i == body.len() {
-                    nodes.push(to_the_end(0, true));
-                    return line_of(Node::Seq(nodes), is_for_directories);
-                } else if is_whole_name_of_git && is_slash_or_end(i) {
-                    nodes.push(ANY_NAMES);
-                    i += 1;
-                    is_behind_slash = true;
-                } else {
-                    // The package: a `*` that is the last name, all of it, takes something.
-                    let is_last_name = !is_git
-                        && !is_for_directories
-                        && stars == 1
-                        && i == body.len()
-                        && was_behind_slash;
-                    nodes.push(if is_last_name { Node::Plus } else { Node::Star });
-                }
+                // A `*` that is the last name, all of it, takes something.
+                let is_last_name =
+                    !is_for_directories && stars == 1 && i == body.len() && was_behind_slash;
+                nodes.push(if is_last_name { Node::Plus } else { Node::Star });
             }
             _ => {
                 nodes.push(Node::Lit(vec![c]));
@@ -550,7 +517,7 @@ fn wildmatch_line(line: &[u8], options: IgnoreOptions) -> Option<Line> {
             }
         }
     }
-    nodes.push(Node::Assert(match is_for_directories || is_git {
+    nodes.push(Node::Assert(match is_for_directories {
         true => Assertion::End,
         false => Assertion::EndOrFinalSlash,
     }));

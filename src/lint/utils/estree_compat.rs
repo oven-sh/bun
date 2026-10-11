@@ -6,7 +6,7 @@
 //! | `node.range` where it differs from `.span()` | [`estree_span`] |
 //! | `node.parent`, for a walk that compares `type`s | [`estree_parent`], [`normalize`] |
 //! | `ChainExpression` | [`is_chain_root`] |
-//! | `SequenceExpression.expressions` | [`sequence_expressions`], [`is_sequence_root`], [`sequence_root`] |
+//! | `SequenceExpression.expressions` | [`is_sequence_root`], [`sequence_root`] |
 //! | `ExpressionStatement`, as opposed to the `init` of a `for` | [`is_expression_statement`], [`is_for_init`] |
 //! | `TSQualifiedName` in `typeof a.b` | [`is_in_type_query`] |
 //! | a pattern in an assignment | [`is_assignment_target`] |
@@ -101,14 +101,6 @@ pub fn sequence_root(mut e: Expr<'_>) -> Expr<'_> {
         e = parent;
     }
     e
-}
-
-/// [`Expr::sequence`]: ESTree's `SequenceExpression.expressions`, the `a`, `b` and `c` of `a, b, c`.
-/// An operand in parentheses is one expression. What is not a comma expression is its own only
-/// element.
-#[inline]
-pub fn sequence_expressions(e: Expr<'_>) -> SmallVec<[Expr<'_>; 4]> {
-    e.sequence()
 }
 
 /// ESTree's `SequenceExpression.expressions.at(-1)`.
@@ -346,21 +338,6 @@ impl<'a> Target<'a> {
                     .collect(),
                 _ => SmallVec::new(),
             },
-        }
-    }
-
-    /// Calls `visit` with everything that the pattern assigns to, in source order: identifiers,
-    /// and in an assignment also member accesses.
-    pub fn for_each_leaf(self, visit: &mut dyn FnMut(Target<'a>)) {
-        match self.kind() {
-            TargetKind::Ident(_) | TargetKind::Other(_) => visit(self),
-            TargetKind::Array | TargetKind::Object => {
-                for element in self.elements() {
-                    if let Some(target) = element.target {
-                        target.for_each_leaf(visit);
-                    }
-                }
-            }
         }
     }
 }

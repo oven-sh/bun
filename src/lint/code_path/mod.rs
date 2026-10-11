@@ -18,7 +18,6 @@
 //! | the same two with `Unreachable` | [`Event::UnreachableSegmentStart`], [`Event::UnreachableSegmentEnd`] |
 //! | `onCodePathSegmentLoop(from, to, node)` | [`Event::SegmentLoop`] |
 //! | `codePath.id`, `segment.id` | `id()` is a number. `to_string()` is ESLint's `s1`, `s1_2` |
-//! | `codePath.origin` | [`CodePath::origin`] |
 //! | `codePath.traverseSegments(options, callback)` | [`CodePath::traverse_segments`], [`CodePath::traverse_segments_between`] |
 //! | a `Set` of the current segments, kept by four listeners and a stack | [`CodePath::current_segments`], or [`CurrentSegments`] |
 //! | `isAnySegmentReachable(currentSegments)` | [`CodePath::is_current_reachable`] |
@@ -32,7 +31,7 @@
 //! 1. What a rule asks with `isAnySegmentReachable(currentSegments)` is answered without any
 //!    listener, by a pass over the statements of the file that takes a few instructions for each
 //!    (a twentieth of the analysis) and is made once for all rules. The answers are those of the
-//!    analysis, quirks included (`test/cli/lint/oracle/code_path/reach.ts` compares them).
+//!    analysis, quirks included.
 //!
 //!    | when ESLint's rule asks | Here |
 //!    | --- | --- |
@@ -70,8 +69,7 @@
 //!
 //! # Differences
 //!
-//! The ids, the graphs and the order of the events are ESLint's
-//! (`test/cli/lint/oracle/code_path/trace.ts` compares them). What differs follows from the order
+//! The ids, the graphs and the order of the events are ESLint's. What differs follows from the order
 //! of the walk:
 //!
 //! - ESTree has the type annotation of a pattern and the decorators of a parameter inside the
@@ -87,28 +85,15 @@ mod state;
 #[doc(hidden)]
 pub use analyzer::steps;
 pub use analyzer::{Step, Steps};
-#[doc(hidden)]
-pub use reach::Method;
 use reach::Reach;
 
-use crate::ast::{Case, File, Func, Handle, MemberKind, Node, Stmt};
+use crate::ast::{Case, File, Func, MemberKind, Node, Stmt};
 use crate::rule::NodeTags;
 use smallvec::SmallVec;
 use std::cell::{Cell, OnceCell, RefCell};
 
-/// ESLint's `codePath.origin`.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum Origin {
-    Program,
-    Function,
-    ClassFieldInitializer,
-    ClassStaticBlock,
-}
-
 #[derive(Debug)]
 pub(crate) struct CodePathData {
-    origin: Origin,
-    upper: Option<u32>,
     initial_segment: u32,
     final_segments: Vec<u32>,
     returned_segments: Vec<u32>,
@@ -172,7 +157,7 @@ impl<'a> Func<'a> {
     pub fn is_end_reachable(self) -> bool {
         match self.file().lazy.code_paths.reach.get() {
             Some(reach) => !self.has_body() || reach.is_fn_end_reachable(self),
-            None => reach::is_end_reachable(Node::Func(self), Method::Quick, None),
+            None => reach::is_end_reachable(Node::Func(self), None),
         }
     }
 }
@@ -183,8 +168,7 @@ impl<'a> Func<'a> {
     /// `exit` in it: what [`Rule::enter`](crate::rule::Rule::enter) and
     /// [`Rule::exit`](crate::rule::Rule::exit) would be called with.
     ///
-    /// For a rule that finds out from the syntax which few functions it has to look at. The code
-    /// path of the function has no [`CodePath::upper`].
+    /// For a rule that finds out from the syntax which few functions it has to look at.
     pub fn code_path_steps(
         self,
         enter: impl Into<NodeTags>,
@@ -226,15 +210,12 @@ impl<'a> File<'a> {
     pub fn is_end_reachable(&'a self) -> bool {
         match self.lazy.code_paths.reach.get() {
             Some(reach) => reach.is_file_end_reachable(),
-            None => reach::is_end_reachable(Node::File(self), Method::Quick, None),
+            None => reach::is_end_reachable(Node::File(self), None),
         }
     }
 
     fn reach(&'a self) -> &'a Reach {
-        self.lazy
-            .code_paths
-            .reach
-            .get_or_init(|| Reach::new(self, Method::Quick))
+        self.lazy.code_paths.reach.get_or_init(|| Reach::new(self))
     }
 
     /// Whether there is a statement for which [`Stmt::is_reachable`] does not hold.
@@ -284,51 +265,6 @@ impl<'a> Case<'a> {
     pub fn is_end_reachable(self) -> bool {
         self.file().reach().is_case_end_reachable(self)
     }
-}
-
-/// What [`Stmt::is_reachable`] and the like answer for `file` if they find out by `method`: the
-/// unreachable statements, the cases and the functions whose end can be reached, whether that of
-/// the file can, and the loops that repeat. For comparing the methods.
-#[doc(hidden)]
-pub fn reachability<'a>(
-    file: &'a File<'a>,
-    method: Method,
-) -> (
-    Vec<Stmt<'a>>,
-    Vec<Case<'a>>,
-    Vec<Func<'a>>,
-    bool,
-    Vec<Stmt<'a>>,
-) {
-    let reach = Reach::new(file, method);
-    let (mut statements, mut cases, mut funcs, mut loops) =
-        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    for id in 0..file.hir.stmts.len() as u32 {
-        let stmt = Stmt::from_raw(file, id);
-        if !reach.is_reachable(stmt) {
-            statements.push(stmt);
-        }
-        if reach.is_repeating(stmt) {
-            loops.push(stmt);
-        }
-    }
-    file.every_case(|case| {
-        if reach.is_case_end_reachable(case) {
-            cases.push(case);
-        }
-    });
-    file.every_func(|func| {
-        if reach.is_fn_end_reachable(func) {
-            funcs.push(func);
-        }
-    });
-    (
-        statements,
-        cases,
-        funcs,
-        reach.is_file_end_reachable(),
-        loops,
-    )
 }
 
 pub type Segments<'a> = SmallVec<[Segment<'a>; 2]>;
@@ -385,10 +321,6 @@ impl<'a> CodePath<'a> {
         self.read(|path| read(path).iter().map(|&id| Segment { file, id }).collect())
     }
 
-    pub fn origin(self) -> Origin {
-        self.read(|path| path.origin)
-    }
-
     pub fn initial_segment(self) -> Segment<'a> {
         Segment {
             file: self.file,
@@ -427,12 +359,6 @@ impl<'a> CodePath<'a> {
                 .iter()
                 .any(|&id| segments[id as usize].is_reachable)
         })
-    }
-
-    /// The code path of what contains the function.
-    pub fn upper(self) -> Option<CodePath<'a>> {
-        let file = self.file;
-        self.read(|path| path.upper).map(|id| CodePath { file, id })
     }
 
     /// Calls `visit` with every reachable segment, from the initial segment on. A segment comes
@@ -522,12 +448,6 @@ impl Traversal {
     #[inline]
     pub fn skip(&mut self) {
         self.is_skipped = true;
-    }
-
-    /// ESLint's `controller.break()`: ends the traversal.
-    #[inline]
-    pub fn stop(&mut self) {
-        self.is_broken = true;
     }
 }
 
@@ -646,11 +566,6 @@ impl<'a> Segment<'a> {
     /// The reachable segments that precede.
     pub fn prev_segments(self) -> Segments<'a> {
         self.others(|segment| &segment.prev)
-    }
-
-    /// Including the unreachable ones.
-    pub fn all_next_segments(self) -> Segments<'a> {
-        self.others(|segment| &segment.all_next)
     }
 
     /// Including the unreachable ones.

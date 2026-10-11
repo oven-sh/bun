@@ -2,7 +2,6 @@
 //! it in, and the printer.
 
 pub(crate) mod builders;
-pub(crate) mod debug;
 pub(crate) mod document;
 pub(crate) mod element;
 pub(crate) mod formatter;

@@ -39,9 +39,7 @@
 //! | `{ filter, skip }`, `{ filter, count }` | `.filter(..).nth(skip)`, `.filter(..).take(count)`: ESLint filters first too |
 //! | `{ includeComments: true }` | `.with_comments()` on any of the iterators, before anything else |
 //! | `getTokenBefore(x, { includeComments: true })` | `file.tokens_before(x).with_comments().next()` |
-//! | `getTokens(node, 1, 2)`, `getTokensBetween(a, b, 1)` | `.padded(1, 2)`, `.padded(1, 1)` |
 //! | `getTokenByRangeStart(i)` | `file.token_at(i)` |
-//! | `getTokenByRangeStart(i, { includeComments: true })` | `file.token_or_comment_at(i)` |
 //! | (what is at an index of the text) | `file.token_around(i)`, `file.comment_around(i)`, `file.token_or_comment_around(i)` |
 //! | `ast.tokens` | `file.tokens()` |
 //! | `getAllComments()`, `ast.comments` | `file.comments()` |
@@ -349,18 +347,6 @@ impl<'a> Tokens<'a> {
         self
     }
 
-    /// With the `before` tokens before the first and the `after` tokens after the last, as many as
-    /// there are: ESLint's `getTokens(node, before, after)`. To be called before anything is taken
-    /// from the iterator. Comments are not included, as in ESLint.
-    pub fn padded(mut self, before: usize, after: usize) -> Self {
-        let all = self.file.raw_tokens();
-        let first = all.partition_point(|token| token.start < self.within.start);
-        let end = (first + self.tokens.len() + after).min(all.len());
-        self.tokens = &all[first.saturating_sub(before)..end];
-        self.comments = &[];
-        self
-    }
-
     fn front(&mut self) -> Option<RawToken> {
         match (self.tokens.first(), self.comments.first()) {
             (Some(token), Some(comment)) if comment.start < token.start => {
@@ -462,34 +448,6 @@ fn is_whitespace(text: &[u8]) -> bool {
         };
     }
     true
-}
-
-/// Scans `file` without keeping the result, to measure it. Returns the number of tokens and
-/// comments.
-#[doc(hidden)]
-pub fn scan_again(file: &File) -> usize {
-    let (tokens, comments) = scan::scan(file);
-    tokens.len() + comments.len()
-}
-
-/// The same for the comments alone, which are made from the list of the parser.
-#[doc(hidden)]
-pub fn comments_again(file: &File) -> usize {
-    scan::comments(file).map_or(0, |comments| comments.len())
-}
-
-/// Whether the parser lists the comments that the scan finds: their number, `None` if not.
-#[doc(hidden)]
-pub fn scan_comments_again(file: &File) -> Option<usize> {
-    let Some(comments) = scan::comments(file) else {
-        return Some(0);
-    };
-    let range = |comment: &RawToken| (comment.start, comment.end, comment.kind);
-    comments
-        .iter()
-        .map(range)
-        .eq(scan::scan(file).1.iter().map(range))
-        .then_some(comments.len())
 }
 
 impl<'a> File<'a> {
@@ -596,17 +554,6 @@ impl<'a> File<'a> {
             .binary_search_by_key(&offset, |token| token.start)
             .ok()?;
         self.token(tokens.get(at))
-    }
-
-    /// The token or the comment that starts at `offset`.
-    pub fn token_or_comment_at(&'a self, offset: u32) -> Option<Token<'a>> {
-        self.token_at(offset).or_else(|| {
-            let comments = self.raw_comments();
-            let at = comments
-                .binary_search_by_key(&offset, |comment| comment.start)
-                .ok()?;
-            self.token(comments.get(at))
-        })
     }
 
     /// The token that `offset` is in: `start <= offset < end`. `None` between tokens.

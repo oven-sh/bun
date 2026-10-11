@@ -210,7 +210,7 @@ impl<'a> VNode<'a> {
     }
 
     /// ESTree's `parent`. `None` for the `Program`.
-    pub fn parent(self) -> Option<VNode<'a>> {
+    pub(crate) fn parent(self) -> Option<VNode<'a>> {
         use Part::*;
         let main = self.with(Main);
         Some(match (self.base, self.part) {
@@ -339,7 +339,7 @@ impl<'a> VNode<'a> {
     }
 
     /// Calls `visit` with each child, in the order in which ESLint traverses them.
-    pub fn for_each_child(self, mut visit: impl FnMut(VNode<'a>)) {
+    pub(crate) fn for_each_child(self, mut visit: impl FnMut(VNode<'a>)) {
         let dialect = self.dialect();
         for entry in self.node_type().fields() {
             if !entry.is_child {
@@ -356,17 +356,8 @@ impl<'a> VNode<'a> {
         }
     }
 
-    /// Calls `visit` with each node of the ESTree that is made of `node`: see [`VNode::base`].
-    ///
-    /// Together with [`NodeType::listens_to`](super::NodeType::listens_to) this finds all the nodes
-    /// of a type without a traversal: listen for these kinds, and of what is made of each such node
-    /// take those of the type.
-    pub fn for_each_at(node: Node<'a>, visit: &mut dyn FnMut(VNode<'a>)) {
-        VNode::for_each_with_type_at(node, &mut |v, _| visit(v));
-    }
-
     /// The same. `visit` is also given the type of the node, which is known here.
-    pub fn for_each_with_type_at(
+    pub(crate) fn for_each_with_type_at(
         node: Node<'a>,
         visit: &mut dyn FnMut(VNode<'a>, super::NodeType),
     ) {

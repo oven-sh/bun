@@ -1,6 +1,6 @@
 // Compares the files that real ESLint lints in a project with those of `bun lint --list-files`.
 //
-//   bun eslint-files.mjs --eslint=<directory of the eslint package> --project=<directory> --bin="<bun-lint> cli" [--show] [-- <patterns>]
+//   bun eslint-files.mjs --eslint=<directory of the eslint package> --project=<directory> --bin="bun lint" [--show] [-- <patterns>]
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -11,7 +11,7 @@ const patterns = dashes < 0 ? ["."] : process.argv.slice(dashes + 1);
 const flag = name => own.find(it => it.startsWith(`--${name}=`))?.slice(name.length + 3);
 const eslint = path.resolve(flag("eslint"));
 const project = path.resolve(flag("project"));
-const bin = flag("bin").split(" ");
+const bin = (flag("bin") ?? "bun lint").split(" ");
 
 const require = createRequire(import.meta.url);
 const { findFiles } = require(path.join(eslint, "lib/eslint/eslint-helpers.js"));

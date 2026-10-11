@@ -2,7 +2,7 @@
 // the fixtures, and compares the exit code, the files afterwards, and which files `--check` and `--list-different` name.
 //
 //   bun oxfmt-fixtures.mjs --oxc=<checkout of oxc> --oxfmt=<path of oxfmt> --scratch=<directory> \
-//     --bin="<bun-lint> cli @format" [--only=substring] [--show]
+//     --bin="bun format" [--only=substring] [--show]
 //
 // `--record=<file>` writes the fixtures and what oxfmt does with them, for `test/cli/format/oxfmt-cli/oxfmt-cli.test.ts`.
 import { spawnSync } from "node:child_process";
@@ -15,7 +15,7 @@ const tests = path.join(path.resolve(flag("oxc")), "apps/oxfmt/test/cli");
 const above = path.join(path.resolve(flag("scratch")), "oxfmt-app");
 const scratch = path.join(above, "fixtures");
 const oxfmt = [path.resolve(flag("oxfmt"))];
-const bin = flag("bin").split(" ");
+const bin = (flag("bin") ?? "bun format").split(" ");
 const only = flag("only");
 const show = process.argv.includes("--show");
 

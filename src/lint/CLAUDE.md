@@ -1,6 +1,6 @@
 # `bun lint`
 
-A linter that is compatible with ESLint and typescript-eslint: the same rule names, options, messages, report locations, fixes and `eslint-disable` comments. Rules are written in Rust against the HIR and binder output that `bun check` already produces. **Nothing is converted to ESTree**, and no rule or helper may build or query an ESTree tree or esquery selectors: that is for a later JavaScript plugin API. (The ESTree serializer in `standalone/` is a test oracle for the syntax layer.) Design goals, in order: correct (matches ESLint), fast, pleasant to write rules in.
+A linter that is compatible with ESLint and typescript-eslint: the same rule names, options, messages, report locations, fixes and `eslint-disable` comments. Rules are written in Rust against the HIR and binder output that `bun check` already produces. **Nothing is converted to ESTree**, and no rule or helper may build or query an ESTree tree or esquery selectors: that is for a later JavaScript plugin API. Design goals, in order: correct (matches ESLint), fast, pleasant to write rules in.
 
 ## Layout
 
@@ -13,8 +13,7 @@ A linter that is compatible with ESLint and typescript-eslint: the same rule nam
 | `src/lint/{unicorn,react,jest}/rules/` | `bun_lint_unicorn`, ..    | oxlint's `unicorn` / `react`, `react-perf`, `jsx-a11y`, `nextjs` / `jest`, `vitest`: ports of oxlint's rules, found with its configuration only                                                                                                                    |
 | `src/lint/oxlint/`                     | `bun_lint_oxlint`         | What the ports of oxlint's rules share: its `ast_util`, its printer, its module records                                                                                                                                                                            |
 | `src/lint/react_compiler/`             | `bun_lint_react_compiler` | The rules of the React Compiler, `react/*` of oxlint and `react-hooks/*` of the plugin for ESLint. `convert.rs` makes the tree of Bun's parser of one function, `src/react_compiler` compiles it, once per file. The rules are declared in `src/lint/react/rules/` |
-| `src/lint/standalone/`                 | `bun_lint_standalone`     | `bun-lint`, the test harness. Links without the rest of Bun, but for JavaScriptCore's regular expressions                                                                                                                                                          |
-| `src/lint/conformance/`                | `bun_lint_conformance`    | Runs the test cases below, in `bun-lint` and in `bun lint --run-eslint-tests` (debug and canary builds)                                                                                                                                                            |
+| `src/lint/conformance/`                | `bun_lint_conformance`    | Runs the test cases below, in `bun lint --run-eslint-tests` (debug and canary builds)                                                                                                                                                                           |
 | `test/cli/lint/conformance/bundle.zst` |                           | Upstream test cases as JSON, with what real ESLint reports for each. See the README there                                                                                                                                                                          |
 
 ## Writing a rule
@@ -62,14 +61,14 @@ A listener is a method of `Rule`. `const ON: On` names those that are called, an
 - The cheapest and most selective test first: the operator, the number of arguments, `tag()` of a child, a byte of the text, before anything that walks (`parent()`, `ancestors()`, `scope()`), allocates or searches. Compute nothing up front that only the path that reports needs. `e.tag()`, `as_ident()`, `as_call()`, `as_fn()`, `chain()` are loads, `kind()` is a call.
 - `symbol.has_reads()`, `has_writes()`, `has_modifying_references()` are one load: ask before walking `symbol.references()`.
 - `ast_utils::equal_tokens(a, b)` decides plain text without tokens. `file.position(..)` and `file.line_of(..)` count line breaks while few are asked for. `file.comments()` is a list the parser made. A question about tokens still scans the whole file.
-- The budget: on 10,000 files (143 MB, 7.8 M expressions) a rule should cost 0.5 to 3 ms of CPU where it reports nothing. `bun-lint perf rules <dir> --rules=a,b` prints for each rule what it costs on a fresh file (cold: with the shared data that it forces) and again (warm).
+- The budget: on 10,000 files (143 MB, 7.8 M expressions) a rule should cost 0.5 to 3 ms of CPU where it reports nothing.
 - `.fix(|fixer| ..)` and `.suggest(..)` closures only run when fixes are wanted. Put all fix computation inside them.
 
 ### Code conventions (Bun-wide, enforced by CI)
 
 - No `unsafe`. No `.unwrap()`/`.expect()`/indexing that user input can make panic: use `let .. else`, `?`, `.get()`.
 - Text is `&[u8]`. Searching goes through `bun_core::strings` (`index_of`, `index_of_char_usize`, `index_of_any`, `contains`, `contains_char`, `last_index_of_char`, `split`, ..): `str::find/rfind/contains/split*/replace*/matches`, `slice::windows`, `.iter().position(|b| *b == b'x')`, `.contains(&b'x')` are denied by lints. `==`, `starts_with`, `ends_with`, `trim_ascii`, `eq_ignore_ascii_case` are fine. What JavaScript does to a string (`trim`, `\s`, line breaks, `length`, `<`, `localeCompare`, `Number(s)`, `toFixed`) is written once, in `bun_core::strings` and `bun_core::fmt`: the table at the head of `utils/text.rs` says which function is which. A private helper for text in a rule is a finding of `test/internal/source-lints/shared-helpers.test.ts`.
-- No `std::fs`, `std::path`, `std::env`, `println!` outside `standalone/`.
+- No `std::fs`, `std::path`, `std::env`, `println!`.
 - Every warning is an error: no unused imports, variables, `mut`, dead code. `pub` only for what another crate uses, otherwise `pub(crate)` or private. (The rule struct and a struct used as its `State<'a>` have to be `pub`.)
 - The clippy lints in `[workspace.lints.clippy]` are denied too. The ones that bite: `derive_partial_eq_without_eq`, `or_fun_call` (`.or_else(|| f())`, not `.or(f())`), `needless_pass_by_value`, `redundant_clone`, `trivially_copy_pass_by_ref`, `needless_collect`.
 - Comments: only what the next reader could not work out quickly. Never narrate the port, never reference ESLint line numbers. Naming the upstream helper a function corresponds to (`` /// ESLint's `isLoop` ``) is good.
@@ -190,15 +189,10 @@ If the API lacks something you need (a position, a flag, a helper several rules 
 ## Testing
 
 ```sh
-bun bd --configure-only                                              # once: the generated files that the crates include, and the flags of the C++
-bun scripts/build/lint-standalone-native.ts target/native --fetch    # once for each version of WebKit: 450 MB
 cargo build --release -p bun_sema_standalone                         # bun-sema
-cargo rustc --release -p bun_lint_standalone --bin bun-lint -- $(bun scripts/build/lint-standalone-native.ts target/native | sed 's/^/-Clink-arg=/')
-B=target/release/bun-lint
-bun test/cli/lint/conformance/sync.ts --extract "" /tmp/fixtures     # the test cases, out of bundle.zst
-$B conformance /tmp/fixtures --rule=eqeqeq --verbose
-$B conformance /tmp/fixtures --report=/tmp/report
-$B run eqeqeq file.js '["smart"]'
+zstd -dc test/cli/lint/conformance/bundle.zst > /tmp/bundle.txt         # the test cases
+bun bd lint --run-eslint-tests /tmp/bundle.txt --rule=eqeqeq --verbose
+bun bd lint --run-eslint-tests /tmp/bundle.txt --report=/tmp/report
 target/release/bun-sema hir file.ts --print                          # the HIR of a file
 bun bd test test/cli/lint/conformance.test.ts                        # the test cases on `bun lint` itself, those with types too
 ```

@@ -23,12 +23,6 @@ pub fn is_type_array_type_or_union_of_array_types(ty: Type) -> bool {
     union_constituents(ty).iter().all(|t| t.is_array_type())
 }
 
-/// `isTypeNeverType(type)`
-#[inline]
-pub fn is_type_never_type(ty: Type) -> bool {
-    is_type_flag_set(ty, TypeFlags::NEVER)
-}
-
 /// `isTypeUnknownType(type)`
 #[inline]
 pub fn is_type_unknown_type(ty: Type) -> bool {

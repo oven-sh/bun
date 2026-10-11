@@ -8,8 +8,6 @@
 //! For the parser that makes the HIR of a JavaScript file ([`syntax::read`]) the same reader is all of jsdoc.go: what it passes
 //! over otherwise is parsed by a [`syntax::Syntax`], errors are reported to it, and the result is the tags of [`syntax`]. One
 //! function of jsdoc.go is not here: `parseSeeTag`. A `@see` tag is read as an unknown tag.
-//!
-//! test/cli/lint/oracle/jsdoc/outline.py compares both flavors with models of them, with oxlint and with TypeScript.
 
 use self::syntax::{
     Callback, ClassName, DeclaredName, Name, Property, Signature, Syntax, TagKind, TagType,

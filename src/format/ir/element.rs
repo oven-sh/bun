@@ -412,10 +412,6 @@ impl Tag {
                 | Tag::StartLabelled(_)
         )
     }
-
-    pub(crate) const fn is_end(&self) -> bool {
-        !self.is_start()
-    }
 }
 
 #[derive(Debug, Copy, Default, Clone, Eq, PartialEq)]
@@ -581,20 +577,4 @@ impl LabelId {
 pub(crate) enum JsLabels {
     /// A chain of calls and member accesses.
     MemberChain,
-}
-
-impl FormatElement {
-    pub(crate) const fn is_start_tag(&self) -> bool {
-        match self {
-            FormatElement::Tag(tag) => tag.is_start(),
-            _ => false,
-        }
-    }
-
-    pub(crate) const fn is_end_tag(&self) -> bool {
-        match self {
-            FormatElement::Tag(tag) => tag.is_end(),
-            _ => false,
-        }
-    }
 }

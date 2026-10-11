@@ -1,7 +1,7 @@
 // Runs the command line of real Prettier and `bun format` on generated projects, and compares the files afterwards, the exit
 // code, and what `--check` and `--list-different` print.
 //
-//   bun prettier-cli.mjs --deps=<directory with node_modules/prettier> --scratch=<directory> --bin="<bun-lint> cli @format" [--only=substring] [--verbose]
+//   bun prettier-cli.mjs --deps=<directory with node_modules/prettier> --scratch=<directory> --bin="bun format" [--only=substring] [--verbose]
 //
 // `bun format` writes unless told otherwise, so Prettier is given `--write` where the case has neither `--check` nor `-l`, and
 // what the two print then is not compared. Only JavaScript, TypeScript and JSON are compared: `bun format` leaves the rest alone.
@@ -13,7 +13,7 @@ import { cases } from "./prettier-cli-cases.mjs";
 const flag = name => process.argv.find(it => it.startsWith(`--${name}=`))?.slice(name.length + 3);
 const deps = path.resolve(flag("deps"));
 const scratch = path.resolve(flag("scratch"));
-const bin = flag("bin").split(" ");
+const bin = (flag("bin") ?? "bun format").split(" ");
 const only = flag("only");
 const verbose = process.argv.includes("--verbose");
 const prettier = path.join(deps, "node_modules/prettier/bin/prettier.cjs");

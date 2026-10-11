@@ -15,17 +15,16 @@ bun test/cli/format/prettier/sync.ts --extract "" /tmp/prettier-fixtures
 bun test/cli/format/prettier/sync.ts --extract js/arrows /tmp/prettier-fixtures
 # Another version of Prettier
 bun test/cli/format/prettier/sync.ts <path to a checkout at the tag, after `yarn install` in it>
-# All of Prettier's checks on all of them: from the bundle, or from a directory, which can be `tests/format` of a checkout
-bun-lint format conformance <(zstd -dc test/cli/format/prettier/bundle.zst) [--languages=js,jsx,..] [--filter=text] [--table] [--report=dir]
-bun-lint format conformance /tmp/prettier-fixtures
-# In a debug or a canary build of Bun
+# In a debug or a canary build of Bun: all of Prettier's checks on all of them
+zstd -dc test/cli/format/prettier/bundle.zst > /tmp/prettier.txt
+bun bd format --run-prettier-tests /tmp/prettier.txt [--languages=js,jsx,..] [--filter=text] [--table] [--report=dir]
 bun bd test test/cli/format/conformance.test.ts
 ```
 
-`bun-lint` is the crate `bun_lint_standalone`. The runner is the crate `bun_format_conformance` (`src/format/conformance`): it says what is checked, and what is left out and why.
+The runner is the crate `bun_format_conformance` (`src/format/conformance`): it says what is checked, and what is left out and why.
 
 `expected.txt` is what it printed when the file was last written: the checks that fail, the totals, and what is not run and why. The test is red if a check fails that is not in it, or if what is not run is not what it says. A check that is in it and passes by now is no reason to be red, so a fix need not come with the file. To write it again:
 
 ```sh
-bun-lint format conformance <(zstd -dc test/cli/format/prettier/bundle.zst) > test/cli/format/prettier/expected.txt
+bun bd format --run-prettier-tests /tmp/prettier.txt > test/cli/format/prettier/expected.txt
 ```

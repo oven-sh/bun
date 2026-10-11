@@ -1,7 +1,7 @@
 // A value that is the same in every recorded input looks like a part of the text: `'x'` in "Found identifier 'x' with the same name as a
 // label." This finds such a value in the texts that `bun lint` has of oxlint: messages, help, labels, notes.
 //
-//   BUN_LINT="<bun-lint> cli" OXLINT_BIN=<oxlint 1.87> OXLINT_TSGOLINT_PATH=<tsgolint 7.0.2003> bun mutants.ts
+//   BUN_LINT="bun lint" OXLINT_BIN=<oxlint 1.87> OXLINT_TSGOLINT_PATH=<tsgolint 7.0.2003> bun mutants.ts
 //
 // For each input of messages.json, every word or number that is both in what oxlint says about it and in the input (the code, the options,
 // the name of the file) is replaced in the input by another one of the same shape, and by a longer one if oxlint has nothing to say about

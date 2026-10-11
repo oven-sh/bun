@@ -1,8 +1,6 @@
-// Records what real ESLint reports for test cases that are not upstream's, in the format of `fixtures/`, and optionally
-// compares that with what `bun-lint` reports.
+// Records what real ESLint reports for test cases that are not upstream's, in the format of `fixtures/`.
 //
-//   ESLINT_DIR=.. TYPESCRIPT_ESLINT_DIR=.. node extra-cases.ts --out <dir> [--judge <bun-lint>] [--jobs N] [--quiet]
-//       [--diff <dir>] [--verdicts <file>] <plugin>/<rule> <cases.json> [<plugin>/<rule> <cases.json> ...]
+//   ESLINT_DIR=.. TYPESCRIPT_ESLINT_DIR=.. node extra-cases.ts --out <dir> <plugin>/<rule> <cases.json> [<plugin>/<rule> <cases.json> ...]
 //
 // `<plugin>` is `eslint` or `typescript-eslint`. `cases.json` is an array of
 //
@@ -26,15 +24,11 @@
 // `skip` is set on what cannot be compared: a fatal parse error, options that ESLint rejects, a rule that throws or that
 // does not finish in `--timeout` seconds (20).
 //
-// `--out <dir>` gets `<dir>/<plugin>/<rule>.json` and a link to the fixture project. With `--judge`, `bun-lint conformance`
-// and `bun-lint types conformance` run on `<dir>`, and each case that differs is printed (and written to
-// `<diff>/<plugin>/<rule>.txt`). The last line is `N cases, M differ, K skipped`. `--verdicts` gets, as JSON, the indices of
-// the cases that differ, by `<plugin>/<rule>`.
+// `--out <dir>` gets `<dir>/<plugin>/<rule>.json` and a link to the fixture project.
 //
 // Needs Node.js >= 23.6, as the extractors do.
 
-import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, normalize, parse as parsePath, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -50,7 +44,6 @@ import {
   writeJson,
   type Fixture,
   type FixtureCase,
-  type FixtureMessage,
   type LintMessage,
   type RuleModule,
 } from "./shared.ts";
@@ -77,11 +70,6 @@ const scriptDir = dirname(fileURLToPath(import.meta.url));
 
 const jobsOfRule: { plugin: Plugin; rule: string; file: string }[] = [];
 let out = "";
-let judge = "";
-let diffDir = "";
-let verdicts = "";
-let typesJobs = 4;
-let quiet = false;
 /** Seconds that ESLint has for one case. */
 let timeout = 20;
 let upstream = join(scriptDir, "fixtures");
@@ -91,18 +79,13 @@ let upstream = join(scriptDir, "fixtures");
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--out") out = resolve(argv[++i]);
-    else if (arg === "--judge") judge = resolve(argv[++i]);
-    else if (arg === "--diff") diffDir = resolve(argv[++i]);
-    else if (arg === "--verdicts") verdicts = resolve(argv[++i]);
     else if (arg === "--fixtures") upstream = resolve(argv[++i]);
-    else if (arg === "--jobs") typesJobs = Number(argv[++i]);
-    else if (arg === "--quiet") quiet = true;
     else if (arg === "--timeout") timeout = Number(argv[++i]);
     else if (arg.startsWith("--")) throw new Error(`unknown flag ${arg}`);
     else plain.push(arg);
   }
   if (!out || plain.length === 0 || plain.length % 2 !== 0) {
-    console.error("usage: node extra-cases.ts --out <dir> [--judge <bun-lint>] <plugin>/<rule> <cases.json> ...");
+    console.error("usage: node extra-cases.ts --out <dir> <plugin>/<rule> <cases.json> ...");
     process.exit(2);
   }
   for (let i = 0; i < plain.length; i += 2) {
@@ -426,7 +409,6 @@ function typeAwareDefaults(fixture: Fixture | null): Config | null {
 }
 
 const recorders: Partial<Record<Plugin, Recorder>> = {};
-const written: Fixture[] = [];
 
 for (const { plugin, rule, file } of jobsOfRule) {
   const recorder = (recorders[plugin] ??= plugin === "eslint" ? eslintRecorder() : typescriptRecorder());
@@ -449,7 +431,6 @@ for (const { plugin, rule, file } of jobsOfRule) {
   };
   mkdirSync(join(out, plugin), { recursive: true });
   writeJson(join(out, plugin, `${rule}.json`), fixture);
-  written.push(fixture);
 }
 
 if (!existsSync(join(out, "typescript-eslint-project"))) {
@@ -458,292 +439,6 @@ if (!existsSync(join(out, "typescript-eslint-project"))) {
   } catch {
     // Someone else was faster.
   }
-}
-
-// ---------------------------------------------------------------------------
-// Judging
-// ---------------------------------------------------------------------------
-
-/** Reads what `{:#?}` of Rust prints: structs and tuples become arrays or objects, `None` is `null`, `Some(x)` is `x`. */
-function parseRustDebug(text: string): unknown {
-  let at = 0;
-  const space = () => {
-    while (at < text.length && /\s/.test(text[at])) at++;
-  };
-  function list(close: string): unknown[] {
-    const items: unknown[] = [];
-    for (space(); text[at] !== close && at < text.length; space()) {
-      items.push(value());
-      space();
-      if (text[at] === ",") at++;
-    }
-    at++;
-    return items;
-  }
-  function string(): string {
-    let result = "";
-    for (at++; at < text.length && text[at] !== '"'; at++) {
-      if (text[at] !== "\\") {
-        result += text[at];
-        continue;
-      }
-      const escape = text[++at];
-      if (escape === "u") {
-        const end = text.indexOf("}", at);
-        result += String.fromCodePoint(parseInt(text.slice(at + 2, end), 16));
-        at = end;
-      } else result += ({ n: "\n", r: "\r", t: "\t", "0": "\0" } as Record<string, string>)[escape] ?? escape;
-    }
-    at++;
-    return result;
-  }
-  function value(): unknown {
-    space();
-    const c = text[at];
-    if (c === '"') return string();
-    if (c === "[") return (at++, list("]"));
-    if (c === "(") return (at++, list(")"));
-    const word = /^[\w.-]+/.exec(text.slice(at, at + 64))?.[0] ?? "";
-    at += word.length || 1;
-    if (/^-?\d/.test(word)) return Number(word);
-    space();
-    if (text[at] === "(") {
-      at++;
-      const items = list(")");
-      return word === "Some" ? items[0] : items;
-    }
-    if (text[at] === "{") {
-      at++;
-      const object: Record<string, unknown> = {};
-      for (space(); text[at] !== "}" && at < text.length; space()) {
-        const key = /^\w+/.exec(text.slice(at, at + 64))?.[0] ?? "";
-        at += key.length + 1;
-        object[key] = value();
-        space();
-        if (text[at] === ",") at++;
-      }
-      at++;
-      return object;
-    }
-    return word === "None" ? null : word;
-  }
-  return value();
-}
-
-interface Line {
-  text: string;
-  more: string[];
-}
-
-const show = (text: string) => JSON.stringify(text);
-
-interface Edit {
-  range: [number, number];
-  text: string;
-}
-
-const edit = (fix: Edit) => `[${fix.range[0]},${fix.range[1]}] ${show(fix.text)}`;
-
-function lineOf(
-  ruleId: string | null | undefined,
-  messageId: string | null,
-  message: string,
-  start: [number, number],
-  end: [number | null, number | null] | null,
-  fix: Edit | null | undefined,
-  suggestions: { id: string | null; desc: string; fix: Edit | null | undefined; output: string }[],
-): Line {
-  const where = `${start[0]}:${start[1]}` + (end && end[0] !== null ? `-${end[0]}:${end[1]}` : "");
-  const from = ruleId === undefined || ruleId === null ? "" : ` <${ruleId || "linter"}>`;
-  return {
-    text: `${where}${from} [${messageId || ""}] ${message}`,
-    more: [
-      ...(fix ? [`    fix ${edit(fix)}`] : []),
-      ...suggestions.map(
-        it => `    suggestion [${it.id || ""}] ${it.desc}${it.fix ? ` ${edit(it.fix)}` : ""} -> ${show(it.output)}`,
-      ),
-    ],
-  };
-}
-
-const expectedLines = (messages: FixtureMessage[]) =>
-  messages.map(m =>
-    lineOf(
-      "ruleId" in m ? (m.ruleId ?? "") : undefined,
-      m.messageId,
-      m.message,
-      [m.line, m.column],
-      [m.endLine, m.endColumn],
-      m.fix,
-      m.suggestions.map(s => ({ id: s.messageId, desc: s.desc, fix: s.fix, output: s.output })),
-    ),
-  );
-
-const actualLines = (reported: any[]) =>
-  reported.map(m =>
-    lineOf(
-      m.rule_id,
-      m.message_id,
-      m.message,
-      [m.line, m.column],
-      m.end,
-      m.fix,
-      (m.suggestions ?? []).map((s: any) => ({ id: s.message_id, desc: s.desc, fix: s.fix, output: s.output })),
-    ),
-  );
-
-/** `-` is what only ESLint reports, `+` what only we report. */
-function diffLines(expected: Line[], actual: Line[]): string[] {
-  const key = (line: Line) => [line.text, ...line.more].join("\n");
-  const left = new Map<string, number>();
-  for (const line of actual) left.set(key(line), (left.get(key(line)) ?? 0) + 1);
-  const result: string[] = [];
-  let same = 0;
-  const onlyExpected: Line[] = [];
-  for (const line of expected) {
-    const n = left.get(key(line)) ?? 0;
-    if (n > 0) (left.set(key(line), n - 1), same++);
-    else onlyExpected.push(line);
-  }
-  for (const line of onlyExpected) result.push(`  - ${line.text}`, ...line.more.map(it => `  - ${it}`));
-  for (const line of actual) {
-    const n = left.get(key(line)) ?? 0;
-    if (n === 0) continue;
-    left.set(key(line), n - 1);
-    result.push(`  + ${line.text}`, ...line.more.map(it => `  + ${it}`));
-  }
-  if (same > 0) result.push(`    (${same} more message(s) are equal)`);
-  return result;
-}
-
-function describe(fixture: Fixture, index: number, problem: string): string {
-  const it = fixture.cases[index];
-  const language = it.languageOptions;
-  const notes = [
-    it.filename,
-    language.parser,
-    language.ecmaVersion !== "latest" && `ecmaVersion ${language.ecmaVersion}`,
-    language.sourceType !== "module" && language.sourceType,
-    it.tsconfig,
-    language.globals && `globals ${JSON.stringify(language.globals)}`,
-    it.settings && `settings ${JSON.stringify(it.settings)}`,
-  ].filter(Boolean);
-  const lines = [
-    `──── ${fixture.plugin}/${fixture.rule} #${index}${it.name ? ` ${it.name}` : ""} (${notes.join(", ")})`,
-  ];
-  if (it.options.length > 0) lines.push(`  options: ${JSON.stringify(it.options)}`);
-  lines.push(...it.code.split("\n").map(line => `  | ${line}`));
-  const parts = /^(messages|output) differ(?:s)?\n  expected: ([^]*?)\n  actual: ([^]*)$/.exec(problem);
-  if (!parts)
-    lines.push(
-      `  ours: ${problem}`,
-      ...expectedLines(it.messages).flatMap(l => [`  - ${l.text}`, ...l.more.map(m => `  - ${m}`)]),
-    );
-  else if (parts[1] === "messages")
-    lines.push(...diffLines(expectedLines(it.messages), actualLines(parseRustDebug(parts[3]) as any[])));
-  else {
-    const actual = parseRustDebug(parts[3]) as string | null;
-    lines.push(`  the messages are equal, the output of the fixes is not:`);
-    lines.push(
-      `  - ${it.output === null ? "no fix" : show(it.output)}`,
-      `  + ${actual === null ? "no fix" : show(actual)}`,
-    );
-  }
-  return lines.join("\n") + "\n";
-}
-
-/** The failures in what `bun-lint [types] conformance --verbose` prints, by rule and index of the case. */
-function failuresOf(stdout: string): Map<string, Map<number, string>> {
-  const failures = new Map<string, Map<number, string>>();
-  let current: Map<number, string> | undefined;
-  const sections = stdout.split(/^(?=(?:ok  |FAIL) (?:eslint|typescript-eslint)\/[\w-]+: \d+ passed)/m);
-  for (const section of sections) {
-    const id = /^(?:ok  |FAIL) ([\w-]+\/[\w-]+): /.exec(section)?.[1];
-    if (!id) continue;
-    failures.set(id, (current = failures.get(id) ?? new Map()));
-    for (const block of section.split(/^(?=──── case \d+ \((?:in)?valid\) )/m)) {
-      const index = /^──── case (\d+) /.exec(block)?.[1];
-      if (index === undefined) continue;
-      const starts = [
-        "messages differ\n",
-        "output differs\n",
-        "panicked\n",
-        "the parser rejects the code\n",
-        "the file is not part of the program\n",
-      ];
-      const start = Math.max(...starts.map(it => block.lastIndexOf("\n" + it)));
-      // What follows the last block of the last rule is the summary.
-      const problem = block.slice(start + 1).replace(/\n\n\d+ rules[^]*$/, "");
-      current.set(Number(index), start < 0 ? "differs" : problem.trimEnd());
-    }
-  }
-  return failures;
-}
-
-if (judge) {
-  const only = written.length === 1 ? [`--rule=${written[0].rule}`] : [];
-  const run = (args: string[]) => {
-    const total = written.reduce((sum, it) => sum + it.cases.length, 0);
-    const spawnOptions = { encoding: "utf8", maxBuffer: 1 << 30, timeout: 60_000 + 500 * total } as const;
-    let result = spawnSync(judge, args, spawnOptions);
-    // The binary is being replaced by a newer one.
-    for (let i = 0; i < 20 && (result.error as { code?: string } | undefined)?.code === "ETXTBSY"; i++) {
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
-      result = spawnSync(judge, args, spawnOptions);
-    }
-    if ((result.error as { code?: string } | undefined)?.code === "ETIMEDOUT") {
-      console.log(`bun-lint ${args[0]} DID NOT FINISH: it hangs on one of the cases. Halve the file to find which.`);
-      process.exitCode = 2;
-    } else if (result.status !== 0)
-      console.error(`${judge} ${args.join(" ")}: exit ${result.status ?? result.signal}\n${result.stderr}`);
-    return failuresOf(result.stdout ?? "");
-  };
-  const comparable = (typed: boolean) => written.some(f => f.cases.some(c => !c.skip && c.typeAware === typed));
-  const plain = comparable(false) ? run(["conformance", out, "--verbose", ...only]) : new Map();
-  const typed = comparable(true)
-    ? run(["types", "conformance", out, "--verbose", `--jobs=${typesJobs}`, ...only])
-    : new Map();
-
-  let cases = 0;
-  let differ = 0;
-  let skipped = 0;
-  const differing: Record<string, number[]> = {};
-  for (const fixture of written) {
-    const id = `${fixture.plugin}/${fixture.rule}`;
-    const ran = plain.has(id) || typed.has(id);
-    const failures = new Map<number, string>([...(plain.get(id) ?? []), ...(typed.get(id) ?? [])]);
-    const skips = fixture.cases.flatMap((c, i) =>
-      c.skip ? [`  skipped #${i}: ${c.skip}: ${show(c.code.slice(0, 100))}`] : [],
-    );
-    const texts = [...failures]
-      .sort((a, b) => a[0] - b[0])
-      .map(([index, problem]) => describe(fixture, index, problem));
-    cases += fixture.cases.length;
-    skipped += skips.length;
-    differ += failures.size;
-    differing[id] = [...failures.keys()].sort((a, b) => a - b);
-    if (!ran && skips.length < fixture.cases.length) {
-      console.log(`${id}: bun-lint does not have the rule, or did not run`);
-      process.exitCode = 2;
-    }
-    if (!quiet) {
-      for (const text of texts) console.log(text);
-      for (const skip of skips) console.log(skip);
-    }
-    if (written.length > 1)
-      console.log(`${id}: ${fixture.cases.length} cases, ${failures.size} differ, ${skips.length} skipped`);
-    if (diffDir) {
-      const file = join(diffDir, fixture.plugin, `${fixture.rule}.txt`);
-      if (texts.length === 0) rmSync(file, { force: true });
-      else {
-        mkdirSync(dirname(file), { recursive: true });
-        writeFileSync(file, texts.join("\n"));
-      }
-    }
-  }
-  if (verdicts) writeFileSync(verdicts, JSON.stringify(differing));
-  console.log(`${cases} cases, ${differ} differ, ${skipped} skipped`);
-  if (differ > 0 && !process.exitCode) process.exitCode = 1;
 }
 
 // The TypeScript watch programs would keep the process alive.

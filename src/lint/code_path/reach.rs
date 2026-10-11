@@ -38,7 +38,7 @@ pub(crate) struct Reach {
 }
 
 impl Reach {
-    pub(super) fn new<'a>(file: &'a File<'a>, method: Method) -> Reach {
+    pub(super) fn new<'a>(file: &'a File<'a>) -> Reach {
         let mut reach = Reach {
             unreachable: Marks::new(file.hir.stmts.len()),
             has_unreachable: false,
@@ -48,9 +48,9 @@ impl Reach {
             fn_ends: Marks::new(file.hir.fns.len()),
             is_end_reachable: true,
         };
-        reach.is_end_reachable = is_end_reachable(Node::File(file), method, Some(&mut reach));
+        reach.is_end_reachable = is_end_reachable(Node::File(file), Some(&mut reach));
         file.every_func(|func| {
-            if func.has_body() && is_end_reachable(Node::Func(func), method, Some(&mut reach)) {
+            if func.has_body() && is_end_reachable(Node::Func(func), Some(&mut reach)) {
                 reach.fn_ends.add(func.id().idx());
             }
         });
@@ -111,19 +111,9 @@ impl Reach {
     }
 }
 
-/// How to find out.
-#[derive(Copy, Clone, PartialEq, Eq)]
-#[doc(hidden)]
-pub enum Method {
-    /// From the statements, and by the analysis only where that gives up.
-    Quick,
-    /// By the analysis. For comparing the two.
-    Analysis,
-}
-
 /// Whether the end of the code path of `root`, which is a function or the file, can be reached.
 /// Fills in `reach` for the statements and cases of that code path.
-pub(super) fn is_end_reachable(root: Node, method: Method, mut reach: Option<&mut Reach>) -> bool {
+pub(super) fn is_end_reachable(root: Node, mut reach: Option<&mut Reach>) -> bool {
     let statements = match root {
         Node::File(file) => file.body(),
         Node::Func(func) => match func.body() {
@@ -132,23 +122,21 @@ pub(super) fn is_end_reachable(root: Node, method: Method, mut reach: Option<&mu
         },
         _ => return true,
     };
-    if method == Method::Quick {
-        let mut quick = Quick {
-            reach: reach.as_deref_mut(),
-            head: 1,
-            rest: 0,
-            count: 1,
-            tries: Vec::new(),
-            targets: Vec::new(),
-            label: None,
-            stack: bun_core::StackCheck::init(),
-            is_generator: matches!(root, Node::Func(func) if func.is_generator()),
-            has_given_up: false,
-        };
-        quick.statements(statements);
-        if !quick.has_given_up {
-            return quick.head != 0;
-        }
+    let mut quick = Quick {
+        reach: reach.as_deref_mut(),
+        head: 1,
+        rest: 0,
+        count: 1,
+        tries: Vec::new(),
+        targets: Vec::new(),
+        label: None,
+        stack: bun_core::StackCheck::init(),
+        is_generator: matches!(root, Node::Func(func) if func.is_generator()),
+        has_given_up: false,
+    };
+    quick.statements(statements);
+    if !quick.has_given_up {
+        return quick.head != 0;
     }
     analyzer::is_end_reachable(root, reach)
 }

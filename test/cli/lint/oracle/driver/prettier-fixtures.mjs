@@ -2,7 +2,7 @@
 // Prettier and with `bun format`, on a copy of tests/integration/cli, and compares the exit code, the files afterwards, which files
 // `--check` and `--list-different` name, and what is printed for standard input.
 //
-//   bun prettier-fixtures.mjs --prettier=<checkout of prettier> --deps=<directory with node_modules/prettier> --scratch=<directory> --bin="<bun-lint> cli @format" [--only=substring] [--show]
+//   bun prettier-fixtures.mjs --prettier=<checkout of prettier> --deps=<directory with node_modules/prettier> --scratch=<directory> --bin="bun format" [--only=substring] [--show]
 //
 // `bun format` writes unless told otherwise, so Prettier is given `--write` where the command line only prints.
 // `--record=<file>` writes the fixtures and what Prettier does with them, for `test/cli/format/prettier-cli/prettier-cli.test.ts`.
@@ -14,7 +14,7 @@ const flag = name => process.argv.find(it => it.startsWith(`--${name}=`))?.slice
 const integration = path.join(path.resolve(flag("prettier")), "tests/integration");
 const scratch = path.join(path.resolve(flag("scratch")), "prettier-app");
 const prettier = ["node", path.join(path.resolve(flag("deps")), "node_modules/prettier/bin/prettier.cjs")];
-const bin = flag("bin").split(" ");
+const bin = (flag("bin") ?? "bun format").split(" ");
 const only = flag("only");
 const show = process.argv.includes("--show");
 

@@ -1130,15 +1130,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         Some(self.symbol(symbol))
     }
 
-    /// `getSymbolsInScope(node, meaning)`. Unlike `resolveName` it looks at the flags of a symbol
-    /// itself and of what it exports, never at those of the target of an alias, so an
-    /// `import x = a.b` hides no `x` unless `meaning` has `ALIAS`. `arguments` is not among them.
-    pub fn symbols_in_scope(&mut self, node: NodeRef, meaning: SymbolFlags) -> &'c [SymbolRef] {
-        let found = self.copy_symbols_in_scope(node, meaning, None);
-        let symbols: Vec<SymbolRef> = found.into_iter().map(|it| self.symbol(it)).collect();
-        self.list(&symbols)
-    }
-
     /// `getSymbolsInScope(node, meaning).find(it => it.name === name)`, without the others.
     pub fn symbol_in_scope(
         &mut self,

@@ -1,6 +1,6 @@
 // Makes test/cli/format/sort-imports/*.json of the cases that fixtures.mjs, fuzz.mjs and oxfmt.mjs make.
 //
-//   node make-fixtures.mjs --out=<directory> --sample=150 --bin=<bun-lint> <cases.json..>
+//   node make-fixtures.mjs --out=<directory> --sample=150 [--bin="bun format"] <cases.json..>
 //
 // All cases of the tools' own tests are taken, and of the others (`fuzz/..`) every n-th, so that `--sample` are left of
 // each file. Left out: what the tool itself fails on, syntax that bun format does not read, and, of the cases for oxfmt,
@@ -28,11 +28,19 @@ for (const file of positional) {
       { ...it, options, output: it.plain },
       { ...it, options, input: it.output },
     ]);
-    const temporary = path.join(os.tmpdir(), `plain-${process.pid}.json`);
-    fs.writeFileSync(temporary, JSON.stringify(plain));
-    const failed = spawnSync(named.bin, ["format", "sort-imports", "cases", temporary], { encoding: "utf8", maxBuffer: 1 << 28 }).stdout;
-    fs.rmSync(temporary);
-    const differs = new Set([...failed.matchAll(/^FAIL \w+\/(\S+)/gm)].map(match => match[1]));
+    const [bin, ...args] = (named.bin ?? "bun format").split(" ");
+    const differs = new Set();
+    // One run for all the cases with the same options.
+    for (const [options, group] of Map.groupBy(plain, it => JSON.stringify(it.options))) {
+      const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "plain-"));
+      fs.writeFileSync(path.join(temporary, ".oxfmtrc.json"), options);
+      for (const [index, it] of group.entries()) fs.writeFileSync(path.join(temporary, `${index}-${it.filename}`), it.input);
+      spawnSync(bin, [...args, "--log-level=silent", "."], { cwd: temporary });
+      for (const [index, it] of group.entries()) {
+        if (fs.readFileSync(path.join(temporary, `${index}-${it.filename}`), "utf8") !== it.output) differs.add(it.name);
+      }
+      fs.rmSync(temporary, { recursive: true });
+    }
     cases = cases.filter(it => !differs.has(it.name));
   }
   const isSampled = cases.every(it => it.name.startsWith("fuzz/"));

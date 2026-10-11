@@ -721,22 +721,6 @@ pub struct FileAtoms<'a> {
     source: &'a [u8],
 }
 
-impl FileAtoms<'_> {
-    /// The atoms of the file are the numbers below this. Those with fixed numbers are among them
-    /// whether they are in the file or not.
-    pub fn len(&self) -> u32 {
-        FIRST_OWN + self.names.spans.len() as u32
-    }
-
-    /// Whether the text of `atom` is in the file.
-    pub fn has(&self, atom: Atom) -> bool {
-        match atom.0 < FIRST_OWN {
-            true => self.names.known_in_file[atom.0 as usize / 64] >> (atom.0 % 64) & 1 != 0,
-            false => atom.0 < self.len(),
-        }
-    }
-}
-
 // Called through `dyn Intern`. With `#[inline]` each crate that makes the table would have its copy.
 impl Intern for FileAtoms<'_> {
     fn intern(&self, text: &[u8]) -> Atom {

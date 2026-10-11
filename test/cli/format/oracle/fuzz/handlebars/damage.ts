@@ -2,7 +2,7 @@
 // that it does not say it of: those whose syntax tree, as Prettier compares trees in its own tests, is another one after formatting, or that
 // cannot be parsed any more.
 //
-//   bun damage.ts "<bun-lint> cli @format" <directory with node_modules/prettier> <directory with templates> [-show=10] [-told]
+//   bun damage.ts "bun format" <directory with node_modules/prettier> <directory with templates> [-show=10] [-told]
 //
 // `-told`: also prints the templates that it says it of although the trees are the same: what the parsers drop is in neither tree.
 import { readFileSync, readdirSync } from "node:fs";

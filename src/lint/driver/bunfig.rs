@@ -12,7 +12,6 @@ use bun_ast::{Expr, Loc};
 use bun_clap::Values;
 use bun_core::strings;
 use bun_lint::context::Severity;
-use bun_lint::json::Notation;
 use bun_lint::options::Json;
 use bun_lint::utils::text::number_to_string;
 
@@ -24,12 +23,6 @@ pub struct Refusal {
 
 /// [`lint`] or [`format`]: what a bunfig.toml says to the command. `Ok(None)`: nothing.
 pub type Read<T> = fn(&Expr) -> Result<Option<T>, Refusal>;
-
-/// What `read` makes of `text`, which is what a bunfig.toml has, for a caller that is without Bun's reader of that file:
-/// the test harness. `Err`: a line for the user.
-pub fn of_text<T>(text: &[u8], read: Read<T>) -> Result<Option<T>, Vec<u8>> {
-    bun_lint::json::with_parsed(Notation::Toml, text, read)?.map_err(|it| it.message)
-}
 
 fn refuse<T>(at: Loc, parts: &[&[u8]]) -> Result<T, Refusal> {
     Err(Refusal {

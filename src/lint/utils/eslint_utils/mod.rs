@@ -10,8 +10,7 @@
 //! | `parseInt(s, radix)`, `parseFloat(s)` | `parse_int`, `parse_float` |
 //! | `n \| 0`, `n >>> 0` | `to_int32`, `to_uint32` |
 //!
-//! `test/cli/lint/oracle/utils-eslint` compares all of this with upstream, node by node. What is
-//! known to differ:
+//! What is known to differ from upstream:
 //! - [`get_static_value`] has no value for what [`StaticValue`] does not represent: `Date`, typed
 //!   arrays, a `bigint` beyond 128 bits, an object with a prototype or a conversion of its own.
 //! - `class A implements b.c` and `interface A extends b.c` have no member access here, so
@@ -26,7 +25,6 @@
 mod builtins;
 mod calls;
 mod find_variable;
-mod get_function_head_location;
 mod get_function_name_with_kind;
 mod get_property_name;
 mod get_static_value;
@@ -43,7 +41,6 @@ mod token_predicate;
 
 pub use builtins::Builtin;
 pub use find_variable::{find_variable, find_variable_of};
-pub use get_function_head_location::get_function_head_location;
 pub use get_function_name_with_kind::get_function_name_with_kind;
 pub use get_property_name::{get_property_name, property_name_of_key};
 pub use get_static_value::get_static_value;

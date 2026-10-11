@@ -166,7 +166,7 @@ fn without_placeholders(json: &Json) -> Json {
 }
 
 /// The same for the rule that ESLint calls `id`, whether it is implemented or not.
-pub fn validate_by_id(id: &[u8], options: &[Json]) -> Result<(), Vec<u8>> {
+pub(crate) fn validate_by_id(id: &[u8], options: &[Json]) -> Result<(), Vec<u8>> {
     // Nearly no rule needs options: `generate-schemas.mjs` lists those that do.
     if options.is_empty() && !data::NEED_OPTIONS.iter().any(|it| it.as_bytes() == id) {
         return Ok(());
@@ -198,7 +198,7 @@ pub(crate) fn validate_as_eslint_8(schema: Option<&Json>, options: &[Json]) -> R
 
 /// The same for a rule of a JavaScript plugin. `Ok`: ESLint's `context.options`, which are `options` with the default options of
 /// the rule, and with the defaults that its schema has.
-pub fn validate_js(rule: &js_plugin::Rule, options: &[Json]) -> Result<Vec<Json>, Vec<u8>> {
+pub(crate) fn validate_js(rule: &js_plugin::Rule, options: &[Json]) -> Result<Vec<Json>, Vec<u8>> {
     match &rule.schema {
         js_plugin::Schema::Any => Ok(with_js_defaults(rule, options)),
         js_plugin::Schema::None => validate_with(None, &rule.default_options, options),

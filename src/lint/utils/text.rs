@@ -159,24 +159,6 @@ pub fn upper_case_first(text: &[u8]) -> Cow<'_, [u8]> {
     }
 }
 
-/// typescript-eslint's `escapeRegExp`: puts a backslash before each of `\ ^ $ . * + ? ( ) [ ] { } |`. The package
-/// `escape-string-regexp` that ESLint uses, for which `-` is `\x2d` too, is `bun_core::strings::escape_reg_exp`.
-pub fn escape_reg_exp(text: &[u8]) -> Cow<'_, [u8]> {
-    const SPECIAL: &[u8] = b"\\^$.*+?()[]{}|";
-    let Some(first) = strings::index_of_any(text, SPECIAL) else {
-        return Cow::Borrowed(text);
-    };
-    let mut out = Vec::with_capacity(text.len() + 8);
-    out.extend_from_slice(&text[..first]);
-    for &c in &text[first..] {
-        if strings::contains_char(SPECIAL, c) {
-            out.push(b'\\');
-        }
-        out.push(c);
-    }
-    Cow::Owned(out)
-}
-
 /// `String(n)`
 #[inline]
 pub fn number_to_string(n: f64) -> Vec<u8> {

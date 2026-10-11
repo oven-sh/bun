@@ -14,9 +14,10 @@ Every input is formatted with each set of options of the nearest `options.json`,
 - `<input>.snap` is what it has to print for whoever has an `.oxfmtrc.json` (`flavor: oxfmt`).
 
 ```sh
-bun-lint format oxfmt-fixtures <(zstd -dc test/cli/format/oxfmt/bundle.zst) [--filter=text] [--report=dir]
+zstd -dc test/cli/format/oxfmt/bundle.zst > /tmp/oxfmt.txt
+bun bd format --run-oxfmt-tests /tmp/oxfmt.txt [--filter=text] [--report=dir]
 # What it printed when it was last written: the outputs that differ, and the totals. The test is red if an output differs that is not in it
-bun-lint format oxfmt-fixtures <(zstd -dc test/cli/format/oxfmt/bundle.zst) > test/cli/format/oxfmt/expected.txt
+bun bd format --run-oxfmt-tests /tmp/oxfmt.txt > test/cli/format/oxfmt/expected.txt
 bun test/cli/format/oxfmt/sync.ts --extract ts/union /tmp/oxfmt-fixtures
 bun test/cli/format/oxfmt/sync.ts <path to a checkout of oxc> <directory with node_modules/prettier>
 ```

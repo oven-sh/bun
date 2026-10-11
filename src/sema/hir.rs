@@ -2152,14 +2152,6 @@ pub const fn mention_bit_of(words: [u64; 2], len: usize) -> u32 {
 }
 
 impl<S: Storage> FileIn<S> {
-    /// `bit`: `mention_bit` of a text. False only if that is the text of no name, keyword, private
-    /// name or bigint, and the value of no string, piece of a template or JSX text in the file. A
-    /// filter: true says nothing.
-    #[inline]
-    pub fn may_mention(&self, bit: u32) -> bool {
-        (self.mentioned.get(bit as usize / 64)).is_none_or(|word| word >> (bit % 64) & 1 != 0)
-    }
-
     /// `node.Modifiers()` of the parameter `p`: keywords and decorators, in source order.
     #[inline]
     pub fn param_modifiers(&self, p: ParamId) -> Span<ModifierId> {

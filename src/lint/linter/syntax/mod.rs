@@ -17,7 +17,6 @@ use super::message::LintMessage;
 use crate::ast::{File, Stmt};
 use crate::context::Severity;
 use crate::language::{Parser, SourceType};
-use crate::options::Json;
 use crate::tokens::{skip_trivia, token_len};
 use bun_sema::hir::{Diagnostic, DiagnosticKind, StmtKind};
 
@@ -192,15 +191,6 @@ pub fn goes_to_flow(text: &[u8], path: &[u8]) -> bool {
     path.ends_with(b".js.flow")
 }
 
-/// Whether Prettier refuses to format the file, which was parsed in the dialect of Babel
-/// ([`Dialect::babel`](bun_sema::resolve::Dialect::babel)): its parser throws. That is `typescript`, which is typescript-estree, for
-/// a TypeScript file, and `babel` for a JavaScript file. What `languageOptions` of the file say about a parser does not count.
-///
-/// Types in JavaScript are [tolerated](TypesInJavaScript::Tolerated).
-pub fn refused_by_prettier<'a>(file: &'a File<'a>) -> bool {
-    refused_by_prettier_with(file, TypesInJavaScript::Tolerated)
-}
-
 /// What becomes of a JavaScript file with the syntax of TypeScript: `var a: T`, `a as T`, `interface A {}`, `class A<T> {}`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TypesInJavaScript {
@@ -239,15 +229,6 @@ pub fn refusal_of_oxfmt<'a>(file: &'a File<'a>, types: TypesInJavaScript) -> Opt
             at: it.at,
         })
     })
-}
-
-/// [`refusal_of_prettier`] the long way, for a test to compare.
-#[doc(hidden)]
-pub fn refusal_of_prettier_by_kind<'a>(
-    file: &'a File<'a>,
-    types: TypesInJavaScript,
-) -> Option<Refusal> {
-    refusal(file, types, false)
 }
 
 fn refusal<'a>(
@@ -335,25 +316,4 @@ fn refusal<'a>(
         .flatten()
         .min_by_key(|it| it.at)
         .or_else(of_babel)
-}
-
-/// What the parser has left in the HIR, for a test to look at.
-#[doc(hidden)]
-pub fn diagnostics(file: &File) -> Vec<Json> {
-    let describe = |it: &Diagnostic| {
-        let mut message = Vec::new();
-        if let Some((_, text)) = bun_sema::messages::message(it.code) {
-            bun_sema::messages::format(&mut message, text, &it.args);
-        }
-        Json::Object(vec![
-            (
-                b"kind".to_vec(),
-                Json::String(format!("{:?}", it.kind).into_bytes()),
-            ),
-            (b"code".to_vec(), Json::Number(f64::from(it.code))),
-            (b"start".to_vec(), Json::Number(f64::from(it.start))),
-            (b"message".to_vec(), Json::String(message)),
-        ])
-    };
-    file.hir.diagnostics.iter().map(describe).collect()
 }

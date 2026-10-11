@@ -1155,37 +1155,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_lint_standalone"
-version = "0.0.0"
-dependencies = [
- "bstr",
- "bun_alloc",
- "bun_core",
- "bun_format",
- "bun_format_conformance",
- "bun_glob",
- "bun_lint",
- "bun_lint_conformance",
- "bun_lint_driver",
- "bun_lint_eslint",
- "bun_lint_graph",
- "bun_lint_jest",
- "bun_lint_plugins",
- "bun_lint_react",
- "bun_lint_react_compiler",
- "bun_lint_typescript",
- "bun_lint_unicorn",
- "bun_paths",
- "bun_react_compiler",
- "bun_sema",
- "bun_sema_driver",
- "bun_sema_parser",
- "bun_sema_standalone",
- "bun_threading",
- "rustc-hash",
-]
-
-[[package]]
 name = "bun_lint_typescript"
 version = "0.0.0"
 dependencies = [
@@ -1658,19 +1627,6 @@ dependencies = [
  "bun_sema",
  "bun_threading",
  "smallvec",
-]
-
-[[package]]
-name = "bun_sema_parser_standalone"
-version = "0.0.0"
-dependencies = [
- "bstr",
- "bun_alloc",
- "bun_core",
- "bun_sema",
- "bun_sema_parser",
- "bun_sema_standalone",
- "bun_threading",
 ]
 
 [[package]]

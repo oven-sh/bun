@@ -16,7 +16,7 @@ use bun_sema::hir::{ModifierId, PropId};
 /// and everything about it is computed from that when it is asked for. Two are equal if they are
 /// the same node of the ESTree.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub struct VNode<'a> {
+pub(crate) struct VNode<'a> {
     pub(super) base: Node<'a>,
     pub(super) part: Part,
 }
@@ -201,23 +201,17 @@ impl<'a> VNode<'a> {
 
     /// The root.
     #[inline]
-    pub fn program(file: &'a File<'a>) -> VNode<'a> {
+    pub(crate) fn program(file: &'a File<'a>) -> VNode<'a> {
         VNode::new(file, Part::Main)
     }
 
-    /// The node of [`crate::ast`] that it is made of: itself, or what it is a part of.
     #[inline]
-    pub fn base(self) -> Node<'a> {
-        self.base
-    }
-
-    #[inline]
-    pub fn file(self) -> &'a File<'a> {
+    pub(crate) fn file(self) -> &'a File<'a> {
         self.base.file()
     }
 
     #[inline]
-    pub fn dialect(self) -> Dialect {
+    pub(crate) fn dialect(self) -> Dialect {
         Dialect::of(self.file())
     }
 
@@ -651,7 +645,7 @@ impl<'a> VNode<'a> {
 
 impl<'a> VNode<'a> {
     /// ESTree's `type`.
-    pub fn node_type(self) -> NodeType {
+    pub(crate) fn node_type(self) -> NodeType {
         use NodeType::*;
         if self.part != Part::Main
             && let Some((leaf, _)) = self.leaf()
@@ -1004,7 +998,7 @@ fn member_type(member: Member) -> NodeType {
 
 impl<'a> VNode<'a> {
     /// [`VNode::node_type`] and [`VNode::span`], for less than the two: a token is looked at once.
-    pub fn type_and_span(self) -> (NodeType, Span) {
+    pub(crate) fn type_and_span(self) -> (NodeType, Span) {
         match self.part {
             Part::Main => None,
             _ => self.leaf(),
@@ -1016,7 +1010,7 @@ impl<'a> VNode<'a> {
     }
 
     /// ESTree's `range`, in bytes.
-    pub fn span(self) -> Span {
+    pub(crate) fn span(self) -> Span {
         if self.part != Part::Main
             && let Some((_, span)) = self.leaf()
         {

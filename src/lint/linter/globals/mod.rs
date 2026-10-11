@@ -154,16 +154,6 @@ pub fn environment(
     Some(Changed { entries, changes }.map(variable))
 }
 
-/// The names of all environments.
-pub fn environments(whose: Tables) -> impl Iterator<Item = &'static str> {
-    let is_new = |it: &&(&'static str, u16, u16)| {
-        entries_of(tables::ENVIRONMENTS, it.0.as_bytes()).is_none()
-    };
-    (tables::ENVIRONMENTS.iter())
-        .chain(whose.changes().iter().filter(is_new))
-        .map(|it| it.0)
-}
-
 /// The edition of the language whose variables are defined. ESLint 8 defines those of ES5 and leaves the others to `env`.
 fn edition_of_globals(language: &LanguageOptions) -> u32 {
     match language.eslint_8 {

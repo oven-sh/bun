@@ -28,11 +28,6 @@ pub use walk::GlobWalker;
 pub type BunGlobWalker = walk::GlobWalker<walk::SyscallAccessor, false>;
 pub type BunGlobWalkerZ = walk::GlobWalker<walk::SyscallAccessor, true>;
 
-/// For `bun-lint glob`.
-pub mod testing {
-    pub use crate::braces::expand as expand_braces;
-}
-
 /// Returns true if the given string contains glob syntax,
 /// excluding those escaped with backslashes
 /// TODO: this doesn't play nicely with Windows directory separator and

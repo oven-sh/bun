@@ -1,7 +1,7 @@
 // Runs oxlint and `bun lint` on a project that has an `.oxlintrc.json`, and compares what they report for the rules that both
 // implement, by (file, line, column, rule), and which files they lint.
 //
-//   bun oxlint-differential.mjs --project=<directory> --oxlint=<path of oxlint> --bin="<bun-lint> cli" [--show[=rule]] [--status] [-- <arguments for both>]
+//   bun oxlint-differential.mjs --project=<directory> --oxlint=<path of oxlint> --bin="bun lint" [--show[=rule]] [--status] [-- <arguments for both>]
 //
 // `--status`: whether the exit code is 0 is compared too, where every diagnostic of oxlint is of a rule that both have.
 //
@@ -21,7 +21,7 @@ const extra = dashes < 0 ? [] : process.argv.slice(dashes + 1);
 const flag = name => own.find(it => it.startsWith(`--${name}=`))?.slice(name.length + 3);
 const project = path.resolve(flag("project"));
 const oxlint = path.resolve(flag("oxlint"));
-const bin = flag("bin").split(" ");
+const bin = (flag("bin") ?? "bun lint").split(" ");
 const show = own.includes("--show") ? true : flag("show");
 
 const forbidden = /^(--fix|--output-file|-o$|-o=|--format|-f$|-f=|--print-config|--debug|--init|--suppress)/;

@@ -5,7 +5,7 @@
 //
 // The events of the native analysis (src/lint/code_path) cannot be replayed in its place: a rule also sees between which nodes of
 // the ESTree an event falls and which node comes with it, and the native walk has no node for a dozen kinds of them. This is
-// ESLint's algorithm on ESLint's tree. test/cli/lint/oracle/jsplugins/code_path compares all that a rule can see of it.
+// ESLint's algorithm on ESLint's tree.
 
 const breakableTypePattern = /^(?:(?:Do)?While|For(?:In|Of)?|Switch)Statement$/u;
 

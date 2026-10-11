@@ -1,6 +1,6 @@
 // The options that oxlint accepts for a rule are accepted by `bun lint` beside an .oxlintrc.json: a configuration that is refused ends the run.
 //
-//   BUN_LINT="<bun-lint> cli" bun compare-options.ts
+//   BUN_LINT="bun lint" bun compare-options.ts
 //   OXLINT_BIN=<oxlint 1.87> bun compare-options.ts --record [--from=<directory with the test cases of the conformance suites>]
 //
 // options.json has, for each rule that both have, the options that oxlint accepts. `--record` asks oxlint about each of them again, one run

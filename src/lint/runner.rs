@@ -600,45 +600,11 @@ pub trait Starts: Send + Sync {
     fn start<'r, 'a: 'r>(&'r self, start: Start<'a>) -> Option<Self::Run<'r, 'a>>;
 }
 
-impl<R: Rule> Starts for R {
-    type Run<'r, 'a: 'r> = Box<Later<'r, 'a, R>>;
-
-    #[inline]
-    fn meta(&self) -> &'static Meta {
-        &R::META
-    }
-
-    #[inline]
-    fn start<'r, 'a: 'r>(&'r self, start: Start<'a>) -> Option<Box<Later<'r, 'a, R>>> {
-        started(self, start)
-    }
-}
-
-impl<'a, T: Running<'a>> Running<'a> for Box<T> {
-    #[inline]
-    fn walks(&self) -> (NodeTags, NodeTags) {
-        (**self).walks()
-    }
-
-    #[inline]
-    fn enter(&mut self, node: Node<'a>) {
-        (**self).enter(node);
-    }
-
-    #[inline]
-    fn exit(&mut self, node: Node<'a>) {
-        (**self).exit(node);
-    }
-
-    #[inline]
-    fn finish(&mut self) {
-        (**self).finish();
-    }
-}
-
+/// For [`rules!`](crate::rules): an arm of a `match` on the rules of a crate is a call of this.
 /// `None`: nothing is left to call.
-#[inline(always)]
-fn started<'r, 'a: 'r, R: Rule>(rule: &'r R, start: Start<'a>) -> Option<Box<Later<'r, 'a, R>>> {
+#[doc(hidden)]
+#[inline(never)]
+pub fn start<'r, 'a: 'r, R: Rule>(rule: &'r R, start: Start<'a>) -> Option<Box<Later<'r, 'a, R>>> {
     let file = start.file;
     let on = R::ON.and(&rule.narrow(file));
     if !has_any_of(file, on) {
@@ -650,13 +616,6 @@ fn started<'r, 'a: 'r, R: Rule>(rule: &'r R, start: Start<'a>) -> Option<Box<Lat
     };
     call_unordered(rule, file, &on, &mut cx);
     on.has_later().then(|| Box::new(Later { rule, on, cx }))
-}
-
-/// For [`rules!`](crate::rules): an arm of a `match` on the rules of a crate is a call of this.
-#[doc(hidden)]
-#[inline(never)]
-pub fn start<'r, 'a: 'r, R: Rule>(rule: &'r R, start: Start<'a>) -> Option<Box<Later<'r, 'a, R>>> {
-    started(rule, start)
 }
 
 /// Calls `visit` with the number of each bit that is set, from the lowest.
@@ -1061,17 +1020,8 @@ impl<S: Starts> Copy for Enabled<'_, S> {}
 /// Runs `rules` on `file`. What they report is sorted by position. `Diagnostic::rule` is an index
 /// into `rules`.
 ///
-/// `wants_fixes`: whether the fixes and suggestions are going to be read.
-pub fn run<'a, S: Starts>(
-    file: &'a File<'a>,
-    rules: &[Enabled<'_, S>],
-    wants_fixes: bool,
-) -> Vec<Diagnostic> {
-    run_in_order(file, rules, wants_fixes, &[])
-}
-
-/// [`run`], in the order of a tool that runs its rules in another way than ESLint. `when`: for each of `rules`, in
-/// place of what the rule and its reports say. Empty: as they say.
+/// `wants_fixes`: whether the fixes and suggestions are going to be read. `when`: for a tool that runs its rules in another way
+/// than ESLint, for each of `rules`, in place of what the rule and its reports say. Empty: as they say.
 pub fn run_in_order<'a, S: Starts>(
     file: &'a File<'a>,
     rules: &[Enabled<'_, S>],

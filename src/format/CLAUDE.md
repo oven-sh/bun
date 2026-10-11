@@ -23,9 +23,9 @@ File (HIR + binder tables)                     bun_lint::ast
 
 `ir/run.rs` has the entry point, `format(file, &options, &mut scratch, &mut out)`. `Scratch` holds every buffer, so that formatting the next file allocates nothing.
 
-What a caller does with a file, in this order, is `format_text` in `src/lint/standalone/format_cmd.rs`: JSON, style sheets, GraphQL, YAML and Markdown by `options.parser` or the name of the file (`json::format`, `css::format`, `graphql::format`, `yaml::format`, `markdown::format`: they take text), `pragma::before_parsing`, parse as a module and, if that fails, as a script, `sort_imports::sorted_text`, `range::format_with_cursor` (which is `format` if there is no range and no cursor).
+What a caller does with a file, in this order, is `format_for_tests` in `src/lint/driver/fmt/mod.rs`: JSON, style sheets, GraphQL, YAML and Markdown by `options.parser` or the name of the file (`json::format`, `css::format`, `graphql::format`, `yaml::format`, `markdown::format`: they take text), `pragma::before_parsing`, parse as a module and, if that fails, as a script, `sort_imports::sorted_text`, `range::format_with_cursor` (which is `format` if there is no range and no cursor).
 
-**Import sorting** (`js/sort_imports/`, option `FormatOptions::sort_imports`, compiled once per run from `sort_imports::Settings`) has four flavours. `@trivago`/`@ianvs` `importOrder*` and prettier-plugin-organize-imports are text → text preprocessors in Prettier, so they are here too: `sort_imports::sorted_text(file, how)` gives the text that has to be parsed and formatted instead of the file, byte for byte the plugin's (`babel.rs`: @babel/parser's comment attachment over the HIR, `generator.rs`: @babel/generator's printer for imports, `trivago.rs`/`ianvs.rs`: the plugins, `organize.rs`: TypeScript's organizeImports and textChanges), or `None` if formatting the file as it is gives the same (`layout.rs`): only a file whose imports move is parsed twice. oxfmt's `sortImports` (`oxfmt/`) happens inside `format`: `FormatStatements` tells an `ImportRun` what it is about to write, a run of imports is captured and written as `Interned` sub-ranges, one per line, in sorted order. Tests: `bun-lint format sort-imports cases|bench|serve`, oracles in `test/cli/format/oracle/sort-imports/`.
+**Import sorting** (`js/sort_imports/`, option `FormatOptions::sort_imports`, compiled once per run from `sort_imports::Settings`) has four flavours. `@trivago`/`@ianvs` `importOrder*` and prettier-plugin-organize-imports are text → text preprocessors in Prettier, so they are here too: `sort_imports::sorted_text(file, how)` gives the text that has to be parsed and formatted instead of the file, byte for byte the plugin's (`babel.rs`: @babel/parser's comment attachment over the HIR, `generator.rs`: @babel/generator's printer for imports, `trivago.rs`/`ianvs.rs`: the plugins, `organize.rs`: TypeScript's organizeImports and textChanges), or `None` if formatting the file as it is gives the same (`layout.rs`): only a file whose imports move is parsed twice. oxfmt's `sortImports` (`oxfmt/`) happens inside `format`: `FormatStatements` tells an `ImportRun` what it is about to write, a run of imports is captured and written as `Interned` sub-ranges, one per line, in sorted order. Tests: `test/cli/format/sort-imports`, made by `test/cli/format/oracle/sort-imports/`.
 
 | directory                                     | what                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | oxc                                            |
 | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
@@ -59,7 +59,6 @@ The printer for style sheets returns no documents. It writes operations (text, l
 
 - **The key has to hold everything that the printed line depends on**: the text of the declaration, all of it (`Printer::memo_text`), and `Printer::memo_context`: the syntax, `singleQuote`, `trailingComma`, the flavor, the name of the at-rule around it, and whether it is in an ICSS rule, a Less variable, a nested property of SCSS. **Whoever makes the printing of a declaration look at one more thing (an option, an ancestor, a sibling, text outside of it) adds that to the key, or keeps such declarations out of the memo.** The width is not in the key: a hit is measured at the end of its line like everything else.
 - Nothing is kept of a declaration with a comment, a line break or a block, of one that failed, or of a style sheet that is written as a document. The style sheets of a file of HTML have a memo of their own, for that file.
-- After any change to how declarations are printed: `test/cli/format/oracle/fuzz/css-memo-orders.py` (all style sheets on one thread in three shuffled orders and once without the memo) and `css-memo-surroundings.py` (the same declarations in many surroundings). The first has found a key that was too short.
 
 ## Syntax errors
 
@@ -101,9 +100,8 @@ text ─ lexer.rs ─→ tokens ─ parser.rs, parse.rs ─→ Tree (ast.rs) ─
 - **Angular** (`angular.rs`, `angular/`): a port of Angular's own lexer and parser says what is an error, and rewrites the expression as TypeScript that our parser reads into the same tree: `a | b: c` is `a | b(c)`, and in Angular every `|` is a pipe.
 - **Other languages**: YAML, Markdown, JSON, GraphQL, Handlebars and the style sheets of a file of HTML are printed to text at the width that is left (`Writer::printed_text`). Where that width is not known (in a template of JavaScript, in Markdown), and for a `style` attribute, a style sheet comes as a `Doc` (`css::document`) that `css/embed.rs::write_document` writes to the document. Prettier calls `cleanDoc` with the document of what is embedded: `Sink::is_cleaned`.
 - `in_js.rs`, `map_strings.rs`: HTML in the templates of JavaScript, Prettier's `embed/html.js`.
-- `verify.rs`: the check before a file is written. The same elements, attributes, comments and blocks in each other the same way, and the same letters as often in all that is text, in whatever language. `test/cli/format/oracle/fuzz/html/content-mutants.ts` damages formatted files and counts what it notices.
+- `verify.rs`: the check before a file is written. The same elements, attributes, comments and blocks in each other the same way, and the same letters as often in all that is text, in whatever language.
 - `cursor.rs`: `cursorOffset`. A range is all of the text in Vue and nothing elsewhere, as in Prettier.
-- Fuzzers and guards: `test/cli/format/oracle/fuzz/html/`.
 
 ## oxc file → our file
 
@@ -250,23 +248,20 @@ A node that is not ported yet is written as it is in the source: `write!(f, Form
 
 ## Testing
 
-`B` is the `bun-lint` binary (the crate `bun_lint_standalone`, `src/lint/standalone/format_cmd.rs`), `P` a checkout of Prettier at the tag 3.9.9.
+`P` is a checkout of Prettier at the tag 3.9.9.
 
 ```sh
-$B format file a.ts --semi=false --printWidth=100     # format one file
-$B format ir a.ts                                      # the document
-$B format conformance <(zstd -dc test/cli/format/prettier/bundle.zst)   # or $P/tests/format: table per directory, totals, what is not run and why
-$B format conformance $P/tests/format --languages=css --table
-$B format conformance $P/tests/format --filter=js/arrow --report=report
+bun bd format a.ts --no-semi --print-width=100 --check
+zstd -dc test/cli/format/prettier/bundle.zst > /tmp/prettier.txt
+bun bd format --run-prettier-tests /tmp/prettier.txt            # totals, what is not run and why
+bun bd format --run-prettier-tests /tmp/prettier.txt --languages=css --table
+bun bd format --run-prettier-tests /tmp/prettier.txt --filter=js/arrow --report=report
 diff -u report/<case>.expected report/<case>.actual
-$B format check-idempotent <files or directories>
-$B format verify <files or directories>                # the same program before and after
-$B format bench <files or directories>
-bun test/cli/format/oracle/compare.ts --bin=$B --prettier=<dir with node_modules/prettier> --options='{"semi":false}' <dirs>
-$B format oxfmt-fixtures <(zstd -dc test/cli/format/oxfmt/bundle.zst)   # oxfmt's fixtures, judged by Prettier and, with its flavor, by oxfmt
+zstd -dc test/cli/format/oxfmt/bundle.zst > /tmp/oxfmt.txt
+bun bd format --run-oxfmt-tests /tmp/oxfmt.txt                  # oxfmt's fixtures, judged by Prettier and, with its flavor, by oxfmt
 ```
 
-`conformance` makes the six checks of Prettier's own runner for every fixture and set of options: the snapshot, that what Prettier rejects is rejected, a second format, CRLF, CR, a byte order mark. `EXCLUDED` in `src/format/conformance/prettier.rs` is all that it leaves out, with the reason. `test/cli/format/{prettier,oxfmt}/expected.txt` is what the two commands printed when the files were last written. `test/cli/format/conformance.test.ts` is red if a check fails that is not in them, or if more is left out than they say. What is in them and passes by now is no reason to be red, so a fix need not come with them.
+`--run-prettier-tests` makes the six checks of Prettier's own runner for every fixture and set of options: the snapshot, that what Prettier rejects is rejected, a second format, CRLF, CR, a byte order mark. `EXCLUDED` in `src/format/conformance/prettier.rs` is all that it leaves out, with the reason. `test/cli/format/{prettier,oxfmt}/expected.txt` is what the two commands printed when the files were last written. `test/cli/format/conformance.test.ts` is red if a check fails that is not in them, or if more is left out than they say. What is in them and passes by now is no reason to be red, so a fix need not come with them.
 
 `test/cli/format/own/cases` has small inputs of our own for what only real code or a fuzzer has shown, with what Prettier and oxfmt print. **A fix of that kind comes with its input**, in the same commit. None of them fails, so there is no list of expected failures: see its README.
 

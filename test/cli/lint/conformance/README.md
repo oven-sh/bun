@@ -73,8 +73,6 @@ bun bd lint --run-eslint-tests /tmp/bundle.txt --projects=/tmp/projects --extrac
 # The files, to look at them or to run them from a directory
 bun test/cli/lint/conformance/sync.ts --extract "" /tmp/fixtures
 bun test/cli/lint/conformance/sync.ts --extract eslint/no-undef.json /tmp/fixtures
-# In the development harness (the crate `bun_lint_standalone`), which prints a line for each rule
-bun-lint conformance /tmp/fixtures [--plugin=eslint] [--rule=no-undef] [--verbose] [--report=dir] [--threads=8]
 ```
 
 The runner is the crate `bun_lint_conformance` (`src/lint/conformance`): it says what is compared.

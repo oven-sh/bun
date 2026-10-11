@@ -9,7 +9,7 @@ use crate::ast::{
 
 /// The value of a field.
 #[derive(Copy, Clone)]
-pub enum Value<'a> {
+pub(crate) enum Value<'a> {
     /// The node has no such field, or it is `undefined`.
     Undefined,
     Null,
@@ -112,7 +112,7 @@ impl<'a> Emit<'a> for Value<'a> {
 
 /// The objects in an ESTree that are not nodes.
 #[derive(Copy, Clone)]
-pub enum Object<'a> {
+pub(crate) enum Object<'a> {
     /// The `value` of a `TemplateElement`
     Template {
         cooked: Option<&'a [u8]>,
@@ -120,22 +120,6 @@ pub enum Object<'a> {
     },
     /// The `regex` of a `Literal`
     Regex { pattern: &'a [u8], flags: &'a [u8] },
-}
-
-impl<'a> Object<'a> {
-    /// Its properties.
-    pub fn entries(self) -> [(&'static str, Value<'a>); 2] {
-        match self {
-            Object::Template { cooked, raw } => [
-                ("cooked", cooked.map_or(Value::Null, Value::Str)),
-                ("raw", Value::Str(raw)),
-            ],
-            Object::Regex { pattern, flags } => [
-                ("flags", Value::Str(flags)),
-                ("pattern", Value::Str(pattern)),
-            ],
-        }
-    }
 }
 
 impl From<bool> for Value<'_> {
@@ -185,7 +169,7 @@ impl<'a, T: Into<Value<'a>>> From<Option<T>> for Value<'a> {
 /// A list of nodes, in which a hole is `None`. It is the iterator over itself, and starts over
 /// from every copy.
 #[derive(Copy, Clone)]
-pub struct Nodes<'a>(Inner<'a>);
+pub(crate) struct Nodes<'a>(Inner<'a>);
 
 #[derive(Copy, Clone)]
 enum Inner<'a> {
@@ -316,18 +300,18 @@ impl<'a> Nodes<'a> {
 
     /// `length`
     #[inline]
-    pub fn len(self) -> usize {
+    pub(crate) fn len(self) -> usize {
         self.count()
     }
 
     /// The element at `i`. The outer `None`: there is none.
     #[inline]
-    pub fn get(mut self, i: usize) -> Option<Option<VNode<'a>>> {
+    pub(crate) fn get(mut self, i: usize) -> Option<Option<VNode<'a>>> {
         self.nth(i)
     }
 
     /// `indexOf(node)`
-    pub fn index_of(mut self, node: VNode<'a>) -> Option<usize> {
+    pub(crate) fn index_of(mut self, node: VNode<'a>) -> Option<usize> {
         self.position(|it| it == Some(node))
     }
 }

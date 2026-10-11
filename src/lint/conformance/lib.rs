@@ -4,7 +4,7 @@
 //! cases from elsewhere. See the README there.
 //!
 //! It is compiled into debug and canary builds of Bun (`bun lint --run-eslint-tests`, for
-//! `test/cli/lint/conformance.test.ts`) and into `bun-lint`.
+//! `test/cli/lint/conformance.test.ts`).
 //!
 //! A case passes if the messages are the same (rule, id, text, place, fix, and for each suggestion
 //! id, text, fix and the code after it) and the code after one pass of fixes is.

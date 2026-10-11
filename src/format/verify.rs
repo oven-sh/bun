@@ -24,8 +24,6 @@
 //! - The line breaks in templates: `\r\n` is `\n`.
 //! - The indentation of the lines of block comments, and the order of the comments.
 //! - With the options for it, the order of imports and of the names in them, and all that is in JSDoc comments.
-//!
-//! test/cli/format/oracle/verify-mutants.ts damages formatted code and counts what the check notices.
 
 mod comments;
 mod tree;

@@ -153,19 +153,3 @@ impl Utf16Index {
         units
     }
 }
-
-/// The byte offset in `s` that the index `index` in its UTF-16 form corresponds to.
-pub fn byte_offset(s: &[u8], index: usize) -> usize {
-    let ascii = bun_core::strings::first_non_ascii(s).map_or(s.len(), |i| i as usize);
-    if index <= ascii {
-        return index;
-    }
-    let mut i = ascii;
-    let mut units = ascii;
-    while i < s.len() && units < index {
-        let (_, len) = unit_at(s, i);
-        units += 1;
-        i += len;
-    }
-    i
-}

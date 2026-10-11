@@ -1,7 +1,7 @@
 // Runs oxlint-differential.mjs on generated projects: which files are linted with which configuration where an `.oxlintrc.json`
 // is in charge.
 //
-//   bun oxlint-cli.mjs --oxlint=<path of oxlint> --scratch=<directory> --bin="<bun-lint> cli" [--only=substring]
+//   bun oxlint-cli.mjs --oxlint=<path of oxlint> --scratch=<directory> --bin="bun lint" [--only=substring]
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -80,7 +80,7 @@ for (const test of cases) {
   }
   const result = spawnSync(
     process.execPath,
-    [path.join(import.meta.dirname, "oxlint-differential.mjs"), `--project=${path.join(root, test.cwd ?? ".")}`, `--oxlint=${flag("oxlint")}`, `--bin=${flag("bin")}`, "--show", "--", ...(test.args ?? [])],
+    [path.join(import.meta.dirname, "oxlint-differential.mjs"), `--project=${path.join(root, test.cwd ?? ".")}`, `--oxlint=${flag("oxlint")}`, `--bin=${flag("bin") ?? "bun lint"}`, "--show", "--", ...(test.args ?? [])],
     { encoding: "utf8" },
   );
   if (result.status === 0) passed++;

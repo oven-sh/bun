@@ -43,16 +43,10 @@ pub mod tokens;
 pub mod types;
 pub mod utils;
 
-/// For the harness, which compares the table of `estree` with what typescript-estree and espree produce. Rules have no use for it.
-#[doc(hidden)]
-pub mod estree_for_tests {
-    pub use crate::estree::*;
-}
-
 /// What a rule imports.
 pub mod prelude {
     pub use crate::ast::*;
-    pub use crate::code_path::{CodePath, CurrentSegments, Origin, Segment, Traversal};
+    pub use crate::code_path::{CodePath, CurrentSegments, Segment, Traversal};
     pub use crate::context::{Cx, Details, IntoText, Report};
     pub use crate::fix::{Fix, Fixer};
     pub use crate::language::{Global, LanguageOptions, SourceType};

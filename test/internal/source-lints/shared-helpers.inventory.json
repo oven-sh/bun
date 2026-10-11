@@ -569,7 +569,6 @@
       "push_char": 1
     },
     "src/lint/regex/wtf8.rs": {
-      "byte_offset": 1,
       "code_point_at": 1,
       "lead_surrogate": 1,
       "trail_surrogate": 1,
@@ -580,43 +579,6 @@
     },
     "src/lint/source.rs": {
       "line_starts": 1
-    },
-    "src/lint/standalone/code_frame_cmd.rs": {
-      "unhex": 1
-    },
-    "src/lint/standalone/code_path_cmd.rs": {
-      "compare": 1
-    },
-    "src/lint/standalone/format_cmd/letters.rs": {
-      "push_code_point": 1,
-      "without_unicode_escapes": 1
-    },
-    "src/lint/standalone/format_cmd/verify.rs": {
-      "compare": 1
-    },
-    "src/lint/standalone/regex_cmd.rs": {
-      "quote": 1
-    },
-    "src/lint/standalone/selector_cmd.rs": {
-      "quoted": 1
-    },
-    "src/lint/standalone/types_cmd.rs": {
-      "json_string": 1
-    },
-    "src/lint/standalone/utils_core_cmd.rs": {
-      "json_string": 1
-    },
-    "src/lint/standalone/utils_eslint_cmd.rs": {
-      "quote": 1
-    },
-    "src/lint/standalone/utils_small_cmd.rs": {
-      "unhex": 1
-    },
-    "src/lint/standalone/utils_ts_cmd.rs": {
-      "unhex": 1
-    },
-    "src/lint/standalone/utils_tsscope_cmd.rs": {
-      "write_string": 1
     },
     "src/lint/tokens/mod.rs": {
       "code_points": 1,
@@ -661,7 +623,6 @@
       "last_index_of": 1
     },
     "src/lint/utils/text.rs": {
-      "escape_reg_exp": 1,
       "is_identifier_name": 1,
       "is_lower_case": 1,
       "is_upper_case": 1,
@@ -762,13 +723,6 @@
     "src/sema/resolve.rs": {
       "ancestors": 1,
       "join": 1
-    },
-    "src/sema/standalone/host.rs": {
-      "contains": 1,
-      "lines": 1,
-      "replace": 1,
-      "split": 1,
-      "split_once": 1
     },
     "src/sema/standalone/symbol_writer.rs": {
       "utf16_length": 1

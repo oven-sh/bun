@@ -12,7 +12,7 @@
 use super::matters::Matters;
 use super::reach::Reach;
 use super::state::{ChoiceKind, Cx, LoopKind, State};
-use super::{CodePath, Event, Origin, Segment, SegmentIds, Store};
+use super::{CodePath, Event, Segment, SegmentIds, Store};
 use crate::ast::{
     BinOp, Chain, Expr, ExprKind, ExprTag, File, Flags, FnKind, Func, Key, KeyKind, MemberKind,
     Node, Pat, PatTag, PropKind, Stmt, StmtKind, StmtTag, TypeKind,
@@ -367,10 +367,10 @@ impl<'s, 'a> Builder<'s, 'a> {
         }
     }
 
-    fn start_code_path(&mut self, origin: Origin, cx: &mut Cx<'_, 'a>) {
+    fn start_code_path(&mut self, cx: &mut Cx<'_, 'a>) {
         self.forward_current_to_head(cx);
         let store = cx.store();
-        let path = store.new_code_path(origin, self.states.last().map(|upper| upper.path));
+        let path = store.new_code_path();
         let mut state = self.spare_states.pop().unwrap_or_else(State::new);
         state.reset(store, path);
         self.states.push(state);
@@ -589,7 +589,7 @@ impl<'s, 'a> Builder<'s, 'a> {
     ) -> Is {
         if is.contains(Is::FIELD_INITIALIZER) {
             cx.keeps_function_expression = true;
-            self.start_code_path(Origin::ClassFieldInitializer, cx);
+            self.start_code_path(cx);
             self.forward_current_to_head(cx);
             cx.keeps_function_expression = false;
         }
@@ -602,7 +602,7 @@ impl<'s, 'a> Builder<'s, 'a> {
             ExprTag::Fn => {
                 return match e.as_fn() {
                     Some(func) if has_code_path(func) => {
-                        self.start_code_path(Origin::Function, cx);
+                        self.start_code_path(cx);
                         Is::HAS_CODE_PATH | Is::HAS_POSTPROCESS
                     }
                     _ => Is::empty(),
@@ -689,7 +689,7 @@ impl<'s, 'a> Builder<'s, 'a> {
             if !has_code_path(func) {
                 return Is::empty();
             }
-            self.start_code_path(Origin::Function, cx);
+            self.start_code_path(cx);
             return Is::HAS_CODE_PATH | Is::HAS_POSTPROCESS;
         }
         let Some(state) = self.states.last_mut() else {
@@ -774,19 +774,19 @@ impl<'s, 'a> Builder<'s, 'a> {
                 _ => Is::empty(),
             },
             Node::File(_) => {
-                self.start_code_path(Origin::Program, cx);
+                self.start_code_path(cx);
                 Is::HAS_CODE_PATH | Is::HAS_POSTPROCESS
             }
             Node::Func(func) => match parent {
                 Some(Node::Member(_)) if has_code_path(func) => {
-                    self.start_code_path(Origin::Function, cx);
+                    self.start_code_path(cx);
                     Is::HAS_CODE_PATH | Is::HAS_POSTPROCESS
                 }
                 _ => Is::empty(),
             },
             Node::Member(member) => match member.kind() {
                 MemberKind::StaticBlock => {
-                    self.start_code_path(Origin::ClassStaticBlock, cx);
+                    self.start_code_path(cx);
                     Is::HAS_CODE_PATH | Is::HAS_POSTPROCESS
                 }
                 MemberKind::Property
@@ -1120,7 +1120,7 @@ pub fn steps<'a>(file: &'a File<'a>, enter: NodeTags, exit: NodeTags) -> Steps<'
 }
 
 /// [`steps`] for the code path that starts with `root` alone: the file, a function, a static block
-/// or the initializer of a field. It has no `upper()`.
+/// or the initializer of a field.
 ///
 /// `is_shallow`: without what is in the code paths in it.
 ///
@@ -1207,7 +1207,7 @@ pub(super) fn is_end_reachable(node: Node, reach: Option<&mut Reach>) -> bool {
     };
     let tell_nobody = &mut |_| {};
     let cx = &mut Cx::new(file, store, node, tell_nobody);
-    recorder.builder.start_code_path(Origin::Function, cx);
+    recorder.builder.start_code_path(cx);
     let mut children = node.children();
     children.reverse();
     let matters = file.lazy.code_paths.what_matters_to_nobody(file);

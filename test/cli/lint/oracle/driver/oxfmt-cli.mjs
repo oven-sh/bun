@@ -1,7 +1,7 @@
 // Runs the command line of real oxfmt and `bun format` on generated projects that have an `.oxfmtrc.json`, and compares which
 // files `--list-different` names, the exit code, and the files after writing.
 //
-//   bun oxfmt-cli.mjs --oxfmt=<path of oxfmt> --scratch=<directory> --bin="<bun-lint> cli @format" [--only=substring]
+//   bun oxfmt-cli.mjs --oxfmt=<path of oxfmt> --scratch=<directory> --bin="bun format" [--only=substring]
 //
 // Only JavaScript and TypeScript are compared: `bun format` leaves the rest alone.
 import { spawnSync } from "node:child_process";
@@ -11,7 +11,7 @@ import path from "node:path";
 const flag = name => process.argv.find(it => it.startsWith(`--${name}=`))?.slice(name.length + 3);
 const scratch = path.resolve(flag("scratch"));
 const oxfmt = [path.resolve(flag("oxfmt"))];
-const bin = flag("bin").split(" ");
+const bin = (flag("bin") ?? "bun format").split(" ");
 const only = flag("only");
 
 const ugly = `const a = {b:1,  c:"two"}\nfunction f(x){return [x,\n'y']}\n`;

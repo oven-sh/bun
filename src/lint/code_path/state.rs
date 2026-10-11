@@ -1,7 +1,7 @@
 //! ESLint's `CodePathState`, `ForkContext` and the static methods of `CodePathSegment`: what
 //! builds the graph of one code path. The names are ESLint's, in snake case.
 
-use super::{CodePathData, Edges, Event, Origin, Segment, SegmentData, SegmentIds, Store};
+use super::{CodePathData, Edges, Event, Segment, SegmentData, SegmentIds, Store};
 use crate::ast::{File, Node, StmtKind};
 use bun_sema::atom::Atom;
 use smallvec::SmallVec;
@@ -104,12 +104,10 @@ impl Store {
         }
     }
 
-    pub(super) fn new_code_path(&self, origin: Origin, upper: Option<u32>) -> u32 {
+    pub(super) fn new_code_path(&self) -> u32 {
         let mut paths = self.paths.borrow_mut();
         let id = paths.len() as u32;
         paths.push(CodePathData {
-            origin,
-            upper,
             initial_segment: 0,
             final_segments: Vec::new(),
             returned_segments: Vec::new(),

@@ -65,7 +65,7 @@ pub use resolved::{ConfiguredJsRule, ConfiguredRule, LinterOptions, ResolvedConf
 use resolved::{Prepared, Slot};
 pub use syntax::{
     Refusal, TypesInJavaScript, goes_to_flow, may_be_misread, parse_error, refusal_of_oxfmt,
-    refusal_of_prettier, refused_by_prettier, refused_by_prettier_with,
+    refusal_of_prettier, refused_by_prettier_with,
 };
 
 use crate::ast::File;
@@ -81,17 +81,6 @@ use instances::Instances;
 use message::Locator;
 use std::borrow::Cow;
 use std::sync::Arc;
-
-/// What a test of this module can reach of its parts.
-#[doc(hidden)]
-pub mod testing {
-    pub use super::comment::{
-        parse_directive, parse_json_like_config, parse_list_config, parse_string_config,
-    };
-    pub use super::message::write_json;
-    pub use super::schema::{validate_by_id, validate_js};
-    pub use super::syntax::{diagnostics, refusal_of_prettier_by_kind};
-}
 
 /// ESLint's `VerifyOptions`: what the command line says about how to lint.
 #[derive(Copy, Clone)]

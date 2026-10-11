@@ -1,7 +1,7 @@
 //! `misc.ts`, and `requiresQuoting` of `@typescript-eslint/type-utils`.
 
 use crate::ast::{
-    Expr, ExprKind, Func, KeyKind, Member, MemberKind, Node, Param, Prop, TypeKind, TypeNode,
+    Expr, ExprKind, Func, KeyKind, Member, MemberKind, Node, Prop, TypeKind, TypeNode,
 };
 use crate::semantic::Declaration;
 use crate::tokens::{skip_trivia, skip_trivia_back};
@@ -24,22 +24,6 @@ pub fn is_definition_file(file_name: &[u8]) -> bool {
     ends_with(file_name, b".ts")
         && (0..file_name.len().saturating_sub(5))
             .any(|at| file_name[at..at + 3].eq_ignore_ascii_case(b".d."))
-}
-
-/// typescript-eslint's `getNameFromIndexSignature`: the `key` of `[key: string]: T`.
-pub fn get_name_from_index_signature<'a>(member: Member<'a>) -> &'a [u8] {
-    // An `Identifier`, as opposed to a `RestElement` or an `AssignmentPattern`.
-    let name_of = |param: Param<'a>| match param.is_rest() || param.default().is_some() {
-        true => None,
-        false => param.pat().as_ident(),
-    };
-    match member
-        .func()
-        .and_then(|func| func.params().iter().find_map(name_of))
-    {
-        Some(name) => name.bytes(),
-        None => b"(index signature)",
-    }
 }
 
 /// typescript-eslint's `MemberNameType`.

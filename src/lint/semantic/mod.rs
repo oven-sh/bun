@@ -10,7 +10,6 @@
 //!
 //! The model is that of `@typescript-eslint/scope-manager` for a TypeScript file, and for any file
 //! if that parser is configured. Otherwise it is that of `eslint-scope`. They differ in little.
-//! `test/cli/lint/oracle/semantic` compares all of it with the two.
 //!
 //! | ESLint | here |
 //! | --- | --- |
@@ -35,7 +34,6 @@
 //! | `globalScope.childScopes[0]` of a module or of CommonJS | [`File::top_level_scope`] |
 //! | `globalScope.through` | [`File::unresolved_references`] |
 //! | `globalScope.set.get(name).references` of a global | [`File::unresolved_references_to`] |
-//! | `globalScope.implicit.variables` | [`File::implicit_globals`] |
 //! | `scope.type`, `scope.block`, `scope.isStrict` | [`Scope::kind`], [`Scope::node`], [`Scope::is_strict`] |
 //! | `scope.variables`, `scope.set.get(name)` | [`Scope::symbols`], [`Scope::get`] |
 //! | `scope.references`, `scope.through` | [`Scope::references`], [`Scope::through`] |
@@ -1184,14 +1182,6 @@ impl<'a> File<'a> {
             self.reference_list()
                 .unresolved_named(self.atoms.intern(name)),
         )
-    }
-
-    /// The assignments outside strict mode to what nothing declares, each of which creates a
-    /// global variable: the definitions of ESLint's `globalScope.implicit.variables`, before the
-    /// globals of the configuration are taken out.
-    pub fn implicit_globals(&'a self) -> impl Iterator<Item = Reference<'a>> + 'a {
-        self.unresolved_references()
-            .filter(|it| it.is_write_only() && !it.is_init() && !it.scope().is_strict())
     }
 }
 

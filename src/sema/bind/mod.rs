@@ -6,7 +6,7 @@ mod binder;
 mod lint;
 mod parents;
 
-pub use parents::{bind_for_format, bind_for_format_in, try_bind_for_format_in};
+pub use parents::{bind_for_format_in, try_bind_for_format_in};
 
 use crate::atom::{Atom, known};
 use crate::hir::*;

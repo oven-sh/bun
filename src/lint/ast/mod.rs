@@ -26,11 +26,6 @@
 //! - `x!!` is one [`ExprKind::NonNull`]: see [`Expr::inner_non_null_spans`].
 //! - The default of the shorthand `{ a = 1 }` is an [`ExprKind::Assign`] that is the value of the
 //!   property. A [`TupleElem`] is there for every element of a tuple type, also for a plain `T`.
-//!
-//! `bun-lint ast check` verifies that the ways up, down and through the vectors agree, and that
-//! the positions of tokens are what the text has there. `bun-lint ast estree` writes a file as
-//! ESTree, from these accessors only, which test/cli/lint/oracle/ast compares with what
-//! typescript-estree and espree make of the same code.
 
 mod decl;
 mod entities;

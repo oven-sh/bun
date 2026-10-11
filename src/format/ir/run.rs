@@ -77,26 +77,6 @@ pub(crate) fn print(
     .map_err(FormatError::from)
 }
 
-/// The document of `file`, for debugging.
-pub fn dump_document<'a>(
-    file: &'a File<'a>,
-    options: &FormatOptions,
-    scratch: &mut Scratch,
-) -> Result<String, FormatError> {
-    let root = write_document(
-        file,
-        options,
-        CursorRegion::NONE,
-        scratch,
-        crate::js::format_file,
-    )?;
-    Ok(super::debug::dump(
-        root,
-        &scratch.formatter.storage,
-        file.text(),
-    ))
-}
-
 fn write_document<'a>(
     file: &'a File<'a>,
     options: &FormatOptions,

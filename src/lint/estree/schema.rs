@@ -30,20 +30,20 @@ use crate::ast::{
 use crate::rule::NodeTags;
 
 /// A field of a type of node.
-pub struct FieldEntry {
-    pub field: Field,
+pub(crate) struct FieldEntry {
+    pub(crate) field: Field,
     /// It is among the visitor keys: a traversal goes into it.
-    pub is_child: bool,
+    pub(crate) is_child: bool,
     /// What is in it can have the same [`VNode::base`] as the node.
-    pub is_part: bool,
+    pub(crate) is_part: bool,
     /// Only typescript-estree has it.
-    pub is_typescript_only: bool,
+    pub(crate) is_typescript_only: bool,
     /// Only espree has it.
-    pub is_espree_only: bool,
+    pub(crate) is_espree_only: bool,
     /// It is not enumerable.
-    pub is_hidden: bool,
+    pub(crate) is_hidden: bool,
     /// Its value in a node of that type.
-    pub get: for<'a> fn(VNode<'a>) -> Value<'a>,
+    pub(crate) get: for<'a> fn(VNode<'a>) -> Value<'a>,
 }
 
 /// Gives `sink` the field that `get` makes. `None`: a `?` in it has given up.
@@ -70,18 +70,18 @@ macro_rules! estree_schema {
         /// The `type` of a node: typescript-eslint's `AST_NODE_TYPES`.
         #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
         #[repr(u8)]
-        pub enum NodeType { $($name),* }
+        pub(crate) enum NodeType { $($name),* }
 
         impl NodeType {
-            pub const ALL: &[NodeType] = &[$(NodeType::$name),*];
+            pub(crate) const ALL: &[NodeType] = &[$(NodeType::$name),*];
 
-            pub const fn name(self) -> &'static str {
+            pub(crate) const fn name(self) -> &'static str {
                 match self { $(NodeType::$name => stringify!($name)),* }
             }
 
             /// Its fields, except `type`, `range`, `loc` and `parent`. First those that a traversal
             /// goes into, in that order.
-            pub fn fields(self) -> &'static [FieldEntry] {
+            pub(crate) fn fields(self) -> &'static [FieldEntry] {
                 match self {
                     $(NodeType::$name => &[$(
                         FieldEntry {
@@ -118,7 +118,7 @@ macro_rules! estree_schema {
 
             /// The kinds of nodes of [`crate::ast`] that a node of this type can be made of. See
             /// [`VNode::for_each_at`].
-            pub fn listens_to(self) -> NodeTags {
+            pub(crate) fn listens_to(self) -> NodeTags {
                 match self {
                     $(NodeType::$name => NodeTags::EMPTY $(| NodeTags::from($tag))*),*
                 }

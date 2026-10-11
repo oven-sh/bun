@@ -4,10 +4,7 @@
 #![feature(linkage)]
 
 pub mod hir_dump;
-pub mod host;
 pub mod native;
-
-pub use bun_sema_baselines as baselines;
 
 use bun_sema::atom::Interner;
 use bun_sema::hir;

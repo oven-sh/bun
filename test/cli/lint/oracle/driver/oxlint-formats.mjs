@@ -1,7 +1,7 @@
 // Runs real oxlint and `bun lint` with every `--format` of oxlint on generated projects that an `.oxlintrc.json` governs, and
 // compares standard output, standard error and the exit code.
 //
-//   bun oxlint-formats.mjs --oxlint=<path of oxlint> --scratch=<directory> --bin="<bun-lint> cli" [--only=substring] [--format=name] [--exact] [--order] [--show]
+//   bun oxlint-formats.mjs --oxlint=<path of oxlint> --scratch=<directory> --bin="bun lint" [--only=substring] [--format=name] [--exact] [--order] [--show]
 //   bun oxlint-formats.mjs --oxlint=<path of oxlint> --record=<directory> [--only=substring] [--format=name]
 //
 // What is compared:

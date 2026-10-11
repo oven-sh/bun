@@ -20,13 +20,13 @@
 //! | `../shared/naming`, `../shared/directives` | [`naming`], [`directives`] | `normalize_package_name`, `get_shorthand_name`, `get_namespace_from_term`, `directivesPattern`: `match_directives_pattern(text)` |
 //! | `require("natural-compare")`, `esutils.keyword.isIdentifierES5/ES6`, `require("escape-string-regexp")` | [`text`] | `text::natural_compare(a, b)`, `text::is_identifier_es6(name)`, `bun_core::strings::escape_reg_exp(s, &mut out)` |
 //! | `require("ignore")` | `bun_glob::ignore` | `IgnoreRules::from_lines(patterns, IgnoreOptions { syntax: IgnoreSyntax::Npm5, ignores_case }).ignores(path)` |
-//! | `node.type`, `node.range`, `node.parent`, `ChainExpression`, `SequenceExpression`, patterns in assignments | [`estree_compat`], re-exported from here | `utils::estree_type_name(node)`, `utils::estree_type_at(file, offset)`, `utils::sequence_expressions(e)`, `utils::Target` |
+//! | `node.type`, `node.range`, `node.parent`, `ChainExpression`, `SequenceExpression`, patterns in assignments | [`estree_compat`], re-exported from here | `utils::estree_type_name(node)`, `utils::estree_type_at(file, offset)`, `utils::Target` |
 //! | `array.sort((a, b) => a > b ? 1 : -1)`, a comparison that never answers 0 | [`array`] | `utils::array_sort_by(&mut items, \|a, b\| ..)` |
 //! | `a.localeCompare(b)`, `new Intl.Collator("en", { numeric: true, sensitivity: "base" })` | `bun_core::strings` | `strings::locale_compare(a, b)`, `strings::locale_compare_numeric_base(a, b)` |
 //! | a `Literal` listener that looks at strings or numbers: keys, module specifiers and literal types are not expressions here | `rule.rs` | `on.string_literals(f)`, `on.number_literals(f)` |
 //! | `n.toString(radix)`, `parseInt`, `parseFloat`, `ToInt32` | [`eslint_utils::js_number`] | `js_number::parse_int(text, 10)`, .. |
 //! | `n.toPrecision(p)`, `n.toFixed(d)`, `n.toExponential(d)`, `Number(s)` | `bun_core::fmt` | `FormatDouble::to_precision(&mut [0; 124], n, p)`, `js_string_to_number(s)` |
-//! | methods of `String`, `/\s/`, `escapeRegExp` | [`text`] | `bun_core::strings::trim_js_whitespace(bytes)`, `bun_core::strings::wtf8_len_utf16(bytes)` |
+//! | methods of `String`, `/\s/` | [`text`] | `bun_core::strings::trim_js_whitespace(bytes)`, `bun_core::strings::wtf8_len_utf16(bytes)` |
 //! | a loop over `node.parent` from each of many nodes | [`ancestor_memo`] | `AncestorMemo::default()` in the state, `cx.state.find(node, \|child, parent\| ..)` |
 //!
 //! A function that takes two handles has one lifetime for both, `fn f<'a>(a: Expr<'a>, b: Expr<'a>)`:
@@ -48,7 +48,6 @@ pub mod estree_compat;
 mod estree_type_at;
 pub mod fix_tracker;
 pub mod keywords;
-pub mod naming;
 pub mod node;
 pub mod oxlint;
 pub mod regular_expressions;
@@ -64,6 +63,6 @@ pub use estree_compat::{
     Target, TargetElement, TargetKind, estree_parent, estree_span, estree_type_name,
     get_node_by_range_index, is_assignment_target, is_chain_root, is_expression_statement,
     is_for_init, is_in_type_query, is_sequence_root, last_sequence_expression, normalize,
-    sequence_expressions, sequence_root, type_annotation_span,
+    sequence_root, type_annotation_span,
 };
 pub use estree_type_at::estree_type_at;

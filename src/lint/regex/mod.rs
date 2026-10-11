@@ -59,8 +59,6 @@
 //!
 //! It refuses a pattern of more than 2^20 characters or 2^15 groups, and `\p{Script=Hrkt}`. Its
 //! strings have less than 2^31 characters: in a longer text nothing is found.
-//!
-//! The scripts in test/cli/lint/oracle/regex compare all of this with regexpp, JavaScriptCore and V8.
 
 pub mod ast;
 mod parser;
@@ -75,13 +73,12 @@ pub use parser::{parse_flags, parse_literal, parse_pattern};
 pub use validator::{
     Handler, Ignore, Mode, Options, SyntaxError, validate_flags, validate_literal, validate_pattern,
 };
-pub use wtf8::{byte_offset, utf16_index};
+pub use wtf8::utf16_index;
 
 use bun_core::strings;
 use bun_yarr::{Compiled, NO_MATCH as NONE};
 use smallvec::SmallVec;
 use std::borrow::Cow;
-use std::sync::OnceLock;
 use subject::Subject;
 
 /// The start and the end of the match and of each group.
@@ -191,8 +188,6 @@ const _: fn() = || {
 #[derive(Debug)]
 pub struct Regex {
     compiled: Compiled,
-    /// The same without the `y` flag, if it has it. Made when it is first asked for.
-    unsticky: OnceLock<Option<Compiled>>,
     flags: Flags,
     source: Box<[u8]>,
     /// Groups, with the whole match as the first.
@@ -217,7 +212,6 @@ impl Regex {
         let ast = parse_pattern(pattern, mode, Options::default())?;
         Ok(Regex {
             compiled: compile(pattern, flags)?,
-            unsticky: OnceLock::new(),
             flags,
             source: escape_source(Cow::Borrowed(pattern)).into_owned().into(),
             group_count: ast.capturing_groups().count() as u32 + 1,
@@ -250,11 +244,6 @@ impl Regex {
     #[inline]
     pub fn flags(&self) -> Flags {
         self.flags
-    }
-
-    /// The names of the groups, in the order in which they first appear.
-    pub fn group_names(&self) -> impl Iterator<Item = &[u8]> {
-        self.names.iter().map(|(name, _)| &**name)
     }
 
     /// Whether a character is a code point: the `u` or the `v` flag.
@@ -346,11 +335,6 @@ impl Regex {
         self.exec_in(&self.compiled, &Subject::new(text, true), start)
     }
 
-    /// `text.search(regex)`
-    pub fn search(&self, text: &[u8]) -> Option<usize> {
-        self.find(text).map(Match::start)
-    }
-
     /// The specification's `AdvanceStringIndex`.
     fn advance(&self, text: &[u8], index: usize) -> usize {
         if index >= text.len() {
@@ -428,58 +412,6 @@ impl Regex {
         }
         out.extend_from_slice(text.get(copied..).unwrap_or_default());
         Cow::Owned(out)
-    }
-
-    /// `text.split(regex)`. What the groups captured is in the result as well, as in JavaScript, but
-    /// a group that did not take part gives an empty slice, not `undefined`.
-    pub fn split<'t>(&self, text: &'t [u8]) -> Vec<&'t [u8]> {
-        let mut parts = Vec::new();
-        if text.is_empty() {
-            if !self.test(text) {
-                parts.push(text);
-            }
-            return parts;
-        }
-        let compiled = self.unsticky();
-        let subject = Subject::new(text, true);
-        let mut from = 0;
-        let mut at = 0;
-        while at < text.len() {
-            let Some(captures) = self.exec_in(compiled, &subject, at) else {
-                break;
-            };
-            let end = captures.end().min(text.len());
-            if captures.start() >= text.len() {
-                break;
-            }
-            if end == from {
-                at = self.advance(text, captures.start().max(at));
-                continue;
-            }
-            parts.push(text.get(from..captures.start()).unwrap_or_default());
-            parts.extend(
-                (1..captures.len()).map(|i| captures.get(i).map_or(&[][..], Match::as_bytes)),
-            );
-            from = end;
-            at = end;
-        }
-        parts.push(text.get(from..).unwrap_or_default());
-        parts
-    }
-
-    /// `split` ignores the `y` flag.
-    fn unsticky(&self) -> &Compiled {
-        if !self.flags.sticky {
-            return &self.compiled;
-        }
-        let flags = Flags {
-            sticky: false,
-            ..self.flags
-        };
-        let made = self
-            .unsticky
-            .get_or_init(|| compile(&self.source, flags).ok());
-        made.as_ref().unwrap_or(&self.compiled)
     }
 }
 

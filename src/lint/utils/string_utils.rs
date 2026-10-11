@@ -3,7 +3,6 @@
 use super::unicode::matches_code_point;
 use crate::regex::Regex;
 use bun_core::strings;
-use std::ops::Range;
 use std::sync::LazyLock;
 
 pub use super::text::upper_case_first;
@@ -16,19 +15,6 @@ pub fn is_letter(c: u32) -> bool {
         0..0x80 => (c as u8).is_ascii_alphabetic(),
         _ => matches_code_point(&LETTER, c),
     }
-}
-
-/// ESLint's `LETTER_PATTERN`. Where `text.match(LETTER_PATTERN)` is: the range in bytes of the first
-/// letter of `text`.
-pub fn find_letter(text: &[u8]) -> Option<Range<usize>> {
-    let (at, _) = strings::wtf8_codepoints(text).find(|&(_, c)| is_letter(c))?;
-    Some(at..at + strings::wtf8_codepoint_at(text, at).1)
-}
-
-/// ESLint's `containsLetter`.
-#[inline]
-pub fn contains_letter(text: &[u8]) -> bool {
-    strings::wtf8_codepoints(text).any(|(_, c)| is_letter(c))
 }
 
 /// ESLint's `getGraphemeCount`. The length of text that is ASCII, where `\r\n` counts as two, and

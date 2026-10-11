@@ -276,16 +276,6 @@ pub fn report_at_line_zero<R: Rule>(cx: &Cx<'_, R>, message: Message) {
     }
 }
 
-/// typescript-eslint's `walkStatements`: the statements of `body` and of the blocks, branches, loop
-/// bodies, `switch` cases, labeled statements and `try` statements in it, in source order. Those
-/// containers are not yielded themselves, and nothing inside an expression or a nested function is
-/// visited.
-pub fn walk_statements<'a>(body: impl IntoIterator<Item = Stmt<'a>>) -> WalkStatements<'a> {
-    let mut stack: SmallVec<[Stmt<'a>; 16]> = body.into_iter().collect();
-    stack.reverse();
-    WalkStatements { stack }
-}
-
 /// What [`walk_statements`] returns.
 pub struct WalkStatements<'a> {
     /// What is left, the next on top.
@@ -330,15 +320,6 @@ impl<'a> Iterator for WalkStatements<'a> {
             self.stack[first..].reverse();
         }
     }
-}
-
-/// typescript-eslint's `forEachReturnStatement`: calls `visitor` with the `return` statements of
-/// `func`, not those of nested functions, until it returns `Some`, which is the result.
-pub fn for_each_return_statement<'a, T>(
-    func: Func<'a>,
-    visitor: impl FnMut(Stmt<'a>) -> Option<T>,
-) -> Option<T> {
-    func.returns().find_map(visitor)
 }
 
 /// typescript-eslint's `forEachChildESTree`: calls `callback` with the node and then with

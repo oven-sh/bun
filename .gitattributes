@@ -24,7 +24,6 @@
 *.patch text eol=lf
 # Every byte of an input of the formatter, and of what is expected for it, is part of the test.
 test/cli/format/own/cases/** -text
-test/cli/format/oracle/fuzz/libfuzzer/found/** -text
 # Compared line by line with what a runner prints, which ends a line with \n on every system.
 test/cli/format/*/expected.txt text eol=lf
 test/cli/lint/conformance/expected*.txt text eol=lf

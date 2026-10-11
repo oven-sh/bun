@@ -2,7 +2,7 @@
 // and with `bun lint`, on a copy of its fixtures, and compares by (file, line, column, rule) for the rules that both have, the
 // number of files that are linted, and whether the exit code is 0.
 //
-//   bun oxlint-fixtures.mjs --oxc=<checkout of oxc> --oxlint=<path of oxlint> --scratch=<directory> --bin="<bun-lint> cli" [--only=substring] [--show]
+//   bun oxlint-fixtures.mjs --oxc=<checkout of oxc> --oxlint=<path of oxlint> --scratch=<directory> --bin="bun lint" [--only=substring] [--show]
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -41,7 +41,7 @@ for (const [name, test] of [...cases].sort()) {
   const args = test.args.filter((it, at) => !/^(--format|-f)(=|$)/.test(it) && !/^(--format|-f)$/.test(test.args[at - 1] ?? ""));
   const result = spawnSync(
     process.execPath,
-    [path.join(import.meta.dirname, "oxlint-differential.mjs"), `--project=${path.join(scratch, test.cwd)}`, `--oxlint=${flag("oxlint")}`, `--bin=${flag("bin")}`, "--show", "--status", "--", ...args],
+    [path.join(import.meta.dirname, "oxlint-differential.mjs"), `--project=${path.join(scratch, test.cwd)}`, `--oxlint=${flag("oxlint")}`, `--bin=${flag("bin") ?? "bun lint"}`, "--show", "--status", "--", ...args],
     { encoding: "utf8" },
   );
   if (result.status === 0) passed++;

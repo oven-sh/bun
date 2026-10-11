@@ -11,8 +11,6 @@ use bun_core::strings;
 /// Who reads the lines.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum IgnoreSyntax {
-    /// gitignore(5), as git reads it. Bytes.
-    Git,
     /// The crate `ignore` 0.4.33 on `globset` 0.4.18: oxlint, oxfmt.
     Globset,
     /// npm `ignore` 5.3.2: the rules of ESLint.
@@ -179,9 +177,9 @@ impl IgnoreRules {
                 }
                 None => (std::mem::take(&mut rest), false),
             };
-            // `\r\n`. git takes a `\r` off the last line too, which ends without `\n`.
+            // `\r\n`
             rules.add_line(match line.strip_suffix(b"\r") {
-                Some(line) if has_line_feed || options.syntax == IgnoreSyntax::Git => line,
+                Some(line) if has_line_feed => line,
                 _ => line,
             });
         }

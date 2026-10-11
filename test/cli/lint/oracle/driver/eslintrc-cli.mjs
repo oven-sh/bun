@@ -3,7 +3,7 @@
 // code, which files are linted, every message (line, column, severity, rule, text), the files after `--fix`, what
 // `--print-config` prints, and where ESLint stops with an error, the sentences of that error.
 //
-//   bun eslintrc-cli.mjs --scratch=<directory> --bin="<bun-lint> cli" [--only=substring] [--verbose] [--report=<file.md or .json>]
+//   bun eslintrc-cli.mjs --scratch=<directory> --bin="bun lint" [--only=substring] [--verbose] [--report=<file.md or .json>]
 //   bun eslintrc-cli.mjs --scratch=<directory> --bin=.. --eslint=<eslint 8.57.1>/bin/eslint.js      ESLint runs too
 //   bun eslintrc-cli.mjs --scratch=<directory> --eslint=.. --record                                 writes eslintrc-cli.expected.json
 //   bun eslintrc-cli.mjs --scratch=<directory> --bin=.. --write-differences                         writes eslintrc-cli.differences.json

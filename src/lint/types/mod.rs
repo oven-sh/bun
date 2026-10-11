@@ -84,7 +84,7 @@
 //! # Where the answers are not those of TypeScript 6
 //!
 //! The checker follows TypeScript 7 (typescript-go). typescript-eslint runs on TypeScript 6 today.
-//! What the oracles in `test/cli/lint/oracle/types` find to differ, all of it known:
+//! What is known to differ:
 //!
 //! - [`Type::to_text`]: the order of the constituents of a union, which is sorted and does not
 //!   depend on what was checked before. Where a long type is cut off. `typeof f` for a function
@@ -270,7 +270,6 @@ queries! {
     fn resolved_signature(call: NodeRef) -> Option<SigId>;
     fn signature_from_declaration(node: NodeRef) -> Option<SigId>;
     fn shorthand_assignment_value_symbol(node: NodeRef) -> Option<SymbolRef>;
-    fn symbols_in_scope(node: NodeRef, meaning: SymbolFlags) -> &'a [SymbolRef];
     fn symbol_in_scope(node: NodeRef, meaning: SymbolFlags, name: &[u8]) -> Option<SymbolRef>;
     fn resolve_name(node: NodeRef, name: &[u8], meaning: SymbolFlags, exclude_globals: bool) -> Option<SymbolRef>;
     fn context_free_type_of_call_resolved_afresh(node: NodeRef) -> TypeId;
@@ -466,18 +465,6 @@ impl<'a> Types<'a> {
         Some(TsSymbol::new(file, symbol))
     }
 
-    /// `checker.getSymbolsInScope(node, meaning)`, with all the globals. To find one name:
-    /// [`Types::get_symbol_in_scope`].
-    pub fn get_symbols_in_scope(
-        self,
-        node: impl Locate<'a>,
-        meaning: SymbolFlags,
-    ) -> impl ExactSizeIterator<Item = TsSymbol<'a>> + 'a {
-        let (file, node) = (self.file, node.locate(self.file).raw());
-        let symbols = file.query(|q| q.symbols_in_scope(node, meaning));
-        symbols.iter().map(move |&id| TsSymbol::new(file, id))
-    }
-
     // ───────────────────────────── types that always exist ─────────────────────────────
 
     intrinsic_types! {
@@ -534,37 +521,6 @@ impl bun_sema::atom::Intern for WrittenNames<'_> {
     fn of_this_thread(&self) -> &dyn bun_sema::atom::Intern {
         self
     }
-}
-
-/// Calls `then` with `file` of the program that `checker` checks, with its types.
-///
-/// To be called right after `checker` has checked the file (`Request::after_file` of
-/// `bun_sema_driver`), on the thread that did. A task of the checker that turns out invalid is run
-/// again, so this can happen more than once for a file: the last time counts.
-///
-/// `read_library`: see [`ReadLibrary`]. It is asked when a rule wants to know whether something
-/// that TypeScript's library declares is `@deprecated`.
-///
-/// `None`, without a call: the file is not one that can be linted. It is part of TypeScript's
-/// library, or its tree is incomplete because the parser or the binder ran out of stack.
-pub fn with_file<R>(
-    checker: &mut bun_sema::check::Checker<'_, '_>,
-    file: FileId,
-    language: &crate::language::LanguageOptions,
-    read_library: Option<ReadLibrary<'_>>,
-    then: impl for<'a> FnOnce(&'a File<'a>) -> R,
-) -> Option<R> {
-    with_file_and_modules(
-        checker,
-        file,
-        None,
-        language,
-        read_library,
-        None,
-        None,
-        None,
-        then,
-    )
 }
 
 /// The same, for a file that has [`File::modules`], [`File::formatter`] and [`File::inferred_globals`]. `path`: [`File::path`], the path that the file is

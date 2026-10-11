@@ -4,6 +4,7 @@ use crate::convert::{Converted, Recorded, Refusal, Root, WrappedDefault, convert
 use crate::finding::{Detail, Finding, Suggestion};
 use crate::host::LintHost;
 use bun_ast::ASTMemoryAllocator;
+use bun_core::strings;
 use bun_lint::ast::{BinOp, File, Func};
 use bun_lint::span::Span;
 use bun_react_compiler::diagnostics::{
@@ -204,7 +205,8 @@ fn with_kind_of_estree<'a>(file: &'a File<'a>, mut finding: Finding) -> Finding 
 
 fn with_what_is_around(wrapped: &[WrappedDefault], mut finding: Finding) -> Finding {
     if let Some(rest) = finding.reason.strip_prefix(CANNOT_BE_REORDERED)
-        && let Some((_, rest)) = rest.split_once('`')
+        && let Some(tick) = strings::index_of_char_usize(rest.as_bytes(), b'`')
+        && let Some(rest) = rest.get(tick + 1..)
         && let Some(Detail::Error { span: Some(at), .. }) = finding.details.first_mut()
         && let Some(it) = wrapped.iter().find(|it| it.inner == *at)
     {

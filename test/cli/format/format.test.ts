@@ -1872,6 +1872,8 @@ ${packages["node_modules/prettier/index.cjs"]}`;
       ["a.graphql", nested("", "{a", "", "}", "", tooDeep)],
       ["a.yaml", nested("", "[", "1", "]", "", tooDeep)],
       ["b.yaml", nested("", "- ", "1", "", "", tooDeep)],
+      ["a.md", nested("", "+ ", "a", "", "", tooDeep)],
+      ["b.md", nested("", "> ", "a", "", "", tooDeep)],
       ["a.hbs", nested("", "{{#if a}}", "b", "{{/if}}", "", tooDeep)],
       ["b.hbs", nested("", "<div>", "b", "</div>", "", tooDeep)],
       ["c.hbs", nested("{{a ", "(b ", "c", ")", "}}", tooDeep)],

@@ -915,7 +915,7 @@ pub(crate) struct SendQueue {
 
     pub(crate) deferred_scheduled: Cell<bool>,
     pub(crate) pending_close: Cell<bool>,
-    /// A user disconnect() waiting for the handle queue to flush; reported as disconnected meanwhile, cleared by any real close.
+    /// A user disconnect() waiting for a handle send not yet acked (queued or written) and the queue behind it; reported as disconnected meanwhile, cleared by any real close.
     pub(crate) close_after_flush: Cell<bool>,
     pub(crate) pending_after_close: Cell<bool>,
     pub(crate) write_in_progress: Cell<bool>,
@@ -1262,11 +1262,16 @@ impl SendQueue {
         self.schedule_deferred();
     }
 
-    /// User disconnect(): reports disconnected now but, like node, closes only once a handle that is queued or awaiting its ack, and the queue behind it, have gone out.
+    /// node's `_handleQueue !== null`: a handle send the peer has not acked yet, still queued or already written.
+    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L861-L864
+    fn has_unacked_handle(&self) -> bool {
+        self.waiting_for_ack.get().is_some()
+            || self.queue.get().iter().any(|item| item.handle.is_some())
+    }
+
+    /// User disconnect(): reports disconnected now but, like node, closes only once a handle send not yet acked and the queue behind it have gone out.
     pub(crate) fn disconnect(&self) {
-        let handle_outstanding = self.waiting_for_ack.get().is_some()
-            || self.queue.get().iter().any(|item| item.handle.is_some());
-        if self.socket_is_open() && !self.pending_close.get() && handle_outstanding {
+        if self.socket_is_open() && !self.pending_close.get() && self.has_unacked_handle() {
             self.close_after_flush.set(true);
             return;
         }

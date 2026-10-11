@@ -226,8 +226,7 @@ impl ReadableStream {
         Some(blob)
     }
 
-    /// What [`Self::to_any_blob`] would lift out of this unread stream, as a Blob that shares the
-    /// payload. Nothing is taken: the stream keeps its payload and stays readable.
+    /// What [`Self::to_any_blob`] would lift, as a Blob of its own. Nothing is taken: the stream stays readable.
     pub fn peek_blob(&self, global_this: &JSGlobalObject) -> Option<Blob> {
         if self.is_disturbed(global_this) || self.is_locked(global_this) {
             return None;
@@ -240,8 +239,7 @@ impl ReadableStream {
             }
             Source::File(_) => stream.file_blob(global_this),
             Source::Bytes(_) => {
-                // BACKREF: see `Source::bytes()` — payload valid while stream alive.
-                let bytes = stream.ptr.bytes().expect("matched Bytes");
+                let bytes = stream.ptr.bytes()?;
                 Some(Blob::init(bytes.peek_bytes()?, global_this))
             }
             Source::JavaScript if ReadableStream__isClosedUnread(self.value, global_this) => {

@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
 import { isBroken, isMacOS, tempDir } from "harness";
+import { closeSync, openSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { routes, static_responses } from "./bun-serve-static-helpers";
 
@@ -408,6 +409,95 @@ describe("a Response whose .body was read stays the program's after it is used a
         bodyUsed: false,
       });
       expect(await use(response, stream, String(dir))).toBe(text);
+      // The route has its own share of the payload.
+      expect(await (await fetch(new URL("/a", server.url))).text()).toBe(text);
     });
+  });
+
+  // A network body that arrives after `.body` was read sits in a byte stream.
+  // The route copies it and the stream keeps it.
+  test("over a fetched Response, a read of the stream gives the whole body", async () => {
+    const { promise: rest, resolve: sendRest } = Promise.withResolvers<void>();
+    await using origin = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          new ReadableStream({
+            async start(controller) {
+              controller.enqueue(text.slice(0, 11));
+              await rest;
+              controller.enqueue(text.slice(11));
+              controller.close();
+            },
+          }),
+        ),
+    });
+    const response = await fetch(origin.url);
+    const stream = response.body!;
+    sendRest();
+    // A route needs the whole body. Until the rest arrives, Bun.serve refuses
+    // the Response and leaves it as it is.
+    const serveOnceArrived = async () => {
+      for (;;) {
+        try {
+          return Bun.serve({
+            port: 0,
+            routes: { "/a": response },
+            fetch: () => new Response("not found", { status: 404 }),
+          });
+        } catch (error) {
+          expect(String(error)).toContain("Body must be fully buffered");
+          await new Promise(resolve => setImmediate(resolve));
+        }
+      }
+    };
+    await using server = await serveOnceArrived();
+    expect({
+      a: await (await fetch(new URL("/a", server.url))).text(),
+      locked: stream.locked,
+      sameStream: response.body === stream,
+      bodyUsed: response.bodyUsed,
+    }).toEqual({ a: text, locked: false, sameStream: true, bodyUsed: false });
+    expect(await new Response(stream).text()).toBe(text);
+    expect(await (await fetch(new URL("/a", server.url))).text()).toBe(text);
+  });
+
+  // The route looks at the file, it does not stat it into the store that the
+  // program's Bun.file() answers from.
+  test("a route over a Bun.file() stream leaves that Bun.file() following the file", async () => {
+    using dir = tempDir("serve-route-file-size", { "a.txt": "12345" });
+    const path = join(String(dir), "a.txt");
+    const file = Bun.file(path);
+    const response = new Response(file.stream());
+    await using server = Bun.serve({
+      port: 0,
+      routes: { "/a": response },
+      fetch: () => new Response("not found", { status: 404 }),
+    });
+    expect(await (await fetch(new URL("/a", server.url))).text()).toBe("12345");
+    writeFileSync(path, "123456789");
+    expect(file.size).toBe(9);
+  });
+
+  // A file descriptor cannot be a route. The refusal comes from a look at the
+  // body, so the stream is not spent for a route that was never made.
+  test("a refused Bun.file(fd) route leaves the stream that was read off .body unlocked", async () => {
+    using dir = tempDir("serve-route-fd", { "a.txt": text });
+    const fd = openSync(join(String(dir), "a.txt"), "r");
+    try {
+      const response = new Response(Bun.file(fd));
+      const stream = response.body!;
+      expect(() =>
+        Bun.serve({ port: 0, routes: { "/a": response }, fetch: () => new Response("not found", { status: 404 }) }),
+      ).toThrow("Support serving files from a file descriptor. Please pass a path instead.");
+      expect({
+        locked: stream.locked,
+        sameStream: response.body === stream,
+        bodyUsed: response.bodyUsed,
+        text: await response.text(),
+      }).toEqual({ locked: false, sameStream: true, bodyUsed: false, text });
+    } finally {
+      closeSync(fd);
+    }
   });
 });

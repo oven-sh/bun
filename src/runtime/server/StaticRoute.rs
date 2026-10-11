@@ -160,11 +160,10 @@ impl StaticRoute {
             // Let's let them do that.
             let body_value = response.get_body_value();
             let was_string = body_value.was_string();
-            // A payload behind an unread `.body` stream is shared with that stream, which stays
-            // the program's. Lifting it out would spend the stream of a Response that stays unused.
+            // Share a payload behind an unread `.body` stream: a lift would spend the stream of a Response that stays unused.
             let shared = match body_value {
                 BodyValue::Locked(locked) => locked
-                    .share_blob_of_unread_stream()
+                    .peek_blob_of_unread_stream()
                     .filter(|blob| !blob.needs_to_read_file()),
                 _ => None,
             };

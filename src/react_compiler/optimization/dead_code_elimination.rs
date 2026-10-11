@@ -193,7 +193,6 @@ fn find_referenced_identifiers(
 
         // In reverse order (postorder - successors before predecessors)
         for block in func.body.blocks.values().rev() {
-
             // Mark terminal operands
             for place in visitors::each_terminal_operand(&block.terminal) {
                 reference(&mut state, &env.identifiers, place.identifier);

@@ -58,8 +58,9 @@ pub(crate) struct Tokens {
     tail: Option<Tail>,
     /// All of `bytes` is.
     is_ascii: bool,
-    /// A `**` that takes anything, then nothing that takes a `/`, then the end: it matches from the last name or not at all.
-    is_for_last_name: bool,
+    /// Where the last `**` is, if it takes anything and what follows goes to the end of the text, and how many `/` that takes:
+    /// it matches from so many names before the last one, or later, or not at all.
+    last_deep: Option<(u32, u32)>,
 }
 
 /// What the tokens are, for an index of many. They end with the end of the text, or of the text but for a `/`.
@@ -109,12 +110,18 @@ fn next_slash(subject: Subject<'_>, from: usize) -> Option<usize> {
     }
 }
 
-/// Where the last name starts. A `/` at the end of the text belongs to it.
-fn last_name_start(subject: Subject<'_>) -> usize {
-    let names = match subject.slash {
+/// Where the name starts that has `after` names behind it, or else the first. A `/` at the end of the text belongs to the last name.
+fn name_start_from_end(subject: Subject<'_>, after: u32) -> usize {
+    let mut names = match subject.slash {
         true => subject.bytes,
         false => subject.bytes.strip_suffix(b"/").unwrap_or(subject.bytes),
     };
+    for _ in 0..after {
+        match strings::last_index_of_char(names, b'/') {
+            Some(slash) => names = &names[..slash],
+            None => return 0,
+        }
+    }
     strings::last_index_of_char(names, b'/').map_or(0, |slash| slash + 1)
 }
 
@@ -129,7 +136,7 @@ impl Tokens {
             head: Span::default(),
             tail: None,
             is_ascii: false,
-            is_for_last_name: false,
+            last_deep: None,
         }
     }
 
@@ -151,22 +158,33 @@ impl Tokens {
             }
             _ => (None, false),
         };
-        let takes_no_slash = |tok: &Tok| match tok {
-            Tok::Lit { has_slash, .. } => !has_slash,
-            Tok::Deep { .. } | Tok::Rest { .. } => false,
-            _ => true,
-        };
-        let is_for_last_name = match &self.toks[..] {
-            [
+        let is_deep = |tok: &Tok| matches!(tok, Tok::Deep { .. });
+        let last_deep = (self.toks.iter().rposition(is_deep)).filter(|&at| {
+            let takes_anything = matches!(
+                self.toks[at],
                 Tok::Deep {
                     empty_names: true,
                     newlines: true,
-                },
-                rest @ ..,
-            ] => has_end && rest.iter().all(takes_no_slash),
-            _ => false,
+                }
+            );
+            let goes_on = |tok: &Tok| matches!(tok, Tok::Rest { .. });
+            takes_anything && has_end && !self.toks[at..].iter().any(goes_on)
+        });
+        let slashes = |tok: &Tok| match *tok {
+            Tok::Lit {
+                start,
+                len,
+                has_slash: true,
+            } => strings::count_char(self.lit(start, len), b'/'),
+            _ => 0,
         };
-        (self.head, self.tail, self.is_for_last_name) = (head, tail, is_for_last_name);
+        let last_deep = last_deep.map(|at| {
+            (
+                at as u32,
+                self.toks[at..].iter().map(slashes).sum::<usize>() as u32,
+            )
+        });
+        (self.head, self.tail, self.last_deep) = (head, tail, last_deep);
         self.is_ascii = self.bytes.is_ascii();
     }
 
@@ -354,8 +372,10 @@ impl Tokens {
                     empty_names,
                     newlines,
                 } => {
-                    if self.is_for_last_name && !partial {
-                        pi = last_name_start(subject);
+                    if let Some((_, slashes)) = self.last_deep.filter(|it| it.0 as usize == ti)
+                        && !partial
+                    {
+                        pi = pi.max(name_start_from_end(subject, slashes));
                     }
                     deep = Some((ti + 1, pi, empty_names, newlines));
                     star = None;

@@ -202,8 +202,7 @@ fn get_context_reassignment(
                 InstructionValue::StoreContext { lvalue, value, .. } => {
                     // If we're inside a function expression and the target is a
                     // context variable from the outer scope, this is a reassignment
-                    if is_function_expression
-                        && context_variables.contains(lvalue.place.identifier)
+                    if is_function_expression && context_variables.contains(lvalue.place.identifier)
                     {
                         return Some(lvalue.place.clone());
                     }

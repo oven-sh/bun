@@ -12,7 +12,7 @@ use crate::{Linter, fs, paths};
 use bun_core::strings;
 use bun_glob::{Options, Pattern};
 use bun_lint::js_plugin::{Host, Route};
-use bun_lint::linter::config::Dotfiles;
+use bun_lint::linter::config::{Dotfiles, Seen};
 use bun_lint::linter::{FileConfig, ResolvedConfig};
 use bun_lint::modules::Listed;
 use bun_threading::Guarded;
@@ -145,6 +145,8 @@ struct Directory {
     relative: Vec<u8>,
     /// The configuration of the directory that it is in or, for the one that is searched, its own.
     inherited: Arc<Loaded>,
+    /// What `inherited` sees of its entries, if that is known.
+    seen: Option<Seen>,
     /// The ignore files above it or, for the one that is searched, also those in it. They are only
     /// read where they count.
     ignores: Files,
@@ -244,6 +246,7 @@ fn search(
                     above: None,
                 }),
                 relative: Vec::new(),
+                seen: None,
                 ignores,
                 inherited,
                 is_hidden,
@@ -300,7 +303,11 @@ fn search(
                 ignores = ignores.and_in(&directory.path, loader.ignore_file_name(&own), has);
             }
             let (mut files, mut directories) = (Vec::new(), Vec::new());
-            let mut within = own.config.within(&directory.path);
+            let seen = match &directory.seen {
+                Some(seen) if Arc::ptr_eq(&own, &directory.inherited) => seen,
+                _ => &own.config.see(&directory.path),
+            };
+            let mut within = own.config.within(&directory.path, seen);
             for mut entry in entries {
                 let path = paths::join(&directory.path, &entry.name);
                 let mut real = None;
@@ -333,6 +340,7 @@ fn search(
                         let real =
                             real.unwrap_or_else(|| paths::join(&directory.way.real, &entry.name));
                         directories.push(Directory {
+                            seen: Some(within.see_below(&path)),
                             path,
                             way: Arc::new(Way {
                                 real,

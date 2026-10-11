@@ -184,6 +184,20 @@ struct ConfigObject {
 }
 
 impl ConfigObject {
+    /// What it sees of the entries of `directory`, which is absolute, if it has a base path of its own. `before_name`: of
+    /// [`Config::relative`].
+    fn see(&self, config: &Config, directory: &[u8], before_name: &[u8]) -> BeforeName {
+        let base_path = self.base_path.as_ref()?;
+        match self.is_global_ignores {
+            // As `is_ignored_globally_as` makes it.
+            true => paths::relative_to_base_before_name(
+                base_path,
+                &paths::resolve(&config.base_path, before_name),
+            ),
+            false => paths::relative_to_base_before_name(base_path, directory),
+        }
+    }
+
     /// What it keeps of `settings` as they are written.
     fn settings_of(written: Json) -> Option<Arc<Json>> {
         matches!(written, Json::Object(_)).then(|| Arc::new(written))
@@ -376,23 +390,33 @@ pub struct Config {
     cache: Cache,
 }
 
-/// What a [`Config`] sees of the entries of one directory. What is the same for all of them is computed once.
+/// What a path that a base path sees has before its last name. `None`: the base path is further down, and it is not the same for
+/// all entries of the directory.
+type BeforeName = Option<Vec<u8>>;
+
+/// What a [`Config`] sees of the entries of one directory, as far as it is the same for all of them.
+#[derive(PartialEq, Eq, Debug)]
+pub struct Seen {
+    /// Of [`Config::relative`].
+    before_name: BeforeName,
+    /// For each object with a base path of its own, by its index. Empty without `before_name`.
+    by_objects: Vec<(u32, BeforeName)>,
+}
+
+/// A [`Config`] for the entries of one directory.
 pub struct Within<'c> {
     config: &'c Config,
+    seen: &'c Seen,
     /// Where the name starts in the path of an entry.
     name_at: usize,
     /// [`Config::relative`] of the entry that was asked about last.
-    seen: Vec<u8>,
-    /// How much of it is before the name. `None`: the base path is further down, and that is not the same for all entries.
-    seen_len: Option<usize>,
-    /// For each object with a base path of its own, by its index: what it sees before the name. `None`: as above.
-    seen_by_objects: Vec<(u32, Option<Vec<u8>>)>,
+    relative: Vec<u8>,
 }
 
 /// An entry of the directory of a [`Within`].
 struct Entry<'w> {
     name: &'w [u8],
-    seen_by_objects: &'w [(u32, Option<Vec<u8>>)],
+    seen_by_objects: &'w [(u32, BeforeName)],
 }
 
 impl Entry<'_> {
@@ -407,27 +431,52 @@ impl Entry<'_> {
 }
 
 impl Within<'_> {
-    /// The entry at `path`, and what the patterns see of it, which has a slash behind it for a directory. `None`: see `seen_len`.
+    /// The entry at `path`, and what the patterns see of it, which has a slash behind it for a directory. `None`: see
+    /// [`BeforeName`].
     fn see<'w>(
         &'w mut self,
         path: &'w [u8],
         is_directory: bool,
     ) -> Option<(Candidate<'w>, Entry<'w>)> {
         let name = path.get(self.name_at..)?;
-        self.seen.truncate(self.seen_len?);
-        self.seen.extend_from_slice(name);
-        debug_assert_eq!(self.seen, self.config.relative(path));
+        self.relative
+            .truncate(self.seen.before_name.as_ref()?.len());
+        self.relative.extend_from_slice(name);
+        debug_assert_eq!(self.relative, self.config.relative(path));
         if is_directory {
-            self.seen.push(b'/');
+            self.relative.push(b'/');
         }
-        let seen_by_objects = &self.seen_by_objects[..];
         Some((
-            Candidate::new(&self.seen),
+            Candidate::new(&self.relative),
             Entry {
                 name,
-                seen_by_objects,
+                seen_by_objects: &self.seen.by_objects,
             },
         ))
+    }
+
+    /// [`Config::see`] for the directory at `path`, an entry.
+    pub fn see_below(&self, path: &[u8]) -> Seen {
+        let config = self.config;
+        let (Some(name), Some(before_name)) = (path.get(self.name_at..), &self.seen.before_name)
+        else {
+            return config.see(path);
+        };
+        let below = |before_name: &[u8]| [before_name, name, b"/"].concat();
+        let before_name = below(before_name);
+        let by_objects = self.seen.by_objects.iter().map(|(index, known)| {
+            let known = known.as_ref().map(|it| below(it));
+            (
+                *index,
+                known.or_else(|| config.objects[*index as usize].see(config, path, &before_name)),
+            )
+        });
+        let seen = Seen {
+            by_objects: by_objects.collect(),
+            before_name: Some(before_name),
+        };
+        debug_assert_eq!(seen, config.see(path));
+        seen
     }
 
     /// [`Config::is_directory_ignored`] for the directory at `path`, an entry, if the directory that it is in is not ignored.
@@ -650,12 +699,10 @@ impl Config {
         }
     }
 
-    /// For the entries of `directory`, which is absolute.
-    pub fn within<'c>(&'c self, directory: &[u8]) -> Within<'c> {
-        let before_name = |base_path: &[u8], directory: &[u8]| {
-            paths::relative_to_base_before_name(base_path, directory)
-        };
-        let seen = before_name(&self.base_path, directory).map(|seen| {
+    /// `directory` is absolute.
+    pub fn see(&self, directory: &[u8]) -> Seen {
+        let before_name = paths::relative_to_base_before_name(&self.base_path, directory);
+        let before_name = before_name.map(|seen| {
             if !(self.prefers_typescript_rules && paths::is_external(&seen)) {
                 return seen;
             }
@@ -665,29 +712,25 @@ impl Config {
             }
             rooted
         });
-        let with_base_paths = (self.objects.iter().zip(0..))
-            .filter_map(|(object, index)| Some((object, index, object.base_path.as_ref()?)));
-        let seen_by_objects = match &seen {
-            Some(seen) => with_base_paths
-                .map(
-                    |(object, index, base_path)| match object.is_global_ignores {
-                        // As `is_ignored_globally_as` makes it.
-                        true => {
-                            let directory = paths::resolve(&self.base_path, seen);
-                            (index, before_name(base_path, &directory))
-                        }
-                        false => (index, before_name(base_path, directory)),
-                    },
-                )
-                .collect(),
-            None => Vec::new(),
-        };
+        let objects = self.objects.iter().zip(0..);
+        let by_objects = before_name.iter().flat_map(|before_name| {
+            let with_base_paths = objects.clone().filter(|it| it.0.base_path.is_some());
+            with_base_paths.map(|(it, index)| (index, it.see(self, directory, before_name)))
+        });
+        Seen {
+            by_objects: by_objects.collect(),
+            before_name,
+        }
+    }
+
+    /// For the entries of `directory`, which is absolute. `seen`: what this configuration sees of them.
+    pub fn within<'c>(&'c self, directory: &[u8], seen: &'c Seen) -> Within<'c> {
+        debug_assert_eq!(*seen, self.see(directory));
         Within {
             config: self,
+            seen,
             name_at: directory.len() + usize::from(!directory.ends_with(b"/")),
-            seen_len: seen.as_ref().map(Vec::len),
-            seen: seen.unwrap_or_default(),
-            seen_by_objects,
+            relative: seen.before_name.clone().unwrap_or_default(),
         }
     }
 
@@ -789,8 +832,8 @@ impl Config {
             // Whether the object applies, and whether that makes ESLint lint the file.
             let status = |parts: &Candidate| -> (bool, bool) {
                 let Some(files) = &object.files else {
-                    let is_ignored = ignores.is_some_and(|it| is_ignored_by(it, parts, false));
-                    return (!object.is_global_ignores && !is_ignored, false);
+                    let is_ignored = || ignores.is_some_and(|it| is_ignored_by(it, parts, false));
+                    return (!object.is_global_ignores && !is_ignored(), false);
                 };
                 let can_match = (files.iter().enumerate())
                     .filter(|it| {

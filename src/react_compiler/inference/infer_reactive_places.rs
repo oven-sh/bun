@@ -93,7 +93,10 @@ pub(crate) fn infer_reactive_places(
     let mut operands: Vec<(IdentifierId, Effect)> = Vec::new();
 
     // Fixpoint iteration — compute reactive set
+    let mut is_settled = false;
     loop {
+        reactive_map.start_round();
+        stable_sidemap.start_round();
         let mut next_phi_operand = 0;
         for (block_id, block) in &func.body.blocks {
             let has_reactive_control = control_tests.any_is_reactive(*block_id, &mut reactive_map);
@@ -178,7 +181,7 @@ pub(crate) fn infer_reactive_places(
                 if has_reactive_input {
                     // Mark lvalues reactive (unless stable)
                     let mut mark_lvalue = |place: &Place| {
-                        if !stable_sidemap.is_stable(place.identifier) {
+                        if !stable_sidemap.read(place.identifier).unwrap_or(false) {
                             reactive_map.mark_reactive(place.identifier);
                         }
                     };
@@ -212,7 +215,16 @@ pub(crate) fn infer_reactive_places(
             }
         }
 
-        if !reactive_map.snapshot() {
+        let had_changes = reactive_map.snapshot();
+        debug_assert!(!is_settled || !(had_changes || stable_sidemap.has_changes));
+        if !had_changes || is_settled {
+            break;
+        }
+        // A round that has changed nothing after it had read it reads the same again, and so
+        // writes the same again.
+        is_settled =
+            !reactive_map.has_changed_what_was_read && !stable_sidemap.has_changed_what_was_read;
+        if is_settled && !cfg!(debug_assertions) {
             break;
         }
     }
@@ -266,12 +278,16 @@ pub(crate) fn for_each_instruction_value_operand(
 
 struct ReactivityMap {
     has_changes: bool,
-    /// Dense bitmap indexed by `IdentifierId.0`.
-    reactive: Vec<bool>,
+    has_changed_what_was_read: bool,
+    round: u32,
+    /// Indexed by `IdentifierId.0`: `REACTIVE`, or the last round that has found it not to be.
+    reactive: Vec<u32>,
     /// Indexed by `IdentifierId.0`: what `aliased_identifiers` finds, or the identifier itself.
     canonical: Vec<IdentifierId>,
     aliased_identifiers: DisjointSet<IdentifierId>,
 }
+
+const REACTIVE: u32 = u32::MAX;
 
 impl ReactivityMap {
     fn new(mut aliased_identifiers: DisjointSet<IdentifierId>, identifier_count: usize) -> Self {
@@ -280,10 +296,17 @@ impl ReactivityMap {
         aliased_identifiers.for_each(|id, group| canonical[id.0 as usize] = group);
         ReactivityMap {
             has_changes: false,
-            reactive: vec![false; identifier_count],
+            has_changed_what_was_read: false,
+            round: 0,
+            reactive: vec![0; identifier_count],
             canonical,
             aliased_identifiers,
         }
+    }
+
+    fn start_round(&mut self) {
+        self.round += 1;
+        self.has_changed_what_was_read = false;
     }
 
     #[inline]
@@ -299,15 +322,21 @@ impl ReactivityMap {
     #[inline]
     fn is_reactive(&mut self, id: IdentifierId) -> bool {
         let canonical = self.canonical(id);
-        self.reactive[canonical.0 as usize]
+        let slot = &mut self.reactive[canonical.0 as usize];
+        if *slot == REACTIVE {
+            return true;
+        }
+        *slot = self.round;
+        false
     }
 
     #[inline]
     fn mark_reactive(&mut self, id: IdentifierId) {
         let canonical = self.canonical(id);
         let slot = &mut self.reactive[canonical.0 as usize];
-        if !*slot {
-            *slot = true;
+        if *slot != REACTIVE {
+            self.has_changed_what_was_read |= *slot == self.round;
+            *slot = REACTIVE;
             self.has_changes = true;
         }
     }
@@ -322,7 +351,9 @@ impl ReactivityMap {
     /// `is_reactive` of each identifier, indexed by `IdentifierId.0`.
     fn reactive_ids(&self) -> Vec<bool> {
         let canonical = self.canonical.iter();
-        canonical.map(|id| self.reactive[id.0 as usize]).collect()
+        canonical
+            .map(|id| self.reactive[id.0 as usize] == REACTIVE)
+            .collect()
     }
 }
 
@@ -333,28 +364,44 @@ impl ReactivityMap {
 struct StableSidemap {
     /// Dense map indexed by `IdentifierId.0`. `None` = not tracked.
     map: Vec<Option<bool>>,
+    /// Indexed by `IdentifierId.0`: the last round that has read `map`.
+    read_in: Vec<u32>,
+    round: u32,
+    has_changes: bool,
+    has_changed_what_was_read: bool,
 }
 
 impl StableSidemap {
     fn new(identifier_count: usize) -> Self {
         StableSidemap {
             map: vec![None; identifier_count],
+            read_in: vec![0; identifier_count],
+            round: 0,
+            has_changes: false,
+            has_changed_what_was_read: false,
         }
+    }
+
+    fn start_round(&mut self) {
+        self.round += 1;
+        self.has_changes = false;
+        self.has_changed_what_was_read = false;
     }
 
     #[inline]
     fn set(&mut self, id: IdentifierId, value: bool) {
-        self.map[id.0 as usize] = Some(value);
+        let slot = &mut self.map[id.0 as usize];
+        if *slot != Some(value) {
+            *slot = Some(value);
+            self.has_changes = true;
+            self.has_changed_what_was_read |= self.read_in[id.0 as usize] == self.round;
+        }
     }
 
     #[inline]
-    fn get(&self, id: IdentifierId) -> Option<bool> {
+    fn read(&mut self, id: IdentifierId) -> Option<bool> {
+        self.read_in[id.0 as usize] = self.round;
         self.map[id.0 as usize]
-    }
-
-    #[inline]
-    fn has(&self, id: IdentifierId) -> bool {
-        self.map[id.0 as usize].is_some()
     }
 
     fn handle_instruction(&mut self, instr: &crate::hir::Instruction, env: &Environment) {
@@ -382,7 +429,7 @@ impl StableSidemap {
             }
             InstructionValue::PropertyLoad { object, .. } => {
                 let source_id = object.identifier;
-                if self.has(source_id) {
+                if self.read(source_id).is_some() {
                     let lvalue_ty =
                         &env.types[env.identifiers[lvalue_id.0 as usize].type_.0 as usize];
                     if is_stable_type_container(lvalue_ty) {
@@ -394,7 +441,7 @@ impl StableSidemap {
             }
             InstructionValue::Destructure { value: val, .. } => {
                 let source_id = val.identifier;
-                if self.has(source_id) {
+                if self.read(source_id).is_some() {
                     let mut handle_lvalue = |place: &Place| {
                         let lid = place.identifier;
                         let lid_ty = &env.types[env.identifiers[lid.0 as usize].type_.0 as usize];
@@ -411,13 +458,13 @@ impl StableSidemap {
             InstructionValue::StoreLocal {
                 lvalue, value: val, ..
             } => {
-                if let Some(entry) = self.get(val.identifier) {
+                if let Some(entry) = self.read(val.identifier) {
                     self.set(lvalue_id, entry);
                     self.set(lvalue.place.identifier, entry);
                 }
             }
             InstructionValue::LoadLocal { place, .. } => {
-                if let Some(entry) = self.get(place.identifier) {
+                if let Some(entry) = self.read(place.identifier) {
                     self.set(lvalue_id, entry);
                 }
             }

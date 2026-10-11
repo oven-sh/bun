@@ -771,6 +771,33 @@ enum MutateVariant {
     MutateTransitiveConditionally,
 }
 
+/// What a value is to an effect that lets data flow from it or into it. `None`: nothing to track.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DataFlowType {
+    Context,
+    Mutable,
+    Frozen,
+}
+
+impl DataFlowType {
+    fn of_destination(kind: ValueKind) -> Option<Self> {
+        match kind {
+            ValueKind::Context => Some(DataFlowType::Context),
+            ValueKind::Mutable | ValueKind::MaybeFrozen => Some(DataFlowType::Mutable),
+            _ => None,
+        }
+    }
+
+    fn of_source(kind: ValueKind) -> Option<Self> {
+        match kind {
+            ValueKind::Context => Some(DataFlowType::Context),
+            ValueKind::Global | ValueKind::Primitive => None,
+            ValueKind::MaybeFrozen | ValueKind::Frozen => Some(DataFlowType::Frozen),
+            ValueKind::Mutable => Some(DataFlowType::Mutable),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MutationResult {
     None,
@@ -1740,21 +1767,12 @@ fn apply_effect(
 
             // Check destination kind
             let into_kind = state.kind_with_loc(into.identifier, into.loc).kind;
-            let destination_type = match into_kind {
-                ValueKind::Context => Some("context"),
-                ValueKind::Mutable | ValueKind::MaybeFrozen => Some("mutable"),
-                _ => None,
-            };
+            let destination_type = DataFlowType::of_destination(into_kind);
 
             let from_kind = state.kind_with_loc(from.identifier, from.loc).kind;
-            let source_type = match from_kind {
-                ValueKind::Context => Some("context"),
-                ValueKind::Global | ValueKind::Primitive => None,
-                ValueKind::MaybeFrozen | ValueKind::Frozen => Some("frozen"),
-                ValueKind::Mutable => Some("mutable"),
-            };
+            let source_type = DataFlowType::of_source(from_kind);
 
-            if source_type == Some("frozen") {
+            if source_type == Some(DataFlowType::Frozen) {
                 apply_effect(
                     context,
                     state,
@@ -1766,12 +1784,14 @@ fn apply_effect(
                     effects,
                     env,
                 )?;
-            } else if (source_type == Some("mutable") && destination_type == Some("mutable"))
+            } else if (source_type == Some(DataFlowType::Mutable)
+                && destination_type == Some(DataFlowType::Mutable))
                 || is_maybe_alias
             {
                 effects.push(effect.clone());
-            } else if (source_type == Some("context") && destination_type.is_some())
-                || (source_type == Some("mutable") && destination_type == Some("context"))
+            } else if (source_type == Some(DataFlowType::Context) && destination_type.is_some())
+                || (source_type == Some(DataFlowType::Mutable)
+                    && destination_type == Some(DataFlowType::Context))
             {
                 apply_effect(
                     context,
@@ -1985,7 +2005,16 @@ fn apply_effect(
                 )?;
 
                 let all_operands = build_apply_operands(receiver, function, args);
-                for (operand, _is_function_operand, is_spread) in &all_operands {
+                // None of the effects below changes the state. An effect that is interned is
+                // applied even if nothing comes of it: it is the one that later ones are replaced by.
+                let kinds: Option<SmallVec<[ValueKind; 8]>> =
+                    context.interned_effects.is_none().then(|| {
+                        let kind_of = |&(operand, _): &(&Place, bool)| {
+                            state.kind_with_loc(operand.identifier, operand.loc).kind
+                        };
+                        all_operands.iter().map(kind_of).collect()
+                    });
+                for (at, &(operand, is_spread)) in all_operands.iter().enumerate() {
                     // In TS, the check is `operand !== effect.function || effect.mutatesFunction`.
                     // This compares by reference identity, so for CallExpression/NewExpression
                     // where receiver === function, BOTH are skipped when !mutatesFunction.
@@ -2004,7 +2033,7 @@ fn apply_effect(
                         )?;
                     }
 
-                    if *is_spread {
+                    if is_spread {
                         let ty = &env.types
                             [env.identifiers[operand.identifier.0 as usize].type_.0 as usize];
                         if let Some(mutate_iter) = conditionally_mutate_iterator(operand, ty) {
@@ -2031,10 +2060,21 @@ fn apply_effect(
                     // `.place` which is never `===` the Spread wrapper object,
                     // so NO pairs are skipped when the outer arg is a Spread
                     // (including self-pairs, producing self-captures).
-                    for (other, _other_is_func, _other_is_spread) in &all_operands {
+                    for (other_at, &(other, _)) in all_operands.iter().enumerate() {
                         if !is_spread && other.identifier == operand.identifier {
                             continue;
                         }
+                        let is_tracked = kinds.as_ref().is_none_or(|kinds| {
+                            match DataFlowType::of_source(kinds[at]) {
+                                None => false,
+                                Some(DataFlowType::Frozen) => true,
+                                Some(_) => DataFlowType::of_destination(kinds[other_at]).is_some(),
+                            }
+                        });
+                        if !is_tracked && !cfg!(debug_assertions) {
+                            continue;
+                        }
+                        let effects_before = effects.len();
                         apply_effect(
                             context,
                             state,
@@ -2046,6 +2086,7 @@ fn apply_effect(
                             effects,
                             env,
                         )?;
+                        debug_assert!(is_tracked || effects.len() == effects_before);
                     }
                 }
             }
@@ -3771,20 +3812,18 @@ fn place_or_spread_to_hole(pos: &PlaceOrSpread) -> PlaceOrSpreadOrHole {
 
 use crate::hir::JsxTag;
 
-fn build_apply_operands(
-    receiver: &Place,
-    function: &Place,
-    args: &[PlaceOrSpreadOrHole],
-) -> Vec<(Place, bool, bool)> {
-    let mut result = vec![
-        (receiver.clone(), false, false),
-        (function.clone(), true, false),
-    ];
+/// Each with whether it is spread.
+fn build_apply_operands<'a>(
+    receiver: &'a Place,
+    function: &'a Place,
+    args: &'a [PlaceOrSpreadOrHole],
+) -> SmallVec<[(&'a Place, bool); 8]> {
+    let mut result = smallvec::smallvec![(receiver, false), (function, false)];
     for arg in args {
         match arg {
             PlaceOrSpreadOrHole::Hole => continue,
-            PlaceOrSpreadOrHole::Place(p) => result.push((p.clone(), false, false)),
-            PlaceOrSpreadOrHole::Spread(s) => result.push((s.place.clone(), false, true)),
+            PlaceOrSpreadOrHole::Place(p) => result.push((p, false)),
+            PlaceOrSpreadOrHole::Spread(s) => result.push((&s.place, true)),
         }
     }
     result

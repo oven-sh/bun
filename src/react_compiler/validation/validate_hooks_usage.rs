@@ -62,11 +62,7 @@ fn join_kinds(a: Kind, b: Kind) -> Kind {
     }
 }
 
-fn get_kind_for_place(
-    place: &Place,
-    value_kinds: &ValueKinds,
-    identifiers: &[Identifier],
-) -> Kind {
+fn get_kind_for_place(place: &Place, value_kinds: &ValueKinds, identifiers: &[Identifier]) -> Kind {
     let known_kind = value_kinds.get(place.identifier);
     let ident = &identifiers[place.identifier.0 as usize];
     if let Some(ref name) = ident.name {
@@ -227,10 +223,9 @@ impl UnconditionalBlocks<'_> {
         }
         let blocks = match &self.blocks {
             Some(blocks) => blocks,
-            None => (self.blocks).insert(compute_unconditional_blocks(
-                self.func,
-                self.next_block_id,
-            )?),
+            None => {
+                (self.blocks).insert(compute_unconditional_blocks(self.func, self.next_block_id)?)
+            }
         };
         Ok(blocks.contains(&id))
     }

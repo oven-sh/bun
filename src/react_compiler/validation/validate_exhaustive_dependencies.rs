@@ -7,10 +7,9 @@ use crate::hir::environment::Environment;
 use crate::hir::environment_config::ExhaustiveEffectDepsMode;
 use crate::hir::visitors::{each_lvalue, lvalues, operands, terminal_operands};
 use crate::hir::{
-    AstAlloc, BlockId, DependencyPathEntry, HirFunction, HirVec, Identifier,
-    IdentifierId, InstructionKind, InstructionValue, ManualMemoDependency,
-    ManualMemoDependencyRoot, NonLocalBinding, Place, PlaceOrSpread, PropertyLiteral, StoreStr,
-    Terminal, Type, hir_vec,
+    AstAlloc, BlockId, DependencyPathEntry, HirFunction, HirVec, Identifier, IdentifierId,
+    InstructionKind, InstructionValue, ManualMemoDependency, ManualMemoDependencyRoot,
+    NonLocalBinding, Place, PlaceOrSpread, PropertyLiteral, StoreStr, Terminal, Type, hir_vec,
 };
 use bun_core::BStr;
 use core::fmt::Write as _;

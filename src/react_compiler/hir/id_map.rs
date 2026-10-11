@@ -4,89 +4,36 @@
 //! [`IdMap`] and [`IdSet`] iterate in insertion order, as a JavaScript `Map` and `Set` do.
 //! [`IdBitSet`] iterates in the order of the ids.
 //!
-//! The tables are as long as the largest id, so one of these per function or per pass is cheap and
-//! one per instruction is not, unless it stays within [`SCAN_MAX`] entries.
+//! The tables are as long as the range of the ids, so one of these per function or per pass is
+//! cheap and one per instruction is not, unless it stays within [`SCAN_MAX`] entries.
 
 use core::fmt;
 use core::marker::PhantomData;
 use core::slice;
+use std::alloc::Global;
+
+use bun_collections::array_hash_map::MapAllocator;
 
 /// With no more entries than this the keys are scanned and there is no table.
 const SCAN_MAX: usize = 8;
 
 /// The keys in insertion order, and where each is.
-#[derive(Clone, Default)]
-struct IdIndex {
-    keys: Vec<u32>,
-    /// By id: the position of the key plus one, or zero. Empty until there are more than
-    /// [`SCAN_MAX`] keys.
-    slots: Vec<u32>,
+#[derive(Clone)]
+struct IdIndex<K, A: MapAllocator> {
+    keys: Vec<K, A>,
+    /// By id less `base`: the position of the key plus one, or zero. Empty until there are more
+    /// than [`SCAN_MAX`] keys.
+    slots: Vec<u32, A>,
+    base: u32,
 }
 
-impl IdIndex {
+impl<K, A: MapAllocator> IdIndex<K, A> {
     #[inline]
-    fn position(&self, id: u32) -> Option<usize> {
-        if self.slots.is_empty() {
-            return self.keys.iter().position(|&key| key == id);
-        }
-        match self.slots.get(id as usize) {
-            Some(&slot) if slot != 0 => Some(slot as usize - 1),
-            _ => None,
-        }
-    }
-
-    /// Appends a key that is not there and says where it is.
-    #[inline]
-    fn push(&mut self, id: u32) -> usize {
-        let at = self.keys.len();
-        self.keys.push(id);
-        if !self.slots.is_empty() {
-            self.set_slot(id, at);
-        } else if at >= SCAN_MAX {
-            self.fill_slots();
-        }
-        at
-    }
-
-    #[inline]
-    fn set_slot(&mut self, id: u32, at: usize) {
-        let id = id as usize;
-        if id >= self.slots.len() {
-            self.slots.resize(id + 1, 0);
-        }
-        self.slots[id] = at as u32 + 1;
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn fill_slots(&mut self) {
-        let largest = self.keys.iter().copied().max().unwrap_or(0) as usize;
-        self.slots.clear();
-        self.slots.resize(largest + 1, 0);
-        for (at, &id) in self.keys.iter().enumerate() {
-            self.slots[id as usize] = at as u32 + 1;
-        }
-    }
-
-    /// Keeps the order of the rest.
-    fn shift_remove_at(&mut self, at: usize) {
-        let id = self.keys.remove(at);
-        if !self.slots.is_empty() {
-            self.slots[id as usize] = 0;
-            for &later in &self.keys[at..] {
-                self.slots[later as usize] -= 1;
-            }
-        }
-    }
-
-    /// The last key takes the place of the removed one.
-    fn swap_remove_at(&mut self, at: usize) {
-        let id = self.keys.swap_remove(at);
-        if !self.slots.is_empty() {
-            self.slots[id as usize] = 0;
-            if let Some(&moved) = self.keys.get(at) {
-                self.slots[moved as usize] = at as u32 + 1;
-            }
+    fn new() -> Self {
+        IdIndex {
+            keys: Vec::new_in(A::default()),
+            slots: Vec::new_in(A::default()),
+            base: 0,
         }
     }
 
@@ -94,12 +41,87 @@ impl IdIndex {
         self.keys.clear();
         self.slots.clear();
     }
+}
 
-    /// After the keys were filtered in place.
-    fn reindex(&mut self) {
-        if !self.slots.is_empty() {
-            self.fill_slots();
+impl<K: Copy + Into<u32>, A: MapAllocator> IdIndex<K, A> {
+    #[inline]
+    fn position(&self, key: K) -> Option<usize> {
+        let id = key.into();
+        if self.slots.is_empty() {
+            return self.keys.iter().position(|&key| key.into() == id);
         }
+        match self.slots.get(id.wrapping_sub(self.base) as usize) {
+            Some(&slot) if slot != 0 => Some(slot as usize - 1),
+            _ => None,
+        }
+    }
+
+    /// Appends a key that is not there and says where it is.
+    #[inline]
+    fn push(&mut self, key: K) -> usize {
+        let at = self.keys.len();
+        self.keys.push(key);
+        if self.slots.is_empty() {
+            if at >= SCAN_MAX {
+                self.fill_slots();
+            }
+            return at;
+        }
+        match key.into().checked_sub(self.base) {
+            Some(slot) => {
+                let slot = slot as usize;
+                if slot >= self.slots.len() {
+                    self.slots.resize(slot + 1, 0);
+                }
+                self.slots[slot] = at as u32 + 1;
+            }
+            None => self.fill_slots(),
+        }
+        at
+    }
+
+    #[inline]
+    fn slot_of(&mut self, key: K) -> &mut u32 {
+        &mut self.slots[(key.into() - self.base) as usize]
+    }
+
+    /// Below the least id there is as much room as the table had, so that ids which come in
+    /// falling order do not fill it each time.
+    #[cold]
+    #[inline(never)]
+    fn fill_slots(&mut self) {
+        let ids = || self.keys.iter().map(|&key| key.into());
+        let (least, greatest) = (ids().min().unwrap_or(0), ids().max().unwrap_or(0));
+        self.base = least.saturating_sub(self.slots.len() as u32);
+        self.slots.clear();
+        self.slots.resize((greatest - self.base) as usize + 1, 0);
+        for at in 0..self.keys.len() {
+            *self.slot_of(self.keys[at]) = at as u32 + 1;
+        }
+    }
+
+    /// Keeps the order of the rest.
+    fn shift_remove_at(&mut self, at: usize) -> K {
+        let key = self.keys.remove(at);
+        if !self.slots.is_empty() {
+            *self.slot_of(key) = 0;
+            for later in at..self.keys.len() {
+                *self.slot_of(self.keys[later]) -= 1;
+            }
+        }
+        key
+    }
+
+    /// The last key takes the place of the removed one.
+    fn swap_remove_at(&mut self, at: usize) -> K {
+        let key = self.keys.swap_remove(at);
+        if !self.slots.is_empty() {
+            *self.slot_of(key) = 0;
+            if let Some(&moved) = self.keys.get(at) {
+                *self.slot_of(moved) = at as u32 + 1;
+            }
+        }
+        key
     }
 }
 
@@ -108,19 +130,17 @@ impl IdIndex {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Insertion-ordered map keyed by a `u32` newtype id.
-pub struct IdMap<K, V> {
-    index: IdIndex,
-    values: Vec<V>,
-    key: PhantomData<K>,
+pub struct IdMap<K, V, A: MapAllocator = Global> {
+    index: IdIndex<K, A>,
+    values: Vec<V, A>,
 }
 
-impl<K, V> IdMap<K, V> {
+impl<K, V, A: MapAllocator> IdMap<K, V, A> {
     #[inline]
     pub(crate) fn new() -> Self {
         Self {
-            index: IdIndex::default(),
-            values: Vec::new(),
-            key: PhantomData,
+            index: IdIndex::new(),
+            values: Vec::new_in(A::default()),
         }
     }
     #[inline]
@@ -132,6 +152,13 @@ impl<K, V> IdMap<K, V> {
         self.values.is_empty()
     }
     #[inline]
+    pub(crate) fn keys(&self) -> core::iter::Copied<slice::Iter<'_, K>>
+    where
+        K: Copy,
+    {
+        self.index.keys.iter().copied()
+    }
+    #[inline]
     pub(crate) fn values(&self) -> slice::Iter<'_, V> {
         self.values.iter()
     }
@@ -139,119 +166,139 @@ impl<K, V> IdMap<K, V> {
     pub(crate) fn values_mut(&mut self) -> slice::IterMut<'_, V> {
         self.values.iter_mut()
     }
+    #[inline]
+    pub(crate) fn iter(&self) -> impl ExactSizeIterator<Item = (K, &V)>
+    where
+        K: Copy,
+    {
+        self.keys().zip(&self.values)
+    }
+    #[inline]
+    pub(crate) fn iter_mut(&mut self) -> impl ExactSizeIterator<Item = (K, &mut V)>
+    where
+        K: Copy,
+    {
+        self.index.keys.iter().copied().zip(&mut self.values)
+    }
+    /// The keys and the values, each in insertion order.
+    #[inline]
+    pub(crate) fn as_slices(&self) -> (&[K], &[V]) {
+        (&self.index.keys, &self.values)
+    }
+    #[inline]
+    pub(crate) fn as_mut_slices(&mut self) -> (&[K], &mut [V]) {
+        (&self.index.keys, &mut self.values)
+    }
+    pub(crate) fn into_entries(self) -> (Vec<K, A>, Vec<V, A>) {
+        (self.index.keys, self.values)
+    }
     pub(crate) fn clear(&mut self) {
         self.index.clear();
         self.values.clear();
     }
+    pub(crate) fn reserve(&mut self, additional: usize) {
+        self.index.keys.reserve(additional);
+        self.values.reserve(additional);
+    }
 }
 
-impl<K: Copy + Into<u32>, V> IdMap<K, V> {
+impl<K: Copy + Into<u32>, V, A: MapAllocator> IdMap<K, V, A> {
+    /// Where the key is in insertion order.
+    #[inline]
+    pub(crate) fn position(&self, k: K) -> Option<usize> {
+        self.index.position(k)
+    }
     #[inline]
     pub(crate) fn get(&self, k: K) -> Option<&V> {
-        self.index.position(k.into()).map(|at| &self.values[at])
+        self.index.position(k).map(|at| &self.values[at])
     }
     #[inline]
     pub(crate) fn get_mut(&mut self, k: K) -> Option<&mut V> {
-        self.index.position(k.into()).map(|at| &mut self.values[at])
+        self.index.position(k).map(|at| &mut self.values[at])
     }
     #[inline]
     pub(crate) fn contains_key(&self, k: K) -> bool {
-        self.index.position(k.into()).is_some()
+        self.index.position(k).is_some()
     }
     /// A key that is there keeps its place.
     #[inline]
     pub(crate) fn insert(&mut self, k: K, v: V) -> Option<V> {
-        let id = k.into();
-        match self.index.position(id) {
+        match self.index.position(k) {
             Some(at) => Some(core::mem::replace(&mut self.values[at], v)),
             None => {
-                self.index.push(id);
+                self.index.push(k);
                 self.values.push(v);
                 None
             }
         }
     }
     #[inline]
-    pub(crate) fn entry(&mut self, k: K) -> IdEntry<'_, K, V> {
-        let id = k.into();
-        let at = self.index.position(id);
-        IdEntry { map: self, id, at }
+    pub(crate) fn entry(&mut self, k: K) -> IdEntry<'_, K, V, A> {
+        let at = self.index.position(k);
+        IdEntry {
+            map: self,
+            key: k,
+            at,
+        }
     }
     /// Order-preserving remove. O(n).
     pub(crate) fn remove(&mut self, k: K) -> Option<V> {
-        let at = self.index.position(k.into())?;
+        let at = self.index.position(k)?;
         self.index.shift_remove_at(at);
         Some(self.values.remove(at))
     }
     /// O(1) remove; does not preserve order.
     pub(crate) fn swap_remove(&mut self, k: K) -> Option<V> {
-        let at = self.index.position(k.into())?;
+        let at = self.index.position(k)?;
         self.index.swap_remove_at(at);
         Some(self.values.swap_remove(at))
     }
-}
-
-impl<K: Copy + From<u32>, V> IdMap<K, V> {
-    #[inline]
-    pub(crate) fn keys(&self) -> impl ExactSizeIterator<Item = K> + '_ {
-        self.index.keys.iter().map(|&id| K::from(id))
-    }
-    #[inline]
-    pub(crate) fn iter(&self) -> impl ExactSizeIterator<Item = (K, &V)> {
-        self.index
-            .keys
-            .iter()
-            .map(|&id| K::from(id))
-            .zip(&self.values)
-    }
-    #[inline]
-    pub(crate) fn iter_mut(&mut self) -> impl ExactSizeIterator<Item = (K, &mut V)> {
-        self.index
-            .keys
-            .iter()
-            .map(|&id| K::from(id))
-            .zip(&mut self.values)
-    }
     pub(crate) fn retain(&mut self, mut keep: impl FnMut(K, &mut V) -> bool) {
-        let mut kept = Vec::with_capacity(self.index.keys.len());
-        let mut keys = self.index.keys.iter();
+        let before = self.values.len();
+        let mut at = 0;
+        let keys = &mut self.index.keys;
+        let mut kept = 0;
         self.values.retain_mut(|value| {
-            let id = *keys.next().expect("a key for each value");
-            let keeps = keep(K::from(id), value);
+            let key = keys[at];
+            at += 1;
+            let keeps = keep(key, value);
             if keeps {
-                kept.push(id);
+                keys[kept] = key;
+                kept += 1;
             }
             keeps
         });
-        self.index.keys = kept;
-        self.index.reindex();
+        keys.truncate(kept);
+        if kept != before && !self.index.slots.is_empty() {
+            self.index.slots.clear();
+            self.index.fill_slots();
+        }
     }
 }
 
-impl<K, V> Default for IdMap<K, V> {
+impl<K, V, A: MapAllocator> Default for IdMap<K, V, A> {
     #[inline]
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<K, V: Clone> Clone for IdMap<K, V> {
+impl<K: Clone, V: Clone, A: MapAllocator> Clone for IdMap<K, V, A> {
     fn clone(&self) -> Self {
         Self {
             index: self.index.clone(),
             values: self.values.clone(),
-            key: PhantomData,
         }
     }
 }
 
-impl<K: Copy + From<u32> + fmt::Debug, V: fmt::Debug> fmt::Debug for IdMap<K, V> {
+impl<K: Copy + fmt::Debug, V: fmt::Debug, A: MapAllocator> fmt::Debug for IdMap<K, V, A> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_map().entries(self.iter()).finish()
     }
 }
 
-impl<K: Copy + Into<u32>, V> Extend<(K, V)> for IdMap<K, V> {
+impl<K: Copy + Into<u32>, V, A: MapAllocator> Extend<(K, V)> for IdMap<K, V, A> {
     fn extend<I: IntoIterator<Item = (K, V)>>(&mut self, iter: I) {
         for (k, v) in iter {
             self.insert(k, v);
@@ -259,7 +306,7 @@ impl<K: Copy + Into<u32>, V> Extend<(K, V)> for IdMap<K, V> {
     }
 }
 
-impl<K: Copy + Into<u32>, V> FromIterator<(K, V)> for IdMap<K, V> {
+impl<K: Copy + Into<u32>, V, A: MapAllocator> FromIterator<(K, V)> for IdMap<K, V, A> {
     fn from_iter<I: IntoIterator<Item = (K, V)>>(iter: I) -> Self {
         let mut map = Self::new();
         map.extend(iter);
@@ -267,35 +314,28 @@ impl<K: Copy + Into<u32>, V> FromIterator<(K, V)> for IdMap<K, V> {
     }
 }
 
-impl<K: Copy + From<u32>, V> IntoIterator for IdMap<K, V> {
+impl<K, V, A: MapAllocator> IntoIterator for IdMap<K, V, A> {
     type Item = (K, V);
-    type IntoIter = core::iter::Zip<
-        core::iter::Map<std::vec::IntoIter<u32>, fn(u32) -> K>,
-        std::vec::IntoIter<V>,
-    >;
+    type IntoIter = core::iter::Zip<std::vec::IntoIter<K, A>, std::vec::IntoIter<V, A>>;
     fn into_iter(self) -> Self::IntoIter {
-        self.index
-            .keys
-            .into_iter()
-            .map(K::from as fn(u32) -> K)
-            .zip(self.values)
+        self.index.keys.into_iter().zip(self.values)
     }
 }
 
-pub struct IdEntry<'a, K, V> {
-    map: &'a mut IdMap<K, V>,
-    id: u32,
+pub struct IdEntry<'a, K, V, A: MapAllocator = Global> {
+    map: &'a mut IdMap<K, V, A>,
+    key: K,
     at: Option<usize>,
 }
 
-impl<'a, K, V> IdEntry<'a, K, V> {
+impl<'a, K: Copy + Into<u32>, V, A: MapAllocator> IdEntry<'a, K, V, A> {
     #[inline]
     pub(crate) fn or_insert_with(self, make: impl FnOnce() -> V) -> &'a mut V {
         let at = match self.at {
             Some(at) => at,
             None => {
                 self.map.values.push(make());
-                self.map.index.push(self.id)
+                self.map.index.push(self.key)
             }
         };
         &mut self.map.values[at]
@@ -319,16 +359,14 @@ impl<'a, K, V> IdEntry<'a, K, V> {
 
 /// Insertion-ordered set of a `u32` newtype id.
 pub struct IdSet<K> {
-    index: IdIndex,
-    key: PhantomData<K>,
+    index: IdIndex<K, Global>,
 }
 
 impl<K> IdSet<K> {
     #[inline]
     pub(crate) fn new() -> Self {
         Self {
-            index: IdIndex::default(),
-            key: PhantomData,
+            index: IdIndex::new(),
         }
     }
     #[inline]
@@ -348,20 +386,19 @@ impl<K: Copy + Into<u32>> IdSet<K> {
     /// Returns `true` if the value was newly inserted.
     #[inline]
     pub(crate) fn insert(&mut self, k: K) -> bool {
-        let id = k.into();
-        let is_new = self.index.position(id).is_none();
+        let is_new = self.index.position(k).is_none();
         if is_new {
-            self.index.push(id);
+            self.index.push(k);
         }
         is_new
     }
     #[inline]
     pub(crate) fn contains(&self, k: K) -> bool {
-        self.index.position(k.into()).is_some()
+        self.index.position(k).is_some()
     }
     /// Order-preserving remove. O(n).
     pub(crate) fn remove(&mut self, k: K) -> bool {
-        match self.index.position(k.into()) {
+        match self.index.position(k) {
             Some(at) => {
                 self.index.shift_remove_at(at);
                 true
@@ -369,12 +406,9 @@ impl<K: Copy + Into<u32>> IdSet<K> {
             None => false,
         }
     }
-}
-
-impl<K: Copy + From<u32>> IdSet<K> {
     #[inline]
-    pub(crate) fn iter(&self) -> impl ExactSizeIterator<Item = K> + DoubleEndedIterator + '_ {
-        self.index.keys.iter().map(|&id| K::from(id))
+    pub(crate) fn iter(&self) -> core::iter::Copied<slice::Iter<'_, K>> {
+        self.index.keys.iter().copied()
     }
 }
 
@@ -385,16 +419,15 @@ impl<K> Default for IdSet<K> {
     }
 }
 
-impl<K> Clone for IdSet<K> {
+impl<K: Clone> Clone for IdSet<K> {
     fn clone(&self) -> Self {
         Self {
             index: self.index.clone(),
-            key: PhantomData,
         }
     }
 }
 
-impl<K: Copy + From<u32> + fmt::Debug> fmt::Debug for IdSet<K> {
+impl<K: Copy + Into<u32> + fmt::Debug> fmt::Debug for IdSet<K> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_set().entries(self.iter()).finish()
     }

@@ -356,7 +356,11 @@ impl Candidates {
         {
             return Candidates::of(file);
         }
-        let count_of = |tag: ExprTag| counts.get(2 * tag as usize).map_or(0, |&count| count as usize);
+        let count_of = |tag: ExprTag| {
+            counts
+                .get(2 * tag as usize)
+                .map_or(0, |&count| count as usize)
+        };
         let mut found = Vec::with_capacity(tags.iter().map(|&tag| count_of(tag)).sum());
         for &tag in tags {
             let kind = 2 * tag as u8;
@@ -493,13 +497,10 @@ pub(super) fn has_module_syntax<'a>(file: &'a File<'a>) -> bool {
 /// Those of the checks of [`first_error`] that OXC makes too, for a file that TypeScript's parser has nothing to say about: see
 /// [`super::oxc`]. OXC takes a file for a module if it has `import` or `export`.
 pub(super) fn first_error_of_oxc<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
-    // What `early_errors_of_oxc` asks for.
-    let tags: &[ExprTag] = match file.is_javascript() {
-        true => &[ExprTag::Regex, ExprTag::Unary, ExprTag::Assign],
-        false => &[ExprTag::Regex],
-    };
-    let candidates = Candidates::of_kinds(file, tags);
-    let mut checks = checks_of_oxc(file, Some(&candidates));
+    // Of TypeScript `early_errors_of_oxc` asks for these only. Of JavaScript it asks for one expression in ten, which the
+    // rules are about to want by kind anyway.
+    let candidates = (!file.is_javascript()).then(|| Candidates::of_kinds(file, &[ExprTag::Regex]));
+    let mut checks = checks_of_oxc(file, candidates.as_ref());
     checks.early_errors_of_oxc();
     checks.first.map(|it| it.1)
 }

@@ -24,7 +24,7 @@ use crate::hir::ReactiveFunction;
 use crate::hir::ReactiveScopeBlock;
 use crate::hir::ReactiveValue;
 use crate::hir::StoreStr;
-use crate::hir::environment::Environment;
+use crate::hir::environment::{Environment, OutputMode};
 
 use crate::reactive_scopes::visitors::ReactiveFunctionVisitor;
 use crate::reactive_scopes::visitors::{self};
@@ -141,6 +141,43 @@ struct Visitor<'a> {
     env: &'a Environment,
 }
 
+impl Visitor<'_> {
+    /// Walk an inner HIR function, visiting params, instructions (with lvalues,
+    /// value-lvalues and operands), and terminal operands, as if each instruction
+    /// were one of the reactive function.
+    /// TS: `visitHirFunction`
+    /// Upstream recurses into a nested function twice, which walks depth `d` 2^d times.
+    fn visit_hir_function(&self, func_id: FunctionId, state: &mut Scopes) {
+        let env = self.env;
+        let inner_func = &env.functions[func_id.0 as usize];
+        for param in &inner_func.params {
+            state.visit_identifier(param.place().identifier, env);
+        }
+        for block in inner_func.body.blocks.values() {
+            for instr_id in &block.instructions {
+                let instr = &inner_func.instructions[instr_id.0 as usize];
+                for lvalue in crate::hir::visitors::lvalues(instr) {
+                    state.visit_identifier(lvalue.identifier, env);
+                }
+                // `traverse_value`
+                if env.has_stack() {
+                    for place in crate::hir::visitors::operands(&instr.value, &env.functions) {
+                        state.visit_identifier(place.identifier, env);
+                    }
+                }
+                if let InstructionValue::FunctionExpression { lowered_func, .. }
+                | InstructionValue::ObjectMethod { lowered_func, .. } = &instr.value
+                {
+                    self.visit_hir_function(lowered_func.func, state);
+                }
+            }
+            for operand in crate::hir::visitors::terminal_operands(&block.terminal) {
+                state.visit_identifier(operand.identifier, env);
+            }
+        }
+    }
+}
+
 impl ReactiveFunctionVisitor for Visitor<'_> {
     type State = Scopes;
 
@@ -180,13 +217,8 @@ impl ReactiveFunctionVisitor for Visitor<'_> {
     /// TS: `visitScope(scope, state) { for (const [_, decl] of scope.scope.declarations) state.visit(decl.identifier); this.traverseScope(scope, state) }`
     fn visit_scope(&self, scope: &ReactiveScopeBlock, state: &mut Scopes) {
         let scope_data = &self.env.scopes[scope.scope.0 as usize];
-        let decl_ids: Vec<crate::hir::IdentifierId> = scope_data
-            .declarations
-            .iter()
-            .map(|(_, d)| d.identifier)
-            .collect();
-        for id in decl_ids {
-            state.visit_identifier(id, self.env);
+        for (_, declaration) in &scope_data.declarations {
+            state.visit_identifier(declaration.identifier, self.env);
         }
         self.traverse_scope(scope, state);
     }
@@ -254,6 +286,11 @@ fn rename_variables_with_parent(
                 identifier.name = Some(mapped_name.clone());
             }
         }
+    }
+
+    // The names are for what is generated.
+    if env.output_mode == OutputMode::Lint {
+        return HashSet::default();
     }
 
     let mut result: HashSet<String> =
@@ -378,10 +415,7 @@ fn collect_globals_hir_function(
     }
 
     let inner_func = &env.functions[func_id.0 as usize];
-    let block_ids: Vec<_> = inner_func.body.blocks.keys().copied().collect();
-    for block_id in block_ids {
-        let inner_func = &env.functions[func_id.0 as usize];
-        let block = &inner_func.body.blocks[&block_id];
+    for block in inner_func.body.blocks.values() {
         for instr_id in &block.instructions {
             let instr = &inner_func.instructions[instr_id.0 as usize];
             if let InstructionValue::LoadGlobal { binding, .. } = &instr.value {

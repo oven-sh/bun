@@ -812,6 +812,16 @@ fn validate_no_ref_value_access(errors: &mut Vec<CompilerDiagnostic>, env: &Env,
     }
 }
 
+/// Whether `validate_no_ref_passed_to_function` reports it. What `validate_no_direct_ref_value_access` reports is
+/// among that.
+fn is_reported_when_passed(env: &Env, operand: &Place) -> bool {
+    match env.peek(operand.identifier).map(destructure) {
+        Some(View::RefValue(..) | View::Ref(_)) => true,
+        Some(View::Structure(_, Some(fn_type))) => fn_type.read_ref_effect,
+        _ => false,
+    }
+}
+
 fn validate_no_ref_passed_to_function(
     errors: &mut Vec<CompilerDiagnostic>,
     env: &Env,
@@ -1141,32 +1151,28 @@ fn validate_no_ref_access_in_render_impl(
                                 let mut visited_effects: HashSet<(IdentifierId, bool)> =
                                     HashSet::default();
                                 // A call with n arguments has about n * n effects.
-                                let frozen: HashSet<IdentifierId> = (instr
-                                    .effects
-                                    .iter()
-                                    .flatten())
-                                .filter_map(|effect| match effect {
-                                    AliasingEffect::Freeze { value, .. } => Some(value.identifier),
-                                    _ => None,
-                                })
-                                .collect();
+                                let mut frozen: Option<HashSet<IdentifierId>> = None;
                                 for effect in instr.effects.as_ref().unwrap() {
-                                    let (place, ref_passed): (&Place, bool) = match effect {
-                                        AliasingEffect::Freeze { value, .. } => (value, false),
+                                    let (place, ref_passed): (&Place, Option<bool>) = match effect {
+                                        AliasingEffect::Freeze { value, .. } => {
+                                            (value, Some(false))
+                                        }
                                         AliasingEffect::Mutate { value, .. }
                                         | AliasingEffect::MutateTransitive { value }
                                         | AliasingEffect::MutateConditionally { value }
                                         | AliasingEffect::MutateTransitiveConditionally { value } => {
-                                            (value, true)
+                                            (value, Some(true))
                                         }
-                                        AliasingEffect::Render { place } => (place, true),
+                                        AliasingEffect::Render { place } => (place, Some(true)),
                                         AliasingEffect::Capture { from, .. }
                                         | AliasingEffect::Alias { from, .. }
                                         | AliasingEffect::MaybeAlias { from, .. }
                                         | AliasingEffect::Assign { from, .. }
-                                        | AliasingEffect::CreateFrom { from, .. } => (from, true),
+                                        | AliasingEffect::CreateFrom { from, .. } => {
+                                            (from, Some(true))
+                                        }
                                         AliasingEffect::ImmutableCapture { from, .. } => {
-                                            (from, !frozen.contains(&from.identifier))
+                                            (from, None)
                                         }
                                         AliasingEffect::Create { .. }
                                         | AliasingEffect::CreateFunction { .. }
@@ -1175,6 +1181,38 @@ fn validate_no_ref_access_in_render_impl(
                                         | AliasingEffect::MutateFrozen { .. }
                                         | AliasingEffect::MutateGlobal { .. } => continue,
                                     };
+                                    if !is_reported_when_passed(ref_env, place) {
+                                        debug_assert!({
+                                            let mut reported = Vec::new();
+                                            validate_no_ref_passed_to_function(
+                                                &mut reported,
+                                                ref_env,
+                                                place,
+                                                place.loc,
+                                            );
+                                            validate_no_direct_ref_value_access(
+                                                &mut reported,
+                                                place,
+                                                ref_env,
+                                            );
+                                            reported.is_empty()
+                                        });
+                                        continue;
+                                    }
+                                    let ref_passed = ref_passed.unwrap_or_else(|| {
+                                        !frozen
+                                            .get_or_insert_with(|| {
+                                                (instr.effects.iter().flatten())
+                                                    .filter_map(|effect| match effect {
+                                                        AliasingEffect::Freeze {
+                                                            value, ..
+                                                        } => Some(value.identifier),
+                                                        _ => None,
+                                                    })
+                                                    .collect()
+                                            })
+                                            .contains(&place.identifier)
+                                    });
                                     if visited_effects.insert((place.identifier, ref_passed)) {
                                         if ref_passed {
                                             validate_no_ref_passed_to_function(

@@ -9,7 +9,7 @@
 
 use crate::diagnostics::CompilerError;
 use crate::hir::{
-    EvaluationOrder, FunctionId, InstructionValue, Place, PrunedReactiveScopeBlock, ReactiveBlock,
+    EvaluationOrder, InstructionValue, Place, PrunedReactiveScopeBlock, ReactiveBlock,
     ReactiveFunction, ReactiveInstruction, ReactiveScopeBlock, ReactiveStatement, ReactiveTerminal,
     ReactiveTerminalStatement, ReactiveValue, environment::Environment,
 };
@@ -39,37 +39,6 @@ pub(crate) trait ReactiveFunctionVisitor {
     fn visit_lvalue(&self, _id: EvaluationOrder, _lvalue: &Place, _state: &mut Self::State) {}
 
     fn visit_param(&self, _place: &Place, _state: &mut Self::State) {}
-
-    /// Walk an inner HIR function, visiting params, instructions (with lvalues,
-    /// value-lvalues and operands), and terminal operands.
-    /// TS: `visitHirFunction`
-    /// Nested functions are left to the visitor's `visit_value` override; upstream also recurses here, which walks depth `d` 2^d times.
-    fn visit_hir_function(&self, func_id: FunctionId, state: &mut Self::State) {
-        let inner_func = &self.env().functions[func_id.0 as usize];
-        for param in &inner_func.params {
-            let place = param.place();
-            self.visit_param(place, state);
-        }
-        for block in inner_func.body.blocks.values() {
-            let terminal_id = block.terminal.evaluation_order();
-
-            for instr_id in &block.instructions {
-                let instr = &inner_func.instructions[instr_id.0 as usize];
-                // Build a temporary ReactiveInstruction for the visitor
-                let reactive_instr = ReactiveInstruction {
-                    id: instr.id,
-                    lvalue: Some(instr.lvalue.clone()),
-                    value: ReactiveValue::Instruction(instr.value.clone()),
-                    effects: None,
-                    loc: instr.loc,
-                };
-                self.visit_instruction(&reactive_instr, state);
-            }
-            for operand in crate::hir::visitors::terminal_operands(&block.terminal) {
-                self.visit_place(terminal_id, operand, state);
-            }
-        }
-    }
 
     fn visit_value(&self, id: EvaluationOrder, value: &ReactiveValue, state: &mut Self::State) {
         self.traverse_value(id, value, state);

@@ -93,7 +93,23 @@ pub(super) fn package_json_entry_or_crash<'a>(
     Global::crash();
 }
 
+/// Exits 1 when a package failed to install.
 pub fn update_package_json_and_install_with_manager(
+    manager: &mut PackageManager,
+    ctx: Command::Context,
+    original_cwd: &[u8],
+) -> Result<(), Error> {
+    update_package_json_and_install_without_failure_exit(manager, ctx, original_cwd)?;
+
+    if manager.any_failed_to_install {
+        Global::exit(1);
+    }
+
+    Ok(())
+}
+
+/// Leaves `manager.any_failed_to_install` for the caller to turn into the exit status.
+fn update_package_json_and_install_without_failure_exit(
     manager: &mut PackageManager,
     ctx: Command::Context,
     original_cwd: &[u8],
@@ -465,7 +481,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         && manager.options.do_.contains(Do::WRITE_PACKAGE_JSON)
         && !any_changes
     {
-        Global::exit(0);
+        return Ok(());
     }
     remove_leftover_node_modules(manager);
 
@@ -603,7 +619,7 @@ pub fn update_package_json_and_install_and_cli(
         crate::update_scope::expand_positionals(manager, original_cwd, update_groups);
     }
 
-    update_package_json_and_install_with_manager(manager, ctx, original_cwd)?;
+    update_package_json_and_install_without_failure_exit(manager, ctx, original_cwd)?;
 
     if matches!(manager.options.patch_features, PatchFeatures::Patch) {
         patch_package::prepare_patch(manager)?;

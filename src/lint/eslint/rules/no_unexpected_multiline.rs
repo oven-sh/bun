@@ -36,6 +36,18 @@ fn break_after(e: Expr) -> Option<Span> {
 
 /// The `(` of a call with type arguments, if it is on another line than their `>`: where oxlint looks.
 fn break_after_type_args<'a>(call: Call<'a>, file: &'a File<'a>) -> Option<Span> {
+    let text = file.text();
+    let is = |at: u32, byte: u8| text.get(at as usize) == Some(&byte);
+    // Nearly always `>(` follows the last of them, and it takes no tokens of the file to see that.
+    let mut close = skip_trivia(text, call.type_args().last()?.span().end);
+    while is(close, b')') || is(close, b',') {
+        close = skip_trivia(text, close + 1);
+    }
+    let open = skip_trivia(text, close + 1);
+    if is(close, b'>') && is(open, b'(') {
+        let between = file.slice(Span::new(close + 1, open));
+        return strings::contains_js_line_break(between).then(|| Span::new(open, open + 1));
+    }
     let open = file.token_before(call.args().first()?.outer_span())?.span();
     let close = file.token_before(open)?.span();
     strings::contains_js_line_break(file.slice(close.between(open))).then_some(open)

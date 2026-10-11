@@ -1,4 +1,3 @@
-use bun_core::strings;
 use super::id_length::key_identifier;
 use bun_lint::linter::GlobalVariable;
 use bun_lint::prelude::*;
@@ -124,10 +123,6 @@ fn is_reference_to_global_variable(e: Expr<'_>) -> bool {
 
 impl IdMatch {
     fn fails(&self, name: &[u8]) -> bool {
-        // The default.
-        if self.pattern == "^.+$" {
-            return name.is_empty() || strings::contains_js_line_break(name);
-        }
         self.regex.as_ref().is_some_and(|regex| !regex.test(name))
     }
 
@@ -628,7 +623,8 @@ impl Rule for IdMatch {
     }
 
     fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
-        self.regex.is_some().then(State::default)
+        // The default takes every name: none is empty, and none has a line break in it.
+        (self.regex.is_some() && self.pattern != "^.+$").then(State::default)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

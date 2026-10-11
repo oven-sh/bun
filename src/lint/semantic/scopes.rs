@@ -8,7 +8,7 @@ use super::ScopeKind;
 use crate::ast::File;
 use crate::language::{Parser, SourceType};
 use crate::runner::in_walk_order;
-use bun_sema::bind::{ClassOwner, FnOwner, MemberOwner, Parent};
+use bun_sema::bind::{ClassOwner, FnOwner, MemberOwner, Parent, kind_counts};
 use bun_sema::hir::{self, FnKind, StmtKind, TypeNodeKind, VarKind};
 use std::cell::OnceCell;
 
@@ -608,7 +608,14 @@ impl<'f, 'a> Collector<'f, 'a> {
         if self.is_javascript {
             return;
         }
-        (0..hir.types.len()).for_each(|i| self.ty(i));
+        // Few files have a type that creates a scope, and the binder has counted them.
+        let count = |tag: hir::TypeTag| {
+            let counted = self.file.bound.kind_counts;
+            counted.get(kind_counts::TYPES + tag as usize).copied()
+        };
+        if (count(hir::TypeTag::Cond), count(hir::TypeTag::Mapped)) != (Some(0), Some(0)) {
+            (0..hir.types.len()).for_each(|i| self.ty(i));
+        }
         hir.interfaces
             .iter()
             .for_each(|it| self.interface(Some(it)));

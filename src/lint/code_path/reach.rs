@@ -35,6 +35,8 @@ pub(crate) struct Reach {
     /// The functions whose end can be reached.
     fn_ends: Marks,
     is_end_reachable: bool,
+    /// Asked for once for all functions.
+    stack: bun_core::StackCheck,
 }
 
 impl Reach {
@@ -47,6 +49,7 @@ impl Reach {
             case_ends: Marks::new(file.hir.cases.len()),
             fn_ends: Marks::new(file.hir.fns.len()),
             is_end_reachable: true,
+            stack: bun_core::StackCheck::init(),
         };
         reach.is_end_reachable = is_end_reachable(Node::File(file), Some(&mut reach));
         file.every_func(|func| {
@@ -122,6 +125,10 @@ pub(super) fn is_end_reachable(root: Node, mut reach: Option<&mut Reach>) -> boo
         },
         _ => return true,
     };
+    let stack = match &reach {
+        Some(reach) => reach.stack,
+        None => bun_core::StackCheck::init(),
+    };
     let mut quick = Quick {
         file: root.file(),
         reach: reach.as_deref_mut(),
@@ -131,7 +138,7 @@ pub(super) fn is_end_reachable(root: Node, mut reach: Option<&mut Reach>) -> boo
         tries: Vec::new(),
         targets: Vec::new(),
         label: None,
-        stack: bun_core::StackCheck::init(),
+        stack,
         is_generator: matches!(root, Node::Func(func) if func.is_generator()),
         has_given_up: false,
     };

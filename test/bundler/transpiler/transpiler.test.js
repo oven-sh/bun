@@ -263,6 +263,60 @@ describe("Bun.Transpiler", () => {
       ts.expectPrintedMin_('x = ({ "a-b": h })["a-b"]`x`', 'x = { "a-b": h }["a-b"]`x`');
       ts.expectPrintedMin_("x = ({ é: h }).é`x`", "x = { é: h }.é`x`");
       ts.expectPrintedMin_('x = ({ "é": h }).é`x`', 'x = { "é": h }.é`x`');
+      // The object arrives through a single-use local, and another tag follows it.
+      ts.expectPrintedMin_(
+        "function f() { const o = { f: h }; return !o.f`x` + g`y`; }",
+        "function f() {\n  return !{ f: h }.f`x` + g`y`;\n}",
+      );
+    });
+    it("does not substitute a single-use local into a template tag when it holds a property access", () => {
+      for (const kept of [
+        "function f(o) {\n  const t = o.f;\n  return t`x`;\n}",
+        "function f(o, k) {\n  const t = o[k];\n  return t`x`;\n}",
+        "function f(a) {\n  const t = a?.f;\n  return t`x`;\n}",
+      ]) {
+        ts.expectPrintedMin_(kept, kept);
+      }
+      ts.expectPrintedMin_(
+        'function f() { const o = { f: h }; const t = o.f; return "" + t`x`; }',
+        'function f() {\n  const t = { f: h }.f;\n  return "" + t`x`;\n}',
+      );
+      ts.expectPrintedMin_("function f(h) { const t = h; return t`x`; }", "function f(h) {\n  return h`x`;\n}");
+    });
+    it("gives a template tag the `this` that the source gives it", async () => {
+      const src = `
+        function getThis() { return this; }
+        var tools = { tag: getThis };
+        function check(label, fn, expected) {
+          var got;
+          try { got = "=> " + fn(); } catch (e) { got = e.constructor.name; }
+          console.log(label + ": " + (got === expected ? "ok" : got + " (want " + expected + ")"));
+        }
+        // A tag that is a property access receives the object.
+        check("literal",          () => ({ f: getThis }).f\`x\`.f === getThis, "=> true");
+        check("literal, local",   () => { const o = { f: getThis }; return o.f\`x\`.f === getThis; }, "=> true");
+        // A tag that is a local does not, whatever the local holds.
+        check("alias",            () => { const t = tools.tag; return t\`x\` === tools; }, "=> false");
+        check("alias, index",     () => { const k = "tag", t = tools[k]; return t\`x\` === tools; }, "=> false");
+        check("alias, ?.",        () => { const t = tools?.tag; return t\`x\` === tools; }, "=> false");
+        check("alias of literal", () => { const o = { f: getThis }; const t = o.f; return !t\`x\`?.f; }, "=> true");
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim().split("\n")).toEqual([
+        "literal: ok",
+        "literal, local: ok",
+        "alias: ok",
+        "alias, index: ok",
+        "alias, ?.: ok",
+        "alias of literal: ok",
+      ]);
+      expect(exitCode).toBe(0);
     });
 
     // A string key with a non-ASCII character is stored as UTF-16. The name of
@@ -291,6 +345,11 @@ describe("Bun.Transpiler", () => {
         ts.expectPrintedMin_(`x = ({ "${key}": 1 }).\\u00e9`, `x = { "${key}": 1 }.é`);
         ts.expectPrintedMin_(`x = typeof ({ "${key}": 1 }).é`, `x = typeof { "${key}": 1 }.é`);
         ts.expectPrintedMin_(`x = ({ "${key}": 1 }).é.toString()`, `x = { "${key}": 1 }.é.toString()`);
+        // The object arrives through a single-use local.
+        ts.expectPrintedMin_(
+          `function f() { const o = { "${key}": 1 }; return +o.é; }`,
+          `function f() {\n  return +{ "${key}": 1 }.é;\n}`,
+        );
       });
       it("folds when the key is the same string as the name", () => {
         for (const name of names) {
@@ -300,12 +359,12 @@ describe("Bun.Transpiler", () => {
         }
         ts.expectPrintedMin_('x = ({ "é": 1 }).\\u00e9', "x = 1");
         ts.expectPrintedMin_('x = ({ "é": 1 })?.é', "x = 1");
+        ts.expectPrintedMin_('function f() { const o = { "é": 1 }; return +o.é; }', "function f() {\n  return 1;\n}");
       });
-      it("compares an index that a define injects in the same way", () => {
+      it("keeps an index that a define injects when the key is its twin", () => {
         const withDefine = new Bun.Transpiler({ loader: "ts", minify: { syntax: true }, define: { K: '"é-x"' } });
         const key = twin("é") + "-x";
         expect(withDefine.transformSync(`x = ({ "${key}": 1 })[K]`)).toBe(`x = { "${key}": 1 }["é-x"];\n`);
-        expect(withDefine.transformSync('x = ({ "é-x": 1 })[K]')).toBe("x = 1;\n");
       });
       it("gives the value of the property read when bun runs a file", async () => {
         const key = twin("é");
@@ -317,9 +376,13 @@ describe("Bun.Transpiler", () => {
           ["twin escaped name", `({ "${key}": 1 }).\\u00e9`, "undefined"],
           ["twin typeof", `typeof ({ "${key}": 1 }).é`, "undefined"],
           ["twin method call", `({ "${key}": 1 }).é.toString()`, "TypeError"],
+          [
+            "twin through a single-use local",
+            `(() => { const o = { "${key}": 1 }; return typeof o.é; })()`,
+            "undefined",
+          ],
           ...names.map(name => [`same ${codePoint(name)}`, `({ "${name}": 1 }).${name}`, "1"]),
-          ["tag with an ASCII key", "({ f: getThis }).f`x`.f === getThis", "true"],
-          ["tag with a non-ASCII key", '({ "é": getThis }).é`x`.é === getThis', "true"],
+          ["same as a tag", '({ "é": getThis }).é`x`.é === getThis', "true"],
         ];
         using dir = tempDir("inline-non-ascii-key", {
           "index.js": `

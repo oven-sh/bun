@@ -64,7 +64,8 @@ bun_core::declare_scope!(cache, visible);
 /// `onResolve` rewrote (`namespace:path`). Older entries request the bare path, and
 /// the cache-HIT path reinstates #33904 for them.
 /// Version 34: An import that a plugin `onResolve` answers is printed as it is written.
-/// Version 35: The `{ k: v }.k` fold compares a non-ASCII string key by value, and skips template tags.
+/// Version 35: The `{ k: v }.k` fold compares a non-ASCII string key by value. A template tag
+/// keeps its `this` in that fold and in single-use substitution.
 const EXPECTED_VERSION: u32 = 35;
 
 /// Source files smaller than this are not written to / read from the on-disk

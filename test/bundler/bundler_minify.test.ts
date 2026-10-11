@@ -1849,6 +1849,7 @@ describe("bundler", () => {
         export function ifBranchWithSideEffect(w, u) { let keep = g(); return w ? keep : u; }
         export function optionalCallArg() { let keep = g(); return f?.(keep); }
         export function callTargetChangingThis(o) { let keep = o.m; return keep(); }
+        export function templateTagChangingThis(o) { let keep = o.m; return keep\`x\`; }
         export function objectValueAfterComputedKey() { let keep = g(); return { [k()]: 1, v: keep }; }
         export function templatePartAfterSideEffect() { let keep = g(); return \`\${h()}-\${keep}\`; }
       `,
@@ -1883,7 +1884,7 @@ describe("bundler", () => {
       }
       // indexTarget and indexIndex both end up here.
       expect(code.match(/return v\[i\];/g)).toHaveLength(2);
-      expect(code.match(/let keep = /g)).toHaveLength(10);
+      expect(code.match(/let keep = /g)).toHaveLength(11);
     },
   });
 

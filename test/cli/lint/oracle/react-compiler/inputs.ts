@@ -254,6 +254,21 @@ function useCallback<T>(callback: T, dependencies?: Array<unknown>): T {
 const useMemo = <T,>(callback: () => T, dependencies?: Array<unknown>): T => callback();
 `;
 
+/** `React.useMemo` is React's by the name `React`, wherever that comes from. */
+const reactByItsName = `import React from "other";
+import * as R from "react";
+
+export function ByItsName(props) {
+  const m = React.useMemo(() => [props.a], []);
+  return <p>{m}</p>;
+}
+
+export function ByAnotherName(props) {
+  const m = R.useMemo(() => [props.a], []);
+  return <p>{m}</p>;
+}
+`;
+
 /** JSX cannot be evaluated earlier, nor can what has JSX in it. */
 const defaultsWithJsx = `export function A({ icon = { on: <Eye />, off: <Off /> } }) {
   return <div>{icon.on}</div>;
@@ -439,6 +454,42 @@ export default memo(function Tree({ items }) {
   return <div>{bad}{items.map(item => <Tree key={item.id} items={item.items} />)}<Tree items={[]} /></div>;
 });
 `,
+    // Its tree has a node for them.
+    "parentheses.tsx": `import { useRef } from "react";
+
+export function Left(props) {
+  const ref = useRef(null);
+  const a = (props.a && ref.current?.height) || 0;
+  const b = (ref.current?.width as number) ?? 0;
+  const c = ref.current?.depth as number || 0;
+  return <div>{a}{b}{c}</div>;
+}
+
+export function Defaults({ a = (<Eye />), b = props.x as any, c = (1), d = [(1)] }) {
+  return <div>{a}{b}{c}{d}</div>;
+}
+`,
+    // It is called each time.
+    "tagged-template.jsx": `import { useMemo } from "react";
+
+export function Component() {
+  const text = useMemo(() => t\`No country\`, []);
+  return <F text={text} />;
+}
+`,
+    // At the first function, not at the declaration of the second, which comes first.
+    "unreachable.jsx": `function Component(props) {
+  return <div>{first()}</div>;
+
+  function first() {
+    return second();
+  }
+
+  function second() {
+    return props.a;
+  }
+}
+`,
     "computed-string.jsx": `import { useRef } from "react";
 
 export function Component({ ["data-testid"]: testId, a }) {
@@ -508,7 +559,7 @@ function Component(props) {
   },
   order: { ".oxlintrc.json": rc(), "order.jsx": order },
   writes: { ".oxlintrc.json": rc(), "writes.jsx": writes },
-  names: { ".oxlintrc.json": rc(), "own-hooks.tsx": ownHooks, "defaults-with-jsx.jsx": defaultsWithJsx },
+  names: { ".oxlintrc.json": rc(), "own-hooks.tsx": ownHooks, "defaults-with-jsx.jsx": defaultsWithJsx, "react-by-its-name.jsx": reactByItsName },
   lowering: { ".oxlintrc.json": rc(), "forever.tsx": forever, "defaults.tsx": defaults },
   node_modules: {
     ".oxlintrc.json": rc(),
@@ -593,6 +644,7 @@ ${["a", "b", "c", "d", "e", "f", "g", "h", "i"].map(name => `    value += props.
   "writes.jsx": writes,
   "own-hooks.tsx": ownHooks,
   "defaults-with-jsx.jsx": defaultsWithJsx,
+  "react-by-its-name.jsx": reactByItsName,
   "disabled.jsx": readsRef("// eslint-disable-next-line react-hooks/refs"),
   "flow-hook.jsx": readsRef("// $FlowFixMe[react-rule-hook]"),
   "flow-ref.jsx": readsRef("// $FlowFixMe[react-rule-unsafe-ref]"),

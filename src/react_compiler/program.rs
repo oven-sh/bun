@@ -72,6 +72,12 @@ pub trait Host {
         &[]
     }
 
+    /// What is in parentheses with the outermost of them, in the order of what is in them. The parser drops them, and so
+    /// does upstream's. For a tree that has a node for them.
+    fn parentheses(&self) -> &[(Loc, Loc)] {
+        &[]
+    }
+
     /// The namespace import that `item` is a member of. The parser makes an import of its own of `ns.member`.
     fn namespace_of_import_item(&self, _item: Ref) -> Option<Ref> {
         None

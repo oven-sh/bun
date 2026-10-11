@@ -91,6 +91,15 @@ pub struct EnvironmentConfig {
     /// JSX that is a default, or in one, can be evaluated earlier if its operands can: the parser has made a call of
     /// it. Upstream does not compile such a function.
     pub jsx_can_be_reordered: bool,
+    /// Code that is not reached and has a function in it is reported at the first such function. Upstream reports it at
+    /// its first instruction, which can be the declaration of a later function that the first one refers to.
+    pub unreachable_code_is_reported_at_its_function: bool,
+    /// A tag can make something new of the same template each time. So a tagged template is a source of reactivity, and
+    /// no scope that it is in is kept, unless the signature of the tag says that it is pure. To upstream it is a call.
+    pub tagged_templates_are_always_called: bool,
+    /// `React.useMemo` is React's if `React` is imported from React, under whatever name. To upstream it is if the name
+    /// is `React`, wherever that comes from.
+    pub react_is_known_by_its_module: bool,
     pub validate_no_set_state_in_render: bool,
     pub enable_use_keyed_state: bool,
     pub validate_no_set_state_in_effects: bool,
@@ -144,6 +153,9 @@ impl Default for EnvironmentConfig {
             captured_refs_are_known_in_functions: true,
             effects_keep_their_place: false,
             jsx_can_be_reordered: true,
+            unreachable_code_is_reported_at_its_function: false,
+            tagged_templates_are_always_called: false,
+            react_is_known_by_its_module: true,
             validate_no_set_state_in_render: true,
             enable_use_keyed_state: false,
             validate_no_set_state_in_effects: false,

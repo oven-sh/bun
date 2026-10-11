@@ -315,7 +315,7 @@ fn collect_temporaries(
                     detected = true;
                 }
             }
-            if !detected && is_react_namespace_binding(binding) {
+            if !detected && is_react_namespace_binding(binding, env) {
                 sidemap.react.insert(lvalue_id);
             }
         }
@@ -730,10 +730,14 @@ fn is_known_react_module(module: &[u8]) -> bool {
 /// `PropertyLoad` of `useMemo`/`useCallback` should be treated as a manual-memo
 /// callee). Matches upstream's `binding.name === 'React'` check plus
 /// namespace/default imports from a known React module.
-fn is_react_namespace_binding(binding: &NonLocalBinding) -> bool {
+fn is_react_namespace_binding(binding: &NonLocalBinding, env: &Environment) -> bool {
     match binding.kind {
         NonLocalKind::ImportNamespace { module, .. }
-        | NonLocalKind::ImportDefault { module, .. } => is_known_react_module(module.slice()),
+        | NonLocalKind::ImportDefault { module, .. }
+            if env.config.react_is_known_by_its_module =>
+        {
+            is_known_react_module(module.slice())
+        }
         _ => binding.name() == b"React",
     }
 }

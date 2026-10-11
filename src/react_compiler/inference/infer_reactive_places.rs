@@ -161,6 +161,11 @@ pub(crate) fn infer_reactive_places(
                             has_reactive_input = true;
                         }
                     }
+                    InstructionValue::TaggedTemplateExpression { .. }
+                        if env.config.tagged_templates_are_always_called =>
+                    {
+                        has_reactive_input = true;
+                    }
                     InstructionValue::MethodCall { property, .. } => {
                         let property_ty = &env.types
                             [env.identifiers[property.identifier.0 as usize].type_.0 as usize];
@@ -621,6 +626,11 @@ fn apply_reactive_flags_replay(
                     {
                         has_reactive_input = true;
                     }
+                }
+                InstructionValue::TaggedTemplateExpression { .. }
+                    if env.config.tagged_templates_are_always_called =>
+                {
+                    has_reactive_input = true;
                 }
                 InstructionValue::MethodCall { property, .. } => {
                     let property_ty = &env.types

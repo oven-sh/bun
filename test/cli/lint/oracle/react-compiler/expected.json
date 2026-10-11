@@ -2785,7 +2785,7 @@
   },
   "fork": {
    "exit": 1,
-   "files": 14,
+   "files": 17,
    "diagnostics": {
     "arguments.jsx": [
      {
@@ -2988,6 +2988,188 @@
       "severity": "error"
      }
     ],
+    "parentheses.tsx": [
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 13,
+         "length": 11,
+         "line": 7,
+         "offset": 203
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 13,
+         "length": 28,
+         "line": 7,
+         "offset": 203
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 13,
+         "length": 30,
+         "line": 6,
+         "offset": 154
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 13,
+         "length": 32,
+         "line": 5,
+         "offset": 103
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 14,
+         "length": 11,
+         "line": 6,
+         "offset": 155
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 16,
+         "length": 1,
+         "line": 8,
+         "offset": 253
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 19,
+         "length": 1,
+         "line": 8,
+         "offset": 256
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 22,
+         "length": 1,
+         "line": 8,
+         "offset": 259
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 25,
+         "length": 11,
+         "line": 5,
+         "offset": 115
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "label": "`ParenthesizedExpression` cannot be safely reordered",
+        "span": {
+         "column": 32,
+         "length": 9,
+         "line": 11,
+         "offset": 303
+        }
+       }
+      ],
+      "message": "(BuildHIR::node.lowerReorderableExpression) Expression type `ParenthesizedExpression` cannot be safely reordered",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
     "ref-in-memo.jsx": [
      {
       "code": "react(memo-dependencies)",
@@ -3041,6 +3223,54 @@
       ],
       "message": "Cannot access refs during render",
       "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ],
+    "tagged-template.jsx": [
+     {
+      "code": "react(preserve-manual-memoization)",
+      "help": "React Compiler could not prove that this useMemo/useCallback remains memoized. Fix related React Compiler errors inside the callback first. If manual memoization is not required for semantics, remove it; otherwise restructure the callback to avoid values that invalidate memoization",
+      "labels": [
+       {
+        "label": "Manual memoization is not preserved here",
+        "span": {
+         "column": 16,
+         "length": 7,
+         "line": 4,
+         "offset": 79
+        }
+       },
+       {
+        "label": "Manual memoization callback starts here",
+        "span": {
+         "column": 24,
+         "length": 1,
+         "line": 4,
+         "offset": 87
+        }
+       }
+      ],
+      "message": "Existing memoization could not be preserved",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/preserve-manual-memoization",
+      "severity": "error"
+     }
+    ],
+    "unreachable.jsx": [
+     {
+      "code": "react(todo)",
+      "help": "Rewrite the highlighted code using syntax supported by React Compiler",
+      "labels": [
+       {
+        "span": {
+         "column": 12,
+         "length": 5,
+         "line": 4,
+         "offset": 71
+        }
+       }
+      ],
+      "message": "Support functions with unreachable code that may contain hoisted declarations",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
       "severity": "error"
      }
     ],
@@ -3556,7 +3786,7 @@
   },
   "names": {
    "exit": 1,
-   "files": 2,
+   "files": 3,
    "diagnostics": {
     "defaults-with-jsx.jsx": [
      {
@@ -3674,6 +3904,35 @@
       ],
       "message": "(BuildHIR::node.lowerReorderableExpression) Expression type `TaggedTemplateExpression` cannot be safely reordered",
       "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/unsupported-syntax",
+      "severity": "error"
+     }
+    ],
+    "react-by-its-name.jsx": [
+     {
+      "code": "react(memo-dependencies)",
+      "help": "Missing dependencies can cause a value to update less often than it should, resulting in stale UI",
+      "labels": [
+       {
+        "label": "This dependency list is missing values used by the callback",
+        "span": {
+         "column": 44,
+         "length": 2,
+         "line": 5,
+         "offset": 134
+        }
+       },
+       {
+        "label": "Missing dependency `props.a`",
+        "span": {
+         "column": 34,
+         "length": 7,
+         "line": 5,
+         "offset": 124
+        }
+       }
+      ],
+      "message": "Found missing memoization dependencies",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/exhaustive-deps",
       "severity": "error"
      }
     ]
@@ -4529,6 +4788,21 @@
       "column": 3,
       "endLine": 15,
       "endColumn": 4,
+      "suggestions": []
+     }
+    ],
+    "suppressed": []
+   },
+   "react-by-its-name.jsx": {
+    "messages": [
+     {
+      "ruleId": "react-hooks/memo-dependencies",
+      "severity": 2,
+      "message": "Error: Found missing memoization dependencies\n\nMissing dependencies can cause a value to update less often than it should, resulting in stale UI.\n\n  3 |\n  4 | export function ByItsName(props) {\n> 5 |   const m = React.useMemo(() => [props.a], []);\n    |                                  ^^^^^^^ Missing dependency `props.a`\n  6 |   return <p>{m}</p>;\n  7 | }\n  8 |",
+      "line": 5,
+      "column": 34,
+      "endLine": 5,
+      "endColumn": 41,
       "suggestions": []
      }
     ],

@@ -61,8 +61,20 @@ pub(crate) struct Converted {
     pub(crate) casts: Vec<(Loc, Loc)>,
     /// [`Host::targets_with_defaults`](bun_react_compiler::Host::targets_with_defaults)
     pub(crate) defaults: Vec<(Loc, Loc)>,
+    /// [`Host::parentheses`](bun_react_compiler::Host::parentheses)
+    pub(crate) parentheses: Vec<(Loc, Loc)>,
+    pub(crate) wrapped_defaults: Vec<WrappedDefault>,
     /// Each `new Date()` and `Date()`, which is in the tree as `Date.now()`. In the order of the source.
     pub(crate) clock_reads: Vec<Span>,
+}
+
+/// A default that has parentheses or a cast around it. oxc's lowering calls it by the outermost of them.
+#[derive(Copy, Clone)]
+pub(crate) struct WrappedDefault {
+    /// Where Bun's lowering, which does not see them, has it.
+    pub(crate) inner: Span,
+    pub(crate) whole: Span,
+    pub(crate) kind: &'static str,
 }
 
 /// What the lowering that the flavor has records, and Bun's does not.
@@ -108,6 +120,8 @@ pub(crate) struct Converter<'a, 'x> {
     recorded: Vec<Recorded>,
     casts: Vec<(Loc, Loc)>,
     defaults: Vec<(Loc, Loc)>,
+    parentheses: Vec<(Loc, Loc)>,
+    wrapped_defaults: Vec<WrappedDefault>,
     clock_reads: Vec<Span>,
     stack: bun_core::StackCheck,
 }
@@ -136,6 +150,8 @@ pub(crate) fn convert<'a>(
         recorded: Vec::new(),
         casts: Vec::new(),
         defaults: Vec::new(),
+        parentheses: Vec::new(),
+        wrapped_defaults: Vec::new(),
         clock_reads: Vec::new(),
         stack,
     };
@@ -152,10 +168,17 @@ pub(crate) fn convert<'a>(
     casts.dedup_by_key(|it| it.0.start);
     let mut defaults = converter.defaults;
     bun_lint::utils::sort::sort_by_key(&mut defaults, |it| it.0.start);
+    // Of `((x) as A)` likewise.
+    let mut parentheses = converter.parentheses;
+    parentheses.reverse();
+    bun_lint::utils::sort::sort_by_key(&mut parentheses, |it| it.0.start);
+    parentheses.dedup_by_key(|it| it.0.start);
     Ok(Converted {
         root,
         casts,
         defaults,
+        parentheses,
+        wrapped_defaults: converter.wrapped_defaults,
         spans: converter.spans,
         symbols: converter.symbols,
         is_outside: converter.is_outside,
@@ -492,7 +515,31 @@ impl<'a> Converter<'a, '_> {
                 is_fragment: jsx.is_fragment(),
             });
         }
-        Ok(Some(self.expr(value)?))
+        let converted = self.expr(value)?;
+        let kind = match value.kind() {
+            _ if self.flavor != Flavor::Oxlint => None,
+            _ if value.is_parenthesized() => Some("ParenthesizedExpression"),
+            ExprKind::As { .. } | ExprKind::AsConst(_) if value.is_angle_bracket_assertion() => {
+                Some("TSTypeAssertion")
+            }
+            ExprKind::As { .. } | ExprKind::AsConst(_) => Some("TSAsExpression"),
+            ExprKind::Satisfies { .. } => Some("TSSatisfiesExpression"),
+            ExprKind::NonNull(_) => Some("TSNonNullExpression"),
+            ExprKind::Instantiation { .. } => Some("TSInstantiationExpression"),
+            _ => None,
+        };
+        if let Some(kind) = kind
+            && let Some(&inner) = usize::try_from(converted.loc.start)
+                .ok()
+                .and_then(|index| self.spans.get(index))
+        {
+            self.wrapped_defaults.push(WrappedDefault {
+                inner,
+                whole: value.outer_span(),
+                kind,
+            });
+        }
+        Ok(Some(converted))
     }
 
     fn binding(&mut self, pat: Pat<'a>) -> Converts<Binding> {
@@ -767,7 +814,12 @@ impl<'a> Converter<'a, '_> {
     }
 
     pub(crate) fn expr(&mut self, expr: Expr<'a>) -> Converts<JsExpr> {
-        self.nested(|this| this.expr_at(expr, expr.span()))
+        let converted = self.nested(|this| this.expr_at(expr, expr.span()))?;
+        if self.flavor == Flavor::Oxlint && expr.is_parenthesized() {
+            let whole = self.loc(expr.outer_span());
+            self.parentheses.push((converted.loc, whole));
+        }
+        Ok(converted)
     }
 
     fn expr_at(&mut self, expr: Expr<'a>, span: Span) -> Converts<JsExpr> {

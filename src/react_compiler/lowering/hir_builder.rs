@@ -285,6 +285,7 @@ pub(crate) struct HirBuilder<'h> {
     host: &'h dyn Host,
     type_casts: &'h [(Loc, Loc)],
     targets_with_defaults: &'h [(Loc, Loc)],
+    parentheses: &'h [(Loc, Loc)],
     exception_handler_stack: Vec<BlockId>,
     /// Flat instruction table being built up.
     instruction_table: HirVec<Instruction>,
@@ -338,6 +339,7 @@ impl<'h> HirBuilder<'h> {
             host,
             type_casts: host.type_casts(),
             targets_with_defaults: host.targets_with_defaults(),
+            parentheses: host.parentheses(),
             exception_handler_stack: Vec::new(),
             instruction_table: AstAlloc::vec(),
             function_scope,
@@ -364,6 +366,12 @@ impl<'h> HirBuilder<'h> {
         let casts = self.type_casts;
         let at = casts.binary_search_by_key(&operand.start, |it| it.0.start);
         Some(casts.get(at.ok()?)?.1)
+    }
+
+    pub(crate) fn parentheses_around(&self, inner: Loc) -> Option<Loc> {
+        let all = self.parentheses;
+        let at = all.binary_search_by_key(&inner.start, |it| it.0.start);
+        Some(all.get(at.ok()?)?.1)
     }
 
     /// The place of `x = d` for that of its `x`. What has no default has its own.
@@ -779,16 +787,18 @@ impl<'h> HirBuilder<'h> {
 
         for (id, block) in &hir.blocks {
             if !rpo_blocks.contains_key(id) {
-                let has_function_expr = block.instructions.iter().any(|&instr_id| {
+                let function_expr = block.instructions.iter().find(|&&instr_id| {
                     matches!(
                         instructions[instr_id.0 as usize].value,
                         InstructionValue::FunctionExpression { .. }
                     )
                 });
-                if has_function_expr {
-                    let loc = block
-                        .instructions
-                        .first()
+                if let Some(function_expr) = function_expr {
+                    let at = match self.env.config.unreachable_code_is_reported_at_its_function {
+                        true => Some(function_expr),
+                        false => block.instructions.first(),
+                    };
+                    let loc = at
                         .and_then(|&i| instructions[i.0 as usize].loc)
                         .or_else(|| block.terminal.loc().copied());
                     self.env.record_error(CompilerErrorDetail {

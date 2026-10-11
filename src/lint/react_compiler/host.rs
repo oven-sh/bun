@@ -40,6 +40,9 @@ impl Host for LintHost<'_> {
     fn targets_with_defaults(&self) -> &[(Loc, Loc)] {
         &self.converted.defaults
     }
+    fn parentheses(&self) -> &[(Loc, Loc)] {
+        &self.converted.parentheses
+    }
     fn is_module_level(&self, ref_: Ref) -> bool {
         let is_outside = self.converted.is_outside.get(ref_.inner_index() as usize);
         is_outside.copied().unwrap_or(true)

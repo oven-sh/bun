@@ -425,7 +425,9 @@ fn lower_logical(
     let test_block = builder.reserve(BlockKind::Value);
     let test_block_id = test_block.id;
     let place = build_temporary_place(builder, loc);
-    let left_loc = convert_loc(bin.left.loc);
+    let around_left = (builder.parentheses_around(bin.left.loc))
+        .or_else(|| builder.type_cast_around(bin.left.loc));
+    let left_loc = convert_loc(around_left.unwrap_or(bin.left.loc));
     let left_place = build_temporary_place(builder, left_loc);
 
     let consequent_block = builder.try_enter(BlockKind::Value, |builder, _block_id| {

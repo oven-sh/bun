@@ -1,6 +1,6 @@
 //! One function through the compiler.
 
-use crate::convert::{Converted, Recorded, Refusal, Root, convert};
+use crate::convert::{Converted, Recorded, Refusal, Root, WrappedDefault, convert};
 use crate::finding::{Detail, Finding, Suggestion};
 use crate::host::LintHost;
 use bun_ast::ASTMemoryAllocator;
@@ -50,6 +50,9 @@ fn config_of(flavor: Flavor) -> EnvironmentConfig {
         captured_refs_are_known_in_functions: false,
         effects_keep_their_place: is_oxlint,
         jsx_can_be_reordered: false,
+        unreachable_code_is_reported_at_its_function: is_oxlint,
+        tagged_templates_are_always_called: is_oxlint,
+        react_is_known_by_its_module: false,
         validate_no_set_state_in_render: true,
         validate_no_set_state_in_effects: true,
         validate_no_jsx_in_try_statements: true,
@@ -152,12 +155,16 @@ impl<'a> Compiler<'a> {
                 .filter(|it| !is_said_already(it))
                 .map(|it| with_kind_of_estree(file, it))
         };
-        match linted.result {
-            Ok(()) if converted.recorded.is_empty() => Ok(()),
-            Ok(()) => Err(recorded.collect()),
-            Err(error) if error.is_thrown => Err(said(error).collect()),
-            Err(error) => Err(recorded.chain(said(error)).collect()),
-        }
+        let all: Vec<Finding> = match linted.result {
+            Ok(()) if converted.recorded.is_empty() => return Ok(()),
+            Ok(()) => recorded.collect(),
+            Err(error) if error.is_thrown => said(error).collect(),
+            Err(error) => recorded.chain(said(error)).collect(),
+        };
+        let wrapped = &converted.wrapped_defaults;
+        Err((all.into_iter())
+            .map(|it| with_what_is_around(wrapped, it))
+            .collect())
     }
 }
 
@@ -191,6 +198,18 @@ fn with_kind_of_estree<'a>(file: &'a File<'a>, mut finding: Finding) -> Finding 
             .is_some_and(|op| matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish))
     {
         finding.reason = format!("{CANNOT_BE_REORDERED}LogicalExpression{rest}");
+    }
+    finding
+}
+
+fn with_what_is_around(wrapped: &[WrappedDefault], mut finding: Finding) -> Finding {
+    if let Some(rest) = finding.reason.strip_prefix(CANNOT_BE_REORDERED)
+        && let Some((_, rest)) = rest.split_once('`')
+        && let Some(Detail::Error { span: Some(at), .. }) = finding.details.first_mut()
+        && let Some(it) = wrapped.iter().find(|it| it.inner == *at)
+    {
+        finding.reason = format!("{CANNOT_BE_REORDERED}{}`{rest}", it.kind);
+        *at = it.whole;
     }
     finding
 }

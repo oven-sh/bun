@@ -165,7 +165,10 @@ describe.concurrent(`bun lint: the rules of the React Compiler report what oxlin
       "default.jsx",
       "import.jsx",
       "own-name-of-the-component.jsx",
+      "parentheses.tsx",
       "ref-in-memo.jsx",
+      "tagged-template.jsx",
+      "unreachable.jsx",
       "update.jsx",
       "virtual.jsx",
     ]);
@@ -210,6 +213,7 @@ describe.concurrent(`bun lint: the rules of the React Compiler report what oxlin
     const { diagnostics, exit } = await report(small.names);
     expect(diagnostics).toEqual(expected.reports.names.diagnostics);
     expect(diagnostics["own-hooks.tsx"]).toBeUndefined();
+    expect(placesOf(diagnostics["react-by-its-name.jsx"]).map(it => it[1])).toEqual([5]);
     // Not for D, whose default has no JSX in it.
     expect(placesOf(diagnostics["defaults-with-jsx.jsx"])).toEqual([
       ["react(static-components)", 6, 11],
@@ -481,6 +485,9 @@ describe.concurrent(
             ? `react-hooks/${start}`
             : `react-hooks/${start}: (BuildHIR::node.lowerReorderableExpression) Expression type \`${kind}\` cannot be safely reordered`,
         ),
+        "react-by-its-name.jsx": [
+          "react-hooks/memo-dependencies 5:34-5:41 Error: Found missing memoization dependencies",
+        ],
         "disabled.jsx": [],
         // All at the first.
         "writes.jsx": Array(3).fill("react-hooks/immutability 5:3-5:4 Error: This value cannot be modified"),

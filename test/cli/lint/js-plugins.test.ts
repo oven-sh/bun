@@ -1330,11 +1330,12 @@ describe.concurrent("bun lint with plugins in JavaScript", () => {
         cwd: String(dir),
         stdin: "ignore",
         stdout: "pipe",
-        stderr: "ignore",
+        stderr: "pipe",
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      expect(stdout.split("\n").filter(it => it.endsWith(": 5 [Error/demo/length]"))).toHaveLength(128);
-      expect(exitCode).toBe(1);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const reports = stdout.split("\n").filter(it => it.endsWith(": 5 [Error/demo/length]")).length;
+      // With what it says: on macOS there were none once, and nobody knows why.
+      expect({ reports, exitCode, stderr }).toEqual({ reports: 128, exitCode: 1, stderr: expect.any(String) });
     },
     timeout,
   );

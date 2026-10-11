@@ -362,7 +362,7 @@ fn format_block_in(
             sort_imports: sort_imports.filter(|it| it.applies_to_embedded_code()),
             ..options.clone()
         },
-        omits_final_newline: false,
+        ..Resolved::default()
     };
     let formatted = format(
         path,
@@ -757,7 +757,7 @@ pub fn format_for_tests(
             parse_javascript: Some(parse_javascript),
             ..options.clone()
         },
-        omits_final_newline: false,
+        ..Resolved::default()
     };
     let names = Session::new();
     format(

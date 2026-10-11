@@ -35,6 +35,8 @@ struct Read<'e> {
     configs: Configs<'e>,
     ignored: Ignored,
     with_node_modules: bool,
+    /// `allowUnsupported` of `[format]`, which is for `bun/format`.
+    allows_unsupported: bool,
 }
 
 /// The names in `plugins`. `Err`: one of them is no name, or that of a plugin that may print the files in another way.
@@ -108,6 +110,7 @@ impl<'e> Set<'e> {
                     .map_err(|_| Reason::Configuration)?,
                 configs,
                 with_node_modules: options.with_node_modules,
+                allows_unsupported: request.like == Like::BunFormat && options.allow_unsupported,
             })
         });
         Set {
@@ -214,6 +217,7 @@ impl<'e> ForRules<'e> {
             configs,
             ignored,
             with_node_modules,
+            allows_unsupported,
         } = set.read.as_ref().map_err(|it| *it)?;
         let path = request.path_on_disk;
         // `getFileInfo(file).ignored`
@@ -245,7 +249,7 @@ impl<'e> ForRules<'e> {
         if is_prettier && configs.is_oxfmt_for(&scope) {
             return Err(Reason::Configuration);
         }
-        if !configs.missing_plugins(&scope, path).is_empty() {
+        if !allows_unsupported && !configs.missing_plugins(&scope, path).is_empty() {
             return Err(Reason::Plugin);
         }
         match language_of(configs, &scope, path) {
@@ -255,7 +259,7 @@ impl<'e> ForRules<'e> {
             Language::Unknown | Language::Other => return Err(Reason::Language),
         }
         let mut resolved = configs.options_for(&scope, path).map_err(unreadable)?;
-        if !configs.unsupported_options.lock().is_empty() {
+        if !allows_unsupported && resolved.has_unsupported_option {
             return Err(Reason::Option);
         }
         if Kind::with_options(path, &resolved.options).is_none() {

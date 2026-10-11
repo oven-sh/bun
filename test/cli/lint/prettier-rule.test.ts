@@ -347,6 +347,40 @@ describe.concurrent("prettier/prettier", () => {
     expect(places.map(it => it.split(": ")[0])).toEqual(["a.js:3:1"]);
   });
 
+  test("bun/format: what the configuration of one package has is nothing to the files of another", async () => {
+    const { stdout } = await run(
+      {
+        ".oxlintrc.json": '{ "rules": { "bun/format": "error" } }',
+        "a/.prettierrc": '{ "sortTailwindcss": true }',
+        "a/a.js": "a  ;\n",
+        "b/.prettierrc": "{}",
+        "b/b.js": "b  ;\n",
+      },
+      "-f",
+      "unix",
+      "--threads=1",
+    );
+    expect(stdout.split("\n").filter(it => it.includes("bun(format)"))).toEqual([
+      "a/a.js:1:1: Files like this are not checked: bun format does not know one of the options. [Error/bun(format)]",
+      "b/b.js:1:2: Delete `··` [Error/bun(format)]",
+    ]);
+  });
+
+  test("bun/format follows allowUnsupported of [format], as bun format does", async () => {
+    const files = {
+      ".oxlintrc.json": '{ "rules": { "bun/format": "error" } }',
+      ".prettierrc": '{ "plugins": ["prettier-plugin-brace-style"], "sortTailwindcss": true }',
+      "bunfig.toml": "[format]\nallowUnsupported = true\n",
+      "a.js": "a  ;\n",
+      "b.js": "b;\n",
+    };
+    const { stdout, exitCode } = await run(files, "-f", "unix");
+    expect(stdout.split("\n").filter(it => it.includes("bun(format)"))).toEqual([
+      "a.js:1:2: Delete `··` [Error/bun(format)]",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
   // It is linted script by script, under the name of the file. `--fix` once made one comment of this script.
   test("bun/format leaves the scripts of a component alone", async () => {
     const script = "// a\nconst a = 1;\nexport default { data: () => ({ a }) };\n";

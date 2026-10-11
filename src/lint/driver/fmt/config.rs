@@ -627,6 +627,8 @@ pub(crate) struct Resolved {
     pub(crate) options: FormatOptions,
     /// `insertFinalNewline: false` of oxfmt.
     pub(crate) omits_final_newline: bool,
+    /// One of [`Configs::unsupported_options`] is among those of the file.
+    pub(crate) has_unsupported_option: bool,
 }
 
 /// Adds what the `tsconfig.json` at `path` says about JSX, after what the files that it extends say.
@@ -1399,6 +1401,7 @@ impl<'c> Configs<'c> {
                     });
                 }
                 name if is_tailwind(name) && value != b"false" => {
+                    resolved.has_unsupported_option = true;
                     let mut unsupported = self.unsupported_options.lock();
                     if !unsupported.iter().any(|it| it == name) {
                         unsupported.push(name.to_vec());

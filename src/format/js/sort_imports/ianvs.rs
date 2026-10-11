@@ -3,13 +3,13 @@
 use super::babel::{
     Attached, CommentId, Declaration, Lines, List, Model, Node, SpecifierKind, Which,
 };
-use super::builtins::is_builtin_module;
 use super::compare::natural_sort_case_sensitive;
 use super::generator::{Piece, PieceKind, Printer, Prologue};
 use super::layout::is_unchanged;
 use super::sort::stable_sort_by;
 use bun_lint::regex::Regex;
 use bun_lint::span::Span;
+use bun_lint::utils::node::is_builtin_module;
 use std::cmp::Ordering;
 
 pub(super) const THIRD_PARTY_MODULES: &[u8] = b"<THIRD_PARTY_MODULES>";

@@ -177,7 +177,7 @@ fn classify(written: Written, source: &[u8], options: &Options) -> (usize, bool)
     add(
         if source.starts_with(b"node:")
             || source.starts_with(b"bun:")
-            || super::super::builtins::is_builtin_module(source)
+            || bun_lint::utils::node::is_builtin_module(source)
         {
             Selector::Builtin
         } else if matches!(

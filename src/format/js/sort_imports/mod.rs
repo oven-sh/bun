@@ -7,7 +7,6 @@
 //! without parsing anything again (`layout.rs`).
 
 mod babel;
-mod builtins;
 mod compare;
 mod generator;
 mod ianvs;

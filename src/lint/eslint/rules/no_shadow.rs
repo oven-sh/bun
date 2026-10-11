@@ -628,32 +628,25 @@ impl Checker {
             only_types: FxHashMap::default(),
             namespaces_of_types: FxHashMap::default(),
         };
-        // The scopes around the one that is looked at that declare something, and how many of their variables have a name with
-        // the same last bits of its number: a name that is alone shadows nothing that the file declares.
-        let mut around: SmallVec<[Scope<'a>; 16]> = SmallVec::new();
+        // By the last bits of the number of a name: the outermost of the scopes around the one that is looked at that declare
+        // such a name. The scopes come in the order they start, so what is not around one is around none that follows. A
+        // name without such a scope shadows nothing that the file declares.
         let places = (file.symbol_key_limit() * 4).next_power_of_two();
         let place_of = |symbol: Symbol<'a>| symbol.name().atom().0 as usize & (places - 1);
-        let mut visible: SmallVec<[u32; 1024]> = SmallVec::from_elem(0, places);
+        let mut declared_in: SmallVec<[Option<Scope<'a>>; 256]> = SmallVec::from_elem(None, places);
         for scope in file.scopes() {
-            if scope.symbols().len() == 0 {
-                continue;
-            }
-            while let Some(&left) = around.last().filter(|it| !it.contains(scope)) {
-                for symbol in left.symbols() {
-                    if let Some(count) = visible.get_mut(place_of(symbol)) {
-                        *count -= 1;
-                    }
-                }
-                around.pop();
-            }
-            around.push(scope);
             let upper = scope.parent();
             for symbol in scope.symbols() {
-                let Some(count) = visible.get_mut(place_of(symbol)) else {
+                let Some(outermost) = declared_in.get_mut(place_of(symbol)) else {
                     continue;
                 };
-                let may_shadow = *count != 0;
-                *count += 1;
+                let may_shadow = match *outermost {
+                    Some(it) if it.contains(scope) => it != scope,
+                    _ => {
+                        *outermost = Some(scope);
+                        false
+                    }
+                };
                 let Some(upper) = upper.filter(|_| !symbol.is_implicit_arguments()) else {
                     continue;
                 };

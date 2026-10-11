@@ -12,7 +12,7 @@
 
 use crate::cli::{Options, Tool};
 use crate::embedded::Framework;
-use crate::gitignore::{self, Chain};
+use crate::gitignore::{self, Files};
 use crate::print_config::object;
 use crate::run::{Environment, Fatal};
 use crate::{Linter, eslintrc, evaluate, fs, paths, rulesdir};
@@ -1559,61 +1559,45 @@ impl<'l> Loader<'l> {
         loaded.flavor == Flavor::Oxlint || (loaded.flavor == Flavor::BuiltIn && self.options.ignore)
     }
 
-    /// The names of the ignore files that count in a directory, the one that overrides the other
-    /// last.
-    pub(crate) fn ignore_file_names(&self) -> &'static [&'static [u8]] {
-        // `--ignore-path` names the file that is read instead.
-        if self.options.ignore && self.options.ignore_path.is_none() {
-            &[b".gitignore", b".eslintignore"]
-        } else {
-            &[b".gitignore"]
+    /// The name of the files that count in every directory beside `.gitignore`. To oxlint, what `--ignore-path` has is such a
+    /// name.
+    pub(crate) fn ignore_file_name(&self, loaded: &Loaded) -> Option<&[u8]> {
+        match &self.options.ignore_path {
+            _ if !self.options.ignore => None,
+            None => Some(b".eslintignore"),
+            Some(name) => (loaded.flavor == Flavor::Oxlint).then_some(name),
         }
     }
 
     /// Whether a file that is an argument is left out all the same, as by oxlint: `.eslintignore`
     /// or `--ignore-path` has a pattern for it. `.gitignore` is not asked.
-    pub(crate) fn ignores_named_file(&self, path: &[u8], loaded: &Loaded) -> bool {
-        if loaded.flavor != Flavor::Oxlint || !self.options.ignore {
-            return false;
-        }
-        let file = self
-            .options
-            .ignore_path
-            .as_deref()
-            .map_or_else(|| b".eslintignore".to_vec(), paths::from_native);
-        let file = paths::resolve(self.cwd(), &file);
-        gitignore::is_ignored(
-            &gitignore::with_file(None, paths::dirname(&file), &file, true),
-            path,
-            false,
-        )
+    pub(crate) fn ignores_named_file(&self, argument: &[u8], loaded: &Loaded) -> bool {
+        loaded.flavor == Flavor::Oxlint
+            && self.ignore_file_name(loaded).is_some_and(|file| {
+                gitignore::has_argument(self.cwd(), &paths::from_native(file), argument)
+            })
     }
 
     /// The ignore files that count in `directory`, where a search starts.
-    pub(crate) fn ignore_files_at(&self, directory: &[u8], loaded: &Loaded) -> Chain {
+    pub(crate) fn ignore_files_at(&self, directory: &[u8], loaded: &Loaded) -> Files {
         if !self.reads_ignore_files(loaded) {
-            return None;
+            return Files::default();
         }
-        let mut chain = gitignore::above_and_in(directory, self.ignore_file_names());
-        // For oxlint `--ignore-pattern` is for the whole run, whatever configuration file is nearest.
-        let patterns = &self.options.ignore_pattern;
-        if loaded.flavor == Flavor::Oxlint && self.options.ignore && !patterns.is_empty() {
-            chain = gitignore::with_lines(chain, self.cwd(), patterns.iter().map(|it| &it[..]));
+        let name = self.ignore_file_name(loaded).map(paths::from_native);
+        let mut files = Files::above_and_in(directory, name.as_deref());
+        let (cwd, patterns) = (self.cwd(), &self.options.ignore_pattern);
+        if !self.options.ignore {
+            return files;
         }
-        match self
-            .options
-            .ignore_path
-            .as_ref()
-            .filter(|_| self.options.ignore)
-        {
-            Some(path) => gitignore::with_file(
-                chain,
-                self.cwd(),
-                &paths::resolve(self.cwd(), &paths::from_native(path)),
-                true,
-            ),
-            None => chain,
+        if loaded.flavor == Flavor::Oxlint {
+            // For oxlint `--ignore-pattern` is for the whole run, whatever configuration file is nearest.
+            files.named =
+                gitignore::with_lines(files.named, cwd, patterns.iter().map(|it| &it[..]));
+        } else if let Some(path) = &self.options.ignore_path {
+            let path = paths::resolve(cwd, &paths::from_native(path));
+            files.named = gitignore::with_file(files.named, cwd, &path, true);
         }
+        files
     }
 
     pub(crate) fn environment(&self) -> &'l Environment<'l> {

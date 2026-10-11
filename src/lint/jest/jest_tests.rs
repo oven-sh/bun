@@ -415,7 +415,9 @@ pub(crate) mod valid_title {
             }
             let prefix = name.iter().take_while(|b| matches!(b, b'f' | b'x')).count();
             let un_prefixed_name = name.get(prefix..).unwrap_or_default();
-            if strings::split(title, b" ").next() == Some(un_prefixed_name) {
+            if (title.strip_prefix(un_prefixed_name))
+                .is_some_and(|rest| matches!(rest.first(), None | Some(b' ')))
+            {
                 let without_prefix =
                     |text: &'a [u8]| text.strip_prefix(un_prefixed_name)?.strip_prefix(b" ");
                 let report = ctx.report(span, DUPLICATE_PREFIX);
@@ -705,9 +707,6 @@ pub(crate) mod no_commented_out_tests {
     }
 
     fn is_commented_out_test(text: &[u8]) -> bool {
-        if !strings::contains_char(text, b'(') {
-            return false;
-        }
         let mut rest = text;
         loop {
             let line = skip(rest, |it| matches!(it, b' ' | b'\t' | b'\r'));
@@ -725,7 +724,7 @@ pub(crate) mod no_commented_out_tests {
         for comment in ctx
             .file
             .comments()
-            .filter(|it| !it.text().starts_with(b"#!"))
+            .filter(|it| strings::contains_char(it.text(), b'(') && !it.text().starts_with(b"#!"))
         {
             if is_commented_out_test(comment.comment_value()) {
                 let end = if comment.text().starts_with(b"/*") {

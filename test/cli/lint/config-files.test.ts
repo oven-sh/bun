@@ -3430,6 +3430,77 @@ describe.concurrent("the command line of oxlint", () => {
     expect((await lint(files, ["--ignore-path=mine"])).problems).toEqual(["a.js:1:1 no-var"]);
   });
 
+  // What oxlint 1.87.0 lints. It hands the value to the crate `ignore` as the name of a file to look for.
+  describe("--ignore-path", () => {
+    const [x, y, z, top] = ["packages/a/generated/x.js", "packages/a/src/y.js", "rest/z.js", "top.js"];
+    const tree = { ".oxlintrc.json": oxlintrc, [x]: code, [y]: code, [z]: code, [top]: code };
+    /** The files that are linted. `$` in an argument is the directory that `tree` is in. */
+    async function linted(files: Record<string, string>, args: string[], cwd?: string) {
+      const before = (dir: string) => args.forEach((it, index) => (args[index] = it.replace("$", () => dir)));
+      const { problems } = await lint({ ...tree, ...files }, args, { cwd, before });
+      return problems.map(it => it.split(":")[0]);
+    }
+
+    test.each([
+      [".eslintignore", [y, top]],
+      [".mine", [y, top]],
+      [".only-here", [x, z, top]],
+    ])("%s is read in every directory that has it", async (name, expected) => {
+      const files = {
+        ".eslintignore": "rest/\n",
+        ".mine": "rest/\n",
+        "packages/a/.eslintignore": "generated/\n",
+        "packages/a/.mine": "generated/\n",
+        "packages/a/.only-here": "src/\n",
+      };
+      expect(await linted(files, ["--ignore-path", name, "."])).toEqual(expected);
+    });
+
+    test.each([
+      [{ ".mine": "*.js\n", "packages/a/.mine": "!y.js\n" }, [y]],
+      [{ ".mine": "src/\n", "packages/a/.mine": "!src/\n" }, [x, y, z, top]],
+      // Wherever the two are.
+      [{ ".mine": "y.js\n", "packages/a/.gitignore": "!y.js\n" }, [x, z, top]],
+      [{ ".mine": "!y.js\n", "packages/a/.gitignore": "y.js\n" }, [x, y, z, top]],
+    ])("the nearest file decides, and all of them come before .gitignore: %j", async (files, expected) => {
+      expect(await linted(files, ["--ignore-path", ".mine", "."])).toEqual(expected);
+    });
+
+    test("so does .eslintignore", async () => {
+      const files = { ".eslintignore": "y.js\n", "packages/a/.gitignore": "!y.js\n" };
+      expect(await linted(files, ["."])).toEqual([x, z, top]);
+    });
+
+    test.each([
+      [{ ".mine": "src/\n" }, ["--ignore-path", ".mine", "a"], "packages", [x]],
+      [{ ".mine": "src/\n" }, ["--ignore-path", ".mine"], "packages/a", [x]],
+      [{ ".mine": "src/\n", "packages/a/.git/HEAD": "" }, ["--ignore-path", ".mine"], "packages/a", [x]],
+      [{ ".eslintignore": "src/\n", "packages/a/.git/HEAD": "" }, ["packages/a"], ".", [x]],
+    ])("so do the files above the search, and above a repository: %j %j", async (files, args, cwd, expected) => {
+      expect(await linted(files, args, cwd)).toEqual(expected);
+    });
+
+    // From there on the crate looks for the name among the entries of a directory. Above, it joins it to the directory.
+    test.each([
+      [{ ".mine": "rest/\n" }, ["./.mine", "."], [x, y, z, top]],
+      [{ "packages/a/.mine": "generated/\n" }, ["packages/a/.mine", "."], [x, y, z, top]],
+      [{ ".mine": "/rest/\n" }, ["$/.mine", "."], [x, y, z, top]],
+      [{ "packages/a/.mine": "/a/src/\n" }, ["a/.mine", "packages/a"], [x]],
+      [{ ".mine": "/a/src/\n" }, ["$/.mine", "packages/a"], [x]],
+    ])("a path is only found above where the search starts: %j %j", async (files, args, expected) => {
+      expect(await linted(files, ["--ignore-path", ...args])).toEqual(expected);
+    });
+
+    test.each([
+      [{ ".eslintignore": "/top.js\n" }, ["$/top.js", z], [z, top]],
+      [{ ".mine": "rest/*\n" }, ["--ignore-path", ".mine", "$/rest/z.js", top], [z, top]],
+      [{ "packages/a/.mine": "top.js\nrest/z.js\n" }, ["--ignore-path", "packages/a/.mine", top, z, x], [x]],
+      [{ "packages/a/.mine": "/generated/x.js\n" }, ["--ignore-path", "$/packages/a/.mine", x, top], [x, top]],
+    ])("the lines are compared with a file that is named as it is spelled: %j %j", async (files, args, expected) => {
+      expect(await linted(files, args)).toEqual(expected);
+    });
+  });
+
   test("--init writes the defaults of oxlint, and not over a file", async () => {
     using dir = tempDir("bun-lint-init", { "a.js": "debugger;\n" });
     const run = async (...args: string[]) => {

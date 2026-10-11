@@ -6954,7 +6954,9 @@ describe("bun lint on Windows, macOS and Linux", () => {
         `.${sep}configs${sep}mine.json`,
       ];
       const results = await Promise.all(
-        forms.map(config => lint(dir, ["-c", config, "--ignore-path", join("configs", "ignored"), "-f", "json"])),
+        forms.map(config =>
+          lint(dir, ["-c", config, "--ignore-path", join("configs", "ignored"), "-f", "json", "src", "configs"]),
+        ),
       );
       expect(results.map(it => reportedToOxlint(it.stdout))).toEqual(forms.map(() => ["src/a.js"]));
       const [before, after] = await Promise.all([

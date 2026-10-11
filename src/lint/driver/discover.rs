@@ -6,7 +6,7 @@
 
 use crate::configs::{Flavor, Loaded, Loader};
 use crate::embedded::Framework;
-use crate::gitignore::{self, Chain};
+use crate::gitignore::Files;
 use crate::run::{Environment, Fatal, Pool};
 use crate::{Linter, fs, paths};
 use bun_core::strings;
@@ -147,7 +147,7 @@ struct Directory {
     inherited: Arc<Loaded>,
     /// The ignore files above it or, for the one that is searched, also those in it. They are only
     /// read where they count.
-    ignores: Chain,
+    ignores: Files,
     /// `inherited` ignores it. It is only read for the configuration files of oxlint in it and below it, each of which is asked
     /// alone about what it is nearest to.
     is_hidden: bool,
@@ -288,18 +288,8 @@ fn search(
                 // They start to count here.
                 ignores = loader.ignore_files_at(&directory.path, &own);
             } else if reads_ignore_files && !directory.relative.is_empty() {
-                for name in loader
-                    .ignore_file_names()
-                    .iter()
-                    .filter(|name| entries.iter().any(|it| it.name == **name))
-                {
-                    ignores = gitignore::with_file(
-                        ignores,
-                        &directory.path,
-                        &paths::join(&directory.path, name),
-                        true,
-                    );
-                }
+                let has = |name: &[u8]| entries.iter().any(|it| it.name == name);
+                ignores = ignores.and_in(&directory.path, loader.ignore_file_name(&own), has);
             }
             let (mut files, mut directories) = (Vec::new(), Vec::new());
             for mut entry in entries {
@@ -317,8 +307,7 @@ fn search(
                     }
                     entry.is_directory = true;
                 }
-                if reads_ignore_files && gitignore::is_ignored(&ignores, &path, entry.is_directory)
-                {
+                if reads_ignore_files && ignores.is_ignored(&path, entry.is_directory) {
                     continue;
                 }
                 let relative = match directory.relative.is_empty() {
@@ -483,7 +472,7 @@ pub(crate) fn find_files(
         match fs::kind_and_size(&path) {
             Some((fs::Kind::File, size)) => {
                 let loaded = loader.for_directory(paths::dirname(&path))?;
-                let status = match loader.ignores_named_file(&path, &loaded) {
+                let status = match loader.ignores_named_file(&pattern, &loaded) {
                     true => Status::Ignored,
                     false => loaded.config.get(loader.linter.registry(), &path).into(),
                 };

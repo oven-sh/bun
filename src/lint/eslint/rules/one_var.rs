@@ -124,14 +124,35 @@ fn is_scope(node: Node<'_>, of_blocks: bool, is_oxlint: bool) -> bool {
 /// declared, the innermost last.
 struct Scopes<'a> {
     of_blocks: bool,
+    is_oxlint: bool,
     around: AncestorMemo<'a, Node<'a>>,
-    open: Vec<(Node<'a>, Span, [Seen; 5])>,
+    /// Each with its [`number_of`] and its [`extent_of`].
+    open: Vec<(u64, Span, [Seen; 5])>,
+}
+
+/// It tells a scope from the others of the file.
+fn number_of(scope: Node<'_>) -> u64 {
+    match scope {
+        Node::Func(func) => 1 << 32 | u64::from(func.id().0),
+        Node::Stmt(statement) => 2 << 32 | u64::from(statement.id().0),
+        _ => 0,
+    }
+}
+
+/// From where to where there are statements in a scope.
+fn extent_of(scope: Node<'_>) -> Span {
+    let body = scope.as_func().and_then(Func::body_statements);
+    match body.and_then(|it| it.first().zip(it.last())) {
+        Some((first, last)) => first.span().to(last.span()),
+        None => scope.span(),
+    }
 }
 
 impl<'a> Scopes<'a> {
-    fn new(of_blocks: bool) -> Self {
+    fn new(of_blocks: bool, is_oxlint: bool) -> Self {
         Scopes {
             of_blocks,
+            is_oxlint,
             around: AncestorMemo::default(),
             open: Vec::new(),
         }
@@ -139,16 +160,17 @@ impl<'a> Scopes<'a> {
 
     /// What has been declared in the scope of `statement`, by [`index`]. The statements come as they end: after what is in them.
     fn seen(&mut self, statement: Stmt<'a>) -> Option<&mut [Seen; 5]> {
-        let (of_blocks, is_oxlint) = (self.of_blocks, statement.file().language().is_oxlint);
+        let (of_blocks, is_oxlint) = (self.of_blocks, self.is_oxlint);
         let scope = self.around.find(statement.into(), |_, it| is_scope(it, of_blocks, is_oxlint).then_some(it))?;
-        if self.open.last().is_none_or(|it| it.0 != scope) {
+        let number = number_of(scope);
+        if self.open.last().is_none_or(|it| it.0 != number) {
             // What ends before the statement, and what is in it.
             let start = statement.span().start;
             while self.open.last().is_some_and(|it| it.1.end <= start || it.1.start > start) {
                 self.open.pop();
             }
-            if self.open.last().is_none_or(|it| it.0 != scope) {
-                self.open.push((scope, scope.span(), Default::default()));
+            if self.open.last().is_none_or(|it| it.0 != number) {
+                self.open.push((number, extent_of(scope), Default::default()));
             }
         }
         self.open.last_mut().map(|it| &mut it.2)
@@ -499,7 +521,8 @@ impl Rule for OneVar {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let (mut functions, mut blocks) = (Scopes::new(false), Scopes::new(true));
+        let is_oxlint = cx.language().is_oxlint;
+        let (mut functions, mut blocks) = (Scopes::new(false, is_oxlint), Scopes::new(true, is_oxlint));
         let mut check = |statement| {
             let Some(declaration) = as_variable_declaration(statement) else {
                 return;
@@ -510,13 +533,12 @@ impl Rule for OneVar {
             }
         };
         // As they end, which is how the parser leaves them.
-        let place = |it: &Stmt| (it.span().end, Reverse(it.span().start));
         let all = || cx.file().stmts_of_kind(StmtTag::Var);
-        if all().is_sorted_by_key(|it| place(&it)) {
+        if all().map(|it| it.span().end).is_sorted_by(|a, b| a < b) {
             return all().for_each(check);
         }
         let mut sorted: Vec<Stmt> = all().collect();
-        sorted.sort_unstable_by_key(place);
+        sorted.sort_unstable_by_key(|it| (it.span().end, Reverse(it.span().start)));
         sorted.into_iter().for_each(&mut check);
     }
 }

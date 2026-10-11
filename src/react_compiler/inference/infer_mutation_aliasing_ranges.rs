@@ -334,19 +334,9 @@ impl AliasingState {
             }
 
             // Forward edges: Capture a -> b, Alias a -> b: mutate(a) => mutate(b)
-            // Collect edges to avoid borrow conflict
-            let edges: Vec<Edge> = node.edges.clone();
             let node_is_phi = matches!(node.value, NodeValue::Phi);
-            let node_aliases: Vec<(IdentifierId, usize)> =
-                node.aliases.iter().map(|(&k, &v)| (k, v)).collect();
-            let node_maybe_aliases: Vec<(IdentifierId, usize)> =
-                node.maybe_aliases.iter().map(|(&k, &v)| (k, v)).collect();
-            let node_captures: Vec<(IdentifierId, usize)> =
-                node.captures.iter().map(|(&k, &v)| (k, v)).collect();
-            let node_created_from: Vec<(IdentifierId, usize)> =
-                node.created_from.iter().map(|(&k, &v)| (k, v)).collect();
 
-            for edge in &edges {
+            for edge in &node.edges {
                 if edge.index >= index {
                     break;
                 }
@@ -363,7 +353,7 @@ impl AliasingState {
                 });
             }
 
-            for (alias, when) in &node_created_from {
+            for (alias, when) in &node.created_from {
                 if *when >= index {
                     continue;
                 }
@@ -377,7 +367,7 @@ impl AliasingState {
 
             if entry.direction == Direction::Backwards || !node_is_phi {
                 // Backward alias edges
-                for (alias, when) in &node_aliases {
+                for (alias, when) in &node.aliases {
                     if *when >= index {
                         continue;
                     }
@@ -389,7 +379,7 @@ impl AliasingState {
                     });
                 }
                 // MaybeAlias backward edges (downgrade to conditional)
-                for (alias, when) in &node_maybe_aliases {
+                for (alias, when) in &node.maybe_aliases {
                     if *when >= index {
                         continue;
                     }
@@ -404,7 +394,7 @@ impl AliasingState {
 
             // Only transitive mutations affect captures backward
             if entry.transitive {
-                for (capture, when) in &node_captures {
+                for (capture, when) in &node.captures {
                     if *when >= index {
                         continue;
                     }

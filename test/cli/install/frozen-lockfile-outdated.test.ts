@@ -517,7 +517,7 @@ describe.concurrent("--frozen-lockfile still passes on", () => {
     expect(frozen.exitCode).toBe(0);
   });
 
-  // The next two are lockfiles an older bun wrote for an unedited package.json. A plain install rewrites them, but a red
+  // The rest are lockfiles an older bun wrote for an unedited package.json. A plain install rewrites them, but a red
   // `bun ci` on an untouched checkout would blame an edit nobody made.
 
   // bun records a name that is only in peerDependenciesMeta as a `*` optional peer. Older versions did not.
@@ -559,6 +559,42 @@ describe.concurrent("--frozen-lockfile still passes on", () => {
     expect(frozen.stderr).not.toContain("error:");
     expect(await lockText(packageDir)).toBe(migrated);
     expect(frozen.exitCode).toBe(0);
+  });
+
+  // Up to Bun 1.1, `bun add what-bin` wrote `^1.5.0` to package.json and left what it was asked for, `""` or a tag, in
+  // the lockfile until the next install. One in eight bun.lockb files of Bun's own repository was committed like that.
+  describe.each(["bun.lock", "bun.lockb"] as const)("a %s in which bun add left its request", lockfile => {
+    const added: Record<string, (range: string) => [PackageJson, PackageJson]> = {
+      "the root": range => [{ ...root, dependencies: { ...root.dependencies, "what-bin": range } }, member],
+      "a workspace": range => [root, { ...member, devDependencies: { "what-bin": range } }],
+    };
+
+    test.each(["", "latest"].flatMap(request => Object.keys(added).map(where => [request, where] as const)))(
+      "%j for %s",
+      async (request, where) => {
+        const { packageDir, lock } = await installed(...added[where](request), lockfile);
+        const declare = async (range: string) => {
+          const [rootJson, memberJson] = added[where](range);
+          await Promise.all([writeRoot(packageDir, rootJson), writeMember(packageDir, memberJson)]);
+        };
+        await declare("^1.5.0");
+
+        const frozen = await bun(packageDir, "install", "--frozen-lockfile");
+
+        expect(frozen.stderr).not.toContain("error:");
+        expect(await lockText(packageDir, lockfile)).toBe(lock);
+        expect(frozen.exitCode).toBe(0);
+
+        // bun add wrote no range that the version it locked is outside of.
+        await declare("1.0.0");
+
+        const outside = await bun(packageDir, "install", "--frozen-lockfile");
+
+        expect(outside.stderr).toContain(frozenError);
+        expect(await lockText(packageDir, lockfile)).toBe(lock);
+        expect(outside.exitCode).toBe(1);
+      },
+    );
   });
 });
 

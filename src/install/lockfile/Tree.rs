@@ -449,6 +449,8 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     /// Workspace package ids that are hoisting barriers (self-contained node_modules).
     pub(crate) self_contained: Vec<PackageID>,
     pub(crate) peer_probes: PeerProbes,
+    /// The first row of each name in each tree, which is what `hoist_dependency` looks for.
+    pub(crate) placed: bun_collections::HashMap<(Id, PackageNameHash), DependencyID>,
     /// `(tree id, dependency id)` of each row of the install tree that a tarball ships: a bundled
     /// dependency and every row placed from below one. They take their places as in the saved
     /// tree, so that no row bun installs resolves through one, and `clean` drops them.
@@ -1034,25 +1036,6 @@ impl Tree {
 
             let dependency = &dependencies[dep_id as usize];
 
-            // An empty alias has no `node_modules/<name>` folder to escape, so
-            // don't treat it as unsafe — match the lockfile parser and isolated
-            // installer (`bun.lock.rs`, `isolated_install.rs`) which guard
-            // `!name.is_empty()` here rather than failing the whole install.
-            // An unresolved dependency's name was already reported by enqueue if it is why.
-            let dependency_name = dependency
-                .name
-                .slice(lockfile.buffers.string_bytes.as_slice());
-            if pkg_id != invalid_package_id
-                && !dependency_name.is_empty()
-                && !crate::package_installer::alias_is_safe_install_target(dependency_name)
-            {
-                builder.maybe_report_error(format_args!(
-                    "Invalid dependency name \"{}\"",
-                    bun_core::fmt::escape_control_chars(dependency_name),
-                ));
-                continue 'dep;
-            }
-
             let hoisted: HoistDependencyResult = 'hoisted: {
                 // don't hoist if it's a folder dependency or a bundled dependency.
                 if dependency.behavior.is_bundled() {
@@ -1188,6 +1171,12 @@ impl Tree {
                             }
                         }
                     }
+                    if let Some(placed) =
+                        builder.placed.get_mut(&(replace.id, dependency.name_hash))
+                        && *placed == replace.dep_id
+                    {
+                        *placed = dep_id;
+                    }
                     builder.shipped_rows.remove(&(replace.id, replace.dep_id));
                     if shipped {
                         builder.shipped_rows.insert((replace.id, dep_id), ());
@@ -1218,10 +1207,33 @@ impl Tree {
                     entry.value_ptr.put(dep_id, ())?;
                 }
                 HoistDependencyResult::Placement(dest) => {
+                    // Only a placed row names a folder: the others dedupe onto a placed row of the same name.
+                    // An empty alias has no `node_modules/<name>` folder to escape, so
+                    // don't treat it as unsafe — match the lockfile parser and isolated
+                    // installer (`bun.lock.rs`, `isolated_install.rs`) which guard
+                    // `!name.is_empty()` here rather than failing the whole install.
+                    // An unresolved dependency's name was already reported by enqueue if it is why.
+                    let dependency_name = dependency
+                        .name
+                        .slice(lockfile.buffers.string_bytes.as_slice());
+                    if pkg_id != invalid_package_id
+                        && !dependency_name.is_empty()
+                        && !crate::package_installer::alias_is_safe_install_target(dependency_name)
+                    {
+                        builder.maybe_report_error(format_args!(
+                            "Invalid dependency name \"{}\"",
+                            bun_core::fmt::escape_control_chars(dependency_name),
+                        ));
+                        continue 'dep;
+                    }
                     {
                         // Go through ListExt
                         // accessors sequentially so the &mut borrows do not overlap.
                         builder.list.items_dependencies_mut()[dest.id as usize].push(dep_id);
+                        let placed = builder.placed.get_or_put((dest.id, dependency.name_hash))?;
+                        if !placed.found_existing {
+                            *placed.value_ptr = dep_id;
+                        }
                         builder.list.items_tree_mut()[dest.id as usize]
                             .dependencies
                             .len += 1;
@@ -1293,16 +1305,14 @@ impl Tree {
         {
             return HoistDependencyResult::DependencyLoop; // 3
         }
-        // Keep the comparand in a register; `deps.get_unchecked` may alias `dependency`.
-        let target_name_hash = dependency.name_hash;
-        for &dep_id in this_deps {
-            // SAFETY: `dep_id` was produced by the same lockfile that produced `deps`,
-            // so it is always in bounds.
-            let dep = unsafe { deps.get_unchecked(dep_id as usize) };
-            if dep.name_hash != target_name_hash {
-                continue;
-            }
-
+        debug_assert_eq!(
+            builder.placed.get(&(this.id, dependency.name_hash)),
+            this_deps
+                .iter()
+                .find(|&&dep_id| deps[dep_id as usize].name_hash == dependency.name_hash),
+        );
+        if let Some(&dep_id) = builder.placed.get(&(this.id, dependency.name_hash)) {
+            let dep = &deps[dep_id as usize];
             let res_id = builder.resolutions[dep_id as usize];
 
             // A row bun installs keeps its own copy below its dependent (`shipped_rows`). A peer
@@ -1448,7 +1458,7 @@ impl Tree {
             // into itself would recurse forever.
             if (this.dependency_id as usize) < deps.len()
                 && builder.resolutions[this.dependency_id as usize] == package_id
-                && deps[this.dependency_id as usize].name_hash == target_name_hash
+                && deps[this.dependency_id as usize].name_hash == dependency.name_hash
             {
                 return HoistDependencyResult::Hoisted; // 1
             }

@@ -1729,6 +1729,7 @@ impl Lockfile {
             list: Default::default(),
             sort_buf: Default::default(),
             peer_probes: Default::default(),
+            placed: Default::default(),
             shipped_rows: Default::default(),
             in_shipped_folder: false,
             linked: Default::default(),

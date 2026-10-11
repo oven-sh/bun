@@ -768,6 +768,41 @@ test.concurrent("what is deleted from a folder dependency is removed from its co
   );
 });
 
+// It holds its name there, so that no registry package of that name is found before it, and has no link of its own.
+test.concurrent(
+  "a folder dependency gets no link in node_modules/.bun/node_modules, whichever way it is linked",
+  async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "folder-dep-hidden",
+          dependencies: { "folder-dep": "file:./pkg-1", "one-dep": "1.0.0" },
+          overrides: { "no-deps": "file:./vendor" },
+        }),
+        "pkg-1/package.json": JSON.stringify({
+          name: "folder-dep",
+          version: "1.0.0",
+          dependencies: { "a-dep": "1.0.1" },
+        }),
+        "vendor/package.json": JSON.stringify({ name: "no-deps", version: "9.9.9" }),
+      },
+    });
+    const hidden = () => readdirSorted(join(packageDir, "node_modules", ".bun", "node_modules"));
+
+    await runBunInstall(bunEnv, packageDir);
+    expect(await hidden()).toEqual(["a-dep", "one-dep"]);
+
+    const { out } = await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+    expect(out).toContain("(no changes)");
+    expect(await hidden()).toEqual(["a-dep", "one-dep"]);
+
+    await Promise.all(["pkg-1", "vendor"].map(folder => write(join(packageDir, folder, "index.js"), "")));
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+    expect(await hidden()).toEqual(["a-dep", "one-dep"]);
+  },
+);
+
 test.concurrent("a folder dependency whose folder is gone fails the install and keeps its copy", async () => {
   const { packageDir } = await registry.createTestDir({
     bunfigOpts: { linker: "isolated" },

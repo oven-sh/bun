@@ -2610,7 +2610,6 @@ pub(crate) fn install_isolated_packages(
                             (sys::Dir::open(folder), sys::Dir::open(store_path.slice()))
                             && crate::package_install::is_linked_folder(&src, &dest)
                         {
-                            installer.link_to_hidden_node_modules(entry_id);
                             installer.start_relink_task(entry_id);
                             continue;
                         }

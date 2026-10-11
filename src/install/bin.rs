@@ -788,6 +788,7 @@ fn normalized_bin_name(name: &[u8]) -> &[u8] {
     // so the `.bin/<name>` destination cannot resolve outside `.bin/`.
     // The cut above leaves one component without `/`, `\` or `:`, so this is all of
     // `is_safe_install_folder_name` but its length limit: a name that is too long fails to link and is reported.
+    debug_assert!(strings::index_of_any(name, b"/\\:").is_none());
     if matches!(name, b"" | b"." | b"..") || crate::dependency::contains_control_character(name) {
         return b"";
     }

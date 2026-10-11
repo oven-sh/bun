@@ -819,7 +819,34 @@ fn resolve_patchfile_in_project(root_dir: &[u8], value: &[u8]) -> Option<Vec<u8>
     let contained = full.len() > root_dir.len()
         && strings::eql_long(&full[..root_dir.len()], root_dir, true)
         && full[root_dir.len()] == b'/';
-    if contained { Some(full) } else { None }
+    if !contained {
+        return None;
+    }
+    // a committed symlink inside the project (e.g. patches/link -> elsewhere)
+    // defeats the lexical check; resolve the patch file's parent directory and
+    // require the real path to stay inside the project. A parent that fails to
+    // resolve cannot contain the file — the unlink below then ENOENTs.
+    let parent = resolve_path::dirname::<platform::Posix>(&full);
+    if !parent.is_empty() {
+        let mut root_zbuf = bun_paths::path_buffer_pool::get();
+        let mut real_root_buf = bun_paths::path_buffer_pool::get();
+        let mut parent_zbuf = bun_paths::path_buffer_pool::get();
+        let mut real_parent_buf = bun_paths::path_buffer_pool::get();
+        let real_root = sys::realpath(
+            resolve_path::z(root_dir, &mut root_zbuf),
+            &mut real_root_buf,
+        );
+        let real_parent =
+            sys::realpath(resolve_path::z(parent, &mut parent_zbuf), &mut real_parent_buf);
+        if let (Ok(real_root), Ok(real_parent)) = (real_root, real_parent) {
+            if resolve_path::is_parent_or_equal(real_root, real_parent)
+                == resolve_path::ParentEqual::Unrelated
+            {
+                return None;
+            }
+        }
+    }
+    Some(full)
 }
 
 /// After a patch file is deleted, remove its directory and any now-empty

@@ -1,8 +1,9 @@
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, lstatSync, readFileSync } from "fs";
+import { mkdir, rm, symlink } from "fs/promises";
 import { bunEnv, bunExe, isASAN, tempDir, VerdaccioRegistry, type DirectoryTree } from "harness";
-import { isAbsolute, join, sep } from "path";
+import { basename, isAbsolute, join, sep } from "path";
 
 const expectNoError = (o: $.ShellOutput) => expect(o.stderr.toString()).not.toContain("error");
 // const platformPath = (path: string) => (process.platform === "win32" ? path.replaceAll("/", sep) : path);
@@ -1446,6 +1447,35 @@ describe("bun patch-remove", async () => {
     expect((await readPackageJson(packageDir)).patchedDependencies["no-deps@1.0.0"]).toBe(
       "patches/no-deps@1.0.0.patch",
     );
+  });
+
+  test.concurrent("does not delete patch files that resolve outside the project", async () => {
+    // a committed symlink inside the project must not let a manifest entry
+    // delete files outside it
+    const packageDir = await createProject({
+      "package.json": JSON.stringify({
+        name: "foo",
+        dependencies: { "no-deps": "1.0.0" },
+        patchedDependencies: { "no-deps@1.0.0": "patches/link/victim.patch" },
+      }),
+    });
+    const outsideDir = join(packageDir, "..", `outside-${basename(packageDir)}`);
+    await mkdir(outsideDir, { recursive: true });
+    await Bun.write(join(outsideDir, "victim.patch"), "precious\n");
+    await mkdir(join(packageDir, "patches"), { recursive: true });
+    await symlink(
+      outsideDir,
+      join(packageDir, "patches", "link"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    const { stderr, exitCode } = await runBun(packageDir, "patch-remove", "no-deps");
+    expect(stderr).toContain("resolves outside the project");
+    expect(exitCode).toBe(0);
+    // the out-of-project file survives; only the manifest entry is removed
+    expect(await Bun.file(join(outsideDir, "victim.patch")).text()).toBe("precious\n");
+    expect((await readPackageJson(packageDir)).patchedDependencies).toBeUndefined();
+    await rm(outsideDir, { recursive: true, force: true });
   });
 
   test.concurrent("from a workspace package edits the root package.json", async () => {

@@ -1,13 +1,10 @@
 //! ESLint's `usedDeprecatedRules`.
 
-#[path = "deprecated_data.rs"]
-mod data;
-
 use bun_core::printer::json_stringify;
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::js_plugin;
-use bun_lint::linter::{ResolvedConfig, RuleId, write_json};
+use bun_lint::linter::{Deprecated, ResolvedConfig, RuleId, deprecated_rule, write_json};
 use bun_lint::options::Json;
 
 /// `getShorthandName(name, "eslint-plugin")`
@@ -58,46 +55,58 @@ fn write_js(out: &mut Vec<u8>, rule: &js_plugin::Rule, (deprecated, replaced_by)
     out.push(b'}');
 }
 
+fn write(out: &mut Vec<u8>, (id, rest): &Deprecated) {
+    let (id, rest) = (id.as_bytes(), rest.as_bytes());
+    out.extend_from_slice(&[b"{\"ruleId\":\"", id, b"\",", rest, b"}"].concat());
+}
+
 /// `JSON.stringify(result.usedDeprecatedRules)` for a file that has `config`.
 pub(crate) fn write_used(out: &mut Vec<u8>, config: Option<&ResolvedConfig>) {
     out.push(b'[');
     let rules = config.into_iter().flat_map(ResolvedConfig::configured);
     let mut js_rules = (config.map_or(&[][..], |config| &config.js_rules[..]).iter())
-        .filter(|it| it.severity != Severity::Off)
-        .filter_map(|it| {
+        .enumerate()
+        .filter(|it| it.1.severity != Severity::Off)
+        .filter_map(|(at, it)| {
             Some((
-                it.position,
+                (it.position, at),
                 &*it.configured.rule,
                 it.configured.rule.deprecated.as_deref()?,
             ))
         })
         .peekable();
+    let formatting_rules = config.map_or(&[][..], |config| &config.formatting_rules[..]);
+    let mut formatting_rules = formatting_rules.iter().peekable();
     let start = out.len();
-    // In the order of the configuration.
-    for (position, rule) in rules.map(Some).chain([None]).enumerate() {
-        while let Some((_, rule, deprecated)) = js_rules.next_if(|it| it.0 <= position) {
-            if out.len() > start {
-                out.push(b',');
-            }
-            write_js(out, rule, deprecated);
-        }
-        let Some(rule) =
-            rule.filter(|it| it.severity != Severity::Off && it.entry.meta.is_deprecated)
-        else {
-            continue;
-        };
-        let id = RuleId::Known(rule.entry.meta).to_vec();
-        let Ok(at) = data::DEPRECATED.binary_search_by(|it| it.0.as_bytes().cmp(&id[..])) else {
-            continue;
-        };
+    let separate = |out: &mut Vec<u8>| {
         if out.len() > start {
             out.push(b',');
         }
-        out.extend_from_slice(b"{\"ruleId\":\"");
-        out.extend_from_slice(&id);
-        out.extend_from_slice(b"\",");
-        out.extend_from_slice(data::DEPRECATED[at].1.as_bytes());
-        out.push(b'}');
+    };
+    // In the order of the configuration.
+    for (position, rule) in rules.map(Some).chain([None]).enumerate() {
+        loop {
+            let about_layout = formatting_rules.next_if(|it| {
+                it.position.0 <= position
+                    && js_rules.peek().is_none_or(|js| js.0.1 >= it.position.1)
+            });
+            if let Some(about_layout) = about_layout {
+                separate(out);
+                write(out, about_layout.rule);
+            } else if let Some((_, rule, deprecated)) = js_rules.next_if(|it| it.0.0 <= position) {
+                separate(out);
+                write_js(out, rule, deprecated);
+            } else {
+                break;
+            }
+        }
+        if let Some(rule) =
+            rule.filter(|it| it.severity != Severity::Off && it.entry.meta.is_deprecated)
+            && let Some(deprecated) = deprecated_rule(&RuleId::Known(rule.entry.meta).to_vec())
+        {
+            separate(out);
+            write(out, deprecated);
+        }
     }
     out.push(b']');
 }

@@ -1,7 +1,7 @@
 //! What is configured for one file.
 
 use super::instances::Instance;
-use super::registry::{Registry, parse_rule_id};
+use super::registry::{Deprecated, Registry, formatting_rule, parse_rule_id};
 use crate::context::Severity;
 use crate::js_plugin::{self, Route};
 use crate::language::{LanguageOptions, Parser};
@@ -129,6 +129,30 @@ pub struct ConfiguredJsRule {
     pub position: usize,
 }
 
+/// An entry of ESLint's `rules` that turns on a [rule about layout](formatting_rule), which does not run.
+#[derive(Copy, Clone)]
+pub struct FormattingRule {
+    pub rule: &'static Deprecated,
+    /// How many of [`ResolvedConfig::rules`], and of [`ResolvedConfig::js_rules`], the configuration has before it.
+    pub position: (usize, usize),
+}
+
+/// [`formatting_rule`], unless `id` is the name of another rule: of a plugin that the rules here do not answer for, as all in
+/// `foreign`, or of `--rulesdir`.
+pub(crate) fn find_formatting_rule(
+    registry: &Registry,
+    id: &[u8],
+    foreign: &[Box<[u8]>],
+    js_plugins: &[Arc<js_plugin::Plugin>],
+) -> Option<&'static Deprecated> {
+    let rule = formatting_rule(id)?;
+    let prefix = parse_rule_id(id).0;
+    let is_another = !registry.answers_for(prefix)
+        || foreign.iter().any(|it| **it == *prefix)
+        || prefix.is_empty() && find_js_rule(js_plugins, id).is_some();
+    (!is_another).then_some(rule)
+}
+
 pub(crate) fn find_js_rule<'p>(
     plugins: &'p [Arc<js_plugin::Plugin>],
     id: &[u8],
@@ -196,6 +220,8 @@ pub struct ResolvedConfig {
     /// Those of JavaScript plugins, also the ones that are off. They run if [`LintOptions::js_plugins`](super::LintOptions) is
     /// there, and are skipped otherwise.
     pub js_rules: Vec<ConfiguredJsRule>,
+    /// Those about layout that are on, which are left to `bun format`.
+    pub formatting_rules: Vec<FormattingRule>,
     /// What the rules of JavaScript plugins see of `language`. It is there if `js_plugins` is not empty.
     pub js_settings: Option<Arc<js_plugin::FileSettings>>,
     /// The JavaScript plugins whose rules the configuration and the comments of the file can name. The name of one hides
@@ -344,6 +370,16 @@ impl ResolvedConfig {
         registry
             .get(Plugin::TypeScript, name)
             .or_else(|| registry.get(Plugin::Eslint, name))
+    }
+
+    /// The rule about layout that a comment of a file that the configuration is for calls `id`: [`find_formatting_rule`]. oxlint
+    /// has no such rules.
+    pub fn formatting_rule(&self, registry: &Registry, id: &[u8]) -> Option<&'static Deprecated> {
+        let rule = find_formatting_rule(registry, id, &self.foreign_plugins, &self.js_plugins)?;
+        let plugin = Plugin::of_prefix(parse_rule_id(id).0)?;
+        let has_plugin = plugin.is_always_there()
+            || (self.plugins.as_ref()).is_none_or(|all| all.contains(&plugin));
+        (has_plugin && !self.prefers_typescript_rules).then_some(rule)
     }
 
     /// Whether the rule called `id`, which does not exist here, is skipped silently: it is of a

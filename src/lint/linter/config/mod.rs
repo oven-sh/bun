@@ -62,9 +62,10 @@ mod rc;
 mod shape;
 
 use super::globals::Tables;
-use super::registry::Registry;
+use super::registry::{Registry, formatting_rule};
 use super::resolved::{
-    ConfiguredJsRule, ConfiguredRule, LinterOptions, ResolvedConfig, find_js_rule,
+    ConfiguredJsRule, ConfiguredRule, FormattingRule, LinterOptions, ResolvedConfig,
+    find_formatting_rule, find_js_rule,
 };
 use super::schema;
 use crate::context::Severity;
@@ -700,7 +701,7 @@ impl Config {
     fn missing_js_rule(&self, registry: &Registry, id: &[u8], plugins: &[&[u8]]) -> Vec<u8> {
         let (prefix, name) = super::registry::parse_rule_id(id);
         let has_it = |other: &&&[u8]| match **other {
-            b"@" => registry.get(Plugin::Eslint, name).is_some(),
+            b"@" => registry.get(Plugin::Eslint, name).is_some() || formatting_rule(name).is_some(),
             other => match find_js_rule(&self.js_plugins, &[other, b"/", name].concat()) {
                 Some(found) => found.is_some(),
                 None => Plugin::of_prefix(other).is_some_and(|it| registry.get(it, name).is_some()),
@@ -974,6 +975,20 @@ impl Config {
             if eslint_8.is_some_and(|it| it.lacks_rule(&setting.id, &js_plugins)) {
                 if setting.severity != Severity::Off {
                     config.missing_rules.push(setting.id);
+                }
+                continue;
+            }
+            let foreign = &config.foreign_plugins;
+            if !self.prefers_typescript_rules
+                && let Some(rule) =
+                    find_formatting_rule(registry, &setting.id, foreign, &js_plugins)
+            {
+                if setting.severity != Severity::Off {
+                    let position = (config.rules.len(), config.js_rules.len());
+                    config
+                        .formatting_rules
+                        .push(FormattingRule { rule, position });
+                    config.has_skipped_rules = true;
                 }
                 continue;
             }

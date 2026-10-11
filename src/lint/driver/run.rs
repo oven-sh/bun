@@ -16,11 +16,14 @@ use bun_lint::context::Severity;
 use bun_lint::formats::Reason;
 use bun_lint::js_plugin::{Engine, HEAVY, Host, Loading, Route};
 use bun_lint::language::Parser;
-use bun_lint::linter::{FileConfig, LintMessage, Registry, RuleId, is_parse_error};
+use bun_lint::linter::{
+    FileConfig, LintMessage, Registry, RuleId, formatting_rule, is_parse_error,
+};
 use bun_sema::resolve::ScriptKind;
 use bun_sema::util::FxHashSet;
 use bun_threading::Guarded;
 use std::io::Write;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::Instant;
 
@@ -1087,6 +1090,10 @@ impl Run<'_> {
             );
         }
         let mut in_comments = std::mem::take(&mut *skipped_in_comments.lock());
+        let mut about_layout: Vec<&[u8]> = (in_comments.iter())
+            .filter_map(|it| Some(formatting_rule(it)?.0.as_bytes()))
+            .collect();
+        in_comments.retain(|it| formatting_rule(it).is_none());
         if !in_comments.is_empty() {
             bun_lint::utils::sort::sort_by(&mut in_comments, |a, b| a.cmp(b));
             let noun: &[u8] = match in_comments.len() {
@@ -1141,6 +1148,34 @@ impl Run<'_> {
                 self.out.stdout.push(b'\n');
             }
             return self.out;
+        }
+        let mut seen: Vec<&Arc<_>> = Vec::new();
+        let configs = results.iter().filter_map(|it| it.linted.as_ref());
+        for config in configs.map(|it| &it.config) {
+            let rules = config.formatting_rules.iter();
+            if rules.len() > 0 && !seen.iter().any(|it| Arc::ptr_eq(it, config)) {
+                seen.push(config);
+                about_layout.extend(rules.map(|it| it.rule.0.as_bytes()));
+            }
+        }
+        if !about_layout.is_empty() {
+            about_layout.sort_unstable();
+            about_layout.dedup();
+            let noun: &[u8] = match about_layout.len() {
+                1 => b" formatting rule that is deprecated",
+                _ => b" formatting rules that are deprecated",
+            };
+            let shown = &about_layout[..about_layout.len().min(3)];
+            loader.advise(
+                [
+                    about_layout.len().to_string().as_bytes(),
+                    noun,
+                    b" did not run, bun format does their work: ",
+                    &shown.join(&b", "[..]),
+                    if about_layout.len() > 3 { b", .." } else { b"" },
+                ]
+                .concat(),
+            );
         }
 
         // The rules that are about several files look at those that they have something to say about.

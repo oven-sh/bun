@@ -165,7 +165,8 @@ async function configureEslint([id, run, built]) {
   const started = performance.now();
   const configs = await (built === null ? wholeConfiguration(eslint, run) : builtConfiguration(eslint, run, built));
   loadingTime += performance.now() - started;
-  eslintConfigurations.set(id, { linter: new eslint.Linter({ cwd, configType: "flat" }), configs, options: run });
+  const options = { ...run, aboutLayout: new Set(run.aboutLayout) };
+  eslintConfigurations.set(id, { linter: new eslint.Linter({ cwd, configType: "flat" }), configs, options });
   return DONE;
 }
 
@@ -233,7 +234,9 @@ function lintWithEslint() {
     filename: name,
   };
   if (configs.getConfig !== undefined) how.filterCodeBlock = block => configs.getConfig(block) !== undefined;
-  if (options.onlyErrors) how.ruleFilter = ({ severity }) => severity === 2;
+  // The rules about layout do not run here either.
+  how.ruleFilter = ({ ruleId, severity }) =>
+    !options.aboutLayout.has(ruleId) && (!options.onlyErrors || severity === 2);
   if (physicalLength !== pathLength) how.physicalFilename = decode(buffer, 16, 16 + physicalLength);
   if ((flags & WITHOUT_FIXES) !== 0) how.disableFixes = true;
   const messages = linter.verify(decode(buffer, 16 + pathLength, length), configs, how);

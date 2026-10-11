@@ -1,9 +1,13 @@
 //! The rules that exist, by name.
 
+#[path = "deprecated_data.rs"]
+mod deprecated;
+
 use super::config::oxlint_category;
 use crate::rule::{Meta, Plugin};
 use crate::runner::RuleEntry;
 use bun_core::strings;
+pub use deprecated::Deprecated;
 
 /// All the rules that can be configured.
 pub struct Registry {
@@ -347,6 +351,27 @@ impl Registry {
         let (plugin, name) = parse_rule_id(id);
         self.get(Plugin::of_prefix(plugin)?, name)
     }
+}
+
+fn find_deprecated(all: &'static [Deprecated], id: &[u8]) -> Option<&'static Deprecated> {
+    let at = all.binary_search_by(|it| it.0.as_bytes().cmp(id));
+    all.get(at.ok()?)
+}
+
+/// What ESLint says about the rule here that it calls `id`, if that is deprecated.
+pub fn deprecated_rule(id: &[u8]) -> Option<&'static Deprecated> {
+    find_deprecated(deprecated::DEPRECATED, id)
+}
+
+/// The rule about the layout of the code that ESLint calls `id`, if those who wrote it have deprecated it. None of them is
+/// here: `bun format` does their work. A configuration of ESLint that names one is not wrong.
+pub fn formatting_rule(id: &[u8]) -> Option<&'static Deprecated> {
+    find_deprecated(deprecated::FORMATTING, id)
+}
+
+/// The names of all of [these](formatting_rule).
+pub fn formatting_rules() -> impl Iterator<Item = &'static str> {
+    deprecated::FORMATTING.iter().map(|it| it.0)
 }
 
 /// What replaces a rule that ESLint has removed, separated by `, `.

@@ -8,6 +8,6 @@ export default [
     files: ["**/*.html", "**/*.htm"],
     plugins: { html },
     languageOptions: { globals: globals.browser, sourceType: "script" },
-    rules: { semi: "error", "no-var": "error", quotes: ["error", "double"], indent: ["error", 2] },
+    rules: { "no-var": "error", eqeqeq: "error", "dot-notation": "error", curly: ["error", "all"] },
   },
 ];

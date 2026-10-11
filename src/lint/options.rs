@@ -15,11 +15,6 @@ impl<'o> Options<'o> {
     }
 
     #[inline]
-    pub fn len(&self) -> usize {
-        self.values.len()
-    }
-
-    #[inline]
     pub fn is_empty(&self) -> bool {
         self.values.is_empty()
     }

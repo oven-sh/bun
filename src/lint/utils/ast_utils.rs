@@ -21,12 +21,12 @@ use super::estree_compat::{
 };
 use super::text;
 use crate::ast::{
-    BinOp, Case, Chain, Expr, ExprKind, ExprTag, File, Flags, FnBody, FnKind, Func, Key, KeyKind,
-    Member, MemberKind, Name, Node, PatKind, PatProp, Prop, PropKind, Stmt, StmtKind, StmtTag,
-    UnOp, VarKind,
+    BinOp, Chain, Expr, ExprKind, ExprTag, File, Flags, FnBody, FnKind, Func, Key, KeyKind, Member,
+    MemberKind, Name, Node, PatKind, PatProp, Prop, PropKind, Stmt, StmtKind, StmtTag, UnOp,
+    VarKind,
 };
 use crate::semantic::{Reference, Scope, Symbol};
-use crate::span::{Position, Span, Spanned};
+use crate::span::{Span, Spanned};
 use crate::tokens::{Token, TokenKind, skip_trivia, skip_trivia_back, token_len};
 use bun_core::strings;
 use bun_sema::hir;
@@ -35,18 +35,6 @@ use smallvec::SmallVec;
 use std::borrow::Cow;
 
 // ───────────────────────────── constants ─────────────────────────────
-
-/// ESLint's `createGlobalLinebreakMatcher`: where each line break of `text` starts, and its length
-/// in bytes. `text.split(createGlobalLinebreakMatcher())` is [`strings::js_lines`].
-pub fn create_global_linebreak_matcher(text: &[u8]) -> impl Iterator<Item = (usize, usize)> + '_ {
-    let mut from = 0;
-    std::iter::from_fn(move || {
-        let (at, len) = strings::find_js_line_break(text.get(from..)?)?;
-        let start = from + at;
-        from = start + len;
-        Some((start, len))
-    })
-}
 
 /// ESLint's `COMMENTS_IGNORE_PATTERN.test(value)`, for the value of a comment.
 pub fn matches_comments_ignore_pattern(value: &[u8]) -> bool {
@@ -156,23 +144,11 @@ pub fn is_builtin_global_of_oxlint(name: &[u8]) -> bool {
 
 // ───────────────────────────── tokens ─────────────────────────────
 
-/// ESLint's `isNotQuestionDotToken`.
-#[inline]
-pub fn is_not_question_dot_token(token: &Token<'_>) -> bool {
-    !token.is_punctuator("?.")
-}
-
 pub use super::eslint_utils::{
     is_arrow_token, is_closing_brace_token, is_closing_paren_token, is_colon_token, is_comma_token,
     is_not_closing_paren_token, is_not_semicolon_token, is_opening_brace_token,
     is_opening_bracket_token, is_opening_paren_token, is_semicolon_token,
 };
-
-/// ESLint's `isKeywordToken`.
-#[inline]
-pub fn is_keyword_token(token: &Token<'_>) -> bool {
-    token.kind() == TokenKind::Keyword
-}
 
 /// ESLint's `isTokenOnSameLine`: `left` ends on the line on which `right` starts. Each is a token,
 /// a comment or a node.
@@ -1049,12 +1025,6 @@ pub fn get_boolean_value(e: Expr<'_>) -> Option<bool> {
         }
         _ => return None,
     })
-}
-
-/// ESLint's `isSurroundedBy`.
-#[inline]
-pub fn is_surrounded_by(value: &[u8], character: u8) -> bool {
-    value.first() == Some(&character) && value.last() == Some(&character)
 }
 
 /// ESLint's `hasOctalOrNonOctalDecimalEscapeSequence`, for the raw text of a string: it has `\1` to
@@ -2154,31 +2124,6 @@ pub fn is_default_this_binding_with<'a>(
 }
 
 // ───────────────────────────── positions ─────────────────────────────
-
-/// ESLint's `getSwitchCaseColonToken`: the `:` after `case test` or `default`.
-pub fn get_switch_case_colon_token(case: Case<'_>) -> Option<Token<'_>> {
-    let file = case.file();
-    match case.test() {
-        Some(test) => file.tokens_after(test).find(is_colon_token),
-        None => file.tokens_in(case).nth(1),
-    }
-}
-
-/// ESLint's `getNextLocation`: the position after `position`, which is the start of the next line
-/// if it is at the end of one. `None` at the end of the file.
-pub fn get_next_location(file: &File<'_>, position: Position) -> Option<Position> {
-    // Not by the length of the line in UTF-16 code units, which takes time in proportion to it.
-    if file.offset(position) < file.line_span(position.line).end {
-        return Some(Position {
-            line: position.line,
-            column: position.column + 1,
-        });
-    }
-    (position.line < file.line_count()).then_some(Position {
-        line: position.line + 1,
-        column: 0,
-    })
-}
 
 /// Whether `node` is in the type of a type annotation, an `as` or `satisfies` expression or a type
 /// alias.

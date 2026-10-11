@@ -6,8 +6,8 @@ use super::rc::strings_of;
 use super::{Config, ConfigObject, Pattern, presets};
 use crate::context::Severity;
 use crate::js_plugin;
-use crate::linter::registry::{Registry, parse_rule_id};
-use crate::linter::resolved::{find_js_rule, needs_resolver};
+use crate::linter::registry::{Deprecated, Registry, parse_rule_id};
+use crate::linter::resolved::{find_formatting_rule, find_js_rule, needs_resolver};
 use crate::options::Json;
 use crate::paths;
 use crate::rule::{Plugin, minor_of};
@@ -378,6 +378,12 @@ impl Reader<'_> {
         .filter(|it| !is_foreign && !(self.has_unknown_resolver && needs_resolver(it.meta)))
     }
 
+    /// [`find_formatting_rule`]. oxlint has no such rules.
+    pub(super) fn formatting_rule(&self, id: &[u8]) -> Option<&'static Deprecated> {
+        find_formatting_rule(self.registry, id, &self.foreign_prefixes, &self.js_plugins)
+            .filter(|_| !self.prefers_typescript_rules)
+    }
+
     /// The rules of an object.
     pub(super) fn rules(&mut self, rules: &Json) -> Result<Vec<RuleSetting>, ConfigError> {
         let mut settings = Vec::new();
@@ -394,7 +400,8 @@ impl Reader<'_> {
                     b"\": Expected severity of \"off\", 0, \"warn\", 1, \"error\", or 2.",
                 ]));
             };
-            if let Some(found) = find_js_rule(&self.js_plugins, id) {
+            let is_about_layout = self.formatting_rule(id).is_some();
+            if !is_about_layout && let Some(found) = find_js_rule(&self.js_plugins, id) {
                 // Also for a rule that is off, as in oxlint.
                 if found.is_none() {
                     return Err(ConfigError::new(&[
@@ -444,6 +451,7 @@ impl Reader<'_> {
                 None if !is_foreign && self.registry.base_of(id).is_some() => {
                     setting.plugin = Box::default();
                 }
+                None if is_about_layout => {}
                 None => {
                     let is_new = !self.unknown_rules.iter().any(|it| **it == *id);
                     if setting.severity != Severity::Off && is_new {

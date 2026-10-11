@@ -31,7 +31,13 @@ const flags = (name, { meta }) =>
     .join(" | ") || "0";
 for (const [name, severity] of Object.entries({ ...configs.recommended.rules, ...configs.all.rules }))
   if (severity !== "error" || !rules8.has(name)) throw new Error(`${name}: ${severity}`);
-const names = [...rules8.keys()].sort(byBytes);
+// Those are in ../deprecated_data.rs. All of them are rules of ESLint 8 too.
+const isAboutLayout = name => {
+  const replacedBy = rulesToday.get(name)?.meta.deprecated?.replacedBy ?? [];
+  return replacedBy.length > 0 && replacedBy.every(it => it.plugin?.name === "@stylistic/eslint-plugin");
+};
+for (const name of rulesToday.keys()) if (isAboutLayout(name) && !rules8.has(name)) throw new Error(name);
+const names = [...rules8.keys()].filter(name => !isAboutLayout(name)).sort(byBytes);
 
 // As in ../schema/generate-schemas.mjs.
 const strip = (schema, isMap = false) => {
@@ -75,6 +81,7 @@ writeFileSync(
 //! What the configuration files of ESLint 8 mean by \`eslint:recommended\` and \`eslint:all\`, which rules and environments there are
 //! for them, and what its rules say and accept where that has changed since.
 
+use crate::linter::registry::formatting_rule;
 use crate::options::Json;
 use crate::rule::{Message, Meta, Plugin};
 
@@ -87,7 +94,7 @@ const FIXABLE: u8 = 4;
 /// \`meta.hasSuggestions\`
 const SUGGESTS: u8 = 8;
 
-/// All rules, sorted by name.
+/// All rules but [those about layout that are deprecated today](formatting_rule), sorted by name.
 #[rustfmt::skip]
 static RULES: [(&str, u8); ${names.length}] = [
 ${names.map(name => `    ("${name}", ${flags(name, rules8.get(name))}),`).join("\n")}
@@ -121,7 +128,7 @@ fn flags_of(name: &[u8]) -> Option<u8> {
 
 /// Whether there is a rule called \`name\`.
 pub(super) fn has_rule(name: &[u8]) -> bool {
-    flags_of(name).is_some()
+    flags_of(name).is_some() || formatting_rule(name).is_some()
 }
 
 /// The names of the rules with \`flag\`: [\`RECOMMENDED\`], [\`ALL\`].

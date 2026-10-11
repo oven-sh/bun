@@ -1383,7 +1383,10 @@ impl<'c> Legacy<'_, '_, 'c> {
             };
             let is_on = severity.is_some_and(|it| it != Severity::Off);
             // Also for a rule that can hand a file back to it.
-            if is_on && (self.reader.native_rule(id)).is_none_or(|it| it.meta.hands_back) {
+            if is_on
+                && self.reader.formatting_rule(id).is_none()
+                && (self.reader.native_rule(id)).is_none_or(|it| it.meta.hands_back)
+            {
                 self.reader.unknown_rules.push(id[..].into());
             }
         }
@@ -1451,7 +1454,10 @@ impl<'c> Legacy<'_, '_, 'c> {
                 .unwrap_or_default()
             {
                 let has_plugin = |id: &[u8]| named.has(id);
-                let definition = definition_of(id, &has_plugin, &self.reader.js_plugins);
+                let definition = match self.reader.formatting_rule(id) {
+                    Some(_) => Definition::Missing,
+                    None => definition_of(id, &has_plugin, &self.reader.js_plugins),
+                };
                 validate_rule(id, value, definition)
                     .map_err(|message| ConfigError::new(&[name, b":\n\t", &message]))?;
             }

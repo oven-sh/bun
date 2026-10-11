@@ -2762,12 +2762,12 @@ describe.concurrent("the configuration files of ESLint 8", () => {
   test("eslint:recommended is that of ESLint 8, and leaves alone what it does not have", async () => {
     const files = {
       "base.json": `{ "rules": { "no-constant-binary-expression": "error" } }`,
-      "a.js": "var a = 1;;\na + 1 == null;\n",
+      "a.js": "var a = 1;\nif (a) { function f() {} f(); }\na + 1 == null;\n",
     };
     const alone = await lint({ ...files, ".eslintrc.json": rc({ extends: ["eslint:recommended"] }) });
-    expect(alone.problems).toEqual(["a.js:1:11 no-extra-semi"]);
+    expect(alone.problems).toEqual(["a.js:2:10 no-inner-declarations"]);
     const after = await lint({ ...files, ".eslintrc.json": rc({ extends: ["./base.json", "eslint:recommended"] }) });
-    expect(after.problems).toEqual(["a.js:1:11 no-extra-semi", "a.js:2:1 no-constant-binary-expression"]);
+    expect(after.problems).toEqual(["a.js:2:10 no-inner-declarations", "a.js:3:1 no-constant-binary-expression"]);
   });
 
   test("after @rushstack/eslint-patch/modern-module-resolution a plugin is looked for from the file that names it", async () => {
@@ -2923,11 +2923,11 @@ describe.concurrent("the configuration files of ESLint 8", () => {
   test("`eslint:all` is that of 8.57.1", async () => {
     const { problems } = await lint({
       ".eslintrc.json": rc({ extends: "eslint:all", env: { es6: true } }),
-      "a.js": "var one = new Symbol();;\n",
+      "a.js": "var one = new Symbol(), two = new Object();\n",
     });
-    // Formatting rules were deprecated by then, and what is deprecated is not in it.
+    // What was deprecated by then is not in it.
     expect(problems).toContain("a.js:1:15 no-new-symbol");
-    expect(problems.filter(it => it.endsWith("semi"))).toEqual([]);
+    expect(problems.filter(it => it.endsWith("no-new-object"))).toEqual([]);
   });
 
   test("the default options of typescript-eslint are those of the major version that is installed", async () => {
@@ -3627,26 +3627,213 @@ describe.concurrent("what the configuration asks for and cannot be done", () => 
   });
 });
 
+// ESLint has deprecated its rules about layout, and eslint-plugin-react its `jsx-space-before-closing`. They are not built in: `bun format`
+// does their work. The configurations that people share still turn them on.
+describe.concurrent("the deprecated rules about layout", () => {
+  const rules = {
+    semi: "error",
+    // Nothing looks at the options.
+    quotes: ["error", "sideways", 3],
+    indent: "warn",
+    "max-len": "off",
+    "no-debugger": "error",
+  };
+  const untidy = "debugger\n   x = 'y'\n";
+  const flavors: [name: string, config: (rules: object) => string][] = [
+    ["eslint.config.mjs", rules => `export default [{ rules: ${JSON.stringify(rules)} }];\n`],
+    [".eslintrc.json", rules => rc({ rules })],
+  ];
+  const forPeople = ["-f", "stylish", "."];
+  const notes = (stderr: string) => stderr.split("\n").filter(it => it.startsWith("note: "));
+  const note = (count: number, names: string) =>
+    `note: ${count} formatting rules that are deprecated did not run, bun format does their work: ${names}`;
+
+  test.each(flavors)("%s: they do not run, which is a note and no error", async (name, config) => {
+    const files = { [name]: config(rules), "a.js": untidy };
+    const [found, shown, clean] = await Promise.all([
+      lint(files),
+      lint(files, forPeople),
+      lint({ ...files, "a.js": "   x = 'y'\n" }, forPeople),
+    ]);
+    expect(found.problems).toEqual(["a.js:1:1 no-debugger"]);
+    expect(found.exitCode).toBe(1);
+    expect(notes(shown.stderr)).toEqual([note(3, "indent, quotes, semi")]);
+    expect(notes(clean.stderr)).toEqual([note(3, "indent, quotes, semi")]);
+    expect(clean.exitCode).toBe(0);
+  });
+
+  test("one note for all files and configuration files, with the first three names", async () => {
+    const on = (...names: string[]) => flavors[0][1](Object.fromEntries(names.map(it => [it, "error"])));
+    const { stderr, exitCode } = await lint(
+      {
+        "a/eslint.config.mjs": on("semi", "eol-last"),
+        "a/a.js": "a",
+        "a/b.js": "b",
+        "b/eslint.config.mjs": on("semi", "comma-dangle", "arrow-parens"),
+        "b/c.js": "/* eslint yield-star-spacing: 2 */ c",
+      },
+      ["-f", "stylish", "a", "b"],
+    );
+    expect(notes(stderr)).toEqual([note(5, "arrow-parens, comma-dangle, eol-last, ..")]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("one alone", async () => {
+    const { stderr } = await lint({ "eslint.config.mjs": flavors[0][1]({ semi: 2 }), "a.js": "a" }, forPeople);
+    expect(notes(stderr)).toEqual([
+      "note: 1 formatting rule that is deprecated did not run, bun format does their work: semi",
+    ]);
+  });
+
+  // As after eslint-config-prettier.
+  test.each([
+    ["eslint.config.mjs", { "eslint.config.mjs": `export default [{ rules: { semi: 2 } }, { rules: { semi: 0, indent: "off" } }];` }],
+    [".eslintrc.json", { ".eslintrc.json": rc({ extends: "./base.json", rules: { semi: 0, indent: "off" } }), "base.json": `{ "rules": { "semi": 2 } }` }],
+  ])("%s: nothing is said about one that is off in the end", async (_, config) => {
+    const { stderr, exitCode } = await lint({ ...config, "a.js": `/* eslint quotes: "off" */ a` }, forPeople);
+    expect(notes(stderr)).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("--rule, and a comment that configures", async () => {
+    const files = { "a.js": `/* eslint quotes: ["error", "sideways"], no-debugger: "error" */ ${untidy}` };
+    const flags = ["--no-config-lookup", "--rule", "semi: error", "--rule", "indent: [warn, sideways]"];
+    const [found, shown] = await Promise.all([lint(files, [...flags, "."]), lint(files, [...flags, ...forPeople])]);
+    expect(found.problems).toEqual(["a.js:1:66 no-debugger"]);
+    expect(found.exitCode).toBe(1);
+    expect(notes(shown.stderr)).toEqual([note(3, "indent, quotes, semi")]);
+  });
+
+  test.each(["--quiet", "--silent", "--format=json"])("no note with %s", async flag => {
+    const files = { "eslint.config.mjs": flavors[0][1](rules), "a.js": untidy };
+    expect(notes((await lint(files, [...forPeople, flag])).stderr)).toEqual([]);
+  });
+
+  test.each(flavors)("%s: a comment that disables one is neither wrong nor unused, and stays", async (name, config) => {
+    const text = [
+      "debugger // eslint-disable-line semi, no-debugger",
+      "// eslint-disable-next-line indent, no-debugger",
+      "x",
+      "/* eslint-disable quotes */",
+      "/* eslint-enable quotes */",
+      "",
+    ];
+    const files = { [name]: config({ "no-debugger": "error" }), "a.js": text.join("\n") };
+    const unused = ["--report-unused-disable-directives", "a.js"];
+    const [found, fixed] = await Promise.all([lint(files, unused), lint(files, ["--fix-dry-run", ...unused])]);
+    expect(JSON.parse(found.raw).results[0].messages.map((it: any) => `${it.line}:${it.column} ${it.message}`)).toEqual([
+      "2:1 Unused eslint-disable directive (no problems were reported from 'no-debugger').",
+    ]);
+    text[1] = "// eslint-disable-next-line indent";
+    expect(JSON.parse(fixed.raw).results[0]).toMatchObject({ messages: [], output: text.join("\n") });
+  });
+
+  // One of them may be what it is there for.
+  test("a comment that disables all rules is not called unused where one is on", async () => {
+    const run = (rules: object) =>
+      lint({ "eslint.config.mjs": flavors[0][1](rules), "a.js": "a // eslint-disable-line\n" }, [
+        "--report-unused-disable-directives",
+        "a.js",
+      ]);
+    const [off, on] = await Promise.all([run({ semi: "off" }), run({ semi: "error" })]);
+    expect([off.problems, on.problems]).toEqual([["a.js:1:3 -"], []]);
+  });
+
+  // What ESLint 10.12 prints.
+  test("usedDeprecatedRules has them, in the order of the configuration", async () => {
+    const old = (replacedBy: string) => `{ meta: { deprecated: true, replacedBy: ["${replacedBy}"] }, create: () => ({}) }`;
+    const { raw } = await lint(
+      {
+        "eslint.config.mjs": `export default [{
+          plugins: { p: { rules: { one: ${old("1")}, two: ${old("2")} } } },
+          rules: { "p/one": 2, semi: 2, "p/two": 2, "no-new-object": 2, indent: 0, quotes: 1, eqeqeq: 2 },
+        }];`,
+        "a.js": "a;\n",
+      },
+      ["a.js"],
+    );
+    const used: { ruleId: string; replacedBy: string[]; info?: { deprecatedSince: string } }[] =
+      JSON.parse(raw).results[0].usedDeprecatedRules;
+    expect(used.map(it => [it.ruleId, it.replacedBy, it.info?.deprecatedSince])).toEqual([
+      ["p/one", ["1"], undefined],
+      ["semi", ["@stylistic/semi"], "8.53.0"],
+      ["p/two", ["2"], undefined],
+      ["no-new-object", ["no-object-constructor"], "8.50.0"],
+      ["quotes", ["@stylistic/quotes"], "8.53.0"],
+    ]);
+  });
+
+  const reports = `{ create: context => ({ Program: node => context.report({ node, message: "It ran." }) }) }`;
+
+  test("a rule of a plugin that is called the same runs", async () => {
+    const files = {
+      "eslint.config.mjs": `export default [{
+        plugins: { "@stylistic": { rules: { semi: ${reports} } }, mine: { rules: { indent: ${reports} } } },
+        rules: { "@stylistic/semi": "error", "mine/indent": "error" },
+      }];`,
+      "a.js": "a\n",
+    };
+    const [found, shown] = await Promise.all([lint(files, ["a.js"]), lint(files, ["-f", "stylish", "a.js"])]);
+    expect(found.problems).toEqual(["a.js:1:1 @stylistic/semi", "a.js:1:1 mine/indent"]);
+    expect(notes(shown.stderr).filter(it => it.includes("formatting"))).toEqual([]);
+  });
+
+  test("so does one of --rulesdir", async () => {
+    const files = { ".eslintrc.json": rc({ rules: { semi: "error" } }), "rules/semi.js": `module.exports = ${reports};`, "a.js": "a\n" };
+    expect((await lint(files, ["--rulesdir", "rules", "a.js"])).problems).toEqual(["a.js:1:1 semi"]);
+  });
+
+  test("react/jsx-space-before-closing is one of them, unless the rules of the package run", async () => {
+    const files = {
+      "eslint.config.mjs": `export default [{
+        plugins: { react: { meta: { name: "eslint-plugin-react" }, rules: { "jsx-space-before-closing": ${reports} } } },
+        rules: { "react/jsx-space-before-closing": "error" },
+      }];`,
+      "a.js": "a\n",
+    };
+    const [builtIn, shown, ofThePackage] = await Promise.all([
+      lint(files, ["a.js"]),
+      lint(files, ["-f", "stylish", "a.js"]),
+      lint(files, ["--no-native-plugin-rules", "a.js"]),
+    ]);
+    expect(builtIn.problems).toEqual([]);
+    expect(builtIn.exitCode).toBe(0);
+    expect(notes(shown.stderr)).toEqual([
+      "note: 1 formatting rule that is deprecated did not run, bun format does their work: react/jsx-space-before-closing",
+    ]);
+    expect(ofThePackage.problems).toEqual(["a.js:1:1 react/jsx-space-before-closing"]);
+  });
+
+  // oxlint has never had them, and refuses the file.
+  test("beside an .oxlintrc.json they are rules like any other that is not built in", async () => {
+    const files = {
+      ".oxlintrc.json": JSON.stringify({ rules: { semi: "error", "eslint/quotes": "warn", indent: "off", "no-debugger": "error" } }),
+      "a.js": untidy,
+    };
+    const { problems, stderr, exitCode } = await lint(files, ["a.js"]);
+    expect(problems).toEqual(["a.js:1:1 no-debugger"]);
+    expect(stderr).toContain("2 rules of ESLint did not run: semi, quotes");
+    expect(stderr).not.toContain("formatting");
+    expect(exitCode).toBe(2);
+  });
+});
+
 // As ESLint 10.12 with eslint-plugin-import 2.32.0 and eslint-plugin-react 7.37.5: `" ".repeat(n)` throws beyond the longest string that
 // JavaScript has, 2 ** 29 - 24, and for a negative n: the rule throws, which ends the run. Below that ESLint reports as ever, in a format
 // that does not print the fixes: its `json` throws over them.
 describe.concurrent("a number in the options of a rule that is the length of a text", () => {
-  const indented = "if (a) {\n  b();\n}\n";
   const element = 'const a = (\n  <b\n    c="d"\n  >\n    <e />\n  </b>\n);\n';
   const tooLong = "RangeError: Invalid string length";
   test.each<
     [rule: string, option: unknown, file: string, text: string, thrown: [error: string, line: number] | string[]]
   >([
-    ["indent", 2 ** 31, "a.js", indented, [tooLong, 1]],
-    ["indent", 2 ** 53, "a.js", indented, [tooLong, 1]],
-    ["indent", 2 ** 29 - 23, "a.js", indented, [tooLong, 1]],
-    // Nothing is repeated.
-    ["indent", 2 ** 31, "a.js", "a();\n", []],
     ["import/newline-after-import", { count: 2 ** 53 }, "a.js", '\nimport "a";\nb();\n', [tooLong, 2]],
     ["import/newline-after-import", { count: 2 ** 29 }, "a.js", '\nimport "a";\nb();\n', [tooLong, 2]],
     // The calls are looked at when the program ends.
     ["import/newline-after-import", { count: 2 ** 31 }, "a.js", '\n\nconst a = require("a");\nb();\n', [tooLong, 1]],
     ["react/jsx-indent", 2 ** 31, "a.jsx", element, [tooLong, 2]],
+    // Nothing is repeated.
+    ["react/jsx-indent", 2 ** 31, "a.jsx", "a();\n", []],
     // Only twice as much is too long.
     ["react/jsx-indent", 2 ** 29 - 24, "a.jsx", element, [tooLong, 5]],
     ["react/jsx-indent", -1, "a.jsx", element, ["RangeError: Invalid count value: -1", 2]],
@@ -3671,15 +3858,6 @@ describe.concurrent("a number in the options of a rule that is the length of a t
     } else {
       expect({ problems, exitCode }).toEqual({ problems: expected as string[], exitCode: expected.length ? 1 : 0 });
     }
-  });
-
-  // ESLint 8.57 names another line: that of the block.
-  test("indent-legacy", async () => {
-    const files = { ".eslintrc.json": rc({ rules: { "indent-legacy": ["error", 2 ** 31] } }), "a.js": indented };
-    const { stderr, exitCode } = await lint(files, ["a.js"]);
-    expect(stderr).toContain(`${tooLong}\nOccurred while linting <dir>/a.js:`);
-    expect(stderr).toContain('\nRule: "indent-legacy"');
-    expect(exitCode).toBe(2);
   });
 });
 
@@ -3884,7 +4062,6 @@ describe("an infinite number in an eslint.config.mjs", () => {
     [`"max-depth": ["error", Infinity]`, []],
     [`"max-depth": ["error", { max: Infinity }]`, []],
     [`"max-lines": ["error", { max: Infinity }]`, []],
-    [`"max-len": ["error", { code: Infinity }]`, []],
     [`"complexity": ["error", Infinity]`, []],
     [`"no-magic-numbers": ["error", { ignore: [Infinity] }]`, ["5:16 No magic number: 123."]],
     [
@@ -3903,16 +4080,13 @@ describe("an infinite number in an eslint.config.mjs", () => {
       `"max-depth": ["error", { max: -Infinity }]`,
       'Key "rules": Key "max-depth":\n\tValue {"max":null} should be integer.\n\tValue null should be >= 0.\n\tValue {"max":null} should match exactly one schema in oneOf.',
     ],
-    [
-      `"newline-per-chained-call": ["error", { ignoreChainWithDepth: Infinity }]`,
-      'Key "rules": Key "newline-per-chained-call":\n\tValue null should be <= 10.',
-    ],
-    [
-      `"indent": ["error", Infinity]`,
-      'RangeError: Invalid count value: Infinity\nOccurred while linting <dir>/a.js:1\nRule: "indent"',
-    ],
+    [`"p/limited": ["error", Infinity]`, 'Key "rules": Key "p/limited":\n\tValue null should be <= 10.'],
   ] as [string, string[] | string][])("an option of a rule: %s", async (rule, expected) => {
-    const files = { "eslint.config.mjs": `export default [{ rules: { ${rule} } }];\n`, "a.js": code };
+    const limited = `{ meta: { schema: [{ type: "integer", maximum: 10 }] }, create: () => ({}) }`;
+    const files = {
+      "eslint.config.mjs": `export default [{ plugins: { p: { rules: { limited: ${limited} } } }, rules: { ${rule} } }];\n`,
+      "a.js": code,
+    };
     const { raw, stderr, exitCode } = await lint(files, ["a.js"]);
     if (typeof expected === "string") {
       expect(stderr).toBe(`error: ${expected}`);

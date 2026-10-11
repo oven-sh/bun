@@ -21,8 +21,8 @@ use bun_lint::context::Severity;
 use bun_lint::js_plugin::{Configuration, Host, Route};
 use bun_lint::language::InferGlobals;
 use bun_lint::linter::{
-    Config, InJavaScript, LegacyFile, LegacyOptions, ResolvedConfig, oxlint_category_of_key,
-    oxlint_filter_keys, oxlint_rule_key, plugin_of_oxlint,
+    Config, InJavaScript, LegacyFile, LegacyOptions, ResolvedConfig, formatting_rules,
+    oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key, plugin_of_oxlint,
 };
 use bun_lint::options::Json;
 use bun_lint::rule::minor_of;
@@ -686,6 +686,7 @@ impl<'l> Loader<'l> {
         let options = self.options;
         let native = |path: &[u8]| Json::String(paths::to_native(path.to_vec()));
         let only_errors = options.quiet && options.max_warnings == -1;
+        let about_layout = formatting_rules().map(|it| Json::String(it.into()));
         let mut run = Vec::new();
         bun_lint::linter::write_json(
             &mut run,
@@ -694,6 +695,7 @@ impl<'l> Loader<'l> {
                 (b"basePath", native(base_path)),
                 (b"allowInlineConfig", Json::Bool(options.inline_config)),
                 (b"onlyErrors", Json::Bool(only_errors)),
+                (b"aboutLayout", Json::Array(about_layout.collect())),
                 (b"file", file.map_or(Json::Null, native)),
                 (b"ignores", Json::Bool(options.ignore)),
                 (b"added", Json::Array(self.added())),

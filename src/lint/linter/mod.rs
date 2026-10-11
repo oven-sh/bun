@@ -58,10 +58,12 @@ pub use message::{
 };
 pub(crate) use per_file::PerFile;
 pub use registry::{
-    NativePlugins, Registry, oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key,
-    parse_rule_id, plugin_of_oxlint,
+    Deprecated, NativePlugins, Registry, deprecated_rule, formatting_rule, formatting_rules,
+    oxlint_category_of_key, oxlint_filter_keys, oxlint_rule_key, parse_rule_id, plugin_of_oxlint,
 };
-pub use resolved::{ConfiguredJsRule, ConfiguredRule, LinterOptions, ResolvedConfig, severity_of};
+pub use resolved::{
+    ConfiguredJsRule, ConfiguredRule, FormattingRule, LinterOptions, ResolvedConfig, severity_of,
+};
 use resolved::{Prepared, Slot};
 pub use syntax::{
     Refusal, TypesInJavaScript, goes_to_flow, may_be_misread, parse_error, refusal_of_oxfmt,
@@ -1138,7 +1140,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
     }
 
     /// The rule called `id`. If there is none, reports that, unless the plugin is one that the
-    /// configuration knows. `is_turned_on`: by the comment, so that it is missed.
+    /// configuration knows, or the rule is left to `bun format`. `is_turned_on`: by the comment, so that it is missed.
     fn find(
         &mut self,
         comment: &ConfigComment,
@@ -1154,8 +1156,10 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
         let js = config.find_js_rule(id);
         let native = || (config.find_rule(&self.linter.registry, id)).map(Named::Native);
         let lacks_it = config.lacks_rule(id);
+        let is_about_layout =
+            !lacks_it && (config.formatting_rule(&self.linter.registry, id)).is_some();
         let found = match js {
-            _ if lacks_it => None,
+            _ if lacks_it || is_about_layout => None,
             // What `jsPlugins` names hides a plugin of the same name that is implemented here.
             Some(js)
                 if config.skips_unknown_rules
@@ -1172,7 +1176,7 @@ impl<'c, 'a, S: RuleSet> Inline<'_, 'c, 'a, S> {
         if found.is_none() {
             // All rules of a plugin that is loaded are known.
             let is_known_to_be_missing = lacks_it || js.is_some() && !config.skips_unknown_rules;
-            if !is_known_to_be_missing && self.config.is_foreign(id) {
+            if is_about_layout || !is_known_to_be_missing && self.config.is_foreign(id) {
                 if is_turned_on && !self.skipped.iter().any(|it| **it == *id) {
                     self.skipped.push(id.into());
                 }

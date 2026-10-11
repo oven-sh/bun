@@ -36,9 +36,19 @@ const script = fileURLToPath(import.meta.url);
 const args = parseArgs("eslint", join(script, ".."));
 const eslintDir = realpathSync(requiredEnv("ESLINT_DIR"));
 
+const require = createRequire(join(eslintDir, "package.json"));
+const builtinRules: Map<string, RuleModule> = require("./lib/rules");
+
+/** The deprecated rules about layout, which @stylistic/eslint-plugin has taken over. `bun lint` does not have them. */
+function isAboutLayout(rule: string) {
+  const replacedBy: { plugin?: { name?: string } }[] = builtinRules.get(rule)?.meta?.deprecated?.replacedBy ?? [];
+  return replacedBy.length > 0 && replacedBy.every(it => it.plugin?.name === "@stylistic/eslint-plugin");
+}
+
 const allRules = readdirSync(join(eslintDir, "lib/rules"))
   .filter(file => file.endsWith(".js") && file !== "index.js")
   .map(file => basename(file, ".js"))
+  .filter(rule => !isAboutLayout(rule))
   .sort();
 
 if (!args.worker) {
@@ -50,12 +60,10 @@ if (!args.worker) {
 // Worker
 // ---------------------------------------------------------------------------
 
-const require = createRequire(join(eslintDir, "package.json"));
 const { Linter, SourceCodeFixer } = require("./lib/linter");
 const { FlatConfigArray } = require("./lib/config/flat-config-array");
 const { defaultConfig, defaultRuleTesterConfig } = require("./lib/config/default-config");
 const { interpolate } = require("./lib/linter/interpolate");
-const builtinRules: Map<string, RuleModule> = require("./lib/rules");
 const espree = require("espree");
 const typescriptParser = require("@typescript-eslint/parser");
 

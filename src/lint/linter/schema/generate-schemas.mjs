@@ -1,5 +1,5 @@
 // Generates `data.rs`: `meta.schema` and `meta.defaultOptions` of every rule of ESLint and
-// typescript-eslint, as JSON.
+// typescript-eslint that is here, as JSON.
 //
 //   ESLINT_DIR=<checkout of eslint with node_modules> \
 //   TYPESCRIPT_ESLINT_DIR=<built checkout of typescript-eslint> node generate-schemas.mjs [--check]
@@ -62,7 +62,12 @@ const add = (id, rule) => {
   bytes += JSON.stringify(tree).length;
   rows.push([id, JSON.parse(JSON.stringify(tree))]);
 };
-for (const [name, rule] of requireFromEslint("./lib/rules")) add(name, rule);
+// Those are not here: ../deprecated_data.rs.
+const isAboutLayout = ({ meta }) => {
+  const replacedBy = meta.deprecated?.replacedBy ?? [];
+  return replacedBy.length > 0 && replacedBy.every(it => it.plugin?.name === "@stylistic/eslint-plugin");
+};
+for (const [name, rule] of requireFromEslint("./lib/rules")) if (!isAboutLayout(rule)) add(name, rule);
 for (const [name, rule] of Object.entries(requireFromPlugin("./dist/rules/index.js")))
   add(`@typescript-eslint/${name}`, rule);
 const ofPlugins = JSON.parse(readFileSync(join(import.meta.dirname, "plugins.json"), "utf8"));

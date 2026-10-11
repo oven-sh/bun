@@ -5,7 +5,7 @@ const basic = config({
   "no-debugger": "error",
   "no-unused-vars": "warn",
   eqeqeq: "error",
-  semi: "error",
+  yoda: ["error", "always"],
   "no-var": "warn",
 });
 
@@ -345,16 +345,16 @@ export const cases = [
   {
     name: "--rule with options",
     files: project,
-    args: ["--rule", "quotes: [2, double]", "--rule", "semi: [error, never]", "src/e.cjs"],
+    args: ["--rule", "id-length: [2, { min: 2 }]", "--rule", "yoda: [error, never]", "src/e.cjs"],
   },
   {
     name: "--rule as JSON",
     files: project,
-    args: ["--rule", '{"quotes": ["error", "double"], "semi": 0}', "src/e.cjs"],
+    args: ["--rule", '{"id-length": ["error", { "min": 2 }], "yoda": 0}', "src/e.cjs"],
   },
-  { name: "--rule several in one", files: project, args: ["--rule", "quotes: [2, double], semi: 0", "src/e.cjs"] },
-  { name: "--rule with invalid options", files: project, args: ["--rule", "quotes: [2, nothing]", "a.js"] },
-  { name: "--rule with an invalid severity", files: project, args: ["--rule", "quotes: 3", "a.js"] },
+  { name: "--rule several in one", files: project, args: ["--rule", "id-length: [2, { min: 2 }], yoda: 0", "src/e.cjs"] },
+  { name: "--rule with invalid options", files: project, args: ["--rule", "yoda: [2, nothing]", "a.js"] },
+  { name: "--rule with an invalid severity", files: project, args: ["--rule", "yoda: 3", "a.js"] },
   {
     name: "--global",
     files: { "eslint.config.js": config({ "no-undef": 2, "no-global-assign": 2 }), "a.js": "a = b; b = c; c = d;\n" },
@@ -437,7 +437,7 @@ export const cases = [
   {
     name: "stylish numbers in the message",
     files: {
-      "eslint.config.js": config({ "max-len": [2, 10], "max-lines": [1, 1] }),
+      "eslint.config.js": config({ "id-length": [2, { max: 10 }], "max-lines": [1, 1] }),
       "a.js": "const aaaaaaaaaaaaaaaaaaaaaaaaaaaa = 1;\n\n\nexport { aaaaaaaaaaaaaaaaaaaaaaaaaaaa };\n",
     },
     args: ["--color", "a.js"],
@@ -484,7 +484,8 @@ export const cases = [
     name: "json deprecated rules",
     files: {
       "eslint.config.js": config({ semi: 2, quotes: 1, "no-new-symbol": 2, indent: 0, "no-debugger": 2 }),
-      "a.js": bad,
+      // Nothing for the rules about layout, which do not run.
+      "a.js": "debugger;\n",
     },
     args: ["-f", "json", "a.js"],
   },
@@ -591,11 +592,9 @@ export const cases = [
       "eslint.config.js": config({
         "no-var": 2,
         "prefer-const": 2,
-        semi: 2,
-        "no-extra-semi": 2,
         "object-shorthand": 2,
       }),
-      "a.js": "var a = 1;;\nvar b = { a: a }\nexport { b }\n",
+      "a.js": "var a = 1;\nvar b = { a: a }\nexport { b }\n",
     },
     args: ["--fix", "-f", "json", "a.js"],
   },
@@ -607,14 +606,14 @@ export const cases = [
   {
     name: "fix byte order mark",
     files: {
-      "eslint.config.js": config({ semi: 2, "unicode-bom": [2, "never"] }),
-      "a.js": "\uFEFFexport const a = 1\n",
+      "eslint.config.js": config({ "no-var": 2, "unicode-bom": [2, "never"] }),
+      "a.js": "\uFEFFexport var a = 1\n",
     },
     args: ["--fix", "-f", "json", "a.js"],
   },
   {
     name: "fix adds a byte order mark",
-    files: { "eslint.config.js": config({ semi: 2, "unicode-bom": [2, "always"] }), "a.js": "export const a = 1\n" },
+    files: { "eslint.config.js": config({ "no-var": 2, "unicode-bom": [2, "always"] }), "a.js": "export var a = 1\n" },
     args: ["--fix", "-f", "json", "a.js"],
   },
   { name: "fix through a link", files: { ...project, "link.js": { link: "a.js" } }, args: ["--fix", "link.js"] },
@@ -659,12 +658,12 @@ export const cases = [
   {
     name: "suppress-rule twice",
     files: project,
-    args: ["--suppress-rule", "no-debugger", "--suppress-rule", "semi", "."],
+    args: ["--suppress-rule", "no-debugger", "--suppress-rule", "yoda", "."],
     reads: ["eslint-suppressions.json"],
   },
   {
     name: "suppressions are applied",
-    files: { ...project, "eslint-suppressions.json": JSON.stringify({ "a.js": { "no-debugger": { count: 1 }, semi: { count: 1 } }, "src/c.js": { "no-debugger": { count: 1 } } }) },
+    files: { ...project, "eslint-suppressions.json": JSON.stringify({ "a.js": { "no-debugger": { count: 1 }, yoda: { count: 1 } }, "src/c.js": { "no-debugger": { count: 1 } } }) },
     args: ["."],
   },
   {
@@ -702,16 +701,16 @@ export const cases = [
     files: {
       "eslint.config.js": basic,
       "a.js": "debugger;\n",
-      "eslint-suppressions.json": JSON.stringify({ "a.js": { "no-debugger": { count: 3 }, eqeqeq: { count: 1 } }, "gone.js": { semi: { count: 1 } }, "eslint.config.js": { semi: { count: 1 } } }),
+      "eslint-suppressions.json": JSON.stringify({ "a.js": { "no-debugger": { count: 3 }, eqeqeq: { count: 1 } }, "gone.js": { yoda: { count: 1 } }, "eslint.config.js": { yoda: { count: 1 } } }),
     },
     args: ["--prune-suppressions", "."],
     reads: ["eslint-suppressions.json"],
   },
   { name: "suppressions-location", files: project, args: ["--suppress-all", "--suppressions-location", "src/s.json", "a.js"], reads: ["src/s.json"] },
   { name: "suppressions-location that does not exist", files: project, args: ["--suppressions-location", "nothing.json", "a.js"] },
-  { name: "suppress-all and suppress-rule", files: project, args: ["--suppress-all", "--suppress-rule", "semi", "a.js"] },
+  { name: "suppress-all and suppress-rule", files: project, args: ["--suppress-all", "--suppress-rule", "yoda", "a.js"] },
   { name: "suppress-all and prune", files: project, args: ["--suppress-all", "--prune-suppressions", "a.js"] },
-  { name: "suppress-rule and prune", files: project, args: ["--suppress-rule", "semi", "--prune-suppressions", "a.js"] },
+  { name: "suppress-rule and prune", files: project, args: ["--suppress-rule", "yoda", "--prune-suppressions", "a.js"] },
   { name: "suppress-all and stdin", files: project, args: ["--suppress-all", "--stdin"], stdin: bad },
   { name: "suppressions from a subdirectory", files: { ...project, "src/eslint-suppressions.json": JSON.stringify({ "c.js": { "no-debugger": { count: 1 } } }) }, cwd: "src", args: ["c.js"] },
   { name: "suppressions file is invalid", files: { ...project, "eslint-suppressions.json": "{" }, args: ["a.js"] },

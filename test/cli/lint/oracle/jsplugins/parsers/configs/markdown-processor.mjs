@@ -11,8 +11,6 @@ export default [
     rules: {
       "no-undef": "off",
       "no-unused-vars": "warn",
-      semi: "error",
-      quotes: ["error", "double"],
       "prefer-const": "error",
       "no-var": "error",
       eqeqeq: "error",

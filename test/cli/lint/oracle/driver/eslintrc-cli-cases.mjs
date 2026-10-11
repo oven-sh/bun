@@ -536,20 +536,20 @@ const extendsOfFiles = [
 
 const howTheyAreMerged = [
   merge("options replace options, they are not merged", {
-    ".eslintrc.json": rc({ extends: "./base.json", rules: { quotes: ["error", "single"] } }),
-    "base.json": json({ rules: { quotes: ["error", "double", { avoidEscape: true }] } }),
-    "a.js": "var a = \"it's\", b = 'c';\n",
+    ".eslintrc.json": rc({ extends: "./base.json", rules: { eqeqeq: ["error", "always"] } }),
+    "base.json": json({ rules: { eqeqeq: ["error", "always", { null: "ignore" }] } }),
+    "a.js": "var a;\nif (a == null) {}\n",
   }),
   merge("a severity in a list without options keeps the options", {
-    ".eslintrc.json": rc({ extends: "./base.json", rules: { quotes: ["warn"] } }),
-    "base.json": json({ rules: { quotes: ["error", "single"] } }),
-    "a.js": "var a = \"b\", c = 'd';\n",
+    ".eslintrc.json": rc({ extends: "./base.json", rules: { eqeqeq: ["warn"] } }),
+    "base.json": json({ rules: { eqeqeq: ["error", "smart"] } }),
+    "a.js": "var a;\nif (a == null || a == 1) {}\n",
   }),
   merge("off, then a severity alone: the options are still there", {
-    ".eslintrc.json": rc({ extends: ["./one.json", "./two.json"], rules: { quotes: 2 } }),
-    "one.json": json({ rules: { quotes: ["error", "single"] } }),
-    "two.json": json({ rules: { quotes: "off" } }),
-    "a.js": "var a = \"b\", c = 'd';\n",
+    ".eslintrc.json": rc({ extends: ["./one.json", "./two.json"], rules: { eqeqeq: 2 } }),
+    "one.json": json({ rules: { eqeqeq: ["error", "smart"] } }),
+    "two.json": json({ rules: { eqeqeq: "off" } }),
+    "a.js": "var a;\nif (a == null || a == 1) {}\n",
   }),
   merge("severities as numbers and words, in any case of letters", {
     ".eslintrc.json": rc({ rules: { eqeqeq: 2, "no-var": "WARN", "no-debugger": ["Error"] } }),
@@ -1192,10 +1192,10 @@ exports.processors = { ".html": { ...processor, supportsAutofix: true }, "non-fi
 `,
   ),
   "test.md":
-    '```js\nconsole.log("hello")\n```\n```html\n<div>Hello</div>\n<script lang="js">\n    console.log("hello")\n</script>\n<script lang="ts">\n    console.log("hello")\n</script>\n```\n',
+    '```js\nconsole["log"]("hello")\n```\n```html\n<div>Hello</div>\n<script lang="js">\n    console["log"]("hello")\n</script>\n<script lang="ts">\n    console["log"]("hello")\n</script>\n```\n',
 };
-const semi = on("semi");
-const both = { plugins: ["markdown", "html"], ...semi };
+const dotNotation = on("dot-notation");
+const both = { plugins: ["markdown", "html"], ...dotNotation };
 const environment = text => pkg("eslint-plugin-foo", `module.exports = { environments: ${text} };\n`);
 
 const environmentsAndProcessors = [
@@ -1249,8 +1249,8 @@ const environmentsAndProcessors = [
 
   // cli-engine.js, "processors" and "multiple processors"
   environments("a processor for an extension works as soon as the plugin is named", { ".eslintrc.json": rc(both), ...markdownAndHtml }, ["test.md"]),
-  environments("a directory does not find the .md", { ".eslintrc.json": rc(both), ...markdownAndHtml, "a.js": "a()\n" }, ["."]),
-  environments("--ext .md finds it", { ".eslintrc.json": rc(both), ...markdownAndHtml, "a.js": "a()\n" }, ["--ext", ".js,.md", "."]),
+  environments("a directory does not find the .md", { ".eslintrc.json": rc(both), ...markdownAndHtml, "a.js": 'a["b"]\n' }, ["."]),
+  environments("--ext .md finds it", { ".eslintrc.json": rc(both), ...markdownAndHtml, "a.js": 'a["b"]\n' }, ["--ext", ".js,.md", "."]),
   environments("--fix: only the JavaScript blocks", { ".eslintrc.json": rc(both), ...markdownAndHtml }, ["--fix", "test.md"]),
   environments("--ext html: the blocks in the blocks", { ".eslintrc.json": rc(both), ...markdownAndHtml }, ["--ext", "js,html", "test.md"]),
   environments("--ext html --fix", { ".eslintrc.json": rc(both), ...markdownAndHtml }, ["--ext", "js,html", "--fix", "test.md"]),
@@ -1262,8 +1262,8 @@ const environmentsAndProcessors = [
     ".eslintrc.json": rc({
       ...both,
       overrides: [
-        { files: "*.html", rules: { semi: "off", "no-console": "off" } },
-        { files: "**/*.html/*.js", rules: { semi: "off", "no-console": "error" } },
+        { files: "*.html", rules: { "dot-notation": "off", "no-console": "off" } },
+        { files: "**/*.html/*.js", rules: { "dot-notation": "off", "no-console": "error" } },
       ],
     }),
     ...markdownAndHtml,
@@ -1272,8 +1272,8 @@ const environmentsAndProcessors = [
     ".eslintrc.json": rc({
       ...both,
       overrides: [
-        { files: "*.html", processor: "html/legacy", rules: { semi: "off", "no-console": "error" } },
-        { files: "**/*.html/*.js", rules: { semi: "error", "no-console": "off" } },
+        { files: "*.html", processor: "html/legacy", rules: { "dot-notation": "off", "no-console": "error" } },
+        { files: "**/*.html/*.js", rules: { "dot-notation": "error", "no-console": "off" } },
       ],
     }),
     ...markdownAndHtml,
@@ -1296,7 +1296,7 @@ const environmentsAndProcessors = [
     "a.js": code,
   }),
   environments("a processor of a configuration of the plugin", {
-    ".eslintrc.json": rc({ extends: "plugin:markdown/rec", ...semi }),
+    ".eslintrc.json": rc({ extends: "plugin:markdown/rec", ...dotNotation }),
     ...markdownAndHtml,
     ...pkg(
       "eslint-plugin-markdown",
@@ -1307,7 +1307,7 @@ exports.configs = { rec: { plugins: ["markdown"], overrides: [{ files: ["*.md"],
     ),
   }, ["."]),
   environments("a syntax error in a block", { ".eslintrc.json": rc(both), ...markdownAndHtml, "test.md": "```js\nvar = 1;\n```\n" }, ["test.md"]),
-  environments("--stdin --stdin-filename test.md", { ".eslintrc.json": rc(both), ...markdownAndHtml }, ["--stdin", "--stdin-filename", "test.md"], { stdin: "```js\na()\n```\n" }),
+  environments("--stdin --stdin-filename test.md", { ".eslintrc.json": rc(both), ...markdownAndHtml }, ["--stdin", "--stdin-filename", "test.md"], { stdin: '```js\na["b"]\n```\n' }),
 ];
 
 const position = "{ start: { line: 1, column: 0 }, end: { line: 1, column: 1 } }";
@@ -1677,7 +1677,7 @@ const directoriesOfRules = [
 
 // One line for each rule that is in eslint:recommended of only one of ESLint 8 and ESLint 10.
 const recommended =
-  "var a = 1;;\nfunction f() {\n\t  return a;\n}\nif (a) { function g() {} }\nvar s = new Symbol();\nvar b = a + 1 ?? 2;\nclass A { #p = 1; static {} }\nvar n = new BigInt(1);\nvar u = 1; u = 2;\ntry { f(); } catch (e) { throw new Error('x'); }\nvar w; w();\ng(s, b, n, A);\n";
+  "var a = 1;\nfunction f() {\n  return a;\n}\nif (a) { function g() {} }\nvar s = new Symbol();\nvar b = a + 1 ?? 2;\nclass A { #p = 1; static {} }\nvar n = new BigInt(1);\nvar u = 1; u = 2;\ntry { f(); } catch (e) { throw new Error('x'); }\nvar w; w();\ng(s, b, n, A);\n";
 
 const whatESLint8Has = [
   presets("eslint:recommended", { ".eslintrc.json": rc({ extends: "eslint:recommended" }), "a.js": code }),
@@ -1686,10 +1686,9 @@ const whatESLint8Has = [
   presets("eslint:all", { ".eslintrc.json": rc({ extends: "eslint:all" }), "a.js": "debugger;\n" }),
   presets("eslint:all on more code", { ".eslintrc.json": rc({ extends: "eslint:all", env: { es2022: true } }), "a.js": recommended }),
   presets("eslint:all, all its rules", { ".eslintrc.json": rc({ extends: "eslint:all" }), "a.js": code }, ["--print-config", "a.js"]),
-  presets("eslint:all, then a rule off", { ".eslintrc.json": rc({ extends: "eslint:all", rules: { "no-debugger": "off", "eol-last": "off" } }), "a.js": "debugger;" }),
+  presets("eslint:all, then a rule off", { ".eslintrc.json": rc({ extends: "eslint:all", rules: { "no-debugger": "off" } }), "a.js": "debugger;" }),
   presets("eslint:recommended in overrides", { ".eslintrc.json": rc({ overrides: [{ files: ["a.js"], extends: "eslint:recommended" }] }), "a.js": code, "b.js": code }, ["a.js", "b.js"]),
   presets("rules that ESLint 9 removed: require-jsdoc, valid-jsdoc", { ".eslintrc.json": rc(on("require-jsdoc", "valid-jsdoc")), "a.js": "function f(a) {}\n/**\n * @param {string} b\n */\nfunction g(a) {}\n" }),
-  presets("formatting rules", { ".eslintrc.json": rc({ rules: { semi: "error", quotes: ["error", "single"], indent: ["error", 2], "comma-dangle": ["error", "always-multiline"], "no-extra-semi": "error" } }), "a.js": 'var a = "b"\nif (a) {\n    a = {\n  c: 1\n  };;\n}\n' }),
   presets("rules for Node.js that are deprecated: no-process-exit, no-path-concat, handle-callback-err", { ".eslintrc.json": rc(on("no-process-exit", "no-path-concat", "handle-callback-err", "no-sync", "global-require")), "a.js": "process.exit(1);\nvar p = __dirname + '/a';\nfunction f(err) { fs.readFileSync(p); require('a'); }\n" }),
   presets("the default options of 8: no-constant-condition and while (true)", { ".eslintrc.json": rc(on("no-constant-condition")), "a.js": "while (true) { f(); }\nfor (;;) { f(); }\nwhile (1) { f(); }\n" }),
   presets("the default options of 8: no-constant-condition, checkLoops: false", { ".eslintrc.json": rc({ rules: { "no-constant-condition": ["error", { checkLoops: false }] } }), "a.js": "while (true) { f(); }\nif (true) { f(); }\n" }),
@@ -1755,10 +1754,10 @@ const theCommandLine = [
     "sub/a.js": code,
   }, ["-c", "other.json", "sub/a.js"]),
   commandLine("--rule wins over -c, which wins over .eslintrc", {
-    ".eslintrc.json": rc({ rules: { quotes: ["error", "single"] } }),
-    "other.json": json({ rules: { quotes: ["error", "double"] } }),
-    "a.js": "var a = 'b', c = \"d\", e = `f`;\n",
-  }, ["-c", "other.json", "--rule", "quotes: [1, backtick]", "--parser-options", "ecmaVersion:6", "a.js"]),
+    ".eslintrc.json": rc({ rules: { "one-var": ["error", "always"] } }),
+    "other.json": json({ rules: { "one-var": ["error", "never"] } }),
+    "a.js": "let a; let b;\na = b;\nlet c, d;\n",
+  }, ["-c", "other.json", "--rule", "one-var: [1, consecutive]", "--parser-options", "ecmaVersion:6", "a.js"]),
   commandLine("--config=other.json", { "other.json": json(noVar), "a.js": code }, ["--config=other.json", "a.js"]),
   commandLine("-c with a .yml", { "other.yml": "rules:\n  no-var: error\n", "a.js": code }, ["-c", "other.yml", "a.js"]),
   commandLine("-c with a file of any other name is JSON or YAML", { "other.conf": "rules:\n  no-var: error\n", "a.js": code }, ["-c", "other.conf", "a.js"]),
@@ -1796,7 +1795,7 @@ const theCommandLine = [
   commandLine("--parser-options", { ".eslintrc.json": rc(), "a.js": "const a = 1;\n" }, ["--parser-options", "ecmaVersion:2015", "a.js"]),
   commandLine("--parser-options: a list, and nested", { ".eslintrc.json": rc(), "a.js": "export const a = <b/>;\n" }, ["--parser-options", "ecmaVersion:2015,sourceType:module", "--parser-options", "ecmaFeatures:{jsx:true}", "a.js"]),
   commandLine("--parser-options: not key:value", { ".eslintrc.json": rc(), "a.js": code }, ["--parser-options", "test111", "a.js"]),
-  commandLine("--rule: words, numbers, options", { ".eslintrc.json": rc(), "a.js": "var a = \"b\";\nif (a == null) {}\n" }, ["--rule", "quotes: [2, single]", "--rule", "eqeqeq: [warn, always, { null: ignore }]", "--rule", "no-var: 1", "a.js"]),
+  commandLine("--rule: words, numbers, options", { ".eslintrc.json": rc(), "a.js": "var a = \"b\";\nif (a == null) {}\n" }, ["--rule", "yoda: [2, always]", "--rule", "eqeqeq: [warn, always, { null: ignore }]", "--rule", "no-var: 1", "a.js"]),
   commandLine("--rule: several in one", { ".eslintrc.json": rc(), "a.js": code }, ["--rule", "{ eqeqeq: 2, no-var: 1 }", "a.js"]),
   commandLine("--rule: JSON", { ".eslintrc.json": rc(), "a.js": code }, ["--rule", '{"eqeqeq": ["error", "always"]}', "a.js"]),
   commandLine("--rule: a severity alone keeps the options of the file", { ".eslintrc.json": rc({ rules: { eqeqeq: ["error", "smart"] } }), "a.js": "if (x == null) {}\nif (x == 1) {}\n" }, ["--rule", "eqeqeq: 1", "a.js"]),
@@ -1816,7 +1815,7 @@ const theCommandLine = [
   commandLine("--quiet", { ".eslintrc.json": rc({ rules: { eqeqeq: "error", "no-var": "warn" } }), "a.js": code }, ["--quiet", "a.js"]),
   commandLine("--max-warnings 0", { ".eslintrc.json": rc({ rules: { "no-var": "warn" } }), "a.js": code }, ["--max-warnings", "0", "a.js"]),
   commandLine("--max-warnings 1", { ".eslintrc.json": rc({ rules: { "no-var": "warn" } }), "a.js": code }, ["--max-warnings", "1", "a.js"]),
-  commandLine("--fix", { ".eslintrc.json": rc(on("semi", "eqeqeq")), "a.js": "var a = 1\nif (a == 2) {}\n" }, ["--fix", "a.js"]),
+  commandLine("--fix", { ".eslintrc.json": rc(on("yoda", "eqeqeq")), "a.js": "var a = 1\nif (2 == a) {}\n" }, ["--fix", "a.js"]),
   commandLine("--fix with the version 5: no-var is not fixed into a syntax error", { ".eslintrc.json": rc(on("no-var", "prefer-const")), "a.js": "var a = 1;\n" }, ["--fix", "a.js"]),
   commandLine("--fix-type without --fix", { ".eslintrc.json": rc(), "a.js": code }, ["--fix-type", "layout", "a.js"]),
   commandLine("--no-warn-ignored is a flag of the other system", { ".eslintrc.json": rc(), "a.js": code }, ["--no-warn-ignored", "a.js"], { lines: 1 }),
@@ -1922,7 +1921,7 @@ const whatIsRefused = [
   refused("a severity of a rule that does not exist", { rules: { "no-such-rule": "loud" } }),
   refused("options: not one of the words", invalid),
   refused("options: too many", { rules: { "no-debugger": ["error", "x"] } }),
-  refused("options: the wrong type", { rules: { "max-len": ["error", "wide"] } }),
+  refused("options: the wrong type", { rules: { "max-depth": ["error", "deep"] } }),
   refused("options: an unknown property", { rules: { "no-unused-vars": ["error", { nonsense: true }] } }),
   refused("options: two things are wrong", { rules: { "no-unused-vars": ["error", { vars: "some", args: "few" }] } }),
   refused("options: a number below the minimum", { rules: { "max-depth": ["error", -1] } }),
@@ -2299,8 +2298,8 @@ const whatRepositoriesDo = [
   of("ignores")("ignorePatterns in a file that is extended are relative to the file that extends", { ".eslintrc.json": rc({ extends: "./c/base.json" }), "c/base.json": json({ ...eqeqeq, ignorePatterns: ["/x.js"] }), "x.js": code, "c/x.js": code }, ["."]),
   of("unknown-rule")("a rule of a plugin that nobody declares, off (mobx, visx)", { ".eslintrc.json": rc({ rules: { "react/display-name": "off", "jsx-a11y/no-onchange": 0, eqeqeq: 2 } }), "a.js": code }),
   of("unknown-rule")("a rule of a plugin that nobody declares, on", { ".eslintrc.json": rc({ rules: { "react/display-name": "error" } }), "a.js": code }),
-  of("presets")("a removed rule of ESLint, on (visx: no-native-reassign is deprecated, not removed)", { ".eslintrc.json": rc({ rules: { "no-native-reassign": "error", "no-negated-in-lhs": "error", "no-spaced-func": "error", "no-new-object": "error", "no-return-await": "error" } }), "a.js": "Object = 1;\nnew Object();\n" }),
-  of("presets")("eqeqeq allow-null, indent, eol-last, no-trailing-spaces (express)", { ".eslintrc.yml": "root: true\nenv:\n  es2022: true\n  node: true\nrules:\n  eol-last: error\n  eqeqeq: [error, allow-null]\n  indent: [error, 2, { MemberExpression: \"off\", SwitchCase: 1 }]\n  no-trailing-spaces: error\n  no-unused-vars: [error, { vars: all, args: none, ignoreRestSiblings: true }]\n  no-restricted-globals:\n    - error\n    - name: Buffer\n      message: Use `import`.\n", "a.js": "var a = 1 \nif (a == null) {\n   Buffer.from(a)\n}\ntry { a() } catch (e) {}\nif (a == 1) a?.b" }),
+  of("presets")("a removed rule of ESLint, on (visx: no-native-reassign is deprecated, not removed)", { ".eslintrc.json": rc({ rules: { "no-native-reassign": "error", "no-negated-in-lhs": "error", "no-new-object": "error", "no-return-await": "error" } }), "a.js": "Object = 1;\nnew Object();\n" }),
+  of("presets")("eqeqeq allow-null (express)", { ".eslintrc.yml": "root: true\nenv:\n  es2022: true\n  node: true\nrules:\n  eqeqeq: [error, allow-null]\n  no-unused-vars: [error, { vars: all, args: none, ignoreRestSiblings: true }]\n  no-restricted-globals:\n    - error\n    - name: Buffer\n      message: Use `import`.\n", "a.js": "var a = 1 \nif (a == null) {\n   Buffer.from(a)\n}\ntry { a() } catch (e) {}\nif (a == 1) a?.b" }),
   of("language")("ecmaVersion 2015, object spread (highlight.js lint-languages)", { "c.json": json({ env: { browser: true, es6: true, node: true }, parserOptions: { ecmaVersion: 2015, sourceType: "module" }, rules: {} }), "a.js": "const a = { ...b };\nexport default a;\n", "b.js": "const r = /(?<=a)b/;\nexport default r;\n", "c.js": "export default async function f() {}\n", "d.js": "const r = /(?<n>a)/u, s = /a/s;\nexport { r, s };\n", "e.js": "export default [1, 2,].map((a, b,) => a ** b);\n" }, ["--no-eslintrc", "-c", "c.json", "a.js", "b.js", "c.js", "d.js", "e.js"]),
   of("language")("ecmaVersion 2018 and 2020 in overrides (highlight.js)", { ".eslintrc.json": rc({ env: { es6: true }, parserOptions: { ecmaVersion: 2015, sourceType: "module" }, overrides: [{ files: ["test/**/*.js"], parserOptions: { ecmaVersion: 2018 } }, { files: ["tools/**/*.js"], parserOptions: { ecmaVersion: 2020 } }] }), "test/a.js": "const a = { ...b }; a?.b;\n", "tools/a.js": "const a = { ...b }; a?.b; class A { x = 1 }\n", "a.js": "try {} catch {}\n" }, ["."]),
   of("language")("ecmaVersion 2022, script (knex)", { ".eslintrc.json": rc({ parserOptions: { ecmaVersion: 2022 }, env: { node: true, mocha: true, es6: true } }), "a.js": "class A { static #x = 1; static { A.#x; } }\nreturn;\n", "b.js": "import a from 'a';\n", "c.js": "await 1;\n", "d.js": "const a = /a/v;\n" }, ["."]),
@@ -2314,7 +2313,7 @@ const whatRepositoriesDo = [
   of("cascade")("the cascade goes on above the working directory (9 repositories have no root)", { ".eslintrc.json": rc(eqeqeq), "r/.eslintrc.json": json({ rules: { "no-var": "error" } }), "r/a.js": code }, ["."], { cwd: "r" }),
   of("merge")("parserOptions of a parser that is not there: requireConfigFile, babelOptions, project", { ".eslintrc.json": rc({ ...eqeqeq, parserOptions: { requireConfigFile: false, babelOptions: { presets: ["x"] }, project: "tsconfig.json", tsconfigRootDir: "/x" } }), "a.js": code }),
   of("merge")("settings with a RegExp source, import/resolver (visx)", { ".eslintrc.json": rc({ ...eqeqeq, settings: { "import/ignore": ["node_modules", "\\.json$"], "import/resolver": { node: { extensions: [".ts"] } }, react: { version: "detect" } } }), "a.js": code }),
-  of("files")("--fix with a pattern (nestjs)", { ".eslintrc.json": rc({ rules: { "no-var": "error", semi: "error" } }), "src/a.ts": "var x = 1\n" }, ["{src,test}/**/*.ts", "--fix"]),
+  of("files")("--fix with a pattern (nestjs)", { ".eslintrc.json": rc({ rules: { "no-var": "error" } }), "src/a.ts": "var x = 1\n" }, ["{src,test}/**/*.ts", "--fix"]),
   of("print-config")("eslint:recommended, env, globals, ignorePatterns", { ".eslintrc.json": rc({ extends: "eslint:recommended", env: { es2022: true, node: true }, globals: { a: true }, ignorePatterns: ["dist"], rules: { eqeqeq: ["error", "smart"] } }), "a.js": code }, ["--print-config", "a.js"]),
 ];
 
@@ -2409,15 +2408,15 @@ const more = [
   }),
 
   environments("overrides that name **/*.ts make the blocks of that extension be linted", {
-    ".eslintrc.json": rc({ plugins: ["markdown"], ...semi, overrides: [{ files: ["**/*.ts"] }] }),
+    ".eslintrc.json": rc({ plugins: ["markdown"], ...dotNotation, overrides: [{ files: ["**/*.ts"] }] }),
     ...markdownAndHtml,
-    "test.md": "```js\na()\n```\n```ts\nb()\n```\n```sh\nc()\n```\n",
+    "test.md": '```js\na["x"]\n```\n```ts\nb["x"]\n```\n```sh\nc["x"]\n```\n',
   }, ["test.md"]),
   environments("overrides for **/*.md/**", {
-    ".eslintrc.json": rc({ plugins: ["markdown"], ...semi, overrides: [{ files: ["**/*.md/**"], rules: { semi: "off", "no-undef": "error" } }] }),
+    ".eslintrc.json": rc({ plugins: ["markdown"], ...dotNotation, overrides: [{ files: ["**/*.md/**"], rules: { "dot-notation": "off", "no-undef": "error" } }] }),
     ...markdownAndHtml,
-    "docs/test.md": "```js\na()\n```\n",
-    "a.js": "a()\n",
+    "docs/test.md": '```js\na["x"]\n```\n',
+    "a.js": 'a["x"]\n',
   }, ["**/*.md", "a.js"]),
 
   language("'use strict' and let", { ".eslintrc.json": rc(), "a.js": "'use strict';\nlet a;\n" }),
@@ -2458,7 +2457,7 @@ const more = [
     "a.js": "var a = 1; a = 2;\nfunction f(b, c) { return c; }\nvar { d, ...e } = f;\ntry {} catch (g) {}\nfor (var h in e) {}\n",
   }),
   presets("no-new-symbol, no-new-object, no-return-await, no-native-reassign are there", {
-    ".eslintrc.json": rc({ env: { es2022: true }, ...on("no-new-symbol", "no-new-object", "no-return-await", "no-native-reassign", "no-negated-in-lhs", "no-catch-shadow", "lines-around-directive", "newline-after-var") }),
+    ".eslintrc.json": rc({ env: { es2022: true }, ...on("no-new-symbol", "no-new-object", "no-return-await", "no-native-reassign", "no-negated-in-lhs", "no-catch-shadow") }),
     "a.js": "'use strict';\nvar s = new Symbol(), o = new Object();\nasync function f() { return await s; }\nObject = o;\n",
   }),
   validation("an option that came after 8.57.1: no-unused-vars reportUsedIgnorePattern", { ".eslintrc.json": rc({ rules: { "no-unused-vars": ["error", { reportUsedIgnorePattern: true }] } }), "a.js": code }),

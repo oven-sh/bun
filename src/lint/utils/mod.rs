@@ -11,7 +11,7 @@
 //! | `require("@eslint-community/eslint-utils")`, `ASTUtils` of `@typescript-eslint/utils` | [`eslint_utils`] | `use bun_lint::utils::eslint_utils::{get_static_value, ..};` |
 //! | `import { .. } from '../util'` in typescript-eslint, syntax only | [`ts_utils`] | `use bun_lint::utils::ts_utils::{get_name_from_member, ..};` |
 //! | the same: `collectVariables`, `analyzeClassMemberUsage`, `explicitReturnTypeUtils`, `scopeUtils`, `referenceContainsTypeQuery` | [`ts_scope`] | `use bun_lint::utils::ts_scope::{..};` |
-//! | `./utils/fix-tracker` | [`fix_tracker`] | `FixTracker::new(fixer).retain_enclosing_function(node).retain_surrounding_tokens(token).retain_range(span).replace_text_range(span, text)`, `.remove(node)` |
+//! | `./utils/fix-tracker` | [`fix_tracker`] | `FixTracker::new(fixer).retain_enclosing_function(node).retain_range(span).replace_text_range(span, text)`, `.remove(node)` |
 //! | `./utils/keywords` | [`keywords`] | `keywords::KEYWORDS`, `keywords::is_keyword` |
 //! | `./utils/unicode` | [`unicode`] | `is_combining_character(c)`, `is_emoji_modifier(c)`, `is_regional_indicator_symbol(c)`, `is_surrogate_pair(lead, tail)`, on `u32` |
 //! | `./utils/char-source` | [`char_source`] | `parse_string_literal(raw)`, `parse_template_token(raw)` return `Vec<CharInfo>`: one for each UTF-16 code unit of the value, with the bytes of the source it comes from |

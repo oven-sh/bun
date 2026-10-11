@@ -114,7 +114,7 @@ const markdown = [
 ].join("\n");
 
 const rules = `
-  { files: ["**/*.js"], rules: { "no-var": "error", semi: "error", "no-debugger": "warn" } },
+  { files: ["**/*.js"], rules: { "no-var": "error", "no-debugger": "warn" } },
   { files: ["**/*.md/*.js"], rules: { "no-debugger": "off", eqeqeq: "error" } },
 `;
 
@@ -136,13 +136,10 @@ describe.concurrent("bun lint with processors", () => {
       expect(result.stderr).not.toContain("error");
       expect(summary(result.raw)).toMatchInlineSnapshot(`
         "a.md: 4:1 no-var Unexpected var, use let or const instead. [fix 13,16 "let"]
-        a.md: 4:10 semi Missing semicolon. [fix 22,22 ";"]
         a.md: 15:15 no-var Unexpected var, use let or const instead. [fix 129,132 "let"]
         a.md: 15:25 eqeqeq Expected '===' and instead saw '=='. [1 suggestion]
-        a.md: 15:29 semi Missing semicolon. [fix 143,143 ";"]
         a.md: 7:3 eqeqeq Expected '===' and instead saw '=='. [1 suggestion] [suppressed: why not]
         b.js: 1:1 no-var Unexpected var, use let or const instead. [fix 0,3 "let"]
-        b.js: 1:10 semi Missing semicolon. [fix 9,9 ";"]
         b.js: 2:1 no-debugger Unexpected 'debugger' statement."
       `);
       expect(result.exitCode).toBe(1);
@@ -168,7 +165,7 @@ describe.concurrent("bun lint with processors", () => {
         "# Ünï
 
         \`\`\`js
-        let a = 1;
+        let a = 1
         debugger;
         // eslint-disable-next-line eqeqeq -- why not
         a == 2;
@@ -179,7 +176,7 @@ describe.concurrent("bun lint with processors", () => {
         \`\`\`
 
         \`\`\`js
-        let s = "é" ; let b = s == 1;
+        let s = "é" ; let b = s == 1
         \`\`\`
         "
       `);
@@ -209,10 +206,8 @@ describe.concurrent("bun lint with processors", () => {
       expect(result.files["a.md"]).toBe(markdown);
       expect(summary(result.raw)).toMatchInlineSnapshot(`
         "a.md: 4:1 no-var Unexpected var, use let or const instead.
-        a.md: 4:10 semi Missing semicolon.
         a.md: 15:15 no-var Unexpected var, use let or const instead.
         a.md: 15:25 eqeqeq Expected '===' and instead saw '=='.
-        a.md: 15:29 semi Missing semicolon.
         a.md: 7:3 eqeqeq Expected '===' and instead saw '=='. [suppressed: why not]"
       `);
       expect(result.exitCode).toBe(1);
@@ -438,6 +433,37 @@ describe.concurrent("bun lint with languages", () => {
       );
       expect(summary(result.raw)).toMatchInlineSnapshot(`"c.vue: 2:1 lines/no-tabs tab p 8 v c.vue [fix 11,12 " "]"`);
       expect(result.stderr).toContain("the package eslint has linted 1 texts");
+      expect(result.exitCode).toBe(1);
+    },
+    timeout,
+  );
+
+  test(
+    "the deprecated rules about layout do not run there either",
+    async () => {
+      const result = await lint(
+        {
+          ...eslintPackage,
+          // One message for each rule that runs.
+          "node_modules/eslint/index.js": `
+            exports.Linter = class Linter {
+              verify(text, [config], { ruleFilter }) {
+                const rules = Object.entries(config.rules).map(([ruleId, [severity]]) => ({ ruleId, severity }));
+                return rules.filter(ruleFilter).map(it => ({ ...it, message: "It ran.", line: 1, column: 1 }));
+              }
+              getSuppressedMessages() {
+                return [];
+              }
+            };`,
+          "parser.cjs": `module.exports = { meta: { name: "vue-eslint-parser", version: "10.0.0" }, parseForESLint() {} };`,
+          "eslint.config.mjs": `
+            import parser from "./parser.cjs";
+            export default [{ files: ["**/*.vue"], languageOptions: { parser }, rules: { semi: "error", "no-var": "error", indent: "warn" } }];`,
+          "c.vue": "<template />\n",
+        },
+        ["-f", "json", "c.vue"],
+      );
+      expect(summary(result.raw)).toMatchInlineSnapshot(`"c.vue: 1:1 no-var It ran."`);
       expect(result.exitCode).toBe(1);
     },
     timeout,

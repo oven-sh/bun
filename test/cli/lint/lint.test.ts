@@ -58,7 +58,7 @@ const basic = config({
   "no-debugger": "error",
   "no-unused-vars": "warn",
   eqeqeq: "error",
-  semi: "error",
+  yoda: ["error", "always"],
   "no-var": "warn",
 });
 const bad = "var a = 1\nif (a == 2) { debugger; }\n";
@@ -120,10 +120,10 @@ describe.concurrent("bun lint", () => {
     );
     expect(stdout).toMatchInlineSnapshot(`
       "<dir>/a.js
-        1:1   warning  Unexpected var, use let or const instead  no-var
-        1:10  error    Missing semicolon                         semi
-        2:7   error    Expected '===' and instead saw '=='       eqeqeq
-        2:15  error    Unexpected 'debugger' statement           no-debugger
+        1:1   warning  Unexpected var, use let or const instead       no-var
+        2:5   error    Expected literal to be on the left side of ==  yoda
+        2:7   error    Expected '===' and instead saw '=='            eqeqeq
+        2:15  error    Unexpected 'debugger' statement                no-debugger
 
       ✖ 4 problems (3 errors, 1 warning)
         1 error and 1 warning potentially fixable with the \`--fix\` option."
@@ -911,7 +911,7 @@ describe.concurrent("bun lint", () => {
 
     test("--rule, --global, --no-config-lookup", async () => {
       const { stdout } = await lint(
-        { "eslint.config.js": config({ "no-debugger": "error" }), "a.js": "debugger; a = b; c = 'd';\n" },
+        { "eslint.config.js": config({ "no-debugger": "error" }), "a.js": "debugger; a = b; c = a == 1;\n" },
         [
           "-f",
           "unix",
@@ -919,14 +919,14 @@ describe.concurrent("bun lint", () => {
           "--rule",
           "no-undef: error",
           "--rule",
-          "quotes: [warn, double]",
+          "yoda: [warn, always]",
           "--global",
           "a:true,b",
         ],
       );
       expect(stdout).toMatchInlineSnapshot(`
         "<dir>/a.js:1:18: 'c' is not defined. [Error/no-undef]
-        <dir>/a.js:1:22: Strings must use doublequote. [Warning/quotes]
+        <dir>/a.js:1:22: Expected literal to be on the left side of ==. [Warning/yoda]
 
         2 problems"
       `);
@@ -1564,6 +1564,8 @@ describe.concurrent("bun lint", () => {
           docs_url: "https://oxc.rs/docs/guide/usage/linter/rules/eslint/no-debugger.html",
         });
         expect(find("typescript", "no-floating-promises").type_aware).toBe(true);
+        // The deprecated rules about layout are not built in.
+        expect([find("eslint", "semi"), find("react", "jsx-space-before-closing")]).toEqual([undefined, undefined]);
         expect(exitCode).toBe(0);
       });
 
@@ -2784,7 +2786,7 @@ describe.concurrent("bun lint", () => {
     test("writes the files and reports what is left", async () => {
       const result = await lint(files, ["--fix"], { reads: ["a.js", "b.js"] });
       expect(result.files).toEqual({
-        "a.js": "let a = 1;\nif (a == 2) { debugger; }\n",
+        "a.js": "let a = 1\nif (2 == a) { debugger; }\n",
         "b.js": "export const b = 1;\n",
       });
       expect(result.stdout).toMatchInlineSnapshot(`
@@ -2803,7 +2805,6 @@ describe.concurrent("bun lint", () => {
           "eslint.config.js": config({
             "no-var": "error",
             "prefer-const": "error",
-            semi: "error",
             "object-shorthand": "error",
           }),
           "a.js": "var a = 1\nvar b = { a: a }\nexport { b }\n",
@@ -2811,7 +2812,7 @@ describe.concurrent("bun lint", () => {
         ["--fix"],
         { reads: ["a.js"] },
       );
-      expect(result.files).toEqual({ "a.js": "const a = 1;\nconst b = { a };\nexport { b };\n" });
+      expect(result.files).toEqual({ "a.js": "const a = 1\nconst b = { a }\nexport { b }\n" });
       expect(result.raw).toBe("");
       expect(result.exitCode).toBe(0);
     });
@@ -2819,7 +2820,7 @@ describe.concurrent("bun lint", () => {
     test("--fix-dry-run writes nothing, and the json format has the output", async () => {
       const result = await lint(files, ["--fix-dry-run", "-f", "json", "a.js"], { reads: ["a.js"] });
       expect(result.files).toEqual({ "a.js": bad });
-      expect(JSON.parse(result.raw)[0].output).toBe("let a = 1;\nif (a == 2) { debugger; }\n");
+      expect(JSON.parse(result.raw)[0].output).toBe("let a = 1\nif (2 == a) { debugger; }\n");
     });
 
     test.each(["--fix", "--fix-dry-run"])(
@@ -3099,12 +3100,6 @@ describe.concurrent("bun lint", () => {
           '<a>\n    {"b"}\n</a>;\n',
         ],
         [
-          { "react/jsx-curly-brace-presence": ["error", { "props": "always" }], "jsx-quotes": "error" },
-          "<a b='c' />;\n",
-          ["1:6 jsx-quotes", "1:6 react/jsx-curly-brace-presence"],
-          '<a b={"c"} />;\n',
-        ],
-        [
           { "react/iframe-missing-sandbox": "error", "react/react-in-jsx-scope": "error" },
           "<iframe />;\n",
           ["1:1 react/react-in-jsx-scope", "1:1 react/iframe-missing-sandbox"],
@@ -3326,8 +3321,9 @@ describe.concurrent("bun lint", () => {
     });
 
     test("--fix-type", async () => {
+      const files = { "eslint.config.js": config({ "unicode-bom": ["error", "always"], "no-var": "error" }), "a.js": bad };
       const result = await lint(files, ["--fix", "--fix-type", "layout", "a.js"], { reads: ["a.js"] });
-      expect(result.files).toEqual({ "a.js": "var a = 1;\nif (a == 2) { debugger; }\n" });
+      expect(result.files).toEqual({ "a.js": `\uFEFF${bad}` });
     });
 
     test.skipIf(isWindows)("keeps a link to the file", async () => {
@@ -3335,13 +3331,13 @@ describe.concurrent("bun lint", () => {
         reads: ["a.js", "link.js"],
         before: dir => symlinkSync("a.js", join(dir, "link.js")),
       });
-      expect(result.files["a.js"]).toBe("let a = 1;\nif (a == 2) { debugger; }\n");
+      expect(result.files["a.js"]).toBe("let a = 1\nif (2 == a) { debugger; }\n");
       expect(result.files["link.js"]).toBe(result.files["a.js"]);
     });
 
     // ESLint and oxlint write into the file (`fs.writeFile`, `fs::write`): all but its text stays as it is.
     describe("the file that is written", () => {
-      const fixed = "let a = 1;\nif (a == 2) { debugger; }\n";
+      const fixed = "let a = 1\nif (2 == a) { debugger; }\n";
       const isRoot = process.getuid?.() === 0;
       /** `--fix` in `dir`, which is still there afterwards. `before`: what starts the command. */
       async function fix(dir: string, args: string[], before: string[] = []) {
@@ -3469,7 +3465,7 @@ describe.concurrent("bun lint", () => {
     // Windows takes no more than that, unless it is asked in a special way.
     test("a file whose path has more than 260 characters", async () => {
       const name = `${Array(14).fill("d".repeat(20)).join("/")}/c.js`;
-      const fixed = "let a = 1;\nif (a == 2) { debugger; }\n";
+      const fixed = "let a = 1\nif (2 == a) { debugger; }\n";
       const [named, found] = await Promise.all([
         lint({ ...files, [name]: bad }, ["--fix", name], { reads: [name] }),
         lint({ ...files, [name]: bad }, ["--fix", "."], { reads: [name] }),
@@ -3868,10 +3864,10 @@ describe.concurrent("bun lint", () => {
       const { stdout, stderr, exitCode } = await lint(files, ["--stdin"], { stdin: bad });
       expect(stdout).toMatchInlineSnapshot(`
         "<text>
-          1:1   warning  Unexpected var, use let or const instead  no-var
-          1:10  error    Missing semicolon                         semi
-          2:7   error    Expected '===' and instead saw '=='       eqeqeq
-          2:15  error    Unexpected 'debugger' statement           no-debugger
+          1:1   warning  Unexpected var, use let or const instead       no-var
+          2:5   error    Expected literal to be on the left side of ==  yoda
+          2:7   error    Expected '===' and instead saw '=='            eqeqeq
+          2:15  error    Unexpected 'debugger' statement                no-debugger
 
         ✖ 4 problems (3 errors, 1 warning)
           1 error and 1 warning potentially fixable with the \`--fix\` option."
@@ -3910,7 +3906,7 @@ describe.concurrent("bun lint", () => {
     });
 
     test("json", async () => {
-      const { raw, exitCode } = await lint(files, ["-f", "json", "--rule", "semi: off", "--rule", "eqeqeq: off"]);
+      const { raw, exitCode } = await lint(files, ["-f", "json", "--rule", "yoda: off", "--rule", "eqeqeq: off"]);
       const results = JSON.parse(raw);
       expect(
         results.map((it: any) => ({
@@ -3974,9 +3970,10 @@ describe.concurrent("bun lint", () => {
            at src/a.js:1:1
 
         1 | var a = 1
-                     ^
-        error: Missing semicolon.  semi
-            at src/a.js:1:10
+        2 | if (a == 2) { debugger; }
+                ^
+        error: Expected literal to be on the left side of ==.  yoda
+            at src/a.js:2:5
 
         1 | var a = 1
         2 | if (a == 2) { debugger; }
@@ -4006,12 +4003,12 @@ describe.concurrent("bun lint", () => {
         2 | if (a == 2) { debugger; }
         </source>
         </warning>
-        <error file="src/a.js" line="1" column="10" rule="semi" fixable="true">
-        Missing semicolon.
+        <error file="src/a.js" line="2" column="5" rule="yoda" fixable="true">
+        Expected literal to be on the left side of ==.
         <source>
         1 | var a = 1
-                     ^
         2 | if (a == 2) { debugger; }
+                ^^^^^^
         </source>
         </error>
         <error file="src/a.js" line="2" column="7" rule="eqeqeq">
@@ -4041,7 +4038,7 @@ describe.concurrent("bun lint", () => {
         lint(files, ["--quiet"], { env: { GITHUB_ACTIONS: "true" } }),
       ]);
       expect(named.stdout).toMatchInlineSnapshot(`
-        "::error file=src/a.js,line=1,col=10,endLine=2,endColumn=1,title=semi::Missing semicolon.
+        "::error file=src/a.js,line=2,col=5,endLine=2,endColumn=11,title=yoda::Expected literal to be on the left side of ==.
         ::error file=src/a.js,line=2,col=7,endLine=2,endColumn=9,title=eqeqeq::Expected '===' and instead saw '=='.
         ::error file=src/a.js,line=2,col=15,endLine=2,endColumn=24,title=no-debugger::Unexpected 'debugger' statement."
       `);
@@ -4070,7 +4067,7 @@ describe.concurrent("bun lint", () => {
 
     test("checkstyle, junit, gitlab and sarif are those of oxlint", async () => {
       const [checkstyle, junit, gitlab, sarif] = await Promise.all(
-        ["checkstyle", "junit", "gitlab", "sarif"].map(format => lint(files, ["-f", format, "--rule", "semi: off"])),
+        ["checkstyle", "junit", "gitlab", "sarif"].map(format => lint(files, ["-f", format, "--rule", "yoda: off"])),
       );
       expect(checkstyle.raw).toStartWith(
         '<?xml version="1.0" encoding="utf-8"?><checkstyle version="4.3"><file name="src/a.js"><error line="1" column="1" severity="warning" message="Unexpected var, use let or const instead." source="eslint(no-var)" />',
@@ -6328,7 +6325,7 @@ describe.concurrent("regular expressions in a configuration", () => {
         "eslint.config.js": config({
           "id-match": ["error", "^\\p{Ll}[\\p{L}\\p{N}]*$"],
           "no-unused-vars": ["error", { varsIgnorePattern: "^größe" }],
-          "max-len": ["error", { code: 30, ignorePattern: "^// 💩.é" }],
+          "no-inline-comments": ["error", { ignorePattern: "^ 💩.é" }],
           "capitalized-comments": ["error", "always", { ignorePattern: "ünï|💩" }],
           "no-restricted-imports": ["error", { patterns: [{ regex: "^@scope/(?!erlaubt/ü)" }] }],
           // A character outside the BMP is one character with the `u` flag, and two without.
@@ -6337,8 +6334,8 @@ describe.concurrent("regular expressions in a configuration", () => {
         "a.js": [
           `import "@scope/erlaubt/ü";`,
           `import "@scope/erlaubt/u";`,
-          `// 💩xé is ignored however long it is`,
-          `// 💩xe is not ignored, and too long`,
+          `0; // 💩xé is ignored`,
+          `0; // 💩xe is not ignored`,
           `// ünï starts small`,
           `// élan starts small too`,
           `let größeDesFensters = 1;`,
@@ -6352,7 +6349,7 @@ describe.concurrent("regular expressions in a configuration", () => {
     expect(stdout).toMatchInlineSnapshot(`
       "<dir>/a.js
         2:1   error  '@scope/erlaubt/u' import is restricted from being used by a pattern                  no-restricted-imports
-        4:1   error  This line has a length of 35. Maximum allowed is 30                                   max-len
+        4:4   error  Unexpected comment inline with code                                                   no-inline-comments
         6:1   error  Comments should not begin with a lowercase character                                  capitalized-comments
         8:5   error  Identifier 'Größe' does not match the pattern '^/p{Ll}[/p{L}/p{N}]*$'                 id-match
         8:5   error  'Größe' is assigned a value but never used. Allowed unused vars must match /^größe/u  no-unused-vars
@@ -7180,7 +7177,7 @@ describe("bun lint on Windows, macOS and Linux", () => {
     test("a file that is named in the other case is linted if the system finds it, and once for each way it is written", async () => {
       using dir = tempDir("bun-lint-platform", { "src/Button.js": "var a = 1\nexport { a }\n" });
       const foldsCase = existsSync(join(String(dir), "SRC", "bUTTON.JS"));
-      const rules = ["--no-config-lookup", "--rule", "semi: error"];
+      const rules = ["--no-config-lookup", "--rule", "no-var: error"];
       const { stdout, exitCode } = await lint(dir, [
         ...rules,
         "--fix",
@@ -7198,7 +7195,7 @@ describe("bun lint on Windows, macOS and Linux", () => {
       );
       expect(exitCode).toBe(0);
       expect(everythingIn(dir)).toEqual(["src", "src/Button.js"]);
-      expect(readFileSync(join(String(dir), "src", "Button.js"), "utf8")).toBe("var a = 1;\nexport { a };\n");
+      expect(readFileSync(join(String(dir), "src", "Button.js"), "utf8")).toBe("let a = 1\nexport { a }\n");
     });
 
     // lib/config/config-loader.js looks with `findUp`, which asks the system for a file of that name. (oxlint lists the directory
@@ -7260,12 +7257,9 @@ foo(b)
     const rules = [
       "no-debugger: error",
       "no-var: error",
-      "semi: error",
       "eqeqeq: error",
-      "no-multiple-empty-lines: [error, { max: 1 }]",
-      "linebreak-style: [error, windows]",
-      "no-trailing-spaces: error",
-      "max-len: [error, 20]",
+      "curly: [error, multi]",
+      "max-lines: [error, { max: 10, skipBlankLines: true }]",
     ].flatMap(rule => ["--rule", rule]);
     const places = (stdout: string) =>
       JSON.parse(stdout)[0]
@@ -7281,33 +7275,25 @@ foo(b)
       expect(places(found.stdout)).toEqual(
         [
           "1:1-1:10 no-var",
-          "1:10-2:1 semi",
           "2:7-2:9 eqeqeq",
+          "2:13-4:2 curly",
           "3:3-3:11 no-debugger",
-          "3:11-4:1 semi",
-          "5:1-5:40 max-len",
-          "12:1-14:1 no-multiple-empty-lines",
-          "14:7-15:1 semi",
+          "14:1-15:1 max-lines",
         ].sort(),
       );
       expect(JSON.parse(found.stdout)[0].suppressedMessages.length).toBe(2);
       expect(readFileSync(join(String(dir), "b.js"), "utf8")).toBe(
-        crlf(
-          source
-            .replace("var a = 1", "let a = 1;")
-            .replace("  debugger", "  debugger;")
-            .replace("\n\n\n\nfoo(b)", "\n\nfoo(b);"),
-        ),
+        crlf(source.replace("var a = 1", "let a = 1").replace("{\n  debugger\n}", "\n  debugger\n")),
       );
       expect(fixed.exitCode).toBe(1);
     });
 
     test("a byte order mark is not a column, and stays where it is", async () => {
       using dir = tempDir("bun-lint-platform", { "a.js": `${BOM}debugger\r\nvar a\r\n`, "b.js": `${BOM}debugger\n` });
-      const some = ["no-debugger: error", "semi: error"].flatMap(rule => ["--rule", rule]);
+      const some = ["no-debugger: error", "no-var: error"].flatMap(rule => ["--rule", rule]);
       const { stdout } = await lint(dir, ["--no-config-lookup", ...some, "--fix", "-f", "json", "a.js"]);
-      expect(places(stdout)).toEqual(["1:1-1:10 no-debugger"]);
-      expect(readFileSync(join(String(dir), "a.js"), "utf8")).toBe(`${BOM}debugger;\r\nvar a;\r\n`);
+      expect(places(stdout)).toEqual(["1:1-1:9 no-debugger"]);
+      expect(readFileSync(join(String(dir), "a.js"), "utf8")).toBe(`${BOM}debugger\r\nlet a\r\n`);
       const removed = await lint(dir, ["--no-config-lookup", "--rule", "unicode-bom: error", "--fix", "b.js"]);
       expect(readFileSync(join(String(dir), "b.js"), "utf8")).toBe("debugger\n");
       expect(removed.exitCode).toBe(0);
@@ -7395,13 +7381,13 @@ foo(b)
 
   describe.concurrent("what --fix writes", () => {
     const fixable = "var a = 1\nexport { a }\n";
-    const fixed = "var a = 1;\nexport { a };\n";
-    const semi = ["--no-config-lookup", "--rule", "semi: error"];
+    const fixed = "let a = 1\nexport { a }\n";
+    const noVar = ["--no-config-lookup", "--rule", "no-var: error"];
 
     test("nothing but the file is left", async () => {
       using dir = tempDir("bun-lint-platform", { "a.js": fixable, "src/b.js": fixable, "src/c.js": fixed });
       const before = everythingIn(dir);
-      const { exitCode } = await lint(dir, [...semi, "--fix"]);
+      const { exitCode } = await lint(dir, [...noVar, "--fix"]);
       expect(everythingIn(dir)).toEqual(before);
       expect(readFileSync(join(String(dir), "src", "b.js"), "utf8")).toBe(fixed);
       expect(exitCode).toBe(0);
@@ -7413,7 +7399,7 @@ foo(b)
       const [tagged, plain] = ["tagged.js", "plain.js"].map(name => join(String(dir), name));
       expect(attributes!.set(tagged, "user.tag", "hello")).toBe(true);
       const before = [tagged, plain].map(path => statSync(path).ino);
-      const { exitCode } = await lint(dir, [...semi, "--fix"]);
+      const { exitCode } = await lint(dir, [...noVar, "--fix"]);
       expect([tagged, plain].map(path => readFileSync(path, "utf8"))).toEqual([fixed, fixed]);
       expect(attributes!.get(tagged, "user.tag")).toBe("hello");
       expect(statSync(tagged).ino).toBe(before[0]);
@@ -7445,7 +7431,7 @@ foo(b)
       // `INVALID_HANDLE_VALUE`: without the handle the test would pass whatever is done.
       expect(handle).not.toBe(0xffffffffffffffffn);
       try {
-        const { stderr, exitCode } = await lint(dir, [...semi, "--fix", "a.js"]);
+        const { stderr, exitCode } = await lint(dir, [...noVar, "--fix", "a.js"]);
         expect(stderr).not.toContain("Cannot write");
         expect(readFileSync(join(String(dir), "a.js"), "utf8")).toBe(fixed);
         expect(everythingIn(dir)).toEqual(["a.js"]);
@@ -7594,7 +7580,7 @@ describe.concurrent("[lint] in bunfig.toml", () => {
   };
   const many = Array.from({ length: 60 }, () => "debugger;\n").join("");
   const suppressions = JSON.stringify({
-    "a.js": { "no-debugger": { count: 1 }, eqeqeq: { count: 1 }, semi: { count: 1 } },
+    "a.js": { "no-debugger": { count: 1 }, eqeqeq: { count: 1 }, yoda: { count: 1 } },
   });
 
   // Lines of the section, the flags that say the same, flags that say otherwise, the files, and the arguments.
@@ -7750,7 +7736,13 @@ describe.concurrent("[lint] in bunfig.toml", () => {
       { ...oxlint, "sub/.oxlintrc.json": `{ "rules": { "no-debugger": "off" } }`, "sub/a.js": bad },
       ["sub/a.js"],
     ],
-    [`fixType = ["suggestion"]`, ["--fix-type", "suggestion"], [], eslint, ["--fix", "a.js"]],
+    [
+      `fixType = ["suggestion"]`,
+      ["--fix-type", "suggestion"],
+      [],
+      { "eslint.config.js": config({ "unicode-bom": ["error", "always"], "no-var": "error" }), "a.js": bad },
+      ["--fix", "a.js"],
+    ],
     [
       `[lint.rules]\n"no-debugger" = "off"\neqeqeq = ["error", "smart"]\n"no-eval" = 2`,
       ["--rule", `{"no-debugger": "off", "eqeqeq": ["error", "smart"], "no-eval": 2}`],

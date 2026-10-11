@@ -493,18 +493,6 @@
     "src/lint/driver/fs.rs": {
       "replace": 1
     },
-    "src/lint/eslint/rules/keyword_spacing.rs": {
-      "is_blank": 1
-    },
-    "src/lint/eslint/rules/multiline_comment_style.rs": {
-      "join": 1
-    },
-    "src/lint/eslint/rules/newline_before_return.rs": {
-      "line_breaks": 1
-    },
-    "src/lint/eslint/rules/spaced_comment.rs": {
-      "is_space_or_tab": 1
-    },
     "src/lint/graph/lib.rs": {
       "directory_of": 1
     },

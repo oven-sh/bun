@@ -216,19 +216,19 @@ export const cases: Case[] = [
   // ── fixes that make a file larger ──
   ...[false, true].flatMap((eslint): Case[] => {
     const flavor = eslint ? "ESLint" : "oxlint";
-    const rules = { indent: "error", "multiline-ternary": "error", "brace-style": "error" };
+    const rules = { "no-implicit-coercion": "error" };
     return [
       {
         name: `${flavor}: a file that fixes make twice as large is fixed`,
         isHeavy: eslint,
         file: "a.js",
-        text: () => `function f() {\n${rep("a;\n", 1_000)}}\n`,
+        text: () => `function f(a) {\n${rep("!!a;\n", 1_000)}}\n`,
         eslint,
         rules,
         args: ["--fix", "-f", "unix"],
         reports: {},
-        keeps: [/^    a;$/gm, 1_000],
-        length: 7_017,
+        keeps: [/^Boolean\(a\);$/gm, 1_000],
+        length: 12_018,
         exitCode: 0,
       },
     ];
@@ -250,8 +250,8 @@ export const cases: Case[] = [
     isHeavy: true,
     file: "a.js",
     text: () => fn(`switch (a) {\n${seq(65_000, i => `case "k${i}": b(); break;\n`)}}`),
-    rules: { "max-statements-per-line": "error", "no-fallthrough": "error" },
-    reports: { "max-statements-per-line": 65_000 },
+    rules: { "default-case": "error", "no-fallthrough": "error" },
+    reports: { "default-case": 1 },
     exitCode: 1,
   },
   {
@@ -279,15 +279,6 @@ export const cases: Case[] = [
     text: () => `${rep("(function () {}), ", 60_000)}a;\n`,
     rules: { "func-names": "error" },
     reports: { "func-names": 60_000 },
-    exitCode: 1,
-  },
-  {
-    name: "60,000 runs of spaces in one block",
-    isHeavy: true,
-    file: "a.js",
-    text: () => rep("a  (b);\n", 60_000),
-    rules: { "no-multi-spaces": "error" },
-    reports: { "no-multi-spaces": 60_000 },
     exitCode: 1,
   },
 
@@ -780,17 +771,6 @@ export const cases: Case[] = [
     args: [],
     matches: /Expected 9007199254740992 empty lines after import statement/,
     exitCode: 1,
-  },
-  {
-    name: "an indentation of 2 ** 31 spaces: the rule throws, as ESLint's",
-    file: "a.js",
-    text: () => "if (a) {\n  b();\n}\n",
-    rules: { indent: ["error", 2 ** 31] },
-    eslint: true,
-    args: ["--fix", "-f", "unix"],
-    reports: {},
-    length: "as before",
-    exitCode: 2,
   },
   // ── eslint-plugin-react: what many components share, and what is asked once for each of them ──
   {

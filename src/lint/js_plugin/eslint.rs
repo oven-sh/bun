@@ -132,7 +132,7 @@ impl Host<'_> {
     }
 
     /// ESLint's `Linter.verify`. `run`: JSON, what is the same for all files of a configuration file: `from`, `basePath`,
-    /// `allowInlineConfig`, `onlyErrors`, and for [`Configuration::whole`] `file`, `ignores` and `added`.
+    /// `allowInlineConfig`, `onlyErrors`, `aboutLayout`, and for [`Configuration::whole`] `file`, `ignores` and `added`.
     pub fn lint_with_eslint(
         &self,
         configuration: &Configuration,

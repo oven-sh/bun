@@ -182,7 +182,6 @@ bun_lint::rules! {
     react_jsx_props_no_spreading::JsxPropsNoSpreading,
     react_jsx_sort_default_props::SortDefaultProps = react_sort_default_props<true>,
     react_jsx_sort_props::JsxSortProps,
-    react_jsx_space_before_closing::JsxSpaceBeforeClosing,
     react_jsx_tag_spacing::JsxTagSpacing,
     react_jsx_uses_react::JsxUsesReact,
     react_jsx_uses_vars::JsxUsesVars,

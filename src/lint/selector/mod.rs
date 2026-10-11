@@ -1,4 +1,4 @@
-//! esquery selectors, which some options of ESLint's rules are written in (`no-restricted-syntax`, `ignoredNodes` of `indent`).
+//! esquery selectors, which the options of `no-restricted-syntax` are written in.
 //!
 //! A selector is compiled once, when the configuration is loaded, into a matcher on the handles of [`crate::ast`]. No ESTree is
 //! built: the names of ESTree's types and fields in the selector are bound to the accessors in the table of `crate::estree`.
@@ -12,12 +12,11 @@
 //!     On::new().nodes(self.selector.listens_to())
 //! }
 //! fn node<'a>(&self, node: Node<'a>, cx: &mut Cx<'a, Self>) {
-//!     let result = self.selector.for_each_match(node, |found| {
-//!         cx.report(found, MESSAGE);
+//!     EsNode::for_each_at(node, |found| match self.selector.test(found) {
+//!         Ok(true) => drop(cx.report(found, MESSAGE)),
+//!         Ok(false) => {}
+//!         Err(error) => cx.throw_for_selector(&error),
 //!     });
-//!     if let Err(error) = result {
-//!         cx.throw_for_selector(&error);
-//!     }
 //! }
 //! ```
 //!
@@ -128,12 +127,6 @@ impl<'a> EsNode<'a> {
             node_type,
             dialect: node.dialect(),
         }
-    }
-
-    /// ESTree's `type`.
-    #[inline]
-    pub fn type_name(self) -> &'static str {
-        self.node_type.name()
     }
 
     /// ESTree's `range`, in bytes.
@@ -294,27 +287,5 @@ impl Selector {
             true => Err(Error::too_deep()),
             false => Ok(matches),
         }
-    }
-
-    /// Calls `visit` with each node of the ESTree that is made of `node` and matches, an outer one before what is in it. `node`
-    /// is what a listener for [`Selector::listens_to`] is called with.
-    ///
-    /// With several selectors, [`EsNode::for_each_at`] and [`Selector::test`] for each do the same with less work.
-    pub fn for_each_match<'a>(
-        &self,
-        node: Node<'a>,
-        mut visit: impl FnMut(EsNode<'a>),
-    ) -> Result<(), Error> {
-        let mut result = Ok(());
-        EsNode::for_each_at(node, |it| {
-            if result.is_ok() {
-                match self.test(it) {
-                    Ok(true) => visit(it),
-                    Ok(false) => {}
-                    Err(error) => result = Err(error),
-                }
-            }
-        });
-        result
     }
 }

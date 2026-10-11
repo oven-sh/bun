@@ -6,7 +6,7 @@ use crate::ast::{File, Node};
 use crate::context::IntoText;
 use crate::fix::{Fix, Fixer};
 use crate::span::{Span, Spanned};
-use crate::tokens::{Token, skip_trivia};
+use crate::tokens::skip_trivia;
 
 /// ESLint's `FixTracker`. Makes a fix whose range is wider than what it changes, so that no other
 /// fix changes the rest of the range in the same pass.
@@ -43,15 +43,6 @@ impl<'a> FixTracker<'a> {
             Some(function) => estree_span(function.into()),
             None => program_span(self.fixer.file()),
         })
-    }
-
-    /// ESLint's `retainSurroundingTokens`. Retains from the token before `at`, which is a node or a
-    /// token, to the token after it.
-    pub fn retain_surrounding_tokens(self, at: impl Spanned) -> Self {
-        let (file, at) = (self.fixer.file(), at.span());
-        let start = file.tokens_before(at).next().map_or(at.start, Token::start);
-        let end = file.tokens_after(at).next().map_or(at.end, Token::end);
-        self.retain_range(Span::new(start, end))
     }
 
     /// ESLint's `replaceTextRange`.

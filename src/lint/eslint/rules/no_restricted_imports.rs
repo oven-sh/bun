@@ -753,9 +753,9 @@ impl Restrictions {
     }
 
     /// oxlint goes through the entries of its module record, where `export { a }` of a name that is imported is an indirect
-    /// export, as in the specification: it has the module and the name of the `import`, and in oxlint its place too. So an
-    /// `import` of which a name is exported again is reported as if it also were `export { a } from "m"`. For all such
-    /// statements of the file, at the first of them.
+    /// export, as in the specification: it has the module and the name of the `import`, and in oxlint its place too. So
+    /// an `import` of which a name is exported again is reported as if it also were `export { a } from "m"`. For all
+    /// such statements of the file, at the first of them.
     fn check_what_is_exported_again<'a, R: Rule<State<'a> = SideEffectImports<'a>>>(
         &self,
         cx: &mut Cx<'a, R>,
@@ -802,7 +802,8 @@ impl Restrictions {
                 };
                 let at = *places.entry(import.span().start).or_insert(again.len());
                 if at == again.len() {
-                    again.push(Imported { node: import.span(), source, is_type_only: false, specifiers: SmallVec::new() });
+                    let specifiers = SmallVec::new();
+                    again.push(Imported { node: import.span(), source, is_type_only: false, specifiers });
                 }
                 if let Some(imported) = again.get_mut(at) {
                     imported.specifiers.push(specifier);

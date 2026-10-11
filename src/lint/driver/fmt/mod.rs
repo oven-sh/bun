@@ -154,7 +154,7 @@ fn with_tree<'h, R>(
 fn with_file<R>(
     how: &How,
     text: &[u8],
-    then: impl for<'a> FnOnce(&'a File<'a>, &Program<'a>, Option<&'a Diagnostic>) -> R,
+    then: impl for<'a> FnOnce(&'a File<'a>, &Program<'a>, Refused<'a>) -> R,
 ) -> R {
     let (path, session) = (how.path, how.memory);
     let arena = session.arena();
@@ -176,7 +176,10 @@ fn with_file<R>(
             return then(
                 &file,
                 &Program::new(&**hir, text, atoms),
-                hir.diagnostics.first(),
+                Refused {
+                    first_error: hir.diagnostics.first(),
+                    is_nested_too_deeply: hir.ran_out_of_stack,
+                },
             );
         }
         let mut hir = summary.into_arena((arena, session));
@@ -191,16 +194,30 @@ fn with_file<R>(
             return then(
                 &File::new(path, &hir, &bound, atoms, language, None),
                 &Program::new(&hir, text, atoms),
-                hir.diagnostics.first(),
+                Refused {
+                    first_error: hir.diagnostics.first(),
+                    is_nested_too_deeply: hir.ran_out_of_stack || bound.ran_out_of_stack,
+                },
             );
         }
         let bound = bind_for_format_in(&hir, bind_options, atoms, &mut recycled);
         then(
             &File::new(path, &hir, bound, atoms, language, None),
             &Program::new(&hir, text, atoms),
-            hir.diagnostics.first(),
+            Refused {
+                first_error: hir.diagnostics.first(),
+                is_nested_too_deeply: hir.ran_out_of_stack || bound.ran_out_of_stack,
+            },
         )
     })
+}
+
+/// What the parser and the binder have to say against a file.
+#[derive(Copy, Clone)]
+struct Refused<'a> {
+    first_error: Option<&'a Diagnostic>,
+    /// There was no stack for it. Nothing else is known about the file.
+    is_nested_too_deeply: bool,
 }
 
 /// `SyntaxError: ';' expected. (1:7)`
@@ -386,7 +403,7 @@ fn parse_code(
     };
     // `error`: in the place of the first error in `text`.
     let whole = |text: &[u8], error: Option<u32>, then: &mut dyn for<'b> FnMut(&Parsed<'b>)| {
-        with_file(&how, text, |file, _, first_error| {
+        with_file(&how, text, |file, _, Refused { first_error, .. }| {
             then(&Parsed {
                 file,
                 end: text.len() as u32,
@@ -695,10 +712,13 @@ fn format(
 
 fn print<'a>(
     (file, program): (&'a File<'a>, &Program<'a>),
-    first_error: Option<&Diagnostic>,
+    refused: Refused<'_>,
     how: &How,
     scratch: &mut Scratches,
 ) -> Result<Formatted, Failure> {
+    if refused.is_nested_too_deeply {
+        return Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec()));
+    }
     let options = &how.resolved.options;
     // `babel` refuses the syntax of TypeScript. The parsers that take it have to be asked for by name.
     let takes_types = matches!(
@@ -738,7 +758,7 @@ fn print<'a>(
     ) {
         Ok(cursor) => cursor,
         Err(FormatError::SyntaxError) => {
-            return Err(Failure::Syntax(syntax_error(file, first_error)));
+            return Err(Failure::Syntax(syntax_error(file, refused.first_error)));
         }
         Err(FormatError::SyntaxErrorAt(error)) => {
             return Err(Failure::Syntax(syntax_error_at(file.text(), error)));
@@ -768,14 +788,17 @@ fn print<'a>(
 }
 
 fn format_as(how: &How, text: &[u8], scratch: &mut Scratches) -> Result<Formatted, Failure> {
-    with_file(how, text, |file, program, first_error| {
+    with_file(how, text, |file, program, refused| {
+        if refused.is_nested_too_deeply {
+            return Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec()));
+        }
         // A file whose imports move is parsed again.
         let how_to_sort = how.resolved.options.sort_imports.as_deref();
         match how_to_sort.and_then(|how| bun_format::sort_imports::sorted_text(file, how)) {
-            Some(sorted) => with_file(how, &sorted, |file, program, first_error| {
-                print_with_sorted_classes((file, program), first_error, how, scratch)
+            Some(sorted) => with_file(how, &sorted, |file, program, refused| {
+                print_with_sorted_classes((file, program), refused, how, scratch)
             }),
-            None => print_with_sorted_classes((file, program), first_error, how, scratch),
+            None => print_with_sorted_classes((file, program), refused, how, scratch),
         }
     })
 }
@@ -783,16 +806,19 @@ fn format_as(how: &How, text: &[u8], scratch: &mut Scratches) -> Result<Formatte
 /// [`print`]. For `prettier-plugin-tailwindcss` a file whose classes move is parsed again.
 fn print_with_sorted_classes<'a>(
     (file, program): (&'a File<'a>, &Program<'a>),
-    first_error: Option<&Diagnostic>,
+    refused: Refused<'_>,
     how: &How,
     scratch: &mut Scratches,
 ) -> Result<Formatted, Failure> {
+    if refused.is_nested_too_deeply {
+        return Err(Failure::Syntax(NESTED_TOO_DEEPLY.to_vec()));
+    }
     let tailwind = how.resolved.options.tailwind.as_deref();
     match tailwind.and_then(|it| bun_format::tailwind::plugin::sorted_text(file, it)) {
-        Some(sorted) => with_file(how, &sorted, |file, program, first_error| {
-            print((file, program), first_error, how, scratch)
+        Some(sorted) => with_file(how, &sorted, |file, program, refused| {
+            print((file, program), refused, how, scratch)
         }),
-        None => print((file, program), first_error, how, scratch),
+        None => print((file, program), refused, how, scratch),
     }
 }
 

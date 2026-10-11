@@ -358,7 +358,7 @@ impl<'a> FormatExpr<'a> {
                     write_comments_trailing_chain_element(self.expr, f);
                 }
             }
-            false => write_expression(self.expr, self.options, f),
+            false => write_expression_that_has_asked(self.expr, self.options, f),
         }
         if needs_parentheses {
             ")".fmt(f);
@@ -442,7 +442,7 @@ impl<'a> FormatExpr<'a> {
             );
             f.in_scope(span, |f| match is_chain_expression {
                 true => print::expressions::write_chain_expression(expr, f),
-                false => write_expression(expr, self.options, f),
+                false => write_expression_that_has_asked(expr, self.options, f),
             });
             write!(f, ")");
             return write_trailing_comments_of(node, f);
@@ -605,7 +605,16 @@ impl<'a> Format<'a> for FormatNonNullMarks<'a> {
 ///
 /// This only finds out where to go on. Each of the functions it goes on in has a frame of its own
 /// size, and none is set up for what is written right here.
+///
+/// It asks the stack, because some come here without having been through [`FormatExpr`] or [`format_expression`]: the
+/// guard of a case of Flow's `match` has.
 pub(crate) fn write_expression<'a>(e: Expr<'a>, options: ExprOptions, f: &mut Formatter<'a>) {
+    if f.context_mut().has_stack_left() {
+        write_expression_that_has_asked(e, options, f);
+    }
+}
+
+fn write_expression_that_has_asked<'a>(e: Expr<'a>, options: ExprOptions, f: &mut Formatter<'a>) {
     write_expression_of(e.tag(), e, options, f);
 }
 

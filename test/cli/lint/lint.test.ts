@@ -5559,6 +5559,395 @@ describe.concurrent("rules as oxlint has them", () => {
     expect(await reports(files, names)).toEqual(rows.map(row => row[1]));
   });
 
+  // In its module record `export { a }` of a name that is imported is an indirect export, with the module, the name and the place
+  // of the `import`: what it says of exports, it says of that `import` once more.
+  test("no-restricted-imports: a name that is imported and exported again", async () => {
+    const rows: [options: unknown, code: string, reports: string[]][] = [
+      [
+        { "paths": [{ "name": "@made/up/slowPart" }] },
+        'import { a, b } from "@made/up/slowPart";\nexport const x = a + b;\n',
+        ["1:1 '@made/up/slowPart' import is restricted from being used."],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart" }] },
+        'import { a, b } from "@made/up/slowPart";\nexport { a };\nb;\n',
+        [
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+        ],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart" }] },
+        'import { a, b } from "@made/up/slowPart";\nexport { a, b };\n',
+        [
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+        ],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart" }] },
+        'import { a, b } from "@made/up/slowPart";\nexport { a };\nexport { b };\n',
+        [
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+        ],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart" }] },
+        'import { a } from "@made/up/slowPart";\nexport { a as c };\n',
+        [
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+        ],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart" }] },
+        'import { a } from "@made/up/slowPart";\nexport { a as default };\n',
+        [
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+        ],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart" }] },
+        'import { a } from "@made/up/slowPart";\nexport { a, a as c };\n',
+        [
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+        ],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart" }] },
+        'import { a } from "@made/up/slowPart";\nexport default a;\n',
+        ["1:1 '@made/up/slowPart' import is restricted from being used."],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart" }] },
+        'import d from "@made/up/slowPart";\nexport { d };\n',
+        [
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+        ],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart" }] },
+        'import * as ns from "@made/up/slowPart";\nexport { ns };\n',
+        ["1:1 '@made/up/slowPart' import is restricted from being used."],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart" }] },
+        'import { a as z } from "@made/up/slowPart";\nexport { z };\n',
+        [
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+        ],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart" }] },
+        'import d, { a } from "@made/up/slowPart";\nexport { d, a };\n',
+        [
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+        ],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart" }] },
+        'import { a } from "@made/up/slowPart";\nimport { b } from "@made/up/slowPart";\nexport { a, b };\n',
+        [
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+          "2:1 '@made/up/slowPart' import is restricted from being used.",
+          "2:1 '@made/up/slowPart' import is restricted from being used.",
+        ],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart" }] },
+        'export { a };\nimport { a, b } from "@made/up/slowPart";\nb;\n',
+        [
+          "2:1 '@made/up/slowPart' import is restricted from being used.",
+          "2:1 '@made/up/slowPart' import is restricted from being used.",
+        ],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart" }] },
+        'import { a } from "@made/up/slowPart";\nimport { o } from "other";\nexport { a, o };\n',
+        [
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+        ],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart" }] },
+        'import { a } from "@made/up/slowPart";\nimport { o } from "other";\nexport { o };\na;\n',
+        ["1:1 '@made/up/slowPart' import is restricted from being used."],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart" }] },
+        'import { a } from "@made/up/slowPart";\nexport { a };\nexport { b } from "@made/up/slowPart";\n',
+        [
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+          "3:1 '@made/up/slowPart' import is restricted from being used.",
+        ],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart" }] },
+        'import { a } from "@made/up/slowPart";\nexport { a };\nexport * from "@made/up/slowPart";\n',
+        [
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+          "3:1 '@made/up/slowPart' import is restricted from being used.",
+        ],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart" }] },
+        'import "@made/up/slowPart";\nimport { a } from "@made/up/slowPart";\nexport { a };\n',
+        [
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+          "2:1 '@made/up/slowPart' import is restricted from being used.",
+          "2:1 '@made/up/slowPart' import is restricted from being used.",
+        ],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart" }] },
+        'import { a } from "@made/up/slowPart";\nexport function f(a: number) { return a; }\nexport { a };\n',
+        [
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+        ],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart" }] },
+        'import a = require("@made/up/slowPart");\nexport { a };\n',
+        ["1:1 '@made/up/slowPart' import is restricted from being used."],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart", "allowTypeImports": true, "message": "no" }] },
+        'import { a, b } from "@made/up/slowPart";\nimport type { T, V } from "@made/up/slowPart";\nexport { a };\nexport const x: T | V = b;\n',
+        [
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+        ],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart", "allowTypeImports": true, "message": "no" }] },
+        'import { a, b } from "@made/up/slowPart";\nimport type { T, V } from "@made/up/slowPart";\nexport type { T };\nexport const x: V = a + b;\n',
+        ["1:1 '@made/up/slowPart' import is restricted from being used."],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart", "allowTypeImports": true, "message": "no" }] },
+        'import type { T } from "@made/up/slowPart";\nexport { T };\n',
+        [],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart", "allowTypeImports": true, "message": "no" }] },
+        'import { a } from "@made/up/slowPart";\nexport type { a };\n',
+        [
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+        ],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart", "allowTypeImports": true, "message": "no" }] },
+        'import { a, type T } from "@made/up/slowPart";\nexport { T };\na;\n',
+        ["1:1 '@made/up/slowPart' import is restricted from being used."],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart", "allowTypeImports": true, "message": "no" }] },
+        'import { a, type T } from "@made/up/slowPart";\nexport { a };\nexport type U = T;\n',
+        [
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+        ],
+      ],
+      [
+        {
+          "patterns": [
+            { "regex": "(^@made/up/|/)slowPart(\\.[cm]?[jt]sx?)?$", "allowTypeImports": true, "message": "no" },
+          ],
+        },
+        'import { a, b } from "@made/up/slowPart";\nimport type { T, V } from "@made/up/slowPart";\nexport { a };\nexport const x: T | V = b;\n',
+        [
+          "1:1 '@made/up/slowPart' import is restricted from being used by a pattern.",
+          "1:1 '@made/up/slowPart' import is restricted from being used by a pattern.",
+        ],
+      ],
+      [
+        {
+          "patterns": [
+            { "regex": "(^@made/up/|/)slowPart(\\.[cm]?[jt]sx?)?$", "allowTypeImports": true, "message": "no" },
+          ],
+        },
+        'import { a, b } from "@made/up/slowPart";\nexport { a, b };\n',
+        [
+          "1:1 '@made/up/slowPart' import is restricted from being used by a pattern.",
+          "1:1 '@made/up/slowPart' import is restricted from being used by a pattern.",
+        ],
+      ],
+      [
+        { "patterns": [{ "group": ["@made/up/*"], "allowTypeImports": true, "message": "no" }] },
+        'import { a, b } from "@made/up/slowPart";\nimport type { T, V } from "@made/up/slowPart";\nexport { a };\nexport const x: T | V = b;\n',
+        [
+          "1:1 '@made/up/slowPart' import is restricted from being used by a pattern.",
+          "1:1 '@made/up/slowPart' import is restricted from being used by a pattern.",
+        ],
+      ],
+      [
+        { "patterns": [{ "group": ["@made/up/*"], "allowTypeImports": true, "message": "no" }] },
+        'import { a, b } from "@made/up/slowPart";\nexport { a, b };\n',
+        [
+          "1:1 '@made/up/slowPart' import is restricted from being used by a pattern.",
+          "1:1 '@made/up/slowPart' import is restricted from being used by a pattern.",
+        ],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart", "importNames": ["a"], "message": "no" }] },
+        'import { a } from "@made/up/slowPart";\nexport { a, a as c };\n',
+        [
+          "1:10 'a' import from '@made/up/slowPart' is restricted.",
+          "1:10 'a' import from '@made/up/slowPart' is restricted.",
+          "1:10 'a' import from '@made/up/slowPart' is restricted.",
+        ],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart", "importNames": ["a"], "message": "no" }] },
+        'import { a as z } from "@made/up/slowPart";\nexport { z };\n',
+        [
+          "1:10 'a' import from '@made/up/slowPart' is restricted.",
+          "1:10 'a' import from '@made/up/slowPart' is restricted.",
+        ],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart", "importNames": ["a"], "message": "no" }] },
+        'import { b as a, a as b } from "@made/up/slowPart";\nexport { a, b };\n',
+        [
+          "1:18 'a' import from '@made/up/slowPart' is restricted.",
+          "1:18 'a' import from '@made/up/slowPart' is restricted.",
+        ],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart", "importNames": ["a"], "message": "no" }] },
+        'import { a, b } from "@made/up/slowPart";\nexport { a as b, b as a };\n',
+        [
+          "1:10 'a' import from '@made/up/slowPart' is restricted.",
+          "1:10 'a' import from '@made/up/slowPart' is restricted.",
+        ],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart", "importNames": ["a"], "message": "no" }] },
+        'import d from "@made/up/slowPart";\nexport { d };\n',
+        [],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart", "importNames": ["c", "z", "d"] }] },
+        'import d from "@made/up/slowPart";\nexport { d };\n',
+        ["1:8 'd' import from '@made/up/slowPart' is restricted."],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart", "importNames": ["c", "z", "d"] }] },
+        'import { a as z } from "@made/up/slowPart";\nexport { z };\n',
+        [],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart", "importNames": ["c", "z", "d"] }] },
+        'import { a } from "@made/up/slowPart";\nexport { a as c };\n',
+        [],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart", "importNames": ["b", "default", "T", "x y"] }] },
+        'import { default as z } from "@made/up/slowPart";\nexport { z };\n',
+        [
+          "1:10 'default' import from '@made/up/slowPart' is restricted.",
+          "1:10 'default' import from '@made/up/slowPart' is restricted.",
+        ],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart", "importNames": ["b", "default", "T", "x y"] }] },
+        'import { "x y" as z } from "@made/up/slowPart";\nexport { z };\n',
+        [
+          "1:10 'x y' import from '@made/up/slowPart' is restricted.",
+          "1:10 'x y' import from '@made/up/slowPart' is restricted.",
+        ],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart", "importNames": ["b", "default", "T", "x y"] }] },
+        'import d from "@made/up/slowPart";\nexport { d };\n',
+        ["1:8 'default' import from '@made/up/slowPart' is restricted."],
+      ],
+      [
+        { "paths": [{ "name": "@made/up/slowPart", "allowImportNames": ["a"] }] },
+        'import { a, b } from "@made/up/slowPart";\nexport { a, b };\n',
+        [
+          "1:13 'b' import from '@made/up/slowPart' is restricted because only a import(s) is/are allowed.",
+          "1:13 'b' import from '@made/up/slowPart' is restricted because only a import(s) is/are allowed.",
+        ],
+      ],
+      [
+        { "patterns": [{ "regex": "slowPart", "importNamePattern": "^[ad]" }] },
+        'import d from "@made/up/slowPart";\nexport { d };\n',
+        [
+          "1:8 'd' import from '@made/up/slowPart' is restricted from being used by a pattern.",
+          "1:8 'default' import from '@made/up/slowPart' is restricted from being used by a pattern.",
+        ],
+      ],
+      [
+        { "patterns": [{ "regex": "slowPart", "importNamePattern": "^[ad]" }] },
+        'import { a, b } from "@made/up/slowPart";\nexport { a, b };\n',
+        [
+          "1:10 'a' import from '@made/up/slowPart' is restricted from being used by a pattern.",
+          "1:10 'a' import from '@made/up/slowPart' is restricted from being used by a pattern.",
+        ],
+      ],
+      [
+        { "patterns": [{ "group": ["@made/up/*"], "importNames": ["a", "default"], "message": "no" }] },
+        'import d, { a } from "@made/up/slowPart";\nexport { d, a };\n',
+        [
+          "1:13 'a' import from '@made/up/slowPart' is restricted from being used by a pattern.",
+          "1:13 'a' import from '@made/up/slowPart' is restricted from being used by a pattern.",
+          "1:8 'default' import from '@made/up/slowPart' is restricted from being used by a pattern.",
+        ],
+      ],
+      [
+        {
+          "paths": [
+            { "name": "@made/up/slowPart", "message": "one" },
+            { "name": "@made/up/slowPart", "importNames": ["a"], "message": "two" },
+          ],
+        },
+        'import { a, b } from "@made/up/slowPart";\nexport { a };\nb;\n',
+        [
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+          "1:10 'a' import from '@made/up/slowPart' is restricted.",
+          "1:10 'a' import from '@made/up/slowPart' is restricted.",
+        ],
+      ],
+      [
+        {
+          "paths": [{ "name": "@made/up/slowPart", "message": "p" }],
+          "patterns": [{ "regex": "slowPart", "message": "r" }],
+        },
+        'import { a, b } from "@made/up/slowPart";\nexport { a };\nb;\n',
+        [
+          "1:1 '@made/up/slowPart' import is restricted from being used by a pattern.",
+          "1:1 '@made/up/slowPart' import is restricted from being used by a pattern.",
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+          "1:1 '@made/up/slowPart' import is restricted from being used.",
+        ],
+      ],
+    ];
+    const names = rows.map((_, at) => `r${at}.ts`);
+    const overrides = rows.map(([options], at) => ({
+      files: [names[at]],
+      rules: { "no-restricted-imports": ["error", options] },
+    }));
+    const files = {
+      ".oxlintrc.json": JSON.stringify({ categories: { correctness: "off" }, overrides }),
+      ...Object.fromEntries(rows.map(([, code], at) => [names[at], code])),
+    };
+    expect(await reports(files, names)).toEqual(rows.map(row => row[2]));
+  });
+
   // An import without names is one for its side effects, `import type {} from "m"` too. `caseSensitive` is about a `group` alone.
   test("no-restricted-imports: an import of no names, and the case of a regex", async () => {
     const rows: [options: unknown, code: string, reports: string[]][] = [

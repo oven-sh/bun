@@ -312,6 +312,10 @@ fn format_flattened_logical_expression<'a>(
     inside_condition: bool,
     f: &mut Formatter<'a>,
 ) {
+    // `a && ((b && ((c && ..) && d)) && e)`: it is not written by way of `Expr`.
+    if !f.context_mut().has_stack_left() {
+        return;
+    }
     let parts = split_into_left_and_right_sides(binary, inside_condition, f);
     f.join().entries(parts.iter());
 }

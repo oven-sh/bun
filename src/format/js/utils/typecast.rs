@@ -79,6 +79,10 @@ impl<'a> Format<'a> for FormatParenthesizedExpression<'a, '_> {
         let Some((&span, inner)) = self.parentheses.split_first() else {
             return (self.write_target)(f);
         };
+        // The parentheses in it are not written by way of `Expr`.
+        if !f.context_mut().has_stack_left() {
+            return;
+        }
         // The comments in the parentheses are written in them, also where those after the
         // expression are left to somebody else.
         let previous_limit = f.comments_mut().show_comments_up_to(span.end);

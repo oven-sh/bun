@@ -686,6 +686,227 @@ impl<'a> Stmt<'a> {
         }
     }
 
+    #[inline]
+    pub fn as_type_alias(self) -> Option<Alias<'a>> {
+        match self.try_raw()?.kind {
+            hir::StmtKind::TypeAlias(alias) => Some(Alias::new(self.file, alias)),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_enum(self) -> Option<Enum<'a>> {
+        match self.try_raw()?.kind {
+            hir::StmtKind::Enum(it) => Some(Enum::new(self.file, it)),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_import_equals(self) -> Option<ImportEquals<'a>> {
+        match self.try_raw()?.kind {
+            hir::StmtKind::ImportEquals(import) => Some(ImportEquals::new(self.file, import)),
+            _ => None,
+        }
+    }
+
+    /// What a `Throw` throws.
+    #[inline]
+    pub fn as_throw(self) -> Option<Expr<'a>> {
+        match self.try_raw()?.kind {
+            hir::StmtKind::Throw(value) => Some(Expr::new(self.file, value)),
+            _ => None,
+        }
+    }
+
+    /// The expression of an `ExportDefault`.
+    #[inline]
+    pub fn as_export_default(self) -> Option<Expr<'a>> {
+        match self.try_raw()?.kind {
+            hir::StmtKind::ExportDefault(value) => Some(Expr::new(self.file, value)),
+            _ => None,
+        }
+    }
+
+    /// The expression of an `ExportAssign`.
+    #[inline]
+    pub fn as_export_assign(self) -> Option<Expr<'a>> {
+        match self.try_raw()?.kind {
+            hir::StmtKind::ExportAssign(value) => Some(Expr::new(self.file, value)),
+            _ => None,
+        }
+    }
+
+    /// The name of an `ExportAsNamespace`.
+    #[inline]
+    pub fn as_export_as_namespace(self) -> Option<Name<'a>> {
+        match self.try_raw()?.kind {
+            hir::StmtKind::ExportAsNamespace(name) => Some(self.file.name(name)),
+            _ => None,
+        }
+    }
+
+    /// The label of a `Break`: `Some(None)` without one.
+    #[inline]
+    pub fn as_break(self) -> Option<Option<Name<'a>>> {
+        match self.try_raw()?.kind {
+            hir::StmtKind::Break(label) => Some(self.file.name_if_some(label)),
+            _ => None,
+        }
+    }
+
+    /// The label of a `Continue`: `Some(None)` without one.
+    #[inline]
+    pub fn as_continue(self) -> Option<Option<Name<'a>>> {
+        match self.try_raw()?.kind {
+            hir::StmtKind::Continue(label) => Some(self.file.name_if_some(label)),
+            _ => None,
+        }
+    }
+
+    /// The `label` and the `body` of a `Labeled`.
+    #[inline]
+    pub fn as_labeled(self) -> Option<(Name<'a>, Stmt<'a>)> {
+        match self.try_raw()?.kind {
+            hir::StmtKind::Labeled { label, body } => {
+                Some((self.file.name(label), Stmt::new(self.file, body)))
+            }
+            _ => None,
+        }
+    }
+
+    /// The `test` and the `body` of a `While`.
+    #[inline]
+    pub fn as_while(self) -> Option<(Expr<'a>, Stmt<'a>)> {
+        match self.try_raw()?.kind {
+            hir::StmtKind::While { test, body } => {
+                Some((Expr::new(self.file, test), Stmt::new(self.file, body)))
+            }
+            _ => None,
+        }
+    }
+
+    /// The `body` and the `test` of a `DoWhile`.
+    #[inline]
+    pub fn as_do_while(self) -> Option<(Stmt<'a>, Expr<'a>)> {
+        match self.try_raw()?.kind {
+            hir::StmtKind::DoWhile { body, test } => {
+                Some((Stmt::new(self.file, body), Expr::new(self.file, test)))
+            }
+            _ => None,
+        }
+    }
+
+    /// The `left`, the `expr` and the `body` of a `ForIn`.
+    #[inline]
+    pub fn as_for_in(self) -> Option<(Stmt<'a>, Expr<'a>, Stmt<'a>)> {
+        match self.try_raw()?.kind {
+            hir::StmtKind::ForIn { left, expr, body } => Some((
+                Stmt::new(self.file, left),
+                Expr::new(self.file, expr),
+                Stmt::new(self.file, body),
+            )),
+            _ => None,
+        }
+    }
+
+    /// The `left`, the `expr`, the `body` and `is_await` of a `ForOf`.
+    #[inline]
+    pub fn as_for_of(self) -> Option<(Stmt<'a>, Expr<'a>, Stmt<'a>, bool)> {
+        match self.try_raw()?.kind {
+            hir::StmtKind::ForOf {
+                left,
+                expr,
+                body,
+                is_await,
+            } => Some((
+                Stmt::new(self.file, left),
+                Expr::new(self.file, expr),
+                Stmt::new(self.file, body),
+                is_await,
+            )),
+            _ => None,
+        }
+    }
+
+    /// The `init`, the `test`, the `update` and the `body` of a `For`.
+    #[inline]
+    #[expect(clippy::type_complexity)]
+    pub fn as_for(
+        self,
+    ) -> Option<(
+        Option<Stmt<'a>>,
+        Option<Expr<'a>>,
+        Option<Expr<'a>>,
+        Stmt<'a>,
+    )> {
+        match self.tag() {
+            StmtTag::For => match self.kind() {
+                StmtKind::For {
+                    init,
+                    test,
+                    update,
+                    body,
+                } => Some((init, test, update, body)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// The `block`, the `param`, the `handler` and the `finalizer` of a `Try`.
+    #[inline]
+    #[expect(clippy::type_complexity)]
+    pub fn as_try(
+        self,
+    ) -> Option<(
+        Stmt<'a>,
+        Option<VarDecl<'a>>,
+        Option<Stmt<'a>>,
+        Option<Stmt<'a>>,
+    )> {
+        match self.tag() {
+            StmtTag::Try => match self.kind() {
+                StmtKind::Try {
+                    block,
+                    param,
+                    handler,
+                    finalizer,
+                } => Some((block, param, handler, finalizer)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// The `object` and the `body` of a `With`.
+    #[inline]
+    pub fn as_with(self) -> Option<(Expr<'a>, Stmt<'a>)> {
+        match self.file.has_with_statements() {
+            true => match self.kind() {
+                StmtKind::With { object, body } => Some((object, body)),
+                _ => None,
+            },
+            false => None,
+        }
+    }
+
+    /// The `spec`, the `alias` and `type_only` of an `ExportStar`.
+    #[inline]
+    pub fn as_export_star(self) -> Option<(Option<Name<'a>>, Option<Ident<'a>>, bool)> {
+        match self.tag() {
+            StmtTag::ExportStar => match self.kind() {
+                StmtKind::ExportStar {
+                    spec,
+                    alias,
+                    type_only,
+                } => Some((spec, alias, type_only)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// `for`, `for`-`in`, `for`-`of`, `while`, `do`-`while`
     #[inline]
     pub fn is_loop(self) -> bool {

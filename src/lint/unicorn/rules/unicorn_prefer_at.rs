@@ -16,11 +16,12 @@ const PREFER_AT_OVER_SUBSTRING: Message =
     Message::new("", "Prefer `String#at()` over `String#substring()` when getting one character.");
 const USE_AT: Message = Message::new("", "Use `.at()` for index access.");
 
+const METHODS: [&str; 6] = ["charAt", "substring", "pop", "shift", "last", "slice"];
+
 impl Rule for PreferAt {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "prefer-at", Kind::Suggestion).fixable(Fixable::Code).has_suggestions();
-    const ON: On =
-        On::new().exprs(&[ExprTag::Index]).method_calls(&["charAt", "substring", "pop", "shift", "last", "slice"]);
+    const ON: On = On::new().exprs(&[ExprTag::Index]).method_calls(&METHODS);
     no_state!();
 
     fn new(options: &Options) -> Self {
@@ -41,7 +42,7 @@ impl Rule for PreferAt {
             on = on.exprs(&[ExprTag::Index]);
         }
         if file.mentions_any(&["charAt", "substring", "slice", "last"]) {
-            on = on.exprs(&[ExprTag::Call]);
+            on = on.method_calls(&METHODS);
         }
         on
     }

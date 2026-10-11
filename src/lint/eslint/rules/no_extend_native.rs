@@ -57,7 +57,7 @@ impl NoExtendNative {
 
 impl Rule for NoExtendNative {
     const META: Meta = Meta::eslint("no-extend-native", Kind::Suggestion).reports_at_the_end();
-    const ON: On = On::new().exprs(&[ExprTag::Assign, ExprTag::Call]);
+    const ON: On = On::new().exprs(&[ExprTag::Assign]).method_calls(&["defineProperty", "defineProperties"]);
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {

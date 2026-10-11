@@ -8,7 +8,7 @@ const UNEXPECTED_PROTO: Message =
 
 impl Rule for NoProto {
     const META: Meta = Meta::eslint("no-proto", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Dot, ExprTag::Index]);
+    const ON: On = On::new().members_named(&["__proto__"]).exprs(&[ExprTag::Index]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {

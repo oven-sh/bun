@@ -158,7 +158,7 @@ impl NoEval {
 
 impl Rule for NoEval {
     const META: Meta = Meta::eslint("no-eval", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::Ident, ExprTag::This]);
+    const ON: On = On::new().function_calls(&["eval"]).exprs(&[ExprTag::Ident, ExprTag::This]);
     type State<'a> = Known<'a>;
 
     fn new(options: &Options) -> Self {
@@ -168,7 +168,7 @@ impl Rule for NoEval {
     }
 
     fn narrow<'a>(&self, _: &'a File<'a>) -> On {
-        let mut on = On::new().exprs(&[ExprTag::Call]);
+        let mut on = On::new().function_calls(&["eval"]);
         if !self.allows_indirect {
             on = on.exprs(&[ExprTag::Ident, ExprTag::This]);
         }

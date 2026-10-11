@@ -33,13 +33,15 @@ impl Rule for NoThenable {
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
-        let on = On::new()
+        if file.mentions_any(&["defineProperty", "fromEntries"]) {
+            return Self::ON;
+        }
+        On::new()
             .props()
             .members()
             .stmts(&[StmtTag::Var, StmtTag::Fn, StmtTag::Class])
             .export_specs()
-            .exprs(&[ExprTag::Assign]);
-        if file.mentions_any(&["defineProperty", "fromEntries"]) { on.exprs(&[ExprTag::Call]) } else { on }
+            .exprs(&[ExprTag::Assign])
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {

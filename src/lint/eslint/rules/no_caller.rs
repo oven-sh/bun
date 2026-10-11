@@ -7,7 +7,7 @@ const UNEXPECTED: Message = Message::new("unexpected", "Avoid arguments.{{prop}}
 
 impl Rule for NoCaller {
     const META: Meta = Meta::eslint("no-caller", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Dot]).types(&[TypeTag::Ref]);
+    const ON: On = On::new().members_named(&["callee", "caller"]).types(&[TypeTag::Ref]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {

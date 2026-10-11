@@ -356,11 +356,17 @@ impl PerFile {
                 .filter(|it| file.mentions_bit(it.1))
                 .filter_map(|it| file.find_name(it.0))
                 .collect();
-            let identifiers = file
-                .exprs_of_kind(ExprTag::Ident)
-                .take_while(|_| !names.is_empty());
-            identifiers
-                .filter(|it| it.as_ident().is_some_and(|name| names.contains(&name)))
+            if names.is_empty() {
+                return Vec::new();
+            }
+            // A bit for each of the names: nearly every identifier is told apart by that.
+            let bit = |name: Name| 1u64 << (name.atom().0 % 64);
+            let bits = names.iter().fold(0, |bits, name| bits | bit(*name));
+            file.exprs_of_kind(ExprTag::Ident)
+                .filter(|it| {
+                    it.as_ident()
+                        .is_some_and(|name| bits & bit(name) != 0 && names.contains(&name))
+                })
                 .map(|it| it.id().0)
                 .collect()
         })

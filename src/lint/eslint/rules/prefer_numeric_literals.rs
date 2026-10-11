@@ -31,7 +31,7 @@ fn is_same_as_literal(text: &[u8], radix: u32) -> bool {
 
 impl Rule for PreferNumericLiterals {
     const META: Meta = Meta::eslint("prefer-numeric-literals", Kind::Suggestion).fixable(Fixable::Code);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().calls_named(&["parseInt"]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {

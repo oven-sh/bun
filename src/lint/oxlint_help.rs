@@ -9,6 +9,7 @@ use self::Texts::{One, Three};
 use crate::rule::{Message, Meta};
 use bun_core::strings;
 use std::num::NonZeroU32;
+use std::sync::OnceLock;
 
 /// What the table has for a message.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -52,25 +53,31 @@ impl Help {
     }
 
     pub(crate) fn found(self, part: Part) -> Found {
-        let [help, first_label, note] = match (self.texts(), part) {
-            (Some(One(help)), _) => [help, "", ""],
-            (Some(Three(all)), _) => *all,
-            (Some(Texts::OfTheFix { removes, edits, .. }), Part::Help) => {
-                return Found::OfTheFix { removes, edits };
-            }
-            (Some(Texts::OfTheFix { note, .. }), _) => ["", "", note],
-            (None, _) => [""; 3],
+        let Some(texts) = self.texts() else {
+            return Found::Nothing;
         };
-        let text = match part {
-            Part::Help => help,
-            Part::FirstLabel => first_label,
-            Part::Note => note,
-        };
+        if let (Texts::OfTheFix { removes, edits, .. }, Part::Help) = (texts, part) {
+            return Found::OfTheFix { removes, edits };
+        }
+        let text = texts.all()[part as usize];
         match text.is_empty() {
             true => Found::Nothing,
-            false if strings::contains(text.as_bytes(), b"{{") => Found::WithData(text),
+            false if self.with_values() >> (part as u8) & 1 != 0 => Found::WithData(text),
             false => Found::Constant(text),
         }
+    }
+
+    /// A bit for each [`Part`] that has `{{` in it.
+    fn with_values(self) -> u8 {
+        static OF_ALL: OnceLock<Box<[u8]>> = OnceLock::new();
+        let of_all = OF_ALL.get_or_init(|| {
+            let has = |text: &str| u8::from(strings::contains(text.as_bytes(), b"{{"));
+            let bits = |[help, first_label, note]: [&str; 3]| {
+                has(help) | has(first_label) << 1 | has(note) << 2
+            };
+            INDEX.iter().map(|it| bits(it.1.all())).collect()
+        });
+        (of_all.get(self.0.get() as usize - 1).copied()).unwrap_or(0)
     }
 
     /// The text, if it is one without values. Else "".
@@ -83,9 +90,7 @@ impl Help {
 
     /// One of the texts has values in it.
     pub(crate) fn has_values(self) -> bool {
-        [Part::Help, Part::FirstLabel, Part::Note]
-            .into_iter()
-            .any(|part| matches!(self.found(part), Found::WithData(_)))
+        self.with_values() != 0
     }
 
     /// The help is [`Found::OfTheFix`].
@@ -113,6 +118,17 @@ enum Texts {
         edits: Edits,
         note: &'static str,
     },
+}
+
+impl Texts {
+    /// By [`Part`]. "": there is none, or it is [`Found::OfTheFix`].
+    fn all(self) -> [&'static str; 3] {
+        match self {
+            One(help) => [help, "", ""],
+            Three(all) => *all,
+            Texts::OfTheFix { note, .. } => ["", "", note],
+        }
+    }
 }
 
 const fn of_the_fix(removes: bool, edits: Edits, note: &'static str) -> Texts {

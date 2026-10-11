@@ -157,6 +157,26 @@ fn without_tabs(lines: &[&[u8]]) -> Vec<u8> {
     text
 }
 
+/// What is printed is appended. A space is written at a time in front of a `^`.
+struct Appender<'o>(&'o mut Vec<u8>);
+
+impl std::fmt::Write for Appender<'_> {
+    #[inline]
+    fn write_str(&mut self, text: &str) -> std::fmt::Result {
+        self.0.extend_from_slice(text.as_bytes());
+        Ok(())
+    }
+
+    #[inline]
+    fn write_char(&mut self, character: char) -> std::fmt::Result {
+        match character.is_ascii() {
+            true => self.0.push(character as u8),
+            false => (self.0).extend_from_slice(character.encode_utf8(&mut [0; 4]).as_bytes()),
+        }
+        Ok(())
+    }
+}
+
 /// As `{}` prints a `BStr`.
 fn push_lossy(out: &mut Vec<u8>, text: &[u8]) {
     match text.is_ascii() {
@@ -305,7 +325,7 @@ fn write_pretty_problem<'r>(
         notes: notes.into(),
         ..Default::default()
     };
-    let to = &mut bun_core::fmt::VecWriter(out);
+    let to = &mut Appender(out);
     let _ = match meta.color {
         true => message.write_format::<true>(to),
         false => message.write_format::<false>(to),

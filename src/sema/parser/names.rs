@@ -34,6 +34,16 @@ struct Long {
     len: u8,
 }
 
+impl Long {
+    /// Word by word: arrays are compared in memory.
+    #[inline(always)]
+    fn is(&self, words: [u64; 4], len: usize) -> bool {
+        let [a, b, c, d] = self.words;
+        (a ^ words[0]) | (b ^ words[1]) | (c ^ words[2]) | (d ^ words[3]) == 0
+            && usize::from(self.len) == len
+    }
+}
+
 const MENTIONED_WORDS: usize = bun_sema::hir::MENTIONED_BITS / 64;
 const SHORT_BITS: u32 = 14;
 const LONG_BITS: u32 = 12;
@@ -398,7 +408,7 @@ impl Names {
             if entry.len == 0 {
                 return None;
             }
-            if entry.words == words && usize::from(entry.len) == len {
+            if entry.is(words, len) {
                 return (entry.atom != u32::MAX).then_some(entry.atom);
             }
             at = (at + 1) % self.known_long.len();
@@ -482,26 +492,22 @@ impl Names {
 
     /// The atom of a text of 16 to 32 bytes.
     pub(crate) fn long(&mut self, text: Text<'_>, atoms: &dyn Intern) -> Atom {
-        let Some(words) = long_words(text.text) else {
-            return self.other(text, atoms);
-        };
-        let place = long_place(words);
-        let entry = &self.long[place >> self.unused_bits];
-        if entry.words == words && usize::from(entry.len) == text.text.len() {
-            return Atom(entry.atom);
+        if let Some(words) = long_words(text.text) {
+            let entry = &self.long[long_place(words) >> self.unused_bits];
+            if entry.is(words, text.text.len()) {
+                return Atom(entry.atom);
+            }
         }
-        self.long_elsewhere(words, place, text, atoms)
+        self.long_elsewhere(text, atoms)
     }
 
     /// The same if it is not at its first place.
     #[inline(never)]
-    fn long_elsewhere(
-        &mut self,
-        words: [u64; 4],
-        place: usize,
-        text: Text<'_>,
-        atoms: &dyn Intern,
-    ) -> Atom {
+    fn long_elsewhere(&mut self, text: Text<'_>, atoms: &dyn Intern) -> Atom {
+        let Some(words) = long_words(text.text) else {
+            return self.other(text, atoms);
+        };
+        let place = long_place(words);
         let first = place >> self.unused_bits;
         let mask = (self.long.len() >> self.unused_bits) - 1;
         let mut free = None;
@@ -511,7 +517,7 @@ impl Names {
                 free = Some(at);
                 break;
             }
-            if entry.words == words && usize::from(entry.len) == text.text.len() {
+            if entry.is(words, text.text.len()) {
                 return Atom(entry.atom);
             }
         }
@@ -598,7 +604,7 @@ impl Names {
                     if entry.len == 0 {
                         return Err(None);
                     }
-                    if entry.words == words && usize::from(entry.len) == text.len() {
+                    if entry.is(words, text.len()) {
                         return Ok(Atom(entry.atom));
                     }
                 }

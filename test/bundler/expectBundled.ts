@@ -429,7 +429,7 @@ export interface BundlerTestRunOptions {
    */
   errorLineMatch?: RegExp;
 
-  env?: Record<string, string>;
+  env?: Record<string, string | undefined>;
 
   runtime?: "bun" | "node";
 
@@ -859,6 +859,7 @@ function expectBundled(
               compile && typeof compile === "object" && "execArgv" in compile
                 ? `--compile-exec-argv=${Array.isArray(compile.execArgv) ? compile.execArgv.join(" ") : compile.execArgv}`
                 : [],
+              compileFlag("envOptions", "--compile-env-options", "--no-compile-env-options"),
               compileFlag("autoloadDotenv", "--compile-autoload-dotenv", "--no-compile-autoload-dotenv"),
               compileFlag("autoloadBunfig", "--compile-autoload-bunfig", "--no-compile-autoload-bunfig"),
               compileFlag("autoloadTsconfig", "--compile-autoload-tsconfig", "--no-compile-autoload-tsconfig"),

@@ -162,7 +162,7 @@ impl<'a> File<'a> {
         {
             return before_end - before_start;
         }
-        bun_core::strings::utf8_lossy_len_utf16(self.slice(Span::new(start, end)))
+        bun_core::strings::utf8_decoded_len_utf16(self.slice(Span::new(start, end)))
     }
 
     /// Where ESLint's text starts: it has no byte order mark. So a line and a column do not count it either.

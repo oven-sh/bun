@@ -108,6 +108,23 @@ pub fn utf8_lossy_len_utf16(text: &[u8]) -> u32 {
     }
 }
 
+/// `text.length` of the text of a file as `TextDecoder` and Node read it: the start of a sequence of
+/// UTF-8 that does not go on is one U+FFFD, however many bytes it has. As [`Utf16OffsetTable`] counts.
+///
+/// [`Utf16OffsetTable`]: super::Utf16OffsetTable
+pub fn utf8_decoded_len_utf16(text: &[u8]) -> u32 {
+    match first_non_ascii(text) {
+        None => text.len() as u32,
+        Some(_) if is_valid_utf8(text) => element_length_utf8_into_utf16(text) as u32,
+        Some(_) => (text.utf8_chunks())
+            .map(|chunk| {
+                let valid = element_length_utf8_into_utf16(chunk.valid().as_bytes()) as u32;
+                valid + u32::from(!chunk.invalid().is_empty())
+            })
+            .sum(),
+    }
+}
+
 /// The offset in bytes of the UTF-16 index `index` of `text`. An index past the end is the length
 /// of `text`, and one in the middle of a surrogate pair is the start of the pair.
 pub fn wtf8_offset_of_utf16_index(text: &[u8], index: u32) -> usize {
@@ -259,6 +276,19 @@ mod tests {
         assert_eq!(wtf8_slice_by_utf16(text, 3, 4), b"\xED\xA0\x80");
         assert_eq!(utf8_lossy_len_utf16(text), 7);
         assert_eq!(utf8_lossy_len_utf16("a😀é".as_bytes()), 4);
+        assert_eq!(utf8_decoded_len_utf16("a😀é".as_bytes()), 4);
+        for (text, go, node) in [
+            (&b"a\xF0\x9F\x98b"[..], 5, 3),
+            (b"a\xF0\x9Fb", 4, 3),
+            (b"a\xE2\x82b", 4, 3),
+            (b"a\xED\xA0\x80b", 5, 5),
+            (b"a\xFF\xFFb", 4, 4),
+            (b"a\xC0\xAFb", 4, 4),
+            (b"a\xF4\x90\x80\x80b", 6, 6),
+        ] {
+            assert_eq!(utf8_lossy_len_utf16(text), go);
+            assert_eq!(utf8_decoded_len_utf16(text), node);
+        }
     }
 
     #[test]

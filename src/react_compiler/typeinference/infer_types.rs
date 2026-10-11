@@ -48,6 +48,7 @@ pub(crate) fn infer_types(
         enable_treat_ref_like_identifiers_as_refs,
         custom_hook_type,
         enable_treat_set_identifiers_as_state_setters,
+        env.stack(),
     );
     let generated = generate(func, env, &mut unifier);
     if let Some(why) = unifier.gave_up() {
@@ -1099,6 +1100,7 @@ impl Unifier {
         enable_treat_ref_like_identifiers_as_refs: bool,
         custom_hook_type: Option<Type>,
         enable_treat_set_identifiers_as_state_setters: bool,
+        stack: bun_core::StackCheck,
     ) -> Self {
         Unifier {
             substitutions: HashMap::default(),
@@ -1106,7 +1108,7 @@ impl Unifier {
             enable_treat_ref_like_identifiers_as_refs,
             enable_treat_set_identifiers_as_state_setters,
             custom_hook_type,
-            stack: bun_core::StackCheck::init(),
+            stack,
             is_out_of_stack: std::cell::Cell::new(false),
         }
     }

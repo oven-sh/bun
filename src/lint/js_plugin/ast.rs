@@ -414,7 +414,7 @@ impl<'a> Writer<'a, '_> {
             None => {
                 let start = self.extra_units;
                 self.tree.extra.extend_from_slice(value);
-                self.extra_units += bun_core::strings::utf8_lossy_len_utf16(value);
+                self.extra_units += bun_core::strings::utf8_decoded_len_utf16(value);
                 (start | IN_EXTRA, self.extra_units)
             }
         };

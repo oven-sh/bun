@@ -317,11 +317,11 @@ struct Env {
 }
 
 impl Env {
-    fn new(keeps_place: bool, looks_into_functions: bool) -> Self {
+    fn new(keeps_place: bool, looks_into_functions: bool, stack: bun_core::StackCheck) -> Self {
         Self {
             joins: Joins {
                 keeps_place,
-                stack: bun_core::StackCheck::init(),
+                stack,
                 is_out_of_stack: std::cell::Cell::new(false),
             },
             looks_into_functions,
@@ -554,6 +554,7 @@ pub(crate) fn validate_no_ref_access_in_render(func: &HirFunction, env: &mut Env
     let mut ref_env = Env::new(
         env.config.joined_ref_values_keep_their_place,
         env.config.captured_refs_are_known_in_functions,
+        env.stack(),
     );
     collect_temporaries_sidemap(
         func,

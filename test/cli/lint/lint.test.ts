@@ -2413,6 +2413,23 @@ describe.concurrent("bun lint", () => {
     expect(rules).toHaveLength(Object.keys(files).length - 1);
   });
 
+  // A fix often has the text of its node, so the fixes of nodes that are in each other have the square of the depth in bytes:
+  // a gigabyte here. A format that only counts what can be fixed keeps none of it.
+  test("the fixes of 45,000 nodes in each other, which are only counted", async () => {
+    using dir = tempDir("bun-lint-nested-fixes", {
+      ".eslintrc.json": JSON.stringify({ root: true, rules: { "no-extra-boolean-cast": "error" } }),
+      "a.js": `x = ${"!".repeat(45_000)}a;\n`,
+    });
+    await using proc = spawn({ cmd: [...command, "--threads", "1", "a.js"], env, cwd: String(dir), stderr: "pipe" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    // Where the stack is smaller or the frames are larger.
+    if (!stdout.includes("The code is nested too deeply")) {
+      expect(stdout).toContain(" errors and 0 warnings potentially fixable with the `--fix` option.");
+    }
+    expect(exitCode).toBe(1);
+    expect(proc.resourceUsage()!.maxRSS).toBeLessThan((isASAN || isDebug ? 700 : 300) * 1024 * 1024);
+  });
+
   // A file to which links give several names, and rules that look at several files. It must be the same in every run.
   describe("a file that has several names by links", () => {
     const project = (configuration: Record<string, string>) => {

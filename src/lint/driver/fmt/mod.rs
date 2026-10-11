@@ -256,7 +256,7 @@ fn syntax_error_in_words(text: &[u8], message: &[u8], offset: u32) -> Vec<u8> {
         }
     }
     // As Prettier counts them: in UTF-16 code units.
-    let column = bun_core::strings::utf8_lossy_len_utf16(&before[line_start..]);
+    let column = bun_core::strings::utf8_decoded_len_utf16(&before[line_start..]);
     let mut out = format!(
         "SyntaxError: {} ({line}:{})",
         BStr::new(message),

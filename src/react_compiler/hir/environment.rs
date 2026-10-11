@@ -55,6 +55,8 @@ pub struct Environment {
     pub errors: CompilerError,
 
     /// For what calls itself along the nesting of the source: [`Environment::has_stack`].
+    /// It keeps to a thread's usual stack: a thread that has more has it for what cannot ask,
+    /// `Drop`, `Clone` and `==` of what was built.
     stack: bun_core::StackCheck,
     is_out_of_stack: std::cell::Cell<bool>,
 
@@ -189,7 +191,8 @@ impl Environment {
             scopes: AstAlloc::vec(),
             functions: AstAlloc::vec(),
             errors: CompilerError::new(),
-            stack: bun_core::StackCheck::init(),
+            stack: bun_core::StackCheck::init()
+                .with_at_most(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize),
             is_out_of_stack: std::cell::Cell::new(false),
             fn_type: ReactFunctionType::Other,
             output_mode: OutputMode::Client,
@@ -229,6 +232,11 @@ impl Environment {
     }
 
     /// For a pass that asks the stack by itself.
+    pub(crate) fn stack(&self) -> bun_core::StackCheck {
+        self.stack
+    }
+
+    /// From such a pass.
     pub(crate) fn ran_out_of_stack(&self) {
         self.is_out_of_stack.set(true);
     }

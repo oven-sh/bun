@@ -428,7 +428,7 @@ impl<'t> Utf16Offsets<'t> {
         let between = &self.text[self.last.0 as usize..offset as usize];
         self.last = (
             offset,
-            self.last.1 + bun_core::strings::utf8_lossy_len_utf16(between),
+            self.last.1 + bun_core::strings::utf8_decoded_len_utf16(between),
         );
         i64::from(self.last.1) + i64::from(beyond)
     }

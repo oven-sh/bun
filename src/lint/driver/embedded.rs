@@ -356,7 +356,7 @@ impl Origin {
         Origin {
             offset: offset as u32,
             lines,
-            columns: bun_core::strings::utf8_lossy_len_utf16(&before[line_start..]),
+            columns: bun_core::strings::utf8_decoded_len_utf16(&before[line_start..]),
         }
     }
 

@@ -1391,6 +1391,7 @@ dependencies = [
  "bun_ast",
  "bun_collections",
  "bun_core",
+ "bun_threading",
  "enumset",
  "rustc-hash",
  "smallvec",

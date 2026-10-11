@@ -203,7 +203,9 @@ impl<'a> Lexer<'a> {
             jsdoc_asterisks: Vec::new(),
             origins: Vec::new(),
             buffer: Vec::new(),
-            stack_check: bun_core::StackCheck::init(),
+            // As much as a thread of Bun's pool has. On a larger stack the rest is for what walks the tree.
+            stack_check: bun_core::StackCheck::init()
+                .with_at_most(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize),
         }
     }
 

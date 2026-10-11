@@ -195,16 +195,20 @@ function serializeConfigObject(given, index) {
     out.processor = typeof processor === "string" ? processor : ((processor && objectId(processor)) ?? "unknown");
     out.$processor = locateProcessor(processor, index);
   }
-  // Only a file that does not call `defineConfig()` still has it.
+  // Only a file that does not call `defineConfig()` still has it. oxlint takes an array of objects and nothing else, which
+  // the driver sees to.
   if (extended !== undefined) {
-    out.extends = [extended]
-      .flat(Infinity)
-      .map(item => (typeof item === "string" ? item : serializeConfigObject(item, index)));
+    const isPlain = item => typeof item === "string" || (isOfOxlint && Array.isArray(item));
+    const items = isOfOxlint ? extended : [extended].flat(Infinity);
+    out.extends = Array.isArray(items)
+      ? items.map(item => (isPlain(item) ? serialize(item) : serializeConfigObject(item, index)))
+      : (serialize(items) ?? null);
   }
   return out;
 }
 
 const isOfVite = require("node:path").basename(path).startsWith("vite.config.");
+const isOfOxlint = require("node:path").basename(path).startsWith("oxlint.config.");
 let exported = (await import(pathToFileURL(path).href)).default;
 if (typeof exported === "function")
   exported = isOfVite ? exported({ command: "serve", mode: "development" }) : exported();

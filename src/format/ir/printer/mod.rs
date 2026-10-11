@@ -21,6 +21,7 @@ use super::element::{
     Interned, LineMode, PrintMode, Tag, TextWidth,
 };
 use super::formatter::{END_LINE_SUFFIX, REST_OF_INDENTED_LINE_GROUP, Storage, line_break};
+use crate::FormatError;
 use crate::options::{Flavor, FormatOptions, IndentStyle, LineEnding};
 use smallvec::SmallVec;
 
@@ -31,6 +32,20 @@ pub(crate) enum PrintError {
     /// What is being measured depends on a group that was passed over by its [`Flat`]. It has to
     /// be measured again, element by element. This does not leave the printer.
     MeasureAgain,
+    /// Fills or variants are in each other so deeply that printing them would overflow the stack.
+    NestedTooDeeply,
+    /// See [`crate::is_too_long`].
+    TooLong,
+}
+
+impl From<PrintError> for FormatError {
+    fn from(error: PrintError) -> FormatError {
+        match error {
+            PrintError::InvalidDocument | PrintError::MeasureAgain => FormatError::InvalidDocument,
+            PrintError::NestedTooDeeply => FormatError::NestedTooDeeply,
+            PrintError::TooLong => FormatError::TooLong,
+        }
+    }
 }
 
 pub(crate) type PrintResult<T> = Result<T, PrintError>;
@@ -201,6 +216,9 @@ struct Printer<'d> {
     is_mark_pending: [bool; 2],
     /// The length of `out` before anything is printed.
     start: usize,
+    /// From here on no line has been indented.
+    is_too_long: bool,
+    stack_check: bun_core::StackCheck,
     buffers: &'d mut PrinterBuffers,
 }
 
@@ -247,12 +265,17 @@ pub(crate) fn print(
         mode: PrintMode::Expanded,
         is_mark_pending: [false; 2],
         start,
+        is_too_long: false,
+        stack_check: bun_core::StackCheck::init(),
         buffers,
     };
     let result = printer.print_all();
     printer.pull_marks_back();
     printer.out.finish();
-    result
+    match printer.is_too_long {
+        true => Err(PrintError::TooLong),
+        false => result,
+    }
 }
 
 impl<'d> Printer<'d> {
@@ -612,11 +635,18 @@ impl<'d> Printer<'d> {
         }
         self.pending_space = false;
         self.pending_indent = self.indention();
+        if crate::is_too_long(self.out.len()) {
+            self.is_too_long = true;
+            self.pending_indent = Indention::default();
+        }
     }
 
     /// Prints everything from the [`Tag::StartEntry`] that is next in the queue to its
     /// [`Tag::EndEntry`], in `mode`.
     fn print_entry(&mut self, mode: PrintMode) -> PrintResult<()> {
+        if !self.stack_check.is_safe_to_recurse() {
+            return Err(PrintError::NestedTooDeeply);
+        }
         match self.is_at_start_entry() {
             true => self.print_elements::<true>(mode),
             false => Err(PrintError::InvalidDocument),
@@ -998,24 +1028,21 @@ impl<'d> Printer<'d> {
 
 /// The first element of `run` that stands for itself.
 fn first_of(run: Run, pool: &[FormatElement]) -> Option<&FormatElement> {
-    let mut elements = pool.get(run.at as usize..run.end as usize)?.iter();
-    while let Some(element) = elements.next() {
-        match element {
-            FormatElement::Nop | FormatElement::Cursor(_) => {}
-            FormatElement::Skip(skip) => {
-                if skip.len > 0 {
-                    elements.nth(skip.len as usize - 1);
-                }
-            }
-            FormatElement::Interned(interned) => {
-                if let Some(first) = first_of(Run::of(*interned), pool) {
-                    return Some(first);
-                }
-            }
-            element => return Some(element),
+    let mut elements = Elements::new(run, pool);
+    // What follows the interned content that is being looked at.
+    let mut outer = SmallVec::<[Elements<'_>; 4]>::new();
+    loop {
+        match elements.next() {
+            Some(FormatElement::Nop | FormatElement::Cursor(_)) => {}
+            Some(FormatElement::Skip(skip)) => elements.skip(skip.len),
+            Some(FormatElement::Interned(interned)) => outer.push(std::mem::replace(
+                &mut elements,
+                Elements::new(Run::of(*interned), pool),
+            )),
+            Some(element) => return Some(element),
+            None => elements = outer.pop()?,
         }
     }
-    None
 }
 
 /// Passes over what is left of conditional content, whose start tag has just been taken from
@@ -1073,12 +1100,12 @@ enum FillPairLayout {
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub(crate) enum Indention {
     /// A number of levels.
-    Level(u16),
+    Level(u32),
     /// A number of levels and `align` spaces, which `align_count` aligns add up to.
     Align {
-        level: u16,
-        align: u8,
-        align_count: u16,
+        level: u32,
+        align: u32,
+        align_count: u32,
     },
 }
 
@@ -1095,14 +1122,14 @@ impl Indention {
     }
 
     #[inline]
-    fn level(self) -> u16 {
+    fn level(self) -> u32 {
         match self {
             Indention::Level(level) | Indention::Align { level, .. } => level,
         }
     }
 
     #[inline]
-    fn align(self) -> u8 {
+    fn align(self) -> u32 {
         match self {
             Indention::Level(_) => 0,
             Indention::Align { align, .. } => align,
@@ -1135,7 +1162,7 @@ impl Indention {
         match self {
             Indention::Level(level) => Indention::Align {
                 level,
-                align: count,
+                align: u32::from(count),
                 align_count: 1,
             },
             Indention::Align {
@@ -1144,7 +1171,7 @@ impl Indention {
                 align_count,
             } => Indention::Align {
                 level,
-                align: align.saturating_add(count),
+                align: align.saturating_add(u32::from(count)),
                 align_count: align_count.saturating_add(1),
             },
         }

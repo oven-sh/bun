@@ -13,6 +13,7 @@ use crate::options::{Flavor, FormatOptions};
 use bun_lint::ast::File;
 use bun_lint::span::Span;
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 use std::cell::Cell;
 use std::num::NonZeroU32;
 
@@ -200,110 +201,126 @@ impl Storage {
     /// whether it [will break](Storage::will_break).
     #[inline]
     pub(crate) fn summary_of(&self, interned: Interned) -> (Flat, bool) {
+        match self.summary_of_whole(interned) {
+            Some(summary) => summary,
+            None => self.summary_of_part(interned),
+        }
+    }
+
+    /// `None` if `interned` is not all of what has been captured but a part of it.
+    #[inline]
+    fn summary_of_whole(&self, interned: Interned) -> Option<(Flat, bool)> {
         match (interned.start as usize)
             .checked_sub(1)
             .and_then(|before| self.pool.get(before))
         {
             Some(FormatElement::Skip(skip)) if skip.len == interned.len => {
-                (skip.flat, skip.will_break)
+                Some((skip.flat, skip.will_break))
             }
-            _ => self.summary_of_part(interned),
+            _ => None,
         }
     }
 
-    /// The same for what is not all of what has been captured but a part of it.
     #[cold]
     fn summary_of_part(&self, part: Interned) -> (Flat, bool) {
         let flat = Flat {
             width: 0,
-            flags: FlatFlags::default().with(FlatFlags::EXPANDS, self.part_expands(part, 0)),
+            flags: FlatFlags::default().with(FlatFlags::EXPANDS, self.part_expands(part)),
         };
         (flat, self.will_break(self.interned(part)))
     }
 
     /// Whether there is something in `part` that forces the groups around it to break.
-    fn part_expands(&self, part: Interned, depth: u32) -> bool {
-        let mut elements = self.interned(part).iter();
-        while let Some(element) = elements.next() {
-            let expands = match element {
-                FormatElement::Skip(it) => {
-                    skip(&mut elements, it.len);
-                    false
-                }
-                FormatElement::Line(mode)
-                | FormatElement::Tag(
-                    Tag::StartIndentWithLine(mode) | Tag::EndIndentWithLine(mode),
-                ) => mode.will_break(),
-                FormatElement::ExpandParent => true,
-                FormatElement::SourceText(text) | FormatElement::OwnedText(text) => {
-                    text.width.is_multiline() && !text.width.is_one_string()
-                }
-                FormatElement::Tag(Tag::StartGroup(group)) => !group.mode().is_flat(),
-                FormatElement::Interned(interned) => match (interned.start as usize)
-                    .checked_sub(1)
-                    .and_then(|at| self.pool.get(at))
-                {
-                    Some(FormatElement::Skip(it)) if it.len == interned.len => {
-                        it.flat.flags.has(FlatFlags::EXPANDS)
+    fn part_expands(&self, part: Interned) -> bool {
+        // The parts in it that have not been looked at.
+        let mut parts = SmallVec::<[Interned; 4]>::new();
+        parts.push(part);
+        while let Some(part) = parts.pop() {
+            let mut elements = self.interned(part).iter();
+            while let Some(element) = elements.next() {
+                let expands = match element {
+                    FormatElement::Skip(it) => {
+                        skip(&mut elements, it.len);
+                        false
                     }
-                    _ => depth >= 16 || self.part_expands(*interned, depth + 1),
-                },
-                _ => false,
-            };
-            if expands {
-                return true;
+                    FormatElement::Line(mode)
+                    | FormatElement::Tag(
+                        Tag::StartIndentWithLine(mode) | Tag::EndIndentWithLine(mode),
+                    ) => mode.will_break(),
+                    FormatElement::ExpandParent => true,
+                    FormatElement::SourceText(text) | FormatElement::OwnedText(text) => {
+                        text.width.is_multiline() && !text.width.is_one_string()
+                    }
+                    FormatElement::Tag(Tag::StartGroup(group)) => !group.mode().is_flat(),
+                    FormatElement::Interned(interned) => match self.summary_of_whole(*interned) {
+                        Some((flat, _)) => flat.flags.has(FlatFlags::EXPANDS),
+                        None => {
+                            parts.push(*interned);
+                            false
+                        }
+                    },
+                    _ => false,
+                };
+                if expands {
+                    return true;
+                }
             }
         }
         false
     }
 
-    fn element_will_break(&self, element: &FormatElement) -> bool {
-        match element {
-            FormatElement::ExpandParent => true,
-            // Not one that is only known to break because of what is in it: that is looked at.
-            FormatElement::Tag(Tag::StartGroup(group)) => group.mode() == GroupMode::Expand,
-            FormatElement::Line(mode) => mode.will_break(),
-            FormatElement::SourceText(text) | FormatElement::OwnedText(text) => {
-                text.width.is_multiline() && !text.width.is_one_string()
-            }
-            FormatElement::Interned(interned) => self.summary_of(*interned).1,
-            // If even the flattest variant has something that forces a break, it breaks.
-            FormatElement::BestFitting(it) => self
-                .variants(*it)
-                .first()
-                .is_some_and(|&flattest| self.summary_of(flattest).1),
-            FormatElement::Token(_)
-            | FormatElement::TokenIfBreaks(_)
-            | FormatElement::IndentedLineGroup(_)
-            | FormatElement::LineSuffixBoundary
-            | FormatElement::Space
-            | FormatElement::Nop
-            | FormatElement::Cursor(_)
-            | FormatElement::Skip(_)
-            | FormatElement::Tag(_) => false,
-        }
-    }
-
     /// Whether the printer is certain to print `elements` over several lines: there is a hard
     /// line break, a text with a line break, or an expanded group.
     pub(crate) fn will_break(&self, elements: &[FormatElement]) -> bool {
-        let mut ignore_depth = 0usize;
-        let mut elements = elements.iter();
-        while let Some(element) = elements.next() {
-            match element {
-                FormatElement::Skip(it) => skip(&mut elements, it.len),
-                FormatElement::Tag(Tag::StartLineSuffix) => ignore_depth += 1,
-                FormatElement::Tag(Tag::EndLineSuffix) => {
-                    ignore_depth = ignore_depth.saturating_sub(1);
+        // The parts of captured content in it that have not been looked at.
+        let mut parts = SmallVec::<[&[FormatElement]; 4]>::new();
+        parts.push(elements);
+        while let Some(elements) = parts.pop() {
+            let mut ignore_depth = 0usize;
+            let mut elements = elements.iter();
+            while let Some(element) = elements.next() {
+                let interned = match element {
+                    FormatElement::Skip(it) => {
+                        skip(&mut elements, it.len);
+                        continue;
+                    }
+                    FormatElement::Tag(Tag::StartLineSuffix) => {
+                        ignore_depth += 1;
+                        continue;
+                    }
+                    FormatElement::Tag(Tag::EndLineSuffix) => {
+                        ignore_depth = ignore_depth.saturating_sub(1);
+                        continue;
+                    }
+                    FormatElement::Line(mode)
+                    | FormatElement::Tag(
+                        Tag::StartIndentWithLine(mode) | Tag::EndIndentWithLine(mode),
+                    ) if mode.will_break() => {
+                        return true;
+                    }
+                    _ if ignore_depth != 0 => continue,
+                    FormatElement::ExpandParent => return true,
+                    // Not one that is only known to break because of what is in it: that is looked at.
+                    FormatElement::Tag(Tag::StartGroup(group))
+                        if group.mode() == GroupMode::Expand =>
+                    {
+                        return true;
+                    }
+                    FormatElement::SourceText(text) | FormatElement::OwnedText(text)
+                        if text.width.is_multiline() && !text.width.is_one_string() =>
+                    {
+                        return true;
+                    }
+                    FormatElement::Interned(interned) => Some(interned),
+                    // If even the flattest variant has something that forces a break, it breaks.
+                    FormatElement::BestFitting(it) => self.variants(*it).first(),
+                    _ => None,
+                };
+                match interned.map(|&it| (it, self.summary_of_whole(it))) {
+                    Some((_, Some((_, true)))) => return true,
+                    Some((part, None)) => parts.push(self.interned(part)),
+                    _ => {}
                 }
-                FormatElement::Line(mode)
-                | FormatElement::Tag(
-                    Tag::StartIndentWithLine(mode) | Tag::EndIndentWithLine(mode),
-                ) if mode.will_break() => {
-                    return true;
-                }
-                element if ignore_depth == 0 && self.element_will_break(element) => return true,
-                _ => {}
             }
         }
         false
@@ -311,34 +328,33 @@ impl Storage {
 
     /// Whether there is any [`FormatElement::Line`] in `elements`.
     pub(crate) fn may_directly_break(&self, elements: &[FormatElement], flavor: Flavor) -> bool {
-        let mut ignore_depth = 0usize;
-        let mut elements = elements.iter();
-        while let Some(element) = elements.next() {
-            match element {
-                FormatElement::Skip(it) => skip(&mut elements, it.len),
-                FormatElement::Tag(Tag::StartLineSuffix) => ignore_depth += 1,
-                FormatElement::Tag(Tag::EndLineSuffix) => {
-                    ignore_depth = ignore_depth.saturating_sub(1);
+        // What is in it and has not been looked at.
+        let mut rest = SmallVec::<[&[FormatElement]; 4]>::new();
+        rest.push(elements);
+        while let Some(elements) = rest.pop() {
+            let mut ignore_depth = 0usize;
+            let mut elements = elements.iter();
+            while let Some(element) = elements.next() {
+                match element {
+                    FormatElement::Skip(it) => skip(&mut elements, it.len),
+                    FormatElement::Tag(Tag::StartLineSuffix) => ignore_depth += 1,
+                    FormatElement::Tag(Tag::EndLineSuffix) => {
+                        ignore_depth = ignore_depth.saturating_sub(1);
+                    }
+                    _ if ignore_depth != 0 => {}
+                    FormatElement::Line(_)
+                    | FormatElement::IndentedLineGroup(_)
+                    | FormatElement::Tag(Tag::StartIndentWithLine(_) | Tag::EndIndentWithLine(_)) =>
+                    {
+                        return true;
+                    }
+                    FormatElement::Interned(it) => rest.push(self.interned(*it)),
+                    // oxfmt does not look into it.
+                    FormatElement::BestFitting(it) if !flavor.is_oxfmt() => {
+                        rest.push(self.most_flat(*it));
+                    }
+                    _ => {}
                 }
-                _ if ignore_depth != 0 => {}
-                FormatElement::Line(_)
-                | FormatElement::IndentedLineGroup(_)
-                | FormatElement::Tag(Tag::StartIndentWithLine(_) | Tag::EndIndentWithLine(_)) => {
-                    return true;
-                }
-                FormatElement::Interned(it)
-                    if self.may_directly_break(self.interned(*it), flavor) =>
-                {
-                    return true;
-                }
-                // oxfmt does not look into it.
-                FormatElement::BestFitting(it)
-                    if !flavor.is_oxfmt()
-                        && self.may_directly_break(self.most_flat(*it), flavor) =>
-                {
-                    return true;
-                }
-                _ => {}
             }
         }
         false
@@ -348,16 +364,13 @@ impl Storage {
     pub(crate) fn has_label(&self, elements: &[FormatElement], label: LabelId) -> bool {
         let mut elements = elements.iter();
         while let Some(element) = elements.next() {
-            return match element {
-                FormatElement::Skip(it) => {
-                    skip(&mut elements, it.len);
-                    continue;
-                }
-                FormatElement::Nop | FormatElement::Cursor(_) => continue,
-                FormatElement::Tag(Tag::StartLabelled(actual)) => *actual == label,
-                FormatElement::Interned(it) => self.has_label(self.interned(*it), label),
-                _ => false,
-            };
+            match element {
+                FormatElement::Skip(it) => skip(&mut elements, it.len),
+                FormatElement::Nop | FormatElement::Cursor(_) => {}
+                FormatElement::Tag(Tag::StartLabelled(actual)) => return *actual == label,
+                FormatElement::Interned(it) => elements = self.interned(*it).iter(),
+                _ => return false,
+            }
         }
         false
     }
@@ -875,6 +888,9 @@ impl<'a> Formatter<'a> {
         conditions: &mut Vec<PrintMode>,
         variants: Variants,
     ) {
+        if !self.context_mut().has_stack_left() {
+            return;
+        }
         let mut indices = range.range();
         while let Some(&element) = indices
             .next()

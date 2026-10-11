@@ -325,5 +325,5 @@ fn format_normalized(
     };
     let printer_options = crate::ir::printer::PrinterOptions::new(&printer_options, text);
     crate::ir::printer::print(root, storage, text, printer_options, printer, out)
-        .map_err(|_| FormatError::InvalidDocument)
+        .map_err(FormatError::from)
 }

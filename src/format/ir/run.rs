@@ -74,7 +74,7 @@ pub(crate) fn print(
         &mut scratch.printer,
         out,
     )
-    .map_err(|_| FormatError::InvalidDocument)
+    .map_err(FormatError::from)
 }
 
 /// The document of `file`, for debugging.

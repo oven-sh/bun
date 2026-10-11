@@ -181,10 +181,14 @@ static OWN_POOL: OnceLock<bun_threading::ThreadPool> = OnceLock::new();
 /// From now on parallel regions run on a pool of their own. For work that waits on its thread for what Bun's pool does:
 /// `bun lint` waits for rules in JavaScript, and such a rule can wait for a `Worker`, whose files are read and whose modules
 /// are loaded on that pool. `name`: what its threads are called, before their number.
+///
+/// The parser nests as deep as on a thread of Bun's pool. Hundreds of rules and printers then walk the tree by recursion,
+/// with frames of their own size, so their threads have eight times that stack. What is not touched costs no memory.
 pub fn use_a_pool_of_their_own(name: &'static str) {
     OWN_POOL.get_or_init(|| {
         bun_threading::ThreadPool::init(bun_threading::thread_pool::Config {
             max_threads: u32::from(bun_core::get_thread_count()),
+            stack_size: 8 * bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE,
             ..Default::default()
         })
         .named(name)

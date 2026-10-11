@@ -2,6 +2,7 @@
 
 use super::compose::{Document, Node as Composed, NodeKind, Pair, ScalarType, SeqItem};
 use super::cst::{self, Item, SourceToken, Token, TokenType};
+use crate::stack::Stack;
 use crate::syntax_error::{Message, SyntaxError};
 use bun_core::strings;
 
@@ -241,6 +242,7 @@ struct Context<'c, 'a> {
     pending: Vec<Id>,
     /// There is a tag or an anchor.
     has_properties: bool,
+    stack: &'c Stack,
 }
 
 /// `tokens(..)`: without spaces and line breaks.
@@ -473,6 +475,9 @@ impl<'a> Context<'_, 'a> {
 
     /// `transformNode`
     fn transform_node(&mut self, node: &Composed<'_>, props: &[SourceToken]) -> Result<Id> {
+        if !self.stack.has_room() {
+            return Err(Unexpected);
+        }
         let [start, end, _] = node.range;
         match &node.kind {
             NodeKind::Alias => {
@@ -1172,7 +1177,10 @@ struct Line {
     trailing_node: Option<Id>,
 }
 
-fn init_node_table(nodes: &[Node<'_>], table: &mut [Line], id: Id) {
+fn init_node_table(nodes: &[Node<'_>], table: &mut [Line], id: Id, stack: &Stack) {
+    if !stack.has_room() {
+        return;
+    }
     let node = &nodes[id.index()];
     let Position { start, end } = node.position;
     if start.offset == end.offset {
@@ -1226,7 +1234,7 @@ fn init_node_table(nodes: &[Node<'_>], table: &mut [Line], id: Id) {
         }
     }
     for child in items(nodes, node.children) {
-        init_node_table(nodes, table, child);
+        init_node_table(nodes, table, child, stack);
     }
 }
 
@@ -1358,7 +1366,10 @@ fn attach_comment(
 
 /// `updatePositions`. `has_properties`: there are comments, tags or anchors. Without them, everything in the body of
 /// a document is where it is said to be from the start.
-fn update_positions(nodes: &mut [Node<'_>], id: Id, has_properties: bool) {
+fn update_positions(nodes: &mut [Node<'_>], id: Id, has_properties: bool, stack: &Stack) {
+    if !stack.has_room() {
+        return;
+    }
     let children = nodes[id.index()].children;
     let has_children_field = !matches!(
         nodes[id.index()].kind,
@@ -1380,7 +1391,7 @@ fn update_positions(nodes: &mut [Node<'_>], id: Id, has_properties: bool) {
         .first()
         .filter(|_| has_properties || nodes[id.index()].kind != Kind::DocumentBody);
     while let Some(id) = child {
-        update_positions(nodes, id, has_properties);
+        update_positions(nodes, id, has_properties, stack);
         child = nodes[id.index()].next;
     }
     if let (Kind::Document, Some(head), Some(body), 2) = (
@@ -1460,6 +1471,7 @@ pub(crate) fn build<'a>(
     text: &'a [u8],
     documents: &[Document<'_>],
     cst: &cst::Tree,
+    stack: &Stack,
 ) -> std::result::Result<Tree<'a>, SyntaxError> {
     let mut line_starts = vec![0u32];
     let mut from = 0;
@@ -1480,6 +1492,7 @@ pub(crate) fn build<'a>(
         comments: Vec::new(),
         pending: Vec::new(),
         has_properties: false,
+        stack,
     };
     // What has been made last is next to what cannot be.
     let children = context
@@ -1510,7 +1523,12 @@ pub(crate) fn build<'a>(
         .iter()
         .all(|&comment| nodes[comment.index()].parent.is_some())
     {
-        update_positions(&mut nodes, root, has_properties || !comments.is_empty());
+        update_positions(
+            &mut nodes,
+            root,
+            has_properties || !comments.is_empty(),
+            stack,
+        );
         return Ok(Tree { nodes, root });
     }
     let mut table = vec![Line::default(); nodes[root.index()].position.end.line as usize];
@@ -1519,7 +1537,7 @@ pub(crate) fn build<'a>(
             line.comment = Some(comment);
         }
     }
-    init_node_table(&nodes, &mut table, root);
+    init_node_table(&nodes, &mut table, root, stack);
     let mut next_leading = vec![u32::MAX; table.len()];
     for index in (0..table.len()).rev() {
         next_leading[index] = match table[index].leading_attachable_node {
@@ -1550,6 +1568,6 @@ pub(crate) fn build<'a>(
         )
         .map_err(|Unexpected| misplaced)?;
     }
-    update_positions(&mut nodes, root, true);
+    update_positions(&mut nodes, root, true, stack);
     Ok(Tree { nodes, root })
 }

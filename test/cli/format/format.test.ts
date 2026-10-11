@@ -331,7 +331,6 @@ describe.concurrent("bun format", () => {
       ["selector.css", "{\n  a: b;\n}\n", "Expected a selector (1:1)"],
       ["custom-selector.css", "@custom-selector a;\n", "The parameters of this at-rule cannot be read (1:1)"],
       ["value.css", "a {\n  b: c);\n}\n", "This value cannot be read (2:6)"],
-      ["deep.css", "a{".repeat(300) + "\n", "It is nested too deeply (1:513)"],
       ["interpolation.scss", "a {\n  b: #{$c;\n", "This interpolation is not closed (2:6)"],
       ["string.scss", 'a {\n  b: "x;\n}\n', "This string is not closed (2:6)"],
       ["nested.scss", "a {\n  b: c: {\n    d: e;\n  }\n}\n", 'Unexpected ":" (2:7)'],

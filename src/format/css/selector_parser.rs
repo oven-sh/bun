@@ -211,10 +211,7 @@ struct Parser<'t> {
     nodes: &'t mut Vec<SelectorNode>,
     current: SelectorId,
     stack: &'t Stack,
-    depth: usize,
 }
-
-const MAX_DEPTH: usize = 128;
 
 impl<'t> Parser<'t> {
     fn token(&self, position: usize) -> Option<Token> {
@@ -436,8 +433,7 @@ impl<'t> Parser<'t> {
         if let Some(last) =
             last.filter(|&last| self.nodes[last as usize].kind == SelectorKind::Pseudo)
         {
-            self.depth += 1;
-            if self.depth > MAX_DEPTH || !self.stack.has_room() {
+            if !self.stack.has_room() {
                 return Err(ParseError);
             }
             let selector = self.append(last, SelectorKind::Selector, (0, 0));
@@ -457,7 +453,6 @@ impl<'t> Parser<'t> {
                 return Err(ParseError);
             }
             self.current = cache;
-            self.depth -= 1;
         } else {
             let last = last.ok_or(ParseError)?;
             let mut balanced = 1;
@@ -673,7 +668,6 @@ impl Selectors {
                 nodes: &mut self.nodes,
                 current: root,
                 stack,
-                depth: 0,
             };
             parser.current = parser.append(root, SelectorKind::Selector, (0, 0));
             while parser.position < parser.tokens.len() {

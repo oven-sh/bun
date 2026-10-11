@@ -10,6 +10,7 @@ mod printer;
 use crate::css::doc::{self, Doc, Elements};
 use crate::options::{QuoteStyle, TrailingCommas};
 use crate::range::Offsets;
+use crate::stack::Stack;
 use crate::syntax_error::{Message, SyntaxError};
 use crate::text::{BOM, has_pragma_in_hash_comment as has_pragma};
 use crate::{FormatError, FormatOptions};
@@ -68,14 +69,20 @@ fn write_document(
     out: &mut Elements,
 ) -> Result<(), FormatError> {
     let lexemes = lexer::lex(text);
-    let tokens = cst::parse(text, &lexemes).map_err(|(error, at)| match error {
-        cst::ParseError::Syntax => {
-            FormatError::SyntaxErrorAt(SyntaxError(Message::UnexpectedToken, at))
-        }
-        cst::ParseError::NestedTooDeeply => FormatError::NestedTooDeeply,
+    let tokens = cst::parse(text, &lexemes).map_err(|(cst::ParseError, at)| {
+        FormatError::SyntaxErrorAt(SyntaxError(Message::UnexpectedToken, at))
     })?;
-    let documents = compose::compose(text, &tokens).map_err(FormatError::SyntaxErrorAt)?;
-    let tree = ast::build(text, &documents, &tokens).map_err(FormatError::SyntaxErrorAt)?;
+    // Whatever else is said to be wrong where the stack has run out.
+    let because_of = |stack: &Stack, error: SyntaxError| match stack.ran_out() {
+        true => FormatError::NestedTooDeeply,
+        false => FormatError::SyntaxErrorAt(error),
+    };
+    let stack = Stack::for_tree();
+    let documents =
+        compose::compose(text, &tokens, &stack).map_err(|error| because_of(&stack, error))?;
+    let stack = Stack::new();
+    let tree =
+        ast::build(text, &documents, &tokens, &stack).map_err(|error| because_of(&stack, error))?;
     let mut printer = printer::Printer {
         tree: &tree,
         text,
@@ -93,9 +100,13 @@ fn write_document(
         printed_empty_lines: vec![false; text.len() + 1],
         last_group_id: 0,
         out,
+        stack: &stack,
     };
     printer.print(tree.root, true);
-    Ok(())
+    match stack.ran_out() {
+        true => Err(FormatError::NestedTooDeeply),
+        false => Ok(()),
+    }
 }
 
 /// `/(?:[/\\]|^)\.(?:prettier|stylelint|lintstaged)rc$/`: a file that Prettier first tries to format as JSON.

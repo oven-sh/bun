@@ -563,7 +563,6 @@ struct Parser<'a> {
     last_node: NodeId,
     spaces: Range,
     semicolon: bool,
-    depth: u32,
     /// The next word is not the name of a custom property, whatever it looks like.
     is_custom_property_set: bool,
     /// For the tokens of a statement.
@@ -586,9 +585,6 @@ fn is_placeholder(name: &[u8]) -> bool {
         .and_then(|it| it.strip_suffix(b"-id"))
         .is_some_and(|number| !number.is_empty() && number.iter().all(u8::is_ascii_digit))
 }
-
-/// How deep rules can be nested. What writes them is recursive.
-const MAX_DEPTH: u32 = 256;
 
 /// `raw`: the text of `tokens` without the comments that have a space next to them, or `None` if that
 /// is all of their text.
@@ -703,15 +699,9 @@ impl<'a> Parser<'a> {
         id
     }
 
-    fn open(&mut self, id: NodeId) -> Result<(), Refused> {
+    fn open(&mut self, id: NodeId) {
         self.node(id).has_block = true;
         self.current = id;
-        self.depth += 1;
-        if self.depth > MAX_DEPTH {
-            Err(self.refuse(Message::NestedTooDeeply, self.nodes[id as usize].start))
-        } else {
-            Ok(())
-        }
     }
 
     fn parse(&mut self) -> Result<(), Refused> {
@@ -728,7 +718,7 @@ impl<'a> Parser<'a> {
                 TokenKind::AtWord => self.atrule(token)?,
                 TokenKind::Control(b'{') => {
                     let id = self.new_node(Kind::Rule, token.start);
-                    self.open(id)?;
+                    self.open(id);
                 }
                 _ => {
                     if self.syntax != Syntax::Less || !self.less_inline_comment(token)? {
@@ -772,7 +762,6 @@ impl<'a> Parser<'a> {
         let node = self.node(current);
         node.end = Some(token.start + 1);
         self.current = node.parent;
-        self.depth -= 1;
         Ok(())
     }
 
@@ -937,7 +926,7 @@ impl<'a> Parser<'a> {
             }
         }
         if open {
-            self.open(id)?;
+            self.open(id);
         }
         Ok(())
     }
@@ -1031,7 +1020,8 @@ impl<'a> Parser<'a> {
         node.between = between;
         node.selector = selector;
         node.clean_selector = clean_selector;
-        self.open(id)
+        self.open(id);
+        Ok(())
     }
 
     /// `colon`: the index of the first `:` outside of parentheses. An error if nothing is before it.
@@ -1356,7 +1346,8 @@ impl<'a> Parser<'a> {
         if let Some(colon) = self.colon(tokens)? {
             return Err(self.refuse(Message::UnexpectedColon, tokens[colon].range.start));
         }
-        self.open(id)
+        self.open(id);
+        Ok(())
     }
 
     // ───────────────────────────── postcss-less ─────────────────────────────
@@ -1679,7 +1670,6 @@ fn parse_from(
         last_node: 0,
         spaces: Range::default(),
         semicolon: false,
-        depth: 0,
         is_custom_property_set,
         token_buffer: Vec::new(),
         placeholder,

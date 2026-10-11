@@ -304,14 +304,9 @@ impl Token {
     }
 }
 
+/// It is not YAML.
 #[derive(Debug)]
-pub(crate) enum ParseError {
-    Syntax,
-    NestedTooDeeply,
-}
-
-/// How deep collections can be nested. What follows is recursive.
-const MAX_DEPTH: usize = 100;
+pub(crate) struct ParseError;
 
 fn includes_token(list: &[SourceToken], kind: TokenType) -> bool {
     list.iter().any(|token| token.kind == kind)
@@ -475,7 +470,7 @@ impl Parser<'_> {
                     // A character of the text that looks like a mark of the lexer confuses the parser.
                     None
                     | Some(TokenType::DocMode | TokenType::FlowErrorEnd | TokenType::Scalar) => {
-                        return Err(ParseError::Syntax);
+                        return Err(ParseError);
                     }
                     Some(kind) => kind,
                 }
@@ -541,9 +536,6 @@ impl Parser<'_> {
             match next? {
                 Next::Done => return Ok(()),
                 Next::Push(token) => {
-                    if self.stack.len() >= MAX_DEPTH {
-                        return Err(ParseError::NestedTooDeeply);
-                    }
                     self.stack.push(token);
                     return Ok(());
                 }
@@ -563,7 +555,7 @@ impl Parser<'_> {
     }
 
     fn pop(&mut self) -> Result<()> {
-        let mut token = self.stack.pop().ok_or(ParseError::Syntax)?;
+        let mut token = self.stack.pop().ok_or(ParseError)?;
         let Some(top) = self.stack.last_mut() else {
             self.out.push(token);
             return Ok(());
@@ -625,7 +617,7 @@ impl Parser<'_> {
                 }
             }
             Token::BlockMap { items, .. } => {
-                let it = items.last_mut().ok_or(ParseError::Syntax)?;
+                let it = items.last_mut().ok_or(ParseError)?;
                 if it.value.is_some() {
                     items.push(Item {
                         key: Some(token),
@@ -643,7 +635,7 @@ impl Parser<'_> {
                 }
             }
             Token::BlockSeq { items, .. } => {
-                let it = items.last_mut().ok_or(ParseError::Syntax)?;
+                let it = items.last_mut().ok_or(ParseError)?;
                 if it.value.is_some() {
                     items.push(Item {
                         value: Some(token),
@@ -667,7 +659,7 @@ impl Parser<'_> {
                 }),
             },
             // Only an error ends up in anything else.
-            _ => return Err(ParseError::Syntax),
+            _ => return Err(ParseError),
         }
         Ok(())
     }
@@ -695,7 +687,7 @@ impl Parser<'_> {
                     end: None,
                 });
             }
-            _ => return Err(ParseError::Syntax),
+            _ => return Err(ParseError),
         }
         Ok(())
     }
@@ -703,7 +695,7 @@ impl Parser<'_> {
     fn document(&mut self, doc: &mut Token) -> Result<Next> {
         let token = self.source_token();
         let Token::Document { start, value, .. } = doc else {
-            return Err(ParseError::Syntax);
+            return Err(ParseError);
         };
         if value.is_some() {
             return self.line_end(doc);
@@ -728,7 +720,7 @@ impl Parser<'_> {
         }
         self.start_block_value(doc)
             .map(Next::Push)
-            .ok_or(ParseError::Syntax)
+            .ok_or(ParseError)
     }
 
     /// `parent`: what is below it on the stack.
@@ -763,7 +755,7 @@ impl Parser<'_> {
     fn block_scalar(&mut self, scalar: &mut Token) -> Result<Next> {
         let token = self.source_token();
         let Token::BlockScalar { props, source, .. } = scalar else {
-            return Err(ParseError::Syntax);
+            return Err(ParseError);
         };
         match self.kind {
             TokenType::Space | TokenType::Comment | TokenType::Newline => {
@@ -841,10 +833,10 @@ impl Parser<'_> {
             ..
         } = map
         else {
-            return Err(ParseError::Syntax);
+            return Err(ParseError);
         };
         let map_indent = *map_indent;
-        let it = items.last_mut().ok_or(ParseError::Syntax)?;
+        let it = items.last_mut().ok_or(ParseError)?;
         match self.kind {
             TokenType::Newline => {
                 self.on_key_line = false;
@@ -866,7 +858,7 @@ impl Parser<'_> {
                 } else if !self.moves_indented_comment(items, map_indent) {
                     items
                         .last_mut()
-                        .ok_or(ParseError::Syntax)?
+                        .ok_or(ParseError)?
                         .start
                         .push(&mut self.lists, token);
                 }
@@ -1035,7 +1027,7 @@ impl Parser<'_> {
                 };
                 if matches!(block_value, Token::BlockSeq { .. }) {
                     if is_on_line_of_key {
-                        return Err(ParseError::Syntax);
+                        return Err(ParseError);
                     }
                 } else if at_map_indent && let Token::BlockMap { items, .. } = map {
                     items.push(item_with_start(start));
@@ -1053,10 +1045,10 @@ impl Parser<'_> {
             ..
         } = seq
         else {
-            return Err(ParseError::Syntax);
+            return Err(ParseError);
         };
         let seq_indent = *seq_indent;
-        let it = items.last_mut().ok_or(ParseError::Syntax)?;
+        let it = items.last_mut().ok_or(ParseError)?;
         match self.kind {
             TokenType::Newline => {
                 if it.value.is_some() {
@@ -1072,7 +1064,7 @@ impl Parser<'_> {
                 } else if !self.moves_indented_comment(items, seq_indent) {
                     items
                         .last_mut()
-                        .ok_or(ParseError::Syntax)?
+                        .ok_or(ParseError)?
                         .start
                         .push(&mut self.lists, token);
                 }
@@ -1119,7 +1111,7 @@ impl Parser<'_> {
             end,
         } = collection
         else {
-            return Err(ParseError::Syntax);
+            return Err(ParseError);
         };
         if self.kind == TokenType::FlowErrorEnd {
             return Ok(Next::PopFlowCollections);
@@ -1184,7 +1176,7 @@ impl Parser<'_> {
             }
             return Ok(Next::Done);
         }
-        let parent = parent.ok_or(ParseError::Syntax)?;
+        let parent = parent.ok_or(ParseError)?;
         if let Token::BlockMap {
             indent: parent_indent,
             items: parent_items,
@@ -1308,7 +1300,7 @@ impl Parser<'_> {
                 .get_or_insert_default()
                 .push(&mut self.lists, source_token),
             Token::FlowCollection { end, .. } => end.push(&mut self.lists, source_token),
-            _ => return Err(ParseError::Syntax),
+            _ => return Err(ParseError),
         }
         Ok(if self.kind == TokenType::Newline {
             Next::Pop

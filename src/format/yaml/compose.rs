@@ -5,6 +5,7 @@
 //! Of the values of scalars there is only what an error or Prettier's printer depends on.
 
 use super::cst::{Item, SourceToken, Token, TokenType, Tree};
+use crate::stack::Stack;
 use crate::syntax_error::{Message, Refusal, Refused, SyntaxError};
 use crate::text;
 use bun_core::strings;
@@ -286,6 +287,7 @@ struct Context<'t, 'a> {
     at_root: bool,
     directives: Directives<'a>,
     refusal: &'a Refusal,
+    stack: &'a Stack,
 }
 
 /// `resolveEnd`, with `reqSpace`. Returns whether there is a comment, and the offset.
@@ -346,20 +348,27 @@ fn empty_scalar_position(mut offset: u32, before: Option<&[SourceToken]>) -> u32
 fn contains_newline(tree: &Tree, key: Option<&Token>, text: &[u8]) -> bool {
     let has_newline =
         |tokens: &[SourceToken]| tokens.iter().any(|st| st.kind == TokenType::Newline);
-    match key {
-        None => false,
-        Some(Token::FlowScalar { token, end }) => {
-            strings::contains_char(token.source(text), b'\n')
-                || end.is_some_and(|end| has_newline(tree.list(end)))
+    // What is in it and has not been looked at.
+    let mut rest: smallvec::SmallVec<[&Token; 8]> = key.into_iter().collect();
+    while let Some(token) = rest.pop() {
+        let contains_newline = match token {
+            Token::FlowScalar { token, end } => {
+                strings::contains_char(token.source(text), b'\n')
+                    || end.is_some_and(|end| has_newline(tree.list(end)))
+            }
+            Token::FlowCollection { items, .. } => items.iter().any(|it| {
+                rest.extend(tree.get(it.key));
+                rest.extend(tree.get(it.value));
+                has_newline(tree.list(it.start))
+                    || it.sep.is_some_and(|sep| has_newline(tree.list(sep)))
+            }),
+            _ => true,
+        };
+        if contains_newline {
+            return true;
         }
-        Some(Token::FlowCollection { items, .. }) => items.iter().any(|it| {
-            has_newline(tree.list(it.start))
-                || it.sep.is_some_and(|sep| has_newline(tree.list(sep)))
-                || contains_newline(tree, tree.get(it.key), text)
-                || contains_newline(tree, tree.get(it.value), text)
-        }),
-        Some(_) => true,
     }
+    false
 }
 
 fn is_block(token: Option<&Token>) -> bool {
@@ -862,6 +871,9 @@ impl<'t, 'a> Context<'t, 'a> {
     }
 
     fn compose_node(&mut self, token: &'t Token, props: &Props) -> Result<Node<'t>> {
+        if !self.stack.has_room() {
+            return Err(self.refusal.note(Message::NestedTooDeeply, token.offset()));
+        }
         let mut node = match token {
             Token::FlowScalar { token: source, end } if source.kind == TokenType::Alias => {
                 if props.anchor.is_some() || props.tag.is_some() || source.len() <= 1 {
@@ -1603,6 +1615,7 @@ fn compose_doc<'t, 'a>(
     directives: Directives<'a>,
     token: &'t Token,
     refusal: &'a Refusal,
+    stack: &'a Stack,
 ) -> Result<(Document<'t>, bool)> {
     let Token::Document {
         offset,
@@ -1620,6 +1633,7 @@ fn compose_doc<'t, 'a>(
         at_root: true,
         directives,
         refusal,
+        stack,
     };
     let value = tree.get(*value);
     let (start, end) = (tree.list(*start), end.map(|end| tree.list(end)));
@@ -1657,15 +1671,17 @@ fn compose_doc<'t, 'a>(
 pub(crate) fn compose<'t>(
     text: &[u8],
     tree: &'t Tree,
+    stack: &Stack,
 ) -> std::result::Result<Vec<Document<'t>>, SyntaxError> {
     let refusal = Refusal::default();
-    compose_documents(text, tree, &refusal).map_err(|_| refusal.reason())
+    compose_documents(text, tree, &refusal, stack).map_err(|_| refusal.reason())
 }
 
 fn compose_documents<'t>(
     text: &[u8],
     tree: &'t Tree,
     refusal: &Refusal,
+    stack: &Stack,
 ) -> Result<Vec<Document<'t>>> {
     let mut documents: Vec<Document<'t>> = Vec::new();
     let mut directives = Directives {
@@ -1683,7 +1699,7 @@ fn compose_documents<'t>(
             }
             Token::Document { .. } => {
                 let (document, has_doc_start) =
-                    compose_doc(text, tree, directives.at_document(), token, refusal)?;
+                    compose_doc(text, tree, directives.at_document(), token, refusal, stack)?;
                 if at_directives && !has_doc_start {
                     return Err(refusal.note(Message::ExpectedDocumentStart, document.range[0]));
                 }

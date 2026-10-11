@@ -43,9 +43,6 @@ struct Token {
 #[derive(Debug)]
 pub(crate) struct ParseError;
 
-/// How deep parentheses can be nested. What follows is recursive.
-const MAX_DEPTH: i32 = 128;
-
 /// The index of the first character from `from` on that ends a word. A `/` does if `slash` says so,
 /// given what follows it.
 fn word_end(
@@ -112,9 +109,6 @@ fn tokenize(
             b'}' => (kind, end, next) = (TokenKind::CloseBrace, pos + 1, pos + 1),
             b'(' => {
                 paren_count += 1;
-                if paren_count > MAX_DEPTH {
-                    return Err(ParseError);
-                }
                 unclosed.push(tokens.len() as u32);
                 is_url_arg = !is_url_arg
                     && paren_count == 1

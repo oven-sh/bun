@@ -4,6 +4,7 @@ use super::ast::{Chomping, Id, Kind, List, Node, Tree};
 use super::compose::{ScalarType, scalar_source};
 use crate::css::doc::{Alignment, Elements, Group, IndentCommand, Line};
 use crate::options::ProseWrap;
+use crate::stack::Stack;
 use crate::text::{self, has_newline_backwards, is_previous_line_empty};
 use bun_core::strings;
 use std::borrow::Cow;
@@ -31,6 +32,7 @@ pub(crate) struct Printer<'t, 'a> {
     pub(crate) last_group_id: u32,
     /// The document.
     pub(crate) out: &'t mut Elements,
+    pub(crate) stack: &'t Stack,
 }
 
 /// `isInlineNode`
@@ -302,7 +304,7 @@ impl<'t, 'a: 't> Printer<'t, 'a> {
     /// or an anchor.
     pub(crate) fn print(&mut self, id: Id, is_last_descendant: bool) {
         let node = self.node(id);
-        if self.prints_text(node) {
+        if self.prints_text(node) || !self.stack.has_room() {
             return;
         }
         if node.kind != Kind::MappingValue && !node.leading_comments.is_empty() {

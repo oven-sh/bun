@@ -33,7 +33,7 @@ fn split_by_or_and(e: Expr<'_>) -> OrOperands<'_> {
 }
 
 /// Whether `a` and `b` can consist of the same tokens: then they are parsed alike.
-fn can_have_equal_tokens<'a>(a: Expr<'a>, b: Expr<'a>) -> bool {
+pub(super) fn can_have_equal_tokens<'a>(a: Expr<'a>, b: Expr<'a>) -> bool {
     let mut pending: SmallVec<[(Expr<'a>, Expr<'a>); 8]> = SmallVec::new();
     pending.push((a, b));
     while let Some((a, b)) = pending.pop() {

@@ -956,7 +956,10 @@ fn is_used_variable_with<'a>(variable: Variable<'a>, facts: Facts, walks: &mut W
 
 /// Whether a look at the first reference that reads `symbol` tells that [`is_used_variable_with`] holds for it, if it has
 /// a definition at all, and its declarations that [`Facts::MARKED`] does not. Nearly every variable is such.
-fn is_plainly_used(symbol: Symbol) -> bool {
+///
+/// `properties`: [`parameter_properties`]
+#[inline]
+fn is_plainly_used(symbol: Symbol, properties: &SymbolSet) -> bool {
     let kinds = symbol.declaration_kinds();
     let plain = DeclarationKinds::VARIABLE
         | DeclarationKinds::CATCH_CLAUSE
@@ -967,16 +970,8 @@ fn is_plainly_used(symbol: Symbol) -> bool {
     if kinds.is_empty() || !plain.contains(kinds) || symbol.has_modifying_references() {
         return false;
     }
-    let is_parameter_property = |it: Declaration| match it {
-        Declaration::Param(pat) => match pat.file().bound.pat_parent.get(pat.id().idx()) {
-            Some(&PatParent::Param(param)) => Param::new(pat.file(), param).is_parameter_property(),
-            _ => false,
-        },
-        _ => false,
-    };
     if kinds.contains(DeclarationKinds::PARAMETER)
-        && (symbol.name().atom() == known::this
-            || symbol.declarations().any(is_parameter_property))
+        && (symbol.name().atom() == known::this || properties.contains(symbol))
     {
         return false;
     }
@@ -986,7 +981,23 @@ fn is_plainly_used(symbol: Symbol) -> bool {
     // The ranges of `self_reference_range` are those of functions here.
     let has_ranges = kinds.intersects(DeclarationKinds::VARIABLE | DeclarationKinds::FUNCTION_NAME);
     !is_type_only_reference(symbol, read)
-        && (!has_ranges || read.scope().variable_scope() == symbol.scope().variable_scope())
+        && (!has_ranges
+            || read.scope() == symbol.scope()
+            || read.scope().variable_scope() == symbol.scope().variable_scope())
+}
+
+/// What the parameter properties of the file declare.
+fn parameter_properties<'a>(file: &'a File<'a>) -> SymbolSet {
+    let mut properties = SymbolSet::default();
+    for id in 0..file.hir.params.len() {
+        let param = Param::new(file, hir::ParamId(id as u32));
+        if param.is_parameter_property()
+            && let Some(symbol) = param.pat().symbol()
+        {
+            properties.insert(symbol);
+        }
+    }
+    properties
 }
 
 /// typescript-eslint's `isUsedVariable` for a variable of the global scope that the file does not
@@ -1083,10 +1094,11 @@ fn collect<'a>(
     let marked_by_loops = variables_of_loops_that_only_return(file);
     let declares_globals = file.scope().symbols().len() != 0;
     let mut walks = Walks::default();
+    let properties = parameter_properties(file);
     for symbol in file.symbols() {
         if !keeps_used
             && !declares_globals
-            && is_plainly_used(symbol)
+            && is_plainly_used(symbol, &properties)
             && !marked_by_loops.contains(symbol)
             && !symbol.is_marked_used()
         {

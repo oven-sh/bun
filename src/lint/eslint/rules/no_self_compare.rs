@@ -1,3 +1,4 @@
+use super::no_dupe_else_if::can_have_equal_tokens as is_parsed_alike;
 use bun_lint::prelude::*;
 
 /// Disallow comparisons where both sides are exactly the same.
@@ -56,7 +57,9 @@ impl Rule for NoSelfCompare {
             ExprTag::String if is_oxlint => left.as_string() == right.as_string(),
             ExprTag::Number if is_oxlint => left.as_number() == right.as_number(),
             _ => {
-                can_have_equal_tokens(left.text(), right.text()) && ast_utils::equal_tokens(cx.file(), left, right)
+                can_have_equal_tokens(left.text(), right.text())
+                    && is_parsed_alike(left, right)
+                    && ast_utils::equal_tokens(cx.file(), left, right)
             }
         };
         if is_same {

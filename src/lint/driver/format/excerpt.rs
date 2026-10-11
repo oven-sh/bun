@@ -78,15 +78,14 @@ impl<'r> Place<'r> {
         result: &'r FileResult,
         meta: &Meta,
     ) -> &(&'r FileResult, LineStarts, Vec<u8>) {
-        let is_known = (self.file.as_ref()).is_some_and(|it| std::ptr::eq(it.0, result));
-        let known = self.file.take().filter(|_| is_known);
-        self.file.insert(known.unwrap_or_else(|| {
+        self.file.take_if(|it| !std::ptr::eq(it.0, result));
+        self.file.get_or_insert_with(|| {
             let starts = match &result.line_starts {
                 Some(starts) => LineStarts::at(starts.clone()),
                 None => LineStarts::new(result.text.as_deref().unwrap_or_default()),
             };
             (result, starts, display_path(&result.path, meta.cwd))
-        }))
+        })
     }
 }
 
@@ -122,7 +121,7 @@ fn lines<'r>(
         return Vec::new();
     };
     let starts = &place.of(result, meta).1;
-    let mut found = Vec::new();
+    let mut found = Vec::with_capacity(4);
     for line in from.max(1)..=to {
         let Some(start) = starts.start_of(line) else {
             break;
@@ -149,10 +148,12 @@ fn without_tabs(lines: &[&[u8]]) -> Vec<u8> {
         if i > 0 {
             text.push(b'\n');
         }
-        text.extend(line.iter().map(|&byte| match byte {
-            b'\t' => b' ',
-            byte => byte,
-        }));
+        text.extend_from_slice(line);
+    }
+    for byte in &mut text {
+        if *byte == b'\t' {
+            *byte = b' ';
+        }
     }
     text
 }
@@ -260,8 +261,9 @@ fn write_pretty_problem<'r>(
 ) {
     let helped = with_help(problem, meta, place);
     let (result, message) = (problem.result, helped.as_ref().unwrap_or(problem.message));
-    let mut text = message.message.clone();
     let rule = problem.rule();
+    let mut text = Vec::with_capacity(message.message.len() + rule.len() + 16);
+    text.extend_from_slice(&message.message);
     if !rule.is_empty() {
         text.extend_from_slice(match meta.color {
             true => bun_core::pretty_fmt!("<r>  <d>", true).as_bytes(),
@@ -291,29 +293,29 @@ fn write_pretty_problem<'r>(
             ..Default::default()
         }),
     };
-    let mut notes = Vec::new();
     let said = |text: &str| bun_ast::Data {
         text: text.as_bytes().to_vec().into(),
         location: None,
     };
-    let details = message.details.as_deref();
     let texts = [message.first_label(), message.help(), message.note()];
-    notes.extend(texts.iter().filter(|it| !it.is_empty()).map(|it| said(it)));
-    if let Some(details) = details {
-        for ((line, column), _, text) in details.labels.iter().filter(|it| !it.2.is_empty()) {
-            let shown = lines(result, (*line, *line), meta, place);
-            let shown = shown.first().filter(|it| it.len() <= 1000);
-            notes.push(bun_ast::Data {
-                location: Some(bun_ast::Location {
-                    file: place.of(result, meta).2.clone().into(),
-                    line: *line as i32,
-                    column: *column as i32,
-                    line_text: shown.map(|it| without_tabs(&[it]).into()),
-                    ..Default::default()
-                }),
-                ..said(text)
-            });
-        }
+    let texts = texts.iter().filter(|it| !it.is_empty());
+    let labels = message.details.iter().flat_map(|it| &it.labels);
+    let labels = labels.filter(|it| !it.2.is_empty());
+    let mut notes = Vec::with_capacity(texts.clone().count() + labels.clone().count());
+    notes.extend(texts.map(|it| said(it)));
+    for ((line, column), _, text) in labels {
+        let shown = lines(result, (*line, *line), meta, place);
+        let shown = shown.first().filter(|it| it.len() <= 1000);
+        notes.push(bun_ast::Data {
+            location: Some(bun_ast::Location {
+                file: place.of(result, meta).2.clone().into(),
+                line: *line as i32,
+                column: *column as i32,
+                line_text: shown.map(|it| without_tabs(&[it]).into()),
+                ..Default::default()
+            }),
+            ..said(text)
+        });
     }
     let message = bun_ast::Msg {
         kind: if problem.is_error() {

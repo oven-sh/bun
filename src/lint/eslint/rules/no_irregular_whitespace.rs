@@ -13,9 +13,6 @@ pub struct NoIrregularWhitespace {
 const NO_IRREGULAR_WHITESPACE: Message =
     Message::new("noIrregularWhitespace", "Irregular whitespace not allowed.");
 
-/// The bytes that the UTF-8 of an irregular whitespace character can start with.
-const FIRST_BYTES: &[u8] = b"\x0B\x0C\xC2\xE1\xE2\xE3\xEF";
-
 #[derive(Copy, Clone, PartialEq)]
 enum Irregular {
     Whitespace,
@@ -78,27 +75,18 @@ impl NoIrregularWhitespace {
         let rest_from = |at: usize| text.get(at..).unwrap_or_default();
         // ESLint takes a byte order mark off the text.
         let mut at = if text.starts_with(b"\xEF\xBB\xBF") { 3 } else { 0 };
-        // Most files are ASCII, in which there are two such characters.
-        let ascii_end = strings::first_non_ascii(rest_from(at)).map_or(text.len(), |first| at + first as usize);
-        // Where each has last been found. To look for one at a time takes less than to look for both.
-        let mut next_in_ascii = [(b'\x0B', None), (b'\x0C', None)];
-        loop {
-            let found = match text.get(at..ascii_end) {
-                Some(ascii) if !ascii.is_empty() => {
-                    let mut first = ascii_end;
-                    for (byte, next) in &mut next_in_ascii {
-                        let next = match *next {
-                            Some(next) if next >= at => next,
-                            _ => *next.insert(at + strings::index_of_char_usize(ascii, *byte).unwrap_or(ascii.len())),
-                        };
-                        first = first.min(next);
+        // Nearly all is ASCII, in which there are two such characters. Where the ASCII ends that `at` is in.
+        let mut ascii_end = at;
+        while let Some(&byte) = text.get(at) {
+            let found = match byte.is_ascii() {
+                true => {
+                    if at >= ascii_end {
+                        ascii_end = strings::first_non_ascii(rest_from(at)).map_or(text.len(), |first| at + first as usize);
                     }
-                    first - at
+                    let ascii = text.get(at..ascii_end).unwrap_or_default();
+                    strings::index_of_any(ascii, b"\x0B\x0C").unwrap_or(ascii.len())
                 }
-                _ => match strings::index_of_any(rest_from(at), FIRST_BYTES) {
-                    Some(found) => found,
-                    None => return,
-                },
+                false => 0,
             };
             let start = at + found;
             let Some((kind, len)) = irregular_at(rest_from(start)) else {

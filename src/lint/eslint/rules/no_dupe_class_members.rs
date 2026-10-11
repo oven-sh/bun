@@ -1,5 +1,5 @@
 use bun_lint::prelude::*;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
 
 /// Disallow duplicate class members.
@@ -13,9 +13,15 @@ const SET: u8 = 1 << 2;
 /// How far the three are shifted for a static member.
 const STATIC: u8 = 3;
 
-/// The names that the members of one class have defined so far, each with how, and with a configuration of oxlint with
-/// the last member that has the name. It is kept between classes only for its allocation.
-pub type Seen<'a> = FxHashMap<Cow<'a, [u8]>, (u8, Option<Member<'a>>)>;
+/// It is kept between classes only for its allocations.
+#[derive(Default)]
+pub struct Seen<'a> {
+    /// The names of the members of one class so far, as their keys have them.
+    names: FxHashSet<Name<'a>>,
+    /// The names that the members of one class have defined so far, each with how, and with a configuration of oxlint
+    /// with the last member that has the name.
+    defined: FxHashMap<Cow<'a, [u8]>, (u8, Option<Member<'a>>)>,
+}
 
 /// The range of ESLint's `key`.
 fn key_span(member: Member<'_>) -> Option<Span> {
@@ -36,6 +42,20 @@ pub fn check<'a, R: Rule>(
     if members.len() < 2 {
         return;
     }
+    // Few classes have two members with one name. Only `static constructor` and `[("a")]` have a name that is no `Name`.
+    seen.names.clear();
+    seen.names.reserve(members.len());
+    let may_have_duplicates = members.iter().any(|member| match member.kind() {
+        MemberKind::Constructor => member.is_static(),
+        _ => {
+            member.computed_key().is_some()
+                || member.key().and_then(Key::name).is_some_and(|name| !seen.names.insert(name))
+        }
+    });
+    if !may_have_duplicates {
+        return;
+    }
+    let seen = &mut seen.defined;
     seen.clear();
     seen.reserve(members.len());
     let is_oxlint = cx.language().is_oxlint;

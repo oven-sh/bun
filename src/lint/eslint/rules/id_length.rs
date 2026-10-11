@@ -1,3 +1,4 @@
+use bun_core::strings;
 use bun_lint::prelude::*;
 use bun_lint::source::ByName;
 use bun_lint::utils::ast_utils::{is_function_with_body, is_import_attribute_key};
@@ -382,6 +383,19 @@ impl IdLength {
         }
     }
 
+    /// `e`: the target of an assignment, or the value of a property, which can be one of an object pattern. There are far
+    /// fewer of these than there are `a.b`.
+    #[inline]
+    fn check_assigned<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        if let Some(start) = e.member_name_start()
+            && !self.is_right_at(cx.file(), start)
+            // The rule of oxlint comes to a private name on its own.
+            && !(cx.language().is_oxlint && e.is_private_member())
+        {
+            self.check_member_expression(e, cx);
+        }
+    }
+
     #[inline(never)]
     fn check_member_expression<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(name) = e.member_name() else {
@@ -443,7 +457,7 @@ impl IdLength {
 impl Rule for IdLength {
     const META: Meta = Meta::eslint("id-length", Kind::Suggestion);
     const ON: On = On::new()
-        .exprs(&[ExprTag::Ident, ExprTag::Dot, ExprTag::PrivateIdentifier])
+        .exprs(&[ExprTag::Ident, ExprTag::Dot, ExprTag::Assign, ExprTag::PrivateIdentifier])
         .stmts(&[
             StmtTag::Interface,
             StmtTag::TypeAlias,
@@ -510,13 +524,16 @@ impl Rule for IdLength {
                 ])
                 .members()
                 .enum_members()
-                .exprs(&[ExprTag::Dot, ExprTag::PrivateIdentifier])
                 .types(&[TypeTag::Tuple, TypeTag::Ref, TypeTag::Typeof, TypeTag::Predicate]);
             if self.check_generic {
                 on = on.type_params();
             }
             if self.properties {
-                on = on.pats(&[PatTag::Object]).props();
+                on = on.pats(&[PatTag::Object]).props().exprs(&[ExprTag::Assign]);
+            }
+            // The private names, wherever they are written.
+            if strings::contains_char(file.text(), b'#') {
+                on = on.exprs(&[ExprTag::Dot, ExprTag::PrivateIdentifier]);
             }
             return on;
         }
@@ -529,7 +546,7 @@ impl Rule for IdLength {
             .stmts(&[StmtTag::Import])
             .import_specs();
         if self.properties {
-            on = on.props().types(&[TypeTag::Import]).exprs(&[ExprTag::Dot]);
+            on = on.props().types(&[TypeTag::Import]).exprs(&[ExprTag::Assign]);
         }
         on
     }
@@ -540,15 +557,15 @@ impl Rule for IdLength {
 
     #[inline]
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let Some(start) = e.member_name_start() {
-            if !self.is_right_at(cx.file(), start) {
-                self.check_member_expression(e, cx);
+        match e.tag() {
+            ExprTag::Ident => self.check_reference(e, cx),
+            ExprTag::Assign => {
+                if let Some(target) = e.left() {
+                    self.check_assigned(target, cx);
+                }
             }
-            return;
-        }
-        match (e.tag(), cx.language().is_oxlint) {
-            (ExprTag::Ident, false) => self.check_reference(e, cx),
-            (ExprTag::PrivateIdentifier, true) => {
+            ExprTag::Dot if e.is_private_member() => self.check_member_expression(e, cx),
+            ExprTag::PrivateIdentifier => {
                 if let ExprKind::PrivateIdentifier(name) = e.kind() {
                     self.check(cx, name, || Some(e.span()));
                 }
@@ -633,6 +650,9 @@ impl Rule for IdLength {
     #[inline]
     fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
         self.check_property(prop, cx);
+        if let Some(value) = prop.value() {
+            self.check_assigned(value, cx);
+        }
     }
 
     #[inline]

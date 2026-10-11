@@ -42,7 +42,7 @@ pub(crate) struct Variables {
     pub(crate) list: Vec<Variable>,
     /// For each scope, where its variables start in `list`. One more than there are scopes.
     starts: Vec<u32>,
-    /// Where the name of each declaration is, and the index in `list` of what it declares. Sorted.
+    /// Where the name of each declaration is that is no pattern, and the index in `list` of what it declares. Sorted.
     declared_at: Vec<(u32, u32)>,
     /// For each pattern that is a name, the index in `list` of what it declares.
     of_pat: Vec<u32>,
@@ -578,6 +578,9 @@ impl Variables {
             ),
             later: Vec::new(),
         };
+        let mut of_pat = vec![NONE; hir.pats.len()];
+        // Of what is no pattern: where the name is, the index of the entry, what it declares.
+        let mut others: Vec<(u32, u32, u32)> = Vec::new();
         for (scope, data) in tree.scopes.iter().enumerate() {
             starts.push(made.list.len() as u32);
             // "NOTE Arrow functions never have an arguments objects."
@@ -602,8 +605,16 @@ impl Variables {
                 made.declare(&implicit, 0, data.body_start);
             }
             for &i in &by_scope[entry_starts[scope] as usize..entry_starts[scope + 1] as usize] {
-                // From here on: what it declares.
-                entries[i as usize].scope = made.declare(&entries[i as usize], 1, data.body_start);
+                let it = &entries[i as usize];
+                let declared = made.declare(it, 1, data.body_start);
+                match it.decl {
+                    Decl::Var(pat) | Decl::Param(pat) => {
+                        if let Some(slot) = of_pat.get_mut(pat.idx()) {
+                            *slot = declared;
+                        }
+                    }
+                    _ => others.push((it.pos, i, declared)),
+                }
             }
         }
         let Made {
@@ -612,22 +623,8 @@ impl Variables {
             mut later,
         } = made;
         starts.push(list.len() as u32);
-        let declared = in_order
-            .iter()
-            .map(|&key| &entries[key as u32 as usize])
-            .filter(|it| it.scope != NONE);
-        let mut of_pat = vec![NONE; hir.pats.len()];
-        let note = |it: &Entry| {
-            if let Decl::Var(pat) | Decl::Param(pat) = it.decl
-                && let Some(slot) = of_pat.get_mut(pat.idx())
-            {
-                *slot = it.scope;
-            }
-            (it.pos, it.scope)
-        };
-        // Nearly all declare something: room for all of them is made at once.
-        let mut declared_at = Vec::with_capacity(in_order.len());
-        declared_at.extend(declared.map(note));
+        others.sort_unstable();
+        let declared_at = others.iter().map(|it| (it.0, it.2)).collect();
 
         // The variables name by name.
         let mut by_name = vec![0u32; list.len()];
@@ -670,7 +667,7 @@ impl Variables {
         }
     }
 
-    /// The index in `list` of what the declaration whose name is at `pos` declares.
+    /// The index in `list` of what the declaration whose name is at `pos`, and which is no pattern, declares.
     pub(crate) fn declared_at(&self, pos: u32) -> Option<u32> {
         let found = self
             .declared_at

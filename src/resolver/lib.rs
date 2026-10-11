@@ -1253,7 +1253,18 @@ pub mod fs {
                         EntriesOption::Entries(e) if e.generation < generation => {
                             in_place = Some(std::ptr::from_mut::<DirEntry>(*e));
                         }
-                        cached => return Ok(cached),
+                        cached => {
+                            if !I::IS_VOID {
+                                if let EntriesOption::Entries(entries) = &*cached {
+                                    // Sorted: hash order is not stable, and #26851 needs a deterministic order.
+                                    for entry in entries.sorted_entries() {
+                                        // SAFETY: `entry` is a slot in the process-lifetime `EntryStore`.
+                                        iterator.next(unsafe { &mut *entry }, entries.fd);
+                                    }
+                                }
+                            }
+                            return Ok(cached);
+                        }
                     }
                 } else if cache_result.status == bun_alloc::ItemStatus::NotFound && generation == 0
                 {

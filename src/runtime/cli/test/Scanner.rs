@@ -4,7 +4,6 @@ use std::rc::Rc;
 use bun_alloc::AllocError;
 use bun_bundler::Transpiler;
 use bun_bundler::options::BundleOptions;
-use bun_collections::index_sort;
 use bun_core::{StringOrTinyString, strings};
 use bun_output::{declare_scope, scoped_log};
 use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
@@ -30,7 +29,6 @@ pub(crate) struct Scanner<'a> {
     pub(crate) fs: *mut FileSystem,
     pub(crate) open_dir_buf: PathBuffer,
     pub(crate) options: &'a BundleOptions<'a>,
-    pub(crate) has_iterated: bool,
     pub(crate) search_count: usize,
     /// The directory being iterated; its fd closes once every child `ScanEntry` has been opened.
     current_dir: Option<Rc<Dir>>,
@@ -86,7 +84,6 @@ impl<'a> Scanner<'a> {
             fs: transpiler.fs,
             test_files: results,
             open_dir_buf: PathBuffer::ZEROED,
-            has_iterated: false,
             search_count: 0,
             current_dir: None,
         })
@@ -194,40 +191,18 @@ impl<'a> Scanner<'a> {
         Ok(())
     }
 
-    /// Passes every entry of `name` to `next`.
     /// `handle` stays owned by the caller; the resolver caches the listing but not the fd.
     fn read_dir_with_name(
         &mut self,
         name: &[u8],
         handle: Option<Fd>,
     ) -> crate::Result<&'static mut EntriesOption> {
-        self.has_iterated = false;
         let fs_ptr = self.fs;
         let iter = ScannerDirIter(std::ptr::from_mut::<Scanner<'a>>(self));
         // SAFETY: borrows only the `fs` field; re-entrant access is serialised by `RealFS.entries_mutex`.
-        let listing = unsafe { &mut (*fs_ptr).fs }
-            .read_directory_with_iterator(name, handle, 0, false, iter)?;
-
-        // On a cache hit the resolver returns the listing without calling the iterator.
-        if !self.has_iterated {
-            if let EntriesOption::Entries(entries) = &*listing {
-                // Sorted: hash-map order is not stable, and #26851 needs a deterministic order.
-                let mut entry_ptrs: Vec<*mut fs::Entry> = entries.data.values().copied().collect();
-                index_sort::sort_slice_by(&mut entry_ptrs, |a, b| {
-                    // SAFETY: `EntryMap` stores `*mut Entry` into the
-                    // process-static `EntryStore`; valid for `'static`.
-                    let (an, bn) = unsafe { ((**a).base_lowercase(), (**b).base_lowercase()) };
-                    an.cmp(bn)
-                });
-                for entry_ptr in entry_ptrs {
-                    // SAFETY: `EntryMap` stores `*mut Entry` into the
-                    // process-static `EntryStore`; valid for `'static`.
-                    self.next(unsafe { &mut *entry_ptr });
-                }
-            }
-        }
-
-        Ok(listing)
+        unsafe { &mut (*fs_ptr).fs }
+            .read_directory_with_iterator(name, handle, 0, false, iter)
+            .map_err(Into::into)
     }
 
     pub(crate) fn could_be_test_file<const NEEDS_TEST_SUFFIX: bool>(&self, name: &[u8]) -> bool {
@@ -322,12 +297,11 @@ impl<'a> Scanner<'a> {
             && !self.matches_path_ignore_pattern(name)
     }
 
-    pub(crate) fn next(&mut self, entry: &mut fs::Entry) {
+    fn next(&mut self, entry: &mut fs::Entry) {
         let name = entry.base_lowercase();
-        self.has_iterated = true;
         // SAFETY: `self.fs` is the process singleton.
         let real_fs = unsafe { &raw mut (*self.fs).fs };
-        // SAFETY: caller holds `entries_mutex`; the direct path is single-threaded.
+        // SAFETY: `real_fs` is the singleton; the resolver calls `next` with `entries_mutex` held.
         match unsafe { entry.kind(real_fs, false) } {
             fs::EntryKind::Dir => {
                 if (!name.is_empty() && name[0] == b'.') || name == b"node_modules" {

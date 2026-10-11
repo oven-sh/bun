@@ -4768,6 +4768,11 @@ declare module "bun" {
     serverName?: string;
 
     /**
+     * Alias of {@link serverName}, the `node:tls` spelling. `serverName` wins if both are set.
+     */
+    servername?: string;
+
+    /**
      * Sets `OPENSSL_RELEASE_BUFFERS` to 1.
      * Reduces overall performance but saves some memory.
      * @default false
@@ -4776,12 +4781,16 @@ declare module "bun" {
 
     /**
      * If set to `false`, any certificate is accepted.
-     * Default is `$NODE_TLS_REJECT_UNAUTHORIZED` environment variable, or `true` if it is not set.
+     *
+     * For a server, the default is `true`. `$NODE_TLS_REJECT_UNAUTHORIZED` does not change it.
+     * For a client, the default is the `$NODE_TLS_REJECT_UNAUTHORIZED` environment variable, or `true` if it is not set.
      */
     rejectUnauthorized?: boolean;
 
     /**
-     * If set to `true`, the server requests a client certificate.
+     * If set to `true`, the server requests a client certificate, and refuses
+     * a client without a valid one unless `rejectUnauthorized` is `false`.
+     * This option alone decides it: `ca` does not request a certificate.
      *
      * Default is `false`.
      */
@@ -4791,8 +4800,17 @@ declare module "bun" {
      * Optionally override the trusted CA certificates. Default is to trust
      * the well-known CAs curated by Mozilla. Mozilla's CAs are completely
      * replaced when CAs are explicitly specified using this option.
+     *
+     * On a server these verify client certificates, which it requests only
+     * with `requestCert: true`.
      */
     ca?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
+    /**
+     * PEM formatted CRLs (Certificate Revocation Lists). A peer certificate
+     * listed in one of them fails verification: a client certificate when a
+     * server sets `requestCert`, or the server certificate when connecting.
+     */
+    crl?: string | BufferSource | BunFile | Array<string | BufferSource | BunFile> | undefined;
     /**
      *  Cert chains in PEM format. One cert chain should be provided per
      *  private key. Each cert chain should consist of the PEM formatted
@@ -4999,7 +5017,24 @@ declare module "bun" {
      * });
      * ```
      */
-    tls?: TLSOptions;
+    tls?: TLSOptions & {
+      /**
+       * The Node.js spelling of `serverName`.
+       */
+      servername?: string;
+      /**
+       * Replaces the built-in hostname check, as in `fetch()` and `tls.connect()`.
+       * Any truthy return value rejects the server, including the Promise of an
+       * `async` function.
+       * Through an HTTPS proxy it runs for the target's certificate only.
+       * With `rejectUnauthorized: false` it still runs when the certificate
+       * chain verified, but its result is not enforced.
+       * @param hostname - The name the certificate is verified against: `serverName` if set, else the URL host
+       * @param cert - The leaf certificate of the server, as in `fetch()`. Unlike in `tls.connect()`, it has no `issuerCertificate`
+       * @returns An error if the server is unauthorized, otherwise undefined
+       */
+      checkServerIdentity?: NonNullable<import("node:tls").ConnectionOptions["checkServerIdentity"]>;
+    };
   };
 
   type WebSocketOptionsHeaders = {
@@ -6814,6 +6849,9 @@ declare module "bun" {
      * It uses `SO_LINGER` with `l_onoff=1` and `l_linger=0` before calling `close(2)`.
      * Consider using {@link close close()} or {@link end end()} for graceful shutdowns.
      *
+     * In the `handshake` callback of a TLS 1.3 client, this refuses the server
+     * before the client certificate is sent.
+     *
      * @example
      * ```ts
      * socket.terminate();
@@ -6822,20 +6860,19 @@ declare module "bun" {
     terminate(): void;
 
     /**
-     * Shuts down the write-half or both halves of the connection.
-     * This allows the socket to enter a half-closed state where it can still receive data
-     * but can no longer send data (`halfClose = true`), or close both read and write
-     * (`halfClose = false`, similar to `end()` but potentially more immediate depending on OS).
+     * Shuts down one half of the connection.
+     * With no argument, sends a FIN: the socket can still receive data but can no longer send it.
+     * With `true`, stops receiving data.
      * Calls the `shutdown(2)` syscall internally.
      *
-     * @param halfClose If `true`, only shuts down the write side (allows receiving). If `false` or omitted, shuts down both read and write. Defaults to `false`.
+     * @param halfClose If `true`, shuts down the read side. If `false` or omitted, shuts down the write side. Defaults to `false`.
      * @example
      * ```ts
      * // Stop sending data, but allow receiving
-     * socket.shutdown(true);
-     *
-     * // Shutdown both reading and writing
      * socket.shutdown();
+     *
+     * // Stop receiving data
+     * socket.shutdown(true);
      * ```
      */
     shutdown(halfClose?: boolean): void;
@@ -7162,7 +7199,11 @@ declare module "bun" {
     getSession(): void;
 
     /**
-     * Sets the session of the socket.
+     * Sets the TLS session to offer for resumption.
+     *
+     * Only has an effect before the handshake starts: in `open`, before any
+     * `write()`, on a client socket that also has a `handshake` handler. A later
+     * call is ignored.
      *
      * @param session The session to set.
      */
@@ -7251,6 +7292,11 @@ declare module "bun" {
      */
     open?(socket: Socket<Data>): void | Promise<void>;
     close?(socket: Socket<Data>, error?: Error): void | Promise<void>;
+    /**
+     * Called when a handler throws, and when an established TLS session fails
+     * (a record that does not decrypt, a fatal alert from the peer). After a
+     * TLS failure the socket closes, with or without this handler.
+     */
     error?(socket: Socket<Data>, error: Error): void | Promise<void>;
     data?(socket: Socket<Data>, data: BinaryTypeList[DataBinaryType]): void | Promise<void>;
     drain?(socket: Socket<Data>): void | Promise<void>;

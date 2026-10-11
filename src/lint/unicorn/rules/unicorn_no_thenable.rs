@@ -42,7 +42,7 @@ impl Rule for NoThenable {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
-        file.mentions("then").then(|| State { then: file.name_of("then"), has_string: OnceCell::new() })
+        Some(State { then: file.find_name("then")?, has_string: OnceCell::new() })
     }
 
     fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {

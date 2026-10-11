@@ -32,7 +32,8 @@ impl Rule for NoUselessPromiseResolveReject {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
         const METHODS: [&str; 2] = ["resolve", "reject"];
-        (file.mentions("Promise") && file.mentions_any(&METHODS)).then(|| State {
+        let has = |name: &str| file.find_name(name).is_some();
+        (has("Promise") && METHODS.into_iter().any(has)).then(|| State {
             methods: METHODS.map(|it| file.name_of(it)),
             nearest_function: AncestorMemo::default(),
             is_in_try_statement: AncestorMemo::default(),

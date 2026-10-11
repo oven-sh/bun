@@ -34,11 +34,8 @@ impl Rule for NoUselessUndefined {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        if !file.mentions("undefined") {
-            return None;
-        }
         Some(State {
-            undefined: file.name_of("undefined"),
+            undefined: file.find_name("undefined")?,
             return_types: AncestorMemo::default(),
             first_optional_parameters: FxHashMap::default(),
         })

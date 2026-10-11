@@ -118,6 +118,9 @@ impl<'a> Variable<'a> {
 
 /// The `VarDecl` that the pattern `pat` is part of.
 fn declarator(pat: Pat<'_>) -> Option<VarDecl<'_>> {
+    if let Node::VarDecl(declaration) = pat.parent() {
+        return Some(declaration);
+    }
     match Declaration::Var(pat).node()? {
         Node::VarDecl(declaration) => Some(declaration),
         _ => None,
@@ -181,7 +184,7 @@ fn is_self_reference<'a>(variable: Variable<'a>, reference: Reference<'a>) -> bo
 
 /// ESLint's `isForInOfRef`.
 fn is_for_in_of_ref(reference: Reference) -> bool {
-    let target = match reference.node() {
+    let target = match reference.expr().map_or_else(|| reference.node(), Node::Expr) {
         Node::Pat(pat) => match pat.parent() {
             Node::VarDecl(declaration) => declaration.parent().parent(),
             _ => return false,
@@ -209,13 +212,19 @@ fn is_for_in_of_ref(reference: Reference) -> bool {
 
 /// ESLint's `isUsedVariable`, but for `eslintUsed`.
 fn is_used_variable(variable: Variable) -> bool {
-    let (mut rhs, mut walks) = (None, Walks::default());
+    let (mut rhs, mut walks) = (None, None);
     variable.references().any(|reference| {
         if is_for_in_of_ref(reference) {
             return true;
         }
-        let is_for_itself = is_read_for_itself(reference, rhs, &mut walks);
-        rhs = get_rhs_node(reference, rhs, &mut walks);
+        // Only what is written to is on the left of an assignment or the operand of an update, and
+        // without an assignment before there is no right side to be in.
+        let mut is_for_itself = false;
+        if reference.is_write() || rhs.is_some() {
+            let walks = walks.get_or_insert_with(Walks::default);
+            is_for_itself = is_read_for_itself(reference, rhs, walks);
+            rhs = get_rhs_node(reference, rhs, walks);
+        }
         reference.is_read() && !is_for_itself && !is_self_reference(variable, reference)
     })
 }

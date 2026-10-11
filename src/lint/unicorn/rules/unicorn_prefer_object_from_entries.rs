@@ -50,9 +50,9 @@ impl Rule for PreferObjectFromEntries {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        let reduce = file.mentions("reduce").then(|| file.name_of("reduce"));
-        let last_names = self.functions.iter().filter_map(|it| it.last()).filter(|it| file.mentions(it));
-        let last_names: SmallVec<_> = last_names.map(|it| file.name_of(it)).collect();
+        let reduce = file.find_name("reduce");
+        let last_names = self.functions.iter().filter_map(|it| it.last());
+        let last_names: SmallVec<_> = last_names.filter_map(|it| file.find_name(it)).collect();
         (reduce.is_some() || !last_names.is_empty()).then_some((reduce, last_names))
     }
 

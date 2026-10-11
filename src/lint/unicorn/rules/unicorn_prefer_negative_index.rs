@@ -32,7 +32,7 @@ impl Rule for PreferNegativeIndex {
             return None;
         }
         let methods = ["slice", "at", "splice", "subarray", "toSpliced", "call", "apply"].into_iter();
-        Some(methods.filter(|it| file.mentions(it)).map(|it| file.name_of(it)).collect())
+        Some(methods.filter_map(|it| file.find_name(it)).collect())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

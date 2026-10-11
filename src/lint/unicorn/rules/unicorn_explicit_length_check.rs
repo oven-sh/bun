@@ -87,7 +87,7 @@ impl Rule for ExplicitLengthCheck {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         let names: SmallVec<_> =
-            ["length", "size"].into_iter().filter(|it| file.mentions(it)).map(|it| file.name_of(it)).collect();
+            ["length", "size"].into_iter().filter_map(|it| file.find_name(it)).collect();
         (!names.is_empty()).then(|| (names, AncestorMemo::default()))
     }
 

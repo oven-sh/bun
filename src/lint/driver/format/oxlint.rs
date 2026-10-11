@@ -6,6 +6,9 @@ use bun_lint::context::Severity;
 use bun_lint::linter::{LintMessage, Registry, RuleId, parse_rule_id};
 use bun_lint::options::Json;
 use bun_lint::rule::{Fixable, Plugin};
+use bun_lint::source::LineStarts;
+use bun_sema::util::FxHashMap;
+use std::cell::OnceCell;
 use std::io::Write;
 
 /// What oxlint says about a run.
@@ -24,6 +27,32 @@ pub(super) fn code(message: &LintMessage) -> Option<Vec<u8>> {
     let id = rule.to_vec();
     let (plugin, name) = parse_rule_id(&id);
     Some([scope_of(rule, plugin), b"(", name, b")"].concat())
+}
+
+/// [`code`], made once for each rule that is built in.
+#[derive(Default)]
+pub(super) struct Codes(FxHashMap<usize, Vec<u8>>);
+
+impl Codes {
+    /// Writes `before` and the code of `message`, if it has one.
+    pub(super) fn write(&mut self, out: &mut Vec<u8>, before: &[u8], message: &LintMessage) {
+        let made;
+        let code = match &message.rule_id {
+            Some(RuleId::Known(meta)) => {
+                let known = self.0.entry(std::ptr::from_ref(*meta).addr());
+                &*known.or_insert_with(|| code(message).unwrap_or_default())
+            }
+            _ => match code(message) {
+                Some(code) => {
+                    made = code;
+                    &made
+                }
+                None => return,
+            },
+        };
+        out.extend_from_slice(before);
+        out.extend_from_slice(code);
+    }
 }
 
 /// [`scope`] for the prefix of `rule`. A plugin in JavaScript is called what it is called.
@@ -53,12 +82,14 @@ pub(super) fn is_error(message: &LintMessage) -> bool {
 pub(super) struct Offsets<'t> {
     text: &'t [u8],
     /// Where each line starts.
-    lines: Vec<usize>,
+    pub(super) lines: LineStarts,
+    /// Where the first line starts: after a byte order mark.
+    start: usize,
     /// A byte is a UTF-16 code unit.
-    is_ascii: bool,
+    pub(super) is_ascii: bool,
     /// Of a text that is not ASCII and is valid UTF-8, for every `Offsets::STEP` bytes: where the next character starts, and how
-    /// many UTF-16 code units are before it.
-    marks: Vec<(usize, usize)>,
+    /// many UTF-16 code units are before it. Made when the first column far into a line is asked for.
+    marks: OnceCell<Vec<(usize, usize)>>,
 }
 
 /// How long a character is.
@@ -80,41 +111,31 @@ fn sizes(first: u8) -> Sizes {
 
 impl<'t> Offsets<'t> {
     pub(super) fn new(text: &'t [u8]) -> Offsets<'t> {
-        let mut lines = vec![text.len() - strings::without_utf8_bom(text).len()];
-        let mut at = 0;
-        // `\r`, `\n`, and the first byte of U+2028 and U+2029.
-        while let Some(found) = strings::index_of_any(&text[at..], b"\r\n\xE2") {
-            at += found;
-            at += match &text[at..] {
-                [b'\r', b'\n', ..] => 2,
-                [b'\xE2', b'\x80', b'\xA8' | b'\xA9', ..] => 3,
-                [b'\xE2', ..] => {
-                    at += 1;
-                    continue;
-                }
-                _ => 1,
-            };
-            lines.push(at);
-        }
-        let is_ascii = strings::first_non_ascii(text).is_none();
-        let mut marks = Vec::new();
-        if !is_ascii && std::str::from_utf8(text).is_ok() {
-            let (mut at, mut units) = (0, 0);
-            while at < text.len() {
-                if at >= marks.len() * Self::STEP {
-                    marks.push((at, units));
-                }
-                let Sizes { bytes, in_utf16 } = sizes(text[at]);
-                at += bytes;
-                units += in_utf16;
-            }
-        }
         Offsets {
             text,
-            lines,
-            is_ascii,
-            marks,
+            lines: LineStarts::new(text),
+            start: text.len() - strings::without_utf8_bom(text).len(),
+            is_ascii: strings::first_non_ascii(text).is_none(),
+            marks: OnceCell::new(),
         }
+    }
+
+    fn marks(&self) -> &[(usize, usize)] {
+        self.marks.get_or_init(|| {
+            let (text, mut marks) = (self.text, Vec::new());
+            if !self.is_ascii && std::str::from_utf8(text).is_ok() {
+                let (mut at, mut units) = (0, 0);
+                while at < text.len() {
+                    if at >= marks.len() * Self::STEP {
+                        marks.push((at, units));
+                    }
+                    let Sizes { bytes, in_utf16 } = sizes(text[at]);
+                    at += bytes;
+                    units += in_utf16;
+                }
+            }
+            marks
+        })
     }
 
     const STEP: usize = 1024;
@@ -132,21 +153,27 @@ impl<'t> Offsets<'t> {
     /// The offset of a line from 1 and a column from 1 in UTF-16 code units, and the column from 1
     /// in bytes.
     pub(super) fn at(&self, line: u32, column: u32) -> (usize, usize) {
-        let start =
-            (self.lines.get((line as usize).saturating_sub(1)).copied()).unwrap_or(self.text.len());
+        let start = match line {
+            0 | 1 => self.start,
+            line => (self.lines.start_of(line)).map_or(self.text.len(), |it| it as usize),
+        };
         let after_start = (column as usize).saturating_sub(1);
+        let in_bytes = (start + after_start).min(self.text.len());
         let at = if self.is_ascii {
-            (start + after_start).min(self.text.len())
+            in_bytes
         } else if after_start <= Self::STEP {
             // Counted from the start of the line. The marks are for a line that is long.
-            self.forward((start, 0), after_start)
+            match self.text[start..in_bytes].is_ascii() {
+                true => in_bytes,
+                false => self.forward((start, 0), after_start),
+            }
         } else if let Some(&before) = self
-            .marks
+            .marks()
             .get(start / Self::STEP)
             .filter(|it| it.0 <= start)
             .or_else(|| {
                 // The mark is after the start of its step if a character goes across that.
-                self.marks.get((start / Self::STEP).checked_sub(1)?)
+                self.marks().get((start / Self::STEP).checked_sub(1)?)
             })
         {
             let (mut counted, mut units_before_line) = before;
@@ -156,11 +183,11 @@ impl<'t> Offsets<'t> {
                 units_before_line += in_utf16;
             }
             let wanted = units_before_line + after_start;
-            let later = self.marks.partition_point(|it| it.1 <= wanted);
+            let later = self.marks().partition_point(|it| it.1 <= wanted);
             self.forward(
                 later
                     .checked_sub(1)
-                    .map_or((start, units_before_line), |it| self.marks[it])
+                    .map_or((start, units_before_line), |it| self.marks()[it])
                     .max((start, units_before_line)),
                 wanted,
             )

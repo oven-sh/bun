@@ -20,7 +20,7 @@ impl Rule for NoLengthAsSliceEnd {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        (file.mentions("slice") && file.mentions("length")).then(|| file.name_of("slice"))
+        file.find_name("slice").filter(|_| file.find_name("length").is_some())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

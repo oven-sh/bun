@@ -26,7 +26,7 @@ impl Rule for NoAwaitInPromiseMethods {
         if !file.mentions("Promise") || !file.has_exprs([ExprTag::Await]) {
             return None;
         }
-        let methods: Self::State<'a> = METHODS.iter().filter(|it| file.mentions(it)).map(|it| file.name_of(it)).collect();
+        let methods: Self::State<'a> = METHODS.iter().filter_map(|it| file.find_name(it)).collect();
         (!methods.is_empty()).then_some(methods)
     }
 

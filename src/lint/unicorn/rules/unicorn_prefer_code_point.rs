@@ -19,7 +19,7 @@ impl Rule for PreferCodePoint {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         const METHODS: [&str; 2] = ["fromCharCode", "charCodeAt"];
-        file.mentions_any(&METHODS).then(|| METHODS.map(|it| file.name_of(it)))
+        METHODS.iter().any(|it| file.find_name(it).is_some()).then(|| METHODS.map(|it| file.name_of(it)))
     }
 
     fn expr<'a>(&self, member_expr: Expr<'a>, cx: &mut Cx<'a, Self>) {

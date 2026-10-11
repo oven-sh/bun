@@ -20,7 +20,8 @@ impl Rule for PreferClasslistToggle {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (file.mentions("classList") && file.mentions("add") && file.mentions("remove")).then_some(())
+        let has = |name: &str| file.find_name(name).is_some();
+        (has("classList") && has("add") && has("remove")).then_some(())
     }
 
     fn stmt<'a>(&self, if_stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {

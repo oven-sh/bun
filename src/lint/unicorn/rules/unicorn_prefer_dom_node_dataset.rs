@@ -23,7 +23,7 @@ impl Rule for PreferDomNodeDataset {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        let methods: Self::State<'a> = METHODS.iter().filter(|it| file.mentions(it)).map(|it| file.name_of(it)).collect();
+        let methods: Self::State<'a> = METHODS.iter().filter_map(|it| file.find_name(it)).collect();
         (!methods.is_empty()).then_some(methods)
     }
 

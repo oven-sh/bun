@@ -19,8 +19,7 @@ impl Rule for PreferStringSlice {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        let methods = ["substr", "substring"].into_iter().filter(|it| file.mentions(it));
-        let methods: Self::State<'a> = methods.map(|it| file.name_of(it)).collect();
+        let methods: Self::State<'a> = ["substr", "substring"].into_iter().filter_map(|it| file.find_name(it)).collect();
         (!methods.is_empty()).then_some(methods)
     }
 

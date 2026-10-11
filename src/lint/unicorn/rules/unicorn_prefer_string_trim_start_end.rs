@@ -20,7 +20,7 @@ impl Rule for PreferStringTrimStartEnd {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         const METHODS: [&str; 2] = ["trimLeft", "trimRight"];
-        file.mentions_any(&METHODS).then(|| METHODS.map(|it| file.name_of(it)))
+        METHODS.iter().any(|it| file.find_name(it).is_some()).then(|| METHODS.map(|it| file.name_of(it)))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

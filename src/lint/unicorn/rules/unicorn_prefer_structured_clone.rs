@@ -50,10 +50,10 @@ impl Rule for PreferStructuredClone {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        let mentions = |(function, method): &(String, Option<String>)| {
-            file.mentions(function) && method.as_ref().is_none_or(|it| file.mentions(it))
-        };
-        let mentions_json = file.mentions("stringify") && file.mentions("parse") && file.mentions("JSON");
+        let has = |name: &str| file.find_name(name).is_some();
+        let mentions =
+            |(function, method): &(String, Option<String>)| has(function) && method.as_ref().is_none_or(|it| has(it));
+        let mentions_json = has("stringify") && has("parse") && has("JSON");
         (mentions_json || self.functions.iter().any(mentions)).then_some(())
     }
 

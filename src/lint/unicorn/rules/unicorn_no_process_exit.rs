@@ -26,8 +26,9 @@ impl Rule for NoProcessExit {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         // Not in what has a hashbang.
-        (file.mentions("exit") && file.mentions("process") && !file.text().starts_with(b"#!")).then(|| State {
-            exit: file.name_of("exit"),
+        let exit = file.find_name("exit")?;
+        (file.find_name("process").is_some() && !file.text().starts_with(b"#!")).then(|| State {
+            exit,
             process_event_handlers: AncestorMemo::default(),
             is_worker_threads_imported: None,
         })

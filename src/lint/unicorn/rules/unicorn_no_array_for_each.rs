@@ -35,7 +35,7 @@ impl Rule for NoArrayForEach {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        file.mentions("forEach").then(|| file.name_of("forEach"))
+        file.find_name("forEach")
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

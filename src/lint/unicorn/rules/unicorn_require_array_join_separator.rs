@@ -22,7 +22,7 @@ impl Rule for RequireArrayJoinSeparator {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        file.mentions("join").then(|| ["join", "call"].map(|it| file.name_of(it)))
+        Some([file.find_name("join")?, file.name_of("call")])
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

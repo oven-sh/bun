@@ -23,17 +23,18 @@ impl Rule for PreferModernMathApis {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let mut on = On::new();
-        if file.mentions("log") && file.mentions_any(&["LN10", "LN2", "LOG10E", "LOG2E"]) {
+        let has = |name: &str| file.find_name(name).is_some();
+        if has("log") && ["LN10", "LN2", "LOG10E", "LOG2E"].into_iter().any(has) {
             on = on.binaries(&[BinOp::Mul, BinOp::Div]);
         }
-        if file.mentions("sqrt") {
+        if has("sqrt") {
             on = on.exprs(&[ExprTag::Call]);
         }
         on
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        file.mentions("Math").then(|| file.name_of("sqrt"))
+        file.find_name("Math").map(|_| file.name_of("sqrt"))
     }
 
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

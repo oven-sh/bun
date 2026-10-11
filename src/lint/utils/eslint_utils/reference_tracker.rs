@@ -280,7 +280,7 @@ impl<'a> ReferenceTracker<'a> {
     ) -> Vec<TrackedReference<'a, 'm>> {
         let mut walk = self.walk();
         for (name, member) in map.members() {
-            if let Some(variable) = walk.unmodified_global(name.as_bytes()) {
+            if let Some(variable) = walk.unmodified_global(name) {
                 walk.variable_references(
                     variable,
                     &SmallVec::from_slice(&[name]),
@@ -290,7 +290,7 @@ impl<'a> ReferenceTracker<'a> {
             }
         }
         for name in GLOBAL_OBJECT_NAMES {
-            if let Some(variable) = walk.unmodified_global(name.as_bytes()) {
+            if let Some(variable) = walk.unmodified_global(name) {
                 walk.variable_references(variable, &SmallVec::new(), View::Map(map), false);
             }
         }
@@ -512,7 +512,9 @@ impl<'a, 'm> Walk<'a, 'm> {
 
     /// The global variable `name`, unless upstream's `isModifiedGlobal` holds. `None` as well if
     /// nothing refers to it.
-    fn unmodified_global(&self, name: &[u8]) -> Option<Variable<'a>> {
+    fn unmodified_global(&self, name: &str) -> Option<Variable<'a>> {
+        self.file.find_name(name)?;
+        let name = name.as_bytes();
         let mut references = self.file.unresolved_references_to(name);
         let first = references.next()?;
         let is_modified = first.is_write() || references.any(Reference::is_write);

@@ -37,10 +37,11 @@ impl Rule for PreferNumberProperties {
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
-        let has_constants = self.check_nan && file.mentions("NaN") || self.check_infinity && file.mentions("Infinity");
-        let has_functions = file.mentions_any(&FUNCTIONS);
+        let has = |name: &str| file.find_name(name).is_some();
+        let has_constants = self.check_nan && has("NaN") || self.check_infinity && has("Infinity");
+        let has_functions = FUNCTIONS.into_iter().any(has);
         let mut on = On::new();
-        if has_constants && file.mentions_any(&GLOBAL_OBJECT_NAMES) {
+        if has_constants && GLOBAL_OBJECT_NAMES.into_iter().any(has) {
             on = on.exprs(&[ExprTag::Dot, ExprTag::Index]);
         }
         if has_functions {
@@ -68,7 +69,7 @@ impl Rule for PreferNumberProperties {
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
         let file = cx.file();
         let constants = [("NaN", self.check_nan), ("Infinity", self.check_infinity)];
-        for (name, _) in constants.into_iter().filter(|it| it.1 && file.mentions(it.0)) {
+        for (name, _) in constants.into_iter().filter(|it| it.1 && file.find_name(it.0).is_some()) {
             for reference in file.unresolved_references_to(name.as_bytes()).filter(|it| !it.is_jsx_pragma()) {
                 let span = reference.span();
                 let is_shorthand = reference.expr().and_then(is_shorthand_of_object_property) == Some(true);
@@ -90,7 +91,7 @@ impl Rule for PreferNumberProperties {
                 });
             }
         }
-        for name in FUNCTIONS.into_iter().filter(|it| file.mentions(it)) {
+        for name in FUNCTIONS.into_iter().filter(|it| file.find_name(it).is_some()) {
             for reference in file.unresolved_references_to(name.as_bytes()) {
                 let Some(is_shorthand) = reference.expr().and_then(is_shorthand_of_object_property) else {
                     continue;

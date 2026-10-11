@@ -26,7 +26,7 @@ impl Rule for NoArrayReverse {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        file.mentions("reverse").then(|| file.name_of("reverse"))
+        file.find_name("reverse")
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

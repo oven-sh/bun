@@ -20,7 +20,7 @@ impl Rule for PreferArrayFind {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Name<'a>> {
-        file.mentions("filter").then(|| file.name_of("filter"))
+        file.find_name("filter")
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

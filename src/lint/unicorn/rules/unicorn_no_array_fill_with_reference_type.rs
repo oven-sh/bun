@@ -38,7 +38,7 @@ impl Rule for NoArrayFillWithReferenceType {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Name<'a>> {
-        file.mentions("fill").then(|| file.name_of("fill"))
+        file.find_name("fill")
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

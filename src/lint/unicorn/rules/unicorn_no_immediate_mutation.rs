@@ -41,7 +41,7 @@ impl Rule for NoImmediateMutation {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some(METHODS.iter().filter(|it| file.mentions(it)).map(|it| file.name_of(it)).collect())
+        Some(METHODS.iter().filter_map(|it| file.find_name(it)).collect())
     }
 
     fn expr<'a>(&self, expr: Expr<'a>, cx: &mut Cx<'a, Self>) {

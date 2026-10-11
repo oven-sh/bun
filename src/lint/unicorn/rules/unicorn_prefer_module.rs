@@ -30,10 +30,10 @@ impl Rule for PreferModule {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let mut on = On::new().stmts(&[StmtTag::Return]);
-        if file.mentions("use strict") {
+        if file.find_name("use strict").is_some() {
             on = on.stmts(&[StmtTag::Expr]);
         }
-        if file.mentions_any(&COMMON_JS_GLOBALS) {
+        if COMMON_JS_GLOBALS.iter().any(|it| file.find_name(it).is_some()) {
             on = on.exprs(&[ExprTag::Ident]);
         }
         on

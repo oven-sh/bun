@@ -49,7 +49,7 @@ impl Rule for PreferAt {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         let methods = ["charAt", "substring", "pop", "shift", "last", "slice"].into_iter();
-        Some(methods.filter(|it| file.mentions(it)).map(|it| file.name_of(it)).collect())
+        Some(methods.filter_map(|it| file.find_name(it)).collect())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

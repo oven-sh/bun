@@ -53,19 +53,41 @@ impl<T: Copy> ByName<T> {
 
 /// Where the lines of a file start.
 pub(crate) struct Lines {
-    starts: Vec<u32>,
+    starts: LineStarts,
     /// No column needs converting: a byte is a UTF-16 code unit.
     is_ascii: bool,
     /// For columns far into a line: how many UTF-16 code units the characters have that start before each multiple of
     /// `BLOCK`, and at last all of them. `None` if the text is not valid UTF-8. Made when the first such column is asked for.
     units: OnceCell<Option<Vec<u32>>>,
+}
+
+/// Where the lines of a text start.
+pub struct LineStarts {
+    starts: Vec<u32>,
     /// The line that was found last, counted from 0. The next one that is asked for is mostly near it.
     last: Cell<u32>,
 }
 
-impl Lines {
+impl LineStarts {
+    /// Of `text`, in which a line ends where ECMAScript says so.
+    pub fn new(text: &[u8]) -> LineStarts {
+        LineStarts::at(line_starts(text, is_plain(text)))
+    }
+
+    /// `starts`: ascending, from 0.
+    pub fn at(starts: Vec<u32>) -> LineStarts {
+        let last = Cell::new(0);
+        LineStarts { starts, last }
+    }
+
+    /// Where the line `line`, counted from 1, starts.
+    #[inline]
+    pub fn start_of(&self, line: u32) -> Option<u32> {
+        self.starts.get((line as usize).checked_sub(1)?).copied()
+    }
+
     /// The line that `offset` is in, counted from 1, and where it starts.
-    fn line_at(&self, offset: u32) -> (u32, u32) {
+    pub fn line_at(&self, offset: u32) -> (u32, u32) {
         let starts = &self.starts[..];
         let starts_by = |at: usize| starts.get(at).is_some_and(|&start| start <= offset);
         // The line is one from `low` to before `high`. The steps away from the last double.
@@ -159,10 +181,9 @@ impl<'a> File<'a> {
 
     fn lines_index(&self) -> &Lines {
         self.lazy.lines.get_or_init(|| Lines {
-            starts: line_starts(self.text(), self.is_plain()),
+            starts: LineStarts::at(line_starts(self.text(), self.is_plain())),
             is_ascii: bun_core::strings::first_non_ascii(self.text()).is_none(),
             units: OnceCell::new(),
-            last: Cell::new(0),
         })
     }
 
@@ -213,7 +234,7 @@ impl<'a> File<'a> {
     /// ESLint's `sourceCode.lines.length`.
     pub fn line_count(&self) -> u32 {
         if self.lazy.lines.get().is_some() || !self.is_plain() {
-            return self.lines_index().starts.len() as u32;
+            return self.lines_index().starts.starts.len() as u32;
         }
         let count = || bun_core::strings::count_char(self.text(), b'\n') as u32 + 1;
         *self.by_kind().nearby_line.count.get_or_init(count)
@@ -224,7 +245,7 @@ impl<'a> File<'a> {
         if let Some((line, _)) = self.nearby_line(offset.min(self.text().len() as u32)) {
             return line;
         }
-        self.lines_index().line_at(offset).0
+        self.lines_index().starts.line_at(offset).0
     }
 
     /// Where the line `line`, counted from 1, starts and where it ends, before its line break. The first starts after a byte
@@ -237,7 +258,7 @@ impl<'a> File<'a> {
             let start = bun_core::strings::last_index_of_char(text, b'\n').map_or(0, |at| at + 1);
             return Span::new(start as u32, text.len() as u32);
         }
-        let (starts, text) = (&self.lines_index().starts, self.text());
+        let (starts, text) = (&self.lines_index().starts.starts, self.text());
         let Some(&start) = starts.get((line as usize).wrapping_sub(1)) else {
             return Span::empty(text.len() as u32);
         };
@@ -270,7 +291,7 @@ impl<'a> File<'a> {
             Some((line, start)) => (line, start, false),
             None => {
                 let lines = self.lines_index();
-                let (line, start) = lines.line_at(offset);
+                let (line, start) = lines.starts.line_at(offset);
                 (line, start, lines.is_ascii)
             }
         };

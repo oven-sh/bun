@@ -19,7 +19,7 @@ impl Rule for RequireNumberToFixedDigitsArgument {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        file.mentions("toFixed").then(|| file.name_of("toFixed"))
+        file.find_name("toFixed")
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

@@ -33,10 +33,11 @@ impl Rule for PreferArraySome {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let mut on = On::new();
-        if file.mentions_any(&["find", "findLast"]) {
+        let has = |name: &str| file.find_name(name).is_some();
+        if has("find") || has("findLast") {
             on = on.exprs(&[ExprTag::Call]);
         }
-        if file.mentions_any(&["findIndex", "findLastIndex"]) {
+        if has("findIndex") || has("findLastIndex") {
             on = on.binaries(&[
                 BinOp::NotEqEq,
                 BinOp::NotEq,
@@ -47,7 +48,7 @@ impl Rule for PreferArraySome {
                 BinOp::Lt,
             ]);
         }
-        if file.mentions("filter") && file.mentions("length") {
+        if has("filter") && has("length") {
             on = on.binaries(&[BinOp::Gt, BinOp::NotEqEq]);
         }
         on

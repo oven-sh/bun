@@ -72,12 +72,12 @@ impl Rule for PreferGlobalThis {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions_any(&ALIASES).then_some(())
+        ALIASES.iter().any(|it| file.find_name(it).is_some()).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let file = cx.file();
-        for alias in ALIASES.into_iter().filter(|it| file.mentions(it)) {
+        for alias in ALIASES.into_iter().filter(|it| file.find_name(it).is_some()) {
             for reference in file.unresolved_references_to(alias.as_bytes()).filter(|it| !it.is_jsx_pragma()) {
                 let ident = reference.expr();
                 if ident.is_some_and(|it| is_allowed(alias, it)) {

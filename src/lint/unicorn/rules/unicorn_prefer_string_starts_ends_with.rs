@@ -26,7 +26,7 @@ impl Rule for PreferStringStartsEndsWith {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        (file.mentions("test") && file.has_exprs([ExprTag::Regex])).then(|| file.name_of("test"))
+        file.find_name("test").filter(|_| file.has_exprs([ExprTag::Regex]))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

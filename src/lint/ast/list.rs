@@ -127,12 +127,18 @@ impl<'a, T: Handle<'a> + Spanned> List<'a, T> {
     }
 
     /// The whole list, or if it is long and `offset` is given, only the last element that starts at or before `offset`.
+    #[inline]
     pub(super) fn near(self, offset: Option<u32>) -> Iter<'a, T> {
+        match offset {
+            Some(offset) if self.len > 8 => self.near_in_long_list(offset),
+            _ => self.iter(),
+        }
+    }
+
+    #[inline(never)]
+    fn near_in_long_list(self, offset: u32) -> Iter<'a, T> {
         let mut all = self.iter();
-        if let Some(offset) = offset
-            && self.len > 8
-            && !all.hides
-        {
+        if !all.hides {
             all.back = self.count_until(offset);
             all.front = all.back.saturating_sub(1);
         }

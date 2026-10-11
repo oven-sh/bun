@@ -169,14 +169,19 @@ impl SortKeys {
         known: &'k Fixes<'a>,
     ) -> Option<Vec<FixableProperty<'a, 'k>>> {
         let file = props.first()?.file();
-        let has_comments = |at: Span| file.comments_in(at).next().is_some();
+        // All that is asked about comments is about those in the object.
+        let is_commented = file.comments_in(whole).next().is_some();
+        let has_comments = |at: Span| is_commented && file.comments_in(at).next().is_some();
         let (mut has_spread_after, mut is_group_over) = (false, false);
         let mut found: Vec<FixableProperty<'a, 'k>> = Vec::with_capacity(props.len());
         // What is before the property, and whether that is a spread.
         let (mut before, mut is_after_spread) = (Span::empty(whole.start), false);
         for (index, prop) in props.iter().enumerate() {
             let next = props.get(index + 1);
-            let span = lift_property_span(file, prop, next.map_or(whole.end, |it| it.span().start));
+            let span = match is_commented {
+                true => lift_property_span(file, prop, next.map_or(whole.end, |it| it.span().start)),
+                false => prop.span(),
+            };
             // Between two spreads there can be comments.
             if has_comments(before.between(span)) && !(is_after_spread && prop.key().is_none()) {
                 return None;
@@ -223,13 +228,14 @@ impl SortKeys {
         // What is between the first two, without the `,`, comes between all.
         let raw = props.get(1).map_or(&b" "[..], |second| file.slice(first.span.between(second.span)));
         let between = strings::split_once_char(raw, b',').unwrap_or((raw, &[]));
-        let mut text = Vec::new();
+        let replaced = Span::new(first.span.start, last.span.end);
+        let mut text = Vec::with_capacity(replaced.len() as usize + 8);
         for (index, prop) in sorted.iter().enumerate() {
             let mut from = prop.span.start;
-            if let Some((replaced, inner)) = prop.nested {
-                text.extend_from_slice(file.slice(Span::before(from, *replaced)));
+            if let Some((nested, inner)) = prop.nested {
+                text.extend_from_slice(file.slice(Span::before(from, *nested)));
                 text.extend_from_slice(inner);
-                from = replaced.end;
+                from = nested.end;
             }
             text.extend_from_slice(file.slice(Span::new(from, prop.span.end)));
             let is_last = index + 1 == sorted.len();
@@ -241,7 +247,7 @@ impl SortKeys {
                 text.extend_from_slice(between.1);
             }
         }
-        Some((Span::new(first.span.start, last.span.end), text))
+        Some((replaced, text))
     }
 
     /// [`SortKeys::build_object_fix`] of `root`, after those of the object literals that are values in it.

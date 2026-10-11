@@ -6,6 +6,7 @@ use crate::paths;
 use crate::results::FileResult;
 use bun_core::strings;
 use bun_lint::linter::{LintMessage, RuleId};
+use bun_lint::source::LineStarts;
 
 /// A line, and a column in bytes, both from 1.
 #[derive(Copy, Clone, Default)]
@@ -32,8 +33,8 @@ pub(super) struct Source<'r> {
     pub(super) name: Vec<u8>,
     text: &'r [u8],
     offsets: Offsets<'r>,
-    /// Where each line starts. Only `\n`, `\r\n` and `\r` end a line.
-    lines: Vec<usize>,
+    /// Where each line starts, where only `\n`, `\r\n` and `\r` end a line. `None`: where those of `offsets` do.
+    lines: Option<LineStarts>,
 }
 
 impl<'r> Source<'r> {
@@ -43,17 +44,22 @@ impl<'r> Source<'r> {
         let name =
             strings::replace_owned(paths::inside(meta.cwd, &path).unwrap_or(&path), b"\\", b"/");
         let text = result.text.as_deref().unwrap_or_default();
-        let mut lines = vec![0];
-        let mut at = 0;
-        while let Some(found) = strings::index_of_any(&text[at..], b"\r\n") {
-            at += found;
-            at += 1 + usize::from(text[at..].starts_with(b"\r\n"));
-            lines.push(at);
-        }
+        let offsets = Offsets::new(text);
+        let has = |separator: &str| strings::contains(text, separator.as_bytes());
+        let lines = (!offsets.is_ascii && (has("\u{2028}") || has("\u{2029}"))).then(|| {
+            let mut lines = vec![0];
+            let mut at = 0;
+            while let Some(found) = strings::index_of_any(&text[at..], b"\r\n") {
+                at += found;
+                at += 1 + usize::from(text[at..].starts_with(b"\r\n"));
+                lines.push(at as u32);
+            }
+            LineStarts::at(lines)
+        });
         Source {
             name,
             text,
-            offsets: Offsets::new(text),
+            offsets,
             lines,
         }
     }
@@ -65,10 +71,11 @@ impl<'r> Source<'r> {
         {
             offset = before;
         }
-        let line = self.lines.partition_point(|start| *start <= offset);
+        let lines = self.lines.as_ref().unwrap_or(&self.offsets.lines);
+        let (line, start) = lines.line_at(offset as u32);
         Position {
-            line,
-            column: offset - self.lines[line - 1] + 1,
+            line: line as usize,
+            column: offset - start as usize + 1,
         }
     }
 
@@ -99,6 +106,11 @@ impl<'r> Source<'r> {
             // A plugin in JavaScript does not see the mark: its 0 is after it.
             Some(RuleId::Js(_) | RuleId::Unknown(_)) | None => self.between(start, end),
         })
+    }
+
+    /// [`Info::start`]
+    pub(super) fn start(&self, message: &LintMessage) -> Position {
+        (self.span(message)).map_or_else(Default::default, |it| self.position(it.0))
     }
 
     pub(super) fn info<'s>(&'s self, message: &'s LintMessage) -> Info<'s> {

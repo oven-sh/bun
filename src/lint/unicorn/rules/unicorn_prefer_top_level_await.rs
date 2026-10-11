@@ -28,8 +28,7 @@ pub struct State<'a> {
 impl<'a> State<'a> {
     fn new(file: &'a File<'a>) -> Self {
         let mut state = State::default();
-        let methods = ["then", "catch", "finally"].into_iter().filter(|it| file.mentions(it));
-        state.promise_methods.extend(methods.map(|it| file.name_of(it)));
+        state.promise_methods.extend(["then", "catch", "finally"].into_iter().filter_map(|it| file.find_name(it)));
         for func in file.funcs().filter(|it| it.is_async() && !it.is_generator()) {
             state.has_async_function = true;
             state.async_functions.extend(func.name().map(Ident::name));

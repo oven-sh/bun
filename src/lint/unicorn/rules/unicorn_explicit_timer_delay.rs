@@ -25,8 +25,7 @@ impl Rule for ExplicitTimerDelay {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        let names = TIMER_FUNCTION_NAMES.iter().filter(|it| file.mentions(it));
-        let names: Self::State<'a> = names.map(|it| file.name_of(it)).collect();
+        let names: Self::State<'a> = TIMER_FUNCTION_NAMES.iter().filter_map(|it| file.find_name(it)).collect();
         (!names.is_empty()).then_some(names)
     }
 

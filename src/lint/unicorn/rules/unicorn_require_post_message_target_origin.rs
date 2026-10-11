@@ -39,7 +39,7 @@ impl Rule for RequirePostMessageTargetOrigin {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        file.mentions("postMessage").then(|| file.name_of("postMessage"))
+        file.find_name("postMessage")
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

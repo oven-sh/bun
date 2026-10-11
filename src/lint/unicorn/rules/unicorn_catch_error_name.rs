@@ -94,7 +94,7 @@ impl Rule for CatchErrorName {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        Some(["catch", "then"].into_iter().filter(|it| file.mentions(it)).map(|it| file.name_of(it)).collect())
+        Some(["catch", "then"].into_iter().filter_map(|it| file.find_name(it)).collect())
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {

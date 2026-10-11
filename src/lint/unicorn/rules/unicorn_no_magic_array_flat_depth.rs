@@ -20,7 +20,7 @@ impl Rule for NoMagicArrayFlatDepth {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        file.mentions("flat").then(|| file.name_of("flat"))
+        file.find_name("flat")
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

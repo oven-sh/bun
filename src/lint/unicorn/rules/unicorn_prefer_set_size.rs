@@ -22,7 +22,7 @@ impl Rule for PreferSetSize {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Name<'a>> {
-        (file.mentions("Set") && file.mentions("length")).then(|| file.name_of("length"))
+        file.find_name("length").filter(|_| file.mentions("Set"))
     }
 
     fn expr<'a>(&self, member: Expr<'a>, cx: &mut Cx<'a, Self>) {

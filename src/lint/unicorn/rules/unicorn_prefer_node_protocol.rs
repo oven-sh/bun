@@ -44,7 +44,7 @@ impl Rule for PreferNodeProtocol {
         let on = On::new()
             .stmts(&[StmtTag::Import, StmtTag::ExportNamed, StmtTag::ImportEquals])
             .exprs(&[ExprTag::ImportCall]);
-        if file.mentions("require") { on.exprs(&[ExprTag::Call]) } else { on }
+        if file.find_name("require").is_some() { on.exprs(&[ExprTag::Call]) } else { on }
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {

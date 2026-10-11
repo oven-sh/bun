@@ -161,8 +161,8 @@ impl Rule for PreferArrayFlatMap {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        let has_map_and_flat = file.mentions("flat") && file.mentions("map");
-        if !has_map_and_flat && !(file.mentions("filter") && file.mentions("flatMap")) {
+        let has = |name: &str| file.find_name(name).is_some();
+        if !(has("flat") && has("map")) && !(has("filter") && has("flatMap")) {
             return None;
         }
         Some(["flat", "flatMap"].map(|it| file.name_of(it)))

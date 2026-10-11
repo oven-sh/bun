@@ -45,7 +45,7 @@ impl Rule for PreferSetHas {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
-        file.mentions("includes").then(State::default)
+        file.find_name("includes").map(|_| State::default())
     }
 
     fn var_decl<'a>(&self, declarator: VarDecl<'a>, cx: &mut Cx<'a, Self>) {

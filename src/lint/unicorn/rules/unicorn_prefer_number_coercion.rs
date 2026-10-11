@@ -21,7 +21,7 @@ impl Rule for PreferNumberCoercion {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         const FUNCTIONS: [&str; 2] = ["parseFloat", "parseInt"];
-        file.mentions_any(&FUNCTIONS).then(|| FUNCTIONS.map(|it| file.name_of(it)))
+        FUNCTIONS.iter().any(|it| file.find_name(it).is_some()).then(|| FUNCTIONS.map(|it| file.name_of(it)))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

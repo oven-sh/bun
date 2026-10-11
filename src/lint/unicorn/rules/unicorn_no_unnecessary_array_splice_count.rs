@@ -30,7 +30,8 @@ impl<const SLICE: bool> Rule for NoUnnecessaryArraySpliceCount<SLICE> {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         let methods = [Self::METHODS.first(), Self::METHODS.last()];
-        file.mentions_any(Self::METHODS).then(|| methods.map(|it| file.name_of(it.copied().unwrap_or_default())))
+        let has_any = Self::METHODS.iter().any(|it| file.find_name(it).is_some());
+        has_any.then(|| methods.map(|it| file.name_of(it.copied().unwrap_or_default())))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

@@ -82,9 +82,8 @@ impl Rule for PreferNativeCoercionFunctions {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        let mentions_any = file.mentions_any(&NATIVE_COERCION_FUNCTION_NAMES)
-            || file.mentions_any(&ARRAY_METHODS_WITH_BOOLEAN_CALLBACK);
-        mentions_any.then_some(())
+        let mut names = NATIVE_COERCION_FUNCTION_NAMES.iter().chain(&ARRAY_METHODS_WITH_BOOLEAN_CALLBACK);
+        names.any(|it| file.find_name(it).is_some()).then_some(())
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {

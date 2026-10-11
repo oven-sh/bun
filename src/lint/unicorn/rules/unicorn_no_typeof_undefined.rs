@@ -19,7 +19,7 @@ impl Rule for NoTypeofUndefined {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("undefined").then_some(())
+        file.find_name("undefined").map(|_| ())
     }
 
     fn unary<'a>(&self, left: Expr<'a>, cx: &mut Cx<'a, Self>) {

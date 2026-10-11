@@ -53,7 +53,7 @@ impl Rule for NoArrayReduce {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        file.mentions_any(&["reduce", "reduceRight"])
+        (file.find_name("reduce").is_some() || file.find_name("reduceRight").is_some())
             .then(|| ["reduce", "reduceRight", "call", "apply"].map(|it| file.name_of(it)))
     }
 

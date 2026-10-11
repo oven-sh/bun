@@ -23,7 +23,7 @@ impl Rule for NoInvalidRemoveEventListener {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        file.mentions("removeEventListener").then(|| file.name_of("removeEventListener"))
+        file.find_name("removeEventListener")
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

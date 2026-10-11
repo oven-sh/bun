@@ -21,7 +21,9 @@ impl Rule for PreferSingleCall {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        file.mentions_any(&["push", "unshift", "classList", "importScripts"])
+        ["push", "unshift", "classList", "importScripts"]
+            .iter()
+            .any(|it| file.find_name(it).is_some())
             .then(|| ["push", "unshift", "add", "remove", "importScripts"].map(|it| file.name_of(it)))
     }
 

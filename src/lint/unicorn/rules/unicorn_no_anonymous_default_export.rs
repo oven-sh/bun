@@ -19,7 +19,7 @@ impl Rule for NoAnonymousDefaultExport {
     // `export default ..`
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let on = On::new().stmts(&[StmtTag::ExportDefault, StmtTag::Fn, StmtTag::Class]);
-        if file.mentions("exports") { on.exprs(&[ExprTag::Assign]) } else { on }
+        if file.find_name("exports").is_some() { on.exprs(&[ExprTag::Assign]) } else { on }
     }
 
     fn stmt<'a>(&self, stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {

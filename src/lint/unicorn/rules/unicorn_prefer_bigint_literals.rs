@@ -57,7 +57,7 @@ impl Rule for PreferBigintLiterals {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("BigInt").then_some(())
+        file.find_name("BigInt").map(|_| ())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

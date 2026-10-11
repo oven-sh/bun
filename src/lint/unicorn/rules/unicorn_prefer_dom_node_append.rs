@@ -19,7 +19,7 @@ impl Rule for PreferDomNodeAppend {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Name<'a>> {
-        file.mentions("appendChild").then(|| file.name_of("appendChild"))
+        file.find_name("appendChild")
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

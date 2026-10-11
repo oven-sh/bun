@@ -1,6 +1,6 @@
 import { file, spawn, version, type Socket } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, exampleSite, tempDir } from "harness";
+import { bunEnv, bunExe, exampleSite, isDebug, tempDir } from "harness";
 import net from "net";
 import { join } from "node:path";
 // @ts-expect-error missing in @types/node
@@ -1323,8 +1323,10 @@ describe.concurrent("string body consumption does not leak", () => {
         ctor === "Request"
           ? `b => new Request("http://example.com/", { method: "POST", body: b })`
           : `b => new Response(b)`;
+      // A debug build takes over 5 s for 130 of these reads, so it does fewer.
+      const [warm, block] = isDebug ? [16, 16] : [50, 40];
       const src = `
-        const SZ = 2_000_000, WARM = 50, BLOCK = 40;
+        const SZ = 2_000_000, WARM = ${warm}, BLOCK = ${block};
         const rss = process.memoryUsage.rss;
         const mb = () => (rss() / 1048576) | 0;
         const body = ${makeBody};
@@ -1346,9 +1348,10 @@ describe.concurrent("string body consumption does not leak", () => {
       const m = stdout.match(/BLOCK1:(-?\d+) BLOCK2:(-?\d+)/);
       expect(m).not.toBeNull();
       const block2 = Number(m![2]);
-      // Bounded: BLOCK2 ≈ 0 (plateaued). Leaking: BLOCK2 ≈ 40 × ~3 MB ≈ 100+ MB
-      // and keeps growing every block. 50 MB cleanly separates the two.
-      expect(block2).toBeLessThan(50);
+      // Bounded: BLOCK2 ≈ 0 (plateaued). Leaking: BLOCK2 ≈ BLOCK × ~3 MB (100+ MB
+      // for 40) and keeps growing every block. BLOCK × 1.25 MB (50 MB for 40)
+      // cleanly separates the two.
+      expect(block2).toBeLessThan(block * 1.25);
       expect(exitCode).toBe(0);
     });
   }

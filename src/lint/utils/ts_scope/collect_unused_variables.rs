@@ -629,8 +629,16 @@ fn mark_identifiers_of<'a>(
 /// before they end. The decorators of the parameters of a method are in the scope of the class.
 fn scope_of_parameters(func: Func<'_>) -> Option<Scope<'_>> {
     let scope = func.scope()?;
-    let end = func.params().last().or_else(|| func.this_param())?.span().end;
-    let is_plain = scope.children().next().is_none_or(|it| it.span().start >= end)
+    let end = func
+        .params()
+        .last()
+        .or_else(|| func.this_param())?
+        .span()
+        .end;
+    let is_plain = scope
+        .children()
+        .next()
+        .is_none_or(|it| it.span().start >= end)
         && (!func.has_body() || func.params().iter().all(|it| it.modifiers().is_empty()));
     is_plain.then_some(scope)
 }
@@ -892,7 +900,8 @@ fn has_use<'a>(
         // Only what is written to is on the left of an assignment or the operand of an update, and
         // without an assignment before there is no right side to be in.
         // Nor is the name of a declaration.
-        if rhs_node.is_some() || flags.contains(ReferenceFlags::WRITE) && reference.expr().is_some() {
+        if rhs_node.is_some() || flags.contains(ReferenceFlags::WRITE) && reference.expr().is_some()
+        {
             let is_for_itself = is_read_for_itself(reference, rhs_node, walks);
             rhs_node = get_rhs_node(reference, rhs_node, walks);
             if is_for_itself {
@@ -975,8 +984,7 @@ fn is_plainly_used(symbol: Symbol) -> bool {
         _ => false,
     };
     if kinds.contains(DeclarationKinds::PARAMETER)
-        && (symbol.name().atom() == known::this
-            || symbol.declarations().any(is_parameter_property))
+        && (symbol.name().atom() == known::this || symbol.declarations().any(is_parameter_property))
     {
         return false;
     }

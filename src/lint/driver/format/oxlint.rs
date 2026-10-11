@@ -1,10 +1,6 @@
-//! What the formats of oxlint share, what its `--rules` prints, and `gitlab` and `sarif` as they are without a configuration of
-//! oxlint: in the shape of oxlint's, with the places and the paths of ESLint.
+//! What the formats of oxlint share, and what its `--rules` prints.
 
-use super::Meta;
-use crate::paths;
 use crate::print_config::{object, text, write_indented};
-use crate::results::FileResult;
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::linter::{LintMessage, Registry, RuleId, parse_rule_id};
@@ -51,15 +47,6 @@ fn scope(prefix: &[u8]) -> &[u8] {
 
 pub(super) fn is_error(message: &LintMessage) -> bool {
     message.is_fatal || message.severity == Severity::Error
-}
-
-pub(super) fn file_name(result: &FileResult, meta: &Meta) -> Vec<u8> {
-    let path = paths::from_native(&result.path);
-    if paths::is_absolute(&path) {
-        paths::relative(meta.cwd, &path)
-    } else {
-        path
-    }
 }
 
 /// Finds the offsets of the lines and columns that ESLint counts.
@@ -186,146 +173,6 @@ impl<'t> Offsets<'t> {
 
 pub(super) fn number(value: usize) -> Json {
     Json::Number(value as f64)
-}
-
-fn fnv_1a(parts: &[&[u8]]) -> u64 {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for byte in parts.iter().flat_map(|part| part.iter().chain(&[0])) {
-        hash = (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
-}
-
-/// GitLab's Code Quality report. The fingerprints are stable from run to run. They are not
-/// oxlint's.
-pub(super) fn write_gitlab(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
-    // Paths are from the root of the repository.
-    let root = paths::ancestors(meta.cwd)
-        .find(|it| bun_sys::exists(&paths::join(it, b".git")))
-        .unwrap_or(meta.cwd);
-    let mut all = Vec::new();
-    for result in results {
-        let path = paths::relative(root, &paths::resolve(meta.cwd, &file_name(result, meta)));
-        for message in &result.messages {
-            let end = message.end.map_or(message.line, |it| it.0);
-            let severity: &[u8] = if is_error(message) {
-                b"critical"
-            } else {
-                b"major"
-            };
-            let lines = format!("{}:{end}:", message.line);
-            let fingerprint = fnv_1a(&[
-                lines.as_bytes(),
-                &path,
-                b":",
-                &message.message,
-                b":",
-                severity,
-            ]);
-            all.push(object(vec![
-                (b"description", text(&message.message)),
-                (b"check_name", text(&code(message).unwrap_or_default())),
-                (b"fingerprint", text(format!("{fingerprint:x}").as_bytes())),
-                (b"severity", text(severity)),
-                (
-                    b"location",
-                    object(vec![
-                        (b"path", text(&path)),
-                        (
-                            b"lines",
-                            object(vec![
-                                (b"begin", number(message.line as usize)),
-                                (b"end", number(end as usize)),
-                            ]),
-                        ),
-                    ]),
-                ),
-            ]));
-        }
-    }
-    write_indented(out, &Json::Array(all), 0);
-}
-
-pub(super) fn write_sarif(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
-    let (mut rules, mut rule_ids): (Vec<Json>, Vec<Vec<u8>>) = (Vec::new(), Vec::new());
-    let (mut artifacts, mut all) = (Vec::new(), Vec::new());
-    for result in results.iter().filter(|it| !it.messages.is_empty()) {
-        let uri = file_name(result, meta);
-        let artifact = artifacts.len();
-        artifacts.push(object(vec![(
-            b"location",
-            object(vec![(b"uri", text(&uri))]),
-        )]));
-        for message in &result.messages {
-            // A problem without a rule, like a syntax error.
-            let id = code(message).unwrap_or_else(|| b"OXL0001".to_vec());
-            let rule = rule_ids.iter().position(|it| *it == id).unwrap_or_else(|| {
-                rules.push(object(vec![(b"id", text(&id))]));
-                rule_ids.push(id.clone());
-                rule_ids.len() - 1
-            });
-            let mut region = vec![
-                (&b"startLine"[..], number(message.line.max(1) as usize)),
-                (b"startColumn", number(message.column.max(1) as usize)),
-            ];
-            if let Some((line, column)) = message.end {
-                region.extend([
-                    (&b"endLine"[..], number(line as usize)),
-                    (b"endColumn", number(column as usize)),
-                ]);
-            }
-            let location = object(vec![(
-                b"physicalLocation",
-                object(vec![
-                    (
-                        b"artifactLocation",
-                        object(vec![(b"uri", text(&uri)), (b"index", number(artifact))]),
-                    ),
-                    (b"region", object(region)),
-                ]),
-            )]);
-            all.push(object(vec![
-                (b"ruleId", text(&id)),
-                (b"ruleIndex", number(rule)),
-                (
-                    b"level",
-                    text(if is_error(message) {
-                        b"error"
-                    } else {
-                        b"warning"
-                    }),
-                ),
-                (b"message", object(vec![(b"text", text(&message.message))])),
-                (b"locations", Json::Array(vec![location])),
-            ]));
-        }
-    }
-    let driver = object(vec![
-        (b"name", text(b"bun lint")),
-        (b"version", text(meta.version)),
-        (b"semanticVersion", text(meta.version)),
-        (
-            b"informationUri",
-            text(b"https://bun.com/docs/runtime/lint"),
-        ),
-        (b"rules", Json::Array(rules)),
-    ]);
-    let mut run = vec![(&b"tool"[..], object(vec![(b"driver", driver)]))];
-    if !artifacts.is_empty() {
-        run.push((b"artifacts", Json::Array(artifacts)));
-    }
-    let has_results = !all.is_empty();
-    run.push((b"results", Json::Array(all)));
-    if has_results {
-        run.push((b"columnKind", text(b"utf16CodeUnits")));
-    }
-    let log = object(vec![
-        (b"version", text(b"2.1.0")),
-        (b"$schema", text(b"https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json")),
-        (b"runs", Json::Array(vec![object(run)])),
-    ]);
-    write_indented(out, &log, 0);
-    out.push(b'\n');
 }
 
 /// The plugin of oxlint that has the rules with the prefix `prefix`.

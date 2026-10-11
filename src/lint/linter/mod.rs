@@ -64,8 +64,8 @@ pub use registry::{
 pub use resolved::{ConfiguredJsRule, ConfiguredRule, LinterOptions, ResolvedConfig, severity_of};
 use resolved::{Prepared, Slot};
 pub use syntax::{
-    Refusal, TypesInJavaScript, goes_to_flow, may_be_misread, not_in_a_project, parse_error,
-    refusal_of_oxfmt, refusal_of_prettier, refused_by_prettier, refused_by_prettier_with,
+    Refusal, TypesInJavaScript, goes_to_flow, may_be_misread, parse_error, refusal_of_oxfmt,
+    refusal_of_prettier, refused_by_prettier, refused_by_prettier_with,
 };
 
 use crate::ast::File;

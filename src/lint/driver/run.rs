@@ -1274,6 +1274,7 @@ impl Run<'_> {
                 threads: pool.threads(),
                 seconds: self.began.elapsed().as_secs_f64(),
             },
+            is_oxlint,
             pool: &pool,
             version: environment.version,
         };

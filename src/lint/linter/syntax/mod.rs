@@ -337,34 +337,6 @@ fn refusal<'a>(
         .or_else(of_babel)
 }
 
-/// What `@typescript-eslint/parser` throws for the file at `path`, which is absolute, if `parserOptions.projectService` is on and
-/// no `tsconfig.json` includes the file. It has no place. ESLint does not lint such a file, whatever the rules are.
-///
-/// Whether that is so is for the caller to know: a [`File`] without types can be one for which nobody has asked.
-pub fn not_in_a_project(path: &[u8]) -> LintMessage {
-    let message: [&[u8]; 3] = [
-        b"Parsing error: ",
-        path,
-        b" was not found by the project service. Consider either including it in the tsconfig.json or including it in allowDefaultProject.",
-    ];
-    LintMessage {
-        rule_id: None,
-        severity: Severity::Error,
-        message: message.concat(),
-        message_id: None,
-        line: 0,
-        column: 0,
-        end: None,
-        is_fatal: true,
-        fix: None,
-        suggestions: Vec::new(),
-        suppressions: Vec::new(),
-        comments_apply_at: None,
-        details: None,
-        constant_help: None,
-    }
-}
-
 /// What the parser has left in the HIR, for a test to look at.
 #[doc(hidden)]
 pub fn diagnostics(file: &File) -> Vec<Json> {

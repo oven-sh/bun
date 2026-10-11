@@ -850,11 +850,7 @@ impl<'d> Printer<'d> {
         measure.must_be_flat = true;
 
         let mut flat_pairs = 0usize;
-        // On a line that is too long already, Prettier's `fits` says no to everything, also to an item that is nothing, or a
-        // line break.
-        let is_too_long =
-            !self.options.flavor.is_oxfmt() && measure.is_past(self.options.print_width);
-        if is_too_long || !self.fill_entry_fits(&mut measure)? {
+        if !self.fill_entry_fits(&mut measure)? {
             return Ok((0, FillPairLayout::Expanded));
         }
         // Goes on to the first item or separator that does not fit, so that no item is measured

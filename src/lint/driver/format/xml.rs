@@ -2,7 +2,6 @@
 
 use super::Meta;
 use super::info::Source;
-use super::oxlint::{code, file_name, is_error};
 use crate::results::FileResult;
 use bun_core::strings::xml_escape_entity;
 use std::io::Write;
@@ -28,12 +27,11 @@ struct File {
 
 /// The files that have problems. `write_problem` prints one problem.
 ///
-/// `is_oxlint`: names, places and texts are those of oxlint's `Info`, so all that has no place is in one file without a name.
-/// The files are sorted by name, as its `junit` sorts them.
+/// Names, places and texts are those of oxlint's `Info`, so all that has no place is in one file without a name. The files are
+/// sorted by name, as its `junit` sorts them.
 fn group(
     results: &[FileResult],
     meta: &Meta,
-    is_oxlint: bool,
     write_problem: &dyn Fn(&mut Vec<u8>, &Problem),
 ) -> Vec<File> {
     let mut files = Vec::new();
@@ -53,31 +51,17 @@ fn group(
             to.errors += usize::from(problem.is_error);
             write_problem(&mut to.problems, problem);
         };
-        if is_oxlint {
-            let source = Source::new(result, meta);
-            for message in &result.messages {
-                let info = source.info(message);
-                let problem = Problem {
-                    line: info.start.line,
-                    column: info.start.column,
-                    message: info.message,
-                    code: info.code.unwrap_or_default(),
-                    is_error: info.is_error,
-                };
-                add(info.filename, &problem);
-            }
-        } else {
-            let name = file_name(result, meta);
-            for message in &result.messages {
-                let problem = Problem {
-                    line: message.line as usize,
-                    column: message.column as usize,
-                    message: &message.message,
-                    code: code(message).unwrap_or_default(),
-                    is_error: is_error(message),
-                };
-                add(&name, &problem);
-            }
+        let source = Source::new(result, meta);
+        for message in &result.messages {
+            let info = source.info(message);
+            let problem = Problem {
+                line: info.start.line,
+                column: info.start.column,
+                message: info.message,
+                code: info.code.unwrap_or_default(),
+                is_error: info.is_error,
+            };
+            add(info.filename, &problem);
         }
         if file.all > 0 {
             files.push(file);
@@ -86,9 +70,7 @@ fn group(
     if nameless.all > 0 {
         files.push(nameless);
     }
-    if is_oxlint {
-        bun_lint::utils::sort::sort_by(&mut files, |a, b| a.name.cmp(&b.name));
-    }
+    bun_lint::utils::sort::sort_by(&mut files, |a, b| a.name.cmp(&b.name));
     files
 }
 
@@ -103,14 +85,8 @@ fn write_xml_escaped(out: &mut Vec<u8>, text: &[u8]) {
     }
 }
 
-/// `is_oxlint`: the configuration is oxlint's.
-pub(super) fn write_checkstyle(
-    out: &mut Vec<u8>,
-    results: &[FileResult],
-    meta: &Meta,
-    is_oxlint: bool,
-) {
-    let files = group(results, meta, is_oxlint, &|out, problem| {
+pub(super) fn write_checkstyle(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
+    let files = group(results, meta, &|out, problem| {
         let severity = if problem.is_error { "error" } else { "warning" };
         let _ = write!(
             out,
@@ -139,9 +115,8 @@ pub(super) fn write_checkstyle(
     out.extend_from_slice(b"</checkstyle>\n");
 }
 
-/// `is_oxlint`: the configuration is oxlint's.
-pub(super) fn write_junit(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta, is_oxlint: bool) {
-    let files = group(results, meta, is_oxlint, &|out, problem| {
+pub(super) fn write_junit(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
+    let files = group(results, meta, &|out, problem| {
         let tag = if problem.is_error { "error" } else { "failure" };
         out.extend_from_slice(b"\n        <testcase name=\"");
         write_xml_escaped(out, &problem.code);
@@ -153,9 +128,10 @@ pub(super) fn write_junit(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta
     });
     let all: usize = files.iter().map(|it| it.all).sum();
     let errors: usize = files.iter().map(|it| it.errors).sum();
+    let name = if meta.is_oxlint { "Oxlint" } else { "bun lint" };
     let _ = write!(
         out,
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites name=\"Oxlint\" tests=\"{all}\" failures=\"{}\" errors=\"{errors}\">\n",
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuites name=\"{name}\" tests=\"{all}\" failures=\"{}\" errors=\"{errors}\">\n",
         all - errors,
     );
     for (i, file) in files.iter().enumerate() {

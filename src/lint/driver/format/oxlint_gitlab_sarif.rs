@@ -1,4 +1,4 @@
-//! `gitlab` and `sarif` with a configuration of oxlint: the bytes of oxlint, but for the words of the messages. Neither
+//! `gitlab` and `sarif`: the bytes of oxlint, but for the words of the messages. Neither
 //! ends with a line break.
 
 use super::Meta;
@@ -13,7 +13,7 @@ use bun_lint::linter::{LintMessage, oxlint_category};
 use bun_lint::options::Json;
 use bun_lint::rule::Plugin;
 
-/// Of oxlint, whose output this is.
+/// Of oxlint, whose output this is with a configuration of it.
 const VERSION: &[u8] = b"1.87.0";
 
 fn for_each(results: &[FileResult], meta: &Meta, mut print: impl FnMut(&LintMessage, Info)) {
@@ -52,7 +52,11 @@ fn hash(bytes: &[u8]) -> u64 {
     };
     let (words, rest) = bytes.as_chunks::<8>();
     let last = little_endian(rest) | ((bytes.len() as u64) << 56);
-    for word in words.iter().map(|word| u64::from_le_bytes(*word)).chain([last]) {
+    for word in words
+        .iter()
+        .map(|word| u64::from_le_bytes(*word))
+        .chain([last])
+    {
         v[3] ^= word;
         round(&mut v);
         v[0] ^= word;
@@ -248,14 +252,23 @@ pub(super) fn write_sarif(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta
         }
         all.push(object(result));
     });
-    let mut driver = vec![
-        (&b"name"[..], text(b"oxlint")),
-        (b"version", text(VERSION)),
-        (b"semanticVersion", text(VERSION)),
-        (
-            b"informationUri",
-            text(b"https://oxc.rs/docs/guide/usage/linter.html"),
+    let (name, version, page): (&[u8], &[u8], &[u8]) = match meta.is_oxlint {
+        true => (
+            b"oxlint",
+            VERSION,
+            b"https://oxc.rs/docs/guide/usage/linter.html",
         ),
+        false => (
+            b"bun lint",
+            meta.version,
+            b"https://bun.com/docs/runtime/lint",
+        ),
+    };
+    let mut driver = vec![
+        (&b"name"[..], text(name)),
+        (b"version", text(version)),
+        (b"semanticVersion", text(version)),
+        (b"informationUri", text(page)),
         (b"rules", Json::Array(rules)),
     ];
     if !notifications.is_empty() {

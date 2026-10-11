@@ -30,10 +30,6 @@ pub(crate) enum Format {
     Agent,
     /// Workflow commands of GitHub Actions.
     Github,
-    Checkstyle,
-    Junit,
-    Gitlab,
-    Sarif,
     /// What oxlint calls `default`: `pretty`, with all else that there is to say after it.
     OxlintDefault,
     /// What oxlint calls by the same name, byte for byte.
@@ -42,10 +38,11 @@ pub(crate) enum Format {
     OxlintUnix,
     OxlintAgent,
     OxlintGithub,
-    OxlintCheckstyle,
-    OxlintJunit,
-    OxlintGitlab,
-    OxlintSarif,
+    /// The same, whatever the configuration.
+    Checkstyle,
+    Junit,
+    Gitlab,
+    Sarif,
 }
 
 impl Format {
@@ -73,10 +70,6 @@ impl Format {
             b"unix" if is_oxlint => Format::OxlintUnix,
             b"agent" if is_oxlint => Format::OxlintAgent,
             b"github" if is_oxlint => Format::OxlintGithub,
-            b"checkstyle" if is_oxlint => Format::OxlintCheckstyle,
-            b"junit" if is_oxlint => Format::OxlintJunit,
-            b"gitlab" if is_oxlint => Format::OxlintGitlab,
-            b"sarif" if is_oxlint => Format::OxlintSarif,
             b"default" | b"pretty" => Format::Pretty,
             b"stylish" => Format::Stylish,
             b"json" => Format::Json,
@@ -101,10 +94,10 @@ impl Format {
                 | Format::OxlintUnix
                 | Format::OxlintAgent
                 | Format::OxlintGithub
-                | Format::OxlintCheckstyle
-                | Format::OxlintJunit
-                | Format::OxlintGitlab
-                | Format::OxlintSarif
+                | Format::Checkstyle
+                | Format::Junit
+                | Format::Gitlab
+                | Format::Sarif
         )
     }
 
@@ -190,6 +183,8 @@ pub(crate) struct Meta<'m> {
     /// Also print the `github` format: the run is one of GitHub Actions.
     pub(crate) github_annotations: bool,
     pub(crate) run: oxlint::Run,
+    /// The configuration is oxlint's, so the run says that it is one of oxlint.
+    pub(crate) is_oxlint: bool,
     pub(crate) pool: &'m Pool,
     /// Of Bun.
     pub(crate) version: &'m [u8],
@@ -206,20 +201,16 @@ pub(crate) fn format(format: Format, results: &[FileResult], meta: &Meta) -> Vec
         Format::Pretty => excerpt::write_pretty(&mut out, results, meta),
         Format::Agent => excerpt::write_agent(&mut out, results, meta),
         Format::Github => excerpt::write_github(&mut out, results, meta),
-        Format::Checkstyle => xml::write_checkstyle(&mut out, results, meta, false),
-        Format::Junit => xml::write_junit(&mut out, results, meta, false),
-        Format::Gitlab => oxlint::write_gitlab(&mut out, results, meta),
-        Format::Sarif => oxlint::write_sarif(&mut out, results, meta),
         Format::OxlintDefault => summary::write_default(&mut out, results, meta),
         Format::OxlintStylish => stylish::write_as_oxlint(&mut out, results, meta),
         Format::OxlintJson => oxlint_json_agent::write_json(&mut out, results, meta),
         Format::OxlintUnix => unix::write_as_oxlint(&mut out, results, meta),
         Format::OxlintAgent => oxlint_json_agent::write_agent(&mut out, results, meta),
         Format::OxlintGithub => github::write(&mut out, results, meta),
-        Format::OxlintCheckstyle => xml::write_checkstyle(&mut out, results, meta, true),
-        Format::OxlintJunit => xml::write_junit(&mut out, results, meta, true),
-        Format::OxlintGitlab => oxlint_gitlab_sarif::write_gitlab(&mut out, results, meta),
-        Format::OxlintSarif => oxlint_gitlab_sarif::write_sarif(&mut out, results, meta),
+        Format::Checkstyle => xml::write_checkstyle(&mut out, results, meta),
+        Format::Junit => xml::write_junit(&mut out, results, meta),
+        Format::Gitlab => oxlint_gitlab_sarif::write_gitlab(&mut out, results, meta),
+        Format::Sarif => oxlint_gitlab_sarif::write_sarif(&mut out, results, meta),
     }
     out
 }

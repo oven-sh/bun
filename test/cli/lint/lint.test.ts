@@ -4029,6 +4029,35 @@ describe.concurrent("bun lint", () => {
       },
     );
 
+    test("checkstyle, junit, gitlab and sarif are those of oxlint", async () => {
+      const [checkstyle, junit, gitlab, sarif] = await Promise.all(
+        ["checkstyle", "junit", "gitlab", "sarif"].map(format => lint(files, ["-f", format, "--rule", "semi: off"])),
+      );
+      expect(checkstyle.raw).toStartWith(
+        '<?xml version="1.0" encoding="utf-8"?><checkstyle version="4.3"><file name="src/a.js"><error line="1" column="1" severity="warning" message="Unexpected var, use let or const instead." source="eslint(no-var)" />',
+      );
+      expect(junit.raw).toContain('<testsuite name="src/a.js" tests="3" disabled="0" errors="2" failures="1">');
+      expect(JSON.parse(gitlab.raw).map((it: any) => [it.check_name, it.severity, it.location])).toEqual([
+        ["eslint(no-var)", "major", { path: "src/a.js", lines: { begin: 1, end: 1 } }],
+        ["eslint(eqeqeq)", "critical", { path: "src/a.js", lines: { begin: 2, end: 2 } }],
+        ["eslint(no-debugger)", "critical", { path: "src/a.js", lines: { begin: 2, end: 2 } }],
+      ]);
+      expect(gitlab.raw).toEndWith("\n]");
+      expect(junit.raw).toContain('<testsuites name="bun lint" tests="3" failures="1" errors="2">');
+      expect(JSON.parse(sarif.raw).runs[0].tool.driver).toMatchObject({
+        name: "bun lint",
+        version: expect.not.stringContaining("1.87.0"),
+        informationUri: "https://bun.com/docs/runtime/lint",
+        rules: [{ id: "eslint(no-var)" }, { id: "eslint(eqeqeq)" }, { id: "eslint(no-debugger)" }],
+      });
+      expect(JSON.parse(sarif.raw).runs[0].results.map((it: any) => [it.ruleId, it.level])).toEqual([
+        ["eslint(no-var)", "warning"],
+        ["eslint(eqeqeq)", "error"],
+        ["eslint(no-debugger)", "error"],
+      ]);
+      expect([checkstyle, junit, gitlab, sarif].map(it => it.exitCode)).toEqual([1, 1, 1, 1]);
+    });
+
     test("identical problems are grouped above 50, unless --all", async () => {
       const many = { "eslint.config.js": basic, "a.js": Buffer.alloc(10 * 60, "debugger;\n").toString() };
       const [grouped, all] = await Promise.all([lint(many, ["-f", "pretty"]), lint(many, ["-f", "pretty", "--all"])]);

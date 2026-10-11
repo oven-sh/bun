@@ -116,8 +116,12 @@ interface CppSQLStatement {
   safeIntegers: boolean;
 }
 
+// What a Database keeps in #handle: a native cell that owns the Database's share of the connection.
+type NativeDatabase = object;
+
 interface CppSQL {
-  open(filename: string, flags: number, db: Database): TODO;
+  open(filename: string, flags: number): NativeDatabase;
+  handleNumber(handle: NativeDatabase): number;
   isInTransaction(handle: TODO): boolean;
   loadExtension(handle: TODO, name: string, entryPoint: string): void;
   serialize(handle: TODO, name: string): Buffer;
@@ -442,7 +446,7 @@ class Database implements SqliteTypes.Database {
       initializeSQL();
     }
 
-    this.#handle = SQL.open(anonymous ? ":memory:" : filename, flags, this);
+    this.#handle = SQL.open(anonymous ? ":memory:" : filename, flags);
     this.filename = filename;
   }
 
@@ -451,7 +455,7 @@ class Database implements SqliteTypes.Database {
   #queryCache: Map<string, Statement> = new Map();
   filename;
   get handle() {
-    return this.#handle;
+    return SQL.handleNumber(this.#handle);
   }
 
   get inTransaction() {

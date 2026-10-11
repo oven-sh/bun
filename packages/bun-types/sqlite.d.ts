@@ -318,9 +318,10 @@ declare module "bun:sqlite" {
     readonly filename: string;
 
     /**
-     * The underlying `sqlite3` database handle
+     * A number that identifies this `Database` in the process
      *
-     * In native code, this is not a file descriptor, but an index into an array of database handles
+     * This is not a file descriptor. Bun gives a number to each `Database` it opens. The number does not
+     * change after `close()`, and no other `Database` in the same process gets it.
      */
     readonly handle: number;
 

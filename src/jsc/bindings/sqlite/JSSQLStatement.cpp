@@ -128,6 +128,12 @@ public:
     }
 };
 
+struct SQLiteHandleCloser {
+    void operator()(sqlite3* db) const { sqlite3_close_v2(db); }
+};
+// A connection from sqlite3_open_v2 (a failed open returns one too) until a VersionSqlite3 takes it.
+using SQLiteHandle = std::unique_ptr<sqlite3, SQLiteHandleCloser>;
+
 // One-time sqlite3_config() calls. Must run before the FIRST sqlite3_open_v2
 // from EITHER bun:sqlite or node:sqlite (they share one library, and config
 // is SQLITE_MISUSE after init). extern "C" for the cross-TU forward-declare.
@@ -198,26 +204,24 @@ static ASCIILiteral finalizedMessage(const JSSQLStatement* statement);
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(VersionSqlite3);
 
-class VersionSqlite3 {
+// One bun:sqlite connection. Its Database's JSSQLDatabase cell and each JSSQLStatement hold a reference, on the opening VM's thread; the last one closes it.
+class VersionSqlite3 final : public WTF::RefCounted<VersionSqlite3> {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(VersionSqlite3, VersionSqlite3);
 
 public:
-    explicit VersionSqlite3(sqlite3* db, JSC::VM* vm)
-        : db(db)
-        , vm(vm)
-        , version(0)
-        , reference_count(1)
-    {
-    }
-    sqlite3* db;
-    // The VM (main thread or worker) that opened this connection; only that VM's exit closes it
-    // (Bun__closeAllSQLiteDatabasesForTermination).
-    JSC::VM* const vm;
+    static Ref<VersionSqlite3> create(JSC::JSGlobalObject*, SQLiteHandle&&);
+    ~VersionSqlite3();
+
     // The Bun.ModuleGraph context whose script opened it (0: none): closed when that graph is disposed.
-    WebCore::ScriptExecutionContextIdentifier graphContext = 0;
-    std::atomic<uint64_t> version;
-    size_t reference_count;
+    const WebCore::ScriptExecutionContextIdentifier graphContext;
+    sqlite3* db;
+    // The VM (main thread or worker) that opened this connection. Its JSVMClientData::sqliteDatabases() has this record at liveIndex.
+    JSC::VM* const vm;
+    std::atomic<uint64_t> version { 0 };
     WTF::HashSet<WebCore::JSSQLStatement*> statements;
+    // db.handle: how many connections the process opened before this one.
+    const uint64_t handleNumber;
+    unsigned liveIndex;
     // close(false) with live db.prepare() statements: JS-visible closed, sqlite3_close deferred until they drain.
     bool closed = false;
 
@@ -234,51 +238,46 @@ public:
     // close(true): every statement is finalized, so the file is released now.
     int closeWithStatements();
 
-    void release()
+private:
+    VersionSqlite3(sqlite3* db, JSC::VM* vm, WebCore::ScriptExecutionContextIdentifier graphContext, uint64_t handleNumber, unsigned liveIndex)
+        : graphContext(graphContext)
+        , db(db)
+        , vm(vm)
+        , handleNumber(handleNumber)
+        , liveIndex(liveIndex)
     {
-        ASSERT(reference_count > 0);
-        if (--reference_count == 0)
-            closeHandle();
-    };
+    }
 };
+
+#if !ASSERT_ENABLED
+static_assert(sizeof(VersionSqlite3) <= 64);
+#endif
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(VersionSqlite3);
 
-class SQLiteSingleton {
-public:
-    Vector<VersionSqlite3*> databases;
-};
+static std::atomic<uint64_t> nextHandleNumber { 0 };
 
-static SQLiteSingleton* _instance = nullptr;
-static WTF::Lock databasesLock;
-
-static Vector<VersionSqlite3*>& databases()
+Ref<VersionSqlite3> VersionSqlite3::create(JSC::JSGlobalObject* lexicalGlobalObject, SQLiteHandle&& handle)
 {
-    if (!_instance) {
-        _instance = new SQLiteSingleton();
-        _instance->databases = Vector<VersionSqlite3*>();
-        _instance->databases.reserveInitialCapacity(4);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto& live = WebCore::clientData(vm)->sqliteDatabases(vm);
+    Ref record = adoptRef(*new VersionSqlite3(handle.release(), &vm, WebCore::ScriptExecutionContext::ownerOfSQLiteDatabase(lexicalGlobalObject), nextHandleNumber++, static_cast<unsigned>(live.size())));
+    live.append(record.ptr());
+    return record;
+}
+
+VersionSqlite3::~VersionSqlite3()
+{
+    // The last record of the VM's list takes this one's place.
+    auto& live = WebCore::clientData(*vm)->sqliteDatabases(*vm);
+    auto* last = live.takeLast();
+    if (last != this) {
+        live[liveIndex] = last;
+        last->liveIndex = liveIndex;
     }
-
-    return _instance->databases;
-}
-
-static size_t registerDatabase(VersionSqlite3* versionDB)
-{
-    WTF::Locker locker { databasesLock };
-    auto& dbs = databases();
-    size_t index = dbs.size();
-    dbs.append(versionDB);
-    return index;
-}
-
-static VersionSqlite3* databaseForHandle(int32_t handle)
-{
-    WTF::Locker locker { databasesLock };
-    auto& dbs = databases();
-    if (handle < 0 || static_cast<size_t>(handle) >= dbs.size())
-        return nullptr;
-    return dbs[static_cast<size_t>(handle)];
+    if (live.capacity() > 16 && live.size() * 4 <= live.capacity())
+        live.shrinkCapacity(live.size() * 2);
+    closeHandle();
 }
 
 // Shared with node:sqlite's termination path (Bun__closeAllNodeSqliteDatabasesForTermination):
@@ -298,26 +297,16 @@ extern "C" void Bun__sqliteCheckpointForTermination(sqlite3* db)
 // joined: closes the connections that VM opened and never touches another VM's entries.
 extern "C" void Bun__closeAllSQLiteDatabasesForTermination(JSC::JSGlobalObject* globalObject)
 {
-    if (!_instance) {
-        return;
-    }
-    JSC::VM* exitingVM = &globalObject->vm();
-    WTF::Locker locker { databasesLock };
-    auto& dbs = _instance->databases;
-
-    for (auto& db : dbs) {
-        if (db->vm != exitingVM)
-            continue;
-        if (db->db) {
-            Bun__sqliteCheckpointForTermination(db->db);
+    auto& vm = globalObject->vm();
+    for (auto* record : WebCore::clientData(vm)->sqliteDatabases(vm)) {
+        if (record->db) {
+            Bun__sqliteCheckpointForTermination(record->db);
             // close_v2: with unfinalized statements still alive, plain
             // sqlite3_close() returns SQLITE_BUSY and leaves the connection
             // open, which would leak it once the pointer is nulled below.
-            sqlite3_close_v2(db->db);
-            // Prevent VersionSqlite3::release() (invoked later by the GC
-            // finalizer during VM teardown) from closing the same handle
-            // again, which would be a use-after-free.
-            db->db = nullptr;
+            sqlite3_close_v2(record->db);
+            // ~VersionSqlite3() runs later, in VM teardown, and must not close the same handle again.
+            record->db = nullptr;
         }
     }
 }
@@ -325,18 +314,15 @@ extern "C" void Bun__closeAllSQLiteDatabasesForTermination(JSC::JSGlobalObject* 
 // The databases script of a Bun.ModuleGraph opened, when that graph is disposed: as close(true).
 extern "C" void Bun__closeSQLiteDatabasesOfGraphContext(WebCore::ScriptExecutionContextIdentifier graphContext)
 {
-    if (!_instance)
-        return;
-    Vector<VersionSqlite3*> owned;
-    {
-        WTF::Locker locker { databasesLock };
-        for (auto& db : _instance->databases) {
-            if (db->graphContext == graphContext && db->db)
-                owned.append(db);
-        }
+    // The graph's VM is this thread's. Its context cannot name it: ScriptExecutionContext::vm() is null once the realm that made the graph is collected.
+    auto& vm = defaultGlobalObject()->vm();
+    Vector<Ref<VersionSqlite3>> owned;
+    for (auto* record : WebCore::clientData(vm)->sqliteDatabases(vm)) {
+        if (record->graphContext == graphContext && record->db)
+            owned.append(*record);
     }
-    for (auto* db : owned)
-        db->closeWithStatements();
+    for (auto& record : owned)
+        record->closeWithStatements();
 }
 
 namespace WebCore {
@@ -501,10 +487,8 @@ public:
     {
         Structure* structure = globalObject->JSSQLStatementStructure();
         JSSQLStatement* ptr = new (NotNull, JSC::allocateCell<JSSQLStatement>(globalObject->vm())) JSSQLStatement(structure, *globalObject, stmt, version_db, memorySizeChange);
-        if (version_db) {
-            ++version_db->reference_count;
+        if (version_db)
             version_db->statements.add(ptr);
-        }
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }
@@ -534,7 +518,7 @@ public:
     ~JSSQLStatement();
 
     sqlite3_stmt* stmt;
-    VersionSqlite3* version_db;
+    RefPtr<VersionSqlite3> version_db;
     uint64_t version = 0;
     // Tracks which columns are valid in the current result set. Used to handle duplicate column names.
     // The bit at index i is set if the column at index i is valid.
@@ -567,6 +551,62 @@ protected:
 static ASCIILiteral finalizedMessage(const JSSQLStatement* statement)
 {
     return statement->finalizedByClose ? "Database has closed"_s : "Statement has finalized"_s;
+}
+
+// What a bun:sqlite Database keeps in #handle: its reference to the connection record, dropped when the cell is collected with the Database.
+class JSSQLDatabase final : public JSC::JSDestructibleObject {
+public:
+    using Base = JSC::JSDestructibleObject;
+    static constexpr JSC::DestructionMode needsDestruction = NeedsDestruction;
+
+    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
+    {
+        return Bun::createClassStructure(vm, globalObject, JSC::jsNull(), JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+    }
+
+    static JSSQLDatabase* create(JSC::JSGlobalObject* lexicalGlobalObject, SQLiteHandle&& handle)
+    {
+        auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+        auto& vm = globalObject->vm();
+        // Before allocateCell: the first use of the Structure allocates.
+        Structure* structure = globalObject->JSSQLDatabaseStructure();
+        Ref record = VersionSqlite3::create(lexicalGlobalObject, WTF::move(handle));
+        JSSQLDatabase* ptr = new (NotNull, JSC::allocateCell<JSSQLDatabase>(vm)) JSSQLDatabase(vm, structure, WTF::move(record));
+        ptr->finishCreation(vm);
+        return ptr;
+    }
+    static void destroy(JSC::JSCell* cell) { static_cast<JSSQLDatabase*>(cell)->~JSSQLDatabase(); }
+    template<typename, SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        return WebCore::subspaceForImpl<JSSQLDatabase, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSSQLDatabase, m_subspaceForJSSQLDatabase));
+    }
+    DECLARE_INFO;
+
+    VersionSqlite3& record() { return m_record.get(); }
+
+private:
+    JSSQLDatabase(JSC::VM& vm, JSC::Structure* structure, Ref<VersionSqlite3>&& record)
+        : Base(vm, structure)
+        , m_record(WTF::move(record))
+    {
+    }
+
+    const Ref<VersionSqlite3> m_record;
+};
+static_assert(sizeof(JSSQLDatabase) == 32);
+
+const ClassInfo JSSQLDatabase::s_info = { "SQLDatabase"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSQLDatabase) };
+
+Structure* createJSSQLDatabaseStructure(JSGlobalObject* globalObject)
+{
+    return JSSQLDatabase::createStructure(globalObject->vm(), globalObject);
+}
+
+// No Ref per call: the handle is an argument of the running SQL.* call, so that frame keeps the cell and its record alive.
+static VersionSqlite3* databaseForHandle(JSC::JSValue handle)
+{
+    auto* database = dynamicDowncast<JSSQLDatabase>(handle);
+    return database ? &database->record() : nullptr;
 }
 
 static JSValue toJSAsBuffer(JSC::VM& vm, JSC::JSGlobalObject* globalObject, sqlite3_stmt* stmt, int i)
@@ -1321,12 +1361,12 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
     }
 
     sqlite3* db = nullptr;
-    if (sqlite3_open_v2(":memory:", &db, openFlags, nullptr) != SQLITE_OK) {
+    int openStatus = sqlite3_open_v2(":memory:", &db, openFlags, nullptr);
+    SQLiteHandle handle { db };
+    if (openStatus != SQLITE_OK) {
         // Ownership of `data` is only transferred by sqlite3_deserialize below;
-        // on open failure it must be released here. A failed open can still
-        // return a partially-initialized handle that needs sqlite3_close().
+        // on open failure it must be released here.
         sqlite3_free(data);
-        sqlite3_close(db);
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Failed to open SQLite"_s));
         return {};
     }
@@ -1344,22 +1384,17 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
     // SQLITE_DESERIALIZE_FREEONCLOSE transfers ownership of `data` to SQLite,
     // which frees it itself when deserialization fails. Do not free it again here.
     if (status == SQLITE_BUSY) {
-        sqlite3_close(db);
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "SQLITE_BUSY"_s));
         return {};
     }
 
     if (status != SQLITE_OK) {
         auto message = status == SQLITE_ERROR ? WTF::String("unable to deserialize database"_s) : WTF::String::fromUTF8(sqlite3_errstr(status));
-        sqlite3_close(db);
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, message));
         return {};
     }
 
-    auto* versionDB = new VersionSqlite3(db, &vm);
-    versionDB->graphContext = WebCore::ScriptExecutionContext::ownerOfSQLiteDatabase(lexicalGlobalObject);
-    auto count = registerDatabase(versionDB);
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(count)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSSQLDatabase::create(lexicalGlobalObject, WTF::move(handle))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSerialize, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -1374,9 +1409,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSerialize, (JSC::JSGlobalObject * lexical
         return {};
     }
 
-    int32_t dbIndex = callFrame->argument(0).toInt32(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    VersionSqlite3* versionDB = databaseForHandle(dbIndex);
+    VersionSqlite3* versionDB = databaseForHandle(callFrame->argument(0));
     if (!versionDB) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
         return {};
@@ -1419,9 +1452,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObje
         return {};
     }
 
-    int32_t dbIndex = callFrame->argument(0).toInt32(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    VersionSqlite3* versionDB = databaseForHandle(dbIndex);
+    VersionSqlite3* versionDB = databaseForHandle(callFrame->argument(0));
     if (!versionDB) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
         return {};
@@ -1489,9 +1520,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
         return {};
     }
 
-    int32_t handle = callFrame->argument(0).toInt32(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-    VersionSqlite3* versionDB = databaseForHandle(handle);
+    VersionSqlite3* versionDB = databaseForHandle(callFrame->argument(0));
     if (!versionDB) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
         return {};
@@ -1645,16 +1674,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementIsInTransactionFunction, (JSC::JSGlobalOb
         return {};
     }
 
-    JSC::JSValue dbNumber = callFrame->argument(0);
-
-    if (!dbNumber.isNumber()) {
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
-        return {};
-    }
-
-    int32_t handle = JSC::toInt32(dbNumber.asNumber());
-
-    VersionSqlite3* versionDB = databaseForHandle(handle);
+    VersionSqlite3* versionDB = databaseForHandle(callFrame->argument(0));
     if (!versionDB) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createRangeError(lexicalGlobalObject, "Invalid database handle"_s));
         return {};
@@ -1682,19 +1702,17 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
         return {};
     }
 
-    JSC::JSValue dbNumber = callFrame->argument(0);
     JSC::JSValue sqlValue = callFrame->argument(1);
     JSC::JSValue bindings = callFrame->argument(2);
     JSC::JSValue prepareFlagsValue = callFrame->argument(3);
     JSC::JSValue internalFlagsValue = callFrame->argument(4);
 
-    if (!dbNumber.isNumber() || !sqlValue.isString()) {
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "SQLStatement requires a number and a string"_s));
+    if (!sqlValue.isString()) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQL string"_s));
         return {};
     }
 
-    int32_t handle = JSC::toInt32(dbNumber.asNumber());
-    VersionSqlite3* versionDB = databaseForHandle(handle);
+    VersionSqlite3* versionDB = databaseForHandle(callFrame->argument(0));
     if (!versionDB) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createRangeError(lexicalGlobalObject, "Invalid database handle"_s));
         return {};
@@ -1821,10 +1839,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
         openFlags = JSC::toInt32(flags.asNumber());
     }
 
-    JSValue finalizationTarget = callFrame->argument(2);
-
     sqlite3* db = nullptr;
     int statusCode = sqlite3_open_v2(path.utf8().legacyCStringPointer(), &db, openFlags, nullptr);
+    SQLiteHandle handle { db };
 
     if (statusCode != SQLITE_OK) {
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, db));
@@ -1842,15 +1859,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
     if (status != SQLITE_OK) {
         // TODO: log a warning here that defensive mode is unsupported.
     }
-    auto* versionDB = new VersionSqlite3(db, &vm);
-    versionDB->graphContext = WebCore::ScriptExecutionContext::ownerOfSQLiteDatabase(lexicalGlobalObject);
-    auto index = registerDatabase(versionDB);
-    if (finalizationTarget.isObject()) {
-        vm.heap.addFinalizer(finalizationTarget.getObject(), [versionDB](JSC::JSCell* ptr) -> void {
-            versionDB->release();
-        });
-    }
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(index)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSSQLDatabase::create(lexicalGlobalObject, WTF::move(handle))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
@@ -1872,16 +1881,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
         return {};
     }
 
-    JSValue dbNumber = callFrame->argument(0);
     JSValue throwOnError = callFrame->argument(1);
-    if (!dbNumber.isNumber()) {
-        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected number"_s));
-        return {};
-    }
 
-    int dbIndex = JSC::toInt32(dbNumber.asNumber());
-
-    VersionSqlite3* versionDB = databaseForHandle(dbIndex);
+    VersionSqlite3* versionDB = databaseForHandle(callFrame->argument(0));
     if (!versionDB) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
         return {};
@@ -1949,20 +1951,18 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
         return {};
     }
 
-    JSValue dbNumber = callFrame->argument(0);
     JSValue databaseFileName = callFrame->argument(1);
     JSValue opNumber = callFrame->argument(2);
     JSValue resultValue = callFrame->argument(3);
 
-    if (!dbNumber.isNumber() || !opNumber.isNumber()) {
+    if (!opNumber.isNumber()) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected number"_s));
         return {};
     }
 
-    int dbIndex = JSC::toInt32(dbNumber.asNumber());
     int op = JSC::toInt32(opNumber.asNumber());
 
-    VersionSqlite3* versionDB = databaseForHandle(dbIndex);
+    VersionSqlite3* versionDB = databaseForHandle(callFrame->argument(0));
     if (!versionDB) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
         return {};
@@ -2023,6 +2023,21 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
     return JSValue::encode(jsNumber(statusCode));
 }
 
+// db.handle
+JSC_DEFINE_HOST_FUNCTION(jsSQLStatementHandleNumberFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    VersionSqlite3* versionDB = databaseForHandle(callFrame->argument(0));
+    if (!versionDB) [[unlikely]] {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
+        return {};
+    }
+
+    return JSValue::encode(jsNumber(versionDB->handleNumber));
+}
+
 /* Hash table for constructor */
 static const HashTableValue JSSQLStatementConstructorTableValues[] = {
     { "open"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementOpenStatementFunction, 2 } },
@@ -2035,6 +2050,7 @@ static const HashTableValue JSSQLStatementConstructorTableValues[] = {
     { "serialize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementSerialize, 1 } },
     { "deserialize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementDeserialize, 2 } },
     { "fcntl"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementFcntlFunction, 2 } },
+    { "handleNumber"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementHandleNumberFunction, 1 } },
 };
 
 const ClassInfo JSSQLStatementConstructor::s_info = { "SQLStatement"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSQLStatementConstructor) };
@@ -2940,10 +2956,6 @@ JSSQLStatement::~JSSQLStatement()
         columnNames->releaseData();
         this->columnNames = nullptr;
     }
-
-    if (this->version_db) {
-        this->version_db->release();
-    }
 }
 
 void JSSQLStatement::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -2961,7 +2973,7 @@ JSC::JSValue JSSQLStatement::rebind(JSC::JSGlobalObject* lexicalGlobalObject, JS
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stmt = this->stmt;
 
-    auto val = rebindStatement(lexicalGlobalObject, values, scope, sqlite3_db_handle(stmt), this->version_db, stmt, this->m_bindingNames, this->useBigInt64, this);
+    auto val = rebindStatement(lexicalGlobalObject, values, scope, sqlite3_db_handle(stmt), this->version_db.get(), stmt, this->m_bindingNames, this->useBigInt64, this);
     RETURN_IF_EXCEPTION(scope, {});
 
     // A getter invoked while binding can finalize this statement; the callers

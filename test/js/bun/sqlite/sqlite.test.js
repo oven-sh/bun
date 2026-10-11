@@ -2,7 +2,17 @@ import { spawnSync } from "bun";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
 import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  expectRssDeltaBelow,
+  isASAN,
+  isDebug,
+  isMacOS,
+  isMacOSVersionAtLeast,
+  isWindows,
+  tempDir,
+} from "harness";
 import { tmpdir } from "os";
 import path from "path";
 
@@ -2182,32 +2192,39 @@ it("#13082", async () => {
   await Promise.all(runs);
 });
 
-// The internal SQL.run / SQL.prepare / SQL.isInTransaction helpers used to
-// perform an off-by-one bounds check on the database handle (`>` instead of
-// `>=`), so a handle equal to databases().size() skipped the early-return and
-// indexed past the end of the WTF::Vector, crashing the process instead of
-// throwing a catchable error.
-it("internal SQL helpers reject out-of-range database handles", async () => {
+// Every internal SQL.* helper takes the native handle that a Database keeps. Anything else is an
+// error that script can catch.
+it("internal SQL helpers reject what is not a database handle", async () => {
   const src = `
     const { SQL } = require("bun:internal-for-testing");
+    const { Database } = require("bun:sqlite");
     const ctor = SQL[0];
     const tuple = SQL[1];
 
-    // No databases have been opened, so databases().size() === 0 and handle 0
-    // is out of range. Each call must throw "Invalid database handle" rather
-    // than fall through to databases()[0] and crash.
-    const results = [];
+    const db = new Database(":memory:");
+    const statement = db.prepare("SELECT 1");
+    const results = {};
     for (const [name, fn] of [
-      ["isInTransaction", () => ctor.isInTransaction(0)],
-      ["prepare", () => ctor.prepare(0, "SELECT 1", undefined, 0, 0)],
-      ["run", () => ctor.run(0, 0, tuple, "SELECT 1")],
+      ["isInTransaction", handle => ctor.isInTransaction(handle)],
+      ["prepare", handle => ctor.prepare(handle, "SELECT 1", undefined, 0, 0)],
+      ["run", handle => ctor.run(handle, 0, tuple, "SELECT 1")],
+      ["serialize", handle => ctor.serialize(handle, "main")],
+      ["loadExtension", handle => ctor.loadExtension(handle, "x")],
+      ["fcntl", handle => ctor.fcntl(handle, null, 0, 0)],
+      ["close", handle => ctor.close(handle, false)],
+      ["handleNumber", handle => ctor.handleNumber(handle)],
     ]) {
-      try {
-        fn();
-        results.push(name + ": no throw");
-      } catch (e) {
-        results.push(name + ": " + e.message);
+      const messages = new Set();
+      // The number that db.handle gives is not the handle either.
+      for (const handle of [db.handle, 0, -1, 0.5, "0", null, undefined, {}, db, statement, statement.native]) {
+        try {
+          fn(handle);
+          messages.add("no throw");
+        } catch (e) {
+          messages.add(e.message);
+        }
       }
+      results[name] = [...messages];
     }
     console.log(JSON.stringify(results));
   `;
@@ -2221,12 +2238,18 @@ it("internal SQL helpers reject out-of-range database handles", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  const rejected = ["Invalid database handle"];
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-    stdout: JSON.stringify([
-      "isInTransaction: Invalid database handle",
-      "prepare: Invalid database handle",
-      "run: Invalid database handle",
-    ]),
+    stdout: JSON.stringify({
+      isInTransaction: rejected,
+      prepare: rejected,
+      run: rejected,
+      serialize: rejected,
+      loadExtension: rejected,
+      fcntl: rejected,
+      close: rejected,
+      handleNumber: rejected,
+    }),
     stderr: "",
     exitCode: 0,
   });
@@ -2677,11 +2700,9 @@ it("decodes declared types leniently and accepts single-character declared types
   db.close();
 });
 
-// The process-global SQLite database registry is shared by every Worker
-// thread. Concurrent opens, prepares, serialize/deserialize, and closes from
-// several Workers must not corrupt the registry while its backing storage
-// grows. Run in a subprocess so a crash shows up as a non-zero exit code
-// instead of taking down the test runner.
+// Concurrent opens, prepares, serialize/deserialize, and closes from several
+// Workers must not disturb each other's databases. Run in a subprocess so a
+// crash shows up as a non-zero exit code instead of taking down the test runner.
 it("keeps database handles working when many Workers open databases concurrently", async () => {
   await using dir = tempDir("sqlite-worker-registry", {
     "main.js": `
@@ -2733,8 +2754,7 @@ it("keeps database handles working when many Workers open databases concurrently
           for (let j = 0; j < ROWS; j++) insert.run(j, "row" + j);
           total += db.query("SELECT count(*) AS n FROM t").get().n;
 
-          // serialize() and deserialize() index into / append to the same
-          // process-wide registry as open().
+          // serialize() and deserialize() take and make a handle like open() does.
           const restored = Database.deserialize(db.serialize());
           total += restored.query("SELECT count(*) AS n FROM t").get().n;
           restored.close();
@@ -2889,3 +2909,475 @@ it.skipIf(!sqliteAllowsMoreThan65535Parameters)(
     expect(db.query("SELECT a FROM t").all()).toEqual([{ a: 7 }]);
   },
 );
+
+// Each in a process of its own: the first counts native objects, the second reads RSS, the third
+// needs functions that no JIT tier has compiled yet.
+describe("the connection of a Database is released with the Database", () => {
+  async function run(src) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  // What a Database keeps natively is one cell, an SQLDatabase in heapStats(). Its connection goes
+  // with the last of that cell and its statements.
+  it("no native handle is left once the Database is collected, closed or not", async () => {
+    const src = /* js */ `
+      import { heapStats } from "bun:jsc";
+      import { Database } from "bun:sqlite";
+
+      const handles = () => heapStats().objectTypeCounts.SQLDatabase ?? 0;
+      const serialized = (() => {
+        using db = new Database(":memory:");
+        db.run("create table t(a)");
+        return db.serialize();
+      })();
+      class Subclass extends Database {}
+      const shapes = {
+        "open, query, close": () => {
+          const db = new Database(":memory:");
+          db.query("select 1").get();
+          db.close();
+          return db;
+        },
+        "open, query, never closed": () => {
+          const db = new Database(":memory:");
+          db.query("select 1").get();
+          return db;
+        },
+        "deserialize, close": () => {
+          const db = Database.deserialize(serialized);
+          db.close();
+          return db;
+        },
+        "deserialize, query, never closed": () => {
+          const db = Database.deserialize(serialized);
+          db.query("select a from t").all();
+          return db;
+        },
+        "using": () => {
+          using db = new Database(":memory:");
+          db.prepare("select 1").get();
+          return db;
+        },
+        "subclass": () => new Subclass(":memory:"),
+      };
+
+      const results = {};
+      Bun.gc(true);
+      for (const [shape, make] of Object.entries(shapes)) {
+        const held = (() => {
+          const databases = [];
+          for (let i = 0; i < 20; i++) databases.push(make());
+          return handles();
+        })();
+        Bun.gc(true);
+        results[shape] = { held, collected: handles() };
+      }
+
+      // A prepare() statement outlives its Database and keeps the connection, not the handle.
+      const statement = (() => {
+        const db = new Database(":memory:");
+        db.run("create table t(a)");
+        db.run("insert into t values (7)");
+        return db.prepare("select a from t");
+      })();
+      Bun.gc(true);
+      results["prepare() statement of a dropped Database"] = { collected: handles(), row: statement.get() };
+      console.log(JSON.stringify(results));
+    `;
+
+    const each = { held: 20, collected: 0 };
+    expect(await run(src)).toEqual({
+      stdout: JSON.stringify({
+        "open, query, close": each,
+        "open, query, never closed": each,
+        "deserialize, close": each,
+        "deserialize, query, never closed": each,
+        "using": each,
+        "subclass": each,
+        "prepare() statement of a dropped Database": { collected: 0, row: { a: 7 } },
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("a deserialized Database that is never closed gives its image back when collected", async () => {
+    const src = /* js */ `
+      import { Database } from "bun:sqlite";
+      const source = new Database(":memory:");
+      source.exec("create table t(a)");
+      source.exec("insert into t values (randomblob(1000000))");
+      const serialized = source.serialize();
+      source.close();
+
+      function dropOne() {
+        const db = Database.deserialize(serialized);
+        db.query("select length(a) from t").get();
+      }
+      async function settle() {
+        for (let i = 0; i < 2; i++) {
+          Bun.gc(true);
+          await Bun.sleep(1);
+        }
+      }
+      // Collect after every few drops: the assertion is about what stays, not about the peak of
+      // 100 live images, which the allocator keeps mapped.
+      async function drop(count) {
+        for (let i = 0; i < count; i += 10) {
+          for (let j = 0; j < 10; j++) dropOne();
+          await settle();
+        }
+      }
+      await drop(20);
+      const before = process.memoryUsage.rss();
+      await drop(100);
+      console.log(JSON.stringify({ deltaMiB: (process.memoryUsage.rss() - before) / 1024 / 1024 }));
+    `;
+
+    // Unfixed: each dropped 1 MB image stays, about 117 MiB. Fixed: the 10 images of one batch, about 15 MiB.
+    await expectRssDeltaBelow(["-e", src], { release: 50, debug: 60 });
+  });
+
+  it("a Database that only its own serialize() call still uses is not closed under that call", async () => {
+    const src = /* js */ `
+      import { Database } from "bun:sqlite";
+
+      // Runs inside the native call, after the caller gave up its last reference to the Database.
+      const name = {
+        toString() {
+          Bun.gc(true);
+          return "main";
+        },
+      };
+      const holders = Array.from({ length: 30 }, () => {
+        const db = new Database(":memory:");
+        db.run("create table t(a)");
+        return { db };
+      });
+      const serializeTheLastReference = holder => {
+        const db = holder.db;
+        holder.db = null;
+        return db.serialize(name);
+      };
+
+      const outcomes = {};
+      for (const holder of holders) {
+        let outcome;
+        try {
+          outcome = serializeTheLastReference(holder).byteLength > 0 ? "serialized" : "empty";
+        } catch (error) {
+          outcome = error.message;
+        }
+        outcomes[outcome] = (outcomes[outcome] ?? 0) + 1;
+      }
+      console.log(JSON.stringify(outcomes));
+    `;
+
+    // Unfixed: "Can't do this on a closed database" for 29 of the 30.
+    expect(await run(src)).toEqual({ stdout: JSON.stringify({ serialized: 30 }), stderr: "", exitCode: 0 });
+  });
+});
+
+// What does not change when the handle a Database keeps becomes a native object.
+describe("Database handle", () => {
+  it("db.handle counts the Databases of the process, in every thread, and is never given twice", async () => {
+    using dir = tempDir("sqlite-handle-numbers", {
+      "main.js": `
+        import { Database } from "bun:sqlite";
+
+        const first = new Database(":memory:");
+        // An older SQLite serializes a database without a table to zero bytes.
+        first.run("create table t(a)");
+        const bytes = first.serialize();
+        const second = Database.deserialize(bytes);
+        const open = [first.handle, second.handle];
+        first.close();
+        second.close(true);
+        const closed = [first.handle, second.handle];
+
+        // The number of a Database that was closed and collected does not go to a later one.
+        const collected = [];
+        for (let i = 0; i < 5; i++) {
+          const db = new Database(":memory:");
+          collected.push(db.handle);
+          db.close();
+        }
+        Bun.gc(true);
+        const later = [new Database(":memory:").handle, Database.deserialize(bytes).handle];
+
+        const inWorker = await new Promise((resolve, reject) => {
+          const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+          worker.onmessage = event => {
+            resolve(event.data);
+            worker.terminate();
+          };
+          worker.onerror = event => {
+            reject(new Error(event.message ?? "worker error"));
+            worker.terminate();
+          };
+        });
+        console.log(JSON.stringify({ open, closed, collected, later, inWorker }));
+      `,
+      "worker.js": `
+        import { Database } from "bun:sqlite";
+        postMessage([new Database(":memory:").handle, new Database(":memory:").handle]);
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({
+        open: [0, 1],
+        closed: [0, 1],
+        collected: [2, 3, 4, 5, 6],
+        later: [7, 8],
+        inWorker: [9, 10],
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("WAL is checkpointed at exit for a collected Database whose prepare() statement is live", async () => {
+    using dir = tempDir("sqlite-collected-wal", {});
+    const file = path.join(String(dir), "x.sqlite");
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import { Database } from "bun:sqlite";
+         import { statSync } from "node:fs";
+         let collected = false;
+         const registry = new FinalizationRegistry(() => { collected = true; });
+         const insert = (() => {
+           const db = new Database(process.argv[1]);
+           db.exec("PRAGMA journal_mode=WAL; CREATE TABLE t (a)");
+           registry.register(db);
+           return db.prepare("INSERT INTO t VALUES (?)");
+         })();
+         for (const deadline = Date.now() + 3_000; !collected && Date.now() < deadline; ) {
+           Bun.gc(true);
+           await new Promise(resolve => setImmediate(resolve));
+         }
+         insert.run(1);
+         console.log(JSON.stringify({ collected, wal: statSync(process.argv[1] + "-wal").size > 0 }));`,
+        file,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: '{"collected":true,"wal":true}\n',
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(existsSync(file + "-wal") ? statSync(file + "-wal").size : 0).toBe(0);
+    {
+      using db = new Database(file, { readonly: true });
+      expect(db.query("SELECT * FROM t").all()).toEqual([{ a: 1 }]);
+    }
+  });
+
+  it("a Database that the script of a Bun.ModuleGraph deserialized is closed when the graph is disposed", async () => {
+    using dir = tempDir("sqlite-graph-deserialize", {
+      "tenant.mjs": `
+        import { Database } from "bun:sqlite";
+        export const deserialize = bytes => Database.deserialize(bytes);
+      `,
+      "main.mjs": `
+        import { Database } from "bun:sqlite";
+        const bytes = (() => {
+          using db = new Database(":memory:");
+          db.run("create table t(a)");
+          return db.serialize();
+        })();
+        const graph = new Bun.ModuleGraph();
+        const tenant = await graph.import(import.meta.dir + "/tenant.mjs");
+        const db = graph.run(() => tenant.deserialize(bytes));
+        const message = fn => { try { fn(); return "returned"; } catch (error) { return error.message; } };
+        const before = message(() => db.run("select a from t"));
+        graph.dispose();
+        console.log(JSON.stringify({ before, after: message(() => db.run("select a from t")) }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ before: "returned", after: "Database has closed" }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A VM lists the connections it has open, and a connection that goes gives its place in the list
+  // to the last one. Both walks of the list still find every connection after that.
+  it("the graph's Databases are closed and the WAL is checkpointed after other Databases were collected", async () => {
+    using dir = tempDir("sqlite-live-list", {});
+    const file = path.join(String(dir), "x.sqlite");
+    const src = /* js */ `
+      import { heapStats } from "bun:jsc";
+      import { Database } from "bun:sqlite";
+      import { statSync } from "node:fs";
+
+      const handles = () => heapStats().objectTypeCounts.SQLDatabase ?? 0;
+      const state = db => {
+        try {
+          db.run("select 1");
+          return "open";
+        } catch (error) {
+          return error.message;
+        }
+      };
+      const graph = new Bun.ModuleGraph();
+      const inGraph = () => graph.run(() => new Database(":memory:"));
+      // Held through an object and made in calls that have returned: nothing else refers to them.
+      const held = {};
+      const handlesLeft = [];
+      const collect = name => {
+        held[name] = null;
+        Bun.gc(true);
+        handlesLeft.push(handles());
+      };
+      (() => {
+        held.outside = new Database(":memory:");
+        held.first = inGraph();
+        held.middle = inGraph();
+        held.last = inGraph();
+      })();
+      collect("first"); // "last" takes the place of "first"
+      collect("last"); // the one that moved goes
+      (() => {
+        held.second = inGraph();
+        held.third = inGraph();
+        held.wal = new Database(process.argv[1]);
+        held.wal.exec("PRAGMA journal_mode=WAL; CREATE TABLE t (a)");
+        held.insert = held.wal.prepare("INSERT INTO t VALUES (?)");
+      })();
+      collect("middle"); // "wal" takes the place of "middle"
+      collect("second"); // "third" takes the place of "second"
+      graph.dispose();
+      held.insert.run(1);
+      console.log(
+        JSON.stringify({
+          handlesLeft,
+          outside: state(held.outside),
+          third: state(held.third),
+          wal: state(held.wal),
+          walBeforeExit: statSync(process.argv[1] + "-wal").size > 0,
+        }),
+      );
+    `;
+
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src, file], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({
+        handlesLeft: [3, 2, 4, 3],
+        outside: "open",
+        third: "Database has closed",
+        wal: "open",
+        walBeforeExit: true,
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(existsSync(file + "-wal") ? statSync(file + "-wal").size : 0).toBe(0);
+  });
+
+  // The task that closes what script of a disposed graph opens runs after the realm that made the
+  // graph is gone.
+  it("a Database that script of a disposed graph opens does not crash once the graph's realm is collected", async () => {
+    const src = /* js */ `
+      const holder = {};
+      (() => {
+        holder.open = new ShadowRealm().evaluate(\`
+          const { Database } = process.getBuiltinModule("bun:sqlite");
+          const { AsyncLocalStorage } = process.getBuiltinModule("node:async_hooks");
+          const graph = new Bun.ModuleGraph();
+          const inGraph = graph.run(() => AsyncLocalStorage.snapshot());
+          graph.dispose();
+          () => { inGraph(() => { new Database(":memory:"); }); };
+        \`);
+      })();
+      await Bun.sleep(1);
+      holder.open();
+      holder.open = null;
+      Bun.gc(true);
+      await Bun.sleep(1);
+      console.log("ok");
+    `;
+
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
+  });
+});
+
+it("new Database() does not leak the sqlite3 handle when open fails", async () => {
+  using dir = tempDir("sqlite-open-fail", {});
+  const badPath = path.join(String(dir), "nonexistent", "x.sqlite");
+
+  // The error is built from the handle, so it must keep its SQLite code.
+  expect(() => new Database(badPath)).toThrow(expect.objectContaining({ code: "SQLITE_CANTOPEN" }));
+
+  // Runs 200 failed opens to warm up and then `count` more in a child. Returns the
+  // RSS growth over the `count`, and the bytes that LeakSanitizer reports at exit
+  // (0 on a build without it).
+  async function failedOpens(count) {
+    const src = `
+      import { Database } from "bun:sqlite";
+      const step = () => { try { new Database(${JSON.stringify(badPath)}); } catch {} };
+      for (let i = 0; i < 200; i++) step();
+      Bun.gc(true);
+      const start = process.memoryUsage.rss();
+      for (let i = 0; i < ${count}; i++) step();
+      Bun.gc(true);
+      console.log((process.memoryUsage.rss() - start) / 1024 / 1024);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: {
+        ...bunEnv,
+        // symbolize=0 keeps the child fast. It also turns the LSAN suppressions off.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1", "symbolize=0"].filter(Boolean).join(":"),
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const summary = /SUMMARY: AddressSanitizer: (\d+) byte\(s\) leaked/.exec(stderr);
+    // The child prints the growth last, so a number on stdout means that every open ran.
+    expect({ stdout, stderr, exitCode }).toMatchObject({ stdout: expect.stringMatching(/^-?\d/) });
+    // A leak report makes the child exit with 1.
+    if (!summary) expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    return { rssGrowthMB: parseFloat(stdout), leakedBytes: Number(summary?.[1] ?? 0) };
+  }
+
+  if (isASAN) {
+    // Each handle that is not closed adds about 1400 bytes. The difference of
+    // two runs leaves out what every bun process leaks once.
+    const [none, many] = await Promise.all([failedOpens(0), failedOpens(500)]);
+    expect(many.leakedBytes - none.leakedBytes).toBeLessThan(100_000);
+  } else if (!isDebug) {
+    // 40000 handles that are not closed grow RSS by about 68 MB. With them
+    // closed it grows by less than 10 MB.
+    expect((await failedOpens(40_000)).rssGrowthMB).toBeLessThan(32);
+  }
+});

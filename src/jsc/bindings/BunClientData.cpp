@@ -106,6 +106,8 @@ JSVMClientData::~JSVMClientData()
         client->remove();
         client->willDestroyVM();
     }
+    // Only this VM's cells keep a record alive, and ~VM destroyed them all (Heap::lastChanceToFinalize) before this.
+    ASSERT(m_sqliteDatabases.isEmpty());
 
     m_normalWorld = nullptr;
     if (vmHandle)

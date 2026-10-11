@@ -317,6 +317,7 @@ public:
     Structure* NativePromiseContextStructure() const { return m_NativePromiseContextStructure.getInitializedOnMainThread(this); }
 
     Structure* JSSQLStatementStructure() const { return m_JSSQLStatementStructure.getInitializedOnMainThread(this); }
+    Structure* JSSQLDatabaseStructure() const { return m_JSSQLDatabaseStructure.getInitializedOnMainThread(this); }
 
     v8::shim::GlobalInternals* V8GlobalInternals() const { return m_V8GlobalInternals.getInitializedOnMainThread(this); }
 
@@ -673,6 +674,7 @@ public:
     V(private, LazyPropertyOfGlobalObject<Structure>, m_NativePromiseContextStructure)                       \
                                                                                                              \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSSQLStatementStructure)                             \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSSQLDatabaseStructure)                              \
     V(private, LazyPropertyOfGlobalObject<v8::shim::GlobalInternals>, m_V8GlobalInternals)                   \
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_bunObject)                                             \

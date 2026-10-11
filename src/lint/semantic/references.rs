@@ -129,6 +129,7 @@ fn sort_what_is_nearly_in_order(numbers: &mut [u64]) {
             return numbers.sort();
         }
     }
+    debug_assert!(numbers.is_sorted());
 }
 
 struct Collector<'f, 'a> {
@@ -952,6 +953,13 @@ impl<'f> Collector<'f, '_> {
             true => self.file.exprs_of(hir::ExprTag::Ident),
             false => &not_grouped[..],
         };
+        debug_assert!(
+            !is_grouped
+                || (identifiers.iter().copied()).eq((0u32..)
+                    .zip(kinds)
+                    .filter(|it| *it.1 == IDENT)
+                    .map(|it| it.0))
+        );
         // `false`: the expression at `i` is an identifier that is before the last one.
         let take = |i: usize| {
             let (Some(e), Some(parent)) = (exprs.get(i), parents.get(i)) else {

@@ -192,6 +192,13 @@ impl<'a> File<'a> {
                 name(key.inner_span(self), owner);
             }
         };
+        // For assertions: what `key` passes on and `name` takes.
+        let is_string = |key: Option<Key<'a>>| {
+            key.is_some_and(|key| {
+                matches!(key.kind(), KeyKind::String(_) | KeyKind::ComputedString(_))
+                    && self.is_quote_at(key.inner_span(self).start)
+            })
+        };
         let attributes = |attributes: Option<ImportAttributes<'a>>,
                           owner: Node<'a>,
                           name: &mut dyn FnMut(Span, Node<'a>)| {
@@ -233,6 +240,8 @@ impl<'a> File<'a> {
                 .is_some_and(|raw| self.can_be_string_key(raw.name_kind, raw.pos))
             {
                 key(it.key(), Node::Prop(it), &mut name);
+            } else {
+                debug_assert!(!is_string(it.key()));
             }
         });
         self.every_member(|it| {
@@ -240,6 +249,10 @@ impl<'a> File<'a> {
                 raw.flags.contains(Flags::STRING_NAME) || self.is_quote_at(raw.name_pos)
             });
             if !can_be_string {
+                debug_assert!(match it.constructor_keyword() {
+                    Some(constructor) => !self.is_quote_at(constructor.span().start),
+                    None => !is_string(it.key()),
+                });
                 return;
             }
             match it.constructor_keyword() {
@@ -252,6 +265,8 @@ impl<'a> File<'a> {
                 .is_some_and(|raw| self.can_be_string_key(raw.name_kind, raw.pos))
             {
                 key(it.key(), Node::EnumMember(it), &mut name);
+            } else {
+                debug_assert!(!is_string(it.key()));
             }
         });
         if !self.pats_of(PatTag::Object).is_empty() {
@@ -260,12 +275,16 @@ impl<'a> File<'a> {
                     .is_some_and(|raw| self.can_be_string_key(raw.name_kind, raw.key_pos))
                 {
                     key(it.key(), Node::PatProp(it), &mut name);
+                } else {
+                    debug_assert!(!is_string(it.key()));
                 }
             });
         }
         self.every_import_spec(|it| {
             if it.imported().is_string() {
                 name(it.imported().span(), Node::ImportSpec(it));
+            } else {
+                debug_assert!(!self.is_quote_at(it.imported().span().start));
             }
         });
         self.every_export_spec(|it| {
@@ -273,6 +292,8 @@ impl<'a> File<'a> {
             for written in [it.local(), it.exported()] {
                 if written.is_string() {
                     name(written.span(), Node::ExportSpec(it));
+                } else {
+                    debug_assert!(!self.is_quote_at(written.span().start));
                 }
             }
         });
@@ -286,6 +307,12 @@ impl<'a> File<'a> {
 
     fn find_number_literals(&'a self, mut visit: impl FnMut(Literal<'a>)) {
         let hir = &self.hir;
+        // For assertions.
+        let is_number = |key: Option<Key<'a>>| {
+            key.is_some_and(|key| {
+                matches!(key.kind(), KeyKind::Number(_) | KeyKind::ComputedNumber(_))
+            })
+        };
         let mut key = |key: Option<Key<'a>>, owner: Node<'a>| {
             if let Some(key) = key
                 && matches!(key.kind(), KeyKind::Number(_) | KeyKind::ComputedNumber(_))
@@ -301,6 +328,8 @@ impl<'a> File<'a> {
                 .is_some_and(|raw| self.can_be_number_key(raw.name_kind, raw.pos))
             {
                 key(it.key(), Node::Prop(it));
+            } else {
+                debug_assert!(!is_number(it.key()));
             }
         });
         self.every_member(|it| {
@@ -310,6 +339,8 @@ impl<'a> File<'a> {
                     || self.is_digit_at(raw.name_pos)
             }) {
                 key(it.key(), Node::Member(it));
+            } else {
+                debug_assert!(!is_number(it.key()));
             }
         });
         self.every_enum_member(|it| {
@@ -317,6 +348,8 @@ impl<'a> File<'a> {
                 .is_some_and(|raw| self.can_be_number_key(raw.name_kind, raw.pos))
             {
                 key(it.key(), Node::EnumMember(it));
+            } else {
+                debug_assert!(!is_number(it.key()));
             }
         });
         if !self.pats_of(PatTag::Object).is_empty() {
@@ -325,6 +358,8 @@ impl<'a> File<'a> {
                     .is_some_and(|raw| self.can_be_number_key(raw.name_kind, raw.key_pos))
                 {
                     key(it.key(), Node::PatProp(it));
+                } else {
+                    debug_assert!(!is_number(it.key()));
                 }
             });
         }

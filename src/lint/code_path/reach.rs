@@ -229,6 +229,12 @@ impl<'a> Quick<'_, 'a> {
     fn statements(&mut self, statements: List<'a, Stmt<'a>>) {
         match statements.listed_ids() {
             Some(ids) => {
+                debug_assert!(
+                    statements
+                        .iter()
+                        .map(|it| it.id().0)
+                        .eq(ids.iter().copied())
+                );
                 (ids.iter()).for_each(|&id| self.statement_of_list(Stmt::from_raw(self.file, id)))
             }
             None => (statements.iter()).for_each(|stmt| self.statement_of_list(stmt)),

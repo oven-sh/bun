@@ -3,7 +3,7 @@ use bun_io::Write;
 use bun_semver as semver;
 
 use crate::lockfile_real::package::PackageColumns as _;
-use crate::package_manager_real::TrackInstalledBin;
+use crate::package_manager_real::{PackageUpdateInfo, TrackInstalledBin};
 use bun_core::fmt::{PathSep, escape_control_chars};
 use bun_install::lockfile::{Printer, package::Meta as PackageMeta};
 use bun_install::{
@@ -267,10 +267,8 @@ fn should_print_package_install(
     let resolution = this.lockfile.packages.items_resolution()[package_id as usize];
     if resolution.tag == resolution::Tag::Npm {
         let npm_version = resolution.npm().version;
-        let name = dependency
-            .name
-            .slice(this.lockfile.buffers.string_bytes.as_slice());
-        if let Some(entry) = manager.updating_packages.get(name) {
+        let string_buf = this.lockfile.buffers.string_bytes.as_slice();
+        if let Some(entry) = update_info_of(manager, dependency, string_buf) {
             if let Some(original_version) = entry.original_version {
                 if !original_version.eql(npm_version) {
                     return ShouldPrintPackageInstallResult::Update(Box::new(
@@ -291,6 +289,37 @@ fn should_print_package_install(
     }
 
     ShouldPrintPackageInstallResult::Yes
+}
+
+/// The original of a `catalog:` row whose entry `record_catalog_originals` recorded.
+fn catalog_update_info<'a>(
+    manager: &'a PackageManager,
+    dependency: &Dependency,
+    string_buf: &[u8],
+) -> Option<&'a PackageUpdateInfo> {
+    if dependency.version.tag != DependencyVersionTag::Catalog
+        || manager.updating_packages.is_empty()
+    {
+        return None;
+    }
+    manager
+        .updating_packages
+        .get(&PackageUpdateInfo::catalog_row_key(
+            dependency.name.slice(string_buf),
+            dependency.version.catalog().slice(string_buf),
+        ))
+}
+
+fn update_info_of<'a>(
+    manager: &'a PackageManager,
+    dependency: &Dependency,
+    string_buf: &[u8],
+) -> Option<&'a PackageUpdateInfo> {
+    catalog_update_info(manager, dependency, string_buf).or_else(|| {
+        manager
+            .updating_packages
+            .get(dependency.name.slice(string_buf))
+    })
 }
 
 fn print_updated_package<W>(
@@ -315,7 +344,7 @@ where
         packages_slice.items_name_hash()[package_id],
         &update_info.resolution,
     )?;
-    let Some(entry) = manager.updating_packages.get(dep_name) else {
+    let Some(entry) = update_info_of(manager, dependency, string_buf) else {
         return Ok(());
     };
     write_updated_row(
@@ -406,10 +435,7 @@ where
     let dependencies = this.lockfile.buffers.dependencies.as_slice();
     let mut printed = false;
     for (dep_id, dep) in dependencies.iter().enumerate() {
-        if dep.version.tag != DependencyVersionTag::Catalog
-            || !(manager.updating_packages.get(dep.name.slice(string_buf)))
-                .is_some_and(|info| info.catalog_entry)
-        {
+        if catalog_update_info(manager, dep, string_buf).is_none() {
             continue;
         }
         let dep_id = dep_id as DependencyID;
@@ -427,7 +453,7 @@ where
     Ok(printed)
 }
 
-/// Packages registered by the transitive half of `bun update` are not rows of the walked workspaces, so the walk above never reaches them; the walked workspaces' own targets stay with them.
+/// Packages registered by the transitive half of `bun update` are not rows of the walked workspaces, so the walk above never reaches them; the walked workspaces' own targets and those of the recorded `catalog:` rows stay with them.
 fn print_transitive_updates<W>(
     this: &Printer,
     manager: &mut PackageManager,
@@ -461,6 +487,14 @@ where
             if (package_id as usize) < pkg_resolutions.len() {
                 workspace_targets.set(package_id as usize);
             }
+        }
+    }
+    let rows = lockfile.buffers.dependencies.iter();
+    for (dep, &package_id) in rows.zip(lockfile.buffers.resolutions.iter()) {
+        if (package_id as usize) < pkg_resolutions.len()
+            && catalog_update_info(manager, dep, string_buf).is_some()
+        {
+            workspace_targets.set(package_id as usize);
         }
     }
 

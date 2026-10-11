@@ -963,23 +963,24 @@ fn registry_get(
     }
 
     let mut response_buf = MutableString::init(64 * 1024)?;
-    let http_proxy = pm.http_proxy(&url);
     let display_url = url.href.to_vec();
-    let mut req = http::AsyncHTTP::init_sync(
+    let mut req = pm.registry_request(
         http::Method::GET,
         url,
         headers.entries,
         headers.content.written_slice(),
         b"",
-        http_proxy,
-        http::FetchRedirect::Follow,
     );
-    req.client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
     let res = match req.send_sync(&mut response_buf) {
         Ok(r) => r,
         Err(err) => {
             Status::clear();
-            Output::err(err, "GET {} failed", (BStr::new(&display_url),));
+            let url = bun_core::fmt::redacted_npm_url(&display_url);
+            Output::err(
+                err,
+                "GET {} failed",
+                (bun_core::fmt::EscapeControlChars(url),),
+            );
             Global::exit(1);
         }
     };

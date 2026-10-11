@@ -798,7 +798,7 @@ pub(crate) fn steer_used_catalogs_to_latest(
     Ok(())
 }
 
-/// Runs on the loaded lockfile, before the differ: every `catalog:` row of an entry recorded by `record_catalog_entries` registers its name in `updating_packages` with the row's locked version as the original, the way the cwd's own dependency lists register theirs, so the install summary prints the entry's move as an update row; a name those lists already registered keeps their original.
+/// Runs on the loaded lockfile, before the differ: every `catalog:` row of an entry recorded by `record_catalog_entries` is registered in `updating_packages` under its `catalog_row_key` with the row's locked version as the original, the way the cwd's own dependency lists register their names, so the install summary prints the entry's move as an update row.
 pub(crate) fn record_catalog_originals(
     manager: &mut PackageManager,
 ) -> Result<(), bun_alloc::AllocError> {
@@ -830,15 +830,13 @@ pub(crate) fn record_catalog_originals(
         else {
             continue;
         };
-        let entry = updating_packages.get_or_put(dep_name)?;
+        let key = PackageUpdateInfo::catalog_row_key(dep_name, catalog_name);
+        let entry = updating_packages.get_or_put(&key)?;
         if entry.found_existing {
             continue;
         }
         *entry.value_ptr = PackageUpdateInfo {
             original_version_literal: info.original_version_literal.clone(),
-            // The entry is written by `edit_catalogs_after_update`; `edit_update_entries` has nothing of it to write into the cwd's dependency lists.
-            written_back: true,
-            catalog_entry: true,
             ..Default::default()
         };
         entry
@@ -1121,7 +1119,9 @@ pub(crate) fn edit(
         }) {
             Output::err_generic(
                 "--latest cannot be combined with a version: {}\n",
-                (bstr::BStr::new(request.version_buf()),),
+                (bun_core::fmt::for_terminal(bstr::BStr::new(
+                    request.version_buf(),
+                )),),
             );
             Global::crash();
         }

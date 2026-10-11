@@ -5,11 +5,24 @@ use bun_sys::{self, Errno, Fd, FdDirExt, FdExt};
 pub(crate) struct Symlinker {
     pub(crate) dest: bun_paths::Path,
     pub(crate) target: bun_paths::RelPath,
+    /// The directories of `dest` after `dest[..real_len]` are the linker's own and were there
+    /// before this run: `prune::remove_planted_links` looks at them before anything is written.
+    pub(crate) real_len: usize,
     #[cfg(windows)]
     pub(crate) fallback_junction_target: bun_paths::AbsPath,
 }
 
 impl Symlinker {
+    /// True if it looked at a directory, which may be gone now.
+    fn remove_planted_parents(&mut self) -> bun_sys::Result<bool> {
+        let Some(parent) = self.dest.dirname().filter(|dir| dir.len() > self.real_len) else {
+            return Ok(false);
+        };
+        crate::prune::remove_planted_links(parent, self.real_len)?;
+        self.real_len = parent.len();
+        Ok(true)
+    }
+
     // `&mut self` because `Path::slice_z()` writes
     // the trailing NUL into its pooled buffer and so requires `&mut`.
     pub(crate) fn symlink(&mut self) -> bun_sys::Result<()> {
@@ -35,6 +48,7 @@ impl Symlinker {
     pub(crate) fn ensure_symlink(&mut self, strategy: Strategy) -> bun_sys::Result<bool> {
         match strategy {
             Strategy::ExpectMissing => {
+                self.remove_planted_parents()?;
                 return match self.symlink() {
                     Ok(()) => Ok(true),
                     Err(symlink_err1) => match symlink_err1.get_errno() {
@@ -60,6 +74,9 @@ impl Symlinker {
                     match bun_sys::readlink(self.dest.slice_z(), &mut current_link_buf) {
                         Ok(len) => len,
                         Err(readlink_err) => {
+                            if self.remove_planted_parents()? {
+                                return self.ensure_symlink(strategy);
+                            }
                             return match readlink_err.get_errno() {
                                 Errno::ENOENT => {
                                     let mut linked = self.symlink();
@@ -111,7 +128,14 @@ impl Symlinker {
                     {
                         return Ok(false);
                     }
+                }
 
+                if self.remove_planted_parents()? {
+                    return self.ensure_symlink(strategy);
+                }
+
+                #[cfg(windows)]
+                {
                     // this existing link is pointing to the wrong package.
                     // on windows rmdir must be used for symlinks created to point
                     // at directories, even if the target no longer exists

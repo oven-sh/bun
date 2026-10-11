@@ -474,14 +474,11 @@ impl PublishCommand {
                 }
             };
 
-        // CI sets it for every npm client in the job, so unlike the flag it does not stop the publish.
         const PROVENANCE_KEYS: [&[u8]; 2] = [b"NPM_CONFIG_PROVENANCE", b"npm_config_provenance"];
         if PROVENANCE_KEYS.iter().any(|key| {
             (manager.env_mut().get(key)).is_some_and(|value| !value.is_empty() && value != b"false")
         }) {
-            bun_core::warn!(
-                "NPM_CONFIG_PROVENANCE is ignored: bun publish cannot generate provenance statements",
-            );
+            Self::refuse_provenance("NPM_CONFIG_PROVENANCE");
         }
 
         if cli.positionals.len() > 1 {
@@ -832,17 +829,13 @@ impl PublishCommand {
             headers.append(b"authorization", authorization);
         }
 
-        let http_proxy = manager.http_proxy(&package_url);
-        let mut req = http::AsyncHTTP::init_sync(
+        let mut req = manager.registry_request(
             http::Method::GET,
             package_url,
             headers.entries,
             headers.content.written_slice(),
             b"",
-            http_proxy,
-            http::FetchRedirect::Follow,
         );
-        req.client.flags.reject_unauthorized = manager.tls_reject_unauthorized();
 
         let Ok(res) = req.send_sync(&mut response_buf) else {
             return false;
@@ -962,19 +955,14 @@ impl PublishCommand {
         // arena so the URL outlives `print_buf.clear()` below.
         let publish_url = URL::parse(crate::cli::cli_dupe(&print_buf));
         print_buf.clear();
-        let http_proxy = manager.http_proxy(&publish_url);
-        let reject_unauthorized = manager.tls_reject_unauthorized();
 
-        let mut req = http::AsyncHTTP::init_sync(
+        let mut req = manager.registry_request(
             http::Method::PUT,
             publish_url.clone(),
             publish_headers.entries,
             publish_headers.content.written_slice(),
             publish_req_body,
-            http_proxy.clone(),
-            http::FetchRedirect::Follow,
         );
-        req.client.flags.reject_unauthorized = reject_unauthorized;
 
         let res = match req.send_sync(&mut response_buf) {
             Ok(r) => r,
@@ -1054,16 +1042,13 @@ impl PublishCommand {
 
                 response_buf.reset();
 
-                let mut otp_req = http::AsyncHTTP::init_sync(
+                let mut otp_req = manager.registry_request(
                     http::Method::PUT,
                     publish_url,
                     otp_headers.entries,
                     otp_headers.content.written_slice(),
                     publish_req_body,
-                    http_proxy,
-                    http::FetchRedirect::Follow,
                 );
-                otp_req.client.flags.reject_unauthorized = reject_unauthorized;
 
                 let otp_res = match otp_req.send_sync(&mut response_buf) {
                     Ok(r) => r,
@@ -1279,25 +1264,19 @@ impl PublishCommand {
                     Self::is_workspace_publish(manager),
                     manager.options.publish_config.auth_type,
                 )?;
-                let reject_unauthorized = manager.tls_reject_unauthorized();
-
-                let http_proxy = manager.http_proxy(&done_url);
 
                 loop {
                     response_buf.reset();
 
-                    // Note: `done_url`/`auth_headers.entries`/`http_proxy` move
-                    // into `init_sync`, so re-clone per iteration.
-                    let mut req = http::AsyncHTTP::init_sync(
+                    // Note: `done_url`/`auth_headers.entries` move into the
+                    // request, so re-clone per iteration.
+                    let mut req = manager.registry_request(
                         http::Method::GET,
                         done_url.clone(),
                         auth_headers.entries.clone()?,
                         auth_headers.content.written_slice(),
                         b"",
-                        http_proxy.clone(),
-                        http::FetchRedirect::Follow,
                     );
-                    req.client.flags.reject_unauthorized = reject_unauthorized;
 
                     let res = match req.send_sync(response_buf) {
                         Ok(r) => r,
@@ -1651,6 +1630,7 @@ impl PublishCommand {
         }
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let mut path_spill: Vec<u8> = Vec::new();
+        let use_directories_bin = pack::non_empty_bin(json).is_none();
         if let Some(bin_query) = json.as_property(b"bin") {
             match &bin_query.expr.data {
                 ExprData::EString(bin_str) => {
@@ -1766,7 +1746,10 @@ impl PublishCommand {
                 }
                 _ => {}
             }
-        } else if let Some(directories_query) = json.as_property(b"directories") {
+        }
+
+        // An empty "bin" is `{}` by now. The listing replaces it.
+        if use_directories_bin && let Some(directories_query) = json.as_property(b"directories") {
             if let Some(bin_query) = directories_query.expr.as_property(b"bin") {
                 let Some(bin_dir_str) = bin_query.expr.as_string(bump) else {
                     return Ok(());

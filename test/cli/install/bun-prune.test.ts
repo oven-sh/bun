@@ -3794,9 +3794,8 @@ test.concurrent("hoisted: a nested copy of a link: dependency is removed when th
   expect(await file(join(dir, "linked", "package.json")).json()).toStrictEqual({ name: "linked", version: "1.0.0" });
 });
 
-// Behind a workspace's `node_modules` that is a link are entries the workspace does not own (the root's, for one),
-// and an install writes the workspace's own entries through the link into a folder that another importer is pruned
-// by. So a project with such a link is not pruned at all.
+// Behind a workspace's `node_modules` that is a link are entries the workspace does not own (the root's, for one).
+// So a project with such a link is not pruned at all. An install puts a directory in the place of the link.
 const REFUSED = (...folders: string[]) =>
   [
     ...folders.map(folder => `error: ${folder} is a symlink, so nothing was pruned`),
@@ -3832,44 +3831,36 @@ const linkedWorkspaceCases: [string, (dir: string, elsewhere: string) => string]
 
 for (const linker of linkers) {
   for (const [name, target] of linkedWorkspaceCases) {
-    for (const [after, reinstall] of [
-      ["", false],
-      [", also after an install wrote through it", true],
-    ] as const) {
-      // The hoisted linker puts a directory in the place of the link before it writes there.
-      if (reinstall && linker === "hoisted") continue;
-      const title = `${linker}: nothing is pruned when a workspace node_modules is a link to ${name}${after}`;
-      test.concurrent(title, async () => {
-        const dir = await setupWorkspaces(linker, {
-          root: { dependencies: { "no-deps": "1.0.0", "what-bin": "1.0.0", "@types/is-number": "1.0.0" } },
-          packages: {
-            a: { dependencies: { "what-bin": "1.5.0" }, devDependencies: { "a-dep": "1.0.1" } },
-            b: { dependencies: { "no-deps": "2.0.0" } },
-          },
-        });
-        using elsewhere = tempDir("prune-elsewhere", {
-          "first/package.json": JSON.stringify({ name: "first" }),
-          "second/index.js": "",
-        });
-        const workspaceModules = join(dir, "packages", "a", "node_modules");
-        rmSync(workspaceModules, { recursive: true, force: true });
-        symlinkSync(target(dir, String(elsewhere)), workspaceModules, "junction");
-        if (reinstall) await install(dir, "--linker", linker);
-        plant(dir, "node_modules/stray-root");
-        plant(dir, "node_modules/@types/stray-scoped");
-        plant(dir, "node_modules/no-deps/node_modules/stray-nested");
-        plant(dir, "packages/b/node_modules/stray-b");
-        const before = { project: listing(dir), elsewhere: listing(String(elsewhere)) };
-
-        for (const flags of [["--dry-run"], ["--check"], ["--production"], []]) {
-          const { stdout, stderr, exitCode } = await prune(dir, "--linker", linker, ...flags);
-          expect(out(stderr)).toBe(REFUSED("packages/a/node_modules"));
-          expect(out(stdout)).toBe(BANNER);
-          expect({ project: listing(dir), elsewhere: listing(String(elsewhere)) }).toEqual(before);
-          expect(exitCode).toBe(1);
-        }
+    const title = `${linker}: nothing is pruned when a workspace node_modules is a link to ${name}`;
+    test.concurrent(title, async () => {
+      const dir = await setupWorkspaces(linker, {
+        root: { dependencies: { "no-deps": "1.0.0", "what-bin": "1.0.0", "@types/is-number": "1.0.0" } },
+        packages: {
+          a: { dependencies: { "what-bin": "1.5.0" }, devDependencies: { "a-dep": "1.0.1" } },
+          b: { dependencies: { "no-deps": "2.0.0" } },
+        },
       });
-    }
+      using elsewhere = tempDir("prune-elsewhere", {
+        "first/package.json": JSON.stringify({ name: "first" }),
+        "second/index.js": "",
+      });
+      const workspaceModules = join(dir, "packages", "a", "node_modules");
+      rmSync(workspaceModules, { recursive: true, force: true });
+      symlinkSync(target(dir, String(elsewhere)), workspaceModules, "junction");
+      plant(dir, "node_modules/stray-root");
+      plant(dir, "node_modules/@types/stray-scoped");
+      plant(dir, "node_modules/no-deps/node_modules/stray-nested");
+      plant(dir, "packages/b/node_modules/stray-b");
+      const before = { project: listing(dir), elsewhere: listing(String(elsewhere)) };
+
+      for (const flags of [["--dry-run"], ["--check"], ["--production"], []]) {
+        const { stdout, stderr, exitCode } = await prune(dir, "--linker", linker, ...flags);
+        expect(out(stderr)).toBe(REFUSED("packages/a/node_modules"));
+        expect(out(stdout)).toBe(BANNER);
+        expect({ project: listing(dir), elsewhere: listing(String(elsewhere)) }).toEqual(before);
+        expect(exitCode).toBe(1);
+      }
+    });
   }
 }
 

@@ -1905,27 +1905,10 @@ mod posix_impl {
             Ok(Fd::from_native(rc))
         }
     }
-    /// Android's app seccomp policy answers `openat2(2)`/`fchmodat2(2)` with SIGSYS, not ENOSYS,
-    /// so they must not even be probed there; the linux build runs under Termux, hence at runtime.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    fn is_android_kernel() -> bool {
-        static CACHED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-        *CACHED.get_or_init(|| {
-            let release = bun_core::ffi::c_field_bytes(&bun_core::ffi::cached_uname().release);
-            cfg!(target_os = "android")
-                || bun_core::strings::contains_case_insensitive_ascii(release, b"android")
-                || (bun_core::env_var::ANDROID_ROOT::get_not_empty().is_some()
-                    && bun_core::env_var::ANDROID_DATA::get_not_empty().is_some())
-        })
-    }
-    /// `openat2(RESOLVE_BENEATH)`; ENOSYS on Android (see [`is_android_kernel`]).
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn openat2_beneath(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
         let dir = dir.as_fd();
         let flags = flags | O::CLOEXEC;
-        if is_android_kernel() {
-            return Err(Error::from_code_int(libc::ENOSYS, Tag::open).with_path(path.as_bytes()));
-        }
         super::linux_syscall::openat2_beneath(dir, path, flags, mode)
             .map_err(|e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes()))
     }
@@ -1939,7 +1922,7 @@ mod posix_impl {
 
         let dir = dir.as_fd();
         let flags = flags | O::CLOEXEC;
-        if !UNAVAILABLE.load(Ordering::Relaxed) && !is_android_kernel() {
+        if !UNAVAILABLE.load(Ordering::Relaxed) {
             match super::linux_syscall::openat2_in_root(dir, path, flags, mode) {
                 Ok(fd) => return Ok(fd),
                 Err(e @ (libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG)) => {
@@ -2832,7 +2815,7 @@ mod posix_impl {
         {
             // glibc/musl `fchmodat(.., AT_SYMLINK_NOFOLLOW)` try `fchmodat2(2)` too.
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            if is_android_kernel() {
+            if super::linux_syscall::is_android_kernel() {
                 return lchmod_no_fchmodat2(path, mode);
             }
             const SYS_FCHMODAT2: libc::c_long = 452;

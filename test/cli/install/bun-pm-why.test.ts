@@ -273,7 +273,7 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
       Explain why a package is installed
 
       Arguments:
-        <package>     The package name to explain (supports glob patterns like '@org/*')
+        <package>     The package name or alias to explain (supports glob patterns like '@org/*')
 
       Options:
         --top         Show only the top dependency tree instead of nested ones

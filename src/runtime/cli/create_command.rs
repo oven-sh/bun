@@ -275,11 +275,50 @@ fn destination_is_inside_template(
     }
 }
 
-/// The template's files that `destination` already has, relative to it.
+/// A component of `path` is a link in `destination`, so what is written there lands wherever the
+/// link leads. `overwrite` removes the link instead.
+fn leaves_destination(destination: &[u8], path: &[u8], overwrite: bool) -> bun_sys::Result<bool> {
+    use bun_sys::FileKind;
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let mut end = 0;
+    while end < path.len() {
+        end = strings::index_of_char_usize(&path[end + 1..], bun_paths::SEP)
+            .map_or(path.len(), |i| end + 1 + i);
+        let Some(component) = bun_paths::resolve_path::join_abs_string_buf_z_checked::<
+            bun_paths::platform::Auto,
+        >(destination, &mut buf[..], &[&path[..end]]) else {
+            return Err(bun_sys::Error::from_code(
+                bun_sys::E::ENAMETOOLONG,
+                bun_sys::Tag::lstat,
+            ));
+        };
+        match bun_sys::lstat(component) {
+            Ok(stat) => match bun_sys::kind_from_mode(stat.st_mode as _) {
+                FileKind::Directory => {}
+                FileKind::SymLink if overwrite => {
+                    let removed = bun_sys::unlink(component);
+                    #[cfg(windows)]
+                    let removed = removed.or_else(|_| bun_sys::rmdir(component));
+                    return removed.map(|()| false);
+                }
+                kind => return Ok(kind == FileKind::SymLink),
+            },
+            Err(err) if err.get_errno() == bun_sys::E::ENOENT => return Ok(false),
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(false)
+}
+
+/// The template's files that have something of `destination` in their way, relative to it.
 fn local_template_conflicts(
     abs_template_path: &[u8],
-    destination: &bun_sys::Dir,
+    destination: &[u8],
+    overwrite: bool,
 ) -> crate::Result<Vec<Vec<u8>>> {
+    let Ok(existing) = bun_sys::Dir::open(destination) else {
+        return Ok(Vec::new());
+    };
     let mut walker = bun_sys::walker_skippable::walk_owned(
         bun_sys::Dir::open(abs_template_path)?,
         SKIP_FILES,
@@ -294,8 +333,12 @@ fn local_template_conflicts(
         let path: Vec<u8> = strings::to_utf8_alloc(entry.path);
         #[cfg(not(windows))]
         let path: Vec<u8> = entry.path.as_bytes().to_vec();
-        if !NEVER_CONFLICT.contains(&path.as_slice())
-            && destination.open_file(&path, bun_sys::O::WRONLY, 0).is_ok()
+        if leaves_destination(destination, &path, overwrite)?
+            || (!overwrite
+                && match existing.open_file(&path, bun_sys::O::WRONLY, 0) {
+                    Ok(_) => !NEVER_CONFLICT.contains(&path.as_slice()),
+                    Err(err) => matches!(err.get_errno(), bun_sys::E::EISDIR | bun_sys::E::ENOTDIR),
+                })
         {
             conflicts.push(path);
         }
@@ -561,7 +604,7 @@ impl CreateCommand {
                     overwrite_list: bun_collections::StringArrayHashMap::<()>::default(),
                 };
 
-                if !create_options.overwrite {
+                {
                     // The overwrite list boxes its keys itself, so the appender
                     // only needs to hand back a stable view of the path for that
                     // copy.
@@ -580,15 +623,20 @@ impl CreateCommand {
                         destination,
                         &mut archive_context,
                         &mut OverwriteListAppender { buf: Vec::new() },
+                        &mut |path: &[u8]| {
+                            leaves_destination(destination, path, create_options.overwrite)
+                        },
                     )?;
 
                     for never_conflict_path in NEVER_CONFLICT {
-                        let _ = archive_context
-                            .overwrite_list
-                            .swap_remove(never_conflict_path);
+                        if !leaves_destination(destination, never_conflict_path, false)? {
+                            let _ = archive_context
+                                .overwrite_list
+                                .swap_remove(never_conflict_path);
+                        }
                     }
 
-                    if archive_context.overwrite_list.count() > 0 {
+                    if !create_options.overwrite && archive_context.overwrite_list.count() > 0 {
                         node.end();
                         progress.refresh();
                         exit_with_conflicts(
@@ -658,15 +706,15 @@ impl CreateCommand {
                     Global::exit(1);
                 }
 
-                if !create_options.overwrite
-                    && let Ok(existing) = bun_sys::Dir::open(destination)
-                {
-                    let conflicts = local_template_conflicts(abs_template_path, &existing)?;
-                    if !conflicts.is_empty() {
-                        node.end();
-                        progress.refresh();
-                        exit_with_conflicts(destination, conflicts.iter().map(Vec::as_slice));
-                    }
+                let conflicts = local_template_conflicts(
+                    abs_template_path,
+                    destination,
+                    create_options.overwrite,
+                )?;
+                if !conflicts.is_empty() {
+                    node.end();
+                    progress.refresh();
+                    exit_with_conflicts(destination, conflicts.iter().map(Vec::as_slice));
                 }
 
                 let destination_dir__ = match bun_sys::Fd::cwd().make_open_path(destination) {
@@ -821,27 +869,20 @@ impl CreateCommand {
 
         {
             let parent_dir = bun_sys::Dir::open(destination)?;
-            if !had_gitignore {
-                #[cfg(windows)]
-                {
-                    let _ = parent_dir.copy_file(
-                        b"gitignore",
-                        &parent_dir,
-                        b".gitignore",
-                        Default::default(),
-                    );
-                }
-                #[cfg(not(windows))]
-                {
-                    let _ = bun_sys::linkat(
-                        parent_dir.fd(),
-                        bun_core::zstr!("gitignore"),
-                        parent_dir.fd(),
-                        bun_core::zstr!(".gitignore"),
-                    );
-                }
-
-                let _ = bun_sys::unlinkat(&parent_dir, bun_core::zstr!("gitignore"));
+            if !had_gitignore
+                && let Err(err) = bun_sys::renameat(
+                    &parent_dir,
+                    bun_core::zstr!("gitignore"),
+                    &parent_dir,
+                    bun_core::zstr!(".gitignore"),
+                )
+                && err.get_errno() != bun_sys::E::ENOENT
+            {
+                pretty_errorln!(
+                    "<r><red>{}<r>: renaming gitignore to .gitignore",
+                    bstr::BStr::new(err.name()),
+                );
+                Global::exit(1);
             }
             if !had_npmignore {
                 let _ = bun_sys::unlinkat(&parent_dir, bun_core::zstr!(".npmignore"));
@@ -1191,6 +1232,9 @@ impl CreateCommand {
             // `bun` in a task is this bun, as it is for the install below.
             let path = RunCommand::path_for_run(env_loader, b"", None, destination, true)?;
             env_loader.map.put(b"PATH", &path)?;
+            env_loader
+                .map
+                .put(b"npm_package_name", bun_paths::basename(destination))?;
 
             for task in &preinstall_tasks {
                 exec_task(ctx, task, b"preinstall", destination, env_loader)?;

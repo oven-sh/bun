@@ -937,7 +937,9 @@ fn run_tasks_erased(
                                 &manager.options,
                                 format_args!(
                                     "tarball {}@{}",
-                                    bun_core::fmt::escape_control_chars(extract.name.slice()),
+                                    bun_core::fmt::for_terminal(bstr::BStr::new(
+                                        extract.name.slice()
+                                    )),
                                     bun_core::fmt::for_terminal(extract.resolution.fmt(
                                         &manager.lockfile.buffers.string_bytes,
                                         PathSep::Auto
@@ -952,7 +954,7 @@ fn run_tasks_erased(
                                 bun_ast::Loc::EMPTY,
                                 "{} downloading tarball <b>{}@{}<r>. Retrying {}/{} in {}ms...",
                                 bstr::BStr::new(err.name().as_bytes()),
-                                bun_core::fmt::escape_control_chars(extract.name.slice()),
+                                bun_core::fmt::for_terminal(bstr::BStr::new(extract.name.slice())),
                                 bun_core::fmt::for_terminal(
                                     extract
                                         .resolution
@@ -1003,7 +1005,7 @@ fn run_tasks_erased(
                             bun_ast::Loc::EMPTY,
                             "{} downloading tarball <b>{}@{}<r>",
                             DownloadFailure(err.name(), &task.response),
-                            bun_core::fmt::escape_control_chars(extract.name.slice()),
+                            bun_core::fmt::for_terminal(bstr::BStr::new(extract.name.slice())),
                             bun_core::fmt::for_terminal(
                                 extract
                                     .resolution
@@ -1017,7 +1019,7 @@ fn run_tasks_erased(
                             bun_ast::Loc::EMPTY,
                             "{} downloading tarball <b>{}@{}<r>",
                             DownloadFailure(err.name(), &task.response),
-                            bun_core::fmt::escape_control_chars(extract.name.slice()),
+                            bun_core::fmt::for_terminal(bstr::BStr::new(extract.name.slice())),
                             bun_core::fmt::for_terminal(
                                 extract
                                     .resolution
@@ -1112,7 +1114,7 @@ fn run_tasks_erased(
                     );
                     bun_core::pretty_error!(
                         "<d> Downloaded <r><green>{}<r> tarball\n",
-                        bstr::BStr::new(extract.name.slice()),
+                        bun_core::fmt::for_terminal(bstr::BStr::new(extract.name.slice())),
                     );
                     Output::flush();
                 }
@@ -1309,7 +1311,7 @@ fn run_tasks_erased(
                             bun_ast::Loc::EMPTY,
                             "{} extracting tarball from <b>{}<r>",
                             err.name(),
-                            bstr::BStr::new(alias),
+                            bun_core::fmt::for_terminal(bstr::BStr::new(alias)),
                         );
                     } else {
                         bun_ast::add_warning_pretty!(
@@ -1318,7 +1320,7 @@ fn run_tasks_erased(
                             bun_ast::Loc::EMPTY,
                             "{} extracting tarball from <b>{}<r>",
                             err.name(),
-                            bstr::BStr::new(alias),
+                            bun_core::fmt::for_terminal(bstr::BStr::new(alias)),
                         );
                     }
                     fail_update_requests(manager, task.id, alias, Some(dependency_id));
@@ -1509,7 +1511,7 @@ fn run_tasks_erased(
                             bun_ast::Loc::EMPTY,
                             "{} cloning repository for <b>{}<r>",
                             err.name(),
-                            bstr::BStr::new(name),
+                            bun_core::fmt::for_terminal(bstr::BStr::new(name)),
                         );
                     } else if !cb.is_store_installer {
                         // Also under `--silent`: git's own lines were warnings if the
@@ -1520,7 +1522,7 @@ fn run_tasks_erased(
                             bun_ast::Loc::EMPTY,
                             "{} cloning repository for <b>{}<r>",
                             err.name(),
-                            bstr::BStr::new(name),
+                            bun_core::fmt::for_terminal(bstr::BStr::new(name)),
                         );
                     }
                     continue;
@@ -1635,7 +1637,7 @@ fn run_tasks_erased(
                             format_args!(
                                 "no commit matching \"{}\" found for \"{}\" (but repository exists)",
                                 bun_core::fmt::escape_control_chars(commit.committish.slice()),
-                                bstr::BStr::new(name),
+                                bun_core::fmt::for_terminal(bstr::BStr::new(name)),
                             ),
                         );
                     } else {
@@ -1645,7 +1647,7 @@ fn run_tasks_erased(
                             format_args!(
                                 "no commit matching \"{}\" found for \"{}\" (but repository exists)",
                                 bun_core::fmt::escape_control_chars(commit.committish.slice()),
-                                bstr::BStr::new(name),
+                                bun_core::fmt::for_terminal(bstr::BStr::new(name)),
                             ),
                         );
                     }
@@ -1699,7 +1701,7 @@ fn run_tasks_erased(
                             bun_ast::Loc::EMPTY,
                             "{} checking out repository for <b>{}<r>",
                             err.name(),
-                            bstr::BStr::new(alias.slice()),
+                            bun_core::fmt::for_terminal(bstr::BStr::new(alias.slice())),
                         );
                         let _ = forget_failed_git_task(manager, task.id, alias.slice());
                     }
@@ -2243,7 +2245,7 @@ pub fn generate_network_task_for_tarball<'a>(
                 bun_ast::Loc::EMPTY,
                 format_args!(
                     "--offline: \"{}\" is not in the cache",
-                    bstr::BStr::new(&name)
+                    bun_core::fmt::for_terminal(bstr::BStr::new(&name))
                 ),
             );
         } else {

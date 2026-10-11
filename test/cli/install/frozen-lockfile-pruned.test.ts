@@ -714,6 +714,89 @@ describe.each(linkers)("linker: %s", linker => {
     },
   );
 
+  // electron is on the default trusted list and its preinstall writes preinstall.txt. uses-what-bin is not, and its
+  // install script writes what-bin.txt. The only package.json with a list is the one the pruned checkout lacks, so
+  // what the lockfile recorded keeps the default list off.
+  describe.each(["bun.lock", "bun.lockb"] as const)("trustedDependencies of a missing workspace (%s)", lockfileName => {
+    const hook = { scripts: { postinstall: "echo ok" } };
+    const removeNodeModules = (dir: string) =>
+      Promise.all(
+        [dir, join(dir, "packages", "uses")].map(at => rm(join(at, "node_modules"), { recursive: true, force: true })),
+      );
+
+    async function installThenPrune(root: PackageJson, declares: PackageJson, uses: PackageJson = {}) {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker, saveTextLockfile: lockfileName === "bun.lock" },
+      });
+      await writeTree(packageDir, {
+        root: { name: "mono", workspaces: ["packages/*"], ...root },
+        packages: {
+          "packages/declares": { name: "declares", ...declares },
+          "packages/uses": { name: "uses", dependencies: { electron: "1.0.0", "uses-what-bin": "1.0.0" }, ...uses },
+        },
+      });
+      await install(packageDir, linker);
+      const marker = (name: string, written: string) =>
+        exists(join(dirname(installedPath(packageDir, linker, name, "1.0.0")), written));
+      const ran = async () => ({
+        electron: await marker("electron", "preinstall.txt"),
+        "uses-what-bin": await marker("uses-what-bin", "what-bin.txt"),
+      });
+      const lockfile = () => file(join(packageDir, lockfileName)).bytes();
+      const complete = { ran: await ran(), lockfile: await lockfile() };
+      await rm(join(packageDir, "packages", "declares"), { recursive: true, force: true });
+      return { packageDir, ran, lockfile, complete };
+    }
+
+    test.concurrent.each([
+      { list: [], nodeModules: "absent", diff: "none", complete: [false, false], pruned: [false, false] },
+      { list: [], nodeModules: "intact", diff: "none", complete: [false, false], pruned: [false, false] },
+      // The hook is a diff of its own, so that install takes the other path through the differ's result.
+      { list: [], nodeModules: "absent", diff: "a hook", complete: [false, false], pruned: [false, false] },
+      { list: [], nodeModules: "intact", diff: "a hook", complete: [false, false], pruned: [false, false] },
+      // Recorded and on the default list.
+      { list: ["electron"], nodeModules: "absent", diff: "none", complete: [true, false], pruned: [true, false] },
+      // No package.json on disk vouches for the recorded name, and the default list stays off.
+      { list: ["uses-what-bin"], nodeModules: "absent", diff: "none", complete: [false, true], pruned: [false, false] },
+      { list: ["uses-what-bin"], nodeModules: "intact", diff: "none", complete: [false, true], pruned: [false, true] },
+    ])("$list, node_modules $nodeModules, other diff: $diff", async ({ list, nodeModules, diff, complete, pruned }) => {
+      const project = await installThenPrune({}, { trustedDependencies: list }, diff === "none" ? {} : hook);
+      expect(project.complete.ran).toEqual({ electron: complete[0], "uses-what-bin": complete[1] });
+      if (nodeModules === "absent") await removeNodeModules(project.packageDir);
+
+      await frozen(project.packageDir, linker, [skippedNote("declares")]);
+
+      expect(await exists(installedPath(project.packageDir, linker, "electron", "1.0.0"))).toBeTrue();
+      expect(await project.ran()).toEqual({ electron: pruned[0], "uses-what-bin": pruned[1] });
+      expect(await project.lockfile()).toEqual(project.complete.lockfile);
+    });
+
+    test.concurrent("bun pm untrusted agrees with the install", async () => {
+      const { packageDir } = await installThenPrune({}, { trustedDependencies: [] });
+
+      const { stdout, exitCode } = await spawnBun(packageDir, ["pm", "untrusted"]);
+
+      expect(stdout).toContain("electron @1.0.0");
+      expect(exitCode).toBe(0);
+    });
+
+    // The missing workspace never declared the list that the lockfile still records.
+    test.concurrent("a list deleted from the root's package.json trusts nothing it named", async () => {
+      const project = await installThenPrune({ trustedDependencies: ["uses-what-bin"] }, {});
+      expect(project.complete.ran).toEqual({ electron: false, "uses-what-bin": true });
+      await write(
+        join(project.packageDir, "package.json"),
+        JSON.stringify({ name: "mono", workspaces: ["packages/*"] }),
+      );
+      await removeNodeModules(project.packageDir);
+
+      await frozen(project.packageDir, linker, [skippedNote("declares")]);
+
+      expect(await project.ran()).toEqual({ electron: false, "uses-what-bin": false });
+      expect(await project.lockfile()).toEqual(project.complete.lockfile);
+    });
+  });
+
   // A frozen install never asks the registry for the name of a workspace that bun.lock lists: whoever publishes that
   // name would be installed in its place.
   describe("a range that bun.lock links to a pruned workspace", () => {

@@ -183,10 +183,14 @@ pub fn enqueue_tarball_for_download(
 ) -> Result<(), EnqueueTarballForDownloadError> {
     let task_id = Task::Id::for_tarball(url);
     if this.network_task_has_failed(task_id) {
+        if is_asked_by_linker(&task_context) {
+            report_failed_download_as_required(this, task_id, dependency_id, package_id);
+        }
         return Err(EnqueueTarballForDownloadError::AlreadyFailed);
     }
     if this.options.offline == crate::package_manager_real::options::OfflineMode::Offline {
-        let is_required = is_package_required(this, dependency_id, package_id);
+        let is_required = !is_asked_by_linker(&task_context)
+            && is_package_required(this, dependency_id, package_id);
         let name = this
             .lockfile
             .str(&this.lockfile.packages.get(package_id as usize).name)
@@ -265,7 +269,7 @@ pub enum GitEnqueueResult {
     /// a task was queued (or joined an existing one); completion arrives via the task queue
     Queued,
     /// `--offline` and the repository is not cached: nothing was queued (already reported
-    /// if required); the caller must count the package as failed/skipped itself
+    /// if required, except to a linker); the caller must count the package as failed/skipped itself
     OfflineMiss,
 }
 
@@ -294,7 +298,14 @@ pub fn enqueue_git_for_checkout(
     let is_required = repo_fd.is_some() || is_package_required(this, dependency_id, package_id);
     // --offline: decide before any queue registration, so an optional miss leaves
     // nothing behind and a later required edge still reaches the report
-    if repo_fd.is_none() && offline_git_miss(this, clone_id, alias, is_required) {
+    if repo_fd.is_none()
+        && offline_git_miss(
+            this,
+            clone_id,
+            alias,
+            is_required && !is_asked_by_linker(&task_context),
+        )
+    {
         return GitEnqueueResult::OfflineMiss;
     }
     if !push_task_callback(this, checkout_id, task_context) {
@@ -387,6 +398,117 @@ pub(crate) fn is_package_required(
         })
 }
 
+/// A linker is told of an `--offline` miss and nothing is reported: whether what is below an optional
+/// dependency is needed depends on whether that one is missing too, so `report_offline_misses` judges them together.
+fn is_asked_by_linker(context: &TaskCallbackContext) -> bool {
+    matches!(
+        context,
+        TaskCallbackContext::DependencyInstallContext(_)
+            | TaskCallbackContext::IsolatedPackageInstallContext(_)
+    )
+}
+
+/// The download failed while only optional dependencies had asked for it, which is a warning. The
+/// linker fails the install for a package that another dependency requires: says which, once.
+#[cold]
+fn report_failed_download_as_required(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    dependency_id: DependencyID,
+    package_id: PackageID,
+) {
+    if this.is_network_task_required(task_id)
+        || !is_package_required(this, dependency_id, package_id)
+    {
+        return;
+    }
+    let _ = this.has_created_network_task(task_id, true);
+    if this.options.log_level.is_silent() {
+        return;
+    }
+    let lockfile = &*this.lockfile;
+    let package = lockfile.packages.get(package_id as usize);
+    Output::err_generic(
+        "failed to download <b>{}@{}<r>",
+        (
+            bun_fmt::for_terminal(bstr::BStr::new(lockfile.str(&package.name))),
+            bun_fmt::for_terminal(
+                package
+                    .resolution
+                    .fmt(&lockfile.buffers.string_bytes, bun_fmt::PathSep::Auto),
+            ),
+        ),
+    );
+    Output::flush();
+}
+
+/// `misses` is `Summary::offline_misses` of a linker that installed `roots`. Reports those that the install cannot go
+/// on without and returns how many they are.
+#[cold]
+pub(crate) fn report_offline_misses(
+    this: &PackageManager,
+    misses: &[PackageID],
+    roots: &[PackageID],
+    isolated: bool,
+) -> Result<u32, bun_alloc::AllocError> {
+    if misses.is_empty() {
+        return Ok(0);
+    }
+    let lockfile = &*this.lockfile;
+    let mut missing = bun_collections::DynamicBitSet::init_empty(lockfile.packages.len())?;
+    for &package_id in misses {
+        missing.set(package_id as usize);
+    }
+    // A peer needs the copy the linker serves it, which can be another than it resolved to. One edge has
+    // one package here: what else a peer is served in another place counts as needed.
+    let mut resolutions = lockfile.buffers.resolutions.clone();
+    for (resolved, dependency) in resolutions.iter_mut().zip(&lockfile.buffers.dependencies) {
+        if dependency.behavior.is_peer() {
+            *resolved = invalid_package_id;
+        }
+    }
+    let mut roots = roots.to_vec();
+    let served = if isolated {
+        crate::isolated_install::served_peers(this, lockfile)?
+    } else {
+        crate::lockfile::tree::served_peers(lockfile)
+    };
+    for (dependency_id, package_id) in served {
+        let resolved = &mut resolutions[dependency_id as usize];
+        if *resolved == invalid_package_id {
+            *resolved = package_id;
+        } else {
+            roots.push(package_id);
+        }
+    }
+    let needed = reachable::packages_without(
+        lockfile,
+        &resolutions,
+        &roots,
+        reachable::Options::install(this),
+        &missing,
+    );
+    let mut reported = 0;
+    for &package_id in misses {
+        // once per package
+        if !missing.is_set(package_id as usize) || !needed.is_set(package_id as usize) {
+            continue;
+        }
+        missing.unset(package_id as usize);
+        reported += 1;
+        let name = lockfile.str(&lockfile.packages.items_name()[package_id as usize]);
+        this.log_mut().add_error_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "--offline: \"{}\" is not in the cache",
+                bun_fmt::for_terminal(bstr::BStr::new(name))
+            ),
+        );
+    }
+    Ok(reported)
+}
+
 /// Under `--offline`, an install-phase request for a package that is not in the cache
 /// (these helpers are only reached after the cache lookup missed): report it once if
 /// required, skip if optional, and never register a task nobody will complete.
@@ -408,7 +530,7 @@ fn offline_tarball_miss(
             bun_ast::Loc::EMPTY,
             format_args!(
                 "--offline: \"{}\" is not in the cache",
-                bstr::BStr::new(name)
+                bun_fmt::for_terminal(bstr::BStr::new(name))
             ),
         );
     }
@@ -452,7 +574,7 @@ fn offline_git_miss(
                 bun_ast::Loc::EMPTY,
                 format_args!(
                     "--offline: git repository for \"{}\" is not in the cache",
-                    bstr::BStr::new(name)
+                    bun_fmt::for_terminal(bstr::BStr::new(name))
                 ),
             );
         }
@@ -510,10 +632,14 @@ pub fn enqueue_package_for_download(
 ) -> Result<(), EnqueuePackageForDownloadError> {
     let task_id = Task::Id::for_npm_package(name, version);
     if this.network_task_has_failed(task_id) {
+        if is_asked_by_linker(&task_context) {
+            report_failed_download_as_required(this, task_id, dependency_id, package_id);
+        }
         return Err(EnqueuePackageForDownloadError::AlreadyFailed);
     }
     if this.options.offline == crate::package_manager_real::options::OfflineMode::Offline {
-        let is_required = is_package_required(this, dependency_id, package_id);
+        let is_required = !is_asked_by_linker(&task_context)
+            && is_package_required(this, dependency_id, package_id);
         if offline_tarball_miss(this, task_id, name, is_required) {
             return Err(EnqueuePackageForDownloadError::Offline);
         }
@@ -602,7 +728,22 @@ pub fn enqueue_dependency_to_root(
         break 'brk index;
     } as DependencyID;
 
+    // This manager lives as long as the process, so a lookup that found nothing is not final: a later
+    // turn of the event loop asks the registry again. Within one turn the answer stands, for the
+    // resolver's second pass and for a `try { require() } catch {}` in a loop.
+    let turn = this.event_loop.iteration_number();
+    let manifest_task_id = {
+        let real_name = this.lockfile.buffers.dependencies[dep_id as usize].realname();
+        Task::Id::for_manifest(this.lockfile.str(&real_name))
+    };
+
     if this.lockfile.buffers.resolutions[dep_id as usize] == invalid_package_id {
+        if (this.network_dedupe_map.get(&manifest_task_id))
+            .is_some_and(|entry| entry.missed_in.is_some_and(|missed_in| missed_in != turn))
+        {
+            let _ = this.network_dedupe_map.remove(&manifest_task_id);
+        }
+
         // Copy to the stack: `enqueueDependencyWithMainAndSuccessFn` can call
         // `Lockfile.Package.fromNPM`, which grows `buffers.dependencies` and
         // would invalidate a pointer taken directly into it.
@@ -679,11 +820,10 @@ pub fn enqueue_dependency_to_root(
     };
 
     if resolution_id == invalid_package_id {
-        // This manager lives as long as the process: the next import asks the registry again.
-        let real_name = this.lockfile.buffers.dependencies[dep_id as usize].realname();
-        let task_id = Task::Id::for_manifest(this.lockfile.str(&real_name));
-        let _ = this.network_dedupe_map.remove(&task_id);
-        let _ = this.task_queue.remove(&task_id);
+        if let Some(entry) = this.network_dedupe_map.get_mut(&manifest_task_id) {
+            entry.missed_in = Some(turn);
+        }
+        let _ = this.task_queue.remove(&manifest_task_id);
         return DependencyToEnqueue::NotFound;
     }
 
@@ -1106,7 +1246,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         registry_name.filter(|name| !crate::package_installer::alias_is_safe_install_target(name))
     };
     if let Some(invalid_name) = invalid_name {
-        let name = bun_fmt::escape_control_chars(invalid_name);
+        let name = bun_fmt::for_terminal(bstr::BStr::new(invalid_name));
         if dependency.behavior.is_required() {
             this.log_mut().add_error_fmt(
                 None,
@@ -1225,7 +1365,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 }
                                 return Ok(());
                             } else if err == crate::Error::MissingPackageJSON {
-                                if requires_local_target(this, dependency) {
+                                if requires_local_target(this, id, dependency) {
                                     if version.tag == dependency::version::Tag::Folder {
                                         this.log_mut()
                     .add_error_fmt(
@@ -1279,7 +1419,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     bstr::BStr::new(this.lockfile.str(&result.package.name)),
                                     bun_fmt::escape_control_chars(label),
                                     bstr::BStr::new(this.lockfile.str(&result.package.name)),
-                                    bun_fmt::EscapeControlChars(result.package.resolution.fmt(
+                                    bun_fmt::for_terminal(result.package.resolution.fmt(
                                         this.lockfile.buffers.string_bytes.as_slice(),
                                         bun_fmt::PathSep::Auto
                                     )),
@@ -1824,7 +1964,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             bstr::BStr::new(this.lockfile.str(&result.package.name)),
                             bun_fmt::escape_control_chars(label),
                             bstr::BStr::new(this.lockfile.str(&result.package.name)),
-                            bun_fmt::EscapeControlChars(result.package.resolution.fmt(
+                            bun_fmt::for_terminal(result.package.resolution.fmt(
                                 this.lockfile.buffers.string_bytes.as_slice(),
                                 bun_fmt::PathSep::Auto
                             )),
@@ -1854,9 +1994,9 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     );
                 }
             } else if is_link_path {
-                let is_required = requires_local_target(this, dependency);
+                let is_required = requires_local_target(this, id, dependency);
                 missing_link_directory(this, name, &version, is_required);
-            } else if requires_local_target(this, dependency) {
+            } else if requires_local_target(this, id, dependency) {
                 if dependency_tag == dependency::version::Tag::Workspace {
                     bun_ast::add_error_pretty!(
                         this.log_mut(),
@@ -2110,7 +2250,7 @@ fn reject_local_tarball_of_remote_package(
         notes,
         format_args!(
             "refusing to resolve \"{name}@{literal}\" declared by {declarer_name}@{}: local tarball dependencies are only allowed in the package.json files of this project",
-            bun_fmt::EscapeControlChars(
+            bun_fmt::for_terminal(
                 packages.items_resolution()[declarer as usize].fmt(buf, bun_fmt::PathSep::Posix)
             ),
         ),
@@ -2138,7 +2278,7 @@ fn reject_link_path_of_remote_package(
             format_args!(
                 "refusing to resolve \"{name}@{literal}\" declared by {}@{}: {REASON}",
                 bun_fmt::escape_control_chars(packages.items_name()[declarer as usize].slice(buf)),
-                bun_fmt::EscapeControlChars(
+                bun_fmt::for_terminal(
                     packages.items_resolution()[declarer as usize]
                         .fmt(buf, bun_fmt::PathSep::Posix)
                 ),
@@ -2156,10 +2296,17 @@ fn reject_link_path_of_remote_package(
 /// `verify_resolutions`, not in a group this install omits: one package of a monorepo copied into an
 /// image. bun.lock does not load with such a row (`may_stay_unresolved`), so none is saved.
 #[cold]
-fn requires_local_target(this: &mut PackageManager, dependency: &Dependency) -> bool {
+fn requires_local_target(
+    this: &mut PackageManager,
+    id: DependencyID,
+    dependency: &Dependency,
+) -> bool {
     use package_manager_real::options::Do;
-    // `remote_package_features` only lacks groups that no remote package has.
-    let omitted = !(dependency.behavior).is_enabled(this.options.local_package_features);
+    let declarer = match this.lockfile.get_parent_pkg_of_dependency(id) {
+        Some(declarer) => this.lockfile.packages.items_resolution()[declarer as usize].tag,
+        None => ResolutionTag::Root,
+    };
+    let omitted = !(dependency.behavior).is_enabled(this.options.dependency_features(declarer));
     if omitted && !Lockfile::bun_lock::may_stay_unresolved(dependency) {
         this.options
             .do_
@@ -3780,6 +3927,16 @@ impl PackageManager {
     #[inline]
     pub(crate) fn warn_incorrect_peers(&self, served: &[(DependencyID, PackageID)]) {
         warn_incorrect_peers(self, served)
+    }
+
+    #[inline]
+    pub(crate) fn report_offline_misses(
+        &self,
+        misses: &[PackageID],
+        roots: &[PackageID],
+        isolated: bool,
+    ) -> Result<u32, bun_alloc::AllocError> {
+        report_offline_misses(self, misses, roots, isolated)
     }
 
     #[inline]

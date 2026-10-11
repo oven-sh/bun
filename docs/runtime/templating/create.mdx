@@ -166,7 +166,7 @@ You can define custom templates on your local file system. Put them in one of th
 
 You can also pass the absolute path of a template folder: `bun create /path/to/template mydir`.
 
-Like a remote template, a local template is merged into an existing destination folder. Bun does _not overwrite_ existing files unless you pass `--force`, and never deletes files the template doesn't have.
+Like a remote template, a local template is merged into an existing destination folder. Bun does _not overwrite_ existing files unless you pass `--force`, and never deletes files the template doesn't have. A symlink where the template has a file or a folder counts as an existing file: Bun never writes through it, and `--force` replaces the link itself.
 
 To create a local template, create a directory in `$HOME/.bun-create` named after your template.
 

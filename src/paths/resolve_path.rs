@@ -1407,6 +1407,14 @@ pub fn join_abs_string<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'a 
     PARSER_JOIN_INPUT_BUFFER.with(|b| join_abs_string_buf::<P>(cwd, tl_buf_mut(b), parts))
 }
 
+/// [`join_abs_string`]; `None` when the normalized result does not fit the thread-local buffer.
+pub fn join_abs_string_checked<'a, P: PlatformT>(
+    cwd: &'a [u8],
+    parts: &[&[u8]],
+) -> Option<&'a [u8]> {
+    PARSER_JOIN_INPUT_BUFFER.with(|b| join_abs_string_buf_checked::<P>(cwd, tl_buf_mut(b), parts))
+}
+
 /// [`join_abs_string`] (thread-local buffer) when the result fits, otherwise
 /// into `spill` (grown as needed). `spill` is untouched in the common case.
 pub fn join_abs_string_spill<'a, P: PlatformT>(

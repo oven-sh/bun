@@ -69,6 +69,8 @@ test.each([
   ["https://user:hunter2@host/repo.git", "https://user:*******@host/repo.git"],
   ["git+https://user:hunter2@host/repo.git", "git+https://user:*******@host/repo.git"],
   ["git+ssh://user:hunter2@host:22/repo.git", "git+ssh://user:*******@host:22/repo.git"],
+  // The userinfo ends at the last `@` of the authority.
+  ["https://user:hun@ter2@host/repo.git", "https://user:********@host/repo.git"],
   // scp-like: the `:` after the host is a path separator, not a password.
   ["git+ssh://git@host:org/repo.git", "git+ssh://git@host:org/repo.git"],
   // No scheme, so nothing is treated as a URL.

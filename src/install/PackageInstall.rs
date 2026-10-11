@@ -57,6 +57,9 @@ pub struct Summary {
 
     /// Set when this install replaced the tree of the other linker.
     pub(crate) old_modules: Option<crate::prune::OldModules>,
+
+    /// `--offline`: not in the cache, one per folder. Not in `fail` until `report_offline_misses` has judged them.
+    pub(crate) offline_misses: Vec<PackageID>,
 }
 
 #[repr(u8)]

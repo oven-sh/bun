@@ -374,6 +374,12 @@ pub mod fs {
             join_abs_string::<platform::Loose>(self.top_level_dir, parts)
         }
 
+        /// Returns `None` on overflow.
+        pub(crate) fn abs_checked(&self, parts: &[&[u8]]) -> Option<&[u8]> {
+            use bun_paths::resolve_path::{join_abs_string_checked, platform};
+            join_abs_string_checked::<platform::Loose>(self.top_level_dir, parts)
+        }
+
         /// Like `abs`, but interns the joined path into `DirnameStore` and
         /// returns the `'static` copy.
         pub(crate) fn abs_alloc(

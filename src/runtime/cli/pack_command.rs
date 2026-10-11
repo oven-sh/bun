@@ -1449,7 +1449,7 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
     let mut path_buf = bun_paths::path_buffer_pool::get();
     let mut path_spill: Vec<u8> = Vec::new();
 
-    if let Some(bin) = json.as_property(b"bin") {
+    if let Some(bin) = non_empty_bin(json) {
         if let Some(bin_str) = bin.expr.as_string(pack_bump()) {
             if let Some(subpath) =
                 bin_subpath(bin_str, BinType::File, &mut path_buf, &mut path_spill)
@@ -1463,10 +1463,6 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
         }
 
         if let ExprData::EObject(bin_obj) = &bin.expr.data {
-            if bin_obj.properties.len_u32() == 0 {
-                return Ok(Vec::new());
-            }
-
             for bin_prop in bin_obj.properties.slice() {
                 if let Some(bin_prop_value) = &bin_prop.value {
                     if let Some(bin_str) = bin_prop_value.as_string(pack_bump()) {
@@ -1504,6 +1500,15 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
     }
 
     Ok(bins)
+}
+
+/// Like npm, an empty `"bin"` (`""`, `{}`) counts as absent, so `"directories.bin"` applies.
+pub(crate) fn non_empty_bin(json: &Expr) -> Option<bun_ast::expr::Query> {
+    json.as_property(b"bin").filter(|bin| match &bin.expr.data {
+        ExprData::EString(bin_str) => bin_str.is_present(),
+        ExprData::EObject(bin_obj) => bin_obj.properties.len_u32() != 0,
+        _ => true,
+    })
 }
 
 pub(crate) fn bin_subpath<'a>(

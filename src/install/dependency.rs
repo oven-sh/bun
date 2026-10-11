@@ -1405,7 +1405,7 @@ pub(crate) fn parse_with_tag(
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "invalid or unsupported dependency \"{}\"",
-                            bun_core::fmt::escape_control_chars(dependency)
+                            bun_core::fmt::for_terminal(bstr::BStr::new(dependency))
                         ),
                     );
                 }
@@ -1528,7 +1528,7 @@ pub(crate) fn parse_with_tag(
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "Unsupported protocol {}",
-                            bun_core::fmt::escape_control_chars(dependency)
+                            bun_core::fmt::for_terminal(bstr::BStr::new(dependency))
                         ),
                     );
                 }

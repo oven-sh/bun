@@ -367,7 +367,7 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
             if !folder_name_is_safe(name) {
                 Output::err_generic(
                     "Lockfile is malformed (dependency name \"{}\" is not a valid folder name)",
-                    (bun_core::fmt::escape_control_chars(name),),
+                    (bun_core::fmt::for_terminal(bstr::BStr::new(name)),),
                 );
                 bun_core::Global::crash();
             }
@@ -722,7 +722,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 
         Output::err_generic(
             "dependency cycle cannot be laid out in node_modules: {}",
-            (cycle,),
+            (bun_core::fmt::for_terminal(bstr::BStr::new(&cycle)),),
         );
         bun_core::note!(
             "each of these needs the next one nested inside it, without end. \"overrides\" in package.json can keep a single version of one of them"
@@ -1222,7 +1222,7 @@ impl Tree {
                     {
                         builder.maybe_report_error(format_args!(
                             "Invalid dependency name \"{}\"",
-                            bun_core::fmt::escape_control_chars(dependency_name),
+                            bun_core::fmt::for_terminal(bstr::BStr::new(dependency_name)),
                         ));
                         continue 'dep;
                     }

@@ -159,7 +159,7 @@ fn missing_package_entry(
         bun_ast::Loc::EMPTY,
         format_args!(
             "pnpm-lock.yaml has no package entry '{}' for dependency '{}' of {}",
-            bstr::BStr::new(dep_path),
+            bun_core::fmt::for_terminal(bstr::BStr::new(dep_path)),
             bstr::BStr::new(dep_name),
             parent
         ),
@@ -651,7 +651,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                         format_args!(
                             "pnpm-lock.yaml override '{}' has an invalid value '{}'",
                             bstr::BStr::new(name_str),
-                            bstr::BStr::new(version_str)
+                            bun_core::fmt::for_terminal(bstr::BStr::new(version_str))
                         ),
                     );
                     return Err(invalid_pnpm_lockfile());
@@ -691,7 +691,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                         if !silent {
                             bun_core::warn!(
                                 "skipped patch \"{}\" from pnpm-lock.yaml: not in patchedDependencies of package.json or pnpm-workspace.yaml",
-                                bstr::BStr::new(key_str)
+                                bun_core::fmt::for_terminal(bstr::BStr::new(key_str))
                             );
                         }
                         continue;
@@ -1229,7 +1229,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                             bun_ast::Loc::EMPTY,
                             format_args!(
                                 "pnpm-lock.yaml package '{}' has an unsupported resolution",
-                                bstr::BStr::new(key_str)
+                                bun_core::fmt::for_terminal(bstr::BStr::new(key_str))
                             ),
                         );
                         return Err(invalid_pnpm_lockfile());
@@ -1240,7 +1240,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                             bun_ast::Loc::EMPTY,
                             format_args!(
                                 "pnpm-lock.yaml package '{}' is a git sub-directory dependency (resolution.path), which bun does not support",
-                                bstr::BStr::new(key_str)
+                                bun_core::fmt::for_terminal(bstr::BStr::new(key_str))
                             ),
                         );
                         return Err(invalid_pnpm_lockfile());

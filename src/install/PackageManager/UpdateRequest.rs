@@ -235,23 +235,7 @@ impl UpdateRequest {
                 pm.as_deref_mut(),
             )
             .filter(|_| dependency::nameless_npm_alias(value).is_none()) else {
-                if fatal {
-                    Output::err_generic(
-                        "unrecognised dependency format: {}",
-                        format_args!("{}", bstr::BStr::new(positional)),
-                    );
-                } else {
-                    log.add_error_fmt(
-                        None,
-                        Loc::EMPTY,
-                        format_args!(
-                            "unrecognised dependency format: {}",
-                            bstr::BStr::new(positional)
-                        ),
-                    );
-                }
-
-                return Err(crate::Error::UnrecognizedDependencyFormat);
+                return Err(unrecognised_format(log, positional, fatal));
             };
             // scp-style `user@host:path/repo`, where `user` was split off as the alias
             if alias.is_some_and(|alias| !strings::contains_char(alias, b'/'))
@@ -283,23 +267,7 @@ impl UpdateRequest {
                 dependency::version::Tag::Npm => version.npm().name.eql(placeholder, input, input),
                 _ => false,
             } {
-                if fatal {
-                    Output::err_generic(
-                        "unrecognised dependency format: {}",
-                        format_args!("{}", bstr::BStr::new(positional)),
-                    );
-                } else {
-                    log.add_error_fmt(
-                        None,
-                        Loc::EMPTY,
-                        format_args!(
-                            "unrecognised dependency format: {}",
-                            bstr::BStr::new(positional)
-                        ),
-                    );
-                }
-
-                return Err(crate::Error::UnrecognizedDependencyFormat);
+                return Err(unrecognised_format(log, positional, fatal));
             }
 
             let mut request = UpdateRequest {
@@ -326,6 +294,24 @@ impl UpdateRequest {
 
         Ok(update_requests.as_mut_slice())
     }
+}
+
+#[cold]
+fn unrecognised_format(log: &mut Log, positional: &[u8], fatal: bool) -> crate::Error {
+    let positional = bun_core::fmt::for_terminal(bstr::BStr::new(positional));
+    if fatal {
+        Output::err_generic(
+            "unrecognised dependency format: {}",
+            format_args!("{}", positional),
+        );
+    } else {
+        log.add_error_fmt(
+            None,
+            Loc::EMPTY,
+            format_args!("unrecognised dependency format: {}", positional),
+        );
+    }
+    crate::Error::UnrecognizedDependencyFormat
 }
 
 impl PackageManager {

@@ -4738,6 +4738,19 @@ describe.concurrent("registry credentials from $VAR env references", () => {
     expect(exitCode).not.toBe(0);
   });
 
+  test("a password that only starts with $ is sent as it is and never printed", async () => {
+    const auths: (string | null)[] = [];
+    await using server = authLoggingRegistry(auths);
+    using dir = tempDir(
+      "bunfig-dollar-password",
+      scopeFiles(server.port!, `username = "carol", password = "$ecr3t!x"`, false),
+    );
+    const { stderr, exitCode } = await install(String(dir), {});
+    expect(auths).toEqual(["Basic " + Buffer.from("carol:$ecr3t!x").toString("base64")]);
+    expect(stderr).not.toContain("ecr3t");
+    expect(exitCode).not.toBe(0);
+  });
+
   test("an unset $VAR token falls back to the .npmrc credential", async () => {
     const auths: (string | null)[] = [];
     await using server = authLoggingRegistry(auths);

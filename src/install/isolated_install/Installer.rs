@@ -9,7 +9,7 @@ use bun_core::{Environment, Global, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::{self as paths, AbsPath, AutoAbsPath, AutoRelPath};
 use bun_sys::{self as sys, Fd};
-use bun_threading::{UnboundedQueue, thread_pool};
+use bun_threading::{UnboundedQueue, WaitGroup, thread_pool};
 
 use bun_semver::String as SemverString;
 use bun_sys::{FdDirExt as _, FdExt as _};
@@ -97,6 +97,8 @@ pub struct Installer<'a> {
 
     pub(crate) task_queue: UnboundedQueue<Task>, // intrusive via .next
     pub(crate) tasks: Box<[Task]>,
+    /// The tasks on the thread pool: `start_task` adds one, `Task::task` counts itself out.
+    pub(crate) tasks_in_flight: &'a WaitGroup,
 
     /// Stable Rust has no
     /// generic atomic-enum, so store the `#[repr(u8)]` discriminant and
@@ -135,6 +137,13 @@ pub struct Installer<'a> {
     /// Main-thread only: entries that returned `Result::RunScripts`, in that order. `run_tasks`
     /// spawns them while fewer than `max_concurrent_lifecycle_scripts` scripts run.
     pub(crate) pending_lifecycle_scripts: VecDeque<StoreEntryId>,
+}
+
+/// A task on the pool reads `self` and the store through `Task::installer`.
+impl Drop for Installer<'_> {
+    fn drop(&mut self) {
+        self.tasks_in_flight.wait();
+    }
 }
 
 impl<'a> Installer<'a> {
@@ -180,9 +189,10 @@ impl<'a> Installer<'a> {
         ));
 
         task.result = Result::None;
+        self.tasks_in_flight.add_one();
         manager
             .thread_pool
-            .schedule(thread_pool::Batch::from(&raw mut task.task));
+            .schedule(thread_pool::Batch::from(&raw mut task.task.task));
     }
 
     /// Called from main thread, for an existing project-local store entry.
@@ -386,12 +396,18 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// Main thread: nothing was queued for the entry's package (its download already failed, or
-    /// `--offline` and not cached). Whoever found that out reported it.
+    /// Main thread: nothing was queued for the entry's package. Its download already failed, and
+    /// whoever found that out reported it. Or `--offline` and not cached: `report_offline_misses`
+    /// decides whether that fails the install.
     pub(crate) fn on_download_not_queued(&mut self, entry_id: StoreEntryId) {
         let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
         let dep_id = self.store.nodes.items_dep_id()[node_id.get() as usize];
         let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+        let offline = self.manager().options.offline
+            == crate::package_manager_real::options::OfflineMode::Offline;
+        if offline {
+            self.summary.offline_misses.push(pkg_id);
+        }
         if !self.manager().is_package_required(dep_id, pkg_id) {
             self.leave_out_entry(entry_id);
             return;
@@ -399,7 +415,14 @@ impl<'a> Installer<'a> {
         // .monotonic is okay because the task isn't running on another thread.
         self.store.entries.items_step()[entry_id.get() as usize]
             .store(Step::Done as u32, Ordering::Relaxed);
-        self.on_task_complete(entry_id, CompleteState::Fail);
+        self.on_task_complete(
+            entry_id,
+            if offline {
+                CompleteState::Skipped
+            } else {
+                CompleteState::Fail
+            },
+        );
     }
 
     pub(crate) fn apply_package_patch(
@@ -496,8 +519,10 @@ impl<'a> Installer<'a> {
                         "failed to link binaries of dependency {}@{} for package: {}@{}",
                         (
                             bstr::BStr::new(pkg_names[dep_pkg_id as usize].slice(string_buf)),
-                            pkg_resolutions[dep_pkg_id as usize]
-                                .fmt(string_buf, bun_core::fmt::PathSep::Auto),
+                            bun_core::fmt::for_terminal(
+                                pkg_resolutions[dep_pkg_id as usize]
+                                    .fmt(string_buf, bun_core::fmt::PathSep::Auto),
+                            ),
                             &pkg_name,
                             &pkg_res_fmt,
                         ),
@@ -812,12 +837,53 @@ impl<'a> Installer<'a> {
                     | ResolutionTag::RemoteTarball
                     | ResolutionTag::Folder
             );
-        if is_store_copy {
+        if is_store_copy
+            && self
+                .remove_planted_links_in(entry_id, Self::store_path_len())
+                .is_ok()
+        {
             let mut path = AutoAbsPath::init_top_level_dir();
             self.append_store_path(&mut path, entry_id);
             let _ = Fd::cwd().delete_tree(path.slice());
         }
         is_store_copy
+    }
+
+    /// Of `<project>/node_modules/.bun`, which `install_isolated_packages` looked at.
+    fn store_path_len() -> usize {
+        let mut store = AutoPath::init_top_level_dir();
+        let _ = store.append(NODE_MODULES_BUN.as_bytes());
+        store.len()
+    }
+
+    /// `prune::remove_planted_links` for the directories of a project-local entry that this run
+    /// did not make, before anything in them is written or deleted. `real_len`: how much of the
+    /// entry's path has been looked at.
+    fn remove_planted_links_in(&self, entry_id: StoreEntryId, real_len: usize) -> sys::Result<()> {
+        if self.is_new_bun_modules {
+            return Ok(());
+        }
+        let mut bin = AutoPath::init_top_level_dir();
+        self.append_store_node_modules_path(&mut bin, entry_id);
+        let node_modules_len = bin.len();
+        let _ = bin.append(b".bin");
+        crate::prune::remove_planted_links(bin.slice(), real_len)?;
+
+        let mut package = AutoPath::init_top_level_dir();
+        self.append_store_path(&mut package, entry_id);
+        // A cached package replaces what is at its path. A folder is linked into it.
+        let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
+        let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+        let replaces =
+            self.lockfile().packages.items_resolution()[pkg_id as usize].can_enqueue_install_task();
+        crate::prune::remove_planted_links(
+            if replaces {
+                package.dirname().unwrap_or_default()
+            } else {
+                package.slice()
+            },
+            node_modules_len,
+        )
     }
 
     /// Main thread; a script of `failed` ends the install. An entry that is in place counts as
@@ -991,7 +1057,7 @@ pub struct Task {
     /// any `start_task` call — see `isolated_install.rs`.
     pub(crate) installer: bun_ptr::BackRef<Installer<'static>>,
 
-    pub(crate) task: thread_pool::Task,
+    pub(crate) task: thread_pool::CountedTask,
     pub(crate) next: bun_threading::Link<Task>, // INTRUSIVE: bun.UnboundedQueue(Task, .next) link
 
     pub(crate) result: Result,
@@ -1216,6 +1282,8 @@ impl Task {
         let mut step =
             Step::from_u32(entry_steps[self.entry_id.get() as usize].load(Ordering::Acquire));
         let mut link_in_place = false;
+        // There was no directory of the entry before `Step::LinkPackage`.
+        let mut made_entry = false;
         'step: loop {
             match step {
                 Step::LinkPackage => {
@@ -1240,6 +1308,12 @@ impl Task {
                                 }
                             };
                             let _folder_dir_guard = sys::CloseOnDrop::new(folder_dir);
+
+                            if let Err(err) = installer
+                                .remove_planted_links_in(self.entry_id, Installer::store_path_len())
+                            {
+                                return Ok(Yield::failure(TaskError::LinkPackage(err)));
+                            }
 
                             let mut backend = InstallMethod::Hardlink;
                             'backend: loop {
@@ -1542,7 +1616,13 @@ impl Task {
                             }
                         }
 
+                        made_entry |= is_stale_link != Some(false);
                         if is_stale_link == Some(false) {
+                            if let Err(err) =
+                                installer.remove_planted_links_in(self.entry_id, local.len())
+                            {
+                                return Ok(Yield::failure(TaskError::LinkPackage(err)));
+                            }
                             link_in_place |=
                                 !installer.clear_local_store_package(self.entry_id, staging);
                         }
@@ -1822,10 +1902,11 @@ impl Task {
                         symlinker::Strategy::ExpectMissing
                     };
 
-                    let changed = match installer.symlink_dependencies(self.entry_id, strategy) {
-                        Ok(changed) => changed,
-                        Err(err) => return Ok(Yield::failure(err)),
-                    };
+                    let changed =
+                        match installer.symlink_dependencies(self.entry_id, strategy, made_entry) {
+                            Ok(changed) => changed,
+                            Err(err) => return Ok(Yield::failure(err)),
+                        };
 
                     if relinking {
                         self.relink = changed;
@@ -1874,6 +1955,13 @@ impl Task {
 
                 Step::SymlinkDependencyBinaries => {
                     let current_step = Step::SymlinkDependencyBinaries;
+                    // `Step::LinkPackage` did not run.
+                    if self.relink != Relink::Off
+                        && let Err(err) = installer
+                            .remove_planted_links_in(self.entry_id, Installer::store_path_len())
+                    {
+                        return Ok(Yield::failure(TaskError::Binaries(err.into())));
+                    }
                     if let Err(err) = installer.link_dependency_bins(self.entry_id) {
                         return Ok(Yield::failure(err));
                     }
@@ -2221,10 +2309,10 @@ impl Task {
                         "Blocked {} scripts for: {}@{}\n",
                         list.total,
                         bstr::BStr::new(dep_name),
-                        pkg_res.fmt(
+                        bun_core::fmt::for_terminal(pkg_res.fmt(
                             lockfile.buffers.string_bytes.as_slice(),
                             bun_core::fmt::PathSep::Posix
-                        ),
+                        )),
                     );
                 }
                 list.total
@@ -2488,7 +2576,12 @@ impl<'a> Installer<'a> {
             )
             .as_bytes(),
         );
+        // `install_isolated_packages` looked at it.
+        let mut real_len = hidden_hoisted_node_modules.len();
         let _ = hidden_hoisted_node_modules.append(name); // OOM/capacity: fire-and-forget
+        if self.is_new_bun_modules {
+            real_len = hidden_hoisted_node_modules.len();
+        }
 
         let mut target = AutoRelPath::init();
 
@@ -2512,6 +2605,7 @@ impl<'a> Installer<'a> {
         let mut symlinker = Symlinker {
             dest: hidden_hoisted_node_modules.into_sep::<{ PathSeparators::ANY }>(),
             target: target.into_sep::<{ PathSeparators::ANY }>(),
+            real_len,
             #[cfg(windows)]
             fallback_junction_target: full_target.into_sep::<{ PathSeparators::ANY }>(),
         };
@@ -2586,6 +2680,7 @@ impl<'a> Installer<'a> {
         &self,
         entry_id: StoreEntryId,
         strategy: symlinker::Strategy,
+        made_entry: bool,
     ) -> core::result::Result<Relink, TaskError> {
         let lockfile = self.lockfile();
         let string_buf = lockfile.buffers.string_bytes.as_slice();
@@ -2606,12 +2701,31 @@ impl<'a> Installer<'a> {
         self.append_real_store_node_modules_path(&mut dest, entry_id, Which::Staging);
         let base_len = dest.len();
 
+        // `Symlinker::real_len`. What this run made holds nothing that came with the project; a
+        // first install with `--filter` does not reset the members. The root's own
+        // `node_modules` may be a link. An entry's directory has been looked at, and its
+        // `node_modules` if `Step::LinkPackage` ran.
+        let all_real = made_entry
+            || uses_global_store
+            || (self.is_new_bun_modules && pkg_res.tag != ResolutionTag::Workspace);
+        let mut real_len = match (pkg_res.tag, strategy) {
+            (ResolutionTag::Root, _) | (_, symlinker::Strategy::ExpectMissing) => base_len,
+            _ => base_len - "/node_modules".len(),
+        };
+        let mut real_scope: &[u8] = b"";
+
         let mut changed = Relink::Unchanged;
         for dep in self.store.entries.items_dependencies()[entry_id.get() as usize].slice() {
             let dep_name = dependencies[dep.dep_id as usize].name.slice(string_buf);
 
             dest.set_length(base_len);
             append_dependency_link_name(&mut dest, dep_name, entry_node_modules_name);
+            if real_len > base_len
+                && !(dep_name.starts_with(real_scope)
+                    && dep_name.get(real_scope.len()) == Some(&b'/'))
+            {
+                real_len = base_len;
+            }
 
             let dep_node_id = self.store.entries.items_node_id()[dep.entry_id.get() as usize];
             let dep_pkg_id = self.store.nodes.items_pkg_id()[dep_node_id.get() as usize];
@@ -2656,10 +2770,17 @@ impl<'a> Installer<'a> {
             let mut symlinker = Symlinker {
                 dest: dest.into_sep::<{ PathSeparators::ANY }>(),
                 target: target.into_sep::<{ PathSeparators::ANY }>(),
+                real_len: if all_real { dest_len } else { real_len },
                 #[cfg(windows)]
                 fallback_junction_target: dep_store_path.into_sep::<{ PathSeparators::ANY }>(),
             };
             let result = symlinker.ensure_symlink(strategy);
+            if !all_real && symlinker.real_len != real_len {
+                real_len = symlinker.real_len;
+                real_scope = dep_name
+                    .get(..real_len.saturating_sub(base_len + 1))
+                    .unwrap_or(b"");
+            }
             dest = symlinker.dest.into_sep::<{ PathSeparators::AUTO }>();
             if result.map_err(TaskError::SymlinkDependencies)? {
                 let behavior = dependencies[dep.dep_id as usize].behavior;
@@ -2699,6 +2820,11 @@ impl<'a> Installer<'a> {
                 let mut symlinker = Symlinker {
                     dest: dest.into_sep::<{ PathSeparators::ANY }>(),
                     target: target.into_sep::<{ PathSeparators::ANY }>(),
+                    real_len: if all_real {
+                        dest_len
+                    } else {
+                        real_len.min(base_len)
+                    },
                     #[cfg(windows)]
                     fallback_junction_target: shipped.into_sep::<{ PathSeparators::ANY }>(),
                 };
@@ -2760,8 +2886,12 @@ impl<'a> Installer<'a> {
             for name in self.hidden_hoist_names(entry_id) {
                 let mut hidden = AutoPath::init();
                 let _ = hidden.append_fmt(format_args!("{NODE_MODULES_BUN}/node_modules"));
+                let real_len = hidden.len();
                 let _ = hidden.append(name);
-                let _ = remove_link(hidden.slice_z());
+                let scope = hidden.dirname().unwrap_or_default();
+                if crate::prune::remove_planted_links(scope, real_len).is_ok() {
+                    let _ = remove_link(hidden.slice_z());
+                }
             }
         }
     }
@@ -2835,6 +2965,22 @@ impl<'a> Installer<'a> {
             });
             a.cmp(&b)
         });
+
+        // Also on a run that installs nothing: a wrong entry of `.bin` is deleted and made again.
+        // That of a store entry: `remove_planted_links_in`.
+        if !deps_with_bins.is_empty()
+            && matches!(
+                pkg_resolutions[parent_pkg_id as usize].tag,
+                ResolutionTag::Root | ResolutionTag::Workspace
+            )
+        {
+            let node_modules_len = node_modules_path.len();
+            let _ = node_modules_path.append(b".bin");
+            let looked =
+                crate::prune::remove_planted_link(&sys::Dir::cwd(), node_modules_path.slice_z());
+            node_modules_path.set_length(node_modules_len);
+            looked.map_err(|err| TaskError::Binaries(err.into()))?;
+        }
 
         for dep in deps_with_bins {
             let pkg_id = pkg_id_of(dep.entry_id);

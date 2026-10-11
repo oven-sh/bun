@@ -1051,6 +1051,17 @@ pub(crate) fn build_store(
                             continue;
                         }
 
+                        // A rule chose this peer's package. An alias that holds another package under the name
+                        // does not serve it (`hoist_dependency` has the same test).
+                        if curr_id != node_id
+                            && best_version != invalid_package_id
+                            && pkgs.items_name_hash()[ids.pkg_id as usize]
+                                != pkgs.items_name_hash()[best_version as usize]
+                            && lockfile.is_overridden_dependency(peer_dep_id)
+                        {
+                            break 'resolved_pkg_id (best_version, true);
+                        }
+
                         let res = &pkg_resolutions[ids.pkg_id as usize];
 
                         if peer_dep.version.tag != VersionTag::Npm || res.tag != ResolutionTag::Npm
@@ -2264,6 +2275,21 @@ pub(crate) fn install_isolated_packages(
         let bun_modules_path = paths::path_literal!("node_modules/.bun");
 
         let is_new_node_modules = sys::mkdirat(Fd::cwd(), node_modules_path, 0o755).is_ok();
+        // 'node_modules' itself may be a link. The rest: `Installer::remove_planted_links_in`,
+        // `Symlinker::real_len`.
+        if !is_new_node_modules
+            && let Err(err) = crate::prune::remove_planted_links(
+                paths::path_literal!("node_modules/.bun/node_modules").as_bytes(),
+                node_modules_path.len(),
+            )
+        {
+            Output::err(
+                err,
+                "failed to remove a link at './node_modules/.bun'",
+                format_args!(""),
+            );
+            Global::exit(1);
+        }
         if !is_new_node_modules
             && sys::directory_exists_at(Fd::cwd(), bun_modules_path).unwrap_or(false)
         {
@@ -2368,6 +2394,8 @@ pub(crate) fn install_isolated_packages(
         // TODO: delete
         let mut seen_workspace_ids: HashMap<PackageID, ()> = HashMap::default();
 
+        let tasks_in_flight = bun_threading::WaitGroup::init();
+
         // `installer::Task` carries `result: Result` (Drop via `TaskError`
         // payloads) and a non-nullable fn-ptr in `thread_pool::Task`, so
         // `assume_init()` on uninit memory is instant UB and a subsequent
@@ -2388,10 +2416,10 @@ pub(crate) fn install_isolated_packages(
                     relink: installer::Relink::Off,
                     newly_trusted: false,
                     blocked_scripts: 0,
-                    task: bun_threading::thread_pool::Task {
-                        callback: installer::Task::callback,
-                        node: Default::default(),
-                    },
+                    task: bun_threading::thread_pool::CountedTask::new(
+                        installer::Task::callback,
+                        &tasks_in_flight,
+                    ),
                     next: bun_threading::Link::new(),
                 });
             }
@@ -2419,6 +2447,7 @@ pub(crate) fn install_isolated_packages(
             },
             store: &store,
             tasks,
+            tasks_in_flight: &tasks_in_flight,
             waiters_head: vec![store::entry::Id::INVALID; store.entries.len()].into_boxed_slice(),
             next_waiter: vec![store::entry::Id::INVALID; store.entries.len()].into_boxed_slice(),
             trusted_dependencies_from_update_requests,
@@ -2858,7 +2887,7 @@ pub(crate) fn install_isolated_packages(
                                         "failed to enqueue package for download: {}@{}",
                                         (
                                             BStr::new(pkg_name.slice(string_buf)),
-                                            bun_fmt::EscapeControlChars(
+                                            bun_fmt::for_terminal(
                                                 pkg_res.fmt(string_buf, bun_fmt::PathSep::Auto),
                                             ),
                                         ),
@@ -2917,7 +2946,7 @@ pub(crate) fn install_isolated_packages(
                                         "failed to enqueue github package for download: {}@{}",
                                         (
                                             BStr::new(pkg_name.slice(string_buf)),
-                                            bun_fmt::EscapeControlChars(
+                                            bun_fmt::for_terminal(
                                                 pkg_res.fmt(string_buf, bun_fmt::PathSep::Auto),
                                             ),
                                         ),

@@ -5,11 +5,116 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 
 describe.concurrent("bun info", () => {
+  // What registry.npmjs.org serves for these names, cut down to the fields that `bun info` prints or a test reads.
+  // The order of fs's `versions`, and fs@0.0.1-security having other maintainers than the package, are the registry's.
+  const tarball = (name: string, version: string) =>
+    `https://registry.npmjs.org/${name}/-/${name.split("/").pop()}-${version}.tgz`;
+  const bare = (name: string, versions: string[]) =>
+    Object.fromEntries(
+      versions.map(version => [version, { name, version, dist: { tarball: tarball(name, version) } }]),
+    );
+  const isNumber = {
+    name: "is-number",
+    description:
+      "Returns true if a number or string value is a finite number. Useful for regex matches, parsing, user input, etc.",
+    homepage: "https://github.com/jonschlinkert/is-number",
+    license: "MIT",
+    author: { name: "Jon Schlinkert", url: "https://github.com/jonschlinkert" },
+    repository: { type: "git", url: "git+https://github.com/jonschlinkert/is-number.git" },
+    keywords:
+      "cast check coerce coercion finite integer is isnan is-nan is-num is-number isnumber isfinite istype kind math nan num number numeric parseFloat parseInt test type typeof value".split(
+        " ",
+      ),
+    maintainers: [
+      { email: "brian.woodward@gmail.com", name: "doowb" },
+      { email: "github@sellside.com", name: "jonschlinkert" },
+      { email: "me@rouvenwessling.de", name: "realityking" },
+    ],
+  };
+  const fs = {
+    name: "fs",
+    description:
+      "This package name is not currently in use, but was formerly occupied by another package. To avoid malicious use, npm is hanging on to the package name, but loosely, and we'll probably give it to you if you want it.",
+    homepage: "https://github.com/npm/security-holder#readme",
+    license: "ISC",
+    keywords: [],
+  };
+  const packuments: Record<string, unknown> = {
+    "is-number": {
+      ...isNumber,
+      "dist-tags": { latest: "7.0.0" },
+      versions: {
+        ...bare(
+          "is-number",
+          "0.1.0 0.1.1 1.0.0 1.1.0 1.1.1 1.1.2 2.0.0 2.0.1 2.0.2 2.1.0 3.0.0 4.0.0 5.0.0 6.0.0".split(" "),
+        ),
+        "7.0.0": {
+          ...isNumber,
+          version: "7.0.0",
+          main: "index.js",
+          engines: { node: ">=0.12.0" },
+          dist: {
+            integrity:
+              "sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng==",
+            shasum: "7535345b896734d5f80c4d06c50955527a14f12b",
+            tarball: tarball("is-number", "7.0.0"),
+            fileCount: 4,
+            unpackedSize: 9615,
+          },
+        },
+      },
+      time: { "7.0.0": "2018-07-04T15:08:58.238Z" },
+    },
+    fs: {
+      ...fs,
+      "dist-tags": { latest: "0.0.1-security" },
+      versions: {
+        "0.0.1-security": {
+          ...fs,
+          version: "0.0.1-security",
+          dist: {
+            shasum: "8a7bd37186b6dddf3813f23858b57ecaaf5e41d4",
+            tarball: tarball("fs", "0.0.1-security"),
+            integrity:
+              "sha512-3XY9e1pP0CVEUCdj5BmfIZxRBTSDycnbqhIOGec9QYtmVH2fbLpj86CFWkrNOkt/Fvty4KZG5lTglL9j/gJ87w==",
+          },
+          maintainers: [{ name: "ehsalazar", email: "ernie@npmjs.com" }],
+        },
+        ...bare("fs", ["0.0.0", "0.0.2"]),
+      },
+      maintainers: [{ name: "npm", email: "npm@npmjs.com" }],
+      time: { "0.0.1-security": "2016-08-23T17:56:58.976Z" },
+    },
+    "@types/bun": { name: "@types/bun", "dist-tags": { latest: "1.3.0" }, versions: bare("@types/bun", ["1.3.0"]) },
+    "@types/semver": {
+      name: "@types/semver",
+      description: "TypeScript definitions for semver",
+      "dist-tags": { latest: "7.7.1" },
+      versions: bare("@types/semver", ["7.7.1"]),
+    },
+  };
+
+  let server: ReturnType<typeof Bun.serve>;
+  beforeAll(() => {
+    server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const name = decodeURIComponent(new URL(req.url).pathname.slice(1));
+        if (name === "@") {
+          return Response.json({ code: "MethodNotAllowedError", message: "GET is not allowed" }, { status: 405 });
+        }
+        return name in packuments
+          ? Response.json(packuments[name])
+          : Response.json({ error: "Not found" }, { status: 404 });
+      },
+    });
+  });
+  afterAll(() => server.stop(true));
+
   let i = 0;
   function setupTest() {
     const testDir = tempDirWithFiles("view-" + i++, {
       "package.json": JSON.stringify({
-        // Since npm reserved the "fs" package name, we know that the "fs" package isn't going to update randomly later on.
         name: "fs",
 
         version: "1.0.0",
@@ -25,7 +130,7 @@ describe.concurrent("bun info", () => {
       stdout: "pipe",
       stdin: "ignore",
       stderr: "pipe",
-      env: bunEnv,
+      env: { ...bunEnv, BUN_CONFIG_REGISTRY: server.url.href },
     });
 
     const [output, error, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);

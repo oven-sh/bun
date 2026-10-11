@@ -4,7 +4,7 @@ use core::fmt;
 
 use bstr::BStr;
 
-use bun_core::fmt::escape_control_chars;
+use bun_core::fmt::{escape_control_chars, for_terminal};
 use bun_core::output::enable_ansi_colors_stderr;
 use bun_core::pretty_fmt;
 
@@ -164,7 +164,8 @@ impl Header {
 // Names, values, status text and URLs are peer-supplied, so they go through
 // `escape_control_chars`: HTTP/1.1 admits HT and any byte >= 0x80 (so UTF-8
 // encoded C1 controls such as U+009B, CSI) in a field value or reason phrase,
-// and HPACK/QPACK only reject NUL, CR and LF.
+// and HPACK/QPACK only reject NUL, CR and LF. A value can be a URL with
+// credentials (`Location`), hence `for_terminal`.
 impl fmt::Display for Header {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // NOTE: pretty_fmt! is the compile-time ANSI-tag expander (`<r><cyan>` → escape
@@ -174,14 +175,14 @@ impl fmt::Display for Header {
                 write!(
                     f,
                     pretty_fmt!("<r><cyan>{}", true),
-                    escape_control_chars(self.value())
+                    for_terminal(BStr::new(self.value()))
                 )
             } else {
                 write!(
                     f,
                     pretty_fmt!("<r><cyan>{}<r><d>: <r>{}", true),
                     escape_control_chars(self.name()),
-                    escape_control_chars(self.value()),
+                    for_terminal(BStr::new(self.value())),
                 )
             }
         } else {
@@ -189,14 +190,14 @@ impl fmt::Display for Header {
                 write!(
                     f,
                     pretty_fmt!("<r><cyan>{}", false),
-                    escape_control_chars(self.value())
+                    for_terminal(BStr::new(self.value()))
                 )
             } else {
                 write!(
                     f,
                     pretty_fmt!("<r><cyan>{}<r><d>: <r>{}", false),
                     escape_control_chars(self.name()),
-                    escape_control_chars(self.value()),
+                    for_terminal(BStr::new(self.value())),
                 )
             }
         }

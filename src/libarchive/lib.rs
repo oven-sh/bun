@@ -1319,6 +1319,8 @@ impl Archiver {
         root: &[u8],
         ctx: &mut Context,
         appender: &mut A,
+        // Asked about every entry's path below `root`; such an entry is listed whatever its size.
+        leaves_root: &mut dyn FnMut(&[u8]) -> bun_sys::Result<bool>,
     ) -> crate::Result<()> {
         let mut entry: *mut lib::Entry = ptr::null_mut();
 
@@ -1344,9 +1346,7 @@ impl Archiver {
                 break 'brk d;
             }
         };
-        // Fd has no Drop impl; close explicitly on every return path to avoid leaking
-        // a directory HANDLE on Windows. Mirrors the guard pattern in extract_to_disk.
-        let _close_dir_guard = scopeguard::guard(dir, |d| d.close());
+        let _close_dir = bun_sys::CloseOnDrop::new(dir);
 
         let mut normalized_buf = bun_paths::path_buffer_pool::get();
 
@@ -1424,39 +1424,40 @@ impl Archiver {
                     // SAFETY: entry valid
                     let size: usize =
                         usize::try_from(lib::Entry::opaque_ref(entry).size().max(0)).unwrap();
-                    if size > 0 {
-                        let Ok(opened) = bun_sys::openat_a(dir, pathname, bun_sys::O::WRONLY, 0)
-                        else {
-                            continue 'loop_;
-                        };
-                        let _close_guard = scopeguard::guard(opened, |fd| fd.close());
-                        let stat_size = bun_sys::get_file_size(opened)?;
-
-                        if stat_size > 0 {
-                            let is_already_top_level = dirname.is_empty();
-                            let path_to_use_: &[u8] = 'brk: {
-                                let __pathname: &[u8] = pathname;
-
-                                if is_already_top_level {
-                                    break 'brk __pathname;
+                    let in_the_way = leaves_root(pathname)?
+                        || (size > 0
+                            && match bun_sys::openat_a(dir, pathname, bun_sys::O::WRONLY, 0) {
+                                Ok(opened) => {
+                                    let _close = bun_sys::CloseOnDrop::new(opened);
+                                    bun_sys::get_file_size(opened)? > 0
                                 }
+                                Err(_) => false,
+                            });
 
-                                let index = strings::index_of_char_usize(__pathname, SEP).unwrap();
-                                break 'brk &__pathname[..index];
-                            };
-                            let mut temp_buf = [0u8; 1024];
-                            temp_buf[..path_to_use_.len()].copy_from_slice(path_to_use_);
-                            let path_to_use: &[u8] = if !is_already_top_level {
-                                temp_buf[path_to_use_.len()] = SEP;
-                                &temp_buf[..path_to_use_.len() + 1]
-                            } else {
-                                &temp_buf[..path_to_use_.len()]
-                            };
+                    if in_the_way {
+                        let is_already_top_level = dirname.is_empty();
+                        let path_to_use_: &[u8] = 'brk: {
+                            let __pathname: &[u8] = pathname;
 
-                            let overwrite_entry = ctx.overwrite_list.get_or_put(path_to_use)?;
-                            if !overwrite_entry.found_existing {
-                                *overwrite_entry.key_ptr = Box::from(appender.append(path_to_use)?);
+                            if is_already_top_level {
+                                break 'brk __pathname;
                             }
+
+                            let index = strings::index_of_char_usize(__pathname, SEP).unwrap();
+                            break 'brk &__pathname[..index];
+                        };
+                        let mut temp_buf = [0u8; 1024];
+                        temp_buf[..path_to_use_.len()].copy_from_slice(path_to_use_);
+                        let path_to_use: &[u8] = if !is_already_top_level {
+                            temp_buf[path_to_use_.len()] = SEP;
+                            &temp_buf[..path_to_use_.len() + 1]
+                        } else {
+                            &temp_buf[..path_to_use_.len()]
+                        };
+
+                        let overwrite_entry = ctx.overwrite_list.get_or_put(path_to_use)?;
+                        if !overwrite_entry.found_existing {
+                            *overwrite_entry.key_ptr = Box::from(appender.append(path_to_use)?);
                         }
                     }
                 }

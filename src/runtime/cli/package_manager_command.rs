@@ -62,7 +62,14 @@ impl InstalledFilter {
         })
     }
 
-    fn is_installed(&mut self, lockfile: &Lockfile, dir: &[u8], dep_id: DependencyID) -> bool {
+    /// `or_in_store`: an isolated install links only direct dependencies into a `node_modules`, so an entry of the (hoisted) tree may be in `node_modules/.bun` alone. A dependency of the root is one the root can load: it has to be linked.
+    fn is_installed(
+        &mut self,
+        lockfile: &Lockfile,
+        dir: &[u8],
+        dep_id: DependencyID,
+        or_in_store: bool,
+    ) -> bool {
         let package_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize] as usize;
         if package_id >= lockfile.packages.len() {
             return false;
@@ -89,12 +96,12 @@ impl InstalledFilter {
         self.path.set_length(self.top_len);
         let _ = self.path.append(dir);
         let _ = self.path.append(alias);
-        // Isolated installs only link direct dependencies into each node_modules; the rest is in the store.
         bun_sys::exists(self.path.slice())
-            || self
-                .store
-                .lookup(&mut self.path, self.top_len, name, resolution, buf)
-                .is_some()
+            || (or_in_store
+                && self
+                    .store
+                    .lookup(&mut self.path, self.top_len, name, resolution, buf)
+                    .is_some())
     }
 }
 
@@ -679,7 +686,7 @@ impl PackageManagerCommand {
 
                 let dir = node_modules.relative_path.as_bytes();
                 let mut dependencies = node_modules.dependencies.to_vec();
-                dependencies.retain(|&dep_id| installed.is_installed(lockfile, dir, dep_id));
+                dependencies.retain(|&dep_id| installed.is_installed(lockfile, dir, dep_id, true));
                 installed_count += dependencies.len();
 
                 if max_depth < node_modules.depth + 1 {
@@ -757,8 +764,9 @@ impl PackageManagerCommand {
                 index_sort::sort_indices(&mut sorted_dependencies, &mut |a, b| by_name.cmp(a, b));
                 sorted_dependencies.dedup_by(|a, b| by_name.cmp(*a, *b) == Ordering::Equal);
 
-                sorted_dependencies
-                    .retain(|&dep_id| installed.is_installed(lockfile, b"node_modules", dep_id));
+                sorted_dependencies.retain(|&dep_id| {
+                    installed.is_installed(lockfile, b"node_modules", dep_id, false)
+                });
 
                 if trusted_only {
                     sorted_dependencies.retain(|&dep_id| {

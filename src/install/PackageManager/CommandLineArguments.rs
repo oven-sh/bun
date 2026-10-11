@@ -1824,7 +1824,11 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             {
                 Output::err_generic(
                     "Registry URL must start with 'https://' or 'http://': {}\n",
-                    (bun_core::fmt::quote(registry),),
+                    (bun_core::fmt::quote(
+                        bun_core::fmt::redacted_npm_url(registry)
+                            .to_string()
+                            .as_bytes(),
+                    ),),
                 );
                 Global::crash();
             }

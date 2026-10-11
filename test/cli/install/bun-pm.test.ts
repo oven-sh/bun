@@ -16,6 +16,7 @@ import {
 } from "harness";
 import { cpSync, mkdirSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { basename, join } from "path";
+import { TestRegistry } from "registry";
 import {
   dummyAfterAll,
   dummyAfterEach,
@@ -332,6 +333,105 @@ it("should error when node_modules does not exist", async () => {
   expect(await stderr.text()).toContain("node_modules not found");
   expect(await stdout.text()).toBe("");
   expect(await exited).toBe(1);
+});
+
+describe.concurrent("bun pm ls lists what is on disk", () => {
+  const registry = new TestRegistry();
+  beforeAll(() => registry.start());
+  afterAll(() => registry.stop());
+
+  async function project(bunfigOpts: { linker: "hoisted" | "isolated"; globalStore?: boolean }, files: object) {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts,
+      files: Object.fromEntries(Object.entries(files).map(([path, json]) => [path, JSON.stringify(json)])),
+    });
+    return {
+      packageDir,
+      async bun(...args: string[]) {
+        await using proc = spawn({
+          cmd: [bunExe(), ...args],
+          cwd: packageDir,
+          stdout: "pipe",
+          stderr: "pipe",
+          stdin: "ignore",
+          env: { ...env, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") },
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout: stdout.replaceAll(packageDir, "<dir>"), stderr, exitCode };
+      },
+    };
+  }
+  const listed = (...lines: string[]) => ({ stdout: lines.join("\n") + "\n", stderr: "", exitCode: 0 });
+
+  // one-fixed-dep@1.0.0 depends on no-deps@1.0.0. `--all` prints the hoisted shape under both linkers.
+  const dependencies = { "a-dep": "1.0.1", "one-fixed-dep": "1.0.0" };
+
+  test.each([{ linker: "hoisted" }, { linker: "isolated" }, { linker: "isolated", globalStore: true }] as const)(
+    "%j",
+    async bunfigOpts => {
+      const isolated = bunfigOpts.linker === "isolated";
+      const { packageDir, bun } = await project(bunfigOpts, { "package.json": { name: "foo", dependencies } });
+      expect(await bun("install")).toMatchObject({ exitCode: 0 });
+
+      expect(await bun("pm", "ls")).toEqual(
+        listed("<dir> node_modules (3 installed)", "├── a-dep@1.0.1", "└── one-fixed-dep@1.0.0"),
+      );
+      expect(await bun("pm", "ls", "--all")).toEqual(
+        listed("<dir> node_modules", "├── a-dep@1.0.1", "├── no-deps@1.0.0", "└── one-fixed-dep@1.0.0"),
+      );
+
+      // The project cannot load a-dep any more. The isolated store still has it, which is what the count and `--all` are about.
+      await rm(join(packageDir, "node_modules", "a-dep"), { recursive: true });
+      expect(await bun("pm", "ls")).toEqual(
+        listed(`<dir> node_modules (${isolated ? 3 : 2} installed)`, "└── one-fixed-dep@1.0.0"),
+      );
+      expect(await bun("pm", "ls", "--all")).toEqual(
+        listed(
+          "<dir> node_modules",
+          ...(isolated ? ["├── a-dep@1.0.1"] : []),
+          "├── no-deps@1.0.0",
+          "└── one-fixed-dep@1.0.0",
+        ),
+      );
+
+      // A transitive dependency is nowhere but in the store under the isolated linker.
+      await rm(join(packageDir, "node_modules", ...(isolated ? [".bun", "no-deps@1.0.0"] : ["no-deps"])), {
+        recursive: true,
+      });
+      expect(await bun("pm", "ls")).toEqual(
+        listed(`<dir> node_modules (${isolated ? 2 : 1} installed)`, "└── one-fixed-dep@1.0.0"),
+      );
+      expect(await bun("pm", "ls", "--all")).toEqual(
+        listed("<dir> node_modules", ...(isolated ? ["├── a-dep@1.0.1"] : []), "└── one-fixed-dep@1.0.0"),
+      );
+
+      await rm(join(packageDir, "node_modules"), { recursive: true });
+      expect(await bun("pm", "ls")).toEqual({
+        stdout: "",
+        stderr: "error: node_modules not found, nothing to list\nnote: run 'bun install' first\n",
+        exitCode: 1,
+      });
+    },
+  );
+
+  test("isolated: a dependency of the root that only a workspace member has linked", async () => {
+    const { bun } = await project(
+      { linker: "isolated" },
+      {
+        "package.json": {
+          name: "foo",
+          workspaces: ["packages/*"],
+          dependencies: { "a-dep": "1.0.1", "no-deps": "1.0.0" },
+        },
+        "packages/member/package.json": { name: "member", dependencies: { "a-dep": "1.0.1" } },
+      },
+    );
+    expect(await bun("install", "--filter", "member")).toMatchObject({ exitCode: 0 });
+
+    const member = `└── member@workspace:${join("packages", "member")}`;
+    expect(await bun("pm", "ls")).toEqual(listed("<dir> node_modules (2 installed)", member));
+    expect(await bun("pm", "ls", "--all")).toEqual(listed("<dir> node_modules", "├── a-dep@1.0.1", member));
+  });
 });
 
 it("should list top-level aliased dependency", async () => {
@@ -2807,6 +2907,17 @@ describe.concurrent("without a package.json", () => {
     });
   });
 
+  test("bun pm ls -g leaves out a global package that is gone from disk", async () => {
+    using project = fresh("pm-ls-global-deleted");
+    expect(await project.run("add", "-g", join(project.root, "pkg"))).toMatchObject({ exitCode: 0 });
+    await rm(join(project.globalDir, "node_modules", "pkg"), { recursive: true });
+    expect(await project.run("pm", "ls", "-g")).toEqual({
+      stdout: `${project.globalDir} node_modules (0 installed)\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("commands that only need machine-wide or registry configuration run", async () => {
     using project = fresh("pm-no-project");
     const cache = join(project.bunInstall, "install", "cache");
@@ -2908,7 +3019,7 @@ describe.concurrent("usage text keeps its indent", () => {
       "Explain why a package is installed",
       "",
       "Arguments:",
-      "  <package>     The package name to explain (supports glob patterns like '@org/*')",
+      "  <package>     The package name or alias to explain (supports glob patterns like '@org/*')",
       "",
       "Options:",
       "  --top         Show only the top dependency tree instead of nested ones",

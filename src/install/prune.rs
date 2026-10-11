@@ -1626,8 +1626,8 @@ fn workspace_node_modules(lockfile: &Lockfile, pkg_id: PackageID) -> Option<Box<
     Some(join(path, b"node_modules"))
 }
 
-/// The one way to open a workspace's `node_modules`. A link is not followed, it can lead to
-/// the root's `node_modules`: `linked_folders` gets its path.
+/// The one way to open a workspace's `node_modules`, and the store. A link is not followed, it
+/// can lead to the root's `node_modules`: `linked_folders` gets its path.
 fn open_workspace_folder(folder: &[u8], linked_folders: &mut Vec<Box<[u8]>>) -> Option<Dir> {
     let st = sys::lstat(ZStr::from_slice_with_nul(&zname(folder))).ok()?;
     match sys::kind_from_mode(st.st_mode as sys::Mode) {
@@ -1952,7 +1952,7 @@ fn plan_isolated(
     let manager: &PackageManager = manager;
 
     let mut removed_store: Vec<Box<[u8]>> = Vec::new();
-    if let Ok(store) = Dir::open(STORE_DIR) {
+    if let Some(store) = open_workspace_folder(STORE_DIR, &mut plan.linked_folders) {
         let store_idx = plan.push_folder(STORE_DIR, FolderKind::Store);
         for (name, kind) in read_entries(&store) {
             if &*name == b"node_modules" {
@@ -2063,6 +2063,20 @@ pub(crate) fn remove_planted_link(dir: &Dir, path: &ZStr) -> sys::Maybe<()> {
         Err(err) if err.get_errno() != E::ENOENT => Err(err),
         _ => Ok(()),
     }
+}
+
+/// `remove_planted_link` for each component of `path` after `path[..real_len]`. `path` is
+/// absolute or starts at the cwd.
+pub(crate) fn remove_planted_links(path: &[u8], mut real_len: usize) -> sys::Maybe<()> {
+    let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+    let mut buf = bun_paths::path_buffer_pool::get();
+    while real_len < path.len() {
+        let rest = &path[real_len + 1..];
+        real_len += 1 + strings::index_of_any(rest, separators).unwrap_or(rest.len());
+        let component = bun_paths::resolve_path::z(&path[..real_len], &mut buf);
+        remove_planted_link(&Dir::cwd(), component)?;
+    }
+    Ok(())
 }
 
 fn execute(plan: &Plan, quiet: bool) -> usize {

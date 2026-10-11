@@ -8,6 +8,7 @@ use core::sync::atomic::Ordering;
 use std::ffi::CString;
 
 use bstr::BStr;
+use bun_core::fmt::for_terminal;
 use bun_core::{Output, strings};
 use bun_event_loop::EventLoopHandle;
 use bun_io::BufferedReader;
@@ -190,7 +191,7 @@ fn finish_checkout(task: &mut Task::Task<'_>, staging: CacheStaging) -> Result<E
             format_args!(
                 "{} for \"{}\" failed: {}",
                 what,
-                BStr::new(&name),
+                for_terminal(BStr::new(&name)),
                 BStr::new(err.name())
             ),
         );
@@ -285,7 +286,7 @@ fn read_package_json(
                     bun_ast::Loc::EMPTY,
                     format_args!(
                         "\"package.json\" for \"{}\" failed to open: {}",
-                        BStr::new(&name),
+                        for_terminal(BStr::new(&name)),
                         BStr::new(err.name())
                     ),
                 );
@@ -302,7 +303,7 @@ fn read_package_json(
                 bun_ast::Loc::EMPTY,
                 format_args!(
                     "\"package.json\" for \"{}\" failed to resolve: {}",
-                    BStr::new(&name),
+                    for_terminal(BStr::new(&name)),
                     BStr::new(err.name())
                 ),
             );
@@ -388,7 +389,7 @@ impl CacheStaging {
                     bun_ast::Loc::EMPTY,
                     format_args!(
                         "moving \"{}\" to cache dir failed: {}",
-                        BStr::new(name),
+                        for_terminal(BStr::new(name)),
                         err
                     ),
                 );
@@ -571,7 +572,7 @@ impl GitSubprocess {
                 if offline {
                     this.log_failure(format_args!(
                         "--offline: git repository for \"{}\" is not in the cache",
-                        BStr::new(&this.name)
+                        for_terminal(BStr::new(&this.name))
                     ));
                     return Err(Error::InstallFailed);
                 }
@@ -652,7 +653,7 @@ impl GitSubprocess {
             this.log_failure(format_args!(
                 "invalid git commit \"{}\" for \"{}\"",
                 bun_core::fmt::escape_control_chars(&resolved),
-                BStr::new(&this.name)
+                for_terminal(BStr::new(&this.name))
             ));
             return Err(Error::InstallFailed);
         }
@@ -697,7 +698,7 @@ impl GitSubprocess {
         let Some(git) = &env.git else {
             this.log_failure(format_args!(
                 "\"git\" is not installed (needed for \"{}\")",
-                BStr::new(&this.name)
+                for_terminal(BStr::new(&this.name))
             ));
             return Err(Error::Sys(bun_errno::SystemErrno::ENOENT));
         };
@@ -879,7 +880,7 @@ impl GitSubprocess {
         if !ok && !not_found {
             this.report_failure(status, stderr);
         }
-        let name = BStr::new(&this.name);
+        let name = for_terminal(BStr::new(&this.name));
         match step {
             Step::Fetch(dir) => {
                 if ok {

@@ -12923,6 +12923,35 @@ describe.concurrent("outdated", () => {
       expect(cells).toEqual(["", "build-metadata-1\x1b[2m\x1b[0m", current, `\x1b[2m${current}\x1b[0m`, latest, ""]);
     });
   }
+
+  // The latest version turns red at the first byte that differs from the current one. When the tag only extends the
+  // current tag (rc.1 to rc.10, build.1 to build.10) that is the first appended byte.
+  const appendedTagCases = [
+    {
+      pkg: "prereleases-5",
+      current: "1.0.0-rc.1",
+      latest: "\x1b[2m1.0.0-rc.1\x1b[0m\x1b[1m\x1b[31m0+build.20240101\x1b[0m",
+    },
+    {
+      pkg: "build-metadata-2",
+      current: "1.0.0+build.1",
+      // "1.0." dim, "1+build.1" green (patch bump), red from the appended "0".
+      latest: "\x1b[2m1.0.\x1b[0m\x1b[1m\x1b[32m1+build.1\x1b[0m\x1b[1m\x1b[31m0\x1b[0m",
+    },
+  ];
+
+  for (const { pkg, current, latest } of appendedTagCases) {
+    test(`colored latest version highlights a tag that only grows (${pkg})`, async () => {
+      const { packageDir, packageJson, env } = await setupTest();
+      await write(packageJson, JSON.stringify({ name: "foo", dependencies: { [pkg]: current } }));
+      await runBunInstall(env, packageDir);
+
+      const out = await runBunOutdated({ ...env, FORCE_COLOR: "1" }, packageDir);
+      const row = out.split("\n").find(line => line.includes(pkg))!;
+      const cells = row.split("│").map(cell => cell.trim());
+      expect(cells).toEqual(["", `${pkg}\x1b[2m\x1b[0m`, current, `\x1b[2m${current}\x1b[0m`, latest, ""]);
+    });
+  }
 });
 
 // TODO: setup registry to run across multiple test files, then move this and a few other describe

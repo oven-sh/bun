@@ -716,7 +716,7 @@ impl<'a> Migrator<'a> {
                         bun_core::warn!(
                             "skipped \"{}@{}\" from {}: unsupported version specifier",
                             bstr::BStr::new(name),
-                            bstr::BStr::new(spec),
+                            bun_core::fmt::for_terminal(bstr::BStr::new(spec)),
                             self.lockfile_name,
                         );
                     }

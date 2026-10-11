@@ -248,13 +248,21 @@ pub struct RedactedNpmUrlFormatter<'a> {
 impl Display for RedactedNpmUrlFormatter<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let mut i: usize = 0;
-        let password = strings::find_url_password(self.url);
+        let mut password = if strings::contains(self.url, b"://") {
+            strings::next_url_password(self.url, 0)
+        } else {
+            // A registry configured without a scheme: refused, and echoed in the refusal.
+            let authority = if self.url.starts_with(b"//") { 2 } else { 0 };
+            strings::find_authority_password(&self.url[authority..])
+                .map(|(offset, len)| (authority + offset, len))
+        };
         while i < self.url.len() {
             if let Some((offset, len)) = password
                 && i == offset
             {
                 splat_byte_all(f, b'*', len)?;
                 i += len;
+                password = strings::next_url_password(self.url, i);
                 continue;
             }
 
@@ -297,13 +305,14 @@ pub fn redacted_npm_url(str: &[u8]) -> RedactedNpmUrlFormatter<'_> {
     RedactedNpmUrlFormatter { url: str }
 }
 
-/// [`redacted_npm_url`] over a `Display` (a lockfile resolution, a dependency specifier); values
-/// without `://` pass unchanged so a version whose pre-release tag looks like a token is not masked.
+/// [`redacted_npm_url`] over a `Display` (a lockfile resolution, a dependency specifier, the name
+/// `bun add <url>` gives the dependency until it is read); values without `://` pass unchanged so a
+/// version whose pre-release tag looks like a token is not masked.
 pub struct Redacted<T>(T);
 
 impl<T: Display> Display for Redacted<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        // Rendered in full first: the password scan is anchored at the start of the whole value.
+        // Rendered in full first: the inner impl may write a URL in pieces.
         let text = self.0.to_string();
         if !strings::contains(text.as_bytes(), b"://") {
             return f.write_str(&text);
@@ -3443,11 +3452,18 @@ impl fmt::Write for EscapeControlCharsWriter<'_, '_> {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         let Self(f, keep_line_breaks) = self;
         let mut start = 0;
-        let mut chars = s.char_indices().peekable();
-        while let Some((i, c)) = chars.next() {
+        let mut next = 0;
+        // Stops at C0, DEL and the first byte of a non-ASCII character; also at `\` and `"`, which pass.
+        while let Some(clean) =
+            strings::index_of_needs_escape_for_java_script_string(&s.as_bytes()[next..], b'"')
+        {
+            let i = next + clean as usize;
+            let mut chars = s[i..].chars();
+            let Some(c) = chars.next() else { break };
+            next = i + c.len_utf8();
             let pass_through = match c {
                 '\t' | '\n' => *keep_line_breaks,
-                '\r' => *keep_line_breaks && matches!(chars.peek(), Some((_, '\n'))),
+                '\r' => *keep_line_breaks && chars.next() == Some('\n'),
                 '\0'..='\x1f' | '\x7f' | '\u{80}'..='\u{9f}' => false,
                 _ => true,
             };
@@ -3462,7 +3478,7 @@ impl fmt::Write for EscapeControlCharsWriter<'_, '_> {
                 c if c.is_ascii() => write!(f, "\\x{:02x}", c as u32)?,
                 c => write!(f, "\\u{:04x}", c as u32)?,
             }
-            start = i + c.len_utf8();
+            start = next;
         }
         f.write_str(&s[start..])
     }

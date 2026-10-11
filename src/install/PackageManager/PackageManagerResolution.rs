@@ -201,7 +201,8 @@ impl PackageManager {
                             != lockfile.packages.items_name_hash()[0]
                             && !lockfile.workspace_paths.contains(&failed_dep.name_hash);
                         let name = bstr::BStr::new(failed_dep.name.slice(string_buf));
-                        let literal = failed_dep.version.literal.fmt(string_buf);
+                        let literal =
+                            bun_core::fmt::for_terminal(failed_dep.version.literal.fmt(string_buf));
                         let catalog_name = failed_dep.version.catalog().slice(string_buf);
                         let is_default = catalog_name.is_empty() || catalog_name == b"default";
                         let catalog_exists = is_default
@@ -214,7 +215,11 @@ impl PackageManager {
                         if !catalog_exists {
                             Output::err_generic(
                                 "<b>{}@{}<r>: there is no catalog named \"{}\" in the root package.json",
-                                (name, literal, bstr::BStr::new(catalog_name)),
+                                (
+                                    name,
+                                    literal,
+                                    bun_core::fmt::for_terminal(bstr::BStr::new(catalog_name)),
+                                ),
                             );
                         } else if is_default {
                             Output::err_generic(
@@ -254,9 +259,9 @@ impl PackageManager {
                         Output::err_generic(
                             "<b>{}<r><d>@<b>{}<r><d> failed to resolve<r>",
                             (
-                                bun_core::fmt::escape_control_chars(
+                                bun_core::fmt::for_terminal(bstr::BStr::new(
                                     failed_dep.name.slice(string_buf),
-                                ),
+                                )),
                                 bun_core::fmt::for_terminal(
                                     failed_dep.version.literal.fmt(string_buf),
                                 ),

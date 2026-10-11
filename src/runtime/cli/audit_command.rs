@@ -728,23 +728,16 @@ fn send_audit_request(
     .expect("unreachable");
     let url = URL::parse(&url_str);
 
-    let http_proxy = pm.http_proxy(&url);
-
     let headers_buf: &[u8] = headers.content.written_slice();
 
     let mut response_buf = MutableString::init(1024)?;
-    // `init_sync` erases lifetimes internally (port-erased raw pointers); all
-    // borrowed inputs live on this stack frame past `send_sync()`.
-    let mut req = http::AsyncHTTP::init_sync(
+    let mut req = pm.registry_request(
         http::Method::POST,
         url,
         headers.entries,
         headers_buf,
         &final_compressed_body,
-        http_proxy,
-        http::FetchRedirect::Follow,
     );
-    req.client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
     // A registry URL that is not http(s) is a configuration error, not a registry without an audit endpoint.
     let mut is_fatal = registry.is_default;
     let reason = match req.send_sync(&mut response_buf) {

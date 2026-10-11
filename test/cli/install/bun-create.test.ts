@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { chmodSync, mkdirSync, realpathSync, symlinkSync } from "fs";
+import { chmodSync, lstatSync, mkdirSync, readdirSync, realpathSync, symlinkSync } from "fs";
 import { exists, stat } from "fs/promises";
 import { bunExe, bunEnv as env, githubTarball, isPosix, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
@@ -662,6 +662,69 @@ describe.concurrent("local template into an existing directory", () => {
     expect(exitCode).toBe(0);
   });
 
+  it("replaces .gitignore with the template's gitignore, as with its .gitignore", async () => {
+    using dir = tempDir("create-local-gitignore-replace", {
+      "bun-create/tpl/gitignore": "template",
+      "proj/.gitignore": "mine",
+    });
+    const { err, exitCode } = await createInProj(String(dir));
+
+    expect(err).not.toContain("error");
+    expect(await tree(join(String(dir), "proj"))).toEqual({ ".gitignore": "template" });
+    expect(exitCode).toBe(0);
+  });
+
+  it.each(["--no-install", "--force"])(
+    "reports a .gitignore that the template's gitignore cannot replace (%s)",
+    async flag => {
+      using dir = tempDir("create-local-gitignore-dir", {
+        "bun-create/tpl/gitignore": "template",
+        "proj/.gitignore/inner.txt": "mine",
+      });
+      const { err, exitCode } = await createInProj(String(dir), flag);
+
+      expect(err).toContain(": renaming gitignore to .gitignore\n");
+      expect(await tree(join(String(dir), "proj"))).toEqual({
+        ".gitignore/inner.txt": "mine",
+        "gitignore": "template",
+      });
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  const otherKind = {
+    "bun-create/tpl/README.md": "template",
+    "bun-create/tpl/new.txt": "template",
+    "bun-create/tpl/sub/nested.ts": "template",
+  };
+
+  // The copy stopped at it with EISDIR / ENOTDIR, after the files that come before it in the walk.
+  it.each([
+    ["a directory where the template has a file", "README.md/index.md", "  README.md"],
+    // Windows reports a file on the way as ENOENT.
+    ...(isPosix ? [["a file where the template has a directory", "sub", "  sub/nested.ts"]] : []),
+  ])("lists %s and writes nothing", async (_, mine, listed) => {
+    using dir = tempDir("create-local-other-kind", { ...otherKind, [`proj/${mine}`]: "mine" });
+    const { err, exitCode } = await createInProj(String(dir));
+
+    expect(err.slice(err.indexOf("error:")).split("\n").filter(Boolean)).toEqual([
+      "error: The directory proj/ contains files that could conflict:",
+      listed,
+      "To overwrite them, use --force",
+    ]);
+    expect(await tree(join(String(dir), "proj"))).toEqual({ [mine]: "mine" });
+    expect(exitCode).toBe(1);
+  });
+
+  it.each(["README.md/index.md", "sub"])("--force deletes nothing to make room: %s", async mine => {
+    using dir = tempDir("create-local-other-kind-force", { ...otherKind, [`proj/${mine}`]: "mine" });
+    const { err, exitCode } = await createInProj(String(dir), "--force");
+
+    expect(err).toContain(": failed to copy file ");
+    expect(await tree(join(String(dir), "proj"))).toMatchObject({ [mine]: "mine" });
+    expect(exitCode).toBe(1);
+  });
+
   it("does not copy a template's .git file", async () => {
     using dir = tempDir("create-local-git-file", {
       "bun-create/tpl/.git": "gitdir: /somewhere/else/.git/worktrees/tpl",
@@ -916,6 +979,75 @@ describe.concurrent("GitHub template", () => {
   });
 });
 
+// Both kinds of template were written through a link in the destination, to wherever it leads.
+describe.concurrent.each(["local", "GitHub"])("a link in the destination of a %s template", kind => {
+  const template = {
+    "sub/nested.txt": "template",
+    "file.txt": "template",
+    "README.md": "template",
+    "package.json": JSON.stringify({ name: "tpl" }),
+  };
+  const outside = { "file.txt": "outside", "README.md": "outside", "package.json": "outside" };
+  const under = (prefix: string, files: Record<string, string>) =>
+    Object.fromEntries(Object.entries(files).map(([path, text]) => [`${prefix}/${path}`, text]));
+
+  const links = [
+    ["sub", "."],
+    ["file.txt", "file.txt"],
+    // Nothing to overwrite behind it, and O_CREAT makes the file it names.
+    ["file.txt", "missing.txt"],
+    // As a file it is replaced without --force.
+    ["README.md", "README.md"],
+    ["package.json", "package.json"],
+    // A link to a file needs a privilege on Windows, a junction does not.
+  ].slice(0, isPosix ? undefined : 1);
+
+  /** `bun create <template> . ...args` in `<root>/proj`, where `name` is a link to `<root>/outside/<target>`. */
+  async function createOverLink(root: string, name: string, target: string, ...args: string[]) {
+    symlinkSync(join(root, "outside", target), join(root, "proj", name), "junction");
+    using github = await serveGithub(template);
+    const result = await create(
+      join(root, "proj"),
+      [kind === "local" ? "tpl" : "dylan-conway/create-test", ".", "--no-git", "--no-install", ...args],
+      { ...github.env, BUN_CREATE_DIR: join(root, "bun-create") },
+    );
+    return { ...result, isLink: lstatSync(join(root, "proj", name)).isSymbolicLink() };
+  }
+  const files = { ...under("bun-create/tpl", template), ...under("outside", outside), "proj/keep.txt": "mine" };
+
+  it.each(links)("%s -> outside/%s is in the way", async (name, target) => {
+    using dir = tempDir("create-over-link", files);
+    const { err, exitCode, isLink } = await createOverLink(String(dir), name, target);
+
+    expect(err.slice(err.indexOf("error:")).replaceAll("\\", "/").split("\n").filter(Boolean)).toEqual([
+      "error: The directory proj/ contains files that could conflict:",
+      name !== "sub" ? `  ${name}` : kind === "local" ? "  sub/nested.txt" : "  sub/",
+      "To overwrite them, use --force",
+    ]);
+    expect(await tree(join(String(dir), "outside"))).toEqual(outside);
+    expect({ isLink, entries: readdirSync(join(String(dir), "proj")).sort() }).toEqual({
+      isLink: true,
+      entries: ["keep.txt", name].sort(),
+    });
+    expect(exitCode).toBe(1);
+  });
+
+  it.each(links)("--force replaces %s -> outside/%s", async (name, target) => {
+    using dir = tempDir("create-over-link-force", files);
+    const { err, exitCode, isLink } = await createOverLink(String(dir), name, target, "--force");
+
+    expect(err).not.toContain("error");
+    expect(await tree(join(String(dir), "outside"))).toEqual(outside);
+    expect(isLink).toBe(false);
+    expect(await tree(join(String(dir), "proj"))).toEqual({
+      ...template,
+      "keep.txt": "mine",
+      "package.json": JSON.stringify({ name: "proj" }, null, 2) + "\n",
+    });
+    expect(exitCode).toBe(0);
+  });
+});
+
 it.concurrent("should preserve package.json indentation from the template", async () => {
   using dir = tempDir("create-tabs", {
     "bun-create/tabs/package.json": `{\n\t"name": "tabs",\n\t"version": "1.0.0",\n\t"scripts": {\n\t\t"start": "bun index.js"\n\t}\n}\n`,
@@ -1021,7 +1153,11 @@ describe.concurrent("bun-create tasks", () => {
         ...dependencies,
         "bun-create": {
           preinstall: "echo 'Installing...' && echo $npm_lifecycle_event > PRE",
-          postinstall: ["echo a    b > SPACES", "echo $npm_lifecycle_event > POST", "create-task first second"],
+          postinstall: [
+            "echo a    b > SPACES",
+            "echo $npm_lifecycle_event of $npm_package_name > POST",
+            "create-task first second",
+          ],
         },
       },
       files,
@@ -1031,7 +1167,12 @@ describe.concurrent("bun-create tasks", () => {
     expect(err).toContain("$ echo 'Installing...' && echo $npm_lifecycle_event > PRE\n");
     expect(err).toContain("$ create-task first second\n");
     expect(out).toContain("Installing...\n");
-    expect(written).toEqual({ PRE: "preinstall", SPACES: "a b", POST: "postinstall", TASK_RAN: "first second" });
+    expect(written).toEqual({
+      PRE: "preinstall",
+      SPACES: "a b",
+      POST: "postinstall of dest",
+      TASK_RAN: "first second",
+    });
     expect(exitCode).toBe(0);
   });
 

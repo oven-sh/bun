@@ -7,6 +7,7 @@ use bun_paths::resolve_path::{join_abs_string_buf, platform};
 
 use crate::bun_fs::FileSystem;
 use crate::dependency::DependencyExt as _;
+use crate::lockfile::override_map::OverrideMap;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{Lockfile, Package};
 use crate::resolution::Tag as ResolutionTag;
@@ -170,11 +171,14 @@ pub(crate) fn fold_resolved_positionals(manager: &mut PackageManager) {
                     .position(|(other, r)| other != index && r.matches_exactly(declared, buf))
                 {
                     Output::flush();
+                    let shown = |request: &UpdateRequest| {
+                        bun_core::fmt::redacted(bstr::BStr::new(request.version_buf())).to_string()
+                    };
                     Output::err_generic(
                         "{} and {} both resolve to {}",
                         (
-                            bun_core::fmt::quote(requests[other.min(index)].version_buf()),
-                            bun_core::fmt::quote(requests[other.max(index)].version_buf()),
+                            bun_core::fmt::quote(shown(&requests[other.min(index)]).as_bytes()),
+                            bun_core::fmt::quote(shown(&requests[other.max(index)]).as_bytes()),
                             bun_core::fmt::quote(name),
                         ),
                     );
@@ -220,9 +224,9 @@ pub(crate) fn fold_resolved_positionals(manager: &mut PackageManager) {
     }
 }
 
-/// Phase 1 (before bun.lock is saved): write the resolved versions into the edited package.json entries and re-derive bun.lock's declared columns from them.
+/// Phase 1 (before bun.lock is saved): write the resolved versions into the edited package.json entries and re-derive bun.lock's declared columns from them. True when that gave `overrides` other values than the rows were resolved with (a `$name` follows the literal written for `name`).
 #[inline]
-pub(crate) fn edit_after_resolve(manager: &mut PackageManager) -> crate::Result<()> {
+pub(crate) fn edit_after_resolve(manager: &mut PackageManager) -> crate::Result<bool> {
     if manager.pending_filtered_write.is_none()
         && manager.update_target_workspaces.is_none()
         && !manager
@@ -230,13 +234,13 @@ pub(crate) fn edit_after_resolve(manager: &mut PackageManager) -> crate::Result<
             .iter()
             .any(|e| e.received_requests)
     {
-        return Ok(());
+        return Ok(false);
     }
     edit_after_resolve_slow(manager)
 }
 
 #[inline(never)]
-fn edit_after_resolve_slow(manager: &mut PackageManager) -> crate::Result<()> {
+fn edit_after_resolve_slow(manager: &mut PackageManager) -> crate::Result<bool> {
     let mut edited: Vec<EditedPackageJson> = core::mem::take(&mut manager.edited_package_jsons);
     let mut updates: Box<[UpdateRequest]> = core::mem::take(&mut manager.update_requests);
     let exact = manager.options.enable.exact_versions();
@@ -445,8 +449,11 @@ fn parse_edited(
     Ok(parsed)
 }
 
-/// Re-parses the edited files the way `bun install` would and copies every declared literal that differs (and, for the root, `overrides` + `catalogs`) into `manager.lockfile`, so the next install's differ sees no change.
-fn sync_lockfile(manager: &mut PackageManager, edited: &[EditedPackageJson]) -> crate::Result<()> {
+/// Re-parses the edited files the way `bun install` would and copies every declared literal that differs (and, for the root, `overrides` + `catalogs`) into `manager.lockfile`, so the next install's differ sees no change. True when `overrides` differed.
+fn sync_lockfile(
+    manager: &mut PackageManager,
+    edited: &[EditedPackageJson],
+) -> crate::Result<bool> {
     let mut scratch = super::workspace_manifests::ScratchManifests::new();
     let parsed = match parse_edited(manager, &mut scratch, edited) {
         Ok(parsed) => parsed,
@@ -458,11 +465,26 @@ fn sync_lockfile(manager: &mut PackageManager, edited: &[EditedPackageJson]) -> 
         }
     };
     let super::workspace_manifests::ScratchManifests {
-        lockfile: scratch, ..
+        lockfile: mut scratch,
+        log,
+        ..
     } = scratch;
 
     let target_ids = target_package_ids(&manager.lockfile, edited);
     let sbuf = scratch.buffers.string_bytes.as_slice();
+    let overrides_changed = {
+        let lockfile: &mut Lockfile = &mut manager.lockfile;
+        OverrideMap::changed(
+            &mut lockfile.overrides,
+            lockfile.buffers.string_bytes.as_slice(),
+            &mut scratch.overrides,
+            sbuf,
+        )
+    };
+    // Why a rule is gone: the members no longer agree on the literal its `$name` names.
+    if overrides_changed && !manager.options.log_level.is_silent() {
+        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+    }
     for (i, pkg) in &parsed {
         let target_id = target_ids[*i];
         if target_id == invalid_package_id {
@@ -556,7 +578,16 @@ fn sync_lockfile(manager: &mut PackageManager, edited: &[EditedPackageJson]) -> 
         *lf.catalogs = scratch.catalogs.clone(known, sbuf, &mut builder)?;
         builder.clamp();
     }
-    Ok(())
+    // A `$name` of the root can name a literal that only a member declares.
+    if overrides_changed && edited.iter().all(|e| e.target.name_hash.is_some()) {
+        let known = &mut manager.known_npm_aliases;
+        let (mut builder, lf) = manager.lockfile.string_builder_split();
+        scratch.overrides.count(sbuf, &mut builder);
+        builder.allocate()?;
+        *lf.overrides = scratch.overrides.clone(known, sbuf, &mut builder)?;
+        builder.clamp();
+    }
+    Ok(overrides_changed)
 }
 
 /// Compared against the file, not `stale_contents`: the before-install print in `update_package_json_and_install` replaces the cwd entry's contents without recording them.

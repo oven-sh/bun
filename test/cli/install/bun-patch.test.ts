@@ -2261,8 +2261,29 @@ describe.concurrent("isolated linker with the global store", () => {
       expect(kind(dir, "node_modules", ".bun", "two-range-deps@1.0.0")).toBe("directory");
       expect(await bunOk(dir, env, "-e", `console.log(require("two-range-deps"))`)).toBe("patched\n");
       expect(shared(dir)).toEqual(before);
+
+      // The copy used to stay for good, and from there the package loads the root's no-deps@2.0.0.
+      const loadsNoDeps = `const from = require("path").dirname(require.resolve("two-range-deps"));
+        console.log(require(require.resolve("no-deps/package.json", { paths: [from] })).version);`;
+      expect([kind(folder), await bunOk(dir, env, "-e", loadsNoDeps)]).toEqual(["link", "1.1.0\n"]);
+      await bunOk(dir, env, "install");
+      expect([kind(folder), await bunOk(dir, env, "-e", loadsNoDeps)]).toEqual(["link", "1.1.0\n"]);
     },
   );
+
+  // A patch that adds a symlink does not apply. Windows is skipped as in the test without the global store.
+  test.skipIf(isWindows)("the copy stays when the patch does not apply", async () => {
+    await using project = await twoVersions();
+    const { dir, env } = project;
+    const folder = join(dir, "node_modules", "two-range-deps");
+    await expectPrepared(dir, env, "two-range-deps", "two-range-deps", "node_modules/two-range-deps");
+    symlinkSync("index.js", join(folder, "link.js"));
+
+    const commit = await runBun(dir, env, "patch", "--commit", "two-range-deps");
+    expect(commit.stderr).toContain("failed to patch package: two-range-deps@1.0.0");
+    expect([kind(folder), kind(folder, "link.js")]).toEqual(["directory", "link"]);
+    expect(commit.exitCode).toBe(1);
+  });
 
   test("bun patch <transitive dependency> makes the copy at the hoisted path", async () => {
     await using project = await installedProject(
@@ -2290,6 +2311,8 @@ describe.concurrent("isolated linker with the global store", () => {
       "patched\n",
     );
     expect(shared(dir)).toEqual(before);
+    // The root does not depend on it.
+    expect(kind(dir, "node_modules", "no-deps")).toBe("missing");
   });
 
   const refusal = (folder: string, commit: boolean) =>

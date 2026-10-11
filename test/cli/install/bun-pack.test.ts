@@ -2,7 +2,7 @@ import { file, gunzipSync, spawn, write } from "bun";
 import { readTarball } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { randomBytes } from "crypto";
-import { existsSync, readFileSync, realpathSync } from "fs";
+import { closeSync, existsSync, constants as fsConstants, openSync, readFileSync, readSync, realpathSync } from "fs";
 import { chmod, exists, lstat, readdir, rm, symlink, writeFile } from "fs/promises";
 import {
   bunEnv,
@@ -18,6 +18,7 @@ import {
   tempDir,
   unprivilegedSpawnOptions,
 } from "harness";
+import { mkfifo } from "mkfifo";
 import { constants } from "os";
 import { join } from "path";
 
@@ -572,6 +573,41 @@ describe.concurrent("flags", () => {
     expect(out).toBe("bun pack <version> (<revision>)");
     expect(exitCode).toBe(1);
     expect(await sortedNames(dir)).toEqual(["index.js", "package.json"]);
+  });
+
+  // The destination used to be opened a second time to hash it, which on a FIFO waits for another writer forever.
+  // This end is open before pack starts and the tarball fits the pipe's buffer, so nothing here can block;
+  // a pack that does is killed by `timeout`.
+  test.skipIf(isWindows)("--filename can be a FIFO", async () => {
+    using dir = tempDir("pack-fifo", {
+      "package.json": JSON.stringify({ name: "pack-fifo", version: "1.1.1" }),
+      "index.js": indexJs,
+    });
+    const fifo = join(dir, "out.fifo");
+    mkfifo(fifo);
+    const reader = openSync(fifo, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "pm", "pack", "--quiet", "--filename=out.fifo"],
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+        env: bunEnv,
+        timeout: 30_000,
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(err).toBe("");
+      expect(out).toBe(`${fifo}\n`);
+      expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+
+      const packed = Buffer.alloc(16 * 1024);
+      await write(join(dir, "out.tgz"), packed.subarray(0, readSync(reader, packed)));
+      expect(tarballEntries(join(dir, "out.tgz"))).toEqual(["package/package.json", "package/index.js"]);
+      expect((await lstat(fifo)).isFIFO()).toBe(true);
+    } finally {
+      closeSync(reader);
+    }
   });
 
   // Every write(2) to /dev/full fails with ENOSPC, the same as a tarball destination on a full disk.
@@ -4048,11 +4084,12 @@ describe.concurrent("bins", () => {
     ]);
   });
 
-  // "directories.bin" applies only without a "bin" field, so `files` decides about bins/a.js here.
+  // "directories.bin" applies only without a "bin", and an empty one counts as absent (npm). `files` leaves bins/a.js out.
   test.each([
-    ["", []],
+    ["", ["package/bins/a.js"]],
+    [{}, ["package/bins/a.js"]],
     ["cli.js", ["package/cli.js"]],
-  ] as [string, string[]][])('"bin" of %p with "directories.bin"', async (bin, bins) => {
+  ] as [string | object, string[]][])('"bin" of %j with "directories.bin"', async (bin, bins) => {
     using dir = tempDir("pack-bins-with-dir", {
       "package.json": JSON.stringify({
         name: "pack-bins-with-dir",

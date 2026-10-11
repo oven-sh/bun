@@ -4,6 +4,7 @@ use bstr::BStr;
 use bun_alloc::AllocError;
 use bun_ast::{E, Expr, ExprData, Loc, StoreStr};
 use bun_collections::VecExt as _;
+use bun_core::fmt::for_terminal;
 use bun_core::{Global, Output, strings};
 use bun_semver::{self as Semver, SlicedString};
 
@@ -109,8 +110,8 @@ fn note_follows(quiet: bool, name: &[u8], target: &[u8], entry: &[u8], declared:
         "{} in {} now follows the catalog entry \"{}\" instead of \"{}\"",
         BStr::new(name),
         BStr::new(target),
-        BStr::new(entry),
-        BStr::new(declared),
+        for_terminal(BStr::new(entry)),
+        for_terminal(BStr::new(declared)),
     );
     Output::flush();
 }
@@ -123,8 +124,8 @@ fn note_keeps(quiet: bool, name: &[u8], target: &[u8], declared: &[u8], entry: &
         "{} in {} keeps \"{}\" because the catalog entry is \"{}\"",
         BStr::new(name),
         BStr::new(target),
-        BStr::new(declared),
-        BStr::new(entry),
+        for_terminal(BStr::new(declared)),
+        for_terminal(BStr::new(entry)),
     );
     Output::flush();
 }
@@ -141,8 +142,8 @@ fn note_replaced(name: &[u8], from: &[u8], to: &[u8], also_used_by: &[Box<[u8]>]
     bun_core::note!(
         "catalog entry {} changed from \"{}\" to \"{}\"{}",
         BStr::new(name),
-        BStr::new(from),
-        BStr::new(to),
+        for_terminal(BStr::new(from)),
+        for_terminal(BStr::new(to)),
         BStr::new(&suffix),
     );
     Output::flush();
@@ -158,11 +159,11 @@ fn refuse_declared(literal: &[u8], target: &[u8], name: &[u8], flag: &[u8]) -> !
     Output::err_generic(
         "--catalog cannot add \"{s}\": {s} already declares {s}\n  bun add {s}@{s} {s}",
         (
-            BStr::new(literal),
+            for_terminal(BStr::new(literal)),
             BStr::new(target),
             BStr::new(name),
             BStr::new(name),
-            BStr::new(literal),
+            for_terminal(BStr::new(literal)),
             BStr::new(&flag_spelling),
         ),
     );
@@ -465,13 +466,17 @@ fn existing_slot(package_json: &Expr, name: &[u8]) -> Option<StoreStr> {
     None
 }
 
+fn is_catalog_reference(slot: &[u8]) -> bool {
+    dependency::Tag::infer(dependency::trim_literal(slot)) == dependency::Tag::Catalog
+}
+
 fn catalog_group_of(reference: &[u8]) -> &[u8] {
+    let reference = dependency::trim_literal(reference);
     strings::trim(&reference[b"catalog:".len()..], &strings::WHITESPACE_CHARS)
 }
 
 fn references_flag_group(slot: &[u8], flag: &[u8]) -> bool {
-    dependency::Tag::infer(slot) == dependency::Tag::Catalog
-        && CatalogMap::same_name(catalog_group_of(slot), flag)
+    is_catalog_reference(slot) && CatalogMap::same_name(catalog_group_of(slot), flag)
 }
 
 fn find_add<'a>(
@@ -526,7 +531,9 @@ fn record_add(
         return Decision::Convert;
     }
 
-    let declared = declared.filter(|literal| catalogable_verbatim(literal));
+    let declared = declared
+        .map(dependency::trim_literal)
+        .filter(|literal| catalogable_verbatim(literal));
     let candidate = || match declared {
         Some(literal) => Candidate::Existing(literal.into()),
         None => Candidate::Latest,
@@ -792,8 +799,7 @@ pub(crate) fn edit_target(
             .iter()
             .find(|&&(name_hash, _)| name_hash == request.name_hash)
             .map(|&(_, slot)| slot);
-        let existing_ref = existing
-            .filter(|slot| dependency::Tag::infer(slot.slice()) == dependency::Tag::Catalog);
+        let existing_ref = existing.filter(|slot| is_catalog_reference(slot.slice()));
 
         let literal = if !options.before_install {
             let Some(reference) = existing_ref else {

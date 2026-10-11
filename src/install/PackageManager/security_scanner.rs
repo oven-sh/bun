@@ -111,7 +111,8 @@ fn do_partial_install_of_security_scanner(
             .unwrap_or(crate::config_version::ConfigVersion::V0),
         manager.lockfile.workspace_paths.len() > 0,
     );
-    let summary = if linker == bun_install_types::NodeLinker::NodeLinker::Isolated {
+    let isolated = linker == bun_install_types::NodeLinker::NodeLinker::Isolated;
+    let mut summary = if isolated {
         IsolatedInstall::install_isolated_packages(
             manager,
             ctx,
@@ -130,6 +131,11 @@ fn do_partial_install_of_security_scanner(
             packages_to_install,
         )?
     };
+    summary.fail += manager.report_offline_misses(
+        &summary.offline_misses,
+        &[security_scanner_pkg_id],
+        isolated,
+    )?;
 
     if cfg!(debug_assertions) {
         bun_core::debug_warn!(

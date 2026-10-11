@@ -1018,7 +1018,7 @@ impl TarballStream {
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "Refusing to install package with invalid name \"{}\"",
-                            bun_fmt::escape_control_chars(tarball.name_and_basename().0),
+                            bun_fmt::for_terminal(bstr::BStr::new(tarball.name_and_basename().0)),
                         ),
                     );
                 } else {
@@ -1028,7 +1028,7 @@ impl TarballStream {
                         format_args!(
                             "{} extracting tarball for \"{}\"{}{} (at byte {} of {})",
                             err.name(),
-                            bstr::BStr::new(tarball.name.slice()),
+                            bun_fmt::for_terminal(bstr::BStr::new(tarball.name.slice())),
                             if self.fail_detail.is_empty() {
                                 ""
                             } else {
@@ -1062,7 +1062,7 @@ impl TarballStream {
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "Integrity check failed for tarball: {}",
-                            bstr::BStr::new(tarball.name.slice()),
+                            bun_fmt::for_terminal(bstr::BStr::new(tarball.name.slice())),
                         ),
                     );
                     (*task).err = Some(crate::Error::IntegrityCheckFailed);
@@ -1121,7 +1121,7 @@ impl TarballStream {
             if PackageManager::verbose_install() {
                 bun_core::pretty_errorln!(
                     "[{}] Streamed {} tarball → {} entries<r>",
-                    bstr::BStr::new(name),
+                    bun_fmt::for_terminal(bstr::BStr::new(name)),
                     bun_fmt::size(self.bytes_received, Default::default()),
                     self.entry_count,
                 );

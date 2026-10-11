@@ -7,9 +7,9 @@ import { join } from "node:path";
 // Android's app seccomp policy denies openat2(2) and fchmodat2(2) with
 // SECCOMP_RET_TRAP: the process is killed by SIGSYS instead of seeing ENOSYS,
 // so the errno-based fallbacks never run and `bun install` dies while linking
-// package bins (issue #39060, Termux). Bun detects Android at runtime (the
-// ANDROID_ROOT/ANDROID_DATA env vars Android init sets for every process, or
-// an "android" kernel release string) and skips those syscalls entirely.
+// package bins (issue #39060, Termux). Bun detects Android at runtime (an
+// "android" kernel release string, or Android's dynamic linker under the
+// ANDROID_ROOT Android init sets for every process) and skips those syscalls.
 // This test reproduces the Android policy with an equivalent seccomp filter.
 const helperSrc = `
 #define _GNU_SOURCE
@@ -95,10 +95,6 @@ const tryBuild = (): string | null => {
   return bin;
 };
 
-// Android env vars are how bun's runtime detection recognizes Android here
-// (the kernel release string of the test host obviously isn't Android's).
-const androidEnv = { ...bunEnv, ANDROID_ROOT: "/system", ANDROID_DATA: "/data" };
-
 test.skipIf(!isLinux)("bun install survives Android-style seccomp (openat2/fchmodat2 SIGSYS)", async () => {
   const helperBin = tryBuild();
   if (helperBin == null) {
@@ -122,12 +118,14 @@ test.skipIf(!isLinux)("bun install survives Android-style seccomp (openat2/fchmo
     // bin in a subdirectory so bin linking validates the parent dir with
     // openat2(RESOLVE_BENEATH), then chmods the target (fchmodat2).
     "dep/bin/dep.js": "#!/usr/bin/env node\nconsole.log('ok');\n",
+    // What makes bun recognize Android here: the test host's kernel release string isn't Android's.
+    "system/bin/linker64": "",
   });
 
   await using proc = Bun.spawn({
     cmd: [helperBin, bunExe(), "install"],
     cwd: String(dir),
-    env: androidEnv,
+    env: { ...bunEnv, ANDROID_ROOT: join(String(dir), "system"), ANDROID_DATA: "/data" },
     stdout: "pipe",
     stderr: "pipe",
   });

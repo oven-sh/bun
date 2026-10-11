@@ -5,6 +5,7 @@ use bun_collections::DynamicBitSet;
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_core::{ZBox, handle_oom, strings};
+use bun_install_types::NodeLinker::NodeLinker;
 use bun_paths::platform;
 use bun_paths::resolve_path;
 use bun_paths::{Platform, SEP};
@@ -316,7 +317,9 @@ pub fn do_patch_commit(
 ) -> Result<Option<PatchCommitResult>, crate::Error> {
     let mut lockfile: Box<Lockfile> = Box::default();
     let log = manager.log_mut();
-    match lockfile.load_from_cwd::<true>(Some(manager), log) {
+    let load_result = lockfile.load_from_cwd::<true>(Some(manager), log);
+    let linker = load_result.node_linker(manager.options.node_linker);
+    match load_result {
         lockfile::LoadResult::NotFound => {
             Output::err_generic(
                 "Cannot find lockfile. Install packages with `<cyan>bun install<r>` before patching them.",
@@ -474,6 +477,15 @@ pub fn do_patch_commit(
     ) {
         Output::err(e, "failed renaming patch file to patches dir", ());
         Global::crash();
+    }
+
+    // With the global store `bun patch` makes the copy there, and an install leaves a package it
+    // finds there alone. The patch has the edits now, unless the install cannot read it.
+    if linker == NodeLinker::Isolated
+        && is_link_position(&new_folder)
+        && bun_patch::parse_patch_file(&patchfile_contents).is_ok()
+    {
+        let _ = Fd::cwd().delete_tree(&new_folder);
     }
 
     Ok(Some(PatchCommitResult {
@@ -951,6 +963,23 @@ fn is_link(path: &[u8]) -> bool {
     sys::readlink(&ZBox::from_bytes(path), &mut buf[..]).is_ok()
 }
 
+/// `folder`, links resolved, is where the isolated linker has a link to a package or nothing: an
+/// entry of one of the project's `node_modules`, outside `node_modules/.bun`.
+fn is_link_position(folder: &[u8]) -> bool {
+    use resolve_path::{ParentEqual, dirname, is_parent_or_equal};
+    let Ok(store) = resolve_links(b"node_modules/.bun") else {
+        return false;
+    };
+    let project = dirname::<platform::Auto>(dirname::<platform::Auto>(&store));
+    let mut node_modules = dirname::<platform::Auto>(folder);
+    if strings::starts_with_char(bun_paths::basename(node_modules), b'@') {
+        node_modules = dirname::<platform::Auto>(node_modules);
+    }
+    bun_paths::basename(node_modules) == b"node_modules"
+        && is_parent_or_equal(project, folder) == ParentEqual::Parent
+        && is_parent_or_equal(&store, folder) == ParentEqual::Unrelated
+}
+
 /// A path next to `folder`, named like an install's staging folder so that `bun prune` collects
 /// one that a crash left behind.
 fn temp_sibling(folder: &[u8]) -> Vec<u8> {
@@ -1311,7 +1340,7 @@ fn pkg_info_for_name_and_version(
         }
         bun_core::pretty_errorln!(
             "\n<r><red>error<r>: package <b>{}<r> not found<r>",
-            bstr::BStr::new(pkg_maybe_version_to_patch)
+            bun_fmt::for_terminal(bstr::BStr::new(pkg_maybe_version_to_patch))
         );
         Global::crash();
     }
@@ -1346,7 +1375,7 @@ fn pkg_info_for_name_and_version(
     else {
         bun_core::pretty_error!(
             "<r><red>error<r>: could not find the folder for <b>{}<r> in node_modules<r>\n<r>",
-            bstr::BStr::new(pkg_maybe_version_to_patch),
+            bun_fmt::for_terminal(bstr::BStr::new(pkg_maybe_version_to_patch)),
         );
         Global::crash();
     };

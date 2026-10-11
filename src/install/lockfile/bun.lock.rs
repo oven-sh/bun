@@ -551,6 +551,12 @@ impl Stringifier {
 
                 Self::dec_indent(writer, indent)?;
                 writer.write_all(b"],\n")?;
+            } else if (lockfile.trusted_dependencies.as_ref())
+                .is_some_and(|trusted_dependencies| trusted_dependencies.count() == 0)
+            {
+                // A checkout without the workspace that declares `[]` has nothing else to tell it from no list.
+                Self::write_indent(writer, *indent)?;
+                writer.write_all(b"\"trustedDependencies\": [],\n")?;
             }
 
             if found_patched_dependencies.len() > 0 {

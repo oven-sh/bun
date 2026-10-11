@@ -1329,8 +1329,7 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("linker=%s", linker =
   describe("next to a root alias of the same name", () => {
     const aliased = { "no-deps": "npm:a-dep@1.0.1" };
 
-    // The isolated linker takes the nearest dependency of the peer's name, whatever package it holds.
-    test.todoIf(linker === "isolated").each([
+    test.each([
       ["peer-deps-fixed>no-deps", { "peer-deps-fixed>no-deps": "npm:no-deps@1.0.0" }],
       ["a group", { "peer-deps-fixed": { "no-deps": "1.0.0" } }],
     ])("a rule for a peer is not lost (%s)", async (_, overrides) => {

@@ -3562,9 +3562,19 @@ impl Lockfile {
         if print_name_version_string {
             Output::flush();
             Output::disable_buffering();
-            Output::writer()
-                .write_all(alphabetized_name_version_string)
-                .expect("unreachable");
+            // `bun pm hash-string` is asked for the hashed bytes; `--verbose` ends up in CI logs.
+            if PackageManager::verbose_install() {
+                Output::writer()
+                    .print(format_args!(
+                        "{}",
+                        bun_core::fmt::redacted(bstr::BStr::new(alphabetized_name_version_string))
+                    ))
+                    .expect("unreachable");
+            } else {
+                Output::writer()
+                    .write_all(alphabetized_name_version_string)
+                    .expect("unreachable");
+            }
             Output::enable_buffering();
         }
 
@@ -3735,6 +3745,25 @@ impl Lockfile {
             .is_some_and(|trusted| trusted.contains(&hash))
     }
 
+    /// The set of a checkout where no package.json has a list and a member is missing: that member may
+    /// have declared what the lockfile recorded, so the default list holds for the recorded names only.
+    pub(crate) fn recorded_default_trust(
+        recorded: &TrustedDependenciesSet,
+    ) -> Result<TrustedDependenciesSet, AllocError> {
+        let mut trusted = TrustedDependenciesSet::default();
+        for entry in default_trusted_dependencies::entries() {
+            let hash = entry.hash as TruncatedPackageNameHash;
+            // bun.lockb records the hash alone.
+            if recorded
+                .get(&hash)
+                .is_some_and(|name| name.is_empty() || **name == *entry.key)
+            {
+                trusted.put(hash, Box::from(entry.key))?;
+            }
+        }
+        Ok(trusted)
+    }
+
     /// Replaces the set with the root's and the members' `trustedDependencies`, which is where an
     /// install takes it from. Returns what the lockfile had recorded.
     pub fn read_trusted_dependencies_from_manifests(
@@ -3744,6 +3773,7 @@ impl Lockfile {
     ) -> Result<Option<TrustedDependenciesSet>, BunError> {
         let bump = bun_alloc::Arena::new();
         let mut trusted: Option<TrustedDependenciesSet> = None;
+        let mut member_is_missing = false;
         let string_bytes = self.buffers.string_bytes.as_slice();
         let members = self.workspace_paths.values().iter();
         for relative_dir in
@@ -3757,7 +3787,10 @@ impl Lockfile {
             let entry = match manifests.get_with_path(log, path, Default::default()) {
                 crate::GetJsonResult::Entry(entry) => entry,
                 // An install skips a member that is not on disk, too.
-                crate::GetJsonResult::ReadErr(_) if !relative_dir.is_empty() => continue,
+                crate::GetJsonResult::ReadErr(_) if !relative_dir.is_empty() => {
+                    member_is_missing = true;
+                    continue;
+                }
                 crate::GetJsonResult::ReadErr(err) | crate::GetJsonResult::ParseErr(err) => {
                     return Err(err);
                 }
@@ -3769,6 +3802,12 @@ impl Lockfile {
                 entry.root,
                 &bump,
             )?;
+        }
+        if member_is_missing
+            && trusted.is_none()
+            && let Some(recorded) = &self.trusted_dependencies
+        {
+            trusted = Some(Self::recorded_default_trust(recorded)?);
         }
         Ok(core::mem::replace(&mut self.trusted_dependencies, trusted))
     }

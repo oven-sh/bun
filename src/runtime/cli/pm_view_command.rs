@@ -149,17 +149,8 @@ pub(crate) fn view(
 
     let mut response_buf = MutableString::init(2048)?;
     let header_buf: &[u8] = headers.content.written_slice();
-    let http_proxy = manager.http_proxy(&url);
-    let mut req = http::AsyncHTTP::init_sync(
-        http::Method::GET,
-        url,
-        headers.entries,
-        header_buf,
-        b"",
-        http_proxy,
-        http::FetchRedirect::Follow,
-    );
-    req.client.flags.reject_unauthorized = manager.tls_reject_unauthorized();
+    let mut req =
+        manager.registry_request(http::Method::GET, url, headers.entries, header_buf, b"");
 
     let res = match req.send_sync(&mut response_buf) {
         Ok(r) => r,
@@ -511,7 +502,7 @@ pub(crate) fn view(
         prettyln!("{}", escape_control_chars(desc));
     }
     if let Some(hp) = string(b"homepage") {
-        prettyln!("<blue>{}<r>", escape_control_chars(hp));
+        prettyln!("<blue>{}<r>", bun_fmt::for_terminal(BStr::new(hp)));
     }
 
     if let Some(mut iter) = manifest.get_array(b"keywords") {
@@ -582,7 +573,7 @@ pub(crate) fn view(
             prettyln!(
                 "- <cyan>{}<r><d>:<r> {}",
                 escape_control_chars(dep_name),
-                escape_control_chars(dep_version),
+                bun_fmt::for_terminal(BStr::new(dep_version)),
             );
         }
     }
@@ -590,7 +581,10 @@ pub(crate) fn view(
     if let Some(dist) = manifest.get_object(b"dist") {
         prettyln!("\n<d><r><b>dist<r>");
         if let Some(t) = dist.get_string_cloned(&bump, b"tarball").ok().flatten() {
-            prettyln!(" <d>.<r>tarball<d>:<r> {}", escape_control_chars(t));
+            prettyln!(
+                " <d>.<r>tarball<d>:<r> {}",
+                bun_fmt::for_terminal(BStr::new(t))
+            );
         }
         if let Some(s) = dist.get_string_cloned(&bump, b"shasum").ok().flatten() {
             let s = escape_control_chars(s);

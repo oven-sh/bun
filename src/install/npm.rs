@@ -132,7 +132,6 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     // returns. `init_sync` borrows the URL/header buffers for the duration of
     // the synchronous request only.
     let url = URL::parse(&print_buf);
-    let http_proxy = manager.http_proxy(&url);
 
     // `headers.allocate()` set `content.ptr` to a valid `content.len`-byte
     // allocation; `headers` outlives `req`. `written_slice()` is the safe
@@ -140,16 +139,8 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     // `&[]` when unallocated, matching the previous `None => b""` arm).
     let header_buf: &[u8] = headers.content.written_slice();
 
-    let mut req = AsyncHTTP::init_sync(
-        http::Method::GET,
-        url,
-        headers.entries,
-        header_buf,
-        b"",
-        http_proxy,
-        http::FetchRedirect::Follow,
-    );
-    req.client.flags.reject_unauthorized = manager.tls_reject_unauthorized();
+    let mut req =
+        manager.registry_request(http::Method::GET, url, headers.entries, header_buf, b"");
 
     let res = match req.send_sync(&mut response_buf) {
         Ok(res) => res,
@@ -582,7 +573,11 @@ pub mod registry {
                 ("username", &mut registry.username),
                 ("password", &mut registry.password),
             ] {
-                if field.len() < 2 || field[0] != b'$' {
+                // Anything else after the `$` is no variable name: a password that happens to start with one.
+                if field.len() < 2
+                    || field[0] != b'$'
+                    || !(field[1..].iter()).all(|c| c.is_ascii_alphanumeric() || *c == b'_')
+                {
                     continue;
                 }
                 match env.get(&**field) {
@@ -2204,6 +2199,18 @@ impl PackageManifest {
             minimum_release_age_ms,
             exclusions,
         )
+    }
+
+    /// Where `bun update --latest` goes: `latest`, or `find_any_version` when that tag names no published version.
+    pub fn find_latest(
+        &self,
+        minimum_release_age_ms: Option<f64>,
+        exclusions: Option<&MinimumReleaseAgeExcludes>,
+    ) -> FindVersionResult<'_> {
+        if self.find_by_dist_tag(b"latest").is_none() {
+            return self.find_any_version(minimum_release_age_ms, exclusions);
+        }
+        self.find_by_dist_tag_with_filter(b"latest", minimum_release_age_ms, exclusions)
     }
 
     pub fn find_by_dist_tag_with_filter(

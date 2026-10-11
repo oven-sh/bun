@@ -1407,7 +1407,7 @@ impl<'a> PackageInstaller<'a> {
             if log_level != Options::LogLevel::Silent {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: refusing to install dependency with unsafe name <b>{}<r>",
-                    bun_core::fmt::escape_control_chars(alias.slice(string_buf!())),
+                    bun_core::fmt::for_terminal(bstr::BStr::new(alias.slice(string_buf!()))),
                 );
             }
             self.summary.fail += 1;
@@ -1492,7 +1492,7 @@ impl<'a> PackageInstaller<'a> {
                 if log_level != Options::LogLevel::Silent {
                     bun_core::pretty_errorln!(
                         "<r><red>error<r>: failed to patch package <b>{}<r>: the hash of patch file {} was not calculated before install, this is a bug in Bun",
-                        bstr::BStr::new(&name_and_version),
+                        bun_core::fmt::for_terminal(bstr::BStr::new(&name_and_version)),
                         bun_core::fmt::quote(patchdep.path.slice(string_buf!())),
                     );
                 }
@@ -2492,9 +2492,9 @@ impl<'a> PackageInstaller<'a> {
         }
     }
 
-    /// Nothing was queued for the package: its download already failed, or `--offline` and not
-    /// cached. Whoever found that out reported it, as a warning if only an optional dependency
-    /// had asked by then.
+    /// Nothing was queued for the package. Its download already failed: whoever found that out
+    /// reported it, as a warning if only an optional dependency had asked by then. Or `--offline`
+    /// and not cached: `report_offline_misses` reports it.
     fn on_download_not_queued(
         &mut self,
         dependency_id: DependencyID,
@@ -2502,9 +2502,15 @@ impl<'a> PackageInstaller<'a> {
         log_level: Options::LogLevel,
         is_pending_package_install: bool,
     ) {
-        self.summary.fail += self
-            .manager()
-            .is_package_required(dependency_id, package_id) as u32;
+        if self.manager().options.offline
+            == crate::package_manager_real::options::OfflineMode::Offline
+        {
+            self.summary.offline_misses.push(package_id);
+        } else {
+            self.summary.fail +=
+                self.manager()
+                    .is_package_required(dependency_id, package_id) as u32;
+        }
         self.increment_tree_install_count(
             !is_pending_package_install,
             self.current_tree_id,

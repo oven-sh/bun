@@ -219,6 +219,9 @@ test.concurrent.each(
     ["packages/*", "!././packages/pkg2//"],
     ["!packages/pkg2", "packages/*"],
     ["packages/*", "!packages/pkg2", "packages/pkg*"],
+    // Like npm, `dir/**` also removes `dir` itself.
+    ["packages/*", "!packages/pkg2/**"],
+    ["packages/**", "!**/pkg2/**"],
     ...(isWindows ? [["packages/*", "!.\\packages\\pkg2\\"]] : []),
   ].map(workspaces => [workspaces]),
 )("allowing negative workspace patterns: %j", async workspaces => {
@@ -283,6 +286,7 @@ test.concurrent("a negative workspace pattern adds no members", async () => {
       }),
     ),
     write(join(packageDir, "packages", "pkg1", "package.json"), JSON.stringify({ name: "pkg1" })),
+    write(join(packageDir, "packages", "pkg1", "test", "package.json"), JSON.stringify({ name: "pkg1-test" })),
     write(
       join(packageDir, "packages", "pkg1", "test", "fixture", "package.json"),
       JSON.stringify({ name: "pkg1-fixture" }),

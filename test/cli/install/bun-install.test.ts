@@ -2029,7 +2029,7 @@ describe.concurrent("bun-install", () => {
       expect(exitCode).toBe(1);
     }
 
-    it("file: dependency is verified through <alias>/package.json", async () => {
+    it("is refused for a file: dependency", async () => {
       using dir = tempDir("long-alias-file-dep", {
         "package.json": JSON.stringify({ name: "app", dependencies: { [alias]: "file:./pkg" } }),
         "pkg/package.json": JSON.stringify({ name: "pkg", version: "1.0.0" }),
@@ -2039,7 +2039,7 @@ describe.concurrent("bun-install", () => {
       await installIntoExistingNodeModules(String(dir));
     });
 
-    it("git dependency is verified through <alias>/.bun-tag", async () => {
+    it("is refused for a git dependency", async () => {
       using dir = tempDir("long-alias-git-dep", {
         "work/package.json": JSON.stringify({ name: "pkg", version: "1.0.0" }),
         "app/node_modules": {},
@@ -16546,6 +16546,22 @@ describe.concurrent("deprecated versions", () => {
     using dir = project({ dependencies: {} });
     expect(await picked(String(dir), registry, ...cmd)).toBe(version);
     expect(await file(join(String(dir), "package.json")).json()).toEqual({ name: "foo", dependencies });
+  });
+
+  it.each<[string, Record<string, string>]>([
+    ["names a version that is not there", { latest: "9.9.9" }],
+    ["is missing", {}],
+  ])("bun outdated lists a package whose latest %s", async (_, tags) => {
+    using registry = serveManifests({ dep: { "1.0.0": {}, "1.1.0": {}, "2.0.0": {}, "3.0.0-rc.1": {} } }, tags);
+    using dir = project({ dependencies: { dep: "~1.0.0" } });
+    expect(await picked(String(dir), registry, "install")).toBe("1.0.0");
+    const { stdout, exitCode } = await bunIn(String(dir), ["outdated"], {
+      BUN_CONFIG_REGISTRY: registry.server.url.href,
+    });
+    expect(stdout.split("\n").flatMap(line => (line.includes("dep") ? [line.match(/[\w.-]+/g)] : []))).toEqual([
+      ["dep", "1.0.0", "1.0.0", "2.0.0"],
+    ]);
+    expect(exitCode).toBe(0);
   });
 
   it("a version in bun.lock stays when it gets deprecated, until bun update", async () => {

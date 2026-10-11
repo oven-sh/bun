@@ -2036,18 +2036,28 @@ describe.concurrent("provenance", () => {
     expect({ requests, exitCode }).toEqual({ requests: 1, exitCode: 0 });
   });
 
-  // A GitHub Actions job sets it for npm. Nobody asked bun for it, so it does not turn the job red.
-  const IGNORED = "warn: NPM_CONFIG_PROVENANCE is ignored: bun publish cannot generate provenance statements\n";
+  // The way a GitHub Actions job asks for it.
   test.each([
-    [{ NPM_CONFIG_PROVENANCE: "true" }, false, IGNORED],
-    [{ NPM_CONFIG_PROVENANCE: "true" }, true, IGNORED],
-    [{ npm_config_provenance: "true" }, false, IGNORED],
-    [{ NPM_CONFIG_PROVENANCE: "true", npm_config_provenance: "true" }, false, IGNORED],
-    [{ NPM_CONFIG_PROVENANCE: "false" }, false, ""],
-    [{ NPM_CONFIG_PROVENANCE: "" }, false, ""],
-  ] as [object, boolean, string][])("%j in the environment, from a tarball: %p", async (vars, fromTarball, warning) => {
-    const { out, err, exitCode, requests } = await publishProvenancePkg(undefined, [], fromTarball, vars);
-    expect(err).toBe(warning + (fromTarball ? "" : "$ echo prepublishOnly\n"));
+    [{ NPM_CONFIG_PROVENANCE: "true" }, [], false],
+    [{ NPM_CONFIG_PROVENANCE: "true" }, [], true],
+    [{ NPM_CONFIG_PROVENANCE: "true" }, ["--dry-run"], false],
+    [{ npm_config_provenance: "true" }, [], false],
+    [{ NPM_CONFIG_PROVENANCE: "true", npm_config_provenance: "true" }, [], false],
+  ] as [object, string[], boolean][])(
+    "%j in the environment is refused, args: %j, from a tarball: %p",
+    async (vars, args, fromTarball) => {
+      const { out, err, exitCode, requests } = await publishProvenancePkg(undefined, args, fromTarball, vars);
+      expect(err).toBe(`error: NPM_CONFIG_PROVENANCE ${NOT_SUPPORTED}`);
+      expect(out).not.toContain("provenance-pkg@1.0.0");
+      expect({ requests, exitCode }).toEqual({ requests: 0, exitCode: 1 });
+    },
+  );
+
+  test.each(["false", ""])("NPM_CONFIG_PROVENANCE=%j publishes", async NPM_CONFIG_PROVENANCE => {
+    const { out, err, exitCode, requests } = await publishProvenancePkg(undefined, [], false, {
+      NPM_CONFIG_PROVENANCE,
+    });
+    expect(err).toBe("$ echo prepublishOnly\n");
     expect(out).toContain(" + provenance-pkg@1.0.0");
     expect({ requests, exitCode }).toEqual({ requests: 1, exitCode: 0 });
   });
@@ -2798,7 +2808,9 @@ describe.concurrent("bin in the published manifest", () => {
     [{ directories: { bin: "." } }, undefined],
     [{ directories: { bin: "cli.js" } }, undefined],
     [{ directories: { bin: "missing" } }, undefined],
-    [{ bin: "", directories: { bin: "bins" } }, {}],
+    [{ bin: "", directories: { bin: "bins" } }, { "a.js": "bins/a.js" }],
+    [{ bin: {}, directories: { bin: "bins" } }, { "a.js": "bins/a.js" }],
+    [{ bin: "", directories: { bin: "missing" } }, {}],
     [{ bin: "cli.js", directories: { bin: "bins" } }, { "bin-pkg": "cli.js" }],
   ])("%j", async (fields, expected) => {
     let captured: any = null;

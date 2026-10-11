@@ -886,10 +886,7 @@ impl UpdateInteractiveCommand {
                 continue;
             };
 
-            let Some(latest) = manifest
-                .find_by_dist_tag_with_filter(b"latest", min_age_ms, excludes)
-                .unwrap()
-            else {
+            let Some(latest) = manifest.find_latest(min_age_ms, excludes).unwrap() else {
                 continue;
             };
 

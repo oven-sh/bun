@@ -155,16 +155,20 @@ pub fn packages_from(
     follow_workspace_edges: bool,
     options: Options,
 ) -> DynamicBitSet {
-    let walk = Walk::new(lockfile, resolutions, follow_workspace_edges, options);
-    let mut seen = walk.empty_seen();
-    let mut worklist: Vec<PackageID> = Vec::new();
-    for &root in roots {
-        if mark(&mut seen, root) {
-            worklist.push(root);
-        }
-    }
-    walk.drain(&mut seen, &mut worklist);
-    seen
+    Walk::new(lockfile, resolutions, follow_workspace_edges, options).reach(roots)
+}
+
+// What an install that goes on without `left_out` still needs: an optional dependency on one of those is not followed.
+pub(crate) fn packages_without(
+    lockfile: &Lockfile,
+    resolutions: &[PackageID],
+    roots: &[PackageID],
+    options: Options,
+    left_out: &DynamicBitSet,
+) -> DynamicBitSet {
+    let mut walk = Walk::new(lockfile, resolutions, true, options);
+    walk.left_out = Some(left_out);
+    walk.reach(roots)
 }
 
 // Out-of-range ids (invalid_package_id) are treated as already seen.
@@ -222,6 +226,7 @@ struct Walk<'a> {
     follow_workspace_edges: bool,
     follow_all: bool,
     options: Options,
+    left_out: Option<&'a DynamicBitSet>,
 }
 
 impl<'a> Walk<'a> {
@@ -244,11 +249,24 @@ impl<'a> Walk<'a> {
                 && options.optional_peer
                 && options.bundled,
             options,
+            left_out: None,
         }
     }
 
     fn empty_seen(&self) -> DynamicBitSet {
         DynamicBitSet::init_empty(self.dep_slices.len()).unwrap_or_oom()
+    }
+
+    fn reach(&self, roots: &[PackageID]) -> DynamicBitSet {
+        let mut seen = self.empty_seen();
+        let mut worklist: Vec<PackageID> = Vec::new();
+        for &root in roots {
+            if mark(&mut seen, root) {
+                worklist.push(root);
+            }
+        }
+        self.drain(&mut seen, &mut worklist);
+        seen
     }
 
     fn follows(&self, behavior: Behavior) -> bool {
@@ -267,6 +285,13 @@ impl<'a> Walk<'a> {
         worklist: &mut Vec<PackageID>,
     ) {
         if seen.is_set_allow_out_of_bound(target as usize, true) {
+            return;
+        }
+        if behavior.contains(Behavior::OPTIONAL)
+            && self
+                .left_out
+                .is_some_and(|left_out| left_out.is_set(target as usize))
+        {
             return;
         }
         if let Some((cpu, os, libc)) = self.options.platform

@@ -840,6 +840,55 @@ describe.concurrent("bun add --catalog", () => {
     });
   });
 
+  describe("leading whitespace in what a package.json declares", () => {
+    test("the target's named reference stays in that catalog", async () => {
+      const pkg1 = pretty({ name: "pkg1", dependencies: { "no-deps": " catalog:testing" } });
+      const dir = await createDir(workspacesObject({ catalogs: { testing: { "no-deps": "1.0.0" } } }), pkg1);
+      await dir.install();
+
+      expectOk(await dir.add(dir.pkg1Dir, "no-deps", "--catalog"));
+
+      expect((await dir.root()).workspaces).toStrictEqual({
+        packages: ["packages/*"],
+        catalogs: { testing: { "no-deps": "1.0.0" } },
+      });
+      expect(await dir.pkg1Text()).toBe(pkg1);
+      expect((await dir.installed("no-deps")).version).toBe("1.0.0");
+      await dir.installSavesNothing();
+    });
+
+    test("another member's reference is named when the entry is replaced", async () => {
+      const dir = await createDir(
+        workspacesObject({ catalog: { "no-deps": "^2.0.0" } }),
+        { name: "pkg1", dependencies: { "no-deps": "catalog:" } },
+        withPkg2({ name: "pkg2", dependencies: { "no-deps": "\tcatalog:" } }),
+      );
+      await dir.install();
+
+      const result = await dir.add(dir.pkg1Dir, "no-deps@1.0.0", "--catalog");
+      expect(result.stderr).toContain(
+        'note: catalog entry no-deps changed from "^2.0.0" to "1.0.0" (also used by pkg2)\n',
+      );
+      expectOk(result);
+    });
+
+    test("a tarball url the target declares is cataloged without it", async () => {
+      const tarball = `${registry.registryUrl()}no-deps/-/no-deps-1.0.0.tgz`;
+      const dir = await createDir(workspacesObject({ catalog: {} }), {
+        name: "pkg1",
+        dependencies: { "no-deps": ` ${tarball}` },
+      });
+      await dir.install();
+
+      expectOk(await dir.add(dir.pkg1Dir, "no-deps", "--catalog"));
+
+      expect(await dir.pkg1()).toStrictEqual({ name: "pkg1", dependencies: { "no-deps": "catalog:" } });
+      expect((await dir.root()).workspaces.catalog).toStrictEqual({ "no-deps": tarball });
+      expect((await dir.installed("no-deps")).version).toBe("1.0.0");
+      await dir.installSavesNothing();
+    });
+  });
+
   describe("literals other than a bare name", () => {
     test("alias@npm:pkg is written verbatim, like plain add", async () => {
       const dir = await createDir(workspacesObject({ catalog: {} }));

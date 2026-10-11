@@ -464,8 +464,8 @@ describe.concurrent("auto-install reports why a package could not be installed",
     using r = registryWithMissingTarball("some-other-package");
     const { stderr, exitCode } = await runWithRegistry(r.origin, "index.js", `import "${name}";\n`);
 
-    // A resolve that misses runs the resolver a second time, and a failed lookup is not remembered.
-    expect(r.requests).toEqual([`/${name}`, `/${name}`]);
+    // A resolve that misses runs the resolver a second time, which does not ask again.
+    expect(r.requests).toEqual([`/${name}`]);
     expect(stderr).toContain(`error: Cannot find package '${name}'`);
     expect(stderr).toContain(`note: GET ${r.origin}/${name} - 404`);
     expect(exitCode).toBe(1);
@@ -797,9 +797,9 @@ describe.concurrent("a failed registry lookup is asked again by the next resolve
     return { stdout: stdout.trim(), stderr, exitCode };
   }
 
-  // A resolve that misses runs the resolver a second time, which is a second lookup.
+  // A resolve that misses runs the resolver a second time, which does not ask again.
   function expectLookups(requests: string[], path: string, requestsPerLookup: number) {
-    expect(requests).toEqual(Array(2 * requestsPerLookup).fill(path));
+    expect(requests).toEqual(Array(requestsPerLookup).fill(path));
   }
 
   const failures: Record<string, { respond: (deadPort: number) => Response; requestsPerLookup: number }> = {
@@ -844,6 +844,27 @@ describe.concurrent("a failed registry lookup is asked again by the next resolve
     expectLookups(registry.lookups[0], "/flaky-pkg", requestsPerLookup);
     expectLookups(registry.lookups[1], "/flaky-pkg", requestsPerLookup);
     expect(registry.lookups[2]).toEqual(["/flaky-pkg", "/flaky-pkg/-/flaky-pkg-1.0.0.tgz"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a loop that never yields asks once, the next turn of the event loop asks again", async () => {
+    using registry = flakyRegistry(() => new Response("{}", { status: 404 }));
+    const { stdout, exitCode } = await run(
+      registry,
+      `
+        const attempt = () => {
+          try { return require("flaky-pkg").version; } catch (e) { return e.code; }
+        };
+        const results = new Set();
+        for (let i = 0; i < 50; i++) results.add(attempt());
+        await fetch(registry + "__next");
+        for (let i = 0; i < 50; i++) results.add(attempt());
+        console.log(JSON.stringify([...results]));
+      `,
+    );
+
+    expect(stdout).toBe(JSON.stringify(["MODULE_NOT_FOUND"]));
+    expect(registry.lookups.slice(0, 2)).toEqual([["/flaky-pkg"], ["/flaky-pkg"]]);
     expect(exitCode).toBe(0);
   });
 

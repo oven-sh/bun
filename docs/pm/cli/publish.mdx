@@ -46,8 +46,8 @@ bun publish ./package.tgz
 </Note>
 
 <Note>
-  `bun publish` cannot generate provenance statements yet. `--provenance` and `"provenance": true` in `publishConfig`
-  are errors; `NPM_CONFIG_PROVENANCE` is ignored with a warning.
+  `bun publish` cannot generate provenance statements yet. `--provenance`, `"provenance": true` in `publishConfig` and
+  `NPM_CONFIG_PROVENANCE=true` are errors.
 </Note>
 
 ### `--recursive` and `--filter`
@@ -170,7 +170,7 @@ bun publish --otp 123456
 
 ### `--provenance`
 
-`bun publish` cannot generate provenance statements yet: `--provenance`, `--provenance-file`, and a `publishConfig.provenance` other than `false` in `package.json` are errors, so that a package is never published without the statement it asked for.
+`bun publish` cannot generate provenance statements yet: `--provenance`, `--provenance-file`, a `publishConfig.provenance` other than `false` in `package.json`, and an `NPM_CONFIG_PROVENANCE` environment variable other than `false` are errors, so that a package is never published without the statement it asked for.
 
 ---
 

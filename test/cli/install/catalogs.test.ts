@@ -599,6 +599,112 @@ describe("update", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("update reports the catalog entry that moved, not another entry for the same name", async () => {
+    // The default catalog pins no-deps@2.0.0 exactly; `catalogs.old` allows ^1.0.0 and the lockfile has it at 1.0.0 (as if 1.1.0 was published after install).
+    const { packageDir } = await registry.createTestDir();
+    const url = registry.registryUrl();
+    const lockfile = {
+      lockfileVersion: 2,
+      configVersion: 1,
+      workspaces: {
+        "": { name: "catalog-update-two-entries" },
+        "packages/pkg1": { name: "pkg1", dependencies: { "no-deps": "catalog:" } },
+        "packages/pkg2": { name: "pkg2", dependencies: { "no-deps": "catalog:old" } },
+      },
+      catalog: { "no-deps": "2.0.0" },
+      catalogs: { old: { "no-deps": "^1.0.0" } },
+      packages: {
+        "no-deps": [
+          "no-deps@2.0.0",
+          `${url}no-deps/-/no-deps-2.0.0.tgz`,
+          {},
+          "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g==",
+        ],
+        "pkg1": ["pkg1@workspace:packages/pkg1"],
+        "pkg2": ["pkg2@workspace:packages/pkg2"],
+        "pkg2/no-deps": [
+          "no-deps@1.0.0",
+          `${url}no-deps/-/no-deps-1.0.0.tgz`,
+          {},
+          "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==",
+        ],
+      },
+    };
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "catalog-update-two-entries",
+          workspaces: {
+            packages: ["packages/*"],
+            catalog: { "no-deps": "2.0.0" },
+            catalogs: { old: { "no-deps": "^1.0.0" } },
+          },
+        }),
+      ),
+      write(join(packageDir, "packages", "pkg1", "package.json"), JSON.stringify(lockfile.workspaces["packages/pkg1"])),
+      write(join(packageDir, "packages", "pkg2", "package.json"), JSON.stringify(lockfile.workspaces["packages/pkg2"])),
+      write(join(packageDir, "bun.lock"), JSON.stringify(lockfile)),
+    ]);
+
+    const { out, err, exitCode } = await runUpdate(packageDir);
+    expect(err).not.toContain("error:");
+    // Only the `old` entry moved, and the row says so; the default entry stays at 2.0.0 without a row.
+    expect(out.match(/^.*no-deps.*$/gm)).toStrictEqual(["^ no-deps 1.0.0 -> 1.1.0 (v2.0.0 available)"]);
+
+    const root = await file(join(packageDir, "package.json")).json();
+    expect(root.workspaces.catalog).toEqual({ "no-deps": "2.0.0" });
+    expect(root.workspaces.catalogs).toEqual({ old: { "no-deps": "^1.1.0" } });
+    const lock = await file(join(packageDir, "bun.lock")).text();
+    expect(lock).toContain("no-deps@2.0.0");
+    expect(lock).toContain("no-deps@1.1.0");
+    expect(lock).not.toContain("no-deps@1.0.0");
+    expect(exitCode).toBe(0);
+  });
+
+  test("update reports a catalog entry once when a transitive dependency moves with it", async () => {
+    const { packageDir } = await registry.createTestDir();
+    const url = registry.registryUrl();
+    const pkg1 = { name: "pkg1", dependencies: { "no-deps": "catalog:", "one-range-dep": "1.0.0" } };
+    const catalog = { "no-deps": "^1.0.0" };
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({ name: "catalog-update-transitive", workspaces: { packages: ["packages/*"], catalog } }),
+      ),
+      write(join(packageDir, "packages", "pkg1", "package.json"), JSON.stringify(pkg1)),
+      write(
+        join(packageDir, "bun.lock"),
+        JSON.stringify({
+          lockfileVersion: 2,
+          configVersion: 1,
+          workspaces: { "": { name: "catalog-update-transitive" }, "packages/pkg1": pkg1 },
+          catalog,
+          packages: {
+            "no-deps": [
+              "no-deps@1.0.0",
+              `${url}no-deps/-/no-deps-1.0.0.tgz`,
+              {},
+              "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==",
+            ],
+            "one-range-dep": [
+              "one-range-dep@1.0.0",
+              `${url}one-range-dep/-/one-range-dep-1.0.0.tgz`,
+              { dependencies: { "no-deps": "^1.0.0" } },
+              "sha512-vHHfVxmeKiXLeOtrPjoDbzSGJVrwfqy8HHC50miwrQTabA1eFkRUWfIQ1E5pOloPpti7HSTocPg809DBNV6x0Q==",
+            ],
+            "pkg1": ["pkg1@workspace:packages/pkg1"],
+          },
+        }),
+      ),
+    ]);
+
+    const { out, err, exitCode } = await runUpdate(packageDir);
+    expect(err).not.toContain("error:");
+    expect(out.match(/^.*no-deps.*$/gm)).toStrictEqual(["^ no-deps 1.0.0 -> 1.1.0 (v2.0.0 available)"]);
+    expect(exitCode).toBe(0);
+  });
+
   for (const fromWorkspace of [false, true]) {
     test(`--latest --dry-run does not modify any package.json (from ${fromWorkspace ? "workspace" : "root"})`, async () => {
       const { packageDir } = await registry.createTestDir();

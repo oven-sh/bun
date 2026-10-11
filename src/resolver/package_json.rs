@@ -382,7 +382,17 @@ impl PackageJSON {
 
         // TODO: remove this extra copy
         let parts: [&[u8]; 2] = [input_path, b"package.json"];
-        let package_json_path_ = r_fs.abs(&parts);
+        let Some(package_json_path_) = r_fs.abs_checked(&parts) else {
+            r_log.add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "Cannot read file \"{}\": ENAMETOOLONG",
+                    bstr::BStr::new(input_path)
+                ),
+            );
+            return None;
+        };
         let package_json_path = r_fs
             .dirname_store
             .append_slice(package_json_path_)

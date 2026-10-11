@@ -1320,8 +1320,7 @@ describe("the trusted set", () => {
       }).toEqual({ args, installed: true, ran: false });
       expect(exitCode).toBe(0);
     }
-    // bun.lock has no way to say `[]`, and does not need one.
-    expect(await recorded(ctx)).toEqual({ "package.json": [], "bun.lock": null });
+    expect(await recorded(ctx)).toEqual({ "package.json": [], "bun.lock": [] });
 
     const untrusted = await bun(ctx, ["pm", "untrusted"]);
     expect(untrusted.out).toContain("electron @1.0.0");
@@ -1330,6 +1329,57 @@ describe("the trusted set", () => {
     expect(trusted.out).not.toContain("electron");
     expect(trusted.exitCode).toBe(0);
   });
+
+  // A checkout without the workspace that declares `[]` has only bun.lock to learn it from (frozen-lockfile-pruned.test.ts).
+  test.concurrent("bun.lock records an empty list, and only that one, for as long as it is declared", async () => {
+    const manifest = { name: "foo", dependencies: { "no-deps": "1.0.0" } };
+    using ctx = await project("hoisted", { "package.json": manifest });
+    const install = async (trustedDependencies?: string[]) => {
+      await write(ctx.packageJson, JSON.stringify({ ...manifest, trustedDependencies }));
+      const { err, exitCode } = await bun(ctx, ["install"]);
+      expect(err).not.toContain("error:");
+      expect(exitCode).toBe(0);
+      return { saved: err.includes("Saved lockfile"), lock: await file(join(ctx.packageDir, "bun.lock")).text() };
+    };
+
+    const { lock } = await install();
+    expect(lock).not.toContain("trustedDependencies");
+    const withEmptyList = lock.replace('  "packages": {', '  "trustedDependencies": [],\n  "packages": {');
+
+    expect(await install(["not-installed"])).toEqual({ saved: false, lock });
+    expect(await install([])).toEqual({ saved: true, lock: withEmptyList });
+    expect(await install([])).toEqual({ saved: false, lock: withEmptyList });
+    expect(await install()).toEqual({ saved: true, lock });
+  });
+
+  // It cannot record that the scripts ran, so every frozen install would run them again.
+  test.concurrent.each(linkers)(
+    "a frozen install runs the scripts of a newly trusted package only if it installs the package (%s)",
+    async linker => {
+      const manifest = { name: "foo", dependencies: { "lifecycle-postinstall": "1.0.0" } };
+      using ctx = await project(linker, { "package.json": manifest });
+      // The script writes "postinstall exists!" when it runs a second time.
+      const marker = () => textOf(packageDirOf(ctx, linker, "lifecycle-postinstall"), "postinstall.txt");
+      const frozen = async (args: string[]) => {
+        const { err, exitCode } = await bun(ctx, args);
+        expect(err).not.toContain("error:");
+        expect(exitCode).toBe(0);
+        return { args, marker: await marker(), "bun.lock": (await recorded(ctx))["bun.lock"] };
+      };
+
+      expect((await bun(ctx, ["install"])).out).toContain("Blocked 1 postinstall");
+      await write(ctx.packageJson, JSON.stringify({ ...manifest, trustedDependencies: ["lifecycle-postinstall"] }));
+
+      for (const args of [["install", "--frozen-lockfile"], ["ci"], ["install", "--production"]]) {
+        expect(await frozen(args)).toEqual({ args, marker: null, "bun.lock": null });
+      }
+
+      await removeNodeModules(ctx);
+      for (const args of [["install", "--frozen-lockfile"], ["ci"], ["install", "--production"]]) {
+        expect(await frozen(args)).toEqual({ args, marker: "postinstall!", "bun.lock": null });
+      }
+    },
+  );
 
   test.concurrent.each(linkers)(
     "an entry added after the first install runs the scripts of that package only, once (%s)",

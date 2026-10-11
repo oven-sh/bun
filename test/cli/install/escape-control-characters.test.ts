@@ -29,8 +29,9 @@ const BIN = `bin-${C1}-name`;
 const BIN_ESCAPED = `bin-${C1_ESCAPED}-name`;
 // Text that must come through untouched, next to the bytes that must not: a
 // backslash, `\u00a9` (also a two-byte character starting with 0xC2, like the C1
-// controls), a three-byte character, a four-byte one, a tab and DEL.
-const PASSTHROUGH = "a\\b \u00a9 \u20ac \u{1f600}";
+// controls), a three-byte character, a four-byte one, a run longer than a SIMD
+// vector, a tab and DEL.
+const PASSTHROUGH = `a\\b \u00a9 \u20ac \u{1f600} ${Buffer.alloc(70, "x")}`;
 const BAD_TAG = `tag-${ESC}${PASSTHROUGH}\t${C1}\x7f`;
 const BAD_TAG_ESCAPED = `tag-${ESC_ESCAPED}${PASSTHROUGH}\\t${C1_ESCAPED}\\x7f`;
 

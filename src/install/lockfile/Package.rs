@@ -1691,11 +1691,21 @@ impl Diff {
         if is_root {
             summary.remove = removed_names.len() as u32;
             // After the loop: it adds each workspace's `trustedDependencies` to `to_lockfile`.
-            Self::trusted_dependencies(
-                &mut summary,
-                from_lockfile.trusted_dependencies.as_ref(),
-                to_lockfile.trusted_dependencies.as_ref(),
-            )?;
+            if !summary.pruned_workspaces.is_empty()
+                && to_lockfile.trusted_dependencies.is_none()
+                && let Some(recorded) = &from_lockfile.trusted_dependencies
+            {
+                to_lockfile.trusted_dependencies =
+                    Some(Lockfile::recorded_default_trust(recorded)?);
+            }
+            // A frozen install cannot record that a newly trusted package's scripts ran, so every one would run them.
+            if !frozen {
+                Self::trusted_dependencies(
+                    &mut summary,
+                    from_lockfile.trusted_dependencies.as_ref(),
+                    to_lockfile.trusted_dependencies.as_ref(),
+                )?;
+            }
         }
 
         if !missing_workspaces.is_empty() {
@@ -1957,6 +1967,8 @@ impl Diff {
                         .added_trusted_dependencies
                         .put(*hash, to_name.clone())?;
                 }
+                // `[]` adds no name and takes the default list away, which the lockfile records.
+                summary.removed_trusted_dependencies = to.count() == 0;
             }
         }
         Ok(())

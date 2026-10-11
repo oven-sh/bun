@@ -1378,7 +1378,7 @@ impl BunxCommand {
             Err(err) => {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: bunx failed to install <b>{}<r> due to error <b>{}<r>",
-                    BStr::new(&install_param),
+                    bun_core::fmt::for_terminal(BStr::new(&install_param)),
                     err.name(),
                 );
                 Global::exit(1);
@@ -1445,7 +1445,7 @@ impl BunxCommand {
             SpawnStatus::Err(err) => {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: bunx failed to install <b>{}<r> due to error:\n{}",
-                    BStr::new(&install_param),
+                    bun_core::fmt::for_terminal(BStr::new(&install_param)),
                     err,
                 );
                 Global::exit(1);

@@ -343,7 +343,7 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
             if has_version_suffix(arg) {
                 Output::err_generic(
                     "a version cannot be combined with --dev, --prod, --no-optional or --depth 0: {}",
-                    (BStr::new(arg),),
+                    (bun_core::fmt::for_terminal(BStr::new(arg)),),
                 );
                 Global::exit(1);
             }
@@ -352,7 +352,7 @@ pub fn expand_positionals(manager: &mut PackageManager, original_cwd: &[u8], gro
             if has_version_suffix(arg) {
                 Output::err_generic(
                     "a version cannot be combined with a pattern: {}",
-                    (BStr::new(arg),),
+                    (bun_core::fmt::for_terminal(BStr::new(arg)),),
                 );
                 Global::exit(1);
             }

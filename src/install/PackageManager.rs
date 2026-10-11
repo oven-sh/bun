@@ -446,7 +446,7 @@ pub struct PackageManager {
     // if `bun update` is used without any package names we need a way to keep information for
     // the original packages that are updating.
     //
-    // dependency name -> original version information
+    // dependency name (`PackageUpdateInfo::catalog_row_key` for a `catalog:` row) -> original version information
     pub(crate) updating_packages: StringArrayHashMap<PackageUpdateInfo>,
 
     // (catalog name, dependency name) -> original version literal
@@ -630,13 +630,16 @@ pub struct PackageUpdateInfo {
     pub(crate) original_version_literal: Box<[u8]>,
     // set by the post-install write-back; the install summary still needs the entry
     pub(crate) written_back: bool,
-    /// Registered by `package_json_editor::record_catalog_originals`: the name's `catalog:` rows carry the move, so the install summary reports it through them.
-    pub(crate) catalog_entry: bool,
     pub(crate) original_version_string_buf: Box<[u8]>,
     pub(crate) original_version: Option<Semver::Version>,
 }
 
 impl PackageUpdateInfo {
+    /// One name can sit in several catalogs, each locked to its own version, so a `catalog:` row is keyed by both; no package name contains `@catalog:`.
+    pub(crate) fn catalog_row_key(name: &[u8], catalog_name: &[u8]) -> Vec<u8> {
+        [name, b"@catalog:".as_slice(), catalog_name].concat()
+    }
+
     /// `version`'s tag strings live in `buf` (a lockfile string buffer that cleaning rebuilds), so the original keeps its own copy of them.
     pub(crate) fn set_original_version(&mut self, version: Semver::Version, buf: &[u8]) {
         // clone because the lockfile buffer may reallocate
@@ -947,6 +950,30 @@ impl PackageManager {
 
     pub fn tls_reject_unauthorized(&self) -> bool {
         self.env().get_tls_reject_unauthorized()
+    }
+
+    /// A blocking request to a registry: through the proxy the environment names for `url`, and
+    /// with the certificate check the environment asks for.
+    pub fn registry_request<'a>(
+        &self,
+        method: http::Method,
+        url: URL<'a>,
+        headers: http::headers::EntryList,
+        headers_buf: &'a [u8],
+        body: &'a [u8],
+    ) -> http::AsyncHTTP<'a> {
+        let http_proxy = self.http_proxy(&url);
+        let mut req = http::AsyncHTTP::init_sync(
+            method,
+            url,
+            headers,
+            headers_buf,
+            body,
+            http_proxy,
+            http::FetchRedirect::Follow,
+        );
+        req.client.flags.reject_unauthorized = self.tls_reject_unauthorized();
+        req
     }
 
     /// Raw-pointer wake for concurrent task-thread callers (see

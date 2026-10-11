@@ -14,7 +14,7 @@ use crate::dependency::Behavior;
 use crate::lockfile::Lockfile;
 use crate::lockfile::override_map::OverrideRule;
 use crate::lockfile::package::PackageColumns as _;
-use crate::npm::PackageManifest;
+use crate::npm::{FindResult, PackageManifest};
 use crate::package_manager::Options::{Do, Enable, LogLevel};
 use crate::package_manager_real::enqueue_dependency_with_main;
 use crate::package_manager_real::populate_manifest_cache::{self, Packages};
@@ -897,9 +897,13 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
                 edges,
                 downgrade: candidate.downgrade,
                 too_recent: age_limit.is_some_and(|limit| {
-                    PackageManifest::is_package_version_too_recent(
-                        &release_pkgs[candidate.index],
+                    manifest.is_version_blocked_by_age_filter(
+                        FindResult {
+                            version: candidate.version,
+                            package: &release_pkgs[candidate.index],
+                        },
                         limit,
+                        excludes,
                     )
                 }),
                 edits,

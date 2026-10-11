@@ -424,11 +424,11 @@ impl OutdatedCommand {
                 continue;
             };
 
-            let Some(actual_latest) = manifest.find_by_dist_tag(b"latest") else {
+            let Some(actual_latest) = manifest.find_latest(None, None).unwrap() else {
                 continue;
             };
 
-            let latest = manifest.find_by_dist_tag_with_filter(b"latest", min_age_ms, excludes);
+            let latest = manifest.find_latest(min_age_ms, excludes);
             let update_version = declared.find_update(row, manifest, min_age_ms, excludes);
 
             // `DeclaredDependencies` only has rows installed from npm.
@@ -630,7 +630,7 @@ impl OutdatedCommand {
                     continue;
                 };
 
-                let latest = manifest.find_by_dist_tag_with_filter(b"latest", min_age_ms, excludes);
+                let latest = manifest.find_latest(min_age_ms, excludes);
                 let update = declared.find_update(&item.dep, manifest, min_age_ms, excludes);
 
                 // `DeclaredDependencies` only has rows installed from npm.

@@ -19,7 +19,7 @@ impl Rule for NoReactChildren {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions("Children") || !file.has_stmts([StmtTag::Import]) {
+        if !file.mentions("Children") || !file.mentions("react") || !file.has_stmts([StmtTag::Import]) {
             return None;
         }
         Some(())

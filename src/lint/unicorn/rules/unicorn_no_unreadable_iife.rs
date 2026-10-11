@@ -9,16 +9,18 @@ const USE_BLOCK_STATEMENT_BODY: Message = Message::new("", "Use a block statemen
 
 impl Rule for NoUnreadableIife {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-unreadable-iife", Kind::Suggestion).has_suggestions();
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().funcs();
     no_state!();
 
     fn new(_: &Options) -> Self {
         NoUnreadableIife
     }
 
-    fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let Some(FnBody::Expr(expression)) = e.callee().and_then(Expr::as_fn).map(Func::body)
+    fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
+        if let FnBody::Expr(expression) = func.body()
             && expression.is_parenthesized()
+            && let Node::Expr(callee) = func.owner()
+            && matches!(callee.parent(), Node::Expr(e) if e.tag() == ExprTag::Call && e.callee() == Some(callee))
         {
             let (parenthesized_span, body_span) = (expression.outer_span(), expression.span());
             cx.report(parenthesized_span, NO_UNREADABLE_IIFE).suggest(USE_BLOCK_STATEMENT_BODY, |fixer| {

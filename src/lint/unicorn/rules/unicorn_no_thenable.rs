@@ -106,10 +106,9 @@ impl Rule for NoThenable {
                 let Some(target) = e.left() else {
                     return;
                 };
-                let span = match target.kind() {
-                    ExprKind::Dot { name, .. } => (name.name() == cx.state.then).then(|| target.span()),
-                    ExprKind::Index { index, .. } => check_expression(index, &cx.state),
-                    _ => None,
+                let span = match target.member_name() {
+                    Some(name) => (name.name() == cx.state.then).then(|| target.span()),
+                    None => target.index().and_then(|it| check_expression(it, &cx.state)),
                 };
                 // Not the default value in a pattern.
                 if let Some(span) = span.filter(|_| !e.is_assignment_target()) {

@@ -17,7 +17,7 @@ impl Rule for NoNegatedCondition {
     }
 
     fn stmt<'a>(&self, if_stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        if let StmtKind::If { test, yes: consequent, no: Some(alternate) } = if_stmt.kind()
+        if let Some((test, consequent, Some(alternate))) = if_stmt.as_if()
             && alternate.tag() != StmtTag::If
             && is_negated_expression(test)
         {
@@ -26,7 +26,7 @@ impl Rule for NoNegatedCondition {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let ExprKind::Cond { test, yes, no } = e.kind()
+        if let Some((test, yes, no)) = e.as_cond()
             && is_negated_expression(test)
         {
             cx.report(test, NO_NEGATED_CONDITION).fix(|fixer| fix_conditional_expression(fixer, e, test, yes, no));
@@ -36,8 +36,5 @@ impl Rule for NoNegatedCondition {
 
 /// `!a`, `a != b`, `a !== b`
 fn is_negated_expression(expr: Expr) -> bool {
-    matches!(
-        expr.kind(),
-        ExprKind::Unary { op: UnOp::Not, .. } | ExprKind::Binary { op: BinOp::NotEq | BinOp::NotEqEq, .. }
-    )
+    expr.unary_op() == Some(UnOp::Not) || matches!(expr.binary_op(), Some(BinOp::NotEq | BinOp::NotEqEq))
 }

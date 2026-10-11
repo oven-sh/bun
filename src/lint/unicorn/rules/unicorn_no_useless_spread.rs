@@ -34,7 +34,7 @@ impl Rule for NoUselessSpread {
     }
 
     fn expr<'a>(&self, spread: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let (ExprKind::Spread(argument), Node::Expr(list)) = (spread.kind(), spread.parent())
+        if let (Some(argument), Node::Expr(list)) = (spread.operand(), spread.parent())
             && spread.jsx_container_span().is_none()
         {
             check(Spread { start: spread.span().start, argument, list }, cx);

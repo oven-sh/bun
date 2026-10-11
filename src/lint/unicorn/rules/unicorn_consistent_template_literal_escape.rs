@@ -18,7 +18,10 @@ impl Rule for ConsistentTemplateLiteralEscape {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Template(template_literal) = e.kind() else {
+        if !strings::contains(e.text(), b"$\\{") {
+            return;
+        }
+        let Some(template_literal) = e.as_template() else {
             return;
         };
         // Its own text only: templates can be in each other.

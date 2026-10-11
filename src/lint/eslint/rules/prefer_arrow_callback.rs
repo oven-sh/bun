@@ -16,6 +16,27 @@ const PREFER_ARROW_CALLBACK: Message =
 /// can have its value.
 type Values<'a> = AncestorMemo<'a, Node<'a>>;
 
+#[derive(Default)]
+pub struct State<'a> {
+    values: Values<'a>,
+    /// Where the `this`, the `super` and the `new.target` of the file start, in order, from the first time it is asked for.
+    keywords: Option<Vec<u32>>,
+}
+
+impl<'a> State<'a> {
+    /// Whether a `this`, a `super` or a `new.target` is written in `span`.
+    fn has_keyword_in(&mut self, file: &'a File<'a>, span: Span) -> bool {
+        let keywords = self.keywords.get_or_insert_with(|| {
+            let all = [ExprTag::This, ExprTag::Super, ExprTag::NewTarget].into_iter().flat_map(|tag| file.exprs_of_kind(tag));
+            let mut starts: Vec<u32> = all.map(|it| it.span().start).collect();
+            starts.sort_unstable();
+            starts
+        });
+        let first = keywords.get(keywords.partition_point(|it| *it < span.start));
+        first.is_some_and(|it| *it < span.end)
+    }
+}
+
 /// Whether the value of `child` is not that of `parent`, which it is directly in.
 fn is_outermost_with_value<'a>(child: Node<'a>, parent: Node<'a>) -> Option<Node<'a>> {
     let is_value_of_parent = match parent.as_expr().map(Expr::kind) {
@@ -197,7 +218,7 @@ fn fix_as_oxlint<'a>(fixer: Fixer<'a>, e: Expr<'a>, func: Func<'a>, is_lexical_t
 impl Rule for PreferArrowCallback {
     const META: Meta = Meta::eslint("prefer-arrow-callback", Kind::Suggestion).fixable(Fixable::Code).reports_on_exit();
     const ON: On = On::new().exprs(&[ExprTag::Fn]);
-    type State<'a> = Values<'a>;
+    type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
         let options = options.object(0);
@@ -207,12 +228,12 @@ impl Rule for PreferArrowCallback {
         }
     }
 
-    fn start<'a>(&self, _: &'a File<'a>) -> Option<Values<'a>> {
-        Some(Values::default())
+    fn start<'a>(&self, _: &'a File<'a>) -> Option<State<'a>> {
+        Some(State::default())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Fn(func) = e.kind() else {
+        let Some(func) = e.as_fn() else {
             return;
         };
         if func.kind() != FnKind::Expr
@@ -222,12 +243,17 @@ impl Rule for PreferArrowCallback {
             return;
         }
         let is_oxlint = cx.language().is_oxlint;
-        let is_lexical_this = match is_callback_with_lexical_this(e, &mut cx.state) {
+        let is_lexical_this = match is_callback_with_lexical_this(e, &mut cx.state.values) {
             Some(is_lexical_this) => is_lexical_this,
             None if is_oxlint && e.is_parenthesized() && is_argument_of_await(e) => false,
             None => return,
         };
-        let own = if is_oxlint { own_keywords_as_oxlint(func) } else { own_keywords(func, false) };
+        let file = cx.file();
+        let own = match cx.state.has_keyword_in(file, e.span()) {
+            false => OwnKeywords::default(),
+            true if is_oxlint => own_keywords_as_oxlint(func),
+            true => own_keywords(func, false),
+        };
         if own.has_super
             || own.new_target
             || self.allow_unbound_this && own.this && !is_lexical_this

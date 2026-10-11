@@ -850,8 +850,9 @@ impl<'a> Lexer<'a> {
 
     // ───────────────────────────── names ─────────────────────────────
 
-    /// A name or a keyword that starts at `start` with an ASCII letter, `_` or `$`.
-    #[inline(never)]
+    /// A name or a keyword that starts at `start` with an ASCII letter, `_` or `$`. It is a part of
+    /// `scan`, and like it saves no register.
+    #[inline]
     fn name(&mut self, start: usize) {
         self.has_escape = false;
         let Some(chunk) = self

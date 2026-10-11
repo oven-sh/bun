@@ -97,11 +97,20 @@ pub(crate) const HAS_WRITE: u32 = 1 << 30;
 pub(crate) const HAS_MODIFYING_WRITE: u32 = 1 << 31;
 const COUNT: u32 = HAS_READ - 1;
 
-/// By where they are. Those at the same place keep their order. It is sorted for every file, by the standard library, and in
-/// one function, so that the sort is compiled once.
+/// By where they are. Those at the same place keep their order. What is sorted is the position and the place in the list of
+/// each, in one number: the sort of such numbers is compiled for other lists too.
 #[inline(never)]
 fn sort_by_pos(found: &mut [RawReference]) {
-    found.sort_by_key(|it| it.pos);
+    if found.is_sorted_by_key(|it| it.pos) {
+        return;
+    }
+    let keys = found.iter().zip(0u64..);
+    let mut keys: Vec<u64> = keys.map(|(it, at)| u64::from(it.pos) << 32 | at).collect();
+    keys.sort();
+    let sorted: Vec<RawReference> = (keys.iter())
+        .filter_map(|&key| found.get(key as u32 as usize).copied())
+        .collect();
+    found.copy_from_slice(&sorted);
 }
 
 struct Collector<'f, 'a> {
@@ -320,12 +329,14 @@ impl<'t> Resolver<'t> {
         {
             return;
         }
-        let last_visit = match self.moved.last() {
-            Some(&(index, visit)) if index as usize + 1 == self.all.len() => visit,
-            _ => self.all.last().map_or(0, |it| it.pos),
-        };
-        self.is_visiting_order &= it.from >= last_visit;
-        if it.from != it.pos {
+        if it.from == it.pos {
+            self.is_visiting_order &= it.pos >= self.last_moved_to;
+        } else {
+            let last_visit = match self.moved.last() {
+                Some(&(index, visit)) if index as usize + 1 == self.all.len() => visit,
+                _ => self.all.last().map_or(0, |it| it.pos),
+            };
+            self.is_visiting_order &= it.from >= last_visit;
             self.moved.push((self.all.len() as u32, it.from));
             self.last_moved_to = self.last_moved_to.max(it.from);
         }
@@ -840,11 +851,8 @@ impl<'f> Collector<'f, '_> {
         // Which are identifiers, if the binder has noted the kinds.
         const IDENT: u8 = 2 * hir::ExprTag::Ident as u8;
         let (kinds, parents) = (self.file.bound.expr_kinds, self.file.bound.expr_parent);
-        // The parser stores nearly every file in source order.
-        let is_in_order = (0..exprs.len()).all(|i| {
-            if kinds.get(i).is_some_and(|kind| *kind != IDENT) {
-                return true;
-            }
+        // `false`: the expression at `i` is an identifier that is before the last one.
+        let mut take = |i: usize| {
             let (Some(e), Some(parent)) = (exprs.get(i), parents.get(i)) else {
                 return true;
             };
@@ -875,7 +883,16 @@ impl<'f> Collector<'f, '_> {
                 return true;
             }
             self.identifier(id, e, name, &skipped, &mut merge)
-        });
+        };
+        // The parser stores nearly every file in source order.
+        let is_in_order = match kinds.len() == exprs.len() {
+            true => (kinds.iter().enumerate())
+                .filter(|it| *it.1 == IDENT)
+                .all(|it| take(it.0)),
+            false => {
+                (0..exprs.len()).all(|i| kinds.get(i).is_some_and(|kind| *kind != IDENT) || take(i))
+            }
+        };
         if !is_in_order {
             merge = start();
             let identifiers = exprs
@@ -1294,14 +1311,14 @@ fn group_by(
         Key::Variable(unresolved) => (it.variable as usize).min(unresolved),
         Key::Scope => it.from as usize,
     };
-    let mut place = |i: usize| {
-        let slot = &mut next[key(&all[i])];
-        indices[*slot as usize] = i as u32;
+    let mut place = |i: u32, it: &RawReference| {
+        let slot = &mut next[key(it)];
+        indices[*slot as usize] = i;
         *slot += 1;
     };
     match order.is_empty() {
-        true => (0..all.len()).for_each(&mut place),
-        false => order.iter().for_each(|&i| place(i as usize)),
+        true => (0..).zip(all).for_each(|(i, it)| place(i, it)),
+        false => order.iter().for_each(|&i| place(i, &all[i as usize])),
     }
     (indices, counts)
 }

@@ -59,7 +59,7 @@ impl Rule for PreferMathTrunc {
     }
 
     fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let ExprKind::Binary { op, left, right } = e.kind()
+        if let Some((op, left, right)) = e.as_binary()
             && is_number_0(right)
         {
             let bad_op = match op {
@@ -73,9 +73,7 @@ impl Rule for PreferMathTrunc {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let ExprKind::Assign { op: Some(op), target, value } = e.kind()
-            && is_number_0(value)
-        {
+        if let Some((Some(op), target, value)) = e.as_assign() {
             let bad_op = match op {
                 BinOp::BitOr => "|=",
                 BinOp::Shr => ">>=",
@@ -83,7 +81,9 @@ impl Rule for PreferMathTrunc {
                 BinOp::BitXor => "^=",
                 _ => return,
             };
-            report(e, bad_op, target.span(), true, cx);
+            if is_number_0(value) {
+                report(e, bad_op, target.span(), true, cx);
+            }
         }
     }
 }

@@ -29,7 +29,7 @@ impl Rule for PreferSetSize {
         if !member.member_name().is_some_and(|it| it.name() == cx.state) {
             return;
         }
-        let ExprKind::Dot { obj, name, chain } = member.kind() else {
+        let Some((obj, name, chain)) = member.as_dot() else {
             return;
         };
         // `[...set]`, `Array.from(set)`

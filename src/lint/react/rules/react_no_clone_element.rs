@@ -17,7 +17,7 @@ impl Rule for NoCloneElement {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions("cloneElement") || !file.has_stmts([StmtTag::Import]) {
+        if !file.mentions("cloneElement") || !file.mentions("react") || !file.has_stmts([StmtTag::Import]) {
             return None;
         }
         Some(())

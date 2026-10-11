@@ -46,14 +46,17 @@ const KNOWN_LONG_BITS: u32 = 6;
 const WINDOW: usize = 8;
 /// In `Names::spans`: the text is in `Names::cooked`, not in the source.
 const COOKED: u32 = OwnTexts::ELSEWHERE;
-/// The length of `KNOWN_TEXTS` one after the other.
-const KNOWN_BYTES: usize = {
+/// `Names::spans` of `KNOWN_TEXTS` where they are one after the other at the start of
+/// `Names::cooked`, and the length of that.
+const KNOWN_SPANS: ([(u32, u32); KNOWN_TEXTS.len()], usize) = {
+    let mut spans = [(0, 0); KNOWN_TEXTS.len()];
     let (mut at, mut bytes) = (0, 0);
-    while at < KNOWN_TEXTS.len() {
+    while at < spans.len() {
+        spans[at] = (bytes as u32 | COOKED, KNOWN_TEXTS[at].len() as u32);
         bytes += KNOWN_TEXTS[at].len();
         at += 1;
     }
-    bytes
+    (spans, bytes)
 };
 
 // A search in `Names::known_long` ends at a free entry.
@@ -82,8 +85,7 @@ pub(crate) struct Names {
     /// `Intern::number` of the interner that the atoms are of.
     of: u64,
     is_own: bool,
-    /// By atom of a file that has its own, where its text starts, and its length. Those of
-    /// `KNOWN_TEXTS` stay from file to file.
+    /// By atom of a file that has its own, where its text starts, and its length.
     spans: Vec<(u32, u32)>,
     /// `KNOWN_TEXTS`, and the texts that are not written in the source as they are.
     cooked: Vec<u8>,
@@ -127,12 +129,6 @@ impl Default for Names {
         let mut known = boxed(([0; 2], u32::MAX, T::Identifier));
         let mut known_long = boxed(NO_LONG);
         let mut known_others = Vec::new();
-        let mut spans = Vec::with_capacity(KNOWN_TEXTS.len());
-        let mut cooked = Vec::with_capacity(KNOWN_BYTES);
-        for text in KNOWN_TEXTS {
-            spans.push((cooked.len() as u32 | COOKED, text.len() as u32));
-            cooked.extend_from_slice(text);
-        }
         let with_numbers = KNOWN_TEXTS
             .iter()
             .zip(0u32..)
@@ -174,8 +170,8 @@ impl Default for Names {
             unused_bits: 0,
             of: 0,
             is_own: false,
-            spans,
-            cooked,
+            spans: KNOWN_SPANS.0.to_vec(),
+            cooked: KNOWN_TEXTS.concat(),
             mentioned: [0; MENTIONED_WORDS],
             known_in_file: Default::default(),
             known,
@@ -337,8 +333,9 @@ impl Names {
         self.long[..1 << (LONG_BITS - self.unused_bits)].fill(NO_LONG);
         self.of = bun_sema::atom::next_interner_number();
         self.is_own = true;
-        self.spans.truncate(KNOWN_TEXTS.len());
-        self.cooked.truncate(KNOWN_BYTES);
+        self.spans.clear();
+        self.spans.extend_from_slice(&KNOWN_SPANS.0);
+        self.cooked.truncate(KNOWN_SPANS.1);
         self.other.clear();
         self.mentioned = [0; MENTIONED_WORDS];
         self.known_in_file = Default::default();
@@ -379,6 +376,10 @@ impl Names {
         let atom = match known {
             Some(known) => {
                 self.known_in_file[known as usize / 64] |= 1 << (known % 64);
+                if let (Some(start), Some(span)) = (text.start, self.spans.get_mut(known as usize))
+                {
+                    span.0 = start;
+                }
                 known
             }
             None => {

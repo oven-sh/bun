@@ -24,11 +24,12 @@ impl Rule for ErrorMessage {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let (ExprKind::New(call) | ExprKind::Call(call)) = e.kind() else {
+        let Some(call) = e.as_call().or_else(|| e.as_new()) else {
             return;
         };
         let callee = call.callee();
-        let Some(constructor_name) = callee.as_ident().filter(|it| it.is_any(&BUILT_IN_ERRORS)) else {
+        let is_error = |it: &Name| it.bytes().ends_with(b"Error") && it.is_any(&BUILT_IN_ERRORS);
+        let Some(constructor_name) = callee.as_ident().filter(is_error) else {
             return;
         };
         if callee.is_parenthesized() || !is_global_reference(callee) {

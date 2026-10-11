@@ -114,7 +114,7 @@ fn number(index: i64) -> Vec<u8> {
 
 impl PreferAt {
     fn handle_computed_member<'a>(&self, e: Expr<'a>, cx: &Context<'a>) {
-        let ExprKind::Index { obj, index, .. } = e.kind() else {
+        let Some((obj, index, _)) = e.as_index() else {
             return;
         };
         if is_number_0(index)

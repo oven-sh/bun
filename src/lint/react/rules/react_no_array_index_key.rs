@@ -39,6 +39,13 @@ impl<'a> State<'a> {
     }
 }
 
+/// oxlint knows `React.cloneElement` only. For upstream what is imported from `react` by a name makes elements.
+fn may_call_what_makes_elements(file: &File) -> bool {
+    file.mentions("cloneElement")
+        || (!file.language().is_oxlint
+            && file.mentions_any(&["createElement", "react", "#createElement", "#cloneElement"]))
+}
+
 impl Rule for NoArrayIndexKey {
     const META: Meta = Meta::plugin(Plugin::React, "no-array-index-key", Kind::None);
     const ON: On = On::new().exprs(&[ExprTag::Jsx, ExprTag::Call]).finish();
@@ -50,15 +57,11 @@ impl Rule for NoArrayIndexKey {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let on = On::new().exprs(&[ExprTag::Jsx]).finish();
-        // oxlint knows `React.cloneElement` only. For upstream what is imported from `react` by a name makes elements.
-        let makes_elements = file.mentions("cloneElement")
-            || (!file.language().is_oxlint
-                && file.mentions_any(&["createElement", "react", "#createElement", "#cloneElement"]));
-        if makes_elements { on.exprs(&[ExprTag::Call]) } else { on }
+        if may_call_what_makes_elements(file) { on.exprs(&[ExprTag::Call]) } else { on }
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
-        file.mentions("key").then(State::default)
+        (file.mentions("key") && (file.has_exprs([ExprTag::Jsx]) || may_call_what_makes_elements(file))).then(State::default)
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

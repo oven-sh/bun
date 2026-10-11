@@ -21,18 +21,22 @@ impl<const SLICE: bool> Rule for NoUnnecessaryArraySpliceCount<SLICE> {
     )
     .fixable(Fixable::Code);
     const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    /// The first and the last of the methods.
+    type State<'a> = [Name<'a>; 2];
 
     fn new(_: &Options) -> Self {
         NoUnnecessaryArraySpliceCount
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions_any(Self::METHODS).then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        let methods = [Self::METHODS.first(), Self::METHODS.last()];
+        file.mentions_any(Self::METHODS).then(|| methods.map(|it| file.name_of(it.copied().unwrap_or_default())))
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let Some(call) = e.as_call()
+            && call.args().len() == 2
+            && call.callee().member_name().is_some_and(|it| cx.state.contains(&it.name()))
             && let Some(argument) = unnecessary_length_or_infinity_argument(call, Self::METHODS)
         {
             let UnnecessaryArgument { first, second, arg_str } = argument;

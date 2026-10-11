@@ -1,4 +1,5 @@
 use bun_lint::prelude::*;
+use bun_lint::source::ByName;
 
 /// Disallow the use of undeclared variables unless mentioned in `/*global */` comments.
 pub struct NoUndef {
@@ -11,7 +12,7 @@ const UNDEF: Message = Message::new("undef", "'{{name}}' is not defined.");
 fn has_typeof_operator(reference: Reference) -> bool {
     matches!(
         reference.expr().map(Expr::parent),
-        Some(Node::Expr(parent)) if matches!(parent.kind(), ExprKind::Unary { op: UnOp::Typeof, .. })
+        Some(Node::Expr(parent)) if parent.unary_op() == Some(UnOp::Typeof)
     )
 }
 
@@ -29,14 +30,26 @@ impl Rule for NoUndef {
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         // oxlint says nothing about a name that can be that of a type.
         let is_oxlint = cx.language().is_oxlint;
-        for reference in cx.file().unresolved_references() {
-            if reference.global().is_some()
-                || is_oxlint && reference.is_type()
-                || !self.considers_typeof && has_typeof_operator(reference)
-            {
+        let file = cx.file();
+        // Whether a global variable of a name is one for a value, and for a type.
+        let (for_value, for_type) = (1, 2);
+        let mut globals: ByName<u8> = ByName::default();
+        for reference in file.unresolved_references() {
+            if is_oxlint && reference.is_type() || !self.considers_typeof && has_typeof_operator(reference) {
                 continue;
             }
-            if cx.file().is_declared_by_types(reference.name().bytes()) {
+            let name = reference.name();
+            let global = globals.get_or_insert_with(name, || match file.global_named(name) {
+                Some(global) => {
+                    (u8::from(global.accepts(false)) * for_value) | (u8::from(global.accepts(true)) * for_type)
+                }
+                None => 0,
+            });
+            // `reference.global().is_some()`
+            if reference.is_value() && global & for_value != 0 || reference.is_type() && global & for_type != 0 {
+                continue;
+            }
+            if file.is_declared_by_types(name.bytes()) {
                 continue;
             }
             cx.report(reference, UNDEF).data("name", reference.name());

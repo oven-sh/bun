@@ -22,7 +22,7 @@ impl Rule for PreferLogicalOperatorOverTernary {
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Cond { test, yes: consequent, no: alternate } = e.kind() else {
+        let Some((test, consequent, alternate)) = e.as_cond() else {
             return;
         };
         // What is on the left of the `||` and what is on the right, each with whether its parentheses stay.
@@ -30,7 +30,7 @@ impl Rule for PreferLogicalOperatorOverTernary {
             // `foo ? foo : bar`
             let preferred = if test.is_parenthesized() { consequent } else { test };
             ((get_inner_expression(preferred), false), (alternate, true))
-        } else if let ExprKind::Unary { op: UnOp::Not, operand: argument } = test.kind()
+        } else if let Some((UnOp::Not, argument)) = test.as_unary()
             && !test.is_parenthesized()
             && is_same_node(argument, alternate)
         {

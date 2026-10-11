@@ -172,15 +172,34 @@ impl<'a> Ident<'a> {
     }
 
     pub fn span(self) -> Span {
-        let file = self.name.file;
-        let len = match file.texts.span_of(self.name.atom) {
-            // Here the file has the name for the first time.
-            Some((start, len)) if start == self.start && !self.is_string() => len as usize,
-            _ => self.written_len(),
+        let len = match self.len_if_plain() {
+            Some(len) => len,
+            None => self.written_len() as u32,
         };
-        Span::new(self.start, self.start + len as u32)
+        Span::new(self.start, self.start + len)
     }
 
+    /// The length of the name if it is seen at once that it is written as it is: it has 16 bytes
+    /// at most, or the file has it here for the first time.
+    #[inline]
+    fn len_if_plain(self) -> Option<u32> {
+        let texts = &self.name.file.texts;
+        let chunk = |at: u32| -> Option<&[u8; 16]> {
+            let chunk = texts.source().get(at as usize..at as usize + 16)?;
+            chunk.try_into().ok()
+        };
+        let (first, len) = texts.span_of(self.name.atom)?;
+        let here = chunk(self.start)?;
+        if first != self.start {
+            let differ = u128::from_le_bytes(*here) ^ u128::from_le_bytes(*chunk(first)?);
+            if differ.trailing_zeros() / 8 < len {
+                return None;
+            }
+        }
+        (len != 0 && !matches!(here[0], b'"' | b'\'')).then_some(len)
+    }
+
+    #[inline(never)]
     fn written_len(self) -> usize {
         let (text, name) = (self.name.file.text(), self.name.bytes());
         let written = text.get(self.start as usize..).unwrap_or_default();

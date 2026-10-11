@@ -6,7 +6,7 @@ pub struct HandleCallbackErr {
 }
 
 enum ErrorArgument {
-    Name(Box<[u8]>),
+    Name(Box<str>),
     /// It starts with `^`. `None` if it is not a valid regular expression.
     Pattern(Option<Box<Regex>>),
 }
@@ -30,7 +30,7 @@ fn first_parameter(func: Func<'_>) -> Option<Pat<'_>> {
 impl HandleCallbackErr {
     fn matches_configured_error_name(&self, name: &[u8]) -> bool {
         match &self.error_argument {
-            ErrorArgument::Name(expected) => **expected == *name,
+            ErrorArgument::Name(expected) => expected.as_bytes() == name,
             ErrorArgument::Pattern(pattern) => pattern.as_ref().is_some_and(|it| it.test(name)),
         }
     }
@@ -39,16 +39,20 @@ impl HandleCallbackErr {
 impl Rule for HandleCallbackErr {
     const META: Meta = Meta::eslint("handle-callback-err", Kind::Suggestion).deprecated();
     const ON: On = On::new().funcs();
-    no_state!();
+    type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         let argument = options.str(0).filter(|it| !it.is_empty()).unwrap_or("err");
         HandleCallbackErr {
             error_argument: match argument.starts_with('^') {
                 true => ErrorArgument::Pattern(Regex::new(argument, "u").ok().map(Box::new)),
-                false => ErrorArgument::Name(argument.as_bytes().into()),
+                false => ErrorArgument::Name(argument.into()),
             },
         }
+    }
+
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
+        (!matches!(&self.error_argument, ErrorArgument::Name(name) if !file.mentions(name))).then_some(())
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {

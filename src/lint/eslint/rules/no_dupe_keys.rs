@@ -15,7 +15,7 @@ const SET: u8 = 1 << 1;
 
 /// Whether two of `props` may have the same name. Names that are known without looking at an expression compare as numbers.
 fn may_have_same_name<'a>(props: List<'a, Prop<'a>>) -> bool {
-    let mut names: SmallVec<[Name<'a>; 16]> = SmallVec::new();
+    let mut names: SmallVec<[u32; 16]> = SmallVec::new();
     for prop in props {
         match prop.key().map(Key::kind) {
             Some(KeyKind::Computed(_)) => return true,
@@ -28,6 +28,7 @@ fn may_have_same_name<'a>(props: List<'a, Prop<'a>>) -> bool {
                 | KeyKind::ComputedString(name)
                 | KeyKind::ComputedNumber(name),
             ) => {
+                let name = name.atom().0;
                 if names.contains(&name) {
                     return true;
                 }
@@ -40,7 +41,7 @@ fn may_have_same_name<'a>(props: List<'a, Prop<'a>>) -> bool {
 
 impl NoDupeKeys {
     fn check<'a>(&self, object: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Object(props) = object.kind() else {
+        let Some(props) = object.as_object() else {
             return;
         };
         if props.len() < 2 || !may_have_same_name(props) {

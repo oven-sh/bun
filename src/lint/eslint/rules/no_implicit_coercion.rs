@@ -39,30 +39,23 @@ enum Remedy {
 
 /// A `Literal` whose value is `value`.
 fn is_number(e: Expr, value: f64) -> bool {
-    matches!(e.kind(), ExprKind::Number(it) if it == value)
+    e.tag() == ExprTag::Number && matches!(e.kind(), ExprKind::Number(it) if it == value)
 }
 
 /// `node.type === "BinaryExpression"`
 fn is_binary_expression(e: Expr) -> bool {
-    matches!(e.kind(), ExprKind::Binary { op, .. }
-        if !matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma))
+    (e.binary_op()).is_some_and(|op| !matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma))
 }
 
 /// The name of the function, if `e` is a `CallExpression` of an identifier. `f?.()` is a
 /// `ChainExpression`.
 fn called_name(e: Expr<'_>) -> Option<Name<'_>> {
-    match e.kind() {
-        ExprKind::Call(call) if call.chain() == Chain::No => call.callee().as_ident(),
-        _ => None,
-    }
+    e.as_call().filter(|call| call.chain() == Chain::No)?.callee().as_ident()
 }
 
 /// The operand, if `e` is the unary operator `op`.
 fn operand_of(e: Expr<'_>, op: UnOp) -> Option<Expr<'_>> {
-    match e.kind() {
-        ExprKind::Unary { op: it, operand } if it == op => Some(operand),
-        _ => None,
-    }
+    e.operand().filter(|_| e.unary_op() == Some(op))
 }
 
 /// ESLint's `isMultiplyByFractionOfOne`: the `a * 1` of `a * 1 / b`, which reads as `a * (1 / b)`.
@@ -75,7 +68,7 @@ fn is_multiply_by_fraction_of_one<'a>(e: Expr<'a>, right: Expr<'a>) -> bool {
 
 /// ESLint's `isNumeric`: a number, or a call of `Number`, `parseInt` or `parseFloat`.
 fn is_numeric(e: Expr) -> bool {
-    matches!(e.kind(), ExprKind::Number(_))
+    e.tag() == ExprTag::Number
         || called_name(e).is_some_and(|it| it.is_any(&["Number", "parseInt", "parseFloat"]))
 }
 
@@ -121,6 +114,9 @@ fn is_string_type(e: Expr) -> bool {
 
 /// ESLint's `isEmptyString`.
 fn is_empty_string(e: Expr) -> bool {
+    if !matches!(e.tag(), ExprTag::String | ExprTag::Template) {
+        return false;
+    }
     match e.kind() {
         ExprKind::String(value) => value.bytes().is_empty(),
         ExprKind::Template(template) => template.as_static().is_some_and(|it| it.bytes().is_empty()),
@@ -139,7 +135,8 @@ fn call_of(callee: &str, operand: Expr) -> Vec<u8> {
 
 /// Whether `Boolean` at `node` is the global variable.
 fn is_boolean_available(node: Expr) -> bool {
-    Node::Expr(node).scope().resolve("Boolean").is_none() && node.file().global(b"Boolean").is_some()
+    (!node.file().mentions("Boolean") || Node::Expr(node).scope().resolve("Boolean").is_none())
+        && node.file().global(b"Boolean").is_some()
 }
 
 /// The first token of `recommendation`, if it starts with a call of one of the three functions. All of it otherwise.
@@ -203,7 +200,7 @@ fn report<'a>(node: Expr<'a>, recommendation: &[u8], remedy: Remedy, cx: &Cx<'a,
 
 impl NoImplicitCoercion {
     fn check_unary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Unary { op, operand } = e.kind() else {
+        let (Some(op), Some(operand)) = (e.unary_op(), e.operand()) else {
             return;
         };
         let is_numeric = if cx.language().is_oxlint { is_already_numeric } else { is_numeric };
@@ -244,7 +241,7 @@ impl NoImplicitCoercion {
     }
 
     fn check_binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Binary { op, left, right } = e.kind() else {
+        let (Some(op), Some(left), Some(right)) = (e.binary_op(), e.left(), e.right()) else {
             return;
         };
         let is_oxlint = cx.language().is_oxlint;
@@ -282,7 +279,8 @@ impl NoImplicitCoercion {
     }
 
     fn check_assignment<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let ExprKind::Assign { op: Some(BinOp::Add), target, value } = e.kind()
+        if e.assign_op() == Some(Some(BinOp::Add))
+            && let (Some(target), Some(value)) = (e.left(), e.right())
             && is_empty_string(value)
         {
             let code = target.text();
@@ -313,12 +311,10 @@ impl Rule for NoImplicitCoercion {
     const META: Meta = Meta::eslint("no-implicit-coercion", Kind::Suggestion)
         .fixable(Fixable::Code)
         .has_suggestions();
-    const ON: On = On::new().exprs(&[
-        ExprTag::Unary,
-        ExprTag::Binary,
-        ExprTag::Assign,
-        ExprTag::Template,
-    ]);
+    const ON: On = On::new()
+        .unaries(&[UnOp::Not, UnOp::BitNot, UnOp::Plus, UnOp::Minus])
+        .binaries(&[BinOp::Mul, BinOp::Sub, BinOp::Add])
+        .exprs(&[ExprTag::Assign, ExprTag::Template]);
     no_state!();
 
     fn new(options: &Options) -> Self {
@@ -340,18 +336,26 @@ impl Rule for NoImplicitCoercion {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let mut on = On::new();
-        if self.checks_double_negation
-            || self.checks_index_of
-            || self.checks_unary_plus
-            || self.checks_double_minus
-        {
-            on = on.exprs(&[ExprTag::Unary]);
+        if self.checks_double_negation {
+            on = on.unaries(&[UnOp::Not]);
         }
-        if self.checks_multiplication || self.checks_subtraction || self.checks_concatenation {
-            on = on.exprs(&[ExprTag::Binary]);
+        if self.checks_index_of {
+            on = on.unaries(&[UnOp::BitNot]);
+        }
+        if self.checks_unary_plus {
+            on = on.unaries(&[UnOp::Plus]);
+        }
+        if self.checks_double_minus {
+            on = on.unaries(&[UnOp::Minus]);
+        }
+        if self.checks_multiplication {
+            on = on.binaries(&[BinOp::Mul]);
+        }
+        if self.checks_subtraction {
+            on = on.binaries(&[BinOp::Sub]);
         }
         if self.checks_concatenation {
-            on = on.exprs(&[ExprTag::Assign]);
+            on = on.binaries(&[BinOp::Add]).exprs(&[ExprTag::Assign]);
         }
         if self.checks_templates && (self.checks_strings || !file.language().is_oxlint) {
             on = on.exprs(&[ExprTag::Template]);
@@ -361,11 +365,17 @@ impl Rule for NoImplicitCoercion {
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.tag() {
-            ExprTag::Unary => self.check_unary(e, cx),
-            ExprTag::Binary => self.check_binary(e, cx),
             ExprTag::Assign => self.check_assignment(e, cx),
             ExprTag::Template => self.check_template(e, cx),
             _ => {}
         }
+    }
+
+    fn binary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_binary(e, cx);
+    }
+
+    fn unary<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
+        self.check_unary(e, cx);
     }
 }

@@ -16,15 +16,17 @@ impl Rule for NoLonelyIf {
     }
 
     fn stmt<'a>(&self, if_stmt: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        let has_no_else = |it: Stmt| matches!(it.kind(), StmtKind::If { no: None, .. });
+        let has_no_else = |it: Stmt| matches!(it.as_if(), Some((_, _, None)));
+        if !has_no_else(if_stmt) {
+            return;
+        }
         let Node::Stmt(parent) = if_stmt.parent() else {
             return;
         };
-        let is_lonely = has_no_else(if_stmt)
-            && match parent.as_block() {
-                Some(body) => body.len() == 1 && matches!(parent.parent(), Node::Stmt(outer) if has_no_else(outer)),
-                None => has_no_else(parent),
-            };
+        let is_lonely = match parent.as_block() {
+            Some(body) => body.len() == 1 && matches!(parent.parent(), Node::Stmt(outer) if has_no_else(outer)),
+            None => has_no_else(parent),
+        };
         if is_lonely {
             let keyword = |start: u32| Span::new(start, start + 2);
             let outer = if parent.as_block().is_some() { parent.parent().span() } else { parent.span() };

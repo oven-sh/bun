@@ -25,7 +25,13 @@ impl Rule for PreferImportFromVue {
         if is_typescript_definition || !file.mentions_any(&VUE_MODULES) {
             return None;
         }
-        Some(())
+        let is_from_one = |stmt: Stmt| match stmt.kind() {
+            StmtKind::Import(import) => import.spec().is_any(&VUE_MODULES),
+            StmtKind::ExportNamed(export) => export.spec().is_some_and(|it| it.is_any(&VUE_MODULES)),
+            StmtKind::ExportStar { spec, .. } => spec.is_some_and(|it| it.is_any(&VUE_MODULES)),
+            _ => false,
+        };
+        file.body().iter().any(is_from_one).then_some(())
     }
 
     // A report for each name that is imported or exported.

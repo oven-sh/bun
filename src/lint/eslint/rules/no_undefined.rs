@@ -9,7 +9,7 @@ const UNEXPECTED_UNDEFINED: Message =
 impl NoUndefined {
     /// A variable that the file declares.
     fn check_symbol<'a>(&self, symbol: Symbol<'a>, cx: &mut Cx<'a, Self>) {
-        if !symbol.name().is("undefined") {
+        if symbol.name() != cx.state {
             return;
         }
         for reference in symbol.references().filter(|it| !it.is_init()) {
@@ -39,7 +39,7 @@ impl NoUndefined {
             return;
         }
         for reference in cx.file().unresolved_references() {
-            if reference.name().is("undefined") && !reference.is_init() {
+            if reference.name() == cx.state && !reference.is_init() {
                 cx.report(reference, UNEXPECTED_UNDEFINED);
             }
         }
@@ -49,14 +49,15 @@ impl NoUndefined {
 impl Rule for NoUndefined {
     const META: Meta = Meta::eslint("no-undefined", Kind::Suggestion).reports_at_the_end();
     const ON: On = On::new().symbols().finish();
-    type State<'a> = ();
+    /// `undefined`
+    type State<'a> = Name<'a>;
 
     fn new(_: &Options) -> Self {
         NoUndefined
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("undefined").then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Name<'a>> {
+        file.mentions("undefined").then(|| file.name_of("undefined"))
     }
 
     fn symbol<'a>(&self, symbol: Symbol<'a>, cx: &mut Cx<'a, Self>) {

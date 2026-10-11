@@ -29,7 +29,7 @@ impl Rule for PreferTernary {
     }
 
     fn stmt<'a>(&self, if_statement: Stmt<'a>, cx: &mut Cx<'a, Self>) {
-        let StmtKind::If { test, yes, no: Some(no) } = if_statement.kind() else {
+        let Some((test, yes, Some(no))) = if_statement.as_if() else {
             return;
         };
         let (consequent, alternate) = (get_node_body_statement(yes), get_node_body_statement(no));

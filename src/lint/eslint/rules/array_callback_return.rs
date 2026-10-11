@@ -61,6 +61,9 @@ const PRECEDENCE_OF_VOID: i32 = 16;
 /// The one of `TARGET_METHODS` that `callee` is an access to.
 fn get_target_method(callee: Expr) -> Option<&'static str> {
     let name = ast_utils::get_static_property_name(callee)?;
+    if !matches!(name.first(), Some(b'e' | b'f' | b'm' | b'r' | b's' | b't')) {
+        return None;
+    }
     TARGET_METHODS.into_iter().find(|it| *name == *it.as_bytes())
 }
 
@@ -103,42 +106,38 @@ fn get_array_method_name<'a>(func: Func<'a>, state: &mut State<'a>) -> Option<(&
     loop {
         // `foo.every(nativeFoo || function foo() { .. })`
         let (outermost, parent) = state.around_choices.find(Node::Expr(current), |child, parent| {
-            let is_choice = matches!(parent, Node::Expr(parent) if matches!(
-                parent.kind(),
-                ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, .. } | ExprKind::Cond { .. }
-            ));
+            let is_choice = matches!(parent, Node::Expr(parent) if parent.tag() == ExprTag::Cond
+                || matches!(parent.binary_op(), Some(BinOp::And | BinOp::Or | BinOp::Nullish)));
             (!is_choice).then_some((child, parent))
         })?;
         current = outermost.as_expr()?;
         match parent {
-            Node::Expr(parent) => match parent.kind() {
-                ExprKind::Call(call) => {
-                    let (callee, args) = (call.callee(), call.args());
-                    let is_second = args.get(1) == Some(current);
-                    // oxlint looks only at a call without further arguments, and at no `from` but that of `Array`.
-                    if current.file().language().is_oxlint
-                        && (args.len() != if is_second { 2 } else { 1 }
-                            || is_second
-                                && !matches!(callee.kind(), ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }
-                                    if obj.is_ident("Array")))
-                    {
-                        return None;
-                    }
-                    if !func.is_async() {
-                        if is_second && ast_utils::is_array_from_method(callee) {
-                            return Some(("from", callee));
-                        }
-                        if args.first() == Some(current)
-                            && let Some(name) = get_target_method(callee)
-                        {
-                            return Some((name, callee));
-                        }
-                    }
-                    return (is_second && ast_utils::is_array_from_async_method(callee))
-                        .then_some(("fromAsync", callee));
+            Node::Expr(parent) => {
+                let call = parent.as_call()?;
+                let (callee, args) = (call.callee(), call.args());
+                let is_second = args.get(1) == Some(current);
+                // oxlint looks only at a call without further arguments, and at no `from` but that of `Array`.
+                if current.file().language().is_oxlint
+                    && (args.len() != if is_second { 2 } else { 1 }
+                        || is_second
+                            && !matches!(callee.kind(), ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. }
+                                if obj.is_ident("Array")))
+                {
+                    return None;
                 }
-                _ => return None,
-            },
+                if !func.is_async() {
+                    if is_second && ast_utils::is_array_from_method(callee) {
+                        return Some(("from", callee));
+                    }
+                    if args.first() == Some(current)
+                        && let Some(name) = get_target_method(callee)
+                    {
+                        return Some((name, callee));
+                    }
+                }
+                return (is_second && ast_utils::is_array_from_async_method(callee))
+                    .then_some(("fromAsync", callee));
+            }
             // What a function that is called at once returns goes where the call is:
             // `foo.every((function() { return function callback() { .. }; })())`
             Node::Stmt(statement) if statement.tag() == StmtTag::Return => {
@@ -331,6 +330,10 @@ impl Rule for ArrayCallbackReturn {
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
         if !matches!(func.kind(), FnKind::Expr | FnKind::Arrow) {
+            return;
+        }
+        // Only what `forEach` is given can be wrong without a block.
+        if !self.check_for_each && !matches!(func.body(), FnBody::Block(_)) {
             return;
         }
         let Some((method, callee)) = get_array_method_name(func, &mut cx.state) else {

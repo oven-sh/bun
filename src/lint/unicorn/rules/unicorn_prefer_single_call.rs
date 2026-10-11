@@ -13,17 +13,24 @@ const PREFER_SINGLE_CALL: Message = Message::new("", "Do not call `{{description
 impl Rule for PreferSingleCall {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-single-call", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().stmts(&[StmtTag::Expr]);
-    type State<'a> = ();
+    /// What is called.
+    type State<'a> = [Name<'a>; 5];
 
     fn new(options: &Options) -> Self {
         PreferSingleCall { ignore: options.object(0).strings("ignore").into_iter().map(String::from).collect() }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions_any(&["push", "unshift", "classList", "importScripts"]).then_some(())
+    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
+        file.mentions_any(&["push", "unshift", "classList", "importScripts"])
+            .then(|| ["push", "unshift", "add", "remove", "importScripts"].map(|it| file.name_of(it)))
     }
 
     fn stmt<'a>(&self, curr_es: Stmt<'a>, cx: &mut Cx<'a, Self>) {
+        let callee = curr_es.as_expr().and_then(Expr::callee);
+        let name = callee.and_then(|it| it.member_name().map(Ident::name).or_else(|| it.as_ident()));
+        if !name.is_some_and(|it| cx.state.contains(&it)) {
+            return;
+        }
         let Some((curr_call, curr_info)) = self.classify_statement(curr_es) else {
             return;
         };

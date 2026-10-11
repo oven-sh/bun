@@ -95,7 +95,7 @@ impl Rule for ExplicitLengthCheck {
         if !member.member_name().is_some_and(|it| cx.state.0.contains(&it.name())) {
             return;
         }
-        let ExprKind::Dot { obj, chain: Chain::No, .. } = member.kind() else {
+        let Some((obj, _, Chain::No)) = member.as_dot() else {
             return;
         };
         if obj.tag() == ExprTag::This && !obj.is_parenthesized()

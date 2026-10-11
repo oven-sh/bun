@@ -12,8 +12,9 @@ pub struct NoUselessPromiseResolveReject {
 const RESOLVE: Message = Message::new("", "Prefer `{{preferred}} value` over `{{preferred}} Promise.resolve(value)`.");
 const REJECT: Message = Message::new("", "Prefer `throw error` over `{{preferred}} Promise.reject(error)`.");
 
-#[derive(Default)]
 pub struct State<'a> {
+    /// `resolve`, `reject`
+    methods: [Name<'a>; 2],
     nearest_function: AncestorMemo<'a, Func<'a>>,
     /// Whether there is a `try` statement around something, in the same function.
     is_in_try_statement: AncestorMemo<'a, bool>,
@@ -30,11 +31,12 @@ impl Rule for NoUselessPromiseResolveReject {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<State<'a>> {
-        if file.mentions("Promise") && file.mentions_any(&["resolve", "reject"]) {
-            Some(State::default())
-        } else {
-            None
-        }
+        const METHODS: [&str; 2] = ["resolve", "reject"];
+        (file.mentions("Promise") && file.mentions_any(&METHODS)).then(|| State {
+            methods: METHODS.map(|it| file.name_of(it)),
+            nearest_function: AncestorMemo::default(),
+            is_in_try_statement: AncestorMemo::default(),
+        })
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -51,7 +53,10 @@ impl NoUselessPromiseResolveReject {
         let Some(call) = e.as_call() else {
             return;
         };
-        let Some(ExprKind::Dot { obj, name, .. }) = get_member_expr(call.callee()).map(Expr::kind) else {
+        if call.callee().member_name().is_some_and(|it| !cx.state.methods.contains(&it.name())) {
+            return;
+        }
+        let Some((obj, name, _)) = get_member_expr(call.callee()).and_then(Expr::as_dot) else {
             return;
         };
         let is_reject = match name.bytes() {

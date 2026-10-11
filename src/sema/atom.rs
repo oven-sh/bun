@@ -80,6 +80,11 @@ impl<'a> OwnTexts<'a> {
         self.spans.get(atom.0 as usize).copied()
     }
 
+    #[inline]
+    pub fn source(&self) -> &'a [u8] {
+        self.source
+    }
+
     /// The text of `atom` if it is in the source as it is. `None`: ask the interner.
     #[inline]
     pub fn in_source(&self, atom: Atom) -> Option<&'a [u8]> {

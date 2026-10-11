@@ -59,6 +59,9 @@ struct Entry {
     name: Atom,
     pos: u32,
     decl: Decl,
+    /// What the outermost pattern around the name is the pattern of: the `VarDeclId` for a `Decl::Var`, the `ParamId` for a
+    /// `Decl::Param`. `NONE` for the name of a `this` parameter.
+    owner: u32,
     flags: u8,
     kinds: u16,
 }
@@ -312,16 +315,15 @@ fn entries_in_order(file: &File, deep_patterns: &mut DeepPatterns) -> (Vec<Entry
     let mut entries: Vec<Entry> = Vec::with_capacity(room);
     // The position and the index of each entry.
     let mut in_order: Vec<u64> = Vec::with_capacity(room);
-    let mut add = |decl: Decl| {
-        if let Some((name, pos)) = name_of_declaration(file, decl)
-            && !(file.has_synthetic_nodes() && file.is_in_jsdoc(pos))
-        {
+    let mut add_named = |decl: Decl, owner: u32, name: Atom, pos: u32| {
+        if !(file.has_synthetic_nodes() && file.is_in_jsdoc(pos)) {
             in_order.push(u64::from(pos) << 32 | entries.len() as u64);
             entries.push(Entry {
                 scope: NONE,
                 name,
                 pos,
                 decl,
+                owner,
                 flags: 0,
                 kinds: 0,
             });
@@ -336,14 +338,26 @@ fn entries_in_order(file: &File, deep_patterns: &mut DeepPatterns) -> (Vec<Entry
             continue;
         };
         let id = hir::PatId(i as u32);
-        match owner_of_pattern(file, deep_patterns.add(file, id, &mut passed)) {
-            PatParent::Var(_) => add(Decl::Var(id)),
-            PatParent::Param(_) => add(Decl::Param(id)),
+        let owner = owner_of_pattern(file, deep_patterns.add(file, id, &mut passed));
+        // As `name_of_declaration` has it.
+        if name.is_none() || name == known::empty {
+            continue;
+        }
+        match owner {
+            PatParent::Var(d) => add_named(Decl::Var(id), d.0, name, pat.pos),
+            PatParent::Param(p) => add_named(Decl::Param(id), p.0, name, pat.pos),
             // The name of a `this` parameter is part of nothing.
-            PatParent::None if name == known::this => add(Decl::Param(id)),
+            PatParent::None if name == known::this => {
+                add_named(Decl::Param(id), NONE, name, pat.pos)
+            }
             _ => {}
         }
     }
+    let mut add = |decl: Decl| {
+        if let Some((name, pos)) = name_of_declaration(file, decl) {
+            add_named(decl, NONE, name, pos);
+        }
+    };
     for (i, func) in hir.fns.iter().enumerate() {
         if matches!(func.kind, FnKind::Decl | FnKind::Expr)
             && func.name.is_some()
@@ -416,22 +430,17 @@ fn assign_scopes(
     tree: &ScopeTree,
     entries: &mut [Entry],
     in_order: &[u64],
-    deep_patterns: &DeepPatterns,
 ) -> Vec<u32> {
     let (hir, bound) = (&file.hir, &file.bound);
-    let root_of_pattern =
-        |pat| owner_of_pattern(file, DeepPatterns::top_of(Some(deep_patterns), file, pat));
     let mut entry_starts = vec![0u32; tree.scopes.len() + 1];
     let mut cursor = tree.cursor();
     for &key in in_order {
         let it = &mut entries[key as u32 as usize];
-        let (here, name) = (cursor.seek(it.pos), it.name);
+        let here = cursor.seek(it.pos);
         let mut is_catch = false;
         (it.scope, it.flags) = match it.decl {
-            Decl::Var(p) => {
-                let PatParent::Var(d) = root_of_pattern(p) else {
-                    continue;
-                };
+            Decl::Var(_) => {
+                let d = hir::VarDeclId(it.owner);
                 is_catch = is_catch_parameter(file, d);
                 let is_hoisted = hir
                     .var_decls
@@ -444,16 +453,15 @@ fn assign_scopes(
                 };
                 (scope, VALUE)
             }
-            Decl::Param(p) => match root_of_pattern(p) {
-                PatParent::Param(param) => {
+            Decl::Param(_) => match it.owner {
+                NONE => (here, VALUE),
+                param => {
                     let scope = bound
                         .param_fn
-                        .get(param.idx())
+                        .get(param as usize)
                         .and_then(|f| tree.of_fn.get(f.idx()));
                     (scope.copied().unwrap_or(NONE), VALUE)
                 }
-                _ if name == known::this => (here, VALUE),
-                _ => continue,
             },
             Decl::Fn(_) => (here, VALUE),
             Decl::Class(c) => match bound.class_owner.get(c.idx()) {
@@ -529,7 +537,7 @@ impl Variables {
         let mut deep_patterns = DeepPatterns::default();
         let (mut entries, in_order) = entries_in_order(file, &mut deep_patterns);
         let scope_count = tree.scopes.len();
-        let mut entry_starts = assign_scopes(file, tree, &mut entries, &in_order, &deep_patterns);
+        let mut entry_starts = assign_scopes(file, tree, &mut entries, &in_order);
 
         // The entries scope by scope, and in each in source order, as indices.
         for i in 0..scope_count {
@@ -567,6 +575,7 @@ impl Variables {
                     name: known::arguments,
                     pos: 0,
                     decl: Decl::File,
+                    owner: NONE,
                     flags: VALUE | TYPE,
                     kinds: 0,
                 };

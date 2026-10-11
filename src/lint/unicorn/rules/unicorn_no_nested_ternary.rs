@@ -23,7 +23,7 @@ impl Rule for NoNestedTernary {
         let Some(parent) = conditional_around(e) else {
             return;
         };
-        let ExprKind::Cond { test, yes, no } = e.kind() else {
+        let Some((test, yes, no)) = e.as_cond() else {
             return;
         };
         // The innermost is what is reported.

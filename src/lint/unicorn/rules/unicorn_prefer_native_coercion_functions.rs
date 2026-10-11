@@ -82,16 +82,19 @@ impl Rule for PreferNativeCoercionFunctions {
     }
 
     fn func<'a>(&self, func: Func<'a>, cx: &mut Cx<'a, Self>) {
-        if func.is_async()
-            || func.is_generator()
-            || !func.has_body()
+        if !func.has_body()
             || func.params().first().is_none_or(|it| it.is_rest())
+            || func.is_async()
+            || func.is_generator()
             || func.return_type().is_some_and(|it| it.tag() == TypeTag::Predicate && !it.is_parenthesized())
         {
             return;
         }
         let owner = func.owner();
         if !func.is_arrow() {
+            if func.body_statements().and_then(|it| it.last()).is_none_or(|it| it.tag() != StmtTag::Return) {
+                return;
+            }
             // Not what is directly in a property of an object: a method, or a value.
             let is_in_object_property =
                 matches!(owner, Node::Expr(e) if !e.is_parenthesized() && matches!(e.parent(), Node::Prop(_)));

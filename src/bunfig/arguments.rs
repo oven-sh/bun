@@ -34,7 +34,7 @@ fn join_config_path<'buf>(
     Some(ZStr::from_buf(&buf[..], len))
 }
 
-fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
+pub(crate) fn get_home_config_path(buf: &mut PathBuffer) -> Option<&ZStr> {
     let dir = env_var::XDG_CONFIG_HOME
         .get()
         .or_else(|| env_var::HOME.get())?;

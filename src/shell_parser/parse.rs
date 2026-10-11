@@ -3415,6 +3415,9 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                     c if (u32::from(b'a')..=u32::from(b'z')).contains(&c)
                         || (u32::from(b'A')..=u32::from(b'Z')).contains(&c)
                         || c == u32::from(b'_') => {}
+                    c if c == u32::from(b'{') && !escaped => {
+                        return Ok(self.eat_braced_var_name());
+                    }
                     _ => return Ok(TextRange { start, end: self.j }),
                 }
             }
@@ -3457,6 +3460,30 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             }
         }
         Ok(TextRange { start, end: self.j })
+    }
+
+    /// Matches `{NAME}` or `{0}`..`{9}` on the source bytes: no escape or JS ref joins the name.
+    #[cold]
+    fn eat_braced_var_name(&mut self) -> TextRange {
+        let start = self.j;
+        let bytes = self.chars.src_bytes_at_cursor();
+        let name_len = match bytes {
+            [b'{', b'0'..=b'9', ..] => 1,
+            [b'{', name @ ..] => name
+                .iter()
+                .take_while(|b| b.is_ascii_alphanumeric() || **b == b'_')
+                .count(),
+            _ => 0,
+        };
+        if name_len == 0 || bytes.get(1 + name_len) != Some(&b'}') {
+            return TextRange { start, end: start };
+        }
+        let name = &bytes[1..=name_len];
+        self.strpool.extend_from_slice(name);
+        self.j += name_len as u32;
+        let after_brace = self.chars.cursor_pos() + name_len + 2;
+        self.bump_cursor_ascii(after_brace, Some(name[name_len - 1]), b'}');
+        TextRange { start, end: self.j }
     }
 
     fn eat(&mut self) -> Option<InputChar> {

@@ -247,6 +247,63 @@ describe("bunshell", () => {
       });
     });
 
+    // The first `${FOO}` of each script is written in the shell source and
+    // expands. The second one gets its name, or the end of its name, from an
+    // interpolated value and stays text.
+    describe("interpolated value after a literal ${ stays literal", () => {
+      const source = { raw: "${FOO}" };
+      const open = { raw: "${" };
+      const name = "FOO";
+      TestBuilder.command`FOO=bar && echo ${source} ${open}${name}}`.stdout("bar ${FOO}\n").runAsTest("no quotes");
+      TestBuilder.command`FOO=bar && echo "${source} ${open}${name}}"`
+        .stdout("bar ${FOO}\n")
+        .runAsTest("double quotes");
+      TestBuilder.command`FOO=bar && echo ${source} a${open}${name}}b`
+        .stdout("bar a${FOO}b\n")
+        .runAsTest("inside a word");
+      TestBuilder.command`FOO=bar && echo ${source} ${open}${1}}`.stdout("bar ${1}\n").runAsTest("a number");
+      TestBuilder.command`FOO=bar && echo ${source} ${open}${["FOO"]}}`.stdout("bar ${FOO}\n").runAsTest("an array");
+      TestBuilder.command`FOO=bar && echo ${source} ${open}${{ toString: () => "FOO" }}}`
+        .stdout("bar ${FOO}\n")
+        .runAsTest("an object with toString");
+      TestBuilder.command`FOO=bar && echo ${source} ${open}${Bun.file("FOO")}}`
+        .stdout("bar ${FOO}\n")
+        .runAsTest("a Bun.file path");
+      TestBuilder.command`FOOBAR=long && FOO=short && echo ${source} ${{ raw: "${FOO" }}${Bun.file("BAR")}}`
+        .stdout("short ${FOOBAR}\n")
+        .runAsTest("a Bun.file path that would complete a name");
+      // A backslash-newline breaks the word today, so this prints `$ {FOO}`.
+      TestBuilder.command`FOO=bar && echo ${source} ${{ raw: "$\\\n{" }}${name}}`
+        .stdout(stdout => expect(stdout.replace("$ {", "${")).toBe("bar ${FOO}\n"))
+        .runAsTest("after a line continuation between $ and {");
+
+      test("does not complete a variable name", async () => {
+        const { stdout, stderr, exitCode } =
+          await $`FOOBAR=long && FOO=short && echo ${source} ${{ raw: "${FOO" }}${"BAR"}}`.env({ ...bunEnv });
+        expect(stderr.toString()).toBe("");
+        expect(stdout.toString()).toBe("short ${FOOBAR}\n");
+        expect(exitCode).toBe(0);
+      });
+
+      test("does not name a variable from the environment", async () => {
+        const { stdout, stderr, exitCode } = await $`echo ${source} ${open}${"SHELL_TEST_SECRET"}}`.env({
+          ...bunEnv,
+          FOO: "bar",
+          SHELL_TEST_SECRET: "hunter2",
+        });
+        expect(stderr.toString()).toBe("");
+        expect(stdout.toString()).toBe("bar ${SHELL_TEST_SECRET}\n");
+        expect(exitCode).toBe(0);
+      });
+
+      test("when $ is called with a strings array", async () => {
+        const { stdout, stderr, exitCode } = await $({ raw: ["FOO=bar && echo ${FOO} ${", "}"] } as any, name);
+        expect(stderr.toString()).toBe("");
+        expect(stdout.toString()).toBe("bar ${FOO}\n");
+        expect(exitCode).toBe(0);
+      });
+    });
+
     test("can't escape a js string/obj ref", async () => {
       const shellvar = "$FOO";
       await TestBuilder.command`FOO=bar && echo \\${shellvar}`.stdout(`\\$FOO\n`).run();
@@ -1148,6 +1205,12 @@ booga"
       const { stdout } = await $`{echo,a,b,c} {d,e,f}`;
       expect(stdout.toString()).toEqual("a b c d e f\n");
     });
+
+    describe("interpolated value after {", () => {
+      TestBuilder.command`echo {${"a"},b}`.stdout("a b\n").runAsTest("first item");
+      TestBuilder.command`echo {pre${"a"},b}`.stdout("prea b\n").runAsTest("end of the first item");
+      TestBuilder.command`echo '{${"a"}}'`.stdout("{a}\n").runAsTest("in single quotes");
+    });
   });
 
   describe("variables", () => {
@@ -1208,6 +1271,80 @@ booga"
       const procEnv = JSON.parse(str);
 
       expect(procEnv).toEqual({ ...bunEnv, BUN_TEST_VAR: "1", FOO: "bar" });
+    });
+
+    // `${` in a JS template literal starts an interpolation, so `{ raw }`
+    // carries the braced form to the shell.
+    describe("${NAME}", () => {
+      const raw = (src: string) => TestBuilder.command`${{ raw: src }}`;
+
+      raw("FOO=bar; echo ${FOO}").stdout("bar\n").runAsTest("expands like $NAME");
+      raw('FOO=bar; echo "${FOO}"').stdout("bar\n").runAsTest("in double quotes");
+      raw('FOO="a  b"; echo "x ${FOO} y"').stdout("x a  b y\n").runAsTest("in double quotes beside text");
+      raw("FOO=bar; echo a${FOO}b").stdout("abarb\n").runAsTest("inside a word");
+      raw("FOO=bar; FOObar=no; echo ${FOO}bar").stdout("barbar\n").runAsTest("the braces end the name");
+      raw("FOO=a; BAR=b; echo ${FOO}${BAR}$FOO").stdout("aba\n").runAsTest("beside other variables");
+      raw("echo a${SHELL_TEST_UNSET}b").stdout("ab\n").runAsTest("unset is empty");
+      raw("echo '${FOO}' \\${FOO}").stdout("${FOO} ${FOO}\n").runAsTest("quoted or escaped stays text");
+
+      raw("echo ${FOO}; FOO=bar; echo ${FOO}").stdout("\nbar\n").runAsTest("reads the value when the command runs");
+      raw("FOO=a; FOO=b; echo ${FOO}").stdout("b\n").runAsTest("after a second assignment");
+      raw("FOO=a; (FOO=b; echo ${FOO}); echo ${FOO}").stdout("b\na\n").runAsTest("in a subshell");
+      raw("FOO=bar; echo $(echo ${FOO}) `echo ${FOO}`").stdout("bar bar\n").runAsTest("in a command substitution");
+      raw("FOO=bar; BAR=${FOO}; echo $BAR").stdout("bar\n").runAsTest("as an assignment value");
+      raw("FOO=echo; ${FOO} hi").stdout("hi\n").runAsTest("as the command name");
+      raw("FOO=bar; echo hi > out_${FOO}.txt")
+        .ensureTempDir()
+        .fileEquals("out_bar.txt", "hi\n")
+        .runAsTest("in a redirect target");
+      raw("FOO=bar; echo ${FOO}{a,b} {${FOO},c} {a,b}")
+        .stdout("bara barb bar c a b\n")
+        .runAsTest("beside a brace group");
+      raw("[[ -n ${SHELL_TEST_UNSET} ]]").exitCode(1).runAsTest("unset in [[ -n ]]");
+      raw("FOO=bar; [[ -n ${FOO} ]] && [[ ${FOO} == bar ]] && echo yes").stdout("yes\n").runAsTest("set in [[ ]]");
+      raw("mkdir sub && cd sub && echo ${PWD} && echo $PWD")
+        .ensureTempDir()
+        .stdout(stdout => {
+          const [braced, bare] = stdout.split("\n");
+          expect(braced).toEndWith("sub");
+          expect(braced).toBe(bare);
+        })
+        .runAsTest("${PWD} after cd");
+
+      test("reads an environment set with .env()", async () => {
+        const { stdout, stderr, exitCode } = await $`echo ${{ raw: "${FOO}" }}`.env({ ...bunEnv, FOO: "bar" });
+        expect(stderr.toString()).toBe("");
+        expect(stdout.toString()).toBe("bar\n");
+        expect(exitCode).toBe(0);
+      });
+
+      // sh gives one empty word for a double-quoted expansion that is empty.
+      // Bun's shell drops the word, for "$NAME" too. #44904 changes both.
+      raw('echo a "${SHELL_TEST_UNSET}" b')
+        .stdout("a  b\n")
+        .todo("needs #44904")
+        .runAsTest("unset in double quotes is one empty word");
+      raw('FOO=; echo a "${FOO}" b')
+        .stdout("a  b\n")
+        .todo("needs #44904")
+        .runAsTest("empty in double quotes is one empty word");
+      test.todo("unset in double quotes is one empty argument (needs #44904)", async () => {
+        const words = { raw: '"${SHELL_TEST_UNSET}" x "$SHELL_TEST_UNSET" y' };
+        const { stdout, stderr, exitCode } =
+          await $`${BUN} -e "console.log(JSON.stringify(process.argv.slice(1)))" ${words}`;
+        expect(stderr.toString()).toBe("");
+        expect(JSON.parse(stdout.toString())).toEqual(["", "x", "", "y"]);
+        expect(exitCode).toBe(0);
+      });
+
+      test("is one argument of a command", async () => {
+        const words = { raw: '"${FOO}" x${BAR}y ${BAR}' };
+        const { stdout, stderr, exitCode } =
+          await $`FOO="a  b"; BAR=c; ${BUN} -e "console.log(JSON.stringify(process.argv.slice(1)))" ${words}`;
+        expect(stderr.toString()).toBe("");
+        expect(JSON.parse(stdout.toString())).toEqual(["a  b", "xcy", "c"]);
+        expect(exitCode).toBe(0);
+      });
     });
   });
 

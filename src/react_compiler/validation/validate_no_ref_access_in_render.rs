@@ -501,13 +501,7 @@ fn guard_check(errors: &mut Vec<CompilerDiagnostic>, operand: &Place, env: &Env)
 
 pub(crate) fn validate_no_ref_access_in_render(func: &HirFunction, env: &mut Environment) {
     let mut ref_env = Env::new();
-    collect_temporaries_sidemap(
-        func,
-        &mut ref_env,
-        &env.identifiers,
-        &env.types,
-        &env.functions,
-    );
+    collect_temporaries_sidemap(func, &mut ref_env, &env.identifiers, &env.types);
     let mut errors: Vec<CompilerDiagnostic> = Vec::new();
     validate_no_ref_access_in_render_impl(
         func,
@@ -528,17 +522,11 @@ fn collect_temporaries_sidemap(
     env: &mut Env,
     identifiers: &[Identifier],
     types: &[Type],
-    functions: &[HirFunction],
 ) {
     for (_, block) in &func.body.blocks {
         for &instr_id in &block.instructions {
             let instr = &func.instructions[instr_id.0 as usize];
             match &instr.value {
-                InstructionValue::ObjectMethod { lowered_func, .. }
-                | InstructionValue::FunctionExpression { lowered_func, .. } => {
-                    let inner = &functions[lowered_func.func.0 as usize];
-                    collect_temporaries_sidemap(inner, env, identifiers, types, functions);
-                }
                 InstructionValue::LoadLocal { place, .. } => {
                     let temp = env
                         .temporaries
@@ -591,16 +579,6 @@ fn validate_no_ref_access_in_render_impl(
     // Process params
     for param in &func.params {
         let place = param.place();
-        ref_env.set(
-            place.identifier,
-            ref_type_of_type(place.identifier, identifiers, types),
-        );
-    }
-    // Seed captured context places so refs captured from an enclosing scope are
-    // recognized as Ref/RefValue inside the lambda body. Callbacks passed to
-    // useState/useReducer (and IIFEs) execute during render, so a captured ref
-    // read must be detected here for `read_ref_effect` to propagate.
-    for place in &func.context {
         ref_env.set(
             place.identifier,
             ref_type_of_type(place.identifier, identifiers, types),
@@ -778,6 +756,14 @@ fn validate_no_ref_access_in_render_impl(
                             ref_env,
                             &mut inner_errors,
                         );
+                        // Not in upstream: the TypeScript original throws this invariant.
+                        if inner_errors
+                            .iter()
+                            .any(|error| error.category == ErrorCategory::Invariant)
+                        {
+                            errors.append(&mut inner_errors);
+                            return RefAccessType::None;
+                        }
                         let (return_type, read_ref_effect) = if inner_errors.is_empty() {
                             (result, false)
                         } else {

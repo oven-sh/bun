@@ -2126,7 +2126,9 @@ ${packages["node_modules/prettier/index.cjs"]}`;
       ["a.html", nested("", "<div>", "a", "</div>", "", tooDeep)],
       ["a.vue", nested("<template>", "<div>", "a", "</div>", "</template>", tooDeep)],
       ["a.component.html", nested("", "@if (a) {", "b", "}", "", tooDeep)],
+      ["b.component.html", nested("", "{a, select, b {", "c", "}}", "", tooDeep)],
       ["a.svelte", nested("", "<div>", "a", "</div>", "", tooDeep)],
+      ["c.svelte", nested("", "<slot>", "a", "</slot>", "", tooDeep)],
       // In a JSDoc comment, with `jsdoc` of oxfmt.
       ["a.js", nested("/**\n * ", "> ", "a", "", "\n */ let a;", tooDeep)],
     ])("what there is no stack for, or no string, is an error, and the file stays as it is: %s", async (name, text) => {

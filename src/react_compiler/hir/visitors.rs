@@ -8,9 +8,9 @@ use std::collections::HashMap;
 
 use crate::hir::environment::Environment;
 use crate::hir::{
-    ArrayElement, ArrayPatternElement, AstAlloc, BasicBlock, BlockId, HirFunction, IdentifierId,
-    Instruction, InstructionValue, JsxAttribute, JsxTag, ManualMemoDependencyRoot,
-    ObjectPropertyKey, ObjectPropertyOrSpread, Pattern, Place, PlaceOrSpread, ScopeId, Terminal,
+    ArrayElement, ArrayPatternElement, BasicBlock, BlockId, HirFunction, IdentifierId, Instruction,
+    InstructionValue, JsxAttribute, JsxTag, ManualMemoDependencyRoot, ObjectPropertyKey,
+    ObjectPropertyOrSpread, Pattern, Place, PlaceOrSpread, ScopeId, Terminal,
 };
 
 // =============================================================================
@@ -508,7 +508,7 @@ pub fn each_terminal_operand(terminal: &Terminal) -> Vec<Place> {
 pub fn map_pattern_operands(pattern: &mut Pattern, f: &mut impl FnMut(Place) -> Place) {
     match pattern {
         Pattern::Array(arr) => {
-            arr.items = AstAlloc::vec_from_iter(arr.items.iter().map(|item| match item {
+            arr.items = Vec::from_iter(arr.items.iter().map(|item| match item {
                 ArrayPatternElement::Place(place) => ArrayPatternElement::Place(f(place.clone())),
                 ArrayPatternElement::Spread(spread) => {
                     let mut spread = spread.clone();

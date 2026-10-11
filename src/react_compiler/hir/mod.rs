@@ -54,38 +54,20 @@ pub use crate::diagnostics::SourceLocation;
 pub use reactive::*;
 
 // =============================================================================
-// Arena-backed Vec for HIR data
+// Vec for HIR data
 // =============================================================================
 
-/// `Vec` whose backing buffer lives in the parser's thread-local AST arena
-/// (see [`bun_alloc::AstAlloc`]). Same layout as `Vec<T>` (the allocator is a
-/// ZST), so HIR types are unchanged in size. The arena is installed for the
-/// duration of `js_parser`'s visit pass — the hook point that calls into this
-/// compiler — so every `HirVec` allocated during a `compile_fn` lands in the
-/// per-file arena and is bulk-freed with the rest of the AST.
-///
-/// `Drop` on a `HirVec<T>` still runs each element's `Drop`; only the backing
-/// buffer's `deallocate` is a no-op. Nonetheless, HIR types must NOT own
-/// global-heap allocations (`String`, `Box<T>`, `Vec<T>`): the arena bulk-
-/// frees on reset without walking elements, so any nested global allocation
-/// leaks per parse. Use [`StoreStr`] / [`HirVec`] instead.
-pub type HirVec<T> = bun_alloc::AstVec<T>;
-pub use bun_alloc::AstAlloc;
-/// Arena-owned (or `'static`) byte string. Copy; no Drop. See [`HirVec`].
+/// `Vec` of HIR data. DESIGN.md ("Memory") says what may go in the AST arena.
+pub type HirVec<T> = Vec<T>;
+/// Arena-owned (or `'static`) byte string. Copy; no Drop.
 pub use bun_ast::StoreStr;
 
-/// `vec![..]` for [`HirVec`]. `Vec<T, A>` has no `Default`/`From<[T; N]>` for
-/// non-`Global` `A`, so the std macro doesn't apply.
+/// `vec![..]` for [`HirVec`].
 #[macro_export]
 macro_rules! hir_vec {
-    () => {
-        ::bun_alloc::AstAlloc::vec()
+    ($($x:tt)*) => {
+        ::std::vec![$($x)*]
     };
-    ($($x:expr),+ $(,)?) => {{
-        let mut v = ::bun_alloc::AstAlloc::vec();
-        $(v.push($x);)+
-        v
-    }};
 }
 pub use crate::hir_vec;
 
@@ -1517,15 +1499,6 @@ impl NonLocalBinding {
 // Type system (from Types.ts)
 // =============================================================================
 
-/// The recursive `Box<Type>` fields here intentionally use the global
-/// allocator, NOT the AST arena: `Type` values are constructed and held by the
-/// process-lifetime [`ShapeRegistry`](crate::hir::object_shape::ShapeRegistry),
-/// which outlives the per-file AST arena, so an arena-backed box would dangle
-/// after `Store::reset()`. The leak hazard described on [`HirVec`] does not
-/// apply because `Type` is stored in `Drop`-running containers (registry
-/// `HashMap`s, the unifier's substitution map) rather than bulk-freed arena
-/// slabs; the one arena-backed holder, `Phi::operands`, is dropped normally
-/// at the end of type inference before any arena reset.
 #[derive(Debug, Clone)]
 pub enum Type {
     Primitive,

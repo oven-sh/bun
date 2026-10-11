@@ -177,10 +177,10 @@ impl Environment {
             next_block_id_counter: 0,
             next_scope_id_counter: 0,
             next_mutable_range_id_counter: 0,
-            identifiers: AstAlloc::vec(),
-            types: AstAlloc::vec(),
-            scopes: AstAlloc::vec(),
-            functions: AstAlloc::vec(),
+            identifiers: Vec::new(),
+            types: Vec::new(),
+            scopes: Vec::new(),
+            functions: Vec::new(),
             errors: CompilerError::new(),
             fn_type: ReactFunctionType::Other,
             output_mode: OutputMode::Client,
@@ -189,7 +189,7 @@ impl Environment {
             instrument_fn_name: None,
             instrument_gating_name: None,
             hook_guard_name: None,
-            renames: AstAlloc::vec(),
+            renames: Vec::new(),
             reference_node_ids: HashSet::new(),
             hoisted_identifiers: HashSet::new(),
             validate_preserve_existing_memoization_guarantees: config
@@ -203,7 +203,7 @@ impl Environment {
             module_type_errors: HashMap::new(),
             default_nonmutating_hook: None,
             default_mutating_hook: None,
-            outlined_functions: AstAlloc::vec(),
+            outlined_functions: Vec::new(),
             uid_known_names: None,
             config,
         }
@@ -269,11 +269,11 @@ impl Environment {
         self.scopes.push(ReactiveScope {
             id,
             range,
-            dependencies: AstAlloc::vec(),
-            declarations: AstAlloc::vec(),
-            reassignments: AstAlloc::vec(),
+            dependencies: Vec::new(),
+            declarations: Vec::new(),
+            reassignments: Vec::new(),
             early_return_value: None,
-            merged: AstAlloc::vec(),
+            merged: Vec::new(),
             loc: None,
         });
         id
@@ -711,7 +711,7 @@ impl Environment {
         // 1. Replace non-identifier chars with '-'
         // 2. Strip leading '-' and digits
         // 3. CamelCase: replace '-' sequences + optional following char with uppercase of that char
-        let mut camel: HirVec<u8> = AstAlloc::vec_with_capacity(base.len());
+        let mut camel: HirVec<u8> = Vec::with_capacity(base.len());
         let mut iter = base.iter().copied().peekable();
         while let Some(&c) = iter.peek() {
             let is_ident = c.is_ascii_alphanumeric() || c == b'_' || c == b'$';
@@ -768,7 +768,7 @@ impl Environment {
         // Find a name that doesn't collide, matching Babel's generateUid loop.
         // Reuse a single buffer across iterations; HashSet::contains accepts &[u8].
         let known = self.uid_known_names.as_mut().unwrap();
-        let mut uid: HirVec<u8> = AstAlloc::vec_with_capacity(uid_base.len() + 4);
+        let mut uid: HirVec<u8> = Vec::with_capacity(uid_base.len() + 4);
         let mut i = 1u32;
         loop {
             uid.clear();
@@ -791,7 +791,7 @@ impl Environment {
             }
         }
 
-        let result = StoreStr::new(uid.leak());
+        let result = StoreStr::new(bun_ast::data_store_dupe_str(&uid));
         known.insert(result);
         result
     }

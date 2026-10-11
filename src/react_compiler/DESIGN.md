@@ -128,6 +128,19 @@ function expression). The bundler's renamer then numbers the new symbols like
 the locals of any other function. `Host::new_generated` is for a name declared
 at module level, such as an outlined `_temp`.
 
+### Memory
+
+The working memory of a function is on the global heap and is freed when it
+drops: `HirVec` is `Vec`, and `IndexMap` / `IndexSet` / `IdMap` use the default
+allocator. So an upstream hunk that builds a `Vec` or a map applies unchanged.
+The AST arena is only for what the output AST keeps, because it frees nothing
+before the AST goes (in `bun build`, the end of the bundle).
+
+A `StoreStr` is a pointer with no lifetime, and codegen puts it in the output
+AST without a copy of the bytes. So the bytes must be source text, a `'static`,
+or a copy in the arena (`bun_ast::data_store_dupe_str`). Never point one at a
+local `Vec<u8>` or `String`.
+
 ### Bail-out semantics
 
 Any `bun_ast` node the port cannot lower (bundler-only synthetics: `ESpecial`,

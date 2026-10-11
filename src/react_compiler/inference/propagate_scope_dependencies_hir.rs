@@ -20,7 +20,7 @@ use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
 use crate::hir::environment::Environment;
 use crate::hir::visitors::{ScopeBlockInfo, ScopeBlockTraversal};
 use crate::hir::{
-    AstAlloc, BasicBlock, BlockId, DeclarationId, DependencyPathEntry, EvaluationOrder, FunctionId,
+    BasicBlock, BlockId, DeclarationId, DependencyPathEntry, EvaluationOrder, FunctionId,
     GotoVariant, HirFunction, HirVec, IdentifierId, Instruction, InstructionId, InstructionKind,
     InstructionValue, MutableRange, ParamPattern, Place, PlaceOrSpread, PropertyLiteral,
     ReactFunctionType, ReactiveScopeDependency, ScopeId, Terminal, Type, hir_vec, visitors,
@@ -1200,7 +1200,7 @@ fn collect_non_nulls_in_blocks(
                                 let sub_dep = ReactiveScopeDependency {
                                     identifier: val.identifier,
                                     reactive: val.reactive,
-                                    path: AstAlloc::vec_from_slice(&dep.path[..i]),
+                                    path: dep.path[..i].to_vec(),
                                     loc: dep.loc,
                                 };
                                 let node_idx = registry.get_or_create_property(&sub_dep);
@@ -1698,7 +1698,7 @@ fn collect_minimal_deps_in_subtree(
         results.push(ReactiveScopeDependency {
             identifier: root_id,
             reactive,
-            path: AstAlloc::vec_from_slice(path),
+            path: path.to_vec(),
             loc: node.loc,
         });
     } else {

@@ -33,6 +33,7 @@
 #include "ErrorCode.h"
 #include "ErrorEvent.h"
 #include "EventNames.h"
+#include "JSEventListener.h"
 #include "MessageEvent.h"
 #include "MessagePort.h"
 #include "SerializedScriptValue.h"
@@ -348,6 +349,9 @@ void WorkerMessagingProxy::drainMessagesToWorkerGlobalScope(ScriptExecutionConte
 {
     auto& globalObject = *defaultGlobalObject(context.globalObject());
     bool more = drainInbox(m_toWorker, globalObject, context, DrainBudget::Bounded, [&](Event& event) {
+        // For the on() listeners of the parentPort that node:worker_threads gives a web Worker: the message,
+        // or undefined for 'messageerror'.
+        NodeStyleEventValue nodeValue(globalObject.vm(), event, static_cast<MessageEvent&>(event).cachedData().getValue());
         globalObject.globalEventScope->dispatchEvent(event);
     });
     if (more) {

@@ -1,4 +1,5 @@
-import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { heapStats } from "bun:jsc";
+import { describe, expect, it, mock, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, tempDir, tls, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
@@ -1256,6 +1257,198 @@ test("off() removes only the listener it names, per event and per port", () => {
   }
 });
 
+// on()/once() register the listener itself in the EventTarget listener list, as node's
+// NodeEventTarget does. message-port-node-event-target.test.ts holds every case that real node
+// can run. The cases here need Bun: its GC, its EventTarget global scope, and the parentPort
+// stand-in that a web Worker gets from node:worker_threads.
+describe("MessagePort on()/once() listeners live in the EventTarget listener list", () => {
+  test("a listener removed with removeEventListener() is not retained by the port", () => {
+    const { port1, port2 } = new MessageChannel();
+    try {
+      const functions = () => {
+        Bun.gc(true);
+        return heapStats().objectTypeCounts.Function ?? 0;
+      };
+      const before = functions();
+      for (let i = 0; i < 2_000; i++) {
+        const f = () => i;
+        port1.on("message", f);
+        port1.removeEventListener("message", f as any);
+      }
+      expect(functions() - before).toBeLessThan(500);
+    } finally {
+      port1.close();
+      port2.close();
+    }
+  });
+
+  // One dispatch hands every addEventListener() listener the same Event object, also when an
+  // on() listener in between (which does not get that object) runs a collection.
+  test.each([
+    ["a posted message", "message", (port2: MessagePort) => port2.postMessage(1)],
+    ["the close event", "close", (port2: MessagePort) => port2.close()],
+  ] as const)("an on() listener that collects garbage does not replace the Event of %s", async (_name, type, send) => {
+    const { port1, port2 } = new MessageChannel();
+    try {
+      const { promise, resolve } = Promise.withResolvers<unknown>();
+      port1.addEventListener(type, event => {
+        (event as any).tag = "first listener";
+      });
+      port1.on(
+        type,
+        function collect() {
+          Bun.gc(true);
+        }.bind(null),
+      );
+      port1.addEventListener(type, event => resolve((event as any).tag));
+      send(port2);
+      expect(await promise).toBe("first listener");
+    } finally {
+      port1.close();
+      port2.close();
+    }
+  });
+
+  // Bun's global scope is an EventTarget. A method called with it, or with no receiver, must
+  // not register on it or remove from it.
+  test("the emitter methods do not act on the global scope", () => {
+    const methods = ["on", "once", "addListener", "off", "removeListener", "removeAllListeners"] as const;
+    const onGlobalScope = mock();
+    const f = mock();
+    globalThis.addEventListener("custom", onGlobalScope);
+    try {
+      const codes: Record<string, unknown> = {};
+      for (const method of methods) {
+        for (const [name, receiver] of [
+          ["undefined", undefined],
+          ["globalThis", globalThis],
+        ] as const) {
+          const listener = method === "off" || method === "removeListener" ? onGlobalScope : f;
+          try {
+            (MessagePort.prototype[method] as (...args: unknown[]) => unknown).call(receiver, "custom", listener);
+            codes[`${method} on ${name}`] = "did not throw";
+          } catch (error) {
+            codes[`${method} on ${name}`] = (error as NodeJS.ErrnoException).code;
+          }
+        }
+      }
+      globalThis.dispatchEvent(new Event("custom"));
+      expect({ codes, onGlobalScope: onGlobalScope.mock.calls.length, f: f.mock.calls.length }).toEqual({
+        codes: Object.fromEntries(
+          methods.flatMap(method =>
+            ["undefined", "globalThis"].map(name => [`${method} on ${name}`, "ERR_INVALID_THIS"]),
+          ),
+        ),
+        onGlobalScope: 1,
+        f: 0,
+      });
+    } finally {
+      globalThis.removeEventListener("custom", onGlobalScope);
+    }
+  });
+
+  // A web Worker that loads node:worker_threads gets a stand-in parentPort whose listeners
+  // live on the worker's global scope. A 'message' listener there keeps the worker alive.
+  // Runs `script` in such a worker and returns what the parent process prints: each message
+  // of the worker, then the worker's exit code.
+  async function inWebWorker(script: string, parent = "") {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const worker = new Worker(URL.createObjectURL(new Blob([${JSON.stringify(script)}])));
+         worker.onerror = event => { console.log("error: " + event.message); process.exit(1); };
+         worker.onmessage = event => console.log(JSON.stringify(event.data));
+         worker.addEventListener("close", event => console.log("exit " + event.code));
+         ${parent}`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim().split("\n"), exitCode };
+  }
+
+  test.concurrent.each([
+    ["on(f)", "removeEventListener(f)"],
+    ["once(f)", "removeEventListener(f)"],
+    ["on(f)", "removeListener(f)"],
+    ["addListener(f)", "off(f)"],
+    ["on(f)", "self.removeEventListener(f)"],
+    ["addListener(f)", "removeAllListeners('message')"],
+  ])("the parentPort of a web Worker: %s, %s lets the worker exit", async (add, remove) => {
+    const call = (method: string) =>
+      method.startsWith("self.")
+        ? method.replace("(f)", `("message", f)`)
+        : `parentPort.${method.replace("(f)", `("message", f)`)}`;
+    const result = await inWebWorker(
+      `const { parentPort } = require("node:worker_threads");
+       const f = () => {};
+       ${call(add)};
+       const added = parentPort.listenerCount("message");
+       ${call(remove)};
+       self.postMessage({ added, removed: parentPort.listenerCount("message"), names: parentPort.eventNames() });
+       // Never fires when nothing keeps the worker alive. It bounds the failure with its own exit code.
+       setTimeout(() => process.exit(7), 2_000).unref();`,
+    );
+    expect(result).toEqual({ stdout: ['{"added":1,"removed":0,"names":[]}', "exit 0"], exitCode: 0 });
+  });
+
+  test.concurrent("the parentPort of a web Worker gives on() listeners the message and counts only them", async () => {
+    const result = await inWebWorker(
+      `const { parentPort } = require("node:worker_threads");
+       const got = [];
+       const record = name => value => got.push(name + ":" + (value instanceof Event ? "event" : value));
+       self.onmessage = record("self.onmessage");
+       self.addEventListener("message", record("self.addEventListener"));
+       parentPort.addListener("message", record("parentPort.addListener"));
+       parentPort.once("message", record("parentPort.once"));
+       const before = { count: parentPort.listenerCount("message"), names: parentPort.eventNames() };
+       let after;
+       self.addEventListener("message", event => {
+         if (event.data === "second") return self.postMessage({ before, after, got });
+         parentPort.removeAllListeners();
+         after = { count: parentPort.listenerCount("message"), names: parentPort.eventNames() };
+       });`,
+      `worker.addEventListener("message", () => worker.terminate());
+       worker.postMessage("first");
+       worker.postMessage("second");`,
+    );
+    // The parent terminates the worker after this message, so the exit code line is not compared.
+    expect({ message: result.stdout[0], exitCode: result.exitCode }).toEqual({
+      message: JSON.stringify({
+        before: { count: 2, names: ["message"] },
+        after: { count: 0, names: [] },
+        got: [
+          "self.onmessage:event",
+          "self.addEventListener:event",
+          "parentPort.addListener:first",
+          "parentPort.once:first",
+          "self.onmessage:event",
+          "self.addEventListener:event",
+        ],
+      }),
+      exitCode: 0,
+    });
+  });
+
+  // The stand-in registers on the global scope, so `this` is what that scope gives a listener:
+  // undefined in strict code. Observed: { data: "ping", thisIsParentPort: false }.
+  test.todo("the parentPort of a web Worker calls on() listeners with `this` bound to parentPort", async () => {
+    const result = await inWebWorker(
+      `"use strict";
+       const { parentPort } = require("node:worker_threads");
+       parentPort.on("message", function (data) {
+         self.postMessage({ data, thisIsParentPort: this === parentPort });
+       });`,
+      `worker.addEventListener("message", () => worker.terminate());
+       worker.postMessage("ping");`,
+    );
+    expect(result.stdout[0]).toBe(JSON.stringify({ data: "ping", thisIsParentPort: true }));
+  });
+});
+
 // bun collects entangled ports; node never does. A worker that drops its transferred
 // port must therefore still notify the peer, or the peer's loop ref is never released
 // and the parent hangs forever. Spawned: the symptom is "the process never exits".
@@ -1646,8 +1839,8 @@ test("ref()/onmessage after the peer closes does not pin the loop", async () => 
   });
 });
 
-// EventTarget removes a {once:true} listener natively, so the JS-side registry
-// backing listenerCount()/eventNames() has to drop it too.
+// EventTarget removes a {once:true} listener when it fires, so listenerCount() and
+// eventNames() have to stop counting it.
 test("a fired once() listener stops being counted", async () => {
   const { port1, port2 } = new MessageChannel();
   let fired = 0;
@@ -1665,8 +1858,7 @@ test("a fired once() listener stops being counted", async () => {
   port2.close();
 });
 
-// once() re-points listener[wrappedListener] at the self-purging wrapper, so
-// off() must still find it through the user's original function.
+// off() finds a once() listener that has not fired through the function given to once().
 test("off() removes a pending once() listener", () => {
   const { port1, port2 } = new MessageChannel();
   const fn = () => {};

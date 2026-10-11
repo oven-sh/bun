@@ -85,6 +85,9 @@ inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, EventTarget*)
     return &owner.get();
 }
 
+// The process warning for a null or undefined listener, which addEventListener() ignores.
+void emitAddEventListenerArgumentTypeWarning(JSC::JSGlobalObject&, JSC::JSObject& target, const AtomString& type, JSC::JSValue listener);
+
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, EventTarget&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, EventTarget* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<EventTarget>&&);

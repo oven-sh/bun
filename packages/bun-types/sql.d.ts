@@ -81,6 +81,12 @@ declare module "bun" {
   interface TransactionSQL extends SQL {
     /**
      * Creates a savepoint within the current transaction
+     *
+     * Run one savepoint at a time, and `await` each query of the transaction
+     * before you call `savepoint()`. The database nests savepoints in the
+     * order it receives the statements: a savepoint or a query that starts
+     * while another savepoint is open is a part of that savepoint, and rolls
+     * back with it.
      */
     savepoint<T>(name: string, fn: SQL.SavepointContextCallback<T>): Promise<T>;
     savepoint<T>(fn: SQL.SavepointContextCallback<T>): Promise<T>;

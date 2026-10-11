@@ -888,6 +888,26 @@ await sql.begin(async tx => {
 });
 ```
 
+A transaction uses one connection, and the database nests savepoints in the order it receives the statements. A savepoint contains every statement that runs while it is open, including statements that its callback did not send. Run one savepoint at a time, and `await` each query of the transaction before you call `savepoint()`:
+
+```ts
+await sql.begin(async tx => {
+  for (const user of users) {
+    try {
+      // One savepoint at a time: a user that fails rolls back alone
+      await tx.savepoint(sp => sp`INSERT INTO users ${sp(user)}`);
+    } catch (error) {
+      console.error(`Skipped ${user.name}:`, error);
+    }
+  }
+});
+```
+
+Do not start savepoints concurrently, for example with `Promise.all(users.map(user => tx.savepoint(...)))`, and do not run a query outside a savepoint's callback while that savepoint is open. That work becomes part of the open savepoint:
+
+- When the open savepoint rolls back, the database also undoes the other work. Nothing reports it: the other promises resolve, and the transaction commits without those rows.
+- When the open savepoint ends before a savepoint that started after it, the later savepoint no longer exists. PostgreSQL fails the transaction. MySQL and SQLite answer that the savepoint does not exist, and the rows of a failed savepoint stay in the transaction.
+
 ### Distributed Transactions
 
 Two-Phase Commit (2PC) is a distributed transaction protocol. In phase 1, the coordinator prepares each node, making sure its data is written and ready to commit. In phase 2, the nodes commit or roll back based on the coordinator's decision.

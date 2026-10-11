@@ -28,6 +28,13 @@ fn is_iife(func: Func) -> bool {
         && matches!(e.parent(), Node::Expr(parent) if parent.as_call().is_some_and(|call| call.callee() == e))
 }
 
+/// `scope.through` of the scope of `func`, in the order of the source.
+fn through<'a>(func: Func<'a>, scope: Scope<'a>) -> impl Iterator<Item = Reference<'a>> {
+    func.file().references_within(func.span()).filter(move |it| {
+        scope.contains(it.scope()) && it.symbol().is_none_or(|variable| !scope.contains(variable.scope()))
+    })
+}
+
 /// Whether `func`, which is in a loop, is among ESLint's `SKIPPED_IIFE_NODES`: it is called where
 /// it is written and nowhere else, so what is in it is in the loop.
 fn is_skipped_iife(func: Func) -> bool {
@@ -35,7 +42,7 @@ fn is_skipped_iife(func: Func) -> bool {
         return false;
     }
     match (func.name(), func.scope()) {
-        (Some(name), Some(scope)) => !scope.through().any(|it| it.name() == name.name()),
+        (Some(name), Some(scope)) => !through(func, scope).any(|it| it.name() == name.name()),
         _ => true,
     }
 }
@@ -99,6 +106,7 @@ impl<'a> Known<'a> {
         })
     }
 
+    #[inline]
     fn is_in_loop(&self, offset: u32) -> bool {
         let after = self.loops.partition_point(|it| it.start <= offset);
         after.checked_sub(1).and_then(|it| self.loops.get(it)).is_some_and(|it| offset < it.end)
@@ -208,14 +216,16 @@ fn is_unsafe<'a>(loop_node: Stmt<'a>, reference: Reference<'a>, dialect: Dialect
 }
 
 /// ESLint's `checkForLoops`.
+#[inline]
 pub fn check<'a, R: Rule<State<'a> = Known<'a>>>(func: Func<'a>, dialect: Dialect, cx: &mut Cx<'a, R>) {
-    if !ast_utils::is_function_with_body(func) {
-        return;
+    if ast_utils::is_function_with_body(func) && cx.state.is_in_loop(func.span().start) {
+        check_in_loop(func, dialect, cx);
     }
+}
+
+#[inline(never)]
+fn check_in_loop<'a, R: Rule<State<'a> = Known<'a>>>(func: Func<'a>, dialect: Dialect, cx: &mut Cx<'a, R>) {
     let known = &mut cx.state;
-    if !known.is_in_loop(func.span().start) {
-        return;
-    }
     let Some(loop_node) = known.get_containing_loop_node(func.into()) else {
         return;
     };
@@ -226,7 +236,7 @@ pub fn check<'a, R: Rule<State<'a> = Known<'a>>>(func: Func<'a>, dialect: Dialec
         return;
     };
     let mut unsafe_refs: Vec<Reference<'a>> =
-        scope.through().filter(|it| is_unsafe(loop_node, *it, dialect, known)).collect();
+        through(func, scope).filter(|it| is_unsafe(loop_node, *it, dialect, known)).collect();
     if unsafe_refs.is_empty() {
         return;
     }

@@ -923,19 +923,23 @@ struct Context {
 
 impl Context {
     /// `None`: the effect itself.
+    #[inline]
     fn interned_effect(&mut self, effect: &AliasingEffect) -> Option<Rc<AliasingEffect>> {
-        let interned_effects = self.interned_effects.as_mut()?;
-        let interned = interned_effects
-            .entry(hash_effect(effect))
-            .or_insert_with(|| Rc::new(effect.clone()));
-        Some(Rc::clone(interned))
+        #[inline(never)]
+        fn intern(
+            interned_effects: &mut HashMap<u64, Rc<AliasingEffect>>,
+            effect: &AliasingEffect,
+        ) -> Rc<AliasingEffect> {
+            let interned = interned_effects
+                .entry(hash_effect(effect))
+                .or_insert_with(|| Rc::new(effect.clone()));
+            Rc::clone(interned)
+        }
+        Some(intern(self.interned_effects.as_mut()?, effect))
     }
 
     #[inline]
     fn intern_effect(&mut self, effect: AliasingEffect) -> AliasingEffect {
-        if self.interned_effects.is_none() {
-            return effect;
-        }
         match self.interned_effect(&effect) {
             Some(interned) => AliasingEffect::clone(&interned),
             None => effect,
@@ -1213,7 +1217,7 @@ fn find_non_mutated_destructure_spreads(
     func: &HirFunction,
     env: &Environment,
 ) -> HashSet<IdentifierId> {
-    let mut known_frozen: HashSet<IdentifierId> = HashSet::default();
+    let mut known_frozen: IdBitSet<IdentifierId> = IdBitSet::new();
     if func.fn_type == ReactFunctionType::Component {
         if let Some(param) = func.params.first() {
             if let ParamPattern::Place(p) = param {
@@ -1248,7 +1252,7 @@ fn find_non_mutated_destructure_spreads(
             let lvalue_id = instr.lvalue.identifier;
             match &instr.value {
                 InstructionValue::Destructure { lvalue, value, .. } => {
-                    if !known_frozen.contains(&value.identifier) {
+                    if !known_frozen.contains(value.identifier) {
                         continue;
                     }
                     if !(lvalue.kind == InstructionKind::Let

@@ -18,40 +18,55 @@ use crate::diagnostics::{CompilerDiagnostic, cold_invariant};
 use crate::hir::cfg_utils::mark_predecessors;
 use crate::hir::visitors;
 use crate::hir::{
-    AliasingEffect, BasicBlock, BlockId, BlockKind, Effect, GENERATED_SOURCE, HirFunction,
-    Instruction, InstructionId, InstructionValue, Place, Terminal,
+    AliasingEffect, BasicBlock, BlockId, BlockKind, Effect, FunctionId, GENERATED_SOURCE,
+    HirFunction, Instruction, InstructionId, InstructionValue, Place, Terminal,
 };
 use crate::hir_vec;
-use crate::ssa::enter_ssa::placeholder_function;
 
 /// Merge consecutive blocks in the function's CFG, including inner functions.
 pub(crate) fn merge_consecutive_blocks(
     func: &mut HirFunction,
     functions: &mut [HirFunction],
 ) -> Result<(), CompilerDiagnostic> {
-    if !crate::lowering::thread_has_stack() {
+    let mut inner_functions = Vec::new();
+    let has_stack = collect_inner_functions(func, functions, &mut inner_functions);
+    for func_id in inner_functions {
+        merge_blocks(&mut functions[func_id.0 as usize])?;
+    }
+    if !has_stack {
         return Err(crate::lowering::nested_too_deeply());
     }
+    merge_blocks(func)
+}
 
-    // Recursively merge consecutive blocks in inner functions
+/// The functions inside `func`, each after those inside it: the order in which their blocks are merged.
+/// Stops, and returns false, where there is not the stack to go deeper: nothing is merged from there on.
+fn collect_inner_functions(
+    func: &HirFunction,
+    functions: &[HirFunction],
+    inner_functions: &mut Vec<FunctionId>,
+) -> bool {
+    if !crate::lowering::thread_has_stack() {
+        return false;
+    }
     for block in func.body.blocks.values() {
         for instr_id in &block.instructions {
             if let InstructionValue::FunctionExpression { lowered_func, .. }
             | InstructionValue::ObjectMethod { lowered_func, .. } =
                 &func.instructions[instr_id.0 as usize].value
             {
-                let func_id = lowered_func.func.0 as usize;
-                // Use std::mem::replace to temporarily take the inner function out,
-                // process it, then put it back (standard borrow checker workaround)
-                let mut inner_func =
-                    std::mem::replace(&mut functions[func_id], placeholder_function());
-                let merged = merge_consecutive_blocks(&mut inner_func, functions);
-                functions[func_id] = inner_func;
-                merged?;
+                let inner = &functions[lowered_func.func.0 as usize];
+                if !collect_inner_functions(inner, functions, inner_functions) {
+                    return false;
+                }
+                inner_functions.push(lowered_func.func);
             }
         }
     }
+    true
+}
 
+fn merge_blocks(func: &mut HirFunction) -> Result<(), CompilerDiagnostic> {
     // Build fallthrough set
     let mut fallthrough_blocks: IdBitSet<BlockId> = IdBitSet::default();
     for block in func.body.blocks.values() {

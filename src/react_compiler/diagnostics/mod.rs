@@ -102,12 +102,21 @@ pub struct SourceLocation {
     pub end: Position,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Position {
-    pub line: u32,
-    pub column: u32,
     /// Byte offset in the source file. Preserved for logger event serialization.
     pub index: Option<u32>,
+}
+
+/// With the line and the column of upstream's, which are not known here.
+impl std::fmt::Debug for Position {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Position")
+            .field("line", &0)
+            .field("column", &0)
+            .field("index", &self.index)
+            .finish()
+    }
 }
 
 /// Sentinel value for generated/synthetic source locations

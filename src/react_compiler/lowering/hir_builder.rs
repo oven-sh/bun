@@ -93,7 +93,7 @@ pub(crate) fn reserved_identifier_diagnostic(name: &str) -> CompilerDiagnostic {
 // Loc → SourceLocation
 // ---------------------------------------------------------------------------
 
-/// Bun's `Loc` is a byte offset; HIR `SourceLocation` wants `{line, column}`.
+/// Bun's `Loc` is a byte offset; upstream's `SourceLocation` has `{line, column}`.
 /// The compiler only uses the end position for diagnostic span width, so a
 /// start-only location with the byte offset in `Position.index` is sufficient.
 pub(crate) fn convert_loc(loc: Loc) -> Option<SourceLocation> {
@@ -101,8 +101,6 @@ pub(crate) fn convert_loc(loc: Loc) -> Option<SourceLocation> {
         return None;
     }
     let pos = Position {
-        line: 0,
-        column: 0,
         index: Some(loc.start as u32),
     };
     Some(SourceLocation {

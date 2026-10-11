@@ -515,21 +515,20 @@ impl<S: RuleSet> Linter<S> {
         };
         let made = prepared.rules.downcast_ref::<Vec<Arc<S>>>();
         let made = made.map_or(&[][..], |it| &it[..]);
-        // The rules that run: where `is_plain`, their places in `prepared.order`. Else `running`.
-        let (mut places, mut running): (Vec<u32>, Vec<Running<S>>) = (Vec::new(), Vec::new());
+        // The rules that run, each with its place: where `is_plain`, in `prepared.order`. Else in `running`.
+        let mut running: Vec<Running<S>> = Vec::new();
         let mut enabled: Vec<Enabled<S>> = Vec::with_capacity(count);
         if let Some(listening) = &listening {
-            places.reserve(count);
             for (word, &bits) in listening.iter().enumerate() {
                 each_bit(bits, |bit| {
                     let place = 64 * word + bit;
                     if let (Some(slot), Some(instance)) =
                         (prepared.order.get(place), made.get(place))
                     {
-                        places.push(place as u32);
                         enabled.push(Enabled {
                             rule: &**instance,
                             severity: slot.severity,
+                            place: place as u32,
                         });
                     }
                 });
@@ -741,12 +740,13 @@ impl<S: RuleSet> Linter<S> {
         }
         // A rule for which the file has nothing is not started.
         if !is_plain {
-            enabled.extend(running.iter().map(|it| Enabled {
+            enabled.extend(running.iter().zip(0..).map(|(it, place)| Enabled {
                 rule: match &it.rule {
                     RuleRef::Shared(rule) => *rule,
                     RuleRef::Own(rule) => &**rule,
                 },
                 severity: it.severity,
+                place,
             }));
             let mut on = RuleBits::EMPTY;
             for it in enabled.iter().filter(|it| it.severity != Severity::Off) {
@@ -769,7 +769,7 @@ impl<S: RuleSet> Linter<S> {
             if !is_plain {
                 return running.get(index).map(Running::ran);
             }
-            let slot = prepared.order.get(*places.get(index)? as usize)?;
+            let slot = prepared.order.get(enabled.get(index)?.place as usize)?;
             let rule = config.rules.get(slot.at as usize)?;
             Some(Ran {
                 entry: rule.entry,
@@ -797,10 +797,12 @@ impl<S: RuleSet> Linter<S> {
         }
         problems.reserve(diagnostics.len());
         let order: Vec<u32> = match (wants_places, file.language().is_oxlint) {
+            _ if diagnostics.is_empty() => Vec::new(),
             (true, true) => {
-                let of_place = |it: &u32| prepared.order.get(*it as usize).map(|it| it.when);
+                let of_place =
+                    |it: &Enabled<S>| prepared.order.get(it.place as usize).map(|it| it.when);
                 let when: Vec<When> = match is_plain {
-                    true => places.iter().filter_map(of_place).collect(),
+                    true => enabled.iter().filter_map(of_place).collect(),
                     false => running.iter().map(|it| it.when).collect(),
                 };
                 crate::runner::sorted(&diagnostics, &when)

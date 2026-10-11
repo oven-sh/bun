@@ -1569,6 +1569,8 @@ pub(crate) const EXPR_TAGS: [ExprTag; ExprTag::COUNT] = {
 pub struct Enabled<'r, S: Starts> {
     pub rule: &'r S,
     pub severity: Severity,
+    /// For whoever enables it: where it has the rule.
+    pub place: u32,
 }
 
 impl<S: Starts> Clone for Enabled<'_, S> {
@@ -1802,11 +1804,14 @@ fn run_rules<'r, 'a: 'r, S: Starts>(file: &'a File<'a>, rules: &'r [Enabled<'r, 
         if enabled.severity == Severity::Off {
             continue;
         }
-        running.extend(enabled.rule.start(Start {
+        let run = enabled.rule.start(Start {
             file,
             rule: i as u16,
             severity: enabled.severity,
-        }));
+        });
+        if let Some(run) = run {
+            running.push(run);
+        }
     }
 
     let (mut enter, mut exit) = (ByTag::default(), ByTag::default());

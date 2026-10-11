@@ -12,14 +12,14 @@
 //! Ported from TypeScript `src/Optimization/DeadCodeElimination.ts`.
 //! Caught throws: https://github.com/oxc-project/oxc (Copyright VoidZero Inc. and contributors, MIT License).
 
-use crate::collections::FxHashSet as HashSet;
+use crate::collections::{FxHashSet as HashSet, IdBitSet};
 
 use crate::hir::environment::{Environment, OutputMode};
 use crate::hir::object_shape::HookKind;
 use crate::hir::visitors;
 use crate::hir::{
     ArrayPatternElement, AstAlloc, BlockId, BlockKind, HirFunction, HirVec, IdentifierId,
-    InstructionKind, InstructionValue, ObjectPropertyOrSpread, Pattern, Terminal,
+    Instruction, InstructionKind, InstructionValue, ObjectPropertyOrSpread, Pattern, Terminal,
 };
 use crate::optimization::prune_maybe_throws::value_may_throw;
 
@@ -33,9 +33,7 @@ pub(crate) fn dead_code_elimination(func: &mut HirFunction, env: &Environment) {
     let state = find_referenced_identifiers(func, env, true);
 
     // Phase 2: Prune / sweep unreferenced identifiers and instructions
-    // Collect instructions to rewrite (two-phase: collect then apply to avoid borrow conflicts)
-    let mut instructions_to_rewrite: Vec<crate::hir::InstructionId> = Vec::new();
-
+    let instructions = &mut func.instructions;
     for block in func.body.blocks.values_mut() {
         // Remove unused phi nodes
         block
@@ -44,30 +42,22 @@ pub(crate) fn dead_code_elimination(func: &mut HirFunction, env: &Environment) {
 
         // Remove instructions with unused lvalues
         block.instructions.retain(|instr_id| {
-            let instr = &func.instructions[instr_id.0 as usize];
+            let instr = &instructions[instr_id.0 as usize];
             is_id_or_name_used(&state, &env.identifiers, instr.lvalue.identifier)
         });
 
-        // Collect instructions that need rewriting (not the block value)
+        // Rewrite the retained instructions (not the block value)
         let retained_count = block.instructions.len();
         for i in 0..retained_count {
             let is_block_value = block.kind != BlockKind::Block && i == retained_count - 1;
-            let instr_id = block.instructions[i];
+            let instr = &mut instructions[block.instructions[i].0 as usize];
             // To read a property that nothing uses can throw as well.
             let is_caught_destructure = is_caught(&block.terminal)
-                && matches!(
-                    func.instructions[instr_id.0 as usize].value,
-                    InstructionValue::Destructure { .. }
-                );
+                && matches!(instr.value, InstructionValue::Destructure { .. });
             if !is_block_value && !is_caught_destructure {
-                instructions_to_rewrite.push(instr_id);
+                rewrite_instruction(instr, &state, env);
             }
         }
-    }
-
-    // Apply rewrites
-    for instr_id in instructions_to_rewrite {
-        rewrite_instruction(func, instr_id, &state, env);
     }
 
     // Remove unused context variables
@@ -78,15 +68,15 @@ pub(crate) fn dead_code_elimination(func: &mut HirFunction, env: &Environment) {
 /// State for tracking referenced identifiers during mark phase.
 struct State {
     /// SSA-specific usages (by IdentifierId)
-    identifiers: HashSet<IdentifierId>,
+    identifiers: IdBitSet<IdentifierId>,
     /// Named variable usages (any version)
     named: HashSet<crate::hir::StoreStr>,
 }
 
 impl State {
-    fn new() -> Self {
+    fn new(env: &Environment) -> Self {
         State {
-            identifiers: HashSet::default(),
+            identifiers: IdBitSet::with_ids(env.identifiers.len()),
             named: HashSet::default(),
         }
     }
@@ -102,7 +92,9 @@ fn reference(
     identifiers: &[crate::hir::Identifier],
     identifier_id: IdentifierId,
 ) {
-    state.identifiers.insert(identifier_id);
+    if !state.identifiers.insert(identifier_id) {
+        return;
+    }
     let ident = &identifiers[identifier_id.0 as usize];
     if let Some(ref name) = ident.name {
         state.named.insert(crate::hir::StoreStr::new(name.value()));
@@ -116,7 +108,7 @@ fn is_id_or_name_used(
     identifiers: &[crate::hir::Identifier],
     identifier_id: IdentifierId,
 ) -> bool {
-    if state.identifiers.contains(&identifier_id) {
+    if state.identifiers.contains(identifier_id) {
         return true;
     }
     let ident = &identifiers[identifier_id.0 as usize];
@@ -129,7 +121,22 @@ fn is_id_or_name_used(
 
 /// Check if this specific SSA id is used.
 fn is_id_used(state: &State, identifier_id: IdentifierId) -> bool {
-    state.identifiers.contains(&identifier_id)
+    state.identifiers.contains(identifier_id)
+}
+
+/// Mark the operands of an instruction, as TS `eachInstructionValueOperand` gives them.
+fn reference_operands(state: &mut State, env: &Environment, value: &InstructionValue) {
+    match value {
+        InstructionValue::ObjectMethod { lowered_func, .. }
+        | InstructionValue::FunctionExpression { lowered_func, .. } => {
+            for place in &env.functions[lowered_func.func.0 as usize].context {
+                reference(state, &env.identifiers, place.identifier);
+            }
+        }
+        _ => visitors::each_operand(value, |place| {
+            reference(state, &env.identifiers, place.identifier);
+        }),
+    }
 }
 
 /// Keep the declaration of each variable that a retained reassignment assigns.
@@ -178,17 +185,14 @@ fn find_referenced_identifiers(
     preserve_caught_throws: bool,
 ) -> State {
     let has_loop = has_back_edge(func);
-    // Collect block ids in reverse order (postorder - successors before predecessors)
-    let reversed_block_ids: Vec<BlockId> = func.body.blocks.keys().rev().copied().collect();
-
-    let mut state = State::new();
+    let mut state = State::new(env);
     let mut size;
 
     loop {
         size = state.count();
 
-        for &block_id in &reversed_block_ids {
-            let block = &func.body.blocks[&block_id];
+        // In reverse order (postorder - successors before predecessors)
+        for block in func.body.blocks.values().rev() {
 
             // Mark terminal operands
             for place in visitors::each_terminal_operand(&block.terminal) {
@@ -206,9 +210,7 @@ fn find_referenced_identifiers(
                 if is_block_value {
                     // Last instr of a value block is never eligible for pruning
                     reference(&mut state, &env.identifiers, instr.lvalue.identifier);
-                    for place in visitors::each_instruction_value_operand(&instr.value, env) {
-                        reference(&mut state, &env.identifiers, place.identifier);
-                    }
+                    reference_operands(&mut state, env, &instr.value);
                     // Nor is it rewritten, so every variable it reassigns stays assigned.
                     reference_reassigned_variables(&mut state, &env.identifiers, &instr.value);
                 } else if is_id_or_name_used(&state, &env.identifiers, instr.lvalue.identifier)
@@ -232,9 +234,7 @@ fn find_referenced_identifiers(
                         // pattern entries that nothing reads.
                         reference_reassigned_variables(&mut state, &env.identifiers, &instr.value);
                     } else {
-                        for place in visitors::each_instruction_value_operand(&instr.value, env) {
-                            reference(&mut state, &env.identifiers, place.identifier);
-                        }
+                        reference_operands(&mut state, env, &instr.value);
                         if preserve_caught_throws && is_caught(&block.terminal) {
                             // Such a Destructure is not rewritten.
                             reference_reassigned_variables(
@@ -294,14 +294,7 @@ pub(crate) fn find_semantic_only_caught_instructions(
 }
 
 /// Rewrite a retained instruction (destructuring cleanup, StoreLocal -> DeclareLocal).
-fn rewrite_instruction(
-    func: &mut HirFunction,
-    instr_id: crate::hir::InstructionId,
-    state: &State,
-    env: &Environment,
-) {
-    let instr = &mut func.instructions[instr_id.0 as usize];
-
+fn rewrite_instruction(instr: &mut Instruction, state: &State, env: &Environment) {
     match &mut instr.value {
         InstructionValue::Destructure { lvalue, .. } => {
             match &mut lvalue.pattern {
@@ -506,9 +499,9 @@ fn pruneable_value(value: &InstructionValue, state: &State, env: &Environment) -
 
 /// Check if the CFG has any back edges (indicating loops).
 fn has_back_edge(func: &HirFunction) -> bool {
-    let mut visited: HashSet<BlockId> = HashSet::default();
+    let mut visited: IdBitSet<BlockId> = IdBitSet::default();
     for (block_id, block) in &func.body.blocks {
-        for pred_id in &block.preds {
+        for &pred_id in &block.preds {
             if !visited.contains(pred_id) {
                 return true;
             }

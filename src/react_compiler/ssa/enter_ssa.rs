@@ -1,3 +1,5 @@
+use smallvec::SmallVec;
+
 use crate::collections::FxHashSet as HashSet;
 
 use crate::collections::IndexMap;
@@ -19,41 +21,71 @@ mod definitions {
     use crate::collections::FxHashMap;
     use crate::hir::{BlockId, IdentifierId};
 
-    /// What each variable is at the end of each block that was started.
+    const NO_BLOCK: BlockId = BlockId(u32::MAX);
+
+    /// What each variable is at the end of each block.
     pub(super) struct Definitions {
-        /// Indexed by `BlockId.0`.
-        blocks: Vec<Option<FxHashMap<IdentifierId, IdentifierId>>>,
+        /// Indexed by the `IdentifierId.0` of the variable: the block that it was last set for, and to what.
+        newest: Vec<(BlockId, IdentifierId)>,
+        /// What it was last set to for the other blocks.
+        others: FxHashMap<u64, IdentifierId>,
+        /// Indexed by `BlockId.0`: a bit for each variable, modulo 64, that `others` may have for the block.
+        in_others: Vec<u64>,
         /// The phis whose operands are being looked up, by ascending id, and whether `get` has returned that id.
         phis_in_the_making: Vec<(IdentifierId, bool)>,
     }
 
+    #[inline]
+    fn key(block_id: BlockId, old: IdentifierId) -> u64 {
+        u64::from(block_id.0) << 32 | u64::from(old.0)
+    }
+
     impl Definitions {
-        pub(super) fn new(num_blocks: usize) -> Self {
+        pub(super) fn new(num_blocks: usize, num_identifiers: usize) -> Self {
             Definitions {
-                blocks: vec![None; num_blocks],
+                newest: vec![(NO_BLOCK, IdentifierId(0)); num_identifiers],
+                others: FxHashMap::default(),
+                in_others: vec![0; num_blocks],
                 phis_in_the_making: Vec::new(),
             }
         }
 
-        pub(super) fn start_block(&mut self, block_id: BlockId) {
-            self.blocks[block_id.0 as usize] = Some(FxHashMap::default());
+        /// The only way to read a definition.
+        #[inline]
+        pub(super) fn get(&mut self, block_id: BlockId, old: IdentifierId) -> Option<IdentifierId> {
+            let new = match self.newest.get(old.0 as usize) {
+                Some(&(block, new)) if block == block_id => new,
+                _ if self.in_others[block_id.0 as usize] & (1 << (old.0 % 64)) == 0 => return None,
+                _ => *self.others.get(&key(block_id, old))?,
+            };
+            if !self.phis_in_the_making.is_empty() {
+                self.was_read(new);
+            }
+            Some(new)
         }
 
-        /// The only way to read a definition.
-        pub(super) fn get(&mut self, block_id: BlockId, old: IdentifierId) -> Option<IdentifierId> {
-            let new = *self.blocks[block_id.0 as usize].as_ref()?.get(&old)?;
+        fn was_read(&mut self, new: IdentifierId) {
             let phi = self
                 .phis_in_the_making
                 .binary_search_by_key(&new, |it| it.0);
             if let Ok(index) = phi {
                 self.phis_in_the_making[index].1 = true;
             }
-            Some(new)
         }
 
         pub(super) fn set(&mut self, block_id: BlockId, old: IdentifierId, new: IdentifierId) {
-            let block = self.blocks[block_id.0 as usize].as_mut();
-            block.expect("the block was started").insert(old, new);
+            let index = old.0 as usize;
+            if index >= self.newest.len() {
+                self.newest.resize(index + 1, (NO_BLOCK, IdentifierId(0)));
+            }
+            let (block, was) = std::mem::replace(&mut self.newest[index], (block_id, new));
+            if block != block_id && block != NO_BLOCK {
+                if self.others.capacity() == 0 {
+                    self.others.reserve(self.in_others.len());
+                }
+                self.others.insert(key(block, old), was);
+                self.in_others[block.0 as usize] |= 1 << (old.0 % 64);
+            }
         }
 
         /// `phi` is newer than all ids so far.
@@ -80,12 +112,12 @@ enum Lookup {
     Phi {
         block_id: BlockId,
         new_id: IdentifierId,
-        operands: Vec<IdentifierId>,
+        operands: SmallVec<[IdentifierId; 4]>,
     },
 }
 
 struct SSABuilder {
-    /// Indexed by `BlockId.0`.
+    /// Indexed by `BlockId.0`. `Some`: the block was started.
     states: Vec<Option<State>>,
     definitions: definitions::Definitions,
     /// Not where the entry has a predecessor: then a variable can be a phi of nothing but phis.
@@ -93,41 +125,55 @@ struct SSABuilder {
     current: Option<BlockId>,
     /// Indexed by `BlockId.0`.
     unsealed_preds: Vec<Option<u32>>,
-    /// Indexed by `BlockId.0`. Empty Vec = no preds / not registered.
-    block_preds: Vec<Vec<BlockId>>,
+    /// Indexed by `BlockId.0`: from where to where in `preds`. Empty = no preds / not registered.
+    block_preds: Vec<(u32, u32)>,
+    preds: Vec<BlockId>,
     unknown: HashSet<IdentifierId>,
     context: HashSet<IdentifierId>,
     /// Indexed by `BlockId.0`.
     pending_phis: Vec<Vec<Phi>>,
     processed_functions: Vec<FunctionId>,
+    /// Empty between the calls of `get_id_at`.
+    lookups: Vec<Lookup>,
 }
 
 impl SSABuilder {
-    fn new(blocks: &IndexMap<BlockId, BasicBlock>, num_blocks: usize) -> Self {
-        let mut block_preds: Vec<Vec<BlockId>> = vec![Vec::new(); num_blocks];
-        for (id, block) in blocks {
-            block_preds[id.0 as usize] = block.preds.iter().copied().collect();
-        }
+    fn new(num_blocks: usize, num_identifiers: usize) -> Self {
         let mut states = Vec::with_capacity(num_blocks);
         states.resize_with(num_blocks, || None);
         SSABuilder {
             states,
-            definitions: definitions::Definitions::new(num_blocks),
+            definitions: definitions::Definitions::new(num_blocks, num_identifiers),
             leaves_out_trivial_phis: false,
             current: None,
             unsealed_preds: vec![None; num_blocks],
-            block_preds,
+            block_preds: vec![(0, 0); num_blocks],
+            preds: Vec::with_capacity(num_blocks),
             unknown: HashSet::default(),
             context: HashSet::default(),
             pending_phis: vec![Vec::new(); num_blocks],
             processed_functions: Vec::new(),
+            lookups: Vec::new(),
         }
     }
 
     fn define_function(&mut self, func: &HirFunction) {
         for (id, block) in &func.body.blocks {
-            self.block_preds[id.0 as usize] = block.preds.iter().copied().collect();
+            let start = self.preds.len() as u32;
+            self.preds.extend(&block.preds);
+            self.block_preds[id.0 as usize] = (start, self.preds.len() as u32);
         }
+    }
+
+    #[inline]
+    fn preds(&self, block_id: BlockId) -> &[BlockId] {
+        let (start, end) = self.block_preds[block_id.0 as usize];
+        &self.preds[start as usize..end as usize]
+    }
+
+    #[inline]
+    fn is_started(&self, block_id: BlockId) -> bool {
+        self.states[block_id.0 as usize].is_some()
     }
 
     fn make_id(&mut self, old_id: IdentifierId, env: &mut Environment) -> IdentifierId {
@@ -143,11 +189,12 @@ impl SSABuilder {
         new_id
     }
 
+    /// The identifier that is to stand in `old_place`, which is written.
     fn define_place(
         &mut self,
         old_place: &Place,
         env: &mut Environment,
-    ) -> Result<Place, CompilerDiagnostic> {
+    ) -> Result<IdentifierId, CompilerDiagnostic> {
         let old_id = old_place.identifier;
 
         if self.unknown.contains(&old_id) {
@@ -175,12 +222,7 @@ impl SSABuilder {
             .current
             .expect("we need to be in a block to access state!");
         self.definitions.set(current, old_id, new_id);
-        Ok(Place {
-            identifier: new_id,
-            effect: old_place.effect,
-            reactive: old_place.reactive,
-            loc: old_place.loc,
-        })
+        Ok(new_id)
     }
 
     /// A function's context places capture a *binding*, not a value: the
@@ -195,14 +237,13 @@ impl SSABuilder {
         self.unknown.remove(&id);
     }
 
-    fn get_place(&mut self, old_place: &Place, env: &mut Environment) -> Place {
+    /// The identifier that is to stand in `old_place`, which is read.
+    #[inline]
+    fn get_place(&mut self, old_place: &Place, env: &mut Environment) -> IdentifierId {
         let current_id = self.current.expect("must be in a block");
-        let new_id = self.get_id_at(old_place, current_id, env);
-        Place {
-            identifier: new_id,
-            effect: old_place.effect,
-            reactive: old_place.reactive,
-            loc: old_place.loc,
+        match self.definitions.get(current_id, old_place.identifier) {
+            Some(new_id) => new_id,
+            None => self.get_id_at(old_place, current_id, env),
         }
     }
 
@@ -213,21 +254,32 @@ impl SSABuilder {
         env: &mut Environment,
     ) -> IdentifierId {
         let old_id = old_place.identifier;
-        let mut lookups: Vec<Lookup> = Vec::new();
+        let mut lookups = std::mem::take(&mut self.lookups);
         let mut block_id = block_id;
         loop {
             let mut found = match self.look_in(old_place, block_id, env) {
                 Ok(found) => found,
                 Err(lookup) => {
-                    block_id = self.block_preds[block_id.0 as usize][0];
-                    lookups.push(lookup);
-                    continue;
+                    block_id = self.preds(block_id)[0];
+                    // A block need not remember what its one predecessor knows.
+                    let known = match lookup {
+                        Lookup::OnePredecessor(_) => self.definitions.get(block_id, old_id),
+                        Lookup::Phi { .. } => None,
+                    };
+                    let Some(found) = known else {
+                        lookups.push(lookup);
+                        continue;
+                    };
+                    found
                 }
             };
             // What was found is what the variable is at the end of a predecessor of the last of `lookups`.
             loop {
                 match lookups.pop() {
-                    None => return found,
+                    None => {
+                        self.lookups = lookups;
+                        return found;
+                    }
                     Some(Lookup::OnePredecessor(block_id)) => {
                         self.definitions.set(block_id, old_id, found);
                     }
@@ -237,9 +289,7 @@ impl SSABuilder {
                         mut operands,
                     }) => {
                         operands.push(found);
-                        if let Some(&next) =
-                            self.block_preds[phi_block.0 as usize].get(operands.len())
-                        {
+                        if let Some(&next) = self.preds(phi_block).get(operands.len()) {
                             block_id = next;
                             lookups.push(Lookup::Phi {
                                 block_id: phi_block,
@@ -266,7 +316,7 @@ impl SSABuilder {
             return Ok(new_id);
         }
 
-        let preds_len = self.block_preds[block_id.0 as usize].len();
+        let preds_len = self.preds(block_id).len();
 
         if preds_len == 0 {
             self.unknown.insert(old_place.identifier);
@@ -301,7 +351,7 @@ impl SSABuilder {
         Err(Lookup::Phi {
             block_id,
             new_id,
-            operands: Vec::with_capacity(preds_len),
+            operands: SmallVec::new(),
         })
     }
 
@@ -339,11 +389,9 @@ impl SSABuilder {
         block_id: BlockId,
         old_place: &Place,
         env: &mut Environment,
-    ) -> Vec<IdentifierId> {
-        let preds = self.block_preds[block_id.0 as usize].clone();
-        preds
-            .iter()
-            .map(|&pred_block_id| self.get_id_at(old_place, pred_block_id, env))
+    ) -> SmallVec<[IdentifierId; 4]> {
+        (0..self.preds(block_id).len())
+            .map(|index| self.get_id_at(old_place, self.preds(block_id)[index], env))
             .collect()
     }
 
@@ -365,7 +413,7 @@ impl SSABuilder {
         new_place: &Place,
         operands: &[IdentifierId],
     ) {
-        let preds = &self.block_preds[block_id.0 as usize];
+        let preds = self.preds(block_id);
         let mut pred_defs: IndexMap<BlockId, Place> = IndexMap::new();
         for (pred_block_id, &pred_id) in preds.iter().zip(operands) {
             pred_defs.insert(
@@ -401,7 +449,6 @@ impl SSABuilder {
 
     fn start_block(&mut self, block_id: BlockId) {
         self.current = Some(block_id);
-        self.definitions.start_block(block_id);
         self.states[block_id.0 as usize] = Some(State {
             incomplete_phis: Vec::new(),
         });
@@ -417,7 +464,8 @@ pub(crate) fn enter_ssa(
     env: &mut Environment,
 ) -> Result<(), CompilerDiagnostic> {
     let num_blocks = env.next_block_id_counter as usize;
-    let mut builder = SSABuilder::new(&func.body.blocks, num_blocks);
+    let mut builder = SSABuilder::new(num_blocks, env.identifiers.len());
+    builder.define_function(func);
     let root_entry = func.body.entry;
     builder.leaves_out_trivial_phis = func.body.blocks[&root_entry].preds.is_empty();
     enter_ssa_impl(func, &mut builder, env, root_entry)?;
@@ -438,7 +486,7 @@ fn apply_pending_phis(func: &mut HirFunction, env: &mut Environment, builder: &m
             block.phis.extend(phis);
         }
     }
-    for fid in &builder.processed_functions.clone() {
+    for fid in &builder.processed_functions {
         let inner_func = &mut env.functions[fid.0 as usize];
         for (block_id, block) in inner_func.body.blocks.iter_mut() {
             let phis = std::mem::take(&mut builder.pending_phis[block_id.0 as usize]);
@@ -459,13 +507,8 @@ fn enter_ssa_impl(
         return Err(crate::lowering::nested_too_deeply());
     }
 
-    let mut visited_blocks: HashSet<BlockId> = HashSet::default();
-    let block_ids: Vec<BlockId> = func.body.blocks.keys().copied().collect();
-
-    for block_id in &block_ids {
-        let block_id = *block_id;
-
-        if visited_blocks.contains(&block_id) {
+    for (&block_id, block) in func.body.blocks.iter_mut() {
+        if builder.is_started(block_id) {
             return Err(cold_invariant(
                 "EnterSSA: found a cycle visiting block",
                 Some(format!("bb{}", block_id.0)),
@@ -474,7 +517,6 @@ fn enter_ssa_impl(
             .into());
         }
 
-        visited_blocks.insert(block_id);
         builder.start_block(block_id);
 
         // Handle params at the root entry
@@ -487,31 +529,15 @@ fn enter_ssa_impl(
                 )
                 .into());
             }
-            let params = AstAlloc::take(&mut func.params);
-            let mut new_params = AstAlloc::vec_with_capacity(params.len());
-            for param in params {
-                new_params.push(match param {
-                    ParamPattern::Place(p) => ParamPattern::Place(builder.define_place(&p, env)?),
-                    ParamPattern::Spread(s) => ParamPattern::Spread(SpreadPattern {
-                        place: builder.define_place(&s.place, env)?,
-                    }),
-                });
+            for param in &mut func.params {
+                let place = param.place_mut();
+                place.identifier = builder.define_place(place, env)?;
             }
-            func.params = new_params;
         }
 
         // Process instructions
-        let instruction_ids = func
-            .body
-            .blocks
-            .get(&block_id)
-            .unwrap()
-            .instructions
-            .clone();
-
-        for instr_id in &instruction_ids {
-            let instr_idx = instr_id.0 as usize;
-            let instr = &mut func.instructions[instr_idx];
+        for instr_id in &block.instructions {
+            let instr = &mut func.instructions[instr_id.0 as usize];
 
             // For FunctionExpression/ObjectMethod, we need to handle context
             // mapping specially because env.functions is borrowed by the closure.
@@ -525,27 +551,25 @@ fn enter_ssa_impl(
 
             // Map context places for function expressions before other operands
             if let Some(fid) = func_expr_id {
-                let context = AstAlloc::take(&mut env.functions[fid.0 as usize].context);
-                env.functions[fid.0 as usize].context = AstAlloc::vec_from_iter(
-                    context
-                        .into_iter()
-                        .map(|place| builder.get_place(&place, env)),
-                );
+                let mut context = AstAlloc::take(&mut env.functions[fid.0 as usize].context);
+                for place in &mut context {
+                    place.identifier = builder.get_place(place, env);
+                }
+                env.functions[fid.0 as usize].context = context;
             }
 
             // Map non-context operands
             visitors::for_each_instruction_value_operand_mut(&mut instr.value, &mut |place| {
-                *place = builder.get_place(place, env);
+                place.identifier = builder.get_place(place, env);
             });
 
             // Map lvalues (skip DeclareContext/StoreContext — context variables
             // don't participate in SSA renaming)
-            let instr = &mut func.instructions[instr_idx];
             let mut lvalue_err: Option<CompilerDiagnostic> = None;
             visitors::for_each_instruction_lvalue_mut(instr, &mut |place| {
                 if lvalue_err.is_none() {
                     match builder.define_place(place, env) {
-                        Ok(new_place) => *place = new_place,
+                        Ok(new_id) => place.identifier = new_id,
                         Err(e) => lvalue_err = Some(e),
                     }
                 }
@@ -556,13 +580,8 @@ fn enter_ssa_impl(
 
             // Handle inner function SSA
             if let Some(fid) = func_expr_id {
-                let context_ids: Vec<IdentifierId> = env.functions[fid.0 as usize]
-                    .context
-                    .iter()
-                    .map(|place| place.identifier)
-                    .collect();
-                for id in context_ids {
-                    builder.unmark_unknown(id);
+                for place in &env.functions[fid.0 as usize].context {
+                    builder.unmark_unknown(place.identifier);
                 }
                 builder.processed_functions.push(fid);
                 let inner_func = &mut env.functions[fid.0 as usize];
@@ -583,55 +602,45 @@ fn enter_ssa_impl(
 
                 let saved_current = builder.current;
 
-                // Map inner function params
-                let inner_params = AstAlloc::take(&mut env.functions[fid.0 as usize].params);
-                let mut new_inner_params = AstAlloc::vec_with_capacity(inner_params.len());
-                for param in inner_params {
-                    new_inner_params.push(match param {
-                        ParamPattern::Place(p) => {
-                            ParamPattern::Place(builder.define_place(&p, env)?)
-                        }
-                        ParamPattern::Spread(s) => ParamPattern::Spread(SpreadPattern {
-                            place: builder.define_place(&s.place, env)?,
-                        }),
-                    });
-                }
-                env.functions[fid.0 as usize].params = new_inner_params;
-
                 // Take the inner function out of the arena to process it
                 let mut inner_func =
                     std::mem::replace(&mut env.functions[fid.0 as usize], placeholder_function());
 
+                // Map inner function params
+                for param in &mut inner_func.params {
+                    let place = param.place_mut();
+                    place.identifier = builder.define_place(place, env)?;
+                }
+
                 enter_ssa_impl(&mut inner_func, builder, env, root_entry)?;
 
-                // Put it back
-                env.functions[fid.0 as usize] = inner_func;
-
-                builder.current = saved_current;
-
                 // Clear entry preds
-                env.functions[fid.0 as usize]
+                inner_func
                     .body
                     .blocks
                     .get_mut(&inner_entry)
                     .unwrap()
                     .preds
                     .clear();
-                builder.block_preds[inner_entry.0 as usize] = Vec::new();
+
+                // Put it back
+                env.functions[fid.0 as usize] = inner_func;
+
+                builder.current = saved_current;
+
+                builder.block_preds[inner_entry.0 as usize] = (0, 0);
             }
         }
 
         // Map terminal operands
-        let terminal = &mut func.body.blocks.get_mut(&block_id).unwrap().terminal;
-        visitors::for_each_terminal_operand_mut(terminal, &mut |place| {
-            *place = builder.get_place(place, env);
+        visitors::for_each_terminal_operand_mut(&mut block.terminal, &mut |place| {
+            place.identifier = builder.get_place(place, env);
         });
 
         // Handle successors
-        let terminal_ref = &func.body.blocks.get(&block_id).unwrap().terminal;
-        let successors = visitors::each_terminal_successor(terminal_ref);
+        let successors = visitors::each_terminal_successor(&block.terminal);
         for output_id in successors {
-            let output_preds_len = builder.block_preds[output_id.0 as usize].len() as u32;
+            let output_preds_len = builder.preds(output_id).len() as u32;
 
             let count = match builder.unsealed_preds[output_id.0 as usize] {
                 Some(prev) => prev - 1,
@@ -639,7 +648,7 @@ fn enter_ssa_impl(
             };
             builder.unsealed_preds[output_id.0 as usize] = Some(count);
 
-            if count == 0 && visited_blocks.contains(&output_id) {
+            if count == 0 && builder.is_started(output_id) {
                 builder.fix_incomplete_phis(output_id, env);
             }
         }

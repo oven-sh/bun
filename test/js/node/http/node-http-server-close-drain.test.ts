@@ -1,10 +1,11 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tls as tlsCert } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
 import { Agent as HttpsAgent, createServer as createHttpsServer, get as httpsGet } from "node:https";
 import type { AddressInfo } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
+import { join } from "node:path";
 import { connect as tlsConnect } from "node:tls";
 
 // Node's net.Server#close callback (and the 'close' event) only fires once
@@ -1009,5 +1010,210 @@ test("no 'close' is emitted on a re-listened server when an earlier connection e
   } finally {
     socket.destroy();
     server.closeAllConnections();
+  }
+});
+
+// A connection whose request stopped the reads does not keep the process alive (below), but it is
+// still open: the server 'close' waits for it.
+test.each(["before", "after"])(
+  "server.close(cb) %s a request stops the reads fires when that connection closes",
+  async order => {
+    const stopped = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    let closeCbFired = false;
+    const close = () =>
+      server.close(() => {
+        closeCbFired = true;
+        closed.resolve();
+      });
+    const server = createServer((req, res) => {
+      req.once("data", () => {
+        req.pause();
+        res.end("ok");
+        if (order === "before") close();
+        (function untilReadsStop() {
+          if (req.readableLength < req.readableHighWaterMark) return setImmediate(untilReadsStop);
+          stopped.resolve();
+        })();
+      });
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const socket = connect(port, "127.0.0.1");
+    try {
+      await once(socket, "connect");
+      let response = "";
+      socket.on("data", chunk => (response += chunk));
+      socket.on("error", () => {});
+      // The body never ends.
+      socket.write("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 10000000\r\n\r\n" + Buffer.alloc(1000, "f"));
+      while (!response.includes("ok")) await once(socket, "data");
+      // More than the request buffers.
+      socket.write(Buffer.alloc(2 * 65536, "x"));
+      await stopped.promise;
+      if (order === "after") close();
+      for (let i = 0; i < 4; i++) await new Promise<void>(r => setImmediate(r));
+      expect(closeCbFired).toBe(false);
+
+      server.closeAllConnections();
+      await closed.promise;
+      expect(closeCbFired).toBe(true);
+    } finally {
+      socket.destroy();
+      server.closeAllConnections();
+    }
+  },
+);
+
+// One row of node-http-body-read-stopped-fixture.js is one connection in one process. The process
+// has nothing but that connection, so it exits when the connection does not keep it alive.
+async function runReadStoppedRow(row: string, env: Record<string, string> = {}) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "node-http-body-read-stopped-fixture.js"), row],
+    env: {
+      ...bunEnv,
+      CERT: tlsCert.cert,
+      KEY: tlsCert.key,
+      // With keepAliveTimeout 0 no timer is left that could end the connection.
+      KEEPALIVE: "0",
+      // bun test does not kill the child of a concurrent test that times out. With this, a
+      // child that hangs exits when the test process does.
+      BUN_FEATURE_FLAG_NO_ORPHANS: "1",
+      ...env,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout: stdout && JSON.parse(stdout), stderr, exitCode, signalCode: proc.signalCode };
+}
+const exitedByItself = { stderr: "", exitCode: 0, signalCode: null };
+
+// In Node.js a request stops the reads of its socket when its stream is full, and a handle that
+// does not read and has nothing to send is not active: it does not keep the process alive. The
+// fixture runs under Node.js as it is, and every expectation here is Node v26.3.0's unless it
+// says otherwise.
+describe.concurrent("what keeps the process alive: a request that stops the reads of its connection", () => {
+  // The connection is still open, so neither it nor the server emits 'close'.
+  const atRest = { events: [], received: 0 };
+  const closed = { server: "close" };
+  const rows: Record<string, object> = {
+    "the response ended first": atRest,
+    "the response ended first, the request is piped": atRest,
+    "the response ends later": atRest,
+    "the response is written later": atRest,
+    "the second request of a connection": atRest,
+    "req.pause() and socket.pause()": atRest,
+    "socket.pause() between two reads of a request that has a reader": { events: [], received: 1000 },
+    "socket.end() when the reads have stopped": { events: ["the peer got the FIN"], received: 0 },
+    "two pipelined requests, the second one stops the reads": atRest,
+    // The 'end' of the second request, which nobody read.
+    "two pipelined requests, socket.pause() one turn later and then both responses end": {
+      events: ["end"],
+      received: 0,
+    },
+    "an Upgrade request": atRest,
+    "an Upgrade request, socket.pause() and then req.pause()": atRest,
+    "an Upgrade request, req.pause() and then socket.pause()": atRest,
+    "an Upgrade request that reads, socket.pause() one turn later": { events: ["still alive", "end"], received: 3000 },
+    // What the peer sent behind the first bytes of the body, and "tail".
+    "a reader comes later": { events: ["end", "close"], received: 2 * 65536 + 4, ...closed },
+    "bytes left to send": { events: ["finish"], received: 0 },
+    "a write to the socket behind the response": { events: ["sent"], received: 0 },
+    "writes to the socket while the ended response drains": { events: ["finish"], received: 0 },
+    "pipelined requests behind bytes that the socket holds": {
+      events: ["/first", "/second", "/third"],
+      received: 0,
+      ...closed,
+    },
+    "socket.pause() in the listener of a request without a body": {
+      events: ["/first", "/second"],
+      received: 0,
+      ...closed,
+    },
+    "a reader all along": { events: ["end", "close"], received: 1004, ...closed },
+    "a request that nobody reads": { events: ["still alive", "end", "close"], received: 0, ...closed },
+    "socket.pause(), then socket.resume() later": {
+      events: ["end", "close"],
+      received: 1000 + 2 * 65536 + 4,
+      ...closed,
+    },
+    "socket.pause() inside a later 'data' of a request that has a reader": {
+      events: ["end", "close"],
+      received: 2000 + 2 * 65536 + 4,
+      ...closed,
+    },
+    "a paused request whose body completes": { events: ["still alive", "close"], received: 0, ...closed },
+    "the request is destroyed when the reads have stopped": { events: ["close"], received: 0, ...closed },
+    "the response closes the connection": { events: ["close"], received: 0, ...closed },
+  };
+  const expectRow = async (row: string, env: Record<string, string>, expected = rows[row]) =>
+    expect(await runReadStoppedRow(row, env)).toEqual({ stdout: expected, ...exitedByItself });
+  // A debug build needs most of the default 5 s to load node:http in a child process.
+  const timeout = 30_000;
+
+  test.each(Object.keys(rows))("%s", row => expectRow(row, { CLOSE: "before" }), timeout);
+
+  test.each([
+    "the response ended first",
+    "the response ends later",
+    "two pipelined requests, the second one stops the reads",
+    "socket.end() when the reads have stopped",
+    "an Upgrade request",
+  ])("server.close() when the reads have stopped: %s", row => expectRow(row, { CLOSE: "after" }), timeout);
+
+  test.each([
+    "the response ended first",
+    "the response ends later",
+    "bytes left to send",
+    "a write to the socket behind the response",
+    "writes to the socket while the ended response drains",
+  ])("https: %s", row => expectRow(row, { CLOSE: "before", PROTO: "https" }), timeout);
+
+  // In Node.js server.unref() is for the listener alone. In Bun the server holds the event loop for
+  // its connections and server.unref() gives that up, so only a request in progress holds it: a
+  // connection is not read to its 'close' (node-http-connect.test.ts has the same for a response).
+  test.each([
+    ["the response ended first", atRest],
+    ["a reader comes later", { events: ["end"], received: 2 * 65536 + 4 }],
+    ["a request that nobody reads", { events: ["still alive", "end"], received: 0 }],
+  ])(
+    "server.unref() in place of server.close(): %s",
+    (row, expected) => expectRow(row, { CLOSE: "unref" }, expected),
+    timeout,
+  );
+
+  // Node.js: [], because its parser stops the reads with that chunk and is gone before they start again.
+  test(
+    "an Upgrade request whose body ends in the read that fills it: the tunnel behind it reads",
+    () =>
+      expectRow(
+        "an Upgrade request whose body ends in the read that fills it",
+        { CLOSE: "before" },
+        {
+          events: ["still alive"],
+          received: 0,
+        },
+      ),
+    timeout,
+  );
+
+  // Node.js exits in each of these states, and Bun does not.
+  for (const [row, expected, why] of [
+    // A response in flight holds the process also when its reads are stopped: node-http-connect.test.ts pins that.
+    ["the response stays in flight", atRest, "a response in flight holds the process"],
+    ["pipelined requests behind an open response", atRest, "a response in flight holds the process"],
+    // Behind its own FIN the connection reads on and drops what it reads: #44244, #44419.
+    ["socket.end() before the reads stop", { events: ["the peer got the FIN"], received: 0 }, "#44244"],
+    // The request asks for more one tick later, and that starts the reads again: #43736.
+    ["socket.pause() inside the first 'data' of a request that has a reader", { events: [], received: 1000 }, "#43736"],
+    // A destroyed request whose socket is kept does not stop the reads: the rest of its body is read and dropped. #44310 changes that branch.
+    ["for await (const chunk of req) break", atRest, "a destroyed request reads on"],
+    ["pipeline(req, sink) and the sink fails", atRest, "a destroyed request reads on"],
+    ["Readable.toWeb(req) and the reader cancels", atRest, "a destroyed request reads on"],
+  ] as const) {
+    test.todo(`${row} (${why})`, () => expectRow(row, { CLOSE: "before" }, expected));
   }
 });

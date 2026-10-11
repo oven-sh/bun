@@ -711,6 +711,13 @@ private:
                     if (us_socket_is_closed((struct us_socket_t *) user)) {
                         return nullptr;
                     }
+                } else if (fin && ((struct us_socket_t *) user)->flags.is_paused && !httpResponseData->isConnectRequest
+                    && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_READS_PAUSED)) {
+                    /* Like Node's parserOnMessageComplete, which starts the reads again behind a complete message. Flood prevention keeps its own pause. */
+                    Bun__NodeHTTP__onReadsResumable(SSL, (struct us_socket_t *) user);
+                    if (us_socket_is_closed((struct us_socket_t *) user)) {
+                        return nullptr;
+                    }
                 }
             }
             /* JavaScript destroyed this socket earlier in this read: its message is delivered, so close before the next request is parsed. */

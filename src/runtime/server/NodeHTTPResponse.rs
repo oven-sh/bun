@@ -1589,7 +1589,10 @@ impl NodeHTTPResponse {
         self.update_flags(|f| f.insert(Flags::REQUEST_HAS_COMPLETED));
         self.poll_ref.with_mut(|r| r.unref(vm_get()));
 
-        if self.flags.get().contains(Flags::MAY_END_AT_REST)
+        let flags = self.flags.get();
+        // Not for a socket that closed or that a WebSocket took: its memory is not a node:http connection any more.
+        if flags.contains(Flags::MAY_END_AT_REST)
+            && !flags.intersects(Flags::SOCKET_CLOSED | Flags::UPGRADED)
             && let Some(raw) = self.reader()
         {
             Bun__NodeHTTP__refreshAtRest(

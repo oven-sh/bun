@@ -502,6 +502,12 @@ struct Env {
     /// Whether `data` holds a guard.
     has_guards: bool,
     changed: bool,
+    /// Counts the rounds of all functions.
+    round: u32,
+    /// By identifier in `data`: the round that read it last.
+    read_in: Vec<Cell<u32>>,
+    /// The latest of the rounds that had read what was changed afterwards.
+    read_before_change_in: u32,
     data: IdMap<IdentifierId, RefAccessType>,
     /// By identifier: the one that stands for it in `data`.
     temporaries: Vec<IdentifierId>,
@@ -523,6 +529,9 @@ impl Env {
             has_refs: false,
             has_guards: false,
             changed: false,
+            round: 0,
+            read_in: vec![Cell::new(0); env.identifiers.len()],
+            read_before_change_in: 0,
             data: IdMap::default(),
             temporaries: (0..env.identifiers.len() as u32)
                 .map(IdentifierId)
@@ -540,6 +549,21 @@ impl Env {
 
     fn has_changed(&self) -> bool {
         self.changed
+    }
+
+    fn start_round(&mut self) -> u32 {
+        self.changed = false;
+        self.round += 1;
+        self.round
+    }
+
+    /// Whether to go through the function once more, as in the round that began as `round`, would change nothing.
+    ///
+    /// A round is a function of what it reads. If nothing was changed after it was read, each read gave
+    /// what is there now, so that another round reads the same, and sets the same: joined with what is there, which
+    /// already has it, that gives what is there. Not so with refs: a join of two makes a new id.
+    fn is_settled_since(&self, round: u32) -> bool {
+        !self.has_refs && self.read_before_change_in < round
     }
 
     /// Whether to look for what is reported. A debug build always looks, and asserts what it finds.
@@ -560,6 +584,14 @@ impl Env {
 
     #[inline]
     fn get(&self, key: IdentifierId) -> Option<&RefAccessType> {
+        let key = self.temporary(key);
+        self.read_in[key.0 as usize].set(self.round);
+        self.data.get(key)
+    }
+
+    /// `get` for what has no part in what is set: a validation, or whether to set at all.
+    #[inline]
+    fn peek(&self, key: IdentifierId) -> Option<&RefAccessType> {
         self.data.get(self.temporary(key))
     }
 
@@ -577,7 +609,14 @@ impl Env {
         }
     }
 
+    #[inline]
     fn set(&mut self, key: IdentifierId, value: RefAccessType) {
+        if self.has_ref_types || !matches!(value, RefAccessType::None) {
+            self.join(key, value);
+        }
+    }
+
+    fn join(&mut self, key: IdentifierId, value: RefAccessType) {
         let operand_id = self.temporary(key);
         let current = self.data.get(operand_id);
         match &value {
@@ -607,6 +646,8 @@ impl Env {
             // No change needed
         } else if current.map_or(true, |c| c != &widened_value) {
             self.changed = true;
+            let read_in = self.read_in[operand_id.0 as usize].get();
+            self.read_before_change_in = self.read_before_change_in.max(read_in);
         }
         self.data.insert(operand_id, widened_value);
     }
@@ -735,7 +776,7 @@ fn validate_no_direct_ref_value_access(
     operand: &Place,
     env: &Env,
 ) {
-    if let Some(View::RefValue(loc, _)) = env.get(operand.identifier).map(destructure) {
+    if let Some(View::RefValue(loc, _)) = env.peek(operand.identifier).map(destructure) {
         errors.push(ref_access_error(
             loc.or(operand.loc),
             "Cannot access ref value during render",
@@ -744,7 +785,7 @@ fn validate_no_direct_ref_value_access(
 }
 
 fn validate_no_ref_value_access(errors: &mut Vec<CompilerDiagnostic>, env: &Env, operand: &Place) {
-    match env.get(operand.identifier).map(destructure) {
+    match env.peek(operand.identifier).map(destructure) {
         Some(View::RefValue(loc, _)) => {
             errors.push(ref_access_error(
                 loc.or(operand.loc),
@@ -767,7 +808,7 @@ fn validate_no_ref_passed_to_function(
     operand: &Place,
     loc: Option<SourceLocation>,
 ) {
-    let error_loc = match env.get(operand.identifier).map(destructure) {
+    let error_loc = match env.peek(operand.identifier).map(destructure) {
         Some(View::RefValue(ref_loc, _)) => ref_loc.or(loc),
         Some(View::Ref(_)) => loc,
         Some(View::Structure(_, Some(fn_type))) if fn_type.read_ref_effect => loc,
@@ -785,7 +826,7 @@ fn validate_no_ref_update(
     operand: &Place,
     loc: Option<SourceLocation>,
 ) {
-    let error_loc = match env.get(operand.identifier).map(destructure) {
+    let error_loc = match env.peek(operand.identifier).map(destructure) {
         Some(View::RefValue(ref_loc, _)) => ref_loc.or(loc),
         Some(View::Ref(_)) => loc,
         _ => return,
@@ -798,7 +839,7 @@ fn validate_no_ref_update(
 
 fn guard_check(errors: &mut Vec<CompilerDiagnostic>, operand: &Place, env: &Env) {
     if matches!(
-        env.get(operand.identifier),
+        env.peek(operand.identifier),
         Some(RefAccessType::Guard { .. })
     ) {
         debug_assert!(env.has_guards);
@@ -923,12 +964,14 @@ fn validate_no_ref_access_in_render_impl(
 
     let mut interpolated_as_jsx: Option<IdBitSet<IdentifierId>> = None;
 
+    let mut is_settled = false;
+
     // Fixed-point iteration (up to 10 iterations)
     for iteration in 0..10 {
         if iteration > 0 && !ref_env.has_changed() {
             break;
         }
-        ref_env.reset_changed();
+        let round = ref_env.start_round();
         return_values.clear();
         let mut safe_blocks: Vec<(BlockId, RefId)> = Vec::new();
 
@@ -1052,7 +1095,7 @@ fn validate_no_ref_access_in_render_impl(
                         };
                         // Joined with what another round has left, the same again gives that.
                         let is_known = matches!(
-                            ref_env.get(instr.lvalue.identifier),
+                            ref_env.peek(instr.lvalue.identifier),
                             Some(RefAccessType::Structure { fn_type: Some(known), .. })
                                 if known.read_ref_effect == read_ref_effect
                                     && is_the_same(known.return_type.view(), return_type.view())
@@ -1208,7 +1251,7 @@ fn validate_no_ref_access_in_render_impl(
                             _ => {
                                 // Joined with what another round has left, the same again gives that.
                                 let is_known = matches!(
-                                    ref_env.get(instr.lvalue.identifier),
+                                    ref_env.peek(instr.lvalue.identifier),
                                     Some(RefAccessType::Structure { value: Some(known), .. })
                                         if is_the_same(known.view(), value.view())
                                 );
@@ -1447,6 +1490,13 @@ fn validate_no_ref_access_in_render_impl(
         if !errors.is_empty() {
             debug_assert!(ref_env.has_refs);
             return RefAccessType::None;
+        }
+
+        debug_assert!(!is_settled || !ref_env.has_changed());
+        // No round follows the last: that it changed something says that the environment did not converge.
+        is_settled = iteration < 9 && ref_env.is_settled_since(round);
+        if is_settled && !cfg!(debug_assertions) {
+            ref_env.reset_changed();
         }
     }
 

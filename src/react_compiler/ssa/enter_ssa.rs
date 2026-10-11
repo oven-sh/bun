@@ -23,10 +23,23 @@ mod definitions {
 
     const NO_BLOCK: BlockId = BlockId(u32::MAX);
 
+    #[derive(Clone, Copy)]
+    struct Newest {
+        /// The block that the variable was last set for, and to what.
+        set: (BlockId, IdentifierId),
+        /// The block that last remembered it since, and as what.
+        remembered: (BlockId, IdentifierId),
+    }
+
+    const NOTHING: Newest = Newest {
+        set: (NO_BLOCK, IdentifierId(0)),
+        remembered: (NO_BLOCK, IdentifierId(0)),
+    };
+
     /// What each variable is at the end of each block.
     pub(super) struct Definitions {
-        /// Indexed by the `IdentifierId.0` of the variable: the block that it was last set for, and to what.
-        newest: Vec<(BlockId, IdentifierId)>,
+        /// Indexed by the `IdentifierId.0` of the variable.
+        newest: Vec<Newest>,
         /// What it was last set to for the other blocks.
         others: FxHashMap<u64, IdentifierId>,
         /// Indexed by `BlockId.0`: a bit for each variable, modulo 64, that `others` may have for the block.
@@ -43,25 +56,31 @@ mod definitions {
     impl Definitions {
         pub(super) fn new(num_blocks: usize, num_identifiers: usize) -> Self {
             Definitions {
-                newest: vec![(NO_BLOCK, IdentifierId(0)); num_identifiers],
+                newest: vec![NOTHING; num_identifiers],
                 others: FxHashMap::default(),
                 in_others: vec![0; num_blocks],
                 phis_in_the_making: Vec::new(),
             }
         }
 
-        /// The only way to read a definition.
+        /// The only way to read a definition for use.
         #[inline]
         pub(super) fn get(&mut self, block_id: BlockId, old: IdentifierId) -> Option<IdentifierId> {
-            let new = match self.newest.get(old.0 as usize) {
-                Some(&(block, new)) if block == block_id => new,
-                _ if self.in_others[block_id.0 as usize] & (1 << (old.0 % 64)) == 0 => return None,
-                _ => *self.others.get(&key(block_id, old))?,
-            };
+            let new = self.peek(block_id, old)?;
             if !self.phis_in_the_making.is_empty() {
                 self.was_read(new);
             }
             Some(new)
+        }
+
+        #[inline]
+        pub(super) fn peek(&self, block_id: BlockId, old: IdentifierId) -> Option<IdentifierId> {
+            match self.newest.get(old.0 as usize) {
+                Some(newest) if newest.set.0 == block_id => Some(newest.set.1),
+                Some(newest) if newest.remembered.0 == block_id => Some(newest.remembered.1),
+                _ if self.in_others[block_id.0 as usize] & (1 << (old.0 % 64)) == 0 => None,
+                _ => self.others.get(&key(block_id, old)).copied(),
+            }
         }
 
         fn was_read(&mut self, new: IdentifierId) {
@@ -76,15 +95,25 @@ mod definitions {
         pub(super) fn set(&mut self, block_id: BlockId, old: IdentifierId, new: IdentifierId) {
             let index = old.0 as usize;
             if index >= self.newest.len() {
-                self.newest.resize(index + 1, (NO_BLOCK, IdentifierId(0)));
+                self.newest.resize(index + 1, NOTHING);
             }
-            let (block, was) = std::mem::replace(&mut self.newest[index], (block_id, new));
+            let set = (block_id, new);
+            let (block, was) =
+                std::mem::replace(&mut self.newest[index], Newest { set, ..NOTHING }).set;
             if block != block_id && block != NO_BLOCK {
                 if self.others.capacity() == 0 {
                     self.others.reserve(self.in_others.len());
                 }
                 self.others.insert(key(block, old), was);
                 self.in_others[block.0 as usize] |= 1 << (old.0 % 64);
+            }
+        }
+
+        /// `set`, of what can be found again: it is forgotten when another block remembers the variable.
+        #[inline]
+        pub(super) fn remember(&mut self, block_id: BlockId, old: IdentifierId, new: IdentifierId) {
+            if let Some(newest) = self.newest.get_mut(old.0 as usize) {
+                newest.remembered = (block_id, new);
             }
         }
 
@@ -109,11 +138,21 @@ struct State {
 /// A block whose predecessors `get_id_at` is looking in.
 enum Lookup {
     OnePredecessor(BlockId),
+    /// As `OnePredecessor`, but it is looking in its top.
+    Top(BlockId),
     Phi {
         block_id: BlockId,
         new_id: IdentifierId,
         operands: SmallVec<[IdentifierId; 4]>,
     },
+}
+
+/// The tops of the blocks, other than tops, that write a variable.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum WrittenBelow {
+    None,
+    One(BlockId),
+    Many,
 }
 
 struct SSABuilder {
@@ -123,6 +162,10 @@ struct SSABuilder {
     /// Not where the entry has a predecessor: then a variable can be a phi of nothing but phis.
     leaves_out_trivial_phis: bool,
     current: Option<BlockId>,
+    /// Indexed by `BlockId.0`: `SSABuilder::top`, once it was asked for.
+    tops: Vec<Option<BlockId>>,
+    /// Indexed by the `IdentifierId.0` of the variable.
+    written_below: Vec<WrittenBelow>,
     /// Indexed by `BlockId.0`.
     unsealed_preds: Vec<Option<u32>>,
     /// Indexed by `BlockId.0`: from where to where in `preds`. Empty = no preds / not registered.
@@ -146,6 +189,8 @@ impl SSABuilder {
             definitions: definitions::Definitions::new(num_blocks, num_identifiers),
             leaves_out_trivial_phis: false,
             current: None,
+            tops: vec![None; num_blocks],
+            written_below: vec![WrittenBelow::None; num_identifiers],
             unsealed_preds: vec![None; num_blocks],
             block_preds: vec![(0, 0); num_blocks],
             preds: Vec::with_capacity(num_blocks),
@@ -169,6 +214,58 @@ impl SSABuilder {
     fn preds(&self, block_id: BlockId) -> &[BlockId] {
         let (start, end) = self.block_preds[block_id.0 as usize];
         &self.preds[start as usize..end as usize]
+    }
+
+    /// Whether what a variable is at the end of the block, which does not write it, is what it is
+    /// at the end of its one predecessor.
+    #[inline]
+    fn passes_on(&self, block_id: BlockId) -> bool {
+        self.preds(block_id).len() == 1
+            && self.unsealed_preds[block_id.0 as usize].unwrap_or(0) == 0
+    }
+
+    /// The block itself, or the nearest above it that does not pass on.
+    #[inline]
+    fn top(&mut self, block_id: BlockId) -> BlockId {
+        match self.tops[block_id.0 as usize] {
+            Some(top) => top,
+            None => self.find_top(block_id),
+        }
+    }
+
+    fn find_top(&mut self, block_id: BlockId) -> BlockId {
+        let mut top = block_id;
+        loop {
+            if let Some(known) = self.tops[top.0 as usize] {
+                top = known;
+                break;
+            }
+            if !self.passes_on(top) {
+                break;
+            }
+            top = self.preds(top)[0];
+        }
+        let mut below = block_id;
+        while self.tops[below.0 as usize].is_none() {
+            self.tops[below.0 as usize] = Some(top);
+            if below != top {
+                below = self.preds(below)[0];
+            }
+        }
+        top
+    }
+
+    /// Whether no block from `block_id` up to `top`, which is not asked, has anything else for the variable.
+    fn is_the_same_up_to(&self, top: BlockId, mut block_id: BlockId, old_id: IdentifierId) -> bool {
+        let at_top = self.definitions.peek(top, old_id);
+        while block_id != top {
+            let here = self.definitions.peek(block_id, old_id);
+            if here.is_some() && here != at_top {
+                return false;
+            }
+            block_id = self.preds(block_id)[0];
+        }
+        true
     }
 
     #[inline]
@@ -222,6 +319,19 @@ impl SSABuilder {
             .current
             .expect("we need to be in a block to access state!");
         self.definitions.set(current, old_id, new_id);
+        let top = self.top(current);
+        if top != current {
+            let index = old_id.0 as usize;
+            if index >= self.written_below.len() {
+                self.written_below.resize(index + 1, WrittenBelow::None);
+            }
+            let written_below = &mut self.written_below[index];
+            *written_below = match *written_below {
+                WrittenBelow::None => WrittenBelow::One(top),
+                WrittenBelow::One(other) if other == top => WrittenBelow::One(top),
+                _ => WrittenBelow::Many,
+            };
+        }
         Ok(new_id)
     }
 
@@ -260,17 +370,24 @@ impl SSABuilder {
             let mut found = match self.look_in(old_place, block_id, env) {
                 Ok(found) => found,
                 Err(lookup) => {
-                    block_id = self.preds(block_id)[0];
-                    // A block need not remember what its one predecessor knows.
-                    let known = match lookup {
-                        Lookup::OnePredecessor(_) => self.definitions.get(block_id, old_id),
-                        Lookup::Phi { .. } => None,
-                    };
-                    let Some(found) = known else {
+                    let below = block_id;
+                    block_id = self.preds(below)[0];
+                    if let Lookup::Phi { .. } = lookup {
                         lookups.push(lookup);
                         continue;
-                    };
-                    found
+                    }
+                    if let Some(found) = self.definitions.get(block_id, old_id) {
+                        self.definitions.remember(below, old_id, found);
+                        found
+                    } else {
+                        if let Some(top) = self.top_to_look_in(block_id, old_id) {
+                            block_id = top;
+                            lookups.push(Lookup::Top(below));
+                        } else {
+                            lookups.push(lookup);
+                        }
+                        continue;
+                    }
                 }
             };
             // What was found is what the variable is at the end of a predecessor of the last of `lookups`.
@@ -282,6 +399,9 @@ impl SSABuilder {
                     }
                     Some(Lookup::OnePredecessor(block_id)) => {
                         self.definitions.set(block_id, old_id, found);
+                    }
+                    Some(Lookup::Top(block_id)) => {
+                        self.definitions.remember(block_id, old_id, found);
                     }
                     Some(Lookup::Phi {
                         block_id: phi_block,
@@ -303,6 +423,25 @@ impl SSABuilder {
                 }
             }
         }
+    }
+
+    /// The top of the block, if the variable is at the end of the block what it is at the end of
+    /// the top. Then none of the blocks between need remember it.
+    fn top_to_look_in(&mut self, block_id: BlockId, old_id: IdentifierId) -> Option<BlockId> {
+        let top = self.top(block_id);
+        let is_written_between = match self.written_below.get(old_id.0 as usize) {
+            None | Some(WrittenBelow::None) => false,
+            Some(&WrittenBelow::One(other)) => other == top,
+            Some(WrittenBelow::Many) => true,
+        };
+        // A variable that is unknown is marked so once for all the blocks that have asked.
+        let may_be_unknown =
+            || self.preds(top).is_empty() && self.definitions.peek(top, old_id).is_none();
+        if is_written_between || may_be_unknown() {
+            return None;
+        }
+        debug_assert!(self.is_the_same_up_to(top, block_id, old_id));
+        Some(top)
     }
 
     /// What `old_place` is at the end of the block, or that it depends on its predecessors. Then it has one at least.

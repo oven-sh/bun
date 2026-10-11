@@ -48,20 +48,93 @@ fn oxlint_reports_each_character(file: &File) -> bool {
     file.language().is_oxlint
 }
 
+/// The kind of the token that `offset` is in, if `node`, the innermost around it in a file without JSX, tells.
+/// `piece`: the piece of a template that was looked at last.
+fn kind_of_token_in(node: Node, offset: u32, piece: &mut Span) -> Option<TokenKind> {
+    match node {
+        Node::Expr(e) => match e.kind() {
+            ExprKind::String(_) => Some(TokenKind::String),
+            ExprKind::Regex(_) => Some(TokenKind::RegularExpression),
+            ExprKind::Template(template) => {
+                if !piece.contains_offset(offset) {
+                    let (exprs, mut before, mut end) = (template.exprs(), 0, template.exprs().len());
+                    while before < end {
+                        let middle = before.midpoint(end);
+                        match exprs.get(middle).is_some_and(|it| it.span().end <= offset) {
+                            true => before = middle + 1,
+                            false => end = middle,
+                        }
+                    }
+                    *piece = template.quasi_span(before);
+                }
+                piece.contains_offset(offset).then_some(TokenKind::Template)
+            }
+            _ => None,
+        },
+        Node::Prop(prop) => {
+            let key = prop.key().filter(|it| matches!(it.kind(), KeyKind::String(_)))?;
+            key.span(prop.file()).contains_offset(offset).then_some(TokenKind::String)
+        }
+        _ => None,
+    }
+}
+
+/// For each of `places`, which are in order: the kind of the token that it starts in, where that shows without the tokens of the
+/// file. Only what is around one of them is looked at.
+fn kinds_of_tokens_around<'a>(file: &'a File<'a>, places: &[Span]) -> Vec<Option<TokenKind>> {
+    let mut kinds = vec![None; places.len()];
+    // There, what a string is depends on where it is.
+    if file.has_exprs([ExprTag::Jsx]) {
+        return kinds;
+    }
+    let mut piece = Span::default();
+    let mut pending = vec![(Node::File(file), 0..places.len())];
+    while let Some((node, within)) = pending.pop() {
+        // In `node` and in none of its children.
+        let mut look_at = |own: std::ops::Range<usize>| {
+            let own = (kinds.get_mut(own.clone()).unwrap_or_default().iter_mut()).zip(places.get(own).unwrap_or_default());
+            own.for_each(|(kind, place)| *kind = kind_of_token_in(node, place.start, &mut piece));
+        };
+        let mut next = within.start;
+        node.for_each_child(|child| {
+            if next == within.end {
+                return;
+            }
+            let (span, rest) = (child.span(), places.get(next..within.end).unwrap_or_default());
+            let first = next + rest.partition_point(|it| it.start < span.start);
+            let after = next + rest.partition_point(|it| it.start < span.end);
+            look_at(next..first);
+            if first < after {
+                pending.push((child, first..after));
+            }
+            next = after.max(first);
+        });
+        look_at(next..within.end);
+    }
+    kinds
+}
+
 impl NoIrregularWhitespace {
     /// Whether the whitespace at `offset` is in something that the options allow it in. Each of
     /// the nodes that upstream looks at is one token: a string or a regular expression `Literal`,
     /// a `TemplateElement`, a `JSXText`.
-    fn is_skipped<'a>(&self, file: &'a File<'a>, offset: u32) -> bool {
-        let Some(token) = file.token_or_comment_around(offset) else {
+    ///
+    /// `known`: the kind of the token that it is in.
+    fn is_skipped<'a>(&self, file: &'a File<'a>, offset: u32, known: Option<TokenKind>) -> bool {
+        debug_assert!(known.is_none() || known == file.token_or_comment_around(offset).map(Token::kind));
+        let token = match known {
+            Some(_) => None,
+            None => file.token_or_comment_around(offset),
+        };
+        let Some(kind) = known.or_else(|| token.map(Token::kind)) else {
             return false;
         };
-        match token.kind() {
+        match kind {
             TokenKind::String => self.skip_strings,
             TokenKind::RegularExpression => self.skip_reg_exps.unwrap_or_else(|| skips_by_default(file)),
             TokenKind::Template => self.skip_templates.unwrap_or_else(|| skips_by_default(file)),
             // The value of an attribute is a string `Literal`.
-            TokenKind::JsxText => match file.token_before(token) {
+            TokenKind::JsxText => match token.and_then(|it| file.token_before(it)) {
                 Some(before) if before.is_punctuator("=") => self.skip_strings,
                 _ => self.skip_jsx_text.unwrap_or_else(|| skips_by_default(file)),
             },
@@ -77,8 +150,9 @@ impl NoIrregularWhitespace {
         let mut at = if text.starts_with(b"\xEF\xBB\xBF") { 3 } else { 0 };
         // Nearly all is ASCII, in which there are two such characters. Where the ASCII ends that `at` is in.
         let mut ascii_end = at;
+        let mut found = Vec::new();
         while let Some(&byte) = text.get(at) {
-            let found = match byte.is_ascii() {
+            let ahead = match byte.is_ascii() {
                 true => {
                     if at >= ascii_end {
                         ascii_end = strings::first_non_ascii(rest_from(at)).map_or(text.len(), |first| at + first as usize);
@@ -88,7 +162,7 @@ impl NoIrregularWhitespace {
                 }
                 false => 0,
             };
-            let start = at + found;
+            let start = at + ahead;
             let Some((kind, len)) = irregular_at(rest_from(start)) else {
                 at = start + 1;
                 continue;
@@ -99,8 +173,14 @@ impl NoIrregularWhitespace {
                     at += len;
                 }
             }
-            if !self.is_skipped(cx.file(), start as u32) {
-                cx.report(Span::new(start as u32, at as u32), NO_IRREGULAR_WHITESPACE);
+            found.push(Span::new(start as u32, at as u32));
+        }
+        if found.is_empty() {
+            return;
+        }
+        for (&place, kind) in found.iter().zip(kinds_of_tokens_around(cx.file(), &found)) {
+            if !self.is_skipped(cx.file(), place.start, kind) {
+                cx.report(place, NO_IRREGULAR_WHITESPACE);
             }
         }
     }

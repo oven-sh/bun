@@ -396,7 +396,9 @@ impl<'f, 's> Binder<'f, 's> {
             associated_declaration: (PatId::NONE, FnId::NONE),
             instance_states: Vec::new(),
             chain_answers: Default::default(),
-            stack_check: bun_core::StackCheck::init(),
+            // As the parser: what is bound is walked by the checker, whose time can be the square or the cube of the depth.
+            stack_check: bun_core::StackCheck::init()
+                .with_at_most(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize),
         };
         this.file();
         if this.b.ran_out_of_stack {

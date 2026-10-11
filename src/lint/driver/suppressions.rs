@@ -67,12 +67,15 @@ fn entry<'e, T: Default>(entries: &'e mut Vec<(Vec<u8>, T)>, key: &[u8]) -> &'e 
 }
 
 impl Suppressions {
-    /// `load`. A file that does not exist has nothing in it.
+    /// `load`. A file that does not exist has nothing in it. One that cannot be read is as one that cannot be parsed.
     pub(crate) fn load(path: &[u8]) -> Result<Suppressions, Fatal> {
-        let Ok(text) = fs::read(path) else {
-            return Ok(Suppressions::default());
+        let text = match fs::read(path) {
+            Err(error) if error.get_errno() == bun_sys::E::ENOENT => {
+                return Ok(Suppressions::default());
+            }
+            read => read.ok(),
         };
-        let Some(Json::Object(files)) = bun_lint::json::parse(&text) else {
+        let Some(Json::Object(files)) = text.and_then(|text| bun_lint::json::parse(&text)) else {
             return Err(Fatal(
                 [b"Failed to parse suppressions file at ", path].concat(),
             ));

@@ -27,6 +27,30 @@ describe("bun exec", () => {
     .stdout('hi "there bud"\n')
     .runAsTest("it works2");
 
+  describe("cmd subst status", () => {
+    const exit7 = "console.log('ran'); process.exit(7);";
+
+    TestBuilder.command`${BUN} exec ${"FOO=$(exit 3)"}`
+      .env(bunEnv)
+      .exitCode(3)
+      .runAsTest("exits with the status of an assignment's command substitution");
+
+    TestBuilder.command`${BUN} exec ${`$(echo ${BUN} exit7.js)`}`
+      .file("exit7.js", exit7)
+      .env(bunEnv)
+      .stdout("ran\n")
+      .exitCode(7)
+      .runAsTest("exits with the status of the command a sole command substitution names");
+
+    TestBuilder.command`${BUN} script.sh`
+      .file("exit7.js", exit7)
+      .file("script.sh", `$(echo ${BUN} exit7.js) || echo fallback\nFOO=$(exit 3)\n`)
+      .env(bunEnv)
+      .stdout("ran\nfallback\n")
+      .exitCode(3)
+      .runAsTest("a .sh file takes the || branch and exits with the status of its last assignment");
+  });
+
   TestBuilder.command`${BUN} exec ${"cat filename"}`
     .file(
       "filename",

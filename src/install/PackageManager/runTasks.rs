@@ -1379,7 +1379,7 @@ fn run_tasks_erased(
                                 url,
                             );
                         }
-                    } else if log_level != Options::LogLevel::Silent {
+                    } else {
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
                             None,

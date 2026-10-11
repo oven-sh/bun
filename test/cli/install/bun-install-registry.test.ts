@@ -3872,6 +3872,44 @@ describe("binaries", () => {
     });
   });
 
+  // `--silent` stops the output of a failed bin link. It must not stop the failure: the command
+  // ends like the one without the flag, with exit code 1 and nothing saved.
+  describe("`node_modules/.bin` is a regular file, so no bin can be linked", () => {
+    const installs = { name: "foo", dependencies: { "what-bin": "1.0.0" } };
+    const adds = { name: "foo" };
+
+    test.each([
+      ["bun install", ["install"], installs],
+      ["bun install --silent", ["install", "--silent"], installs],
+      ["bun add", ["add", "what-bin@1.0.0"], adds],
+      ["bun add --silent", ["add", "what-bin@1.0.0", "--silent"], adds],
+    ])("%s fails and saves nothing", async (_command, args, manifest) => {
+      await Promise.all([
+        write(packageJson, JSON.stringify(manifest)),
+        write(join(packageDir, "node_modules", ".bin"), "not a folder"),
+      ]);
+
+      await using proc = spawn({ cmd: [bunExe(), ...args], cwd: packageDir, stdout: "pipe", stderr: "pipe", env });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      if (args.includes("--silent")) {
+        expect({ out, err }).toEqual({ out: "", err: "" });
+      } else {
+        // A path below a regular file is ENOTDIR on POSIX. Windows reports another errno.
+        expect(err).toContain(`error: Failed to link what-bin: ${isWindows ? "" : "ENOTDIR"}`);
+        expect(out).not.toContain("installed");
+      }
+      expect({
+        packageJson: await file(packageJson).json(),
+        lockfiles: (await readdirSorted(packageDir)).filter(name => name.startsWith("bun.lock")),
+        // The package itself is installed. Only its bin is missing.
+        package: await exists(join(packageDir, "node_modules", "what-bin", "package.json")),
+        bin: await exists(join(packageDir, "node_modules", ".bin", "what-bin")),
+      }).toEqual({ packageJson: manifest, lockfiles: [], package: true, bin: false });
+      expect(exitCode).toBe(1);
+    });
+  });
+
   test("it will skip (without errors) if a folder from `directories.bin` does not exist", async () => {
     await Promise.all([
       write(

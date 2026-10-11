@@ -5,7 +5,7 @@
 // a bare repo on disk (served over git's dumb HTTP protocol by Bun.serve
 // when an http URL is needed) or tarballs built in memory.
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
 import { pathToFileURL } from "url";
@@ -585,6 +585,38 @@ test.concurrent("installs a git+file:// dependency", async () => {
   expect(await installedVersions(project, [nameOf("b")])).toEqual(markers(["b"]));
   expect(await lockedPackages(project)).toEqual(locked);
   expect(exitCode).toBe(0);
+});
+
+// `--silent` must not change what a failed clone does to the install. The
+// "cloning repository" error was recorded only without the flag, so the silent
+// install of an optional git dependency saved a lockfile and the other one did
+// not. Whether such an install fails or leaves the dependency out is not the
+// subject here: both runs have to end the same way.
+test.concurrent("a failed clone of an optional git dependency ends the same with and without --silent", async () => {
+  async function install(...flags: string[]) {
+    using dir = tempDir("git-dep-optional-clone-fails", {});
+    const root = String(dir);
+    const project = join(root, "project");
+    mkdirSync(project);
+    writeFileSync(
+      join(project, "package.json"),
+      JSON.stringify({
+        name: "project",
+        version: "1.0.0",
+        optionalDependencies: { [nameOf("a")]: `git+${pathToFileURL(join(root, "no-such-repo.git"))}` },
+      }),
+    );
+    const { exitCode } = await runInstall(project, join(root, "cache"), {}, ...flags);
+    return {
+      exitCode,
+      lockfiles: readdirSync(project).filter(name => name.startsWith("bun.lock")),
+      installed: existsSync(join(project, "node_modules", nameOf("a"))),
+    };
+  }
+
+  const [plain, silent] = await Promise.all([install(), install("--silent")]);
+  expect(plain.installed).toBe(false);
+  expect(silent).toEqual(plain);
 });
 
 // issue #40803: `bun install <git url>` (no alias) sorted the workspace dep

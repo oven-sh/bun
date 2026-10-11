@@ -1,12 +1,12 @@
-use crate::jest::{self, Ctx};
+use crate::jest::{self, Ctx, Runner};
 use crate::jest_expect::no_conditional_expect;
 use bun_lint::prelude::*;
 
 /// This rule prevents the use of `expect` in conditional blocks, such as `if` and `catch`.
-pub struct NoConditionalExpect<const VITEST: bool = false>;
+pub struct NoConditionalExpect<const RUNNER: u8 = { jest::JEST }>;
 
-impl<const VITEST: bool> Rule for NoConditionalExpect<VITEST> {
-    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "no-conditional-expect", Kind::Problem);
+impl<const RUNNER: u8> Rule for NoConditionalExpect<RUNNER> {
+    const META: Meta = jest::meta(RUNNER, "no-conditional-expect", Kind::Problem);
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -15,11 +15,11 @@ impl<const VITEST: bool> Rule for NoConditionalExpect<VITEST> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (file.mentions("expect") && jest::is_test(file)).then_some(())
+        (file.mentions("expect") && jest::is_test(file, RUNNER)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
+        let ctx = Ctx { file: cx.file(), runner: Runner::of(RUNNER), report: &|at, message| cx.report(at, message) };
         no_conditional_expect::run(&ctx);
     }
 }

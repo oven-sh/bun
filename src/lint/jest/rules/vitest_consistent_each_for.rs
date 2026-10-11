@@ -30,11 +30,11 @@ impl Rule for ConsistentEachFor {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (self.not_allowed_methods.iter().flatten().any(|it| file.mentions(it)) && jest::is_test(file)).then_some(())
+        (self.not_allowed_methods.iter().flatten().any(|it| file.mentions(it)) && jest::is_test(file, jest::VITEST)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        jest::iter_possible_jest_call_node(cx.file()).for_each(|node| self.run(node, cx));
+        jest::iter_possible_jest_call_node(cx.file(), jest::Runner::Vitest).for_each(|node| self.run(node, cx));
     }
 }
 

@@ -1,4 +1,5 @@
-// The rules of `bun lint` that are Bun's own: `bun/..`. No other linter has them, so what they should report is written here.
+// The rules of `bun lint` that are Bun's own: `bun/..` and `bun:test/..`. No other linter has them, so what they should report is
+// written here.
 import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { basename } from "node:path";
@@ -1551,6 +1552,248 @@ const rules: Record<string, Case[]> = {
   ].map(inPage),
 };
 
+// The rules of `bun:test/..` are those that oxlint has for Jest and Vitest, whose cases are in conformance/. Here is what is Bun's own.
+const bunTest = `import { describe, expect, expectTypeOf, it, jest, mock, setDefaultTimeout, test, vi, xdescribe, xit, xtest } from "bun:test";\n`;
+const inBunTest = (it: Case): Case => {
+  const { code, output, suggestions, ...rest } = typeof it === "string" ? { code: it } : it;
+  return {
+    code: bunTest + code,
+    output: output === undefined ? undefined : bunTest + output,
+    suggestions: suggestions?.map(it => bunTest + it),
+    ...rest,
+  };
+};
+const focused = (code: string): Case => ({ code, suggestions: [code.replace(/\.«only»|\[«"only"»\]/, "")] });
+const inTest = (code: string) => `test("a", async () => {\n  ${code}\n});`;
+
+const testRules: Record<string, Case[]> = {
+  "no-focused-tests": [
+    focused(`test.«only»("a", () => {});`),
+    focused(`it.«only»("a", () => {});`),
+    focused(`describe.«only»("a", () => {});`),
+    focused(`test[«"only"»]("a", () => {});`),
+    focused(`test.«only».each([1])("a", () => {});`),
+    focused(`test.each([1]).«only»("a", () => {});`),
+    focused(`test.concurrent.«only»("a", () => {});`),
+    focused(`test.serial.«only»("a", () => {});`),
+    focused(`test.failing.«only»("a", () => {});`),
+    focused(`test.«only».if(a)("b", () => {});`),
+    focused(`test.skipIf(a).«only»("b", () => {});`),
+    focused(`describe.«only».skipIf(a)("b", () => {});`),
+
+    `test("a", () => {});`,
+    `test.if(a)("b", () => {});`,
+    `test.only;`,
+    `other.only("a", () => {});`,
+    // Bun has none of these.
+    `fit("a", () => {});`,
+    `fdescribe("a", () => {});`,
+    `test.sequential.only("a", () => {});`,
+    `suite.only("a", () => {});`,
+  ].map(inBunTest),
+
+  "no-disabled-tests": [
+    `«test.skip»("a", () => {});`,
+    `«it.skip»("a", () => {});`,
+    `«describe.skip»("a", () => {});`,
+    `«xtest»("a", () => {});`,
+    `«xit»("a", () => {});`,
+    `«xdescribe»("a", () => {});`,
+    `«test.skip.each([1])»("a", () => {});`,
+    `«test.concurrent.skip»("a", () => {});`,
+    `«test.skipIf(a).skip»("b", () => {});`,
+    `«test("a")»;`,
+    `«test.failing("a")»;`,
+    `«test.skipIf(a)("b")»;`,
+
+    // What depends on a condition is not disabled.
+    `test.skipIf(a)("b", () => {});`,
+    `test.if(a)("b", () => {});`,
+    `test.todoIf(a)("b", () => {});`,
+    `test.todoIf(a)("b");`,
+    `describe.skipIf(a)("b", () => {});`,
+    `test.skipIf(a).each([1])("b", () => {});`,
+    `const onLinux = test.skipIf(a);`,
+    `const onLinux = test.concurrent.if(a);`,
+    `test.todo("a");`,
+    `test.failing("a", () => {});`,
+    `test.failingIf(a)("b", () => {});`,
+    `test.concurrent("a", () => {});`,
+    `test.concurrentIf(a)("b", () => {});`,
+    `test.serial("a", () => {});`,
+    `test.serialIf(a)("b", () => {});`,
+    `pending();`,
+  ].map(inBunTest),
+
+  "warn-todo": [`test.«todo»("a");`, `describe.«todo»("a");`, `test.todoIf(a)("b");`].map(inBunTest),
+
+  "valid-describe-callback": [
+    `describe(«"a"»);`,
+    `«describe()»;`,
+    `describe("a", «"b"»);`,
+    `describe("a", «b => {}»);`,
+    `describe("a", () => {\n  «return 1;»\n});`,
+    // Only Vitest has options.
+    `describe("a", «{}», () => {});`,
+
+    `describe("a", () => {});`,
+    `describe("a", async () => {});`,
+    `describe(() => {});`,
+    `describe.todo("a");`,
+    `describe.skip("a");`,
+    `describe.each([1])("a", b => {});`,
+    `describe.skipIf(a)("b", () => {});`,
+  ].map(inBunTest),
+
+  "valid-expect": [
+    inTest(`«expect(1)»;`),
+    inTest(`«expect(1).toBe»;`),
+    inTest(`«expect(1).never.toBe(1)»;`),
+    inTest(`«expect()».toBe(1);`),
+    inTest(`«expect(1, 2, 3)».toBe(1);`),
+    { code: inTest(`«expect(a).resolves.toBe(1)»;`), suggestions: [inTest(`await expect(a).resolves.toBe(1);`)] },
+
+    inTest(`expect(1).toBe(1);`),
+    inTest(`expect(1, "why").toBe(1);`),
+    inTest(`expect(1, why).toBe(1);`),
+    inTest(`expect().pass();`),
+    inTest(`expect().fail();`),
+    inTest(`expect.unreachable();`),
+    inTest(`expect(1)[matcher]();`),
+    inTest(`await expect(a).resolves.not.toBe(1);`),
+  ].map(inBunTest),
+
+  "valid-title": [
+    `test(«""», () => {});`,
+    `describe(«""», () => {});`,
+    `test(«a», () => {});`,
+    { code: `describe(«add», () => {});`, options: [{ ignoreTypeOfDescribeName: false }] },
+
+    `test("a", () => {});`,
+    `describe(add, () => {});`,
+    `describe(Adder, () => {});`,
+    `describe(1, () => {});`,
+    { code: `test(a, () => {});`, options: [{ ignoreTypeOfTestName: true }] },
+  ].map(inBunTest),
+
+  "expect-expect": [
+    `«test»("a", () => {});`,
+    `«test.failing»("a", () => {});`,
+    `«test.skipIf(a)»("b", () => {});`,
+    // Vitest's.
+    `«test»("a", () => {\n  assert(1);\n});`,
+
+    `test("a", () => {\n  expect(1).toBe(1);\n});`,
+    `test("a", () => {\n  expectTypeOf(1).toBeNumber();\n});`,
+    `test.skip("a", () => {});`,
+    `test.todo("a", () => {});`,
+  ].map(inBunTest),
+
+  "no-identical-title": [
+    `test("a", () => {});\ntest(«"a"», () => {});`,
+    `test.failing("a", () => {});\ntest.serial(«"a"», () => {});`,
+
+    `test.if(a)("b", () => {});\ntest.if(!a)("b", () => {});`,
+    `test.skipIf(a)("b", () => {});\ntest.todoIf(a)("b", () => {});`,
+    `test.each([1])("a", () => {});\ntest.each([2])("a", () => {});`,
+  ].map(inBunTest),
+
+  "no-test-prefixes": [
+    { code: `«xtest»("a", () => {});`, output: `test.skip("a", () => {});` },
+    { code: `«xit.each»([1])("a", () => {});`, output: `it.skip.each([1])("a", () => {});` },
+    { code: `«xdescribe»("a", () => {});`, output: `describe.skip("a", () => {});` },
+    `fit("a", () => {});`,
+  ].map(inBunTest),
+
+  "no-export": [
+    { code: `export const «a» = 1;\ntest("a", () => {});`, file: "a.test.ts" },
+    { code: `export const «a» = 1;\ntest("a", () => {});`, file: "a_spec.ts" },
+    // `bun test` does not run it: others import what it has.
+    { code: `export const a = 1;\ntest("a", () => {});`, file: "helpers.ts" },
+    { code: `export const a = 1;`, file: "a.test.ts" },
+  ].map(inBunTest),
+
+  "no-restricted-jest-methods": [`jest.«spyOn»(a, "b");`, `vi.«spyOn»(a, "b");`, `jest.fn();`, `spyOn(a, "b");`]
+    .map(code => ({ code, options: [{ spyOn: null }] }))
+    .map(inBunTest),
+
+  "prefer-called-once": [
+    { code: inTest(`expect(a).«toHaveBeenCalledTimes(1)»;`), output: inTest(`expect(a).toHaveBeenCalledOnce();`) },
+    // There is no `toBeCalledOnce`.
+    { code: inTest(`expect(a).«toBeCalledTimes(1)»;`), output: inTest(`expect(a).toHaveBeenCalledOnce();`) },
+    inTest(`expect(a).toHaveBeenCalledTimes(2);`),
+  ].map(inBunTest),
+
+  "require-hook": [
+    `«setup()»;`,
+    `describe("a", () => {\n  «setup()»;\n});`,
+
+    `setDefaultTimeout(1000);`,
+    `mock.module("a", () => ({}));`,
+    `jest.useFakeTimers();`,
+    `expect.extend({});`,
+    `expectTypeOf(1).toBeNumber();`,
+    `xtest("a", () => {});`,
+    `xdescribe("a", () => {});`,
+  ].map(inBunTest),
+
+  "require-mock-type-parameters": [`jest.«fn»();`, `vi.«fn»();`, `jest.fn<() => void>();`, `vi.fn<() => void>();`].map(
+    inBunTest,
+  ),
+
+  "require-test-timeout": [
+    `«test("a", () => {})»;`,
+    `test("a", () => {}, «{ retry: 1 }»);`,
+    `test("a", «{ retry: 1 }», () => {});`,
+    `test("a", () => {}, «-1»);`,
+    `test("a", () => {}, «limit»);`,
+    `«test("a", () => {})»;\nsetDefaultTimeout(1000);`,
+    `setDefaultTimeout(«limit»);`,
+    // Vitest's.
+    `vi.setConfig({ testTimeout: 1000 });\n«test("a", () => {})»;`,
+
+    `test("a", () => {}, 1000);`,
+    `test("a", () => {}, { timeout: 1000 });`,
+    `test("a", { timeout: 1000 }, () => {});`,
+    `setDefaultTimeout(1000);\ntest("a", () => {});`,
+    `jest.setTimeout(1000);\ntest("a", () => {});`,
+    `test.todo("a", () => {});`,
+    `xtest("a", () => {});`,
+  ].map(inBunTest),
+};
+
+const whose: Case[] = [
+  focused(`import { test } from "bun:test";\ntest.«only»("a", () => {});`),
+  focused(`import { test as check } from "bun:test";\ncheck.«only»("a", () => {});`),
+  focused(`import { type Mock, test } from "bun:test";\ntest.«only»("a", () => {});`),
+  focused(`const { test } = require("bun:test");\ntest.«only»("a", () => {});`),
+  focused(`const { test: check } = require("bun:test");\ncheck.«only»("a", () => {});`),
+  focused(`const { test } = await import("bun:test");\ntest.«only»("a", () => {});`),
+  // What `bun test` declares, in a file that imports something else from there.
+  focused(`import { expect } from "bun:test";\ntest.«only»("a", () => {});`),
+  focused(`import { expect } from "bun:test";\ndescribe.«only»("a", () => {});`),
+  focused(`import "bun:test";\ntest.«only»("a", () => {});`),
+  focused(`import * as all from "bun:test";\ntest.«only»("a", () => {});`),
+  focused(`const all = require("bun:test");\ntest.«only»("a", () => {});`),
+
+  // Nothing is imported from there.
+  { code: `test.only("a", () => {});`, file: "a.test.ts" },
+  { code: `import { test } from "vitest";\ntest.only("a", () => {});`, file: "a.test.ts" },
+  { code: `import { test } from "@jest/globals";\ntest.only("a", () => {});`, file: "a.test.ts" },
+  `import type { Mock } from "bun:test";\ntest.only("a", () => {});`,
+  `import { test } from "bun:tests";\ntest.only("a", () => {});`,
+  `const from = "bun:test";\ntest.only("a", () => {});`,
+  `function load() {\n  return require("bun:test");\n}\ntest.only("a", () => {});`,
+  // It is somebody else's.
+  `import { expect } from "bun:test";\nimport { test } from "vitest";\ntest.only("a", () => {});`,
+  `import { expect } from "bun:test";\nimport { test } from "@jest/globals";\ntest.only("a", () => {});`,
+  `import { expect } from "bun:test";\nimport { test } from "./test";\ntest.only("a", () => {});`,
+  `import { expect } from "bun:test";\nfunction test() {}\ntest.only("a", () => {});`,
+  `import { expect } from "bun:test";\nfunction run(test) {\n  test.only("a", () => {});\n}`,
+  // As with `@jest/globals`, the members of a namespace are not followed.
+  `import * as all from "bun:test";\nall.test.only("a", () => {});`,
+];
+
 type Message = {
   ruleId: string;
   messageId: string;
@@ -1599,15 +1842,20 @@ function marked(code: string, messages: Message[]) {
   );
 }
 
-describe.concurrent("bun/", () => {
-  for (const [rule, table] of Object.entries(rules)) {
-    test(rule, async () => {
+const tables = Object.entries({
+  bun: rules,
+  "bun:test": { ...testRules, "no-focused-tests, by whose the call is": whose },
+});
+describe.concurrent.each(tables)("%s/", (plugin, rules) => {
+  for (const [title, table] of Object.entries(rules)) {
+    test(title, async () => {
+      const rule = `${plugin}/${title.split(",")[0]}`;
       const cases = table.map(it => (typeof it === "string" ? { code: it } : it));
       const name = (index: number) => (cases[index].file ? `case-${index}/${cases[index].file}` : `case-${index}.tsx`);
       const code = (index: number) => cases[index].code.replace(/[«»]/g, "");
       const objects = cases.map((it, index) => ({
         files: [name(index)],
-        rules: { [`bun/${rule}`]: ["error", ...(it.options ?? [])] },
+        rules: { [rule]: ["error", ...(it.options ?? [])] },
       }));
       using dir = tempDir("bun-rules", {
         "eslint.config.mjs": `export default [
@@ -1649,7 +1897,7 @@ describe.concurrent("bun/", () => {
       });
       const expected = cases.map(it => ({
         code: it.code,
-        rules: it.code.includes("«") ? [`bun/${rule}`] : [],
+        rules: it.code.includes("«") ? [rule] : [],
         ids: it.ids,
         output: it.output,
         suggestions: it.suggestions ?? [],
@@ -1842,5 +2090,679 @@ describe.concurrent("the plugin bun", () => {
       it => it.messages.length > 0,
     );
     expect(found.map(it => basename(it.filePath)).toSorted()).toEqual(["a.js", "http.js", "other-http.js"]);
+  });
+});
+
+/** For each rule of `bun:test`: code that it reports, code that it does not, and its options. */
+const twins: Record<string, [reported: string, clean: string, ...options: unknown[]]> = {
+  "consistent-test-filename": [`test("a", () => {});`, `test("a", () => {});`],
+  "consistent-test-it": [`it("a", () => {});`, `test("a", () => {});`],
+  "expect-expect": [`test("a", () => {});`, `test("a", () => { expect(1).toBe(1); });`],
+  "max-expects": [
+    `test("a", () => { expect(1).toBe(1); expect(2).toBe(2); });`,
+    `test("a", () => { expect(1).toBe(1); });`,
+    { max: 1 },
+  ],
+  "max-nested-describe": [`describe("a", () => { describe("b", () => {}); });`, `describe("a", () => {});`, { max: 1 }],
+  "no-alias-methods": [
+    `test("a", () => { expect(a).toBeCalled(); });`,
+    `test("a", () => { expect(a).toHaveBeenCalled(); });`,
+  ],
+  "no-commented-out-tests": [`// test("a", () => {});`, `// a test`],
+  "no-conditional-expect": [
+    `test("a", () => { if (a) expect(1).toBe(1); });`,
+    `test("a", () => { expect(1).toBe(1); });`,
+  ],
+  "no-conditional-in-test": [`test("a", () => { if (a) b(); });`, `test("a", () => { b(); });`],
+  "no-conditional-tests": [`if (a) { test("a", () => {}); }`, `test("a", () => {});`],
+  "no-disabled-tests": [`test.skip("a", () => {});`, `test("a", () => {});`],
+  "no-done-callback": [`test("a", done => { done(); });`, `test("a", () => {});`],
+  "no-duplicate-hooks": [`beforeEach(() => {}); beforeEach(() => {});`, `beforeEach(() => {});`],
+  "no-export": [`export const a = 1; test("a", () => {});`, `const a = 1; test("a", () => {});`],
+  "no-focused-tests": [`test.only("a", () => {});`, `test("a", () => {});`],
+  "no-hooks": [`beforeEach(() => {});`, `test("a", () => {});`],
+  "no-identical-title": [`test("a", () => {}); test("a", () => {});`, `test("a", () => {}); test("b", () => {});`],
+  "no-interpolation-in-snapshots": [
+    "test('a', () => { expect(a).toMatchInlineSnapshot(`${b}`); });",
+    "test('a', () => { expect(a).toMatchInlineSnapshot(`b`); });",
+  ],
+  "no-large-snapshots": [
+    "test('a', () => { expect(a).toMatchInlineSnapshot(`\n1\n2\n3\n`); });",
+    "test('a', () => { expect(a).toMatchInlineSnapshot(`1`); });",
+    { inlineMaxSize: 2 },
+  ],
+  "no-restricted-jest-methods": [`jest.spyOn(a, "b");`, `jest.fn();`, { spyOn: null }],
+  "no-restricted-matchers": [
+    `test("a", () => { expect(a).toBeFalsy(); });`,
+    `test("a", () => { expect(a).toBe(false); });`,
+    { toBeFalsy: null },
+  ],
+  "no-standalone-expect": [`expect(1).toBe(1);`, `test("a", () => { expect(1).toBe(1); });`],
+  "no-test-prefixes": [`xtest("a", () => {});`, `test.skip("a", () => {});`],
+  "no-test-return-statement": [
+    `test("a", () => { return expect(1).toBe(1); });`,
+    `test("a", () => { expect(1).toBe(1); });`,
+  ],
+  "no-unneeded-async-expect-function": [
+    `test("a", async () => { await expect(async () => { await b(); }).rejects.toThrow("c"); });`,
+    `test("a", async () => { await expect(b()).rejects.toThrow("c"); });`,
+  ],
+  "padding-around-after-all-blocks": [`const a = 1;\nafterAll(() => {});`, `const a = 1;\n\nafterAll(() => {});`],
+  "padding-around-test-blocks": [`const a = 1;\ntest("a", () => {});`, `const a = 1;\n\ntest("a", () => {});`],
+  "prefer-called-once": [
+    `test("a", () => { expect(a).toHaveBeenCalledTimes(1); });`,
+    `test("a", () => { expect(a).toHaveBeenCalledOnce(); });`,
+  ],
+  "prefer-called-times": [
+    `test("a", () => { expect(a).toHaveBeenCalledOnce(); });`,
+    `test("a", () => { expect(a).toHaveBeenCalledTimes(1); });`,
+  ],
+  "prefer-called-with": [
+    `test("a", () => { expect(a).toHaveBeenCalled(); });`,
+    `test("a", () => { expect(a).toHaveBeenCalledWith(1); });`,
+  ],
+  "prefer-comparison-matcher": [
+    `test("a", () => { expect(a > 1).toBe(true); });`,
+    `test("a", () => { expect(a).toBeGreaterThan(1); });`,
+  ],
+  "prefer-describe-function-title": [
+    `import { add } from "./add";\ndescribe("add", () => {});`,
+    `import { add } from "./add";\ndescribe(add, () => {});`,
+  ],
+  "prefer-each": [`for (const a of b) { test("a", () => {}); }`, `test.each(b)("a", () => {});`],
+  "prefer-ending-with-an-expect": [
+    `test("a", () => { expect(1).toBe(1); b(); });`,
+    `test("a", () => { b(); expect(1).toBe(1); });`,
+  ],
+  "prefer-equality-matcher": [
+    `test("a", () => { expect(a === 1).toBe(true); });`,
+    `test("a", () => { expect(a).toBe(1); });`,
+  ],
+  "prefer-expect-assertions": [
+    `test("a", () => { expect(1).toBe(1); });`,
+    `test("a", () => { expect.hasAssertions(); expect(1).toBe(1); });`,
+  ],
+  "prefer-expect-resolves": [
+    `test("a", async () => { expect(await b).toBe(1); });`,
+    `test("a", async () => { await expect(b).resolves.toBe(1); });`,
+  ],
+  "prefer-expect-type-of": [
+    `test("a", () => { expect(typeof a).toBe("string"); });`,
+    `test("a", () => { expect(a).toBeTypeOf("string"); });`,
+  ],
+  "prefer-hooks-in-order": [`afterAll(() => {});\nbeforeAll(() => {});`, `beforeAll(() => {});\nafterAll(() => {});`],
+  "prefer-hooks-on-top": [`test("a", () => {});\nbeforeAll(() => {});`, `beforeAll(() => {});\ntest("a", () => {});`],
+  "prefer-lowercase-title": [`test("A", () => {});`, `test("a", () => {});`],
+  "prefer-mock-promise-shorthand": [`a.mockImplementation(() => Promise.resolve(1));`, `a.mockResolvedValue(1);`],
+  "prefer-mock-return-shorthand": [`a.mockImplementation(() => 1);`, `a.mockReturnValue(1);`],
+  "prefer-snapshot-hint": [
+    `test("a", () => { expect(1).toMatchSnapshot(); expect(2).toMatchSnapshot(); });`,
+    `test("a", () => { expect(1).toMatchSnapshot("b"); expect(2).toMatchSnapshot("c"); });`,
+  ],
+  "prefer-spy-on": [`a.b = jest.fn();`, `jest.spyOn(a, "b");`],
+  "prefer-strict-boolean-matchers": [
+    `test("a", () => { expect(a).toBeTruthy(); });`,
+    `test("a", () => { expect(a).toBe(true); });`,
+  ],
+  "prefer-strict-equal": [
+    `test("a", () => { expect(a).toEqual(1); });`,
+    `test("a", () => { expect(a).toStrictEqual(1); });`,
+  ],
+  "prefer-to-be": [`test("a", () => { expect(a).toEqual(1); });`, `test("a", () => { expect(a).toBe(1); });`],
+  "prefer-to-be-falsy": [
+    `test("a", () => { expect(a).toBe(false); });`,
+    `test("a", () => { expect(a).toBeFalsy(); });`,
+  ],
+  "prefer-to-be-truthy": [
+    `test("a", () => { expect(a).toBe(true); });`,
+    `test("a", () => { expect(a).toBeTruthy(); });`,
+  ],
+  "prefer-to-contain": [
+    `test("a", () => { expect(a.includes(1)).toBe(true); });`,
+    `test("a", () => { expect(a).toContain(1); });`,
+  ],
+  "prefer-to-have-been-called": [
+    `test("a", () => { expect(a).toHaveBeenCalledTimes(0); });`,
+    `test("a", () => { expect(a).not.toHaveBeenCalled(); });`,
+  ],
+  "prefer-to-have-been-called-times": [
+    `test("a", () => { expect(a.mock.calls).toHaveLength(1); });`,
+    `test("a", () => { expect(a).toHaveBeenCalledTimes(1); });`,
+  ],
+  "prefer-to-have-length": [
+    `test("a", () => { expect(a.length).toBe(1); });`,
+    `test("a", () => { expect(a).toHaveLength(1); });`,
+  ],
+  "prefer-todo": [`test("a");`, `test.todo("a");`],
+  "require-hook": [`setup();`, `beforeAll(() => { setup(); });`],
+  "require-mock-type-parameters": [`const a = vi.fn();`, `const a = vi.fn<() => void>();`],
+  "require-test-timeout": [`test("a", () => {});`, `test("a", () => {}, 1000);`],
+  "require-to-throw-message": [
+    `test("a", () => { expect(a).toThrow(); });`,
+    `test("a", () => { expect(a).toThrow("b"); });`,
+  ],
+  "require-top-level-describe": [`test("a", () => {});`, `describe("a", () => { test("b", () => {}); });`],
+  "valid-describe-callback": [`describe("a", b => {});`, `describe("a", () => {});`],
+  "valid-expect": [`test("a", () => { expect(1); });`, `test("a", () => { expect(1).toBe(1); });`],
+  "valid-expect-in-promise": [
+    `test("a", () => { b.then(c => { expect(c).toBe(1); }); });`,
+    `test("a", async () => { await b.then(c => { expect(c).toBe(1); }); });`,
+  ],
+  "valid-title": [`test("", () => {});`, `test("a", () => {});`],
+  "warn-todo": [`test.todo("a");`, `test("a", () => {});`],
+};
+
+/** The rules of oxlint that do not ask what `test` refers to, or that are not about calls: they report in every file. */
+const goByWhatIsWritten = [
+  "consistent-test-filename",
+  "no-commented-out-tests",
+  "no-conditional-in-test",
+  "no-test-return-statement",
+  "prefer-each",
+  "prefer-hooks-in-order",
+  "prefer-mock-promise-shorthand",
+  "prefer-mock-return-shorthand",
+  "prefer-spy-on",
+  "require-hook",
+];
+
+describe.concurrent("bun:test/, jest/ and vitest/ are one implementation", () => {
+  const names =
+    "afterAll, afterEach, beforeAll, beforeEach, describe, expect, expectTypeOf, it, jest, test, vi, xdescribe, xit, xtest";
+  const sources = ["bun:test", "vitest", "@jest/globals", ""];
+
+  test("each reports what is imported from where it looks", async () => {
+    const listed = await lint({ ".oxlintrc.json": "{}" }, ["--rules", "-f", "json"]);
+    const all = (JSON.parse(listed.stdout) as { scope: string; value: string }[]).map(it => `${it.scope}/${it.value}`);
+    expect(all.filter(it => it.startsWith("bun:test/"))).toEqual(Object.keys(twins).map(it => `bun:test/${it}`));
+    /** The rules of the other two plugins that are the same rule. */
+    const twinsOf = (rule: string) =>
+      [`jest/${rule}`, `vitest/${rule.replace("-jest-", "-vi-")}`].filter(it => all.includes(it));
+
+    const files: Record<string, string> = {};
+    const overrides = Object.entries(twins).map(([rule, [reported, clean, ...options]]) => {
+      for (const [index, source] of sources.entries()) {
+        const head = source && `import { ${names} } from "${source}";\n`;
+        // `consistent-test-filename` wants `.test.`.
+        files[`${rule}.${index}.reported.${rule === "consistent-test-filename" ? "spec" : "test"}.ts`] =
+          head + reported;
+        files[`${rule}.${index}.clean.test.ts`] = head + clean;
+      }
+      const ids = [`bun:test/${rule}`, ...twinsOf(rule)];
+      return { files: [`${rule}.*`], rules: Object.fromEntries(ids.map(id => [id, ["error", ...options]])) };
+    });
+    const config = { plugins: ["jest", "vitest"], categories: { correctness: "off" }, overrides };
+    const { stdout } = await lint({ ".oxlintrc.json": JSON.stringify(config), ...files }, ["-f", "json", "."]);
+    const diagnostics = JSON.parse(stdout).diagnostics as { filename: string; code: string }[];
+    const found = (prefix: string) => [
+      ...new Set(
+        diagnostics
+          .filter(it => it.filename.startsWith(prefix))
+          .map(it => it.code.replace(/\((.*)\)/, "/$1"))
+          .toSorted(),
+      ),
+    ];
+    const table = (cell: (rule: string, index: number, kind: "reported" | "clean") => string[]) =>
+      Object.fromEntries(
+        Object.keys(twins).map(rule => [
+          rule,
+          sources.map((_, index) => [cell(rule, index, "reported"), cell(rule, index, "clean")]),
+        ]),
+      );
+    expect(table((rule, index, kind) => found(`${rule}.${index}.${kind}.`))).toEqual(
+      table((rule, index, kind) =>
+        kind === "clean"
+          ? []
+          : index === 0
+            ? [`bun:test/${rule}`, ...(goByWhatIsWritten.includes(rule) ? twinsOf(rule) : [])]
+            : // oxlint has one list of what is imported from either, and of the globals, for both plugins.
+              twinsOf(rule),
+      ),
+    );
+  });
+});
+
+describe.concurrent("the plugin bun:test", () => {
+  const name = "bun:test/no-focused-tests";
+  const flat = (rules: unknown) => `export default [{ rules: ${JSON.stringify(rules)} }];\n`;
+  const legacy = (rules: unknown) =>
+    JSON.stringify({ root: true, parserOptions: { ecmaVersion: 2022, sourceType: "module" }, rules });
+  const oxlintrc = (rules: unknown) => JSON.stringify({ rules });
+  const only = `import { test } from "bun:test";\ntest.only("a", () => {});\n`;
+  /** The lines of `unix` that are about a rule of the plugin: the line in the file, and what is in the brackets. */
+  const unix = (stdout: string) =>
+    [...stdout.matchAll(/^[^:\n]*:(\d+):\d+: .* \[(.*bun:test.*)\]$/gm)].map(it => `${it[1]} ${it[2]}`);
+
+  test("without a configuration file some rules are on", async () => {
+    const code = `import { describe, expect, test } from "bun:test";
+test.only("a", () => {});
+test.skip("b", () => {});
+export const c = 1;
+describe("d", e => {});
+test("f", () => {
+  expect(1);
+  g.then(h => {
+    expect(h).toBe(1);
+  });
+});
+`;
+    // What oxlint has in `correctness` too, and what reports too much that is usual with Bun.
+    const quiet = `import { expect, test } from "bun:test";
+test("a", () => {});
+test("test b", () => {
+  if (c) expect(() => {}).toThrow();
+  expect(1).toMatchSnapshot();
+  expect(2).toMatchSnapshot();
+});
+expect(1).toBe(1);
+`;
+    const files = { "a.test.js": code, "quiet.test.js": quiet };
+    const [plain, withBunfig] = await Promise.all([
+      lint(files, ["-f", "json", "."]),
+      lint({ ...files, "bunfig.toml": "[lint]\nmaxWarnings = 0\n" }, ["-f", "json", "."]),
+    ]);
+    const own = (all: string[]) => all.filter(it => it.includes(" bun:test/"));
+    for (const { stdout } of [plain, withBunfig]) {
+      expect(own(reported(stdout, "a.test.js"))).toEqual([
+        "2 bun:test/no-focused-tests",
+        "3 bun:test/no-disabled-tests",
+        "4 bun:test/no-export",
+        "5 bun:test/valid-describe-callback",
+        "7 bun:test/valid-expect",
+        "8 bun:test/valid-expect-in-promise",
+      ]);
+      expect(own(reported(stdout, "quiet.test.js"))).toEqual([]);
+      // Errors, as what else is on.
+      const messages = (JSON.parse(stdout) as { messages: { severity: number }[] }[]).flatMap(it => it.messages);
+      expect([...new Set(messages.map(it => it.severity))]).toEqual([2]);
+    }
+  });
+
+  test("a configuration file replaces the defaults", async () => {
+    const found = await Promise.all([
+      lint({ "eslint.config.mjs": flat({}), "a.test.js": only }, ["-f", "unix", "a.test.js"]),
+      lint({ ".eslintrc.json": legacy({}), "a.test.js": only }, ["-f", "unix", "a.test.js"]),
+      lint({ ".oxlintrc.json": "{}", "a.test.js": only }, ["-f", "unix", "a.test.js"]),
+      // The defaults of oxlint, for a project that depends on it.
+      lint({ "package.json": `{ "devDependencies": { "oxlint": "1.87.0" } }`, "a.test.js": only }, ["-f", "unix", "."]),
+      lint({ "a.test.js": only }, ["--no-config-lookup", "-f", "unix", "a.test.js"]),
+      lint({ "a.test.js": only }, ["-f", "unix", "a.test.js"]),
+    ]);
+    expect(found.map(it => unix(it.stdout))).toEqual([[], [], [], [], [], ["2 Error/bun:test/no-focused-tests"]]);
+    expect(found.map(it => it.exitCode)).toEqual([0, 0, 0, 0, 0, 1]);
+  });
+
+  test("no configuration file has to name it", async () => {
+    const found = await Promise.all([
+      lint({ "eslint.config.mjs": flat({ [name]: "error" }), "a.test.js": only }, ["-f", "unix", "a.test.js"]),
+      lint({ ".eslintrc.json": legacy({ [name]: "warn" }), "a.test.js": only }, ["-f", "unix", "a.test.js"]),
+      lint({ ".oxlintrc.json": oxlintrc({ [name]: "error" }), "a.test.js": only }, ["-f", "unix", "a.test.js"]),
+      lint({ ".oxlintrc.json": JSON.stringify({ plugins: [], rules: { [name]: "warn" } }), "a.test.js": only }, [
+        "-f",
+        "unix",
+        "a.test.js",
+      ]),
+      lint(
+        {
+          ".oxlintrc.json": JSON.stringify({ overrides: [{ files: ["*.test.js"], rules: { [name]: "error" } }] }),
+          "a.test.js": only,
+          "b.js": only,
+        },
+        ["-f", "unix", "."],
+      ),
+    ]);
+    expect(found.map(it => unix(it.stdout))).toEqual([
+      ["2 Error/bun:test/no-focused-tests"],
+      ["2 Warning/bun:test/no-focused-tests"],
+      ["2 Error/bun:test(no-focused-tests)"],
+      ["2 Warning/bun:test(no-focused-tests)"],
+      ["2 Error/bun:test(no-focused-tests)"],
+    ]);
+  });
+
+  test("[lint.rules] of bunfig.toml and the command line", async () => {
+    const skipped = `${only}test.skip("b", () => {});\n`;
+    const bunfig = `[lint.rules]\n"${name}" = "off"\n"bun:test/no-disabled-tests" = "warn"\n`;
+    const rule = (text: string) => lint({ "a.test.js": skipped }, ["--rule", text, "-f", "unix", "a.test.js"]);
+    const filter = (...args: string[]) =>
+      lint({ ".oxlintrc.json": "{}", "a.test.js": only }, [...args, "-f", "unix", "a.test.js"]);
+    const found = await Promise.all([
+      lint({ "bunfig.toml": bunfig, "a.test.js": skipped }, ["-f", "unix", "a.test.js"]),
+      rule(`"${name}": off`),
+      // ESLint takes the first colon for the end of the name.
+      rule(`${name}: off`),
+      rule(`${name}:0,bun:test/no-disabled-tests:[1]`),
+      rule(`{"${name}": "off"}`),
+      filter("-D", name),
+      filter("-W", name),
+      filter(`--deny=${name}`),
+      filter("-D", name, "-A", name),
+      // Without the plugin a name is that of a rule of oxlint.
+      filter("-D", "no-focused-tests"),
+      filter("-D", "all"),
+    ]);
+    expect(found.map(it => unix(it.stdout))).toEqual([
+      ["3 Warning/bun:test/no-disabled-tests"],
+      ["3 Error/bun:test/no-disabled-tests"],
+      ["3 Error/bun:test/no-disabled-tests"],
+      ["3 Warning/bun:test/no-disabled-tests"],
+      ["3 Error/bun:test/no-disabled-tests"],
+      ["2 Error/bun:test(no-focused-tests)"],
+      ["2 Warning/bun:test(no-focused-tests)"],
+      ["2 Error/bun:test(no-focused-tests)"],
+      [],
+      [],
+      [],
+    ]);
+  });
+
+  test("neither a category nor a plugin of oxlint turns a rule on, and it is no plugin of an .oxlintrc.json", async () => {
+    const all = ["correctness", "suspicious", "pedantic", "perf", "style", "restriction", "nursery"];
+    const categories = Object.fromEntries(all.map(it => [it, "error"]));
+    const plugins = ["jest", "vitest"];
+    const [everything, andTheRule, named] = await Promise.all([
+      lint({ ".oxlintrc.json": JSON.stringify({ plugins, categories }), "a.test.js": only }, [
+        "-f",
+        "unix",
+        "a.test.js",
+      ]),
+      lint(
+        { ".oxlintrc.json": JSON.stringify({ plugins, categories, rules: { [name]: "warn" } }), "a.test.js": only },
+        ["-f", "unix", "a.test.js"],
+      ),
+      lint({ ".oxlintrc.json": JSON.stringify({ plugins: ["bun:test"] }), "a.test.js": only }, ["a.test.js"]),
+    ]);
+    expect(unix(everything.stdout)).toEqual([]);
+    expect(unix(andTheRule.stdout)).toEqual(["2 Warning/bun:test(no-focused-tests)"]);
+    expect(named.stdout).toContain("Unknown plugin: 'bun:test'.");
+    expect(named.exitCode).toBe(1);
+  });
+
+  test("comments turn a rule off", async () => {
+    const code = (prefix: string) => `import { test } from "bun:test";
+// ${prefix}-disable-next-line ${name}
+test.only("a", () => {});
+// ${prefix}-disable-next-line ${name} -- why
+test.only("a", () => {});
+test.only("a", () => {}); // ${prefix}-disable-line ${name}
+test.only("a", () => {}); /* ${prefix}-disable-line no-var, ${name} -- why */
+/* ${prefix}-disable ${name}, no-var */
+test.only("a", () => {});
+/* ${prefix}-enable ${name} */
+test.only("a", () => {});
+// ${prefix}-disable-next-line bun:test/no-disabled-tests
+test.only("a", () => {});
+`;
+    const found = await Promise.all([
+      lint({ "a.test.js": code("eslint") }, ["-f", "unix", "a.test.js"]),
+      lint({ "eslint.config.mjs": flat({ [name]: "error" }), "a.test.js": code("eslint") }, [
+        "-f",
+        "unix",
+        "a.test.js",
+      ]),
+      lint({ ".eslintrc.json": legacy({ [name]: "error" }), "a.test.js": code("eslint") }, ["-f", "unix", "a.test.js"]),
+      lint({ ".oxlintrc.json": oxlintrc({ [name]: "error" }), "a.test.js": code("eslint") }, [
+        "-f",
+        "unix",
+        "a.test.js",
+      ]),
+      lint({ ".oxlintrc.json": oxlintrc({ [name]: "error" }), "a.test.js": code("oxlint") }, [
+        "-f",
+        "unix",
+        "a.test.js",
+      ]),
+    ]);
+    expect(found.map(it => unix(it.stdout).map(it => it.split(" ")[0]))).toEqual(Array(5).fill(["11", "13"]));
+  });
+
+  test("comments turn a rule on", async () => {
+    const files = Object.fromEntries(
+      [
+        `"${name}": "error"`,
+        // ESLint cannot read these: for it the name ends at the first colon.
+        `${name}: "error"`,
+        `${name}:2`,
+        `no-var: 2, ${name}: [2]`,
+        `${name}: 2 -- why`,
+        // Without commas it is read as JSON.
+        `"${name}": 2 "no-var": 2`,
+        `${name}: 2 no-var: 2`,
+      ].map((text, index) => [`${index}.test.js`, `/* eslint ${text} */\n${only}`]),
+    );
+    const { stdout } = await lint({ "eslint.config.mjs": flat({}), ...files }, ["-f", "json", "."]);
+    expect(Object.keys(files).map(file => reported(stdout, file))).toEqual(Array(7).fill([`3 ${name}`]));
+  });
+
+  test("a comment that disables nothing is reported, and --fix removes the name", async () => {
+    const code = `import { test } from "bun:test";
+// eslint-disable-next-line ${name}, bun:test/no-disabled-tests -- why
+test.only("a", () => {});
+/* eslint-disable no-var, ${name}, no-undef */
+var a = b;
+`;
+    const files = { "eslint.config.mjs": flat({ [name]: 2, "no-var": 2, "no-undef": 2 }), "a.test.js": code };
+    using dir = tempDir("bun-rules", files);
+    const run = async (...args: string[]) => {
+      await using proc = spawn({
+        cmd: [bunExe(), "lint", "--report-unused-disable-directives", ...args, "a.test.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      return await proc.stdout.text();
+    };
+    expect(JSON.parse(await run("-f", "json"))[0].messages.map((it: { message: string }) => it.message)).toEqual([
+      "Unused eslint-disable directive (no problems were reported from 'bun:test/no-disabled-tests').",
+      `Unused eslint-disable directive (no problems were reported from '${name}').`,
+    ]);
+    await run("--fix");
+    expect(await Bun.file(`${dir}/a.test.js`).text()).toBe(
+      code.replace(", bun:test/no-disabled-tests", "").replace(`, ${name}, no-undef`, ", no-undef"),
+    );
+  });
+
+  test("suppressions", async () => {
+    for (const [config, text, file] of [
+      ["eslint.config.mjs", flat({ [name]: "error" }), "eslint-suppressions.json"],
+      [".oxlintrc.json", oxlintrc({ [name]: "error" }), "oxlint-suppressions.json"],
+    ]) {
+      using dir = tempDir("bun-rules", { [config]: text, "a.test.js": only });
+      const run = async (...args: string[]) => {
+        await using proc = spawn({
+          cmd: [bunExe(), "lint", ...args, "a.test.js"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        return await proc.exited;
+      };
+      expect(await run()).toBe(1);
+      expect(await run("--suppress-rule", name)).toBe(0);
+      expect(await Bun.file(`${dir}/${file}`).json()).toEqual({ "a.test.js": { [name]: { count: 1 } } });
+      expect(await run()).toBe(0);
+    }
+  });
+
+  test("every format", async () => {
+    const formats = ["stylish", "unix", "json", "github", "checkstyle", "junit", "gitlab", "sarif", "pretty", "agent"];
+    const print = (files: Record<string, string>) =>
+      Promise.all(formats.map(async format => (await lint(files, ["-f", format, "a.test.js"])).stdout));
+    const [plain, oxlint] = await Promise.all([
+      print({ "a.test.js": only }),
+      print({ ".oxlintrc.json": oxlintrc({ [name]: "error" }), "a.test.js": only }),
+    ]);
+    /** How the rule is written. */
+    const written = (text: string) => [...new Set(text.match(/bun(:|%3A)test[/(]no-focused-tests\)?/g))];
+    expect(Object.fromEntries(formats.map((format, index) => [format, written(plain[index])]))).toEqual({
+      stylish: ["bun:test/no-focused-tests"],
+      unix: ["bun:test/no-focused-tests"],
+      json: ["bun:test/no-focused-tests"],
+      // A colon ends the name of a property there.
+      github: ["bun%3Atest/no-focused-tests"],
+      checkstyle: ["bun:test(no-focused-tests)"],
+      junit: ["bun:test(no-focused-tests)"],
+      gitlab: ["bun:test(no-focused-tests)"],
+      sarif: ["bun:test(no-focused-tests)"],
+      pretty: ["bun:test/no-focused-tests"],
+      agent: ["bun:test/no-focused-tests"],
+    });
+    expect(Object.fromEntries(formats.map((format, index) => [format, written(oxlint[index])]))).toEqual({
+      stylish: ["bun:test(no-focused-tests)"],
+      unix: ["bun:test(no-focused-tests)"],
+      json: ["bun:test(no-focused-tests)"],
+      github: ["bun%3Atest(no-focused-tests)"],
+      checkstyle: ["bun:test(no-focused-tests)"],
+      junit: ["bun:test(no-focused-tests)"],
+      gitlab: ["bun:test(no-focused-tests)"],
+      sarif: ["bun:test(no-focused-tests)"],
+      pretty: ["bun:test/no-focused-tests"],
+      agent: ["bun:test(no-focused-tests)"],
+    });
+    // There is no page about it at oxc.rs.
+    expect(Object.keys(JSON.parse(oxlint[formats.indexOf("json")]).diagnostics[0])).not.toContain("url");
+    // What to do about it is said whatever the configuration.
+    for (const text of [plain, oxlint].map(it => it[formats.indexOf("pretty")])) {
+      expect(text).toContain("Remove focus from test.");
+    }
+  });
+
+  test("--print-config has the rules and no plugin", async () => {
+    const [plain, eslint, oxlint] = await Promise.all([
+      lint({ "a.test.js": only }, ["--print-config", "a.test.js"]),
+      lint({ "eslint.config.mjs": flat({ [name]: "warn" }), "a.test.js": only }, ["--print-config", "a.test.js"]),
+      lint({ ".oxlintrc.json": JSON.stringify({ plugins: [], rules: { [name]: "error" } }), "a.test.js": only }, [
+        "--print-config",
+      ]),
+    ]);
+    expect(Object.keys(JSON.parse(plain.stdout).rules).filter(it => it.startsWith("bun:test/"))).toEqual([
+      "bun:test/no-disabled-tests",
+      "bun:test/no-export",
+      "bun:test/no-focused-tests",
+      "bun:test/valid-describe-callback",
+      "bun:test/valid-expect",
+      "bun:test/valid-expect-in-promise",
+    ]);
+    expect(JSON.parse(eslint.stdout).rules).toEqual({ [name]: [1] });
+    expect(JSON.parse(eslint.stdout).plugins).toEqual(["@"]);
+    expect(JSON.parse(oxlint.stdout).rules[name]).toBe("deny");
+    expect(JSON.parse(oxlint.stdout).plugins).toEqual([]);
+  });
+
+  test("--rules lists them, without a category and without a page", async () => {
+    const [json, lines] = await Promise.all([
+      lint({ ".oxlintrc.json": "{}" }, ["--rules", "-f", "json"]),
+      lint({}, ["--rules"]),
+    ]);
+    const listed = (JSON.parse(json.stdout) as Record<string, unknown>[]).filter(it => it.scope === "bun:test");
+    expect(listed.map(it => it.value)).toEqual(Object.keys(twins));
+    expect([...new Set(listed.map(it => JSON.stringify([it.category, it.default, it.docs_url])))]).toEqual([
+      "[null,false,null]",
+    ]);
+    expect(lines.stdout.split("\n").filter(it => it.startsWith("bun:test/"))).toEqual(
+      Object.keys(twins).map(it => `bun:test/${it}`),
+    );
+  });
+
+  test("a plugin of the project that is called bun:test hides it", async () => {
+    const config = `
+      const rule = { create: context => ({ Program: node => context.report({ node, message: "theirs" }) }) };
+      export default [{ plugins: { "bun:test": { rules: { "no-focused-tests": rule } } }, rules: { "${name}": "error" } }];`;
+    const [theirs, ours] = await Promise.all([
+      lint({ "eslint.config.mjs": config, "a.test.js": only }, ["-f", "json", "a.test.js"]),
+      lint({ "eslint.config.mjs": flat({ [name]: "error" }), "a.test.js": only }, ["-f", "json", "a.test.js"]),
+    ]);
+    const messages = (stdout: string) => JSON.parse(stdout)[0].messages.map((it: { message: string }) => it.message);
+    expect(messages(theirs.stdout)).toEqual(["theirs"]);
+    expect(messages(ours.stdout)).toEqual(["Unexpected focused test."]);
+  });
+
+  test("options that a rule does not have are refused, and a rule that does not exist", async () => {
+    const check = (rules: unknown) => lint({ "eslint.config.mjs": flat(rules), "a.test.js": only }, ["a.test.js"]);
+    const refused = await Promise.all(
+      [
+        { "bun:test/max-expects": ["error", { nope: 1 }] },
+        { "bun:test/max-expects": ["error", { max: "1" }] },
+        { "bun:test/prefer-snapshot-hint": ["error", "sometimes"] },
+        { "bun:test/valid-title": ["error", { mustMatch: 1 }] },
+        // It is about `.snap` files, which import nothing.
+        { "bun:test/no-large-snapshots": ["error", { allowedSnapshots: {} }] },
+        // Bun has neither `vi.importActual` nor `vi.importMock`.
+        { "bun:test/require-mock-type-parameters": ["error", { checkImportFunctions: true }] },
+        { [name]: ["error", {}] },
+      ].map(async rules => [Object.keys(rules)[0], await check(rules)] as const),
+    );
+    for (const [id, { stderr, exitCode }] of refused) {
+      expect(stderr).toContain(`Key "rules": Key "${id}":`);
+      expect(exitCode).toBe(2);
+    }
+    const taken = await check({
+      "bun:test/max-expects": ["error", { max: 1 }],
+      "bun:test/prefer-snapshot-hint": ["error", "always"],
+      "bun:test/valid-title": [
+        "error",
+        { mustMatch: { test: "^a" }, mustNotMatch: ["b$", "why"], disallowedWords: ["c"] },
+      ],
+      "bun:test/no-restricted-matchers": ["error", { toBeFalsy: null, "not.toBe": "why" }],
+    });
+    expect(taken.stderr).not.toContain("Key");
+    expect(taken.exitCode).toBe(0);
+    const missing = await check({ "bun:test/no-mocks-import": "error" });
+    expect(missing.stderr).toContain(`1 rule of the plugin "bun:test" did not run: bun:test/no-mocks-import`);
+    expect(missing.exitCode).toBe(2);
+  });
+
+  test("what is said is not about Jest or Vitest", async () => {
+    const code = `import { expect, jest, test } from "bun:test";
+test("a", () => {
+  return expect(1).toBe(1);
+});
+test("b", () => {
+  expect(1).toMatchInlineSnapshot(\`
+    1
+    2
+  \`);
+}, 1000);
+test("c", () => {
+  expect(typeof jest.fn()).toBe("function");
+}, 1000);
+`;
+    const rules = {
+      "bun:test/no-test-return-statement": "error",
+      "bun:test/no-large-snapshots": ["error", { inlineMaxSize: 1 }],
+      "bun:test/require-test-timeout": "error",
+      "bun:test/prefer-expect-type-of": "error",
+      "bun:test/require-mock-type-parameters": "error",
+    };
+    const { stdout } = await lint({ ".oxlintrc.json": oxlintrc(rules), "a.test.ts": code }, [
+      "-f",
+      "json",
+      "a.test.ts",
+    ]);
+    const said = (JSON.parse(stdout).diagnostics as Record<string, string>[]).map(it => [it.message, it.help, it.note]);
+    expect(said).toEqual([
+      [
+        "Test is missing a timeout.",
+        "Add a numeric third argument, a `{ timeout }` option object, or call `setDefaultTimeout(..)` before this test.",
+        undefined,
+      ],
+      [
+        "Tests should not return a value",
+        "Use `await` for async assertions or remove the return statement.",
+        undefined,
+      ],
+      ["Snapshot is too long.", "Expected snapshot to be no longer than 1 lines but it was 3 lines long", undefined],
+      [
+        "Type assertions should be done using `toBeTypeOf()`.",
+        'Substitute the assertion with `expect(jest.fn()).toBeTypeOf("function")`.',
+        undefined,
+      ],
+      [
+        "Missing type parameters on mock function call",
+        "Add a type parameter to the mock function, e.g. `jest.fn<() => void>()`.",
+        undefined,
+      ],
+    ]);
   });
 });

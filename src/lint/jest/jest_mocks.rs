@@ -501,9 +501,11 @@ pub(crate) mod prefer_spy_on {
         left_assign: Expr<'a>,
         ctx: &Ctx<'a, '_>,
     ) {
-        let Some(ParsedJestFnCall::GeneralJest(jest_fn_call)) =
-            parse_jest_fn_call_in(ctx.file, call_expr, PossibleJestNode::new(assign_expr))
-        else {
+        let Some(ParsedJestFnCall::GeneralJest(jest_fn_call)) = parse_jest_fn_call_in(
+            ctx.file,
+            call_expr,
+            PossibleJestNode::new(assign_expr, ctx.runner),
+        ) else {
             return;
         };
         let Some(first_fn_member) = jest_fn_call

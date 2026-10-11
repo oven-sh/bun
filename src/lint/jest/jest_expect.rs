@@ -3,10 +3,10 @@
 
 use crate::jest::{
     AstKind, Ctx, EnclosingFunctions, ExpectError, JestFnKind, JestGeneralFnKind,
-    KnownMemberExpressionParentKind, PossibleJestNode, Scopes, convert_pattern, enclosing_function,
-    get_first_node_name, get_node_name, get_node_name_vec, is_type_of_jest_fn_call, is_vitest,
-    is_vitest_import_source, iter_possible_jest_call_node, parse_expect_jest_fn_call,
-    parse_general_jest_fn_call, possible_jest_node_of,
+    KnownMemberExpressionParentKind, PossibleJestNode, Runner, Scopes, convert_pattern,
+    enclosing_function, get_first_node_name, get_node_name, get_node_name_vec,
+    is_type_of_jest_fn_call, is_vitest, is_vitest_import_source, iter_possible_jest_call_node,
+    parse_expect_jest_fn_call, parse_general_jest_fn_call, possible_jest_node_of,
 };
 use bun_core::strings;
 use bun_lint::ast::walk::{Visitor, walk_node};
@@ -57,7 +57,7 @@ pub(crate) mod valid_expect {
         async_matchers: Vec<String>,
         min_args: u32,
         max_args: u32,
-        /// A second argument that is a string or a template is a message.
+        /// A second argument that is a string or a template is a message. With Bun whatever it is.
         allow_string_message_arg: bool,
         always_await: bool,
     }
@@ -96,7 +96,7 @@ pub(crate) mod valid_expect {
         pub(crate) fn run_once<'a>(&self, ctx: &Ctx<'a, '_>) {
             // The functions that a fix has made `async`.
             let mut fixed_function_expression = FxHashSet::default();
-            for jest_node in iter_possible_jest_call_node(ctx.file) {
+            for jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner) {
                 self.run(jest_node, &mut fixed_function_expression, ctx);
             }
         }
@@ -139,7 +139,7 @@ pub(crate) mod valid_expect {
             };
             let allow_message_arg = self.allow_string_message_arg
                 && argument_count == 2
-                && arguments.get(1).is_some_and(is_message);
+                && (ctx.runner == Runner::Bun || arguments.get(1).is_some_and(is_message));
             let plural = |count: u32| if count > 1 { "s" } else { "" };
             if argument_count > self.max_args && !allow_message_arg {
                 ctx.report(expect, TOO_MANY_ARGUMENTS)
@@ -147,7 +147,11 @@ pub(crate) mod valid_expect {
                     .data("s", plural(self.max_args));
                 return;
             }
-            if argument_count < self.min_args {
+            // `expect().pass()`, `expect().fail()`
+            let needs_no_argument = ctx.runner == Runner::Bun
+                && (jest_fn_call.matcher())
+                    .is_some_and(|it| it.is_name_equal("pass") || it.is_name_equal("fail"));
+            if argument_count < self.min_args && !needs_no_argument {
                 ctx.report(expect, NOT_ENOUGH_ARGUMENTS)
                     .data("count", self.min_args)
                     .data("s", plural(self.min_args));
@@ -691,13 +695,14 @@ pub(crate) mod expect_expect {
     }
 
     pub(crate) struct ExpectExpectConfig {
+        /// For Jest, or for Bun.
         assert_function_matchers_jest: Vec<AssertFunctionMatcher>,
         assert_function_matchers_vitest: Vec<AssertFunctionMatcher>,
         additional_test_block_functions: Vec<String>,
     }
 
     impl ExpectExpectConfig {
-        pub(crate) fn new(options: &Options) -> Self {
+        pub(crate) fn new(options: &Options, runner: Runner) -> Self {
             let config = options.object(0);
             let configured = config
                 .get("assertFunctionNames")
@@ -712,7 +717,10 @@ pub(crate) mod expect_expect {
                     .collect()
             };
             ExpectExpectConfig {
-                assert_function_matchers_jest: compile(&["expect"]),
+                assert_function_matchers_jest: compile(match runner {
+                    Runner::Bun => &["expect", "expectTypeOf"],
+                    Runner::Jest | Runner::Vitest => &["expect"],
+                }),
                 assert_function_matchers_vitest: compile(&[
                     "expect",
                     "expectTypeOf",
@@ -727,14 +735,15 @@ pub(crate) mod expect_expect {
             }
         }
 
-        /// `is_for_vitest`: the rule is that of `vitest`. The rule of `jest` goes by what the file imports.
-        pub(crate) fn run_once<'a>(&self, ctx: &Ctx<'a, '_>, is_for_vitest: bool) {
-            let use_vitest_assertions = is_for_vitest || is_vitest(ctx.file);
+        /// The rule of `jest` goes by what the file imports.
+        pub(crate) fn run_once<'a>(&self, ctx: &Ctx<'a, '_>) {
+            let use_vitest_assertions =
+                ctx.runner == Runner::Vitest || is_vitest(ctx.file, ctx.runner);
             let mut visitor = AssertionVisitor::new(match use_vitest_assertions {
                 true => &self.assert_function_matchers_vitest,
                 false => &self.assert_function_matchers_jest,
             });
-            for possible_jest_node in iter_possible_jest_call_node(ctx.file) {
+            for possible_jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner) {
                 self.run(possible_jest_node, ctx, use_vitest_assertions, &mut visitor);
             }
         }
@@ -763,8 +772,10 @@ pub(crate) mod expect_expect {
                 return;
             }
             if let Some((_, property_name)) = callee_member(call_expr)
-                && property_name
-                    .is_none_or(|it| it.is("todo") || it.is("skip") && use_vitest_assertions)
+                && property_name.is_none_or(|it| {
+                    it.is("todo")
+                        || it.is("skip") && (use_vitest_assertions || ctx.runner == Runner::Bun)
+                })
             {
                 return;
             }
@@ -1089,7 +1100,7 @@ pub(crate) mod no_standalone_expect {
 
         pub(crate) fn run_once<'a>(&self, ctx: &Ctx<'a, '_>) {
             let mut places = Places::default();
-            for possible_jest_node in iter_possible_jest_call_node(ctx.file) {
+            for possible_jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner) {
                 let Some(jest_fn_call) = parse_expect_jest_fn_call(ctx.file, possible_jest_node)
                 else {
                     continue;
@@ -1216,7 +1227,7 @@ pub(crate) mod no_standalone_expect {
                         return true;
                     }
                 }
-                if let Some(jest_node) = possible_jest_node_of(ctx.file, e)
+                if let Some(jest_node) = possible_jest_node_of(ctx.file, ctx.runner, e)
                     && let Some(jest_fn_call) = parse_general_jest_fn_call(ctx.file, jest_node)
                 {
                     return jest_fn_call.kind == JestFnKind::General(JestGeneralFnKind::Test);
@@ -1244,24 +1255,24 @@ pub(crate) mod no_conditional_expect {
         Function(Func<'a>),
     }
 
-    fn is_test<'a>(file: &'a File<'a>, node: Node<'a>) -> bool {
+    fn is_test<'a>(ctx: &Ctx<'a, '_>, node: Node<'a>) -> bool {
         node.as_expr()
             .filter(|it| it.tag() == ExprTag::Call)
             .is_some_and(|it| {
                 is_type_of_jest_fn_call(
-                    file,
-                    PossibleJestNode::new(it),
+                    ctx.file,
+                    PossibleJestNode::new(it, ctx.runner),
                     &[JestFnKind::General(JestGeneralFnKind::Test)],
                 )
             })
     }
 
     /// Where the way ends.
-    fn end<'a>(file: &'a File<'a>, parent: Node<'a>) -> Option<Stop<'a>> {
+    fn end<'a>(ctx: &Ctx<'a, '_>, parent: Node<'a>) -> Option<Stop<'a>> {
         match parent {
             Node::Func(func) => (!func.is_arrow() && func.kind() != FnKind::StaticBlock)
                 .then_some(Stop::Function(func)),
-            _ => is_test(file, parent).then_some(Stop::Test),
+            _ => is_test(ctx, parent).then_some(Stop::Test),
         }
     }
 
@@ -1298,19 +1309,19 @@ pub(crate) mod no_conditional_expect {
             AncestorMemo::default(),
             AncestorMemo::default(),
         );
-        for possible_jest_node in iter_possible_jest_call_node(file) {
+        for possible_jest_node in iter_possible_jest_call_node(file, ctx.runner) {
             let Some(jest_fn_call) = parse_expect_jest_fn_call(file, possible_jest_node) else {
                 continue;
             };
             let node = Node::Expr(possible_jest_node.node);
             let first = stops.find(node, |child, parent| {
-                end(file, parent)
+                end(ctx, parent)
                     .or_else(|| is_conditional(child, parent).then_some(Stop::Conditional))
             });
             if !matches!(first, Some(Stop::Conditional)) {
                 continue;
             }
-            let is_in_test = match ends.find(node, |_, parent| end(file, parent)) {
+            let is_in_test = match ends.find(node, |_, parent| end(ctx, parent)) {
                 Some(Stop::Function(function)) => function
                     .name()
                     .and_then(|_| function.symbol())
@@ -1318,7 +1329,7 @@ pub(crate) mod no_conditional_expect {
                         (symbol.references().filter_map(Reference::expr)).any(|it| {
                             tests
                                 .find(Node::Expr(it), |_, parent| {
-                                    is_test(file, parent).then_some(())
+                                    is_test(ctx, parent).then_some(())
                                 })
                                 .is_some()
                         })
@@ -1345,7 +1356,7 @@ pub(crate) mod max_expects {
         let mut scopes = Scopes::default();
         // How many there are in each scope. A block is one.
         let mut count_map: FxHashMap<Option<Node<'a>>, u32> = FxHashMap::default();
-        for jest_node in iter_possible_jest_call_node(ctx.file) {
+        for jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner) {
             let Some(ident) = jest_node
                 .node
                 .callee()
@@ -1573,20 +1584,22 @@ pub(crate) mod prefer_expect_assertions {
             }
         }
 
-        pub(crate) fn run_once<'a>(&self, ctx: &Ctx<'a, '_>, is_for_vitest: bool) {
+        pub(crate) fn run_once<'a>(&self, ctx: &Ctx<'a, '_>) {
+            let is_for_vitest = ctx.runner == Runner::Vitest;
             // What `expect` is imported as.
             let file_expect_prefix = (import_entries(ctx.file)
                 .take_while(|_| ctx.file.mentions("expect"))
                 .filter(|it| !it.is_type()))
-                .filter(|it| match it.declaration.spec().bytes() {
-                    b"@jest/globals" => !is_for_vitest,
-                    source => is_for_vitest && is_vitest_import_source(source),
+                .filter(|it| match (ctx.runner, it.declaration.spec().bytes()) {
+                    (Runner::Jest, source) => source == b"@jest/globals",
+                    (Runner::Vitest, source) => is_vitest_import_source(source),
+                    (Runner::Bun, source) => source == b"bun:test",
                 })
                 .find(|it| matches!(it.import_name, ImportImportName::Name(it) if it.imported().bytes() == b"expect"))
                 .map_or(b"expect".as_slice(), |it| it.local_name().bytes());
             // The calls of `describe` with a hook that calls `expect.hasAssertions()` before or after each test. `None` is the file.
             let mut covered_describe_ids: Vec<Option<Node<'a>>> = Vec::new();
-            for jest_node in iter_possible_jest_call_node(ctx.file) {
+            for jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner) {
                 let Some(call_expr) = jest_node.node.as_call() else {
                     continue;
                 };

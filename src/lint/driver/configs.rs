@@ -105,7 +105,17 @@ const BUILT_IN: &[u8] = br#"[
             }
         }
     },
-    { "files": ["**/*.{ts,mts,cts,tsx}"], "extends": ["typescript-eslint/TYPESCRIPT"] }
+    { "files": ["**/*.{ts,mts,cts,tsx}"], "extends": ["typescript-eslint/TYPESCRIPT"] },
+    {
+        "rules": {
+            "bun:test/no-disabled-tests": "error",
+            "bun:test/no-export": "error",
+            "bun:test/no-focused-tests": "error",
+            "bun:test/valid-describe-callback": "error",
+            "bun:test/valid-expect": "error",
+            "bun:test/valid-expect-in-promise": "error"
+        }
+    }
 ]"#;
 
 /// The files whose `lint` and `fmt` are the configurations of oxlint and oxfmt in a project of Vite+, by priority.

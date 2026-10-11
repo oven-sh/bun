@@ -20,11 +20,11 @@ impl Rule for HoistedApisOnTop {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (jest::mentions_any(file, &const { jest::mention_bits(["vi", "vitest"]) }) && jest::mentions_any(file, &const { jest::mention_bits(["mock", "hoisted", "unmock"]) }) && jest::is_test(file)).then_some(())
+        (jest::mentions_any(file, &const { jest::mention_bits(["vi", "vitest"]) }) && jest::mentions_any(file, &const { jest::mention_bits(["mock", "hoisted", "unmock"]) }) && jest::is_test(file, jest::VITEST)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        jest::iter_possible_jest_call_node(cx.file()).for_each(|node| run(node, cx));
+        jest::iter_possible_jest_call_node(cx.file(), jest::Runner::Vitest).for_each(|node| run(node, cx));
     }
 }
 

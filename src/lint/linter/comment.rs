@@ -181,7 +181,12 @@ fn normalize_for_json(text: &[u8]) -> Vec<u8> {
     let mut quoted = Vec::with_capacity(text.len() + 16);
     let mut at = 0;
     while at < text.len() {
-        let run = text[at..].iter().take_while(|b| is_name_byte(**b)).count();
+        let name_at = |at: usize| text[at..].iter().take_while(|b| is_name_byte(**b)).count();
+        let mut run = name_at(at);
+        // The colon of `bun:test/no-focused-tests` is part of the name, in quotes or not.
+        if text[at..].starts_with(b"bun:test/") && run == 3 {
+            run += 1 + name_at(at + 4);
+        }
         if run == 0 {
             quoted.push(text[at]);
             at += 1;

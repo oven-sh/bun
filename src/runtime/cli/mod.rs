@@ -2336,7 +2336,7 @@ Full documentation is available at <magenta>https://bun.com/docs/runtime/format<
   Lint JavaScript and TypeScript with the rules of ESLint and typescript-eslint, using all CPU cores.
 
   Uses the nearest <b>eslint.config.js<r>, <b>.oxlintrc.json<r> or <b>.eslintrc.json<r>, and takes the flags of <b>eslint<r> and <b>oxlint<r>.
-  Without a configuration file: <b>eslint:recommended<r>, and <b>typescript-eslint/recommended<r> for TypeScript.
+  Without a configuration file: <b>eslint:recommended<r>, <b>typescript-eslint/recommended<r> for TypeScript, and some of <b>bun:test/*<r> for tests.
 
 <b>Flags:<r>"
                 );

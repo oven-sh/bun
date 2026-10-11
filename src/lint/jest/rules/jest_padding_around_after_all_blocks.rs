@@ -1,13 +1,13 @@
-use crate::jest::{self, Ctx};
+use crate::jest::{self, Ctx, Runner};
 use crate::jest_tests::padding_around_blocks;
 use bun_lint::prelude::*;
 
 /// This rule enforces a line of padding before and after 1 or more `afterAll` statements.
-pub struct PaddingAroundAfterAllBlocks<const VITEST: bool = false>;
+pub struct PaddingAroundAfterAllBlocks<const RUNNER: u8 = { jest::JEST }>;
 
-impl<const VITEST: bool> Rule for PaddingAroundAfterAllBlocks<VITEST> {
+impl<const RUNNER: u8> Rule for PaddingAroundAfterAllBlocks<RUNNER> {
     const META: Meta =
-        Meta::oxlint(jest::plugin(VITEST), "padding-around-after-all-blocks", Kind::Suggestion).fixable(Fixable::Code);
+        jest::meta(RUNNER, "padding-around-after-all-blocks", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -16,11 +16,11 @@ impl<const VITEST: bool> Rule for PaddingAroundAfterAllBlocks<VITEST> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (file.mentions("afterAll") && jest::is_test(file)).then_some(())
+        (file.mentions("afterAll") && jest::is_test(file, RUNNER)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
+        let ctx = Ctx { file: cx.file(), runner: Runner::of(RUNNER), report: &|at, message| cx.report(at, message) };
         padding_around_blocks::run(&ctx, false);
     }
 }

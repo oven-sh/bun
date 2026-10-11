@@ -1,15 +1,14 @@
-use crate::jest::{self, JestFnKind, JestGeneralFnKind, PossibleJestNode};
+use crate::jest::{self, Ctx, JestFnKind, JestGeneralFnKind, PossibleJestNode, Runner};
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// This rule checks the function parameter of hooks & tests for use of the done argument, suggesting you return a promise
 /// instead.
-pub struct NoDoneCallback;
+pub struct NoDoneCallback<const RUNNER: u8 = { jest::JEST }>;
 
 const NO_DONE_CALLBACK: Message = Message::new("", "Function parameter(s) use the `done` argument");
 
-impl Rule for NoDoneCallback {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "no-done-callback", Kind::Suggestion);
+impl<const RUNNER: u8> Rule for NoDoneCallback<RUNNER> {
+    const META: Meta = jest::meta(RUNNER, "no-done-callback", Kind::Suggestion);
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -18,19 +17,20 @@ impl Rule for NoDoneCallback {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        jest::is_test(file).then_some(())
+        jest::is_test(file, RUNNER).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        jest::iter_possible_jest_call_node(cx.file()).for_each(|node| run(node, cx));
+        let ctx = Ctx { file: cx.file(), runner: Runner::of(RUNNER), report: &|at, message| cx.report(at, message) };
+        jest::run_on_jest_nodes(&ctx, &run);
     }
 }
 
-fn run<'a>(possible_jest_node: PossibleJestNode<'a>, cx: &Cx<'a, NoDoneCallback>) {
+fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
     let Some(call_expr) = possible_jest_node.node.as_call() else {
         return;
     };
-    let Some(jest_fn_call) = jest::parse_general_jest_fn_call(cx.file(), possible_jest_node) else {
+    let Some(jest_fn_call) = jest::parse_general_jest_fn_call(ctx.file, possible_jest_node) else {
         return;
     };
     if !matches!(jest_fn_call.kind, JestFnKind::General(JestGeneralFnKind::Test | JestGeneralFnKind::Hook)) {
@@ -54,7 +54,7 @@ fn run<'a>(possible_jest_node: PossibleJestNode<'a>, cx: &Cx<'a, NoDoneCallback>
         && func.params().len() == 1 + usize::from(is_jest_each)
         && let Some(first_parameter) = func.params().first()
     {
-        cx.report(first_parameter, NO_DONE_CALLBACK).help(match func.is_async() {
+        ctx.report(first_parameter, NO_DONE_CALLBACK).help(match func.is_async() {
             true => "Use await instead of callback in async functions",
             false => "Return a Promise instead of relying on callback parameter",
         });

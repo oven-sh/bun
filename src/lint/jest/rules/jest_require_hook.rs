@@ -1,13 +1,13 @@
-use crate::jest::{self, Ctx};
+use crate::jest::{self, Ctx, Runner};
 use crate::jest_hooks::require_hook::RequireHookConfig;
 use bun_lint::prelude::*;
 
 /// This rule flags any expression that is either at the toplevel of a test file or directly within the body of a `describe`,
 /// _except_ for the following
-pub struct RequireHook<const VITEST: bool = false>(RequireHookConfig);
+pub struct RequireHook<const RUNNER: u8 = { jest::JEST }>(RequireHookConfig);
 
-impl<const VITEST: bool> Rule for RequireHook<VITEST> {
-    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "require-hook", Kind::Suggestion);
+impl<const RUNNER: u8> Rule for RequireHook<RUNNER> {
+    const META: Meta = jest::meta(RUNNER, "require-hook", Kind::Suggestion);
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -16,11 +16,11 @@ impl<const VITEST: bool> Rule for RequireHook<VITEST> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        (file.has_exprs([ExprTag::Call]) || file.has_stmts([StmtTag::Var])).then_some(())
+        (jest::is_for(file, RUNNER) && (file.has_exprs([ExprTag::Call]) || file.has_stmts([StmtTag::Var]))).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
+        let ctx = Ctx { file: cx.file(), runner: Runner::of(RUNNER), report: &|at, message| cx.report(at, message) };
         self.0.run_once(&ctx);
     }
 }

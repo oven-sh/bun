@@ -103,14 +103,24 @@ impl<'a> Compiler<'a> {
             Root::Function(function) => FunctionNode::Function(function),
             Root::Arrow(arrow) => FunctionNode::Arrow(arrow),
         };
+        let wanted = self.wanted;
+        let is_wanted = |it: &Recorded| {
+            wanted.has_thrown()
+                || wanted.has(match it {
+                    Recorded::ImplicitArguments(_) => ErrorCategory::UnsupportedSyntax,
+                    Recorded::DuplicateFbtTags { .. }
+                    | Recorded::DynamicImport(_)
+                    | Recorded::DefaultIsJsx { .. } => ErrorCategory::Todo,
+                })
+        };
         let linted = bun_react_compiler::lint_function(
             &node,
             &host,
             fn_type,
             &self.config,
             &converted.import_bindings,
-            self.wanted,
-            !converted.recorded.is_empty(),
+            wanted,
+            converted.recorded.iter().any(is_wanted),
         );
         logged.extend(findings(&converted, linted.logged));
         let recorded = converted.recorded.iter().map(|it| match *it {

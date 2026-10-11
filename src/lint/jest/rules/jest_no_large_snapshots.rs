@@ -1,12 +1,12 @@
-use crate::jest::{self, Ctx};
+use crate::jest::{self, Ctx, Runner};
 use crate::jest_matchers::no_large_snapshots::{NoLargeSnapshotsConfig, may_have_snapshot};
 use bun_lint::prelude::*;
 
 /// Disallow large snapshots.
-pub struct NoLargeSnapshots<const VITEST: bool = false>(NoLargeSnapshotsConfig);
+pub struct NoLargeSnapshots<const RUNNER: u8 = { jest::JEST }>(NoLargeSnapshotsConfig);
 
-impl<const VITEST: bool> Rule for NoLargeSnapshots<VITEST> {
-    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "no-large-snapshots", Kind::Suggestion);
+impl<const RUNNER: u8> Rule for NoLargeSnapshots<RUNNER> {
+    const META: Meta = jest::meta(RUNNER, "no-large-snapshots", Kind::Suggestion);
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -15,11 +15,11 @@ impl<const VITEST: bool> Rule for NoLargeSnapshots<VITEST> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        may_have_snapshot(file).then_some(())
+        (jest::is_for(file, RUNNER) && may_have_snapshot(file)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
+        let ctx = Ctx { file: cx.file(), runner: Runner::of(RUNNER), report: &|at, message| cx.report(at, message) };
         self.0.run_once(&ctx);
     }
 }

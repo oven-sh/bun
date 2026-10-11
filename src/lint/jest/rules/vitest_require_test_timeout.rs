@@ -1,11 +1,10 @@
 use bun_lint_oxlint::ast_util::as_object_expression;
-use crate::jest::{self, JestFnKind, JestGeneralFnKind};
+use crate::jest::{self, Ctx, JestFnKind, JestGeneralFnKind, Runner};
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Requires every test to have a timeout specified, either as a numeric third argument, a `{ timeout }` option, or via
 /// `vi.setConfig({ testTimeout: ... })`.
-pub struct RequireTestTimeout;
+pub struct RequireTestTimeout<const RUNNER: u8 = { jest::VITEST }>;
 
 const TEST_MISSING_TIMEOUT: Message = Message::new("", "Test is missing a timeout.");
 const CONFIG_MISSING_TIMEOUT_OBJECT: Message = Message::new("", "`vi.setConfig()` is missing a `testTimeout` property.");
@@ -13,8 +12,8 @@ const TEST_OPTIONS_MISSING_TIMEOUT_PROPERTY: Message = Message::new("", "Test op
 const TIMEOUT_MUST_BE_A_NUMBER: Message = Message::new("", "Timeout must be a number.");
 const TIMEOUT_MUST_BE_NON_NEGATIVE: Message = Message::new("", "Timeout must not be negative.");
 
-impl Rule for RequireTestTimeout {
-    const META: Meta = Meta::oxlint(Plugin::Vitest, "require-test-timeout", Kind::Suggestion);
+impl<const RUNNER: u8> Rule for RequireTestTimeout<RUNNER> {
+    const META: Meta = jest::meta(RUNNER, "require-test-timeout", Kind::Suggestion);
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -23,11 +22,11 @@ impl Rule for RequireTestTimeout {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (jest::mentions_test(file) || jest::mentions_any(file, &const { jest::mention_bits(["vi", "vitest"]) })).then_some(())
+        (jest::is_for(file, RUNNER) && (jest::mentions_test(file) || jest::mentions_any(file, &const { jest::mention_bits(["vi", "vitest"]) }))).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        run_once(cx)
+        run_once(&Ctx { file: cx.file(), runner: Runner::of(RUNNER), report: &|at, message| cx.report(at, message) })
     }
 }
 
@@ -36,30 +35,43 @@ fn value_of<'a>(properties: List<'a, Prop<'a>>, name: &str) -> Option<Expr<'a>> 
     properties.iter().find(is_named)?.value()
 }
 
-fn run_once<'a>(cx: &Cx<'a, RequireTestTimeout>) {
-    // Where the `vi.setConfig({ testTimeout: .. })` that ends first ends.
+fn run_once(ctx: &Ctx) {
+    let is_bun = ctx.runner == Runner::Bun;
+    // Where the `vi.setConfig({ testTimeout: .. })` that ends first ends. With Bun `setDefaultTimeout(..)` or `jest.setTimeout(..)`.
     let mut config_position: Option<u32> = None;
-    for possible_jest_node in jest::iter_possible_jest_call_node(cx.file()) {
+    for possible_jest_node in jest::iter_possible_jest_call_node(ctx.file, ctx.runner) {
         let node = possible_jest_node.node;
         let Some(arguments) = node.as_call().map(Call::args) else {
             continue;
         };
-        let Some(vi_node) = jest::parse_general_jest_fn_call(cx.file(), possible_jest_node) else {
+        let mut is_configured_by = |value: Expr| {
+            let end = node.span().end;
+            config_position = Some(config_position.map_or(end, |it| it.min(end)));
+            parse_timeout_value(value, ctx);
+        };
+        if is_bun && possible_jest_node.original == Some(b"setDefaultTimeout") && node.callee().is_some_and(|it| it.tag() == ExprTag::Ident) {
+            arguments.first().into_iter().for_each(&mut is_configured_by);
+            continue;
+        }
+        let Some(vi_node) = jest::parse_general_jest_fn_call(ctx.file, possible_jest_node) else {
             continue;
         };
         match vi_node.kind {
-            JestFnKind::General(JestGeneralFnKind::Vitest) => {
+            JestFnKind::General(JestGeneralFnKind::Jest) if is_bun => {
+                if vi_node.members.first().is_some_and(|member| member.is_name_equal("setTimeout")) {
+                    arguments.first().into_iter().for_each(&mut is_configured_by);
+                }
+            }
+            JestFnKind::General(JestGeneralFnKind::Vitest) if !is_bun => {
                 if !vi_node.members.first().is_some_and(|member| member.is_name_equal("setConfig")) {
                     continue;
                 }
                 let Some(test_config) = arguments.first().and_then(as_object_expression) else {
-                    cx.report(node, CONFIG_MISSING_TIMEOUT_OBJECT);
+                    ctx.report(node, CONFIG_MISSING_TIMEOUT_OBJECT);
                     continue;
                 };
                 if let Some(value) = value_of(test_config, "testTimeout") {
-                    let end = node.span().end;
-                    config_position = Some(config_position.map_or(end, |it| it.min(end)));
-                    parse_timeout_value(value, cx);
+                    is_configured_by(value);
                 }
             }
             JestFnKind::General(JestGeneralFnKind::Test) => {
@@ -69,20 +81,22 @@ fn run_once<'a>(cx: &Cx<'a, RequireTestTimeout>) {
                 {
                     continue;
                 }
-                // The options are the second argument, or the timeout is the third.
-                if let Some(options) = arguments.get(1)
-                    && let Some(test_config) = as_object_expression(options)
-                {
+                // The options are the second argument, or the timeout is the third. With Bun the options can be the third too.
+                let options = |at: usize| arguments.get(at).and_then(|it| Some((it, as_object_expression(it)?)));
+                if let Some((options, test_config)) = options(1).or_else(|| options(2).filter(|_| is_bun)) {
                     match value_of(test_config, "timeout") {
-                        Some(value) => parse_timeout_value(value, cx),
-                        None => drop(cx.report(options, TEST_OPTIONS_MISSING_TIMEOUT_PROPERTY)),
+                        Some(value) => parse_timeout_value(value, ctx),
+                        None => drop(ctx.report(options, TEST_OPTIONS_MISSING_TIMEOUT_PROPERTY)),
                     }
                 } else if let Some(last_argument) = arguments.get(2) {
                     if last_argument.tag() != ExprTag::Spread {
-                        parse_timeout_value(last_argument, cx);
+                        parse_timeout_value(last_argument, ctx);
                     }
                 } else if !config_position.is_some_and(|end| end < node.span().start) {
-                    cx.report(node, TEST_MISSING_TIMEOUT);
+                    let report = ctx.report(node, TEST_MISSING_TIMEOUT);
+                    if is_bun {
+                        report.help("Add a numeric third argument, a `{ timeout }` option object, or call `setDefaultTimeout(..)` before this test.");
+                    }
                 }
             }
             _ => {}
@@ -90,7 +104,7 @@ fn run_once<'a>(cx: &Cx<'a, RequireTestTimeout>) {
     }
 }
 
-fn parse_timeout_value<'a>(expression: Expr<'a>, cx: &Cx<'a, RequireTestTimeout>) {
+fn parse_timeout_value(expression: Expr, ctx: &Ctx) {
     let is_number = |it: Expr| it.tag() == ExprTag::Number && !it.is_parenthesized();
     let message = match expression.kind() {
         _ if is_number(expression) => return,
@@ -103,5 +117,5 @@ fn parse_timeout_value<'a>(expression: Expr<'a>, cx: &Cx<'a, RequireTestTimeout>
     };
     // The function of a method starts with its parameters.
     let method = expression.as_fn().filter(|it| matches!(it.kind(), FnKind::Method | FnKind::Getter | FnKind::Setter));
-    cx.report(method.map_or_else(|| expression.outer_span(), Func::span_from_params), message);
+    ctx.report(method.map_or_else(|| expression.outer_span(), Func::span_from_params), message);
 }

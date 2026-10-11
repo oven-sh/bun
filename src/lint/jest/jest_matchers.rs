@@ -3,7 +3,7 @@
 
 use crate::jest::{
     Ctx, EnclosingFunctions, JestFnKind, JestGeneralFnKind, KnownMemberExpressionProperty,
-    ParsedExpectFnCall, PossibleJestNode, enclosing_function, is_equality_matcher,
+    ParsedExpectFnCall, PossibleJestNode, Runner, enclosing_function, is_equality_matcher,
     iter_possible_jest_call_node, mention_bits, mentions_any, parent_expression,
     parse_expect_and_typeof_vitest_fn_call, parse_expect_jest_fn_call, print_expression,
 };
@@ -71,7 +71,7 @@ pub(crate) mod prefer_snapshot_hint {
             // By the test, or the outermost function, that they are in.
             let mut scoped_expects: FxHashMap<Option<Func<'a>>, SmallVec<[Expr<'a>; 2]>> =
                 FxHashMap::default();
-            for possible_jest_node in iter_possible_jest_call_node(ctx.file) {
+            for possible_jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner) {
                 if let Some(jest_fn_call) = parse_expect_jest_fn_call(ctx.file, possible_jest_node)
                     && jest_fn_call
                         .members
@@ -971,13 +971,17 @@ pub(crate) mod no_large_snapshots {
     const TOO_LONG_SNAPSHOT: Message = Message::new("", "Snapshot is too long.");
 
     /// `no_snapshot`, `too_long_snapshot`
-    fn help(is_none_expected: bool, line_limit: u32, line_count: u32) -> String {
+    fn help(runner: Runner, is_none_expected: bool, line_limit: u32, line_count: u32) -> String {
+        let (a, whose) = match runner {
+            Runner::Bun => ("a ", ""),
+            Runner::Jest | Runner::Vitest => ("a Jest or Vitest ", "Jest or Vitest "),
+        };
         match is_none_expected {
             true => format!(
-                "Expected to not encounter a Jest or Vitest snapshot but one was found that is {line_count} lines long"
+                "Expected to not encounter {a}snapshot but one was found that is {line_count} lines long"
             ),
             false => format!(
-                "Expected Jest or Vitest snapshot to be no longer than {line_limit} lines but it was {line_count} \
+                "Expected {whose}snapshot to be no longer than {line_limit} lines but it was {line_count} \
                  lines long"
             ),
         }
@@ -1030,7 +1034,7 @@ pub(crate) mod no_large_snapshots {
                     .for_each(|it| self.report_in_expr_stmt(it, ctx));
                 return;
             }
-            for possible_jest_node in iter_possible_jest_call_node(ctx.file) {
+            for possible_jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner) {
                 if let Some(jest_fn_call) = parse_expect_jest_fn_call(ctx.file, possible_jest_node)
                     && let Some(first_arg_expr) = first_expression(jest_fn_call.args)
                     && let Some(snapshot_matcher) = (jest_fn_call.members.iter()).find(|member| {
@@ -1043,7 +1047,14 @@ pub(crate) mod no_large_snapshots {
                     if line_count > self.inline_max_size {
                         let is_none_expected = self.inline_max_size == 0;
                         ctx.report(snapshot_matcher.span, TOO_LONG_SNAPSHOT)
-                            .help_with(|| help(is_none_expected, self.inline_max_size, line_count));
+                            .help_with(|| {
+                                help(
+                                    ctx.runner,
+                                    is_none_expected,
+                                    self.inline_max_size,
+                                    line_count,
+                                )
+                            });
                     }
                 }
             }
@@ -1070,7 +1081,7 @@ pub(crate) mod no_large_snapshots {
             let line_count = get_line_count(expr_stmt.span(), ctx.file);
             if !allowed && line_count > self.max_size {
                 ctx.report(expr_stmt, TOO_LONG_SNAPSHOT)
-                    .help_with(|| help(line_count == 0, self.max_size, line_count));
+                    .help_with(|| help(ctx.runner, line_count == 0, self.max_size, line_count));
             }
         }
 

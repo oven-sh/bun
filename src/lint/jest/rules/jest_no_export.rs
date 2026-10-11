@@ -1,15 +1,14 @@
-use crate::jest::{self, JestFnKind, JestGeneralFnKind};
+use crate::jest::{self, Ctx, JestFnKind, JestGeneralFnKind, Runner};
 use bun_lint_oxlint::module_record::ModuleRecord;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Prevents using exports if a file has one or more tests in it.
-pub struct NoExport;
+pub struct NoExport<const RUNNER: u8 = { jest::JEST }>;
 
 const NO_EXPORT: Message = Message::new("", "Do not export from a test file.");
 
-impl Rule for NoExport {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "no-export", Kind::Problem);
+impl<const RUNNER: u8> Rule for NoExport<RUNNER> {
+    const META: Meta = jest::meta(RUNNER, "no-export", Kind::Problem);
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -18,26 +17,30 @@ impl Rule for NoExport {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (jest::mentions_test(file) && jest::is_jest_file(file)).then_some(())
+        (jest::is_for(file, RUNNER) && jest::mentions_test(file) && jest::is_jest_file(file)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let file = cx.file();
-        let may_export = |it: Stmt| {
-            it.is_exported() || matches!(it.tag(), StmtTag::ExportStar | StmtTag::ExportDefault | StmtTag::ExportNamed)
-        };
-        if !file.body().iter().any(may_export) {
-            return;
-        }
-        let has_tests = jest::iter_possible_jest_call_node(file).any(|possible_node| {
-            jest::parse_general_jest_fn_call(file, possible_node)
-                .is_some_and(|general| general.kind == JestFnKind::General(JestGeneralFnKind::Test))
-        });
-        if has_tests {
-            let module_record = ModuleRecord::new(file);
-            for span in module_record.exported_bindings.values().copied().chain(module_record.export_default()) {
-                cx.report(span, NO_EXPORT);
-            }
+        run_once(&Ctx { file: cx.file(), runner: Runner::of(RUNNER), report: &|at, message| cx.report(at, message) });
+    }
+}
+
+fn run_once(ctx: &Ctx) {
+    let file = ctx.file;
+    let may_export = |it: Stmt| {
+        it.is_exported() || matches!(it.tag(), StmtTag::ExportStar | StmtTag::ExportDefault | StmtTag::ExportNamed)
+    };
+    if !file.body().iter().any(may_export) {
+        return;
+    }
+    let has_tests = jest::iter_possible_jest_call_node(file, ctx.runner).any(|possible_node| {
+        jest::parse_general_jest_fn_call(file, possible_node)
+            .is_some_and(|general| general.kind == JestFnKind::General(JestGeneralFnKind::Test))
+    });
+    if has_tests {
+        let module_record = ModuleRecord::new(file);
+        for span in module_record.exported_bindings.values().copied().chain(module_record.export_default()) {
+            ctx.report(span, NO_EXPORT);
         }
     }
 }

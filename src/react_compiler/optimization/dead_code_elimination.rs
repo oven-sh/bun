@@ -19,7 +19,8 @@ use crate::hir::object_shape::HookKind;
 use crate::hir::visitors;
 use crate::hir::{
     ArrayPatternElement, AstAlloc, BlockId, BlockKind, HirFunction, HirVec, IdentifierId,
-    Instruction, InstructionKind, InstructionValue, ObjectPropertyOrSpread, Pattern, Terminal,
+    IdentifierName, Instruction, InstructionKind, InstructionValue, ObjectPropertyOrSpread,
+    Pattern, Terminal,
 };
 use crate::optimization::prune_maybe_throws::value_may_throw;
 
@@ -49,11 +50,16 @@ pub(crate) fn dead_code_elimination(func: &mut HirFunction, env: &Environment) {
         // Rewrite the retained instructions (not the block value)
         let retained_count = block.instructions.len();
         for i in 0..retained_count {
-            let is_block_value = block.kind != BlockKind::Block && i == retained_count - 1;
             let instr = &mut instructions[block.instructions[i].0 as usize];
+            let is_destructure = match &instr.value {
+                InstructionValue::Destructure { .. } => true,
+                InstructionValue::StoreLocal { .. } => false,
+                // Nothing else is rewritten.
+                _ => continue,
+            };
+            let is_block_value = block.kind != BlockKind::Block && i == retained_count - 1;
             // To read a property that nothing uses can throw as well.
-            let is_caught_destructure = is_caught(&block.terminal)
-                && matches!(instr.value, InstructionValue::Destructure { .. });
+            let is_caught_destructure = is_destructure && is_caught(&block.terminal);
             if !is_block_value && !is_caught_destructure {
                 rewrite_instruction(instr, &state, env);
             }
@@ -87,39 +93,45 @@ impl State {
 }
 
 /// Mark an identifier as being referenced (not dead code).
+#[inline]
 fn reference(
     state: &mut State,
     identifiers: &[crate::hir::Identifier],
     identifier_id: IdentifierId,
 ) {
-    if !state.identifiers.insert(identifier_id) {
-        return;
+    // Its name went in with the first reference.
+    if state.identifiers.insert(identifier_id) {
+        if let Some(name) = &identifiers[identifier_id.0 as usize].name {
+            reference_name(state, name);
+        }
     }
-    let ident = &identifiers[identifier_id.0 as usize];
-    if let Some(ref name) = ident.name {
-        state.named.insert(crate::hir::StoreStr::new(name.value()));
-    }
+}
+
+#[inline(never)]
+fn reference_name(state: &mut State, name: &IdentifierName) {
+    state.named.insert(crate::hir::StoreStr::new(name.value()));
 }
 
 /// Check if any version of the given identifier is used somewhere.
 /// Checks both the specific SSA id and (for named identifiers) any usage of that name.
+#[inline]
 fn is_id_or_name_used(
     state: &State,
     identifiers: &[crate::hir::Identifier],
     identifier_id: IdentifierId,
 ) -> bool {
-    if state.identifiers.contains(identifier_id) {
-        return true;
-    }
-    let ident = &identifiers[identifier_id.0 as usize];
-    if let Some(ref name) = ident.name {
-        state.named.contains(name.value())
-    } else {
-        false
-    }
+    state.identifiers.contains(identifier_id)
+        || (identifiers[identifier_id.0 as usize].name.as_ref())
+            .is_some_and(|name| is_name_used(state, name))
+}
+
+#[inline(never)]
+fn is_name_used(state: &State, name: &IdentifierName) -> bool {
+    state.named.contains(name.value())
 }
 
 /// Check if this specific SSA id is used.
+#[inline]
 fn is_id_used(state: &State, identifier_id: IdentifierId) -> bool {
     state.identifiers.contains(identifier_id)
 }

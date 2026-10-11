@@ -1,12 +1,12 @@
-use crate::jest::{self, Ctx};
+use crate::jest::{self, Ctx, Runner};
 use crate::jest_hooks::{mentions_hook, no_duplicate_hooks};
 use bun_lint::prelude::*;
 
 /// Disallows duplicate hooks in describe blocks.
-pub struct NoDuplicateHooks<const VITEST: bool = false>;
+pub struct NoDuplicateHooks<const RUNNER: u8 = { jest::JEST }>;
 
-impl<const VITEST: bool> Rule for NoDuplicateHooks<VITEST> {
-    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "no-duplicate-hooks", Kind::Suggestion);
+impl<const RUNNER: u8> Rule for NoDuplicateHooks<RUNNER> {
+    const META: Meta = jest::meta(RUNNER, "no-duplicate-hooks", Kind::Suggestion);
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -15,11 +15,11 @@ impl<const VITEST: bool> Rule for NoDuplicateHooks<VITEST> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        mentions_hook(file).then_some(())
+        (jest::is_for(file, RUNNER) && mentions_hook(file)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
+        let ctx = Ctx { file: cx.file(), runner: Runner::of(RUNNER), report: &|at, message| cx.report(at, message) };
         no_duplicate_hooks::run_once(&ctx);
     }
 }

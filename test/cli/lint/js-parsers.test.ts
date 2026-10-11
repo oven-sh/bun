@@ -438,21 +438,26 @@ describe.concurrent("bun lint with languages", () => {
     timeout,
   );
 
-  test(
-    "the deprecated rules about layout do not run there either",
-    async () => {
+  // `Linter#verify` takes a `ruleFilter` since ESLint 9. That of ESLint 8 runs every rule, and finds a comment that disables one unused.
+  test.each([
+    ["9", "rules.filter(ruleFilter)"],
+    ["8", `[...rules, ...["'semi'", "'indent' or 'semi'", "'semi' or 'no-var'"].map(unused)]`],
+  ])(
+    "the deprecated rules about layout do not run there either: ESLint %s",
+    async (_, reported) => {
       const result = await lint(
         {
           ...eslintPackage,
           // One message for each rule that runs.
           "node_modules/eslint/index.js": `
+            const unused = names => ({ ruleId: null, severity: 1, text: "Unused eslint-disable directive (no problems were reported from " + names + ")." });
             exports.Linter = class Linter {
               verify(text, [config], { ruleFilter }) {
-                const rules = Object.entries(config.rules).map(([ruleId, [severity]]) => ({ ruleId, severity }));
-                return rules.filter(ruleFilter).map(it => ({ ...it, message: "It ran.", line: 1, column: 1 }));
+                const rules = Object.entries(config.rules).map(([ruleId, [severity]]) => ({ ruleId, severity, text: "It ran." }));
+                return ${reported}.map(({ text, ...it }) => ({ ...it, message: text, line: 1, column: 1 }));
               }
               getSuppressedMessages() {
-                return [];
+                return [{ ruleId: "semi", severity: 2, message: "It ran.", line: 1, column: 1, suppressions: [{ kind: "directive", justification: "" }] }].slice(${reported.startsWith("rules") ? 1 : 0});
               }
             };`,
           "parser.cjs": `module.exports = { meta: { name: "vue-eslint-parser", version: "10.0.0" }, parseForESLint() {} };`,
@@ -463,7 +468,12 @@ describe.concurrent("bun lint with languages", () => {
         },
         ["-f", "json", "c.vue"],
       );
-      expect(summary(result.raw)).toMatchInlineSnapshot(`"c.vue: 1:1 no-var It ran."`);
+      expect(summary(result.raw).split("\n")).toEqual([
+        "c.vue: 1:1 no-var It ran.",
+        ...(reported.startsWith("rules")
+          ? []
+          : ["c.vue: 1:1 null Unused eslint-disable directive (no problems were reported from 'semi' or 'no-var')."]),
+      ]);
       expect(result.exitCode).toBe(1);
     },
     timeout,

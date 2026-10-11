@@ -1,13 +1,13 @@
-use crate::jest::{self, Ctx};
+use crate::jest::{self, Ctx, Runner};
 use crate::jest_mocks::prefer_spy_on;
 use bun_lint::prelude::*;
 
 /// When mocking a function by overwriting a property you have to manually restore the original implementation when cleaning
 /// up.
-pub struct PreferSpyOn<const VITEST: bool = false>;
+pub struct PreferSpyOn<const RUNNER: u8 = { jest::JEST }>;
 
-impl<const VITEST: bool> Rule for PreferSpyOn<VITEST> {
-    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "prefer-spy-on", Kind::Suggestion).has_suggestions();
+impl<const RUNNER: u8> Rule for PreferSpyOn<RUNNER> {
+    const META: Meta = jest::meta(RUNNER, "prefer-spy-on", Kind::Suggestion).has_suggestions();
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -16,11 +16,11 @@ impl<const VITEST: bool> Rule for PreferSpyOn<VITEST> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        prefer_spy_on::should_run(file).then_some(())
+        (jest::is_for(file, RUNNER) && prefer_spy_on::should_run(file)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
+        let ctx = Ctx { file: cx.file(), runner: Runner::of(RUNNER), report: &|at, message| cx.report(at, message) };
         prefer_spy_on::run_once(&ctx);
     }
 }

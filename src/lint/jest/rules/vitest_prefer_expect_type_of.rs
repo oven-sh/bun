@@ -1,14 +1,15 @@
-use crate::jest::{self, MemberExpressionElement, PossibleJestNode};
+use crate::jest::{self, Ctx, MemberExpressionElement, PossibleJestNode, Runner};
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Enforce using `toBeTypeOf` instead of `expect(typeof ...).toBe(...)`.
-pub struct PreferExpectTypeOf;
+pub struct PreferExpectTypeOf<const RUNNER: u8 = { jest::VITEST }>;
 
 const PREFER_EXPECT_TYPE_OF: Message = Message::new("", "Type assertions should be done using `toBeTypeOf`.");
+/// Without the page of Vitest about it.
+const PREFER_EXPECT_TYPE_OF_IN_BUN: Message = Message::new("", "Type assertions should be done using `toBeTypeOf()`.");
 
-impl Rule for PreferExpectTypeOf {
-    const META: Meta = Meta::oxlint(Plugin::Vitest, "prefer-expect-type-of", Kind::Suggestion).fixable(Fixable::Code);
+impl<const RUNNER: u8> Rule for PreferExpectTypeOf<RUNNER> {
+    const META: Meta = jest::meta(RUNNER, "prefer-expect-type-of", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -17,16 +18,17 @@ impl Rule for PreferExpectTypeOf {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (file.mentions("expect") && jest::is_test(file) && file.has_exprs([ExprTag::Unary])).then_some(())
+        (file.mentions("expect") && jest::is_test(file, RUNNER) && file.has_exprs([ExprTag::Unary])).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        jest::iter_possible_jest_call_node(cx.file()).for_each(|node| run(node, cx));
+        let ctx = Ctx { file: cx.file(), runner: Runner::of(RUNNER), report: &|at, message| cx.report(at, message) };
+        jest::run_on_jest_nodes(&ctx, &run);
     }
 }
 
-fn run<'a>(possible_jest_node: PossibleJestNode<'a>, cx: &Cx<'a, PreferExpectTypeOf>) {
-    let Some(expect_call) = jest::parse_expect_jest_fn_call(cx.file(), possible_jest_node) else {
+fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
+    let Some(expect_call) = jest::parse_expect_jest_fn_call(ctx.file, possible_jest_node) else {
         return;
     };
     if let Some(typeof_expression) = expect_call.expect_arguments.and_then(List::first)
@@ -36,7 +38,7 @@ fn run<'a>(possible_jest_node: PossibleJestNode<'a>, cx: &Cx<'a, PreferExpectTyp
         && let Some(type_expected) = expect_call.matcher_arguments.and_then(List::first)
         && type_expected.tag() != ExprTag::Spread
     {
-        let file = cx.file();
+        let file = ctx.file;
         let mut code = [b"expect(".as_slice(), file.slice(operand.outer_span()), b")".as_slice()].concat();
         for modifier in expect_call.modifiers() {
             let (open, close) = match modifier.element {
@@ -50,8 +52,11 @@ fn run<'a>(possible_jest_node: PossibleJestNode<'a>, cx: &Cx<'a, PreferExpectTyp
         code.extend_from_slice(b".toBeTypeOf(");
         code.extend_from_slice(file.slice(type_expected.outer_span()));
         code.push(b')');
-        cx.report(possible_jest_node.node, PREFER_EXPECT_TYPE_OF)
-            .data("code", code.clone())
-            .fix(|fixer| fixer.replace(possible_jest_node.node, code));
+        let report = match ctx.runner {
+            Runner::Bun => (ctx.report(possible_jest_node.node, PREFER_EXPECT_TYPE_OF_IN_BUN))
+                .help_with(|| format!("Substitute the assertion with `{}`.", std::str::from_utf8(&code).unwrap_or_default())),
+            Runner::Jest | Runner::Vitest => ctx.report(possible_jest_node.node, PREFER_EXPECT_TYPE_OF).data("code", code.clone()),
+        };
+        report.fix(|fixer| fixer.replace(possible_jest_node.node, code));
     }
 }

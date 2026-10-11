@@ -5,7 +5,7 @@ use crate::ast::{File, Ident, Name};
 use crate::fix::{Fix, Fixer, IntoFix, SuggestionKind};
 use crate::oxlint_help::{self, Edits, Found, Help, Part};
 use crate::oxlint_messages;
-use crate::rule::{Message, Meta, Rule, When};
+use crate::rule::{Message, Meta, Plugin, Rule, When};
 use crate::span::{Position, Span, Spanned};
 use smallvec::SmallVec;
 use std::borrow::Cow;
@@ -200,7 +200,9 @@ impl<'a> CxBase<'a> {
     #[inline(never)]
     fn report(&self, span: Span, message: Message) -> Report<'a> {
         let (language, sink) = (self.file.language(), &self.file.sink);
-        let wants_help = language.is_oxlint && sink.wants_help.get();
+        // The rules of `bun:test` say what those of oxlint say, whatever the configuration.
+        let has_help = language.is_oxlint || self.meta.plugin == Plugin::BunTest;
+        let wants_help = has_help && sink.wants_help.get();
         let wants_text = !sink.drops_messages.get();
         let message = match language.is_oxlint {
             // What oxlint says has the same id.

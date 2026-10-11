@@ -2,8 +2,10 @@
 //! `utils/vitest.rs`, `utils/vitest/valid_vitest_fn.rs` and what `frameworks.rs` says about tests. Each function has the name that it
 //! has there.
 //!
-//! - A rule that `jest` and `vitest` both have is `rules/jest_*.rs`, with `VITEST`. What it does is compiled once, in `jest_*.rs`
-//!   beside this file: a function there takes a [`Ctx`], which is not generic.
+//! - A rule that several of `jest`, `vitest` and `bun:test` have is one file in `rules/`, with `RUNNER`. What it does is compiled
+//!   once, in `jest_*.rs` beside this file: a function there takes a [`Ctx`], which is not generic and has the [`Runner`].
+//! - The rules of `jest` and `vitest` see what oxlint sees, which knows nothing of `bun:test`. Those of `bun:test` see only what is
+//!   Bun's, and only in a file that imports from there: [`is_for`].
 //! - A `CallExpression` is the `Expr` of a `Call`. Text is bytes.
 //! - Which calls may be calls of Jest is found once for a file, whatever the number of rules: [`iter_possible_jest_call_node`].
 //! - oxlint recurses along `a.b().c().d..`. Here these are loops.
@@ -18,16 +20,17 @@ use bun_lint_oxlint::ast_util::{
 };
 use bun_lint_oxlint::codegen::Codegen;
 use bun_lint_oxlint::hash_order::HashOrder;
-use bun_lint_oxlint::import::import_entries;
+use bun_lint_oxlint::import::{common_js_require, import_entries};
 use bun_lint_oxlint::regex_flags::rust_regex;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use std::cell::OnceCell;
 
-/// What a function that two rules share needs of the rule that it runs for: `Ctx { file: cx.file(), report: &|at, message|
-/// cx.report(at, message) }`.
+/// What a function that several rules share needs of the rule that it runs for: `Ctx { file: cx.file(), runner: Runner::of(RUNNER),
+/// report: &|at, message| cx.report(at, message) }`.
 pub(crate) struct Ctx<'a, 'r> {
     pub(crate) file: &'a File<'a>,
+    pub(crate) runner: Runner,
     pub(crate) report: &'r dyn Fn(Span, Message) -> Report<'a>,
 }
 
@@ -37,11 +40,37 @@ impl<'a> Ctx<'a, '_> {
     }
 }
 
-/// Of a rule that both have.
-pub(crate) const fn plugin(is_vitest: bool) -> Plugin {
-    match is_vitest {
-        true => Plugin::Vitest,
-        false => Plugin::Jest,
+/// `RUNNER` of a rule of `jest`, of `vitest`, of `bun:test`.
+pub(crate) const JEST: u8 = 0;
+pub(crate) const VITEST: u8 = 1;
+pub(crate) const BUN: u8 = 2;
+
+/// Whose tests a rule is about.
+#[derive(Copy, Clone, PartialEq, Eq)]
+pub(crate) enum Runner {
+    Jest,
+    Vitest,
+    Bun,
+}
+
+impl Runner {
+    /// `runner`: the `RUNNER` of a rule.
+    pub(crate) const fn of(runner: u8) -> Runner {
+        match runner {
+            JEST => Runner::Jest,
+            VITEST => Runner::Vitest,
+            BUN => Runner::Bun,
+            _ => panic!("no such runner"),
+        }
+    }
+}
+
+/// Of a rule with `RUNNER`. One of `bun:test` is Bun's own: it exists with every configuration.
+pub(crate) const fn meta(runner: u8, name: &'static str, kind: Kind) -> Meta {
+    match Runner::of(runner) {
+        Runner::Jest => Meta::oxlint(Plugin::Jest, name, kind),
+        Runner::Vitest => Meta::oxlint(Plugin::Vitest, name, kind),
+        Runner::Bun => Meta::plugin(Plugin::BunTest, name, kind),
     }
 }
 
@@ -89,6 +118,39 @@ const SOURCE_BITS: [u32; 4] = mention_bits([
     "@effect/vitest",
     "@jest/globals",
 ]);
+const BUN_TEST: &[u8] = b"bun:test";
+const MODIFIERS_OF_BUN: [&str; 13] = [
+    "concurrent",
+    "concurrentIf",
+    "each",
+    "failing",
+    "failingIf",
+    "if",
+    "only",
+    "serial",
+    "serialIf",
+    "skip",
+    "skipIf",
+    "todo",
+    "todoIf",
+];
+/// What `bun test` declares in a test file that does not import it.
+const GLOBALS_OF_BUN: [&str; 14] = [
+    "afterAll",
+    "afterEach",
+    "beforeAll",
+    "beforeEach",
+    "describe",
+    "expect",
+    "expectTypeOf",
+    "it",
+    "jest",
+    "test",
+    "vi",
+    "xdescribe",
+    "xit",
+    "xtest",
+];
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum JestFnKind {
@@ -139,16 +201,33 @@ struct PerFile {
     /// `ctx.frameworks().is_jest()`: the file is named like a test, or imports something from `@jest/globals`.
     is_jest: bool,
     is_vitest: bool,
+    /// The file imports something from `bun:test`.
+    is_bun: bool,
     /// The numbers of the identifiers that are named like one of [`JEST_METHOD_NAMES`], whatever they refer to.
     named_like_jest: OnceCell<Vec<u32>>,
+    /// For the rules of `jest` and `vitest`, and for those of `bun:test`.
+    seen: [Seen; 2],
+}
+
+/// What depends on whose tests count.
+#[derive(Default)]
+struct Seen {
     /// [`tests_as_written`]
     tests_as_written: OnceCell<Vec<Span>>,
     possible_jest_nodes: OnceCell<PossibleJestNodes>,
 }
 
+/// Whose tables a call is checked with.
+#[derive(Copy, Clone)]
+struct Frameworks {
+    is_jest: bool,
+    is_vitest: bool,
+    is_bun: bool,
+}
+
 #[derive(Default)]
 struct PossibleJestNodes {
-    /// The names under which something is imported from Jest or Vitest.
+    /// The names under which something is imported from Jest or Vitest, or from `bun:test`.
     originals: Vec<Box<[u8]>>,
     calls: Vec<PossibleCall>,
     /// [`Scopes::of`] each of `calls`, once a rule asks.
@@ -221,21 +300,74 @@ fn per_file<'a>(file: &'a File<'a>) -> Option<&'a PerFile> {
         PerFile {
             is_jest: is_jestlike_file(file.path()) || imports(|source| source == b"@jest/globals"),
             is_vitest: imports(is_vitest_import_source),
+            is_bun: file.mentions_bit(const { mention_bit(BUN_TEST) }) && imports_bun_test(file),
             named_like_jest: OnceCell::new(),
-            tests_as_written: OnceCell::new(),
-            possible_jest_nodes: OnceCell::new(),
+            seen: Default::default(),
         }
     })
 }
 
-/// `ctx.frameworks().is_vitest()`: the file imports something from Vitest. Its name does not matter.
-pub(crate) fn is_vitest<'a>(file: &'a File<'a>) -> bool {
-    per_file(file).is_some_and(|it| it.is_vitest)
+/// The `{ test: t }` of `const { test: t } = require("bun:test")` and of `.. = await import("bun:test")`.
+fn required_from_bun_test(declarator: VarDecl<'_>) -> Option<Pat<'_>> {
+    let init = declarator.init()?;
+    let source = match init.kind() {
+        ExprKind::Call(call) => common_js_require(call),
+        ExprKind::Await(import) => match import.kind() {
+            ExprKind::ImportCall { args } => args.first(),
+            _ => None,
+        },
+        _ => None,
+    };
+    (static_string(source?)?.bytes() == BUN_TEST).then(|| declarator.pat())
 }
 
-/// `ctx.frameworks().is_test()`: in other files oxlint does not call `run_on_jest_node`.
-pub(crate) fn is_test<'a>(file: &'a File<'a>) -> bool {
-    per_file(file).is_some_and(|it| it.is_jest || it.is_vitest)
+/// The declarations at the top level of [`required_from_bun_test`].
+fn all_required_from_bun_test<'a>(file: &'a File<'a>) -> impl Iterator<Item = Pat<'a>> {
+    let declarators = file.body().iter().filter_map(Stmt::as_var).flatten();
+    declarators.filter_map(required_from_bun_test)
+}
+
+fn imports_bun_test<'a>(file: &'a File<'a>) -> bool {
+    let imports = |it: Import| it.spec().bytes() == BUN_TEST && !it.is_type_only();
+    file.body().iter().filter_map(Stmt::as_import).any(imports)
+        || all_required_from_bun_test(file).next().is_some()
+}
+
+impl PerFile {
+    fn seen(&self, runner: Runner) -> &Seen {
+        &self.seen[usize::from(runner == Runner::Bun)]
+    }
+
+    fn frameworks(&self, runner: Runner) -> Frameworks {
+        let is_bun = runner == Runner::Bun;
+        Frameworks {
+            is_jest: self.is_jest && !is_bun,
+            is_vitest: self.is_vitest && !is_bun,
+            is_bun,
+        }
+    }
+}
+
+/// Whether a rule with `RUNNER` is for `file` at all. One of `bun:test` is for a file that imports from there.
+#[inline]
+pub(crate) fn is_for<'a>(file: &'a File<'a>, runner: u8) -> bool {
+    runner != BUN
+        || file.mentions_bit(const { mention_bit(BUN_TEST) })
+            && per_file(file).is_some_and(|it| it.is_bun)
+}
+
+/// `ctx.frameworks().is_vitest()`: the file imports something from Vitest. Its name does not matter.
+pub(crate) fn is_vitest<'a>(file: &'a File<'a>, runner: Runner) -> bool {
+    per_file(file).is_some_and(|it| it.frameworks(runner).is_vitest)
+}
+
+/// `ctx.frameworks().is_test()`: in other files oxlint does not call `run_on_jest_node`. `runner`: the `RUNNER` of the rule.
+#[inline]
+pub(crate) fn is_test<'a>(file: &'a File<'a>, runner: u8) -> bool {
+    match runner {
+        BUN => is_for(file, runner),
+        _ => per_file(file).is_some_and(|it| it.is_jest || it.is_vitest),
+    }
 }
 
 /// A call that may be one of Jest.
@@ -243,8 +375,10 @@ pub(crate) fn is_test<'a>(file: &'a File<'a>) -> bool {
 pub(crate) struct PossibleJestNode<'a> {
     /// A `Call`.
     pub(crate) node: Expr<'a>,
-    /// The name that what is called has in `@jest/globals` or in Vitest, if it is imported by name from there.
+    /// The name that what is called has in `@jest/globals`, in Vitest or in `bun:test`, if it is imported by name from there.
     pub(crate) original: Option<&'a [u8]>,
+    /// For whose rules it is one.
+    runner: Runner,
     /// What is known of one of [`iter_possible_jest_call_node`]: most rules are about `expect` only, or not about it, and need not
     /// parse the rest.
     known: Option<&'a PossibleCall>,
@@ -252,18 +386,25 @@ pub(crate) struct PossibleJestNode<'a> {
 
 impl<'a> PossibleJestNode<'a> {
     /// For a call that is looked at by what is written only.
-    pub(crate) fn new(node: Expr<'a>) -> Self {
+    pub(crate) fn new(node: Expr<'a>, runner: Runner) -> Self {
         PossibleJestNode {
             node,
             original: None,
+            runner,
             known: None,
         }
     }
 
-    fn of(file: &'a File<'a>, originals: &'a [Box<[u8]>], call: &'a PossibleCall) -> Self {
+    fn of(
+        file: &'a File<'a>,
+        runner: Runner,
+        originals: &'a [Box<[u8]>],
+        call: &'a PossibleCall,
+    ) -> Self {
         PossibleJestNode {
             node: Expr::from_raw(file, call.id),
             original: originals.get(call.original as usize).map(|it| &**it),
+            runner,
             known: Some(call),
         }
     }
@@ -282,33 +423,36 @@ impl<'a> PossibleJestNode<'a> {
     }
 }
 
-fn possible_jest_nodes<'a>(file: &'a File<'a>) -> Option<&'a PossibleJestNodes> {
+fn possible_jest_nodes<'a>(file: &'a File<'a>, runner: Runner) -> Option<&'a PossibleJestNodes> {
     per_file(file).map(|it| {
-        it.possible_jest_nodes
-            .get_or_init(|| collect_possible_jest_call_node(file, it))
+        (it.seen(runner).possible_jest_nodes)
+            .get_or_init(|| collect_possible_jest_call_node(file, it, runner))
     })
 }
 
 /// Every call of a global of Jest, of what is imported from Jest or Vitest, and of what these calls and their members return: of
-/// `expect(1).toBe(1)` both `expect(1).toBe(1)` and `expect(1)`.
+/// `expect(1).toBe(1)` both `expect(1).toBe(1)` and `expect(1)`. For [`Runner::Bun`] of what `bun test` declares and of what is
+/// imported from `bun:test`.
 ///
 /// In the order of the source, what is around before what is in it. oxlint has them in another order, and most rules that depend on
 /// it sort them like this. For the others there is [`OxlintOrder`]. `collect_possible_jest_call_node` is the same.
 pub(crate) fn iter_possible_jest_call_node<'a>(
     file: &'a File<'a>,
+    runner: Runner,
 ) -> impl Iterator<Item = PossibleJestNode<'a>> {
-    let (originals, calls) = possible_jest_nodes(file)
+    let (originals, calls) = possible_jest_nodes(file, runner)
         .map_or((&[][..], &[][..]), |it| (&it.originals[..], &it.calls[..]));
     calls
         .iter()
-        .map(move |call| PossibleJestNode::of(file, originals, call))
+        .map(move |call| PossibleJestNode::of(file, runner, originals, call))
 }
 
 /// [`iter_possible_jest_call_node`], each with [`Scopes::of`] it.
 pub(crate) fn iter_possible_jest_call_node_with_scope<'a>(
     file: &'a File<'a>,
+    runner: Runner,
 ) -> impl Iterator<Item = (PossibleJestNode<'a>, Option<Node<'a>>)> {
-    let scopes = possible_jest_nodes(file).map_or(&[][..], |found| {
+    let scopes = possible_jest_nodes(file, runner).map_or(&[][..], |found| {
         found.scopes.get_or_init(|| {
             let mut scopes = Scopes::default();
             let calls = found.calls.iter().map(|it| Expr::from_raw(file, it.id));
@@ -329,36 +473,42 @@ pub(crate) fn iter_possible_jest_call_node_with_scope<'a>(
         ScopeMaker::Stmt(id) => Some(Node::Stmt(Stmt::from_raw(file, id))),
         ScopeMaker::Class(id) => Some(Node::Class(Class::from_raw(file, id))),
     };
-    iter_possible_jest_call_node(file).zip(scopes.iter().map(scope))
+    iter_possible_jest_call_node(file, runner).zip(scopes.iter().map(scope))
 }
 
 /// The one of [`iter_possible_jest_call_node`] that is the call `node`.
 pub(crate) fn possible_jest_node_of<'a>(
     file: &'a File<'a>,
+    runner: Runner,
     node: Expr<'a>,
 ) -> Option<PossibleJestNode<'a>> {
-    let found = possible_jest_nodes(file)?;
+    let found = possible_jest_nodes(file, runner)?;
     let key = |span: Span| (span.start, std::cmp::Reverse(span.end));
     let call = found.calls.get(
         found
             .calls
             .partition_point(|it| key(it.span) < key(node.span())),
     )?;
-    (call.id == node.id().0).then(|| PossibleJestNode::of(file, &found.originals, call))
+    (call.id == node.id().0).then(|| PossibleJestNode::of(file, runner, &found.originals, call))
 }
 
 fn collect_possible_jest_call_node<'a>(
     file: &'a File<'a>,
-    frameworks: &PerFile,
+    per_file: &PerFile,
+    runner: Runner,
 ) -> PossibleJestNodes {
     let mut found = PossibleJestNodes::default();
-    let imports_tests = mentions_any(file, &SOURCE_BITS);
+    let frameworks = per_file.frameworks(runner);
+    let imports_tests = frameworks.is_bun || mentions_any(file, &SOURCE_BITS);
     for (import_index, entry) in import_entries(file)
         .take_while(|_| imports_tests)
         .enumerate()
     {
         let source = entry.declaration.spec().bytes();
-        if source != b"@jest/globals" && !is_vitest_import_source(source) {
+        if match frameworks.is_bun {
+            true => source != BUN_TEST,
+            false => source != b"@jest/globals" && !is_vitest_import_source(source),
+        } {
             continue;
         }
         let Some(symbol) = file.top_level_scope().get_name(entry.local_name().name()) else {
@@ -374,13 +524,31 @@ fn collect_possible_jest_call_node<'a>(
         let references = symbol.references().filter_map(Reference::expr);
         references.for_each(|it| found.add_calls_of(it, original, import_index as u32, frameworks));
     }
+    for property in all_required_from_bun_test(file)
+        .take_while(|_| frameworks.is_bun)
+        .filter_map(|it| match it.kind() {
+            PatKind::Object(properties) => Some(properties),
+            _ => None,
+        })
+        .flatten()
+    {
+        if let Some(original) = property.key().and_then(|it| it.name())
+            && let Some(symbol) = property.value().symbol()
+        {
+            found.originals.push(original.bytes().into());
+            let original = found.originals.len() as u32 - 1;
+            let references = symbol.references().filter_map(Reference::expr);
+            references.for_each(|it| found.add_calls_of(it, original, 0, frameworks));
+        }
+    }
     // What the names resolve to is asked only where one of them starts a chain.
     let is_global = |e: &Expr<'a>| {
         parent_expression(*e).is_some_and(|it| {
             matches!(it.tag(), ExprTag::Call | ExprTag::TaggedTemplate) || is_member(it)
         }) && e.symbol().is_none()
+            && (!frameworks.is_bun || e.as_ident().is_some_and(|it| it.is_any(&GLOBALS_OF_BUN)))
     };
-    (frameworks.named_like_jest(file).iter())
+    (per_file.named_like_jest(file).iter())
         .map(|id| Expr::from_raw(file, *id))
         .filter(is_global)
         .for_each(|it| found.add_calls_of(it, u32::MAX, u32::MAX, frameworks));
@@ -449,13 +617,13 @@ pub(crate) fn for_each_call_named_like<'a>(
 
 /// The calls that are tests by what is written, whatever `it` and `test` refer to: those that are in no other, in the order of
 /// the source.
-pub(crate) fn tests_as_written<'a>(file: &'a File<'a>) -> &'a [Span] {
+pub(crate) fn tests_as_written<'a>(file: &'a File<'a>, runner: Runner) -> &'a [Span] {
     let find = || {
         let mut tests: Vec<Span> = Vec::new();
         for_each_call_named_like(file, &[JestGeneralFnKind::Test], &mut |call_expr| {
             if is_type_of_jest_fn_call(
                 file,
-                PossibleJestNode::new(call_expr),
+                PossibleJestNode::new(call_expr, runner),
                 &[JestFnKind::General(JestGeneralFnKind::Test)],
             ) {
                 tests.push(call_expr.span());
@@ -470,7 +638,9 @@ pub(crate) fn tests_as_written<'a>(file: &'a File<'a>) -> &'a [Span] {
         });
         tests
     };
-    per_file(file).map_or(&[][..], |it| it.tests_as_written.get_or_init(find))
+    per_file(file).map_or(&[][..], |it| {
+        it.seen(runner).tests_as_written.get_or_init(find)
+    })
 }
 
 impl PossibleJestNodes {
@@ -480,7 +650,7 @@ impl PossibleJestNodes {
         reference: Expr,
         original: u32,
         import_index: u32,
-        frameworks: &PerFile,
+        frameworks: Frameworks,
     ) {
         let local = reference.as_ident().map_or(b"".as_slice(), Name::bytes);
         let name = self
@@ -491,7 +661,7 @@ impl PossibleJestNodes {
         let is_valid = local != b"each"
             && match kind {
                 JestFnKind::General(JestGeneralFnKind::Jest | JestGeneralFnKind::Vitest) => true,
-                _ => is_valid_without_members(frameworks, name),
+                _ => is_valid_call(frameworks, name, &[]),
             };
         let is_expect = matches!(kind, JestFnKind::Expect | JestFnKind::ExpectTypeOf);
         let mut at = reference;
@@ -672,8 +842,11 @@ impl<'a> KnownMemberExpressionProperty<'a> {
 
 /// `get_node_chain`, after `resolve_first_ident`: the identifier that `callee` starts with, and the names of the members, in the
 /// order of the source. `None` if it starts with something else, or if there is something else on the way than members, calls and
-/// tagged templates.
-fn get_node_chain(callee: Expr<'_>) -> Option<(KnownMemberExpressionProperty<'_>, Members<'_>)> {
+/// tagged templates. oxlint passes over the `[b]` of `a[b].c`. `knows_all_names`: that is `None` too.
+fn get_node_chain(
+    callee: Expr<'_>,
+    knows_all_names: bool,
+) -> Option<(KnownMemberExpressionProperty<'_>, Members<'_>)> {
     use KnownMemberExpressionParentKind::{Call, Member, TaggedTemplate};
     let mut chain = Members::new();
     let (mut at, mut parent) = (callee, None);
@@ -717,6 +890,8 @@ fn get_node_chain(callee: Expr<'_>) -> Option<(KnownMemberExpressionProperty<'_>
                         grandparent_kind: parent_kind,
                         span,
                     });
+                } else if knows_all_names {
+                    return None;
                 }
                 (obj, Member)
             }
@@ -750,14 +925,21 @@ pub(crate) fn first_identifier_of_chain(callee: Expr<'_>) -> Option<Name<'_>> {
     None
 }
 
-/// Whether `name(..)` is a call of Jest or of Vitest, whichever the file is for. In a file that is for neither, every call is.
-fn is_valid_without_members(frameworks: &PerFile, name: &[u8]) -> bool {
-    let PerFile {
-        is_jest, is_vitest, ..
-    } = *frameworks;
-    !is_jest && !is_vitest
-        || is_jest && is_valid_jest_call(name, &[])
-        || is_vitest && is_valid_vitest_call(name, &[])
+/// Whether `name.a.b(..)` is a call of Jest, of Vitest or of Bun, whichever the file is for. In a file that is for none, every call is.
+fn is_valid_call(
+    frameworks: Frameworks,
+    name: &[u8],
+    members: &[KnownMemberExpressionProperty],
+) -> bool {
+    let Frameworks {
+        is_jest,
+        is_vitest,
+        is_bun,
+    } = frameworks;
+    !is_jest && !is_vitest && !is_bun
+        || is_jest && is_valid_jest_call(name, members)
+        || is_vitest && is_valid_vitest_call(name, members)
+        || is_bun && is_valid_bun_call(name, members)
 }
 
 /// Parses the call `call_expr`. What it is part of is asked of the node of `possible_jest_node`: some rules pass another than the call.
@@ -766,7 +948,12 @@ pub(crate) fn parse_jest_fn_call_in<'a>(
     call_expr: Expr<'a>,
     possible_jest_node: PossibleJestNode<'a>,
 ) -> Option<ParsedJestFnCall<'a>> {
-    let PossibleJestNode { node, original, .. } = possible_jest_node;
+    let PossibleJestNode {
+        node,
+        original,
+        runner,
+        ..
+    } = possible_jest_node;
     let known = possible_jest_node
         .known
         .filter(|it| it.id == call_expr.id().0);
@@ -797,7 +984,7 @@ pub(crate) fn parse_jest_fn_call_in<'a>(
         }
         let is_valid = || match kind {
             JestFnKind::General(JestGeneralFnKind::Jest | JestGeneralFnKind::Vitest) => true,
-            _ => per_file(file).is_none_or(|it| is_valid_without_members(it, name)),
+            _ => per_file(file).is_none_or(|it| is_valid_call(it.frameworks(runner), name, &[])),
         };
         let is_call = match known.and_then(|it| it.without_members) {
             Some(is_call) => is_call,
@@ -812,13 +999,18 @@ pub(crate) fn parse_jest_fn_call_in<'a>(
         });
     }
 
-    let (head, members) = get_node_chain(callee)?;
+    let (head, members) = get_node_chain(callee, runner == Runner::Bun)?;
     let local = head.name()?;
     let name = original.unwrap_or(local);
-    let is_each = members.last().unwrap_or(&head).is_name_equal("each");
+    let last = members.last().unwrap_or(&head);
+    let is_each = last.is_name_equal("each");
+    // `test.skipIf(a)`
+    let is_condition =
+        runner == Runner::Bun && (last.name()).is_some_and(|it| it == b"if" || it.ends_with(b"If"));
 
     // `.each()` is parsed with the call of what it returns: `.each()()`.
-    if is_each && !matches!(callee.tag(), ExprTag::Call | ExprTag::TaggedTemplate) {
+    if (is_each || is_condition) && !matches!(callee.tag(), ExprTag::Call | ExprTag::TaggedTemplate)
+    {
         return None;
     }
     if !is_each && callee.tag() == ExprTag::TaggedTemplate {
@@ -851,15 +1043,11 @@ pub(crate) fn parse_jest_fn_call_in<'a>(
         return None;
     }
 
-    let (is_jest, is_vitest) =
-        per_file(file).map_or((false, false), |it| (it.is_jest, it.is_vitest));
-    if is_jest || is_vitest {
-        if !(is_jest && is_valid_jest_call(name, &members)
-            || is_vitest && is_valid_vitest_call(name, &members))
-        {
+    if let Some(frameworks) = per_file(file).map(|it| it.frameworks(runner)) {
+        if !is_valid_call(frameworks, name, &members) {
             return None;
         }
-        if is_vitest
+        if frameworks.is_vitest
             && members.iter().find_map(KnownMemberExpressionProperty::name)
                 == Some(b"extend".as_slice())
         {
@@ -1060,6 +1248,17 @@ fn is_valid_vitest_call(name: &[u8], members: &[KnownMemberExpressionProperty]) 
     })
 }
 
+/// `test.skipIf(a).each(b)`, ..: every modifier is a property of every other.
+fn is_valid_bun_call(name: &[u8], members: &[KnownMemberExpressionProperty]) -> bool {
+    match name {
+        b"afterAll" | b"afterEach" | b"beforeAll" | b"beforeEach" => members.is_empty(),
+        b"describe" | b"it" | b"test" | b"xdescribe" | b"xit" | b"xtest" => {
+            members.iter().all(|it| it.is_any_of(&MODIFIERS_OF_BUN))
+        }
+        _ => false,
+    }
+}
+
 pub(crate) fn is_type_of_jest_fn_call<'a>(
     file: &'a File<'a>,
     possible_jest_node: PossibleJestNode<'a>,
@@ -1185,7 +1384,7 @@ pub(crate) fn run_on_jest_nodes<'a>(
     ctx: &Ctx<'a, '_>,
     run: &dyn Fn(PossibleJestNode<'a>, &Ctx<'a, '_>),
 ) {
-    iter_possible_jest_call_node(ctx.file).for_each(|node| run(node, ctx));
+    iter_possible_jest_call_node(ctx.file, ctx.runner).for_each(|node| run(node, ctx));
 }
 
 /// Whether [`iter_possible_jest_call_node`] can have anything, by what the file mentions. It computes nothing.

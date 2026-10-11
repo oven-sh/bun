@@ -1,14 +1,13 @@
-use crate::jest::{self, PossibleJestNode};
+use crate::jest::{self, Ctx, PossibleJestNode, Runner};
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Enforce using `toBe(true)` and `toBe(false)` over matchers that coerce types to boolean.
-pub struct PreferStrictBooleanMatchers;
+pub struct PreferStrictBooleanMatchers<const RUNNER: u8 = { jest::VITEST }>;
 
 const PREFER_STRICT_BOOLEAN_MATCHERS: Message = Message::new("", "Use `toBe({{value}})` instead of `{{matcher_name}}`.");
 
-impl Rule for PreferStrictBooleanMatchers {
-    const META: Meta = Meta::oxlint(Plugin::Vitest, "prefer-strict-boolean-matchers", Kind::Suggestion).fixable(Fixable::Code);
+impl<const RUNNER: u8> Rule for PreferStrictBooleanMatchers<RUNNER> {
+    const META: Meta = jest::meta(RUNNER, "prefer-strict-boolean-matchers", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -17,16 +16,17 @@ impl Rule for PreferStrictBooleanMatchers {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (jest::mentions_any(file, &const { jest::mention_bits(["expect", "expectTypeOf"]) }) && jest::mentions_any(file, &const { jest::mention_bits(["toBeTruthy", "toBeFalsy"]) }) && jest::is_test(file)).then_some(())
+        (jest::mentions_any(file, &const { jest::mention_bits(["expect", "expectTypeOf"]) }) && jest::mentions_any(file, &const { jest::mention_bits(["toBeTruthy", "toBeFalsy"]) }) && jest::is_test(file, RUNNER)).then_some(())
     }
 
     fn finish<'a>(&self, cx: &mut Cx<'a, Self>) {
-        jest::iter_possible_jest_call_node(cx.file()).for_each(|node| run(node, cx));
+        let ctx = Ctx { file: cx.file(), runner: Runner::of(RUNNER), report: &|at, message| cx.report(at, message) };
+        jest::run_on_jest_nodes(&ctx, &run);
     }
 }
 
-fn run<'a>(possible_vitest_node: PossibleJestNode<'a>, cx: &Cx<'a, PreferStrictBooleanMatchers>) {
-    let Some(vitest_expect_fn_call) = jest::parse_expect_and_typeof_vitest_fn_call(cx.file(), possible_vitest_node) else {
+fn run<'a>(possible_vitest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
+    let Some(vitest_expect_fn_call) = jest::parse_expect_and_typeof_vitest_fn_call(ctx.file, possible_vitest_node) else {
         return;
     };
     let Some(matcher) = vitest_expect_fn_call.matcher() else {
@@ -41,7 +41,7 @@ fn run<'a>(possible_vitest_node: PossibleJestNode<'a>, cx: &Cx<'a, PreferStrictB
         return;
     };
     let span = Span::new(matcher.span.start, possible_vitest_node.node.span().end);
-    cx.report(span, PREFER_STRICT_BOOLEAN_MATCHERS).data("value", value).data("matcher_name", matcher_name).fix(|fixer| {
+    ctx.report(span, PREFER_STRICT_BOOLEAN_MATCHERS).data("value", value).data("matcher_name", matcher_name).fix(|fixer| {
         let call_name = if parent.tag() == ExprTag::Index { "\"toBe\"]" } else { "toBe" };
         fixer.replace(span, format!("{call_name}({value})"))
     });

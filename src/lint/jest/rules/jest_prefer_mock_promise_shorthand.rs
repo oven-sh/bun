@@ -1,14 +1,14 @@
-use crate::jest::{self, Ctx};
+use crate::jest::{self, Ctx, Runner};
 use crate::jest_mocks::prefer_mock_promise_shorthand;
 use bun_lint::prelude::*;
 
 /// When working with mocks of functions that return promises, Jest provides some API sugar functions to reduce the amount of
 /// boilerplate you have to write.
-pub struct PreferMockPromiseShorthand<const VITEST: bool = false>;
+pub struct PreferMockPromiseShorthand<const RUNNER: u8 = { jest::JEST }>;
 
-impl<const VITEST: bool> Rule for PreferMockPromiseShorthand<VITEST> {
+impl<const RUNNER: u8> Rule for PreferMockPromiseShorthand<RUNNER> {
     const META: Meta =
-        Meta::oxlint(jest::plugin(VITEST), "prefer-mock-promise-shorthand", Kind::Suggestion).fixable(Fixable::Code);
+        jest::meta(RUNNER, "prefer-mock-promise-shorthand", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -17,11 +17,11 @@ impl<const VITEST: bool> Rule for PreferMockPromiseShorthand<VITEST> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        prefer_mock_promise_shorthand::should_run(file).then_some(())
+        (jest::is_for(file, RUNNER) && prefer_mock_promise_shorthand::should_run(file)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
+        let ctx = Ctx { file: cx.file(), runner: Runner::of(RUNNER), report: &|at, message| cx.report(at, message) };
         prefer_mock_promise_shorthand::run_once(&ctx);
     }
 }

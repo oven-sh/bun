@@ -3,7 +3,7 @@
 
 use crate::jest::{
     Ctx, JestFnKind, JestGeneralFnKind, MemberExpressionElement, OxlintOrder,
-    ParsedGeneralJestFnCall, PossibleJestNode, Scopes, for_each_call_named_like,
+    ParsedGeneralJestFnCall, PossibleJestNode, Runner, Scopes, for_each_call_named_like,
     is_in_call_or_member, is_type_of_jest_fn_call, is_vitest, iter_possible_jest_call_node,
     iter_possible_jest_call_node_with_scope, mentions_jest_method, parent_expression,
     parse_general_jest_fn_call, parse_jest_fn_call, tests_as_written,
@@ -101,7 +101,9 @@ pub(crate) mod no_disabled_tests {
         };
         if kind == JestGeneralFnKind::Test
             && call_expr.args().len() < 2
-            && members.iter().all(|member| member.is_name_unequal("todo"))
+            && members
+                .iter()
+                .all(|member| member.is_name_unequal("todo") && member.is_name_unequal("todoIf"))
         {
             ctx.report(node, MISSING_FUNCTION);
         } else if name.starts_with(b"x")
@@ -137,12 +139,9 @@ pub(crate) mod valid_describe_callback {
     const UNEXPECTED_RETURN_IN_DESCRIBE: Message =
         Message::new("", "Unexpected return statement in describe callback");
 
-    /// `is_for_vitest`: the callback can be `async`, and there can be options before it.
-    pub(crate) fn run<'a>(
-        possible_jest_node: PossibleJestNode<'a>,
-        ctx: &Ctx<'a, '_>,
-        is_for_vitest: bool,
-    ) {
+    /// For Vitest and Bun the callback can be `async`. For Vitest there can be options before it. For Bun it can be all there is.
+    pub(crate) fn run<'a>(possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
+        let (is_for_vitest, is_for_bun) = (ctx.runner == Runner::Vitest, ctx.runner == Runner::Bun);
         let node = possible_jest_node.node;
         let Some(call_expr) = node.as_call() else {
             return;
@@ -158,12 +157,18 @@ pub(crate) mod valid_describe_callback {
         // `describe.todo("title")`
         if arguments.len() == 1
             && matches!(callee.tag(), ExprTag::Dot | ExprTag::Index)
-            && is_vitest(ctx.file)
-            && static_property_name(callee).is_none_or(|it| it.is("todo"))
+            && (is_vitest(ctx.file, ctx.runner) || is_for_bun)
+            && static_property_name(callee)
+                .is_none_or(|it| it.is("todo") || is_for_bun && it.is("skip"))
         {
             return;
         }
-        let Some(second) = arguments.get(1) else {
+        let as_function = |arg: Expr<'a>| arg.as_fn().filter(|_| !arg.is_parenthesized());
+        let Some(second) = (arguments.get(1)).or_else(|| {
+            arguments
+                .first()
+                .filter(|it| is_for_bun && as_function(*it).is_some())
+        }) else {
             ctx.report(
                 arguments
                     .first()
@@ -172,7 +177,6 @@ pub(crate) mod valid_describe_callback {
             );
             return;
         };
-        let as_function = |arg: Expr<'a>| arg.as_fn().filter(|_| !arg.is_parenthesized());
         let callback = match arguments.get(2) {
             Some(third)
                 if is_for_vitest
@@ -187,7 +191,7 @@ pub(crate) mod valid_describe_callback {
             ctx.report(callback.outer_span(), SECOND_ARGUMENT_MUST_BE_FUNCTION);
             return;
         };
-        if func.is_async() && !is_for_vitest {
+        if func.is_async() && !is_for_vitest && !is_for_bun {
             ctx.report(callback, NO_ASYNC_DESCRIBE_CALLBACK);
         }
         let is_parameterized = jest_fn_call
@@ -286,7 +290,8 @@ pub(crate) mod valid_title {
     }
 
     impl ValidTitleConfig {
-        pub(crate) fn new(options: &Options) -> Self {
+        /// `runner`: with Bun the title of a `describe` can be a function, a class or a number.
+        pub(crate) fn new(options: &Options, runner: Runner) -> Self {
             let config = options.object(0);
             let disallowed_words = config.strings("disallowedWords");
             let disallowed_words_reg = (!disallowed_words.is_empty()).then(|| {
@@ -302,7 +307,8 @@ pub(crate) mod valid_title {
             });
             ValidTitleConfig {
                 ignore_type_of_test_name: config.bool_or("ignoreTypeOfTestName", false),
-                ignore_type_of_describe_name: config.bool_or("ignoreTypeOfDescribeName", false),
+                ignore_type_of_describe_name: config
+                    .bool_or("ignoreTypeOfDescribeName", runner == Runner::Bun),
                 allow_arguments: config.bool_or("allowArguments", false),
                 disallowed_words_reg: disallowed_words_reg.flatten(),
                 ignore_spaces: config.bool_or("ignoreSpaces", false),
@@ -544,7 +550,7 @@ pub(crate) mod consistent_test_it {
         pub(crate) fn run_once<'a>(self, ctx: &Ctx<'a, '_>) {
             // The calls of `describe` around.
             let mut describe_stack: Vec<Span> = Vec::new();
-            for possible_jest_node in iter_possible_jest_call_node(ctx.file) {
+            for possible_jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner) {
                 let node = possible_jest_node.node;
                 while describe_stack
                     .last()
@@ -629,7 +635,7 @@ pub(crate) mod max_nested_describe {
 
     pub(crate) fn run_once<'a>(max: u32, ctx: &Ctx<'a, '_>) {
         let mut active_describes: Vec<Span> = Vec::new();
-        for possible_jest_node in iter_possible_jest_call_node(ctx.file) {
+        for possible_jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner) {
             if !is_type_of_jest_fn_call(
                 ctx.file,
                 possible_jest_node,
@@ -745,7 +751,7 @@ pub(crate) mod no_conditional_in_test {
 
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
         let file = ctx.file;
-        let tests = tests_as_written(file);
+        let tests = tests_as_written(file, ctx.runner);
         if tests.is_empty() {
             return;
         }
@@ -801,7 +807,8 @@ pub(crate) mod no_identical_title {
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
         // The titles of more than one call. Most files have none.
         let (mut titles, mut repeated) = (FxHashSet::default(), FxHashSet::default());
-        for (_, title) in iter_possible_jest_call_node(ctx.file).filter_map(|it| title_of(it.node))
+        for (_, title) in
+            iter_possible_jest_call_node(ctx.file, ctx.runner).filter_map(|it| title_of(it.node))
         {
             if !titles.insert(title) {
                 repeated.insert(title);
@@ -813,7 +820,7 @@ pub(crate) mod no_identical_title {
         let mut blocks = AncestorMemo::default();
         let mut title_to_calls: FxHashMap<Name<'a>, SmallVec<[Titled<'a>; 1]>> =
             FxHashMap::default();
-        for possible_jest_node in iter_possible_jest_call_node(ctx.file) {
+        for possible_jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner) {
             let node = possible_jest_node.node;
             let Some((argument, title)) = title_of(node).filter(|it| repeated.contains(&it.1))
             else {
@@ -827,7 +834,12 @@ pub(crate) mod no_identical_title {
                 JestFnKind::General(JestGeneralFnKind::Test) => false,
                 _ => continue,
             };
-            if result.members.iter().any(|m| m.is_name_equal("each")) {
+            // With Bun `test.if(a)("b", ..)` and `test.if(!a)("b", ..)` are one test.
+            let is_one_of_many = |name: &[u8]| {
+                name == b"each"
+                    || ctx.runner == Runner::Bun && (name == b"if" || name.ends_with(b"If"))
+            };
+            if (result.members.iter()).any(|m| m.name().is_some_and(is_one_of_many)) {
                 continue;
             }
             // `get_closest_block`
@@ -891,7 +903,7 @@ pub(crate) mod no_test_prefixes {
         let Some(callee) = possible_jest_node.node.callee() else {
             return;
         };
-        let Some((name, member_names)) = parse_no_test_prefixes_call(possible_jest_node, ctx.file)
+        let Some((name, member_names)) = parse_no_test_prefixes_call(possible_jest_node, ctx)
         else {
             return;
         };
@@ -930,9 +942,9 @@ pub(crate) mod no_test_prefixes {
     /// The name as it is where it is from, and the names of the members.
     fn parse_no_test_prefixes_call<'a>(
         possible_jest_node: PossibleJestNode<'a>,
-        file: &'a File<'a>,
+        ctx: &Ctx<'a, '_>,
     ) -> Option<(&'a [u8], Names<'a>)> {
-        if let Some(jest_fn_call) = parse_general_jest_fn_call(file, possible_jest_node) {
+        if let Some(jest_fn_call) = parse_general_jest_fn_call(ctx.file, possible_jest_node) {
             return Some((
                 jest_fn_call.name,
                 jest_fn_call
@@ -943,7 +955,7 @@ pub(crate) mod no_test_prefixes {
             ));
         }
         // Vitest has no `xit.each`, so that it is not parsed.
-        if !is_vitest(file) || is_in_call_or_member(possible_jest_node.node) {
+        if !is_vitest(ctx.file, ctx.runner) || is_in_call_or_member(possible_jest_node.node) {
             return None;
         }
         let (mut member_names, mut at) = (Names::new(), possible_jest_node.node);
@@ -977,19 +989,24 @@ pub(crate) mod no_test_return_statement {
 
     const NO_TEST_RETURN_STATEMENT: Message =
         Message::new("", "Jest tests should not return a value");
+    const NO_TEST_RETURN_STATEMENT_IN_BUN: Message =
+        Message::new("", "Tests should not return a value");
 
     pub(crate) fn run_once<'a>(ctx: &Ctx<'a, '_>) {
         for return_stmt in ctx.file.stmts_of_kind(StmtTag::Return) {
             if let Some(call_expr) = returned_expect_call(return_stmt)
-                && is_in_test_context(return_stmt, ctx.file)
+                && is_in_test_context(return_stmt, ctx)
             {
-                ctx.report(
-                    Span::new(
-                        return_stmt.span().start,
-                        call_expr.span().start.saturating_sub(1),
-                    ),
-                    NO_TEST_RETURN_STATEMENT,
+                let keyword = Span::new(
+                    return_stmt.span().start,
+                    call_expr.span().start.saturating_sub(1),
                 );
+                match ctx.runner {
+                    Runner::Bun => ctx
+                        .report(keyword, NO_TEST_RETURN_STATEMENT_IN_BUN)
+                        .help("Use `await` for async assertions or remove the return statement."),
+                    Runner::Jest | Runner::Vitest => ctx.report(keyword, NO_TEST_RETURN_STATEMENT),
+                };
             }
         }
     }
@@ -1009,25 +1026,25 @@ pub(crate) mod no_test_return_statement {
     }
 
     /// Whether `argument` is an argument of a call of `it` or `test`.
-    fn is_test_callback<'a>(argument: Expr<'a>, file: &'a File<'a>) -> bool {
+    fn is_test_callback<'a>(argument: Expr<'a>, ctx: &Ctx<'a, '_>) -> bool {
         parent_expression(argument).is_some_and(|call_node| {
             call_node
                 .as_call()
                 .is_some_and(|it| it.callee() != argument)
                 && is_type_of_jest_fn_call(
-                    file,
-                    PossibleJestNode::new(call_node),
+                    ctx.file,
+                    PossibleJestNode::new(call_node, ctx.runner),
                     &[JestFnKind::General(JestGeneralFnKind::Test)],
                 )
         })
     }
 
-    fn is_in_test_context<'a>(return_stmt: Stmt<'a>, file: &'a File<'a>) -> bool {
+    fn is_in_test_context<'a>(return_stmt: Stmt<'a>, ctx: &Ctx<'a, '_>) -> bool {
         let Some(function) = Node::Stmt(return_stmt).enclosing_function() else {
             return false;
         };
         match function.owner() {
-            Node::Expr(function_node) => is_test_callback(function_node, file),
+            Node::Expr(function_node) => is_test_callback(function_node, ctx),
             Node::Stmt(_) => {
                 function
                     .name()
@@ -1036,7 +1053,7 @@ pub(crate) mod no_test_return_statement {
                         symbol
                             .references()
                             .filter_map(Reference::expr)
-                            .any(|it| is_test_callback(it, file))
+                            .any(|it| is_test_callback(it, ctx))
                     })
             }
             _ => false,
@@ -1077,7 +1094,9 @@ pub(crate) mod prefer_each {
             let Some(Some(loop_node)) = enclosing_loop else {
                 return;
             };
-            match parse_jest_fn_call(file, PossibleJestNode::new(node)).map(|it| it.kind()) {
+            match parse_jest_fn_call(file, PossibleJestNode::new(node, ctx.runner))
+                .map(|it| it.kind())
+            {
                 Some(JestFnKind::General(JestGeneralFnKind::Test)) => {
                     found.push((loop_node, node, "it"));
                 }
@@ -1319,7 +1338,9 @@ pub(crate) mod require_top_level_describe {
 
     pub(crate) fn run_once<'a>(max_number_of_top_level_describes: u32, ctx: &Ctx<'a, '_>) {
         let mut count = 0;
-        for (possible_jest_node, scope) in iter_possible_jest_call_node_with_scope(ctx.file) {
+        for (possible_jest_node, scope) in
+            iter_possible_jest_call_node_with_scope(ctx.file, ctx.runner)
+        {
             let node = possible_jest_node.node;
             let Some(ParsedGeneralJestFnCall {
                 kind: JestFnKind::General(kind),
@@ -1371,7 +1392,9 @@ pub(crate) mod padding_around_blocks {
 
     /// `is_for_tests`: for `it` and `test`. Otherwise for `afterAll`.
     pub(crate) fn run<'a>(ctx: &Ctx<'a, '_>, is_for_tests: bool) {
-        for (possible_jest_node, scope) in iter_possible_jest_call_node_with_scope(ctx.file) {
+        for (possible_jest_node, scope) in
+            iter_possible_jest_call_node_with_scope(ctx.file, ctx.runner)
+        {
             let Some(ParsedGeneralJestFnCall { kind, name, .. }) =
                 parse_general_jest_fn_call(ctx.file, possible_jest_node)
             else {

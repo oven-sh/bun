@@ -40,10 +40,16 @@ fn date_end(text: &[u8]) -> Option<usize> {
     bun_core::strings::last_index_of_char(&text[1..end], b'#').map(|i| i + 2)
 }
 
-/// `[^\s<special>](?:\s*[^\s<special>]+)*`
+/// `[^\s<special>](?:\s*[^\s<special>]+)*`. The colon of `bun:test/no-focused-tests` is part of the word: levn makes nothing of
+/// that text, and no rule is called `bun`.
 fn word_end(text: &[u8]) -> usize {
     let (mut at, mut end) = (0, 0);
-    while at < text.len() && !is_special(text[at]) {
+    let colon_of_name = if text.starts_with(b"bun:test/") {
+        3
+    } else {
+        usize::MAX
+    };
+    while at < text.len() && (!is_special(text[at]) || at == colon_of_name) {
         match bun_core::strings::js_whitespace_len(&text[at..]) {
             0 => {
                 at += bun_core::lexer::char_and_size(&text[at..], 0).1.max(1);

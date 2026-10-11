@@ -229,7 +229,7 @@ pub(crate) fn page_of(of: Plugin, name: &[u8]) -> Option<Vec<u8>> {
         name,
         b".html",
     ];
-    (of != Plugin::Bun).then(|| page.concat())
+    (!matches!(of, Plugin::Bun | Plugin::BunTest)).then(|| page.concat())
 }
 
 /// `--rules`. `as_json`: with `-f json`.

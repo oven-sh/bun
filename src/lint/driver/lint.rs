@@ -296,7 +296,10 @@ impl Context<'_, '_> {
         };
         let path = paths::from_native(&result.path);
         let was_made = result.had_types || Framework::of(&path).is_some();
-        if was_made || !linted.config.language.is_oxlint {
+        let is_of_bun_test = |it: &LintMessage| matches!(&it.rule_id, Some(RuleId::Known(meta)) if meta.plugin == Plugin::BunTest);
+        let has_help =
+            linted.config.language.is_oxlint || result.messages.iter().any(is_of_bun_test);
+        if was_made || !has_help {
             return Vec::new();
         }
         let how = How {

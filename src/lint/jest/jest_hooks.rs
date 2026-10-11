@@ -2,9 +2,10 @@
 //! `rules/shared/jest_vitest`. See [`jest`](crate::jest).
 
 use crate::jest::{
-    Ctx, JestFnKind, JestGeneralFnKind, PossibleJestNode, Scopes, first_identifier_of_chain,
-    for_each_call_named_like, get_node_name_vec, is_type_of_jest_fn_call,
-    iter_possible_jest_call_node, mention_bits, mentions_any, parse_general_jest_fn_call,
+    Ctx, JestFnKind, JestGeneralFnKind, PossibleJestNode, Runner, Scopes,
+    first_identifier_of_chain, for_each_call_named_like, get_node_name_vec,
+    is_type_of_jest_fn_call, iter_possible_jest_call_node, mention_bits, mentions_any,
+    parse_general_jest_fn_call,
 };
 use bun_core::strings;
 use bun_lint::prelude::*;
@@ -30,7 +31,7 @@ pub(crate) mod no_duplicate_hooks {
         // The file, and then the calls of `describe` around, each with its hooks.
         let mut hook_contexts: Vec<(Span, HookNames<'a>)> =
             vec![(Span::new(0, u32::MAX), HookNames::new())];
-        for possible_jest_node in iter_possible_jest_call_node(ctx.file) {
+        for possible_jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner) {
             let node = possible_jest_node.node;
             let Some(jest_fn_call) = parse_general_jest_fn_call(ctx.file, possible_jest_node)
             else {
@@ -123,7 +124,9 @@ pub(crate) mod prefer_hooks_in_order {
         for node in calls {
             let hook_name = (node.callee().and_then(first_identifier_of_chain))
                 .filter(is_name)
-                .and_then(|_| parse_general_jest_fn_call(ctx.file, PossibleJestNode::new(node)))
+                .and_then(|_| {
+                    parse_general_jest_fn_call(ctx.file, PossibleJestNode::new(node, ctx.runner))
+                })
                 .filter(|it| it.kind == JestFnKind::General(JestGeneralFnKind::Hook))
                 .map(|it| it.name);
             // Most calls are not in a scope that has a hook.
@@ -172,7 +175,7 @@ pub(crate) mod prefer_hooks_on_top {
         let mut scopes = Scopes::default();
         // The scopes in which there has been a test.
         let mut hooks_context: FxHashSet<Option<Node<'a>>> = FxHashSet::default();
-        for possible_jest_node in iter_possible_jest_call_node(ctx.file) {
+        for possible_jest_node in iter_possible_jest_call_node(ctx.file, ctx.runner) {
             let node = possible_jest_node.node;
             match parse_general_jest_fn_call(ctx.file, possible_jest_node).map(|it| it.kind) {
                 Some(JestFnKind::General(JestGeneralFnKind::Test)) => {
@@ -216,7 +219,7 @@ pub(crate) mod require_hook {
                     && let Some(statements) = callback.as_fn().and_then(Func::body_statements)
                     && is_type_of_jest_fn_call(
                         file,
-                        PossibleJestNode::new(node),
+                        PossibleJestNode::new(node, ctx.runner),
                         &[JestFnKind::General(JestGeneralFnKind::Describe)],
                     )
                 {
@@ -231,7 +234,7 @@ pub(crate) mod require_hook {
                     if let Some(call_expr) = expr.as_call()
                         && !expr.is_parenthesized()
                         && !expr.is_chain_root()
-                        && !self.is_allowed(&get_node_name_vec(call_expr.callee()))
+                        && !self.is_allowed(&get_node_name_vec(call_expr.callee()), ctx.runner)
                     {
                         ctx.report(expr, USE_HOOK);
                     }
@@ -251,7 +254,7 @@ pub(crate) mod require_hook {
         }
 
         /// `names`: the names of what is called, which are looked at with dots between them.
-        fn is_allowed(&self, names: &[&[u8]]) -> bool {
+        fn is_allowed(&self, names: &[&[u8]], runner: Runner) -> bool {
             let first = names.first().copied().unwrap_or_default();
             let is_member_of = |object: &[u8]| match first.strip_prefix(object) {
                 Some(rest) => rest.first().map_or(names.len() > 1, |it| *it == b'.'),
@@ -272,6 +275,12 @@ pub(crate) mod require_hook {
                 )
             ) || is_member_of(b"jest")
                 || is_member_of(b"vi")
+                || runner == Runner::Bun
+                    && (matches!(
+                        first,
+                        b"expectTypeOf" | b"setDefaultTimeout" | b"xdescribe" | b"xit" | b"xtest"
+                    ) || is_member_of(b"expect")
+                        || is_member_of(b"mock"))
                 || !self.allowed_function_calls.is_empty() && {
                     let name = names.join(&b"."[..]);
                     self.allowed_function_calls

@@ -1,12 +1,12 @@
-use crate::jest::{self, Ctx};
+use crate::jest::{self, Ctx, Runner};
 use crate::jest_tests::prefer_each;
 use bun_lint::prelude::*;
 
 /// This rule enforces using `each` rather than manual loops.
-pub struct PreferEach<const VITEST: bool = false>;
+pub struct PreferEach<const RUNNER: u8 = { jest::JEST }>;
 
-impl<const VITEST: bool> Rule for PreferEach<VITEST> {
-    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "prefer-each", Kind::Suggestion);
+impl<const RUNNER: u8> Rule for PreferEach<RUNNER> {
+    const META: Meta = jest::meta(RUNNER, "prefer-each", Kind::Suggestion);
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -15,11 +15,11 @@ impl<const VITEST: bool> Rule for PreferEach<VITEST> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        prefer_each::should_run(file).then_some(())
+        (jest::is_for(file, RUNNER) && prefer_each::should_run(file)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
+        let ctx = Ctx { file: cx.file(), runner: Runner::of(RUNNER), report: &|at, message| cx.report(at, message) };
         prefer_each::run_once(&ctx);
     }
 }

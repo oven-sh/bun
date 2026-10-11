@@ -28,13 +28,13 @@ impl Rule for RequireLocalTestContextForConcurrentSnapshots {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (file.mentions("expect") && file.mentions("concurrent") && jest::mentions_any(file, &const { jest::mention_bits(SNAPSHOT_METHODS) }) && jest::is_test(file)).then_some(())
+        (file.mentions("expect") && file.mentions("concurrent") && jest::mentions_any(file, &const { jest::mention_bits(SNAPSHOT_METHODS) }) && jest::is_test(file, jest::VITEST)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         // Whether something is in a call of `it.concurrent` or the like.
         let mut in_concurrent = AncestorMemo::default();
-        for possible_jest_node in jest::iter_possible_jest_call_node(cx.file()) {
+        for possible_jest_node in jest::iter_possible_jest_call_node(cx.file(), jest::Runner::Vitest) {
             let node = possible_jest_node.node;
             let is_snapshot = node.callee().filter(|it| !it.is_parenthesized()).and_then(static_property_name);
             if is_snapshot.is_some_and(|it| it.is_any(&SNAPSHOT_METHODS))

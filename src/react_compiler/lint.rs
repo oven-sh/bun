@@ -46,15 +46,20 @@ impl Categories {
     pub fn has(self, category: ErrorCategory) -> bool {
         self.0 & (1 << category as u32) != 0
     }
+
+    /// One of those that a pass throws.
+    pub fn has_thrown(self) -> bool {
+        self.has(ErrorCategory::Todo) || self.has(ErrorCategory::Invariant)
+    }
 }
 
 /// For which functions the passes after the validations run. They take as long as all before them.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum LatePasses {
-    /// Where they can change what is said in a category other than `Todo` and `Invariant`: an
-    /// error is recorded, which an error of theirs would drop, or there is manual memoization to
-    /// validate.
-    WhereTheyCount,
+    /// Where they can change what is said in one of these categories, of which `Todo` and
+    /// `Invariant` are none: an error is recorded, which an error of theirs would drop, or there
+    /// is manual memoization to validate.
+    WhereTheyCount(Categories),
     /// Also where they can say a `Todo`, which is about a function declaration that is referred
     /// to before it. Their invariants are not looked for.
     AlsoForTodos,
@@ -71,17 +76,22 @@ impl LatePasses {
         };
         match self {
             LatePasses::Always => true,
+            LatePasses::WhereTheyCount(wanted) => {
+                let validates_memoization = wanted.has(ErrorCategory::PreserveManualMemo)
+                    || wanted.has(ErrorCategory::MemoDependencies);
+                (env.errors.details.iter()).any(|it| wanted.has(it.category()))
+                    || (validates_memoization && has_instruction(hir, env, is_start_of_memoization))
+            }
             _ if env.has_errors() || has_instruction(hir, env, is_start_of_memoization) => true,
             LatePasses::AlsoForTodos => has_instruction(hir, env, is_hoisted_function),
-            LatePasses::WhereTheyCount => false,
         }
     }
 }
 
 /// `wanted`: what is said in another category need not be said.
 ///
-/// `is_more_recorded`: the caller has errors of its own for the function, which an error that a
-/// pass throws drops like those that the passes record.
+/// `is_more_recorded`: the caller has errors of its own for the function that are wanted, which
+/// an error that a pass throws drops like those that the passes record.
 pub fn lint_function(
     func: &FunctionNode<'_>,
     host: &dyn Host,
@@ -91,11 +101,11 @@ pub fn lint_function(
     wanted: Categories,
     is_more_recorded: bool,
 ) -> Linted {
-    let wants_thrown = wanted.has(ErrorCategory::Todo) || wanted.has(ErrorCategory::Invariant);
+    let wants_thrown = wanted.has_thrown();
     let late_passes = match wants_thrown {
         _ if is_more_recorded => LatePasses::Always,
         true => LatePasses::AlsoForTodos,
-        false => LatePasses::WhereTheyCount,
+        false => LatePasses::WhereTheyCount(wanted),
     };
     let mut config = config.clone();
     // A validation throws only a `Todo` or an `Invariant`, and that for no reason of its own.

@@ -179,6 +179,8 @@ plugins! {
     Vue: ["vue"], Package, Nothing;
     /// `bun/no-eager-dynamic-import`
     Bun: ["bun"], Always, Whole;
+    /// `bun:test/no-focused-tests`
+    BunTest: ["bun:test"], Always, Whole;
     /// `prettier/prettier`
     Prettier: ["prettier"], InPlaceOf(Some("eslint-plugin-prettier"), "5.5.6"), Whole;
 }

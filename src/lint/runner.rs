@@ -1882,9 +1882,9 @@ fn run_rules<'r, 'a: 'r, S: Starts>(file: &'a File<'a>, rules: &'r [Enabled<'r, 
 /// rule without a module of its own: `a::Rule<true>`.
 #[macro_export]
 macro_rules! rules {
-    ($($module:ident::$rule:ident $(= $of:ident<$argument:literal>)?,)*) => {
+    ($($module:ident::$rule:ident $(= $of:ident<$($argument:literal),+>)?,)*) => {
         pub mod rules {
-            $($crate::rule_module! { $module::$rule $(= $of<$argument>)? })*
+            $($crate::rule_module! { $module::$rule $(= $of<$($argument),+>)? })*
         }
 
         /// Sorted by name.
@@ -1903,9 +1903,9 @@ macro_rules! rule_module {
     ($module:ident::$rule:ident) => {
         pub mod $module;
     };
-    ($module:ident::$rule:ident = $of:ident<$argument:literal>) => {
+    ($module:ident::$rule:ident = $of:ident<$($argument:literal),+>) => {
         pub mod $module {
-            pub type $rule = super::$of::$rule<$argument>;
+            pub type $rule = super::$of::$rule<$($argument),+>;
         }
     };
 }

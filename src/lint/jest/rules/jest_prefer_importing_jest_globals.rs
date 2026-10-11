@@ -56,7 +56,7 @@ impl PreferImportingJestGlobals {
         let file = cx.file();
         let mut functions_to_import = Names::new();
         let mut found = Vec::new();
-        for jest_node in jest::iter_possible_jest_call_node(file).filter(|it| it.original.is_none())
+        for jest_node in jest::iter_possible_jest_call_node(file, jest::Runner::Jest).filter(|it| it.original.is_none())
         {
             let Some(jest_fn_call) = jest::parse_jest_fn_call(file, jest_node) else {
                 continue;

@@ -112,6 +112,6 @@ fn is_jest_fn_call<'a>(reference: Expr<'a>, file: &'a File<'a>, tops: &mut Ances
             });
         (!is_link).then_some(child)
     });
-    (top.and_then(|it| jest::possible_jest_node_of(file, it)))
+    (top.and_then(|it| jest::possible_jest_node_of(file, jest::Runner::Jest, it)))
         .is_some_and(|possible_jest_node| jest::parse_jest_fn_call_in(file, parent_node, possible_jest_node).is_some())
 }

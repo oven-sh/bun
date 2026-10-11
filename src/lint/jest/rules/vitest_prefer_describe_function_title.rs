@@ -1,19 +1,18 @@
 use bun_lint_oxlint::import::import_entries;
-use crate::jest::{self, JestFnKind, JestGeneralFnKind, PossibleJestNode};
+use crate::jest::{self, Ctx, JestFnKind, JestGeneralFnKind, PossibleJestNode, Runner};
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 use rustc_hash::FxHashMap;
 use std::cell::OnceCell;
 
 /// When testing a specific function, this rule aims to enforce passing a named function to `describe()` instead of an equivalent
 /// hardcoded string.
-pub struct PreferDescribeFunctionTitle;
+pub struct PreferDescribeFunctionTitle<const RUNNER: u8 = { jest::VITEST }>;
 
 const PREFER_DESCRIBE_FUNCTION_TITLE: Message =
     Message::new("", "Title description can not have the same content as a imported function name.");
 
-impl Rule for PreferDescribeFunctionTitle {
-    const META: Meta = Meta::oxlint(Plugin::Vitest, "prefer-describe-function-title", Kind::Suggestion).fixable(Fixable::Code);
+impl<const RUNNER: u8> Rule for PreferDescribeFunctionTitle<RUNNER> {
+    const META: Meta = jest::meta(RUNNER, "prefer-describe-function-title", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -22,12 +21,13 @@ impl Rule for PreferDescribeFunctionTitle {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (jest::mentions_describe(file) && jest::is_test(file) && file.has_stmts([StmtTag::Import])).then_some(())
+        (jest::mentions_describe(file) && jest::is_test(file, RUNNER) && file.has_stmts([StmtTag::Import])).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
+        let ctx = Ctx { file: cx.file(), runner: Runner::of(RUNNER), report: &|at, message| cx.report(at, message) };
         let imported_names = OnceCell::new();
-        jest::iter_possible_jest_call_node(cx.file()).for_each(|node| run(node, &imported_names, cx));
+        jest::run_on_jest_nodes(&ctx, &|node, ctx| run(node, &imported_names, ctx));
     }
 }
 
@@ -43,9 +43,9 @@ fn imported_names<'a>(file: &'a File<'a>) -> FxHashMap<Name<'a>, bool> {
 fn run<'a>(
     possible_jest_node: PossibleJestNode<'a>,
     imported: &OnceCell<FxHashMap<Name<'a>, bool>>,
-    cx: &Cx<'a, PreferDescribeFunctionTitle>,
+    ctx: &Ctx<'a, '_>,
 ) {
-    let file = cx.file();
+    let file = ctx.file;
     let Some(arguments) = possible_jest_node.node.as_call().map(Call::args).filter(|it| it.len() >= 2) else {
         return;
     };
@@ -73,7 +73,7 @@ fn run<'a>(
     if title_arg.tag() == ExprTag::String && typecheck == Some(true) {
         return;
     }
-    let report = cx.report(title_arg, PREFER_DESCRIBE_FUNCTION_TITLE);
+    let report = ctx.report(title_arg, PREFER_DESCRIBE_FUNCTION_TITLE);
     if is_value {
         report.fix(|fixer| fixer.replace(title_arg, variable));
     }

@@ -1,12 +1,12 @@
-use crate::jest::{self, Ctx};
+use crate::jest::{self, Ctx, Runner};
 use crate::jest_tests::no_test_return_statement;
 use bun_lint::prelude::*;
 
 /// Disallow explicitly returning from tests.
-pub struct NoTestReturnStatement<const VITEST: bool = false>;
+pub struct NoTestReturnStatement<const RUNNER: u8 = { jest::JEST }>;
 
-impl<const VITEST: bool> Rule for NoTestReturnStatement<VITEST> {
-    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "no-test-return-statement", Kind::Suggestion);
+impl<const RUNNER: u8> Rule for NoTestReturnStatement<RUNNER> {
+    const META: Meta = jest::meta(RUNNER, "no-test-return-statement", Kind::Suggestion);
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -15,11 +15,11 @@ impl<const VITEST: bool> Rule for NoTestReturnStatement<VITEST> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (file.mentions("expect") && file.has_stmts([StmtTag::Return])).then_some(())
+        (jest::is_for(file, RUNNER) && file.mentions("expect") && file.has_stmts([StmtTag::Return])).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
+        let ctx = Ctx { file: cx.file(), runner: Runner::of(RUNNER), report: &|at, message| cx.report(at, message) };
         no_test_return_statement::run_once(&ctx);
     }
 }

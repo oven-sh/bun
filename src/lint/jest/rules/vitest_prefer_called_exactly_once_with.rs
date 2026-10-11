@@ -97,7 +97,7 @@ fn check_statements<'a>(
             }
             continue;
         }
-        let expect_call = match jest::parse_jest_fn_call(file, PossibleJestNode::new(expression)) {
+        let expect_call = match jest::parse_jest_fn_call(file, PossibleJestNode::new(expression, jest::Runner::Vitest)) {
             Some(ParsedJestFnCall::GeneralJest(_)) => {
                 let callback = call_expr.args().iter().rev().find_map(|it| it.as_fn().filter(|_| !it.is_parenthesized()));
                 pending.extend(callback.and_then(Func::body_statements));

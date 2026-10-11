@@ -1,10 +1,11 @@
-use crate::jest::{self, JestFnKind, JestGeneralFnKind, PossibleJestNode};
+use crate::jest::{self, Ctx, JestFnKind, JestGeneralFnKind, PossibleJestNode, Runner};
 use bun_core::strings;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Enforces that test blocks end with an assertion.
-pub struct PreferEndingWithAnExpect {
+pub struct PreferEndingWithAnExpect<const RUNNER: u8 = { jest::JEST }>(Config);
+
+struct Config {
     additional_test_block_functions: Vec<String>,
     /// `None`: what has `expect` in its name.
     assert_function_names: Option<Vec<Regex>>,
@@ -12,33 +13,34 @@ pub struct PreferEndingWithAnExpect {
 
 const PREFER_ENDING_WITH_AN_EXPECT: Message = Message::new("", "Test must end with an assertion");
 
-impl Rule for PreferEndingWithAnExpect {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "prefer-ending-with-an-expect", Kind::Suggestion);
+impl<const RUNNER: u8> Rule for PreferEndingWithAnExpect<RUNNER> {
+    const META: Meta = jest::meta(RUNNER, "prefer-ending-with-an-expect", Kind::Suggestion);
     const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
         let config = options.object(0);
-        PreferEndingWithAnExpect {
+        PreferEndingWithAnExpect(Config {
             additional_test_block_functions: (config.strings("additionalTestBlockFunctions").into_iter())
                 .map(String::from)
                 .collect(),
             assert_function_names: (config.has("assertFunctionNames"))
                 .then(|| config.strings("assertFunctionNames").into_iter().filter_map(jest::convert_pattern).collect()),
-        }
+        })
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        jest::is_test(file).then_some(())
+        jest::is_test(file, RUNNER).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        jest::iter_possible_jest_call_node(cx.file()).for_each(|node| self.run(node, cx));
+        let ctx = Ctx { file: cx.file(), runner: Runner::of(RUNNER), report: &|at, message| cx.report(at, message) };
+        jest::run_on_jest_nodes(&ctx, &|node, ctx| self.0.run(node, ctx));
     }
 }
 
-impl PreferEndingWithAnExpect {
-    fn run<'a>(&self, possible_jest_node: PossibleJestNode<'a>, cx: &Cx<'a, Self>) {
+impl Config {
+    fn run<'a>(&self, possible_jest_node: PossibleJestNode<'a>, ctx: &Ctx<'a, '_>) {
         let Some(call_expr) = possible_jest_node.node.as_call() else {
             return;
         };
@@ -46,7 +48,7 @@ impl PreferEndingWithAnExpect {
         else {
             return;
         };
-        let Some(parsed_jest_fn) = jest::parse_general_jest_fn_call(cx.file(), possible_jest_node) else {
+        let Some(parsed_jest_fn) = jest::parse_general_jest_fn_call(ctx.file, possible_jest_node) else {
             return;
         };
         // Other functions take a function as the second argument too: `vi.mock(.., factory)`.
@@ -54,12 +56,12 @@ impl PreferEndingWithAnExpect {
             let name = jest::get_node_name(call_expr.callee());
             self.additional_test_block_functions.iter().any(|it| it.as_bytes() == name)
         };
-        if is_test_block && !self.is_valid_last_statement(func, cx.file()) {
-            cx.report(call_expr.callee(), PREFER_ENDING_WITH_AN_EXPECT);
+        if is_test_block && !self.is_valid_last_statement(func, ctx) {
+            ctx.report(call_expr.callee(), PREFER_ENDING_WITH_AN_EXPECT);
         }
     }
 
-    fn is_valid_last_statement<'a>(&self, func: Func<'a>, file: &'a File<'a>) -> bool {
+    fn is_valid_last_statement<'a>(&self, func: Func<'a>, ctx: &Ctx<'a, '_>) -> bool {
         let statement_expression = match func.body() {
             FnBody::Expr(expression) => Some(expression),
             _ => match func.body_statements().and_then(List::last).filter(|it| it.directive().is_none()).map(Stmt::kind) {
@@ -77,7 +79,7 @@ impl PreferEndingWithAnExpect {
         else {
             return false;
         };
-        if jest::parse_expect_jest_fn_call(file, PossibleJestNode::new(call_expression)).is_some() {
+        if jest::parse_expect_jest_fn_call(ctx.file, PossibleJestNode::new(call_expression, ctx.runner)).is_some() {
             return true;
         }
         let names = call_expression.callee().map(jest::get_node_name_vec).unwrap_or_default();

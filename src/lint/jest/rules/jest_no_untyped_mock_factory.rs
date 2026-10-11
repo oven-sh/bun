@@ -20,11 +20,11 @@ impl Rule for NoUntypedMockFactory {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (!file.is_javascript() && jest::mentions_any(file, &const { jest::mention_bits(["mock", "doMock"]) }) && jest::is_test(file)).then_some(())
+        (!file.is_javascript() && jest::mentions_any(file, &const { jest::mention_bits(["mock", "doMock"]) }) && jest::is_test(file, jest::JEST)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        jest::iter_possible_jest_call_node(cx.file()).for_each(|node| run(node, cx));
+        jest::iter_possible_jest_call_node(cx.file(), jest::Runner::Jest).for_each(|node| run(node, cx));
     }
 }
 

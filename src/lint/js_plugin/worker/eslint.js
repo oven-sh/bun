@@ -219,6 +219,13 @@ function deprecatedRulesOf(config) {
 
 const WITHOUT_FIXES = 1;
 
+// Whether a message is of one of the rules `aboutLayout`, or says that a comment which disables nothing but them does nothing.
+function isAboutLayout({ ruleId, message }, aboutLayout) {
+  if (ruleId !== null) return aboutLayout.has(ruleId);
+  const names = /^Unused eslint-\w+ directive \(.* (?:from|for) ('.*')\)\.$/u.exec(message)?.[1].match(/'[^']+'/gu) ?? [];
+  return names.length > 0 && names.every(it => aboutLayout.has(it.slice(1, -1)));
+}
+
 // ESLint's `verifyText`, without the fixing, which the other side does. The message: `flags`, the id of the configuration, the length
 // of the path and of what it starts with that is the path of the file on disk, then the path, then the text.
 function lintWithEslint() {
@@ -239,12 +246,12 @@ function lintWithEslint() {
     !options.aboutLayout.has(ruleId) && (!options.onlyErrors || severity === 2);
   if (physicalLength !== pathLength) how.physicalFilename = decode(buffer, 16, 16 + physicalLength);
   if ((flags & WITHOUT_FIXES) !== 0) how.disableFixes = true;
-  const messages = linter.verify(decode(buffer, 16 + pathLength, length), configs, how);
+  // The `Linter` of ESLint 8 knows no `ruleFilter`: there they have run.
+  const isKept = it => !isAboutLayout(it, options.aboutLayout);
+  const messages = linter.verify(decode(buffer, 16 + pathLength, length), configs, how).filter(isKept);
+  const suppressed = linter.getSuppressedMessages().filter(isKept);
   const config = configs.getConfig?.(name);
-  return (
-    DONE +
-    JSON.stringify([messages, linter.getSuppressedMessages(), config === undefined ? [] : deprecatedRulesOf(config)])
-  );
+  return DONE + JSON.stringify([messages, suppressed, config === undefined ? [] : deprecatedRulesOf(config)]);
 }
 
 // What `handle` does with the kinds of calls from `LINT_WITH_ESLINT` on.

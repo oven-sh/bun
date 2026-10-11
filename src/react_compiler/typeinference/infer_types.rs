@@ -281,9 +281,10 @@ fn is_ref_like_name(object_name: &[u8], property_name: PropertyName) -> bool {
         PropertyName::Literal(PropertyLiteral::String(s)) => s.slice() == b"current",
         _ => false,
     };
-    if !is_current {
-        return false;
-    }
+    is_current && is_ref_like_object_name(object_name)
+}
+
+fn is_ref_like_object_name(object_name: &[u8]) -> bool {
     // Match TS regex: /^(?:[a-zA-Z$_][a-zA-Z$_0-9]*)Ref$|^ref$/
     // "Ref" alone does NOT match — requires at least one character before "Ref"
     // (e.g., "fooRef", "aRef" match, but bare "Ref" does not).
@@ -325,8 +326,19 @@ fn type_equals(mut a: &Type, mut b: &Type) -> bool {
     }
 }
 
-fn set_name(names: &mut IdMap<IdentifierId, StoreStr>, id: IdentifierId, source: &Identifier) {
-    if let Some(IdentifierName::Named(name)) = source.name {
+/// Only a name that is told from others: `get_name` is asked for nothing else.
+fn set_name(
+    names: &mut IdMap<IdentifierId, StoreStr>,
+    id: IdentifierId,
+    source: &Identifier,
+    unifier: &Unifier,
+) {
+    if let Some(IdentifierName::Named(name)) = source.name
+        && ((unifier.enable_treat_ref_like_identifiers_as_refs
+            && is_ref_like_object_name(name.slice()))
+            || (unifier.enable_treat_set_identifiers_as_state_setters
+                && name.slice().starts_with(b"set")))
+    {
         names.insert(id, name);
     }
 }
@@ -620,6 +632,7 @@ fn generate_instruction_types(
                 names,
                 instr.lvalue.identifier,
                 &identifiers[place.identifier.0 as usize],
+                unifier,
             );
             let place_type = get_type(place.identifier, identifiers);
             unifier.unify(left, place_type, shapes)?;

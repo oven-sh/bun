@@ -1,12 +1,12 @@
-use crate::jest::{self, Ctx};
+use crate::jest::{self, Ctx, Runner};
 use crate::jest_tests::no_disabled_tests;
 use bun_lint::prelude::*;
 
 /// This rule raises a warning about disabled tests.
-pub struct NoDisabledTests<const VITEST: bool = false>;
+pub struct NoDisabledTests<const RUNNER: u8 = { jest::JEST }>;
 
-impl<const VITEST: bool> Rule for NoDisabledTests<VITEST> {
-    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "no-disabled-tests", Kind::Problem);
+impl<const RUNNER: u8> Rule for NoDisabledTests<RUNNER> {
+    const META: Meta = jest::meta(RUNNER, "no-disabled-tests", Kind::Problem);
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -15,11 +15,11 @@ impl<const VITEST: bool> Rule for NoDisabledTests<VITEST> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        jest::is_test(file).then_some(())
+        jest::is_test(file, RUNNER).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
+        let ctx = Ctx { file: cx.file(), runner: Runner::of(RUNNER), report: &|at, message| cx.report(at, message) };
         jest::run_on_jest_nodes(&ctx, &no_disabled_tests::run);
     }
 }

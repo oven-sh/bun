@@ -41,7 +41,7 @@ impl Rule for ConsistentVitestVi {
     fn expr<'a>(&self, node: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let Some(member_expression) = node.callee().and_then(as_member_expression)
             && jest::first_identifier_of_chain(member_expression) == Some(cx.state)
-            && let Some(vitest_fn) = jest::parse_general_jest_fn_call(cx.file(), PossibleJestNode::new(node))
+            && let Some(vitest_fn) = jest::parse_general_jest_fn_call(cx.file(), PossibleJestNode::new(node, jest::Runner::Vitest))
             && vitest_fn.kind == JestFnKind::General(JestGeneralFnKind::Vitest)
             && vitest_fn.name == self.opposite.as_bytes()
             && let Some(object) = member_expression.object()

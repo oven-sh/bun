@@ -24,7 +24,7 @@ You don't need the `eslint` package, and you don't need a configuration file.
 
 ## Without a configuration file
 
-`bun lint` uses `eslint:recommended`, plus `typescript-eslint/recommended` for TypeScript files. It lints `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts`, and `.tsx` files, and knows the globals of browsers, Node.js, and Bun, and in test files those of `bun test`. It skips `node_modules`, `*.min.js`, and what `.gitignore` ignores.
+`bun lint` uses `eslint:recommended`, plus `typescript-eslint/recommended` for TypeScript files, plus [six rules](#rules-for-tests) for files that import from `bun:test`. It lints `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.mts`, `.cts`, and `.tsx` files, and knows the globals of browsers, Node.js, and Bun, and in test files those of `bun test`. It skips `node_modules`, `*.min.js`, and what `.gitignore` ignores.
 
 With `--infer-globals`, or `inferGlobals = true` in `bunfig.toml`, the globals of a file that a `tsconfig.json` or `jsconfig.json` includes are what the types of the project declare: its `lib`, its `types`, and `declare global`. So `window` is undefined in a project without the `dom` library. In JavaScript that the project does not check (`checkJs`), and beside a configuration file, they are added to the globals there are. If the packages of the project are not installed, or an entry of `types` is missing, nothing is inferred. With the `dom` library, `name`, `event`, `status`, `length`, `parent`, `top` and about 90 more such names count as defined everywhere, as for `tsc`.
 
@@ -778,6 +778,58 @@ A file that it cannot check gets one report, which says why: the configuration n
 | the first         | `{}`    | Options of Prettier, which win over those of the configuration file |
 | `usePrettierrc`   | `true`  | Whether the configuration file and `.editorconfig` count            |
 | `fileInfoOptions` | `{}`    | `ignorePath`, `withNodeModules`                                     |
+
+## Rules for tests
+
+The rules that start with `bun:test/` are about the tests that [`bun test`](/test) runs. They are the rules that [oxlint has for Jest and Vitest](https://oxc.rs/docs/guide/usage/linter/rules.html), with the same names and options. They know what `bun:test` has, such as `test.if`, `test.skipIf`, `test.todoIf`, `test.failing`, and `test.serial`.
+
+A rule looks at a file only if the file imports from `"bun:test"`: with `import`, or with `require` or `await import` at the top level. In such a file, these count as Bun's:
+
+- What the file imports from `"bun:test"`, under any name.
+- `test`, `it`, `describe`, `expect`, `expectTypeOf`, `beforeAll`, `beforeEach`, `afterEach`, `afterAll`, `jest`, `vi`, `xit`, `xtest`, and `xdescribe`, if the file does not declare them. `bun test` declares them.
+
+A name that the file imports from `"vitest"`, `"@jest/globals"`, or another module is not Bun's. Most `jest/` and `vitest/` rules of oxlint pass over what a file imports from `"bun:test"`.
+
+[Without a configuration file](#without-a-configuration-file), these six rules are errors:
+
+| Rule                               | Reports                                                                            |
+| ---------------------------------- | ---------------------------------------------------------------------------------- |
+| `bun:test/no-focused-tests`        | `.only`                                                                            |
+| `bun:test/no-disabled-tests`       | `.skip`, `xit`, `xtest`, `xdescribe`, and a test without a function. Not `.skipIf` |
+| `bun:test/no-export`               | An `export` in a file with tests that is named like a test, such as `a.test.ts`    |
+| `bun:test/valid-describe-callback` | A `describe` whose callback is missing, takes parameters, or returns something     |
+| `bun:test/valid-expect`            | An `expect` without a matcher, and `.resolves` or `.rejects` that nothing awaits   |
+| `bun:test/valid-expect-in-promise` | An `expect` in a `.then()` that the test neither awaits nor returns                |
+
+A configuration file replaces these defaults. It turns a rule on by its name. No plugin has to be named, and no category of oxlint has these rules.
+
+```js eslint.config.js icon="/icons/javascript.svg"
+export default [
+  {
+    rules: {
+      "bun:test/no-focused-tests": "error",
+      "bun:test/expect-expect": "warn",
+    },
+  },
+];
+```
+
+`--rule` and `/* eslint */` comments take the name with or without quotes: `/* eslint bun:test/no-focused-tests: "error" */`.
+
+The other 59 rules are off until a configuration turns them on:
+
+`consistent-test-filename`, `consistent-test-it`, `expect-expect`, `max-expects`, `max-nested-describe`, `no-alias-methods`, `no-commented-out-tests`, `no-conditional-expect`, `no-conditional-in-test`, `no-conditional-tests`, `no-done-callback`, `no-duplicate-hooks`, `no-hooks`, `no-identical-title`, `no-interpolation-in-snapshots`, `no-large-snapshots`, `no-restricted-jest-methods`, `no-restricted-matchers`, `no-standalone-expect`, `no-test-prefixes`, `no-test-return-statement`, `no-unneeded-async-expect-function`, `padding-around-after-all-blocks`, `padding-around-test-blocks`, `prefer-called-once`, `prefer-called-times`, `prefer-called-with`, `prefer-comparison-matcher`, `prefer-describe-function-title`, `prefer-each`, `prefer-ending-with-an-expect`, `prefer-equality-matcher`, `prefer-expect-assertions`, `prefer-expect-resolves`, `prefer-expect-type-of`, `prefer-hooks-in-order`, `prefer-hooks-on-top`, `prefer-lowercase-title`, `prefer-mock-promise-shorthand`, `prefer-mock-return-shorthand`, `prefer-snapshot-hint`, `prefer-spy-on`, `prefer-strict-boolean-matchers`, `prefer-strict-equal`, `prefer-to-be`, `prefer-to-be-falsy`, `prefer-to-be-truthy`, `prefer-to-contain`, `prefer-to-have-been-called`, `prefer-to-have-been-called-times`, `prefer-to-have-length`, `prefer-todo`, `require-hook`, `require-mock-type-parameters`, `require-test-timeout`, `require-to-throw-message`, `require-top-level-describe`, `valid-title`, and `warn-todo`.
+
+Where Bun differs from Jest and Vitest, so do the rules:
+
+- `expect(value, message)` takes a message, and `expect().pass()` and `expect().fail()` take no value.
+- The callback of `describe` can be `async`, and `describe(() => {})` needs no title. The title can be a function, a class, or a number.
+- `test.if(a)("b", ..)` and `test.if(!a)("b", ..)` are not identical titles.
+- `expect-expect` counts `expect` and `expectTypeOf`.
+- `require-test-timeout` takes the options as the second or the third argument, and knows `setDefaultTimeout()` and `jest.setTimeout()`.
+- `require-hook` allows `setDefaultTimeout()`, `mock.module()`, and `expect.extend()` outside hooks.
+- `no-restricted-jest-methods` and `require-mock-type-parameters` are about both `jest` and `vi`.
+- `require-mock-type-parameters` has no `checkImportFunctions`, and `no-large-snapshots` has no `allowedSnapshots`.
 
 ## What cannot be linted
 

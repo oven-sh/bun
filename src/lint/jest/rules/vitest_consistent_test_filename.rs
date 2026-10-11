@@ -1,10 +1,10 @@
 use bun_lint_oxlint::regex_flags::rust_regex;
+use crate::jest;
 use bun_core::strings;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// This rule triggers an error when a file is considered a test file, but its name does not match an expected filename format.
-pub struct ConsistentTestFilename {
+pub struct ConsistentTestFilename<const RUNNER: u8 = { jest::VITEST }> {
     /// By default `.*\.(test|spec)\.[tj]sx?$`
     all_test_pattern: Matcher,
     /// By default `.*\.test\.[tj]sx?$`
@@ -43,8 +43,8 @@ fn kind_of_test(path: &[u8]) -> Option<&'static [u8]> {
     (kinds.into_iter()).find(|it| rest.strip_suffix(*it).is_some_and(|rest| rest.ends_with(b".")))
 }
 
-impl Rule for ConsistentTestFilename {
-    const META: Meta = Meta::oxlint(Plugin::Vitest, "consistent-test-filename", Kind::Suggestion);
+impl<const RUNNER: u8> Rule for ConsistentTestFilename<RUNNER> {
+    const META: Meta = jest::meta(RUNNER, "consistent-test-filename", Kind::Suggestion);
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -63,7 +63,7 @@ impl Rule for ConsistentTestFilename {
             Matcher::Default => kind_of_test(path).is_some_and(is_default),
             Matcher::Pattern(pattern) => pattern.as_ref().is_some_and(|it| it.test(path)),
         };
-        (is_match(&self.all_test_pattern, |_| true) && !is_match(&self.pattern, |kind| kind == b"test")).then_some(())
+        (is_match(&self.all_test_pattern, |_| true) && !is_match(&self.pattern, |kind| kind == b"test") && jest::is_for(file, RUNNER)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {

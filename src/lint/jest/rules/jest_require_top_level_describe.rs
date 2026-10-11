@@ -1,12 +1,12 @@
-use crate::jest::{self, Ctx};
+use crate::jest::{self, Ctx, Runner};
 use crate::jest_tests::require_top_level_describe;
 use bun_lint::prelude::*;
 
 /// Requires test cases and hooks to be inside a top-level `describe` block.
-pub struct RequireTopLevelDescribe<const VITEST: bool = false>(u32);
+pub struct RequireTopLevelDescribe<const RUNNER: u8 = { jest::JEST }>(u32);
 
-impl<const VITEST: bool> Rule for RequireTopLevelDescribe<VITEST> {
-    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "require-top-level-describe", Kind::Suggestion);
+impl<const RUNNER: u8> Rule for RequireTopLevelDescribe<RUNNER> {
+    const META: Meta = jest::meta(RUNNER, "require-top-level-describe", Kind::Suggestion);
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -15,11 +15,11 @@ impl<const VITEST: bool> Rule for RequireTopLevelDescribe<VITEST> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        jest::may_have_possible_jest_call_node(file).then_some(())
+        (jest::is_for(file, RUNNER) && jest::may_have_possible_jest_call_node(file)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
+        let ctx = Ctx { file: cx.file(), runner: Runner::of(RUNNER), report: &|at, message| cx.report(at, message) };
         require_top_level_describe::run_once(self.0, &ctx);
     }
 }

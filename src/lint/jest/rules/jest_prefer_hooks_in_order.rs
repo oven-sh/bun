@@ -1,12 +1,12 @@
-use crate::jest::{self, Ctx};
+use crate::jest::{self, Ctx, Runner};
 use crate::jest_hooks::{mentions_hook, prefer_hooks_in_order};
 use bun_lint::prelude::*;
 
 /// Ensures that hooks are in the order that they are called in.
-pub struct PreferHooksInOrder<const VITEST: bool = false>;
+pub struct PreferHooksInOrder<const RUNNER: u8 = { jest::JEST }>;
 
-impl<const VITEST: bool> Rule for PreferHooksInOrder<VITEST> {
-    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "prefer-hooks-in-order", Kind::Suggestion);
+impl<const RUNNER: u8> Rule for PreferHooksInOrder<RUNNER> {
+    const META: Meta = jest::meta(RUNNER, "prefer-hooks-in-order", Kind::Suggestion);
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -15,11 +15,11 @@ impl<const VITEST: bool> Rule for PreferHooksInOrder<VITEST> {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        mentions_hook(file).then_some(())
+        (jest::is_for(file, RUNNER) && mentions_hook(file)).then_some(())
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
+        let ctx = Ctx { file: cx.file(), runner: Runner::of(RUNNER), report: &|at, message| cx.report(at, message) };
         prefer_hooks_in_order::run_once(&ctx);
     }
 }

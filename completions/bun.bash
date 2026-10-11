@@ -132,7 +132,7 @@ _extract_cwd() {
                 --cwd|--bunfile|--server-bunfile|-c|--config|--env-file|--port|-p|\
                 --loader|-l|--target|--origin|--public-dir|--backend|--filter|-F|\
                 --jsx-runtime|--jsx-factory|--jsx-fragment|--jsx-import-source|\
-                --omit|--linker|--define|-d|--external|--inject|-i|--tsconfig-override|\
+                --omit|--linker|--define|-d|--external|--tsconfig-override|\
                 --main-fields|--extension-order|--conditions|-e|--eval|-u|--use|\
                 --outdir|--outfile|--format|--timeout|--rerun-each|--package|--project)
                     if [[ "${COMP_WORDS[line+1]}" == "=" ]]; then

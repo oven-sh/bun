@@ -371,8 +371,8 @@ impl<'src> HtmlRenderer<'src> {
                 }
             }
             TextType::Entity => self.write_entity(content),
-            TextType::Code => {
-                // In code spans, newlines become spaces
+            TextType::Code | TextType::Latexmath => {
+                // In code and math spans, newlines become spaces
                 let mut start: usize = 0;
                 for (j, &byte) in content.iter().enumerate() {
                     if byte == b'\n' {

@@ -61,8 +61,8 @@ All available options:
 | `headings`             | `false` | Heading IDs and autolinks — see [Heading IDs](#heading-ids) |
 | `hardSoftBreaks`       | `false` | Treat soft line breaks as hard breaks                       |
 | `wikiLinks`            | `false` | Enable `[[wiki links]]`                                     |
-| `underline`            | `false` | `__text__` renders as `<u>` instead of `<strong>`           |
-| `latexMath`            | `false` | Enable `$inline$` and `$$display$$` math                    |
+| `underline`            | `false` | `_` emphasis renders as `<u>` instead of `<em>`/`<strong>`  |
+| `latexMath`            | `false` | `$inline$` and `$$display$$` math render as `<x-equation>`  |
 | `collapseWhitespace`   | `false` | Collapse whitespace in text                                 |
 | `permissiveAtxHeaders` | `false` | ATX headers without space after `#`                         |
 | `noIndentedCodeBlocks` | `false` | Disable indented code blocks                                |
@@ -357,6 +357,8 @@ You can override every HTML tag the parser produces:
 | `img`        | `{ src, alt?, title? }`      | Image (no children)                                             |
 | `code`       | `{ children }`               | Inline code                                                     |
 | `del`        | `{ children }`               | Strikethrough (`~~text~~`)                                      |
+| `u`          | `{ children }`               | Underline (`_text_` with the `underline` option)                |
+| `math`       | `{ display?, children }`     | Math span (`latexMath` option). `display` is set for `$$text$$` |
 | `br`         | `{}`                         | Hard line break (no children)                                   |
 
 ### React 18 and older

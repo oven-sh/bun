@@ -41,6 +41,10 @@ describe("bun <file.md>", () => {
     expect(await runMd("**bold** *italic* ~~strike~~ `code` regular\n")).toMatchSnapshot();
   });
 
+  test("renders math spans; underscores stay emphasis", async () => {
+    expect(await runMd("_em_ and $x$\n")).toBe("\x1b[3mem\x1b[23m and \x1b[35m$x$\x1b[39m\x1b[0m\n");
+  });
+
   test("renders ordered, unordered, and task lists", async () => {
     expect(
       await runMd(

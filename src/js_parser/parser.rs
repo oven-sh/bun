@@ -1097,6 +1097,7 @@ impl IdentifierOpts {
     const IS_CALL_TARGET: u8 = 1 << 4;
     const IS_TEMPLATE_TAG: u8 = 1 << 5;
     const IS_PROPERTY_ACCESS_TARGET: u8 = 1 << 6;
+    const IS_CALLEE_CHAIN: u8 = 1 << 7;
 
     #[inline]
     pub(crate) const fn assign_target(self) -> js_ast::AssignTarget {
@@ -1134,6 +1135,11 @@ impl IdentifierOpts {
     pub(crate) const fn is_property_access_target(self) -> bool {
         self.0 & Self::IS_PROPERTY_ACCESS_TARGET != 0
     }
+    /// `ExprIn::callee_chain` is not `CalleeChain::None`.
+    #[inline]
+    pub(crate) const fn is_callee_chain(self) -> bool {
+        self.0 & Self::IS_CALLEE_CHAIN != 0
+    }
 
     // Builder-style helpers (this stays a packed u8 rather than a
     // named-field struct).
@@ -1169,6 +1175,11 @@ impl IdentifierOpts {
     #[inline]
     pub(crate) const fn with_is_property_access_target(mut self, v: bool) -> Self {
         self.0 = (self.0 & !Self::IS_PROPERTY_ACCESS_TARGET) | ((v as u8) << 6);
+        self
+    }
+    #[inline]
+    pub(crate) const fn with_is_callee_chain(mut self, v: bool) -> Self {
+        self.0 = (self.0 & !Self::IS_CALLEE_CHAIN) | ((v as u8) << 7);
         self
     }
 }
@@ -1224,10 +1235,46 @@ pub struct ExprIn {
     /// with `__toESM()`.
     pub(crate) is_immediately_assigned_to_decl: bool,
 
-    pub(crate) property_access_for_method_call_maybe_should_replace_with_undefined: bool,
+    pub(crate) callee_chain: CalleeChain,
 
     /// The parent only reads, calls or assigns a property of this: `x.a`, `x[a]`, `const { a } = x`, not `delete x.a`.
     pub(crate) is_property_access_target: bool,
+}
+
+/// Where an expression is in the callee of the call being visited.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum CalleeChain {
+    #[default]
+    None,
+    /// The callee itself, or reached from it through `.` only: `a.b` in `a.b.c()`.
+    Dots,
+    /// Reached through a `[]`: `a.b` in `a.b[c]()`. `--drop` does not follow it.
+    Index,
+}
+
+/// A node in a call's callee asks that call to become `undefined`. Outside a callee nothing owns the request, so the next unrelated call would take it.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct MethodCallDrop(bool);
+
+impl MethodCallDrop {
+    #[inline]
+    pub(crate) fn raise(&mut self, in_callee: bool) {
+        if in_callee {
+            self.0 = true;
+        }
+    }
+    #[inline]
+    pub(crate) fn take(&mut self) -> bool {
+        let raised = self.0;
+        if raised {
+            self.0 = false;
+        }
+        raised
+    }
+    #[inline]
+    pub(crate) const fn is_raised(self) -> bool {
+        self.0
+    }
 }
 
 /// This function exists to tie all of these checks together in one place

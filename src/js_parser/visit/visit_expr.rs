@@ -8,8 +8,8 @@ use bun_core::strings;
 use crate::lexer as js_lexer;
 use crate::p::P;
 use crate::parser::{
-    ExprIn, FnOrArrowDataVisit, IdentifierOpts, PrependTempRefsOpts, ReactRefresh, Ref,
-    StrictModeFeature, ThenCatchChain, TransposeState, VisitArgsOpts, float_to_int32, prefill,
+    CalleeChain, ExprIn, FnOrArrowDataVisit, IdentifierOpts, PrependTempRefsOpts, ReactRefresh,
+    Ref, StrictModeFeature, ThenCatchChain, TransposeState, VisitArgsOpts, float_to_int32, prefill,
 };
 use crate::scan::scan_side_effects::SideEffects;
 use bun_alloc::ArenaVecExt as _;
@@ -47,6 +47,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             self.report_stack_overflow(e.loc);
             return;
         }
+
+        debug_assert!(
+            in_.callee_chain != CalleeChain::None
+                || !self.method_call_must_be_replaced_with_undefined.is_raised(),
+            "a node outside the callee of a call asked for a call to be replaced with undefined"
+        );
 
         if in_.assign_target != js_ast::AssignTarget::None && !self.is_valid_assignment_target(e) {
             self.log()
@@ -293,10 +299,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
 
                 // If the user passed --drop=console, drop all property accesses to console.
                 if def.method_call_must_be_replaced_with_undefined()
-                    && in_.property_access_for_method_call_maybe_should_replace_with_undefined
                     && in_.assign_target == js_ast::AssignTarget::None
                 {
-                    p.method_call_must_be_replaced_with_undefined = true;
+                    p.method_call_must_be_replaced_with_undefined
+                        .raise(in_.callee_chain == CalleeChain::Dots);
                 }
             }
 
@@ -856,6 +862,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let is_call_target = matches!(p.call_target, Data::EIndex(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
         let is_template_tag = matches!(p.template_tag, Data::EIndex(tag) if core::ptr::eq(&raw const *e_, &raw const *tag));
         let is_delete_target = matches!(p.delete_target, Data::EIndex(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
+        // Built before the target visit: built after it, the release frame of `visit_expr_in_out` is 16 bytes larger.
+        let opts = IdentifierOpts::default()
+            .with_is_call_target(is_call_target)
+            .with_is_template_tag(is_template_tag)
+            .with_is_delete_target(is_delete_target)
+            .with_assign_target(in_.assign_target)
+            .with_is_property_access_target(in_.is_property_access_target)
+            .with_is_callee_chain(in_.callee_chain != CalleeChain::None);
 
         // "a['b']" => "a.b"
         if p.options.features.minify_syntax {
@@ -892,6 +906,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         p.visit_expr_in_out(
             &mut e_.target,
             ExprIn {
+                callee_chain: if in_.callee_chain == CalleeChain::None {
+                    CalleeChain::None
+                } else {
+                    CalleeChain::Index
+                },
                 is_property_access_target: !is_delete_target,
                 ..Default::default()
             },
@@ -977,7 +996,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                 };
             }
             _ => {
+                // What the target raised is for the enclosing call. A call in the index must not take it.
+                let in_callee = in_.callee_chain != CalleeChain::None;
+                let target_raised =
+                    in_callee && p.method_call_must_be_replaced_with_undefined.take();
                 p.visit_expr(&mut e_.index);
+                if target_raised {
+                    p.method_call_must_be_replaced_with_undefined
+                        .raise(in_callee);
+                }
 
                 let unwrapped = e_.index.unwrap_inlined();
                 if let Some(mut s) = unwrapped.data.e_string() {
@@ -1016,12 +1043,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         // Reminder that this can only be done after
                         // `target` is visited.
                         if e_.optional_chain.is_none() {
-                            let opts = IdentifierOpts::default()
-                                .with_is_call_target(is_call_target)
-                                .with_is_template_tag(is_template_tag)
-                                .with_is_delete_target(is_delete_target)
-                                .with_assign_target(in_.assign_target)
-                                .with_is_property_access_target(in_.is_property_access_target);
                             if let Some(rewrite) = p.maybe_rewrite_property_access(
                                 expr.loc,
                                 e_.target,
@@ -1331,6 +1352,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         let is_delete_target = matches!(p.delete_target, Data::EDot(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
         let is_call_target = matches!(p.call_target, Data::EDot(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
         let is_template_tag = matches!(p.template_tag, Data::EDot(tag) if core::ptr::eq(&raw const *e_, &raw const *tag));
+        // Built before the target visit: built after it, the release frame of `visit_expr_in_out` is 16 bytes larger.
+        let opts = IdentifierOpts::default()
+            .with_is_call_target(is_call_target)
+            .with_is_template_tag(is_template_tag)
+            .with_assign_target(in_.assign_target)
+            .with_is_delete_target(is_delete_target)
+            .with_is_property_access_target(in_.is_property_access_target)
+            .with_is_callee_chain(in_.callee_chain != CalleeChain::None);
 
         // `p.define: &'a Define` is `Copy`; hoist so the `dots.get` borrow is
         // tied to `'a`, not `&*p`, and `&mut self` helpers below can be called
@@ -1351,11 +1380,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                             return;
                         }
 
-                        if define.data.method_call_must_be_replaced_with_undefined()
-                            && in_
-                                .property_access_for_method_call_maybe_should_replace_with_undefined
-                        {
-                            p.method_call_must_be_replaced_with_undefined = true;
+                        if define.data.method_call_must_be_replaced_with_undefined() {
+                            p.method_call_must_be_replaced_with_undefined
+                                .raise(in_.callee_chain == CalleeChain::Dots);
                         }
                     }
 
@@ -1404,8 +1431,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         p.visit_expr_in_out(
             &mut e_.target,
             ExprIn {
-                property_access_for_method_call_maybe_should_replace_with_undefined: in_
-                    .property_access_for_method_call_maybe_should_replace_with_undefined,
+                callee_chain: in_.callee_chain,
                 is_property_access_target: !is_delete_target,
                 ..Default::default()
             },
@@ -1443,12 +1469,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         }
 
         if e_.optional_chain.is_none() {
-            let opts = IdentifierOpts::default()
-                .with_is_call_target(is_call_target)
-                .with_is_template_tag(is_template_tag)
-                .with_assign_target(in_.assign_target)
-                .with_is_delete_target(is_delete_target)
-                .with_is_property_access_target(in_.is_property_access_target);
             if let Some(_expr) = p.maybe_rewrite_property_access(
                 expr.loc,
                 e_.target,
@@ -1889,7 +1909,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
         p.visit_expr_in_out(
             &mut e_.target,
             ExprIn {
-                property_access_for_method_call_maybe_should_replace_with_undefined: true,
+                callee_chain: CalleeChain::Dots,
                 ..Default::default()
             },
         );
@@ -2115,9 +2135,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             // When a value is targeted by `--drop`, it will be removed.
             // The HMR APIs in `import.meta.hot` are implicitly dropped when HMR is disabled.
             let mut method_call_should_be_replaced_with_undefined =
-                p.method_call_must_be_replaced_with_undefined;
+                p.method_call_must_be_replaced_with_undefined.take();
             if method_call_should_be_replaced_with_undefined {
-                p.method_call_must_be_replaced_with_undefined = false;
                 match &e_.target.data {
                     // If we're removing this call, don't count any arguments as symbol uses
                     Data::EIndex(..) | Data::EDot(..) | Data::EIdentifier(..) => {

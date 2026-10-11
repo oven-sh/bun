@@ -613,7 +613,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool
     /// We must be careful to avoid revisiting nodes that have scopes.
     pub(crate) is_revisit_for_substitution: bool,
 
-    pub(crate) method_call_must_be_replaced_with_undefined: bool,
+    pub(crate) method_call_must_be_replaced_with_undefined: crate::parser::MethodCallDrop,
 
     // Inside a TypeScript namespace, an "export declare" statement can be used
     // to cause a namespace to be emitted even though it has no other observable
@@ -10040,7 +10040,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
             span_uses: Vec::new(),
             is_inside_single_stmt_body: false,
             is_revisit_for_substitution: false,
-            method_call_must_be_replaced_with_undefined: false,
+            method_call_must_be_replaced_with_undefined: Default::default(),
             has_non_local_export_declare_inside_namespace: false,
             await_target: None,
             temp_refs_to_declare: BumpVec::new_in(arena),

@@ -1043,61 +1043,111 @@ describe("bundler", () => {
       api.expectFile("/out.js").not.toContain("import.meta.hot");
     },
   });
-  // Reading an `import.meta.hot` method without calling it must not cause the
-  // next unrelated call expression to be dropped from the output.
-  itBundled("minify/ImportMetaHotReadWithoutCall", {
-    files: {
-      "/entry.ts": `
-        globalThis.sink = import.meta.hot.accept;
-        console.log("after-accept");
-        globalThis.sink = import.meta.hot.dispose;
-        console.log("after-dispose");
-        globalThis.sink = [
-          import.meta.hot.decline,
-          import.meta.hot.prune,
-          import.meta.hot.invalidate,
-          import.meta.hot.on,
-          import.meta.hot.off,
-          import.meta.hot.send,
-        ];
-        console.log("after-array");
-        // Direct calls are still stripped.
-        import.meta.hot.accept(() => console.log("FAIL-accept-call"));
-        import.meta.hot.dispose(() => console.log("FAIL-dispose-call"));
-        console.log("after-calls");
-      `,
-    },
-    outfile: "/out.js",
-    run: {
-      stdout: "after-accept\nafter-dispose\nafter-array\nafter-calls",
-    },
-    onAfterBundle(api) {
-      const out = api.readFile("/out.js");
-      expect(out).toContain("after-accept");
-      expect(out).toContain("after-dispose");
-      expect(out).toContain("after-array");
-      expect(out).toContain("after-calls");
-      expect(out).not.toContain("FAIL");
-      expect(out).not.toContain("import.meta.hot");
-    },
-  });
-  itBundled("minify/ImportMetaHotReadWithoutCallNoBundle", {
-    files: {
-      "/entry.ts": `
-        globalThis.sink = import.meta.hot.accept;
-        console.log("after-accept");
-        globalThis.sink = import.meta.hot.dispose;
-        console.log("after-dispose");
-      `,
-    },
-    bundling: false,
-    outfile: "/out.js",
-    onAfterBundle(api) {
-      const out = api.readFile("/out.js");
-      expect(out).toContain("after-accept");
-      expect(out).toContain("after-dispose");
-    },
-  });
+  for (const [suffix, options] of [
+    ["", {}],
+    ["NoBundle", { bundling: false }],
+    ["MinifySyntax", { minifySyntax: true }],
+  ] as const) {
+    // With HMR off, an `import.meta.hot` method that is read and not called is `undefined`.
+    // The read must not remove a call expression.
+    itBundled(`minify/ImportMetaHotReadWithoutCall${suffix}`, {
+      files: {
+        "/entry.ts": `
+          const seen = [];
+          seen.push(import.meta.hot.accept);
+          console.log("after argument");
+          const accept = import.meta.hot.accept;
+          console.log("after accept");
+          const dispose = import.meta.hot.dispose;
+          console.log("after dispose");
+          const rest = [
+            import.meta.hot.decline,
+            import.meta.hot.prune,
+            import.meta.hot.invalidate,
+            import.meta.hot.on,
+            import.meta.hot.off,
+            import.meta.hot.send,
+          ];
+          console.log("after the other methods");
+          if (typeof import.meta.hot.dispose !== "function") {
+            console.log("inside typeof branch");
+          }
+          function unused() {
+            return import.meta.hot.accept;
+          }
+          console.log("after function");
+          if (false) {
+            seen.push(import.meta.hot.accept);
+          }
+          console.log("after dead branch");
+          const table = { undefined: () => console.log("called table[undefined]") };
+          table[import.meta.hot.accept]();
+          const fallback = () => console.log("called fallback");
+          (import.meta.hot ? import.meta.hot.accept : fallback)();
+          new Date(import.meta.hot.accept);
+          console.log("after new");
+          import.meta.hot.accept(() => {
+            import.meta.hot.invalidate;
+          });
+          console.log("after callback that reads a method");
+          console.log([...seen, accept, dispose, ...rest].join());
+          import.meta.hot.accept(() => console.log("FAIL"));
+          import.meta.hot.dispose(() => console.log("FAIL"));
+          console.log("after direct calls");
+        `,
+      },
+      ...options,
+      outfile: "/out.js",
+      run: {
+        stdout: [
+          "after argument",
+          "after accept",
+          "after dispose",
+          "after the other methods",
+          "inside typeof branch",
+          "after function",
+          "after dead branch",
+          "called table[undefined]",
+          "called fallback",
+          "after new",
+          "after callback that reads a method",
+          ",,,,,,,,",
+          "after direct calls",
+        ].join("\n"),
+      },
+      onAfterBundle(api) {
+        api.expectFile("/out.js").not.toContain("FAIL");
+        api.expectFile("/out.js").not.toContain("import.meta.hot");
+      },
+    });
+    // A call through a property of a disabled method is removed like the direct call.
+    // It must not become a method call on `undefined`, which throws when the file loads.
+    itBundled(`minify/ImportMetaHotCallThroughProperty${suffix}`, {
+      files: {
+        "/entry.ts": `
+          const fail = () => console.log("FAIL");
+          const key = ["call"][0];
+          import.meta.hot.accept.call(null, fail);
+          import.meta.hot.dispose.apply(null, [fail]);
+          import.meta.hot.accept["call"](null, fail);
+          import.meta.hot.accept[key](null, fail);
+          import.meta.hot["accept"](fail);
+          import.meta.hot.accept?.(fail);
+          import.meta.hot.on[fail()]();
+          console.log(import.meta.hot.accept.bind(null), import.meta.hot.on.toString());
+          console.log("after calls");
+        `,
+      },
+      ...options,
+      outfile: "/out.js",
+      run: {
+        stdout: "undefined undefined\nafter calls",
+      },
+      onAfterBundle(api) {
+        api.expectFile("/out.js").not.toContain("import.meta.hot");
+      },
+    });
+  }
   itBundled("minify/ProductionMode", {
     files: {
       "/entry.jsx": `
@@ -2078,6 +2128,33 @@ test("runtime transpiler does not collapse single-return arrow bodies", async ()
   expect(noArgs).toContain("return 42");
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
+});
+
+// HMR is off in the runtime transpiler too.
+test("runtime transpiler keeps the call after an import.meta.hot method that is read and not called", async () => {
+  using dir = tempDir("import-meta-hot-read", {
+    "index.ts": /* ts */ `
+      const accept = import.meta.hot.accept;
+      console.log("after read", accept);
+      import.meta.hot.dispose.call(null, () => console.log("FAIL"));
+      console.log("after call through property");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "after read undefined\nafter call through property\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 // `Bun.Transpiler` prints through the same path as `bun build --no-bundle`.

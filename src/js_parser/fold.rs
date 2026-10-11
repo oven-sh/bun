@@ -764,9 +764,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                         }
                         if name == b"accept" {
                             if !enabled {
-                                if identifier_opts.is_call_target() {
-                                    p.method_call_must_be_replaced_with_undefined = true;
-                                }
+                                p.method_call_must_be_replaced_with_undefined
+                                    .raise(identifier_opts.is_callee_chain());
                                 return Some(Expr {
                                     data: js_ast::ExprData::EUndefined(E::Undefined),
                                     loc,
@@ -800,9 +799,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
                                     loc,
                                 ));
                             } else {
-                                if identifier_opts.is_call_target() {
-                                    p.method_call_must_be_replaced_with_undefined = true;
-                                }
+                                p.method_call_must_be_replaced_with_undefined
+                                    .raise(identifier_opts.is_callee_chain());
                                 return Some(Expr {
                                     data: js_ast::ExprData::EUndefined(E::Undefined),
                                     loc,

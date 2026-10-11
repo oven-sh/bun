@@ -114,4 +114,20 @@ describe("bundler", () => {
     drop: ["ASSERT"],
     backend: "api",
   });
+  // The argument of a dropped call reads an `import.meta.hot` method. The next call must stay.
+  itBundled("drop/ImportMetaHotMethodInDroppedCall", {
+    files: {
+      "/a.js": `console.log(import.meta.hot.accept); globalThis.console.log("kept");`,
+    },
+    run: { stdout: "kept" },
+    drop: ["console"],
+  });
+  // `--drop` does not follow a computed member, so the bound method stays callable.
+  itBundled("drop/ComputedMemberBindStaysCallable", {
+    files: {
+      "/a.js": `for (const level of ["log"]) { const log = console[level].bind(console); log("kept"); }`,
+    },
+    run: { stdout: "kept" },
+    drop: ["console"],
+  });
 });

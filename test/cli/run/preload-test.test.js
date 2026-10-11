@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, realpathSync } from "fs";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 const preloadModule = `
@@ -253,54 +253,70 @@ plugin({
       },
     );
 
-    // Only the builtin `_tls_wrap` warns when it loads: that shows the load. It loads `node:tls`, which takes
-    // seconds in a debug build.
-    const warning = "[DEP0192] DeprecationWarning: The _tls_wrap module is deprecated. Use `node:tls` instead.";
-    // "(node:<pid>) <warning>", then a hint that names the executable.
-    const warnings = stderr =>
-      stderr
-        .split("\n")
-        .map(line => line.replace(/^\(node:\d+\) /, ""))
-        .filter(line => line && !line.startsWith("(Use `"));
-
-    test("--preload loads the builtin, and does not ask the registry for a package of that name", async () => {
+    test("--preload does not ask the registry for a package of that name", async () => {
       using dir = tempDir("preload-builtin-name-autoinstall", { "main.js": `console.log("main ran");` });
-      const args = [...builtins, "_tls_wrap"].flatMap(name => ["--preload", name]);
-      const { stdout, stderr, exitCode, requests } = await run(String(dir), args);
-      expect({ stdout, warnings: warnings(stderr), exitCode, requests }).toEqual({
-        stdout: "main ran\n",
-        warnings: [warning],
-        exitCode: 0,
-        requests: [],
+      const args = builtins.flatMap(name => ["--preload", name]);
+      expect(await run(String(dir), args)).toEqual({ stdout: "main ran\n", stderr: "", exitCode: 0, requests: [] });
+    });
+
+    // The name that goes to the resolver is the one without `file://`, so that name is the one to test.
+    test("--preload file://path does not run the package of that name", async () => {
+      using dir = tempDir("preload-builtin-name-file-url", {
+        ...packages("path"),
+        "main.js": `console.log("main ran");`,
       });
-    }, 30_000);
+      const { stdout, requests } = await run(String(dir), ["--preload", "file://path"]);
+      expect({ stdout, requests }).toEqual({ stdout: "main ran\n", requests: [] });
+    });
+
+    const worker = preload => `
+      const worker = new Worker("./worker.js", { preload: ${JSON.stringify(preload)} });
+      worker.onmessage = e => {
+        console.log(e.data);
+        worker.terminate();
+      };
+      worker.onerror = e => {
+        console.log("error: " + e.message);
+      };
+    `;
 
     // The `preload` option of a Worker is "equivalent to passing the `--preload` CLI argument". Its resolver also
     // takes a bare name for a `./name` file: `util` is the builtin, and `./util` is the file.
-    test("Worker preload loads the builtin, not a file that the resolver has for that name", async () => {
+    test("Worker preload does not run a file that the resolver has for that name", async () => {
       using dir = tempDir("preload-builtin-name-worker", {
-        ...packages("path", "abort-controller", "_tls_wrap", "lodashy"),
+        ...packages("path", "abort-controller", "lodashy"),
         "util.ts": `console.log("util.ts ran");`,
-        "worker.js": `postMessage("worker ran");`,
-        "main.js": `
-          const preload = ["path", "bun:sqlite", "abort-controller", "util", "_tls_wrap", "./util", "lodashy"];
-          const worker = new Worker("./worker.js", { preload });
-          worker.onmessage = e => {
-            console.log(e.data);
-            worker.terminate();
-          };
-          worker.onerror = e => {
-            console.log("error: " + e.message);
-          };
-        `,
+        "worker.js": `postMessage("main ran");`,
+        "main.js": worker(["path", "bun:sqlite", "abort-controller", "util", "./util", "lodashy"]),
       });
-      const { stdout, stderr, exitCode } = await run(String(dir), []);
-      expect({ stdout, warnings: warnings(stderr), exitCode }).toEqual({
-        stdout: "util.ts ran\nnode_modules/lodashy ran\nworker ran\n",
-        warnings: [warning],
+      expect(await run(String(dir), [])).toEqual({
+        stdout: "util.ts ran\nnode_modules/lodashy ran\nmain ran\n",
+        stderr: "",
+        exitCode: 0,
+        requests: [],
+      });
+    });
+
+    // A preload that is skipped passes the tests above too. Only the builtin `_tls_wrap` warns when it loads.
+    // It loads `node:tls`, which takes seconds in a debug build.
+    test.skipIf(isDebug).each(["--preload", "Worker preload"])("%s loads the builtin", async how => {
+      using dir = tempDir("preload-builtin-name-loads", {
+        ...packages("_tls_wrap"),
+        "worker.js": `postMessage("main ran");`,
+        "main.js": how === "--preload" ? `console.log("main ran");` : worker(["_tls_wrap"]),
+      });
+      const { stdout, stderr, exitCode } = await run(String(dir), how === "--preload" ? [how, "_tls_wrap"] : []);
+      // "(node:<pid>) <warning>", then a hint that names the executable.
+      const warnings = stderr
+        .split("\n")
+        .map(line => line.replace(/^\(node:\d+\) /, ""))
+        .filter(line => line && !line.startsWith("(Use `"));
+      expect({ stdout, warnings, exitCode }).toEqual({
+        stdout: "main ran\n",
+        warnings: ["[DEP0192] DeprecationWarning: The _tls_wrap module is deprecated. Use `node:tls` instead."],
         exitCode: 0,
       });
-    }, 30_000);
+    });
   });
 
   // Under `--expose-internals` an `internal/` module is a builtin too, and `internal` is a package's name.
@@ -319,24 +335,6 @@ plugin({
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "main ran\n", stderr: "", exitCode: 0 });
-  });
-
-  // The name as written decides. `file://node:fs` is no builtin's name, and no file.
-  test("--preload of file://node:fs is not found", async () => {
-    using dir = tempDir("preload-builtin-name-file-url", { "main.js": `console.log("main ran");` });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--preload", "file://node:fs", "main.js"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "",
-      stderr: `error: preload not found "file://node:fs"\n`,
-      exitCode: 1,
-    });
   });
 
   test("throws an error when preloaded module not found", async () => {

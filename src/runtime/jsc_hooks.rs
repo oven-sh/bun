@@ -752,8 +752,8 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
             .unwrap_or(preload_slice);
 
         // JSModuleLoader resolves a builtin's name: `bun --import path` works like Node's.
-        let module_name = if bun_jsc::module_loader::preload_skips_resolver(preload_slice) {
-            bun_core::String::from_bytes(preload_slice)
+        let module_name = if bun_jsc::module_loader::preload_skips_resolver(normalized) {
+            bun_core::String::from_bytes(normalized)
         } else {
             // ── resolve ─────────────────────────────────────────────────────
             // SAFETY: per fn contract; `top_level_dir` is the `'static` fs

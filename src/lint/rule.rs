@@ -314,7 +314,7 @@ bitflags::bitflags! {
 /// When the original reports: it decides about the order of what starts at one place.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum When {
-    /// Before any node, rule by rule: `run_once` of a rule of oxlint.
+    /// Before any node, rule by rule: `run_once` of a rule of oxlint, [`Meta::reports_on_creation`].
     Once,
     /// In a listener that is called on entering a node: the longer first.
     Entering,
@@ -433,6 +433,13 @@ impl Meta {
 
     pub const fn hands_back(mut self) -> Meta {
         self.hands_back = true;
+        self
+    }
+
+    /// Of what starts at one place, what this rule reports comes before all that is reported for a node, by the order of the
+    /// rules: as from `create`, which ESLint calls for every rule before it visits the first node.
+    pub const fn reports_on_creation(mut self) -> Meta {
+        self.reports = When::Once;
         self
     }
 

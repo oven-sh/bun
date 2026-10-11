@@ -344,20 +344,23 @@ impl Candidates {
     }
 
     /// All expressions of the kinds `tags`, none of which is part of an optional chain, and none of another kind. They are
-    /// looked for in the kinds that the binder has noted on its way, which costs next to nothing.
+    /// looked for in the kinds that the binder has noted on its way, which costs next to nothing. `tags`: in the order of
+    /// `ExprTag`, which leaves what is found in order.
     fn of_kinds(file: &File, tags: &[ExprTag]) -> Candidates {
         let (kinds, counts) = (file.bound.expr_kinds, file.bound.expr_kind_counts);
         // As `runner::Exprs::from_binder`.
         if kinds.len() != file.hir.exprs.len()
             || file.has_synthetic_nodes()
             || !file.hir.import_attributes.is_empty()
+            || !tags.is_sorted_by_key(|&tag| tag as u8)
         {
             return Candidates::of(file);
         }
-        let mut found = Vec::new();
+        let count_of = |tag: ExprTag| counts.get(2 * tag as usize).map_or(0, |&count| count as usize);
+        let mut found = Vec::with_capacity(tags.iter().map(|&tag| count_of(tag)).sum());
         for &tag in tags {
             let kind = 2 * tag as u8;
-            if counts.get(kind as usize).is_none_or(|&count| count == 0) {
+            if count_of(tag) == 0 {
                 continue;
             }
             let mut at = 0;
@@ -368,7 +371,7 @@ impl Candidates {
                 at += next + 1;
             }
         }
-        crate::utils::sort::sort_unstable(&mut found);
+        debug_assert!(found.is_sorted());
         Candidates { found }
     }
 
@@ -492,7 +495,7 @@ pub(super) fn has_module_syntax<'a>(file: &'a File<'a>) -> bool {
 pub(super) fn first_error_of_oxc<'a>(file: &'a File<'a>) -> Option<SyntaxError> {
     // What `early_errors_of_oxc` asks for.
     let tags: &[ExprTag] = match file.is_javascript() {
-        true => &[ExprTag::Assign, ExprTag::Regex, ExprTag::Unary],
+        true => &[ExprTag::Regex, ExprTag::Unary, ExprTag::Assign],
         false => &[ExprTag::Regex],
     };
     let candidates = Candidates::of_kinds(file, tags);

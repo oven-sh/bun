@@ -6,7 +6,7 @@
 
 use super::{Checks, Tops};
 use crate::ast::{
-    BinOp, Class, Expr, ExprKind, ExprTag, FnKind, Func, Handle, KeyKind, Member, MemberKind, Node,
+    BinOp, Chain, Class, Expr, ExprKind, ExprTag, FnKind, Func, Handle, KeyKind, Member, MemberKind, Node,
     Param, PatElem, PatKind, PatProp, Prop, PropKind, Stmt, StmtKind, StmtTag, UnOp, VarKind,
 };
 use crate::language::SourceType;
@@ -245,12 +245,18 @@ impl<'a> Checks<'a, '_> {
 
     fn assignment_targets(&mut self) {
         let file = self.file;
+        // Nearly all are a name or a member, about which there is nothing to say wherever they are.
+        let is_plain = |target: Expr<'a>| match target.tag() {
+            ExprTag::Ident => true,
+            ExprTag::Dot | ExprTag::Index => target.chain() == Chain::No,
+            _ => false,
+        };
         for it in self.exprs_of(ExprTag::Assign) {
-            let ExprKind::Assign { op, target, .. } = it.kind() else {
+            let Some((op, target, _)) = it.as_assign() else {
                 continue;
             };
             // A default in a pattern is looked at with the pattern.
-            if it.is_assignment_target() {
+            if is_plain(target) || it.is_assignment_target() {
                 continue;
             }
             self.when_read_to(target.outer_span().end, |checks| match op {
@@ -261,10 +267,9 @@ impl<'a> Checks<'a, '_> {
             });
         }
         for it in self.exprs_of(ExprTag::Unary) {
-            if let ExprKind::Unary {
-                op: UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
-                operand,
-            } = it.kind()
+            if let Some((UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec, operand)) =
+                it.as_unary()
+                && !is_plain(operand)
             {
                 self.when_read_to(operand.outer_span().end, |checks| {
                     checks.check_simple_target(operand)

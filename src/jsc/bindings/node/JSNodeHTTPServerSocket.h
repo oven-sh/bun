@@ -67,6 +67,8 @@ public:
     unsigned tunnelEndAwaitsDrain : 1 = 0;
     /* socket.unref() to socket.ref(). The reads of an unref'd tunnel do not hold the event loop. */
     unsigned tunnelUnrefed : 1 = 0;
+    /* A request stopped the reads of this connection at least once. Only then can a write leave a connection that is not a tunnel at rest. */
+    unsigned requestStoppedReads : 1 = 0;
     int closeReadError = 0;
     /* Tunnel bytes that onData() queued for JS in tasks that have not run yet. */
     size_t queuedTunnelBytes = 0;

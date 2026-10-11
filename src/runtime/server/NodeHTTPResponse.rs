@@ -249,6 +249,8 @@ unsafe extern "C" {
     // node:http flood prevention (JSNodeHTTPServerSocket.cpp): unsent response bytes and queued responses hold a paused socket.
     safe fn Bun__NodeHTTP__onReadsPaused(ssl: core::ffi::c_int, socket: *mut c_void);
     safe fn Bun__NodeHTTP__onReadsResumable(ssl: core::ffi::c_int, socket: *mut c_void);
+    // A request stopped the reads (after the caller paused the socket). Reads that are stopped do not hold the event loop.
+    safe fn Bun__NodeHTTP__onReadsStopped(ssl: core::ffi::c_int, socket: *mut c_void);
     // Tells the server whether the connection is at rest (`HttpResponse::setNodeHttpAtRest`).
     safe fn Bun__NodeHTTP__refreshAtRest(ssl: core::ffi::c_int, socket: *mut c_void);
     // False when no read of this socket is being parsed.
@@ -566,7 +568,7 @@ impl NodeHTTPResponse {
         }
         raw.pause();
         self.update_flags(|f| f.insert(Flags::MAY_END_AT_REST));
-        Bun__NodeHTTP__refreshAtRest(
+        Bun__NodeHTTP__onReadsStopped(
             any_response_is_ssl(&raw) as core::ffi::c_int,
             raw.socket().cast(),
         );

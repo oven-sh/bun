@@ -727,7 +727,29 @@ extern "C" void Bun__NodeHTTP__onReadsResumable(int ssl, us_socket_t* socket)
     }
 }
 
-/* A request stopped the reads, or a response is over while they are stopped. */
+/* A request stopped the reads (JS-driven, after the caller paused the socket). */
+template<bool SSL>
+static void onNodeHttpReadsStopped(us_socket_t* socket)
+{
+    if (auto* cell = reinterpret_cast<JSNodeHTTPServerSocket*>(reinterpret_cast<uWS::HttpResponseData<SSL>*>(us_socket_ext(socket))->socketData)) {
+        cell->requestStoppedReads = true;
+    }
+    refreshAtRestOf<SSL>(socket);
+}
+
+extern "C" void Bun__NodeHTTP__onReadsStopped(int ssl, us_socket_t* socket)
+{
+    if (!socket || us_socket_is_closed(socket)) {
+        return;
+    }
+    if (ssl) {
+        onNodeHttpReadsStopped<true>(socket);
+    } else {
+        onNodeHttpReadsStopped<false>(socket);
+    }
+}
+
+/* A response is over: with the reads stopped, the connection can be at rest now. */
 extern "C" void Bun__NodeHTTP__refreshAtRest(int ssl, us_socket_t* socket)
 {
     if (!socket || us_socket_is_closed(socket)) {
@@ -1015,7 +1037,7 @@ void JSNodeHTTPServerSocket::refreshAtRest()
 void JSNodeHTTPServerSocket::updateAtRest()
 {
     // A connection whose reads hold the event loop is not at rest, and a write or a drain does not change that.
-    if (tunnelReadEnded || tunnelReadsStopped || tunnelUnrefed || (socket && socket->flags.is_paused)) {
+    if (tunnelReadEnded || tunnelReadsStopped || tunnelUnrefed || requestStoppedReads) {
         refreshAtRest();
     }
 }

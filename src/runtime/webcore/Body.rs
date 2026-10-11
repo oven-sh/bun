@@ -2089,8 +2089,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             }
         }
 
-        // https://fetch.spec.whatwg.org/#concept-body-consume-body: the body is read first; a
-        // Content-Type that is not form data rejects the read afterwards.
+        // <https://fetch.spec.whatwg.org/#concept-body-consume-body> reads the body first, then a Content-Type that is not form data rejects.
         let encoder = self.get_form_data_encoding()?;
 
         let value = self.get_body_value();

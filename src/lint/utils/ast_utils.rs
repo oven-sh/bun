@@ -1635,11 +1635,18 @@ fn is_constant_unless_binary(mut e: Expr<'_>, mut in_boolean_position: bool) -> 
 }
 
 /// ESLint's `couldBeError`: the value of `e` can be an `Error` object, as far as the syntax tells.
-pub fn could_be_error(mut e: Expr<'_>) -> bool {
-    loop {
-        e = match e.kind() {
-            ExprKind::Assign { op: None, .. } if is_assignment_target(e) => return false,
-            ExprKind::NonNull(_) => return is_chain_root(e),
+pub fn could_be_error(e: Expr<'_>) -> bool {
+    // All that it can be the value of. Not by recursion: `a ? a ? .. : b : b` is nested tens of thousands deep.
+    let mut open: SmallVec<[Expr<'_>; 8]> = SmallVec::new();
+    open.push(e);
+    while let Some(e) = open.pop() {
+        match e.kind() {
+            ExprKind::Assign { op: None, .. } if is_assignment_target(e) => {}
+            ExprKind::NonNull(_) => {
+                if is_chain_root(e) {
+                    return true;
+                }
+            }
             ExprKind::Ident(_)
             | ExprKind::Call(_)
             | ExprKind::New(_)
@@ -1649,22 +1656,20 @@ pub fn could_be_error(mut e: Expr<'_>) -> bool {
             | ExprKind::Yield { .. }
             | ExprKind::Await(_) => return true,
             ExprKind::Assign { op, target, value } => match op {
-                None | Some(BinOp::And) => value,
-                Some(BinOp::Or | BinOp::Nullish) if could_be_error(target) => return true,
-                Some(BinOp::Or | BinOp::Nullish) => value,
-                Some(_) => return false,
+                None | Some(BinOp::And) => open.push(value),
+                Some(BinOp::Or | BinOp::Nullish) => open.extend([value, target]),
+                Some(_) => {}
             },
             ExprKind::Binary { op, left, right } => match op {
-                BinOp::Comma | BinOp::And => right,
-                BinOp::Or | BinOp::Nullish if could_be_error(right) => return true,
-                BinOp::Or | BinOp::Nullish => left,
-                _ => return false,
+                BinOp::Comma | BinOp::And => open.push(right),
+                BinOp::Or | BinOp::Nullish => open.extend([left, right]),
+                _ => {}
             },
-            ExprKind::Cond { yes, .. } if could_be_error(yes) => return true,
-            ExprKind::Cond { no, .. } => no,
-            _ => return false,
+            ExprKind::Cond { yes, no, .. } => open.extend([no, yes]),
+            _ => {}
         }
     }
+    false
 }
 
 // ───────────────────────────── functions ─────────────────────────────

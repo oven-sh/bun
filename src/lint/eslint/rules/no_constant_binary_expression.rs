@@ -3,6 +3,7 @@ use bun_lint::utils::ast_utils::{
     Constants, is_constant, is_constant_in, is_ecmascript_global, is_global_reference, is_literal,
     is_reference_to_global_variable,
 };
+use smallvec::SmallVec;
 
 /// Disallow expressions where the operation doesn't affect the value.
 pub struct NoConstantBinaryExpression {
@@ -83,37 +84,40 @@ fn is_null_or_undefined(e: Expr<'_>) -> bool {
 }
 
 /// ESLint's `hasConstantNullishness`: `e` is always nullish or never. With `non_nullish`, never.
-fn has_constant_nullishness(e: Expr<'_>, non_nullish: bool) -> bool {
-    if non_nullish && is_null_or_undefined(e) {
-        return false;
-    }
-    // oxlint does not know the last two.
-    let e = inner(e);
-    let functions = ["Boolean", "String", "Number", "Symbol", "BigInt"];
-    let known = if is_oxlint(e) { 3 } else { functions.len() };
-    match e.kind() {
-        ExprKind::Object(_)
-        | ExprKind::Array(_)
-        | ExprKind::Fn(_)
-        | ExprKind::Class(_)
-        | ExprKind::New(_)
-        | ExprKind::Template(_)
-        | ExprKind::Unary { .. } => true,
-        ExprKind::Call(call) => is_call_of_global(call, functions.get(..known).unwrap_or_default()),
-        ExprKind::Binary { op, right, .. } => match op {
-            BinOp::Nullish => has_constant_nullishness(right, true),
-            BinOp::And | BinOp::Or => false,
-            BinOp::Comma => has_constant_nullishness(right, non_nullish),
-            _ => true,
-        },
-        ExprKind::Assign { op, value, .. } => match op {
-            None => has_constant_nullishness(value, non_nullish),
-            Some(BinOp::And | BinOp::Or | BinOp::Nullish) => false,
-            // A number or a string.
-            Some(_) => true,
-        },
-        ExprKind::Ident(_) => is_undefined(e),
-        _ => is_literal(e),
+fn has_constant_nullishness(mut e: Expr<'_>, mut non_nullish: bool) -> bool {
+    // Not by recursion, here and below: `a = a = ..` is nested tens of thousands deep.
+    loop {
+        if non_nullish && is_null_or_undefined(e) {
+            return false;
+        }
+        // oxlint does not know the last two.
+        e = inner(e);
+        let functions = ["Boolean", "String", "Number", "Symbol", "BigInt"];
+        let known = if is_oxlint(e) { 3 } else { functions.len() };
+        (e, non_nullish) = match e.kind() {
+            ExprKind::Object(_)
+            | ExprKind::Array(_)
+            | ExprKind::Fn(_)
+            | ExprKind::Class(_)
+            | ExprKind::New(_)
+            | ExprKind::Template(_)
+            | ExprKind::Unary { .. } => return true,
+            ExprKind::Call(call) => return is_call_of_global(call, functions.get(..known).unwrap_or_default()),
+            ExprKind::Binary { op, right, .. } => match op {
+                BinOp::Nullish => (right, true),
+                BinOp::And | BinOp::Or => return false,
+                BinOp::Comma => (right, non_nullish),
+                _ => return true,
+            },
+            ExprKind::Assign { op, value, .. } => match op {
+                None => (value, non_nullish),
+                Some(BinOp::And | BinOp::Or | BinOp::Nullish) => return false,
+                // A number or a string.
+                Some(_) => return true,
+            },
+            ExprKind::Ident(_) => return is_undefined(e),
+            _ => return is_literal(e),
+        };
     }
 }
 
@@ -129,89 +133,107 @@ fn is_static_boolean(e: Expr<'_>) -> bool {
 }
 
 /// ESLint's `hasConstantLooseBooleanComparison`: `e == true` always gives the same result.
-fn has_constant_loose_boolean_comparison(e: Expr<'_>) -> bool {
-    match e.kind() {
-        ExprKind::Object(_) | ExprKind::Class(_) | ExprKind::Fn(_) => true,
-        // `[x]` could be `[0]` or `[1]`.
-        ExprKind::Array(elements) => {
-            let is_element = |it: &Expr<'_>| !matches!(it.tag(), ExprTag::Missing | ExprTag::Spread);
-            elements.is_empty() || elements.iter().filter(is_element).count() > 1
-        }
-        ExprKind::Unary { op, operand } => match op {
-            UnOp::Void | UnOp::Typeof => true,
-            UnOp::Not => is_constant(operand, true),
-            _ => false,
-        },
-        ExprKind::Call(call) => is_constant_boolean_call(call),
-        ExprKind::Ident(_) => is_undefined(e),
-        ExprKind::Template(template) => template.exprs().is_empty(),
-        ExprKind::Assign { op: None, value, .. } => has_constant_loose_boolean_comparison(value),
-        ExprKind::Binary { op: BinOp::Comma, right, .. } => has_constant_loose_boolean_comparison(right),
-        _ => is_literal(e),
+fn has_constant_loose_boolean_comparison(mut e: Expr<'_>) -> bool {
+    loop {
+        e = match e.kind() {
+            ExprKind::Object(_) | ExprKind::Class(_) | ExprKind::Fn(_) => return true,
+            // `[x]` could be `[0]` or `[1]`.
+            ExprKind::Array(elements) => {
+                let is_element = |it: &Expr<'_>| !matches!(it.tag(), ExprTag::Missing | ExprTag::Spread);
+                return elements.is_empty() || elements.iter().filter(is_element).count() > 1;
+            }
+            ExprKind::Unary { op, operand } => {
+                return match op {
+                    UnOp::Void | UnOp::Typeof => true,
+                    UnOp::Not => is_constant(operand, true),
+                    _ => false,
+                };
+            }
+            ExprKind::Call(call) => return is_constant_boolean_call(call),
+            ExprKind::Ident(_) => return is_undefined(e),
+            ExprKind::Template(template) => return template.exprs().is_empty(),
+            ExprKind::Assign { op: None, value, .. } => value,
+            ExprKind::Binary { op: BinOp::Comma, right, .. } => right,
+            _ => return is_literal(e),
+        };
     }
 }
 
 /// ESLint's `hasConstantStrictBooleanComparison`: `e === true` always gives the same result,
 /// because `e` is never a boolean or always the same.
-fn has_constant_strict_boolean_comparison(e: Expr<'_>) -> bool {
-    match e.kind() {
-        ExprKind::Object(_)
-        | ExprKind::Array(_)
-        | ExprKind::Fn(_)
-        | ExprKind::Class(_)
-        | ExprKind::New(_)
-        | ExprKind::Template(_) => true,
-        ExprKind::Binary { op, right, .. } => match op {
-            BinOp::Comma => has_constant_strict_boolean_comparison(right),
-            BinOp::Add
-            | BinOp::Sub
-            | BinOp::Mul
-            | BinOp::Div
-            | BinOp::Rem
-            | BinOp::BitOr
-            | BinOp::BitXor
-            | BinOp::BitAnd
-            | BinOp::Pow
-            | BinOp::Shl
-            | BinOp::Shr
-            | BinOp::UShr => true,
-            _ => false,
-        },
-        ExprKind::Unary { op, operand } => match op {
-            UnOp::Delete => false,
-            UnOp::Not => is_constant(operand, true),
-            // A string or a number.
-            _ => true,
-        },
-        ExprKind::Ident(_) => is_undefined(e),
-        ExprKind::Assign { op, value, .. } => match op {
-            None => has_constant_strict_boolean_comparison(value),
-            Some(BinOp::And | BinOp::Or | BinOp::Nullish) => false,
-            Some(_) => true,
-        },
-        ExprKind::Call(call) => {
-            let functions = ["String", "Number", "BigInt", "Symbol"];
-            let known = if is_oxlint(e) { 2 } else { functions.len() };
-            is_call_of_global(call, functions.get(..known).unwrap_or_default()) || is_constant_boolean_call(call)
-        }
-        _ => is_literal(e),
+fn has_constant_strict_boolean_comparison(mut e: Expr<'_>) -> bool {
+    loop {
+        e = match e.kind() {
+            ExprKind::Object(_)
+            | ExprKind::Array(_)
+            | ExprKind::Fn(_)
+            | ExprKind::Class(_)
+            | ExprKind::New(_)
+            | ExprKind::Template(_) => return true,
+            ExprKind::Binary { op, right, .. } => match op {
+                BinOp::Comma => right,
+                BinOp::Add
+                | BinOp::Sub
+                | BinOp::Mul
+                | BinOp::Div
+                | BinOp::Rem
+                | BinOp::BitOr
+                | BinOp::BitXor
+                | BinOp::BitAnd
+                | BinOp::Pow
+                | BinOp::Shl
+                | BinOp::Shr
+                | BinOp::UShr => return true,
+                _ => return false,
+            },
+            ExprKind::Unary { op, operand } => {
+                return match op {
+                    UnOp::Delete => false,
+                    UnOp::Not => is_constant(operand, true),
+                    // A string or a number.
+                    _ => true,
+                };
+            }
+            ExprKind::Ident(_) => return is_undefined(e),
+            ExprKind::Assign { op, value, .. } => match op {
+                None => value,
+                Some(BinOp::And | BinOp::Or | BinOp::Nullish) => return false,
+                Some(_) => return true,
+            },
+            ExprKind::Call(call) => {
+                let functions = ["String", "Number", "BigInt", "Symbol"];
+                let known = if is_oxlint(e) { 2 } else { functions.len() };
+                return is_call_of_global(call, functions.get(..known).unwrap_or_default())
+                    || is_constant_boolean_call(call);
+            }
+            _ => return is_literal(e),
+        };
     }
 }
 
 /// ESLint's `isAlwaysNew`: `e` always results in a newly constructed object.
 fn is_always_new(e: Expr<'_>) -> bool {
-    match e.kind() {
-        ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Fn(_) | ExprKind::Class(_) | ExprKind::Regex(_) => true,
-        // A constructor that is not built in could return a sentinel object.
-        ExprKind::New(call) => {
-            let callee = call.callee();
-            callee.as_ident().is_some_and(|name| is_ecmascript_global(name.bytes())) && refers_to_global(callee)
+    // All that it can be the value of.
+    let mut open: SmallVec<[Expr<'_>; 4]> = SmallVec::new();
+    open.push(e);
+    while let Some(e) = open.pop() {
+        match e.kind() {
+            ExprKind::Object(_) | ExprKind::Array(_) | ExprKind::Fn(_) | ExprKind::Class(_) | ExprKind::Regex(_) => {}
+            // A constructor that is not built in could return a sentinel object.
+            ExprKind::New(call) => {
+                let callee = call.callee();
+                let is_built_in = callee.as_ident().is_some_and(|name| is_ecmascript_global(name.bytes()));
+                if !is_built_in || !refers_to_global(callee) {
+                    return false;
+                }
+            }
+            ExprKind::Binary { op: BinOp::Comma, right, .. } => open.push(right),
+            ExprKind::Assign { op: None, value, .. } => open.push(value),
+            ExprKind::Cond { yes, no, .. } => open.extend([no, yes]),
+            _ => return false,
         }
-        ExprKind::Binary { op: BinOp::Comma, right, .. } => is_always_new(right),
-        ExprKind::Assign { op: None, value, .. } => is_always_new(value),
-        ExprKind::Cond { yes, no, .. } => is_always_new(yes) && is_always_new(no),
-        _ => false,
     }
+    true
 }
 
 /// ESLint's `findBinaryExpressionConstantOperand`: `b` makes the result of comparing it with `a`

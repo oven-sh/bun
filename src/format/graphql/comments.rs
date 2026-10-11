@@ -23,10 +23,18 @@ pub(crate) struct Attached {
 /// Fills `attached`, which is sorted by node, and by position for the same node.
 pub(crate) fn attach(text: &[u8], tree: &Tree, attached: &mut Vec<Attached>) {
     attached.clear();
+    // The nodes that the last comment is in, from the outside in. The comments are in the order of the text, so the way
+    // down to one starts at the innermost of them that it is in, not at the root.
+    let mut path = vec![tree.root()];
     for (index, comment) in tree.comments.iter().enumerate() {
+        while let [_, .., last] = path[..]
+            && !(tree.span(last).start <= comment.start && comment.end <= tree.span(last).end)
+        {
+            path.pop();
+        }
         // Prettier's `decorateComment`: the innermost node that the comment is in, and its
         // children before and after the comment.
-        let mut enclosing = tree.root();
+        let mut enclosing = path.last().copied().unwrap_or(tree.root());
         let (mut preceding, mut following);
         'descend: loop {
             (preceding, following) = (None, None);
@@ -40,6 +48,7 @@ pub(crate) fn attach(text: &[u8], tree: &Tree, attached: &mut Vec<Attached>) {
                 let span = tree.span(child);
                 if span.start <= comment.start && comment.end <= span.end {
                     enclosing = child;
+                    path.push(child);
                     continue 'descend;
                 }
                 if span.end <= comment.start {

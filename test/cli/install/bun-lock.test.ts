@@ -1021,7 +1021,7 @@ it("names folder and tarball packages without a package.json name after their fo
   expect(lockfile.replaceAll(/localhost:\d+/g, "localhost:1234").replaceAll(/"sha512-[^"]*"/g, '"<integrity>"'))
     .toMatchInlineSnapshot(`
     "{
-      "lockfileVersion": 1,
+      "lockfileVersion": 2,
       "configVersion": 1,
       "workspaces": {
         "": {

@@ -3339,19 +3339,19 @@ test.concurrent("a peerDependencies entry another group provides keeps following
   await frozen(dir);
 });
 
-const PEER_ONLY = (range: string) => ({ name: "foo", peerDependencies: { "no-deps": range } });
+const peerOnly = (range: string) => ({ name: "foo", peerDependencies: { "no-deps": range } });
 
 // no-deps@1.5.0 was never published (a `bun init` project hits this with `bun add typescript@5.0.0`): with nothing to install
 // instead, the entry keeps the copy it has and warns as it always did, instead of spinning on or dropping the unresolvable row.
 test.concurrent(
   "`bun add <name>@<unpublished version>` on a peerDependencies entry keeps the installed copy",
   async () => {
-    const dir = await setup({ "package.json": PEER_ONLY("^1.0.0") });
+    const dir = await setup({ "package.json": peerOnly("^1.0.0") });
     expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
     const { stderr, exitCode } = await run(dir, "add", "no-deps@1.5.0");
     expect(stderr).toContain('warn: incorrect peer dependency "no-deps@1.1.0"');
     expect(stderr).not.toContain("error:");
-    expect(await packageJsonOf(dir)).toStrictEqual(PEER_ONLY("1.5.0"));
+    expect(await packageJsonOf(dir)).toStrictEqual(peerOnly("1.5.0"));
     expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
     expect(await installedVersion(dir, "no-deps")).toBe("1.1.0");
     await frozen(dir);
@@ -3793,12 +3793,12 @@ test.concurrent("`bun update -i` installs the Target version a peerDependencies 
 
 // With 1.1.0 locked, the row's Target equals Current, so selecting it takes the Latest column.
 test.concurrent("`bun update -i` installs the Latest version a peerDependencies row shows", async () => {
-  const dir = await setup({ "package.json": PEER_ONLY("^1.0.0") });
+  const dir = await setup({ "package.json": peerOnly("^1.0.0") });
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["1.1.0"]);
   const { stderr, exitCode } = await runInteractive(dir, " \r");
   expect(stderr).not.toContain("error:");
   expect(stderr).not.toContain("warn:");
-  expect(await packageJsonOf(dir)).toStrictEqual(PEER_ONLY("^2.0.0"));
+  expect(await packageJsonOf(dir)).toStrictEqual(peerOnly("^2.0.0"));
   expect((await lock(dir)).workspaces[""].peerDependencies).toStrictEqual({ "no-deps": "^2.0.0" });
   expect(await lockedVersions(dir, "no-deps")).toStrictEqual(["2.0.0"]);
   expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");

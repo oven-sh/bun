@@ -1480,7 +1480,7 @@ describe.concurrent("lockfile", () => {
       expect(await versionSeenBy(dir, undefined, "x")).toBe("1.0.0");
       expect(normalizeBunSnapshot(await lock(dir), dir)).toMatchInlineSnapshot(`
         "{
-          "lockfileVersion": 1,
+          "lockfileVersion": 2,
           "configVersion": 1,
           "workspaces": {
             "": {
@@ -1512,7 +1512,7 @@ describe.concurrent("lockfile", () => {
       expect(err).toContain("Saved lockfile");
       expect(normalizeBunSnapshot(await lock(dir), dir)).toMatchInlineSnapshot(`
         "{
-          "lockfileVersion": 1,
+          "lockfileVersion": 2,
           "configVersion": 1,
           "workspaces": {
             "": {

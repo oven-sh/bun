@@ -13,7 +13,7 @@ import { ChildProcess, execSync, fork } from "child_process";
 import { readdir, rm, writeFile } from "fs/promises";
 import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
-import { dirname, isAbsolute, join } from "path";
+import { dirname, isAbsolute, join, sep } from "path";
 
 export const BREAKING_CHANGES_BUN_1_2 = false;
 
@@ -567,8 +567,8 @@ export function tempDirWithFilesAnon(filesOrAbsolutePathToCopyFolderFrom: Direct
  *
  * Root bypasses permission bits, so when the tests run as root the child is
  * run as uid/gid 65534 ("nobody" on Linux and macOS): `dir` is handed over to
- * that user, and every ancestor it could not traverse (CI points TMPDIR at a
- * mode 0700 directory) gets `o+x` until the returned value is disposed. When
+ * that user, and every ancestor up to TMPDIR it could not traverse (CI points
+ * TMPDIR at a mode 0700 directory) gets `o+x` until the returned value is disposed. When
  * the tests already run unprivileged, the child runs as the current user and
  * nothing is changed. POSIX only.
  *
@@ -595,9 +595,13 @@ export function unprivilegedSpawnOptions(dir: string): { uid?: number; gid?: num
     for (const entry of fs.readdirSync(dir, { recursive: true, encoding: "utf8" })) {
       fs.lchownSync(join(dir, entry), NOBODY, NOBODY);
     }
-    for (let parent = dirname(dir); parent !== dirname(parent); parent = dirname(parent)) {
+    const tmp = fs.realpathSync(os.tmpdir());
+    for (let parent = dirname(fs.realpathSync(dir)); parent !== dirname(parent); parent = dirname(parent)) {
       const mode = fs.statSync(parent).mode & 0o7777;
       if (mode & 0o001) continue;
+      if (parent !== tmp && !parent.startsWith(tmp + sep)) {
+        throw new Error(`${parent} is above TMPDIR and uid ${NOBODY} cannot traverse it`);
+      }
       fs.chmodSync(parent, mode | 0o001);
       restoreModes.push([parent, mode]);
     }

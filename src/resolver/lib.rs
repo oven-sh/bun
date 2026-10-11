@@ -1443,7 +1443,7 @@ pub mod fs {
                     )
                 };
                 if handle == w::INVALID_HANDLE_VALUE {
-                    if is_dangling_link_error(w::get_last_errno()) {
+                    if is_dangling_link_error(w::last_system_errno().to_e()) {
                         cache.kind = EntryKind::Dangling;
                         return Ok(cache);
                     }

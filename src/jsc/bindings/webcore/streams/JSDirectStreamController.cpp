@@ -356,6 +356,12 @@ void JSDirectStreamController::freeBuffer()
     m_reportedCapacity = 0;
 }
 
+// The byte buffer and a body's Array sink: the value is not a string or a BufferSource.
+static void throwInvalidWriteChunk(JSGlobalObject* globalObject, ThrowScope& scope, JSValue chunk)
+{
+    Bun::throwError(globalObject, scope, chunk.isUndefinedOrNull() ? Bun::ErrorCode::ERR_STREAM_NULL_VALUES : Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "write() expects a string, ArrayBufferView, or ArrayBuffer"_s);
+}
+
 // Appends the chunk's bytes (a string is UTF-8 encoded); returns the byte count.
 static JSValue writeToByteBuffer(JSGlobalObject* globalObject, JSDirectStreamController* controller, JSValue chunk)
 {
@@ -374,7 +380,7 @@ static JSValue writeToByteBuffer(JSGlobalObject* globalObject, JSDirectStreamCon
         if (auto* impl = arrayBuffer->impl(); impl && !impl->isDetached())
             bytes = impl->span();
     } else {
-        Bun::throwError(globalObject, scope, chunk.isUndefinedOrNull() ? Bun::ErrorCode::ERR_STREAM_NULL_VALUES : Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "write() expects a string, ArrayBufferView, or ArrayBuffer"_s);
+        throwInvalidWriteChunk(globalObject, scope, chunk);
         return {};
     }
 
@@ -453,6 +459,17 @@ static JSValue writeToArraySink(JSGlobalObject* globalObject, JSDirectStreamCont
     JSArray* array = controller->m_array.get();
     if (!array) [[unlikely]]
         return jsUndefined();
+    if (controller->m_arraySinkTakesBytesOrString) {
+        bool isString = chunk.isString();
+        if (!isString && !dynamicDowncast<JSArrayBufferView>(chunk) && !dynamicDowncast<JSArrayBuffer>(chunk)) {
+            throwInvalidWriteChunk(globalObject, scope, chunk);
+            return {};
+        }
+        array->push(globalObject, chunk);
+        RETURN_IF_EXCEPTION(scope, {});
+        // The size of the chunk, as the Text sink reports it.
+        return isString ? jsNumber(asString(chunk)->length()) : jsNumber(byteLengthOf(chunk));
+    }
     array->push(globalObject, chunk);
     RETURN_IF_EXCEPTION(scope, {});
     JSValue byteLength = chunk.get(globalObject, vm.propertyNames->byteLength);

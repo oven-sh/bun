@@ -338,6 +338,54 @@ test("a Response or Blob returned from a macro is classified by its MIME essence
   expect(exitCode).toBe(0);
 });
 
+// A macro's Response is read with blob(), which takes bytes and strings from a stream body. Any other
+// chunk is a TypeError there, so the build fails. The chunk used to be inlined as its string form:
+// 5 became "data:;base64,NQ==".
+test("a macro that returns a Response over a stream with a chunk that is not bytes fails the build", async () => {
+  using dir = tempDir("macro-response-stream-chunk", {
+    "m.ts": [
+      `export function stream(chunk: unknown) {`,
+      `  return new Response(`,
+      `    new ReadableStream({`,
+      `      start(controller) {`,
+      `        controller.enqueue(chunk);`,
+      `        controller.close();`,
+      `      },`,
+      `    }),`,
+      `  );`,
+      `}`,
+    ].join("\n"),
+    "string.ts": [`import { stream } from "./m.ts" with { type: "macro" };`, `console.log(stream("hi"));`, ``].join(
+      "\n",
+    ),
+    "number.ts": [`import { stream } from "./m.ts" with { type: "macro" };`, `console.log(stream(5));`, ``].join("\n"),
+  });
+  const run = async (entry: string) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  };
+  const [string, number] = await Promise.all([run("string.ts"), run("number.ts")]);
+
+  // Debug builds print "[macro] call <name>" to stdout before the script's own output.
+  expect({ ...string, stdout: string.stdout.trim().split("\n").pop() }).toEqual({
+    stdout: "data:;base64,aGk=",
+    stderr: "",
+    exitCode: 0,
+  });
+
+  expect(number.stdout).not.toContain("data:");
+  expect(number.stderr).toContain("TypeError: Expected an ArrayBuffer, ArrayBufferView, or string chunk");
+  expect(number.stderr).toContain("error: macro threw exception");
+  expect(number.exitCode).toBe(1);
+});
+
 // A macro's `await` is serviced by the VM's macro event loop, so completions have to be routed by which
 // loop was current when their work started: what the macro started goes to the macro loop (or the wait
 // hangs), what the program started stays on the regular loop (or program callbacks run mid-transpile),

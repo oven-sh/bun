@@ -1,5 +1,6 @@
 // Consumer x chunk-shape matrix for JS-sourced ReadableStreams (MB/s, best of RUNS).
 // Every shape totals ~8 MiB so numbers are comparable across rows.
+// The async generator is a Response body, not a stream: the stream helpers show "-" for it.
 const RUNS = 5;
 const MB = 1024 * 1024;
 const TOTAL = 8 * MB;
@@ -45,12 +46,34 @@ const mixed = size => {
   };
 };
 
+const direct = size => {
+  const chunk = new Uint8Array(size).fill(123);
+  const count = TOTAL / size;
+  return () =>
+    new ReadableStream({
+      type: "direct",
+      pull(c) {
+        for (let i = 0; i < count; i++) c.write(chunk);
+        c.close();
+      },
+    });
+};
+const generator = size => {
+  const chunk = new Uint8Array(size).fill(124);
+  const count = TOTAL / size;
+  return async function* () {
+    for (let i = 0; i < count; i++) yield chunk;
+  };
+};
+
 const shapes = {
   "binary 64KiB x128": binary(64 * 1024),
   "binary 1KiB x8192": binary(1024),
   "text 64KiB x128": text(64 * 1024),
   "text 1KiB x8192": text(1024),
   "mixed text/bytes 64KiB x128": mixed(64 * 1024),
+  "direct binary 1KiB x8192": direct(1024),
+  "async generator 1KiB x8192": generator(1024),
   "one 8MiB chunk": (() => {
     const chunk = new Uint8Array(TOTAL).fill(122);
     return () =>
@@ -71,6 +94,7 @@ const consumers = {
   "toBlob": async s => (await Bun.readableStreamToBlob(s)).size,
   "Response.text": s => new Response(s).text(),
   "Response.arrayBuffer": s => new Response(s).arrayBuffer(),
+  "Response.blob": async s => (await new Response(s).blob()).size,
   "for await": async s => {
     let n = 0;
     for await (const c of s) n += c.length;
@@ -82,6 +106,10 @@ const table = {};
 for (const [shapeName, make] of Object.entries(shapes)) {
   const row = (table[shapeName] = {});
   for (const [consumerName, consume] of Object.entries(consumers)) {
+    if (!(make() instanceof ReadableStream) && !consumerName.startsWith("Response.") && consumerName !== "for await") {
+      row[consumerName] = "-";
+      continue;
+    }
     await consume(make()); // warmup + validity
     let best = Infinity;
     for (let i = 0; i < RUNS; i++) {

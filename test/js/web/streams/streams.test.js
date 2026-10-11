@@ -12,6 +12,7 @@ import { mkfifo } from "mkfifo";
 import { closeSync, createReadStream, openSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Duplex, PassThrough, Readable, Writable, finished, pipeline } from "node:stream";
+import { blob as consumersBlob } from "node:stream/consumers";
 import {
   consumers as directConsumers,
   expected as directExpected,
@@ -1893,6 +1894,28 @@ describe("multi-chunk consumers produce exactly the concatenated bytes", () => {
     expect(p).toBeInstanceOf(Promise);
     await expect(p).rejects.toThrow(expect.objectContaining({ name: "TypeError" }));
     await expect(new Response(source([42])).text()).rejects.toThrow(expect.objectContaining({ name: "TypeError" }));
+  });
+
+  // These are `new Blob(chunks)`: the types send "chunks of different types" to
+  // Bun.readableStreamToBlob, and blob() of node:stream/consumers does the same in Node. A Response
+  // or Request is the byte consumer: its blob() and formData() reject these chunks (body.test.ts).
+  it("blob: the stream helpers convert a chunk like a Blob part", async () => {
+    const helpers = {
+      "Bun.readableStreamToBlob": s => Bun.readableStreamToBlob(s),
+      "stream.blob()": s => s.blob(),
+      "response.body.blob()": s => new Response(s).body.blob(),
+      "node:stream/consumers blob()": s => consumersBlob(s),
+    };
+    const chunks = () => [5, { a: 1 }, new Blob(["blob"]), "s", new Uint8Array([33])];
+    const texts = {};
+    for (const [name, blob] of Object.entries(helpers)) texts[name] = await (await blob(source(chunks()))).text();
+    expect(texts).toEqual({
+      "Bun.readableStreamToBlob": "5[object Object]blobs!",
+      "stream.blob()": "5[object Object]blobs!",
+      "response.body.blob()": "5[object Object]blobs!",
+      "node:stream/consumers blob()": "5[object Object]blobs!",
+    });
+    expect([...(await Bun.readableStreamToFormData(source(["a=", 1])))]).toEqual([["a", "1"]]);
   });
 
   it("a detached chunk throws", () => {
@@ -4958,6 +4981,50 @@ describe("direct stream edge cases", () => {
       }
       const result = await settle(new Response(gen()).text());
       expect("err" in result).toBe(true);
+    });
+  });
+
+  // blob() and formData() collect a direct stream's chunks in an Array sink. For a Response or
+  // Request the sink takes what the Text and ArrayBuffer sinks take. The stream helpers take any value.
+  describe("write() on the Array sink", () => {
+    const returned = async (chunks, consume) => {
+      const values = [];
+      const stream = direct(tally(), c => {
+        for (const chunk of chunks) values.push(c.write(chunk));
+        c.close();
+      });
+      await consume(stream);
+      return values;
+    };
+
+    test("a body's blob() and formData(): write() returns the size of the chunk, like text()", async () => {
+      const chunks = () => ["h\u00e9llo", new Uint8Array(3), new ArrayBuffer(0), new DataView(new ArrayBuffer(0))];
+      const headers = { "content-type": "application/x-www-form-urlencoded" };
+      expect({
+        text: await returned(chunks(), s => new Response(s).text()),
+        blob: await returned(chunks(), s => new Response(s).blob()),
+        formData: await returned(chunks(), s => new Response(s, { headers }).formData()),
+      }).toEqual({ text: [5, 3, 0, 0], blob: [5, 3, 0, 0], formData: [5, 3, 0, 0] });
+    });
+
+    test("the stream helpers: write() takes any value", async () => {
+      const object = { a: 1 };
+      const stream = () =>
+        direct(tally(), c => {
+          for (const chunk of [5, object, "s"]) c.write(chunk);
+          c.close();
+        });
+      expect({
+        "Bun.readableStreamToArray": await Bun.readableStreamToArray(stream()),
+        "Bun.readableStreamToBlob": await (await Bun.readableStreamToBlob(stream())).text(),
+        "stream.blob()": await (await stream().blob()).text(),
+        "node:stream/consumers blob()": await (await consumersBlob(stream())).text(),
+      }).toEqual({
+        "Bun.readableStreamToArray": [5, object, "s"],
+        "Bun.readableStreamToBlob": "5[object Object]s",
+        "stream.blob()": "5[object Object]s",
+        "node:stream/consumers blob()": "5[object Object]s",
+      });
     });
   });
 

@@ -166,6 +166,8 @@ pub struct Options {
     after_short_c: Option<(Vec<u8>, bool)>,
     pub list_different: bool,
     pub write: bool,
+    /// The flags of which oxfmt takes one, once: as they follow each other on the command line, by their long names.
+    modes: Vec<&'static [u8]>,
     pub stdin_filepath: Option<Vec<u8>>,
     pub config: Option<Vec<u8>>,
     /// `false`: `--no-config`.
@@ -213,6 +215,7 @@ impl Default for Options {
             after_short_c: None,
             list_different: false,
             write: false,
+            modes: Vec::new(),
             stdin_filepath: None,
             config: None,
             config_lookup: true,
@@ -391,6 +394,34 @@ impl Options {
         Some(options)
     }
 
+    /// Why the tool refuses the flags that say what the run does, in its words.
+    pub(crate) fn refusal_of_modes(&self, is_oxfmt: bool) -> Option<Vec<u8>> {
+        if !is_oxfmt {
+            return (self.check && self.list_different)
+                .then(|| b"Cannot use --check and --list-different together.".to_vec());
+        }
+        // The second is what oxfmt stops at, whatever follows.
+        let &[first, second, ..] = &self.modes[..] else {
+            return None;
+        };
+        Some(match first == second {
+            true => [
+                &b"argument `--"[..],
+                second,
+                b"` cannot be used multiple times in this context",
+            ]
+            .concat(),
+            false => [
+                &b"`--"[..],
+                second,
+                b"` cannot be used at the same time as `--",
+                first,
+                b"`",
+            ]
+            .concat(),
+        })
+    }
+
     /// `args`: what follows `format` on the command line.
     pub fn parse(args: &[&[u8]]) -> Result<Options, UsageError> {
         Options::default().with(args)
@@ -428,6 +459,22 @@ impl Options {
         {
             options.after_short_c = Some((next.to_vec(), args.contains(&&b"--check"[..])));
         }
+        let flags = args.iter().take_while(|arg| **arg != b"--");
+        options.modes = (flags.enumerate())
+            .filter_map(|(at, arg)| -> Option<&'static [u8]> {
+                match *arg {
+                    // `--config` for oxfmt.
+                    b"-c" if args.get(at + 1).is_some_and(|next| !next.starts_with(b"-")) => None,
+                    b"--check" | b"-c" => Some(b"check"),
+                    b"--list-different" | b"-l" => Some(b"list-different"),
+                    b"--write" | b"-w" => Some(b"write"),
+                    b"--init" => Some(b"init"),
+                    b"--stdin-filepath" => Some(b"stdin-filepath"),
+                    _ if arg.starts_with(b"--stdin-filepath=") => Some(b"stdin-filepath"),
+                    _ => None,
+                }
+            })
+            .collect();
         crate::args::parse(PARAMS, &args, &mut |argument| match argument {
             Argument::Flag { name, value, is_on } => options.set(name, value, is_on),
             Argument::Positional(pattern) => {

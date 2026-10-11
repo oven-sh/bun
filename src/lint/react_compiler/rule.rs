@@ -144,6 +144,7 @@ macro_rules! declare_eslint_rule {
             )
             .fixable(::bun_lint::rule::Fixable::Code)
             .has_suggestions()
+            .reports_on_creation()
             $(.$preset())?;
             const ON: ::bun_lint::rule::On = ::bun_lint::rule::On::new().finish();
             type State<'a> = ();

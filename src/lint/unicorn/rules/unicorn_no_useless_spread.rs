@@ -41,6 +41,7 @@ impl Rule for NoUselessSpread {
         }
     }
 
+    #[inline]
     fn prop<'a>(&self, prop: Prop<'a>, cx: &mut Cx<'a, Self>) {
         if prop.kind() == PropKind::Spread
             && !prop.is_jsx_attribute()

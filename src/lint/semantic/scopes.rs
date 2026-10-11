@@ -81,6 +81,9 @@ pub(crate) struct ScopeTree {
     regions: OnceCell<Vec<Region>>,
     /// Where each of `zones` starts, sorted, and where the last ends of those up to it. Computed on demand.
     zone_ends: OnceCell<Vec<(u32, u32)>>,
+    /// A part of a scope is evaluated in the scope around it. A scope in such a part has that one as its `parent`, not the
+    /// scope whose range it is in.
+    has_lifted_parts: bool,
 }
 
 #[derive(Copy, Clone)]
@@ -233,6 +236,7 @@ impl ScopeTree {
             zones: Vec::new(),
             regions: OnceCell::new(),
             zone_ends: OnceCell::new(),
+            has_lifted_parts: false,
         };
         let mut scope_of_proto = vec![NONE; if zones.is_empty() { 0 } else { protos.len() }];
         // What is open: where it ends, the scope that what is written in it belongs to, and what
@@ -259,6 +263,7 @@ impl ScopeTree {
             let end = proto.end.min(around_end);
             match proto.what {
                 What::Lifted => {
+                    tree.has_lifted_parts = true;
                     let parent = tree.scopes.get(outer as usize).map_or(NONE, |it| it.parent);
                     if parent != NONE {
                         tree.changes.push(Change {
@@ -449,8 +454,8 @@ impl ScopeTree {
         (after.checked_sub(1).and_then(|it| ends.get(it))).is_some_and(|it| pos < it.1)
     }
 
-    /// `scope_of_node` for a node that starts in none of `zones`: no zone is around it, and without the zones the regions
-    /// are the scopes, which are in that order, each with the one around it.
+    /// `scope_of_node` for a node that starts in none of `zones`, in a file without lifted parts: no zone is around it, and
+    /// without the zones the regions are the scopes, which are in that order, each with the one around it as its `parent`.
     fn scope_of_node_in_no_zone(&self, start: u32, end: u32, block: Option<Block>) -> u32 {
         let after = self.scopes.partition_point(|it| it.start <= start);
         let mut at = after.saturating_sub(1);
@@ -468,7 +473,7 @@ impl ScopeTree {
     /// ESLint's `getScope` for a node with this range. `block`: the node, if a node of its sort
     /// can create a scope.
     pub(crate) fn scope_of_node(&self, start: u32, end: u32, block: Option<Block>) -> u32 {
-        if self.regions.get().is_none() && !self.is_in_zone(start) {
+        if self.regions.get().is_none() && !self.has_lifted_parts && !self.is_in_zone(start) {
             return self.scope_of_node_in_no_zone(start, end, block);
         }
         let regions = self.regions();

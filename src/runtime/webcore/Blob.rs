@@ -3673,8 +3673,7 @@ impl FormDataContext<'_> {
                 joiner.push_static(b"\r\n\r\n");
 
                 if blob.store.get().is_some() {
-                    // `resolve_size` would zero an S3 entry, which is rejected below.
-                    if blob.size.get() == MAX_SIZE && !blob.is_s3() {
+                    if blob.size.get() == MAX_SIZE {
                         blob.resolve_size();
                     }
                     let store = blob

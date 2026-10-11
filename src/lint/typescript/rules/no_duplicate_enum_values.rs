@@ -1,6 +1,6 @@
 use bun_lint::prelude::*;
 use bun_lint::utils::text::number_to_string;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 /// Disallow duplicate enum member values.
@@ -16,18 +16,7 @@ enum Value<'a> {
 }
 
 impl Value<'_> {
-    /// `Object.is`
-    fn is(self, other: Self) -> bool {
-        match (self, other) {
-            (Value::Number(a), Value::Number(b)) => a.to_bits() == b.to_bits(),
-            (Value::String(a), Value::String(b)) => a == b,
-            _ => false,
-        }
-    }
-}
-
-impl Value<'_> {
-    /// The same for two values if and only if [`Value::is`] holds.
+    /// The same for two values if and only if `Object.is` holds.
     fn key(self) -> (bool, u64) {
         match self {
             Value::Number(value) => (false, value.to_bits()),
@@ -118,24 +107,13 @@ impl Rule for NoDuplicateEnumValues {
         if cx.language().is_oxlint {
             return check_as_oxlint(declaration, cx);
         }
-        let mut seen: SmallVec<[Value<'a>; 8]> = SmallVec::new();
-        // All of them, as soon as they are more than a few.
-        let mut keys: FxHashSet<(bool, u64)> = FxHashSet::default();
+        let mut seen: SmallVec<[(bool, u64); 8]> = SmallVec::new();
         for member in declaration.members() {
             let Some(value) = member.init().and_then(member_value) else {
                 continue;
             };
-            if seen.len() == 16 && keys.is_empty() {
-                keys.extend(seen.iter().map(|it| it.key()));
-            }
-            let is_new = match keys.is_empty() {
-                true => !seen.iter().any(|it| it.is(value)),
-                false => keys.insert(value.key()),
-            };
-            if is_new {
-                if keys.is_empty() {
-                    seen.push(value);
-                }
+            if !seen.contains(&value.key()) {
+                seen.push(value.key());
                 continue;
             }
             report(member.span(), value, cx);

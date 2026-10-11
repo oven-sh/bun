@@ -13,7 +13,7 @@ The crate is not a member of Bun's workspace. It links the crates that it tests 
 | `markdown` | `bun format` | Markdown, MDX |
 | `json` | `bun format` | JSON, JSON5, JSONC, `json-stringify`, `package.json`, `.prettierrc` |
 | `js` | `bun format`: parse, bind, print, parse again, compare | the extension, and `flow`, `babel-flow`, `babel-ts`, `typescript`, `babel` |
-| `imports` | `bun format` with what plugins do: imports sorted as `@trivago` / `@ianvs/prettier-plugin-sort-imports` and oxfmt sort them, JSDoc comments formatted as oxfmt does | where the text is: a file, a block of code in Markdown or MDX, the top of MDX, a script in Vue or HTML (`PLACES_OF_IMPORTS` in `format.rs`), and which of thirteen sets of options (`EXTRAS`) |
+| `imports` | `bun format` with what plugins do: imports sorted as `@trivago` / `@ianvs/prettier-plugin-sort-imports`, `prettier-plugin-organize-imports` and oxfmt sort them, JSDoc comments formatted as oxfmt does | where the text is: a file, a block of code in Markdown or MDX, the top of MDX, a script in Vue or HTML (`PLACES_OF_IMPORTS` in `format.rs`), and which of sixteen sets of options (`EXTRAS`) |
 | `options` | the same, and the first line of the text is the options, as they are in a `.prettierrc` or an `.oxfmtrc.json`: regular expressions, globs, groups | where the text is |
 | `config` | `bun format --check .` and `bun lint .` as a whole, in a small project in memory whose configuration file is the text: how `.prettierrc` in JSON, JSON5, YAML and TOML, `package.json`, `.editorconfig`, ignore files, `.oxfmtrc.json`, `.oxlintrc.json` and `.eslintrc` are found, read and applied, overrides, the options of rules. After a line `-----`: the text of `base.json`, which the file can extend. After a line `=====`: the text of `a.ts`. With a flag it writes: after `bun format --write .` nothing is left for `--check` (`not-formatted-after-write`). No program is run, no plugin is loaded | the name of the file (`FILES` in `config.rs`) |
 | `regex` | `bun_lint::regex::Regex`, which is `RegExp` for the patterns in the options of rules and in `importOrder`: the text is a pattern, a line break, and what is searched. `test`, `find`, all matches, `split`, `replace` and `source` have to agree with `exec`. `regex-oracle.mjs` asks the `RegExp` of Node.js | nothing. The first eight flags of the input: `d g i m s u v y` |
@@ -58,6 +58,7 @@ What does end the process is libFuzzer's to report, in `artifacts/`: a stack ove
 Sorted imports, the sorted keys of a `package.json` and formatted JSDoc comments are the steps that can lose something which the check on what is printed does not see: for the plugins of Prettier it compares the sorted text with what is printed, not the file with the sorted text, and code in another language is not checked at all. So a text is formatted twice, with the step and without it, and the two are compared (`kept.rs`), which leaves out all that the formatter changes by itself:
 
 - A file of JavaScript or TypeScript: the same names are imported from the same modules under the same names, as types or not, with the same attributes. In which statement does not count: imports are merged. The same for `export { .. }`, `export *` and `import a = `. The same comments. All else is the same text in the same order.
+- `prettier-plugin-organize-imports` removes what is not used. A name that is nowhere else in the code is not used. One that is can still be unused, if something hides it: `import-removed-though-named` is for the oracle.
 - Code in Markdown, MDX, Vue and HTML, and a `package.json`: no word is lost or added.
 - JSDoc comments: no word, in small letters, but the names of tags.
 
@@ -67,7 +68,7 @@ With `FUZZ_SABOTAGE=1` the first line of what is printed that imports something 
 
 ```sh
 FUZZ_RECORD=$W/records FUZZ_FINDINGS=$W/findings $B/fuzz_imports -runs=0 $W/corpus/imports
-node imports-oracle.mjs $W/records --prettier=<dir> --oxfmt=<dir> --out=$W/differences.jsonl
+node imports-oracle.mjs $W/records --prettier=<dir> --organize=<dir> --oxfmt=<dir> --out=$W/differences.jsonl
 ```
 
 ## Commands

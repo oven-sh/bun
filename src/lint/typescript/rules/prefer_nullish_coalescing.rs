@@ -761,14 +761,6 @@ impl Rule for PreferNullishCoalescing {
     }
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
-        // tsgolint points at the start of the file.
-        if cx.language().is_oxlint {
-            cx.report(Span::empty(0), NO_STRICT_NULL_CHECK);
-            return;
-        }
-        let line_zero = Position { line: 0, column: 0 };
-        cx.report(Span::empty(0), NO_STRICT_NULL_CHECK)
-            .start_at(line_zero)
-            .end_at(line_zero);
+        ts_utils::report_at_line_zero(cx, NO_STRICT_NULL_CHECK);
     }
 }

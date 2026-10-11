@@ -9,7 +9,7 @@
 //! public for it.
 
 use super::estree::is_expression_statement;
-use super::{is_type_import, is_type_only_reference};
+use super::is_type_only_reference;
 use crate::ast::{
     BinOp, Class, Expr, ExprKind, ExprTag, File, FnKind, Func, Handle, Key, KeyKind, Module,
     ModuleName, Name, Node, Param, Pat, PatKind, PatProp, PropKind, Stmt, StmtKind, StmtTag,
@@ -21,6 +21,7 @@ use crate::tokens::TokenKind;
 use crate::utils::ancestor_memo::AncestorMemo;
 use crate::utils::directives::match_directives_pattern;
 use crate::utils::estree_compat::is_assignment_target;
+use crate::utils::ts_utils::is_type_import;
 use bun_core::strings;
 use bun_sema::atom::known;
 use bun_sema::bind::PatParent;

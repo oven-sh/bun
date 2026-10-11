@@ -53,6 +53,7 @@ fn written(value: &Json) -> Vec<u8> {
 fn options_of(case: &Json, plugin: &[u8]) -> Result<FormatOptions, Vec<u8>> {
     let (mut options, mut settings) = (FormatOptions::default(), Settings::default());
     match plugin {
+        b"organize" => settings.set(b"plugins", b"[\"prettier-plugin-organize-imports\"]"),
         b"oxfmt" => false,
         _ => settings.set(
             b"plugins",

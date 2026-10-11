@@ -369,8 +369,6 @@ fn signatures_differ_by_optional_or_rest_parameter<'a>(
 #[derive(Default)]
 struct UnionMembers<'a> {
     list: SmallVec<[TypeNode<'a>; 8]>,
-    /// How they are written, as soon as they are more than a few.
-    texts: FxHashSet<&'a [u8]>,
 }
 
 impl<'a> UnionMembers<'a> {
@@ -384,14 +382,7 @@ impl<'a> UnionMembers<'a> {
                 stack[first..].reverse();
                 continue;
             }
-            if self.list.len() == 16 && self.texts.is_empty() {
-                self.texts.extend(self.list.iter().map(|it| it.text()));
-            }
-            let is_new = match self.texts.is_empty() {
-                true => !self.list.iter().any(|other| other.text() == ty.text()),
-                false => self.texts.insert(ty.text()),
-            };
-            if is_new {
+            if !self.list.iter().any(|other| other.text() == ty.text()) {
                 self.list.push(ty);
             }
         }

@@ -4,11 +4,11 @@ use super::estree::is_pattern;
 use crate::ast::{
     BinOp, Expr, ExprKind, File, Flags, Func, Ident, Node, PropKind, Stmt, StmtKind, UnOp,
 };
-use crate::context::Report;
+use crate::context::{Cx, Report};
 use crate::fix::{Fixer, IntoFix};
-use crate::rule::Message;
+use crate::rule::{Message, Rule};
 use crate::semantic::Declaration;
-use crate::span::{Span, Spanned};
+use crate::span::{Position, Span, Spanned};
 use crate::utils::ast_utils::as_function;
 use crate::utils::estree_compat::is_sequence_root;
 use crate::utils::string_utils::graphemes;
@@ -263,6 +263,16 @@ pub fn get_fix_or_suggest_with<'a, F: IntoFix>(
         FixOrSuggest::Fix => report.fix(fix),
         FixOrSuggest::None => report,
         FixOrSuggest::Suggest => report.suggest_with(message, data, fix),
+    }
+}
+
+/// `context.report({ loc: { start: { line: 0, column: 0 }, end: { line: 0, column: 0 } }, messageId })`. tsgolint
+/// points at the start of the file.
+pub fn report_at_line_zero<R: Rule>(cx: &Cx<'_, R>, message: Message) {
+    let report = cx.report(Span::empty(0), message);
+    if !cx.language().is_oxlint {
+        let line_zero = Position { line: 0, column: 0 };
+        report.start_at(line_zero).end_at(line_zero);
     }
 }
 

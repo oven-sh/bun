@@ -224,7 +224,7 @@ pub(crate) fn options_of_host(options: &FormatOptions, parser: Parser) -> Format
     FormatOptions {
         sort_imports: sort_imports.filter(|how| match how.is_applied_by_format() {
             true => is_vue_file,
-            false => parser != Parser::Vue,
+            false => parser != Parser::Vue && how.applies_to_embedded_code(),
         }),
         jsdoc: options.jsdoc.filter(|_| is_vue_file),
         flavor: Flavor::Prettier,
@@ -532,7 +532,8 @@ pub fn format_with(
         ));
     }
     let sorts_text = (options.sort_imports.as_deref())
-        .filter(|how| parser == Parser::Vue && !how.is_applied_by_format());
+        .filter(|how| parser == Parser::Vue && !how.is_applied_by_format())
+        .filter(|how| how.applies_to_embedded_code());
     let text = match sorts_text.zip(js::Parse::new(parse_javascript, options)) {
         Some((how, parse)) => with_sorted_scripts(&text, how, parse).map_or(text, Cow::Owned),
         None => text,

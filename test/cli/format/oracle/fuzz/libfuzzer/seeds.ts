@@ -134,7 +134,8 @@ function writeImports(name: string, extras: readonly number[], text: Uint8Array)
 for (const [plugin, extras] of [
   ["trivago", [0, 1, 2, 3]],
   ["ianvs", [4, 5, 6, 7]],
-  ["oxfmt", [8, 9, 10]],
+  ["organize", [8, 9, 10]],
+  ["oxfmt", [11, 12, 13]],
 ] as const) {
   const cases = JSON.parse(readFileSync(join(import.meta.dir, `../../../sort-imports/${plugin}.json`), "utf8"));
   for (const it of cases) writeImports(it.filename, extras, Buffer.from(it.input));
@@ -142,6 +143,7 @@ for (const [plugin, extras] of [
   const named = {
     trivago: "@trivago/prettier-plugin-sort-imports",
     ianvs: "@ianvs/prettier-plugin-sort-imports",
+    organize: "prettier-plugin-organize-imports",
   };
   for (const it of cases) {
     const { overrides, ...options } = it.options;
@@ -151,7 +153,7 @@ for (const [plugin, extras] of [
   }
 }
 for (const [name, text] of readBundle(join(import.meta.dir, "../../../oxfmt/bundle.zst"))) {
-  if (name.includes("jsdoc") && !name.endsWith(".snap")) writeImports(name, [11, 12], text);
+  if (name.includes("jsdoc") && !name.endsWith(".snap")) writeImports(name, [14, 15], text);
   if (name.endsWith("package.json")) write("json", 4, 0, text, 1 << 26);
 }
 // One case in eight: there are tens of thousands, and most differ in a word. All that have options: a comment sets them.

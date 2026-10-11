@@ -1,11 +1,12 @@
 // Compares import sorting on real code with the real plugins. Nothing is written anywhere.
 //
-//   node real.mjs --bin=<bun-lint> --modules=<dir> --plugin=trivago|ianvs|oxfmt --options='{"importOrder":["^[./]"]}' [--whole] [--quiet] [--jobs=8] <directories..>
+//   node real.mjs --bin=<bun-lint> --modules=<dir> --plugin=trivago|ianvs|organize|oxfmt --options='{"importOrder":["^[./]"]}' [--whole] [--quiet] [--jobs=8] <directories..>
 //
 // Of each file, what is compared is its start, up to the end of the first statement after the last import
 // (`--whole`: all of it). Counted are the files
 // - `sorted`: for which bun-lint formats the file to what it formats the text to that the plugin hands to Prettier,
-//   and, if it makes a text of its own, that text is the plugin's, byte for byte;
+//   and, if it makes a text of its own, that text is the plugin's, byte for byte (not for `organize`, whose text is
+//   that of TypeScript's printer and formatter);
 // - `identical`: for which the result is what Prettier prints.
 // `--quiet`: only numbers, no names of files.
 import { fork, spawn } from "node:child_process";
@@ -95,7 +96,7 @@ const { expected } = named.plugin === "oxfmt" ? { expected: oxfmt } : await load
 const { parse } = createRequire(path.resolve(named.babel ?? named.modules, "index.js"))("@babel/parser");
 const options = JSON.parse(named.options ?? "{}");
 const asFlag = ([name, value]) => `--${name}=${typeof value === "string" ? value : JSON.stringify(value)}`;
-const isAboutImports = ([name]) => name.startsWith("importOrder") || name === "sortImports";
+const isAboutImports = ([name]) => name.startsWith("importOrder") || name.startsWith("organizeImports") || name === "sortImports";
 const always = named.plugin === "oxfmt" ? ["--flavor=oxfmt", ...("printWidth" in options ? [] : ["--printWidth=100"])] : [];
 const sorting = new Server([`--plugins=["${PACKAGES[named.plugin] ?? ""}"]`, ...always, ...Object.entries(options).map(asFlag)]);
 const plain = new Server([...always, ...Object.entries(options).filter(it => !isAboutImports(it)).map(asFlag)]);
@@ -132,7 +133,7 @@ for (const [index, file] of files(positional).entries()) {
   counts.compared++;
   const ours = await sorting.format(file, input);
   const reference = await plain.format(file, theirs.text);
-  const isSorted = ours.output !== null && ours.output === reference.output && (ours.text === "" || ours.text === theirs.text || named.plugin === "oxfmt");
+  const isSorted = ours.output !== null && ours.output === reference.output && (ours.text === "" || ours.text === theirs.text || named.plugin === "organize" || named.plugin === "oxfmt");
   counts.sorted += isSorted;
   counts.identical += ours.output === theirs.output;
   counts.unchanged += ours.text === "";

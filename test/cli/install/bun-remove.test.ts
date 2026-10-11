@@ -2,7 +2,15 @@ import { file, spawn } from "bun";
 import { afterAll, beforeAll, expect, it } from "bun:test";
 import { existsSync, readdirSync } from "fs";
 import { mkdir, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import {
+  bunExe,
+  bunEnv as env,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  tmpdirSync,
+  withFileSizeLimit,
+} from "harness";
 import { join, relative } from "path";
 import { createTestContext, destroyTestContext, dummyAfterAll, dummyBeforeAll } from "./dummy.registry";
 
@@ -548,4 +556,41 @@ it.concurrent("bun remove --recursive is not a workspace-wide remove: only the c
   expect(await file(join(String(dir), "packages", "api", "package.json")).text()).toBe(WORKSPACE("api"));
   expect(await file(join(String(dir), "packages", "web", "package.json")).text()).toBe(WORKSPACE("web"));
   expect(exitCode).toBe(0);
+});
+
+// The limit of one block cuts the write of package.json short (the lockfile is smaller than a
+// block and is written first). "dependencies" comes before the long field, so the text that
+// changes is inside the first block: written in place, that block would land over the old file.
+it.concurrent.skipIf(isWindows)("bun remove keeps the old package.json when the write fails", async () => {
+  const original =
+    JSON.stringify(
+      { name: "app", dependencies: { dep: "file:./dep" }, description: Buffer.alloc(3000, "x").toString() },
+      null,
+      2,
+    ) + "\n";
+  using dir = tempDir("bun-remove-write-fails", {
+    "package.json": original,
+    "dep/package.json": JSON.stringify({ name: "dep", version: "1.0.0" }),
+  });
+  await using install = spawn({ cmd: [bunExe(), "install"], cwd: String(dir), env, stdout: "pipe", stderr: "pipe" });
+  const [installStdout, installStderr, installExitCode] = await Promise.all([
+    install.stdout.text(),
+    install.stderr.text(),
+    install.exited,
+  ]);
+  expect(installExitCode, `bun install failed: ${installStdout}${installStderr}`).toBe(0);
+
+  await using proc = spawn({
+    cmd: withFileSizeLimit(1, [bunExe(), "remove", "dep"]),
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("EFBIG");
+  expect(stderr).toContain("failed to write package.json at ");
+  expect(exitCode).toBe(1);
+  expect(await file(join(String(dir), "package.json")).text()).toBe(original);
+  expect(readdirSync(String(dir)).filter(name => name.endsWith(".tmp"))).toEqual([]);
 });

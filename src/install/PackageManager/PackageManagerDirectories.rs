@@ -66,6 +66,101 @@ impl PackageManager {
     pub(crate) fn get_temporary_directory(&mut self) -> &'static TemporaryDirectory {
         get_temporary_directory(self)
     }
+
+    #[inline]
+    pub fn lock_project(&mut self) {
+        lock_project(self)
+    }
+}
+
+// ───────────────────────────── project lock ───────────────────────────────────
+
+/// Serializes the processes that edit one project; held until exit, and best effort.
+pub fn lock_project(this: &mut PackageManager) {
+    if this.project_lock.is_some() {
+        return;
+    }
+    // Canonical: a junction or another case of the same directory must lock the same file.
+    let top_level_dir = FileSystem::instance().top_level_dir();
+    let top_level_dir_z = ZBox::from_bytes(top_level_dir);
+    let mut project_dir_buf = path::path_buffer_pool::get();
+    let project_dir = bun_core::strings::without_trailing_slash(
+        sys::realpath(top_level_dir_z.as_zstr(), &mut project_dir_buf).unwrap_or(top_level_dir),
+    );
+    if env_var::BUN_INTERNAL_INSTALL_LOCK_DIR
+        .get()
+        .is_some_and(|held| bun_core::strings::without_trailing_slash(held) == project_dir)
+    {
+        return;
+    }
+
+    let Some(lock_file) = open_project_lock_file(this, project_dir) else {
+        bun_core::scoped_log!(project_lock, "no lock for {}", bstr::BStr::new(project_dir));
+        return;
+    };
+    let locked = match sys::flock(lock_file.handle, sys::FileLockMode::Exclusive, true) {
+        Ok(true) => true,
+        Ok(false) => {
+            if !this.options.log_level.is_silent() {
+                bun_core::pretty_errorln!(
+                    "<d>Waiting for another bun process to finish in {}<r>",
+                    bstr::BStr::new(project_dir)
+                );
+                Output::flush();
+            }
+            matches!(
+                sys::flock(lock_file.handle, sys::FileLockMode::Exclusive, false),
+                Ok(true)
+            )
+        }
+        Err(_) => false,
+    };
+    if !locked {
+        bun_core::scoped_log!(
+            project_lock,
+            "could not lock {}",
+            bstr::BStr::new(project_dir)
+        );
+        return;
+    }
+
+    // The process this one may have waited for has rewritten the package.json files read so far.
+    this.workspace_package_json_cache.map.clear();
+    bun_core::handle_oom(
+        this.env_mut()
+            .map
+            .put(env_var::BUN_INTERNAL_INSTALL_LOCK_DIR.key(), project_dir),
+    );
+    this.project_lock = Some(lock_file);
+}
+
+bun_core::declare_scope!(project_lock, hidden);
+
+/// Read-only: `flock` does not need more, and another user may own the file in a shared cache.
+fn open_project_lock_file(this: &mut PackageManager, project_dir: &[u8]) -> Option<File> {
+    let mut locks_dir_path = fetch_cache_directory_path(this.env_mut(), Some(&this.options)).path;
+    if locks_dir_path.last() != Some(&SEP) {
+        locks_dir_path.push(SEP);
+    }
+    locks_dir_path.extend_from_slice(b".locks");
+    let locks_dir = Dir::cwd()
+        .make_open_path(&locks_dir_path, Default::default())
+        .ok()?;
+
+    let mut lock_file_name = [0u8; b"0123456789abcdef.lock".len()];
+    write!(
+        &mut lock_file_name[..],
+        "{:016x}.lock",
+        bun_wyhash::hash(project_dir)
+    )
+    .expect("the buffer is sized for this format");
+    File::openat(
+        locks_dir.fd(),
+        &lock_file_name,
+        sys::O::RDONLY | sys::O::CREAT | sys::O::CLOEXEC,
+        0o644,
+    )
+    .ok()
 }
 
 // ───────────────────────────── cache directory ────────────────────────────────
@@ -1053,14 +1148,26 @@ pub fn compute_cache_dir_and_subpath<'a>(
 // ─────────────────────────── package.json / lockfile ──────────────────────────
 
 pub(crate) fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
-    let package_json_file = match Dir::cwd().create_file_z(
-        z_static(b"package.json\0"),
-        sys::CreateFlags {
-            read: true,
-            ..Default::default()
-        },
+    let open_flags = sys::O::RDWR | sys::O::CLOEXEC;
+    let opened = match File::openat(
+        Fd::cwd(),
+        b"package.json",
+        open_flags | sys::O::CREAT | sys::O::EXCL,
+        0o666,
     ) {
-        Ok(f) => f,
+        Ok(package_json_file) => {
+            package_json_file.pwrite_all(b"{\"dependencies\": {}}", 0)?;
+            return Ok(package_json_file);
+        }
+        // Another process created it first and writes the contents; an empty file parses as `{}`.
+        Err(err) if err.get_errno() == sys::E::EEXIST => {
+            File::openat(Fd::cwd(), b"package.json", open_flags, 0)
+        }
+        Err(err) => Err(err),
+    };
+
+    match opened {
+        Ok(package_json_file) => Ok(package_json_file),
         Err(err) => {
             bun_core::pretty_errorln!(
                 "<r><red>error:<r> {} create package.json",
@@ -1068,11 +1175,7 @@ pub(crate) fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
             );
             Global::crash();
         }
-    };
-
-    package_json_file.pwrite_all(b"{\"dependencies\": {}}", 0)?;
-
-    Ok(package_json_file)
+    }
 }
 
 pub fn attempt_to_create_package_json() -> Result<(), Error> {

@@ -11,7 +11,7 @@ use bun_install::dependency;
 use bun_install::{Lockfile, PackageID, PackageNameHash};
 use bun_paths::path_buffer_pool;
 use bun_paths::resolve_path::{self, Platform, join_abs_string_buf, platform};
-use bun_sys::{Fd, File};
+use bun_sys::File;
 
 use super::add_catalog;
 use super::install_with_manager::install_with_manager;
@@ -295,7 +295,7 @@ pub(crate) fn write_target(manager: &mut PackageManager, target: &WorkspaceTarge
     let entry = fetch_entry(manager, target);
     let mut zbuf = path_buffer_pool::get();
     let path = resolve_path::z(&target.package_json_path, &mut zbuf);
-    match File::write_file(Fd::cwd(), path, &entry.source.contents) {
+    match File::write_file_atomically(path, &entry.source.contents, 0o644) {
         Ok(()) => true,
         Err(err) => {
             Output::err_generic(

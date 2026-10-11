@@ -533,20 +533,15 @@ impl TrustCommand {
             }
         }
 
-        // SAFETY: `pm_raw` singleton; this scope takes over the descriptor
-        // (the original `pm.root_package_json_file` is replaced with INVALID so
-        // its eventual drop is a no-op).
-        let root_file = unsafe {
-            let fd = (*pm_raw).root_package_json_file.handle;
-            (*pm_raw).root_package_json_file.handle = bun_core::Fd::INVALID;
-            bun_sys::File::from_fd(fd)
-        };
-        let package_json_contents = root_file.read_to_end().map_err(crate::Error::from)?;
-
         // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set during `PackageManager::init`
         // (single-threaded startup) and immutable thereafter.
+        let root_package_json_path = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
+        // By path: the file may have been replaced between `init` and the project lock.
+        let package_json_contents =
+            bun_sys::File::read_from(bun_sys::Fd::cwd(), root_package_json_path)
+                .map_err(crate::Error::from)?;
         let package_json_source = bun_ast::Source::init_path_string(
-            unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes(),
+            root_package_json_path.as_bytes(),
             package_json_contents.as_slice(),
         );
 
@@ -669,11 +664,12 @@ impl TrustCommand {
 
         let new_package_json_contents = package_json_writer.ctx.written_without_trailing_zero();
 
-        root_file
-            .pwrite_all(new_package_json_contents, 0)
-            .map_err(crate::Error::from)?;
-        let _ = bun_sys::ftruncate(root_file.handle, new_package_json_contents.len() as i64);
-        let _ = root_file.close();
+        bun_sys::File::write_file_atomically(
+            root_package_json_path,
+            new_package_json_contents,
+            0o644,
+        )
+        .map_err(crate::Error::from)?;
 
         debug_assert!(total_scripts_ran > 0);
 

@@ -2041,8 +2041,9 @@ where
 
         // The upgrade detaches the response and disarms onAborted, so neither
         // on_abort nor an end path can reclaim a parked handler promise's
-        // claim later. Reclaim it here.
-        upgrader.reclaim_promise_cell();
+        // claim later. Reclaim it here. The handler is still running, so its
+        // promise stays in the cell for `on_reject` to report.
+        upgrader.reclaim_promise_cell_after_upgrade();
         upgrader.deref();
 
         resp.upgrade(

@@ -55,7 +55,8 @@ public:
 
     // `held` is visited, so the reaction keeps it alive for as long as the
     // Promise can settle (the HTMLRewriter suspension stores its Transform
-    // cell here). Pass the empty JSValue when nothing needs rooting.
+    // cell here, a Bun.serve request the handler's promise). Pass the empty
+    // JSValue when nothing needs rooting.
     static NativePromiseContext* create(JSC::VM& vm, JSC::Structure* structure, void* ctx, Tag tag, JSC::JSValue held);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
@@ -89,6 +90,15 @@ public:
 
     void* pointer() const { return m_data.pointer(); }
     Tag tag() const { return m_data.type(); }
+
+    // Hands `held` to the caller and stops rooting it. Returns the empty
+    // JSValue if nothing is held.
+    JSC::JSValue takeHeld()
+    {
+        JSC::JSValue held = m_held.get();
+        m_held.clear();
+        return held;
+    }
 
 private:
     NativePromiseContext(JSC::VM& vm, JSC::Structure* structure, void* ctx, Tag tag)

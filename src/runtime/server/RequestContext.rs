@@ -269,13 +269,15 @@ mod NativePromiseContext {
     pub(super) fn create<T: NativePromiseContextType>(
         global: &JSGlobalObject,
         ctx: *mut T,
+        held: JSValue,
     ) -> JSValue {
-        npc::create(global, ctx, JSValue::ZERO)
+        npc::create(global, ctx, held)
     }
     #[inline]
     pub(super) fn take<T>(cell: JSValue) -> Option<NonNull<T>> {
         npc::take::<T>(cell)
     }
+    pub(super) use npc::take_held;
 }
 use crate::node::types::PathLikeExt as _;
 use crate::server::jsc::CallFrame;
@@ -779,15 +781,22 @@ where
 
     /// [`Self::discard_response_body`] for a request this context can no longer respond to.
     fn discard_handler_result(&self, global_this: &JSGlobalObject, result: JSValue) {
+        let resp_held = self.resp.get().is_some();
         let Some(promise) = result.as_any_promise() else {
+            // A thrown value (what `on_response` hands to `error()`). While `resp` is held it is
+            // dropped like a rejection below. After `server.upgrade()` nothing else reports it.
+            if !resp_held && result.to_error().is_some() {
+                let vm = global_this.bun_vm().as_mut();
+                let _ = vm.uncaught_exception(global_this, result, false);
+                return;
+            }
             Self::discard_response_body(global_this, result);
             return;
         };
-        let resp_held = self.resp.get().is_some();
         match promise.status() {
             // Only while `resp` is held: the `on_abort` that follows then reclaims the cell.
             jsc::PromiseStatus::Pending if resp_held => {
-                let cell = self.create_promise_cell(global_this);
+                let cell = self.create_handler_promise_cell(global_this, result, promise);
                 result.then_with_value(global_this, cell, Self::ON_RESOLVE, Self::ON_REJECT);
             }
             // A subscribed promise that rejects later is dropped. Drop this one the same way.
@@ -1029,12 +1038,34 @@ where
     /// Takes one ref as the cell's claim on this context and remembers the
     /// cell in `promise_cell`. The settle reactions (`take()` + a field
     /// clear), `on_abort`, or the cell's destructor release the claim.
-    fn create_promise_cell(&self, global: &JSGlobalObject) -> JSValue {
+    /// `held` rides in the cell; see [`Self::create_handler_promise_cell`].
+    fn create_promise_cell(&self, global: &JSGlobalObject, held: JSValue) -> JSValue {
         debug_assert!(self.promise_cell.get().is_empty());
         self.ref_();
-        let cell = NativePromiseContext::create(global, self.as_ctx_ptr());
+        let cell = NativePromiseContext::create(global, self.as_ctx_ptr(), held);
         self.promise_cell.set(cell);
         cell
+    }
+
+    /// [`Self::create_promise_cell`] for a pending promise that `fetch`, a
+    /// route or `error()` returned, to subscribe `ON_RESOLVE` / `ON_REJECT` with.
+    ///
+    /// The cell holds the promise when that subscription is what marks it
+    /// handled, so `on_reject` can report a rejection that follows
+    /// `server.upgrade()`. A promise the program already handles keeps its
+    /// own reporting.
+    fn create_handler_promise_cell(
+        &self,
+        global: &JSGlobalObject,
+        promise_js: JSValue,
+        promise: jsc::AnyPromise,
+    ) -> JSValue {
+        let held = if promise.is_handled() {
+            JSValue::ZERO
+        } else {
+            promise_js
+        };
+        self.create_promise_cell(global, held)
     }
 
     /// Called from the cell's destructor (GC sweep) when the claim was never
@@ -1045,40 +1076,59 @@ where
         self.promise_cell.set(JSValue::ZERO);
     }
 
-    /// Once the response is detached or ended, the promise this context
+    /// Once the response is aborted or ended, the promise this context
     /// subscribed to can no longer do anything for the request. Reclaim the
     /// cell's claim so the context is torn down now instead of when GC
     /// collects the promise; the settle reactions then see a null `take()`
-    /// and no-op. A no-op when no claim is outstanding (the common case on
-    /// paths reached from a settle reaction, which already cleared the field).
+    /// and no-op, so a later rejection is dropped with the request. A no-op
+    /// when no claim is outstanding (the common case on paths reached from a
+    /// settle reaction, which already cleared the field).
     pub(crate) fn reclaim_promise_cell(&self) {
+        let cell = self.promise_cell.replace(JSValue::ZERO);
+        if !cell.is_empty() && NativePromiseContext::take::<Self>(cell).is_some() {
+            NativePromiseContext::take_held(cell);
+            self.deref();
+        }
+    }
+
+    /// [`Self::reclaim_promise_cell`] for `server.upgrade()`. The handler runs
+    /// on after the 101, so the cell keeps the handler's promise and
+    /// `on_reject` reports a later rejection of it.
+    pub(crate) fn reclaim_promise_cell_after_upgrade(&self) {
         let cell = self.promise_cell.replace(JSValue::ZERO);
         if !cell.is_empty() && NativePromiseContext::take::<Self>(cell).is_some() {
             self.deref();
         }
     }
 
-    pub(crate) fn on_reject(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn on_reject(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         ctx_log!("onReject");
 
         let arguments = callframe.arguments_as_array::<2>();
+        // Pass the rejection reason through verbatim (including `null` and
+        // `undefined`) so `error()` sees the same value the already-settled
+        // path delivers. Only an empty JSValue is normalized.
+        let reason = if arguments[0].is_empty() {
+            JSValue::UNDEFINED
+        } else {
+            arguments[0]
+        };
         let Some(ctx) = NativePromiseContext::take::<Self>(arguments[1]) else {
-            // A termination path (abort, end, upgrade) reclaimed the cell's
-            // claim; the context may already be gone.
+            // A termination path reclaimed the cell's claim; the context may
+            // already be gone. An abort or an end took the handler's promise
+            // with it. `server.upgrade()` left it: this reaction marked the
+            // promise handled, so nothing else reports the rejection.
+            let promise = NativePromiseContext::take_held(arguments[1]);
+            if !promise.is_empty() {
+                let vm = global.bun_vm().as_mut();
+                vm.unhandled_rejection(global, reason, promise);
+            }
             return Ok(JSValue::UNDEFINED);
         };
         let ctx = RequestContextRef::adopt(ctx.as_ptr());
         ctx.ctx().promise_cell.set(JSValue::ZERO);
 
-        let err = arguments[0];
-        // Pass the rejection reason through verbatim (including `null` and
-        // `undefined`) so `error()` sees the same value the already-settled
-        // path delivers. Only an empty JSValue is normalized.
-        ctx.ctx().handle_reject(if err.is_empty() {
-            JSValue::UNDEFINED
-        } else {
-            err
-        });
+        ctx.ctx().handle_reject(reason);
         Ok(JSValue::UNDEFINED)
     }
 
@@ -2272,7 +2322,7 @@ where
                             global: std::ptr::from_ref(global_this),
                             ..Default::default()
                         });
-                        let cell = this.create_promise_cell(global_this);
+                        let cell = this.create_promise_cell(global_this, JSValue::ZERO);
                         effective_result.then_with_value(
                             global_this,
                             cell,
@@ -2794,7 +2844,11 @@ where
             // If we immediately have the value available, we can skip the extra event loop tick
             match promise.unwrap(vm.global().vm(), jsc::PromiseUnwrapMode::MarkHandled) {
                 jsc::PromiseResult::Pending => {
-                    let cell = ctx.create_promise_cell(this.global_this());
+                    let cell = ctx.create_handler_promise_cell(
+                        this.global_this(),
+                        response_value,
+                        promise,
+                    );
                     response_value.then_with_value(
                         this.global_this(),
                         cell,
@@ -2880,7 +2934,7 @@ where
                     stream_log!("handleResolveStream: waiting for pending flush");
                     debug_assert!(self.server.get().is_some());
                     let global_this = self.server().global_this();
-                    let cell = self.create_promise_cell(global_this);
+                    let cell = self.create_promise_cell(global_this, JSValue::ZERO);
                     // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
                     jsc::JSPromise::opaque_ref(flush).to_js().then_with_value(
                         global_this,
@@ -3726,7 +3780,8 @@ where
         match promise.unwrap(vm.global().vm(), jsc::PromiseUnwrapMode::MarkHandled) {
             jsc::PromiseResult::Pending => {
                 ctx.flags.set_is_error_promise_pending(true);
-                let cell = ctx.create_promise_cell(server.global_this());
+                let cell =
+                    ctx.create_handler_promise_cell(server.global_this(), promise_js, promise);
                 promise_js.then_with_value(
                     server.global_this(),
                     cell,

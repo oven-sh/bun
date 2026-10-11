@@ -49,6 +49,8 @@ unsafe extern "C" {
     safe fn JSC__JSPromise__status(this: &JSPromise) -> u32;
     safe fn JSC__JSPromise__result(this: &mut JSPromise, vm: &VM) -> JSValue;
     safe fn JSC__JSPromise__setHandled(this: &mut JSPromise);
+    // `JSInternalPromise` is `JSPromise`; this is the one `isHandled` shim C++ exports.
+    safe fn JSC__JSInternalPromise__isHandled(this: &JSPromise) -> bool;
     // The resolve/reject/rejectAsHandled shims are `void` on the C side
     // (bindings.cpp) — there is no bool sentinel on the wire; a pending
     // exception is surfaced by checking `global.has_exception()` after the
@@ -260,6 +262,11 @@ impl JSPromise {
 
     pub fn set_handled(&mut self) {
         JSC__JSPromise__setHandled(self)
+    }
+
+    /// `[[PromiseIsHandled]]`: a reaction is attached, or the promise was marked handled.
+    pub fn is_handled(&self) -> bool {
+        JSC__JSInternalPromise__isHandled(self)
     }
 
     /// Create a new resolved promise resolving to a given value.

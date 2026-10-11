@@ -59,6 +59,11 @@ impl AnyPromise {
     }
 
     #[inline]
+    pub fn is_handled(self) -> bool {
+        any_promise_dispatch!(self, |p| p.is_handled())
+    }
+
+    #[inline]
     pub fn resolve(self, global_this: &JSGlobalObject, value: JSValue) -> JsResult<()> {
         any_promise_dispatch!(self, |p| p.resolve(global_this, value))
     }

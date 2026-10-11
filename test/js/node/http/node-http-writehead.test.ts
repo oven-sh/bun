@@ -386,7 +386,10 @@ describe("writeHead(status, headers) with no header set before sends the header 
           res => res.writeHead(200, { "Set-Cookie": value, "Content-Length": "2" }).end("ok"),
           { transport },
         );
-        sent.push({ same: headers.join() === [...value.map(cookie => `Set-Cookie: ${cookie}`), "Content-Length: 2"].join(), body });
+        sent.push({
+          same: headers.join() === [...value.map(cookie => `Set-Cookie: ${cookie}`), "Content-Length: 2"].join(),
+          body,
+        });
       }
       assert.deepStrictEqual(sent, [
         { same: true, body: "ok" },
@@ -1414,12 +1417,18 @@ describe("writeHead(status, headers) with no header set before sends no byte bef
       const { early, late } = await exchange(
         first + GET,
         // A whole request on another connection is answered after writeHead(): bytes of this head would be here by then.
-        headWritten.then(() => respond(res => res.end(), { request: "GET /other HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n" })),
+        headWritten.then(() =>
+          respond(res => res.end(), { request: "GET /other HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n" }),
+        ),
       );
       for (const res of waiting.reverse()) res.end("ok");
       const raw = await late;
       assert.deepStrictEqual(
-        { early, replies: raw.split("HTTP/1.1 200 OK").length - 1, last: raw.slice(raw.lastIndexOf("HTTP/1.1")).includes("X-A: 1") },
+        {
+          early,
+          replies: raw.split("HTTP/1.1 200 OK").length - 1,
+          last: raw.slice(raw.lastIndexOf("HTTP/1.1")).includes("X-A: 1"),
+        },
         { early: "", replies: queued ? 2 : 1, last: true },
       );
     });

@@ -22,7 +22,12 @@ const { setServerCustomOptions, setServerAppFlags, setServerMaxHeadersCount, ren
   ) => void;
   setServerMaxHeadersCount: (server: any, maxHeadersCount: number) => void;
   // The lines of writeHead(status, headers) behind one character of RAW_HEAD_* bits. `out` gets the bits and the Content-Length number, also when it throws.
-  renderRawHead: (headers: unknown, lenient: boolean, uniqueHeaders: Set<string> | null | undefined, out: Float64Array) => string;
+  renderRawHead: (
+    headers: unknown,
+    lenient: boolean,
+    uniqueHeaders: Set<string> | null | undefined,
+    out: Float64Array,
+  ) => string;
   drainMicrotasks: () => void;
 };
 

@@ -265,18 +265,20 @@ function readFileOfHandle(handle, fd, options) {
   }
 }
 
-function writeFileOfHandle(handle, fd, data, options) {
+function writeFileOfHandle(handle, fd, args: TailParameters<typeof _writeFile>) {
   handle[kRef]();
   try {
+    const data = args[0];
     // An iterable is written chunk by chunk, and on Windows each chunk goes to this descriptor number.
     if (
       !$isTypedArrayView(data) &&
       typeof data !== "string" &&
       ($isCallable(data?.[Symbol.iterator]) || $isCallable(data?.[Symbol.asyncIterator]))
     ) {
-      return releaseWhenSettled(handle, writeFileAsyncIterator(fd, data, options, undefined, undefined));
+      // @ts-expect-error
+      return releaseWhenSettled(handle, writeFileAsyncIterator(fd, ...args));
     }
-    return releaseWhenSettled(handle, _writeFile(fd, data, options));
+    return releaseWhenSettled(handle, _writeFile(fd, ...args));
   } catch (err) {
     handle[kUnref]();
     throw err;
@@ -367,7 +369,7 @@ const exports = {
   },
   writeFile: async function (fileHandleOrFdOrPath, ...args: TailParameters<typeof _writeFile>) {
     const fd = fileHandleOrFdOrPath?.[kFd];
-    if (fd !== undefined) return writeFileOfHandle(fileHandleOrFdOrPath, fd, args[0], args[1]);
+    if (fd !== undefined) return writeFileOfHandle(fileHandleOrFdOrPath, fd, args);
     if (
       !$isTypedArrayView(args[0]) &&
       typeof args[0] !== "string" &&
@@ -1247,15 +1249,10 @@ function closeAfterLastUnref(handle) {
 
       // Writev with retry. On partial write, concatenates remaining
       // buffers and falls back to writeAll.
-      async function writevAll(buffers, position, signal) {
+      async function writevAll(buffers, totalSize, position, signal) {
         acquireRef();
         asyncPending++;
         try {
-          let totalSize = 0;
-          for (let i = 0; i < buffers.length; i++) {
-            totalSize += buffers[i].byteLength;
-          }
-
           let retries = 0;
           while (totalSize > 0) {
             const { bytesWritten } = await writev(fd, buffers, position >= 0 ? position : null);
@@ -1403,7 +1400,7 @@ function closeAfterLastUnref(handle) {
           if (bytesRemaining > 0) bytesRemaining -= totalSize;
           const position = pos;
           if (pos >= 0) pos += totalSize;
-          return writevAll(chunks, position, signal);
+          return writevAll(chunks, totalSize, position, signal);
         },
 
         writeSync(chunk) {
@@ -1492,7 +1489,8 @@ function closeAfterLastUnref(handle) {
             return Promise.$reject(error);
           }
           if (closing) {
-            return pendingEndPromise;
+            // It is null for a call from a 'close' listener of the handle, inside the end that emits that event.
+            return pendingEndPromise ?? Promise.$resolve(totalBytesWritten);
           }
           if (closed) {
             return Promise.$resolve(totalBytesWritten);
@@ -1518,6 +1516,7 @@ function closeAfterLastUnref(handle) {
             // The close has to wait for another operation of the handle: the end starts here and end() returns its promise.
             closing = true;
             pendingEndPromise = cleanup().$then(returnTotalBytesWritten);
+            handle[kCloseSyncDeferred] = true;
             return -1;
           }
           closed = true;

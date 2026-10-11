@@ -460,7 +460,7 @@ fn is_hardlinked_copy(src: &Dir, dest: &Dir) -> bool {
         let mut iter = sys::iterate_dir(dir.fd());
         while let Some(entry) = iter.next().ok()? {
             let name = entry.name.slice_u8();
-            let ino: u64 = match entry.kind {
+            let ino: u64 = match crate::prune::entry_kind(dir, name, entry.kind) {
                 EntryKind::File if cfg!(windows) => {
                     sys::fstatat(dir, &bun_core::ZBox::from_bytes(name))
                         .ok()?

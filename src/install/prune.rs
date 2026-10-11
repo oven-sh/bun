@@ -1681,7 +1681,7 @@ fn lstat_kind(dir: &Dir, name: &[u8]) -> EntryKind {
     }
 }
 
-fn entry_kind(dir: &Dir, name: &[u8], kind: EntryKind) -> EntryKind {
+pub(crate) fn entry_kind(dir: &Dir, name: &[u8], kind: EntryKind) -> EntryKind {
     if kind != EntryKind::Unknown {
         return kind;
     }

@@ -28,6 +28,7 @@ async function run(cwd: string, ...args: string[]) {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toContain(dtUnknownReaddir.marker);
   expect({ stdout, stderr, exitCode }).toMatchObject({ stderr: expect.not.stringContaining("error:"), exitCode: 0 });
+  return stdout;
 }
 
 function packedPaths(tarball: string): string[] {
@@ -156,5 +157,28 @@ describe.skipIf(!dtUnknownReaddir.available)("pack on a filesystem whose readdir
       "package/index.js",
       "package/package.json",
     ]);
+  });
+});
+
+describe.skipIf(!dtUnknownReaddir.available)("install on a filesystem whose readdir reports DT_UNKNOWN", () => {
+  test.concurrent.each(["hoisted", "isolated"])("a file: folder is linked once (%s)", async linker => {
+    using dir = tempDir("dt-unknown-folder", {
+      "bunfig.toml": `[install]\nlinker = "${linker}"\n`,
+      "package.json": JSON.stringify({
+        name: "app",
+        dependencies: { lib: "file:./lib" },
+        trustedDependencies: ["lib"],
+      }),
+      "lib/src/index.js": "",
+    });
+    const runs = join(String(dir), "runs");
+    await writeFile(
+      join(String(dir), "lib", "package.json"),
+      JSON.stringify({ name: "lib", version: "1.0.0", scripts: { postinstall: `echo ran >> "${runs}"` } }),
+    );
+
+    expect(await run(String(dir), "install")).toContain("1 package installed");
+    expect(await run(String(dir), "install")).toContain("(no changes)");
+    expect(await Bun.file(runs).text()).toBe("ran\n");
   });
 });

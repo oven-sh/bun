@@ -713,23 +713,29 @@ it.concurrent("bun remove --recursive is not a workspace-wide remove: the unknow
   expect(exitCode).toBe(1);
 });
 
+// Serves version 1.0.0 of every name; `extra` adds fields to a package's manifest.
+function serveAnyPackage(extra: Record<string, object> = {}) {
+  const registry = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const name = new URL(req.url).pathname.slice(1).replace(/-1\.0\.0\.tgz$/, "");
+      const manifest = { name, version: "1.0.0", ...extra[name] };
+      if (req.url.endsWith(".tgz")) {
+        const files = { "package/package.json": JSON.stringify(manifest) };
+        return new Response(await new Bun.Archive(files, { compress: "gzip" }).bytes());
+      }
+      const versions = { "1.0.0": { ...manifest, dist: { tarball: `${registry.url}${name}-1.0.0.tgz` } } };
+      return Response.json({ name, "dist-tags": { latest: "1.0.0" }, versions });
+    },
+  });
+  return registry;
+}
+
 for (const linker of ["hoisted", "isolated"] as const) {
   it.concurrent(
     `bun remove keeps the folder another workspace has under that name for an alias (${linker})`,
     async () => {
-      await using registry = Bun.serve({
-        port: 0,
-        async fetch(req) {
-          const name = new URL(req.url).pathname.slice(1).replace(/-1\.0\.0\.tgz$/, "");
-          const manifest = { name, version: "1.0.0" };
-          if (req.url.endsWith(".tgz")) {
-            const files = { "package/package.json": JSON.stringify(manifest) };
-            return new Response(await new Bun.Archive(files, { compress: "gzip" }).bytes());
-          }
-          const versions = { "1.0.0": { ...manifest, dist: { tarball: `${registry.url}${name}-1.0.0.tgz` } } };
-          return Response.json({ name, "dist-tags": { latest: "1.0.0" }, versions });
-        },
-      });
+      await using registry = serveAnyPackage();
       using dir = tempDir(`bun-remove-alias-${linker}`, {
         "bunfig.toml": `[install]\nregistry = "${registry.url}"\nlinker = "${linker}"\n`,
         "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
@@ -752,4 +758,22 @@ for (const linker of ["hoisted", "isolated"] as const) {
       expect(exitCode).toBe(0);
     },
   );
+
+  it.concurrent(`bun remove deletes the folder of a package that is still an optional peer (${linker})`, async () => {
+    await using registry = serveAnyPackage({
+      ui: { peerDependencies: { react: "*" }, peerDependenciesMeta: { react: { optional: true } } },
+    });
+    using dir = tempDir(`bun-remove-optional-peer-${linker}`, {
+      "bunfig.toml": `[install]\nregistry = "${registry.url}"\nlinker = "${linker}"\n`,
+      "package.json": JSON.stringify({ name: "app", dependencies: { react: "1.0.0", ui: "1.0.0" } }),
+    });
+    const react = join(String(dir), "node_modules", "react");
+    expect(await run(String(dir), "install")).toMatchObject({ exitCode: 0 });
+    expect(existsSync(react)).toBe(true);
+
+    const { stderr, exitCode } = await remove(String(dir), "react");
+    expect(stderr).not.toContain("error:");
+    expect(existsSync(react)).toBe(false);
+    expect(exitCode).toBe(0);
+  });
 }

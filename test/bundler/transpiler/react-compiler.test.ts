@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { itBundled, type BundlerTestInput } from "../expectBundled";
@@ -3121,6 +3121,77 @@ test("react-compiler memory does not grow with the square of the size of a compo
   expect(chain - empty).toBeLessThan(bound);
   expect(pattern - empty).toBeLessThan(bound);
 });
+
+// Codegen copied its map of temporaries on entry to each block and put the
+// copy back on exit. The copies live in the arena of the file, so they stay
+// resident until the build ends. In a component body the map holds every
+// temporary so far, so the copies grow with the square of the number of
+// blocks: 4000 sequential `if`/`else` took 2.3 GB.
+//
+// The build runs in the child, which reads its own peak RSS from VmHWM in
+// /proc/self/status (Linux only). The peak RSS of a spawned `bun build` is
+// not usable: it starts at the RSS of the process that spawned it, and a
+// debug build of `bun test` is larger than the build under test.
+test.skipIf(!isLinux)(
+  "react-compiler memory does not grow with the square of the number of blocks",
+  async () => {
+    // A debug build is 20 times slower: the small input takes it 12 seconds,
+    // almost all in InferReactivePlaces, which is why this test has a timeout.
+    const small = isDebug || isASAN;
+    const branches = small ? 600 : 1000;
+    using dir = tempDir("react-compiler-blocks-memory", {
+      "branches.jsx": `
+        import { useState } from "react";
+        export default function App({ a }) {
+          const [s] = useState(0);
+          let v = s;
+          ${Array.from({ length: branches }, (_, i) => `if (a > ${i}) { v = ${i}; } else { v = ${branches + i}; }`).join("\n")}
+          return <div>{v}{s}</div>;
+        }
+      `,
+      "measure.js": `
+        import { readFileSync } from "node:fs";
+        const before = process.memoryUsage().rss;
+        const result = await Bun.build({
+          entrypoints: ["./branches.jsx"],
+          target: "browser",
+          external: ["*"],
+          reactCompiler: true,
+        });
+        const status = readFileSync("/proc/self/status", "utf8");
+        const peak = parseInt(status.slice(status.indexOf("VmHWM:") + "VmHWM:".length), 10) * 1024;
+        console.log(JSON.stringify({
+          memoized: /\\b_c\\(\\d+\\)/.test(await result.outputs[0].text()),
+          peakMB: (peak - before) / 1024 / 1024,
+        }));
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "measure.js"],
+      env: {
+        ...bunEnv,
+        // ASAN's quarantine keeps freed blocks resident, which hides the difference.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
+          .filter(Boolean)
+          .join(":"),
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const { memoized, peakMB } = JSON.parse(stdout);
+    expect(memoized).toBe(true);
+    // Peak RSS above the RSS before the build. Without the fix: 134 MB for the
+    // small input in a debug build, 213 MB for the large one in a release
+    // build. With it: 77 MB and 71 MB.
+    expect(peakMB).toBeLessThan(small ? 100 : 130);
+  },
+  90_000,
+);
 
 // ValidateExhaustiveDependencies gives each phi the dependencies of its
 // operands. TS keeps them in a `Set`. The port appended clones to a `Vec`, so a

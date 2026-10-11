@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 describe("--sql-preconnect", () => {
   test("should attempt to preconnect to PostgreSQL on startup", async () => {
@@ -22,7 +22,7 @@ describe("--sql-preconnect", () => {
       },
     });
 
-    const testDir = tempDirWithFiles("sql-preconnect-test", {
+    await using testDir = tempDir("sql-preconnect-test", {
       "index.js": `console.log("Script executed");`,
     });
 
@@ -58,7 +58,7 @@ describe("--sql-preconnect", () => {
       },
     });
 
-    const testDir = tempDirWithFiles("sql-no-preconnect", {
+    await using testDir = tempDir("sql-no-preconnect", {
       "index.js": `console.log("Normal script executed");`,
     });
 

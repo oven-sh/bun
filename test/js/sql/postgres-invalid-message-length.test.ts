@@ -21,14 +21,14 @@ import { listeningServer, pgAuthenticationOk, pgCString, pgRaw, pgReadyForQuery 
 // One mock server for the file; each test sets `current` before connecting and
 // the accept handler latches it per connection. A per-test server flaked on
 // Windows CI with ERR_POSTGRES_CONNECTION_REFUSED (loopback SYN not retransmitted).
-let current!: { atStartup: Buffer[]; atQuery?: Buffer[] };
+let current!: { atStartup: Buffer[]; atQuery?: Buffer[]; authenticationOk?: boolean };
 const { port, server } = await listeningServer(socket => {
-  const { atStartup, atQuery } = current;
+  const { atStartup, atQuery, authenticationOk } = current;
   let startup = true;
   socket.on("data", data => {
     if (startup) {
       startup = false;
-      socket.write(Buffer.concat([pgAuthenticationOk(), ...atStartup]));
+      socket.write(Buffer.concat([...(authenticationOk === false ? [] : [pgAuthenticationOk()]), ...atStartup]));
       return;
     }
     if (atQuery && data[0] === 0x51 /* 'Q' */) socket.write(Buffer.concat(atQuery));
@@ -108,6 +108,26 @@ test("postgres: CommandComplete declaring length 3 fails the in-flight query", a
     code: "ERR_POSTGRES_INVALID_MESSAGE_LENGTH",
     name: "PostgresError",
   });
+});
+
+test("postgres: ReadyForQuery before AuthenticationOk rejects the connection instead of marking it ready", async () => {
+  current = { atStartup: [pgReadyForQuery()], authenticationOk: false };
+  const db = new SQL({ url: `postgres://postgres@127.0.0.1:${port}/postgres`, max: 1, connectionTimeout: 1 });
+  try {
+    let err: any;
+    try {
+      await db.connect();
+      throw new Error("expected connect() to reject");
+    } catch (e) {
+      err = e;
+    }
+    expect({ code: err.code, name: err.name }).toEqual({
+      code: "ERR_POSTGRES_UNEXPECTED_MESSAGE",
+      name: "PostgresError",
+    });
+  } finally {
+    await db.close({ timeout: 0 });
+  }
 });
 
 // Boundary: a length of exactly 4 (an empty NoticeResponse) is the smallest

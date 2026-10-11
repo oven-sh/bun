@@ -169,7 +169,7 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
     /// Create a Cow that wraps a static slice.
     ///
     /// `Drop` is safe to call, but will have no effect.
-    pub const fn init_static(data: &'static [T]) -> Self {
+    pub(crate) const fn init_static(data: &'static [T]) -> Self {
         Self {
             // SAFETY: const semantics are enforced by is_owned flag
             ptr: data.as_ptr().cast_mut(),
@@ -194,32 +194,6 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
     #[inline]
     pub fn length(&self) -> usize {
         self.flags.len()
-    }
-
-    /// Mutably borrow this `Cow`'s slice.
-    ///
-    /// Borrowed `Cow`s will be automatically converted to owned, incurring
-    /// an allocation.
-    pub fn slice_mut(&mut self) -> Result<&mut [T], AllocError>
-    where
-        T: Clone + Default,
-    {
-        if !self.is_owned() {
-            self.into_owned()?;
-        }
-        // SAFETY: owned ⇒ `ptr` is uniquely owned and valid for `len` elements.
-        Ok(unsafe { core::slice::from_raw_parts_mut(self.ptr, self.flags.len()) })
-    }
-
-    /// Mutably borrow this `Cow`'s slice, assuming it already owns its data.
-    /// Calling this on a borrowed `Cow` invokes safety-checked Illegal Behavior.
-    pub fn slice_mut_unsafe(&mut self) -> &mut [T] {
-        debug_assert!(
-            self.is_owned(),
-            "CowSlice.slice_mut_unsafe cannot be called on Cows that borrow their data."
-        );
-        // SAFETY: caller contract — `self` is owned.
-        unsafe { core::slice::from_raw_parts_mut(self.ptr, self.flags.len()) }
     }
 
     /// Take ownership over this string's allocation. `self` is left in a
@@ -299,18 +273,6 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
         result
     }
 
-    /// Make this Cow `owned` by duplicating its borrowed data. Does nothing
-    /// if the Cow is already owned.
-    pub fn to_owned(&mut self) -> Result<(), AllocError>
-    where
-        T: Clone + Default,
-    {
-        if !self.is_owned() {
-            self.into_owned()?;
-        }
-        Ok(())
-    }
-
     /// Make this Cow `owned` by duplicating its borrowed data. Panics if
     /// the Cow is already owned.
     #[inline(always)]
@@ -340,21 +302,6 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
         }
 
         Ok(())
-    }
-
-    /// Does not include debug safety checks.
-    ///
-    /// `data` is the logical slice. For `Z = true` with `is_owned = true`, the
-    /// backing allocation must physically hold `data.len() + 1` elements (the
-    /// sentinel beyond the slice), as `Drop` frees the physical length.
-    pub fn init_unchecked(data: &[T], is_owned: bool) -> Self {
-        Self {
-            // SAFETY: const semantics are enforced by is_owned flag
-            ptr: data.as_ptr().cast_mut(),
-            flags: Flags::new(data.len(), is_owned),
-            #[cfg(debug_assertions)]
-            debug: None,
-        }
     }
 }
 
@@ -447,7 +394,7 @@ mod tests {
         assert!(!borrow.is_owned());
         assert_eq!(borrow.slice(), b"hello");
 
-        str.to_owned().unwrap();
+        str.into_owned().unwrap();
         assert!(str.is_owned());
         assert_eq!(str.slice(), b"hello");
 
@@ -475,7 +422,7 @@ mod tests {
         let mut borrow = str.borrow();
         assert!(!borrow.is_owned());
         assert_eq!(borrow.slice(), b"hello");
-        borrow.to_owned().unwrap();
+        borrow.into_owned().unwrap();
         assert!(borrow.is_owned());
         assert_eq!(borrow.slice(), b"hello");
         // SAFETY: owned Z-cow ⇒ sentinel at index `len`.

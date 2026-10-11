@@ -18,7 +18,7 @@ Bun.cron("0 * * * *", async () => {
 **Parse a cron expression to find the next matching time:**
 
 ```ts
-// Next weekday at 9:30 AM UTC
+// Next weekday at 9:30 AM local time
 const next = Bun.cron.parse("30 9 * * MON-FRI");
 ```
 
@@ -32,7 +32,7 @@ await Bun.cron("./worker.ts", "30 2 * * MON", "weekly-report");
 
 ## `Bun.cron.parse()`
 
-Parse a cron expression and return the next matching `Date` in UTC.
+Parse a cron expression and return the next matching `Date` in the system's local time zone.
 
 ```ts
 const next = Bun.cron.parse("*/15 * * * *");
@@ -41,10 +41,11 @@ console.log(next); // => next quarter-hour boundary
 
 ### Parameters
 
-| Parameter      | Type             | Description                                              |
-| -------------- | ---------------- | -------------------------------------------------------- |
-| `expression`   | `string`         | A 5-field cron expression or predefined nickname         |
-| `relativeDate` | `Date \| number` | Starting point for the search (defaults to `Date.now()`) |
+| Parameter      | Type              | Description                                                                    |
+| -------------- | ----------------- | ------------------------------------------------------------------------------ |
+| `expression`   | `string`          | A 5-field cron expression or predefined nickname                               |
+| `relativeDate` | `Date \| number`  | Starting point for the search (defaults to `Date.now()`)                       |
+| `options`      | `{ tz?: string }` | IANA time-zone name to interpret the schedule in (defaults to the system zone) |
 
 ### Returns
 
@@ -113,25 +114,38 @@ Both `0` and `7` mean Sunday in the weekday field.
 
 ```ts
 const next = Bun.cron.parse("@daily");
-console.log(next); // => next UTC midnight
+console.log(next); // => next local midnight
 ```
 
 ### Time zone
 
-`Bun.cron.parse()` and the in-process `Bun.cron(schedule, handler)` interpret schedules in **UTC**. There is no DST to handle — `0 9 * * *` always means 9:00 UTC.
+Bun interprets schedules in the system's **local time zone**, the same way crontab, launchd, and Windows Task Scheduler read them. The OS-level form and the in-process callback form fire at the same wall-clock time.
 
-The OS-level `Bun.cron(path, schedule, title)` uses the **system's local time zone**, because that's how crontab, launchd, and Windows Task Scheduler work. To make the two forms agree, run the process with `TZ=UTC`.
+To override, pass an IANA time-zone name as `{ tz }` to `Bun.cron.parse()` or the in-process `Bun.cron(schedule, handler, options)`:
+
+```ts
+// 09:00 UTC, regardless of the server's TZ
+Bun.cron.parse("0 9 * * *", Date.now(), { tz: "UTC" });
+
+// Fire at 09:00 New York time
+Bun.cron("0 9 * * *", handler, { tz: "America/New_York" });
+```
+
+DST transitions:
+
+- **Spring-forward** — a schedule that lands in the missing hour fires that day, shifted forward by the gap (e.g. `30 2 * * *` runs at 3:30 on the spring-forward day). For multi-minute patterns inside the gap (`*/15 2 * * *`), only the first match fires.
+- **Fall-back** — a fixed-time schedule in the duplicated hour (`30 1 * * *`) fires once, at the first occurrence. A schedule whose minute or hour field is `*` (`0 * * * *`, `* * * * *`) fires through **both** occurrences — once per real-time minute, matching crontab on Linux.
 
 ### Day-of-month and day-of-week interaction
 
-When **both** day-of-month and day-of-week are specified (neither is `*`), the expression matches when **either** condition is true. This follows the [POSIX cron](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html) standard.
+When you specify **both** day-of-month and day-of-week (neither is `*`), the expression matches when **either** condition is true. This follows the [POSIX cron](https://pubs.opengroup.org/onlinepubs/9699919799/utilities/crontab.html) standard.
 
 ```ts
 // Fires on the 15th of every month OR every Friday
 Bun.cron.parse("0 0 15 * FRI");
 ```
 
-When only one is specified (the other is `*`), only that field is used for matching.
+When you specify only one (the other is `*`), Bun uses only that field for matching.
 
 ---
 
@@ -145,7 +159,7 @@ const job = Bun.cron("*/5 * * * *", async () => {
 });
 ```
 
-In-process scheduling is the lightweight option for long-running servers and workers — no system cron daemon required, works the same on every platform, and shares state (database pools, caches, module-level variables) between invocations.
+In-process scheduling is the lightweight option for long-running servers and workers. It requires no system cron daemon, works the same on every platform, and shares state (database pools, caches, module-level variables) between invocations.
 
 |                              | In-process                       | [OS-level](#bun-cron-path-schedule-title-os-level) |
 | ---------------------------- | -------------------------------- | -------------------------------------------------- |
@@ -160,13 +174,14 @@ In-process scheduling is the lightweight option for long-running servers and wor
 | Parameter  | Type                         | Description                                                                                                                                                                  |
 | ---------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `schedule` | `string`                     | A [cron expression](#cron-expression-syntax) or nickname like `"@hourly"`.                                                                                                   |
-| `handler`  | `(this: CronJob) => unknown` | Called on each fire. May return a Promise — the next fire is not scheduled until it settles. Inside a `function` callback, `this` is the `CronJob` (so `this.stop()` works). |
+| `handler`  | `(this: CronJob) => unknown` | Called on each fire. May return a Promise; Bun schedules the next fire only once it settles. Inside a `function` callback, `this` is the `CronJob` (so `this.stop()` works). |
+| `options`  | `{ tz?: string }`            | IANA time-zone name to interpret the schedule in (defaults to the system zone).                                                                                              |
 
-Returns a [`CronJob`](#the-cronjob-handle) synchronously. Throws a `TypeError` if the expression is invalid or has no future occurrences, like `"0 0 30 2 *"` (February 30th).
+Returns a [`CronJob`](#the-cronjob-handle) synchronously. Throws a `TypeError` if the expression is invalid, the time-zone name is unknown, or the expression has no future occurrences, like `"0 0 30 2 *"` (February 30th).
 
 ### No-overlap guarantee
 
-The next fire time is computed only after the handler — including any returned `Promise` — settles. If your handler takes 90 seconds and the schedule is `* * * * *`, the second fire is the first minute boundary _after_ the handler finishes, not 60 seconds after the first fire. Invocations never stack.
+Bun computes the next fire time only after the handler and any returned `Promise` settle. If your handler takes 90 seconds and the schedule is `* * * * *`, the second fire is the first minute boundary _after_ the handler finishes, not 60 seconds after the first fire. Invocations never stack.
 
 ### Error handling
 
@@ -187,7 +202,7 @@ Bun.cron("* * * * *", async () => {
 
 ### `bun --hot`
 
-Under `bun --hot`, all in-process cron jobs are stopped immediately before the module graph re-evaluates. Every `Bun.cron()` call still in your source then re-registers. Editing the schedule, editing the handler, or deleting the line entirely all take effect on save without leaking timers.
+Under `bun --hot`, Bun stops all in-process cron jobs immediately before the module graph re-evaluates. Every `Bun.cron()` call still in your source then re-registers. Editing the schedule, editing the handler, or deleting the line entirely all take effect on save without leaking timers.
 
 ### The `CronJob` handle
 
@@ -224,7 +239,7 @@ await Bun.cron("./worker.ts", "30 2 * * MON", "weekly-report");
 | `schedule` | `string` | Cron expression or nickname                                |
 | `title`    | `string` | Unique job identifier (alphanumeric, hyphens, underscores) |
 
-Re-registering with the same `title` overwrites the existing job in-place — the old schedule is replaced, not duplicated.
+Re-registering with the same `title` overwrites the existing job in-place. Bun replaces the old schedule instead of duplicating it.
 
 ```ts
 await Bun.cron("./worker.ts", "0 * * * *", "my-job"); // every hour
@@ -253,7 +268,7 @@ The handler can be `async`. Bun waits for the returned promise to settle before 
 
 ### Linux
 
-Bun uses [crontab](https://man7.org/linux/man-pages/man5/crontab.5.html) to register jobs. Each job is stored as a line in your user's crontab with a `# bun-cron: <title>` marker comment above it.
+Bun uses [crontab](https://man7.org/linux/man-pages/man5/crontab.5.html) to register jobs. Bun stores each job as a line in your user's crontab with a `# bun-cron: <title>` marker comment above it.
 
 The crontab entry looks like:
 
@@ -295,13 +310,13 @@ crontab -l | grep -v "# bun-cron:" | grep -v "\-\-cron-title=" | crontab -
 
 ### macOS
 
-Bun uses [launchd](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html) to register jobs. Each job is installed as a plist file at:
+Bun uses [launchd](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html) to register jobs. Bun installs each job as a plist file at:
 
 ```
 ~/Library/LaunchAgents/bun.cron.<title>.plist
 ```
 
-The plist uses `StartCalendarInterval` to define the schedule. Complex patterns with ranges, lists, or steps are supported — Bun expands them into multiple `StartCalendarInterval` dicts as a Cartesian product.
+The plist uses `StartCalendarInterval` to define the schedule. Complex patterns with ranges, lists, or steps are supported. Bun expands them into multiple `StartCalendarInterval` dicts as a Cartesian product.
 
 **Viewing registered jobs:**
 
@@ -339,17 +354,17 @@ rm ~/Library/LaunchAgents/bun.cron.weekly-report.plist
 
 ### Windows
 
-Bun uses [Windows Task Scheduler](https://learn.microsoft.com/en-us/windows/win32/taskschd/task-scheduler-start-page) with XML-based task definitions. Each job is registered as a scheduled task named `bun-cron-<title>` using [`CalendarTrigger`](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-calendartrigger-triggergroup-element) elements and [`Repetition`](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-repetition-triggerbasetype-element) patterns.
+Bun uses [Windows Task Scheduler](https://learn.microsoft.com/en-us/windows/win32/taskschd/task-scheduler-start-page) with XML-based task definitions. Bun registers each job as a scheduled task named `bun-cron-<title>` using [`CalendarTrigger`](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-calendartrigger-triggergroup-element) elements and [`Repetition`](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-repetition-triggerbasetype-element) patterns.
 
 Most cron expressions are fully supported, including `@daily`, `@weekly`, `@monthly`, `@yearly`, ranges (`1-5`), lists (`1,15`), named days/months, and day-of-month patterns.
 
 #### User context
 
-Bun registers tasks with the [`S4U` (Service-for-User)](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-logontype-simpletype) logon type, which runs jobs as the registering user even when not logged in — matching Linux `crontab` behavior. No password is stored.
+Bun registers tasks with the [`S4U` (Service-for-User)](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-logontype-simpletype) logon type, which runs jobs as the registering user even when not logged in. Linux `crontab` behaves the same way. No password is stored.
 
 TCP/IP networking (`fetch()`, HTTP, WebSocket, database connections) works normally. The only restriction is that S4U tasks cannot access [Windows-authenticated network resources](https://learn.microsoft.com/en-us/windows/win32/taskschd/security-contexts-for-running-tasks) (SMB file shares, mapped drives, Kerberos/NTLM services).
 
-On headless servers and CI environments where the current user's [Security Identifier (SID)](https://learn.microsoft.com/en-us/windows/security/identity-protection/access-control/security-identifiers) cannot be resolved — such as service accounts created by [NSSM](https://nssm.cc/) or similar tools — `Bun.cron()` fails with an error explaining the issue. To work around this, either run Bun as a regular user account, or create the scheduled task manually with `schtasks /create /xml <file> /tn <name> /ru SYSTEM /f`.
+On some headless servers and CI environments, the current user's [Security Identifier (SID)](https://learn.microsoft.com/en-us/windows/security/identity-protection/access-control/security-identifiers) cannot be resolved, for example with service accounts created by [NSSM](https://nssm.cc/) or similar tools. In that case, `Bun.cron()` fails with an error explaining the issue. To work around this, either run Bun as a regular user account, or create the scheduled task manually with `schtasks /create /xml <file> /tn <name> /ru SYSTEM /f`.
 
 #### Trigger limit
 
@@ -368,7 +383,7 @@ On headless servers and CI environments where the current user's [Security Ident
 | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
 | `*/5 * * * *`                              | Single trigger with [`Repetition`](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-repetition-triggerbasetype-element) (PT5M) | 1     |
 | `*/15 * * * *`                             | Single trigger with Repetition (PT15M)                                                                                                                     | 1     |
-| `0 9 * * MON-FRI`                          | One `CalendarTrigger` per weekday                                                                                                                          | 5     |
+| `0 9 * * MON-FRI`                          | One `CalendarTrigger` listing all five weekdays                                                                                                            | 1     |
 | `0,30 9-17 * * *`                          | 2 minutes × 9 hours                                                                                                                                        | 18    |
 | `@daily`, `@weekly`, `@monthly`, `@yearly` | Single trigger                                                                                                                                             | 1     |
 
@@ -384,7 +399,7 @@ On headless servers and CI environments where the current user's [Security Ident
 | `*/15 * * 6 *`    | Month restriction prevents Repetition: 4 × 24 | 96            |
 | `0,30 * 15 * FRI` | OR-split doubles triggers: 2 × 24 × 2         | 96            |
 
-The key factor is whether the expression can use a [`Repetition`](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-repetition-triggerbasetype-element) interval (single trigger) or must expand to individual `CalendarTrigger` elements. Minute steps that **evenly divide 60** (`*/1`, `*/2`, `*/3`, `*/4`, `*/5`, `*/6`, `*/10`, `*/12`, `*/15`, `*/20`, `*/30`) use Repetition and work regardless of other fields. Steps that don't divide 60 (`*/7`, `*/8`, `*/9`, `*/11`, `*/13`, etc.) must be expanded, and with 24 hours active, the count quickly exceeds 48.
+The key factor is whether the expression can use a [`Repetition`](https://learn.microsoft.com/en-us/windows/win32/taskschd/taskschedulerschema-repetition-triggerbasetype-element) interval (single trigger) or must expand to individual `CalendarTrigger` elements. Minute steps that **evenly divide 60** (`*/1`, `*/2`, `*/3`, `*/4`, `*/5`, `*/6`, `*/10`, `*/12`, `*/15`, `*/20`, `*/30`) use Repetition only when the other four fields are unrestricted (`*`). Steps that don't divide 60 (`*/7`, `*/8`, `*/9`, `*/11`, `*/13`, etc.) must be expanded, and with 24 hours active, the count quickly exceeds 48.
 
 To work around it, simplify the expression or restrict the hour range:
 

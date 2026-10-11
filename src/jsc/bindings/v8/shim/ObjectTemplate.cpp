@@ -50,17 +50,23 @@ void ObjectTemplate::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(tmp, visitor);
 
     tmp->m_objectStructure.visit(visitor);
+
+    WTF::Locker locker { tmp->cellLock() };
+    for (auto& prop : tmp->m_properties) {
+        visitor.append(prop.name);
+        visitor.append(prop.value);
+    }
+    for (auto& acc : tmp->m_accessors) {
+        visitor.append(acc.name);
+        visitor.append(acc.data);
+    }
 }
 
 DEFINE_VISIT_CHILDREN(ObjectTemplate);
 
 Structure* ObjectTemplate::createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return Structure::create(
-        vm,
-        globalObject,
-        prototype,
-        JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags),
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags),
         info());
 }
 
@@ -68,8 +74,30 @@ InternalFieldObject* ObjectTemplate::newInstance()
 {
     auto* structure = m_objectStructure.get(this);
     auto* newInstance = InternalFieldObject::create(globalObject()->vm(), structure, m_internalFieldCount);
-    // todo: apply properties
+    applyTemplateProperties(globalObject(), newInstance, m_properties, m_accessors);
     return newInstance;
+}
+
+void ObjectTemplate::addProperty(JSC::VM& vm, JSC::JSValue name, JSC::JSValue value, unsigned attributes)
+{
+    TemplateProperty prop;
+    prop.name.set(vm, this, name);
+    prop.value.set(vm, this, value);
+    prop.attributes = attributes;
+    WTF::Locker locker { cellLock() };
+    m_properties.append(WTF::move(prop));
+}
+
+void ObjectTemplate::addAccessor(JSC::VM& vm, JSC::JSValue name, AccessorNameGetterCallback getter, AccessorNameSetterCallback setter, JSC::JSValue data, unsigned attributes)
+{
+    TemplateAccessor acc;
+    acc.name.set(vm, this, name);
+    acc.data.set(vm, this, data);
+    acc.getter = getter;
+    acc.setter = setter;
+    acc.attributes = attributes;
+    WTF::Locker locker { cellLock() };
+    m_accessors.append(WTF::move(acc));
 }
 
 } // namespace shim

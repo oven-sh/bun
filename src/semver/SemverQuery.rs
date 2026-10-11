@@ -18,13 +18,6 @@ pub mod token {
 /// "^1 ^2"
 /// ----|-----
 /// That is two Query
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Op {
-    None,
-    And,
-    Or,
-}
-
 #[derive(Default)]
 pub struct Query {
     pub range: Range,
@@ -89,14 +82,14 @@ impl<'a> fmt::Display for QueryFormatter<'a> {
 }
 
 impl Query {
-    pub fn fmt<'a>(&'a self, buf: &'a [u8]) -> QueryFormatter<'a> {
+    pub(crate) fn fmt<'a>(&'a self, buf: &'a [u8]) -> QueryFormatter<'a> {
         QueryFormatter {
             query: self,
             buffer: buf,
         }
     }
 
-    pub fn eql(&self, rhs: &Query) -> bool {
+    pub(crate) fn eql(&self, rhs: &Query) -> bool {
         let mut lhs = self;
         let mut rhs = rhs;
         loop {
@@ -118,7 +111,7 @@ impl Query {
         }
     }
 
-    pub fn satisfies(&self, version: Version, query_buf: &[u8], version_buf: &[u8]) -> bool {
+    pub(crate) fn satisfies(&self, version: Version, query_buf: &[u8], version_buf: &[u8]) -> bool {
         let mut node = self;
         loop {
             if !node.range.satisfies(version, query_buf, version_buf) {
@@ -131,16 +124,14 @@ impl Query {
         }
     }
 
-    pub fn satisfies_pre(
+    pub(crate) fn satisfies_pre(
         &self,
         version: Version,
         query_buf: &[u8],
         version_buf: &[u8],
         pre_matched: &mut bool,
     ) -> bool {
-        if cfg!(debug_assertions) {
-            debug_assert!(version.tag.has_pre());
-        }
+        debug_assert!(version.tag.has_pre());
         let mut node = self;
         loop {
             if !node
@@ -165,7 +156,7 @@ impl Query {
 pub struct List {
     pub head: Query,
     // BACKREF: alias into self.head.next chain
-    pub tail: Option<NonNull<Query>>,
+    pub(crate) tail: Option<NonNull<Query>>,
 
     // OR
     pub next: Option<Box<List>>,
@@ -250,14 +241,14 @@ impl<'a> fmt::Display for ListFormatter<'a> {
 }
 
 impl List {
-    pub fn fmt<'a>(&'a self, buf: &'a [u8]) -> ListFormatter<'a> {
+    pub(crate) fn fmt<'a>(&'a self, buf: &'a [u8]) -> ListFormatter<'a> {
         ListFormatter {
             list: self,
             buffer: buf,
         }
     }
 
-    pub fn satisfies(&self, version: Version, list_buf: &[u8], version_buf: &[u8]) -> bool {
+    pub(crate) fn satisfies(&self, version: Version, list_buf: &[u8], version_buf: &[u8]) -> bool {
         let mut node = self;
         loop {
             if node.head.satisfies(version, list_buf, version_buf) {
@@ -270,10 +261,13 @@ impl List {
         }
     }
 
-    pub fn satisfies_pre(&self, version: Version, list_buf: &[u8], version_buf: &[u8]) -> bool {
-        if cfg!(debug_assertions) {
-            debug_assert!(version.tag.has_pre());
-        }
+    pub(crate) fn satisfies_pre(
+        &self,
+        version: Version,
+        list_buf: &[u8],
+        version_buf: &[u8],
+    ) -> bool {
+        debug_assert!(version.tag.has_pre());
 
         // `version` has a prerelease tag:
         // - needs to satisfy each comparator in the query (<comparator> AND <comparator> AND ...) like normal comparison
@@ -297,7 +291,7 @@ impl List {
         }
     }
 
-    pub fn eql(&self, rhs: &List) -> bool {
+    pub(crate) fn eql(&self, rhs: &List) -> bool {
         let mut lhs = self;
         let mut rhs = rhs;
         loop {
@@ -319,7 +313,7 @@ impl List {
         }
     }
 
-    pub fn and_range(&mut self, range: &Range) -> Result<(), AllocError> {
+    pub(crate) fn and_range(&mut self, range: &Range) -> Result<(), AllocError> {
         if !self.head.range.has_left() && !self.head.range.has_right() {
             self.head.range = *range;
             return Ok(());
@@ -329,7 +323,6 @@ impl List {
             range: *range,
             next: None,
         });
-        tail.range = *range;
 
         let tail_ptr = NonNull::from(&mut *tail);
 
@@ -349,13 +342,13 @@ pub(crate) type FlagsBitSet = IntegerBitSet<3>;
 pub struct Flags;
 impl Flags {
     pub const PRE: usize = 1;
-    pub const BUILD: usize = 0;
+    pub(crate) const BUILD: usize = 0;
 }
 
 pub struct Group {
     pub head: List,
     // BACKREF: alias into self.head.next chain
-    pub tail: Option<NonNull<List>>,
+    pub(crate) tail: Option<NonNull<List>>,
     /// Borrowed view into the caller's source buffer.
     /// Stored as a raw fat pointer
     /// (parser-owned, never freed) so `Group` carries no lifetime parameter and
@@ -441,20 +434,6 @@ impl Group {
         GroupFormatter { group: self, buf }
     }
 
-    pub fn json_stringify(&self, writer: &mut impl core::fmt::Write) -> fmt::Result {
-        let temp = {
-            use std::io::Write as _;
-            let mut v: Vec<u8> = Vec::new();
-            // SAFETY: `input` points into the parse source buffer which the
-            // caller must keep alive for the lifetime of this Group (see the
-            // `input` field doc).
-            let input = unsafe { &*self.input };
-            let _ = write!(&mut v, "{}", self.fmt(input));
-            v
-        };
-        bun_core::fmt::encode_json_string(writer, &temp)
-    }
-
     // `deinit` deleted — `next: Option<Box<..>>` chains are freed by the
     // iterative `Drop` impls on `Query` and `List`.
 
@@ -466,9 +445,7 @@ impl Group {
             && range.left.op == RangeOp::Eql
             && !range.has_right()
         {
-            if cfg!(debug_assertions) {
-                debug_assert!(self.tail.is_none());
-            }
+            debug_assert!(self.tail.is_none());
             return Some(range.left.version);
         }
 
@@ -522,7 +499,7 @@ impl Group {
         self.head.head.range.left.version
     }
 
-    pub fn or_version(&mut self, version: Version) -> Result<(), AllocError> {
+    pub(crate) fn or_version(&mut self, version: Version) -> Result<(), AllocError> {
         if self.tail.is_none() && !self.head.head.range.has_left() {
             self.head.head.range.left.version = version;
             self.head.head.range.left.op = RangeOp::Eql;
@@ -545,7 +522,7 @@ impl Group {
         Ok(())
     }
 
-    pub fn and_range(&mut self, range: &Range) -> Result<(), AllocError> {
+    pub(crate) fn and_range(&mut self, range: &Range) -> Result<(), AllocError> {
         let tail: &mut List = match self.tail {
             // SAFETY: self.tail aliases a List owned by self.head.next chain; we hold &mut self.
             Some(mut p) => unsafe { p.as_mut() },
@@ -554,7 +531,7 @@ impl Group {
         tail.and_range(range)
     }
 
-    pub fn or_range(&mut self, range: &Range) -> Result<(), AllocError> {
+    pub(crate) fn or_range(&mut self, range: &Range) -> Result<(), AllocError> {
         if self.tail.is_none() && self.head.tail.is_none() && !self.head.head.range.has_left() {
             self.head.head.range = *range;
             return Ok(());
@@ -583,12 +560,30 @@ impl Group {
             self.head.satisfies(version, group_buf, version_buf)
         }
     }
+
+    /// True when `parse` found no comparator at all (e.g. the input was only unrecognised words).
+    pub fn is_empty(&self) -> bool {
+        self.head.next.is_none()
+            && self.head.head.next.is_none()
+            && !self.head.head.range.has_left()
+    }
+
+    /// npm's `includePrerelease`: a prerelease only has to satisfy the comparators.
+    #[inline]
+    pub fn satisfies_including_prerelease(
+        &self,
+        version: Version,
+        group_buf: &[u8],
+        version_buf: &[u8],
+    ) -> bool {
+        self.head.satisfies(version, group_buf, version_buf)
+    }
 }
 
 #[derive(Clone, Copy, Default)]
 pub struct Token {
-    pub tag: TokenTag,
-    pub wildcard: Wildcard,
+    pub(crate) tag: TokenTag,
+    pub(crate) wildcard: Wildcard,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -614,7 +609,7 @@ pub enum Wildcard {
 }
 
 impl Token {
-    pub fn to_range(self, version: &version::Partial<u64>) -> Range {
+    pub(crate) fn to_range(self, version: &version::Partial<u64>) -> Range {
         match self.tag {
             // Allows changes that do not modify the left-most non-zero element in the [major, minor, patch] tuple
             TokenTag::Caret => {
@@ -631,29 +626,25 @@ impl Token {
                             ..Default::default()
                         },
                     };
-                    range.right = Comparator {
-                        op: RangeOp::Lt,
-                        ..Default::default()
-                    };
                     if let Some(minor) = version.minor {
                         range.left.version.minor = minor;
                         if let Some(patch) = version.patch {
                             range.left.version.patch = patch;
                             range.left.version.tag = version.tag;
                             if major == 0 {
-                                if minor == 0 {
-                                    range.right.version.patch = patch.saturating_add(1);
+                                range.right = if minor == 0 {
+                                    Comparator::lt_next_patch(0, 0, patch)
                                 } else {
-                                    range.right.version.minor = minor.saturating_add(1);
-                                }
+                                    Comparator::lt_next_minor(0, minor)
+                                };
                                 break 'done;
                             }
                         } else if major == 0 {
-                            range.right.version.minor = minor.saturating_add(1);
+                            range.right = Comparator::lt_next_minor(0, minor);
                             break 'done;
                         }
                     }
-                    range.right.version.major = major.saturating_add(1);
+                    range.right = Comparator::lt_next_major(major);
                 }
                 return range;
             }
@@ -671,21 +662,16 @@ impl Token {
                             ..Default::default()
                         },
                     };
-                    range.right = Comparator {
-                        op: RangeOp::Lt,
-                        ..Default::default()
-                    };
                     if let Some(minor) = version.minor {
                         range.left.version.minor = minor;
                         if let Some(patch) = version.patch {
                             range.left.version.patch = patch;
                             range.left.version.tag = version.tag;
                         }
-                        range.right.version.major = major;
-                        range.right.version.minor = minor.saturating_add(1);
+                        range.right = Comparator::lt_next_minor(major, minor);
                         break 'done;
                     }
-                    range.right.version.major = major.saturating_add(1);
+                    range.right = Comparator::lt_next_major(major);
                 }
                 return range;
             }
@@ -961,10 +947,10 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
             let parse_result = Version::parse(sliced.sub(&input[i..]));
             let version = parse_result.version.min();
             if version.tag.has_build() {
-                list.flags.set_value(Flags::BUILD, true);
+                list.flags.set(Flags::BUILD);
             }
             if version.tag.has_pre() {
-                list.flags.set_value(Flags::PRE, true);
+                list.flags.set(Flags::PRE);
             }
 
             token.wildcard = parse_result.wildcard;
@@ -997,7 +983,7 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                         break 'possibly_hyphenate false;
                     }
 
-                    if !(i < input.len() && matches!(input[i], b'0'..=b'9' | b'X' | b'x' | b'*')) {
+                    if !matches!(input[i], b'0'..=b'9' | b'X' | b'x' | b'*') {
                         break 'possibly_hyphenate false;
                     }
 
@@ -1013,10 +999,10 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                 let second_parsed = Version::parse(sliced.sub(&input[i..]));
                 let mut second_version = second_parsed.version.min();
                 if second_version.tag.has_build() {
-                    list.flags.set_value(Flags::BUILD, true);
+                    list.flags.set(Flags::BUILD);
                 }
                 if second_version.tag.has_pre() {
-                    list.flags.set_value(Flags::PRE, true);
+                    list.flags.set(Flags::PRE);
                 }
                 let range: Range = match second_parsed.wildcard {
                     Wildcard::Major => {
@@ -1031,35 +1017,50 @@ pub fn parse(input: &[u8], sliced: SlicedString) -> Result<Group, AllocError> {
                     }
                     Wildcard::Minor => {
                         // "1.0.0 - 1.x" --> ">=1.0.0 < 2.0.0"
-                        second_version.major = second_version.major.saturating_add(1);
-                        second_version.minor = 0;
-                        second_version.patch = 0;
+                        let right = match second_version.major.checked_add(1) {
+                            Some(m) => {
+                                second_version.major = m;
+                                second_version.minor = 0;
+                                second_version.patch = 0;
+                                Comparator {
+                                    op: RangeOp::Lt,
+                                    version: second_version,
+                                }
+                            }
+                            None => Comparator::lt_next_major(second_version.major),
+                        };
 
                         Range {
                             left: Comparator {
                                 op: RangeOp::Gte,
                                 version,
                             },
-                            right: Comparator {
-                                op: RangeOp::Lt,
-                                version: second_version,
-                            },
+                            right,
                         }
                     }
                     Wildcard::Patch => {
                         // "1.0.0 - 1.0.x" --> ">=1.0.0 <1.1.0"
-                        second_version.minor = second_version.minor.saturating_add(1);
-                        second_version.patch = 0;
+                        let right = match second_version.minor.checked_add(1) {
+                            Some(m) => {
+                                second_version.minor = m;
+                                second_version.patch = 0;
+                                Comparator {
+                                    op: RangeOp::Lt,
+                                    version: second_version,
+                                }
+                            }
+                            None => Comparator::lt_next_minor(
+                                second_version.major,
+                                second_version.minor,
+                            ),
+                        };
 
                         Range {
                             left: Comparator {
                                 op: RangeOp::Gte,
                                 version,
                             },
-                            right: Comparator {
-                                op: RangeOp::Lt,
-                                version: second_version,
-                            },
+                            right,
                         }
                     }
                     Wildcard::None => Range {

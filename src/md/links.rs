@@ -8,9 +8,9 @@ use crate::types::{OFF, SpanDetail, SpanType, TextType};
 type Span = SpanType;
 type SpanAttrs<'a> = SpanDetail<'a>;
 
-/// Maximum parenthesis nesting depth inside a bare inline-link destination.
+/// Maximum parenthesis nesting depth inside a bare link destination.
 /// CommonMark allows implementations to impose such a limit ("at least three
-/// levels of nesting should be supported"); cmark and commonmark.js both use
+/// levels of nesting should be supported"); cmark and md4c both use
 /// 32. Without a cap, an unclosed destination is rescanned for every candidate
 /// link, which is quadratic on inputs like `"[a](b"` repeated.
 const MAX_LINK_DEST_PAREN_DEPTH: u32 = 32;
@@ -22,10 +22,10 @@ const MAX_LINK_DEST_PAREN_DEPTH: u32 = 32;
 const MAX_WIKI_BRACKET_DEPTH: u32 = 32;
 
 /// Result of `try_match_bracket_link`.
-pub struct BracketLinkMatch {
-    pub is_link: bool,
-    pub label_end: usize,
-    pub link_end: usize,
+pub(crate) struct BracketLinkMatch {
+    pub(crate) is_link: bool,
+    pub(crate) label_end: usize,
+    pub(crate) link_end: usize,
 }
 
 /// A successfully parsed link/image/wikilink whose opening span has been
@@ -33,16 +33,16 @@ pub struct BracketLinkMatch {
 /// content, performs `leave`, and resumes at `link_end`. Returning this
 /// instead of recursing keeps label nesting iterative (arbitrary depth, no
 /// native stack growth).
-pub struct LabelParse {
-    pub label_start: usize,
-    pub label_end: usize,
-    pub link_end: usize,
-    pub leave: LabelLeave,
+pub(crate) struct LabelParse {
+    pub(crate) label_start: usize,
+    pub(crate) label_end: usize,
+    pub(crate) link_end: usize,
+    pub(crate) leave: LabelLeave,
 }
 
 /// Close action matching the span opened by `enter_label_span` /
 /// `process_wiki_link`.
-pub enum LabelLeave {
+pub(crate) enum LabelLeave {
     /// Inside image alt text: no span was opened.
     AltText,
     Image,
@@ -50,10 +50,83 @@ pub enum LabelLeave {
     Wikilink,
 }
 
+/// Result of `match_wiki_link`; the construct ends at `inner_end + 2`.
+pub(crate) struct WikiLinkMatch {
+    pub(crate) inner_start: usize,
+    pub(crate) pipe_pos: Option<usize>,
+    /// Position of the first closing `]`.
+    pub(crate) inner_end: usize,
+}
+
 /// Result of `find_autolink`.
-pub struct Autolink {
-    pub end_pos: usize,
-    pub is_email: bool,
+pub(crate) struct Autolink {
+    pub(crate) end_pos: usize,
+    pub(crate) is_email: bool,
+}
+
+/// Result of `scan_link_destination`.
+pub(crate) struct ParsedDest<'a> {
+    /// Raw destination, without the `<` `>` of the angle-bracket form.
+    pub(crate) dest: &'a [u8],
+    /// Position just past the destination (past the `>` of the angle-bracket form).
+    pub(crate) end_pos: usize,
+}
+
+/// CommonMark §6.3 link destination, shared by inline links, the link lookahead and reference definitions.
+pub(crate) fn scan_link_destination(text: &[u8], start: usize) -> Option<ParsedDest<'_>> {
+    let escapes_next = |p: usize| p + 1 < text.len() && helpers::is_ascii_punctuation(text[p + 1]);
+    let mut p = start;
+
+    if p < text.len() && text[p] == b'<' {
+        p += 1;
+        let dest_start = p;
+        while p < text.len() {
+            match text[p] {
+                b'>' => {
+                    return Some(ParsedDest {
+                        dest: &text[dest_start..p],
+                        end_pos: p + 1,
+                    });
+                }
+                b'<' | b'\n' | b'\r' => return None,
+                b'\\' if escapes_next(p) => p += 2,
+                _ => p += 1,
+            }
+        }
+        return None;
+    }
+
+    let mut paren_depth: u32 = 0;
+    while p < text.len() && !helpers::is_whitespace(text[p]) {
+        match text[p] {
+            b'\\' if escapes_next(p) => {
+                p += 2;
+                continue;
+            }
+            b'(' => {
+                paren_depth += 1;
+                if paren_depth > MAX_LINK_DEST_PAREN_DEPTH {
+                    return None;
+                }
+            }
+            b')' => {
+                if paren_depth == 0 {
+                    break;
+                }
+                paren_depth -= 1;
+            }
+            c if c.is_ascii_control() => return None,
+            _ => {}
+        }
+        p += 1;
+    }
+    if paren_depth != 0 {
+        return None;
+    }
+    Some(ParsedDest {
+        dest: &text[start..p],
+        end_pos: p,
+    })
 }
 
 /// Characters that can affect bracket matching: the brackets themselves,
@@ -86,7 +159,7 @@ enum BracketLookup {
 /// the rest of the slice for every opener — that rescan is quadratic on
 /// inputs like `"[".repeat(n)`. The backing vec is recycled through
 /// `Parser.bracket_pairs`, so steady-state rendering does not allocate here.
-pub struct BracketMatches {
+pub(crate) struct BracketMatches {
     /// `(open, close)` position of every `[` seen outside code spans, HTML
     /// tags/autolinks and backslash escapes, ordered by `open`.
     /// `close == UNMATCHED` marks an opener with no matching `]`.
@@ -133,7 +206,7 @@ impl Parser<'_> {
     /// same tokenization as the matching scan (code spans, HTML tags,
     /// autolinks and backslash escapes hide brackets). `storage` is the
     /// recycled backing vec from `Parser.bracket_pairs`.
-    pub fn compute_bracket_matches(
+    pub(crate) fn compute_bracket_matches(
         &self,
         content: &[u8],
         mut storage: Vec<(OFF, OFF)>,
@@ -339,7 +412,7 @@ impl Parser<'_> {
         }
     }
 
-    pub fn process_link(
+    pub(crate) fn process_link(
         &mut self,
         content: &[u8],
         start: usize,
@@ -369,66 +442,17 @@ impl Parser<'_> {
                 pos += 1;
             }
 
-            // Parse destination
-            let mut dest_start = pos;
-            let dest_end;
-            let mut dest_valid = true;
-
-            if pos < content.len() && content[pos] == b'<' {
-                // Angle-bracket destination (no newlines or unescaped '<' allowed)
-                dest_start = pos + 1;
-                pos += 1;
-                let mut angle_valid = true;
-                while pos < content.len() && content[pos] != b'>' {
-                    if content[pos] == b'\n' || content[pos] == b'\r' || content[pos] == b'<' {
-                        angle_valid = false;
-                        break;
-                    }
-                    if content[pos] == b'\\' && pos + 1 < content.len() {
-                        pos += 2;
-                    } else {
-                        pos += 1;
-                    }
+            let dest: &[u8] = match scan_link_destination(content, pos) {
+                Some(parsed) => {
+                    pos = parsed.end_pos;
+                    parsed.dest
                 }
-                if !angle_valid {
-                    return Ok(None);
+                None => {
+                    // Not an inline link: skip the title and ')' checks, keep the reference/shortcut fallback.
+                    pos = content.len();
+                    b""
                 }
-                dest_end = pos;
-                if pos < content.len() {
-                    pos += 1; // skip >
-                }
-            } else {
-                // Bare destination — balance parentheses (nesting depth is capped)
-                let mut paren_depth: u32 = 0;
-                while pos < content.len() && !helpers::is_whitespace(content[pos]) {
-                    if content[pos] == b'(' {
-                        paren_depth += 1;
-                        if paren_depth > MAX_LINK_DEST_PAREN_DEPTH {
-                            dest_valid = false;
-                            break;
-                        }
-                    } else if content[pos] == b')' {
-                        if paren_depth == 0 {
-                            break;
-                        }
-                        paren_depth -= 1;
-                    }
-                    if content[pos] == b'\\' && pos + 1 < content.len() {
-                        pos += 2;
-                    } else {
-                        pos += 1;
-                    }
-                }
-                dest_end = pos;
-            }
-
-            if !dest_valid {
-                // Destination exceeded the paren-nesting cap: not an inline
-                // link (cmark rejects it too). Skip the title and ')' checks —
-                // the offending '(' must not be reparsed as a title opener —
-                // but keep the reference/shortcut fallback below reachable.
-                pos = content.len();
-            }
+            };
 
             // Skip whitespace (including newlines)
             while pos < content.len()
@@ -487,7 +511,6 @@ impl Parser<'_> {
             // Must end with ')'
             if pos < content.len() && content[pos] == b')' {
                 pos += 1;
-                let dest = &content[dest_start..dest_end];
 
                 // Link nesting prohibition: links cannot contain other links (CommonMark §6.7)
                 if !is_image
@@ -599,7 +622,7 @@ impl Parser<'_> {
     /// Try to match a bracket pair starting at `start` and check if it forms a link.
     /// Returns whether it's a link, where the label ends, and the full link end position.
     /// `base` is the offset of `content` within the slice `brackets` was built for.
-    pub fn try_match_bracket_link(
+    pub(crate) fn try_match_bracket_link(
         &mut self,
         content: &[u8],
         start: usize,
@@ -637,57 +660,11 @@ impl Parser<'_> {
             {
                 p += 1;
             }
-            // Parse dest (no line endings or unescaped '<' allowed, matching
-            // process_link: the lookahead and the parser must agree on what
-            // is a link or emphasis collection desyncs from rendering)
-            if p < content.len() && content[p] == b'<' {
-                p += 1;
-                while p < content.len()
-                    && content[p] != b'>'
-                    && content[p] != b'\n'
-                    && content[p] != b'\r'
-                    && content[p] != b'<'
-                {
-                    if content[p] == b'\\' && p + 1 < content.len() {
-                        p += 2;
-                    } else {
-                        p += 1;
-                    }
-                }
-                if p < content.len() && content[p] == b'>' {
-                    p += 1;
-                } else {
-                    return BracketLinkMatch {
-                        is_link: false,
-                        label_end,
-                        link_end: label_end + 1,
-                    };
-                }
-            } else {
-                let mut paren_depth: u32 = 0;
-                while p < content.len() && !helpers::is_whitespace(content[p]) {
-                    if content[p] == b'(' {
-                        paren_depth += 1;
-                        if paren_depth > MAX_LINK_DEST_PAREN_DEPTH {
-                            // Not an inline link; skip the title/')' checks but
-                            // keep the reference/shortcut fallback reachable
-                            // (mirrors process_link).
-                            p = content.len();
-                            break;
-                        }
-                    } else if content[p] == b')' {
-                        if paren_depth == 0 {
-                            break;
-                        }
-                        paren_depth -= 1;
-                    }
-                    if content[p] == b'\\' && p + 1 < content.len() {
-                        p += 2;
-                    } else {
-                        p += 1;
-                    }
-                }
-            }
+            // Must agree with process_link, or emphasis collection desyncs from rendering.
+            p = match scan_link_destination(content, p) {
+                Some(parsed) => parsed.end_pos,
+                None => content.len(),
+            };
             // Skip whitespace
             while p < content.len()
                 && (helpers::is_blank(content[p]) || content[p] == b'\n' || content[p] == b'\r')
@@ -791,7 +768,7 @@ impl Parser<'_> {
     /// Check if a link label contains an inner link construct.
     /// Used to enforce the "links cannot contain other links" rule (CommonMark §6.7).
     /// `base` is the offset of `label` within the slice `brackets` was built for.
-    pub fn label_contains_link(
+    pub(crate) fn label_contains_link(
         &mut self,
         label: &[u8],
         brackets: &BracketMatches,
@@ -845,12 +822,9 @@ impl Parser<'_> {
         false
     }
 
-    /// Process wiki link: [[destination]] or [[destination|label]]
-    pub fn process_wiki_link(
-        &mut self,
-        content: &[u8],
-        start: usize,
-    ) -> Result<Option<LabelParse>, parser::Error> {
+    /// Lookahead-only match of `[[destination]]` / `[[destination|label]]`,
+    /// shared by rendering and emphasis collection so they agree.
+    pub(crate) fn match_wiki_link(&self, content: &[u8], start: usize) -> Option<WikiLinkMatch> {
         // start points at first '[', next char is also '['
         let mut pos = start + 2;
 
@@ -861,12 +835,12 @@ impl Parser<'_> {
 
         while pos < content.len() {
             if content[pos] == b'\n' || content[pos] == b'\r' {
-                return Ok(None);
+                return None;
             }
             if content[pos] == b'[' {
                 bracket_depth += 1;
                 if bracket_depth > MAX_WIKI_BRACKET_DEPTH {
-                    return Ok(None);
+                    return None;
                 }
             } else if content[pos] == b']' {
                 if bracket_depth > 0 {
@@ -875,7 +849,7 @@ impl Parser<'_> {
                     break;
                 } else {
                     // Single ] without matching [, not a valid close
-                    return Ok(None);
+                    return None;
                 }
             } else if content[pos] == b'|' && pipe_pos.is_none() && bracket_depth == 0 {
                 pipe_pos = Some(pos);
@@ -885,22 +859,35 @@ impl Parser<'_> {
 
         // Must end with ]]
         if pos >= content.len() || content[pos] != b']' {
-            return Ok(None);
+            return None;
         }
 
         let inner_end = pos;
 
-        // Determine the target
-        let target = if let Some(pp) = pipe_pos {
-            &content[inner_start..pp]
-        } else {
-            &content[inner_start..inner_end]
+        // Target must not exceed 100 characters
+        let target_end = pipe_pos.unwrap_or(inner_end);
+        if target_end - inner_start > 100 {
+            return None;
+        }
+
+        Some(WikiLinkMatch {
+            inner_start,
+            pipe_pos,
+            inner_end,
+        })
+    }
+
+    /// Process wiki link: [[destination]] or [[destination|label]]
+    pub(crate) fn process_wiki_link(
+        &mut self,
+        content: &[u8],
+        start: usize,
+    ) -> Result<Option<LabelParse>, parser::Error> {
+        let Some(m) = self.match_wiki_link(content, start) else {
+            return Ok(None);
         };
 
-        // Target must not exceed 100 characters
-        if target.len() > 100 {
-            return Ok(None);
-        }
+        let target = &content[m.inner_start..m.pipe_pos.unwrap_or(m.inner_end)];
 
         // Render the wikilink
         self.renderer.enter_span(
@@ -910,20 +897,19 @@ impl Parser<'_> {
                 ..Default::default()
             },
         )?;
-        let label_start = if let Some(pp) = pipe_pos {
-            pp + 1
-        } else {
-            inner_start
+        let label_start = match m.pipe_pos {
+            Some(pp) => pp + 1,
+            None => m.inner_start,
         };
         Ok(Some(LabelParse {
             label_start,
-            label_end: inner_end,
-            link_end: pos + 2, // skip both ']'
+            label_end: m.inner_end,
+            link_end: m.inner_end + 2, // skip both ']'
             leave: LabelLeave::Wikilink,
         }))
     }
 
-    pub fn find_autolink(&self, content: &[u8], start: usize) -> Option<Autolink> {
+    pub(crate) fn find_autolink(&self, content: &[u8], start: usize) -> Option<Autolink> {
         if start + 1 >= content.len() {
             return None;
         }
@@ -1023,7 +1009,11 @@ impl Parser<'_> {
         None
     }
 
-    pub fn render_autolink(&mut self, url: &[u8], is_email: bool) -> crate::types::JsResult<()> {
+    pub(crate) fn render_autolink(
+        &mut self,
+        url: &[u8],
+        is_email: bool,
+    ) -> crate::types::JsResult<()> {
         self.renderer.enter_span(
             Span::A,
             SpanAttrs {

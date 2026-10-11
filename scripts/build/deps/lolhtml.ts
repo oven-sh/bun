@@ -4,13 +4,12 @@
  *
  * Unlike the other vendored deps this is NOT built into its own archive.
  * A Rust `staticlib` bundles a private copy of `std`; linking that next to
- * `libbun_rust.a` (also a `staticlib`) gives the linker two copies of every
- * unmangled std symbol (`rust_begin_unwind`, `__rdl_alloc`, ...). Instead
- * the `lol_html` crate (`vendor/lolhtml/Cargo.toml`) is a direct Rust path
+ * bun's own Rust crates gives the linker two copies of every unmangled std
+ * symbol (`rust_begin_unwind`, `__rdl_alloc`, ...). Instead the `lol_html` crate (`vendor/lolhtml/Cargo.toml`) is a direct Rust path
  * dependency of `bun_runtime`/`bun_bundler`
  * (`lol_html = { path = "vendor/lolhtml" }` in the workspace `Cargo.toml`),
- * so it compiles as an rlib inside the ONE workspace cargo build and lands
- * in `libbun_rust.a` like any other crate. There is no C FFI layer; the
+ * so it compiles as an rlib in the one workspace crate graph and is linked
+ * like any other crate. There is no C FFI layer; the
  * upstream `c-api/` sub-crate is fetched along with the rest of the source
  * but never built.
  *
@@ -21,7 +20,13 @@
 
 import type { Dependency } from "../source.ts";
 
-const LOLHTML_COMMIT = "77127cd2b8545998756e8d64e36ee2313c4bb312";
+// oven-sh/lol-html is cloudflare/lol-html plus content-handler suspension
+// (`HtmlRewriter::resume()`), maintained on the `bun` branch. The upstream
+// base commit is recorded here so a rebase onto a new upstream tag is
+// `git rebase --onto <new-tag> <LOLHTML_UPSTREAM_BASE> bun` in the fork.
+const LOLHTML_UPSTREAM_BASE = "77127cd2b8545998756e8d64e36ee2313c4bb312"; // v2.7.2
+const LOLHTML_COMMIT = "725ce499aa9b71e38b7a2d0a9fbb6d7294a4079e";
+void LOLHTML_UPSTREAM_BASE;
 
 export const lolhtml: Dependency = {
   name: "lolhtml",
@@ -29,7 +34,7 @@ export const lolhtml: Dependency = {
 
   source: () => ({
     kind: "github-archive",
-    repo: "cloudflare/lol-html",
+    repo: "oven-sh/lol-html",
     commit: LOLHTML_COMMIT,
   }),
 

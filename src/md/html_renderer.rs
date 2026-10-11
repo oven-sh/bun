@@ -57,7 +57,7 @@ impl<'src> HtmlRenderer<'src> {
     // Block rendering
     // ========================================
 
-    pub(crate) fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) {
+    fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) {
         match block_type {
             BlockType::Doc => {}
             BlockType::Quote => {
@@ -168,7 +168,7 @@ impl<'src> HtmlRenderer<'src> {
         }
     }
 
-    pub(crate) fn leave_block(&mut self, block_type: BlockType, data: u32) {
+    fn leave_block(&mut self, block_type: BlockType, data: u32) {
         match block_type {
             BlockType::Doc => {}
             BlockType::Quote => self.write(b"</blockquote>\n"),
@@ -240,7 +240,7 @@ impl<'src> HtmlRenderer<'src> {
     // Span rendering
     // ========================================
 
-    pub(crate) fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail<'_>) {
+    fn enter_span(&mut self, span_type: SpanType, detail: SpanDetail<'_>) {
         if self.image_nesting_level > 0 {
             if span_type == SpanType::Img {
                 self.image_nesting_level += 1;
@@ -303,7 +303,7 @@ impl<'src> HtmlRenderer<'src> {
         }
     }
 
-    pub(crate) fn leave_span(&mut self, span_type: SpanType) {
+    fn leave_span(&mut self, span_type: SpanType) {
         if self.image_nesting_level > 0 {
             if span_type == SpanType::Img {
                 self.image_nesting_level -= 1;
@@ -341,7 +341,7 @@ impl<'src> HtmlRenderer<'src> {
     // Text rendering
     // ========================================
 
-    pub(crate) fn text(&mut self, text_type: TextType, content: &[u8]) {
+    fn text(&mut self, text_type: TextType, content: &[u8]) {
         let in_image = self.image_nesting_level > 0;
 
         // Track plain text for slug generation when inside a heading
@@ -395,7 +395,7 @@ impl<'src> HtmlRenderer<'src> {
     // HTML writing utilities
     // ========================================
 
-    pub(crate) fn write(&mut self, data: &[u8]) {
+    fn write(&mut self, data: &[u8]) {
         if self.heading_tracker.in_heading {
             try_extend(&mut self.out.oom, &mut self.heading_buf, data);
         } else {
@@ -446,7 +446,7 @@ impl<'src> HtmlRenderer<'src> {
         }
     }
 
-    pub(crate) fn write_html_escaped(&mut self, txt: &[u8]) {
+    fn write_html_escaped(&mut self, txt: &[u8]) {
         let mut i: usize = 0;
         let needle: &[u8] = b"&<>\"";
 

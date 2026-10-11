@@ -31,7 +31,7 @@ impl JSArray {
         crate::from_js_host_call(global, || JSArray__constructEmptyArray(global, len))
     }
 
-    pub fn iterator<'a>(&self, global: &'a JSGlobalObject) -> JsResult<JSArrayIterator<'a>> {
+    pub(crate) fn iterator<'a>(&self, global: &'a JSGlobalObject) -> JsResult<JSArrayIterator<'a>> {
         JSValue::from_cell(self).array_iterator(global)
     }
 }

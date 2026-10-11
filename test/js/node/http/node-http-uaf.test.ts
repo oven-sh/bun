@@ -1,34 +1,100 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { once } from "node:events";
+import http from "node:http";
+import net, { type AddressInfo } from "node:net";
 import { join } from "path";
 
-uafTest("node-http-uaf-fixture.ts");
-uafTest("node-http-uaf-fixture-2.ts");
+// Each fixture internally loops hundreds/thousands of requests to hit the
+// abort/destroy race. The counts below were validated by running the fixtures
+// against the pre-fix release build (bun 1.2.6, commit 8ebd5d53d, before both
+// #18485 and #18564) and counting crashes out of 10 runs:
+//
+//   fixture 1 (#18485): REQUESTS=500 5/5, 1000 5/5, 2000 10/10, 10000 10/10
+//   fixture 2 (#18564): ROUNDS=20 1/5, 40-100 8/10, 200 10/10
+//
+// so a single spawn at 2000 / 200 catches the original bugs 10/10 on a release
+// build without ASAN. ASAN/debug only reduces fixture 1 (the 80 s one); fixture
+// 2 stays at 200 everywhere, equal to the previous 2x100 total.
+const slow = isASAN || isDebug;
+uafTest("node-http-uaf-fixture.ts", { REQUESTS: slow ? "2000" : "10000" });
+uafTest("node-http-uaf-fixture-2.ts", { ROUNDS: "200" });
 
-function uafTest(fixture, iterations = 2) {
-  test(
+// A termination request (worker.terminate(), a node:vm timeout) that landed on
+// the native writeHead of a response used to be taken in a stretch of native
+// code that had no exception scope. JSC's exception-check validator reports
+// that as "Unchecked JS exception ... NodeHTTPServer__writeHead" and aborts.
+// The validator only exists in debug and ASAN builds; release has nothing to
+// observe. The fixture steers node:vm deadlines onto that call. Against the
+// unfixed build, all 20 calibration runs (five at a time on a 16-core
+// debug+ASAN box) aborted, between attempt 350 and 1060. The fixed build
+// survived 20/20 runs of the full 3000 attempts, in 17 to 19 s each.
+test.concurrent.skipIf(!slow)(
+  "a termination request landing on the native writeHead passes the exception-check validator",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "node-http-writehead-termination-fixture.ts")],
+      env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // On a failure stdout stays empty and stderr carries the validator's report.
+    const summary = stdout.startsWith("ok ") ? JSON.parse(stdout.slice(3)) : stdout;
+    const counts = {
+      early: expect.any(Number),
+      inCall: expect.any(Number),
+      late: expect.any(Number),
+      cutAfterHead: expect.any(Number),
+    };
+    expect({ summary, stderr, exitCode }).toEqual({
+      summary: {
+        attempts: expect.any(Number),
+        timeout: expect.any(Number),
+        paths: [
+          { name: "end", ...counts },
+          { name: "flushHeaders", ...counts },
+        ],
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(summary.attempts).toBeGreaterThan(100);
+    // The deadlines did land inside both calls (about 45% of them do here), and
+    // on the end() path some were taken right after the native writeHead had
+    // put the head out (20 to 30% of that path's attempts here).
+    const [end, flushHeaders] = summary.paths;
+    expect({ end: end.inCall > 0, flushHeaders: flushHeaders.inCall > 0, cutAfterHead: end.cutAfterHead > 0 }).toEqual({
+      end: true,
+      flushHeaders: true,
+      cutAfterHead: true,
+    });
+  },
+  60_000,
+);
+
+function uafTest(fixture: string, extraEnv: Record<string, string>) {
+  test.concurrent(
     `should not crash on abort (${fixture})`,
     async () => {
-      for (let i = 0; i < iterations; i++) {
-        const { exited } = Bun.spawn({
-          cmd: [bunExe(), join(import.meta.dir, fixture)],
-          env: bunEnv,
-          stdout: "inherit",
-          stderr: "inherit",
-          stdin: "ignore",
-        });
-        const exitCode = await exited;
-        expect(exitCode).not.toBeNull();
-        expect(exitCode).toBe(0);
-      }
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(import.meta.dir, fixture)],
+        env: { ...bunEnv, ...extraEnv },
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trimEnd().split("\n").at(-1)).toBe("Done");
+      expect(exitCode).toBe(0);
     },
-    // The express fixture pushes 10k aborted requests; one iteration runs
-    // ~10 s under ASAN instrumentation (~1 s on release), so two iterations
-    // can never fit the 5 s default there. The full file measures ~2.1 s on a
-    // release x64 box, and the windows-11-aarch64 agent ran a single fixture
-    // to 5006 ms - just over the default - so give release the same measured
-    // headroom instead of sitting on the line.
-    isASAN ? 90_000 : 20_000,
+    // Measured ~21 s (fixture 1) / ~10 s (fixture 2) on a 16-core debug+ASAN
+    // box with the other concurrent tests contending; release runs the full
+    // 10k in ~1 s. Keep the 20 s release ceiling for the windows-aarch64 lane
+    // that previously ran one fixture to 5006 ms.
+    slow ? 60_000 : 20_000,
   );
 }
 
@@ -78,4 +144,52 @@ test.concurrent.each([
     exitCode: 0,
   });
   expect(JSON.parse(stdout).received).toBeGreaterThan(8 * 1024 * 1024);
+});
+
+test("'connection' and 'clientError' callbacks survive GC", async () => {
+  // The server's native struct stores these two node:http callbacks on the JS
+  // wrapper (GC-visited WriteBarrier slots), not in Strong handles. Force GC
+  // between registration and dispatch to prove the wrapper roots them.
+  let gotConnection = 0;
+  let gotClientError = 0;
+  const server = http.createServer((req, res) => res.end());
+  server.on("connection", () => void gotConnection++);
+  server.on("clientError", (err, sock) => {
+    gotClientError++;
+    sock.destroy();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    Bun.gc(true);
+
+    const sock = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
+    sock.on("error", () => {});
+    await once(sock, "connect");
+    Bun.gc(true);
+    sock.write("!!!garbage!!!\r\n\r\n");
+    await once(sock, "close");
+
+    expect({ gotConnection, gotClientError }).toEqual({ gotConnection: 1, gotClientError: 1 });
+  } finally {
+    server.close();
+  }
+});
+
+test("'request' and 'clientError' still dispatch on a connection that outlives server.close() and a GC", async () => {
+  // The fixture also runs under `node --expose-gc` and prints the same result.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "node-http-server-close-gc-fixture.mjs")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ results: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+    results: Array.from({ length: 3 }, () => ({
+      statuses: ["HTTP/1.1 200 OK", "HTTP/1.1 200 OK"],
+      clientErrors: ["HPE_INVALID_HEADER_TOKEN"],
+    })),
+    stderr: "",
+    exitCode: 0,
+  });
 });

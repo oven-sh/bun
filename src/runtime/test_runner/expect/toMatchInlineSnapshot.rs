@@ -1,6 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_core::ZigString;
 
+use super::throw;
 use super::Expect;
 
 pub(crate) fn to_match_inline_snapshot(
@@ -14,40 +14,36 @@ pub(crate) fn to_match_inline_snapshot(
     let this = scopeguard::guard(this, |this| this.post_match(global));
 
     let this_value = frame.this();
-    let arguments_ = frame.arguments_old::<2>(); let arguments: &[JSValue] = arguments_.slice();
+    let arguments: &[JSValue] = frame.arguments();
 
     this.increment_expect_call_counter();
 
     let not = this.flags.get().not();
     if not {
         let signature = Expect::get_signature("toMatchInlineSnapshot", "", true);
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n"
-            ),
+            "\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n",
         );
     }
 
-    let mut has_expected = false;
-    let mut expected_string: ZigString = ZigString::EMPTY;
+    let mut expected_string = None;
     let mut property_matchers: Option<JSValue> = None;
     match arguments.len() {
         0 => {}
         1 => {
             if arguments[0].is_string() {
-                has_expected = true;
-                arguments[0].to_zig_string(&mut expected_string, global)?;
+                expected_string = Some(arguments[0].to_js_string_view(global)?);
             } else if arguments[0].is_object() {
                 property_matchers = Some(arguments[0]);
             } else {
-                return this.throw(
+                return throw!(
+                    this,
                     global,
                     "",
-                    format_args!(
-                        "\n\nMatcher error: Expected first argument to be a string or object\n"
-                    ),
+                    "\n\nMatcher error: Expected first argument to be a string or object\n",
                 );
             }
         }
@@ -58,28 +54,25 @@ pub(crate) fn to_match_inline_snapshot(
                     "<green>properties<r><d>, <r>hint",
                     false,
                 );
-                return this.throw(
+                return throw!(
+                    this,
                     global,
                     signature,
-                    format_args!(
-                        "\n\nMatcher error: Expected <green>properties<r> must be an object\n"
-                    ),
+                    "\n\nMatcher error: Expected <green>properties<r> must be an object\n",
                 );
             }
 
             property_matchers = Some(arguments[0]);
 
             if arguments[1].is_string() {
-                has_expected = true;
-                arguments[1].to_zig_string(&mut expected_string, global)?;
+                expected_string = Some(arguments[1].to_js_string_view(global)?);
             }
         }
     }
 
-    let expected = expected_string.to_slice();
-    // `defer expected.deinit()` — handled by Drop on the returned slice guard.
+    let expected = expected_string.as_ref().map(|s| s.to_utf8());
 
-    let expected_slice: Option<&[u8]> = if has_expected { Some(expected.slice()) } else { None };
+    let expected_slice = expected.as_ref().map(|s| s.slice());
 
     let value = this.get_value(
         global,

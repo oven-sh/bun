@@ -27,12 +27,6 @@
 
 namespace WebCore {
 
-DOMWrapperWorld& normalWorld(JSC::VM&);
-// WEBCORE_EXPORT DOMWrapperWorld& mainThreadNormalWorld();
-
-// inline DOMWrapperWorld& debuggerWorld() { return mainThreadNormalWorld(); }
-// inline DOMWrapperWorld& pluginWorld() { return mainThreadNormalWorld(); }
-
 DOMWrapperWorld& currentWorld(JSC::JSGlobalObject&);
 DOMWrapperWorld& worldForDOMObject(JSC::JSObject&);
 

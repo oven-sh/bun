@@ -21,7 +21,6 @@
 #include "config.h"
 #include "JSEventTarget.h"
 
-#include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "IDLTypes.h"
@@ -69,7 +68,7 @@ public:
     using Base = JSC::JSNonFinalObject;
     static JSEventTargetPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSEventTargetPrototype* ptr = new (NotNull, JSC::allocateCell<JSEventTargetPrototype>(vm)) JSEventTargetPrototype(vm, globalObject, structure);
+        JSEventTargetPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSEventTargetPrototype))) JSEventTargetPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -83,7 +82,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -133,11 +132,7 @@ template<> JSValue JSEventTargetDOMConstructor::prototypeForStructure(JSC::VM& v
 
 template<> void JSEventTargetDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(0), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "EventTarget"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSEventTarget::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 0, "EventTarget"_s, JSEventTarget::prototype(vm, globalObject));
 }
 
 /* Hash table for prototype */
@@ -154,8 +149,8 @@ const ClassInfo JSEventTargetPrototype::s_info = { "EventTarget"_s, &Base::s_inf
 void JSEventTargetPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSEventTarget::info(), JSEventTargetPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSEventTarget::info(), JSEventTargetPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSEventTarget::s_info = { "EventTarget"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEventTarget) };
@@ -240,8 +235,7 @@ static inline JSC::EncodedJSValue jsEventTargetPrototypeFunction_addEventListene
         RETURN_IF_EXCEPTION(throwScope, {});
         errorInstance->putDirect(vm, vm.propertyNames->type, jsString(vm, WTF::move(type)));
         Bun::Process::emitWarningErrorInstance(lexicalGlobalObject, errorInstance);
-        if (throwScope.exception()) [[unlikely]]
-            (void)throwScope.tryClearException();
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     auto result = JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.addEventListenerForBindings(WTF::move(type), WTF::move(listener), WTF::move(options)); }));
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -305,12 +299,7 @@ JSC_DEFINE_HOST_FUNCTION(jsEventTargetPrototypeFunction_dispatchEvent, (JSGlobal
 
 JSC::GCClient::IsoSubspace* JSEventTarget::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSEventTarget, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForEventTarget.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForEventTarget = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForEventTarget.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForEventTarget = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSEventTarget, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForEventTarget, m_subspaceForEventTarget));
 }
 
 template<typename Visitor>

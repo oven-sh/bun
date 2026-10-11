@@ -21,7 +21,6 @@
 #include "config.h"
 #include "JSPerformanceMark.h"
 
-#include "ActiveDOMObject.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "JSDOMAttribute.h"
@@ -33,6 +32,7 @@
 #include "JSDOMConvertStrings.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
+#include "JSDOMOperation.h"
 #include "JSDOMWrapperCache.h"
 #include "JSPerformanceMarkOptions.h"
 #include "ScriptExecutionContext.h"
@@ -40,6 +40,7 @@
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/GetPtr.h>
@@ -53,13 +54,14 @@ using namespace JSC;
 
 static JSC_DECLARE_CUSTOM_GETTER(jsPerformanceMarkConstructor);
 static JSC_DECLARE_CUSTOM_GETTER(jsPerformanceMark_detail);
+static JSC_DECLARE_HOST_FUNCTION(jsPerformanceMarkPrototypeFunction_toJSON);
 
 class JSPerformanceMarkPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
     static JSPerformanceMarkPrototype* create(JSC::VM& vm, JSDOMGlobalObject* globalObject, JSC::Structure* structure)
     {
-        JSPerformanceMarkPrototype* ptr = new (NotNull, JSC::allocateCell<JSPerformanceMarkPrototype>(vm)) JSPerformanceMarkPrototype(vm, globalObject, structure);
+        JSPerformanceMarkPrototype* ptr = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSPerformanceMarkPrototype))) JSPerformanceMarkPrototype(vm, globalObject, structure);
         ptr->finishCreation(vm);
         return ptr;
     }
@@ -73,7 +75,7 @@ public:
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
 private:
@@ -127,11 +129,7 @@ template<> JSValue JSPerformanceMarkDOMConstructor::prototypeForStructure(JSC::V
 
 template<> void JSPerformanceMarkDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    putDirect(vm, vm.propertyNames->length, jsNumber(1), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    JSString* nameString = jsNontrivialString(vm, "PerformanceMark"_s);
-    m_originalName.set(vm, this, nameString);
-    putDirect(vm, vm.propertyNames->name, nameString, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum);
-    putDirect(vm, vm.propertyNames->prototype, JSPerformanceMark::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+    initializeBaseProperties(vm, 1, "PerformanceMark"_s, JSPerformanceMark::prototype(vm, globalObject));
 }
 
 /* Hash table for prototype */
@@ -139,6 +137,7 @@ template<> void JSPerformanceMarkDOMConstructor::initializeProperties(VM& vm, JS
 static const HashTableValue JSPerformanceMarkPrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceMarkConstructor, 0 } },
     { "detail"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceMark_detail, 0 } },
+    { "toJSON"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformanceMarkPrototypeFunction_toJSON, 0 } },
 };
 
 const ClassInfo JSPerformanceMarkPrototype::s_info = { "PerformanceMark"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceMarkPrototype) };
@@ -146,8 +145,8 @@ const ClassInfo JSPerformanceMarkPrototype::s_info = { "PerformanceMark"_s, &Bas
 void JSPerformanceMarkPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, JSPerformanceMark::info(), JSPerformanceMarkPrototypeTableValues, *this);
-    JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    Bun::reifyStaticPropertyTable(vm, JSPerformanceMark::info(), JSPerformanceMarkPrototypeTableValues, *this);
+    Bun::putToStringTagWithoutTransition(vm, this, info());
 }
 
 const ClassInfo JSPerformanceMark::s_info = { "PerformanceMark"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSPerformanceMark) };
@@ -204,14 +203,36 @@ JSC_DEFINE_CUSTOM_GETTER(jsPerformanceMark_detail, (JSGlobalObject * lexicalGlob
     return IDLAttribute<JSPerformanceMark>::get<jsPerformanceMark_detailGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
 
+// PerformanceEntry.prototype.toJSON does not know about `detail`; Node's mark and
+// measure entries include it (lib/internal/perf/usertiming.js).
+static inline EncodedJSValue jsPerformanceMarkPrototypeFunction_toJSONBody(JSGlobalObject* lexicalGlobalObject, CallFrame*, JSPerformanceMark* castedThis)
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    PerformanceEntry& impl = castedThis->wrapped();
+    auto* result = constructEmptyObject(lexicalGlobalObject);
+    auto nameValue = toJS<IDLDOMString>(*lexicalGlobalObject, throwScope, impl.name());
+    RETURN_IF_EXCEPTION(throwScope, {});
+    result->putDirect(vm, vm.propertyNames->name, nameValue);
+    auto entryTypeValue = toJS<IDLDOMString>(*lexicalGlobalObject, throwScope, impl.entryType());
+    RETURN_IF_EXCEPTION(throwScope, {});
+    Bun::putDirectNamed(vm, result, "entryType"_s, entryTypeValue);
+    Bun::putDirectNamed(vm, result, "startTime"_s, jsNumber(impl.startTime()));
+    Bun::putDirectNamed(vm, result, "duration"_s, jsNumber(impl.duration()));
+    auto detailValue = jsPerformanceMark_detailGetter(*lexicalGlobalObject, *castedThis);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    Bun::putDirectNamed(vm, result, "detail"_s, detailValue);
+    return JSValue::encode(result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsPerformanceMarkPrototypeFunction_toJSON, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSPerformanceMark>::call<jsPerformanceMarkPrototypeFunction_toJSONBody>(*lexicalGlobalObject, *callFrame, "toJSON");
+}
+
 JSC::GCClient::IsoSubspace* JSPerformanceMark::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSPerformanceMark, UseCustomHeapCellType::No>(
-        vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForPerformanceMark.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformanceMark = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForPerformanceMark.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForPerformanceMark = std::forward<decltype(space)>(space); });
+    return WebCore::subspaceForImpl<JSPerformanceMark, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForPerformanceMark, m_subspaceForPerformanceMark));
 }
 
 template<typename Visitor>

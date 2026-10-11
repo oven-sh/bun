@@ -53,10 +53,6 @@ interface WebSocketWrapper {
   [Symbol.dispose](): void;
 }
 
-export function getMainWebSocket(): WebSocketWrapper | null {
-  return mainWebSocket;
-}
-
 // Modern browsers allow the WebSocket constructor to receive an http: or https: URL and implicitly convert it to a ws: or wss: URL.
 // But, older browsers didn't support this, so we normalize the URL manually.
 let normalizeWebSocketURL = (url: string) => {
@@ -76,7 +72,6 @@ export function initWebSocket(
   { url = "/_bun/hmr", onStatusChange }: { url?: string; onStatusChange?: (connected: boolean) => void } = {},
 ): WebSocketWrapper {
   url = normalizeWebSocketURL(url);
-  let firstConnection = true;
   let closed = false;
 
   // Allow some messages to be queued if sent before the connection is established.

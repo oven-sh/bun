@@ -23,7 +23,7 @@ impl PathLike for bun_paths::fs::Path<'_> {
 /// We assume it's arena allocated.
 #[derive(Default)]
 pub struct PathToSourceIndexMap {
-    pub map: Map,
+    pub(crate) map: Map,
 }
 
 pub type Map = StringHashMap<IndexInt>;
@@ -33,38 +33,27 @@ pub type Map = StringHashMap<IndexInt>;
 pub(crate) type GetOrPutResult<'a> = bun_collections::string_hash_map::GetOrPutResult<'a, IndexInt>;
 
 impl PathToSourceIndexMap {
-    pub fn get_path(&self, path: &impl PathLike) -> Option<IndexInt> {
+    pub(crate) fn get_path(&self, path: &impl PathLike) -> Option<IndexInt> {
         self.get(path.path_text())
     }
 
-    pub fn get(&self, text: impl AsRef<[u8]>) -> Option<IndexInt> {
+    pub(crate) fn get(&self, text: impl AsRef<[u8]>) -> Option<IndexInt> {
         self.map.get(text.as_ref()).copied()
-    }
-
-    pub fn put_path(
-        &mut self,
-        path: &impl PathLike,
-        value: IndexInt,
-    ) -> Result<(), bun_alloc::AllocError> {
-        self.put(path.path_text(), value)
     }
 
     // Takes `&[u8]` (not `impl AsRef<[u8]>`)
     // to avoid E0283 inference ambiguity at `.into()` call sites in bundle_v2.
-    pub fn put(&mut self, text: &[u8], value: IndexInt) -> Result<(), bun_alloc::AllocError> {
+    pub(crate) fn put(
+        &mut self,
+        text: &[u8],
+        value: IndexInt,
+    ) -> Result<(), bun_alloc::AllocError> {
         // PERF: bun_collections::StringHashMap is keyed by `Box<[u8]>`, so we dupe here.
         // Revisit once StringHashMap gains a borrowed-key variant.
         self.map.put(text, value)
     }
 
-    pub fn get_or_put_path(
-        &mut self,
-        path: &impl PathLike,
-    ) -> Result<GetOrPutResult<'_>, bun_alloc::AllocError> {
-        self.get_or_put(path.path_text())
-    }
-
-    pub fn get_or_put(
+    pub(crate) fn get_or_put(
         &mut self,
         text: impl AsRef<[u8]>,
     ) -> Result<GetOrPutResult<'_>, bun_alloc::AllocError> {
@@ -74,9 +63,5 @@ impl PathToSourceIndexMap {
 
     pub fn remove(&mut self, text: impl AsRef<[u8]>) -> bool {
         self.map.remove(text.as_ref()).is_some()
-    }
-
-    pub fn remove_path(&mut self, path: &impl PathLike) -> bool {
-        self.remove(path.path_text())
     }
 }

@@ -29,7 +29,7 @@ test("CSS system colors in color-mix should not crash", () => {
     try {
       const result = cssInternals._test(css, css);
       expect(result).toBeDefined();
-    } catch (error) {
+    } catch (error: any) {
       // If it fails, it should be a parsing error, not a crash
       expect(error.message).not.toContain("system colors cannot be converted to a color");
       expect(error.message).not.toContain("unreachable");
@@ -62,7 +62,7 @@ test("CSS system colors in color-mix - snapshot outputs", () => {
     try {
       const result = cssInternals._test(css, css);
       results[testCase] = { success: true, output: result };
-    } catch (error) {
+    } catch (error: any) {
       results[testCase] = { success: false, error: error.message };
     }
   }

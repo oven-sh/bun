@@ -590,7 +590,7 @@ fn get_extended_config(
             errors,
         });
         let mut cache = extended_config_cache.0.borrow_mut();
-        cache.insert(path, entry.clone());
+        cache.insert(path, Rc::clone(&entry));
         entry
     });
     errors.extend(entry.errors.iter().cloned());

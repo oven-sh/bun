@@ -1660,7 +1660,8 @@ describe.concurrent("bun check", () => {
     test.skipIf(process.platform === "win32")("a named pipe in the project directory is ignored", async () => {
       using dir = project({ "a.ts": `export const a: string = 1;\n` });
       // Reading a pipe that nobody writes to blocks forever.
-      expect(Bun.spawnSync(["mkfifo", join(String(dir), "pipe.ts")]).exitCode).toBe(0);
+      // Not `spawnSync`: the tests that run beside this one have children that wait for their input.
+      expect(await Bun.spawn(["mkfifo", join(String(dir), "pipe.ts")]).exited).toBe(0);
       const { stdout, exitCode } = await check(dir);
       expect(stdout).toMatchInlineSnapshot(
         `"a.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'."`,

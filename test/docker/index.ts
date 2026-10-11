@@ -2,22 +2,12 @@ import { spawn } from "bun";
 import * as net from "net";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
+import type { ServiceName } from "./service-names.mts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-export type ServiceName =
-  | "postgres_plain"
-  | "postgres_tls"
-  | "postgres_auth"
-  | "mysql_plain"
-  | "mysql_native_password"
-  | "mysql_tls"
-  | "mariadb_plain"
-  | "redis_plain"
-  | "redis_unified"
-  | "autobahn"
-  | "squid";
+export type { ServiceName };
 
 export interface ServiceInfo {
   host: string;

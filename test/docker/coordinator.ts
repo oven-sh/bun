@@ -7,15 +7,16 @@
  * "Conflict. The container name ... is already in use". So instead of letting
  * each process shell out to compose (and retrying on conflicts), exactly one
  * process does: scripts/runner.node.ts spawns this coordinator once per
- * shard, with the shard's test paths on argv and a unix socket path in
+ * shard, with the services to prestart on argv and a unix socket path in
  * BUN_DOCKER_COORDINATOR_SOCKET. ensure() in test/docker/index.ts connects to
  * that socket, sends the service name, and waits for the ready message with
  * the port mapping; the in-flight map below collapses concurrent requests for
  * one service onto a single `compose up --wait`.
  *
- * This also subsumes the old warmup-ci.ts: the path→service map below
- * predicts which services argv's tests need and starts them at launch, so
- * they're healthy by the time the first test asks.
+ * The services on argv start at launch, so they're healthy by the time the
+ * first test asks. The runner reads them from the sources of the shard's test
+ * files (scripts/docker-services.ts). A service that is not on argv starts
+ * when a test first asks for it.
  *
  * Lifetime is tied to the runner: stdin is a pipe from it, and EOF means the
  * runner is gone.
@@ -24,14 +25,7 @@
 import { unlinkSync } from "node:fs";
 import * as net from "node:net";
 import { ensure, type ServiceInfo, type ServiceName } from "./index.ts";
-import { prestartMap as prestartMapRaw } from "./prestart-map.mjs";
-
-// Keys are paths relative to test/ — that's the shape runner.node.ts passes
-// (getTests() walks from testsPath, not repo root). Prefix-matched. The map
-// literal lives in prestart-map.mjs (add new entries THERE) because
-// scripts/runner.node.ts, which plain Node runs, also reads it to schedule
-// docker-backed test files last within the shard.
-const prestartMap = prestartMapRaw as Record<string, readonly ServiceName[]>;
+import { isServiceName } from "./service-names.mts";
 
 const socketPath = process.env.BUN_DOCKER_COORDINATOR_SOCKET;
 if (!socketPath) {
@@ -171,16 +165,8 @@ server.listen(socketPath, () => {
   // The runner waits for this exact line before pointing tests at the socket.
   console.log(`COORDINATOR_READY ${socketPath}`);
 
-  const prestart = new Set<ServiceName>();
-  for (const arg of process.argv.slice(2)) {
-    const testPath = arg.replaceAll("\\", "/");
-    for (const [prefix, services] of Object.entries(prestartMap)) {
-      if (testPath.startsWith(prefix)) {
-        for (const service of services) prestart.add(service);
-      }
-    }
-  }
-  for (const service of prestart) {
+  for (const service of process.argv.slice(2)) {
+    if (!isServiceName(service)) continue;
     // Failures are logged by ensureService and reported again when a test
     // actually requests the service.
     void ensureService(service).catch(() => {});

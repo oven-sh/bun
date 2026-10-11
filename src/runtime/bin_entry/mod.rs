@@ -180,6 +180,9 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
         libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
     }
 
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    keep_children_waitable();
+
     // Windows-only startup. Must run before anything reads
     // `Bun.env`/`process.env` (env conversion).
     #[cfg(windows)]
@@ -210,6 +213,25 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     crate::cli::Cli::start();
     // `Global::exit` is `-> !`; it coerces to the `c_int` return type.
     Global::exit(0)
+}
+
+/// An ignored SIGCHLD survives execve, and while it is ignored Linux reaps
+/// our children itself, so every wait4() fails with ECHILD. It is the one
+/// inherited SIG_IGN we undo (HUP/INT/TERM stay ignored, for nohup). Only an
+/// exact SIG_IGN is replaced: a handler installed before main() stays.
+/// macOS and FreeBSD keep children waitable after execve, hence the gate.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn keep_children_waitable() {
+    // SAFETY: `old` is a valid out-pointer and a null new action only queries;
+    // `SIGCHLD` and `SIG_DFL` are a valid signal and disposition.
+    unsafe {
+        let mut old: libc::sigaction = bun_core::ffi::zeroed();
+        if libc::sigaction(libc::SIGCHLD, core::ptr::null(), &raw mut old) == 0
+            && old.sa_sigaction == libc::SIG_IGN
+        {
+            libc::signal(libc::SIGCHLD, libc::SIG_DFL);
+        }
+    }
 }
 
 /// Linux's `expand_fdtable()` waits for an RCU grace period (tens of ms on a

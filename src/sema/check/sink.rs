@@ -262,6 +262,7 @@ fn is_task_independent(q: Query) -> bool {
         | Query::Comparison(_) => true,
         Query::ReturnOfSignature(_)
         | Query::Shape(_)
+        | Query::Properties(_)
         | Query::Constraint(_)
         | Query::InferredConstraint(_)
         | Query::MappedProp(..)

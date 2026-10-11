@@ -1148,7 +1148,7 @@ impl<'p, 's> Checker<'p, 's> {
                 return Some(rest);
             }
         }
-        let members = self.members(part)?;
+        let members = self.structured_members(part)?;
         let info = match name_type {
             Some(key) => self.applicable_index_info(&members, key),
             // A symbol name uses the index signature for symbols.
@@ -1168,7 +1168,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let mut types = Vec::new();
         for &part in self.parts(context) {
-            if let Some(members) = self.members(part)
+            if let Some(members) = self.structured_members(part)
                 && let Some(info) = self.applicable_index_info(&members, key)
             {
                 types.push(info.value);
@@ -1635,7 +1635,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
             // `getPropertiesOfUnionOrIntersectionType`: a property that all members have is a
             // property of the first member without index signatures.
-            if members.shape().index.is_empty() {
+            if self.structured(members).index_infos().is_empty() {
                 break;
             }
             visited.push(members);

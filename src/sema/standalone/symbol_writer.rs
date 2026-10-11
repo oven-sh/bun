@@ -932,7 +932,7 @@ impl<'c, 'p, 's> SymbolWriter<'c, 'p, 's> {
                 } else {
                     self.c.string_literal(name, false)
                 };
-                for info in &members.shape().index {
+                for info in self.c.structured(members).index_infos() {
                     if let Some(declaration) = info.declaration
                         && self.c.is_applicable_index_type(key_type, info.key)
                     {

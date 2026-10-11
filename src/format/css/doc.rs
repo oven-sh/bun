@@ -1108,6 +1108,8 @@ struct Indent {
     last: Written,
     /// How long the `value` is.
     bytes: usize,
+    /// The byte that all of the `value` is, as nearly every one is.
+    only: Option<u8>,
     length: usize,
     root: u32,
     /// What has been made of it.
@@ -1203,6 +1205,7 @@ impl<'o> Printer<'o> {
                 after: 0,
                 last: Written::Nothing,
                 bytes: 0,
+                only: None,
                 length: 0,
                 root: 0,
                 derived: Vec::new(),
@@ -1290,6 +1293,12 @@ impl<'o> Printer<'o> {
             | IndentCommand::DedentToRoot
             | IndentCommand::MarkAsRoot => (same.after, same.last, 0, 0),
         };
+        let only = match last {
+            _ if bytes == 0 => same.only,
+            Written::Blanks(_) if same.bytes == 0 || same.only == Some(b' ') => Some(b' '),
+            Written::Tab if same.bytes == 0 || same.only == Some(b'\t') => Some(b'\t'),
+            _ => None,
+        };
         let (bytes, length) = (same.bytes + bytes, same.length + width);
         if crate::is_too_long(bytes) {
             self.failure = Some(FormatError::TooLong);
@@ -1305,6 +1314,7 @@ impl<'o> Printer<'o> {
             after,
             last,
             bytes,
+            only,
             length,
             root,
             derived: Vec::new(),
@@ -1322,11 +1332,18 @@ impl<'o> Printer<'o> {
             return 0;
         }
         let Indent { bytes, length, .. } = self.indents[indent as usize];
-        let mut end = self.out.len() + bytes;
+        let start = self.out.len();
+        let mut end = start + bytes;
         self.out.resize(end, b' ');
         let mut at = indent;
-        while at != 0 {
-            let Indent { after, last, .. } = self.indents[at as usize];
+        while end > start {
+            let Indent {
+                after, last, only, ..
+            } = self.indents[at as usize];
+            if let Some(byte) = only {
+                self.out[start..end].fill(byte);
+                break;
+            }
             match last {
                 Written::Nothing => {}
                 Written::Blanks(count) => end -= count,

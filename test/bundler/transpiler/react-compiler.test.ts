@@ -3656,7 +3656,6 @@ test.skipIf(isDebug || isASAN)(
   `;
     using dir = tempDir("react-compiler-defaults", {
       "empty.jsx": `export default function App() { return null; }`,
-      "half.jsx": pattern(500),
       "whole.jsx": pattern(1000),
       // The peak of a process is never below that of the one that spawned it, and this one is small.
       "measure.js": `
@@ -3666,7 +3665,7 @@ test.skipIf(isDebug || isASAN)(
           stdout: "ignore",
           stderr: "inherit",
         }).resourceUsage.maxRSS;
-      console.log(JSON.stringify(["empty.jsx", "half.jsx", "whole.jsx"].map(peak)));
+      console.log(JSON.stringify(["empty.jsx", "whole.jsx"].map(peak)));
     `,
     });
     await using proc = Bun.spawn({
@@ -3678,11 +3677,11 @@ test.skipIf(isDebug || isASAN)(
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    const [empty, half, whole] = JSON.parse(stdout);
-    // 4.8 times. Else what is measured is not the pattern.
-    expect(half).toBeGreaterThan(empty * 2);
-    // 1.9, and 2.95 without the fix.
-    expect((whole - empty) / (half - empty)).toBeLessThan(2.5);
+    const [empty, whole] = JSON.parse(stdout);
+    // 9 times. Else what is measured is not the pattern.
+    expect(whole).toBeGreaterThan(empty * 2);
+    // 131 MB, and 499 MB without the fix. The ratio of two sizes tells the two apart by 1.4 times only.
+    expect(whole - empty).toBeLessThan(300 * 1024 * 1024);
     expect(exitCode).toBe(0);
   },
 );

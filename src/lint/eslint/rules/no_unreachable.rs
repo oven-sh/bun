@@ -27,15 +27,17 @@ fn is_constructor(member: Member) -> bool {
     member.kind() == MemberKind::Constructor && !member.is_static()
 }
 
+/// Not `var a, b;`
+fn is_more_than_hoisted<'a>(declarations: List<'a, VarDecl<'a>>) -> bool {
+    declarations.first().is_some_and(|it| it.var_kind() != VarKind::Var)
+        || declarations.iter().any(|it| it.init().is_some())
+}
+
 /// Whether the rule listens for `stmt`, or for the `ExportNamedDeclaration` or the
 /// `ExportDefaultDeclaration` around it.
 fn is_listened(stmt: Stmt) -> bool {
     match stmt.kind() {
-        StmtKind::Var(declarations) => {
-            declarations.first().is_some_and(|it| it.var_kind() != VarKind::Var)
-                || declarations.iter().any(|it| it.init().is_some())
-                || stmt.is_exported()
-        }
+        StmtKind::Var(declarations) => is_more_than_hoisted(declarations) || stmt.is_exported(),
         StmtKind::Fn(_)
         | StmtKind::Interface(_)
         | StmtKind::TypeAlias(_)
@@ -43,6 +45,25 @@ fn is_listened(stmt: Stmt) -> bool {
         | StmtKind::Module(_)
         | StmtKind::ImportEquals(_) => stmt.is_exported(),
         _ => true,
+    }
+}
+
+/// What is no statement for oxlint: what declares something else than variables, and of the exports all but `export default`.
+/// Of `export const a = 1` the declaration is one.
+fn is_no_statement_for_oxlint(stmt: Stmt) -> bool {
+    match stmt.kind() {
+        _ if stmt.is_default_export() => false,
+        StmtKind::Var(declarations) => !is_more_than_hoisted(declarations),
+        StmtKind::Fn(_)
+        | StmtKind::Class(_)
+        | StmtKind::Interface(_)
+        | StmtKind::TypeAlias(_)
+        | StmtKind::Enum(_)
+        | StmtKind::Module(_)
+        | StmtKind::ImportEquals(_)
+        | StmtKind::ExportNamed(_)
+        | StmtKind::ExportStar { .. } => true,
+        _ => false,
     }
 }
 
@@ -141,8 +162,8 @@ impl<'a> State<'a> {
         self.report_range(Some(node));
     }
 
-    /// What cannot be reached and oxlint says nothing about: the declaration of a class, which is no statement for it, and
-    /// a `catch` block, which it takes for reachable whatever the `try` block is.
+    /// What cannot be reached and oxlint says nothing about: what is no statement for it, and a `catch` block, which it takes
+    /// for reachable whatever the `try` block is.
     fn oxlint_passes_over(&mut self, stmt: Stmt<'a>) -> bool {
         if self.catch_block.is_some_and(|it| it.contains(stmt.span())) {
             return true;
@@ -152,7 +173,7 @@ impl<'a> State<'a> {
         if is_catch_block {
             self.catch_block = Some(stmt.span());
         }
-        is_catch_block || stmt.tag() == StmtTag::Class
+        is_catch_block || is_no_statement_for_oxlint(stmt)
     }
 
     fn enter_statement(&mut self, stmt: Stmt<'a>) {
@@ -160,11 +181,13 @@ impl<'a> State<'a> {
         if is_reachable && self.range.is_none() || !is_listened(stmt) {
             return;
         }
-        if !is_reachable && stmt.file().language().is_oxlint && self.oxlint_passes_over(stmt) {
+        let is_oxlint = stmt.file().language().is_oxlint;
+        if !is_reachable && is_oxlint && self.oxlint_passes_over(stmt) {
             return;
         }
         match is_reachable {
             true => self.report_range(None),
+            false if is_oxlint && stmt.tag() == StmtTag::Var => self.add_unreachable(stmt.span_without_export(), stmt.file()),
             false => self.add_unreachable(stmt.span(), stmt.file()),
         }
     }

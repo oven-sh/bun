@@ -349,11 +349,17 @@ impl PerFile {
 }
 
 /// Whether a rule with `RUNNER` is for `file` at all. One of `bun:test` is for a file that imports from there.
-#[inline]
+#[inline(always)]
 pub(crate) fn is_for<'a>(file: &'a File<'a>, runner: u8) -> bool {
-    runner != BUN
-        || file.mentions_bit(const { mention_bit(BUN_TEST) })
-            && per_file(file).is_some_and(|it| it.is_bun)
+    runner != BUN || is_bun(file)
+}
+
+fn is_bun<'a>(file: &'a File<'a>) -> bool {
+    file.mentions_bit(const { mention_bit(BUN_TEST) }) && per_file(file).is_some_and(|it| it.is_bun)
+}
+
+fn is_jest_or_vitest<'a>(file: &'a File<'a>) -> bool {
+    per_file(file).is_some_and(|it| it.is_jest || it.is_vitest)
 }
 
 /// `ctx.frameworks().is_vitest()`: the file imports something from Vitest. Its name does not matter.
@@ -362,11 +368,11 @@ pub(crate) fn is_vitest<'a>(file: &'a File<'a>, runner: Runner) -> bool {
 }
 
 /// `ctx.frameworks().is_test()`: in other files oxlint does not call `run_on_jest_node`. `runner`: the `RUNNER` of the rule.
-#[inline]
+#[inline(always)]
 pub(crate) fn is_test<'a>(file: &'a File<'a>, runner: u8) -> bool {
     match runner {
-        BUN => is_for(file, runner),
-        _ => per_file(file).is_some_and(|it| it.is_jest || it.is_vitest),
+        BUN => is_bun(file),
+        _ => is_jest_or_vitest(file),
     }
 }
 

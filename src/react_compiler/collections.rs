@@ -18,7 +18,7 @@ use core::slice;
 use bun_alloc::{AstAlloc, AstVec};
 use bun_collections::array_hash_map::{ArrayHashMap, AutoContext};
 
-pub use crate::hir::id_map::{IdBitSet, IdMap, IdSet};
+pub use crate::hir::id_map::{IdBitSet, IdMap};
 
 /// Unordered map/set keyed by small `Copy` ids — `std`'s SipHash is the wrong
 /// default for dense `u32` newtypes. The `disallowed_types` lint is satisfied:

@@ -1370,6 +1370,25 @@
   "a.js:8:22+4 eslint(no-unreachable)",
   "a.js:8:27+4 eslint(no-unreachable)"
  ],
+ "no-unreachable/exports": [
+  "a.js:11:8+10 eslint(no-unreachable)",
+  "a.js:15:1+4 eslint(no-unreachable)",
+  "a.js:6:8+12 eslint(no-unreachable)",
+  "a.js:7:8+19 eslint(no-unreachable)",
+  "a.js:8:8+6 eslint(no-unreachable)",
+  "a.js:9:8+10 eslint(no-unreachable)",
+  "b.js:2:1+4 eslint(no-unreachable)",
+  "b.js:3:1+17 eslint(no-unreachable)",
+  "b.js:4:1+4 eslint(no-unreachable)",
+  "c.js:2:1+29 eslint(no-unreachable)",
+  "d.js:2:1+23 eslint(no-unreachable)",
+  "e.ts:10:29+12 eslint(no-unreachable)",
+  "e.ts:10:42+4 eslint(no-unreachable)",
+  "e.ts:11:22+12 eslint(no-unreachable)",
+  "e.ts:7:8+24 eslint(no-unreachable)",
+  "e.ts:8:8+20 eslint(no-unreachable)",
+  "f.ts:2:1+29 eslint(no-unreachable)"
+ ],
  "no-unused-vars/in-a-function-that-is-returned": [
   "a.js:15:9+1 eslint(no-unused-vars)",
   "a.js:9:7+1 eslint(no-unused-vars)"

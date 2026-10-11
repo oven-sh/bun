@@ -1,7 +1,7 @@
 //! Containers keyed by the id newtypes. The ids of a compile are small consecutive numbers, so an
 //! id indexes a table directly: nothing is hashed.
 //!
-//! [`IdMap`] and [`IdSet`] iterate in insertion order, as a JavaScript `Map` and `Set` do.
+//! [`IdMap`] iterates in insertion order, as a JavaScript `Map` does.
 //! [`IdBitSet`] iterates in the order of the ids.
 //!
 //! A table has two levels, so that what is written for it grows with the ids that are in it and
@@ -219,22 +219,11 @@ impl<K, V, A: MapAllocator> IdMap<K, V, A> {
         self.values.iter()
     }
     #[inline]
-    pub(crate) fn values_mut(&mut self) -> slice::IterMut<'_, V> {
-        self.values.iter_mut()
-    }
-    #[inline]
     pub(crate) fn iter(&self) -> impl ExactSizeIterator<Item = (K, &V)>
     where
         K: Copy,
     {
         self.keys().zip(&self.values)
-    }
-    #[inline]
-    pub(crate) fn iter_mut(&mut self) -> impl ExactSizeIterator<Item = (K, &mut V)>
-    where
-        K: Copy,
-    {
-        self.index.keys.iter().copied().zip(&mut self.values)
     }
     /// The keys and the values, each in insertion order.
     #[inline]
@@ -409,102 +398,6 @@ impl<'a, K: Copy + Into<u32>, V, A: MapAllocator> IdEntry<'a, K, V, A> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// IdSet
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Insertion-ordered set of a `u32` newtype id.
-pub struct IdSet<K> {
-    index: IdIndex<K, Global>,
-}
-
-impl<K> IdSet<K> {
-    #[inline]
-    pub(crate) fn new() -> Self {
-        Self {
-            index: IdIndex::new(),
-        }
-    }
-    #[inline]
-    pub(crate) fn len(&self) -> usize {
-        self.index.keys.len()
-    }
-    #[inline]
-    pub(crate) fn is_empty(&self) -> bool {
-        self.index.keys.is_empty()
-    }
-    pub(crate) fn clear(&mut self) {
-        self.index.clear();
-    }
-}
-
-impl<K: Copy + Into<u32>> IdSet<K> {
-    /// Returns `true` if the value was newly inserted.
-    #[inline]
-    pub(crate) fn insert(&mut self, k: K) -> bool {
-        let is_new = self.index.position(k).is_none();
-        if is_new {
-            self.index.push(k);
-        }
-        is_new
-    }
-    #[inline]
-    pub(crate) fn contains(&self, k: K) -> bool {
-        self.index.position(k).is_some()
-    }
-    /// Order-preserving remove. O(n).
-    pub(crate) fn remove(&mut self, k: K) -> bool {
-        match self.index.position(k) {
-            Some(at) => {
-                self.index.shift_remove_at(at);
-                true
-            }
-            None => false,
-        }
-    }
-    #[inline]
-    pub(crate) fn iter(&self) -> core::iter::Copied<slice::Iter<'_, K>> {
-        self.index.keys.iter().copied()
-    }
-}
-
-impl<K> Default for IdSet<K> {
-    #[inline]
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<K: Clone> Clone for IdSet<K> {
-    fn clone(&self) -> Self {
-        Self {
-            index: self.index.clone(),
-        }
-    }
-}
-
-impl<K: Copy + Into<u32> + fmt::Debug> fmt::Debug for IdSet<K> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_set().entries(self.iter()).finish()
-    }
-}
-
-impl<K: Copy + Into<u32>> Extend<K> for IdSet<K> {
-    fn extend<I: IntoIterator<Item = K>>(&mut self, iter: I) {
-        for k in iter {
-            self.insert(k);
-        }
-    }
-}
-
-impl<K: Copy + Into<u32>> FromIterator<K> for IdSet<K> {
-    fn from_iter<I: IntoIterator<Item = K>>(iter: I) -> Self {
-        let mut set = Self::new();
-        set.extend(iter);
-        set
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
 // IdBitSet
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -545,28 +438,6 @@ impl<K> IdBitSet<K> {
         self.words.fill(0);
         self.len = 0;
     }
-    /// Adds all of `other` and says whether that added anything.
-    pub(crate) fn union_with(&mut self, other: &Self) -> bool {
-        if self.words.len() < other.words.len() {
-            self.words.resize(other.words.len(), 0);
-        }
-        let before = self.len;
-        for (word, &more) in self.words.iter_mut().zip(&other.words) {
-            self.len += (more & !*word).count_ones() as usize;
-            *word |= more;
-        }
-        self.len != before
-    }
-    /// Keeps what is also in `other` and says whether that removed anything.
-    pub(crate) fn intersect_with(&mut self, other: &Self) -> bool {
-        let before = self.len;
-        for (at, word) in self.words.iter_mut().enumerate() {
-            let kept = *word & other.words.get(at).copied().unwrap_or(0);
-            self.len -= (*word & !kept).count_ones() as usize;
-            *word = kept;
-        }
-        self.len != before
-    }
 }
 
 impl<K: Copy + Into<u32>> IdBitSet<K> {
@@ -592,19 +463,6 @@ impl<K: Copy + Into<u32>> IdBitSet<K> {
             Some(word) => word & (1u64 << (id % 64)) != 0,
             None => false,
         }
-    }
-    /// Returns `true` if the value was there.
-    #[inline]
-    pub(crate) fn remove(&mut self, k: K) -> bool {
-        let id = k.into() as usize;
-        let Some(word) = self.words.get_mut(id / 64) else {
-            return false;
-        };
-        let bit = 1u64 << (id % 64);
-        let was_there = *word & bit != 0;
-        *word &= !bit;
-        self.len -= was_there as usize;
-        was_there
     }
 }
 

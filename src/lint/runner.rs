@@ -145,10 +145,7 @@ impl Exprs {
     /// substitutions is a string.
     fn from_binder(file: &File) -> Option<Exprs> {
         let (kinds, counted) = (file.bound.expr_kinds, file.bound.expr_kind_counts);
-        if kinds.len() != file.hir.exprs.len()
-            || file.has_synthetic_nodes()
-            || !file.hir.import_attributes.is_empty()
-        {
+        if !file.groups_exprs_as_the_binder() {
             return None;
         }
         let mut counts = [0u32; MOST_KINDS + 2];
@@ -457,6 +454,13 @@ pub(crate) struct ByKind {
 }
 
 impl File<'_> {
+    /// Whether the groups of the expressions are made of the kinds that the binder has noted (`Bound::expr_kinds`).
+    pub(crate) fn groups_exprs_as_the_binder(&self) -> bool {
+        self.bound.expr_kinds.len() == self.hir.exprs.len()
+            && !self.has_synthetic_nodes()
+            && self.hir.import_attributes.is_empty()
+    }
+
     #[inline]
     pub(crate) fn by_kind(&self) -> &ByKind {
         self.lazy.by_kind.get_or_init(ByKind::default)
@@ -468,7 +472,7 @@ impl File<'_> {
     }
 
     #[inline(never)]
-    fn exprs_of(&self, tag: ExprTag) -> &[u32] {
+    pub(crate) fn exprs_of(&self, tag: ExprTag) -> &[u32] {
         let grouped = &self.exprs().grouped;
         &grouped.ids[grouped.starts[2 * tag as usize] as usize
             ..grouped.starts[2 * tag as usize + 2] as usize]

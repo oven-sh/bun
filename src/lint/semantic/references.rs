@@ -921,16 +921,18 @@ impl<'f> Collector<'f, '_> {
         // Which are identifiers, if the binder has noted the kinds.
         const IDENT: u8 = 2 * hir::ExprTag::Ident as u8;
         let (kinds, parents) = (self.file.bound.expr_kinds, self.file.bound.expr_parent);
-        // Where it has not, each can be one.
-        let not_noted: Vec<u8> = match kinds.len() == exprs.len() {
+        // They are grouped already if the groups are made of these kinds. Where it has not noted them, each can be one.
+        let is_grouped =
+            self.file.groups_exprs_as_the_binder() && exprs.len() == self.file.hir.exprs.len();
+        let not_grouped: Vec<u32> = match is_grouped {
             true => Vec::new(),
-            false => (0..exprs.len())
-                .map(|i| kinds.get(i).map_or(IDENT, |kind| *kind))
+            false => (0..exprs.len() as u32)
+                .filter(|&i| kinds.get(i as usize).is_none_or(|kind| *kind == IDENT))
                 .collect(),
         };
-        let kinds = match kinds.len() == exprs.len() {
-            true => kinds,
-            false => &not_noted[..],
+        let identifiers = match is_grouped {
+            true => self.file.exprs_of(hir::ExprTag::Ident),
+            false => &not_grouped[..],
         };
         // `false`: the expression at `i` is an identifier that is before the last one.
         let take = |i: usize| {
@@ -966,8 +968,7 @@ impl<'f> Collector<'f, '_> {
             self.identifier(id, e, name, &skipped, &mut merge)
         };
         // The parser stores nearly every file in source order.
-        let identifiers = kinds.iter().enumerate().filter(|it| *it.1 == IDENT);
-        let is_in_order = identifiers.map(|it| it.0).all(take);
+        let is_in_order = identifiers.iter().map(|&i| i as usize).all(take);
         if !is_in_order {
             merge = start();
             let identifiers = exprs

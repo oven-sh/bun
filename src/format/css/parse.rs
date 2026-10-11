@@ -185,7 +185,8 @@ fn move_space_behind_dots(params: &[u8]) -> Option<Vec<u8>> {
                 return Some(out);
             }
         }
-        from = dollar + 1;
+        // Another `$` before the white space would be followed by the same, from further on.
+        from = at;
     }
     None
 }

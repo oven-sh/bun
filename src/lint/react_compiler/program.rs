@@ -13,7 +13,7 @@
 //!
 //! Nothing here calls itself: what oxc and Babel walk by recursion is a list of what is left to walk.
 
-use crate::compile::{Compiler, Depth, Flavor};
+use crate::compile::{Compiler, Flavor};
 use crate::finding::Finding;
 use crate::suppression::{
     ProgramSuppressions, find_program_suppressions, remove_what_flow_suppresses,
@@ -26,6 +26,7 @@ use bun_lint::ast::{
     StmtKind, StmtTag, TypeKind, TypeNode, UnOp, VarDecl, VarKind,
 };
 use bun_lint::span::Span;
+use bun_react_compiler::Categories;
 use bun_react_compiler::diagnostics::ErrorCategory;
 use bun_react_compiler::environment::is_hook_name;
 use bun_react_compiler::hir::ReactFunctionType;
@@ -1275,7 +1276,7 @@ fn has_memo_cache_function_import<'a>(
 pub(crate) fn compile_program<'a>(
     file: &'a File<'a>,
     flavor: Flavor,
-    depth: Depth,
+    wanted: Categories,
 ) -> Vec<Finding> {
     if has_memo_cache_function_import(file, REACT_COMPILER_RUNTIME_MODULE, flavor) {
         return Vec::new();
@@ -1294,7 +1295,7 @@ pub(crate) fn compile_program<'a>(
 
     let mut context = ProgramContext {
         flavor,
-        compiler: Compiler::new(file, flavor, depth),
+        compiler: Compiler::new(file, flavor, wanted),
         // The plugin validates hooks and the dependencies of memoization itself, with which the compiler looks for no comment.
         suppressions: match flavor {
             Flavor::Oxlint => find_program_suppressions(file, &ESLINT_SUPPRESSION_RULES),

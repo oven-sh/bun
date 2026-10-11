@@ -114,11 +114,6 @@ impl<K: Hash + Eq, V> IndexMap<K, V> {
     pub(crate) fn shift_remove(&mut self, key: &K) -> Option<V> {
         self.0.remove(key)
     }
-    /// O(1) remove; does not preserve order.
-    #[inline]
-    pub(crate) fn swap_remove(&mut self, key: &K) -> Option<V> {
-        self.0.fetch_swap_remove(key).map(|(_, v)| v)
-    }
 }
 
 impl<K, V> Default for IndexMap<K, V> {

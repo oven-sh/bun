@@ -77,8 +77,8 @@ pub fn report_as_eslint<'a, R: Rule>(cx: &Cx<'a, R>, category: ErrorCategory) {
 pub fn starts<'a>(file: &'a File<'a>, flavor: Flavor, category: ErrorCategory) -> bool {
     let starts = crate::program::may_have_react_code(file, flavor)
         && (flavor == Flavor::Eslint || should_run(file));
-    if starts && matches!(category, ErrorCategory::Todo | ErrorCategory::Invariant) {
-        crate::want_everything(file, flavor);
+    if starts {
+        crate::want(file, flavor, category);
     }
     starts
 }

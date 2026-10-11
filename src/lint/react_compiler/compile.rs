@@ -14,7 +14,7 @@ use bun_react_compiler::diagnostics::{
 use bun_react_compiler::hir::ReactFunctionType;
 use bun_react_compiler::hir::environment_config::ExhaustiveEffectDepsMode;
 use bun_react_compiler::lowering::FunctionNode;
-use bun_react_compiler::{EnvironmentConfig, LatePasses};
+use bun_react_compiler::{Categories, EnvironmentConfig};
 
 /// Whose rules the compiler runs for. The two have their own forks of it, and look for other functions.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -25,20 +25,11 @@ pub enum Flavor {
     Eslint,
 }
 
-/// How much of the compiler runs.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub(crate) enum Depth {
-    /// All that can change what is reported in a category other than `Todo` and `Invariant`.
-    Validations,
-    /// Also what says a `Todo`.
-    Everything,
-}
-
 /// The state for one file.
 pub(crate) struct Compiler<'a> {
     file: &'a File<'a>,
     flavor: Flavor,
-    depth: Depth,
+    wanted: Categories,
     config: EnvironmentConfig,
 }
 
@@ -80,11 +71,11 @@ fn config_of(flavor: Flavor) -> EnvironmentConfig {
 }
 
 impl<'a> Compiler<'a> {
-    pub(crate) fn new(file: &'a File<'a>, flavor: Flavor, depth: Depth) -> Compiler<'a> {
+    pub(crate) fn new(file: &'a File<'a>, flavor: Flavor, wanted: Categories) -> Compiler<'a> {
         Compiler {
             file,
             flavor,
-            depth,
+            wanted,
             config: config_of(flavor),
         }
     }
@@ -118,12 +109,8 @@ impl<'a> Compiler<'a> {
             fn_type,
             &self.config,
             &converted.import_bindings,
-            match self.depth {
-                // An error that a late pass throws drops what is recorded, which these are.
-                _ if !converted.recorded.is_empty() => LatePasses::Always,
-                Depth::Validations => LatePasses::WhereTheyCount,
-                Depth::Everything => LatePasses::AlsoForTodos,
-            },
+            self.wanted,
+            !converted.recorded.is_empty(),
         );
         logged.extend(findings(&converted, linted.logged));
         let recorded = converted.recorded.iter().map(|it| match *it {

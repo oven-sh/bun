@@ -4,7 +4,7 @@ use bun_lint::span::Span;
 use bun_react_compiler::diagnostics::{CompilerSuggestionOperation, ErrorCategory};
 
 /// One `CompilerDiagnostic` or `CompilerErrorDetail` of the compiler.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Finding {
     pub category: ErrorCategory,
     pub reason: String,
@@ -20,7 +20,7 @@ pub struct Finding {
     pub function_span: Option<Span>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Detail {
     Error {
         span: Option<Span>,
@@ -31,7 +31,7 @@ pub enum Detail {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Suggestion {
     pub op: CompilerSuggestionOperation,
     pub range: Span,

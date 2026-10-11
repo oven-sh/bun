@@ -174,12 +174,49 @@ pub fn is_on_one_line(file: &File<'_>, span: Span) -> bool {
         && file.is_on_same_line(middle, span.end)
 }
 
+/// Whether a `/` follows a `yield` or an `await` in `text`: whether it divides depends on the function around.
+fn has_slash_after_yield_or_await(text: &[u8]) -> bool {
+    [&b"yield"[..], b"await"].into_iter().any(|word| {
+        let mut rest = text;
+        while let Some(found) = strings::index_of(rest, word) {
+            rest = rest.get(found + word.len()..).unwrap_or_default();
+            if rest.get(skip_trivia(rest, 0) as usize) == Some(&b'/') {
+                return true;
+            }
+        }
+        false
+    })
+}
+
+/// What `equal_tokens` is for `left` and `right`, which follow the same tokens, whatever both start in: code, a regular
+/// expression, a template. Up to where they differ they are in the same. `None` if a comment may have started before that, and
+/// if whitespace, a comment or an escape in a name may be what differs.
+fn equal_tokens_of_text_in_anything(left: &[u8], right: &[u8]) -> Option<bool> {
+    let same = left.iter().zip(right).take_while(|(a, b)| a == b).count();
+    let (common, a, b) = (left.get(..same)?, left.get(same), right.get(same));
+    if a.is_none() && b.is_none() {
+        return Some(true);
+    }
+    let can_be_more_than_itself =
+        |byte: Option<&u8>| matches!(byte, Some(..=b' ' | b'/' | b'*' | b'\\' | b'<' | b'!' | b'-' | 0x80..));
+    if can_be_more_than_itself(a)
+        || can_be_more_than_itself(b)
+        || [&b"//"[..], b"/*", b"--"].into_iter().any(|it| strings::contains(common, it))
+    {
+        return None;
+    }
+    // `\u0061` and `\u{61}`
+    let digits = common.iter().rev().take_while(|it| it.is_ascii_hexdigit() || **it == b'{').count();
+    (!common.get(..same - digits)?.ends_with(b"\\u")).then_some(false)
+}
+
 /// What `equal_tokens` is for the texts `left` and `right`, if that shows without splitting them into tokens: they are compared
-/// byte by byte, whitespace against whitespace. `None` where more than that is to be known: at a comment, a regular expression,
-/// a substitution of a template, an escape in a name, a character that is not ASCII and not in a string, and where only one of
-/// the two has whitespace, which may or may not separate two tokens.
+/// byte by byte, whitespace and comments against whitespace and comments. From a `/` that is no comment, a substitution of a
+/// template, an escape in a name or a character that is not ASCII and not in a string on, see
+/// [`equal_tokens_of_text_in_anything`]. `None` where more than that is to be known, as where only one of the two has
+/// whitespace, which may or may not separate two tokens.
 fn equal_tokens_of_plain_text(left: &[u8], right: &[u8]) -> Option<bool> {
-    let is_blank = |byte: Option<&u8>| matches!(byte, Some(b'\t'..=b'\r' | b' '));
+    let can_start_trivia = |byte: Option<&u8>| matches!(byte, Some(b'\t'..=b'\r' | b' ' | b'/'));
     let is_of_word = |byte: Option<&u8>| {
         byte.is_some_and(|it| it.is_ascii_alphanumeric() || matches!(it, b'_' | b'$'))
     };
@@ -187,6 +224,10 @@ fn equal_tokens_of_plain_text(left: &[u8], right: &[u8]) -> Option<bool> {
     let is_in_html_comment_mark = |text: &[u8], at: usize| {
         let (before, rest) = text.split_at(at);
         rest.starts_with(b"-->") || rest.starts_with(b"--") && before.ends_with(b"<!")
+    };
+    let in_anything = |l: usize, r: usize| match equal_tokens_of_text_in_anything(left.get(l..)?, right.get(r..)?)? {
+        true => (!has_slash_after_yield_or_await(left)).then_some(true),
+        false => Some(false),
     };
     let (mut l, mut r) = (0, 0);
     // The quote of the string, or of the template before its first substitution, that both are in. It is one token, which
@@ -199,7 +240,7 @@ fn equal_tokens_of_plain_text(left: &[u8], right: &[u8]) -> Option<bool> {
                 return Some(false);
             }
             match a {
-                b'$' if open == b'`' && left.get(l + 1) == Some(&b'{') => return None,
+                b'$' if open == b'`' && left.get(l + 1) == Some(&b'{') => return in_anything(l, r),
                 b'\\' => {
                     if *left.get(l + 1)? != *right.get(r + 1)? {
                         return Some(false);
@@ -212,30 +253,25 @@ fn equal_tokens_of_plain_text(left: &[u8], right: &[u8]) -> Option<bool> {
             (l, r) = (l + 1, r + 1);
             continue;
         }
-        if is_blank(left.get(l)) || is_blank(right.get(r)) {
-            if !is_blank(left.get(l)) || !is_blank(right.get(r)) {
+        if can_start_trivia(left.get(l)) || can_start_trivia(right.get(r)) {
+            let after = (skip_trivia(left, l as u32) as usize, skip_trivia(right, r as u32) as usize);
+            if (after.0 > l) != (after.1 > r) {
                 // A word that ends in one goes on in the other.
                 let goes_on = is_of_word(left.get(l)) || is_of_word(right.get(r));
                 return (goes_on && l > 0 && is_of_word(left.get(l - 1))).then_some(false);
             }
-            while is_blank(left.get(l)) {
-                l += 1;
-            }
-            while is_blank(right.get(r)) {
-                r += 1;
-            }
+            (l, r) = after;
         }
         let (a, b) = match (left.get(l), right.get(r)) {
             (None, None) => return Some(true),
             (Some(&a), Some(&b)) => (a, b),
             _ => return Some(false),
         };
-        if matches!(a, b'/' | b'\\' | 0x80..)
-            || matches!(b, b'/' | b'\\' | 0x80..)
-            || a == b'-' && is_in_html_comment_mark(left, l)
-            || b == b'-' && is_in_html_comment_mark(right, r)
-        {
+        if a == b'-' && is_in_html_comment_mark(left, l) || b == b'-' && is_in_html_comment_mark(right, r) {
             return None;
+        }
+        if matches!(a, b'/' | b'\\' | 0x80..) || matches!(b, b'/' | b'\\' | 0x80..) {
+            return if a == b { in_anything(l, r) } else { None };
         }
         if a != b {
             return Some(false);
@@ -248,19 +284,24 @@ fn equal_tokens_of_plain_text(left: &[u8], right: &[u8]) -> Option<bool> {
 }
 
 /// ESLint's `equalTokens`: `left` and `right` consist of the same tokens.
+#[inline]
 pub fn equal_tokens<'a>(file: &'a File<'a>, left: impl Spanned, right: impl Spanned) -> bool {
+    equal_tokens_in(file, left.span(), right.span())
+}
+
+fn equal_tokens_in<'a>(file: &'a File<'a>, left: Span, right: Span) -> bool {
+    let of_all_tokens = || {
+        let (left, right) = (file.tokens_in(left), file.tokens_in(right));
+        left.len() == right.len() && left.zip(right).all(|(l, r)| l.kind() == r.kind() && l.has_same_value(r))
+    };
     // In JSX whitespace can be text, and what a name is depends on where it is.
     if file.hir.jsx.is_empty()
-        && let Some(answer) =
-            equal_tokens_of_plain_text(file.slice(left.span()), file.slice(right.span()))
+        && let Some(answer) = equal_tokens_of_plain_text(file.slice(left), file.slice(right))
     {
+        debug_assert_eq!(answer, of_all_tokens());
         return answer;
     }
-    let (left, right) = (file.tokens_in(left), file.tokens_in(right));
-    left.len() == right.len()
-        && left
-            .zip(right)
-            .all(|(l, r)| l.kind() == r.kind() && l.has_same_value(r))
+    of_all_tokens()
 }
 
 /// ESLint's `canContinueExpressionInClassBody`.

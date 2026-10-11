@@ -12,11 +12,12 @@
 //! instruction and terminal in the HIR.
 
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use smallvec::SmallVec;
 
-use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet};
+use crate::collections::{FxHashMap as HashMap, FxHashSet as HashSet, IdBitSet, IdMap};
 
 use crate::diagnostics::CompilerDiagnostic;
 use crate::diagnostics::CompilerDiagnosticDetail;
@@ -69,10 +70,10 @@ pub(crate) fn infer_mutation_aliasing_effects(
     // `ChunkedVec`; allocation starts at 0 and continues via `Context.next_value_id`.
     let mut next_value_id = 0u32;
 
-    let mut initial_state = InferenceState::empty(is_function_expression, env.identifiers.len());
+    let mut initial_state = InferenceState::empty();
 
     // Map of blocks to the last (merged) incoming state that was processed
-    let mut states_by_block: HashMap<BlockId, InferenceState> = HashMap::default();
+    let mut states_by_block: IdMap<BlockId, InferenceState> = IdMap::new();
 
     // Initialize context variables
     for ctx_place in &func.context {
@@ -130,19 +131,18 @@ pub(crate) fn infer_mutation_aliasing_effects(
         }
     }
 
-    let mut queued_states: crate::collections::IndexMap<BlockId, InferenceState> =
-        crate::collections::IndexMap::new();
+    let mut queued_states: IdMap<BlockId, InferenceState> = IdMap::new();
 
     // Queue helper. Clones a state that is lent only when actually inserting.
     fn queue(
-        queued_states: &mut crate::collections::IndexMap<BlockId, InferenceState>,
-        states_by_block: &HashMap<BlockId, InferenceState>,
+        queued_states: &mut IdMap<BlockId, InferenceState>,
+        states_by_block: &IdMap<BlockId, InferenceState>,
         block_id: BlockId,
         state: Cow<'_, InferenceState>,
     ) {
-        if let Some(queued_state) = queued_states.get_mut(&block_id) {
+        if let Some(queued_state) = queued_states.get_mut(block_id) {
             queued_state.merge_from(&state);
-        } else if let Some(prev) = states_by_block.get(&block_id) {
+        } else if let Some(prev) = states_by_block.get(block_id) {
             let mut next = prev.clone();
             if next.merge_from(&state) {
                 queued_states.insert(block_id, next);
@@ -204,12 +204,12 @@ pub(crate) fn infer_mutation_aliasing_effects(
         }
 
         for &block_id in &block_ids {
-            let incoming_state = match queued_states.swap_remove(&block_id) {
+            let incoming_state = match queued_states.swap_remove(block_id) {
                 Some(s) => s,
                 None => continue,
             };
 
-            let is_revisitable = revisitable.contains(&block_id);
+            let is_revisitable = revisitable.contains(block_id);
             let mut state = if is_revisitable {
                 let state = incoming_state.clone();
                 states_by_block.insert(block_id, incoming_state);
@@ -285,26 +285,19 @@ pub(crate) fn infer_mutation_aliasing_effects(
 /// sweep processes blocks in `func.body.blocks` order. So a block is queued
 /// after its own turn only if it is the target of an edge from the same or a
 /// later block, or if such a target reaches it. Every other block is processed
-/// exactly once and `states_by_block` never reads its incoming state back. A
-/// dense state is `env.identifiers.len()` cells, so keeping one per block of a
-/// long loop-free function is quadratic.
-fn blocks_reachable_from_back_edges(func: &HirFunction) -> HashSet<BlockId> {
-    let position: HashMap<BlockId, usize> = func
-        .body
-        .blocks
-        .keys()
-        .enumerate()
-        .map(|(index, id)| (*id, index))
-        .collect();
+/// exactly once and `states_by_block` never reads its incoming state back.
+fn blocks_reachable_from_back_edges(func: &HirFunction) -> IdBitSet<BlockId> {
+    let mut not_later: IdBitSet<BlockId> = IdBitSet::new();
     let mut worklist: Vec<BlockId> = Vec::new();
-    for (index, block) in func.body.blocks.values().enumerate() {
+    for (&block_id, block) in &func.body.blocks {
+        not_later.insert(block_id);
         for successor in visitors::each_terminal_successor(&block.terminal) {
-            if position.get(&successor).is_some_and(|&p| p <= index) {
+            if not_later.contains(successor) {
                 worklist.push(successor);
             }
         }
     }
-    let mut reachable: HashSet<BlockId> = HashSet::default();
+    let mut reachable: IdBitSet<BlockId> = IdBitSet::new();
     while let Some(block_id) = worklist.pop() {
         if !reachable.insert(block_id) {
             continue;
@@ -344,192 +337,157 @@ fn hashset_of(r: ValueReason) -> ValueReasonSet {
 }
 
 // =============================================================================
-// ValueIdSet — compact points-to set
+// ValueSet — compact points-to set
 // =============================================================================
 
-/// 16-byte points-to set for an identifier.
+/// The points-to set of an identifier. Two that are equal are the same set; two that are not can be.
 ///
-/// Typical cardinality is 1; phis with N predecessors merge N sets. The inline
-/// storage holds up to 3 `ValueId`s; states share a larger set until one inserts into it.
-#[derive(Clone)]
-enum ValueIdSet {
-    Inline { len: u8, items: [ValueId; 3] },
-    Spilled(Rc<Vec<ValueId>>),
-}
+/// Typical cardinality is 1, and such a set is its `ValueId`. A larger one is a place in [`ValueSets`].
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+struct ValueSet(u32);
 
-const _: () = assert!(std::mem::size_of::<ValueIdSet>() == 16);
-
-impl ValueIdSet {
-    #[inline]
-    const fn new() -> Self {
-        ValueIdSet::Inline {
-            len: 0,
-            items: [ValueId(0); 3],
-        }
-    }
+impl ValueSet {
+    const EMPTY: ValueSet = ValueSet(0);
 
     #[inline]
     fn singleton(v: ValueId) -> Self {
-        ValueIdSet::Inline {
-            len: 1,
-            items: [v, ValueId(0), ValueId(0)],
-        }
+        ValueSet(v.0 << 1 | 1)
     }
 
     #[inline]
-    fn is_empty(&self) -> bool {
-        matches!(self, ValueIdSet::Inline { len: 0, .. })
+    fn is_empty(self) -> bool {
+        self.0 == 0
     }
 
     #[inline]
-    fn as_slice(&self) -> &[ValueId] {
-        match self {
-            ValueIdSet::Inline { len, items } => &items[..usize::from(*len)],
-            ValueIdSet::Spilled(values) => values,
-        }
+    fn as_singleton(self) -> Option<ValueId> {
+        (self.0 & 1 == 1).then_some(ValueId(self.0 >> 1))
+    }
+}
+
+/// The sets of more than one value, of all the states of a pass.
+///
+/// Each is a value added to a smaller set: the set of a phi at the end of n branches, or of the
+/// binding of a handler after n calls, grows n times, and each time takes the room of one value.
+#[derive(Default)]
+struct ValueSets {
+    added: Vec<(ValueId, ValueSet)>,
+}
+
+impl ValueSets {
+    /// `set`, which is not empty, and a value that is not in it.
+    fn with(&mut self, set: ValueSet, value: ValueId) -> ValueSet {
+        self.added.push((value, set));
+        ValueSet((self.added.len() as u32) << 1)
     }
 
+    /// The value that was added last, and the set that it was added to.
     #[inline]
-    fn contains(&self, v: ValueId) -> bool {
-        self.as_slice().iter().any(|x| x.0 == v.0)
-    }
-
-    fn push(&mut self, v: ValueId) {
-        match self {
-            ValueIdSet::Inline { len, items } => match items.get_mut(usize::from(*len)) {
-                Some(item) => {
-                    *item = v;
-                    *len += 1;
-                }
-                None => {
-                    let mut values = Vec::with_capacity(8);
-                    values.extend_from_slice(items.as_slice());
-                    values.push(v);
-                    *self = ValueIdSet::Spilled(Rc::new(values));
-                }
-            },
-            ValueIdSet::Spilled(values) => Rc::make_mut(values).push(v),
+    fn split(&self, set: ValueSet) -> Option<(ValueId, ValueSet)> {
+        if set.is_empty() {
+            return None;
         }
+        Some(match set.as_singleton() {
+            Some(value) => (value, ValueSet::EMPTY),
+            None => self.added[(set.0 >> 1) as usize - 1],
+        })
     }
 
-    /// Set-insert: push if absent. Returns `true` if inserted.
-    #[inline]
-    fn insert(&mut self, v: ValueId) -> bool {
-        if self.contains(v) {
-            false
-        } else {
-            self.push(v);
-            true
-        }
+    fn newest_first(&self, set: ValueSet) -> impl Iterator<Item = ValueId> {
+        let mut rest = set;
+        std::iter::from_fn(move || {
+            let (value, smaller) = self.split(rest)?;
+            rest = smaller;
+            Some(value)
+        })
     }
 
-    /// `insert` of each value of `other`, in its order. Returns `true` if any was inserted.
-    ///
-    /// The set of a phi at the end of n branches has n values, and is merged n times.
-    fn union_with(&mut self, other: &ValueIdSet) -> bool {
+    fn oldest_first(&self, set: ValueSet) -> SmallVec<[ValueId; 4]> {
+        let mut values: SmallVec<[ValueId; 4]> = self.newest_first(set).collect();
+        values.reverse();
+        values
+    }
+
+    /// `mine`, then what only `theirs` has, in its order. It is `mine` itself if there is no such value.
+    fn union(&mut self, mine: ValueSet, theirs: ValueSet) -> ValueSet {
         const FEW: usize = 16;
-        if self.is_empty() {
-            *self = other.clone();
-            return !other.is_empty();
+        if mine.is_empty() || mine == theirs {
+            return theirs;
         }
-        if let (ValueIdSet::Spilled(this), ValueIdSet::Spilled(that)) = (&*self, other)
-            && Rc::ptr_eq(this, that)
-        {
-            return false;
-        }
-        let mut changed = false;
-        let few = self.as_slice().len() <= FEW && other.as_slice().len() <= FEW;
-        if few || other.as_slice().len() <= 1 {
-            for v in other {
-                changed |= self.insert(*v);
+        let mut members: SmallVec<[ValueId; FEW]> = SmallVec::new();
+        let mut rest = mine;
+        while let Some((value, smaller)) = self.split(rest) {
+            // What is merged is most often an earlier state of the same set.
+            if rest == theirs {
+                return mine;
             }
-            return changed;
+            members.push(value);
+            rest = smaller;
         }
-        // What is merged is most often an earlier state of the same set.
-        if self.as_slice().starts_with(other.as_slice()) {
-            return false;
-        }
-        let mut members: HashSet<ValueId> = self.iter().copied().collect();
-        for v in other {
-            if members.insert(*v) {
-                self.push(*v);
-                changed = true;
+        let theirs = self.oldest_first(theirs);
+        let mut all = mine;
+        if members.len() <= FEW || theirs.len() <= 1 {
+            for value in theirs {
+                if !members.contains(&value) {
+                    all = self.with(all, value);
+                }
+            }
+        } else {
+            let members: HashSet<ValueId> = members.into_iter().collect();
+            for value in theirs {
+                if !members.contains(&value) {
+                    all = self.with(all, value);
+                }
             }
         }
-        changed
-    }
-
-    #[inline]
-    fn iter(&self) -> std::slice::Iter<'_, ValueId> {
-        self.as_slice().iter()
-    }
-}
-
-impl Default for ValueIdSet {
-    #[inline]
-    fn default() -> Self {
-        ValueIdSet::new()
-    }
-}
-
-impl std::fmt::Debug for ValueIdSet {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_list().entries(self.as_slice()).finish()
-    }
-}
-
-impl<'a> IntoIterator for &'a ValueIdSet {
-    type Item = &'a ValueId;
-    type IntoIter = std::slice::Iter<'a, ValueId>;
-    #[inline]
-    fn into_iter(self) -> Self::IntoIter {
-        self.iter()
+        all
     }
 }
 
 const CHUNK: usize = 64;
-const CHUNK_OF_CHUNKS: usize = CHUNK * CHUNK;
+const CHUNKS: usize = 16;
+
+type Chunk<T> = Rc<[T; CHUNK]>;
 
 /// A vector in chunks of chunks that its clones share until one of them writes to the chunk.
-#[derive(Debug, Clone)]
-struct ChunkedVec<T>(Vec<Rc<[Rc<[T; CHUNK]>; CHUNK]>>);
+#[derive(Clone)]
+struct ChunkedVec<T>(SmallVec<[Rc<[Chunk<T>; CHUNKS]>; 2]>);
 
-impl<T: Clone + Default> ChunkedVec<T> {
-    fn with_len(len: usize) -> Self {
-        let mut this = ChunkedVec(Vec::new());
-        this.grow(len.div_ceil(CHUNK_OF_CHUNKS));
-        this
+impl<T: Copy + Default> ChunkedVec<T> {
+    fn new() -> Self {
+        ChunkedVec(SmallVec::new())
     }
 
+    #[cold]
     fn grow(&mut self, chunks_of_chunks: usize) {
-        if chunks_of_chunks > self.0.len() {
-            let empty = Rc::new(std::array::from_fn(|_| T::default()));
-            let empty = Rc::new(std::array::from_fn(|_| Rc::clone(&empty)));
-            self.0.resize(chunks_of_chunks, empty);
+        let empty = Rc::new([T::default(); CHUNK]);
+        let empty = Rc::new(std::array::from_fn(|_| Rc::clone(&empty)));
+        self.0.resize(chunks_of_chunks, empty);
+    }
+
+    /// The default where nothing was written.
+    #[inline]
+    fn get(&self, i: usize) -> T {
+        match self.0.get(i / (CHUNK * CHUNKS)) {
+            Some(chunks) => chunks[i / CHUNK % CHUNKS][i % CHUNK],
+            None => T::default(),
         }
     }
 
     #[inline]
-    fn get(&self, i: usize) -> Option<&T> {
-        let chunks = self.0.get(i / CHUNK_OF_CHUNKS)?;
-        Some(&chunks[i / CHUNK % CHUNK][i % CHUNK])
-    }
-
-    #[inline]
-    fn get_mut(&mut self, i: usize) -> &mut T {
-        self.grow(i / CHUNK_OF_CHUNKS + 1);
-        let chunks = Rc::make_mut(&mut self.0[i / CHUNK_OF_CHUNKS]);
-        &mut Rc::make_mut(&mut chunks[i / CHUNK % CHUNK])[i % CHUNK]
-    }
-
-    fn iter(&self) -> impl Iterator<Item = &T> {
-        let chunks = self.0.iter().flat_map(|chunks| chunks.iter());
-        chunks.flat_map(|chunk| chunk.iter())
+    fn set(&mut self, i: usize, value: T) {
+        if i / (CHUNK * CHUNKS) >= self.0.len() {
+            self.grow(i / (CHUNK * CHUNKS) + 1);
+        }
+        let chunks = Rc::make_mut(&mut self.0[i / (CHUNK * CHUNKS)]);
+        Rc::make_mut(&mut chunks[i / CHUNK % CHUNKS])[i % CHUNK] = value;
     }
 
     /// Puts `merged(mine, theirs)` at each index where it is something, and copies no chunk for less. Whether it was.
-    fn merge_from(&mut self, other: &Self, merged: impl Fn(&T, &T) -> Option<T>) -> bool {
-        self.grow(other.0.len());
+    fn merge_from(&mut self, other: &Self, mut merged: impl FnMut(T, T) -> Option<T>) -> bool {
+        if other.0.len() > self.0.len() {
+            self.grow(other.0.len());
+        }
         let mut changed = false;
         for (mine, theirs) in self.0.iter_mut().zip(&other.0) {
             if Rc::ptr_eq(mine, theirs) {
@@ -539,11 +497,21 @@ impl<T: Clone + Default> ChunkedVec<T> {
                 if Rc::ptr_eq(&mine[chunk], theirs) {
                     continue;
                 }
-                for (at, theirs) in theirs.iter().enumerate() {
-                    if let Some(merged) = merged(&mine[chunk][at], theirs) {
-                        Rc::make_mut(&mut Rc::make_mut(mine)[chunk])[at] = merged;
-                        changed = true;
+                let mut all = *mine[chunk];
+                let mut chunk_changed = false;
+                for (mine, theirs) in all.iter_mut().zip(theirs.iter()) {
+                    if let Some(merged) = merged(*mine, *theirs) {
+                        *mine = merged;
+                        chunk_changed = true;
                     }
+                }
+                if chunk_changed {
+                    let chunk = &mut Rc::make_mut(mine)[chunk];
+                    match Rc::get_mut(chunk) {
+                        Some(chunk) => *chunk = all,
+                        None => *chunk = Rc::new(all),
+                    }
+                    changed = true;
                 }
             }
         }
@@ -552,120 +520,49 @@ impl<T: Clone + Default> ChunkedVec<T> {
 }
 
 // =============================================================================
-// Variables — IdentifierId → ValueIdSet, dense or sparse
-// =============================================================================
-
-/// Storage for the per-identifier points-to map.
-///
-/// `IdentifierId` indexes `env.identifiers`, which is shared across the
-/// top-level component and all nested closures. For the top-level component
-/// it indexes a [`ChunkedVec`]. For nested function expressions the
-/// same Vec would be thousands of empty slots for a handful of live ids, so
-/// those keep a `HashMap`.
-#[derive(Clone)]
-enum Variables {
-    Dense(ChunkedVec<ValueIdSet>),
-    Sparse(HashMap<IdentifierId, ValueIdSet>),
-}
-
-impl Variables {
-    #[inline]
-    fn get(&self, id: IdentifierId) -> Option<&ValueIdSet> {
-        match self {
-            Variables::Dense(sets) => sets.get(id.0 as usize).filter(|set| !set.is_empty()),
-            Variables::Sparse(m) => m.get(&id),
-        }
-    }
-
-    #[inline]
-    fn is_defined(&self, id: IdentifierId) -> bool {
-        self.get(id).is_some()
-    }
-
-    fn insert(&mut self, id: IdentifierId, set: ValueIdSet) {
-        debug_assert!(!set.is_empty());
-        match self {
-            Variables::Dense(sets) => *sets.get_mut(id.0 as usize) = set,
-            Variables::Sparse(m) => {
-                m.insert(id, set);
-            }
-        }
-    }
-
-    /// Set-union `values` into the existing entry at `id`. No-op if `id` is
-    /// undefined.
-    fn extend_values(&mut self, id: IdentifierId, values: &ValueIdSet) {
-        match self {
-            Variables::Dense(sets) => {
-                if sets.get(id.0 as usize).is_some_and(|set| !set.is_empty()) {
-                    sets.get_mut(id.0 as usize).union_with(values);
-                }
-            }
-            Variables::Sparse(m) => {
-                let Some(prev) = m.get_mut(&id) else {
-                    return;
-                };
-                prev.union_with(values);
-            }
-        }
-    }
-}
-
-impl std::fmt::Debug for Variables {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut map = f.debug_map();
-        match self {
-            Variables::Dense(sets) => {
-                for (i, set) in sets.iter().enumerate() {
-                    if !set.is_empty() {
-                        map.entry(&i, set);
-                    }
-                }
-            }
-            Variables::Sparse(m) => {
-                for (k, v) in m {
-                    map.entry(&k.0, v);
-                }
-            }
-        }
-        map.finish()
-    }
-}
-
-// =============================================================================
 // InferenceState
 // =============================================================================
 
 /// The abstract state tracked during inference.
-///
-/// `variables` is dense for the top-level function
-/// and sparse (`HashMap`) for nested function expressions — see [`Variables`].
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct InferenceState {
     /// Kind of each allocation site, indexed by `ValueId.0`. `None` = unset.
     values: ChunkedVec<Option<AbstractValue>>,
-    /// Points-to set per identifier.
-    variables: Variables,
+    /// Points-to set per identifier, indexed by `IdentifierId.0`.
+    variables: ChunkedVec<ValueSet>,
+    sets: Rc<RefCell<ValueSets>>,
     uninitialized_access: std::cell::Cell<Option<(IdentifierId, Option<SourceLocation>)>>,
 }
 
 impl InferenceState {
-    fn empty(is_function_expression: bool, identifier_capacity: usize) -> Self {
-        let variables = if is_function_expression {
-            Variables::Sparse(HashMap::default())
-        } else {
-            Variables::Dense(ChunkedVec::with_len(identifier_capacity))
-        };
+    fn empty() -> Self {
         InferenceState {
-            values: ChunkedVec::with_len(0),
-            variables,
+            values: ChunkedVec::new(),
+            variables: ChunkedVec::new(),
+            sets: Rc::default(),
             uninitialized_access: std::cell::Cell::new(None),
         }
     }
 
     #[inline]
-    fn value_slot(&mut self, id: ValueId) -> &mut Option<AbstractValue> {
-        self.values.get_mut(id.0 as usize)
+    fn value(&self, id: ValueId) -> Option<AbstractValue> {
+        self.values.get(id.0 as usize)
+    }
+
+    #[inline]
+    fn set_of(&self, place_id: IdentifierId) -> ValueSet {
+        self.variables.get(place_id.0 as usize)
+    }
+
+    #[inline]
+    fn union(&self, mine: ValueSet, theirs: ValueSet) -> ValueSet {
+        if theirs.is_empty() || mine == theirs {
+            mine
+        } else if mine.is_empty() {
+            theirs
+        } else {
+            self.sets.borrow_mut().union(mine, theirs)
+        }
     }
 
     /// Check the kind of a place, recording the usage location for error reporting.
@@ -674,21 +571,23 @@ impl InferenceState {
         place_id: IdentifierId,
         usage_loc: Option<SourceLocation>,
     ) -> AbstractValue {
-        let values = match self.variables.get(place_id) {
-            Some(v) => v,
-            None => {
-                if self.uninitialized_access.get().is_none() {
-                    self.uninitialized_access.set(Some((place_id, usage_loc)));
-                }
-                return AbstractValue {
-                    kind: ValueKind::Mutable,
-                    reason: hashset_of(ValueReason::Other),
-                };
-            }
+        let unknown = AbstractValue {
+            kind: ValueKind::Mutable,
+            reason: hashset_of(ValueReason::Other),
         };
+        let values = self.set_of(place_id);
+        if let Some(value_id) = values.as_singleton() {
+            return self.value(value_id).unwrap_or(unknown);
+        }
+        if values.is_empty() {
+            if self.uninitialized_access.get().is_none() {
+                self.uninitialized_access.set(Some((place_id, usage_loc)));
+            }
+            return unknown;
+        }
         let mut merged_kind: Option<AbstractValue> = None;
-        for value_id in values {
-            let kind = match self.values.get(value_id.0 as usize).copied().flatten() {
+        for value_id in self.sets.borrow().newest_first(values) {
+            let kind = match self.value(value_id) {
                 Some(k) => k,
                 None => continue,
             };
@@ -697,54 +596,60 @@ impl InferenceState {
                 None => kind,
             });
         }
-        merged_kind.unwrap_or(AbstractValue {
-            kind: ValueKind::Mutable,
-            reason: hashset_of(ValueReason::Other),
-        })
+        merged_kind.unwrap_or(unknown)
     }
 
     fn initialize(&mut self, value_id: ValueId, kind: AbstractValue) {
-        *self.value_slot(value_id) = Some(kind);
+        self.values.set(value_id.0 as usize, Some(kind));
     }
 
     fn define(&mut self, place_id: IdentifierId, value_id: ValueId) {
         self.variables
-            .insert(place_id, ValueIdSet::singleton(value_id));
+            .set(place_id.0 as usize, ValueSet::singleton(value_id));
     }
 
     fn assign(&mut self, into: IdentifierId, from: IdentifierId, context: &mut Context) {
-        let values = match self.variables.get(from) {
-            Some(v) => v.clone(),
-            None => {
-                let fallback = context.fallback_value_id(from);
-                let slot = self.value_slot(fallback);
-                if slot.is_none() {
-                    *slot = Some(AbstractValue {
+        let mut values = self.set_of(from);
+        if values.is_empty() {
+            let fallback = context.fallback_value_id(from);
+            if self.value(fallback).is_none() {
+                self.initialize(
+                    fallback,
+                    AbstractValue {
                         kind: ValueKind::Mutable,
                         reason: hashset_of(ValueReason::Other),
-                    });
-                }
-                ValueIdSet::singleton(fallback)
+                    },
+                );
             }
-        };
-        self.variables.insert(into, values);
+            values = ValueSet::singleton(fallback);
+        }
+        self.variables.set(into.0 as usize, values);
     }
 
+    /// No-op if either is undefined.
     fn append_alias(&mut self, place: IdentifierId, value: IdentifierId) {
-        let new_values = match self.variables.get(value) {
-            Some(v) => v.clone(),
-            None => return,
-        };
-        self.variables.extend_values(place, &new_values);
+        let values = self.set_of(place);
+        if values.is_empty() {
+            return;
+        }
+        let all = self.union(values, self.set_of(value));
+        if all != values {
+            self.variables.set(place.0 as usize, all);
+        }
     }
 
     #[inline]
     fn is_defined(&self, place_id: IdentifierId) -> bool {
-        self.variables.is_defined(place_id)
+        !self.set_of(place_id).is_empty()
     }
 
-    fn values_for(&self, place_id: IdentifierId) -> ValueIdSet {
-        self.variables.get(place_id).cloned().unwrap_or_default()
+    /// In the order in which they came into the set.
+    fn values_for(&self, place_id: IdentifierId) -> SmallVec<[ValueId; 4]> {
+        let values = self.set_of(place_id);
+        match values.as_singleton() {
+            Some(value_id) => smallvec::smallvec![value_id],
+            None => self.sets.borrow().oldest_first(values),
+        }
     }
 
     fn kind(&self, place_id: IdentifierId) -> AbstractValue {
@@ -758,8 +663,8 @@ impl InferenceState {
         let value = self.kind(place_id);
         match value.kind {
             ValueKind::Context | ValueKind::Mutable | ValueKind::MaybeFrozen => {
-                for vid in &self.values_for(place_id) {
-                    self.freeze_value(*vid, reason);
+                for vid in self.values_for(place_id) {
+                    self.freeze_value(vid, reason);
                 }
                 true
             }
@@ -768,10 +673,13 @@ impl InferenceState {
     }
 
     fn freeze_value(&mut self, value_id: ValueId, reason: ValueReason) {
-        *self.value_slot(value_id) = Some(AbstractValue {
-            kind: ValueKind::Frozen,
-            reason: hashset_of(reason),
-        });
+        self.initialize(
+            value_id,
+            AbstractValue {
+                kind: ValueKind::Frozen,
+                reason: hashset_of(reason),
+            },
+        );
     }
 
     fn mutate_with_loc(
@@ -804,43 +712,31 @@ impl InferenceState {
 
     /// Merge `other` into `self` in place. Returns `true` if `self` changed.
     fn merge_from(&mut self, other: &InferenceState) -> bool {
-        let mut changed = self.values.merge_from(&other.values, |value, ov| {
-            let ov = (*ov)?;
-            let merged = match *value {
+        let values_changed = self.values.merge_from(&other.values, |value, ov| {
+            if value == ov {
+                return None;
+            }
+            let ov = ov?;
+            let merged = match value {
                 Some(this) => merge_abstract_values(this, ov),
                 None => ov,
             };
-            (*value != Some(merged)).then_some(Some(merged))
+            (value != Some(merged)).then_some(Some(merged))
         });
 
-        match (&mut self.variables, &other.variables) {
-            (Variables::Dense(this), Variables::Dense(that)) => {
-                changed |= this.merge_from(that, |mine, theirs| {
-                    if theirs.is_empty() || mine.as_slice() == theirs.as_slice() {
-                        return None;
-                    }
-                    let mut all = mine.clone();
-                    all.union_with(theirs).then_some(all)
-                });
+        let sets = &self.sets;
+        let variables_changed = self.variables.merge_from(&other.variables, |mine, theirs| {
+            if theirs.is_empty() || mine == theirs {
+                return None;
             }
-            (Variables::Sparse(this), Variables::Sparse(that)) => {
-                for (id, other_values) in that {
-                    match this.entry(*id) {
-                        std::collections::hash_map::Entry::Occupied(mut e) => {
-                            changed |= e.get_mut().union_with(other_values);
-                        }
-                        std::collections::hash_map::Entry::Vacant(e) => {
-                            e.insert(other_values.clone());
-                            changed = true;
-                        }
-                    }
-                }
+            if mine.is_empty() {
+                return Some(theirs);
             }
-            // Variant is fixed per `infer_mutation_aliasing_effects` call.
-            _ => unreachable!("Variables variant mismatch in merge_from"),
-        }
+            let all = sets.borrow_mut().union(mine, theirs);
+            (all != mine).then_some(all)
+        });
 
-        changed
+        values_changed | variables_changed
     }
 
     fn infer_phi(
@@ -848,15 +744,13 @@ impl InferenceState {
         phi_place_id: IdentifierId,
         phi_operands: &crate::collections::IndexMap<BlockId, Place>,
     ) {
-        let mut values = ValueIdSet::new();
-        for (_, operand) in phi_operands {
-            if let Some(operand_values) = self.variables.get(operand.identifier) {
-                values.union_with(operand_values);
-            }
+        let mut values = ValueSet::EMPTY;
+        for operand in phi_operands.values() {
             // If not found, it's a backedge that will be handled later by merge
+            values = self.union(values, self.set_of(operand.identifier));
         }
         if !values.is_empty() {
-            self.variables.insert(phi_place_id, values);
+            self.variables.set(phi_place_id.0 as usize, values);
         }
     }
 }
@@ -2007,49 +1901,45 @@ fn apply_effect(
             }
             // First, check if the callee is a locally-declared function expression
             // whose aliasing effects we already know (TS lines 1016-1068)
-            if let Some(function_values) = state.variables.get(function.identifier) {
-                if let &[value_id] = function_values.as_slice() {
-                    if let Some(func_id) = context.function_of(value_id) {
-                        let inner_func = &env.functions[func_id.0 as usize];
-                        if inner_func.aliasing_effects.is_some() {
-                            // Build or retrieve the signature from the function expression
-                            if !context.function_signature_cache.contains_key(&func_id) {
-                                let sig = build_signature_from_function_expression(env, func_id);
-                                context
-                                    .function_signature_cache
-                                    .insert(func_id, Rc::new(sig));
-                            }
-                            let sig = Rc::clone(&context.function_signature_cache[&func_id]);
-                            let inner_func = &env.functions[func_id.0 as usize];
-                            let context_places = inner_func.context.clone();
-                            let sig_effects = compute_effects_for_aliasing_signature(
-                                env,
-                                &sig,
-                                into,
-                                receiver,
-                                args,
-                                &context_places,
-                                loc.as_ref(),
-                            )?;
-                            if let Some(sig_effs) = sig_effects {
-                                // Conditionally mutate the function itself first
-                                apply_effect(
-                                    context,
-                                    state,
-                                    &AliasingEffect::MutateTransitiveConditionally {
-                                        value: function.clone(),
-                                    },
-                                    initialized,
-                                    effects,
-                                    env,
-                                )?;
-                                for se in sig_effs {
-                                    apply_effect(context, state, &se, initialized, effects, env)?;
-                                }
-                                return Ok(());
-                            }
-                        }
+            if let Some(value_id) = state.set_of(function.identifier).as_singleton()
+                && let Some(func_id) = context.function_of(value_id)
+                && env.functions[func_id.0 as usize].aliasing_effects.is_some()
+            {
+                // Build or retrieve the signature from the function expression
+                if !context.function_signature_cache.contains_key(&func_id) {
+                    let sig = build_signature_from_function_expression(env, func_id);
+                    context
+                        .function_signature_cache
+                        .insert(func_id, Rc::new(sig));
+                }
+                let sig = Rc::clone(&context.function_signature_cache[&func_id]);
+                let inner_func = &env.functions[func_id.0 as usize];
+                let context_places = inner_func.context.clone();
+                let sig_effects = compute_effects_for_aliasing_signature(
+                    env,
+                    &sig,
+                    into,
+                    receiver,
+                    args,
+                    &context_places,
+                    loc.as_ref(),
+                )?;
+                if let Some(sig_effs) = sig_effects {
+                    // Conditionally mutate the function itself first
+                    apply_effect(
+                        context,
+                        state,
+                        &AliasingEffect::MutateTransitiveConditionally {
+                            value: function.clone(),
+                        },
+                        initialized,
+                        effects,
+                        env,
+                    )?;
+                    for se in sig_effs {
+                        apply_effect(context, state, &se, initialized, effects, env)?;
                     }
+                    return Ok(());
                 }
             }
             if let Some(sig) = signature {

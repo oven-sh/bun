@@ -9,9 +9,9 @@
 use crate::collections::FxHashSet as HashSet;
 
 use crate::collections::IndexMap;
-use crate::diagnostics::CompilerError;
+use crate::diagnostics::{CompilerError, ErrorCategory};
 use crate::hir::environment::{Environment, OutputMode};
-use crate::hir::environment_config::EnvironmentConfig;
+use crate::hir::environment_config::{EnvironmentConfig, ExhaustiveEffectDepsMode};
 use crate::hir::{
     HirFunction, InstructionKind, InstructionValue, ReactFunctionType, VariableBinding,
 };
@@ -20,6 +20,7 @@ use crate::lowering::{self, FunctionNode};
 use crate::options::ReactCompilerOptions;
 use crate::pipeline;
 use crate::program::Host;
+use core::cell::Cell;
 
 /// What the compiler says of a function.
 pub struct Linted {
@@ -30,9 +31,26 @@ pub struct Linted {
     pub result: Result<(), CompilerError>,
 }
 
+/// Categories of what the compiler says.
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+pub struct Categories(u32);
+
+impl Categories {
+    pub const ALL: Categories = Categories(u32::MAX);
+
+    #[must_use]
+    pub fn with(self, category: ErrorCategory) -> Categories {
+        Categories(self.0 | (1 << category as u32))
+    }
+
+    pub fn has(self, category: ErrorCategory) -> bool {
+        self.0 & (1 << category as u32) != 0
+    }
+}
+
 /// For which functions the passes after the validations run. They take as long as all before them.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum LatePasses {
+enum LatePasses {
     /// Where they can change what is said in a category other than `Todo` and `Invariant`: an
     /// error is recorded, which an error of theirs would drop, or there is manual memoization to
     /// validate.
@@ -43,25 +61,74 @@ pub enum LatePasses {
     Always,
 }
 
+impl LatePasses {
+    fn run(self, hir: &HirFunction, env: &Environment) -> bool {
+        let is_start_of_memoization =
+            |value: &InstructionValue| matches!(value, InstructionValue::StartMemoize { .. });
+        let is_hoisted_function = |value: &InstructionValue| {
+            matches!(value, InstructionValue::DeclareContext { lvalue, .. }
+                if lvalue.kind == InstructionKind::HoistedFunction)
+        };
+        match self {
+            LatePasses::Always => true,
+            _ if env.has_errors() || has_instruction(hir, env, is_start_of_memoization) => true,
+            LatePasses::AlsoForTodos => has_instruction(hir, env, is_hoisted_function),
+            LatePasses::WhereTheyCount => false,
+        }
+    }
+}
+
+/// `wanted`: what is said in another category need not be said.
+///
+/// `is_more_recorded`: the caller has errors of its own for the function, which an error that a
+/// pass throws drops like those that the passes record.
 pub fn lint_function(
     func: &FunctionNode<'_>,
     host: &dyn Host,
     fn_type: ReactFunctionType,
     config: &EnvironmentConfig,
     import_bindings: &[(bun_ast::Ref, VariableBinding)],
-    late_passes: LatePasses,
+    wanted: Categories,
+    is_more_recorded: bool,
 ) -> Linted {
+    let wants_thrown = wanted.has(ErrorCategory::Todo) || wanted.has(ErrorCategory::Invariant);
+    let late_passes = match wants_thrown {
+        _ if is_more_recorded => LatePasses::Always,
+        true => LatePasses::AlsoForTodos,
+        false => LatePasses::WhereTheyCount,
+    };
+    let mut config = config.clone();
+    // A validation throws only a `Todo` or an `Invariant`, and that for no reason of its own.
+    if !wants_thrown {
+        config.validate_hooks_usage &= wanted.has(ErrorCategory::Hooks);
+        if !wanted.has(ErrorCategory::CapitalizedCalls) {
+            config.validate_no_capitalized_calls = None;
+        }
+        config.validate_no_derived_computations_in_effects &=
+            wanted.has(ErrorCategory::EffectDerivationsOfState);
+        if !wanted.has(ErrorCategory::EffectExhaustiveDependencies) {
+            config.validate_exhaustive_effect_dependencies = ExhaustiveEffectDepsMode::Off;
+        }
+    }
     let mut bindings = IndexMap::new();
     for (ref_, binding) in import_bindings {
         bindings.insert(*ref_, binding.clone());
     }
     let mut context = ProgramContext::new(ReactCompilerOptions::default(), None, None, false);
     context.output_mode = OutputMode::Lint;
-    let mut env = Environment::with_config(config.clone());
+    let mut env = Environment::with_config(config);
     env.fn_type = fn_type;
     env.output_mode = OutputMode::Lint;
     env.seed_uid_known_names(&HashSet::default());
-    let result = run(func, host, &mut env, &mut context, &bindings, late_passes);
+    let result = run(
+        func,
+        host,
+        &mut env,
+        &mut context,
+        &bindings,
+        late_passes,
+        wants_thrown,
+    );
     Linted {
         logged: context.logged,
         result,
@@ -75,26 +142,28 @@ fn run(
     context: &mut ProgramContext,
     import_bindings: &IndexMap<bun_ast::Ref, VariableBinding>,
     late_passes: LatePasses,
+    wants_thrown: bool,
 ) -> Result<(), CompilerError> {
     let mut hir = lowering::lower(func, None, host, env, import_bindings)?;
     pipeline::dump_lowered(&hir, env);
     if env.has_invariant_errors() {
         return Err(env.take_invariant_errors());
     }
-    pipeline::run_analysis_passes(&mut hir, env, context)?;
-    let is_start_of_memoization =
-        |value: &InstructionValue| matches!(value, InstructionValue::StartMemoize { .. });
-    let is_hoisted_function = |value: &InstructionValue| {
-        matches!(value, InstructionValue::DeclareContext { lvalue, .. }
-            if lvalue.kind == InstructionKind::HoistedFunction)
+    let was_followed = Cell::new(true);
+    let is_followed = |hir: &HirFunction, env: &Environment| {
+        was_followed.set(late_passes.run(hir, env));
+        was_followed.get()
     };
-    let runs = match late_passes {
-        LatePasses::Always => true,
-        _ if env.has_errors() || has_instruction(&hir, env, is_start_of_memoization) => true,
-        LatePasses::AlsoForTodos => has_instruction(&hir, env, is_hoisted_function),
-        LatePasses::WhereTheyCount => false,
+    let is_followed: Option<pipeline::IsFollowed<'_>> = match wants_thrown {
+        true => None,
+        false => Some(&is_followed),
     };
-    if runs {
+    pipeline::run_analysis_passes(&mut hir, env, context, is_followed)?;
+    if late_passes.run(&hir, env) {
+        debug_assert!(
+            was_followed.get(),
+            "an error was recorded after the question"
+        );
         pipeline::run_reactive_scope_passes(&mut hir, env, context)?;
     }
     match env.has_errors() {

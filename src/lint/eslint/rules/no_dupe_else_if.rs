@@ -44,6 +44,7 @@ pub(super) fn can_have_equal_tokens<'a>(a: Expr<'a>, b: Expr<'a>) -> bool {
             || a.member_name().map(Ident::name) != b.member_name().map(Ident::name)
             || a.binary_op() != b.binary_op()
             || a.unary_op() != b.unary_op()
+            || a.tag() == ExprTag::Regex && a.text() != b.text()
         {
             return false;
         }

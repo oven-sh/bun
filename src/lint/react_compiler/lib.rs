@@ -27,13 +27,14 @@ pub use finding::{Detail, Finding, Suggestion};
 pub use oxlint::{Label, Rendered, render_all};
 
 use bun_lint::ast::File;
-use compile::Depth;
+use bun_react_compiler::Categories;
 use std::cell::{Cell, OnceCell};
 
 #[derive(Default)]
 struct PerFlavor {
-    wants_everything: Cell<bool>,
-    findings: OnceCell<Vec<Finding>>,
+    wanted: Cell<Categories>,
+    /// And what was wanted when the compiler ran.
+    findings: OnceCell<(Vec<Finding>, Categories)>,
 }
 
 #[derive(Default)]
@@ -50,25 +51,34 @@ fn per_flavor<'a>(file: &'a File<'a>, flavor: Flavor) -> Option<&'a PerFlavor> {
     })
 }
 
-/// [`findings`] is also to have what only the passes after the validations say, which is of the
-/// categories `Todo` and `Invariant`. It counts if it is called before.
-pub fn want_everything<'a>(file: &'a File<'a>, flavor: Flavor) {
+/// [`findings`] is to have what the compiler says in `category`. It counts if it is called before.
+pub fn want<'a>(file: &'a File<'a>, flavor: Flavor, category: ErrorCategory) {
     if let Some(per_flavor) = per_flavor(file, flavor) {
-        per_flavor.wants_everything.set(true);
+        (per_flavor.wanted).set(per_flavor.wanted.get().with(category));
     }
 }
 
-/// What the compiler says of the file, in its order. It runs the first time this is asked.
+/// What the compiler says of the file in the categories that are [wanted](want), in its order, and
+/// perhaps more. It runs the first time this is asked.
 pub fn findings<'a>(file: &'a File<'a>, flavor: Flavor) -> &'a [Finding] {
     let Some(per_flavor) = per_flavor(file, flavor) else {
         debug_assert!(false, "the file has no room for what the compiler says");
         return &[];
     };
-    per_flavor.findings.get_or_init(|| {
-        let depth = match per_flavor.wants_everything.get() {
-            true => Depth::Everything,
-            false => Depth::Validations,
-        };
-        program::compile_program(file, flavor, depth)
-    })
+    let wanted = per_flavor.wanted.get();
+    let (findings, wanted_then) = per_flavor.findings.get_or_init(|| {
+        let findings = program::compile_program(file, flavor, wanted);
+        #[cfg(debug_assertions)]
+        {
+            let of_wanted = |all: &[Finding]| -> Vec<Finding> {
+                let is_wanted = |it: &&Finding| wanted.has(it.category);
+                all.iter().filter(is_wanted).cloned().collect()
+            };
+            let all = program::compile_program(file, flavor, Categories::ALL);
+            debug_assert_eq!(of_wanted(&findings), of_wanted(&all));
+        }
+        (findings, wanted)
+    });
+    debug_assert_eq!(*wanted_then, wanted);
+    findings
 }

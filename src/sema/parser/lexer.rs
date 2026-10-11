@@ -34,6 +34,8 @@ pub(crate) struct Lexer<'a> {
     /// template.
     pub(crate) atom: Atom,
     pub(crate) number: f64,
+    /// Where the last string starts that has nothing between its quotes but printable ASCII, and no backslash.
+    plain_string: u32,
     pub(crate) refusal: Option<Refusal>,
     /// Where the text was refused, and by which line of this crate.
     pub(crate) refused_at: (u32, &'static core::panic::Location<'static>),
@@ -288,6 +290,7 @@ impl<'a> Lexer<'a> {
             full_start: 0,
             atom: Atom::NONE,
             number: 0.0,
+            plain_string: u32::MAX,
             refusal: None,
             refused_at: (0, core::panic::Location::caller()),
             refused_after: 0,
@@ -1299,6 +1302,7 @@ impl<'a> Lexer<'a> {
             pos += mask.trailing_zeros() as usize;
             if src.get(pos) == Some(&quote) {
                 self.atom = self.atom_of_source(start + 1, pos);
+                self.plain_string = start as u32;
                 return self.set(T::String, start, pos + 1);
             }
             break;
@@ -2160,6 +2164,13 @@ impl Lexer<'_> {
         let src = self.src;
         let start = match self.refusal == had_refused {
             true if self.token != T::String => return,
+            // It is the same string here as in JavaScript.
+            true if self.plain_string == self.start
+                && self.flagged.is_empty()
+                && self.errors.is_empty() =>
+            {
+                return;
+            }
             true => self.start as usize,
             false if self.recovers => return,
             // It is scanned again from the quote.

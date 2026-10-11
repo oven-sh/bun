@@ -25,7 +25,7 @@ use crate::collections::FxHashSet as HashSet;
 use crate::diagnostics::CompilerError;
 use crate::hir::ReactFunctionType;
 use crate::hir::environment::{Environment, OutputMode};
-use crate::hir::environment_config::EnvironmentConfig;
+use crate::hir::environment_config::{EnvironmentConfig, ExhaustiveEffectDepsMode};
 
 use crate::codegen::{self, Codegen, CodegenFunction, OutlinedFunction};
 use crate::collections::IndexMap;
@@ -368,15 +368,22 @@ fn run_hir_passes(
     env: &mut Environment,
     context: &mut ProgramContext,
 ) -> Result<(crate::hir::reactive::ReactiveFunction, HashSet<String>), CompilerError> {
-    run_analysis_passes(hir, env, context)?;
+    run_analysis_passes(hir, env, context, None)?;
     run_reactive_scope_passes(hir, env, context)
 }
 
+/// Whether [`run_reactive_scope_passes`] is to follow, by what is known of the function when all
+/// that records an error has run but the validation of dependencies.
+pub(crate) type IsFollowed<'a> = &'a dyn Fn(&crate::hir::HirFunction, &Environment) -> bool;
+
 /// The passes up to and including the validations of the HIR.
+///
+/// With `is_followed`, what nothing uses is left out, even if it could throw.
 pub(crate) fn run_analysis_passes(
     hir: &mut crate::hir::HirFunction,
     env: &mut Environment,
     context: &mut ProgramContext,
+    is_followed: Option<IsFollowed<'_>>,
 ) -> Result<(), CompilerError> {
     pass!(
         env,
@@ -570,13 +577,21 @@ pub(crate) fn run_analysis_passes(
         return Err(env.take_errors());
     }
 
-    pass!(
-        env,
-        "InferReactivePlaces",
-        crate::inference::infer_reactive_places(hir, env)
-    )?;
+    // Memoization to validate is followed by the other passes.
+    let is_reactivity_used = is_followed.is_none_or(|is_followed| {
+        env.config.validate_exhaustive_effect_dependencies != ExhaustiveEffectDepsMode::Off
+            || is_followed(hir, env)
+    });
 
-    if env.enable_validations() {
+    if is_reactivity_used {
+        pass!(
+            env,
+            "InferReactivePlaces",
+            crate::inference::infer_reactive_places(hir, env)
+        )?;
+    }
+
+    if env.enable_validations() && is_reactivity_used {
         pass!(
             env,
             "ValidateExhaustiveDependencies",

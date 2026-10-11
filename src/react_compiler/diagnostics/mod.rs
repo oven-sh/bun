@@ -76,7 +76,7 @@ impl ErrorCategory {
 }
 
 /// Suggestion operations for auto-fixes
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CompilerSuggestionOperation {
     InsertBefore,
     InsertAfter,

@@ -35,7 +35,7 @@ end
 set -l bun_install_boolean_flags yarn production optional development no-save dry-run force no-cache silent verbose global
 set -l bun_install_boolean_flags_descriptions "Write a yarn.lock file (yarn v1)" "Don't install devDependencies" "Add dependency to optionalDependencies" "Add dependency to devDependencies" "Don't update package.json or save a lockfile" "Don't install anything" "Always request the latest versions from the registry & reinstall all dependencies" "Ignore manifest cache entirely" "Don't output anything" "Excessively verbose logging" "Use global folder"
 
-set -l bun_builtin_cmds_without_run dev create help bun upgrade discord install remove add update audit dedupe prune init pm x repl
+set -l bun_builtin_cmds_without_run dev create help bun upgrade discord install remove add update audit dedupe prune init pm x repl check
 set -l bun_builtin_cmds_accepting_flags create help bun upgrade discord run init link unlink pm x update
 
 function __bun_complete_bins_scripts --inherit-variable bun_builtin_cmds_without_run -d "Emit bun completions for bins and scripts"
@@ -211,6 +211,14 @@ complete -c bun -n "__fish_use_subcommand" -a "pm" -d "Additional package manage
 complete -c bun -n "__fish_use_subcommand" -a "x" -d "Execute a package binary, installing if needed" -f
 complete -c bun -n "__fish_use_subcommand" -a "outdated" -d "Display the latest versions of outdated dependencies" -f
 complete -c bun -n "__fish_use_subcommand" -a "audit" -d "Check installed packages for vulnerabilities" -f
+complete -c bun -n "__fish_use_subcommand" -a "check" -d "Type check a TypeScript project" -f
+complete -c bun -n "__fish_seen_subcommand_from check" -s "p" -l "project" -r -F -d "Path to a tsconfig.json or its directory"
+complete -c bun -n "__fish_seen_subcommand_from check" -l "pretty" -d "Show source code around each error"
+complete -c bun -n "__fish_seen_subcommand_from check" -l "no-pretty" -d "One line per error"
+complete -c bun -n "__fish_seen_subcommand_from check" -l "all" -d "Show every error"
+complete -c bun -n "__fish_seen_subcommand_from check" -l "threads" -r -d "Number of threads"
+complete -c bun -n "__fish_seen_subcommand_from check" -l "timing" -d "Print load and check times"
+complete -c bun -n "__fish_seen_subcommand_from check" -l "cwd" -r -d "Set the working directory"
 complete -c bun -n "__fish_use_subcommand" -a "dedupe" -d "Remove duplicate versions from the lockfile" -f
 complete -c bun -n "__fish_use_subcommand" -a "prune" -d "Remove packages that are not in the lockfile from node_modules" -f
 complete -c bun -n "__fish_seen_subcommand_from audit; and not __fish_seen_subcommand_from fix" -a "fix" -d "Upgrade vulnerable packages to the lowest safe version" -f

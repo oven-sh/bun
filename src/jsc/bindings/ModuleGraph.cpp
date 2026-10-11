@@ -596,24 +596,22 @@ JSPromise* JSModuleGraph::import(Zig::GlobalObject* globalObject, JSValue specif
     String cwd = cwdValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
     auto referrer = Identifier::fromString(vm, makeString(cwd, PLATFORM_SEP, "[module-graph]"_s));
-    Identifier key = loader->resolve(globalObject, Identifier::fromString(vm, specifier), referrer, nullptr, false);
+    Identifier key = loader->resolve(globalObject, Identifier::fromString(vm, specifier), referrer, nullptr, /* useImportMap */ true);
     RETURN_IF_EXCEPTION(scope, nullptr);
     // The first import makes its module main, whether or not it then loads. (Not a builtin: it
     // is no graph's module.)
     bool becomesMain = !m_mainPath && !Bun::isBuiltinModule(key.string());
     if (becomesMain)
         m_mainPath.set(vm, this, jsString(vm, key.string()));
-    JSPromise* loaded = loader->requestImportModule(globalObject, key, Identifier(), nullptr, nullptr);
+    // JSModuleLoader::requestImportModule() after its resolve, which would ask about the key.
+    JSPromise* loaded = loader->loadModule(globalObject, key, nullptr, nullptr, { ModuleLoadFlag::Evaluate, ModuleLoadFlag::Dynamic });
     if (scope.exception()) [[unlikely]] {
         if (becomesMain)
             m_mainPath.clear();
         return nullptr;
     }
-    // The loader marks its promise handled (import() in script derives one from it): so is what is
-    // returned here derived, by a reaction of JSC's own with no handler, so that a failure nobody
-    // handles is reported.
     JSPromise* result = JSPromise::create(vm, globalObject->promiseStructure());
-    result->pipeFrom(vm, loaded);
+    loaded->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ImportModuleNamespace, result, jsUndefined());
     return result;
 }
 

@@ -706,7 +706,7 @@ describe("TOML.stringify", () => {
     expect(TOML.stringify({ max: Number.MAX_SAFE_INTEGER })).toBe("max = 9007199254740991\n");
     // A double-encoded +0 (not an int32-tagged value) must not gain a sign.
     expect(TOML.stringify({ z: new Float64Array(1)[0] })).toBe("z = 0\n");
-    expect(Object.is(TOML.parse(TOML.stringify({ z: new Float64Array(1)[0] })).z, 0)).toBe(true);
+    expect(Object.is((TOML.parse(TOML.stringify({ z: new Float64Array(1)[0] })!) as { z: number }).z, 0)).toBe(true);
   });
 
   test("integral doubles beyond the safe range are emitted as floats", () => {
@@ -720,7 +720,7 @@ describe("TOML.stringify", () => {
     const d = new Date(Date.UTC(1979, 4, 27, 7, 32, 0, 999));
     expect(TOML.stringify({ d })).toBe("d = 1979-05-27T07:32:00.999Z\n");
     // It reads back as the Temporal.Instant of the same moment.
-    expect(TOML.parse(TOML.stringify({ d })).d.epochMilliseconds).toBe(d.getTime());
+    expect((TOML.parse(TOML.stringify({ d })!) as { d: Temporal.Instant }).d.epochMilliseconds).toBe(d.getTime());
     // Fraction uses auto precision (trailing zeros trimmed), so a Date and a
     // Temporal.Instant spell the same instant identically.
     expect(TOML.stringify({ d: new Date(0) })).toBe("d = 1970-01-01T00:00:00Z\n");
@@ -777,7 +777,7 @@ describe("TOML.stringify", () => {
     const zdt = Temporal.ZonedDateTime.from("2024-06-15T12:34:56+02:00[Europe/Berlin]");
     expect(TOML.stringify({ zdt })).toBe("zdt = 2024-06-15T12:34:56+02:00\n");
     // The same instant comes back, as an Instant.
-    expect(TOML.parse(TOML.stringify({ zdt })).zdt.equals(zdt.toInstant())).toBe(true);
+    expect((TOML.parse(TOML.stringify({ zdt })!) as { zdt: Temporal.Instant }).zdt.equals(zdt.toInstant())).toBe(true);
   });
 
   test("a ZonedDateTime with a sub-minute offset falls back to the UTC instant form", () => {
@@ -786,7 +786,7 @@ describe("TOML.stringify", () => {
     const zdt = Temporal.ZonedDateTime.from("1800-01-01T00:00[Europe/Berlin]");
     expect(zdt.offsetNanoseconds % 60_000_000_000).not.toBe(0);
     expect(TOML.stringify({ zdt })).toBe(`zdt = ${zdt.toInstant().toString()}\n`);
-    expect(TOML.parse(TOML.stringify({ zdt })).zdt.equals(zdt.toInstant())).toBe(true);
+    expect((TOML.parse(TOML.stringify({ zdt })!) as { zdt: Temporal.Instant }).zdt.equals(zdt.toInstant())).toBe(true);
   });
 
   test("a non-ISO calendar date emits its ISO fields without the calendar annotation", () => {
@@ -847,14 +847,16 @@ describe("TOML.stringify", () => {
       ["9999-12-31T23:59:59.999999999+00:00", "9999-12-31T23:59:59.999999999Z"],
     ];
     for (const [source, printed] of cases) {
-      const i = TOML.parse(`i = ${source}`).i as Temporal.Instant;
+      const i = (TOML.parse(`i = ${source}`) as { i: Temporal.Instant }).i;
       expect(TOML.stringify({ i })).toBe(`i = ${printed}\n`);
-      expect((TOML.parse(`i = ${printed}`).i as Temporal.Instant).epochNanoseconds).toBe(i.epochNanoseconds);
+      expect((TOML.parse(`i = ${printed}`) as { i: Temporal.Instant }).i.epochNanoseconds).toBe(i.epochNanoseconds);
     }
     // A ZonedDateTime keeps its own offset when that spelling fits, else the same rule applies.
     const zdt = Temporal.Instant.from("+010000-01-01T00:00:00Z").toZonedDateTimeISO("+02:00");
     expect(TOML.stringify({ zdt })).toBe("zdt = 9999-12-31T23:00:00-01:00\n");
-    expect((TOML.parse(TOML.stringify({ zdt })).zdt as Temporal.Instant).epochNanoseconds).toBe(zdt.epochNanoseconds);
+    expect((TOML.parse(TOML.stringify({ zdt })!) as { zdt: Temporal.Instant }).zdt.epochNanoseconds).toBe(
+      zdt.epochNanoseconds,
+    );
   });
 
   test("null values throw with the offending key", () => {
@@ -1002,7 +1004,7 @@ describe("stringify(parse) round-trips", () => {
     for (const [doc, out] of cases) {
       const once = TOML.parse(doc) as any;
       expect(TOML.stringify(once)).toBe(out);
-      expect((TOML.parse(TOML.stringify(once)) as any).d.toString()).toBe(once.d.toString());
+      expect((TOML.parse(TOML.stringify(once)!) as any).d.toString()).toBe(once.d.toString());
     }
   });
 
@@ -1016,7 +1018,7 @@ describe("stringify(parse) round-trips", () => {
   test("nan, inf, -inf, and signed zero round-trip as values, not just as text", () => {
     // toEqual treats NaN as NaN and -0 as 0, so assert with Object.is.
     for (const x of [NaN, Infinity, -Infinity, -0, 0]) {
-      expect(Object.is(TOML.parse(TOML.stringify({ x })).x, x)).toBe(true);
+      expect(Object.is((TOML.parse(TOML.stringify({ x })!) as { x: number }).x, x)).toBe(true);
     }
   });
 
@@ -1037,7 +1039,7 @@ describe("stringify(parse) round-trips", () => {
 
   test("float extremes round-trip exactly and the exponent form is valid TOML", () => {
     for (const x of [Number.MAX_VALUE, Number.MIN_VALUE, Number.EPSILON, 1e-7, 1e-300, 0.1, 1 / 3]) {
-      expect(Object.is(TOML.parse(TOML.stringify({ x })).x, x)).toBe(true);
+      expect(Object.is((TOML.parse(TOML.stringify({ x })!) as { x: number }).x, x)).toBe(true);
     }
     // JSC's shortest repr picks exponent form here; TOML allows `int-part exp`.
     expect(TOML.stringify({ x: 1e-7 })).toBe("x = 1e-7\n");

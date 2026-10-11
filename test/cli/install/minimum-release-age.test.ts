@@ -13,7 +13,7 @@ setDefaultTimeout(1000 * 60 * 5);
  * prerelease handling, 7-day give-up threshold, and edge cases.
  */
 describe("minimum-release-age", () => {
-  let mockRegistryServer: Server;
+  let mockRegistryServer: Server<undefined>;
   let mockRegistryUrl: string;
   const currentTime = Date.now();
   const SECONDS_PER_DAY = 24 * 60 * 60;
@@ -39,7 +39,7 @@ describe("minimum-release-age", () => {
     };
 
     let tarSize = 0;
-    const entries = [];
+    const entries: Buffer[] = [];
 
     for (const [path, content] of Object.entries(files)) {
       const contentBuf = Buffer.from(content, "utf8");

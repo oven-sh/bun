@@ -37,7 +37,9 @@ use core::ptr::NonNull;
 // In the AST crate, ListManaged is arena-backed.
 type ListManaged<'bump, T> = BumpVec<'bump, T>;
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool, const SEMA: bool>
+    P<'a, TYPESCRIPT, SCAN_ONLY, SEMA>
+{
     // Thin alias of `current_scope_mut()` kept for local readability.
     #[inline(always)]
     fn vis_scope(&mut self) -> &mut js_ast::Scope {

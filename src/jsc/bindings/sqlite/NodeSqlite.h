@@ -443,7 +443,7 @@ private:
     // SQLITE_STMTSTATUS_REPREPARE count when m_rowStructure was built.
     // A re-prepare (ALTER TABLE … RENAME COLUMN) keeps the column count
     // but can change the names, so count alone is not a valid key.
-    WTF::Vector<WTF::CString> m_rowColumnNames;
+    WTF::Vector<WTF::UTF8CString> m_rowColumnNames;
     int m_rowReprepareCount = -1;
     unsigned m_rowResetGeneration = 0;
     // Open-generation this statement was prepared on. After db.close()

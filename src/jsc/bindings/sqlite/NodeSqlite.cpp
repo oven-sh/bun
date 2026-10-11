@@ -2530,7 +2530,7 @@ bool JSStatementSync::cachedRowNamesMatch()
     }
     for (size_t i = 0; i < m_rowColumnNames.size(); ++i) {
         const char* name = sqlite3_column_name(m_stmt, static_cast<int>(i));
-        if (!name || strcmp(name, m_rowColumnNames[i].data()) != 0)
+        if (!name || strcmp(name, m_rowColumnNames[i].legacyCStringPointer()) != 0)
             return false;
     }
     m_rowReprepareCount = reprepares;
@@ -2590,7 +2590,7 @@ Structure* JSStatementSync::ensureRowStructure(JSGlobalObject* globalObject)
             m_rowColumnNames.clear();
             return nullptr;
         }
-        m_rowColumnNames.append(WTF::CString(name));
+        m_rowColumnNames.append(WTF::UTF8CString::unsafeFromUTF8(name));
         int8_t off = -1;
         for (size_t j = 0; j < names.size(); ++j) {
             if (names[j] == id) {

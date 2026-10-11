@@ -2701,7 +2701,11 @@ describe.concurrent("bun lint", () => {
         }];`,
       ],
     ])("as %s", async (_, name, configuration) => {
-      const { stdout, exitCode } = await lint({ [name]: configuration, ...sources }, ["-f", "unix", ...Object.keys(sources)]);
+      const { stdout, exitCode } = await lint({ [name]: configuration, ...sources }, [
+        "-f",
+        "unix",
+        ...Object.keys(sources),
+      ]);
       const places = [...stdout.matchAll(/([\w-]+\.ts):(\d+):(\d+): /g)].map(it => `${it[1]}:${it[2]}:${it[3]}`);
       expect(places.sort()).toEqual(["arrow.ts:3:5", "function.ts:3:5", "no-decorator.ts:3:5", "no-function.ts:3:5"]);
       expect(exitCode).toBe(1);

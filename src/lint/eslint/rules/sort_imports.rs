@@ -89,15 +89,9 @@ impl SortImports {
         }
     }
 
-    /// `specifiers.sort((a, b) => name(a) > name(b) ? 1 : -1)`
+    /// `specifiers.sort((a, b) => name(a) > name(b) ? 1 : -1)`: of two with the same name, the later one ends up
+    /// first.
     fn sort(&self, specifiers: &mut [ImportSpec<'_>]) {
-        if specifiers.len() < 64 {
-            return utils::array_sort_by(specifiers, |a, b| {
-                self.compare(a.local().bytes(), b.local().bytes()) != Ordering::Greater
-            });
-        }
-        // The same without moving each past all that come after it: of two with the same name, the
-        // later one ends up first.
         let key = |name| match self.ignore_case {
             true => text::to_lower_case(name),
             false => Cow::Borrowed(name),

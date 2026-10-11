@@ -1,13 +1,12 @@
 use crate::jest::{self, Ctx};
 use crate::jest_hooks::no_hooks::NoHooksConfig;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Disallows Jest setup and teardown hooks, such as `beforeAll`.
-pub struct NoHooks(NoHooksConfig);
+pub struct NoHooks<const VITEST: bool = false>(NoHooksConfig);
 
-impl Rule for NoHooks {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "no-hooks", Kind::Suggestion);
+impl<const VITEST: bool> Rule for NoHooks<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "no-hooks", Kind::Suggestion);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

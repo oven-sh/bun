@@ -2,34 +2,46 @@ use bun_lint::prelude::*;
 use rustc_hash::FxHashSet;
 
 /// Disallow specified identifiers.
-pub struct IdDenylist {
+pub struct IdList<const IS_BLACKLIST: bool> {
     names: FxHashSet<Vec<u8>>,
 }
+
+pub type IdDenylist = IdList<false>;
 
 const RESTRICTED: Message = Message::new("restricted", "Identifier '{{name}}' is restricted.");
 const RESTRICTED_PRIVATE: Message =
     Message::new("restrictedPrivate", "Identifier '#{{name}}' is restricted.");
 
 /// `name`: with the `#` of a private name.
-fn report<'a>(at: Span, name: &'a [u8], cx: &Cx<'a, IdDenylist>) {
+fn report<'a, R: Rule>(at: Span, name: &'a [u8], cx: &Cx<'a, R>) {
     match name {
         [b'#', rest @ ..] => cx.report(at, RESTRICTED_PRIVATE).data("name", rest),
         _ => cx.report(at, RESTRICTED).data("name", name),
     };
 }
 
-impl IdDenylist {
-    /// A private name is looked up without its `#`.
+impl<const IS_BLACKLIST: bool> IdList<IS_BLACKLIST> {
+    /// A private name is looked up without its `#`. `id-blacklist` does not check a `PrivateIdentifier`.
     #[inline]
     fn is_restricted(&self, name: Name) -> bool {
-        let name = name.bytes();
-        self.names.contains(name.strip_prefix(b"#").unwrap_or(name))
+        match name.bytes() {
+            [b'#', rest @ ..] => !IS_BLACKLIST && self.names.contains(rest),
+            name => self.names.contains(name),
+        }
     }
 
     /// An `Identifier` that is checked wherever it is, and does not refer to anything.
     fn check_name<'a>(&self, name: Ident<'a>, cx: &Cx<'a, Self>) {
         if self.is_restricted(name.name()) && !name.is_string() {
             report(name.span(), name.bytes(), cx);
+        }
+    }
+
+    /// The same for a keyword that ESLint has as an `Identifier`.
+    fn check_keyword<'a>(&self, at: Span, cx: &Cx<'a, Self>) {
+        let name = cx.slice(at);
+        if self.names.contains(name) {
+            report(at, name, cx);
         }
     }
 
@@ -50,6 +62,10 @@ impl IdDenylist {
         {
             report(key.span(cx.file()), name.bytes(), cx);
         }
+    }
+
+    fn check_import_attributes<'a>(&self, attributes: ImportAttributes<'a>, cx: &Cx<'a, Self>) {
+        attributes.entries().iter().filter_map(Prop::key).for_each(|key| self.check_key(key, cx));
     }
 
     fn check_reference<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
@@ -96,7 +112,7 @@ impl IdDenylist {
         }
         // Upstream's `isAssignmentTarget` leaves out the head of a `for`-`in` and a `for`-`of`.
         let is_written = utils::is_assignment_target(e) && !matches!(e.parent(), Node::Stmt(_));
-        if (is_written && !e.is_jsx_tag_name()) || utils::is_in_type_query(e) {
+        if (is_written && (IS_BLACKLIST || !e.is_jsx_tag_name())) || utils::is_in_type_query(e) {
             report(name.span(), name.bytes(), cx);
         }
     }
@@ -109,7 +125,7 @@ impl IdDenylist {
             && !prop.is_jsx_attribute()
             && let Node::Expr(object) = prop.parent()
             && !utils::is_assignment_target(object)
-            && !ast_utils::is_import_attribute_key(prop)
+            && (IS_BLACKLIST || !ast_utils::is_import_attribute_key(prop))
         {
             report(key.span(cx.file()), name.bytes(), cx);
         }
@@ -138,11 +154,7 @@ impl IdDenylist {
                     match it.name() {
                         ModuleName::Ident(name) => self.check_name(name, cx),
                         ModuleName::String(_) => {}
-                        ModuleName::Global => {
-                            if self.names.contains(&b"global"[..]) {
-                                report(it.name_span(), b"global", cx);
-                            }
-                        }
+                        ModuleName::Global => self.check_keyword(it.name_span(), cx),
                     }
                     at = it.nested();
                 }
@@ -159,6 +171,9 @@ impl IdDenylist {
                 }
             }
             _ => {}
+        }
+        if IS_BLACKLIST && let Some(attributes) = statement.import_attributes() {
+            self.check_import_attributes(attributes, cx);
         }
     }
 
@@ -186,11 +201,8 @@ impl IdDenylist {
                 name.parts().for_each(|part| self.check_name(part, cx));
                 // ESLint has `{ with: { key: "" } }` as an object literal.
                 if let Some(attributes) = ty.import_attributes() {
-                    let keyword = attributes.keyword_span();
-                    if self.names.contains(cx.slice(keyword)) {
-                        report(keyword, cx.slice(keyword), cx);
-                    }
-                    attributes.entries().iter().filter_map(Prop::key).for_each(|key| self.check_key(key, cx));
+                    self.check_keyword(attributes.keyword_span(), cx);
+                    self.check_import_attributes(attributes, cx);
                 }
             }
             TypeKind::Predicate { .. } => {
@@ -223,10 +235,16 @@ impl IdDenylist {
     }
 }
 
-impl Rule for IdDenylist {
-    const META: Meta = Meta::eslint("id-denylist", Kind::Suggestion);
+impl<const IS_BLACKLIST: bool> Rule for IdList<IS_BLACKLIST> {
+    const META: Meta = match IS_BLACKLIST {
+        true => Meta::eslint("id-blacklist", Kind::Suggestion).deprecated(),
+        false => Meta::eslint("id-denylist", Kind::Suggestion),
+    };
     const ON: On = On::new()
-        .exprs(&[ExprTag::Ident, ExprTag::Dot, ExprTag::PrivateIdentifier])
+        .exprs(match IS_BLACKLIST {
+            true => &[ExprTag::Ident, ExprTag::Dot, ExprTag::ImportMeta, ExprTag::NewTarget, ExprTag::AsConst],
+            false => &[ExprTag::Ident, ExprTag::Dot, ExprTag::PrivateIdentifier],
+        })
         .pats(&[PatTag::Ident])
         .props()
         .members()
@@ -237,6 +255,7 @@ impl Rule for IdDenylist {
             StmtTag::Break,
             StmtTag::Continue,
             StmtTag::Import,
+            StmtTag::ExportNamed,
             StmtTag::ExportStar,
             StmtTag::Interface,
             StmtTag::TypeAlias,
@@ -247,18 +266,13 @@ impl Rule for IdDenylist {
         ])
         .import_specs()
         .export_specs()
-        .types(&[
-            TypeTag::Ref,
-            TypeTag::Import,
-            TypeTag::Predicate,
-            TypeTag::Tuple,
-        ])
+        .types(&[TypeTag::Ref, TypeTag::Import, TypeTag::Predicate, TypeTag::Tuple])
         .type_params()
         .enum_members();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
-        IdDenylist {
+        IdList {
             names: options.all().iter().filter_map(|it| it.as_str().map(<[u8]>::to_vec)).collect(),
         }
     }
@@ -279,6 +293,17 @@ impl Rule for IdDenylist {
                     && self.is_restricted(name)
                 {
                     report(e.span(), name.bytes(), cx);
+                }
+            }
+            ExprTag::ImportMeta | ExprTag::NewTarget => {
+                if let Some((meta, property)) = e.meta_property_spans() {
+                    self.check_keyword(meta, cx);
+                    self.check_keyword(property, cx);
+                }
+            }
+            ExprTag::AsConst => {
+                if let Some(keyword) = e.const_keyword_span() {
+                    self.check_keyword(keyword, cx);
                 }
             }
             _ => {}

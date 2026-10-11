@@ -45,20 +45,14 @@ impl SortVars {
     }
 
     fn sorted_text<'a>(&self, declarations: &[VarDecl<'a>], file: &'a File<'a>) -> Vec<u8> {
-        let mut sorted = declarations.to_vec();
-        if sorted.len() < 64 {
-            utils::array_sort_by(&mut sorted, |a, b| self.compare(a, b) != Ordering::Greater);
-        } else {
-            // The same without moving each past all that come after it: of two with the same name,
-            // the later one ends up first.
-            let key = |name| match self.ignore_case {
-                true => text::to_lower_case(name),
-                false => Cow::Borrowed(name),
-            };
-            let mut named: Vec<_> = declarations.iter().rev().map(|it| (key(name_of(*it)), *it)).collect();
-            utils::sort::sort_by(&mut named, |a, b| strings::order_utf16(&a.0, &b.0));
-            sorted = named.into_iter().map(|it| it.1).collect();
-        }
+        // `sort((a, b) => name(a) > name(b) ? 1 : -1)`: of two with the same name, the later one ends up first.
+        let key = |name| match self.ignore_case {
+            true => text::to_lower_case(name),
+            false => Cow::Borrowed(name),
+        };
+        let mut named: Vec<_> = declarations.iter().rev().map(|it| (key(name_of(*it)), *it)).collect();
+        utils::sort::sort_by(&mut named, |a, b| strings::order_utf16(&a.0, &b.0));
+        let sorted: Vec<_> = named.into_iter().map(|it| it.1).collect();
         text_of(&sorted, declarations, file)
     }
 

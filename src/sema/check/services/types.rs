@@ -494,19 +494,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         self.c.intersection(types)
     }
 
-    pub fn indexed_access_type(
-        &mut self,
-        object: TypeId,
-        index: TypeId,
-        in_expression: bool,
-    ) -> Option<TypeId> {
-        let flags = match in_expression {
-            true => AccessFlags::EXPRESSION_POSITION,
-            false => AccessFlags::empty(),
-        };
-        self.c.indexed_access_with_flags(object, index, flags)
-    }
-
     pub fn assignment_reduced_type(&mut self, declared: TypeId, assigned: TypeId) -> TypeId {
         self.c.assignment_reduced_type(declared, assigned)
     }
@@ -518,15 +505,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             None => self.c.global_type_symbol(name)?,
         };
         Some(self.c.declared_type(symbol))
-    }
-
-    pub fn string_literal_type(&mut self, value: &[u8]) -> TypeId {
-        let value = self.c.atoms().intern(value);
-        self.c.string_literal(value, false)
-    }
-
-    pub fn number_literal_type(&mut self, value: f64) -> TypeId {
-        self.c.number_literal(value, false)
     }
 
     pub fn compare_types(&mut self, a: TypeId, b: TypeId) -> Option<std::cmp::Ordering> {

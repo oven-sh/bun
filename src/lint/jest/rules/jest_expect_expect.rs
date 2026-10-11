@@ -1,14 +1,13 @@
 use crate::jest::{self, Ctx};
 use crate::jest_expect::expect_expect::ExpectExpectConfig;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// This rule triggers when there is no call made to `expect` in a test, ensure that there is at least one `expect` call made
 /// in a test.
-pub struct ExpectExpect(ExpectExpectConfig);
+pub struct ExpectExpect<const VITEST: bool = false>(ExpectExpectConfig);
 
-impl Rule for ExpectExpect {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "expect-expect", Kind::Problem);
+impl<const VITEST: bool> Rule for ExpectExpect<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "expect-expect", Kind::Problem);
     const ON: On = On::new().finish();
     type State<'a> = ();
 
@@ -22,6 +21,6 @@ impl Rule for ExpectExpect {
 
     fn finish(&self, cx: &mut Cx<'_, Self>) {
         let ctx = Ctx { file: cx.file(), report: &|at, message| cx.report(at, message) };
-        self.0.run_once(&ctx, false);
+        self.0.run_once(&ctx, VITEST);
     }
 }

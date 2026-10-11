@@ -697,14 +697,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
 
     // ───────────────────────────── other symbols ─────────────────────────────
 
-    pub fn symbol_of_local(&mut self, symbol: SymbolId) -> Option<SymbolRef> {
-        if symbol.idx() >= self.c.bound(self.file).symbols.len() {
-            return None;
-        }
-        let sym = self.c.files().sym(self.file, symbol);
-        Some(self.symbol(sym))
-    }
-
     pub fn symbol_op(&mut self, op: SymbolOp, symbol: SymbolRef) -> Option<SymbolRef> {
         let (key, prop) = self.entry(symbol)?;
         let files = self.c.files();
@@ -804,24 +796,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         match self.prop_of(symbol) {
             Some((prop, _)) => self.c.is_spreadable_property(prop),
             None => false,
-        }
-    }
-
-    pub fn declaration_modifier_flags_from_symbol(&mut self, symbol: SymbolRef) -> ModifierFlags {
-        if let Some((prop, _)) = self.prop_of(symbol) {
-            let mut flags = self
-                .c
-                .get_declaration_modifier_flags_from_symbol_ex(prop, false);
-            flags.remove(Flags::AMBIENT);
-            return ModifierFlags::from(flags);
-        }
-        match self.entry(symbol) {
-            // "a prototype property is public and static"
-            Some((Key::Prototype(_), _)) => ModifierFlags::PUBLIC | ModifierFlags::STATIC,
-            _ => match self.value_declaration(symbol) {
-                Some(declaration) => self.node_modifier_flags(declaration),
-                None => ModifierFlags::empty(),
-            },
         }
     }
 
@@ -957,11 +931,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
             parameter_index: predicate.param.and_then(|index| u32::try_from(index).ok()),
             ty: predicate.ty,
         })
-    }
-
-    pub fn type_at_position(&mut self, signature: SigId, index: u32) -> Option<TypeId> {
-        let parameters = self.c.sig_params(signature);
-        self.c.param_type_at(&parameters, index as usize)
     }
 
     pub fn signature_to_string(&mut self, signature: SigId) -> Vec<u8> {

@@ -1,18 +1,17 @@
 use crate::jest::{self, Ctx};
 use crate::jest_expect::valid_expect::ValidExpectConfig;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Checks that `expect()` is called correctly.
-pub struct ValidExpect(ValidExpectConfig);
+pub struct ValidExpect<const VITEST: bool = false>(ValidExpectConfig);
 
-impl Rule for ValidExpect {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "valid-expect", Kind::Problem).has_suggestions();
+impl<const VITEST: bool> Rule for ValidExpect<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "valid-expect", Kind::Problem).has_suggestions();
     const ON: On = On::new().finish();
     type State<'a> = ();
 
     fn new(options: &Options) -> Self {
-        ValidExpect(ValidExpectConfig::new(options, false))
+        ValidExpect(ValidExpectConfig::new(options, VITEST))
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {

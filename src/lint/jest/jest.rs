@@ -2,14 +2,15 @@
 //! `utils/vitest.rs`, `utils/vitest/valid_vitest_fn.rs` and what `frameworks.rs` says about tests. Each function has the name that it
 //! has there.
 //!
-//! - A rule exists twice, for `jest` and for `vitest`. What it does is compiled once, in `jest_*.rs` beside this file: a function
-//!   there takes a [`Ctx`], which is not generic, and the two rules are wrappers.
+//! - A rule that `jest` and `vitest` both have is `rules/jest_*.rs`, with `VITEST`. What it does is compiled once, in `jest_*.rs`
+//!   beside this file: a function there takes a [`Ctx`], which is not generic.
 //! - A `CallExpression` is the `Expr` of a `Call`. Text is bytes.
 //! - Which calls may be calls of Jest is found once for a file, whatever the number of rules: [`iter_possible_jest_call_node`].
 //! - oxlint recurses along `a.b().c().d..`. Here these are loops.
 
 use bun_core::strings;
 use bun_lint::prelude::*;
+use bun_lint::rule::Plugin;
 use bun_lint::utils::ancestor_memo::AncestorMemo;
 use bun_lint_oxlint::ast_util::{scope_made_by, static_property_info};
 use bun_lint_oxlint::codegen::Codegen;
@@ -30,6 +31,14 @@ pub(crate) struct Ctx<'a, 'r> {
 impl<'a> Ctx<'a, '_> {
     pub(crate) fn report(&self, at: impl Spanned, message: Message) -> Report<'a> {
         (self.report)(at.span(), message)
+    }
+}
+
+/// Of a rule that both have.
+pub(crate) const fn plugin(is_vitest: bool) -> Plugin {
+    match is_vitest {
+        true => Plugin::Vitest,
+        false => Plugin::Jest,
     }
 }
 

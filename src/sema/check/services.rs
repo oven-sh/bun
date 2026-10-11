@@ -906,56 +906,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
         Some(self.c.sig_of_fn(node.file, function))
     }
 
-    pub fn accessed_property_name(&mut self, node: NodeRef) -> Option<&'p [u8]> {
-        let (hir, at) = self.valid(node)?;
-        let name = match hir.data(at) {
-            NodeData::Expr(e) => match hir[e].kind {
-                ExprKind::Dot { name, .. } => name,
-                ExprKind::Index { index, .. } => match hir[index].kind {
-                    ExprKind::String(text) => text,
-                    ExprKind::Number(number) => {
-                        self.c.number_name(*hir.numbers.get(number as usize)?)
-                    }
-                    _ => {
-                        let ty = self.c.type_of_expr(node.file, index);
-                        self.c.property_name_of_type(ty)?
-                    }
-                },
-                _ => return None,
-            },
-            NodeData::PatProp(p) => match hir[p].key {
-                PropKey::Name(name) => name,
-                PropKey::Computed(e) => {
-                    let ty = self.c.type_of_expr(node.file, e);
-                    self.c.property_name_of_type(ty)?
-                }
-                _ => return None,
-            },
-            // The index of the element in its pattern, of the parameter in its list.
-            NodeData::PatElem(element) => {
-                let pattern = hir.parent(at);
-                let mut index = 0;
-                let mut found = None;
-                hir.for_each_child(pattern, &mut |child| {
-                    if child == hir.node(element) {
-                        found = Some(index);
-                    }
-                    index += 1;
-                    found.is_some()
-                });
-                self.c.number_name(f64::from(found?))
-            }
-            NodeData::Param(parameter) => {
-                let function = *self.c.bound(node.file).param_fn.get(parameter.idx())?;
-                self.c.number_name(f64::from(
-                    parameter.0.checked_sub(hir[function].params.start)?,
-                ))
-            }
-            _ => return None,
-        };
-        Some(self.c.atoms().bytes(name))
-    }
-
     pub fn constant_value(&mut self, node: NodeRef) -> Option<LiteralValue<'p>> {
         let (hir, at) = self.valid(node)?;
         let value = match hir.data(at) {
@@ -1008,13 +958,6 @@ impl<'c, 'p, 's> Services<'c, 'p, 's> {
                 (self.c).context_free_type_of_call_resolved_afresh(node.file, e)
             }
             _ => self.c.context_free_type_of_expression(node.file, e),
-        }
-    }
-
-    pub fn type_with_default(&mut self, ty: TypeId, default: NodeRef) -> TypeId {
-        match self.expr_of(default) {
-            Some(e) => self.c.get_type_with_default(default.file, ty, e),
-            None => ty,
         }
     }
 

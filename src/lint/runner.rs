@@ -1237,12 +1237,13 @@ fn run_rules<'r, 'a: 'r, S: Starts>(file: &'a File<'a>, rules: &'r [Enabled<'r, 
     }
 }
 
-/// Declares the rules of a crate: one module in `rules/` for each, and the list of all of them.
+/// Declares the rules of a crate: one module in `rules/` for each, and the list of all of them. `b::Rule = a<true>` is a
+/// rule without a module of its own: `a::Rule<true>`.
 #[macro_export]
 macro_rules! rules {
-    ($($module:ident::$rule:ident,)*) => {
+    ($($module:ident::$rule:ident $(= $of:ident<$argument:literal>)?,)*) => {
         pub mod rules {
-            $(pub mod $module;)*
+            $($crate::rule_module! { $module::$rule $(= $of<$argument>)? })*
         }
 
         /// Sorted by name.
@@ -1251,5 +1252,19 @@ macro_rules! rules {
         ];
 
         $crate::rules_as_a_set! { $($module::$rule,)* }
+    };
+}
+
+/// For [`rules!`](crate::rules).
+#[doc(hidden)]
+#[macro_export]
+macro_rules! rule_module {
+    ($module:ident::$rule:ident) => {
+        pub mod $module;
+    };
+    ($module:ident::$rule:ident = $of:ident<$argument:literal>) => {
+        pub mod $module {
+            pub type $rule = super::$of::$rule<$argument>;
+        }
     };
 }

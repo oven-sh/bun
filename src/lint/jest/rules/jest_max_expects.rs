@@ -1,13 +1,12 @@
 use crate::jest::{self, Ctx};
 use crate::jest_expect::max_expects;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// This rule enforces a maximum number of `expect()` calls in a single test.
-pub struct MaxExpects(u32);
+pub struct MaxExpects<const VITEST: bool = false>(u32);
 
-impl Rule for MaxExpects {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "max-expects", Kind::Suggestion);
+impl<const VITEST: bool> Rule for MaxExpects<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "max-expects", Kind::Suggestion);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

@@ -1,13 +1,12 @@
 use crate::jest::{self, Ctx};
 use crate::jest_matchers::prefer_to_be;
 use bun_lint::prelude::*;
-use bun_lint::rule::Plugin;
 
 /// Recommends using `toBe` matcher for primitive literals and specific matchers for `null`, `undefined`, and `NaN`.
-pub struct PreferToBe;
+pub struct PreferToBe<const VITEST: bool = false>;
 
-impl Rule for PreferToBe {
-    const META: Meta = Meta::oxlint(Plugin::Jest, "prefer-to-be", Kind::Suggestion).fixable(Fixable::Code);
+impl<const VITEST: bool> Rule for PreferToBe<VITEST> {
+    const META: Meta = Meta::oxlint(jest::plugin(VITEST), "prefer-to-be", Kind::Suggestion).fixable(Fixable::Code);
     const ON: On = On::new().finish();
     type State<'a> = ();
 

@@ -2528,15 +2528,20 @@ test.concurrent("keeps dependencies bundled inside a file: dependency", async ()
     write(packageJson, JSON.stringify({ name: "foo", dependencies: { local: "file:./local" } })),
     write(
       join(dir, "local", "package.json"),
-      JSON.stringify({ name: "local", version: "1.0.0", bundleDependencies: ["inner"] }),
+      JSON.stringify({
+        name: "local",
+        version: "1.0.0",
+        dependencies: { "no-deps": "1.0.0" },
+        bundleDependencies: ["no-deps"],
+      }),
     ),
     write(
-      join(dir, "local", "node_modules", "inner", "package.json"),
-      JSON.stringify({ name: "inner", version: "1.0.0" }),
+      join(dir, "local", "node_modules", "no-deps", "package.json"),
+      JSON.stringify({ name: "no-deps", version: "1.0.0" }),
     ),
   ]);
   await runBunInstall(installEnv(dir), dir);
-  const inner = join(dir, "node_modules", "local", "node_modules", "inner", "package.json");
+  const inner = join(dir, "node_modules", "local", "node_modules", "no-deps", "package.json");
   expect(existsSync(inner)).toBeTrue();
   const junk = plant(dir, "node_modules/junk");
 

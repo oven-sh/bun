@@ -157,8 +157,8 @@ type Faults = {
   chunker?: (offset: number) => number;
   /** Milliseconds to wait between writes (default: none, `setImmediate`). */
   delayMs?: (offset: number) => number;
-  /** The rest of the tarball waits for this after the first write. */
-  afterFirstWrite?: () => Promise<void>;
+  /** The rest of the tarball waits for this after the first write. `isClosed`: bun hung up, nobody reads the rest. */
+  afterFirstWrite?: (isClosed: () => boolean) => Promise<void>;
   /** Destroy the tarball connection after this many body bytes... */
   dropTarballAt?: number;
   /** ...for the first N tarball requests (default: every request). */
@@ -231,7 +231,9 @@ async function makeRegistry(tgz: Buffer, shasum: string, integrity: string, chun
         const first = i === 0;
         i += n;
         if (first && faults.afterFirstWrite) {
-          void faults.afterFirstWrite().then(step);
+          let closed = false;
+          res.once("close", () => (closed = true));
+          void faults.afterFirstWrite(() => closed).then(() => closed || step());
           return;
         }
         const delay = faults.delayMs ? faults.delayMs(i) : 0;
@@ -1571,9 +1573,15 @@ async function installStreamPkg(path: ExtractPath, tgz: Buffer, { installs = 1, 
   const sha = (algorithm: string, encoding: "hex" | "base64") => createHash(algorithm).update(tgz).digest(encoding);
   // A tarball is streamed only if its body arrives in more than one piece. The first
   // drain creates the extraction directory, so the rest waits until that exists.
+  // An install that fails may remove it again, or hang up, before this looks.
   let tmp = "";
-  const afterFirstWrite = async () => {
-    while (!readdirSync(tmp).some(name => name.endsWith(".stream-pkg"))) await Bun.sleep(1);
+  const waits: Promise<void>[] = [];
+  const afterFirstWrite = (isClosed: () => boolean) => {
+    const wait = (async () => {
+      while (!isClosed() && !readdirSync(tmp).some(name => name.endsWith(".stream-pkg"))) await Bun.sleep(1);
+    })();
+    waits.push(wait);
+    return wait;
   };
   // The integrity is that of the bytes as they are: it holds.
   await using reg = await makeRegistry(
@@ -1616,6 +1624,8 @@ async function installStreamPkg(path: ExtractPath, tgz: Buffer, { installs = 1, 
       exitCode,
     });
   }
+  // They read `tmp`, which goes with `dir`.
+  await Promise.all(waits);
   return results;
 }
 

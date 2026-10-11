@@ -343,7 +343,10 @@ impl RepositoryExt for Repository {
             return None;
         }
 
-        if url.starts_with(b"git@") {
+        // `git@host:path`. git reads `git@host/path` as a path on this machine.
+        if url.starts_with(b"git@")
+            && strings::index_of_any(url, b":/").is_some_and(|at| url[at] == b':')
+        {
             return Some(url.to_vec());
         }
 

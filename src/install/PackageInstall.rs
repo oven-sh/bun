@@ -573,6 +573,17 @@ fn is_hardlinked_copy(src: &Dir, dest: &Dir) -> bool {
         })
 }
 
+/// `is_hardlinked_copy` for the folder itself, in either linker.
+pub(crate) fn is_linked_folder(src: &Dir, dest: &Dir) -> bool {
+    let (Ok(dest_stat), Ok(src_stat)) = (sys::fstat(dest.fd()), sys::fstat(src.fd())) else {
+        return false;
+    };
+    // Inode numbers only compare on one device. The same directory is a link to the folder.
+    dest_stat.st_dev == src_stat.st_dev
+        && dest_stat.st_ino != src_stat.st_ino
+        && is_hardlinked_copy(src, dest)
+}
+
 // macOS clonefileat(2) — routed through the safe `sys::clonefileat` wrapper
 // (takes `Fd`/`&ZStr`, returns `Maybe<()>`). The wrapper preserves the errno
 // via `Error::get_errno()` for the per-errno branching below.
@@ -1005,13 +1016,7 @@ impl<'a> PackageInstall<'a> {
         ) else {
             return false;
         };
-        let (Ok(dest_stat), Ok(src_stat)) = (sys::fstat(dest.fd()), sys::fstat(src.fd())) else {
-            return false;
-        };
-        // Inode numbers only compare on one device. The same directory is a link to the folder.
-        dest_stat.st_dev == src_stat.st_dev
-            && dest_stat.st_ino != src_stat.st_ino
-            && is_hardlinked_copy(&src, &dest)
+        is_linked_folder(&src, &dest)
     }
 
     fn get_installed_package_json_source(
@@ -2268,6 +2273,57 @@ impl<'a> PackageInstall<'a> {
     }
 
     fn install_into(
+        &mut self,
+        destination_dir: &Dir,
+        method_: Method,
+        resolution_tag: resolution::Tag,
+    ) -> InstallResult {
+        let result = self.link_files_into(destination_dir, method_, resolution_tag);
+        if resolution_tag == resolution::Tag::Folder && matches!(result, InstallResult::Success) {
+            self.link_bundled_into(destination_dir);
+        }
+        result
+    }
+
+    /// See `Lockfile::bundled_by_folder`. The links are relative, and hold after the rename: a
+    /// staging directory is a sibling of its destination.
+    #[cold]
+    fn link_bundled_into(&self, destination_dir: &Dir) {
+        let lockfile = self.lockfile;
+        let mut src_buf = path::path_buffer_pool::get();
+        let mut dest_buf = path::path_buffer_pool::get();
+        for bundled in lockfile.bundled_by_folder(self.cache_dir_subpath.as_bytes()) {
+            let name = bstr::BStr::new(bundled.name.slice(&lockfile.buffers.string_bytes));
+            if let (Ok(src), Ok(dest)) = (
+                bun_core::fmt::buf_print_z(
+                    &mut src_buf[..],
+                    format_args!(
+                        "{}/node_modules/{}",
+                        bstr::BStr::new(self.cache_dir_subpath.as_bytes()),
+                        name
+                    ),
+                ),
+                bun_core::fmt::buf_print_z(
+                    &mut dest_buf[..],
+                    format_args!(
+                        "{}/node_modules/{}",
+                        bstr::BStr::new(self.destination_dir_subpath.as_bytes()),
+                        name
+                    ),
+                ),
+            ) {
+                // Not in the folder: as with a tarball that lacks what it bundles.
+                let _ = PackageInstall {
+                    cache_dir_subpath: src,
+                    destination_dir_subpath: dest,
+                    ..*self
+                }
+                .install_from_link(true, destination_dir);
+            }
+        }
+    }
+
+    fn link_files_into(
         &mut self,
         destination_dir: &Dir,
         method_: Method,

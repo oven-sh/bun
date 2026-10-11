@@ -2550,6 +2550,8 @@ test.concurrent.skipIf(isWindows).each([
   ["git+deploy@myhost.example:org/repo.git", "deploy@myhost.example/org/repo.git"],
   ["git+deploy@myhost.example/org/repo.git", "deploy@myhost.example/org/repo.git"],
   ["bun@github.com:owner/repo.git", "bun@github.com/owner/repo.git"],
+  // As it is, git would read it as a directory of the project.
+  ["git@localhost/user/repo.git", "git@localhost/user/repo.git"],
   // ssh must not read the user as an option.
   [
     "git+-oProxyCommand=x@localhost:org/repo.git",
@@ -2571,8 +2573,10 @@ test.concurrent.skipIf(isWindows).each([
 // Neither a URL nor an scp-style path: git would read it as a directory of the
 // project and clone that.
 test.concurrent.skipIf(isWindows)("does not hand a bare word to git clone", async () => {
-  const { calls, exitCode } = await failingGitCalls("sshlatest");
+  const { calls, stderr, exitCode } = await failingGitCalls("git+:latest");
   expect(calls).toEqual([]);
+  // It is a git dependency: the registry was not asked for a `git+:latest` tag.
+  expect(diagnostics(stderr)).toContain("error: RepositoryNotFound cloning repository for pkg");
   expect(exitCode).toBe(1);
 });
 
@@ -3043,11 +3047,12 @@ async function expectFileDepsInstalled(project: string) {
   expect(lockfile).toContain(`"${name}/${name}-self": ["${name}-self@file:.", {}]`);
   expect(lockfile).toContain(`"${name}/gone": ["gone@file:./not-in-package", {}]`);
 
-  // Transitive folder dependencies are not hoisted: each one is installed into
-  // the declaring package's own node_modules, relative to that package, as real
-  // files (`file:.` as one symlink per file). The folder missing from the
-  // package is skipped, as it is for a registry package.
+  // Transitive folder dependencies are not hoisted: each one is linked into
+  // the declaring package's own node_modules, relative to that package, as one
+  // link to the folder (`file:.` as one symlink per file). The folder missing
+  // from the package is skipped, as it is for a registry package.
   expect((await readdir(nested)).sort()).toEqual([`${name}-self`, "sub"]);
+  expect((await lstat(join(nested, "sub"))).isSymbolicLink()).toBe(true);
   expect((await lstat(join(nested, "sub", "package.json"))).isFile()).toBe(true);
   expect(await Bun.file(join(nested, "sub", "package.json")).json()).toEqual({ name: "sub", version: "1.0.0" });
   expect(await linkedJson(join(nested, `${name}-self`, "package.json"))).toEqual(fileDepsManifest);

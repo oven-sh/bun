@@ -1226,13 +1226,14 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
             let _ = bun_http::OVERRIDDEN_DEFAULT_USER_AGENT.set(user_agent);
         }
 
-        ctx.debug.offline_mode_setting = Some(if args.flag(b"--prefer-offline") {
-            bun_options_types::offline_mode::OfflineMode::Offline
+        // Without a flag, `install.prefer` of bunfig.toml stays.
+        if args.flag(b"--prefer-offline") {
+            ctx.debug.offline_mode_setting =
+                Some(bun_options_types::offline_mode::OfflineMode::Offline);
         } else if args.flag(b"--prefer-latest") {
-            bun_options_types::offline_mode::OfflineMode::Latest
-        } else {
-            bun_options_types::offline_mode::OfflineMode::Online
-        });
+            ctx.debug.offline_mode_setting =
+                Some(bun_options_types::offline_mode::OfflineMode::Latest);
+        }
 
         if args.flag(b"--no-install") {
             ctx.debug.global_cache = options::GlobalCache::disable;

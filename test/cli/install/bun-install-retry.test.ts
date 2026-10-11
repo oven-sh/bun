@@ -915,8 +915,10 @@ describe.concurrent("an optional dependency whose tarball is gone", () => {
       "package.json": JSON.stringify({ name: "foo", ...root }),
       "bunfig.toml": Bun.TOML.stringify({ install: { cache: "./.bun-cache", registry: registry.url.href, linker } }),
     });
+    let lastOut = "";
     return {
       dir: String(dir),
+      lastOut: () => lastOut,
       has: (...path: string[]) => lstatSync(join(String(dir), ...path), { throwIfNoEntry: false }) !== undefined,
       async run(...args: string[]) {
         await using proc = spawn({
@@ -927,6 +929,7 @@ describe.concurrent("an optional dependency whose tarball is gone", () => {
           stderr: "pipe",
         });
         const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        lastOut = out;
         const count = (prefix: string) => err.split("\n").filter(line => line.startsWith(prefix)).length;
         return {
           errors: count("error:"),
@@ -968,6 +971,9 @@ describe.concurrent("an optional dependency whose tarball is gone", () => {
         false,
         false,
       ]);
+      // The isolated linker links `bad` beside `pkg` again and takes the link away again.
+      expect(await p.run("install")).toEqual(leftOut);
+      expect(p.lastOut()).toContain("(no changes)");
     });
 
     it("is left out by --offline", async () => {

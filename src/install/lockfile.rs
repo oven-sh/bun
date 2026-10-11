@@ -1161,6 +1161,26 @@ impl Lockfile {
                 == ResolutionTag::Folder
     }
 
+    /// What the `file:` folder at `path` (as its resolution has it) bundles. Nothing is installed
+    /// for these dependencies and a folder's `node_modules` is not copied, so both linkers link
+    /// each to `<path>/node_modules/<name>`, where it also finds what it depends on.
+    pub(crate) fn bundled_by_folder<'a>(
+        &'a self,
+        path: &'a [u8],
+    ) -> impl Iterator<Item = &'a Dependency> {
+        let buf = self.buffers.string_bytes.as_slice();
+        (self.packages.items_resolution().iter())
+            .zip(self.packages.items_dependencies())
+            .find(|(resolution, _)| {
+                resolution.tag == ResolutionTag::Folder && resolution.folder().slice(buf) == path
+            })
+            .map_or(&[][..], |(_, rows)| {
+                rows.get(self.buffers.dependencies.as_slice())
+            })
+            .iter()
+            .filter(|dependency| dependency.behavior.is_bundled())
+    }
+
     /// Is there a root `overrides`/`resolutions` rule (plain or scoped) for this dependency?
     pub(crate) fn is_overridden_dependency(&self, id: DependencyID) -> bool {
         let dependency = &self.buffers.dependencies[id as usize];
@@ -2321,6 +2341,29 @@ pub(crate) fn linked_workspace_path(
     }
     let version = *workspace_versions.get(&name_hash)?;
     range.satisfies(version, buf, buf).then_some(path)
+}
+
+/// Whether `Package::parse_dependency` replaces the root's edge to the workspace of `dep`'s name by
+/// `dep`, a dependency of the root: a registry range that does not link the workspace.
+pub(crate) fn replaces_workspace_edge(
+    link_workspace_packages: bool,
+    workspace_paths: &NameHashMap,
+    workspace_versions: &VersionHashMap,
+    dep: &Dependency,
+    buf: &[u8],
+) -> bool {
+    dep.version.tag == dependency::Tag::Npm
+        && workspace_versions.contains(&dep.name_hash)
+        && Semver::string::Builder::string_hash(dep.version.npm().name.slice(buf)) == dep.name_hash
+        && linked_workspace_path(
+            link_workspace_packages,
+            workspace_paths,
+            workspace_versions,
+            dep.name_hash,
+            &dep.version.npm().version,
+            buf,
+        )
+        .is_none()
 }
 
 /// `parts` resolved against the top-level dir, or `None` when the result does not fit a path buffer.

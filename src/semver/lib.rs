@@ -659,14 +659,15 @@ pub mod semver_string {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             use core::fmt::Write;
             for chunk in self.bytes.utf8_chunks() {
-                for c in chunk.valid().chars() {
-                    f.write_char(match c {
-                        // `?` would be parsed as a query-string delimiter during
-                        // module resolution (and is invalid in Windows filenames).
-                        '/' | '\\' | ':' | '#' | '?' => '+',
-                        _ => c,
-                    })?;
+                // `?` would be parsed as a query-string delimiter during
+                // module resolution (and is invalid in Windows filenames).
+                let mut rest = chunk.valid();
+                while let Some(i) = strings::index_of_any(rest.as_bytes(), b"/\\:#?") {
+                    f.write_str(&rest[..i])?;
+                    f.write_char('+')?;
+                    rest = &rest[i + 1..];
                 }
+                f.write_str(rest)?;
                 for &c in chunk.invalid() {
                     f.write_char(c as char)?;
                 }

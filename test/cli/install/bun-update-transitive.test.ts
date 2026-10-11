@@ -1,5 +1,5 @@
 import { file, write } from "bun";
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { statSync, utimesSync } from "fs";
 import { exists, rm } from "fs/promises";
 import { bunEnv, bunExe, tempDir } from "harness";
@@ -3148,21 +3148,45 @@ test.concurrent("`bun update <name> -r` keeps a member's optional entry that no 
   expect(exitCode).toBe(0);
 });
 
-// --latest swaps the declared range for `latest` before the install. Every release here is younger than the minimum release age, so nothing resolves and the range comes back.
-test.concurrent.each([
-  ["a plain entry", { leaf: "^1.0.0" }, "leaf"],
-  ["an npm: alias", { aliased: "npm:leaf@^1.0.0" }, "aliased"],
-])("`bun update <name> --latest` restores the range of %s that it could not resolve", async (_, entries, name) => {
+// Every release here is younger than the minimum release age, so --latest has nothing to move to: `latest` is not written in place of the range.
+describe.each([
+  ["a plain entry", "leaf", (range: string) => ({ leaf: range })],
+  ["an npm: alias", "aliased", (range: string) => ({ aliased: `npm:leaf@${range}` })],
+])("`bun update <name> --latest` when every release of %s is too recent", (_, name, entries) => {
   const today = { leaf: { "1.0.0": daysAgo(0), "1.1.0": daysAgo(0) } };
-  using server = await serveRegistry(TAGGED_FREE, {}, { times: today });
-  const packageJson = { name: "foo", optionalDependencies: entries };
-  const dir = await installServed(server, "update-latest-unresolved-", packageJson);
+  const packageJson = { name: "foo", optionalDependencies: entries("^1.0.0") };
+  const age = ["--minimum-release-age", THREE_DAYS_SECONDS];
 
-  const { stderr, exitCode } = await run(dir, "update", name, "--latest", "--minimum-release-age", THREE_DAYS_SECONDS);
-  expect(stderr).not.toContain("error:");
-  expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
-  expect((await lock(dir)).workspaces[""].optionalDependencies).toStrictEqual(entries);
-  expect(exitCode).toBe(0);
+  test.concurrent("keeps the range of an entry that never resolved", async () => {
+    using server = await serveRegistry(TAGGED_FREE, {}, { times: today });
+    const dir = await installServed(server, "update-latest-unresolved-", packageJson, ...age);
+
+    const { stderr, exitCode } = await run(dir, "update", name, "--latest", ...age);
+    expect(stderr).not.toContain("error:");
+    expect(await packageJsonOf(dir)).toStrictEqual(packageJson);
+    const { workspaces, packages } = await lock(dir);
+    expect({ entries: workspaces[""].optionalDependencies, packages }).toStrictEqual({
+      entries: entries("^1.0.0"),
+      packages: {},
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // The age is for new resolutions, as in `bun update <name>`.
+  test.concurrent("stays at the version that bun.lock pins", async () => {
+    using server = await serveRegistry(TAGGED_FREE, {}, { times: today });
+    const dir = await installServed(server, "update-latest-pinned-", packageJson);
+
+    const { stderr, exitCode } = await run(dir, "update", name, "--latest", ...age);
+    expect(stderr).not.toContain("error:");
+    expect(await packageJsonOf(dir)).toStrictEqual({ name: "foo", optionalDependencies: entries("^1.1.0") });
+    const { workspaces, packages } = await lock(dir);
+    expect({ entries: workspaces[""].optionalDependencies, locked: packages[name][0] }).toStrictEqual({
+      entries: entries("^1.1.0"),
+      locked: "leaf@1.1.0",
+    });
+    expect(exitCode).toBe(0);
+  });
 });
 
 // `bun add npm:<name>` has no key to find its row by after the write-back renames the row, so the request keeps the package the first binding gave it.

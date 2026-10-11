@@ -2008,7 +2008,7 @@ describe.concurrent("bun-install", () => {
   // node_modules/<alias> by appending "/package.json" (or "/.bun-tag" for git dependencies) to
   // the alias inside the path buffer holding it. The alias may be up to one byte short of the
   // buffer (4096 bytes on Linux, 1024 on macOS), so aliases a few bytes short of it used to crash
-  // the install right there instead of failing like any other name the file system rejects.
+  // the install right there. A name over 255 bytes no longer gets that far: it is refused when it is read.
   // On Windows the buffer is far larger than any path the OS accepts.
   describe.concurrent.skipIf(isWindows)("dependency alias that fills the path buffer", () => {
     const alias = Buffer.alloc((isLinux ? 4096 : 1024) - 6, "a").toString();
@@ -2024,8 +2024,8 @@ describe.concurrent("bun-install", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toContain("ENAMETOOLONG: failed opening node_modules/package dir for package pkg");
-      expect(stdout).toContain("Failed to install 1 package");
+      expect(stderr).toContain(`error: Invalid dependency name "${alias}"`);
+      expect(stdout).not.toContain("installed");
       expect(exitCode).toBe(1);
     }
 
@@ -15908,14 +15908,15 @@ describe.concurrent("registry manifest with an unexpected shape", () => {
 });
 
 // The progress bar copies the name it is currently showing into a fixed
-// 768-byte buffer (PackageManager.progress_name_buf). Dependency and package
-// names have no length limit, so a longer name used to abort the install with
+// 768-byte buffer (PackageManager.progress_name_buf). While dependency and
+// package names had no length limit, a longer name aborted the install with
 // "panic: range end index 900 out of range for slice of length 768" whenever
-// the progress bar was on. BUN_INSTALL_PROGRESS=1 turns it on without a TTY;
-// with colors enabled an emoji shares the buffer with the name, so both color
-// settings are covered.
-describe("progress bar with a name longer than its name buffer", () => {
-  const longName = Buffer.alloc(900, "a").toString();
+// the progress bar was on. Names end at 255 bytes now, so this is the longest
+// it is given. BUN_INSTALL_PROGRESS=1 turns it on without a TTY; with colors
+// enabled an emoji shares the buffer with the name, so both color settings
+// are covered.
+describe("progress bar with the longest name a package can have", () => {
+  const longName = Buffer.alloc(255, "a").toString();
   const progressEnvs = [
     ["NO_COLOR", { ...env, BUN_INSTALL_PROGRESS: "1", NO_COLOR: "1" }],
     ["FORCE_COLOR", { ...env, BUN_INSTALL_PROGRESS: "1", NO_COLOR: undefined, FORCE_COLOR: "1" }],
@@ -16731,9 +16732,15 @@ describe.concurrent.each(["hoisted", "isolated"])(
       using dir = project(server.url.href, { outer: "1.0.0", mid: "2.0.0" });
       const cwd = join(String(dir), "project");
       const { stderr, exitCode } = await bunIn(cwd, ["install"]);
-      expect(stderr).toContain(`error: refusing to install dependency inner with unsafe folder path "../inner"`);
+      // Nothing is installed for the peer. In the hoisted tree the copy "outer" ships is next to mid@1.0.0 and serves
+      // it. In the store the folder is private to "outer", and the optional peer stays unlinked.
+      expect(errors(stderr)).toEqual([]);
       expect(outside(cwd)).toEqual([]);
-      expect(exitCode).toBe(1);
+      expect(exitCode).toBe(0);
+      if (linker === "hoisted") {
+        expect(await readdirSorted(join(cwd, "node_modules", "outer", "node_modules"))).toEqual(["inner", "mid"]);
+        expect(await readdirSorted(join(cwd, "node_modules"))).toEqual(["mid", "outer"]);
+      }
     });
   },
 );

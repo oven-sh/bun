@@ -1874,12 +1874,14 @@ fn parse_integrity(
     lockfile_version: Version,
     log: &mut bun_ast::Log,
     source: &bun_ast::Source,
-    loc: bun_ast::Loc,
+    key_loc: bun_ast::Loc,
+    index: usize,
 ) -> Result<Integrity, ParseError> {
     let integrity = Integrity::parse(integrity_str);
     if integrity_str.is_empty() || integrity.tag.is_supported() {
         return Ok(integrity);
     }
+    let loc = item_loc(source, key_loc, index);
     if lockfile_version.at_least(Version::V2) {
         log.add_error(
             Some(source),
@@ -2455,7 +2457,11 @@ pub(crate) fn parse_into_binary_lockfile(
             &mut optional_peers_buf,
             None,
             None,
-            Some((member_rows.as_slice(), package_rows)),
+            Some((
+                member_rows.as_slice(),
+                package_rows,
+                manager.is_none_or(|manager| manager.options.link_workspace_packages),
+            )),
             true,
         )?;
 
@@ -2552,6 +2558,7 @@ pub(crate) fn parse_into_binary_lockfile(
             }
         }
         let pkg_rows: &[JSON::E::PropertyJSON] = pkgs_expr.as_ref().map_or(&[], object_rows);
+        pkg_map.map.reserve(pkg_rows.len());
 
         // find the bundle roots.
         //
@@ -2936,13 +2943,8 @@ pub(crate) fn parse_into_binary_lockfile(
                         return Err(ParseError::InvalidPackageInfo);
                     };
 
-                    pkg.meta.integrity = parse_integrity(
-                        integrity_str,
-                        lockfile_version,
-                        log,
-                        source,
-                        item_loc(source, key_loc, i),
-                    )?;
+                    pkg.meta.integrity =
+                        parse_integrity(integrity_str, lockfile_version, log, source, key_loc, i)?;
 
                     // Fail closed: otherwise a tampered lockfile could redirect
                     // the tarball URL off-registry and install arbitrary content
@@ -2972,7 +2974,8 @@ pub(crate) fn parse_into_binary_lockfile(
                                 lockfile_version,
                                 log,
                                 source,
-                                item_loc(source, key_loc, i),
+                                key_loc,
+                                i,
                             )?;
                         }
                     }
@@ -3034,7 +3037,8 @@ pub(crate) fn parse_into_binary_lockfile(
                                 lockfile_version,
                                 log,
                                 source,
-                                item_loc(source, key_loc, i),
+                                key_loc,
+                                i,
                             )?;
                         }
                     }
@@ -3565,8 +3569,8 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
     // Only meaningful when `CHECK_FOR_BUNDLED`; carried as Option.
     pkg_path: Option<&[u8]>,
     bundled_pkgs: Option<&PkgPathSet>,
-    // With the rows of `packages`.
-    member_rows: Option<(&[&JSON::E::PropertyJSON], &[JSON::E::PropertyJSON])>,
+    // With the rows of `packages` and `linkWorkspacePackages`.
+    member_rows: Option<(&[&JSON::E::PropertyJSON], &[JSON::E::PropertyJSON], bool)>,
     catalogs_apply: bool,
 ) -> Result<(u32, u32), ParseError> {
     // Clearing on entry is equivalent to clearing on every exit path for all
@@ -3701,7 +3705,8 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
     }
 
     if IS_ROOT {
-        let (member_rows, package_rows) = member_rows.expect("member_rows required when IS_ROOT");
+        let (member_rows, package_rows, link_workspace_packages) =
+            member_rows.expect("member_rows required when IS_ROOT");
         let declared_end = lockfile.buffers.dependencies.len();
         for row in member_rows {
             let value = Expr::from_json_value(&row.value, row.key_loc);
@@ -3713,16 +3718,28 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
             let name_hash = StringBuilder::string_hash(name);
 
             // `Package::parse_dependency` replaces the root's edge to a workspace by a dependency of
-            // the root that has its name and does not accept it.
-            if lockfile.buffers.dependencies[off..declared_end]
+            // the root that has its name and does not accept it, also when an override then sends
+            // that dependency to the workspace.
+            let mut declared = lockfile.buffers.dependencies[off..declared_end]
                 .iter()
-                .any(|dep| dep.name_hash == name_hash)
-                && package_rows
+                .filter(|dep| dep.name_hash == name_hash)
+                .peekable();
+            if declared.peek().is_some()
+                && (package_rows
                     .iter()
                     .find(|package| package.key.slice() == name)
                     .and_then(|package| package.value.as_array()?.items().first()?.as_str())
                     .and_then(|resolved| dependency::split_name_and_version(resolved).ok())
                     .is_some_and(|(_, resolution)| !resolution.starts_with(b"workspace:"))
+                    || declared.any(|dep| {
+                        super::replaces_workspace_edge(
+                            link_workspace_packages,
+                            &lockfile.workspace_paths,
+                            &lockfile.workspace_versions,
+                            dep,
+                            lockfile.buffers.string_bytes.as_slice(),
+                        )
+                    }))
             {
                 continue;
             }

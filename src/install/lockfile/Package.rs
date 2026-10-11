@@ -1373,8 +1373,19 @@ impl Diff {
                 to_lockfile.buffers.string_bytes.as_slice(),
                 from_lockfile.buffers.string_bytes.as_slice(),
             );
+            // `file:x` for `file:./x` is what a migration writes. Both sides hold the path from the project.
+            let same_folder = !same
+                && from_dep.version.tag == dependency::version::Tag::Folder
+                && to_deps!()[cur_to_i].version.tag == dependency::version::Tag::Folder
+                && to_deps!()[cur_to_i].version.folder().eql(
+                    *from_dep.version.folder(),
+                    to_lockfile.buffers.string_bytes.as_slice(),
+                    from_lockfile.buffers.string_bytes.as_slice(),
+                );
+            let same = same || same_folder;
             // The lockfile records the literal: one that is written differently and means the same is an update that keeps its package.
             let retyped = same
+                && !same_folder
                 && !from_dep.behavior.is_workspace()
                 && !to_deps!()[cur_to_i].version.literal.eql(
                     from_dep.version.literal,
@@ -1650,7 +1661,16 @@ impl Diff {
             }
             summary.update += 1;
             // No earlier version rewrote these, so a lockfile that has one is not the user's omission.
-            summary.script_only_updates += retyped as u32;
+            // Nor is the request (`""`, a tag) that `bun add` left in the lockfile up to Bun 1.1, next to the range it wrote to package.json.
+            let recorded_request = (from_dep.version.tag == dependency::version::Tag::DistTag
+                || from_dep.version.literal.is_empty())
+                && Self::locked_version_satisfies(
+                    &*from_lockfile,
+                    from_resolutions[i],
+                    &to_deps!()[cur_to_i],
+                    to_lockfile.buffers.string_bytes.as_slice(),
+                );
+            summary.script_only_updates += (retyped || recorded_request) as u32;
         }
 
         // A bun.lock from before a name that only `peerDependenciesMeta` lists was recorded lacks its `*` optional peer.
@@ -2372,6 +2392,11 @@ impl Package<u64> {
                     debug_assert!(path.len() > 0);
                     debug_assert!(!bun_paths::is_absolute(path.slice(buf)));
                     dependency_version.value.workspace = path;
+
+                    // The root package again, by its path.
+                    if path.slice(buf) == b"." {
+                        break 'workspace;
+                    }
 
                     let workspace_entry = workspace_paths.get_or_put(name_hash)?;
                     let found_matching_workspace = workspace_entry.found_existing;
@@ -3466,44 +3491,6 @@ impl Package<u64> {
                     lockfile
                         .catalogs
                         .parse_append(pm, log, source, json, &mut string_builder)?;
-            }
-
-            // As `parse_dependency` does for a plain range, now that the catalogs are known: a
-            // dependency that has the name of a workspace and does not accept it replaces the
-            // root's edge to the workspace.
-            let buf = string_builder.string_bytes.as_slice();
-            loop {
-                let rows = &lockfile.buffers.dependencies[off..];
-                let replaced = rows
-                    .iter()
-                    .filter(|dep| {
-                        let range = lockfile.catalogs.resolve_range(buf, dep);
-                        dep.version.tag == dependency::version::Tag::Catalog
-                            && range.tag == dependency::version::Tag::Npm
-                            && !range.npm().is_alias
-                            && lockfile.workspace_versions.get(&dep.name_hash).is_some()
-                            && lockfile::linked_workspace_path(
-                                pm.options.link_workspace_packages,
-                                &lockfile.workspace_paths,
-                                &lockfile.workspace_versions,
-                                dep.name_hash,
-                                &range.npm().version,
-                                buf,
-                            )
-                            .is_none()
-                    })
-                    .find_map(|dep| {
-                        rows.iter().position(|row| {
-                            row.behavior.is_workspace() && row.name_hash == dep.name_hash
-                        })
-                    });
-                let Some(replaced) = replaced else {
-                    break;
-                };
-                lockfile.buffers.dependencies.remove(off + replaced);
-                lockfile.buffers.resolutions.pop();
-                self.dependencies.len -= 1;
-                self.resolutions.len -= 1;
             }
         }
 

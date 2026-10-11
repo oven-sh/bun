@@ -431,6 +431,7 @@ fn contained_folders(lockfile: &Lockfile) -> Result<(DynamicBitSet, DynamicBitSe
     if nested.count() == 0 {
         return Ok((contained, nested));
     }
+    let mut inside_a_package = DynamicBitSet::init_empty(pkg_resolutions.len())?;
 
     for (pkg_id, pkg_deps) in pkgs.items_dependencies().iter().enumerate() {
         for dep_id in pkg_deps.begin()..pkg_deps.end() {
@@ -447,11 +448,15 @@ fn contained_folders(lockfile: &Lockfile) -> Result<(DynamicBitSet, DynamicBitSe
                 &dependencies[dep_id as usize],
             ) {
                 contained.set(dep_id as usize);
-            } else {
+                inside_a_package.set(target as usize);
+            } else if !dependencies[dep_id as usize].behavior.is_peer() {
                 nested.unset(target as usize);
             }
         }
     }
+    // A peer has no say where there is such a dependency: the hoisted tree binds an optional
+    // peer to the nearest folder of its name, whose path only its declarer can follow.
+    nested.set_intersection(&inside_a_package);
 
     Ok((contained, nested))
 }
@@ -1018,10 +1023,13 @@ pub(crate) fn build_store(
                 // are deduplicated only if their package id and their transitive peer package
                 // ids are equal.
                 let peer_dep = &dependencies[peer_dep_id as usize];
-                let best_version = if is_omitted_peer(peer_dep) {
+                let best_version = resolutions[peer_dep_id as usize];
+                let best_version = if is_omitted_peer(peer_dep)
+                    || nested_folders.is_set_allow_out_of_bound(best_version as usize, false)
+                {
                     invalid_package_id
                 } else {
-                    resolutions[peer_dep_id as usize]
+                    best_version
                 };
 
                 // TODO: double check this
@@ -2263,8 +2271,11 @@ pub(crate) fn install_isolated_packages(
         }
 
         // Without 'node_modules/.bun' what is there is not this linker's, also in the
-        // members' 'node_modules' when only the root's was deleted.
-        if !is_new_node_modules || !lockfile.workspace_paths.is_empty() {
+        // members' 'node_modules' when only the root's was deleted. A first install with
+        // '--filter' leaves the members it does not link alone.
+        if !is_new_node_modules
+            || (!lockfile.workspace_paths.is_empty() && workspace_filters.is_empty())
+        {
             old_modules = move_node_modules_aside(lockfile, manager.options.global);
         }
 
@@ -2588,6 +2599,22 @@ pub(crate) fn install_isolated_packages(
                     }
 
                     // folders are always hardlinked to keep them up-to-date
+                    if !is_new_bun_modules && !installer.manager().options.enable.force_install() {
+                        let mut store_path: AbsPath = AbsPath::init_top_level_dir();
+                        installer.append_real_store_path(
+                            &mut store_path,
+                            entry_id,
+                            installer::Which::Final,
+                        );
+                        if let (Ok(src), Ok(dest)) =
+                            (sys::Dir::open(folder), sys::Dir::open(store_path.slice()))
+                            && crate::package_install::is_linked_folder(&src, &dest)
+                        {
+                            installer.link_to_hidden_node_modules(entry_id);
+                            installer.start_relink_task(entry_id);
+                            continue;
+                        }
+                    }
                     installer.start_task(entry_id);
                     continue;
                 }

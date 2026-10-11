@@ -707,7 +707,7 @@ test("can install folder dependencies on root package", async () => {
   ]);
 });
 
-// The copy of a folder dependency is made again on every install, from the names the folder has then.
+// The copy of a folder dependency is made again by an install that finds other names or files in the folder.
 test.concurrent("what is deleted from a folder dependency is removed from its copy on the next install", async () => {
   const { packageDir } = await registry.createTestDir({
     bunfigOpts: { linker: "isolated" },
@@ -1270,6 +1270,40 @@ describe("transitive file dependencies of registry packages", () => {
     expect(() => fromPeer.resolve("files")).toThrow(expect.objectContaining({ code: "MODULE_NOT_FOUND" }));
   });
 
+  // The root's `peer-on-files` is another package, so the hoisted tree keeps peer-on-files@1.0.0
+  // below file-dep-with-peer-on-files, next to the folder, and binds the optional peer to it.
+  test("nor when the lockfile has bound the peer dependency to it", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "contained-folder-bound-peer",
+        dependencies: { "file-dep-with-peer-on-files": "1.0.0", "peer-on-files": "npm:no-deps@2.0.0" },
+      }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    const declaring = join(bunDir, "file-dep-with-peer-on-files@1.0.0", "node_modules");
+    expect(
+      await Promise.all([
+        readdirSorted(bunDir),
+        readdirSorted(declaring),
+        readlink(join(declaring, "files")),
+        readdirSorted(join(bunDir, "peer-on-files@1.0.0", "node_modules")),
+      ]),
+    ).toEqual([
+      ["file-dep-with-peer-on-files@1.0.0", "no-deps@2.0.0", "node_modules", "peer-on-files@1.0.0"],
+      ["file-dep-with-peer-on-files", "files", "peer-on-files"],
+      join("file-dep-with-peer-on-files", "the-files"),
+      ["peer-on-files"],
+    ]);
+
+    const { out } = await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+    expect(out).toContain("no changes");
+  });
+
   test("a folder the root also declares: the root links its store entry, the package links its own copy, fresh and from bun.lock", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
     await Promise.all([
@@ -1357,13 +1391,15 @@ describe("transitive file dependencies of registry packages", () => {
         // publicHoistPattern and the hidden fallback directory both hold no-deps
         readlink(join(packageDir, "node_modules", "files")),
         readdirSorted(join(bunDir, "node_modules")),
+        readlink(join(bunDir, "node_modules", "files")),
         readlink(join(bunDir, "file-dep@1.0.0", "node_modules", "files")),
         readlink(join(bunDir, "mid@file+mid", "node_modules", "files")),
       ]),
     ).toEqual([
       ["file-dep@1.0.0", "mid@file+mid", "no-deps@1.0.0", "node_modules"],
       join(".bun", "no-deps@1.0.0", "node_modules", "no-deps"),
-      ["file-dep", "no-deps"],
+      ["file-dep", "files"],
+      join("..", "no-deps@1.0.0", "node_modules", "no-deps"),
       join("file-dep", "the-files"),
       join("..", "..", "no-deps@1.0.0", "node_modules", "no-deps"),
     ]);
@@ -5744,7 +5780,7 @@ describe("long store entry names", () => {
     const tarballEntry =
       storeEntryName("bar", `.+${deep.replaceAll("/", "+")}+bar-0.0.2.tgz`) + tarballPin("bar-0.0.2.tgz");
     const folderEntry = storeEntryName("folder-pkg", `file+${deep.replaceAll("/", "+")}+pkg`);
-    expect(tarballEntry).toMatch(/^bar@\.\+d{61}\+[0-9a-f]{16}$/);
+    expect(tarballEntry).toMatch(/^bar@\.\+d{61}(\+[0-9a-f]{16}){2}$/);
     expect(folderEntry).toMatch(/^folder-pkg@file\+d{58}\+[0-9a-f]{16}$/);
     const expectedEntries = [tarballEntry, folderEntry].sort();
     expect(await storeEntries(packageDir)).toEqual(expectedEntries);
@@ -5795,7 +5831,7 @@ describe("long store entry names", () => {
     await runBunInstall(bunEnv, packageDir);
 
     const entry = storeEntryName("no-deps", url.replaceAll(/[/:]/g, "+")) + noDepsPin("1.0.0");
-    expect(entry).toMatch(/^no-deps@http\+\+\+localhost\+\d+\+t+\+[0-9a-f]{16}$/);
+    expect(entry).toMatch(/^no-deps@http\+\+\+localhost\+\d+\+t+(\+[0-9a-f]{16}){2}$/);
     expect(await storeEntries(packageDir)).toEqual([entry]);
 
     const localEntry = join(packageDir, "node_modules", ".bun", entry);

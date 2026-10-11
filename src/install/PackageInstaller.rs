@@ -4,7 +4,7 @@ use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
-use bun_paths::resolve_path::{dirname, join_z_buf};
+use bun_paths::resolve_path::{dirname, join_abs_string_buf_z_checked, join_z_buf};
 use bun_paths::{AbsPath, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, SEP, platform};
 use bun_semver::String;
 use bun_sys::{Dir, Fd};
@@ -445,8 +445,11 @@ pub(crate) fn name_is_single_path_entry(name: &[u8]) -> bool {
         return false;
     }
 
-    let component_count = strings::split(name, b"/").count();
-    component_count == 1 || (component_count == 2 && name[0] == b'@')
+    match strings::count_char(name, b'/') {
+        0 => true,
+        1 => name[0] == b'@',
+        _ => false,
+    }
 }
 
 /// The alias is the install destination inside `node_modules` (renamed aside, deleted and
@@ -632,13 +635,14 @@ impl<'a> PackageInstaller<'a> {
         let mut deferred: Vec<DependencyID> = Vec::new();
 
         // Also on a run that installs nothing: a wrong entry of `.bin` is deleted and made again.
-        if let Err(err) = crate::prune::remove_planted_link(
-            &self.root_node_modules_folder,
-            join_z_buf::<platform::Auto>(
-                link_dest_buf,
-                &[self.node_modules.path.as_slice(), b".bin"],
-            ),
-        ) {
+        // A `.bin` that does not fit the buffer is reported by the linker, for each bin.
+        if let Some(bin_dir) = join_abs_string_buf_z_checked::<platform::Auto>(
+            self.node_modules.path.as_slice(),
+            link_dest_buf,
+            &[b".bin"],
+        ) && let Err(err) =
+            crate::prune::remove_planted_link(&self.root_node_modules_folder, bin_dir)
+        {
             if log_level != Options::LogLevel::Silent {
                 bun_ast::add_error_pretty!(
                     manager.log_mut(),
@@ -751,6 +755,14 @@ impl<'a> PackageInstaller<'a> {
                     self.successfully_installed
                         .is_set_allow_out_of_bound(package_id as usize, false),
                 );
+            // The other global packages keep their links in the global bin dir, as under the isolated linker.
+            if !global
+                && tree_id == 0
+                && manager.options.global
+                && pkgs.items_dependencies()[0].contains(dep_id)
+            {
+                continue;
+            }
 
             loop {
                 // `node_modules_path` (mut) and `target_node_modules_path`
@@ -1127,13 +1139,15 @@ impl<'a> PackageInstaller<'a> {
             && open.scope != scope
         {
             let mut path_buf = bun_paths::path_buffer_pool::get();
-            crate::prune::remove_planted_link(
-                &open.dir,
-                join_z_buf::<platform::Auto>(
-                    path_buf.as_mut_slice(),
-                    &[node_modules.path.as_slice(), scope],
-                ),
-            )?;
+            // From the open directory: the whole path need not fit a buffer.
+            #[cfg(not(windows))]
+            let scope_path = bun_paths::resolve_path::z(scope, &mut path_buf);
+            #[cfg(windows)]
+            let scope_path = join_z_buf::<platform::Auto>(
+                path_buf.as_mut_slice(),
+                &[node_modules.path.as_slice(), scope],
+            );
+            crate::prune::remove_planted_link(&open.dir, scope_path)?;
             open.scope.clear();
             open.scope.extend_from_slice(scope);
         }
@@ -2045,6 +2059,28 @@ impl<'a> PackageInstaller<'a> {
 
                         let result = if resolution.tag == resolution::Tag::Root {
                             installer.install_from_link(self.skip_delete, &destination_dir)
+                        } else if installer.cache_dir_subpath.as_bytes() != b"." {
+                            // What a package ships inside itself is linked where it is, as the isolated
+                            // linker does: one module instance, with all that is shipped below it.
+                            // The tarball may also ship a directory at the destination.
+                            let mut shipped_buf = bun_paths::path_buffer_pool::get();
+                            match join_abs_string_buf_z_checked::<platform::Auto>(
+                                dir_name,
+                                shipped_buf.as_mut_slice(),
+                                &[installer.cache_dir_subpath.as_bytes()],
+                            ) {
+                                Some(shipped) => PackageInstall {
+                                    cache_dir: Fd::cwd(),
+                                    cache_dir_subpath: shipped,
+                                    ..installer
+                                }
+                                .install_from_link(false, &destination_dir),
+                                None => package_install::InstallResult::fail(
+                                    crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG),
+                                    package_install::Step::OpeningCacheDir,
+                                    None,
+                                ),
+                            }
                         } else {
                             installer.install(
                                 staging,

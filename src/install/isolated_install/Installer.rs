@@ -705,7 +705,7 @@ impl<'a> Installer<'a> {
     /// Called from main thread
     pub(crate) fn on_task_complete(&mut self, entry_id: StoreEntryId, state: CompleteState) {
         let state = match self.tasks[entry_id.get() as usize].relink {
-            Relink::Unchanged => CompleteState::Skipped,
+            Relink::Unchanged | Relink::ChangedOptional => CompleteState::Skipped,
             Relink::Off | Relink::Pending | Relink::Changed => state,
         };
         if Environment::CI_ASSERT {
@@ -957,6 +957,9 @@ pub enum Relink {
     Off,
     Pending,
     Unchanged,
+    /// Only links to optional dependencies were written. Every install writes the link to one
+    /// that is left out, and takes it away again: the entry does not count as installed.
+    ChangedOptional,
     Changed,
 }
 
@@ -1825,15 +1828,11 @@ impl Task {
                     };
 
                     if relinking {
-                        if changed {
-                            self.relink = Relink::Changed;
-                        } else {
-                            self.relink = Relink::Unchanged;
-                            if !self.newly_trusted {
-                                entry_steps[self.entry_id.get() as usize]
-                                    .store(Step::Done as u32, Ordering::Release);
-                                return Ok(Yield::Done);
-                            }
+                        self.relink = changed;
+                        if changed == Relink::Unchanged && !self.newly_trusted {
+                            entry_steps[self.entry_id.get() as usize]
+                                .store(Step::Done as u32, Ordering::Release);
+                            return Ok(Yield::Done);
                         }
                     } else if installer.entry_uses_global_store(self.entry_id) {
                         match installer.link_project_to_global_store(self.entry_id) {
@@ -2582,12 +2581,12 @@ impl<'a> Installer<'a> {
         None
     }
 
-    /// Ok(true) when at least one dependency link of the entry was written.
+    /// Which dependency links of the entry were written: `Unchanged`, `ChangedOptional`, `Changed`.
     fn symlink_dependencies(
         &self,
         entry_id: StoreEntryId,
         strategy: symlinker::Strategy,
-    ) -> core::result::Result<bool, TaskError> {
+    ) -> core::result::Result<Relink, TaskError> {
         let lockfile = self.lockfile();
         let string_buf = lockfile.buffers.string_bytes.as_slice();
         let dependencies = lockfile.buffers.dependencies.as_slice();
@@ -2607,7 +2606,7 @@ impl<'a> Installer<'a> {
         self.append_real_store_node_modules_path(&mut dest, entry_id, Which::Staging);
         let base_len = dest.len();
 
-        let mut changed = false;
+        let mut changed = Relink::Unchanged;
         for dep in self.store.entries.items_dependencies()[entry_id.get() as usize].slice() {
             let dep_name = dependencies[dep.dep_id as usize].name.slice(string_buf);
 
@@ -2662,7 +2661,53 @@ impl<'a> Installer<'a> {
             };
             let result = symlinker.ensure_symlink(strategy);
             dest = symlinker.dest.into_sep::<{ PathSeparators::AUTO }>();
-            changed |= result.map_err(TaskError::SymlinkDependencies)?;
+            if result.map_err(TaskError::SymlinkDependencies)? {
+                let behavior = dependencies[dep.dep_id as usize].behavior;
+                if !(behavior.is_optional() || behavior.is_optional_peer()) {
+                    changed = Relink::Changed;
+                } else if changed == Relink::Unchanged {
+                    changed = Relink::ChangedOptional;
+                }
+            }
+        }
+
+        // See `Lockfile::bundled_by_folder`.
+        if pkg_res.tag == ResolutionTag::Folder {
+            let folder = pkg_res.folder().slice(string_buf);
+            for bundled in lockfile.bundled_by_folder(folder) {
+                let dep_name = bundled.name.slice(string_buf);
+                let mut shipped = AutoAbsPath::init_top_level_dir();
+                if shipped.len() + folder.len() + dep_name.len() + "/node_modules//".len()
+                    >= paths::MAX_PATH_BYTES
+                {
+                    continue;
+                }
+                shipped.append_join(folder).assume_ok();
+                shipped.append(b"node_modules").assume_ok();
+                shipped.append(dep_name).assume_ok();
+                if !sys::directory_exists_at(Fd::cwd(), shipped.slice_z()).unwrap_or(false) {
+                    continue;
+                }
+
+                dest.set_length(base_len);
+                append_dependency_link_name(&mut dest, dep_name, entry_node_modules_name);
+                let dest_len = dest.len();
+                dest.undo(1);
+                let target = dest.relative(&shipped);
+                dest.set_length(dest_len);
+
+                let mut symlinker = Symlinker {
+                    dest: dest.into_sep::<{ PathSeparators::ANY }>(),
+                    target: target.into_sep::<{ PathSeparators::ANY }>(),
+                    #[cfg(windows)]
+                    fallback_junction_target: shipped.into_sep::<{ PathSeparators::ANY }>(),
+                };
+                let result = symlinker.ensure_symlink(strategy);
+                dest = symlinker.dest.into_sep::<{ PathSeparators::AUTO }>();
+                if result.map_err(TaskError::SymlinkDependencies)? {
+                    changed = Relink::Changed;
+                }
+            }
         }
 
         Ok(changed)

@@ -438,6 +438,26 @@ pub(crate) fn is_remote_tarball(dependency: &[u8]) -> bool {
 
 /// `2x`, `1beta`, `v2x`: like npm-package-arg, one word that starts like a version but is not a partial version is a dist-tag.
 fn is_dist_tag_with_leading_digit(dependency: &[u8]) -> bool {
+    // `1.2.3`, the usual case: three numbers leave no wildcard, and the caller parses it again.
+    if dependency.len() <= 17 {
+        let mut dots = 0;
+        let mut after_digit = false;
+        let is_plain = dependency.iter().all(|&byte| match byte {
+            b'0'..=b'9' => {
+                after_digit = true;
+                true
+            }
+            b'.' if after_digit => {
+                after_digit = false;
+                dots += 1;
+                true
+            }
+            _ => false,
+        });
+        if is_plain && after_digit && dots == 2 {
+            return false;
+        }
+    }
     if strings::index_of_any(dependency, b"|+ \t\n\r\x0B\x0C").is_some() {
         return false;
     }
@@ -547,22 +567,31 @@ pub fn is_scoped_package_name(name: &[u8]) -> Result<bool, PackageNameError> {
 /// A dependency name/alias becomes a directory under `node_modules/`. Names
 /// come from untrusted `package.json` / manifest keys, so reject anything that
 /// could resolve outside that directory, and terminal control characters. `@scope/name` stays valid.
-/// Nor over 255 bytes: no file system takes a longer directory name (npm stops at 214).
+/// Nor a component over 255 bytes: no file system takes a longer directory name (npm stops at 214 for the whole name).
 pub(crate) fn is_safe_install_folder_name(name: &[u8]) -> bool {
-    if name.is_empty() || name.len() > 255 || contains_control_character(name) {
+    if name.is_empty() || name.len() > 255 + 1 + 255 {
         return false;
     }
 
-    for component in strings::split(name, b"/") {
-        if component.is_empty() || component == b"." || component == b".." {
-            return false;
-        }
-        if strings::contains_any(component, b"\\:") {
-            return false;
+    // One pass: this runs for every dependency row of a lockfile, on names of a dozen bytes.
+    let is_safe_component =
+        |component: &[u8]| component.len() <= 255 && !matches!(component, b"" | b"." | b"..");
+    let mut component_start = 0;
+    for (i, &byte) in name.iter().enumerate() {
+        match byte {
+            b'/' => {
+                if !is_safe_component(&name[component_start..i]) {
+                    return false;
+                }
+                component_start = i + 1;
+            }
+            b'\\' | b':' => return false,
+            0xC2 if matches!(name.get(i + 1), Some(0x80..=0x9F)) => return false,
+            _ if byte.is_ascii_control() => return false,
+            _ => {}
         }
     }
-
-    true
+    is_safe_component(&name[component_start..])
 }
 
 /// C0 controls and DEL, plus UTF-8 encoded C1 controls (`C2 80`..`C2 9F`,

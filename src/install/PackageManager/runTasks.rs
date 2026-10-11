@@ -424,8 +424,11 @@ fn run_tasks_erased(
                             // `extract_ctx` *is* the installer here.
                             let installer: &mut PackageInstaller =
                                 cb.package_installer(extract_ctx);
-                            let path = core::mem::take(&mut ctx.path);
-                            installer.node_modules.path = path;
+                            // The hoisted loop runs tasks in the middle of a tree.
+                            let prev_node_modules = core::mem::take(&mut installer.node_modules);
+                            let prev_tree_id = installer.current_tree_id;
+                            installer.node_modules.path = core::mem::take(&mut ctx.path);
+                            installer.node_modules.tree_id = ctx.tree_id;
                             installer.current_tree_id = ctx.tree_id;
                             let pkg_id = apply.pkg_id;
                             let resolution =
@@ -443,6 +446,8 @@ fn run_tasks_erased(
                                 needs_verify,
                                 is_pending_package_install,
                             );
+                            installer.node_modules = prev_node_modules;
+                            installer.current_tree_id = prev_tree_id;
                         }
                     }
                 }

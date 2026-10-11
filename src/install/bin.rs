@@ -786,7 +786,9 @@ fn normalized_bin_name(name: &[u8]) -> &[u8] {
 
     // npm's `join('/', key).slice(1)` collapses `.`/`..` to empty; do the same
     // so the `.bin/<name>` destination cannot resolve outside `.bin/`.
-    if !crate::dependency::is_safe_install_folder_name(name) {
+    // The cut above leaves one component without `/`, `\` or `:`, so this is all of
+    // `is_safe_install_folder_name` but its length limit: a name that is too long fails to link and is reported.
+    if matches!(name, b"" | b"." | b"..") || crate::dependency::contains_control_character(name) {
         return b"";
     }
 

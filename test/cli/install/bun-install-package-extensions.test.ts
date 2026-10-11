@@ -1,9 +1,9 @@
 import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { rm } from "fs/promises";
-import { bunEnv, bunExe, readdirSorted } from "harness";
-import { join } from "path";
+import { realpath, rm } from "fs/promises";
+import { bunEnv, bunExe } from "harness";
+import { basename, dirname, join } from "path";
 import { TestRegistry } from "registry";
 
 // `packageExtensions` in the root package.json adds dependencies and peer dependencies that a
@@ -80,9 +80,9 @@ async function project(linker: Linker, bunfigOpts: { saveTextLockfile?: boolean 
     async resolvedFrom(name: string, version: string, dependency: string): Promise<string | undefined> {
       let nodeModules = join(dir, "node_modules");
       if (linker === "isolated") {
-        const store = join(nodeModules, ".bun");
-        const entry = (await readdirSorted(store)).find(entry => entry.startsWith(`${name}@${version}`))!;
-        nodeModules = join(store, entry, "node_modules");
+        // Through the root's link: added peers rename the entry, and the one it replaces stays in the store.
+        nodeModules = dirname(await realpath(join(nodeModules, name)));
+        expect(basename(dirname(nodeModules))).toStartWith(`${name}@${version}`);
       }
       const manifest = file(join(nodeModules, dependency, "package.json"));
       return (await manifest.exists()) ? (await manifest.json()).version : undefined;

@@ -2187,8 +2187,11 @@ describe("package-lock.json migration fixes", () => {
     expect(lock.packages.o[0]).toBe(project.o);
     expect(text).not.toContain("../m/node_modules/p");
 
-    const install = await run(project.dir, "install", "--linker", linker);
-    expect(normalizeBunSnapshot(install.stderr)).toBe("");
+    // Without "p" the lockfile is behind o/package.json. A plain install reads that again and asks the registry for "p".
+    const install = await run(project.dir, "install", "--frozen-lockfile", "--linker", linker);
+    expect(normalizeBunSnapshot(install.stderr)).toBe(
+      "warn: the dependencies in ../m/node_modules/n/o/package.json changed since the lockfile was saved (run 'bun install' to update it)",
+    );
     expect(normalizeBunSnapshot(install.stdout)).toMatchInlineSnapshot(`
       "bun install <version> (<revision>)
 

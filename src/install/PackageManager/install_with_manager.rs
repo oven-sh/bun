@@ -952,7 +952,9 @@ pub fn install_with_manager(
                         let served = lockfile::tree::served_peers(&manager.lockfile);
                         manager.warn_incorrect_peers(&served);
                     }
+                    // `bun install --filter` lays out another tree than the one the pass compares with.
                     if summary.fail == 0
+                        && (workspace_filters.is_empty() || manager.filtered_link_targets.is_some())
                         && (had_any_diffs
                             || matches!(
                                 manager.subcommand,

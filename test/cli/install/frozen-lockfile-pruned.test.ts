@@ -240,14 +240,14 @@ type Fixture = { fullDir: string; full: string };
 const fixtures = new Map<string, Promise<Fixture>>();
 
 // A full install of `tree`, done once per linker and shared by every test that starts from its bun.lock.
-function fullInstall(linker: Linker, tree: Tree): Promise<Fixture> {
+function fullInstall(linker: Linker, tree: Tree, notes: string[] = []): Promise<Fixture> {
   const key = JSON.stringify([linker, tree]);
   let fixture = fixtures.get(key);
   if (!fixture) {
     fixture = (async () => {
       const { packageDir } = await registry.createTestDir({ bunfigOpts: { linker } });
       await writeTree(packageDir, tree);
-      await install(packageDir, linker);
+      await install(packageDir, linker, notes);
       return { fullDir: packageDir, full: await lockText(packageDir) };
     })();
     fixtures.set(key, fixture);
@@ -268,9 +268,9 @@ function fullLockb(): Promise<Uint8Array<ArrayBuffer>> {
 }
 
 // A second checkout with only `keep` of `checkout`'s workspaces on disk and the full install's bun.lock copied verbatim.
-async function verbatimScenario(linker: Linker, tree: Tree, keep: string[], checkout = tree) {
+async function verbatimScenario(linker: Linker, tree: Tree, keep: string[], checkout = tree, notes?: string[]) {
   const [{ fullDir, full }, { packageDir }] = await Promise.all([
-    fullInstall(linker, tree),
+    fullInstall(linker, tree, notes),
     registry.createTestDir({ bunfigOpts: { linker } }),
   ]);
   await writeTree(packageDir, checkout, keep);
@@ -759,7 +759,14 @@ describe.each(linkers)("linker: %s", linker => {
       ["dependencies, as *,", { dependencies: { "no-deps": "*" } }],
     ] as [string, PackageJson][])("in a survivor's %s fails", async (_, app) => {
       const tree = linkedRangeTree({}, app);
-      const { packageDir, full } = await verbatimScenario(linker, tree, ["packages/app"]);
+      const unmetPeer = (app.peerDependencies as Record<string, string> | undefined)?.["no-deps"] === "^2.0.0";
+      const { packageDir, full } = await verbatimScenario(linker, tree, ["packages/app"], tree, [
+        ...(unmetPeer
+          ? [
+              'warn: incorrect peer dependency "no-deps@workspace:packages/no-deps": "app@workspace:packages/app" requires "no-deps@^2.0.0"',
+            ]
+          : []),
+      ]);
       expect(full).toContain("no-deps@workspace:packages/no-deps");
       expect(full).not.toContain('"no-deps@1.');
 

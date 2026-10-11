@@ -5878,8 +5878,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     describe("add trusted, delete, then add again", async () => {
-      // when we change bun install to delete dependencies from node_modules
-      // for both cases, we need to update this test
+      // Either way the package leaves node_modules, with the what-bin only it needed.
       for (const withRm of [true, false]) {
         test(withRm ? "withRm" : "withoutRm", async () => {
           using ctx = await setupTest();
@@ -6003,7 +6002,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           expected = [expect.stringContaining("bun install v1."), ...expected];
           expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual(expected);
           expect(await exited).toBe(0);
-          expect(await exists(join(packageDir, "node_modules", "uses-what-bin"))).toBe(!withRm);
+          expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([".bin", "no-deps"]);
 
           // add again, bun pm untrusted should report it as untrusted
 
@@ -6032,19 +6031,16 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
           expect(err).not.toContain("error:");
           expect(err).not.toContain("warn:");
           out = await stdout.text();
-          expected = withRm
-            ? [
-                "",
-                expect.stringContaining("+ uses-what-bin@1.0.0"),
-                "",
-                "1 package installed",
-                "",
-                "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
-                "",
-              ]
-            : ["", expect.stringContaining("Checked 3 installs across 4 packages (no changes)"), ""];
-          expected = [expect.stringContaining("bun install v1."), ...expected];
-          expect(out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/)).toEqual(expected);
+          expect(out.replace(/\s*\[[0-9\.]+m?s\]$/m, "").split(/\r?\n/)).toEqual([
+            expect.stringContaining("bun install v1."),
+            "",
+            expect.stringContaining("+ uses-what-bin@1.0.0"),
+            "",
+            "2 packages installed",
+            "",
+            "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+            "",
+          ]);
 
           ({ stdout, stderr, exited } = spawn({
             cmd: [bunExe(), "pm", "untrusted"],

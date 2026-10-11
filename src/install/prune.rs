@@ -1361,9 +1361,17 @@ fn has_bundled_deps(lockfile: &Lockfile, pkg_id: PackageID) -> bool {
 /// The folders are compared with the install tree, not the lockfile's: only the install tree applies the
 /// self-contained barrier, so only it says what a self-contained workspace keeps. The tree carries every
 /// dependency type, so a copy under a dependency that `--production` / `--omit` skipped this run stays.
+/// It carries every platform too: bun.lock still holds what `--os` / `--cpu` / `--libc` installed.
 pub(crate) fn remove_collapsed_copies(manager: &mut PackageManager, before: &Lockfile) {
-    let Ok(saved) = hoist_install_tree(manager, full_install_features(install_features(manager)))
-    else {
+    let options = &mut manager.options;
+    let platform = (options.cpu, options.os, options.libc);
+    options.cpu = crate::npm::Architecture::ALL;
+    options.os = crate::npm::OperatingSystem::ALL;
+    options.libc = <crate::npm::Libc as crate::npm::NegatableEnum>::ALL;
+    let hoisted = hoist_install_tree(manager, full_install_features(install_features(manager)));
+    let options = &mut manager.options;
+    (options.cpu, options.os, options.libc) = platform;
+    let Ok(saved) = hoisted else {
         return;
     };
     plan_and_remove_collapsed_copies(manager, before);
@@ -1436,9 +1444,15 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
                 None => continue,
             },
         };
-        if has_bundled_deps(before, tree_owner(before, old_idx))
-            || surviving.is_some_and(|id| has_bundled_deps(after, tree_owner(after, id as usize)))
-        {
+        // A tarball ships folders at any depth below the package that bundles.
+        let mut ships =
+            surviving.is_some_and(|id| has_bundled_deps(after, tree_owner(after, id as usize)));
+        let mut ancestor = old_idx;
+        while !ships && ancestor != 0 && ancestor < old.trees.len() {
+            ships = has_bundled_deps(before, tree_owner(before, ancestor));
+            ancestor = old.trees[ancestor].parent as usize;
+        }
+        if ships {
             continue;
         }
         let Some(dir) = open_tree_folder(before, old_idx as tree::Id, &mut plan.linked_folders)
@@ -1481,7 +1495,12 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
         plan.retain(folder_idx, dir);
     }
 
-    // Workspace node_modules: dropped `before` rows resolve like nested trees; other entries go only once the root copy is installed.
+    // Workspace node_modules: dropped `before` rows resolve like nested trees; other entries go only once the root copy is installed,
+    // and only for the commands that collapse copies: no bun.lock says that bun placed them.
+    let removes_other_entries = matches!(
+        manager.subcommand,
+        crate::Subcommand::Dedupe | crate::Subcommand::Audit | crate::Subcommand::Update
+    );
     let selected_after: Option<Vec<PackageID>> = targets.map(|targets| targets.package_ids(after));
     let buf = after.buffers.string_bytes.as_slice();
     let pkg_names = after.packages.items_name();
@@ -1525,7 +1544,7 @@ fn plan_and_remove_collapsed_copies(manager: &PackageManager, before: &Lockfile)
                 if was_row {
                     !new.removable(0, entry.alias, &folder_path)
                 } else {
-                    !new.collapsed_into_ancestor(0, entry.alias)
+                    !removes_other_entries || !new.collapsed_into_ancestor(0, entry.alias)
                 }
             },
             &mut plan,

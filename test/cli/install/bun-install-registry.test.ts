@@ -4822,6 +4822,28 @@ describe.concurrent("binaries", () => {
       expect(exitCode).toBe(1);
     });
 
+    // A package is placed from the open `node_modules`, so nothing has to hold the whole path.
+    test.skipIf(!isLinux)("install places a scoped package whose @scope directory does not fit", async () => {
+      const { packageDir, env } = await setupTest();
+      await write(join(packageDir, "scoped", "package.json"), JSON.stringify({ name: "@s/a", version: "1.0.0" }));
+      const { dir: project, shorten } = directoryFilledBy(packageDir, join("node_modules", "@s"));
+      await write(
+        join(project, "package.json"),
+        JSON.stringify({ name: "foo", dependencies: { "@s/a": `file:${join(packageDir, "scoped")}` } }),
+      );
+
+      const { out, err, exitCode } = await run(["install"], project, env);
+      const shortened = await shorten();
+
+      expect(err).not.toContain("error:");
+      expect(out).toContain("1 package installed");
+      expect(await file(join(shortened, "node_modules", "@s", "a", "package.json")).json()).toEqual({
+        name: "@s/a",
+        version: "1.0.0",
+      });
+      expect(exitCode).toBe(0);
+    });
+
     // `bun link` symlinks the package into the global directory's node_modules and links its bins
     // from there, into the global bin directory.
     test("bun link reports a global package directory that does not fit as ENAMETOOLONG", async () => {
@@ -8249,6 +8271,98 @@ describe.concurrent("transitive file dependencies", () => {
       expect(lockfile).toContain(`"one-dep/no-deps/sub": ["sub@file:`);
       expect(await versionSeenThrough(packageDir, "one-dep", "no-deps", "sub")).toBe("1.2.3");
     });
+  });
+
+  // A folder's own node_modules is whatever an install in that folder left there, so it is no part of the dependency:
+  // bun installs what bun.lock has. It installs nothing for what the folder bundles, which is taken from there.
+  test.each(["hoisted", "isolated"])(
+    "a folder's own node_modules provides only what it bundles, %s linker",
+    async linker => {
+      const { packageDir, packageJson, env } = await setupTest();
+      const inFolder = (name: string, json: object) =>
+        write(join(packageDir, "local", "node_modules", name, "package.json"), JSON.stringify({ name, ...json }));
+      await Promise.all([
+        write(
+          packageJson,
+          JSON.stringify({ name: "foo", dependencies: { local: "file:./local", "no-deps": "2.0.0" } }),
+        ),
+        write(
+          join(packageDir, "local", "package.json"),
+          JSON.stringify({
+            name: "local",
+            version: "1.0.0",
+            dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.1" },
+            bundleDependencies: ["no-deps"],
+          }),
+        ),
+        inFolder("no-deps", { version: "1.0.0", bundled: true }),
+        write(
+          join(packageDir, "local", "node_modules", "no-deps", "index.js"),
+          `module.exports = require("next-to-it/package.json").version;`,
+        ),
+        inFolder("next-to-it", { version: "3.2.1" }),
+        inFolder("a-dep", { version: "9.9.9" }),
+      ]);
+      const install = async (...args: string[]) => {
+        await using proc = spawn({
+          cmd: [bunExe(), "install", "--linker", linker, "--save-text-lockfile", ...args],
+          cwd: packageDir,
+          stdout: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(err).not.toContain("error:");
+        expect(exitCode).toBe(0);
+        return out;
+      };
+      const check = async () => {
+        await using proc = spawn({
+          cmd: [
+            bunExe(),
+            "--no-install",
+            "-p",
+            `const local = require("module").createRequire(require.resolve("local/package.json"));
+          JSON.stringify([
+            local("no-deps/package.json").bundled,
+            local("no-deps"),
+            local("a-dep/package.json").version,
+            require("no-deps/package.json").version,
+          ])`,
+          ],
+          cwd: packageDir,
+          stdout: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ out, err, exitCode }).toEqual({ out: `[true,"3.2.1","1.0.1","2.0.0"]\n`, err: "", exitCode: 0 });
+      };
+
+      await install();
+      await check();
+      expect(await file(join(packageDir, "bun.lock")).text()).toContain(`"local/no-deps": ["no-deps@1.0.0", `);
+      expect(await install()).toContain("(no changes)");
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      await install("--frozen-lockfile");
+      await check();
+    },
+  );
+
+  // One module instance, whether it is loaded by its name or by its path, and with all that the tarball has below it.
+  test("the hoisted linker links a folder that a registry package ships to where it is", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
+    await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "file-dep": "1.0.0" } }));
+
+    await runBunInstall(env, packageDir);
+
+    const fileDep = join(packageDir, "node_modules", "file-dep");
+    const files = join(fileDep, "node_modules", "files");
+    expect(lstatSync(files).isSymbolicLink()).toBe(true);
+    expect(realpathSync(files)).toBe(realpathSync(join(fileDep, "the-files")));
+
+    const { out } = await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(out).toContain("(no changes)");
   });
 });
 
@@ -12336,8 +12450,9 @@ describe.concurrent("outdated", () => {
       "|--------------------------------------------------------------------------------------------|",
     ]);
     expect(table.map(line => Bun.stringWidth(line))).toEqual(table.map(() => 94));
-    expect(err).toContain('error: Invalid dependency name "e\\x1b[2Kvil-別名-\\u009b1m"');
-    expect(exitCode).toBe(1);
+    // Nothing is placed in node_modules, so the name is only reported on.
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
   });
 
   test("sizes and pads a cell by its display width, not by its byte length", async () => {

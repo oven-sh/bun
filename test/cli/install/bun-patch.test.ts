@@ -1689,23 +1689,48 @@ describe.concurrent("an npm: aliased dependency", () => {
     const dir = String(tmp);
     const env = projectEnv(dir);
     const install = await runBun(dir, env, "install");
-    expect(install.stderr).toContain("error: refusing to install dependency with unsafe name a/b\n");
+    expect(install.stderr).toStartWith('error: Invalid dependency name "a/b"\n');
     expect(install.exitCode).toBe(1);
 
     const { stdout, stderr, exitCode } = await runBun(dir, env, "patch", arg);
-    expect(stderr).toContain('error: refusing to patch dependency with unsafe name "a/b"\n');
+    expect(stderr).toStartWith('error: Invalid dependency name "a/b"\n');
     expect(stdout).not.toContain("To patch");
-    expect(await readdirSorted(join(dir, "node_modules"))).toEqual([]);
+    expect(existsSync(join(dir, "node_modules"))).toBe(false);
     expect(exitCode).toBe(1);
   });
 
-  // `bun.lockb` is read as is. One resolution id past the end of the package list used to be an
-  // index out of bounds when the id belonged to the named dependency. The name lookup reads the id
-  // of every dependency, so it must not trust any of them.
+  // `bun patch --commit` runs no install, so it has to look at the alias in the lockfile itself.
+  test("bun patch --commit <package name> refuses an unsafe alias in bun.lockb", async () => {
+    await using tmp = tempDir("bun-patch-unsafe-alias", {
+      "package.json": JSON.stringify({ name: "root", dependencies: { "a_b": "npm:no-deps@1.0.0" } }),
+      "bunfig.toml": `[install]\nlinker = "hoisted"\nsaveTextLockfile = false\n`,
+    });
+    const dir = String(tmp);
+    const env = projectEnv(dir);
+    await bunOk(dir, env, "install");
+
+    const lockb = Buffer.from(await Bun.file(join(dir, "bun.lockb")).arrayBuffer());
+    const at = lockb.indexOf("a_b");
+    expect(lockb.indexOf("a_b", at + 1)).toBe(-1);
+    lockb.write("a/b", at);
+    await Bun.write(join(dir, "bun.lockb"), lockb);
+
+    await expectRefused(
+      dir,
+      env,
+      'error: refusing to patch dependency with unsafe name "a/b"\n',
+      "--commit",
+      "no-deps",
+    );
+    expect(await readdirSorted(join(dir, "node_modules"))).toEqual(["a_b"]);
+  });
+
+  // One resolution id past the end of the package list used to be an index out of bounds when the
+  // id belonged to the named dependency. Such a `bun.lockb` does not load.
   test.each([
-    ["another dependency", 0, "failed to resolve"],
-    ["the named dependency", 1, "error: package no-deps not found"],
-  ])("bun patch --commit <name> with a resolution id past the end for %s", async (_, index, message) => {
+    ["another dependency", 0],
+    ["the named dependency", 1],
+  ])("bun patch --commit <name> with a resolution id past the end for %s", async (_, index) => {
     await using tmp = tempDir("bun-patch-lockb", {
       "package.json": JSON.stringify({ name: "root", dependencies: { "a-dep": "1.0.1", "no-deps": "1.0.0" } }),
       "bunfig.toml": `[install]\nlinker = "hoisted"\nsaveTextLockfile = false\n`,
@@ -1726,7 +1751,7 @@ describe.concurrent("an npm: aliased dependency", () => {
     await Bun.write(join(dir, "bun.lockb"), lockb);
 
     const { stderr, exitCode } = await runBun(dir, env, "patch", "--commit", "no-deps");
-    expect(stderr).toContain(message);
+    expect(stderr).toStartWith("error parsing lockfile: InvalidLockfile\n");
     expect(existsSync(join(dir, "patches"))).toBe(false);
     expect((await Bun.file(join(dir, "package.json")).json()).patchedDependencies).toBeUndefined();
     expect(exitCode).toBe(1);

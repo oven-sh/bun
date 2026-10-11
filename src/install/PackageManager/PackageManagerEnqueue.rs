@@ -854,17 +854,17 @@ fn warn_latest_names_no_version(
 }
 
 /// The package bun.lock has for a git / github row parsed from package.json, which does not know the
-/// package's name yet. Not for a resolved row: the isolated linker enqueues one again to get its checkout.
+/// package's name yet. Also a row that `Diff::keep_resolutions` resolved: it is enqueued all the same.
 fn locked_repository(
     this: &PackageManager,
-    id: DependencyID,
     dependency: &Dependency,
     res: &Resolution,
 ) -> Option<PackageID> {
-    let lockfile = &this.lockfile;
-    if lockfile.buffers.resolutions[id as usize] != invalid_package_id
-        || this.repins_tarball(dependency, lockfile.buffers.string_bytes.as_slice(), true)
-    {
+    if this.repins_tarball(
+        dependency,
+        this.lockfile.buffers.string_bytes.as_slice(),
+        true,
+    ) {
         return None;
     }
     this.locked_tarball(res)
@@ -1584,7 +1584,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             if let Some(pkg_id) = this
                 .lockfile
                 .get_package_id(name_hash, None, &res)
-                .or_else(|| locked_repository(this, id, dependency, &res))
+                .or_else(|| locked_repository(this, dependency, &res))
             {
                 success_fn(this, id, pkg_id);
                 return Ok(());
@@ -1718,7 +1718,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             if let Some(pkg_id) = this
                 .lockfile
                 .get_package_id(name_hash, None, &res)
-                .or_else(|| locked_repository(this, id, dependency, &res))
+                .or_else(|| locked_repository(this, dependency, &res))
             {
                 success_fn(this, id, pkg_id);
                 return Ok(());
@@ -2607,9 +2607,6 @@ fn resolve_dist_tag_from_workspace(
     dependency_id: DependencyID,
     success_fn: SuccessFn,
 ) -> Option<ResolvedPackageResult> {
-    if !has_linkable_workspace(this, name_hash) {
-        return None;
-    }
     let workspace_package_id = root_workspace_package_id(&this.lockfile, name_hash)?;
     // make sure verifyResolutions sees this resolution as a valid package id
     success_fn(this, dependency_id, workspace_package_id);
@@ -3014,6 +3011,7 @@ fn get_or_put_resolved_package(
             ) else {
                 // The registry does not have the name (`run_tasks` sends the row back after the 404).
                 if version.tag == dependency::version::Tag::DistTag
+                    && has_linkable_workspace(this, name_hash)
                     && this.network_task_has_failed(Task::Id::for_manifest(name_str))
                 {
                     if let Some(linked) =
@@ -3719,6 +3717,9 @@ pub(crate) fn warn_incorrect_peers(this: &PackageManager, served: &[(DependencyI
         let Some(dependent) = lockfile.get_parent_pkg_of_dependency(row) else {
             continue;
         };
+        let dependent_resolution = bun_fmt::for_terminal(
+            resolutions[dependent as usize].fmt(buf, bun_fmt::PathSep::Posix),
+        );
         this.log_mut().add_warning_fmt(
             None,
             bun_ast::Loc::EMPTY,
@@ -3727,9 +3728,12 @@ pub(crate) fn warn_incorrect_peers(this: &PackageManager, served: &[(DependencyI
                 names[copy as usize].fmt(buf),
                 bun_fmt::for_terminal(resolutions[copy as usize].fmt(buf, bun_fmt::PathSep::Posix)),
                 names[dependent as usize].fmt(buf),
-                bun_fmt::for_terminal(
-                    resolutions[dependent as usize].fmt(buf, bun_fmt::PathSep::Posix)
-                ),
+                // The root's resolution prints as nothing.
+                if dependent == 0 {
+                    &"root" as &dyn core::fmt::Display
+                } else {
+                    &dependent_resolution
+                },
                 peer.name.fmt(buf),
                 bun_fmt::escape_control_chars(range.literal.slice(buf)),
             ),

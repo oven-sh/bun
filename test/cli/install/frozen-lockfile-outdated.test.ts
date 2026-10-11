@@ -382,11 +382,14 @@ describe.concurrent("--frozen-lockfile still passes after an edit of", () => {
   ] as const)("a file: directory that %s, with a warning", async (_name, edit) => {
     const { packageDir, lock } = await installed();
     await writeVendored(packageDir, edit(vendored));
+    // Hashing the patch file is the one task of every install of this project.
+    const hashedThePatch = ["Resolving dependencies", "Resolved, downloaded and extracted [1]"];
 
     for (const args of [["install", "--frozen-lockfile"], ["ci"]]) {
       const frozen = await bun(packageDir, ...args);
 
       expect(frozen.stderr.split("\n").filter(Boolean)).toEqual([
+        ...hashedThePatch,
         "warn: the dependencies in vendor/vendored/package.json changed since the lockfile was saved (run 'bun install' to update it)",
       ]);
       expect(await lockText(packageDir)).toBe(lock);
@@ -402,7 +405,7 @@ describe.concurrent("--frozen-lockfile still passes after an edit of", () => {
 
     const after = await bun(packageDir, "install", "--frozen-lockfile");
 
-    expect(after.stderr).toBe("");
+    expect(after.stderr.split("\n").filter(Boolean)).toEqual(hashedThePatch);
     expect(after.exitCode).toBe(0);
   });
 

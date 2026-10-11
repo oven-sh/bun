@@ -4,7 +4,7 @@
 // Whatever the answer, bun loads the lockfile it wrote, and `--frozen-lockfile` / `bun ci` accept it.
 import { file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdir, realpath, rename, rm } from "fs/promises";
+import { exists, mkdir, realpath, rename, rm } from "fs/promises";
 import { bunEnv, bunExe } from "harness";
 import { dirname, join } from "path";
 import { TestRegistry } from "registry";
@@ -82,9 +82,19 @@ const wipeNodeModules = async (dir: string) => {
   );
 };
 
+// The real directory of the `name` that code in `from` loads. Not `Bun.resolveSync`: this process would remember what
+// the directories held before the last install.
+async function lookUp(from: string, name: string) {
+  for (let dir = await realpath(from); ; dir = dirname(dir)) {
+    const found = join(dir, "node_modules", name);
+    if (await exists(join(found, "package.json"))) return await realpath(found);
+    if (dir === dirname(dir)) throw new Error(`${name} does not resolve from ${from}`);
+  }
+}
+
 // The version of `name` that code in `from` (a directory of the project) loads.
 const seenFrom = async (dir: string, from: string, name: string) =>
-  (await file(Bun.resolveSync(`${name}/package.json`, await realpath(join(dir, from)))).json()).version;
+  (await file(join(await lookUp(join(dir, from), name), "package.json")).json()).version;
 
 // After the install that wrote bun.lock: a second one changes nothing, and frozen installs accept the file over the
 // node_modules that is there, over a wiped root node_modules, and over none at all.
@@ -241,6 +251,38 @@ describe.each(linkers)("%s linker", linker => {
         expect(await seenFrom(dir, "packages/beta", "@types/is-number")).toBe("9.0.0");
       });
     });
+  });
+
+  // Nobody depends on the workspace. Today a range drops it from bun.lock, so that nothing it depends on is installed,
+  // and after `catalog:` it takes the name back as soon as bun.lock is loaded.
+  describe("a workspace stays installed when the root gives its name to a registry version written as", () => {
+    for (const [written, range, catalog] of [
+      ["a range", "1.0.0", undefined],
+      ["catalog:", "catalog:", { "no-deps": "1.0.0" }],
+    ] as const) {
+      test.todo(written, async () => {
+        const dir = await project(linker, {
+          "": root({
+            workspaces: { packages: ["packages/*"], catalog },
+            dependencies: { "no-deps": range, "a-dep": "1.0.2" },
+          }),
+          "packages/no-deps": {
+            name: "no-deps",
+            version: "3.0.0",
+            dependencies: { "a-dep": "1.0.1", "what-bin": "1.0.0" },
+          },
+        });
+        await ok(dir, "install");
+
+        expect((await resolved(dir)).workspaces).toEqual(["", "packages/no-deps"]);
+        await expectRoundTrip(dir, async () => {
+          expect(await seenFrom(dir, ".", "no-deps")).toBe("1.0.0");
+          expect(await seenFrom(dir, ".", "a-dep")).toBe("1.0.2");
+          expect(await seenFrom(dir, "packages/no-deps", "a-dep")).toBe("1.0.1");
+          expect(await seenFrom(dir, "packages/no-deps", "what-bin")).toBe("1.0.0");
+        });
+      });
+    }
   });
 
   test.concurrent("a * range still links a workspace without a version", async () => {
@@ -465,10 +507,15 @@ describe.each(linkers)("%s linker", linker => {
         "packages/app": app,
       });
       // The no-deps that peer-deps-fixed loads.
-      const peer = async () => {
-        const plugin = Bun.resolveSync("peer-deps-fixed/package.json", await realpath(join(dir, "packages", "app")));
-        return (await file(Bun.resolveSync("no-deps/package.json", await realpath(join(plugin, "..")))).json()).version;
-      };
+      const peer = async () =>
+        (
+          await file(
+            join(
+              await lookUp(await lookUp(join(dir, "packages", "app"), "peer-deps-fixed"), "no-deps"),
+              "package.json",
+            ),
+          ).json()
+        ).version;
       await ok(dir, "install");
       expect(await resolved(dir)).toEqual({
         workspaces: ["", "packages/app", "packages/no-deps"],

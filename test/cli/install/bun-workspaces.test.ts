@@ -500,7 +500,9 @@ describe.concurrent("dist-tag on the name of a workspace that the registry does 
   ])("%s links the workspace", async (_, folder, app, root) => {
     using repo = project(app, root);
     expect(await repo.bun("install")).toEqual({ errors: [], exitCode: 0, requests: ["/sib"] });
-    expect(await file(join(repo.dir, "node_modules", folder, "package.json")).json()).toEqual(linked);
+    expect(await file(join(repo.dir, "packages", "app", "node_modules", folder, "package.json")).json()).toEqual(
+      linked,
+    );
     const lockfile = await file(join(repo.dir, "bun.lock")).text();
 
     // bun.lock has the link: the registry, which never gets to cache a 404, is not asked again
@@ -533,23 +535,13 @@ describe.concurrent("dist-tag on the name of a workspace that the registry does 
     });
   });
 
-  test.each([
-    ["", { errors: [], exitCode: 0, requests: ["/sib"] }],
-    [
-      "linkWorkspacePackages = false\n",
-      {
-        errors: [
-          'error: Package "sib" with tag "beta" not found, but package exists',
-          "error: sib@beta failed to resolve",
-        ],
-        exitCode: 1,
-        requests: ["/sib"],
-      },
-    ],
-  ])("a tag that the registry's package of the name lacks, with %j in bunfig.toml", async (bunfig, expected) => {
-    using repo = project({ dependencies: { sib: "beta" } }, undefined, bunfig, true);
-    expect(await repo.bun("install")).toEqual(expected);
-  });
+  test.each(["", "linkWorkspacePackages = false\n"])(
+    "a tag that the registry's package of the name lacks, with %j in bunfig.toml",
+    async bunfig => {
+      using repo = project({ dependencies: { sib: "beta" } }, undefined, bunfig, true);
+      expect(await repo.bun("install")).toEqual({ errors: [], exitCode: 0, requests: ["/sib"] });
+    },
+  );
 });
 
 test.concurrent("successfully installs workspace when path already exists in node_modules", async () => {
@@ -3894,19 +3886,16 @@ test.concurrent("the package.json cache keeps no mimalloc heap for each file", a
 });
 
 // The hoisted installer links a workspace package into node_modules under its name. A name
-// too long for the buffer that symlink is given used to abort the whole install instead of
-// failing that one package with ENAMETOOLONG. On POSIX that buffer held 512 bytes. On
-// Windows the name is appended to the absolute node_modules path in a 98302 byte buffer
-// (bun refuses names of 98302 bytes and up), so the name has to come within a node_modules
-// path (`\\?\C:\x\node_modules\` at the very least) of that size to overflow it.
+// too long for the buffer that symlink is given (512 bytes on POSIX) used to abort the whole
+// install. A name over 255 bytes is refused like that of any other dependency, before
+// anything is written.
 describe("workspace packages whose name is too long to link", () => {
-  const longName = Buffer.alloc(isWindows ? 98302 - 20 : 600, "a").toString();
+  const longName = Buffer.alloc(600, "a").toString();
 
-  // A scoped package is linked inside a separately opened `node_modules/@scope` directory.
   test.concurrent.each([
     ["unscoped", longName],
     ["scoped", `@scope/${longName}`],
-  ])("%s name fails with ENAMETOOLONG", async (_, name) => {
+  ])("%s name is refused", async (_, name) => {
     using ctx = await setupTest();
     const { packageDir, packageJson } = ctx;
     await Promise.all([
@@ -3922,8 +3911,12 @@ describe("workspace packages whose name is too long to link", () => {
       env: ctx.env,
     });
     const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(err).toContain(`ENAMETOOLONG: failed linking dependency/workspace to node_modules for package ${name}`);
-    expect(out).toContain("Failed to install 1 package");
+    expect(err).toContain(`error: Invalid dependency name "${name}"`);
+    expect(out).not.toContain("installed");
+    expect([await exists(join(packageDir, "bun.lock")), await exists(join(packageDir, "node_modules"))]).toEqual([
+      false,
+      false,
+    ]);
     expect(exitCode).toBe(1);
   });
 });
@@ -4358,7 +4351,7 @@ describe("the git and github dependencies that bun.lock has already resolved", (
     await run(cwd, env, "install", "--linker=isolated");
     expect(requests).toBe(afterFirstInstall);
 
-    // The isolated linker enqueues the resolved row again once the clone is there, to get the checkout.
+    // Nothing is fetched to resolve the row, so the linker is the one to clone and check out.
     await Promise.all(
       ["node_modules", "packages/a/node_modules", ".bun-cache"].map(path =>
         rm(join(cwd, path), { recursive: true, force: true }),

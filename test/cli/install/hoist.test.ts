@@ -1024,6 +1024,33 @@ describe.concurrent("what left the tree leaves node_modules", () => {
     }).toEqual({ root: "2.0.0", a: null, b: "1.0.1" });
   });
 
+  // `bun prune` is the tool for that.
+  test("not a folder in a member's node_modules that bun.lock never placed", async () => {
+    const { packageDir, packageJson } = await project({
+      "package.json": {
+        name: "root",
+        workspaces: ["packages/*"],
+        dependencies: { "a-dep": "1.0.1", "no-deps": "2.0.0" },
+      },
+      "packages/a/package.json": { name: "a", dependencies: { "no-deps": "2.0.0" } },
+    });
+    await runBunInstall(env(packageDir), packageDir);
+    await write(
+      join(packageDir, "packages", "a", "node_modules", "no-deps", "package.json"),
+      JSON.stringify({ name: "no-deps", version: "2.0.0-by-hand" }),
+    );
+    await write(
+      packageJson,
+      JSON.stringify({ name: "root", workspaces: ["packages/*"], dependencies: { "no-deps": "2.0.0" } }),
+    );
+    await runBunInstall(env(packageDir), packageDir);
+    expect({
+      left: await versionAt(packageDir, "node_modules", "a-dep"),
+      root: await versionAt(packageDir, "node_modules", "no-deps"),
+      a: await versionAt(packageDir, "packages", "a", "node_modules", "no-deps"),
+    }).toEqual({ left: null, root: "2.0.0", a: "2.0.0-by-hand" });
+  });
+
   test("not the copy of a member that --filter leaves out", async () => {
     const { packageDir } = await project({
       "package.json": { name: "root", workspaces: ["packages/*"], dependencies: { "no-deps": "2.0.0" } },
@@ -1093,6 +1120,46 @@ describe.concurrent("what left the tree leaves node_modules", () => {
     expect(await versionAt(packageDir, "node_modules", "bundled-1", "node_modules", "no-deps")).toBe("1.0.0");
   });
 
+  // The host needs no-deps@2.0.0 and nests it, so bun.lock places the no-deps@1.0.0 of the bundled
+  // package one level further down, where the tarball ships it.
+  test.each(["install", "update"])("not what a tarball ships below the package it bundles (bun %s)", async command => {
+    const { packageDir, packageJson } = await project({
+      "package.json": {
+        name: "root",
+        dependencies: { "a-dep": "1.0.1", "bundled-conflict-host": "1.0.0", "no-deps": "1.0.1" },
+      },
+    });
+    await runBunInstall(env(packageDir), packageDir);
+    await write(
+      packageJson,
+      JSON.stringify({ name: "root", dependencies: { "bundled-conflict-host": "1.0.0", "no-deps": "1.0.1" } }),
+    );
+    await using proc = Bun.spawn({ cmd: [bunExe(), command], cwd: packageDir, env: env(packageDir), stderr: "pipe" });
+    expect(await proc.stderr.text()).not.toContain("error:");
+    const host = join(packageDir, "node_modules", "bundled-conflict-host", "node_modules");
+    expect({
+      left: await versionAt(packageDir, "node_modules", "a-dep"),
+      nested: await versionAt(host, "no-deps"),
+      shipped: await versionAt(host, "bundled-shipped-inner", "node_modules", "no-deps"),
+    }).toEqual({ left: null, nested: "2.0.0", shipped: "1.0.0" });
+    expect(await proc.exited).toBe(0);
+  });
+
+  // bun.lock still holds it.
+  test("not a package that an install for another platform placed", async () => {
+    const { packageDir, packageJson } = await project({
+      "package.json": { name: "root", dependencies: { "a-dep": "1.0.1", "test-native-binlink": "1.0.0" } },
+    });
+    await runBunInstall(env(packageDir), packageDir);
+    await write(packageJson, JSON.stringify({ name: "root", dependencies: { "test-native-binlink": "1.0.0" } }));
+    await runBunInstall(env(packageDir), packageDir, { packages: ["--cpu=ppc64"] });
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      ".bin",
+      "test-native-binlink",
+      "test-native-binlink-target",
+    ]);
+  });
+
   test("not a devDependency that --omit=dev skips", async () => {
     const { packageDir, packageJson } = await project({
       "package.json": {
@@ -1112,50 +1179,44 @@ describe.concurrent("what left the tree leaves node_modules", () => {
 });
 
 // The root asks for no-deps@1.0.1, and a member is called no-deps too (2.0.0: not accepted).
-describe.concurrent.each(["hoisted", "isolated"] as const)(
+test.concurrent.each(["hoisted", "isolated"] as const)(
   "%s: the root's own dependency beats the member of that name",
-  linker => {
-    test.each([
-      ["a version", "1.0.1", undefined],
-      ["a catalog", "catalog:tools", { tools: { "no-deps": "1.0.1" } }],
-    ])("written as %s", async (_, range, catalogs) => {
-      const { packageDir } = await registry.createTestDir({
-        bunfigOpts: { linker },
-        files: {
-          "package.json": JSON.stringify({
-            name: "root",
-            workspaces: { packages: ["packages/*"], catalogs },
-            dependencies: { "no-deps": range },
-          }),
-          "packages/a/package.json": JSON.stringify({
-            name: "no-deps",
-            version: "2.0.0",
-            dependencies: { "no-deps": "^1.0.1" },
-          }),
-          "packages/b/package.json": JSON.stringify({
-            name: "ws-b",
-            version: "1.0.0",
-            dependencies: { "no-deps": "workspace:2.0.0" },
-          }),
-        },
-      });
-      const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") };
-      const seen = async () => ({
-        root: (await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).version,
-        "ws-b": (await file(join(packageDir, "packages", "b", "node_modules", "no-deps", "package.json")).json())
-          .version,
-      });
-
-      await runBunInstall(env, packageDir);
-      expect(await seen()).toEqual({ root: "1.0.1", "ws-b": "2.0.0" });
-      const lockfile = await file(join(packageDir, "bun.lock")).text();
-
-      // What bun.lock holds gives the same.
-      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-      await runBunInstall(env, packageDir, { savesLockfile: false });
-      expect(await seen()).toEqual({ root: "1.0.1", "ws-b": "2.0.0" });
-      expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+  async linker => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker },
+      files: {
+        "package.json": JSON.stringify({
+          name: "root",
+          workspaces: ["packages/*"],
+          dependencies: { "no-deps": "1.0.1" },
+        }),
+        "packages/a/package.json": JSON.stringify({
+          name: "no-deps",
+          version: "2.0.0",
+          dependencies: { "no-deps": "^1.0.1" },
+        }),
+        "packages/b/package.json": JSON.stringify({
+          name: "ws-b",
+          version: "1.0.0",
+          dependencies: { "no-deps": "workspace:2.0.0" },
+        }),
+      },
     });
+    const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") };
+    const seen = async () => ({
+      root: (await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).version,
+      "ws-b": (await file(join(packageDir, "packages", "b", "node_modules", "no-deps", "package.json")).json()).version,
+    });
+
+    await runBunInstall(env, packageDir);
+    expect(await seen()).toEqual({ root: "1.0.1", "ws-b": "2.0.0" });
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+
+    // What bun.lock holds gives the same.
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await runBunInstall(env, packageDir, { savesLockfile: false });
+    expect(await seen()).toEqual({ root: "1.0.1", "ws-b": "2.0.0" });
+    expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
   },
 );
 

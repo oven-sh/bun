@@ -4,9 +4,9 @@ use core::mem::MaybeUninit;
 
 use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMap, DynamicBitSet, MultiArrayList, index_sort};
-use bun_core::Output;
 use bun_core::ZStr;
 use bun_core::fmt::PathSep;
+use bun_core::{Output, UnwrapOrOom as _};
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP};
 
 use crate::lockfile::package::PackageColumns as _;
@@ -461,8 +461,10 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
 /// The required peers of the package that is being hoisted, each with whether a `node_modules`
 /// it would still see if it stayed put holds a version in range. Hoisting stops below a
 /// `node_modules` that would hide that version behind one out of range.
+///
+/// The second field: the packages that have such a peer. Most have none, and `begin` runs for every row that is hoisted.
 #[derive(Default)]
-pub(crate) struct PeerProbes(Vec<(DependencyID, bool)>);
+pub(crate) struct PeerProbes(Vec<(DependencyID, bool)>, Option<DynamicBitSet>);
 
 impl PeerProbes {
     /// `package_id` is about to be hoisted out of the package with `owner_deps`.
@@ -476,6 +478,25 @@ impl PeerProbes {
     ) {
         self.0.clear();
         if package_id == invalid_package_id {
+            return;
+        }
+
+        let is_probed = |peer: &Dependency| {
+            peer.behavior.is_peer()
+                && !peer.behavior.is_optional_peer()
+                && peer.version.tag == crate::dependency::VersionTag::Npm
+        };
+        let with_peers = self.1.get_or_insert_with(|| {
+            let lists = lockfile.packages.items_resolutions();
+            let mut set = DynamicBitSet::init_empty(lists.len()).unwrap_or_oom();
+            for (id, list) in lists.iter().enumerate() {
+                if (list.begin()..list.end()).any(|dep_id| is_probed(&deps[dep_id as usize])) {
+                    set.set(id);
+                }
+            }
+            set
+        });
+        if !with_peers.is_set(package_id as usize) {
             return;
         }
 
@@ -493,10 +514,7 @@ impl PeerProbes {
 
         for peer_dep_id in pkg_deps.begin()..pkg_deps.end() {
             let peer = &deps[peer_dep_id as usize];
-            if !peer.behavior.is_peer()
-                || peer.behavior.is_optional_peer()
-                || peer.version.tag != crate::dependency::VersionTag::Npm
-            {
+            if !is_probed(peer) {
                 continue;
             }
 

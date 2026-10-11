@@ -3756,8 +3756,17 @@ describe.concurrent("the deprecated rules about layout", () => {
 
   // As after eslint-config-prettier.
   test.each([
-    ["eslint.config.mjs", { "eslint.config.mjs": `export default [{ rules: { semi: 2 } }, { rules: { semi: 0, indent: "off" } }];` }],
-    [".eslintrc.json", { ".eslintrc.json": rc({ extends: "./base.json", rules: { semi: 0, indent: "off" } }), "base.json": `{ "rules": { "semi": 2 } }` }],
+    [
+      "eslint.config.mjs",
+      { "eslint.config.mjs": `export default [{ rules: { semi: 2 } }, { rules: { semi: 0, indent: "off" } }];` },
+    ],
+    [
+      ".eslintrc.json",
+      {
+        ".eslintrc.json": rc({ extends: "./base.json", rules: { semi: 0, indent: "off" } }),
+        "base.json": `{ "rules": { "semi": 2 } }`,
+      },
+    ],
   ])("%s: nothing is said about one that is off in the end", async (_, config) => {
     const { stderr, exitCode } = await lint({ ...config, "a.js": `/* eslint quotes: "off" */ a` }, forPeople);
     expect(notes(stderr)).toEqual([]);
@@ -3790,9 +3799,9 @@ describe.concurrent("the deprecated rules about layout", () => {
     const files = { [name]: config({ "no-debugger": "error" }), "a.js": text.join("\n") };
     const unused = ["--report-unused-disable-directives", "a.js"];
     const [found, fixed] = await Promise.all([lint(files, unused), lint(files, ["--fix-dry-run", ...unused])]);
-    expect(JSON.parse(found.raw).results[0].messages.map((it: any) => `${it.line}:${it.column} ${it.message}`)).toEqual([
-      "2:1 Unused eslint-disable directive (no problems were reported from 'no-debugger').",
-    ]);
+    expect(JSON.parse(found.raw).results[0].messages.map((it: any) => `${it.line}:${it.column} ${it.message}`)).toEqual(
+      ["2:1 Unused eslint-disable directive (no problems were reported from 'no-debugger')."],
+    );
     text[1] = "// eslint-disable-next-line indent";
     expect(JSON.parse(fixed.raw).results[0]).toMatchObject({ messages: [], output: text.join("\n") });
   });
@@ -3810,7 +3819,8 @@ describe.concurrent("the deprecated rules about layout", () => {
 
   // What ESLint 10.12 prints.
   test("usedDeprecatedRules has them, in the order of the configuration", async () => {
-    const old = (replacedBy: string) => `{ meta: { deprecated: true, replacedBy: ["${replacedBy}"] }, create: () => ({}) }`;
+    const old = (replacedBy: string) =>
+      `{ meta: { deprecated: true, replacedBy: ["${replacedBy}"] }, create: () => ({}) }`;
     const { raw } = await lint(
       {
         "eslint.config.mjs": `export default [{
@@ -3883,7 +3893,11 @@ describe.concurrent("the deprecated rules about layout", () => {
   });
 
   test("so does one of --rulesdir", async () => {
-    const files = { ".eslintrc.json": rc({ rules: { semi: "error" } }), "rules/semi.js": `module.exports = ${reports};`, "a.js": "a\n" };
+    const files = {
+      ".eslintrc.json": rc({ rules: { semi: "error" } }),
+      "rules/semi.js": `module.exports = ${reports};`,
+      "a.js": "a\n",
+    };
     expect((await lint(files, ["--rulesdir", "rules", "a.js"])).problems).toEqual(["a.js:1:1 semi"]);
   });
 
@@ -3911,7 +3925,9 @@ describe.concurrent("the deprecated rules about layout", () => {
   // oxlint has never had them, and refuses the file.
   test("beside an .oxlintrc.json they are rules like any other that is not built in", async () => {
     const files = {
-      ".oxlintrc.json": JSON.stringify({ rules: { semi: "error", "eslint/quotes": "warn", indent: "off", "no-debugger": "error" } }),
+      ".oxlintrc.json": JSON.stringify({
+        rules: { semi: "error", "eslint/quotes": "warn", indent: "off", "no-debugger": "error" },
+      }),
       "a.js": untidy,
     };
     const { problems, stderr, exitCode } = await lint(files, ["a.js"]);
@@ -3960,13 +3976,19 @@ describe.concurrent("the plugins jsdoc and vue of oxlint, of which no rule is bu
     expect(await run({ ...quiet, plugins: ["jsdoc", "vue"], rules: off })).toEqual(silent);
     // As in oxlint, where it does not run either.
     expect(await run({ ...quiet, rules: on })).toEqual(silent);
-    expect(await run({ ...quiet, extends: ["./base.json"], plugins: ["jsdoc", "vue"], rules: off }, [], {
-      "base.json": JSON.stringify({ plugins: ["jsdoc", "vue"], rules: on }),
-    })).toEqual(silent);
+    expect(
+      await run({ ...quiet, extends: ["./base.json"], plugins: ["jsdoc", "vue"], rules: off }, [], {
+        "base.json": JSON.stringify({ plugins: ["jsdoc", "vue"], rules: on }),
+      }),
+    ).toEqual(silent);
   });
 
   test("in overrides, for the files that they are for", async () => {
-    const override = (pattern: string) => ({ files: [pattern], plugins: ["vue"], rules: { "vue/no-dupe-keys": "error" } });
+    const override = (pattern: string) => ({
+      files: [pattern],
+      plugins: ["vue"],
+      rules: { "vue/no-dupe-keys": "error" },
+    });
     expect((await run({ ...quiet, overrides: [override("*.vue")] })).notes).toEqual([vue]);
     expect((await run({ ...quiet, overrides: [override("*.svelte")] })).notes).toEqual([]);
   });

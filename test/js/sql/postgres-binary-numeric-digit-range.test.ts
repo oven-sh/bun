@@ -175,6 +175,7 @@ const table = [
   row(1, -1, NEG, 3, [10], "-0.001"),
   row(1, -1, NEG, 2, [99], "0.00"),
   row(1, -1, NEG, 2, [100], "-0.01"),
+  row(1, -1, NEG, 4, [1], "-0.0001"),
   row(2, -1, NEG, 5, [1234, 5000], "-0.12345"),
 
   // A leading zero word before a word that is not zero is dropped.
@@ -259,6 +260,7 @@ const table = [
   row(3, -4, POS, 10, [5000, 10000, 1253], REJECT),
   row(2, 0, POS, 4, [0, 10000], REJECT),
   row(2, 1, POS, 0, [5, 10000], REJECT),
+  row(2, 1, POS, 0, [5, 10001], REJECT),
 
   // The sign is not one of the five values.
   row(1, 0, 0x8000, 0, [5], REJECT),

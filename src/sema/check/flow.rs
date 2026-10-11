@@ -1046,7 +1046,7 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(members) = self.members(ty) else {
             return false;
         };
-        if !(members.shape().call.is_empty() && members.shape().construct.is_empty()) {
+        if members.has_signatures() {
             return true;
         }
         if members.resolved.prop(known::bind).is_none() {

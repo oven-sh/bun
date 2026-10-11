@@ -869,7 +869,8 @@ fn has_use<'a>(
         // Only what is written to is on the left of an assignment or the operand of an update, and
         // without an assignment before there is no right side to be in.
         // Nor is the name of a declaration.
-        if rhs_node.is_some() || flags.contains(ReferenceFlags::WRITE) && reference.expr().is_some() {
+        if rhs_node.is_some() || flags.contains(ReferenceFlags::WRITE) && reference.expr().is_some()
+        {
             let is_for_itself = is_read_for_itself(reference, rhs_node, walks);
             rhs_node = get_rhs_node(reference, rhs_node, walks);
             if is_for_itself {

@@ -1,6 +1,6 @@
 use bun_lint::code_path::{Event, Step};
 use bun_lint::prelude::*;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
 /// Disallow assignments that can lead to race conditions due to usage of `await` or `yield`.
@@ -34,14 +34,14 @@ impl<'a> Variable<'a> {
     }
 }
 
-/// A reference, what it refers to, and the number of that in the [`ReadSets`].
-type Resolved<'a> = (Reference<'a>, Variable<'a>, u32);
+/// A reference, and what it refers to.
+type Resolved<'a> = (Reference<'a>, Variable<'a>);
 
 /// By where the identifier starts.
 type ReferenceMap<'a> = FxHashMap<u32, Resolved<'a>>;
 
 /// The references in `scope`, which is that of a function, without those in nested functions.
-fn create_reference_map<'a>(scope: Scope<'a>, file: &'a File<'a>, sets: &mut ReadSets<'a>) -> ReferenceMap<'a> {
+fn create_reference_map<'a>(scope: Scope<'a>, file: &'a File<'a>) -> ReferenceMap<'a> {
     let mut map = ReferenceMap::default();
     let mut scopes: SmallVec<[Scope<'a>; 8]> = SmallVec::new();
     scopes.push(scope);
@@ -54,7 +54,7 @@ fn create_reference_map<'a>(scope: Scope<'a>, file: &'a File<'a>, sets: &mut Rea
                 }
                 None => continue,
             };
-            map.insert(reference.ident().start(), (reference, variable, sets.number_of(variable)));
+            map.insert(reference.ident().start(), (reference, variable));
         }
         scopes.extend(scope.children().filter(|it| it.kind() != ScopeKind::Function));
     }
@@ -150,168 +150,10 @@ fn is_local_variable_without_escape(variable: Variable, is_member_access: bool) 
     symbol.references().all(|reference| reference.scope().variable_scope() == function_scope)
 }
 
-/// ESLint's `freshReadVariables` and `outdatedReadVariables` of a segment: two bits for each
-/// variable. With `height` 0, `root` has the bits of the first 16 variables. Otherwise it is a node
-/// of [`ReadSets`] with two halves of `height - 1`, and 0 if no bit is set.
-#[derive(Copy, Clone, Default)]
-struct SegmentInfo {
-    root: u32,
-    height: u8,
-}
-
-const VARIABLES_PER_BLOCK: u32 = 16;
-const FRESH: u32 = 0x5555_5555;
-const OUTDATED: u32 = FRESH << 1;
-const UNKNOWN: u32 = u32::MAX;
-
-/// The nodes of all [`SegmentInfo`]s. A segment starts with what the segments before it end with,
-/// and changes little of it. So equal halves are one node, which makes what has not changed cost
-/// nothing: neither memory, nor time where two of them are joined. What has been computed of a node
-/// is remembered.
 #[derive(Default)]
-struct ReadSets<'a> {
-    numbers: FxHashMap<Variable<'a>, u32>,
-    /// The halves of each node. The first is not used.
-    nodes: Vec<[u32; 2]>,
-    /// By height and halves.
-    interned: FxHashMap<(u8, [u32; 2]), u32>,
-    /// By node: the result of `make_outdated`, or `UNKNOWN`.
-    outdated: Vec<u32>,
-    /// By two nodes, the lower first.
-    unions: FxHashMap<[u32; 2], u32>,
-}
-
-impl<'a> ReadSets<'a> {
-    fn clear(&mut self) {
-        self.numbers.clear();
-        self.nodes.clear();
-        self.interned.clear();
-        self.outdated.clear();
-        self.unions.clear();
-    }
-
-    fn number_of(&mut self, variable: Variable<'a>) -> u32 {
-        let next = self.numbers.len() as u32;
-        *self.numbers.entry(variable).or_insert(next)
-    }
-
-    fn halves(&self, node: u32) -> [u32; 2] {
-        self.nodes.get(node as usize).copied().unwrap_or_default()
-    }
-
-    fn node(&mut self, height: u8, halves: [u32; 2]) -> u32 {
-        if halves == [0, 0] {
-            return 0;
-        }
-        if self.nodes.is_empty() {
-            self.nodes.push([0, 0]);
-            self.outdated.push(0);
-        }
-        let next = self.nodes.len() as u32;
-        let node = *self.interned.entry((height, halves)).or_insert(next);
-        if node == next {
-            self.nodes.push(halves);
-            self.outdated.push(UNKNOWN);
-        }
-        node
-    }
-
-    /// The root of `info` at a `height` that is not lower than its own.
-    fn root_at(&mut self, info: SegmentInfo, height: u8) -> u32 {
-        (info.height..height).fold(info.root, |root, below| self.node(below + 1, [root, 0]))
-    }
-
-    /// Which half of a node of `height` has the variable.
-    fn half_of(variable: u32, height: u8) -> usize {
-        (((variable / VARIABLES_PER_BLOCK) >> (height - 1)) & 1) as usize
-    }
-
-    fn mark_in(&mut self, root: u32, height: u8, variable: u32) -> u32 {
-        if height == 0 {
-            let shift = (variable % VARIABLES_PER_BLOCK) * 2;
-            return (root & !(0b11 << shift)) | (0b01 << shift);
-        }
-        let mut halves = self.halves(root);
-        let half = &mut halves[Self::half_of(variable, height)];
-        *half = self.mark_in(*half, height - 1, variable);
-        self.node(height, halves)
-    }
-
-    /// ESLint's `markAsRead`: it is fresh, and no longer outdated.
-    fn mark_as_read(&mut self, info: SegmentInfo, variable: u32) -> SegmentInfo {
-        let blocks = variable / VARIABLES_PER_BLOCK;
-        let height = info.height.max((u32::BITS - blocks.leading_zeros()) as u8);
-        let root = self.root_at(info, height);
-        SegmentInfo {
-            root: self.mark_in(root, height, variable),
-            height,
-        }
-    }
-
-    fn make_outdated_in(&mut self, root: u32, height: u8) -> u32 {
-        if height == 0 {
-            return ((root & FRESH) << 1) | (root & OUTDATED);
-        }
-        match self.outdated.get(root as usize) {
-            Some(&UNKNOWN) => {}
-            known => return known.copied().unwrap_or(0),
-        }
-        let halves = self.halves(root).map(|half| self.make_outdated_in(half, height - 1));
-        let result = self.node(height, halves);
-        if let Some(known) = self.outdated.get_mut(root as usize) {
-            *known = result;
-        }
-        result
-    }
-
-    /// ESLint's `makeOutdated`: what is fresh is outdated.
-    fn make_outdated(&mut self, info: SegmentInfo) -> SegmentInfo {
-        SegmentInfo {
-            root: self.make_outdated_in(info.root, info.height),
-            height: info.height,
-        }
-    }
-
-    fn union_in(&mut self, a: u32, b: u32, height: u8) -> u32 {
-        if a == b || b == 0 {
-            return a;
-        }
-        if a == 0 {
-            return b;
-        }
-        if height == 0 {
-            return a | b;
-        }
-        let key = [a.min(b), a.max(b)];
-        if let Some(&known) = self.unions.get(&key) {
-            return known;
-        }
-        let ([a0, a1], [b0, b1]) = (self.halves(a), self.halves(b));
-        let halves = [self.union_in(a0, b0, height - 1), self.union_in(a1, b1, height - 1)];
-        let result = self.node(height, halves);
-        self.unions.insert(key, result);
-        result
-    }
-
-    fn union(&mut self, a: SegmentInfo, b: SegmentInfo) -> SegmentInfo {
-        let height = a.height.max(b.height);
-        let (a, b) = (self.root_at(a, height), self.root_at(b, height));
-        SegmentInfo {
-            root: self.union_in(a, b, height),
-            height,
-        }
-    }
-
-    /// ESLint's `isOutdated`
-    fn is_outdated(&self, info: SegmentInfo, variable: u32) -> bool {
-        if (u64::from(variable / VARIABLES_PER_BLOCK) >> info.height) != 0 {
-            return false;
-        }
-        let block = (1..=info.height).rev().fold(info.root, |root, height| {
-            self.halves(root)[Self::half_of(variable, height)]
-        });
-        (block >> ((variable % VARIABLES_PER_BLOCK) * 2)) & 0b10 != 0
-    }
+struct SegmentInfo<'a> {
+    outdated_read_variables: FxHashSet<Variable<'a>>,
+    fresh_read_variables: FxHashSet<Variable<'a>>,
 }
 
 struct Frame<'a> {
@@ -324,8 +166,7 @@ struct Frame<'a> {
 pub struct State<'a> {
     stack: Vec<Frame<'a>>,
     /// By `Segment::id`, for the reachable segments of async functions and generators.
-    segment_info: FxHashMap<u32, SegmentInfo>,
-    read_sets: ReadSets<'a>,
+    segment_info: FxHashMap<u32, SegmentInfo<'a>>,
     /// The current segments where the `ChainExpression` that is being left is left.
     segments_after_chain: Option<SmallVec<[Segment<'a>; 2]>>,
     /// By what is assigned: the references to verify once that has been evaluated.
@@ -440,7 +281,7 @@ impl RequireAtomicUpdates {
             _ => None,
         };
         let file = cx.file();
-        let reference_map = scope.map(|scope| create_reference_map(scope, file, &mut cx.state.read_sets));
+        let reference_map = scope.map(|scope| create_reference_map(scope, file));
         cx.state.stack.push(Frame {
             code_path,
             reference_map,
@@ -452,7 +293,6 @@ impl RequireAtomicUpdates {
         state.stack.pop();
         if !state.stack.iter().any(|it| it.reference_map.is_some()) {
             state.segment_info.clear();
-            state.read_sets.clear();
         }
     }
 
@@ -463,8 +303,9 @@ impl RequireAtomicUpdates {
         }
         let mut info = SegmentInfo::default();
         for prev_segment in segment.prev_segments() {
-            if let Some(&prev) = state.segment_info.get(&prev_segment.id()) {
-                info = state.read_sets.union(info, prev);
+            if let Some(prev) = state.segment_info.get(&prev_segment.id()) {
+                info.outdated_read_variables.extend(&prev.outdated_read_variables);
+                info.fresh_read_variables.extend(&prev.fresh_read_variables);
             }
         }
         state.segment_info.insert(segment.id(), info);
@@ -484,7 +325,7 @@ impl RequireAtomicUpdates {
             Node::Pat(pat) if pat.tag() == PatTag::Ident => pat.span().start,
             _ => return,
         };
-        let Some(&(reference, variable, number)) = reference_map.get(&start) else {
+        let Some(&(reference, variable)) = reference_map.get(&start) else {
             return;
         };
         let code_path = *code_path;
@@ -501,7 +342,9 @@ impl RequireAtomicUpdates {
         if reference.is_read() && !write_expr.is_some_and(is_right_of_plain_assignment) {
             for segment in code_path.current_segments() {
                 if let Some(info) = state.segment_info.get_mut(&segment.id()) {
-                    *info = state.read_sets.mark_as_read(*info, number);
+                    info.fresh_read_variables.insert(variable);
+                    // What is freshly read again is no longer outdated.
+                    info.outdated_read_variables.remove(&variable);
                 }
             }
         }
@@ -510,7 +353,7 @@ impl RequireAtomicUpdates {
             && assignment_of(write_expr).is_some()
             && !is_local_variable_without_escape(variable, is_member_access)
         {
-            state.assignment_references.entry(write_expr).or_default().push((reference, variable, number));
+            state.assignment_references.entry(write_expr).or_default().push((reference, variable));
         }
     }
 
@@ -530,7 +373,7 @@ impl RequireAtomicUpdates {
         if matches!(e.tag(), ExprTag::Await | ExprTag::Yield) {
             for segment in code_path.current_segments() {
                 if let Some(info) = state.segment_info.get_mut(&segment.id()) {
-                    *info = state.read_sets.make_outdated(*info);
+                    info.outdated_read_variables.extend(info.fresh_read_variables.drain());
                 }
             }
         }
@@ -546,10 +389,10 @@ impl RequireAtomicUpdates {
             return;
         };
         let segments = cx.state.segments_after_chain.take().unwrap_or_else(|| code_path.current_segments());
-        for (reference, variable, number) in references {
+        for (reference, variable) in references {
             let is_outdated = segments.iter().any(|segment| {
                 let info = cx.state.segment_info.get(&segment.id());
-                info.is_some_and(|&it| cx.state.read_sets.is_outdated(it, number))
+                info.is_some_and(|it| it.outdated_read_variables.contains(&variable))
             });
             if !is_outdated {
                 continue;

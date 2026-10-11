@@ -8,10 +8,14 @@
  */
 import assert from "node:assert";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import http from "node:http";
+import https from "node:https";
 import type { AddressInfo, Socket } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
+import { dirname, join } from "node:path";
 import { describe, test } from "node:test";
+import { connect as tlsConnect } from "node:tls";
 import { fileURLToPath } from "node:url";
 
 type Seen = Record<string, boolean>;
@@ -396,6 +400,223 @@ for (const expectation of ["100-continue", "something-else"]) {
     });
   });
 }
+
+// close() and closeIdleConnections() take a connection whose parser is between
+// messages and whose response has ended:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js#L693-L706
+// The parser is between messages from the last byte of a body, for either
+// framing, before anything runs behind that byte:
+// https://github.com/nodejs/node/blob/v26.3.0/src/node_http_parser.cc#L535-L545
+describe("a sweep behind the last byte of a request body", () => {
+  type Arrange = (req: http.IncomingMessage, res: http.ServerResponse, sweep: () => void) => unknown;
+  type Method = "close" | "closeIdleConnections" | "closeIdleConnections after close";
+  const everyMethod: Method[] = ["close", "closeIdleConnections", "closeIdleConnections after close"];
+  const bothMethods: Method[] = ["close", "closeIdleConnections"];
+
+  const fixtures = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
+  const tlsOptions = { cert: readFileSync(join(fixtures, "cert.pem")), key: readFileSync(join(fixtures, "cert.key")) };
+  const upload = "POST /upload HTTP/1.1\r\nHost: x\r\n";
+  const chunked = upload + "Transfer-Encoding: chunked\r\n";
+  const second = "GET /second HTTP/1.1\r\nHost: x\r\n\r\n";
+  const framings: [name: string, request: string][] = [
+    ["chunked", chunked + "\r\n5\r\nhello\r\n0\r\n\r\n"],
+    ["Content-Length", upload + "Content-Length: 5\r\n\r\nhello"],
+  ];
+
+  const inEnd: Arrange = (req, res, sweep) =>
+    req.resume().on("end", () => {
+      res.end("stored");
+      sweep();
+    });
+  const inFinish: Arrange = (req, res, sweep) => req.resume().on("end", () => res.on("finish", sweep).end("stored"));
+  // Where the handler sweeps: behind the last byte, with the response ended.
+  const places: [name: string, arrange: Arrange][] = [
+    ["the request's 'end' listener", inEnd],
+    [
+      "the 'end' listener of a request whose response ended first",
+      (req, res, sweep) => {
+        req.resume().on("end", sweep);
+        res.end("stored");
+      },
+    ],
+    ["the response's 'finish' listener", inFinish],
+    [
+      "the request's 'close' listener",
+      (req, res, sweep) => {
+        req.on("close", sweep);
+        req.resume().on("end", () => res.end("stored"));
+      },
+    ],
+    [
+      "a microtask of the 'finish' listener",
+      (req, res, sweep) => req.resume().on("end", () => res.on("finish", () => queueMicrotask(sweep)).end("stored")),
+    ],
+    [
+      "a nextTick of the 'finish' listener",
+      (req, res, sweep) => req.resume().on("end", () => res.on("finish", () => process.nextTick(sweep)).end("stored")),
+    ],
+    [
+      "an async handler behind its for await loop",
+      async (req, res, sweep) => {
+        for await (const _ of req);
+        res.end("stored");
+        sweep();
+      },
+    ],
+  ];
+
+  // One keep-alive connection. "closed": the sweep took it. "answered": it served one more request.
+  // `behind` bytes of that request come in the write that ends the body, the rest behind the sweep.
+  async function connectionAfterSweep(
+    method: Method,
+    arrange: Arrange,
+    writes: string[],
+    { secure = false, behind = 0 } = {},
+  ) {
+    const swept = Promise.withResolvers<void>();
+    const closeCallback = Promise.withResolvers<void>();
+    const handler = (req: http.IncomingMessage, res: http.ServerResponse) => {
+      if (req.url !== "/upload") return void res.end(req.url);
+      // This connection receives a request, so it survives this close().
+      if (method === "closeIdleConnections after close") server.close(() => closeCallback.resolve());
+      arrange(req, res, () => {
+        if (method === "close") server.close(() => closeCallback.resolve());
+        else server.closeIdleConnections();
+        swept.resolve();
+      });
+    };
+    const server = secure ? https.createServer(tlsOptions, handler) : http.createServer(handler);
+    // The connection must go with the sweep, not with this timer.
+    server.keepAliveTimeout = 60000;
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    const open = () =>
+      secure ? tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false }) : connect(port, "127.0.0.1");
+
+    const socket = open();
+    try {
+      await once(socket, secure ? "secureConnect" : "connect");
+      socket.on("error", () => {});
+      let response = "";
+      const stored = Promise.withResolvers<void>();
+      const outcome = Promise.withResolvers<"closed" | "answered">();
+      socket.on("data", chunk => {
+        response += chunk;
+        if (response.includes("stored")) stored.resolve();
+        if (response.endsWith("/second")) outcome.resolve("answered");
+      });
+      // Also after an 'error': a request to a connection that the server closed can get a reset.
+      socket.on("close", () => outcome.resolve("closed"));
+
+      for (const [index, write] of writes.entries()) {
+        if (index > 0) {
+          // One round trip on another connection: the server has read the earlier write by then.
+          const barrier = open();
+          barrier.resume();
+          barrier.end("GET /barrier HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+          await once(barrier, "close");
+        }
+        socket.write(index === writes.length - 1 ? write + second.slice(0, behind) : write);
+      }
+      await swept.promise;
+      await Promise.race([stored.promise, outcome.promise]);
+      assert.ok(response.includes("stored"), "the sweep cut the response off");
+      // A connection that is still open answers this.
+      if (behind < second.length) socket.write(second.slice(behind));
+      const connection = await outcome.promise;
+      // No connection is left, so the callback of close() runs.
+      if (method !== "closeIdleConnections" && connection === "closed") await closeCallback.promise;
+      return connection;
+    } finally {
+      socket.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  }
+
+  const sweepWith = async (methods: Method[], ...cell: [Arrange, string[], { secure?: boolean; behind?: number }?]) =>
+    Object.fromEntries(
+      await Promise.all(methods.map(async method => [method, await connectionAfterSweep(method, ...cell)])),
+    );
+  const each = (methods: Method[], outcome: string) => Object.fromEntries(methods.map(method => [method, outcome]));
+
+  for (const [framing, request] of framings) {
+    for (const [place, arrange] of places) {
+      test(`${framing}: a sweep from ${place} takes the connection`, async () => {
+        assert.deepStrictEqual(await sweepWith(everyMethod, arrange, [request]), each(everyMethod, "closed"));
+      });
+    }
+  }
+
+  // The server reads each write before the client sends the next one.
+  for (const [delivery, writes] of [
+    ["the last chunk in a later read", [chunked + "\r\n5\r\nhello\r\n", "0\r\n\r\n"]],
+    ["the head in two reads", [chunked.slice(0, 20), chunked.slice(20) + "\r\n5\r\nhello\r\n0\r\n\r\n"]],
+    ["trailer fields behind the last chunk", [chunked + "Trailer: X-Sum\r\n\r\n5\r\nhello\r\n0\r\nX-Sum: 1\r\n\r\n"]],
+    ["an empty body", [chunked + "\r\n0\r\n\r\n"]],
+  ] as [string, string[]][]) {
+    test(`chunked, ${delivery}: a sweep from the response's 'finish' listener takes the connection`, async () => {
+      assert.deepStrictEqual(await sweepWith(bothMethods, inFinish, writes), each(bothMethods, "closed"));
+    });
+  }
+
+  for (const [place, arrange] of [places[0], places[2]]) {
+    test(`https, chunked: a sweep from ${place} takes the connection`, async () => {
+      assert.deepStrictEqual(
+        await sweepWith(bothMethods, arrange, [framings[0][1]], { secure: true }),
+        each(bothMethods, "closed"),
+      );
+    });
+  }
+
+  // Node.js parses a whole read before the ticks of its first request run. Bun runs those ticks
+  // first, so a sweep from them comes before the parser has read on.
+  const todoInBun = { todo: typeof Bun !== "undefined" };
+
+  test(
+    "chunked, an empty body: a sweep from 'finish' of a response that the listener ended takes the connection",
+    todoInBun,
+    async () => {
+      const answered: Arrange = (req, res, sweep) => {
+        req.resume();
+        res.on("finish", sweep).end("stored");
+      };
+      // Bun: "answered". The sweep runs in front of the last chunk, and nothing sweeps behind it.
+      assert.deepStrictEqual(
+        await sweepWith(bothMethods, answered, [chunked + "\r\n0\r\n\r\n"]),
+        each(bothMethods, "closed"),
+      );
+    },
+  );
+
+  for (const [framing, request] of framings) {
+    for (const [place, arrange] of [places[0], places[2]]) {
+      test(
+        `${framing}: a sweep from ${place} leaves a connection that holds part of the next head`,
+        todoInBun,
+        async () => {
+          // Bun: "closed". The sweep runs in front of the bytes behind the body.
+          assert.deepStrictEqual(
+            await sweepWith(bothMethods, arrange, [request], { behind: 24 }),
+            each(bothMethods, "answered"),
+          );
+        },
+      );
+    }
+    test(
+      `${framing}: the next request of the same read is answered in front of a sweep from 'finish'`,
+      todoInBun,
+      async () => {
+        // Bun: "closed". The sweep runs in front of the request behind the body.
+        assert.deepStrictEqual(
+          await sweepWith(bothMethods, inFinish, [request], { behind: second.length }),
+          each(bothMethods, "answered"),
+        );
+      },
+    );
+  }
+});
 
 // Only in Bun: when Node.js runs this file it must not spawn itself again.
 if (typeof Bun !== "undefined") {

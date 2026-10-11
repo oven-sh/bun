@@ -2256,6 +2256,40 @@ describe("HTTP Server Security Tests - Advanced", () => {
         httpsServer.close();
       }
     });
+
+    test("https server fires no clientError when the client closes behind a complete chunked request", async () => {
+      // The handler ends the socket in the request's 'end'. The client's answer to
+      // that close_notify reaches the parser as an EOF, with no request open.
+      const errors: (string | undefined)[] = [];
+      const serverSocketClosed = Promise.withResolvers<void>();
+      const httpsServer = createHttpsServer(tlsCert, (req, res) => {
+        req.socket.on("close", () => serverSocketClosed.resolve());
+        req.resume().on("end", () => {
+          res.end("stored");
+          req.socket.end();
+        });
+      });
+      httpsServer.on("clientError", (err: NodeJS.ErrnoException, socket) => {
+        errors.push(err.code);
+        socket.destroy();
+      });
+      await new Promise<void>(resolve => httpsServer.listen(0, "127.0.0.1", resolve));
+      const port = (httpsServer.address() as AddressInfo).port;
+      // This socket ends its own side when it sees the end of the server.
+      const socket = tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false }, () => {
+        socket.write("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n");
+      });
+      try {
+        socket.on("error", () => {});
+        let response = "";
+        socket.on("data", chunk => (response += chunk));
+        await serverSocketClosed.promise;
+        expect({ errors, stored: response.endsWith("stored") }).toEqual({ errors: [], stored: true });
+      } finally {
+        socket.destroy();
+        httpsServer.close();
+      }
+    });
   });
 
   describe("Response Splitting Protection", () => {

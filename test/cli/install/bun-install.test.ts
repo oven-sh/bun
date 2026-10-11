@@ -11605,7 +11605,7 @@ describe.concurrent("file: tarballs declared by a package installed from the cac
 
     const { err, exitCode } = await install(root, "--lockfile-only");
     expect(diagnostics(err)).toEqual([
-      ...refusal("inside", "file:./inside.tgz", "inner@file:inner"),
+      ...refusal("inside", "file:./inside.tgz", "inner@inner"),
       "error: inside@file:./inside.tgz failed to resolve",
     ]);
     expect(await file(join(root, "project", "bun.lock")).text()).toBe(lockfile);
@@ -12602,7 +12602,7 @@ describe.concurrent("link: paths with .. or an absolute path declared by a depen
 
     const { err, exitCode } = await install(root, "--lockfile-only");
     expect(errorLines(err)).toEqual([
-      refusal("outside", "link:../outside", "inner@file:inner"),
+      refusal("outside", "link:../outside", "inner@inner"),
       "error: outside@link:../outside failed to resolve",
     ]);
     expect(await file(join(root, "project", "bun.lock")).text()).toBe(lockfile);

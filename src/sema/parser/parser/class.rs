@@ -44,6 +44,15 @@ pub(super) fn declared_key(key: PropKey, name_token: T, is_default: bool) -> Pro
     }
 }
 
+/// `IsClassMemberModifier`: "it is certain that we are starting to parse class member"
+#[inline]
+fn is_class_member_modifier(token: T) -> bool {
+    matches!(
+        token,
+        T::Public | T::Private | T::Protected | T::Readonly | T::Override | T::Static | T::Accessor
+    )
+}
+
 impl<const GENERAL: bool> Parser<'_, GENERAL> {
     /// `parseClassDeclaration`
     pub(crate) fn class_declaration(&mut self, start: Start, base: usize, flags: Flags) -> StmtId {
@@ -370,17 +379,7 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         // "Eat up all modifiers, but hold on to the last one in case it is actually an identifier."
         while self.token().is_modifier() {
             last = self.token();
-            // `IsClassMemberModifier`: "it is certain that we are starting to parse class member"
-            if matches!(
-                last,
-                T::Public
-                    | T::Private
-                    | T::Protected
-                    | T::Readonly
-                    | T::Override
-                    | T::Static
-                    | T::Accessor
-            ) {
+            if is_class_member_modifier(last) {
                 return true;
             }
             self.next();
@@ -426,7 +425,10 @@ impl<const GENERAL: bool> Parser<'_, GENERAL> {
         let start = self.start();
         let first_modifier = self.s.modifiers.len();
         let token = self.token();
-        if token.is_modifier() && !self.look_ahead(Self::scan_class_member_start) {
+        if token.is_modifier()
+            && !is_class_member_modifier(token)
+            && !self.look_ahead(Self::scan_class_member_start)
+        {
             self.fail();
         }
         let mut flags = match token.is_modifier() || token == T::At {

@@ -485,6 +485,10 @@ impl Context<'_, '_> {
                     unused_directives_as_oxlint(&mut result, as_what.script.is_some());
                 }
                 self.promote_suggestions(&mut result);
+                // What is fixed is another text in the end.
+                if self.keeps_text && is_whole && !self.fixes() {
+                    result.line_starts = file.known_line_starts().map(<[u32]>::to_vec);
+                }
                 self.timing.add(&self.timing.rules, parsed);
                 result
             },
@@ -588,6 +592,7 @@ impl Context<'_, '_> {
             path,
             counts,
             text: (is_fixed || (self.keeps_text && is_reported)).then_some(text),
+            line_starts: result.line_starts.filter(|_| !is_fixed && is_reported),
             messages: result.messages,
             suppressed: result.suppressed,
             thrown: result.thrown,

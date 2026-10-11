@@ -8,15 +8,18 @@ const NO_FUNCTION_CONSTRUCTOR: Message =
 
 impl Rule for NoNewFunc {
     const META: Meta = Meta::eslint("no-new-func", Kind::Suggestion).reports_at_the_end();
-    const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::New]);
-    type State<'a> = ();
+    const ON: On = On::new()
+        .function_calls(&["Function"])
+        .method_calls(&["apply", "bind", "call"])
+        .exprs(&[ExprTag::New]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoNewFunc
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("Function").then_some(())
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        if file.mentions("Function") { Self::ON } else { On::new() }
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

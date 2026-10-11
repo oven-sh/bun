@@ -165,6 +165,8 @@ pub struct LintResult {
     /// schema accepts ([`Rule::validate`](crate::rule::Rule::validate)), or a rule of a JavaScript plugin throws. There is
     /// nothing else in the result then.
     pub thrown: Option<Vec<u8>>,
+    /// [`File::known_line_starts`], for whoever lints to keep.
+    pub line_starts: Option<Vec<u32>>,
 }
 
 /// `S`: the rules that it has.

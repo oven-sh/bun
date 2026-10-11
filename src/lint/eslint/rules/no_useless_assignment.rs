@@ -49,6 +49,8 @@ pub struct State<'a> {
     code_path_start_scopes: FxHashSet<Scope<'a>>,
     /// For `written_by`.
     writers: AncestorMemo<'a, Writer<'a>>,
+    /// For `is_read_after_declaration`: the statement that an expression is evaluated in.
+    evaluated_in: AncestorMemo<'a, Option<Stmt<'a>>>,
     /// Of the variable that is looked at.
     uses: Uses<'a>,
     /// By the id of a segment: from the start of the first identifier in it to the end of the last.
@@ -463,6 +465,66 @@ fn written_by<'a>(
     })
 }
 
+/// Whether `written`, the only assignment to `variable`, is the initializer of a `let`, `const` or `using` declaration
+/// in a list of statements, and a statement that can be reached evaluates the variable after that declaration, in the
+/// same function (`home`). It is in the block of the list, where every way to it leads over the declaration.
+fn is_read_after_declaration<'a>(
+    variable: Binding<'a>,
+    written: Reference<'a>,
+    home: Scope<'a>,
+    evaluated_in: &mut AncestorMemo<'a, Option<Stmt<'a>>>,
+) -> bool {
+    if written.expr().is_some() || variable.symbol.declaration_count() != 1 {
+        return false;
+    }
+    let Node::Pat(name) = written.node() else {
+        return false;
+    };
+    let Node::VarDecl(declarator) = name.parent() else {
+        return false;
+    };
+    if declarator.var_kind() == VarKind::Var || declarator.init().is_none() {
+        return false;
+    }
+    let Node::Stmt(declaration) = declarator.parent() else {
+        return false;
+    };
+    let is_in_list = match declaration.parent() {
+        Node::Func(_) | Node::File(_) => true,
+        Node::Stmt(block) => block.as_block().is_some(),
+        _ => false,
+    };
+    if !is_in_list {
+        return false;
+    }
+    let end = declaration.span().end;
+    let read = (variable.references())
+        .find(|it| it.is_read() && start_of(it) >= end && it.scope().variable_scope() == home);
+    let Some(identifier) = read.and_then(Reference::expr) else {
+        return false;
+    };
+    let statement = evaluated_in.find(Node::Expr(identifier), |_, parent| match parent {
+        Node::Expr(_) | Node::Prop(_) | Node::VarDecl(_) => None,
+        Node::Stmt(statement) => Some(Some(statement)),
+        _ => Some(None),
+    });
+    // Not where the body of a loop comes first.
+    statement.flatten().is_some_and(|it| {
+        matches!(
+            it.tag(),
+            StmtTag::Expr
+                | StmtTag::Var
+                | StmtTag::Return
+                | StmtTag::Throw
+                | StmtTag::If
+                | StmtTag::While
+                | StmtTag::Switch
+                | StmtTag::ForIn
+                | StmtTag::ForOf
+        ) && it.is_reachable()
+    })
+}
+
 /// The scope that the code path around `scope` starts with.
 fn code_path_scope(scope: Scope<'_>) -> Option<Scope<'_>> {
     scope.chain().find(|it| match it.kind() {
@@ -603,7 +665,7 @@ impl<'a> Uses<'a> {
                 previous.is_none_or(|it| it.span().start < offset || it.is_known_to_complete())
             };
             let next = self.first_from(offset).map(|it| start_of(&it));
-            let Some(statement) = next.and_then(|next| list.around(next)) else {
+            let Some((statement, previous)) = next.and_then(|next| list.around_with_previous(next)) else {
                 let Some(last) = list.last().filter(|it| it.span().end > passed) else {
                     return Flow::Through;
                 };
@@ -614,7 +676,7 @@ impl<'a> Uses<'a> {
                     _ => Flow::Unknown,
                 };
             };
-            if !is_reached(statement) {
+            if previous.is_some_and(|it| it.span().start >= offset && !it.is_known_to_complete()) {
                 return Flow::Unknown;
             }
             match self.statement_with_uses(statement) {
@@ -1114,7 +1176,27 @@ impl NoUselessAssignment {
 
     /// Finds out whether the code path that `variable` is declared in has to be analyzed.
     fn check_binding<'a>(variable: Binding<'a>, cx: &mut Cx<'a, Self>) {
-        let State { uses, writers, .. } = &mut cx.state;
+        let State { uses, writers, evaluated_in, .. } = &mut cx.state;
+        let home = variable.scope().variable_scope();
+        let (mut writes, mut written) = (0, None);
+        for reference in variable.references() {
+            if reference.is_write() {
+                writes += 1;
+                written = Some(reference);
+            }
+            // What a function reads can be read at any time.
+            if reference.is_read()
+                && reference.scope().variable_scope() != home
+                && code_path_scope(reference.scope()) != code_path_scope(variable.scope())
+            {
+                return;
+            }
+        }
+        if let (1, None, Some(written)) = (writes, variable.class, written)
+            && is_read_after_declaration(variable, written, home, evaluated_in)
+        {
+            return;
+        }
         uses.look_at(variable);
         // Of the variable, once it is asked for.
         let mut scope = None;

@@ -72,7 +72,7 @@ fn get_pattern_replacement(e: Expr) -> Option<Vec<u8>> {
 impl Rule for PreferStringReplaceAll {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "prefer-string-replace-all", Kind::Suggestion).fixable(Fixable::Code);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["replace", "replaceAll"]);
     /// `replace`, `replaceAll`
     type State<'a> = [Name<'a>; 2];
 

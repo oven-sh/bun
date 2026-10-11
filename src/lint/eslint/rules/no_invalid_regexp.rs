@@ -89,8 +89,8 @@ impl NoInvalidRegexp {
 
 impl Rule for NoInvalidRegexp {
     const META: Meta = Meta::eslint("no-invalid-regexp", Kind::Problem).recommended();
-    const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::New]);
-    type State<'a> = ();
+    const ON: On = On::new().function_calls(&["RegExp"]).exprs(&[ExprTag::New]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         let mut allowed_flags = options.object(0).strings("allowConstructorFlags").concat().into_bytes();
@@ -98,8 +98,8 @@ impl Rule for NoInvalidRegexp {
         NoInvalidRegexp { allowed_flags }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("RegExp").then_some(())
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        if file.mentions("RegExp") { Self::ON } else { On::new() }
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

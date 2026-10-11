@@ -39,7 +39,7 @@ fn is_literal_or_array_or_object(e: Expr) -> bool {
 
 impl Rule for PreferReflectApply {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-reflect-apply", Kind::Suggestion).has_suggestions();
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["apply", "call"]);
     /// `apply`, `call`
     type State<'a> = [Name<'a>; 2];
 

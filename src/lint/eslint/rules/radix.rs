@@ -49,22 +49,19 @@ fn is_valid_radix_for_oxlint(radix: Expr) -> bool {
 
 impl Rule for Radix {
     const META: Meta = Meta::eslint("radix", Kind::Suggestion).has_suggestions().reports_at_the_end();
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    const ON: On = On::new().calls_named(&["parseInt"]);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         Radix { is_as_needed: options.str(0) == Some("as-needed") }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions("parseInt") {
-            return None;
-        }
-        Some(())
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        if file.mentions("parseInt") { Self::ON } else { On::new() }
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        let ExprKind::Call(call) = e.kind() else {
+        let Some(call) = e.as_call() else {
             return;
         };
         let (callee, is_oxlint) = (call.callee(), cx.language().is_oxlint);

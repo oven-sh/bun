@@ -10,24 +10,19 @@ const PREFER_DOM_NODE_APPEND: Message =
 
 impl Rule for PreferDomNodeAppend {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-dom-node-append", Kind::Suggestion).fixable(Fixable::Code);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
-    /// `appendChild`
-    type State<'a> = Name<'a>;
+    const ON: On = On::new().method_calls(&["appendChild"]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         PreferDomNodeAppend
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<Name<'a>> {
-        file.find_name("appendChild")
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        if file.mentions("appendChild") { Self::ON } else { On::new() }
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         if let Some(call_expr) = e.as_call()
-            && match call_expr.callee().member_name() {
-                Some(method) => method.name() == cx.state,
-                None => call_expr.callee().tag() != ExprTag::Ident,
-            }
             && call_expr.args().len() == 1
             && !call_expr.is_optional()
             && let Some(ExprKind::Dot { name, .. }) = get_member_expr(call_expr.callee()).map(Expr::kind)

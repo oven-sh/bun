@@ -35,7 +35,7 @@ fn is_global_this_reference_or_global_window<'a>(call: Expr<'a>, object: Expr<'a
 
 impl Rule for NoAlert {
     const META: Meta = Meta::eslint("no-alert", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().calls_named(&PROHIBITED);
     /// Those of [`PROHIBITED`] that the file mentions.
     type State<'a> = [Option<Name<'a>>; 3];
 
@@ -43,8 +43,12 @@ impl Rule for NoAlert {
         NoAlert
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        if file.mentions_any(&PROHIBITED) { Self::ON } else { On::new() }
+    }
+
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        let mentioned = PROHIBITED.map(|it| file.mentions(it).then(|| file.name_of(it)));
+        let mentioned = PROHIBITED.map(|it| file.find_name(it));
         mentioned.iter().any(Option::is_some).then_some(mentioned)
     }
 

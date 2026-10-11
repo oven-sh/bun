@@ -22,8 +22,8 @@ use super::estree_compat::{
 use super::text;
 use crate::ast::{
     BinOp, Case, Chain, Expr, ExprKind, ExprTag, File, Flags, FnBody, FnKind, Func, Key, KeyKind,
-    Member, MemberKind, Name, Node, PatKind, PatProp, Prop, PropKind, Stmt, StmtKind, UnOp,
-    VarKind,
+    Member, MemberKind, Name, Node, PatKind, PatProp, Prop, PropKind, Stmt, StmtKind, StmtTag,
+    UnOp, VarKind,
 };
 use crate::semantic::{Reference, Scope, Symbol};
 use crate::span::{Position, Span, Spanned};
@@ -605,10 +605,7 @@ fn function_of(node: Node<'_>) -> Option<Func<'_>> {
     let func = match node {
         Node::Func(func) => func,
         Node::Expr(e) => e.as_fn()?,
-        Node::Stmt(statement) => match statement.kind() {
-            StmtKind::Fn(func) => func,
-            _ => return None,
-        },
+        Node::Stmt(statement) => statement.as_fn()?,
         _ => return None,
     };
     is_function_with_body(func).then_some(func)
@@ -639,30 +636,30 @@ pub fn get_upper_function<'a>(node: impl Into<Node<'a>>) -> Option<Func<'a>> {
 /// ESLint's `isBreakableStatement`: a loop or a `switch`.
 #[inline]
 pub fn is_breakable_statement(statement: Stmt<'_>) -> bool {
-    statement.is_loop() || matches!(statement.kind(), StmtKind::Switch { .. })
+    statement.is_loop() || statement.tag() == StmtTag::Switch
 }
 
 /// `node.type === "Literal"`
 #[inline]
 pub fn is_literal(e: Expr<'_>) -> bool {
     matches!(
-        e.kind(),
-        ExprKind::Null
-            | ExprKind::True
-            | ExprKind::False
-            | ExprKind::Number(_)
-            | ExprKind::String(_)
-            | ExprKind::BigInt(_)
-            | ExprKind::Regex(_)
+        e.tag(),
+        ExprTag::Null
+            | ExprTag::True
+            | ExprTag::False
+            | ExprTag::Number
+            | ExprTag::String
+            | ExprTag::BigInt
+            | ExprTag::Regex
     )
 }
 
 /// `node.type === "MemberExpression"`: an `ExprKind::Dot` or an `ExprKind::Index`, but not the `a.b`
 /// of `<a.b />`, a `JSXMemberExpression`, nor that of the type `typeof a.b`, a `TSQualifiedName`.
 pub fn is_member_expression(e: Expr<'_>) -> bool {
-    match e.kind() {
-        ExprKind::Index { .. } => true,
-        ExprKind::Dot { .. } => !e.is_jsx_tag_name() && !is_in_type_query(e),
+    match e.tag() {
+        ExprTag::Index => true,
+        ExprTag::Dot => !e.is_jsx_tag_name() && !is_in_type_query(e),
         _ => false,
     }
 }
@@ -670,64 +667,49 @@ pub fn is_member_expression(e: Expr<'_>) -> bool {
 /// ESLint's `isNullLiteral`.
 #[inline]
 pub fn is_null_literal(e: Expr<'_>) -> bool {
-    matches!(e.kind(), ExprKind::Null)
+    e.tag() == ExprTag::Null
 }
 
 /// ESLint's `isNullOrUndefined`: `null`, `undefined` or `void something`.
 pub fn is_null_or_undefined(e: Expr<'_>) -> bool {
-    match e.kind() {
-        ExprKind::Null | ExprKind::Unary { op: UnOp::Void, .. } => true,
-        ExprKind::Ident(name) => name.is("undefined"),
-        _ => false,
-    }
+    e.tag() == ExprTag::Null || e.unary_op() == Some(UnOp::Void) || e.is_ident("undefined")
 }
 
 /// ESLint's `isStringLiteral`: a string literal or a template literal.
 #[inline]
 pub fn is_string_literal(e: Expr<'_>) -> bool {
-    matches!(e.kind(), ExprKind::String(_) | ExprKind::Template(_))
+    matches!(e.tag(), ExprTag::String | ExprTag::Template)
 }
 
 /// ESLint's `isNumericLiteral`: a number or a bigint.
 #[inline]
 pub fn is_numeric_literal(e: Expr<'_>) -> bool {
-    matches!(e.kind(), ExprKind::Number(_) | ExprKind::BigInt(_))
+    matches!(e.tag(), ExprTag::Number | ExprTag::BigInt)
 }
 
 /// ESLint's `isStaticTemplateLiteral`: a template literal without substitutions.
 #[inline]
 pub fn is_static_template_literal(e: Expr<'_>) -> bool {
-    matches!(e.kind(), ExprKind::Template(template) if template.exprs().is_empty())
+    e.as_template()
+        .is_some_and(|template| template.exprs().is_empty())
 }
 
 /// ESLint's `isDecimalInteger`: `5`, `1_000`, `089`, but not `5.0`, `0x5`, `05`, `5e0` or `5n`.
 #[inline]
 pub fn is_decimal_integer(e: Expr<'_>) -> bool {
-    matches!(e.kind(), ExprKind::Number(_)) && is_decimal_integer_text(e.text())
+    e.tag() == ExprTag::Number && is_decimal_integer_text(e.text())
 }
 
 /// ESLint's `isLogicalExpression`: `&&` or `||`, not `??`.
 #[inline]
 pub fn is_logical_expression(e: Expr<'_>) -> bool {
-    matches!(
-        e.kind(),
-        ExprKind::Binary {
-            op: BinOp::And | BinOp::Or,
-            ..
-        }
-    )
+    matches!(e.binary_op(), Some(BinOp::And | BinOp::Or))
 }
 
 /// ESLint's `isCoalesceExpression`: `??`.
 #[inline]
 pub fn is_coalesce_expression(e: Expr<'_>) -> bool {
-    matches!(
-        e.kind(),
-        ExprKind::Binary {
-            op: BinOp::Nullish,
-            ..
-        }
-    )
+    e.binary_op() == Some(BinOp::Nullish)
 }
 
 /// ESLint's `isMixedLogicalAndCoalesceExpressions`.
@@ -746,13 +728,13 @@ pub fn is_logical_assignment_operator(op: Option<BinOp>) -> bool {
 /// ESLint's `isCallee`: `e` is what a call calls. Not what `new` constructs.
 #[inline]
 pub fn is_callee(e: Expr<'_>) -> bool {
-    matches!(e.parent().as_expr().map(Expr::kind), Some(ExprKind::Call(call)) if call.callee() == e)
+    (e.parent().as_expr().and_then(Expr::as_call)).is_some_and(|call| call.callee() == e)
 }
 
 /// `CallExpression > MemberExpression.callee[object.name="process"][property.name="exit"]`: what
 /// `no-process-exit` reports, in ESLint and in eslint-plugin-n.
 pub fn is_process_exit_call(e: Expr<'_>) -> bool {
-    let ExprKind::Call(call) = e.kind() else {
+    let Some(call) = e.as_call() else {
         return false;
     };
     let callee = call.callee();

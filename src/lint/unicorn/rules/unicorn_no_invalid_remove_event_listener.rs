@@ -14,7 +14,7 @@ fn static_member_name(callee: Expr<'_>) -> Option<Ident<'_>> {
 
 impl Rule for NoInvalidRemoveEventListener {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-invalid-remove-event-listener", Kind::Problem);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["removeEventListener"]);
     /// `removeEventListener`
     type State<'a> = Name<'a>;
 

@@ -11,7 +11,7 @@ const NO_MAGIC_ARRAY_FLAT_DEPTH: Message =
 
 impl Rule for NoMagicArrayFlatDepth {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-magic-array-flat-depth", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["flat"]);
     /// `flat`
     type State<'a> = Name<'a>;
 

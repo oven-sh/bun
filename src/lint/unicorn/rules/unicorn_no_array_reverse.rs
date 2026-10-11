@@ -17,7 +17,7 @@ const USE_TO_REVERSED: Message = Message::new(
 
 impl Rule for NoArrayReverse {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-array-reverse", Kind::Problem).has_suggestions();
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["reverse"]);
     /// `reverse`
     type State<'a> = Name<'a>;
 

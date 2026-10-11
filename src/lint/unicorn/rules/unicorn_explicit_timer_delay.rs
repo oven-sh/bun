@@ -2,7 +2,6 @@ use bun_lint_oxlint::ast_util::{get_inner_expression, is_reference_to_global_var
 use crate::unicorn::GLOBAL_OBJECT_NAMES;
 use bun_lint::prelude::*;
 use bun_lint::rule::Plugin;
-use smallvec::SmallVec;
 
 /// Enforce or disallow explicit `delay` argument for `setTimeout()` and `setInterval()`.
 pub struct ExplicitTimerDelay {
@@ -16,27 +15,21 @@ const TIMER_FUNCTION_NAMES: [&str; 2] = ["setTimeout", "setInterval"];
 
 impl Rule for ExplicitTimerDelay {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "explicit-timer-delay", Kind::Suggestion).fixable(Fixable::Code);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
-    /// Those of `TIMER_FUNCTION_NAMES` that the file mentions.
-    type State<'a> = SmallVec<[Name<'a>; 2]>;
+    const ON: On = On::new().calls_named(&TIMER_FUNCTION_NAMES);
+    no_state!();
 
     fn new(options: &Options) -> Self {
         ExplicitTimerDelay { is_never: options.str(0) == Some("never") }
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        let names: Self::State<'a> = TIMER_FUNCTION_NAMES.iter().filter_map(|it| file.find_name(it)).collect();
-        (!names.is_empty()).then_some(names)
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        if file.mentions_any(&TIMER_FUNCTION_NAMES) { Self::ON } else { On::new() }
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(call_expr) = e.as_call() else {
             return;
         };
-        let callee = call_expr.callee();
-        if callee.member_name().map(Ident::name).or_else(|| callee.as_ident()).is_some_and(|it| !cx.state.contains(&it)) {
-            return;
-        }
         let arguments = call_expr.args();
         if arguments.len() != 1 + usize::from(self.is_never) || call_expr.is_optional() {
             return;

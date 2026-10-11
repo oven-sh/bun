@@ -49,7 +49,7 @@ fn bigint_literal_from_numeric(raw: &[u8]) -> Option<Vec<u8>> {
 
 impl Rule for PreferBigintLiterals {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-bigint-literals", Kind::Suggestion).fixable(Fixable::Code);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().function_calls(&["BigInt"]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {

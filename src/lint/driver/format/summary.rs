@@ -134,6 +134,7 @@ pub(crate) fn about_suppressions(has_unused: bool, has_new: bool) -> Option<File
         thrown: None,
         had_types: false,
         text: None,
+        line_starts: None,
         is_fixed: false,
         fixed_text: None,
         linted: None,

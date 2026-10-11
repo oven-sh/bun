@@ -7,7 +7,7 @@ const UNNECESSARY_CALL: Message = Message::new("unnecessaryCall", "Unnecessary '
 
 impl Rule for NoUselessCall {
     const META: Meta = Meta::eslint("no-useless-call", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["call", "apply"]);
     /// `call` and `apply`, as far as the file mentions them.
     type State<'a> = [Option<Name<'a>>; 2];
 
@@ -15,8 +15,12 @@ impl Rule for NoUselessCall {
         NoUselessCall
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        if file.mentions_any(&["call", "apply"]) { Self::ON } else { On::new() }
+    }
+
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        let mentioned = ["call", "apply"].map(|it| file.mentions(it).then(|| file.name_of(it)));
+        let mentioned = ["call", "apply"].map(|it| file.find_name(it));
         mentioned.iter().any(Option::is_some).then_some(mentioned)
     }
 

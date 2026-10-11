@@ -10,29 +10,26 @@ pub struct NoConsoleSpaces;
 const NO_CONSOLE_SPACES: Message =
     Message::new("", "Do not use {{leading_or_trailing}} spaces with `console.{{method_name}}` parameters");
 
+const METHODS: [&str; 5] = ["log", "debug", "info", "warn", "error"];
+
 impl Rule for NoConsoleSpaces {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-console-spaces", Kind::Suggestion).fixable(Fixable::Code);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    const ON: On = On::new().method_calls(&METHODS);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         NoConsoleSpaces
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        file.mentions("console").then_some(())
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        if file.mentions("console") { Self::ON } else { On::new() }
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(call_expr) = e.as_call() else {
             return;
         };
-        // `console.log()`, nearly always.
-        let callee = call_expr.callee();
-        if callee.tag() == ExprTag::Ident
-            || callee.tag() == ExprTag::Dot && callee.object().is_some_and(|it| matches!(it.tag(), ExprTag::This | ExprTag::Dot | ExprTag::Call))
-            || !is_method_call(call_expr, Some(&["console"]), Some(&["log", "debug", "info", "warn", "error"]), None, None)
-        {
+        if !is_method_call(call_expr, Some(&["console"]), Some(&METHODS), None, None) {
             return;
         }
         let Some((_, method_name)) = call_expr_method_callee_info(call_expr) else {

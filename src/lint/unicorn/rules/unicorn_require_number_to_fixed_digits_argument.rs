@@ -10,7 +10,7 @@ const MISSING_DIGITS_ARGUMENT: Message = Message::new("", "Number method .toFixe
 impl Rule for RequireNumberToFixedDigitsArgument {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "require-number-to-fixed-digits-argument", Kind::Suggestion)
         .fixable(Fixable::Code);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["toFixed"]);
     /// `toFixed`
     type State<'a> = Name<'a>;
 

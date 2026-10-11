@@ -60,6 +60,8 @@ pub(crate) struct FileResult {
     /// The text that the messages are about: that of the file, or `output` if there is one. Kept
     /// only if there is something to say about the file, and the format reads it.
     pub(crate) text: Option<Vec<u8>>,
+    /// Where the lines of `text` start, if that was looked for while it was linted.
+    pub(crate) line_starts: Option<Vec<u32>>,
     /// The text has been changed by fixes: `text` is ESLint's `output`.
     pub(crate) is_fixed: bool,
     /// What the fixes have made of the text, if that is not `text`: oxlint fixes once, and reports what is left where it was.
@@ -96,6 +98,7 @@ impl FileResult {
             thrown: None,
             had_types: false,
             text: None,
+            line_starts: None,
             is_fixed: false,
             fixed_text: None,
             linted: None,

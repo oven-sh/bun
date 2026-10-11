@@ -11,7 +11,7 @@ const REPLACE: Message = Message::new("", "Replace this call with `{{replacement
 
 impl Rule for PreferNumberCoercion {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-number-coercion", Kind::Suggestion).has_suggestions();
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().calls_named(&["parseFloat", "parseInt"]);
     /// `parseFloat`, `parseInt`
     type State<'a> = [Name<'a>; 2];
 

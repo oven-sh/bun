@@ -17,27 +17,22 @@ const ENDS_WITH: Message = Message::new("", "Prefer String#endsWith over a regex
 impl Rule for PreferStringStartsEndsWith {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "prefer-string-starts-ends-with", Kind::Problem).fixable(Fixable::Code);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
-    /// `test`
-    type State<'a> = Name<'a>;
+    const ON: On = On::new().method_calls(&["test"]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         PreferStringStartsEndsWith
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        file.find_name("test").filter(|_| file.has_exprs([ExprTag::Regex]))
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        if file.mentions("test") && file.has_exprs([ExprTag::Regex]) { Self::ON } else { On::new() }
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(call) = e.as_call().filter(|it| !it.is_optional()) else {
             return;
         };
-        let is_candidate = match call.callee().member_name() {
-            Some(method) => method.name() == cx.state,
-            None => call.callee().tag() != ExprTag::Ident,
-        };
-        let Some(member) = get_member_expr(call.callee()).filter(|_| is_candidate) else {
+        let Some(member) = get_member_expr(call.callee()) else {
             return;
         };
         let ExprKind::Dot { obj, name, .. } = member.kind() else {

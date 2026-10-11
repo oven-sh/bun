@@ -44,7 +44,7 @@ impl<'r> Source<'r> {
         let name =
             strings::replace_owned(paths::inside(meta.cwd, &path).unwrap_or(&path), b"\\", b"/");
         let text = result.text.as_deref().unwrap_or_default();
-        let offsets = Offsets::new(text);
+        let offsets = Offsets::new(text, result.line_starts.as_deref());
         let has = |separator: &str| strings::contains(text, separator.as_bytes());
         let lines = (!offsets.is_ascii && (has("\u{2028}") || has("\u{2029}"))).then(|| {
             let mut lines = vec![0];

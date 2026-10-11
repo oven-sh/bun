@@ -110,10 +110,14 @@ fn sizes(first: u8) -> Sizes {
 }
 
 impl<'t> Offsets<'t> {
-    pub(super) fn new(text: &'t [u8]) -> Offsets<'t> {
+    /// `lines`: where the lines start, if that is known.
+    pub(super) fn new(text: &'t [u8], lines: Option<&[u32]>) -> Offsets<'t> {
         Offsets {
             text,
-            lines: LineStarts::new(text),
+            lines: match lines {
+                Some(lines) => LineStarts::at(lines.to_vec()),
+                None => LineStarts::new(text),
+            },
             start: text.len() - strings::without_utf8_bom(text).len(),
             is_ascii: strings::first_non_ascii(text).is_none(),
             marks: OnceCell::new(),

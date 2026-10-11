@@ -254,6 +254,11 @@ impl<'a> File<'a> {
         if self.has_bom() { 3 } else { 0 }
     }
 
+    /// Where the lines start, if that has been looked for: what [`LineStarts::at`] takes.
+    pub fn known_line_starts(&self) -> Option<&[u32]> {
+        Some(&self.lazy.lines.get()?.starts.starts)
+    }
+
     /// ESLint's `sourceCode.lines.length`.
     pub fn line_count(&self) -> u32 {
         if self.lazy.lines.get().is_some() || !self.is_plain() {

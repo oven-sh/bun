@@ -31,15 +31,15 @@ fn is_left_hand_object(object: Expr<'_>) -> bool {
 
 impl Rule for PreferObjectHasOwn {
     const META: Meta = Meta::eslint("prefer-object-has-own", Kind::Suggestion).fixable(Fixable::Code);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
-    type State<'a> = ();
+    const ON: On = On::new().method_calls(&["call"]);
+    no_state!();
 
     fn new(_: &Options) -> Self {
         PreferObjectHasOwn
     }
 
-    fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        (file.mentions("hasOwnProperty") && file.mentions("call")).then_some(())
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        if file.mentions("hasOwnProperty") && file.mentions("call") { Self::ON } else { On::new() }
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

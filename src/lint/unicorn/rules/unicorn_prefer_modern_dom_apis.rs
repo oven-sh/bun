@@ -10,7 +10,8 @@ const PREFER_MODERN_DOM_APIS: Message = Message::new("", "Prefer using `{{good_m
 
 impl Rule for PreferModernDomApis {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-modern-dom-apis", Kind::Suggestion).has_suggestions();
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On =
+        On::new().method_calls(&["replaceChild", "insertBefore", "insertAdjacentText", "insertAdjacentElement"]);
     /// The names of the methods.
     type State<'a> = [Name<'a>; 4];
 

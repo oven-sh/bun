@@ -30,7 +30,7 @@ fn is_message_port_expression(e: Expr) -> bool {
 impl Rule for RequirePostMessageTargetOrigin {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "require-post-message-target-origin", Kind::Problem).has_suggestions();
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["postMessage"]);
     /// `postMessage`
     type State<'a> = Name<'a>;
 

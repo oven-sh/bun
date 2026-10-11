@@ -113,7 +113,7 @@ impl PreferPromiseRejectErrors {
 
 impl Rule for PreferPromiseRejectErrors {
     const META: Meta = Meta::eslint("prefer-promise-reject-errors", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Call, ExprTag::New]);
+    const ON: On = On::new().method_calls(&["reject"]).exprs(&[ExprTag::New]);
     /// `Promise`
     type State<'a> = Name<'a>;
 
@@ -124,14 +124,15 @@ impl Rule for PreferPromiseRejectErrors {
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
-        match file.mentions("reject") {
-            true => On::new().exprs(&[ExprTag::Call, ExprTag::New]),
-            false => On::new().exprs(&[ExprTag::New]),
+        match (file.mentions("Promise"), file.mentions("reject")) {
+            (false, _) => On::new(),
+            (true, true) => Self::ON,
+            (true, false) => On::new().exprs(&[ExprTag::New]),
         }
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Name<'a>> {
-        file.mentions("Promise").then(|| file.name_of("Promise"))
+        file.find_name("Promise")
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {

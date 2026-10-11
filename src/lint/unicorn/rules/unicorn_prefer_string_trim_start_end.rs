@@ -10,7 +10,7 @@ const PREFER_STRING_TRIM_START_END: Message = Message::new("", "Prefer `{{good_t
 impl Rule for PreferStringTrimStartEnd {
     const META: Meta =
         Meta::oxlint(Plugin::Unicorn, "prefer-string-trim-start-end", Kind::Suggestion).fixable(Fixable::Code);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["trimLeft", "trimRight"]);
     /// `trimLeft`, `trimRight`
     type State<'a> = [Name<'a>; 2];
 

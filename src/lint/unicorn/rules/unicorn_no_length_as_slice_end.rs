@@ -11,7 +11,7 @@ const NO_LENGTH_AS_SLICE_END: Message =
 
 impl Rule for NoLengthAsSliceEnd {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-length-as-slice-end", Kind::Suggestion).fixable(Fixable::Code);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["slice"]);
     /// `slice`
     type State<'a> = Name<'a>;
 

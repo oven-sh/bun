@@ -8,22 +8,23 @@ const EXPECTED: Message = Message::new("expected", "Expected Symbol to have a de
 
 impl Rule for SymbolDescription {
     const META: Meta = Meta::eslint("symbol-description", Kind::Suggestion).reports_at_the_end();
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().function_calls(&["Symbol"]);
     type State<'a> = ();
 
     fn new(_: &Options) -> Self {
         SymbolDescription
     }
 
+    fn narrow<'a>(&self, file: &'a File<'a>) -> On {
+        if file.mentions("Symbol") { Self::ON } else { On::new() }
+    }
+
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
-        if !file.mentions("Symbol") || !ast_utils::is_configured_global(file, b"Symbol") {
-            return None;
-        }
-        Some(())
+        ast_utils::is_configured_global(file, b"Symbol").then_some(())
     }
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
-        if let ExprKind::Call(call) = e.kind()
+        if let Some(call) = e.as_call()
             && call.args().is_empty()
             && call.callee().is_ident("Symbol")
             && call.callee().reference().is_some_and(|it| it.symbol().is_none())

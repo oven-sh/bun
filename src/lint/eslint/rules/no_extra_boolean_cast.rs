@@ -181,7 +181,7 @@ impl Rule for NoExtraBooleanCast {
     const META: Meta = Meta::eslint("no-extra-boolean-cast", Kind::Suggestion)
         .fixable(Fixable::Code)
         .recommended();
-    const ON: On = On::new().unaries(&[UnOp::Not]).exprs(&[ExprTag::Call]);
+    const ON: On = On::new().unaries(&[UnOp::Not]).function_calls(&["Boolean"]);
     /// Whether an expression is in a flagged context.
     type State<'a> = AncestorMemo<'a, bool>;
 
@@ -196,7 +196,7 @@ impl Rule for NoExtraBooleanCast {
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let mut on = On::new().unaries(&[UnOp::Not]);
         if file.mentions("Boolean") {
-            on = on.exprs(&[ExprTag::Call]);
+            on = on.function_calls(&["Boolean"]);
         }
         on
     }

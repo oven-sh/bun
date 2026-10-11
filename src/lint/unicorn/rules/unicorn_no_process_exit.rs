@@ -17,7 +17,7 @@ pub struct State<'a> {
 
 impl Rule for NoProcessExit {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "no-process-exit", Kind::Suggestion);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&["exit"]);
     type State<'a> = State<'a>;
 
     fn new(_: &Options) -> Self {

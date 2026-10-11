@@ -13,7 +13,7 @@ const METHODS: [&str; 4] = ["getElementById", "getElementsByClassName", "getElem
 
 impl Rule for PreferQuerySelector {
     const META: Meta = Meta::oxlint(Plugin::Unicorn, "prefer-query-selector", Kind::Suggestion).fixable(Fixable::Code);
-    const ON: On = On::new().exprs(&[ExprTag::Call]);
+    const ON: On = On::new().method_calls(&METHODS);
     /// [`METHODS`]
     type State<'a> = [Name<'a>; 4];
 

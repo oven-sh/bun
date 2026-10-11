@@ -306,8 +306,13 @@ impl Execution {
 
     /// The kill-only half of [`handle_timeout`]: reaps a timed-out test's spawned processes without touching the runner's queue, so it may run from inside `spawnSync`'s isolated loop.
     pub(crate) fn kill_dangling_processes_on_timeout(&mut self, global_this: &JSGlobalObject) {
+        // The timer can fire after the active entry returned and before `run` steps past it.
+        // That entry did not time out, so its processes are not dangling.
+        if self.active_entry_reported() {
+            return;
+        }
         // if the concurrent group has one sequence and the sequence has an active entry that has timed out,
-        //   kill any dangling processes
+        //   kill the dangling processes that entry spawned
         // when using test.concurrent(), we can't do this because it could kill multiple tests at once.
         if let Some(current_group) = self.active_group() {
             // reshaped for borrowck — capture range, drop &mut group, re-borrow sequences
@@ -321,7 +326,7 @@ impl Execution {
                     let now = Timespec::now_force_real_time();
                     if entry.timespec.order(&now) == core::cmp::Ordering::Less {
                         // SAFETY: bun_vm() returns the live per-thread VM.
-                        let kill_count = global_this.bun_vm().as_mut().auto_killer.kill();
+                        let kill_count = global_this.bun_vm().as_mut().auto_killer.kill_scope();
                         if kill_count.processes > 0 {
                             bun_core::pretty_errorln!(
                                 "<d>killed {} dangling process{}<r>",
@@ -334,6 +339,16 @@ impl Execution {
                 }
             }
         }
+    }
+
+    /// A result for an active entry is queued: its callback returned and `run` has not stepped yet.
+    fn active_entry_reported(&mut self) -> bool {
+        let buntest = self.bun_test();
+        // SAFETY: `self` is `BunTest.execution`. `result_queue` is a sibling field, read through the
+        // parent pointer without forming a `&BunTest` that would alias `&mut self`.
+        let queue = unsafe { &(*buntest).result_queue };
+        (0..queue.readable_length())
+            .any(|offset| self.get_current_and_valid_execution_sequence(&queue.peek_item(offset)).is_some())
     }
 
     pub(crate) fn step(
@@ -1027,6 +1042,9 @@ fn step_sequence_one(
             (*on_stack_cell).set(prev_on_stack);
             (*on_stack_data_cell).set(prev_on_stack_data);
         });
+
+        // One auto-kill scope per callback: a timeout kills only what this entry spawned.
+        global_this.bun_vm().as_mut().auto_killer.begin_scope();
 
         if BunTest::run_test_callback(
             buntest_strong,

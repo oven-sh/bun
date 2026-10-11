@@ -1748,6 +1748,14 @@ ${packages["node_modules/prettier/index.cjs"]}`;
         nested("", "- ", "1", "", "", 150),
         "e1a8ea12ccc9716fce57009c7ca4c541033bc57d",
       ],
+      // Each one took twice the memory of the one in it.
+      [
+        "YAML: 40 mappings with a comment behind the key",
+        "a.yaml",
+        {},
+        Array.from({ length: 40 }, (_, i) => `${" ".repeat(i)}a: # c\n`).join("") + `${" ".repeat(40)}b: c\n`,
+        "ed218e0b39393da450552421d2345f583eb8689a",
+      ],
       [
         "Handlebars: 300 blocks",
         "a.hbs",

@@ -1063,7 +1063,9 @@ impl Apply<'_> {
         let type_id = self.identifiers[id.0 as usize].type_;
         if self.resolved.insert(type_id) {
             let ty = &mut self.types[type_id.0 as usize];
-            *ty = self.unifier.get(ty);
+            if let Some(resolved) = self.unifier.get_if_changed(ty) {
+                *ty = resolved;
+            }
         }
     }
 }

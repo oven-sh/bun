@@ -43,6 +43,8 @@ pub struct State<'a> {
     /// What the code paths to analyze start with: those that assign to a variable where the
     /// statements alone do not tell that the value is read.
     roots: FxHashSet<Node<'a>>,
+    /// The variables of which they do not tell. Nothing is reported about the others.
+    unknown: FxHashSet<Binding<'a>>,
     stack: Vec<ScopeStack<'a>>,
     /// Only the reachable ones.
     current_segments: CurrentSegments<'a>,
@@ -565,11 +567,22 @@ fn code_path_scope(scope: Scope<'_>) -> Option<Scope<'_>> {
     })
 }
 
+/// What the code path around `scope` starts with.
+fn code_path_root(scope: Scope<'_>) -> Option<Node<'_>> {
+    let scope = code_path_scope(scope)?;
+    Some(match (scope.kind(), scope.node()) {
+        (ScopeKind::ClassStaticBlock, Node::Func(func)) => func.owner(),
+        (_, node) => node,
+    })
+}
+
 /// Where a variable is used, to look for ways from an assignment to a place where it is read.
 #[derive(Default)]
 struct Uses<'a> {
     /// In source order.
     all: Vec<Reference<'a>>,
+    /// For every variable: the innermost `a ? b : c` in the statement of a node that has the node in its `b`.
+    conditions: AncestorMemo<'a, Option<Expr<'a>>>,
     /// The loops whose body has been looked at from its start.
     loops: SmallVec<[Stmt<'a>; 2]>,
     /// How many more statements to look at.
@@ -629,21 +642,50 @@ impl<'a> Uses<'a> {
         match self.within(e.span()) {
             [] => Flow::Through,
             [only] => read_or_unknown(only.is_read()),
+            // There is a way to everything in an expression, and nothing before it is on that way.
+            [first, ..] if !first.is_write() => Flow::Read,
             [first, rest @ ..] => {
                 if rest.iter().any(|it| it.is_write()) {
                     return Flow::Unknown;
                 }
                 // `x = f(x)`
-                read_or_unknown(
-                    !first.is_write()
-                        || matches!(
-                            e.kind(),
-                            ExprKind::Assign { target, value, .. }
-                                if target.span().start == start_of(first)
-                                    && rest.iter().all(|it| value.span().contains_offset(start_of(it)))
-                        ),
-                )
+                read_or_unknown(matches!(
+                    e.kind(),
+                    ExprKind::Assign { target, value, .. }
+                        if target.span().start == start_of(first)
+                            && rest.iter().all(|it| value.span().contains_offset(start_of(it)))
+                ))
             }
+        }
+    }
+
+    /// From the end of `node`, an assignment, to the end of `part`: the expression or the declarators of a statement that it
+    /// is in. What follows in an expression is evaluated later, but for the `c` of `a ? b : c` after something in `b`.
+    fn rest_of_part(&mut self, node: Node<'a>, part: Span) -> Flow<'a> {
+        let (mut inner, mut offset) = (node, node.span().end);
+        'uses: loop {
+            let Some(next) = self.first_within(Span::new(offset, part.end)) else {
+                return Flow::Through;
+            };
+            let condition_around = |child: Node<'a>, parent: Node<'a>| match parent {
+                Node::Expr(it) => it.as_cond().filter(|it| Node::Expr(it.1) == child).map(|_| Some(it)),
+                Node::Stmt(_) | Node::Func(_) | Node::Member(_) | Node::File(_) => Some(None),
+                _ => None,
+            };
+            while let Some(condition) = self.conditions.find(inner, condition_around).flatten()
+                && let Some((_, yes, _)) = condition.as_cond()
+            {
+                inner = Node::Expr(condition);
+                if start_of(&next) >= condition.span().end {
+                    continue;
+                }
+                if start_of(&next) < yes.span().end {
+                    break;
+                }
+                offset = condition.span().end;
+                continue 'uses;
+            }
+            return if next.is_read() { Flow::Read } else { Flow::Unknown };
         }
     }
 
@@ -1122,13 +1164,16 @@ impl<'a> Uses<'a> {
         {
             return true;
         }
-        if matches!(statement.tag(), StmtTag::Expr | StmtTag::Var) {
-            return self.is_alone_in(written, statement.span()) && self.is_read_after(statement);
-        }
         let kind = statement.kind();
         // The part of the statement that it is in.
         let part = match kind {
-            StmtKind::If { test, .. } | StmtKind::While { test, .. } => test.span(),
+            StmtKind::Expr(_) | StmtKind::Var(_) | StmtKind::Return(_) | StmtKind::Throw(_) => statement.span(),
+            StmtKind::If { test, .. } | StmtKind::While { test, .. } | StmtKind::DoWhile { test, .. } => test.span(),
+            StmtKind::Switch { expr, .. } | StmtKind::ForIn { expr, .. } | StmtKind::ForOf { expr, .. }
+                if expr.span().contains_offset(start_of(&written.identifier)) =>
+            {
+                expr.span()
+            }
             StmtKind::For {
                 init, test, update, ..
             } => {
@@ -1149,10 +1194,16 @@ impl<'a> Uses<'a> {
             }
             _ => return false,
         };
-        if !self.is_alone_in(written, part) {
+        if !self.is_alone_in(written, written.node.span()) {
             return false;
         }
+        match self.rest_of_part(written.node, part) {
+            Flow::Read => return true,
+            Flow::Through => {}
+            _ => return false,
+        }
         match kind {
+            StmtKind::Expr(_) | StmtKind::Var(_) => self.is_read_after(statement),
             StmtKind::If { yes, no, .. } => {
                 let yes = self.statement(yes);
                 match yes.or(no.map_or(Flow::Through, |no| self.statement(no))) {
@@ -1185,6 +1236,10 @@ impl NoUselessAssignment {
     fn check_variable<'a>(&self, variable: Symbol<'a>, cx: &mut Cx<'a, Self>) {
         if !variable.has_writes() || !variable.has_reads() {
             return;
+        }
+        // To see that nothing is reported about a variable that is passed over.
+        if cfg!(debug_assertions) {
+            cx.state.roots.extend(code_path_root(variable.scope()));
         }
         // Nearly all are a name with an initializer that nothing else assigns to.
         if !variable.has_modifying_references()
@@ -1248,14 +1303,19 @@ impl NoUselessAssignment {
         // Of the variable, once it is asked for.
         let mut scope = None;
         let mut at = 0;
+        // Where the last of the assignments so far ends: one that does not end later is in another, which comes after it.
+        let mut end = 0;
         let is_unknown = loop {
             let Some(&reference) = uses.all.get(at) else {
                 break false;
             };
             at += 1;
             if reference.is_write()
-                && written_by(reference, writers)
-                    .is_some_and(|written| !uses.is_known_to_be_read(&written))
+                && written_by(reference, writers).is_some_and(|written| {
+                    let is_in_another = written.node.span().end <= end;
+                    end = end.max(written.node.span().end);
+                    is_in_another || !uses.is_known_to_be_read(&written)
+                })
                 && code_path_scope(reference.scope())
                     == *scope.get_or_insert_with(|| code_path_scope(variable.scope()))
             {
@@ -1276,11 +1336,8 @@ impl NoUselessAssignment {
         if (uses.all.iter()).any(|it| it.is_read() && code_path_scope(it.scope()) != Some(scope)) {
             return;
         }
-        let root = match (scope.kind(), scope.node()) {
-            (ScopeKind::ClassStaticBlock, Node::Func(func)) => func.owner(),
-            (_, node) => node,
-        };
-        cx.state.roots.insert(root);
+        cx.state.roots.extend(code_path_root(scope));
+        cx.state.unknown.insert(variable);
     }
 
     fn check_code_path<'a>(&self, root: Node<'a>, cx: &mut Cx<'a, Self>) {
@@ -1362,6 +1419,7 @@ impl NoUselessAssignment {
                     && uses.is_assignment_unused(index, next)
                     && !oxlint_takes_for_used(assignments.get(index + 1), read_references.last())
                 {
+                    debug_assert!(cx.state.unknown.contains(&variable));
                     // For oxlint a name that is declared is without its type.
                     let name = variable.symbol.name();
                     let end = match cx.language().is_oxlint {
@@ -1388,7 +1446,8 @@ impl NoUselessAssignment {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => {
                 let scope = variable.scope();
-                let is_ignored = get_code_path_start_scope(scope, &state.code_path_start_scopes) != Some(top.scope)
+                let is_ignored = !cfg!(debug_assertions) && !state.unknown.contains(&variable)
+                    || get_code_path_start_scope(scope, &state.code_path_start_scopes) != Some(top.scope)
                     || variable.class.is_none() && variable.symbol.is_marked_used()
                     || scope.kind() == ScopeKind::Module && is_exported(variable.symbol);
                 entry.insert((!is_ignored).then(SmallVec::new))

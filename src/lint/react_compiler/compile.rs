@@ -31,6 +31,8 @@ pub(crate) struct Compiler<'a> {
     flavor: Flavor,
     wanted: Categories,
     config: EnvironmentConfig,
+    /// What the trees and the compiler allocate.
+    arena: bun_alloc::Arena,
 }
 
 /// oxlint's `react_compiler_plugin_options`, the plugin's `COMPILER_OPTIONS`
@@ -77,6 +79,7 @@ impl<'a> Compiler<'a> {
             flavor,
             wanted,
             config: config_of(flavor),
+            arena: bun_alloc::Arena::new(),
         }
     }
 
@@ -88,17 +91,18 @@ impl<'a> Compiler<'a> {
         fn_type: ReactFunctionType,
         logged: &mut Vec<Finding>,
     ) -> Result<(), Vec<Finding>> {
-        // All that the tree and the compiler allocate for the function is freed with these.
-        let arena = bun_alloc::Arena::new();
-        let mut allocator = ASTMemoryAllocator::borrowing(&arena);
+        // Nothing of a function is in use after it. A heap for each costs more than the small ones need.
+        let _ = self.arena.reset_retain_with_limit(8 * 1024 * 1024);
+        let arena = &self.arena;
+        let mut allocator = ASTMemoryAllocator::borrowing(arena);
         let _scope = allocator.enter();
-        let converted = match convert(self.file, &arena, func, self.flavor) {
+        let converted = match convert(self.file, arena, func, self.flavor) {
             Ok(converted) => converted,
             Err(Refusal::Using) => return Ok(()),
             Err(Refusal::ThisParameter) => return Err(Vec::new()),
             Err(Refusal::TooDeep) => return Err(vec![too_deep()]),
         };
-        let host = LintHost::new(&converted, &arena, self.file.text());
+        let host = LintHost::new(&converted, arena, self.file.text());
         let node = match &converted.root {
             Root::Function(function) => FunctionNode::Function(function),
             Root::Arrow(arrow) => FunctionNode::Arrow(arrow),

@@ -134,7 +134,15 @@ pub fn update_package_json_and_install_with_manager(
         update_requests,
         subcommand,
         original_cwd,
-    )
+    )?;
+
+    // `bun patch` prepares the patch first; its caller exits.
+    if manager.any_failed_to_install
+        && !matches!(manager.options.patch_features, PatchFeatures::Patch)
+    {
+        Global::exit(1);
+    }
+    Ok(())
 }
 
 fn update_package_json_and_install_with_manager_with_updates(
@@ -465,7 +473,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         && manager.options.do_.contains(Do::WRITE_PACKAGE_JSON)
         && !any_changes
     {
-        Global::exit(0);
+        Global::exit(u32::from(manager.any_failed_to_install));
     }
     remove_leftover_node_modules(manager);
 

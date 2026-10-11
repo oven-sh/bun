@@ -1027,28 +1027,33 @@ impl Run<'_> {
         tailwind::only_where_sorted(&mut options.options, kind);
         let names = Session::new();
         let verifies = self.options.verify;
-        let format_text = || {
+        let format_text = |options: &Resolved| {
             format(
                 &path,
                 &text,
-                &options,
+                options,
                 (&Interner::new_in(&names), &names),
                 &mut Scratches::default(),
                 verifies,
             )
         };
-        let mut formatted = format_text();
+        let mut formatted = format_text(&options);
         if let Some(tailwind) = options
             .options
             .tailwind
             .as_deref()
             .filter(|it| it.has_missed())
         {
-            if let Err(error) = configs.classes.ask(self.environment) {
-                return self.fail(&error);
+            match configs.classes.ask(self.environment) {
+                Ok(_) => tailwind.has_missed.store(false, Ordering::Relaxed),
+                // As for a file.
+                Err(error) if self.options.allow_unsupported => {
+                    self.warn(&error);
+                    options.options.tailwind = None;
+                }
+                Err(error) => return self.fail(&error),
             }
-            tailwind.has_missed.store(false, Ordering::Relaxed);
-            formatted = format_text();
+            formatted = format_text(&options);
         }
         match formatted {
             Err(failure @ Failure::Unread(_)) => {
@@ -1306,9 +1311,10 @@ impl Run<'_> {
                     .filter(|&at| matches!(results.lock()[work[at].0], Some(Done::PutAside)))
                     .collect();
                 let files = if left.len() == 1 { "file" } else { "files" };
-                let what = match options.allow_unsupported {
-                    true => "The classes are not sorted in",
-                    false => "Left as they are:",
+                let what = match (options.allow_unsupported, left.len()) {
+                    (true, _) => "The classes are not sorted in",
+                    (false, 1) => "Left as it is:",
+                    (false, _) => "Left as they are:",
                 };
                 error.extend_from_slice(format!("\n{what} {} {files}.", left.len()).as_bytes());
                 if options.allow_unsupported {

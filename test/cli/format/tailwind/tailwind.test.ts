@@ -39,11 +39,12 @@ exports.createContext = config => {
 `,
 };
 
-async function formatIn(cwd: string, names: string[], flags: string[] = ["."]) {
+async function formatIn(cwd: string, names: string[], flags: string[] = ["."], stdin?: string) {
   await using proc = spawn({
     cmd: [bunExe(), "format", "--log-level=warn", ...flags],
     env: bunEnv,
     cwd,
+    stdin: stdin === undefined ? "ignore" : Buffer.from(stdin),
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -202,6 +203,18 @@ if (now.join() !== before.join()) throw new Error("There is " + now.filter(it =>
     expect(allowed.stderr).toContain("[warn] sortTailwindcss: It needs the package tailwindcss");
     expect(allowed.files).toEqual([`${input}a;\n`, "b;\n"]);
     expect(allowed.exitCode).toBe(0);
+  });
+
+  // What an editor runs.
+  test("without the package, a text from stdin: an error, and with --allow-unsupported a warning, as for a file", async () => {
+    using dir = tempDir("bun-format-tailwind", { ".oxfmtrc.json": '{ "sortTailwindcss": true }' });
+    const from = ["--stdin-filepath", "a.jsx"];
+    const refused = await formatIn(String(dir), [], from, `${input}a  ;\n`);
+    expect(refused.stderr).toContain("[error] sortTailwindcss: It needs the package tailwindcss");
+    expect(refused).toMatchObject({ stdout: "", exitCode: 2 });
+    const allowed = await formatIn(String(dir), [], ["--allow-unsupported", ...from], `${input}a  ;\n`);
+    expect(allowed.stderr).toContain("[warn] sortTailwindcss: It needs the package tailwindcss");
+    expect(allowed).toMatchObject({ stdout: `${input}a;\n`, exitCode: 0 });
   });
 
   test("every run that comes across classes asks Tailwind, once, and leaves nothing behind", async () => {
